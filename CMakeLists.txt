@@ -18,11 +18,17 @@ endif()
 
 target_link_libraries(SnowDesktop PRIVATE
     comctl32
+    d2d1
+    d3d11
+    dcomp
+    dwrite
+    dxgi
     gdi32
     msimg32
     ole32
     shell32
     shlwapi
     user32
+    windowscodecs
     uuid
 )
