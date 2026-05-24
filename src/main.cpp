@@ -5,11 +5,17 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <d2d1_1.h>
+#include <d3d11.h>
+#include <dcomp.h>
+#include <dwrite.h>
+#include <dxgi1_2.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <cwchar>
 #include <cstdint>
+#include <cstring>
 #include <cstdlib>
 #include <fstream>
 #include <memory>
@@ -904,6 +910,18 @@ public:
             return 1;
         }
 
+        if (!InitializeGraphics())
+        {
+            wchar_t message[256]{};
+            swprintf_s(
+                message,
+                L"Unable to initialize Direct2D/DirectComposition.\nHRESULT=0x%08lX",
+                static_cast<unsigned long>(lastGraphicsError_));
+            MessageBoxW(nullptr, message, L"SnowDesktop", MB_ICONERROR);
+            OleUninitialize();
+            return 1;
+        }
+
         const auto cleanup = std::unique_ptr<void, void (*)(void*)>(
             this,
             [](void* ctx)
@@ -948,10 +966,20 @@ public:
         if (!CreateDesktopWindow(showCommand))
         {
             wchar_t message[256]{};
-            swprintf_s(
-                message,
-                L"Unable to create the SnowDesktop desktop window.\nGetLastError=%lu",
-                lastCreateWindowError_);
+            if (FAILED(lastGraphicsError_))
+            {
+                swprintf_s(
+                    message,
+                    L"Unable to create the SnowDesktop composition target.\nHRESULT=0x%08lX",
+                    static_cast<unsigned long>(lastGraphicsError_));
+            }
+            else
+            {
+                swprintf_s(
+                    message,
+                    L"Unable to create the SnowDesktop desktop window.\nGetLastError=%lu",
+                    lastCreateWindowError_);
+            }
             MessageBoxW(nullptr, message, L"SnowDesktop", MB_ICONERROR);
             return 1;
         }
@@ -976,6 +1004,155 @@ public:
     }
 
 private:
+    bool InitializeGraphics()
+    {
+        const D3D_FEATURE_LEVEL featureLevels[] = {
+            D3D_FEATURE_LEVEL_11_1,
+            D3D_FEATURE_LEVEL_11_0,
+            D3D_FEATURE_LEVEL_10_1,
+            D3D_FEATURE_LEVEL_10_0,
+            D3D_FEATURE_LEVEL_9_3,
+        };
+
+        D3D_FEATURE_LEVEL actualFeatureLevel{};
+        HRESULT hr = D3D11CreateDevice(
+            nullptr,
+            D3D_DRIVER_TYPE_HARDWARE,
+            nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            featureLevels,
+            static_cast<UINT>(std::size(featureLevels)),
+            D3D11_SDK_VERSION,
+            &d3dDevice_,
+            &actualFeatureLevel,
+            nullptr);
+
+        if (FAILED(hr))
+        {
+            hr = D3D11CreateDevice(
+                nullptr,
+                D3D_DRIVER_TYPE_WARP,
+                nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                featureLevels,
+                static_cast<UINT>(std::size(featureLevels)),
+                D3D11_SDK_VERSION,
+                &d3dDevice_,
+                &actualFeatureLevel,
+                nullptr);
+        }
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        ComPtr<IDXGIDevice> dxgiDevice;
+        hr = d3dDevice_.As(&dxgiDevice);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        D2D1_FACTORY_OPTIONS factoryOptions{};
+        hr = D2D1CreateFactory(
+            D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            __uuidof(ID2D1Factory1),
+            &factoryOptions,
+            reinterpret_cast<void**>(d2dFactory_.GetAddressOf()));
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        hr = d2dFactory_->CreateDevice(dxgiDevice.Get(), &d2dDevice_);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &bitmapContext_);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+        bitmapContext_->SetDpi(96.0f, 96.0f);
+        bitmapContext_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+
+        hr = DCompositionCreateDevice2(
+            d2dDevice_.Get(),
+            __uuidof(IDCompositionDesktopDevice),
+            reinterpret_cast<void**>(dcompDevice_.GetAddressOf()));
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        hr = DWriteCreateFactory(
+            DWRITE_FACTORY_TYPE_SHARED,
+            __uuidof(IDWriteFactory),
+            reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        hr = dwriteFactory_->CreateTextFormat(
+            L"Segoe UI",
+            nullptr,
+            DWRITE_FONT_WEIGHT_BOLD,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            15.0f,
+            L"",
+            &itemTextFormat_);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+        itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+
+        hr = dwriteFactory_->CreateTextFormat(
+            L"Segoe UI",
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            14.0f,
+            L"",
+            &statusTextFormat_);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+        statusTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        statusTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        statusTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+        D2D1_STROKE_STYLE_PROPERTIES dottedProps{};
+        dottedProps.startCap = D2D1_CAP_STYLE_FLAT;
+        dottedProps.endCap = D2D1_CAP_STYLE_FLAT;
+        dottedProps.dashCap = D2D1_CAP_STYLE_FLAT;
+        dottedProps.lineJoin = D2D1_LINE_JOIN_MITER;
+        dottedProps.miterLimit = 10.0f;
+        dottedProps.dashStyle = D2D1_DASH_STYLE_DOT;
+        dottedProps.dashOffset = 0.0f;
+        d2dFactory_->CreateStrokeStyle(dottedProps, nullptr, 0, &dottedStrokeStyle_);
+
+        lastGraphicsError_ = S_OK;
+        return true;
+    }
+
     bool InitializeShell()
     {
         if (FAILED(SHGetDesktopFolder(&desktopFolder_)))
@@ -1036,7 +1213,7 @@ private:
         ScreenToClient(parent, &origin);
         bool attachedToDesktopHost = true;
 
-        DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW;
+        DWORD exStyle = WS_EX_TOOLWINDOW;
         hwnd_ = CreateWindowExW(
             exStyle,
             kWindowClassName,
@@ -1108,8 +1285,89 @@ private:
         }
         ShowWindow(hwnd_, showCommand);
         UpdateWindow(hwnd_);
-        SetLayeredWindowAttributes(hwnd_, kTransparentKey, 255, LWA_COLORKEY);
+        return CreateCompositionTarget();
+    }
+
+    bool CreateCompositionTarget()
+    {
+        if (!dcompDevice_)
+        {
+            return false;
+        }
+
+        HRESULT hr = dcompDevice_->CreateTargetForHwnd(hwnd_, TRUE, &dcompTarget_);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        hr = dcompDevice_->CreateVisual(&dcompVisual_);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        hr = CreateOrResizeCompositionSurface();
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        hr = dcompTarget_->SetRoot(dcompVisual_.Get());
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        hr = dcompDevice_->Commit();
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+
+        lastGraphicsError_ = S_OK;
         return true;
+    }
+
+    HRESULT CreateOrResizeCompositionSurface()
+    {
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        const UINT width = static_cast<UINT>(std::max<LONG>(1, client.right - client.left));
+        const UINT height = static_cast<UINT>(std::max<LONG>(1, client.bottom - client.top));
+
+        if (dcompSurface_ && compositionWidth_ == width && compositionHeight_ == height)
+        {
+            return S_OK;
+        }
+
+        ComPtr<IDCompositionSurface> surface;
+        HRESULT hr = dcompDevice_->CreateSurface(
+            width,
+            height,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+            DXGI_ALPHA_MODE_PREMULTIPLIED,
+            &surface);
+        if (FAILED(hr))
+        {
+            return hr;
+        }
+
+        hr = dcompVisual_->SetContent(surface.Get());
+        if (FAILED(hr))
+        {
+            return hr;
+        }
+
+        dcompSurface_ = surface;
+        compositionWidth_ = width;
+        compositionHeight_ = height;
+        return S_OK;
     }
 
     void HideExplorerIcons()
@@ -1537,6 +1795,7 @@ private:
     void ReloadItems()
     {
         items_.clear();
+        d2dIconCache_.clear();
         selectedCount_ = 0;
 
         ComPtr<IEnumIDList> enumItems;
@@ -2650,6 +2909,414 @@ private:
         ReloadItems();
     }
 
+    static D2D1_RECT_F ToD2DRect(const RECT& rect)
+    {
+        return D2D1::RectF(
+            static_cast<float>(rect.left),
+            static_cast<float>(rect.top),
+            static_cast<float>(rect.right),
+            static_cast<float>(rect.bottom));
+    }
+
+    ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm)
+    {
+        ComPtr<ID2D1Bitmap1> bitmap;
+        if (hbm == nullptr || bitmapContext_ == nullptr)
+        {
+            return bitmap;
+        }
+
+        BITMAP bm{};
+        if (GetObjectW(hbm, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight == 0)
+        {
+            return bitmap;
+        }
+
+        const int width = bm.bmWidth;
+        const int height = std::abs(bm.bmHeight);
+        std::vector<std::uint32_t> pixels(static_cast<size_t>(width) * static_cast<size_t>(height));
+
+        if (bm.bmBits != nullptr && bm.bmBitsPixel == 32)
+        {
+            const auto* src = static_cast<const std::uint8_t*>(bm.bmBits);
+            const size_t srcPitch = static_cast<size_t>(std::abs(bm.bmWidthBytes));
+            for (int y = 0; y < height; ++y)
+            {
+                std::memcpy(
+                    pixels.data() + (static_cast<size_t>(y) * static_cast<size_t>(width)),
+                    src + (static_cast<size_t>(y) * srcPitch),
+                    static_cast<size_t>(width) * sizeof(std::uint32_t));
+            }
+        }
+        else
+        {
+            HDC screenDc = GetDC(nullptr);
+            if (screenDc == nullptr)
+            {
+                return bitmap;
+            }
+
+            BITMAPINFO bi{};
+            bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+            bi.bmiHeader.biWidth = width;
+            bi.bmiHeader.biHeight = -height;
+            bi.bmiHeader.biPlanes = 1;
+            bi.bmiHeader.biBitCount = 32;
+            bi.bmiHeader.biCompression = BI_RGB;
+
+            if (GetDIBits(screenDc, hbm, 0, static_cast<UINT>(height), pixels.data(), &bi, DIB_RGB_COLORS) == 0)
+            {
+                ReleaseDC(nullptr, screenDc);
+                return bitmap;
+            }
+            ReleaseDC(nullptr, screenDc);
+        }
+
+        bool hasAlpha = false;
+        bool hasVisiblePixels = false;
+        for (std::uint32_t pixel : pixels)
+        {
+            if (((pixel >> 24) & 0xff) != 0)
+            {
+                hasAlpha = true;
+            }
+            if ((pixel & 0x00ffffff) != 0)
+            {
+                hasVisiblePixels = true;
+            }
+        }
+        if (!hasAlpha && hasVisiblePixels)
+        {
+            for (std::uint32_t& pixel : pixels)
+            {
+                if ((pixel & 0x00ffffff) != 0)
+                {
+                    pixel |= 0xff000000;
+                }
+            }
+        }
+        PremultiplyBgraPixels(pixels.data(), width, height);
+
+        D2D1_BITMAP_PROPERTIES1 props{};
+        props.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+        props.dpiX = 96.0f;
+        props.dpiY = 96.0f;
+        props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+
+        bitmapContext_->CreateBitmap(
+            D2D1::SizeU(static_cast<UINT32>(width), static_cast<UINT32>(height)),
+            pixels.data(),
+            static_cast<UINT32>(width * sizeof(std::uint32_t)),
+            &props,
+            &bitmap);
+        return bitmap;
+    }
+
+    ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm)
+    {
+        if (hbm == nullptr)
+        {
+            return nullptr;
+        }
+
+        const auto key = reinterpret_cast<std::uintptr_t>(hbm);
+        auto found = d2dIconCache_.find(key);
+        if (found != d2dIconCache_.end())
+        {
+            return found->second.Get();
+        }
+
+        ComPtr<ID2D1Bitmap1> bitmap = CreateD2DBitmapFromHBitmap(hbm);
+        if (!bitmap)
+        {
+            return nullptr;
+        }
+
+        ID2D1Bitmap1* raw = bitmap.Get();
+        d2dIconCache_.emplace(key, std::move(bitmap));
+        return raw;
+    }
+
+    void DrawD2D()
+    {
+        if (hwnd_ == nullptr || dcompSurface_ == nullptr || dcompDevice_ == nullptr)
+        {
+            return;
+        }
+
+        HRESULT hr = CreateOrResizeCompositionSurface();
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return;
+        }
+
+        ID2D1DeviceContext* rawContext = nullptr;
+        POINT updateOffset{};
+        hr = dcompSurface_->BeginDraw(
+            nullptr,
+            __uuidof(ID2D1DeviceContext),
+            reinterpret_cast<void**>(&rawContext),
+            &updateOffset);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return;
+        }
+
+        ComPtr<ID2D1DeviceContext> context;
+        context.Attach(rawContext);
+        context->SetDpi(96.0f, 96.0f);
+        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            static_cast<float>(updateOffset.x),
+            static_cast<float>(updateOffset.y)));
+        context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+
+        DrawD2DScene(context.Get());
+
+        context->SetTransform(D2D1::Matrix3x2F::Identity());
+        context.Reset();
+
+        hr = dcompSurface_->EndDraw();
+        if (SUCCEEDED(hr))
+        {
+            hr = dcompDevice_->Commit();
+        }
+        lastGraphicsError_ = hr;
+    }
+
+    void DrawD2DScene(ID2D1DeviceContext* context)
+    {
+        if (context == nullptr)
+        {
+            return;
+        }
+
+        for (const auto& item : items_)
+        {
+            if (draggingItems_ && item.selected)
+            {
+                continue;
+            }
+            DrawD2DItemAt(context, item, item.bounds, item.selected);
+        }
+
+        if (draggingItems_)
+        {
+            DrawD2DDraggedItems(context);
+        }
+
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        DrawD2DStatus(context, client);
+
+        if (marqueeActive_)
+        {
+            DrawD2DRectangle(context, marqueeRect_, D2D1::ColorF(0.47f, 0.71f, 1.0f, 0.95f), nullptr);
+        }
+
+        if (draggingItems_)
+        {
+            RECT targetRect = GetTargetRectAt(dragCurrentPoint_);
+            targetRect.left += 3;
+            targetRect.top += 3;
+            targetRect.right -= 3;
+            targetRect.bottom -= 3;
+            DrawD2DRectangle(context, targetRect, D2D1::ColorF(0.47f, 0.71f, 1.0f, 0.95f), dottedStrokeStyle_.Get());
+        }
+
+        if (externalDragActive_)
+        {
+            RECT target{};
+            int hit = HitTest(externalDragPoint_);
+            if (hit >= 0)
+            {
+                target = items_[static_cast<size_t>(hit)].bounds;
+            }
+            else
+            {
+                target = GetSlotRect(SlotFromPoint(externalDragPoint_));
+            }
+
+            target.left += 3;
+            target.top += 3;
+            target.right -= 3;
+            target.bottom -= 3;
+            DrawD2DRectangle(context, target, D2D1::ColorF(0.47f, 0.71f, 1.0f, 0.95f), dottedStrokeStyle_.Get());
+        }
+    }
+
+    void DrawD2DRectangle(ID2D1DeviceContext* context, const RECT& rect, const D2D1_COLOR_F& color, ID2D1StrokeStyle* strokeStyle)
+    {
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (FAILED(context->CreateSolidColorBrush(color, &brush)) || !brush)
+        {
+            return;
+        }
+
+        context->DrawRectangle(ToD2DRect(rect), brush.Get(), 1.0f, strokeStyle);
+    }
+
+    void DrawD2DItemAt(ID2D1DeviceContext* context, const DesktopItem& item, RECT bounds, bool selected)
+    {
+        const float iconX = static_cast<float>(bounds.left + (kCellWidth - kIconSize) / 2);
+        const float iconY = static_cast<float>(bounds.top + 2);
+        const float contentBottom = static_cast<float>(bounds.top + kTextTop + kTextHeight + 6);
+
+        if (selected)
+        {
+            ComPtr<ID2D1SolidColorBrush> highlightBrush;
+            if (SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(0.61f, 0.78f, 1.0f, 0.95f), &highlightBrush)) && highlightBrush)
+            {
+                D2D1_RECT_F highlight = D2D1::RectF(
+                    static_cast<float>(bounds.left + 4),
+                    static_cast<float>(bounds.top),
+                    static_cast<float>(bounds.right - 4),
+                    contentBottom);
+                context->DrawRectangle(highlight, highlightBrush.Get(), 1.0f);
+            }
+        }
+
+        ID2D1Bitmap1* iconBitmap = GetOrCreateD2DBitmap(item.iconBitmap);
+        if (iconBitmap != nullptr)
+        {
+            D2D1_RECT_F dst = D2D1::RectF(iconX, iconY, iconX + kIconSize, iconY + kIconSize);
+            context->DrawBitmap(iconBitmap, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+        }
+        else if (item.sysIconIndex >= 0 && sysImageList_)
+        {
+            HICON icon = nullptr;
+            if (SUCCEEDED(sysImageList_->GetIcon(item.sysIconIndex, ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) && icon != nullptr)
+            {
+                SIZE size{};
+                HBITMAP fallbackBitmap = CreateAlphaBitmapFromIcon(icon, kIconSize, kIconSize, size);
+                ComPtr<ID2D1Bitmap1> fallback = CreateD2DBitmapFromHBitmap(fallbackBitmap);
+                if (fallback)
+                {
+                    D2D1_RECT_F dst = D2D1::RectF(iconX, iconY, iconX + kIconSize, iconY + kIconSize);
+                    context->DrawBitmap(fallback.Get(), dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+                }
+                if (fallbackBitmap != nullptr)
+                {
+                    DeleteObject(fallbackBitmap);
+                }
+                DestroyIcon(icon);
+            }
+        }
+
+        if (dwriteFactory_ && itemTextFormat_ && !item.name.empty())
+        {
+            const float textWidth = static_cast<float>(std::max<LONG>(1, bounds.right - bounds.left - 4));
+            const float textHeight = static_cast<float>(kTextHeight + 4);
+            ComPtr<IDWriteTextLayout> layout;
+            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                    item.name.c_str(),
+                    static_cast<UINT32>(item.name.size()),
+                    itemTextFormat_.Get(),
+                    textWidth,
+                    textHeight,
+                    &layout)) &&
+                layout)
+            {
+                ComPtr<ID2D1SolidColorBrush> shadowBrush;
+                ComPtr<ID2D1SolidColorBrush> textBrush;
+                context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
+                context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &textBrush);
+
+                const float tx = static_cast<float>(bounds.left + 2);
+                const float ty = static_cast<float>(bounds.top + kTextTop);
+                if (shadowBrush)
+                {
+                    const D2D1_POINT_2F offsets[] = {
+                        D2D1::Point2F(tx - 1.0f, ty),
+                        D2D1::Point2F(tx + 1.0f, ty),
+                        D2D1::Point2F(tx, ty - 1.0f),
+                        D2D1::Point2F(tx, ty + 1.0f),
+                    };
+                    for (const D2D1_POINT_2F& point : offsets)
+                    {
+                        context->DrawTextLayout(point, layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    }
+                }
+                if (textBrush)
+                {
+                    context->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
+            }
+        }
+    }
+
+    void DrawD2DDraggedItems(ID2D1DeviceContext* context)
+    {
+        int dx = dragCurrentPoint_.x - mouseDownPoint_.x;
+        int dy = dragCurrentPoint_.y - mouseDownPoint_.y;
+        for (const auto& item : items_)
+        {
+            if (!item.selected)
+            {
+                continue;
+            }
+
+            RECT moved = item.bounds;
+            OffsetRect(&moved, dx, dy);
+            DrawD2DItemAt(context, item, moved, true);
+        }
+    }
+
+    void DrawD2DStatus(ID2D1DeviceContext* context, const RECT& client)
+    {
+        if (!dwriteFactory_ || !statusTextFormat_ || client.right <= 0 || client.bottom <= 0)
+        {
+            return;
+        }
+
+        const std::wstring status = L"SnowDesktop 桌面验证  |  F5 重新加载  |  Esc 退出并恢复 Explorer 图标";
+        const LONG left = std::max<LONG>(16, client.right - 620);
+        const LONG right = std::max<LONG>(left + 1, client.right - 16);
+        const LONG top = std::max<LONG>(0, client.bottom - 34);
+        const LONG bottom = std::max<LONG>(top + 1, client.bottom - 12);
+        const float width = static_cast<float>(right - left);
+        const float height = static_cast<float>(bottom - top);
+
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(dwriteFactory_->CreateTextLayout(
+                status.c_str(),
+                static_cast<UINT32>(status.size()),
+                statusTextFormat_.Get(),
+                width,
+                height,
+                &layout)) ||
+            !layout)
+        {
+            return;
+        }
+
+        ComPtr<ID2D1SolidColorBrush> shadowBrush;
+        ComPtr<ID2D1SolidColorBrush> textBrush;
+        context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.65f), &shadowBrush);
+        context->CreateSolidColorBrush(D2D1::ColorF(0.92f, 0.96f, 1.0f, 0.92f), &textBrush);
+        if (shadowBrush)
+        {
+            context->DrawTextLayout(
+                D2D1::Point2F(static_cast<float>(left + 1), static_cast<float>(top + 1)),
+                layout.Get(),
+                shadowBrush.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+        if (textBrush)
+        {
+            context->DrawTextLayout(
+                D2D1::Point2F(static_cast<float>(left), static_cast<float>(top)),
+                layout.Get(),
+                textBrush.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+    }
+
     void Draw(HDC hdc, const RECT& paintRect)
     {
         RECT client{};
@@ -3010,9 +3677,9 @@ private:
         case WM_PAINT:
         {
             PAINTSTRUCT ps{};
-            HDC hdc = BeginPaint(hwnd_, &ps);
-            Draw(hdc, ps.rcPaint);
+            BeginPaint(hwnd_, &ps);
             EndPaint(hwnd_, &ps);
+            DrawD2D();
             return 0;
         }
         case WM_ERASEBKGND:
@@ -3020,6 +3687,14 @@ private:
         case WM_SIZE:
             virtualWidth_ = LOWORD(lParam);
             virtualHeight_ = HIWORD(lParam);
+            if (dcompVisual_)
+            {
+                HRESULT hr = CreateOrResizeCompositionSurface();
+                if (FAILED(hr))
+                {
+                    lastGraphicsError_ = hr;
+                }
+            }
             UpdateLayoutWorkArea();
             LayoutItems();
             InvalidateRect(hwnd_, nullptr, TRUE);
@@ -3030,6 +3705,14 @@ private:
             virtualTop_ = GetSystemMetrics(SM_YVIRTUALSCREEN);
             virtualWidth_ = GetSystemMetrics(SM_CXVIRTUALSCREEN);
             virtualHeight_ = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if (dcompVisual_)
+            {
+                HRESULT hr = CreateOrResizeCompositionSurface();
+                if (FAILED(hr))
+                {
+                    lastGraphicsError_ = hr;
+                }
+            }
             UpdateLayoutWorkArea();
             LayoutItems();
             InvalidateRect(hwnd_, nullptr, TRUE);
@@ -3427,6 +4110,19 @@ private:
     bool customDesktopVisible_ = true;
     DesktopWindows desktopWindows_{};
     ComPtr<IImageList> sysImageList_;
+    ComPtr<ID3D11Device> d3dDevice_;
+    ComPtr<ID2D1Factory1> d2dFactory_;
+    ComPtr<ID2D1Device> d2dDevice_;
+    ComPtr<ID2D1DeviceContext> bitmapContext_;
+    ComPtr<IDCompositionDesktopDevice> dcompDevice_;
+    ComPtr<IDCompositionTarget> dcompTarget_;
+    ComPtr<IDCompositionVisual2> dcompVisual_;
+    ComPtr<IDCompositionSurface> dcompSurface_;
+    ComPtr<IDWriteFactory> dwriteFactory_;
+    ComPtr<IDWriteTextFormat> itemTextFormat_;
+    ComPtr<IDWriteTextFormat> statusTextFormat_;
+    ComPtr<ID2D1StrokeStyle> dottedStrokeStyle_;
+    std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
     ComPtr<IShellFolder> desktopFolder_;
     Pidl desktopPidl_;
     std::vector<DesktopItem> items_;
@@ -3455,6 +4151,9 @@ private:
     ComPtr<IContextMenu2> activeContextMenu2_;
     ComPtr<IContextMenu3> activeContextMenu3_;
     DWORD lastCreateWindowError_ = 0;
+    HRESULT lastGraphicsError_ = S_OK;
+    UINT compositionWidth_ = 0;
+    UINT compositionHeight_ = 0;
 };
 } // namespace
 
