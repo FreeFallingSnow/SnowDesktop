@@ -13,6 +13,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <climits>
 #include <cwchar>
 #include <cstdint>
 #include <cstring>
@@ -35,11 +36,15 @@ constexpr wchar_t kHiddenBySnowDesktopProp[] = L"SnowDesktop.HiddenExplorerIconL
 constexpr COLORREF kTransparentKey = RGB(1, 2, 3);
 constexpr int kIconSize = 64;
 constexpr int kCellWidth = 92;
-constexpr int kMinCellHeight = 128;
-constexpr int kMarginX = 0;
+constexpr int kMinCellHeight = 136;
+constexpr int kGridMarginX = 6;
+constexpr int kGridMarginY = 6;
+constexpr int kMarginX = kGridMarginX;
 constexpr int kMarginY = 6;
 constexpr int kTextTop = 70;
-constexpr int kTextHeight = 42;
+constexpr int kTextCollapsedHeight = 34;
+constexpr int kTextExpandedHeight = 58;
+constexpr int kTextHeight = kTextCollapsedHeight;
 constexpr int kRenameEditId = 1001;
 constexpr UINT kTrayCallbackMessage = WM_APP + 1;
 constexpr UINT_PTR kTrayIconId = 1;
@@ -54,6 +59,61 @@ constexpr UINT kTrayDesktopIconUserFiles = 40008;
 constexpr UINT kTrayDesktopIconNetwork = 40009;
 constexpr UINT kTrayDesktopIconControlPanel = 40010;
 constexpr UINT kTrayDesktopIconRecycleBin = 40011;
+constexpr UINT kContextOpenCommand = 41001;
+constexpr UINT kContextRenameCommand = 41002;
+constexpr UINT kContextCutCommand = 41003;
+constexpr UINT kContextCopyCommand = 41004;
+constexpr UINT kContextPasteCommand = 41005;
+constexpr UINT kContextDeleteCommand = 41006;
+constexpr UINT kContextRefreshCommand = 41007;
+constexpr UINT kContextSortByNameCommand = 41008;
+constexpr UINT kContextSortByTypeCommand = 41009;
+constexpr UINT kContextMoreCommand = 41010;
+constexpr UINT kContextThisDisplayFirstCommand = 41011;
+
+struct GridCell
+{
+    std::wstring pageId;
+    int column = 0;
+    int row = 0;
+};
+
+struct GridSpan
+{
+    int columns = 1;
+    int rows = 1;
+};
+
+struct LayoutRecord
+{
+    GridCell cell;
+    GridSpan span;
+    bool hasGrid = false;
+    int legacySlot = -1;
+};
+
+struct GridPage
+{
+    std::wstring id;
+    std::wstring monitorId;
+    RECT bounds{};
+    RECT workArea{};
+    bool isPrimary = false;
+    int columns = 1;
+    int rows = 1;
+    int cellWidth = kCellWidth;
+    int cellHeight = kMinCellHeight;
+    int gapX = 0;
+    int gapY = 0;
+    int marginX = kGridMarginX;
+    int marginY = kGridMarginY;
+};
+
+struct PendingGridMove
+{
+    size_t index = 0;
+    GridCell cell;
+};
 
 struct Pidl
 {
@@ -103,6 +163,8 @@ struct DesktopItem
     int sysIconIndex = -1;
     RECT bounds{};
     int slot = 0;
+    GridCell gridCell;
+    GridSpan gridSpan;
     bool selected = false;
 
     DesktopItem() = default;
@@ -118,6 +180,8 @@ struct DesktopItem
           sysIconIndex(other.sysIconIndex),
           bounds(other.bounds),
           slot(other.slot),
+          gridCell(std::move(other.gridCell)),
+          gridSpan(other.gridSpan),
           selected(other.selected)
     {
         other.iconBitmap = nullptr;
@@ -143,6 +207,8 @@ struct DesktopItem
             sysIconIndex = other.sysIconIndex;
             bounds = other.bounds;
             slot = other.slot;
+            gridCell = std::move(other.gridCell);
+            gridSpan = other.gridSpan;
             selected = other.selected;
             other.iconBitmap = nullptr;
             other.iconBitmapSize = {};
@@ -184,6 +250,51 @@ BOOL CALLBACK FindDefViewProc(HWND hwnd, LPARAM lParam)
         search->parent = hwnd;
         return FALSE;
     }
+    return TRUE;
+}
+
+struct MonitorEnumContext
+{
+    int virtualLeft = 0;
+    int virtualTop = 0;
+    std::vector<GridPage>* pages = nullptr;
+};
+
+BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lParam)
+{
+    auto* context = reinterpret_cast<MonitorEnumContext*>(lParam);
+    if (context == nullptr || context->pages == nullptr)
+    {
+        return TRUE;
+    }
+
+    MONITORINFOEXW monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(monitor, &monitorInfo))
+    {
+        return TRUE;
+    }
+
+    GridPage page;
+    page.monitorId = monitorInfo.szDevice[0] != L'\0'
+        ? monitorInfo.szDevice
+        : (L"Monitor" + std::to_wstring(context->pages->size()));
+    page.id = page.monitorId;
+    page.isPrimary = (monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0;
+    page.bounds = {
+        monitorInfo.rcMonitor.left - context->virtualLeft,
+        monitorInfo.rcMonitor.top - context->virtualTop,
+        monitorInfo.rcMonitor.right - context->virtualLeft,
+        monitorInfo.rcMonitor.bottom - context->virtualTop,
+    };
+    page.workArea = {
+        monitorInfo.rcWork.left - context->virtualLeft,
+        monitorInfo.rcWork.top - context->virtualTop,
+        monitorInfo.rcWork.right - context->virtualLeft,
+        monitorInfo.rcWork.bottom - context->virtualTop,
+    };
+
+    context->pages->push_back(page);
     return TRUE;
 }
 
@@ -302,6 +413,27 @@ bool TryReadDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const std
     }
 
     return false;
+}
+
+bool TryWriteDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const std::wstring& clsid, DWORD value)
+{
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(root, subKey, 0, nullptr, 0, KEY_WRITE | KEY_WOW64_64KEY, nullptr, &key, nullptr) != ERROR_SUCCESS &&
+        RegCreateKeyExW(root, subKey, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+    {
+        return false;
+    }
+    LONG status = RegSetValueExW(key, clsid.c_str(), 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
+    RegCloseKey(key);
+    return status == ERROR_SUCCESS;
+}
+
+void WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible)
+{
+    DWORD value = visible ? 0 : 1;
+    TryWriteDesktopIconRegistryValue(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel",
+        clsid, value);
 }
 
 bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& value)
@@ -1120,6 +1252,7 @@ private:
         itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 17.0f, 13.0f);
 
         hr = dwriteFactory_->CreateTextFormat(
             L"Segoe UI",
@@ -1295,7 +1428,7 @@ private:
             return false;
         }
 
-        HRESULT hr = dcompDevice_->CreateTargetForHwnd(hwnd_, TRUE, &dcompTarget_);
+        HRESULT hr = dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_);
         if (FAILED(hr))
         {
             lastGraphicsError_ = hr;
@@ -1487,15 +1620,15 @@ private:
 
         int width = std::clamp(static_cast<int>(textSize.cx + 24), 130, 520);
         int height = std::clamp(static_cast<int>(textSize.cy + 14), 32, 46);
-        POINT windowPos{ screenPoint.x + 34, screenPoint.y + 22 };
+        POINT windowPos{ screenPoint.x + 48, screenPoint.y + 22 };
 
         HMONITOR monitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
         MONITORINFO monitorInfo{};
         monitorInfo.cbSize = sizeof(monitorInfo);
         if (monitor != nullptr && GetMonitorInfoW(monitor, &monitorInfo))
         {
-            windowPos.x = std::clamp(windowPos.x, monitorInfo.rcWork.left + 8, monitorInfo.rcWork.right - width - 8);
-            windowPos.y = std::clamp(windowPos.y, monitorInfo.rcWork.top + 8, monitorInfo.rcWork.bottom - height - 8);
+            windowPos.x = std::clamp<LONG>(windowPos.x, monitorInfo.rcWork.left + 8, monitorInfo.rcWork.right - static_cast<LONG>(width) - 8);
+            windowPos.y = std::clamp<LONG>(windowPos.y, monitorInfo.rcWork.top + 8, monitorInfo.rcWork.bottom - static_cast<LONG>(height) - 8);
         }
 
         BITMAPINFO bitmapInfo{};
@@ -1524,8 +1657,8 @@ private:
                 static_cast<std::uint32_t>(b);
         };
 
-        const std::uint32_t background = argb(178, 24, 32, 42);
-        const std::uint32_t border = argb(230, 110, 170, 240);
+        const std::uint32_t background = argb(255, 255, 255, 255);
+        const std::uint32_t border = argb(255, 205, 211, 220);
         for (int y = 0; y < height; ++y)
         {
             for (int x = 0; x < width; ++x)
@@ -1539,7 +1672,7 @@ private:
         HGDIOBJ oldBitmap = SelectObject(memoryDc, bitmap);
         HGDIOBJ oldFont = SelectObject(memoryDc, font);
         SetBkMode(memoryDc, TRANSPARENT);
-        SetTextColor(memoryDc, RGB(245, 250, 255));
+        SetTextColor(memoryDc, RGB(25, 32, 42));
 
         RECT textRect{ 10, 0, width - 10, height };
         DrawTextW(memoryDc, text.c_str(), -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
@@ -1547,20 +1680,10 @@ private:
         for (int i = 0; i < width * height; ++i)
         {
             std::uint32_t pixel = pixels[i];
-            std::uint8_t a = static_cast<std::uint8_t>((pixel >> 24) & 0xff);
             std::uint8_t r = static_cast<std::uint8_t>((pixel >> 16) & 0xff);
             std::uint8_t g = static_cast<std::uint8_t>((pixel >> 8) & 0xff);
             std::uint8_t b = static_cast<std::uint8_t>(pixel & 0xff);
-
-            if (r > 150 && g > 150 && b > 150)
-            {
-                a = 255;
-            }
-
-            r = static_cast<std::uint8_t>((static_cast<int>(r) * a) / 255);
-            g = static_cast<std::uint8_t>((static_cast<int>(g) * a) / 255);
-            b = static_cast<std::uint8_t>((static_cast<int>(b) * a) / 255);
-            pixels[i] = argb(a, r, g, b);
+            pixels[i] = argb(255, r, g, b);
         }
 
         POINT sourcePoint{ 0, 0 };
@@ -1691,7 +1814,9 @@ private:
         }
 
         bool currentVisible = IsClsidCurrentlyVisible(it->second);
-        settingsIconVisibility_[it->second] = !currentVisible;
+        bool newVisible = !currentVisible;
+        settingsIconVisibility_[it->second] = newVisible;
+        WriteDesktopIconRegistryValue(it->second, newVisible);
         SaveSettings();
         ReloadItems();
     }
@@ -1792,8 +1917,13 @@ private:
         DestroyMenu(menu);
     }
 
-    void ReloadItems()
+    void ReloadItems(bool reloadLayoutFromDisk = true)
     {
+        if (reloadLayoutFromDisk)
+        {
+            LoadLayoutSlots();
+        }
+
         items_.clear();
         d2dIconCache_.clear();
         selectedCount_ = 0;
@@ -1897,25 +2027,50 @@ private:
                 continue;
             }
             seenKeys.insert(key);
-            auto knownSlot = layoutSlots_.find(key);
-            if (knownSlot != layoutSlots_.end())
+            auto knownRecord = layoutRecords_.find(key);
+            if (knownRecord != layoutRecords_.end() && knownRecord->second.hasGrid)
             {
-                item.slot = knownSlot->second;
+                item.gridCell = knownRecord->second.cell;
+                item.gridSpan = knownRecord->second.span;
+                item.slot = SlotFromCell(item.gridCell);
+            }
+            else if (knownRecord != layoutRecords_.end() && knownRecord->second.legacySlot >= 0)
+            {
+                item.gridCell = CellFromSlot(knownRecord->second.legacySlot);
+                item.gridSpan = knownRecord->second.span;
+                item.slot = SlotFromCell(item.gridCell);
             }
             else
             {
                 item.slot = -1;
             }
+            if (!gridPages_.empty() && item.gridCell.pageId.empty())
+            {
+                item.gridCell.pageId = gridPages_.front().id;
+            }
             items_.push_back(std::move(item));
         }
 
-        std::unordered_map<int, bool> usedSlots;
+        std::stable_sort(items_.begin(), items_.end(), [](const DesktopItem& a, const DesktopItem& b) {
+            bool aIsClsid = a.parsingName.find(L'{') != std::wstring::npos;
+            bool bIsClsid = b.parsingName.find(L'{') != std::wstring::npos;
+            return aIsClsid && !bIsClsid;
+        });
+
+        std::unordered_set<std::wstring> usedSlots;
         int nextTailSlot = 0;
         for (auto& item : items_)
         {
-            if (item.slot >= 0 && !usedSlots.contains(item.slot))
+            item.gridSpan.columns = std::max(1, item.gridSpan.columns);
+            item.gridSpan.rows = std::max(1, item.gridSpan.rows);
+            item.slot = SlotFromCell(item.gridCell);
+            if (!item.gridCell.pageId.empty() && !HasGridPage(item.gridCell.pageId))
             {
-                usedSlots[item.slot] = true;
+                continue;
+            }
+            if (item.slot >= 0 && IsGridAreaValid(item.gridCell, item.gridSpan) && !AreGridSlotsMarked(usedSlots, item.gridCell, item.gridSpan))
+            {
+                MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
                 nextTailSlot = std::max(nextTailSlot, item.slot + 1);
             }
             else
@@ -1924,29 +2079,58 @@ private:
             }
         }
 
+        std::vector<DesktopItem*> unslotted;
         for (auto& item : items_)
         {
-            if (item.slot >= 0)
+            if (item.slot < 0)
             {
-                continue;
+                unslotted.push_back(&item);
             }
+        }
 
-            while (usedSlots.contains(nextTailSlot))
+        std::sort(unslotted.begin(), unslotted.end(), [](const DesktopItem* a, const DesktopItem* b) {
+            bool aIsClsid = a->parsingName.find(L'{') != std::wstring::npos;
+            bool bIsClsid = b->parsingName.find(L'{') != std::wstring::npos;
+            if (aIsClsid != bIsClsid)
+            {
+                return aIsClsid;
+            }
+            if (aIsClsid)
+            {
+                int cmp = ToUpperInvariant(a->typeName).compare(ToUpperInvariant(b->typeName));
+                if (cmp != 0)
+                {
+                    return cmp < 0;
+                }
+            }
+            return ToUpperInvariant(a->name) < ToUpperInvariant(b->name);
+        });
+
+        for (auto* item : unslotted)
+        {
+            GridCell nextCell = CellFromSequentialIndex(nextTailSlot);
+            while (AreGridSlotsMarked(usedSlots, nextCell, item->gridSpan) || !IsGridAreaValid(nextCell, item->gridSpan))
             {
                 ++nextTailSlot;
+                nextCell = CellFromSequentialIndex(nextTailSlot);
             }
-            item.slot = nextTailSlot;
-            usedSlots[item.slot] = true;
-            ++nextTailSlot;
+            item->gridCell = nextCell;
+            item->slot = SlotFromCell(item->gridCell);
+            MarkGridArea(usedSlots, item->gridCell, item->gridSpan);
+            nextTailSlot = item->slot + 1;
         }
 
         std::sort(items_.begin(), items_.end(), [](const DesktopItem& a, const DesktopItem& b) {
-            return a.slot < b.slot;
+            if (a.gridCell.pageId != b.gridCell.pageId)
+            {
+                return a.gridCell.pageId < b.gridCell.pageId;
+            }
+            if (a.gridCell.column != b.gridCell.column)
+            {
+                return a.gridCell.column < b.gridCell.column;
+            }
+            return a.gridCell.row < b.gridCell.row;
         });
-        for (size_t i = 0; i < items_.size(); ++i)
-        {
-            items_[i].slot = static_cast<int>(i);
-        }
 
         LayoutItems();
         SaveLayoutSlots();
@@ -2051,13 +2235,50 @@ private:
         file << "}\n";
     }
 
+    bool ReadJsonStringField(const std::string& objectText, const char* fieldName, std::string& value) const
+    {
+        std::string marker = std::string("\"") + fieldName + "\"";
+        size_t name = objectText.find(marker);
+        if (name == std::string::npos)
+        {
+            return false;
+        }
+
+        size_t colon = objectText.find(':', name + marker.size());
+        size_t quote = objectText.find('"', colon == std::string::npos ? name + marker.size() : colon + 1);
+        size_t end = 0;
+        return quote != std::string::npos && ParseJsonStringAt(objectText, quote, value, end);
+    }
+
+    bool ReadJsonIntField(const std::string& objectText, const char* fieldName, int& value) const
+    {
+        std::string marker = std::string("\"") + fieldName + "\"";
+        size_t name = objectText.find(marker);
+        if (name == std::string::npos)
+        {
+            return false;
+        }
+
+        size_t colon = objectText.find(':', name + marker.size());
+        size_t numberStart = objectText.find_first_of("-0123456789", colon == std::string::npos ? name + marker.size() : colon + 1);
+        if (numberStart == std::string::npos)
+        {
+            return false;
+        }
+
+        value = std::atoi(objectText.c_str() + numberStart);
+        return true;
+    }
+
     void LoadLayoutSlots()
     {
-        layoutSlots_.clear();
+        layoutRecords_.clear();
+        savedPageIds_.clear();
 
         std::ifstream file(GetLayoutPath(), std::ios::binary);
         if (!file)
         {
+            ApplyPageMapping();
             return;
         }
 
@@ -2065,53 +2286,116 @@ private:
         buffer << file.rdbuf();
         std::string text = buffer.str();
 
+        std::string firstPageMonitorUtf8;
+        if (ReadJsonStringField(text, "firstPageMonitor", firstPageMonitorUtf8))
+        {
+            firstPageMonitorId_ = Utf8ToWide(firstPageMonitorUtf8);
+        }
+
+        LoadSavedPagesFromJson(text);
+
+        auto findJsonObjectEnd = [](const std::string& t, size_t start) -> size_t {
+            int depth = 1;
+            bool inString = false;
+            for (size_t i = start + 1; i < t.size(); ++i)
+            {
+                char ch = t[i];
+                if (ch == '"' && (i == 0 || t[i - 1] != '\\'))
+                {
+                    inString = !inString;
+                }
+                else if (!inString)
+                {
+                    if (ch == '{') ++depth;
+                    else if (ch == '}')
+                    {
+                        --depth;
+                        if (depth == 0) return i;
+                    }
+                }
+            }
+            return std::string::npos;
+        };
+
         size_t pos = 0;
         while ((pos = text.find("\"key\"", pos)) != std::string::npos)
         {
-            size_t colon = text.find(':', pos);
-            size_t quote = text.find('"', colon == std::string::npos ? pos : colon);
-            if (quote == std::string::npos)
+            size_t objectStart = text.rfind('{', pos);
+            if (objectStart == std::string::npos)
+            {
+                break;
+            }
+            size_t objectEnd = findJsonObjectEnd(text, objectStart);
+            if (objectEnd == std::string::npos || objectEnd <= objectStart)
             {
                 break;
             }
 
+            std::string objectText = text.substr(objectStart, objectEnd - objectStart + 1);
             std::string keyUtf8;
-            size_t afterKey = 0;
-            if (!ParseJsonStringAt(text, quote, keyUtf8, afterKey))
+            if (!ReadJsonStringField(objectText, "key", keyUtf8))
             {
-                pos = quote + 1;
+                pos = objectEnd + 1;
                 continue;
             }
 
-            size_t slotName = text.find("\"slot\"", afterKey);
-            size_t slotColon = text.find(':', slotName == std::string::npos ? afterKey : slotName);
-            if (slotColon == std::string::npos)
+            LayoutRecord record;
+            std::string pageUtf8;
+            int x = 0;
+            int y = 0;
+            int w = 1;
+            int h = 1;
+            if (ReadJsonStringField(objectText, "page", pageUtf8) &&
+                ReadJsonIntField(objectText, "x", x) &&
+                ReadJsonIntField(objectText, "y", y))
             {
-                pos = afterKey;
-                continue;
+                record.cell.pageId = Utf8ToWide(pageUtf8);
+                record.cell.column = x;
+                record.cell.row = y;
+                RememberSavedPageId(record.cell.pageId);
+                ReadJsonIntField(objectText, "w", w);
+                ReadJsonIntField(objectText, "h", h);
+                record.span.columns = std::max(1, w);
+                record.span.rows = std::max(1, h);
+                record.hasGrid = true;
+                record.legacySlot = SlotFromCell(record.cell);
+            }
+            else
+            {
+                int slot = -1;
+                if (!ReadJsonIntField(objectText, "slot", slot))
+                {
+                    pos = objectEnd + 1;
+                    continue;
+                }
+                record.legacySlot = slot;
+                record.cell = CellFromSlot(slot);
+                record.span = {};
             }
 
-            size_t numberStart = text.find_first_of("-0123456789", slotColon + 1);
-            if (numberStart == std::string::npos)
-            {
-                pos = afterKey;
-                continue;
-            }
-
-            int slot = std::atoi(text.c_str() + numberStart);
-            layoutSlots_[NormalizeLayoutKey(Utf8ToWide(keyUtf8))] = slot;
-            pos = numberStart + 1;
+            layoutRecords_[NormalizeLayoutKey(Utf8ToWide(keyUtf8))] = record;
+            pos = objectEnd + 1;
         }
+
+        ApplyPageMapping();
+        ApplySavedGridDimensions();
     }
 
     void SaveLayoutSlots()
     {
-        layoutSlots_.clear();
+        layoutRecords_.clear();
         for (const auto& item : items_)
         {
             if (!item.parsingName.empty())
             {
-                layoutSlots_[GetStableLayoutKey(item.absolutePidl.get(), item.parsingName)] = item.slot;
+                RememberSavedPageId(item.gridCell.pageId);
+
+                LayoutRecord record;
+                record.cell = item.gridCell;
+                record.span = item.gridSpan;
+                record.hasGrid = true;
+                record.legacySlot = item.slot;
+                layoutRecords_[GetStableLayoutKey(item.absolutePidl.get(), item.parsingName)] = record;
             }
         }
 
@@ -2122,7 +2406,15 @@ private:
             sortedItems.push_back(&item);
         }
         std::sort(sortedItems.begin(), sortedItems.end(), [](const DesktopItem* left, const DesktopItem* right) {
-            return left->slot < right->slot;
+            if (left->gridCell.pageId != right->gridCell.pageId)
+            {
+                return left->gridCell.pageId < right->gridCell.pageId;
+            }
+            if (left->gridCell.column != right->gridCell.column)
+            {
+                return left->gridCell.column < right->gridCell.column;
+            }
+            return left->gridCell.row < right->gridCell.row;
         });
 
         std::ofstream file(GetLayoutPath(), std::ios::binary | std::ios::trunc);
@@ -2131,11 +2423,33 @@ private:
             return;
         }
 
-        file << "{\n  \"items\": [\n";
+        std::vector<std::wstring> pagesToWrite = savedPageIds_;
+        if (pagesToWrite.empty() && !gridPages_.empty())
+        {
+            pagesToWrite.push_back(gridPages_.front().id);
+        }
+
+        file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_) << "\",\n  \"pages\": [\n";
+        for (size_t i = 0; i < pagesToWrite.size(); ++i)
+        {
+            const GridPage* page = FindExactGridPage(pagesToWrite[i]);
+            file << "    { \"id\": \"" << JsonEscapeUtf8(pagesToWrite[i]) << "\", \"monitor\": \"";
+            file << JsonEscapeUtf8(page != nullptr ? page->monitorId : L"");
+            file << "\", \"columns\": " << (page != nullptr ? page->columns : 1) <<
+                ", \"rows\": " << (page != nullptr ? page->rows : 1) << " }";
+            file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
+        }
+        file << "  ],\n  \"items\": [\n";
         for (size_t i = 0; i < sortedItems.size(); ++i)
         {
             const DesktopItem* item = sortedItems[i];
-            file << "    { \"key\": \"" << JsonEscapeUtf8(GetStableLayoutKey(item->absolutePidl.get(), item->parsingName)) << "\", \"slot\": " << item->slot << " }";
+            file << "    { \"key\": \"" << JsonEscapeUtf8(GetStableLayoutKey(item->absolutePidl.get(), item->parsingName)) <<
+                "\", \"page\": \"" << JsonEscapeUtf8(item->gridCell.pageId) <<
+                "\", \"x\": " << item->gridCell.column <<
+                ", \"y\": " << item->gridCell.row <<
+                ", \"w\": " << std::max(1, item->gridSpan.columns) <<
+                ", \"h\": " << std::max(1, item->gridSpan.rows) <<
+                ", \"slot\": " << item->slot << " }";
             file << (i + 1 == sortedItems.size() ? "\n" : ",\n");
         }
         file << "  ]\n}\n";
@@ -2157,7 +2471,8 @@ private:
 
         for (size_t i = 0; i < order.size(); ++i)
         {
-            items_[order[i]].slot = static_cast<int>(i);
+            items_[order[i]].gridCell = CellFromSequentialIndex(static_cast<int>(i));
+            items_[order[i]].slot = SlotFromCell(items_[order[i]].gridCell);
         }
 
         LayoutItems();
@@ -2190,7 +2505,8 @@ private:
 
         for (size_t i = 0; i < order.size(); ++i)
         {
-            items_[order[i]].slot = static_cast<int>(i);
+            items_[order[i]].gridCell = CellFromSequentialIndex(static_cast<int>(i));
+            items_[order[i]].slot = SlotFromCell(items_[order[i]].gridCell);
         }
 
         LayoutItems();
@@ -2202,49 +2518,478 @@ private:
     {
         for (auto& item : items_)
         {
-            item.bounds = GetSlotRect(item.slot);
+            if (!gridPages_.empty() && item.gridCell.pageId.empty())
+            {
+                item.gridCell.pageId = gridPages_.front().id;
+            }
+            const GridPage* page = FindExactGridPage(item.gridCell.pageId);
+            if (page != nullptr)
+            {
+                item.gridSpan.columns = std::clamp(item.gridSpan.columns, 1, std::max(1, page->columns));
+                item.gridSpan.rows = std::clamp(item.gridSpan.rows, 1, std::max(1, page->rows));
+                item.gridCell.column = std::clamp(item.gridCell.column, 0, std::max(0, page->columns - item.gridSpan.columns));
+                item.gridCell.row = std::clamp(item.gridCell.row, 0, std::max(0, page->rows - item.gridSpan.rows));
+            }
+            item.slot = SlotFromCell(item.gridCell);
+            item.bounds = GetGridRect(item.gridCell, item.gridSpan);
         }
     }
 
     void UpdateLayoutWorkArea()
     {
         layoutWorkArea_ = MakeRect(0, 0, virtualWidth_, virtualHeight_);
+        gridPages_.clear();
 
-        POINT startPoint{ virtualLeft_ + 1, virtualTop_ + 1 };
-        HMONITOR monitor = MonitorFromPoint(startPoint, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO monitorInfo{};
-        monitorInfo.cbSize = sizeof(monitorInfo);
-        if (monitor != nullptr && GetMonitorInfoW(monitor, &monitorInfo))
+        MonitorEnumContext context{};
+        context.virtualLeft = virtualLeft_;
+        context.virtualTop = virtualTop_;
+        context.pages = &gridPages_;
+        EnumDisplayMonitors(nullptr, nullptr, EnumGridPageMonitorProc, reinterpret_cast<LPARAM>(&context));
+
+        if (gridPages_.empty())
         {
-            layoutWorkArea_.left = std::clamp(static_cast<int>(monitorInfo.rcWork.left - virtualLeft_), 0, virtualWidth_);
-            layoutWorkArea_.top = std::clamp(static_cast<int>(monitorInfo.rcWork.top - virtualTop_), 0, virtualHeight_);
-            layoutWorkArea_.right = std::clamp(static_cast<int>(monitorInfo.rcWork.right - virtualLeft_), static_cast<int>(layoutWorkArea_.left), virtualWidth_);
-            layoutWorkArea_.bottom = std::clamp(static_cast<int>(monitorInfo.rcWork.bottom - virtualTop_), static_cast<int>(layoutWorkArea_.top), virtualHeight_);
+            GridPage fallback;
+            fallback.id = L"Primary";
+            fallback.monitorId = fallback.id;
+            fallback.isPrimary = true;
+            fallback.bounds = layoutWorkArea_;
+            fallback.workArea = layoutWorkArea_;
+            gridPages_.push_back(fallback);
+        }
+
+        std::sort(gridPages_.begin(), gridPages_.end(), [](const GridPage& left, const GridPage& right) {
+            if (left.bounds.left != right.bounds.left)
+            {
+                return left.bounds.left < right.bounds.left;
+            }
+            return left.bounds.top < right.bounds.top;
+        });
+
+        for (auto& page : gridPages_)
+        {
+            page.workArea.left = std::clamp<LONG>(page.workArea.left, 0, static_cast<LONG>(virtualWidth_));
+            page.workArea.top = std::clamp<LONG>(page.workArea.top, 0, static_cast<LONG>(virtualHeight_));
+            page.workArea.right = std::clamp<LONG>(page.workArea.right, page.workArea.left, static_cast<LONG>(virtualWidth_));
+            page.workArea.bottom = std::clamp<LONG>(page.workArea.bottom, page.workArea.top, static_cast<LONG>(virtualHeight_));
+            ConfigureGridPage(page);
+        }
+
+        std::wstring detectedPrimaryMonitorId;
+        for (const auto& page : gridPages_)
+        {
+            if (page.isPrimary)
+            {
+                detectedPrimaryMonitorId = page.monitorId;
+                break;
+            }
+        }
+        if (detectedPrimaryMonitorId.empty() && !gridPages_.empty())
+        {
+            detectedPrimaryMonitorId = gridPages_.front().monitorId;
+        }
+        const bool hadPrimaryMonitor = !primaryMonitorId_.empty();
+        if (primaryMonitorId_ != detectedPrimaryMonitorId)
+        {
+            primaryMonitorId_ = detectedPrimaryMonitorId;
+            if (hadPrimaryMonitor || firstPageMonitorId_.empty())
+            {
+                firstPageMonitorId_ = primaryMonitorId_;
+            }
+            pageOffset_ = 0;
+        }
+        if (firstPageMonitorId_.empty())
+        {
+            firstPageMonitorId_ = primaryMonitorId_;
+        }
+        if (!firstPageMonitorId_.empty())
+        {
+            bool firstMonitorStillExists = false;
+            for (const auto& page : gridPages_)
+            {
+                if (page.monitorId == firstPageMonitorId_)
+                {
+                    firstMonitorStillExists = true;
+                    break;
+                }
+            }
+            if (!firstMonitorStillExists)
+            {
+                firstPageMonitorId_ = primaryMonitorId_;
+                pageOffset_ = 0;
+            }
+        }
+        ApplyPageMapping();
+
+        if (!gridPages_.empty())
+        {
+            layoutWorkArea_ = gridPages_.front().workArea;
         }
     }
 
-    int GetCellHeight() const
+    void ApplySavedGridDimensions()
     {
-        int rows = GetRowsPerColumn();
-        int usableHeight = std::max(kMinCellHeight, static_cast<int>((layoutWorkArea_.bottom - layoutWorkArea_.top) - (kMarginY * 2)));
-        return std::max(kMinCellHeight, usableHeight / rows);
+        for (auto& page : gridPages_)
+        {
+            auto colIt = savedPageColumns_.find(page.id);
+            auto rowIt = savedPageRows_.find(page.id);
+            if (colIt != savedPageColumns_.end() && rowIt != savedPageRows_.end() &&
+                colIt->second > 0 && rowIt->second > 0)
+            {
+                page.columns = colIt->second;
+                page.rows = rowIt->second;
+                const int width = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
+                const int height = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
+                const int usableWidth = std::max(1, width - (page.marginX * 2));
+                const int usableHeight = std::max(1, height - (page.marginY * 2));
+                page.cellWidth = kCellWidth;
+                page.cellHeight = kMinCellHeight;
+                page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
+                page.gapY = page.rows > 1 ? std::max(0, (usableHeight - (page.rows * page.cellHeight)) / (page.rows - 1)) : 0;
+            }
+        }
+    }
+
+    void ConfigureGridPage(GridPage& page) const
+    {
+        const int width = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
+        const int height = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
+        const int usableWidth = std::max(1, width - (page.marginX * 2));
+        const int usableHeight = std::max(1, height - (page.marginY * 2));
+
+        page.columns = std::max(1, usableWidth / kCellWidth);
+        page.rows = std::max(1, usableHeight / kMinCellHeight);
+        page.cellWidth = kCellWidth;
+        page.cellHeight = kMinCellHeight;
+        page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
+        page.gapY = page.rows > 1 ? std::max(0, (usableHeight - (page.rows * page.cellHeight)) / (page.rows - 1)) : 0;
+    }
+
+    bool IsGeneratedExtraPageId(const std::wstring& pageId) const
+    {
+        return pageId.rfind(L"__extra:", 0) == 0;
+    }
+
+    std::wstring MakeExtraPageId(const std::wstring& monitorId) const
+    {
+        return L"__extra:" + monitorId;
+    }
+
+    void RememberSavedPageId(const std::wstring& pageId)
+    {
+        if (pageId.empty())
+        {
+            return;
+        }
+
+        if (std::find(savedPageIds_.begin(), savedPageIds_.end(), pageId) == savedPageIds_.end())
+        {
+            savedPageIds_.push_back(pageId);
+        }
+    }
+
+    void LoadSavedPagesFromJson(const std::string& text)
+    {
+        size_t pagesName = text.find("\"pages\"");
+        if (pagesName == std::string::npos)
+        {
+            return;
+        }
+
+        size_t arrayStart = text.find('[', pagesName);
+        size_t arrayEnd = text.find(']', arrayStart == std::string::npos ? pagesName : arrayStart + 1);
+        if (arrayStart == std::string::npos || arrayEnd == std::string::npos || arrayEnd <= arrayStart)
+        {
+            return;
+        }
+
+        size_t pos = arrayStart + 1;
+        while ((pos = text.find('{', pos)) != std::string::npos && pos < arrayEnd)
+        {
+            size_t objectEnd = text.find('}', pos);
+            if (objectEnd == std::string::npos || objectEnd > arrayEnd)
+            {
+                break;
+            }
+
+            std::string objectText = text.substr(pos, objectEnd - pos + 1);
+            std::string pageUtf8;
+            if (ReadJsonStringField(objectText, "id", pageUtf8))
+            {
+                std::wstring pageId = Utf8ToWide(pageUtf8);
+                RememberSavedPageId(pageId);
+                int columns = 0;
+                int rows = 0;
+                if (ReadJsonIntField(objectText, "columns", columns) && columns > 0)
+                {
+                    savedPageColumns_[pageId] = columns;
+                }
+                if (ReadJsonIntField(objectText, "rows", rows) && rows > 0)
+                {
+                    savedPageRows_[pageId] = rows;
+                }
+            }
+            pos = objectEnd + 1;
+        }
+    }
+
+    size_t FirstMonitorOrderIndex() const
+    {
+        if (gridPages_.empty())
+        {
+            return 0;
+        }
+
+        for (size_t i = 0; i < gridPages_.size(); ++i)
+        {
+            if (!firstPageMonitorId_.empty() && gridPages_[i].monitorId == firstPageMonitorId_)
+            {
+                return i;
+            }
+        }
+
+        for (size_t i = 0; i < gridPages_.size(); ++i)
+        {
+            if (!primaryMonitorId_.empty() && gridPages_[i].monitorId == primaryMonitorId_)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
+
+    std::vector<size_t> BuildMonitorRenderOrder() const
+    {
+        std::vector<size_t> order;
+        if (gridPages_.empty())
+        {
+            return order;
+        }
+
+        order.reserve(gridPages_.size());
+        const size_t first = FirstMonitorOrderIndex();
+        for (size_t offset = 0; offset < gridPages_.size(); ++offset)
+        {
+            order.push_back((first + offset) % gridPages_.size());
+        }
+        return order;
+    }
+
+    int MaxPageOffset() const
+    {
+        if (savedPageIds_.empty() || gridPages_.empty())
+        {
+            return 0;
+        }
+
+        const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
+        return std::max(0, static_cast<int>(savedPageIds_.size()) - visiblePageCount);
+    }
+
+    void ApplyPageMapping()
+    {
+        pageNavigationPageId_.clear();
+        if (gridPages_.empty())
+        {
+            return;
+        }
+
+        if (savedPageIds_.empty())
+        {
+            for (const auto& page : gridPages_)
+            {
+                RememberSavedPageId(page.monitorId);
+            }
+        }
+
+        pageOffset_ = std::clamp(pageOffset_, 0, MaxPageOffset());
+        std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+        int lastRenderedSavedIndex = -1;
+        for (size_t logicalIndex = 0; logicalIndex < monitorOrder.size(); ++logicalIndex)
+        {
+            GridPage& page = gridPages_[monitorOrder[logicalIndex]];
+            const size_t savedIndex = static_cast<size_t>(pageOffset_) + logicalIndex;
+            if (savedIndex < savedPageIds_.size())
+            {
+                page.id = savedPageIds_[savedIndex];
+                lastRenderedSavedIndex = static_cast<int>(savedIndex);
+            }
+            else
+            {
+                page.id = MakeExtraPageId(page.monitorId);
+            }
+        }
+
+        if (lastRenderedSavedIndex >= 0 && gridPages_.size() != savedPageIds_.size())
+        {
+            pageNavigationPageId_ = savedPageIds_[static_cast<size_t>(lastRenderedSavedIndex)];
+        }
+    }
+
+    const GridPage* FindExactGridPage(const std::wstring& pageId) const
+    {
+        for (const auto& page : gridPages_)
+        {
+            if (page.id == pageId)
+            {
+                return &page;
+            }
+        }
+        return nullptr;
+    }
+
+    const GridPage* FindGridPage(const std::wstring& pageId) const
+    {
+        for (const auto& page : gridPages_)
+        {
+            if (page.id == pageId)
+            {
+                return &page;
+            }
+        }
+        return gridPages_.empty() ? nullptr : &gridPages_.front();
+    }
+
+    bool HasGridPage(const std::wstring& pageId) const
+    {
+        for (const auto& page : gridPages_)
+        {
+            if (page.id == pageId)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const GridPage* GridPageFromPoint(POINT point) const
+    {
+        const GridPage* fallback = gridPages_.empty() ? nullptr : &gridPages_.front();
+        for (const auto& page : gridPages_)
+        {
+            if (PtInRect(&page.bounds, point) || PtInRect(&page.workArea, point))
+            {
+                return &page;
+            }
+        }
+        return fallback;
+    }
+
+    int SlotFromCell(const GridCell& cell) const
+    {
+        const GridPage* page = FindGridPage(cell.pageId);
+        const int rows = page != nullptr ? page->rows : GetRowsPerColumn();
+        return std::max(0, cell.column) * std::max(1, rows) + std::max(0, cell.row);
+    }
+
+    GridCell CellFromSlot(int slot, const std::wstring& pageId = L"") const
+    {
+        const GridPage* page = FindGridPage(pageId);
+        const int rows = page != nullptr ? page->rows : GetRowsPerColumn();
+        GridCell cell;
+        cell.pageId = page != nullptr ? page->id : pageId;
+        cell.column = std::max(0, slot) / std::max(1, rows);
+        cell.row = std::max(0, slot) % std::max(1, rows);
+        return cell;
+    }
+
+    GridCell CellFromSequentialIndex(int index) const
+    {
+        int remaining = std::max(0, index);
+        for (const auto& page : gridPages_)
+        {
+            if (IsGeneratedExtraPageId(page.id))
+            {
+                continue;
+            }
+
+            const int capacity = std::max(1, page.columns * page.rows);
+            if (remaining < capacity)
+            {
+                GridCell cell;
+                cell.pageId = page.id;
+                cell.column = remaining / std::max(1, page.rows);
+                cell.row = remaining % std::max(1, page.rows);
+                return cell;
+            }
+            remaining -= capacity;
+        }
+
+        GridCell cell;
+        if (!gridPages_.empty())
+        {
+            const GridPage* page = nullptr;
+            for (auto it = gridPages_.rbegin(); it != gridPages_.rend(); ++it)
+            {
+                if (!IsGeneratedExtraPageId(it->id))
+                {
+                    page = &(*it);
+                    break;
+                }
+            }
+            if (page == nullptr)
+            {
+                page = &gridPages_.back();
+            }
+            cell.pageId = page->id;
+            cell.column = std::max(0, page->columns - 1);
+            cell.row = std::max(0, page->rows - 1);
+        }
+        return cell;
+    }
+
+    RECT GetGridRect(const GridCell& cell, GridSpan span = {}) const
+    {
+        const GridPage* page = FindExactGridPage(cell.pageId);
+        if (page == nullptr)
+        {
+            return MakeRect(0, 0, 0, 0);
+        }
+
+        const int column = std::clamp(cell.column, 0, std::max(0, page->columns - 1));
+        const int row = std::clamp(cell.row, 0, std::max(0, page->rows - 1));
+        const int spanColumns = std::clamp(span.columns, 1, std::max(1, page->columns - column));
+        const int spanRows = std::clamp(span.rows, 1, std::max(1, page->rows - row));
+        const int x = page->workArea.left + page->marginX + (column * (page->cellWidth + page->gapX));
+        const int y = page->workArea.top + page->marginY + (row * (page->cellHeight + page->gapY));
+        const int width = (spanColumns * page->cellWidth) + ((spanColumns - 1) * page->gapX);
+        const int height = (spanRows * page->cellHeight) + ((spanRows - 1) * page->gapY);
+        return MakeRect(x, y, x + width, y + height);
     }
 
     RECT GetSlotRect(int slot) const
     {
-        int rows = GetRowsPerColumn();
-        int row = std::max(0, slot) % rows;
-        int column = std::max(0, slot) / rows;
-        int x = layoutWorkArea_.left + kMarginX + (column * kCellWidth);
-        int y = layoutWorkArea_.top + kMarginY + (row * GetCellHeight());
-        return MakeRect(x, y, x + kCellWidth, y + GetCellHeight());
+        return GetGridRect(CellFromSlot(slot));
+    }
+
+    GridCell CellFromPoint(POINT point) const
+    {
+        const GridPage* page = GridPageFromPoint(point);
+        GridCell cell;
+        if (page == nullptr)
+        {
+            return cell;
+        }
+
+        const int stepX = std::max(1, page->cellWidth + page->gapX);
+        const int stepY = std::max(1, page->cellHeight + page->gapY);
+        cell.pageId = page->id;
+        cell.column = std::clamp(static_cast<int>((point.x - page->workArea.left - page->marginX + (stepX / 2)) / stepX), 0, std::max(0, page->columns - 1));
+        cell.row = std::clamp(static_cast<int>((point.y - page->workArea.top - page->marginY + (stepY / 2)) / stepY), 0, std::max(0, page->rows - 1));
+        return cell;
     }
 
     int SlotFromPoint(POINT point) const
     {
-        int column = std::max(0, static_cast<int>((point.x - layoutWorkArea_.left - kMarginX) / kCellWidth));
-        int row = std::clamp(static_cast<int>((point.y - layoutWorkArea_.top - kMarginY) / GetCellHeight()), 0, GetRowsPerColumn() - 1);
-        return column * GetRowsPerColumn() + row;
+        return SlotFromCell(CellFromPoint(point));
+    }
+
+    POINT GetDragTargetPoint(POINT current) const
+    {
+        return {
+            dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
+            dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
+        };
     }
 
     RECT GetTargetRectAt(POINT point) const
@@ -2252,10 +2997,10 @@ private:
         int hit = HitTest(point);
         if (hit >= 0 && !items_[static_cast<size_t>(hit)].selected)
         {
-            return items_[static_cast<size_t>(hit)].bounds;
+            return GetItemSelectionRect(items_[static_cast<size_t>(hit)], true);
         }
 
-        return GetSlotRect(SlotFromPoint(point));
+        return GetGridRect(CellFromPoint(point));
     }
 
     RECT GetSelectedDragBoundsAt(POINT point) const
@@ -2271,8 +3016,12 @@ private:
             {
                 continue;
             }
+            if (IsRectEmptyRect(item.bounds))
+            {
+                continue;
+            }
 
-            RECT moved = item.bounds;
+            RECT moved = GetItemSelectionRect(item, true);
             OffsetRect(&moved, dx, dy);
             bounds = hasBounds ? UnionCopy(bounds, moved) : moved;
             hasBounds = true;
@@ -2284,8 +3033,24 @@ private:
     RECT GetInternalDragDirtyRect(POINT point) const
     {
         RECT dirty = GetSelectedDragBoundsAt(point);
-        dirty = UnionCopy(dirty, GetTargetRectAt(point));
+        for (const RECT& rect : GetSelectedMovePreviewRects(point))
+        {
+            dirty = UnionCopy(dirty, rect);
+        }
         return InflateCopy(dirty, 16);
+    }
+
+    std::vector<RECT> GetSelectedMovePreviewRects(POINT point) const
+    {
+        std::vector<RECT> rects;
+        std::vector<PendingGridMove> moves = BuildSelectedMove(CellFromPoint(point));
+        rects.reserve(moves.size());
+        for (const PendingGridMove& move : moves)
+        {
+            RECT bounds = GetGridRect(move.cell, items_[move.index].gridSpan);
+            rects.push_back(GetItemSelectionRect(bounds, true));
+        }
+        return rects;
     }
 
     RECT GetExternalDragDirtyRect(POINT point) const
@@ -2320,8 +3085,7 @@ private:
             return L"释放：交给「" + items_[static_cast<size_t>(hit)].name + L"」处理";
         }
 
-        int slot = SlotFromPoint(point);
-        if (IsSlotOccupiedByUnselected(slot))
+        if (BuildSelectedMove(CellFromPoint(point)).empty())
         {
             return L"释放：当前位置已有图标";
         }
@@ -2344,7 +3108,12 @@ private:
     {
         for (int i = static_cast<int>(items_.size()) - 1; i >= 0; --i)
         {
-            if (PtInRect(&items_[static_cast<size_t>(i)].bounds, point))
+            if (IsRectEmptyRect(items_[static_cast<size_t>(i)].bounds))
+            {
+                continue;
+            }
+            RECT hitRect = GetItemHitRect(items_[static_cast<size_t>(i)]);
+            if (PtInRect(&hitRect, point))
             {
                 return i;
             }
@@ -2352,13 +3121,47 @@ private:
         return -1;
     }
 
-    RECT GetItemTextRect(const DesktopItem& item) const
+    RECT GetItemIconRect(RECT bounds) const
     {
+        const int iconX = bounds.left + (kCellWidth - kIconSize) / 2;
+        const int iconY = bounds.top + 2;
+        return MakeRect(iconX, iconY, iconX + kIconSize, iconY + kIconSize);
+    }
+
+    RECT GetItemTextRect(RECT bounds, bool expanded) const
+    {
+        const int textHeight = expanded ? kTextExpandedHeight : kTextCollapsedHeight;
         return MakeRect(
-            item.bounds.left + 6,
-            item.bounds.top + kTextTop - 2,
-            item.bounds.right - 6,
-            item.bounds.top + kTextTop + kTextHeight + 2);
+            bounds.left + 4,
+            bounds.top + kTextTop,
+            bounds.right - 4,
+            bounds.top + kTextTop + textHeight);
+    }
+
+    RECT GetItemTextRect(const DesktopItem& item, bool expanded) const
+    {
+        return GetItemTextRect(item.bounds, expanded);
+    }
+
+    RECT GetItemSelectionRect(RECT bounds, bool expanded) const
+    {
+        RECT textRect = GetItemTextRect(bounds, expanded);
+        RECT selection = UnionCopy(GetItemIconRect(bounds), textRect);
+        selection.left = std::max(bounds.left + 3, selection.left - 4);
+        selection.top = std::max(bounds.top, selection.top - 2);
+        selection.right = std::min(bounds.right - 3, selection.right + 4);
+        selection.bottom = std::min(bounds.bottom - 2, textRect.bottom);
+        return selection;
+    }
+
+    RECT GetItemSelectionRect(const DesktopItem& item, bool expanded) const
+    {
+        return GetItemSelectionRect(item.bounds, expanded);
+    }
+
+    RECT GetItemHitRect(const DesktopItem& item) const
+    {
+        return GetItemSelectionRect(item, item.selected);
     }
 
     void ClearSelection()
@@ -2383,7 +3186,101 @@ private:
         selectedCount_ += items_[index].selected ? 1 : -1;
     }
 
+    std::wstring GridSlotKey(const GridCell& cell) const
+    {
+        return cell.pageId + L":" + std::to_wstring(cell.column) + L":" + std::to_wstring(cell.row);
+    }
+
+    bool IsGridAreaValid(const GridCell& cell, GridSpan span) const
+    {
+        const GridPage* page = FindExactGridPage(cell.pageId);
+        if (page == nullptr)
+        {
+            return false;
+        }
+
+        const int columns = std::max(1, span.columns);
+        const int rows = std::max(1, span.rows);
+        return cell.column >= 0 &&
+            cell.row >= 0 &&
+            cell.column + columns <= page->columns &&
+            cell.row + rows <= page->rows;
+    }
+
+    bool AreGridSlotsMarked(const std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span) const
+    {
+        const int columns = std::max(1, span.columns);
+        const int rows = std::max(1, span.rows);
+        for (int y = 0; y < rows; ++y)
+        {
+            for (int x = 0; x < columns; ++x)
+            {
+                GridCell occupied = cell;
+                occupied.column += x;
+                occupied.row += y;
+                if (usedSlots.contains(GridSlotKey(occupied)))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    void MarkGridArea(std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span) const
+    {
+        const int columns = std::max(1, span.columns);
+        const int rows = std::max(1, span.rows);
+        for (int y = 0; y < rows; ++y)
+        {
+            for (int x = 0; x < columns; ++x)
+            {
+                GridCell occupied = cell;
+                occupied.column += x;
+                occupied.row += y;
+                usedSlots.insert(GridSlotKey(occupied));
+            }
+        }
+    }
+
+    bool IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const
+    {
+        const int columns = std::max(1, span.columns);
+        const int rows = std::max(1, span.rows);
+        for (const auto& item : items_)
+        {
+            if (item.selected || item.gridCell.pageId != cell.pageId)
+            {
+                continue;
+            }
+
+            const int itemRight = item.gridCell.column + std::max(1, item.gridSpan.columns);
+            const int itemBottom = item.gridCell.row + std::max(1, item.gridSpan.rows);
+            const int areaRight = cell.column + columns;
+            const int areaBottom = cell.row + rows;
+            if (cell.column < itemRight &&
+                areaRight > item.gridCell.column &&
+                cell.row < itemBottom &&
+                areaBottom > item.gridCell.row)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool IsSlotOccupiedByUnselected(int slot) const
+    {
+        GridCell cell = CellFromSlot(slot);
+        return IsGridAreaOccupiedByUnselected(cell, {});
+    }
+
+    bool IsCellOccupiedByUnselected(const GridCell& cell, GridSpan span = {}) const
+    {
+        return IsGridAreaOccupiedByUnselected(cell, span);
+    }
+
+    bool IsSlotOccupiedByUnselectedLegacy(int slot) const
     {
         for (const auto& item : items_)
         {
@@ -2395,42 +3292,91 @@ private:
         return false;
     }
 
-    void MoveSelectedItemsToSlot(int targetSlot)
+    std::vector<PendingGridMove> BuildSelectedMove(GridCell targetCell) const
     {
-        if (targetSlot < 0 || selectedCount_ <= 0 || IsSlotOccupiedByUnselected(targetSlot))
+        std::vector<PendingGridMove> moves;
+        if (selectedCount_ <= 0)
         {
-            return;
+            return moves;
         }
 
         std::vector<size_t> selectedIndexes;
         selectedIndexes.reserve(static_cast<size_t>(selectedCount_));
+        int minColumn = INT_MAX;
+        int minRow = INT_MAX;
+        int maxColumn = 0;
+        int maxRow = 0;
         for (size_t i = 0; i < items_.size(); ++i)
         {
             if (items_[i].selected)
             {
                 selectedIndexes.push_back(i);
+                minColumn = std::min(minColumn, items_[i].gridCell.column);
+                minRow = std::min(minRow, items_[i].gridCell.row);
+                maxColumn = std::max(maxColumn, items_[i].gridCell.column + std::max(1, items_[i].gridSpan.columns));
+                maxRow = std::max(maxRow, items_[i].gridCell.row + std::max(1, items_[i].gridSpan.rows));
             }
         }
 
-        int slot = targetSlot;
+        if (selectedIndexes.empty())
+        {
+            return moves;
+        }
+
+        const GridPage* page = FindExactGridPage(targetCell.pageId);
+        if (page == nullptr)
+        {
+            return moves;
+        }
+
+        const int groupColumns = std::max(1, maxColumn - minColumn);
+        const int groupRows = std::max(1, maxRow - minRow);
+        targetCell.column = std::clamp(targetCell.column, 0, std::max(0, page->columns - groupColumns));
+        targetCell.row = std::clamp(targetCell.row, 0, std::max(0, page->rows - groupRows));
+
         for (size_t itemIndex : selectedIndexes)
         {
-            while (IsSlotOccupiedByUnselected(slot))
+            GridCell movedCell = targetCell;
+            movedCell.column += items_[itemIndex].gridCell.column - minColumn;
+            movedCell.row += items_[itemIndex].gridCell.row - minRow;
+
+            if (!IsGridAreaValid(movedCell, items_[itemIndex].gridSpan) ||
+                IsGridAreaOccupiedByUnselected(movedCell, items_[itemIndex].gridSpan))
             {
-                ++slot;
+                moves.clear();
+                return moves;
             }
 
-            items_[itemIndex].slot = slot;
-            ++slot;
+            moves.push_back({ itemIndex, movedCell });
+        }
+        return moves;
+    }
+
+    void MoveSelectedItemsToCell(GridCell targetCell)
+    {
+        std::vector<PendingGridMove> moves = BuildSelectedMove(std::move(targetCell));
+        if (moves.empty())
+        {
+            return;
+        }
+
+        for (const PendingGridMove& move : moves)
+        {
+            items_[move.index].gridCell = move.cell;
+            items_[move.index].slot = SlotFromCell(move.cell);
         }
         LayoutItems();
         SaveLayoutSlots();
     }
 
+    void MoveSelectedItemsToSlot(int targetSlot)
+    {
+        MoveSelectedItemsToCell(CellFromSlot(targetSlot));
+    }
+
     int GetRowsPerColumn() const
     {
-        int usableHeight = std::max(kMinCellHeight, static_cast<int>((layoutWorkArea_.bottom - layoutWorkArea_.top) - (kMarginY * 2)));
-        return std::max(1, usableHeight / kMinCellHeight);
+        return gridPages_.empty() ? 1 : std::max(1, gridPages_.front().rows);
     }
 
     void MoveKeyboardSelection(int delta)
@@ -2645,6 +3591,163 @@ private:
         }
     }
 
+    bool IsProtectedDesktopIcon(const DesktopItem& item) const
+    {
+        std::wstring clsid = ExtractClsidText(item.parsingName);
+        return clsid == L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}" ||
+            clsid == L"{645FF040-5081-101B-9F08-00AA002F954E}";
+    }
+
+    bool CanUseSelectedFileCommands() const
+    {
+        if (selectedCount_ <= 0)
+        {
+            return false;
+        }
+
+        for (const auto& item : items_)
+        {
+            if (item.selected && IsProtectedDesktopIcon(item))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void ShowCustomItemContextMenu(POINT screenPoint)
+    {
+        HMENU menu = CreatePopupMenu();
+        if (menu == nullptr)
+        {
+            return;
+        }
+
+        const UINT singleItemFlag = selectedCount_ == 1 ? MF_STRING : (MF_STRING | MF_GRAYED);
+        const UINT fileCommandFlag = CanUseSelectedFileCommands() ? MF_STRING : (MF_STRING | MF_GRAYED);
+        const UINT renameFlag = selectedCount_ == 1 && CanUseSelectedFileCommands() ? MF_STRING : (MF_STRING | MF_GRAYED);
+        AppendMenuW(menu, singleItemFlag, kContextOpenCommand, L"打开");
+        AppendMenuW(menu, renameFlag, kContextRenameCommand, L"重命名");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, fileCommandFlag, kContextCutCommand, L"剪切");
+        AppendMenuW(menu, fileCommandFlag, kContextCopyCommand, L"复制");
+        AppendMenuW(menu, fileCommandFlag, kContextDeleteCommand, L"删除");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+
+        SetForegroundWindow(hwnd_);
+        UINT command = TrackPopupMenuEx(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint.x,
+            screenPoint.y,
+            hwnd_,
+            nullptr);
+        DestroyMenu(menu);
+
+        switch (command)
+        {
+        case kContextOpenCommand:
+            OpenSelected();
+            break;
+        case kContextRenameCommand:
+            BeginRenameSelected();
+            break;
+        case kContextCutCommand:
+            InvokeSelectedShellVerb("cut");
+            break;
+        case kContextCopyCommand:
+            InvokeSelectedShellVerb("copy");
+            break;
+        case kContextDeleteCommand:
+            InvokeSelectedShellVerb("delete");
+            break;
+        case kContextThisDisplayFirstCommand:
+            SetFirstPageMonitorFromPoint(screenPoint);
+            break;
+        case kContextMoreCommand:
+            ShowShellContextMenu(screenPoint);
+            break;
+        default:
+            break;
+        }
+    }
+
+    void ShowCustomBackgroundContextMenu(POINT screenPoint)
+    {
+        HMENU menu = CreatePopupMenu();
+        if (menu == nullptr)
+        {
+            return;
+        }
+
+        AppendMenuW(menu, MF_STRING, kContextRefreshCommand, L"刷新");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextSortByNameCommand, L"排序方式：名称");
+        AppendMenuW(menu, MF_STRING, kContextSortByTypeCommand, L"排序方式：类型");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+
+        SetForegroundWindow(hwnd_);
+        UINT command = TrackPopupMenuEx(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint.x,
+            screenPoint.y,
+            hwnd_,
+            nullptr);
+        DestroyMenu(menu);
+
+        switch (command)
+        {
+        case kContextRefreshCommand:
+            ReloadItems();
+            break;
+        case kContextSortByNameCommand:
+            SortIconsByName();
+            break;
+        case kContextSortByTypeCommand:
+            SortIconsByType();
+            break;
+        case kContextThisDisplayFirstCommand:
+            SetFirstPageMonitorFromPoint(screenPoint);
+            break;
+        case kContextPasteCommand:
+            InvokeDesktopBackgroundVerb("paste");
+            break;
+        case kContextMoreCommand:
+            ShowDesktopBackgroundContextMenu(screenPoint);
+            break;
+        default:
+            break;
+        }
+    }
+
+    void SetFirstPageMonitorFromPoint(POINT screenPoint)
+    {
+        POINT clientPoint = screenPoint;
+        ScreenToClient(hwnd_, &clientPoint);
+        const GridPage* page = GridPageFromPoint(clientPoint);
+        if (page == nullptr || page->monitorId.empty())
+        {
+            return;
+        }
+
+        firstPageMonitorId_ = page->monitorId;
+        pageOffset_ = 0;
+        ApplyPageMapping();
+        ApplySavedGridDimensions();
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
     void ShowShellContextMenu(POINT screenPoint)
     {
         auto pidls = SelectedChildPidls();
@@ -2834,18 +3937,21 @@ private:
             }
 
             renameIndex_ = i;
-            RECT rect = GetItemTextRect(items_[i]);
+            RECT rect = GetItemTextRect(items_[i], true);
+            InflateRect(&rect, 2, 2);
+            RECT screenRect = rect;
+            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
             renameEdit_ = CreateWindowExW(
-                WS_EX_CLIENTEDGE,
+                WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                 L"EDIT",
                 items_[i].name.c_str(),
-                WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_CENTER,
-                rect.left,
-                rect.top,
-                rect.right - rect.left,
-                rect.bottom - rect.top,
+                WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_CENTER | ES_AUTOVSCROLL | ES_WANTRETURN,
+                screenRect.left,
+                screenRect.top,
+                screenRect.right - screenRect.left,
+                screenRect.bottom - screenRect.top,
                 hwnd_,
-                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kRenameEditId)),
+                nullptr,
                 instance_,
                 nullptr);
 
@@ -2854,7 +3960,36 @@ private:
                 return;
             }
 
+            if (renameFont_ != nullptr)
+            {
+                DeleteObject(renameFont_);
+            }
+            renameFont_ = CreateFontW(
+                -15,
+                0,
+                0,
+                0,
+                FW_NORMAL,
+                FALSE,
+                FALSE,
+                FALSE,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE,
+                L"Segoe UI");
+            SendMessageW(renameEdit_, WM_SETFONT, reinterpret_cast<WPARAM>(renameFont_ != nullptr ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+            SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
             SetWindowSubclass(renameEdit_, &SnowDesktopApp::RenameEditSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
+            SetWindowPos(
+                renameEdit_,
+                HWND_TOPMOST,
+                screenRect.left,
+                screenRect.top,
+                screenRect.right - screenRect.left,
+                screenRect.bottom - screenRect.top,
+                SWP_SHOWWINDOW);
             SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
             SetFocus(renameEdit_);
             return;
@@ -2885,9 +4020,21 @@ private:
         }
 
         DestroyWindow(edit);
+        if (renameFont_ != nullptr)
+        {
+            DeleteObject(renameFont_);
+            renameFont_ = nullptr;
+        }
+        if (renameBackgroundBrush_ != nullptr)
+        {
+            DeleteObject(renameBackgroundBrush_);
+            renameBackgroundBrush_ = nullptr;
+        }
 
+        bool keepUpdatedLayoutSlots = false;
         if (!cancel && renameIndex_ < items_.size() && !newName.empty() && newName != items_[renameIndex_].name)
         {
+            int oldSlot = items_[renameIndex_].slot;
             PITEMID_CHILD newChild = nullptr;
             HRESULT hr = desktopFolder_->SetNameOf(
                 hwnd_,
@@ -2895,6 +4042,25 @@ private:
                 newName.c_str(),
                 SHGDN_NORMAL,
                 &newChild);
+            if (SUCCEEDED(hr))
+            {
+                if (newChild != nullptr)
+                {
+                    PIDLIST_ABSOLUTE newAbsolute = ILCombine(desktopPidl_.get(), newChild);
+                    std::wstring newParsingName = StrRetToString(desktopFolder_.Get(), newChild, SHGDN_FORPARSING);
+                    if (newAbsolute != nullptr)
+                    {
+                        LayoutRecord record;
+                        record.cell = items_[renameIndex_].gridCell;
+                        record.span = items_[renameIndex_].gridSpan;
+                        record.hasGrid = true;
+                        record.legacySlot = oldSlot;
+                        layoutRecords_[GetStableLayoutKey(newAbsolute, newParsingName)] = record;
+                        keepUpdatedLayoutSlots = true;
+                        ILFree(newAbsolute);
+                    }
+                }
+            }
             if (newChild != nullptr)
             {
                 ILFree(newChild);
@@ -2906,7 +4072,7 @@ private:
             }
         }
 
-        ReloadItems();
+        ReloadItems(!keepUpdatedLayoutSlots);
     }
 
     static D2D1_RECT_F ToD2DRect(const RECT& rect)
@@ -3098,6 +4264,10 @@ private:
 
         for (const auto& item : items_)
         {
+            if (IsRectEmptyRect(item.bounds))
+            {
+                continue;
+            }
             if (draggingItems_ && item.selected)
             {
                 continue;
@@ -3116,17 +4286,29 @@ private:
 
         if (marqueeActive_)
         {
-            DrawD2DRectangle(context, marqueeRect_, D2D1::ColorF(0.47f, 0.71f, 1.0f, 0.95f), nullptr);
+            DrawD2DFilledRectangle(
+                context,
+                marqueeRect_,
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
+                D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f),
+                nullptr);
         }
 
         if (draggingItems_)
         {
-            RECT targetRect = GetTargetRectAt(dragCurrentPoint_);
-            targetRect.left += 3;
-            targetRect.top += 3;
-            targetRect.right -= 3;
-            targetRect.bottom -= 3;
-            DrawD2DRectangle(context, targetRect, D2D1::ColorF(0.47f, 0.71f, 1.0f, 0.95f), dottedStrokeStyle_.Get());
+            for (RECT targetRect : GetSelectedMovePreviewRects(GetDragTargetPoint(dragCurrentPoint_)))
+            {
+                targetRect.left += 3;
+                targetRect.top += 3;
+                targetRect.right -= 3;
+                targetRect.bottom -= 3;
+                DrawD2DFilledRectangle(
+                    context,
+                    targetRect,
+                    D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.14f),
+                    D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f),
+                    dottedStrokeStyle_.Get());
+            }
         }
 
         if (externalDragActive_)
@@ -3135,19 +4317,37 @@ private:
             int hit = HitTest(externalDragPoint_);
             if (hit >= 0)
             {
-                target = items_[static_cast<size_t>(hit)].bounds;
+                target = GetItemSelectionRect(items_[static_cast<size_t>(hit)], true);
             }
             else
             {
-                target = GetSlotRect(SlotFromPoint(externalDragPoint_));
+                target = GetGridRect(CellFromPoint(externalDragPoint_));
             }
 
             target.left += 3;
             target.top += 3;
             target.right -= 3;
             target.bottom -= 3;
-            DrawD2DRectangle(context, target, D2D1::ColorF(0.47f, 0.71f, 1.0f, 0.95f), dottedStrokeStyle_.Get());
+            DrawD2DRectangle(context, target, D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f), dottedStrokeStyle_.Get());
         }
+
+        DrawD2DPageNavigationControls(context);
+    }
+
+    void DrawD2DFilledRectangle(
+        ID2D1DeviceContext* context,
+        const RECT& rect,
+        const D2D1_COLOR_F& fillColor,
+        const D2D1_COLOR_F& strokeColor,
+        ID2D1StrokeStyle* strokeStyle)
+    {
+        ComPtr<ID2D1SolidColorBrush> fillBrush;
+        if (SUCCEEDED(context->CreateSolidColorBrush(fillColor, &fillBrush)) && fillBrush)
+        {
+            context->FillRectangle(ToD2DRect(rect), fillBrush.Get());
+        }
+
+        DrawD2DRectangle(context, rect, strokeColor, strokeStyle);
     }
 
     void DrawD2DRectangle(ID2D1DeviceContext* context, const RECT& rect, const D2D1_COLOR_F& color, ID2D1StrokeStyle* strokeStyle)
@@ -3161,24 +4361,127 @@ private:
         context->DrawRectangle(ToD2DRect(rect), brush.Get(), 1.0f, strokeStyle);
     }
 
+    void DrawD2DButton(ID2D1DeviceContext* context, const RECT& rect, const std::wstring& label, bool enabled)
+    {
+        if (context == nullptr)
+        {
+            return;
+        }
+
+        DrawD2DFilledRectangle(
+            context,
+            rect,
+            enabled ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f) : D2D1::ColorF(0.94f, 0.94f, 0.94f, 0.92f),
+            enabled ? D2D1::ColorF(0.56f, 0.60f, 0.66f, 0.95f) : D2D1::ColorF(0.70f, 0.72f, 0.76f, 0.80f),
+            nullptr);
+
+        if (!itemTextFormat_)
+        {
+            return;
+        }
+
+        ComPtr<ID2D1SolidColorBrush> textBrush;
+        context->CreateSolidColorBrush(
+            enabled ? D2D1::ColorF(0.10f, 0.13f, 0.18f, 1.0f) : D2D1::ColorF(0.45f, 0.48f, 0.54f, 0.95f),
+            &textBrush);
+        if (!textBrush)
+        {
+            return;
+        }
+
+        D2D1_RECT_F textRect = ToD2DRect(MakeRect(rect.left + 4, rect.top + 5, rect.right - 4, rect.bottom));
+        context->DrawTextW(
+            label.c_str(),
+            static_cast<UINT32>(label.size()),
+            itemTextFormat_.Get(),
+            &textRect,
+            textBrush.Get(),
+            D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
+    bool GetPageNavigationRects(RECT& previousRect, RECT& nextRect) const
+    {
+        const GridPage* page = FindExactGridPage(pageNavigationPageId_);
+        if (page == nullptr)
+        {
+            return false;
+        }
+
+        constexpr LONG buttonWidth = 68;
+        constexpr LONG buttonHeight = 28;
+        constexpr LONG gap = 8;
+        const LONG right = std::max<LONG>(page->workArea.left + buttonWidth, page->workArea.right - page->marginX - 10);
+        const LONG bottom = std::max<LONG>(page->workArea.top + buttonHeight, page->workArea.bottom - page->marginY - 10);
+        nextRect = MakeRect(right - buttonWidth, bottom - buttonHeight, right, bottom);
+        previousRect = MakeRect(nextRect.left - gap - buttonWidth, nextRect.top, nextRect.left - gap, nextRect.bottom);
+        return true;
+    }
+
+    void DrawD2DPageNavigationControls(ID2D1DeviceContext* context)
+    {
+        RECT previousRect{};
+        RECT nextRect{};
+        if (!GetPageNavigationRects(previousRect, nextRect))
+        {
+            return;
+        }
+
+        DrawD2DButton(context, previousRect, L"上一页", pageOffset_ > 0);
+        DrawD2DButton(context, nextRect, L"下一页", pageOffset_ < MaxPageOffset());
+    }
+
+    bool HandlePageNavigationClick(POINT point)
+    {
+        RECT previousRect{};
+        RECT nextRect{};
+        if (!GetPageNavigationRects(previousRect, nextRect))
+        {
+            return false;
+        }
+
+        int delta = 0;
+        if (PtInRect(&previousRect, point))
+        {
+            delta = pageOffset_ > 0 ? -1 : 0;
+        }
+        else if (PtInRect(&nextRect, point))
+        {
+            delta = pageOffset_ < MaxPageOffset() ? 1 : 0;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (delta != 0)
+        {
+            pageOffset_ = std::clamp(pageOffset_ + delta, 0, MaxPageOffset());
+            ApplyPageMapping();
+            LayoutItems();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        return true;
+    }
+
     void DrawD2DItemAt(ID2D1DeviceContext* context, const DesktopItem& item, RECT bounds, bool selected)
     {
-        const float iconX = static_cast<float>(bounds.left + (kCellWidth - kIconSize) / 2);
-        const float iconY = static_cast<float>(bounds.top + 2);
-        const float contentBottom = static_cast<float>(bounds.top + kTextTop + kTextHeight + 6);
+        if (IsRectEmptyRect(bounds))
+        {
+            return;
+        }
+
+        RECT iconRect = GetItemIconRect(bounds);
+        const float iconX = static_cast<float>(iconRect.left);
+        const float iconY = static_cast<float>(iconRect.top);
 
         if (selected)
         {
-            ComPtr<ID2D1SolidColorBrush> highlightBrush;
-            if (SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(0.61f, 0.78f, 1.0f, 0.95f), &highlightBrush)) && highlightBrush)
-            {
-                D2D1_RECT_F highlight = D2D1::RectF(
-                    static_cast<float>(bounds.left + 4),
-                    static_cast<float>(bounds.top),
-                    static_cast<float>(bounds.right - 4),
-                    contentBottom);
-                context->DrawRectangle(highlight, highlightBrush.Get(), 1.0f);
-            }
+            DrawD2DFilledRectangle(
+                context,
+                GetItemSelectionRect(bounds, true),
+                D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f),
+                D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f),
+                nullptr);
         }
 
         ID2D1Bitmap1* iconBitmap = GetOrCreateD2DBitmap(item.iconBitmap);
@@ -3210,8 +4513,9 @@ private:
 
         if (dwriteFactory_ && itemTextFormat_ && !item.name.empty())
         {
-            const float textWidth = static_cast<float>(std::max<LONG>(1, bounds.right - bounds.left - 4));
-            const float textHeight = static_cast<float>(kTextHeight + 4);
+            RECT textRect = GetItemTextRect(bounds, selected);
+            const float textWidth = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
+            const float textHeight = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
             ComPtr<IDWriteTextLayout> layout;
             if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
                     item.name.c_str(),
@@ -3227,8 +4531,8 @@ private:
                 context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
                 context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &textBrush);
 
-                const float tx = static_cast<float>(bounds.left + 2);
-                const float ty = static_cast<float>(bounds.top + kTextTop);
+                const float tx = static_cast<float>(textRect.left);
+                const float ty = static_cast<float>(textRect.top);
                 if (shadowBrush)
                 {
                     const D2D1_POINT_2F offsets[] = {
@@ -3257,6 +4561,10 @@ private:
         for (const auto& item : items_)
         {
             if (!item.selected)
+            {
+                continue;
+            }
+            if (IsRectEmptyRect(item.bounds))
             {
                 continue;
             }
@@ -3392,7 +4700,7 @@ private:
 
         if (draggingItems_)
         {
-            RECT targetRect = GetTargetRectAt(dragCurrentPoint_);
+            RECT targetRect = GetTargetRectAt(GetDragTargetPoint(dragCurrentPoint_));
             targetRect.left += 3;
             targetRect.top += 3;
             targetRect.right -= 3;
@@ -3528,6 +4836,11 @@ private:
 
     void DrawItemAt(HDC hdc, const DesktopItem& item, RECT bounds, bool selected)
     {
+        if (IsRectEmptyRect(bounds))
+        {
+            return;
+        }
+
         const int iconX = bounds.left + (kCellWidth - kIconSize) / 2;
         const int iconY = bounds.top + 2;
         const int contentBottom = bounds.top + kTextTop + kTextHeight + 6;
@@ -3624,7 +4937,7 @@ private:
         }
         else
         {
-            target = GetSlotRect(SlotFromPoint(externalDragPoint_));
+            target = GetGridRect(CellFromPoint(externalDragPoint_));
         }
 
         target.left += 3;
@@ -3737,6 +5050,19 @@ private:
             return 0;
         case WM_GETDLGCODE:
             return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
+        case WM_CTLCOLOREDIT:
+            if (reinterpret_cast<HWND>(lParam) == renameEdit_)
+            {
+                HDC editDc = reinterpret_cast<HDC>(wParam);
+                SetTextColor(editDc, RGB(24, 32, 42));
+                SetBkColor(editDc, RGB(255, 255, 255));
+                if (renameBackgroundBrush_ == nullptr)
+                {
+                    renameBackgroundBrush_ = CreateSolidBrush(RGB(255, 255, 255));
+                }
+                return reinterpret_cast<LRESULT>(renameBackgroundBrush_);
+            }
+            return DefWindowProcW(hwnd_, message, wParam, lParam);
         case WM_COMMAND:
             OnCommand(LOWORD(wParam));
             return 0;
@@ -3751,6 +5077,10 @@ private:
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
         case WM_DESTROY:
+            if (renameEdit_ != nullptr)
+            {
+                CommitRename(true);
+            }
             SaveLayoutSlots();
             HideDragHintWindow();
             DestroyDragHintWindow();
@@ -3769,10 +5099,16 @@ private:
         SetForegroundWindow(hwnd_);
         SetActiveWindow(hwnd_);
         SetFocus(hwnd_);
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        if (HandlePageNavigationClick(point))
+        {
+            return;
+        }
+
         SetCapture(hwnd_);
         mouseDown_ = true;
         marqueeActive_ = false;
-        mouseDownPoint_ = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        mouseDownPoint_ = point;
         dragCurrentPoint_ = mouseDownPoint_;
         marqueeRect_ = MakeRect(mouseDownPoint_.x, mouseDownPoint_.y, mouseDownPoint_.x, mouseDownPoint_.y);
 
@@ -3782,6 +5118,28 @@ private:
         bool ctrl = (wParam & MK_CONTROL) != 0;
         if (hit >= 0)
         {
+            int minCol = INT_MAX;
+            int minRow = INT_MAX;
+            for (const auto& item : items_)
+            {
+                if (item.selected)
+                {
+                    minCol = std::min(minCol, item.gridCell.column);
+                    minRow = std::min(minRow, item.gridCell.row);
+                }
+            }
+            if (minCol == INT_MAX)
+            {
+                minCol = items_[static_cast<size_t>(hit)].gridCell.column;
+                minRow = items_[static_cast<size_t>(hit)].gridCell.row;
+            }
+            GridCell groupOrigin = items_[static_cast<size_t>(hit)].gridCell;
+            groupOrigin.column = minCol;
+            groupOrigin.row = minRow;
+            RECT groupRect = GetGridRect(groupOrigin, {1, 1});
+            dragGroupOriginX_ = groupRect.left;
+            dragGroupOriginY_ = groupRect.top;
+
             if (ctrl)
             {
                 ToggleSelection(static_cast<size_t>(hit));
@@ -3809,13 +5167,13 @@ private:
         POINT current{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         if (std::abs(current.x - mouseDownPoint_.x) > 3 || std::abs(current.y - mouseDownPoint_.y) > 3)
         {
-            int hit = HitTest(mouseDownPoint_);
+            int hit = mouseDownHit_;
             if (hit >= 0 && items_[static_cast<size_t>(hit)].selected)
             {
                 RECT oldDirty = draggingItems_ ? GetInternalDragDirtyRect(dragCurrentPoint_) : GetSelectedDragBoundsAt(mouseDownPoint_);
                 draggingItems_ = true;
                 dragCurrentPoint_ = current;
-                dragTargetSlot_ = SlotFromPoint(current);
+                dragTargetCell_ = CellFromPoint(GetDragTargetPoint(current));
                 dragHint_ = MakeInternalDragHint(current);
                 ShowDragHintWindow(dragCurrentPoint_, dragHint_);
                 InvalidateFast(UnionCopy(oldDirty, GetInternalDragDirtyRect(current)));
@@ -3852,7 +5210,7 @@ private:
             }
             else
             {
-                MoveSelectedItemsToSlot(SlotFromPoint(point));
+                MoveSelectedItemsToCell(CellFromPoint(GetDragTargetPoint(point)));
                 LayoutItems();
             }
             InvalidateRect(hwnd_, nullptr, TRUE);
@@ -3867,7 +5225,11 @@ private:
 
             for (auto& item : items_)
             {
-                if (RectsIntersect(item.bounds, marqueeRect_) && !item.selected)
+                if (IsRectEmptyRect(item.bounds))
+                {
+                    continue;
+                }
+                if (RectsIntersect(GetItemSelectionRect(item, false), marqueeRect_) && !item.selected)
                 {
                     item.selected = true;
                     ++selectedCount_;
@@ -3880,7 +5242,7 @@ private:
 
         mouseDown_ = false;
         draggingItems_ = false;
-        dragTargetSlot_ = -1;
+        dragTargetCell_ = {};
         dragHint_.clear();
         HideDragHintWindow();
         mouseDownHit_ = -1;
@@ -3910,11 +5272,18 @@ private:
         ClientToScreen(hwnd_, &screenPoint);
         if (hit >= 0)
         {
-            ShowShellContextMenu(screenPoint);
+            if (IsProtectedDesktopIcon(items_[static_cast<size_t>(hit)]))
+            {
+                ShowShellContextMenu(screenPoint);
+            }
+            else
+            {
+                ShowCustomItemContextMenu(screenPoint);
+            }
         }
         else
         {
-            ShowDesktopBackgroundContextMenu(screenPoint);
+            ShowCustomBackgroundContextMenu(screenPoint);
         }
     }
 
@@ -4104,6 +5473,8 @@ private:
     HWND hwnd_ = nullptr;
     HWND hintHwnd_ = nullptr;
     HWND renameEdit_ = nullptr;
+    HFONT renameFont_ = nullptr;
+    HBRUSH renameBackgroundBrush_ = nullptr;
     size_t renameIndex_ = 0;
     bool trayIconAdded_ = false;
     HICON trayIcon_ = nullptr;
@@ -4126,7 +5497,11 @@ private:
     ComPtr<IShellFolder> desktopFolder_;
     Pidl desktopPidl_;
     std::vector<DesktopItem> items_;
-    std::unordered_map<std::wstring, int> layoutSlots_;
+    std::vector<GridPage> gridPages_;
+    std::vector<std::wstring> savedPageIds_;
+    std::unordered_map<std::wstring, int> savedPageColumns_;
+    std::unordered_map<std::wstring, int> savedPageRows_;
+    std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     int selectedCount_ = 0;
     LONG refCount_ = 1;
@@ -4141,12 +5516,18 @@ private:
     bool externalDragActive_ = false;
     bool dropTargetRegistered_ = false;
     int mouseDownHit_ = -1;
-    int dragTargetSlot_ = -1;
+    GridCell dragTargetCell_;
+    int dragGroupOriginX_ = 0;
+    int dragGroupOriginY_ = 0;
     POINT mouseDownPoint_{};
     POINT dragCurrentPoint_{};
     POINT externalDragPoint_{};
     std::wstring dragHint_;
     std::wstring externalDragHint_;
+    std::wstring primaryMonitorId_;
+    std::wstring firstPageMonitorId_;
+    std::wstring pageNavigationPageId_;
+    int pageOffset_ = 0;
     RECT marqueeRect_{};
     ComPtr<IContextMenu2> activeContextMenu2_;
     ComPtr<IContextMenu3> activeContextMenu3_;
