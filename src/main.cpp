@@ -86,20 +86,6 @@ constexpr UINT kShellChangeDebounceMs = 500;
 constexpr UINT_PTR kRecycleBinPollTimerId = 3;
 constexpr UINT kRecycleBinPollIntervalMs = 2000;
 
-struct MenuItemData
-{
-    const wchar_t* label = nullptr;
-    bool isSeparator = false;
-    bool isChecked = false;
-    bool hasSubmenu = false;
-};
-
-constexpr int kMenuItemHeight = 36;
-constexpr int kMenuSeparatorHeight = 9;
-constexpr int kMenuItemWidth = 260;
-constexpr int kMenuItemTextPadLeft = 44;
-constexpr float kMenuItemHighlightRadius = 4.0f;
-
 struct GridCell
 {
     std::wstring pageId;
@@ -1324,16 +1310,6 @@ private:
         statusTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         statusTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
-        hr = dwriteFactory_->CreateTextFormat(
-            L"Segoe UI", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &menuTextFormat_);
-        if (FAILED(hr))
-        {
-            lastGraphicsError_ = hr;
-            return false;
-        }
-
         D2D1_STROKE_STYLE_PROPERTIES dottedProps{};
         dottedProps.startCap = D2D1_CAP_STYLE_FLAT;
         dottedProps.endCap = D2D1_CAP_STYLE_FLAT;
@@ -1883,38 +1859,18 @@ private:
         ReloadItems();
     }
 
-    void AppendOwnerDrawItem(HMENU menu, UINT command, const wchar_t* label, bool enabled, bool checked = false)
-    {
-        menuItemPool_.push_back({ label, false, checked, false });
-        UINT flags = MF_OWNERDRAW | MF_STRING | (enabled ? 0 : MF_GRAYED);
-        AppendMenuW(menu, flags, command, reinterpret_cast<LPCWSTR>(&menuItemPool_.back()));
-    }
-
-    void AppendOwnerDrawSeparator(HMENU menu)
-    {
-        menuItemPool_.push_back({ nullptr, true, false, false });
-        AppendMenuW(menu, MF_OWNERDRAW | MF_SEPARATOR, 0, reinterpret_cast<LPCWSTR>(&menuItemPool_.back()));
-    }
-
-    void AppendOwnerDrawSubmenu(HMENU menu, HMENU submenu, const wchar_t* label)
-    {
-        menuItemPool_.push_back({ label, false, false, true });
-        AppendMenuW(menu, MF_OWNERDRAW | MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), reinterpret_cast<LPCWSTR>(&menuItemPool_.back()));
-    }
-
     void ShowTrayMenu(POINT screenPoint)
     {
-        menuItemPool_.clear();
         HMENU menu = CreatePopupMenu();
         if (menu == nullptr)
         {
             return;
         }
 
-        AppendOwnerDrawItem(menu, kTrayReloadCommand, L"重新加载", true);
-        AppendOwnerDrawItem(menu, kTraySortByNameCommand, L"图标排序：按名称", true);
-        AppendOwnerDrawItem(menu, kTraySortByTypeCommand, L"图标排序：按类型", true);
-        AppendOwnerDrawSeparator(menu);
+        AppendMenuW(menu, MF_STRING, kTrayReloadCommand, L"重新加载");
+        AppendMenuW(menu, MF_STRING, kTraySortByNameCommand, L"图标排序：按名称");
+        AppendMenuW(menu, MF_STRING, kTraySortByTypeCommand, L"图标排序：按类型");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
         HMENU iconSettingsMenu = CreatePopupMenu();
         if (iconSettingsMenu != nullptr)
@@ -1935,18 +1891,22 @@ private:
 
             for (const auto& setting : settings)
             {
-                AppendOwnerDrawItem(iconSettingsMenu, setting.command, setting.label, true,
-                    IsClsidCurrentlyVisible(setting.clsid));
+                UINT flags = MF_STRING;
+                if (IsClsidCurrentlyVisible(setting.clsid))
+                {
+                    flags |= MF_CHECKED;
+                }
+                AppendMenuW(iconSettingsMenu, flags, setting.command, setting.label);
             }
 
-            AppendOwnerDrawSubmenu(menu, iconSettingsMenu, L"桌面图标设置");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconSettingsMenu), L"桌面图标设置");
         }
 
-        AppendOwnerDrawSeparator(menu);
-        AppendOwnerDrawItem(menu, kTraySwitchNativeCommand, L"切换原生桌面", customDesktopVisible_);
-        AppendOwnerDrawItem(menu, kTraySwitchCustomCommand, L"切换自定义桌面", !customDesktopVisible_);
-        AppendOwnerDrawSeparator(menu);
-        AppendOwnerDrawItem(menu, kTrayExitCommand, L"退出", true);
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, customDesktopVisible_ ? MF_STRING : (MF_STRING | MF_GRAYED), kTraySwitchNativeCommand, L"切换原生桌面");
+        AppendMenuW(menu, customDesktopVisible_ ? (MF_STRING | MF_GRAYED) : MF_STRING, kTraySwitchCustomCommand, L"切换自定义桌面");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出");
 
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
@@ -3842,26 +3802,25 @@ private:
 
     void ShowCustomItemContextMenu(POINT screenPoint)
     {
-        menuItemPool_.clear();
         HMENU menu = CreatePopupMenu();
         if (menu == nullptr)
         {
             return;
         }
 
-        const bool single = selectedCount_ == 1;
-        const bool canFile = CanUseSelectedFileCommands();
-        const bool canRename = single && canFile;
-        AppendOwnerDrawItem(menu, kContextOpenCommand, L"打开", single);
-        AppendOwnerDrawItem(menu, kContextRenameCommand, L"重命名", canRename);
-        AppendOwnerDrawSeparator(menu);
-        AppendOwnerDrawItem(menu, kContextCutCommand, L"剪切", canFile);
-        AppendOwnerDrawItem(menu, kContextCopyCommand, L"复制", canFile);
-        AppendOwnerDrawItem(menu, kContextDeleteCommand, L"删除", canFile);
-        AppendOwnerDrawSeparator(menu);
-        AppendOwnerDrawItem(menu, kContextThisDisplayFirstCommand, L"当前显示器显示首屏", true);
-        AppendOwnerDrawSeparator(menu);
-        AppendOwnerDrawItem(menu, kContextMoreCommand, L"展开更多选项", true);
+        const UINT singleItemFlag = selectedCount_ == 1 ? MF_STRING : (MF_STRING | MF_GRAYED);
+        const UINT fileCommandFlag = CanUseSelectedFileCommands() ? MF_STRING : (MF_STRING | MF_GRAYED);
+        const UINT renameFlag = selectedCount_ == 1 && CanUseSelectedFileCommands() ? MF_STRING : (MF_STRING | MF_GRAYED);
+        AppendMenuW(menu, singleItemFlag, kContextOpenCommand, L"打开");
+        AppendMenuW(menu, renameFlag, kContextRenameCommand, L"重命名");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, fileCommandFlag, kContextCutCommand, L"剪切");
+        AppendMenuW(menu, fileCommandFlag, kContextCopyCommand, L"复制");
+        AppendMenuW(menu, fileCommandFlag, kContextDeleteCommand, L"删除");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
 
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
@@ -3903,7 +3862,6 @@ private:
 
     void ShowCustomBackgroundContextMenu(POINT screenPoint)
     {
-        menuItemPool_.clear();
         lastContextMenuScreenPoint_ = screenPoint;
 
         HMENU menu = CreatePopupMenu();
@@ -3912,52 +3870,56 @@ private:
             return;
         }
 
-        AppendOwnerDrawItem(menu, kContextRefreshCommand, L"刷新", true);
-        AppendOwnerDrawSeparator(menu);
+        AppendMenuW(menu, MF_STRING, kContextRefreshCommand, L"刷新");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
         HMENU sortMenu = CreatePopupMenu();
         if (sortMenu != nullptr)
         {
-            AppendOwnerDrawItem(sortMenu, kContextSortByNameCommand, L"名称", true);
-            AppendOwnerDrawItem(sortMenu, kContextSortByTypeCommand, L"类型", true);
-            AppendOwnerDrawSubmenu(menu, sortMenu, L"排序方式");
+            AppendMenuW(sortMenu, MF_STRING, kContextSortByNameCommand, L"名称");
+            AppendMenuW(sortMenu, MF_STRING, kContextSortByTypeCommand, L"类型");
+            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
         }
 
         HMENU gridMenu = CreatePopupMenu();
         if (gridMenu != nullptr)
         {
-            AppendOwnerDrawItem(gridMenu, kContextGridAddRow, L"增加行", true);
-            AppendOwnerDrawItem(gridMenu, kContextGridRemoveRow, L"减少行", true);
-            AppendOwnerDrawItem(gridMenu, kContextGridAddColumn, L"增加列", true);
-            AppendOwnerDrawItem(gridMenu, kContextGridRemoveColumn, L"减少列", true);
-            AppendOwnerDrawSubmenu(menu, gridMenu, L"行列调整");
+            AppendMenuW(gridMenu, MF_STRING, kContextGridAddRow, L"增加行");
+            AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveRow, L"减少行");
+            AppendMenuW(gridMenu, MF_STRING, kContextGridAddColumn, L"增加列");
+            AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveColumn, L"减少列");
+            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), L"行列调整");
         }
 
         HMENU zoomMenu = CreatePopupMenu();
         if (zoomMenu != nullptr)
         {
             const int presets[] = {50, 70, 80, 90, 100, 110, 120, 130, 150, 200};
-            const int currentPct = static_cast<int>(gapScale_ * 100);
             for (int pct : presets)
             {
                 wchar_t label[16]{};
                 swprintf_s(label, L"%d%%", pct);
-                AppendOwnerDrawItem(zoomMenu, kContextZoomPresetFirst + static_cast<UINT>(pct), label, true, pct == currentPct);
+                UINT flags = MF_STRING;
+                if (static_cast<int>(gapScale_ * 100) == pct)
+                {
+                    flags |= MF_CHECKED;
+                }
+                AppendMenuW(zoomMenu, flags, kContextZoomPresetFirst + static_cast<UINT>(pct), label);
             }
-            AppendOwnerDrawSeparator(zoomMenu);
-            AppendOwnerDrawItem(zoomMenu, kContextZoomIncrease, L"放大 (+10%)", true);
-            AppendOwnerDrawItem(zoomMenu, kContextZoomDecrease, L"缩小 (-10%)", true);
+            AppendMenuW(zoomMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(zoomMenu, MF_STRING, kContextZoomIncrease, L"放大 (+10%)");
+            AppendMenuW(zoomMenu, MF_STRING, kContextZoomDecrease, L"缩小 (-10%)");
             wchar_t zoomLabel[32]{};
-            swprintf_s(zoomLabel, L"缩放：%d%%", currentPct);
-            AppendOwnerDrawSubmenu(menu, zoomMenu, zoomLabel);
+            swprintf_s(zoomLabel, L"缩放：%d%%", static_cast<int>(gapScale_ * 100));
+            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(zoomMenu), zoomLabel);
         }
 
-        AppendOwnerDrawSeparator(menu);
-        AppendOwnerDrawItem(menu, kContextThisDisplayFirstCommand, L"当前显示器显示首屏", true);
-        AppendOwnerDrawSeparator(menu);
-        AppendOwnerDrawItem(menu, kContextPasteCommand, L"粘贴", true);
-        AppendOwnerDrawSeparator(menu);
-        AppendOwnerDrawItem(menu, kContextMoreCommand, L"展开更多选项", true);
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
 
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
@@ -4649,103 +4611,6 @@ private:
         }
 
         context->DrawRectangle(ToD2DRect(rect), brush.Get(), 1.0f, strokeStyle);
-    }
-
-    void DrawOwnerDrawMenuItem(DRAWITEMSTRUCT& di, const MenuItemData* data)
-    {
-        if (d2dFactory_ == nullptr || data == nullptr) return;
-
-        ComPtr<ID2D1DCRenderTarget> rt;
-        D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
-            D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        if (FAILED(d2dFactory_->CreateDCRenderTarget(&props, &rt)) || !rt) return;
-
-        RECT rc = di.rcItem;
-        if (FAILED(rt->BindDC(di.hDC, &rc))) return;
-
-        rt->BeginDraw();
-
-        if (data->isSeparator)
-        {
-            const int midY = (rc.top + rc.bottom) / 2;
-            ComPtr<ID2D1SolidColorBrush> sepBrush;
-            rt->CreateSolidColorBrush(D2D1::ColorF(0.85f, 0.85f, 0.85f, 0.6f), &sepBrush);
-            if (sepBrush)
-            {
-                rt->DrawLine(
-                    D2D1::Point2F(static_cast<float>(rc.left + 8), static_cast<float>(midY)),
-                    D2D1::Point2F(static_cast<float>(rc.right - 8), static_cast<float>(midY)),
-                    sepBrush.Get(), 1.0f);
-            }
-        }
-        else
-        {
-            const bool selected = (di.itemState & ODS_SELECTED) != 0;
-            const bool disabled = (di.itemState & (ODS_GRAYED | ODS_DISABLED)) != 0;
-
-            if (selected)
-            {
-                D2D1_RECT_F highlight = D2D1::RectF(
-                    static_cast<float>(rc.left + 3), static_cast<float>(rc.top + 2),
-                    static_cast<float>(rc.right - 3), static_cast<float>(rc.bottom - 2));
-                D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(highlight, kMenuItemHighlightRadius, kMenuItemHighlightRadius);
-                ComPtr<ID2D1SolidColorBrush> hlBrush;
-                rt->CreateSolidColorBrush(D2D1::ColorF(0.94f, 0.94f, 0.94f, 1.0f), &hlBrush);
-                if (hlBrush) rt->FillRoundedRectangle(rounded, hlBrush.Get());
-            }
-
-            if (data->label != nullptr && menuTextFormat_)
-            {
-                const D2D1_COLOR_F textColor = disabled
-                    ? D2D1::ColorF(0.65f, 0.65f, 0.65f, 1.0f)
-                    : D2D1::ColorF(0.10f, 0.13f, 0.18f, 1.0f);
-
-                ComPtr<ID2D1SolidColorBrush> textBrush;
-                rt->CreateSolidColorBrush(textColor, &textBrush);
-                if (textBrush)
-                {
-                    D2D1_RECT_F textRect = D2D1::RectF(
-                        static_cast<float>(rc.left + kMenuItemTextPadLeft),
-                        static_cast<float>(rc.top),
-                        static_cast<float>(rc.right - 16),
-                        static_cast<float>(rc.bottom));
-                    rt->DrawTextW(data->label, static_cast<UINT32>(wcslen(data->label)),
-                        menuTextFormat_.Get(), &textRect, textBrush.Get(),
-                        D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_NO_SNAP);
-                }
-            }
-
-            if (data->isChecked)
-            {
-                ComPtr<ID2D1SolidColorBrush> checkBrush;
-                rt->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.13f, 0.18f, 1.0f), &checkBrush);
-                if (checkBrush)
-                {
-                    D2D1_RECT_F checkRect = D2D1::RectF(
-                        static_cast<float>(rc.left + 12), static_cast<float>(rc.top + 4),
-                        static_cast<float>(rc.left + 32), static_cast<float>(rc.bottom));
-                    rt->DrawTextW(L"✓", 1, menuTextFormat_.Get(), &checkRect, checkBrush.Get(),
-                        D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_NO_SNAP);
-                }
-            }
-
-            if (data->hasSubmenu)
-            {
-                ComPtr<ID2D1SolidColorBrush> arrowBrush;
-                rt->CreateSolidColorBrush(D2D1::ColorF(0.55f, 0.55f, 0.55f, 1.0f), &arrowBrush);
-                if (arrowBrush)
-                {
-                    D2D1_RECT_F arrowRect = D2D1::RectF(
-                        static_cast<float>(rc.right - 24), static_cast<float>(rc.top),
-                        static_cast<float>(rc.right - 8), static_cast<float>(rc.bottom));
-                    rt->DrawTextW(L"›", 1, menuTextFormat_.Get(), &arrowRect, arrowBrush.Get(),
-                        D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_NO_SNAP);
-                }
-            }
-        }
-
-        rt->EndDraw();
     }
 
     void DrawD2DButton(ID2D1DeviceContext* context, const RECT& rect, const std::wstring& label, bool enabled)
@@ -5654,21 +5519,6 @@ private:
                 return reinterpret_cast<LRESULT>(renameBackgroundBrush_);
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
-        case WM_MEASUREITEM: {
-            auto* info = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
-            if (info->CtlType != ODT_MENU) break;
-            auto* data = reinterpret_cast<MenuItemData*>(info->itemData);
-            info->itemWidth = kMenuItemWidth;
-            info->itemHeight = (data != nullptr && data->isSeparator) ? kMenuSeparatorHeight : kMenuItemHeight;
-            return TRUE;
-        }
-        case WM_DRAWITEM: {
-            auto* info = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-            if (info->CtlType != ODT_MENU) break;
-            auto* data = reinterpret_cast<MenuItemData*>(info->itemData);
-            DrawOwnerDrawMenuItem(*info, data);
-            return TRUE;
-        }
         case WM_COMMAND:
             OnCommand(LOWORD(wParam));
             return 0;
@@ -6166,7 +6016,6 @@ private:
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> statusTextFormat_;
-    ComPtr<IDWriteTextFormat> menuTextFormat_;
     ComPtr<ID2D1StrokeStyle> dottedStrokeStyle_;
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
     ComPtr<IShellFolder> desktopFolder_;
@@ -6209,7 +6058,6 @@ private:
     ULONG shellChangeRegId_ = 0;
     bool reloading_ = false;
     LONGLONG lastRecycleBinItemCount_ = -1;
-    std::vector<MenuItemData> menuItemPool_;
     bool navButtonsVisible_ = false;
     RECT navButtonsHoverZone_{};
     POINT lastContextMenuScreenPoint_{};
