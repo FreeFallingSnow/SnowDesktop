@@ -315,13 +315,45 @@ BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lPar
 
 HICON LoadAppIcon()
 {
-    HICON icon = LoadIconW(nullptr, IDI_APPLICATION);
-    HICON copy = nullptr;
-    if (icon != nullptr)
-    {
-        copy = CopyIcon(icon);
-    }
-    return copy != nullptr ? copy : icon;
+    constexpr int kSize = 32;
+    HDC screenDc = GetDC(nullptr);
+    HDC memDc = CreateCompatibleDC(screenDc);
+
+    BITMAPINFO bmi{};
+    bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+    bmi.bmiHeader.biWidth = kSize;
+    bmi.bmiHeader.biHeight = -kSize;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+
+    void* bits = nullptr;
+    HBITMAP colorBmp = CreateDIBSection(memDc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HBITMAP maskBmp = CreateBitmap(kSize, kSize, 1, 1, nullptr);
+    HGDIOBJ oldBmp = SelectObject(memDc, colorBmp);
+
+    HBRUSH bg = CreateSolidBrush(RGB(60, 130, 220));
+    RECT rc = {0, 0, kSize, kSize};
+    FillRect(memDc, &rc, bg);
+    DeleteObject(bg);
+
+    SetBkMode(memDc, TRANSPARENT);
+    SetTextColor(memDc, RGB(255, 255, 255));
+    HGDIOBJ oldFont = SelectObject(memDc, GetStockObject(DEFAULT_GUI_FONT));
+    DrawTextW(memDc, L"S", 1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(memDc, oldFont);
+
+    ICONINFO ii{};
+    ii.fIcon = TRUE;
+    ii.hbmColor = colorBmp;
+    ii.hbmMask = maskBmp;
+    HICON icon = CreateIconIndirect(&ii);
+
+    SelectObject(memDc, oldBmp);
+    DeleteObject(colorBmp);
+    DeleteObject(maskBmp);
+    DeleteDC(memDc);
+    ReleaseDC(nullptr, screenDc);
+    return icon;
 }
 
 DesktopWindows FindDesktopWindows()
@@ -1456,6 +1488,13 @@ private:
         }
         ShowWindow(hwnd_, showCommand);
         UpdateWindow(hwnd_);
+
+        HICON appIcon = LoadAppIcon();
+        if (appIcon != nullptr)
+        {
+            SendMessageW(hwnd_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(appIcon));
+            SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
+        }
         return CreateCompositionTarget();
     }
 
