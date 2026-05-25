@@ -83,6 +83,8 @@ constexpr UINT kContextZoomPresetFirst = 41150;
 constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
+constexpr UINT_PTR kRecycleBinPollTimerId = 3;
+constexpr UINT kRecycleBinPollIntervalMs = 2000;
 
 struct GridCell
 {
@@ -1158,6 +1160,8 @@ public:
             kShellChangeMessage,
             entryCount,
             entries);
+
+        SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
 
         MSG msg{};
         while (GetMessageW(&msg, nullptr, 0, 0) > 0)
@@ -5539,6 +5543,23 @@ private:
                 }
                 return 0;
             }
+            if (wParam == kRecycleBinPollTimerId)
+            {
+                SHQUERYRBINFO info{};
+                info.cbSize = sizeof(info);
+                if (SUCCEEDED(SHQueryRecycleBinW(nullptr, &info)))
+                {
+                    if (lastRecycleBinItemCount_ >= 0 && info.i64NumItems != lastRecycleBinItemCount_)
+                    {
+                        if (!mouseDown_ && !draggingItems_ && !reloading_)
+                        {
+                            ReloadItems();
+                        }
+                    }
+                    lastRecycleBinItemCount_ = info.i64NumItems;
+                }
+                return 0;
+            }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
         case WM_DESTROY:
             if (renameEdit_ != nullptr)
@@ -6036,6 +6057,7 @@ private:
     float gapScale_ = 1.0f;
     ULONG shellChangeRegId_ = 0;
     bool reloading_ = false;
+    LONGLONG lastRecycleBinItemCount_ = -1;
     bool navButtonsVisible_ = false;
     RECT navButtonsHoverZone_{};
     POINT lastContextMenuScreenPoint_{};
