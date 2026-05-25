@@ -45,8 +45,8 @@ constexpr int kTextTop = 70;
 constexpr int kTextCollapsedHeight = 34;
 constexpr int kTextExpandedHeight = 58;
 constexpr int kTextHeight = kTextCollapsedHeight;
-constexpr int kDefaultGapX = 16;
-constexpr int kDefaultGapY = 16;
+constexpr float kGapPercentX = 0.16f;
+constexpr float kGapPercentY = 0.14f;
 constexpr int kRenameEditId = 1001;
 constexpr UINT kTrayCallbackMessage = WM_APP + 1;
 constexpr UINT_PTR kTrayIconId = 1;
@@ -2654,10 +2654,12 @@ private:
 
     void ApplyGapScaleToPage(GridPage& page)
     {
-        const int targetGapX = std::max(0, static_cast<int>(kDefaultGapX / gapScale_));
-        const int targetGapY = std::max(0, static_cast<int>(kDefaultGapY / gapScale_));
         const int usableW = std::max(1, static_cast<int>(page.workArea.right - page.workArea.left) - (page.marginX * 2));
         const int usableH = std::max(1, static_cast<int>(page.workArea.bottom - page.workArea.top) - (page.marginY * 2));
+        const float cellRefW = static_cast<float>(usableW) / static_cast<float>(std::max(1, page.columns));
+        const float cellRefH = static_cast<float>(usableH) / static_cast<float>(std::max(1, page.rows));
+        const int targetGapX = std::max(0, static_cast<int>(cellRefW * kGapPercentX / gapScale_));
+        const int targetGapY = std::max(0, static_cast<int>(cellRefH * kGapPercentY / gapScale_));
 
         page.cellWidth = page.columns > 1
             ? std::max(kIconSize, (usableW - (page.columns - 1) * targetGapX) / page.columns)
@@ -2924,7 +2926,7 @@ private:
 
     void ApplyPageMapping()
     {
-        pageNavigationPageId_.clear();
+        lastMonitorPageId_.clear();
         if (gridPages_.empty())
         {
             return;
@@ -2940,25 +2942,28 @@ private:
 
         pageOffset_ = std::clamp(pageOffset_, 0, MaxPageOffset());
         std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
-        int lastRenderedSavedIndex = -1;
-        for (size_t logicalIndex = 0; logicalIndex < monitorOrder.size(); ++logicalIndex)
+        const size_t numMonitors = monitorOrder.size();
+        for (size_t i = 0; i < numMonitors; ++i)
         {
-            GridPage& page = gridPages_[monitorOrder[logicalIndex]];
-            const size_t savedIndex = static_cast<size_t>(pageOffset_) + logicalIndex;
-            if (savedIndex < savedPageIds_.size())
+            GridPage& page = gridPages_[monitorOrder[i]];
+            const bool isLast = (i == numMonitors - 1);
+            const size_t pageIdx = i + (isLast ? static_cast<size_t>(pageOffset_) : 0);
+            if (pageIdx < savedPageIds_.size())
             {
-                page.id = savedPageIds_[savedIndex];
-                lastRenderedSavedIndex = static_cast<int>(savedIndex);
+                page.id = savedPageIds_[pageIdx];
             }
             else
             {
                 page.id = MakeExtraPageId(page.monitorId);
             }
+            if (isLast)
+            {
+                lastMonitorPageId_ = page.id;
+            }
         }
-
-        if (lastRenderedSavedIndex >= 0 && gridPages_.size() != savedPageIds_.size())
+        if (!lastMonitorPageId_.empty() && savedPageIds_.size() <= gridPages_.size())
         {
-            pageNavigationPageId_ = savedPageIds_[static_cast<size_t>(lastRenderedSavedIndex)];
+            lastMonitorPageId_.clear();
         }
     }
 
@@ -4621,9 +4626,9 @@ private:
     void UpdateNavButtonHover(POINT point)
     {
         const GridPage* page = nullptr;
-        if (!pageNavigationPageId_.empty())
+        if (!lastMonitorPageId_.empty())
         {
-            page = FindExactGridPage(pageNavigationPageId_);
+            page = FindExactGridPage(lastMonitorPageId_);
         }
         if (page == nullptr && !gridPages_.empty())
         {
@@ -4664,9 +4669,9 @@ private:
         if (context == nullptr) return;
 
         const GridPage* page = nullptr;
-        if (!pageNavigationPageId_.empty())
+        if (!lastMonitorPageId_.empty())
         {
-            page = FindExactGridPage(pageNavigationPageId_);
+            page = FindExactGridPage(lastMonitorPageId_);
         }
         if (page == nullptr && !gridPages_.empty())
         {
@@ -4731,7 +4736,7 @@ private:
 
     bool GetPageNavigationRects(RECT& previousRect, RECT& nextRect) const
     {
-        const GridPage* page = FindExactGridPage(pageNavigationPageId_);
+        const GridPage* page = FindExactGridPage(lastMonitorPageId_);
         if (page == nullptr)
         {
             return false;
@@ -4763,9 +4768,9 @@ private:
     bool HandlePageNavigationClick(POINT point)
     {
         const GridPage* page = nullptr;
-        if (!pageNavigationPageId_.empty())
+        if (!lastMonitorPageId_.empty())
         {
-            page = FindExactGridPage(pageNavigationPageId_);
+            page = FindExactGridPage(lastMonitorPageId_);
         }
         if (page == nullptr && !gridPages_.empty())
         {
@@ -5891,7 +5896,7 @@ private:
     std::wstring externalDragHint_;
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;
-    std::wstring pageNavigationPageId_;
+    std::wstring lastMonitorPageId_;
     int pageOffset_ = 0;
     float gapScale_ = 1.0f;
     bool navButtonsVisible_ = false;
