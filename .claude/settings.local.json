@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where msbuild *)",
+      "Bash(cmake -G \"Visual Studio 16 2019\" -A x64 ..)",
+      "Bash(\"C:/Program Files \\(x86\\)/Microsoft Visual Studio/Installer/vswhere.exe\" -all -format json)",
+      "Bash(cmake --help)",
+      "Bash(cmd /c 'call \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\VC\\\\Auxiliary\\\\Build\\\\vcvars64.bat\" >nul 2>&1 && cl /std:c++20 /EHsc /W4 /permissive- /D_UNICODE /DUNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /I \"C:\\\\Program Files \\(x86\\)\\\\Windows Kits\\\\10\\\\Include\\\\10.0.26100.0\\\\um\" /I \"C:\\\\Program Files \\(x86\\)\\\\Windows Kits\\\\10\\\\Include\\\\10.0.26100.0\\\\shared\" /I \"C:\\\\Program Files \\(x86\\)\\\\Windows Kits\\\\10\\\\Include\\\\10.0.26100.0\\\\ucrt\" /c src/main.cpp 2>&1')",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(./build.bat)",
+      "Bash(git checkout *)",
+      "Bash(node *)",
+      "Bash(cmake --build .build --config Release)",
+      "Bash(rm *)",
+      "Bash(git filter-branch *)",
+      "Bash(git revert *)",
+      "Bash(python)",
+      "Bash(bash build.bat)"
+    ]
+  }
+}

@@ -4,6 +4,8 @@ project(SnowDesktop LANGUAGES CXX)
 
 add_executable(SnowDesktop WIN32
     src/main.cpp
+    src/app.cpp
+    src/utils.cpp
 )
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
