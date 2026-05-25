@@ -1138,9 +1138,17 @@ public:
         AddTrayIcon();
         ReloadItems();
 
-        SHChangeNotifyEntry entries[1]{};
+        SHChangeNotifyEntry entries[2]{};
         entries[0].pidl = desktopPidl_.get();
         entries[0].fRecursive = FALSE;
+        PIDLIST_ABSOLUTE rbPidl = nullptr;
+        if (SUCCEEDED(SHGetSpecialFolderLocation(nullptr, CSIDL_BITBUCKET, &rbPidl)))
+        {
+            recycleBinPidl_.reset(rbPidl);
+            entries[1].pidl = recycleBinPidl_.get();
+            entries[1].fRecursive = TRUE;
+        }
+        const int entryCount = recycleBinPidl_.get() != nullptr ? 2 : 1;
         shellChangeRegId_ = SHChangeNotifyRegister(
             hwnd_,
             SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
@@ -1148,7 +1156,7 @@ public:
             SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
             SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES,
             kShellChangeMessage,
-            1,
+            entryCount,
             entries);
 
         MSG msg{};
@@ -1945,6 +1953,12 @@ private:
 
     void ReloadItems(bool reloadLayoutFromDisk = true)
     {
+        if (reloading_)
+        {
+            return;
+        }
+        reloading_ = true;
+
         if (reloadLayoutFromDisk)
         {
             LoadLayoutSlots();
@@ -1962,6 +1976,7 @@ private:
             !enumItems)
         {
             InvalidateRect(hwnd_, nullptr, TRUE);
+            reloading_ = false;
             return;
         }
 
@@ -2161,6 +2176,7 @@ private:
         LayoutItems();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
+        reloading_ = false;
     }
 
     std::wstring GetLayoutPath() const
@@ -5517,7 +5533,10 @@ private:
             if (wParam == kShellChangeTimerId)
             {
                 KillTimer(hwnd_, kShellChangeTimerId);
-                ReloadItems();
+                if (!mouseDown_ && !draggingItems_ && !reloading_)
+                {
+                    ReloadItems();
+                }
                 return 0;
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
@@ -5980,6 +5999,7 @@ private:
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
     ComPtr<IShellFolder> desktopFolder_;
     Pidl desktopPidl_;
+    Pidl recycleBinPidl_;
     std::vector<DesktopItem> items_;
     std::vector<GridPage> gridPages_;
     std::vector<std::wstring> savedPageIds_;
@@ -6015,6 +6035,7 @@ private:
     int pageOffset_ = 0;
     float gapScale_ = 1.0f;
     ULONG shellChangeRegId_ = 0;
+    bool reloading_ = false;
     bool navButtonsVisible_ = false;
     RECT navButtonsHoverZone_{};
     POINT lastContextMenuScreenPoint_{};
