@@ -4506,7 +4506,7 @@ private:
                 nullptr);
         }
 
-        if (draggingItems_)
+        if (draggingItems_ && !draggingOverNav_)
         {
             for (RECT targetRect : GetSelectedMovePreviewRects(GetDragTargetPoint(dragCurrentPoint_)))
             {
@@ -5110,7 +5110,7 @@ private:
             DeleteObject(pen);
         }
 
-        if (draggingItems_)
+        if (draggingItems_ && !draggingOverNav_)
         {
             RECT targetRect = GetTargetRectAt(GetDragTargetPoint(dragCurrentPoint_));
             targetRect.left += 3;
@@ -5534,6 +5534,7 @@ private:
         int hit = HitTest(mouseDownPoint_);
         mouseDownHit_ = hit;
         draggingItems_ = false;
+        draggingOverNav_ = false;
         bool ctrl = (wParam & MK_CONTROL) != 0;
         if (hit >= 0)
         {
@@ -5593,8 +5594,18 @@ private:
                 RECT oldDirty = draggingItems_ ? GetInternalDragDirtyRect(dragCurrentPoint_) : GetSelectedDragBoundsAt(mouseDownPoint_);
                 draggingItems_ = true;
                 dragCurrentPoint_ = current;
-                dragTargetCell_ = CellFromPoint(GetDragTargetPoint(current));
-                dragHint_ = MakeInternalDragHint(current);
+                int navDelta = HitTestNavButton(current);
+                if (navDelta != 0)
+                {
+                    draggingOverNav_ = true;
+                    dragHint_ = navDelta < 0 ? L"释放：移动到上一页" : L"释放：移动到下一页";
+                }
+                else
+                {
+                    draggingOverNav_ = false;
+                    dragTargetCell_ = CellFromPoint(GetDragTargetPoint(current));
+                    dragHint_ = MakeInternalDragHint(current);
+                }
                 ShowDragHintWindow(dragCurrentPoint_, dragHint_);
                 InvalidateFast(UnionCopy(oldDirty, GetInternalDragDirtyRect(current)));
             }
@@ -5682,6 +5693,7 @@ private:
 
         mouseDown_ = false;
         draggingItems_ = false;
+        draggingOverNav_ = false;
         dragTargetCell_ = {};
         dragHint_.clear();
         HideDragHintWindow();
@@ -5953,6 +5965,7 @@ private:
     bool mouseDown_ = false;
     bool marqueeActive_ = false;
     bool draggingItems_ = false;
+    bool draggingOverNav_ = false;
     bool externalDragActive_ = false;
     bool dropTargetRegistered_ = false;
     int mouseDownHit_ = -1;
