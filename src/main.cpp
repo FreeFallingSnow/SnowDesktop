@@ -1154,7 +1154,7 @@ public:
             SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
             SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
             SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
-            SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES,
+            SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES | SHCNE_ASSOCCHANGED,
             kShellChangeMessage,
             entryCount,
             entries);
