@@ -481,6 +481,7 @@ void WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible)
     TryWriteDesktopIconRegistryValue(HKEY_CURRENT_USER,
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel",
         clsid, value);
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
 }
 
 bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& value)
@@ -1617,7 +1618,6 @@ private:
         if (hwnd_ != nullptr)
         {
             ShowWindow(hwnd_, SW_SHOW);
-            SetForegroundWindow(hwnd_);
         }
         customDesktopVisible_ = true;
         ReloadItems();
@@ -1980,7 +1980,7 @@ private:
         AppendMenuW(menu, customDesktopVisible_ ? MF_STRING : (MF_STRING | MF_GRAYED), kTraySwitchNativeCommand, L"切换原生桌面");
         AppendMenuW(menu, customDesktopVisible_ ? (MF_STRING | MF_GRAYED) : MF_STRING, kTraySwitchCustomCommand, L"切换自定义桌面");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出");
+        AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
@@ -5932,9 +5932,15 @@ private:
         UINT message = LOWORD(lParam);
         if (message == WM_CONTEXTMENU || message == WM_RBUTTONUP)
         {
+            if (trayMenuShowing_)
+            {
+                return;
+            }
+            trayMenuShowing_ = true;
             POINT point{};
             GetCursorPos(&point);
             ShowTrayMenu(point);
+            trayMenuShowing_ = false;
         }
         else if (message == WM_LBUTTONDBLCLK)
         {
@@ -6139,6 +6145,7 @@ private:
     float gapScale_ = 1.0f;
     ULONG shellChangeRegId_ = 0;
     bool reloading_ = false;
+    bool trayMenuShowing_ = false;
     LONGLONG lastRecycleBinItemCount_ = -1;
     std::vector<HBITMAP> menuIconPool_;
     bool navButtonsVisible_ = false;
