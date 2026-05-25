@@ -50,6 +50,18 @@ struct PendingGridMove
     GridCell cell;
 };
 
+struct PendingWidgetMove
+{
+    size_t index = 0;
+    GridCell cell;
+};
+
+enum class DesktopWidgetType
+{
+    Collection,
+    FileCategories,
+};
+
 struct Pidl
 {
     PIDLIST_ABSOLUTE value = nullptr;
@@ -90,6 +102,7 @@ struct DesktopItem
 {
     std::wstring name;
     std::wstring parsingName;
+    std::wstring layoutKey;
     std::wstring desktopIconClsid;
     std::wstring typeName;
     Pidl absolutePidl;
@@ -108,6 +121,7 @@ struct DesktopItem
     DesktopItem(DesktopItem&& other) noexcept
         : name(std::move(other.name)),
           parsingName(std::move(other.parsingName)),
+          layoutKey(std::move(other.layoutKey)),
           desktopIconClsid(std::move(other.desktopIconClsid)),
           typeName(std::move(other.typeName)),
           absolutePidl(std::move(other.absolutePidl)),
@@ -136,6 +150,7 @@ struct DesktopItem
 
             name = std::move(other.name);
             parsingName = std::move(other.parsingName);
+            layoutKey = std::move(other.layoutKey);
             desktopIconClsid = std::move(other.desktopIconClsid);
             typeName = std::move(other.typeName);
             absolutePidl = std::move(other.absolutePidl);
@@ -161,6 +176,23 @@ struct DesktopItem
             DeleteObject(iconBitmap);
         }
     }
+};
+
+struct DesktopWidget
+{
+    std::wstring id;
+    DesktopWidgetType type = DesktopWidgetType::Collection;
+    std::wstring title;
+    std::wstring sourceFolderPath;
+    GridCell gridCell;
+    GridSpan gridSpan;
+    RECT bounds{};
+    bool selected = false;
+    bool autoCollect = false;
+    bool listMode = false;
+    int scrollOffset = 0;
+    std::wstring activeCategoryId;
+    std::vector<std::wstring> itemKeys;
 };
 
 struct DesktopWindows

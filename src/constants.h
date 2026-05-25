@@ -54,6 +54,14 @@ constexpr UINT kContextGridAddColumn = 41014;
 constexpr UINT kContextGridRemoveColumn = 41015;
 constexpr UINT kContextZoomIncrease = 41016;
 constexpr UINT kContextZoomDecrease = 41017;
+constexpr UINT kContextAddCollectionWidget = 41018;
+constexpr UINT kContextWidgetOpen = 41019;
+constexpr UINT kContextWidgetRename = 41020;
+constexpr UINT kContextWidgetDelete = 41021;
+constexpr UINT kContextAddFileCategoryWidget = 41022;
+constexpr UINT kContextWidgetManualCollect = 41023;
+constexpr UINT kContextWidgetToggleAutoCollect = 41024;
+constexpr UINT kContextWidgetToggleListMode = 41025;
 constexpr UINT kContextZoomPresetFirst = 41150;
 
 constexpr UINT kShellChangeMessage = WM_APP + 2;
