@@ -1894,7 +1894,7 @@ private:
         settingsIconVisibility_[it->second] = newVisible;
         WriteDesktopIconRegistryValue(it->second, newVisible);
         SaveSettings();
-        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, nullptr, nullptr);
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
         ReloadItems();
     }
 
@@ -2173,7 +2173,13 @@ private:
         std::stable_sort(items_.begin(), items_.end(), [](const DesktopItem& a, const DesktopItem& b) {
             bool aIsClsid = a.parsingName.find(L'{') != std::wstring::npos;
             bool bIsClsid = b.parsingName.find(L'{') != std::wstring::npos;
-            return aIsClsid && !bIsClsid;
+            if (aIsClsid != bIsClsid) return aIsClsid;
+            if (aIsClsid)
+            {
+                int cmp = ToUpperInvariant(a.typeName).compare(ToUpperInvariant(b.typeName));
+                if (cmp != 0) return cmp < 0;
+            }
+            return ToUpperInvariant(a.name) < ToUpperInvariant(b.name);
         });
 
         std::unordered_set<std::wstring> usedSlots;
