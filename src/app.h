@@ -16,6 +16,8 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -257,6 +259,41 @@ public:
     }
 
 private:
+    enum class DesktopHitKind
+    {
+        None,
+        Item,
+        Widget,
+        WidgetMember,
+        WidgetCategory,
+        WidgetAllButton,
+        PopupMember,
+    };
+
+    struct DesktopHit
+    {
+        DesktopHitKind kind = DesktopHitKind::None;
+        size_t itemIndex = static_cast<size_t>(-1);
+        size_t widgetIndex = static_cast<size_t>(-1);
+        size_t memberIndex = static_cast<size_t>(-1);
+        RECT bounds{};
+    };
+
+    enum WidgetResizeEdge
+    {
+        kResizeNone = 0,
+        kResizeLeft = 1,
+        kResizeRight = 2,
+        kResizeTop = 4,
+        kResizeBottom = 8,
+    };
+
+    static constexpr int kCollectionPopupPaddingX = 18;
+    static constexpr int kCollectionPopupHeaderHeight = 54;
+    static constexpr int kCollectionPopupBottomPadding = 18;
+    static constexpr int kCollectionPopupCellWidth = kCellWidth;
+    static constexpr int kCollectionPopupCellHeight = kMinCellHeight;
+
     bool InitializeGraphics()
     {
         const D3D_FEATURE_LEVEL featureLevels[] = {
@@ -374,6 +411,24 @@ private:
         itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
         itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 17.0f, 13.0f);
+
+        hr = dwriteFactory_->CreateTextFormat(
+            L"Segoe UI",
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            12.0f,
+            L"",
+            &collectionItemTextFormat_);
+        if (FAILED(hr))
+        {
+            lastGraphicsError_ = hr;
+            return false;
+        }
+        collectionItemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        collectionItemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        collectionItemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
         hr = dwriteFactory_->CreateTextFormat(
             L"Segoe UI",
@@ -1208,6 +1263,7 @@ private:
             ClampAlphaToColorKey(item.iconBitmap, kTransparentKey);
             item.sysIconIndex = info.iIcon;
             std::wstring key = GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid);
+            item.layoutKey = key;
             if (seenKeys.contains(key))
             {
                 continue;
@@ -1249,10 +1305,21 @@ private:
             return ToUpperInvariant(a.name) < ToUpperInvariant(b.name);
         });
 
+        CleanWidgetItemKeys();
+        ApplyAutoCollectFileCategoryWidgets();
+
         std::unordered_set<std::wstring> usedSlots;
+        NormalizeWidgetsInGrid(usedSlots);
+
         int nextTailSlot = 0;
         for (auto& item : items_)
         {
+            if (!IsTopLevelItem(item))
+            {
+                item.slot = -1;
+                item.bounds = {};
+                continue;
+            }
             item.gridSpan.columns = std::max(1, item.gridSpan.columns);
             item.gridSpan.rows = std::max(1, item.gridSpan.rows);
             if (item.slot < 0)
@@ -1278,7 +1345,7 @@ private:
         std::vector<DesktopItem*> unslotted;
         for (auto& item : items_)
         {
-            if (item.slot < 0)
+            if (IsTopLevelItem(item) && item.slot < 0)
             {
                 unslotted.push_back(&item);
             }
@@ -1401,9 +1468,154 @@ private:
         return true;
     }
 
+    bool ReadJsonBoolField(const std::string& objectText, const char* fieldName, bool& value) const
+    {
+        std::string marker = std::string("\"") + fieldName + "\"";
+        size_t name = objectText.find(marker);
+        if (name == std::string::npos)
+        {
+            return false;
+        }
+
+        size_t colon = objectText.find(':', name + marker.size());
+        size_t valueStart = objectText.find_first_not_of(" \t\r\n", colon == std::string::npos ? name + marker.size() : colon + 1);
+        if (valueStart == std::string::npos)
+        {
+            return false;
+        }
+
+        if (objectText.compare(valueStart, 4, "true") == 0)
+        {
+            value = true;
+            return true;
+        }
+        if (objectText.compare(valueStart, 5, "false") == 0)
+        {
+            value = false;
+            return true;
+        }
+        return false;
+    }
+
+    size_t FindJsonContainerEnd(const std::string& text, size_t start, char open, char close) const
+    {
+        if (start >= text.size() || text[start] != open)
+        {
+            return std::string::npos;
+        }
+
+        int depth = 1;
+        bool inString = false;
+        for (size_t i = start + 1; i < text.size(); ++i)
+        {
+            char ch = text[i];
+            if (ch == '"' && (i == 0 || text[i - 1] != '\\'))
+            {
+                inString = !inString;
+            }
+            else if (!inString)
+            {
+                if (ch == open)
+                {
+                    ++depth;
+                }
+                else if (ch == close)
+                {
+                    --depth;
+                    if (depth == 0)
+                    {
+                        return i;
+                    }
+                }
+            }
+        }
+        return std::string::npos;
+    }
+
+    size_t FindJsonObjectEnd(const std::string& text, size_t start) const
+    {
+        return FindJsonContainerEnd(text, start, '{', '}');
+    }
+
+    size_t FindJsonArrayEnd(const std::string& text, size_t start) const
+    {
+        return FindJsonContainerEnd(text, start, '[', ']');
+    }
+
+    bool ReadJsonStringArrayField(const std::string& objectText, const char* fieldName, std::vector<std::wstring>& values) const
+    {
+        values.clear();
+        std::string marker = std::string("\"") + fieldName + "\"";
+        size_t name = objectText.find(marker);
+        if (name == std::string::npos)
+        {
+            return false;
+        }
+
+        size_t colon = objectText.find(':', name + marker.size());
+        size_t arrayStart = objectText.find('[', colon == std::string::npos ? name + marker.size() : colon + 1);
+        if (arrayStart == std::string::npos)
+        {
+            return false;
+        }
+
+        size_t arrayEnd = FindJsonArrayEnd(objectText, arrayStart);
+        if (arrayEnd == std::string::npos)
+        {
+            return false;
+        }
+
+        size_t pos = arrayStart + 1;
+        while (pos < arrayEnd)
+        {
+            size_t quote = objectText.find('"', pos);
+            if (quote == std::string::npos || quote >= arrayEnd)
+            {
+                break;
+            }
+
+            std::string utf8;
+            size_t end = 0;
+            if (!ParseJsonStringAt(objectText, quote, utf8, end))
+            {
+                break;
+            }
+            values.push_back(Utf8ToWide(utf8));
+            pos = end;
+        }
+        return true;
+    }
+
+    std::wstring WidgetTypeToJson(DesktopWidgetType type) const
+    {
+        switch (type)
+        {
+        case DesktopWidgetType::FileCategories:
+            return L"fileCategories";
+        case DesktopWidgetType::Collection:
+        default:
+            return L"collection";
+        }
+    }
+
+    DesktopWidgetType WidgetTypeFromJson(const std::wstring& type) const
+    {
+        std::wstring normalized = ToUpperInvariant(type);
+        if (normalized == L"FILECATEGORIES" || normalized == L"FILE_CATEGORIES")
+        {
+            return DesktopWidgetType::FileCategories;
+        }
+        if (normalized == L"COLLECTION")
+        {
+            return DesktopWidgetType::Collection;
+        }
+        return DesktopWidgetType::Collection;
+    }
+
     void LoadLayoutSlots()
     {
         layoutRecords_.clear();
+        widgets_.clear();
         savedPageIds_.clear();
 
         std::ifstream file(GetLayoutPath(), std::ios::binary);
@@ -1425,29 +1637,6 @@ private:
 
         LoadSavedPagesFromJson(text);
 
-        auto findJsonObjectEnd = [](const std::string& t, size_t start) -> size_t {
-            int depth = 1;
-            bool inString = false;
-            for (size_t i = start + 1; i < t.size(); ++i)
-            {
-                char ch = t[i];
-                if (ch == '"' && (i == 0 || t[i - 1] != '\\'))
-                {
-                    inString = !inString;
-                }
-                else if (!inString)
-                {
-                    if (ch == '{') ++depth;
-                    else if (ch == '}')
-                    {
-                        --depth;
-                        if (depth == 0) return i;
-                    }
-                }
-            }
-            return std::string::npos;
-        };
-
         size_t pos = 0;
         while ((pos = text.find("\"key\"", pos)) != std::string::npos)
         {
@@ -1456,7 +1645,7 @@ private:
             {
                 break;
             }
-            size_t objectEnd = findJsonObjectEnd(text, objectStart);
+            size_t objectEnd = FindJsonObjectEnd(text, objectStart);
             if (objectEnd == std::string::npos || objectEnd <= objectStart)
             {
                 break;
@@ -1508,8 +1697,135 @@ private:
             pos = objectEnd + 1;
         }
 
+        LoadWidgetsFromJson(text);
+
         ApplyPageMapping();
         ApplySavedGridDimensions();
+    }
+
+    void LoadWidgetsFromJson(const std::string& text)
+    {
+        size_t widgetsName = text.find("\"widgets\"");
+        if (widgetsName == std::string::npos)
+        {
+            return;
+        }
+
+        size_t arrayStart = text.find('[', widgetsName);
+        if (arrayStart == std::string::npos)
+        {
+            return;
+        }
+
+        size_t arrayEnd = FindJsonArrayEnd(text, arrayStart);
+        if (arrayEnd == std::string::npos || arrayEnd <= arrayStart)
+        {
+            return;
+        }
+
+        size_t pos = arrayStart + 1;
+        while ((pos = text.find('{', pos)) != std::string::npos && pos < arrayEnd)
+        {
+            size_t objectEnd = FindJsonObjectEnd(text, pos);
+            if (objectEnd == std::string::npos || objectEnd > arrayEnd)
+            {
+                break;
+            }
+
+            std::string objectText = text.substr(pos, objectEnd - pos + 1);
+            std::string idUtf8;
+            std::string typeUtf8;
+            std::string titleUtf8;
+            std::string sourceUtf8;
+            std::string activeCategoryUtf8;
+            std::string pageUtf8;
+            int x = 0;
+            int y = 0;
+            int w = 1;
+            int h = 1;
+            int scrollOffset = 0;
+            bool autoCollect = false;
+            bool listMode = false;
+            if (!ReadJsonStringField(objectText, "id", idUtf8) ||
+                !ReadJsonStringField(objectText, "page", pageUtf8) ||
+                !ReadJsonIntField(objectText, "x", x) ||
+                !ReadJsonIntField(objectText, "y", y))
+            {
+                pos = objectEnd + 1;
+                continue;
+            }
+
+            ReadJsonStringField(objectText, "type", typeUtf8);
+            ReadJsonStringField(objectText, "title", titleUtf8);
+            ReadJsonStringField(objectText, "sourceFolderPath", sourceUtf8);
+            ReadJsonStringField(objectText, "activeCategory", activeCategoryUtf8);
+            ReadJsonIntField(objectText, "w", w);
+            ReadJsonIntField(objectText, "h", h);
+            ReadJsonIntField(objectText, "scrollOffset", scrollOffset);
+            ReadJsonBoolField(objectText, "autoCollect", autoCollect);
+            ReadJsonBoolField(objectText, "listMode", listMode);
+
+            DesktopWidget widget;
+            widget.id = Utf8ToWide(idUtf8);
+            widget.type = WidgetTypeFromJson(Utf8ToWide(typeUtf8));
+            widget.title = titleUtf8.empty()
+                ? (widget.type == DesktopWidgetType::FileCategories ? L"桌面分类" : L"集合")
+                : Utf8ToWide(titleUtf8);
+            widget.sourceFolderPath = Utf8ToWide(sourceUtf8);
+            widget.gridCell.pageId = Utf8ToWide(pageUtf8);
+            widget.gridCell.column = x;
+            widget.gridCell.row = y;
+            widget.gridSpan.columns = std::max(1, w);
+            widget.gridSpan.rows = std::max(1, h);
+            widget.autoCollect = autoCollect;
+            widget.listMode = listMode;
+            widget.scrollOffset = std::max(0, scrollOffset);
+            widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
+            ReadJsonStringArrayField(objectText, "items", widget.itemKeys);
+            for (auto& key : widget.itemKeys)
+            {
+                key = NormalizeLayoutKey(key);
+            }
+            RememberSavedPageId(widget.gridCell.pageId);
+            widgets_.push_back(std::move(widget));
+            pos = objectEnd + 1;
+        }
+    }
+
+    bool IsItemKeyInAnyCollection(const std::wstring& key) const
+    {
+        if (key.empty())
+        {
+            return false;
+        }
+
+        std::wstring normalized = NormalizeLayoutKey(key);
+        for (const auto& widget : widgets_)
+        {
+            if (std::find(widget.itemKeys.begin(), widget.itemKeys.end(), normalized) != widget.itemKeys.end())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool IsTopLevelItem(const DesktopItem& item) const
+    {
+        return !IsItemKeyInAnyCollection(item.layoutKey);
+    }
+
+    size_t FindItemIndexByKey(const std::wstring& key) const
+    {
+        std::wstring normalized = NormalizeLayoutKey(key);
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            if (NormalizeLayoutKey(items_[i].layoutKey) == normalized)
+            {
+                return i;
+            }
+        }
+        return static_cast<size_t>(-1);
     }
 
     void SaveLayoutSlots()
@@ -1517,7 +1833,7 @@ private:
         layoutRecords_.clear();
         for (const auto& item : items_)
         {
-            if (!item.parsingName.empty())
+            if (!item.parsingName.empty() && IsTopLevelItem(item))
             {
                 RememberSavedPageId(item.gridCell.pageId);
 
@@ -1526,7 +1842,7 @@ private:
                 record.span = item.gridSpan;
                 record.hasGrid = true;
                 record.legacySlot = item.slot;
-                layoutRecords_[GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid)] = record;
+                layoutRecords_[item.layoutKey] = record;
             }
         }
 
@@ -1534,7 +1850,10 @@ private:
         sortedItems.reserve(items_.size());
         for (const auto& item : items_)
         {
-            sortedItems.push_back(&item);
+            if (IsTopLevelItem(item))
+            {
+                sortedItems.push_back(&item);
+            }
         }
         std::sort(sortedItems.begin(), sortedItems.end(), [](const DesktopItem* left, const DesktopItem* right) {
             if (left->gridCell.pageId != right->gridCell.pageId)
@@ -1574,7 +1893,7 @@ private:
         for (size_t i = 0; i < sortedItems.size(); ++i)
         {
             const DesktopItem* item = sortedItems[i];
-            file << "    { \"key\": \"" << JsonEscapeUtf8(GetStableLayoutKey(item->absolutePidl.get(), item->parsingName, item->desktopIconClsid)) <<
+            file << "    { \"key\": \"" << JsonEscapeUtf8(item->layoutKey) <<
                 "\", \"page\": \"" << JsonEscapeUtf8(item->gridCell.pageId) <<
                 "\", \"x\": " << item->gridCell.column <<
                 ", \"y\": " << item->gridCell.row <<
@@ -1583,15 +1902,73 @@ private:
                 ", \"slot\": " << item->slot << " }";
             file << (i + 1 == sortedItems.size() ? "\n" : ",\n");
         }
+        file << "  ],\n  \"widgets\": [\n";
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            const DesktopWidget& widget = widgets_[i];
+            file << "    { \"id\": \"" << JsonEscapeUtf8(widget.id) <<
+                "\", \"type\": \"" << JsonEscapeUtf8(WidgetTypeToJson(widget.type)) <<
+                "\", \"title\": \"" << JsonEscapeUtf8(widget.title) <<
+                "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(widget.sourceFolderPath) <<
+                "\", \"activeCategory\": \"" << JsonEscapeUtf8(widget.activeCategoryId) <<
+                "\", \"page\": \"" << JsonEscapeUtf8(widget.gridCell.pageId) <<
+                "\", \"x\": " << widget.gridCell.column <<
+                ", \"y\": " << widget.gridCell.row <<
+                ", \"w\": " << std::max(1, widget.gridSpan.columns) <<
+                ", \"h\": " << std::max(1, widget.gridSpan.rows) <<
+                ", \"autoCollect\": " << (widget.autoCollect ? "true" : "false") <<
+                ", \"listMode\": " << (widget.listMode ? "true" : "false") <<
+                ", \"scrollOffset\": " << std::max(0, widget.scrollOffset) <<
+                ", \"items\": [";
+            for (size_t j = 0; j < widget.itemKeys.size(); ++j)
+            {
+                file << "\"" << JsonEscapeUtf8(widget.itemKeys[j]) << "\"";
+                if (j + 1 != widget.itemKeys.size())
+                {
+                    file << ", ";
+                }
+            }
+            file << "] }";
+            file << (i + 1 == widgets_.size() ? "\n" : ",\n");
+        }
         file << "  ]\n}\n";
+    }
+
+    void PlaceSortedTopLevelItems(const std::vector<size_t>& order)
+    {
+        std::unordered_set<std::wstring> usedSlots;
+        for (const auto& widget : widgets_)
+        {
+            MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
+        }
+
+        for (size_t itemIndex : order)
+        {
+            if (itemIndex >= items_.size() || !IsTopLevelItem(items_[itemIndex]))
+            {
+                continue;
+            }
+
+            GridCell freeCell;
+            if (TryFindFreeCell(items_[itemIndex].gridSpan, usedSlots, freeCell))
+            {
+                items_[itemIndex].gridCell = freeCell;
+                items_[itemIndex].slot = SlotFromCell(freeCell);
+                MarkGridArea(usedSlots, freeCell, items_[itemIndex].gridSpan);
+            }
+        }
     }
 
     void SortIconsByName()
     {
-        std::vector<size_t> order(items_.size());
+        std::vector<size_t> order;
+        order.reserve(items_.size());
         for (size_t i = 0; i < items_.size(); ++i)
         {
-            order[i] = i;
+            if (IsTopLevelItem(items_[i]))
+            {
+                order.push_back(i);
+            }
         }
 
         std::sort(order.begin(), order.end(), [this](size_t left, size_t right) {
@@ -1600,11 +1977,7 @@ private:
             return leftName < rightName;
         });
 
-        for (size_t i = 0; i < order.size(); ++i)
-        {
-            items_[order[i]].gridCell = CellFromSequentialIndex(static_cast<int>(i));
-            items_[order[i]].slot = SlotFromCell(items_[order[i]].gridCell);
-        }
+        PlaceSortedTopLevelItems(order);
 
         LayoutItems();
         SaveLayoutSlots();
@@ -1613,10 +1986,14 @@ private:
 
     void SortIconsByType()
     {
-        std::vector<size_t> order(items_.size());
+        std::vector<size_t> order;
+        order.reserve(items_.size());
         for (size_t i = 0; i < items_.size(); ++i)
         {
-            order[i] = i;
+            if (IsTopLevelItem(items_[i]))
+            {
+                order.push_back(i);
+            }
         }
 
         std::sort(order.begin(), order.end(), [this](size_t left, size_t right) {
@@ -1634,11 +2011,7 @@ private:
             return ToUpperInvariant(items_[left].name) < ToUpperInvariant(items_[right].name);
         });
 
-        for (size_t i = 0; i < order.size(); ++i)
-        {
-            items_[order[i]].gridCell = CellFromSequentialIndex(static_cast<int>(i));
-            items_[order[i]].slot = SlotFromCell(items_[order[i]].gridCell);
-        }
+        PlaceSortedTopLevelItems(order);
 
         LayoutItems();
         SaveLayoutSlots();
@@ -1649,6 +2022,12 @@ private:
     {
         for (auto& item : items_)
         {
+            if (!IsTopLevelItem(item))
+            {
+                item.bounds = {};
+                item.slot = -1;
+                continue;
+            }
             if (!gridPages_.empty() && item.gridCell.pageId.empty())
             {
                 item.gridCell.pageId = gridPages_.front().id;
@@ -1663,6 +2042,27 @@ private:
             }
             item.slot = SlotFromCell(item.gridCell);
             item.bounds = GetGridRect(item.gridCell, item.gridSpan);
+        }
+        LayoutWidgets();
+    }
+
+    void LayoutWidgets()
+    {
+        for (auto& widget : widgets_)
+        {
+            if (!gridPages_.empty() && widget.gridCell.pageId.empty())
+            {
+                widget.gridCell.pageId = gridPages_.front().id;
+            }
+            const GridPage* page = FindExactGridPage(widget.gridCell.pageId);
+            if (page != nullptr)
+            {
+                widget.gridSpan.columns = std::clamp(widget.gridSpan.columns, 1, std::max(1, page->columns));
+                widget.gridSpan.rows = std::clamp(widget.gridSpan.rows, 1, std::max(1, page->rows));
+                widget.gridCell.column = std::clamp(widget.gridCell.column, 0, std::max(0, page->columns - widget.gridSpan.columns));
+                widget.gridCell.row = std::clamp(widget.gridCell.row, 0, std::max(0, page->rows - widget.gridSpan.rows));
+            }
+            widget.bounds = GetGridRect(widget.gridCell, widget.gridSpan);
         }
     }
 
@@ -2201,6 +2601,52 @@ private:
         return cell;
     }
 
+    int GetGridAxisOffset(const GridPage& page, int index, bool horizontal) const
+    {
+        const int count = horizontal ? page.columns : page.rows;
+        if (count <= 1)
+        {
+            return 0;
+        }
+
+        const int cellSize = horizontal ? page.cellWidth : page.cellHeight;
+        const int margin = horizontal ? page.marginX : page.marginY;
+        const int areaSize = horizontal
+            ? static_cast<int>(page.workArea.right - page.workArea.left)
+            : static_cast<int>(page.workArea.bottom - page.workArea.top);
+        const int usable = std::max(1, areaSize - (margin * 2));
+        const int travel = std::max(0, usable - cellSize);
+        const int denominator = std::max(1, count - 1);
+        return static_cast<int>((static_cast<long long>(travel) * std::clamp(index, 0, count - 1) + denominator / 2) / denominator);
+    }
+
+    int GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, bool horizontal) const
+    {
+        const int count = horizontal ? page.columns : page.rows;
+        if (count <= 1)
+        {
+            return 0;
+        }
+
+        const int cellSize = horizontal ? page.cellWidth : page.cellHeight;
+        const int margin = horizontal ? page.marginX : page.marginY;
+        const int origin = horizontal ? page.workArea.left : page.workArea.top;
+        int bestIndex = 0;
+        int bestDistance = INT_MAX;
+        for (int i = 0; i < count; ++i)
+        {
+            const int left = origin + margin + GetGridAxisOffset(page, i, horizontal);
+            const int center = left + cellSize / 2;
+            const int distance = std::abs(coordinate - center);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestIndex = i;
+            }
+        }
+        return bestIndex;
+    }
+
     RECT GetGridRect(const GridCell& cell, GridSpan span = {}) const
     {
         const GridPage* page = FindExactGridPage(cell.pageId);
@@ -2213,11 +2659,11 @@ private:
         const int row = std::clamp(cell.row, 0, std::max(0, page->rows - 1));
         const int spanColumns = std::clamp(span.columns, 1, std::max(1, page->columns - column));
         const int spanRows = std::clamp(span.rows, 1, std::max(1, page->rows - row));
-        const int x = page->workArea.left + page->marginX + (column * (page->cellWidth + page->gapX));
-        const int y = page->workArea.top + page->marginY + (row * (page->cellHeight + page->gapY));
-        const int width = (spanColumns * page->cellWidth) + ((spanColumns - 1) * page->gapX);
-        const int height = (spanRows * page->cellHeight) + ((spanRows - 1) * page->gapY);
-        return MakeRect(x, y, x + width, y + height);
+        const int x = page->workArea.left + page->marginX + GetGridAxisOffset(*page, column, true);
+        const int y = page->workArea.top + page->marginY + GetGridAxisOffset(*page, row, false);
+        const int right = page->workArea.left + page->marginX + GetGridAxisOffset(*page, column + spanColumns - 1, true) + page->cellWidth;
+        const int bottom = page->workArea.top + page->marginY + GetGridAxisOffset(*page, row + spanRows - 1, false) + page->cellHeight;
+        return MakeRect(x, y, right, bottom);
     }
 
     RECT GetSlotRect(int slot) const
@@ -2234,11 +2680,9 @@ private:
             return cell;
         }
 
-        const int stepX = std::max(1, page->cellWidth + page->gapX);
-        const int stepY = std::max(1, page->cellHeight + page->gapY);
         cell.pageId = page->id;
-        cell.column = std::clamp(static_cast<int>((point.x - page->workArea.left - page->marginX + (stepX / 2)) / stepX), 0, std::max(0, page->columns - 1));
-        cell.row = std::clamp(static_cast<int>((point.y - page->workArea.top - page->marginY + (stepY / 2)) / stepY), 0, std::max(0, page->rows - 1));
+        cell.column = GetGridAxisIndexFromPoint(*page, point.x, true);
+        cell.row = GetGridAxisIndexFromPoint(*page, point.y, false);
         return cell;
     }
 
@@ -2287,6 +2731,20 @@ private:
 
     RECT GetTargetRectAt(POINT point) const
     {
+        if (IsPointInsideOpenPopup(point))
+        {
+            return GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        }
+
+        DesktopHit desktopHit = HitTestDesktop(point);
+        if ((desktopHit.kind == DesktopHitKind::Widget ||
+            desktopHit.kind == DesktopHitKind::WidgetMember ||
+            desktopHit.kind == DesktopHitKind::WidgetAllButton) &&
+            desktopHit.widgetIndex < widgets_.size())
+        {
+            return GetWidgetSelectionRect(widgets_[desktopHit.widgetIndex]);
+        }
+
         int hit = HitTest(point);
         if (hit >= 0 && !items_[static_cast<size_t>(hit)].selected)
         {
@@ -2309,12 +2767,20 @@ private:
             {
                 continue;
             }
-            if (IsRectEmptyRect(item.bounds))
+            RECT sourceBounds = item.bounds;
+            if (IsRectEmptyRect(sourceBounds) &&
+                draggingCollectionMember_ &&
+                mouseDownHit_ >= 0 &&
+                &item == &items_[static_cast<size_t>(mouseDownHit_)])
+            {
+                sourceBounds = collectionDragStartBounds_;
+            }
+            if (IsRectEmptyRect(sourceBounds))
             {
                 continue;
             }
 
-            RECT moved = GetItemSelectionRect(item, true);
+            RECT moved = GetItemSelectionRect(sourceBounds, true);
             OffsetRect(&moved, dx, dy);
             bounds = hasBounds ? UnionCopy(bounds, moved) : moved;
             hasBounds = true;
@@ -2326,6 +2792,7 @@ private:
     RECT GetInternalDragDirtyRect(POINT point) const
     {
         RECT dirty = GetSelectedDragBoundsAt(point);
+        dirty = UnionCopy(dirty, GetTargetRectAt(point));
         for (const RECT& rect : GetSelectedMovePreviewRects(GetDragTargetPoint(point)))
         {
             dirty = UnionCopy(dirty, rect);
@@ -2352,6 +2819,17 @@ private:
         return InflateCopy(dirty, 16);
     }
 
+    bool IsPointInsideOpenPopup(POINT point) const
+    {
+        if (popupWidgetIndex_ >= widgets_.size())
+        {
+            return false;
+        }
+
+        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        return PtInRect(&popup, point) != FALSE;
+    }
+
     void InvalidateFast(RECT dirty)
     {
         if (hwnd_ == nullptr || IsRectEmptyRect(dirty))
@@ -2372,6 +2850,22 @@ private:
 
     std::wstring MakeInternalDragHint(POINT point) const
     {
+        if (IsPointInsideOpenPopup(point))
+        {
+            return L"释放：调整集合内位置";
+        }
+
+        DesktopHit desktopHit = HitTestDesktop(point);
+        if ((desktopHit.kind == DesktopHitKind::PopupMember ||
+            desktopHit.kind == DesktopHitKind::Widget ||
+            desktopHit.kind == DesktopHitKind::WidgetMember ||
+            desktopHit.kind == DesktopHitKind::WidgetAllButton) &&
+            desktopHit.widgetIndex < widgets_.size() &&
+            widgets_[desktopHit.widgetIndex].type == DesktopWidgetType::Collection)
+        {
+            return L"释放：加入集合「" + widgets_[desktopHit.widgetIndex].title + L"」";
+        }
+
         int hit = HitTest(point);
         if (hit >= 0 && !items_[static_cast<size_t>(hit)].selected)
         {
@@ -2412,6 +2906,107 @@ private:
             }
         }
         return -1;
+    }
+
+    DesktopHit HitTestDesktop(POINT point) const
+    {
+        if (popupWidgetIndex_ < widgets_.size())
+        {
+            const DesktopWidget& popupWidget = widgets_[popupWidgetIndex_];
+            RECT popup = GetCollectionPopupRect(popupWidget);
+            if (PtInRect(&popup, point))
+            {
+                std::vector<std::wstring> popupKeys = GetPopupItemKeys(popupWidget);
+                for (size_t i = 0; i < popupKeys.size(); ++i)
+                {
+                    RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                    if (PtInRect(&itemRect, point))
+                    {
+                        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                        if (itemIndex != static_cast<size_t>(-1))
+                        {
+                            return { DesktopHitKind::PopupMember, itemIndex, popupWidgetIndex_, i, itemRect };
+                        }
+                    }
+                }
+                return { DesktopHitKind::Widget, static_cast<size_t>(-1), popupWidgetIndex_, static_cast<size_t>(-1), popup };
+            }
+        }
+
+        for (int i = static_cast<int>(widgets_.size()) - 1; i >= 0; --i)
+        {
+            const auto& widget = widgets_[static_cast<size_t>(i)];
+            if (widget.type == DesktopWidgetType::Collection)
+            {
+                const bool compact = widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
+                const size_t inlineCapacity = std::min(GetCollectionInlineCapacity(widget), widget.itemKeys.size());
+                for (size_t slot = 0; slot < inlineCapacity; ++slot)
+                {
+                    RECT slotRect = GetCollectionPreviewSlotRect(widget, slot);
+                    if (PtInRect(&slotRect, point))
+                    {
+                        size_t itemIndex = FindItemIndexByKey(widget.itemKeys[slot]);
+                        if (itemIndex != static_cast<size_t>(-1))
+                        {
+                            return { DesktopHitKind::WidgetMember, itemIndex, static_cast<size_t>(i), slot, slotRect };
+                        }
+                    }
+                }
+
+                if (!compact)
+                {
+                    size_t allSlot = GetCollectionAllButtonSlot(widget);
+                    if (allSlot != static_cast<size_t>(-1))
+                    {
+                        RECT allRect = GetCollectionPreviewSlotRect(widget, allSlot);
+                        if (PtInRect(&allRect, point))
+                        {
+                            return { DesktopHitKind::WidgetAllButton, static_cast<size_t>(-1), static_cast<size_t>(i), allSlot, allRect };
+                        }
+                    }
+                }
+            }
+            else if (widget.type == DesktopWidgetType::FileCategories)
+            {
+                std::vector<std::wstring> categoryIds = GetVisibleFileCategoryIds(widget);
+                for (size_t slot = 0; slot < categoryIds.size(); ++slot)
+                {
+                    RECT tab = GetFileCategoryTabRect(widget, slot);
+                    if (PtInRect(&tab, point))
+                    {
+                        return { DesktopHitKind::WidgetCategory, static_cast<size_t>(-1), static_cast<size_t>(i), slot, tab };
+                    }
+                }
+
+                std::vector<std::wstring> keys = GetFileCategoryKeys(widget, GetActiveFileCategoryId(widget));
+                RECT content = GetFileCategoryContentRect(widget);
+                for (size_t slot = 0; slot < keys.size(); ++slot)
+                {
+                    RECT itemRect = GetFileCategoryItemRect(widget, slot);
+                    if (RectsIntersect(itemRect, content) && PtInRect(&itemRect, point))
+                    {
+                        size_t itemIndex = FindItemIndexByKey(keys[slot]);
+                        if (itemIndex != static_cast<size_t>(-1))
+                        {
+                            return { DesktopHitKind::WidgetMember, itemIndex, static_cast<size_t>(i), slot, itemRect };
+                        }
+                    }
+                }
+            }
+
+            RECT hitRect = GetWidgetHitRect(widget);
+            if (PtInRect(&hitRect, point))
+            {
+                return { DesktopHitKind::Widget, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), hitRect };
+            }
+        }
+
+        int itemHit = HitTest(point);
+        if (itemHit >= 0)
+        {
+            return { DesktopHitKind::Item, static_cast<size_t>(itemHit), static_cast<size_t>(-1), static_cast<size_t>(-1), GetItemHitRect(items_[static_cast<size_t>(itemHit)]) };
+        }
+        return {};
     }
 
     RECT GetItemIconRect(RECT bounds) const
@@ -2470,6 +3065,11 @@ private:
         {
             item.selected = false;
         }
+        for (auto& widget : widgets_)
+        {
+            widget.selected = false;
+        }
+        selectedWidgetIndex_ = static_cast<size_t>(-1);
         selectedCount_ = 0;
     }
 
@@ -2482,8 +3082,26 @@ private:
 
     void ToggleSelection(size_t index)
     {
+        if (selectedWidgetIndex_ != static_cast<size_t>(-1))
+        {
+            for (auto& widget : widgets_)
+            {
+                widget.selected = false;
+            }
+            selectedWidgetIndex_ = static_cast<size_t>(-1);
+        }
         items_[index].selected = !items_[index].selected;
         selectedCount_ += items_[index].selected ? 1 : -1;
+    }
+
+    void SelectWidgetOnly(size_t index)
+    {
+        ClearSelection();
+        if (index < widgets_.size())
+        {
+            widgets_[index].selected = true;
+            selectedWidgetIndex_ = index;
+        }
     }
 
     std::wstring GridSlotKey(const GridCell& cell) const
@@ -2543,12 +3161,142 @@ private:
         }
     }
 
+    bool TryFindFreeCell(
+        GridSpan span,
+        const std::unordered_set<std::wstring>& usedSlots,
+        GridCell& result,
+        const std::wstring& preferredPageId = L"",
+        int preferredStartSlot = 0) const
+    {
+        auto tryPage = [&](const GridPage& page, int startSlot, GridCell& found) -> bool {
+            const int capacity = std::max(1, page.columns * page.rows);
+            for (int slot = std::clamp(startSlot, 0, capacity - 1); slot < capacity; ++slot)
+            {
+                GridCell candidate;
+                candidate.pageId = page.id;
+                candidate.column = slot / std::max(1, page.rows);
+                candidate.row = slot % std::max(1, page.rows);
+                if (IsGridAreaValid(candidate, span) && !AreGridSlotsMarked(usedSlots, candidate, span))
+                {
+                    found = candidate;
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        if (!preferredPageId.empty())
+        {
+            for (const auto& page : gridPages_)
+            {
+                if (page.id == preferredPageId && tryPage(page, preferredStartSlot, result))
+                {
+                    return true;
+                }
+            }
+        }
+
+        for (const auto& page : gridPages_)
+        {
+            if (!preferredPageId.empty() && page.id == preferredPageId)
+            {
+                continue;
+            }
+            if (tryPage(page, 0, result))
+            {
+                return true;
+            }
+        }
+
+        if (!preferredPageId.empty())
+        {
+            for (const auto& page : gridPages_)
+            {
+                if (page.id == preferredPageId && tryPage(page, 0, result))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    void CleanWidgetItemKeys()
+    {
+        std::unordered_set<std::wstring> available;
+        for (const auto& item : items_)
+        {
+            if (!item.layoutKey.empty())
+            {
+                available.insert(NormalizeLayoutKey(item.layoutKey));
+            }
+        }
+
+        std::unordered_set<std::wstring> assigned;
+        for (auto& widget : widgets_)
+        {
+            std::vector<std::wstring> cleaned;
+            cleaned.reserve(widget.itemKeys.size());
+            for (const auto& rawKey : widget.itemKeys)
+            {
+                std::wstring key = NormalizeLayoutKey(rawKey);
+                if (key.empty() || !available.contains(key) || assigned.contains(key))
+                {
+                    continue;
+                }
+                cleaned.push_back(key);
+                assigned.insert(key);
+            }
+            widget.itemKeys = std::move(cleaned);
+        }
+    }
+
+    void NormalizeWidgetsInGrid(std::unordered_set<std::wstring>& usedSlots)
+    {
+        for (auto& widget : widgets_)
+        {
+            widget.gridSpan.columns = std::max(1, widget.gridSpan.columns);
+            widget.gridSpan.rows = std::max(1, widget.gridSpan.rows);
+            if (!gridPages_.empty() && widget.gridCell.pageId.empty())
+            {
+                widget.gridCell.pageId = gridPages_.front().id;
+            }
+
+            bool valid = IsGridAreaValid(widget.gridCell, widget.gridSpan) &&
+                !AreGridSlotsMarked(usedSlots, widget.gridCell, widget.gridSpan);
+            if (!valid)
+            {
+                GridCell freeCell;
+                if (TryFindFreeCell(widget.gridSpan, usedSlots, freeCell))
+                {
+                    widget.gridCell = freeCell;
+                }
+                else if (!gridPages_.empty())
+                {
+                    widget.gridCell.pageId = gridPages_.front().id;
+                    widget.gridCell.column = 0;
+                    widget.gridCell.row = 0;
+                    widget.gridSpan.columns = 1;
+                    widget.gridSpan.rows = 1;
+                }
+            }
+
+            RememberSavedPageId(widget.gridCell.pageId);
+            MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
+        }
+    }
+
     bool IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const
     {
         const int columns = std::max(1, span.columns);
         const int rows = std::max(1, span.rows);
         for (const auto& item : items_)
         {
+            if (!IsTopLevelItem(item))
+            {
+                continue;
+            }
             if (item.selected || item.gridCell.pageId != cell.pageId)
             {
                 continue;
@@ -2562,6 +3310,26 @@ private:
                 areaRight > item.gridCell.column &&
                 cell.row < itemBottom &&
                 areaBottom > item.gridCell.row)
+            {
+                return true;
+            }
+        }
+
+        for (const auto& widget : widgets_)
+        {
+            if (widget.selected || widget.gridCell.pageId != cell.pageId)
+            {
+                continue;
+            }
+
+            const int widgetRight = widget.gridCell.column + std::max(1, widget.gridSpan.columns);
+            const int widgetBottom = widget.gridCell.row + std::max(1, widget.gridSpan.rows);
+            const int areaRight = cell.column + columns;
+            const int areaBottom = cell.row + rows;
+            if (cell.column < widgetRight &&
+                areaRight > widget.gridCell.column &&
+                cell.row < widgetBottom &&
+                areaBottom > widget.gridCell.row)
             {
                 return true;
             }
@@ -2674,6 +3442,598 @@ private:
         MoveSelectedItemsToCell(CellFromSlot(targetSlot));
     }
 
+    bool GridAreasOverlap(const GridCell& leftCell, GridSpan leftSpan, const GridCell& rightCell, GridSpan rightSpan) const
+    {
+        if (leftCell.pageId != rightCell.pageId)
+        {
+            return false;
+        }
+
+        const int leftRight = leftCell.column + std::max(1, leftSpan.columns);
+        const int leftBottom = leftCell.row + std::max(1, leftSpan.rows);
+        const int rightRight = rightCell.column + std::max(1, rightSpan.columns);
+        const int rightBottom = rightCell.row + std::max(1, rightSpan.rows);
+        return leftCell.column < rightRight &&
+            leftRight > rightCell.column &&
+            leftCell.row < rightBottom &&
+            leftBottom > rightCell.row;
+    }
+
+    void AddOccupiedExcept(
+        std::unordered_set<std::wstring>& usedSlots,
+        size_t movingWidget,
+        const std::unordered_set<size_t>& displacedItems,
+        const std::unordered_set<size_t>& displacedWidgets) const
+    {
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            if (!IsTopLevelItem(items_[i]) || displacedItems.contains(i))
+            {
+                continue;
+            }
+            MarkGridArea(usedSlots, items_[i].gridCell, items_[i].gridSpan);
+        }
+
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (i == movingWidget || displacedWidgets.contains(i))
+            {
+                continue;
+            }
+            MarkGridArea(usedSlots, widgets_[i].gridCell, widgets_[i].gridSpan);
+        }
+    }
+
+    void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan)
+    {
+        if (widgetIndex >= widgets_.size())
+        {
+            return;
+        }
+
+        const GridPage* page = FindExactGridPage(targetCell.pageId);
+        if (page == nullptr)
+        {
+            return;
+        }
+
+        targetSpan.columns = std::clamp(targetSpan.columns, 1, std::max(1, page->columns));
+        targetSpan.rows = std::clamp(targetSpan.rows, 1, std::max(1, page->rows));
+        targetCell.column = std::clamp(targetCell.column, 0, std::max(0, page->columns - targetSpan.columns));
+        targetCell.row = std::clamp(targetCell.row, 0, std::max(0, page->rows - targetSpan.rows));
+
+        std::vector<size_t> displacedItemOrder;
+        std::vector<size_t> displacedWidgetOrder;
+        std::unordered_set<size_t> displacedItems;
+        std::unordered_set<size_t> displacedWidgets;
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            if (IsTopLevelItem(items_[i]) && GridAreasOverlap(targetCell, targetSpan, items_[i].gridCell, items_[i].gridSpan))
+            {
+                displacedItems.insert(i);
+                displacedItemOrder.push_back(i);
+            }
+        }
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (i != widgetIndex && GridAreasOverlap(targetCell, targetSpan, widgets_[i].gridCell, widgets_[i].gridSpan))
+            {
+                displacedWidgets.insert(i);
+                displacedWidgetOrder.push_back(i);
+            }
+        }
+
+        auto byGridOrder = [this](auto left, auto right) {
+            const GridCell& l = items_[left].gridCell;
+            const GridCell& r = items_[right].gridCell;
+            if (l.pageId != r.pageId) return l.pageId < r.pageId;
+            return SlotFromCell(l) < SlotFromCell(r);
+        };
+        std::sort(displacedItemOrder.begin(), displacedItemOrder.end(), byGridOrder);
+        std::sort(displacedWidgetOrder.begin(), displacedWidgetOrder.end(), [this](size_t left, size_t right) {
+            const GridCell& l = widgets_[left].gridCell;
+            const GridCell& r = widgets_[right].gridCell;
+            if (l.pageId != r.pageId) return l.pageId < r.pageId;
+            return SlotFromCell(l) < SlotFromCell(r);
+        });
+
+        widgets_[widgetIndex].gridCell = targetCell;
+        widgets_[widgetIndex].gridSpan = targetSpan;
+        std::unordered_set<std::wstring> usedSlots;
+        AddOccupiedExcept(usedSlots, widgetIndex, displacedItems, displacedWidgets);
+        MarkGridArea(usedSlots, targetCell, targetSpan);
+
+        int searchStart = SlotFromCell(targetCell) + std::max(1, targetSpan.rows);
+        for (size_t itemIndex : displacedItemOrder)
+        {
+            GridCell freeCell;
+            if (TryFindFreeCell(items_[itemIndex].gridSpan, usedSlots, freeCell, targetCell.pageId, searchStart))
+            {
+                items_[itemIndex].gridCell = freeCell;
+                items_[itemIndex].slot = SlotFromCell(freeCell);
+                MarkGridArea(usedSlots, freeCell, items_[itemIndex].gridSpan);
+            }
+        }
+
+        for (size_t otherWidget : displacedWidgetOrder)
+        {
+            GridCell freeCell;
+            if (TryFindFreeCell(widgets_[otherWidget].gridSpan, usedSlots, freeCell, targetCell.pageId, searchStart))
+            {
+                widgets_[otherWidget].gridCell = freeCell;
+                MarkGridArea(usedSlots, freeCell, widgets_[otherWidget].gridSpan);
+            }
+        }
+
+        LayoutItems();
+        SaveLayoutSlots();
+    }
+
+    void UpdateWidgetPreviewFromPoint(POINT point)
+    {
+        if (mouseDownWidgetIndex_ >= widgets_.size())
+        {
+            return;
+        }
+
+        if (resizingWidget_)
+        {
+            const GridPage* page = FindExactGridPage(widgetDragOriginalCell_.pageId);
+            if (page == nullptr)
+            {
+                return;
+            }
+
+            const int stepX = std::max(1, page->cellWidth + page->gapX);
+            const int stepY = std::max(1, page->cellHeight + page->gapY);
+            const int deltaColumns = static_cast<int>(std::round(static_cast<double>(point.x - mouseDownPoint_.x) / static_cast<double>(stepX)));
+            const int deltaRows = static_cast<int>(std::round(static_cast<double>(point.y - mouseDownPoint_.y) / static_cast<double>(stepY)));
+
+            GridCell cell = widgetDragOriginalCell_;
+            GridSpan span = widgetDragOriginalSpan_;
+            if ((widgetResizeEdges_ & kResizeLeft) != 0)
+            {
+                cell.column += deltaColumns;
+                span.columns -= deltaColumns;
+            }
+            if ((widgetResizeEdges_ & kResizeRight) != 0)
+            {
+                span.columns += deltaColumns;
+            }
+            if ((widgetResizeEdges_ & kResizeTop) != 0)
+            {
+                cell.row += deltaRows;
+                span.rows -= deltaRows;
+            }
+            if ((widgetResizeEdges_ & kResizeBottom) != 0)
+            {
+                span.rows += deltaRows;
+            }
+
+            span.columns = std::clamp(span.columns, 1, std::max(1, page->columns));
+            span.rows = std::clamp(span.rows, 1, std::max(1, page->rows));
+            cell.column = std::clamp(cell.column, 0, std::max(0, page->columns - span.columns));
+            cell.row = std::clamp(cell.row, 0, std::max(0, page->rows - span.rows));
+            widgetPreviewCell_ = cell;
+            widgetPreviewSpan_ = span;
+            return;
+        }
+
+        GridCell target = CellFromPoint(GetDragTargetPoint(point));
+        const GridPage* page = FindExactGridPage(target.pageId);
+        if (page == nullptr)
+        {
+            return;
+        }
+        target.column = std::clamp(target.column, 0, std::max(0, page->columns - widgetDragOriginalSpan_.columns));
+        target.row = std::clamp(target.row, 0, std::max(0, page->rows - widgetDragOriginalSpan_.rows));
+        widgetPreviewCell_ = target;
+        widgetPreviewSpan_ = widgetDragOriginalSpan_;
+    }
+
+    std::wstring MakeNewWidgetId() const
+    {
+        return L"collection-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
+    }
+
+    void AddCollectionWidgetAt(POINT screenPoint)
+    {
+        POINT clientPoint = screenPoint;
+        ScreenToClient(hwnd_, &clientPoint);
+        GridCell cell = CellFromPoint(clientPoint);
+        if (cell.pageId.empty())
+        {
+            return;
+        }
+
+        DesktopWidget widget;
+        widget.id = MakeNewWidgetId();
+        widget.type = DesktopWidgetType::Collection;
+        widget.title = L"集合";
+        widget.gridCell = cell;
+        widget.gridSpan = { 1, 1 };
+        widgets_.push_back(std::move(widget));
+        const size_t index = widgets_.size() - 1;
+        SelectWidgetOnly(index);
+        PlaceWidgetWithDisplacement(index, cell, { 1, 1 });
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    void AddFileCategoryWidgetAt(POINT screenPoint)
+    {
+        POINT clientPoint = screenPoint;
+        ScreenToClient(hwnd_, &clientPoint);
+        GridCell cell = CellFromPoint(clientPoint);
+        if (cell.pageId.empty())
+        {
+            return;
+        }
+
+        DesktopWidget widget;
+        widget.id = L"file-categories-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
+        widget.type = DesktopWidgetType::FileCategories;
+        widget.title = L"桌面分类";
+        widget.gridCell = cell;
+        widget.gridSpan = { 3, 2 };
+        widgets_.push_back(std::move(widget));
+        const size_t index = widgets_.size() - 1;
+        SelectWidgetOnly(index);
+        PlaceWidgetWithDisplacement(index, cell, { 3, 2 });
+        int collectAnswer = MessageBoxW(
+            hwnd_,
+            L"是否将当前桌面散文件收集到此分类组件？\n收集后这些项目会从自由桌面顶层隐藏。",
+            L"桌面文件分类",
+            MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1);
+        if (collectAnswer == IDYES)
+        {
+            CollectFilesIntoFileCategoryWidget(index, true);
+        }
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    void DeleteWidget(size_t widgetIndex)
+    {
+        if (widgetIndex >= widgets_.size())
+        {
+            return;
+        }
+
+        std::vector<std::wstring> keysToRestore = widgets_[widgetIndex].itemKeys;
+        GridCell startCell = widgets_[widgetIndex].gridCell;
+        widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
+        selectedWidgetIndex_ = static_cast<size_t>(-1);
+        popupWidgetIndex_ = static_cast<size_t>(-1);
+
+        std::unordered_set<std::wstring> restoringKeys;
+        for (const auto& key : keysToRestore)
+        {
+            restoringKeys.insert(NormalizeLayoutKey(key));
+        }
+
+        std::unordered_set<std::wstring> usedSlots;
+        for (const auto& item : items_)
+        {
+            if (!IsTopLevelItem(item) || restoringKeys.contains(NormalizeLayoutKey(item.layoutKey)))
+            {
+                continue;
+            }
+            MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+        }
+        for (const auto& widget : widgets_)
+        {
+            MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
+        }
+
+        int startSlot = SlotFromCell(startCell);
+        for (const auto& key : keysToRestore)
+        {
+            size_t itemIndex = FindItemIndexByKey(key);
+            if (itemIndex == static_cast<size_t>(-1))
+            {
+                continue;
+            }
+
+            items_[itemIndex].gridSpan = { 1, 1 };
+            GridCell freeCell;
+            if (TryFindFreeCell(items_[itemIndex].gridSpan, usedSlots, freeCell, startCell.pageId, startSlot))
+            {
+                items_[itemIndex].gridCell = freeCell;
+                items_[itemIndex].slot = SlotFromCell(freeCell);
+                MarkGridArea(usedSlots, freeCell, items_[itemIndex].gridSpan);
+            }
+        }
+
+        ClearSelection();
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    void OpenCollectionPopup(size_t widgetIndex)
+    {
+        OpenCollectionPopupAt(widgetIndex, { LONG_MIN, LONG_MIN }, L"");
+    }
+
+    void OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint, const std::wstring& categoryId = L"")
+    {
+        if (widgetIndex >= widgets_.size())
+        {
+            return;
+        }
+        popupWidgetIndex_ = widgetIndex;
+        popupScrollOffset_ = 0;
+        popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
+        popupAnchorPoint_ = anchorPoint;
+        popupCategoryId_ = categoryId;
+        popupRect_ = GetCollectionPopupRect(widgets_[widgetIndex]);
+        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    void CloseCollectionPopup()
+    {
+        if (popupWidgetIndex_ == static_cast<size_t>(-1))
+        {
+            return;
+        }
+        popupWidgetIndex_ = static_cast<size_t>(-1);
+        popupScrollOffset_ = 0;
+        popupHasAnchor_ = false;
+        popupCategoryId_.clear();
+        popupRect_ = {};
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    bool RemoveItemKeyFromWidget(size_t widgetIndex, const std::wstring& key)
+    {
+        if (widgetIndex >= widgets_.size())
+        {
+            return false;
+        }
+
+        std::wstring normalized = NormalizeLayoutKey(key);
+        auto& keys = widgets_[widgetIndex].itemKeys;
+        auto it = std::find(keys.begin(), keys.end(), normalized);
+        if (it == keys.end())
+        {
+            return false;
+        }
+        keys.erase(it);
+        return true;
+    }
+
+    void RemoveItemKeyFromAllCollections(const std::wstring& key)
+    {
+        std::wstring normalized = NormalizeLayoutKey(key);
+        for (auto& widget : widgets_)
+        {
+            auto& keys = widget.itemKeys;
+            keys.erase(std::remove(keys.begin(), keys.end(), normalized), keys.end());
+        }
+    }
+
+    void RemoveSelectedItemsFromCollections(size_t sourceWidget)
+    {
+        std::vector<std::wstring> selectedKeys = GetSelectedItemKeysInDragOrder(sourceWidget);
+        if (selectedKeys.empty())
+        {
+            return;
+        }
+
+        std::unordered_set<std::wstring> selectedSet(selectedKeys.begin(), selectedKeys.end());
+        for (auto& widget : widgets_)
+        {
+            auto& keys = widget.itemKeys;
+            keys.erase(
+                std::remove_if(keys.begin(), keys.end(), [&](const std::wstring& key) {
+                    return selectedSet.contains(NormalizeLayoutKey(key));
+                }),
+                keys.end());
+        }
+    }
+
+    size_t GetCollectionInsertIndex(size_t widgetIndex, POINT point, bool popup) const
+    {
+        if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        {
+            return 0;
+        }
+
+        const DesktopWidget& widget = widgets_[widgetIndex];
+        const size_t count = widget.itemKeys.size();
+        if (count == 0)
+        {
+            return 0;
+        }
+
+        if (popup)
+        {
+            RECT popupRect = GetCollectionPopupRect(widget);
+            RECT content = GetCollectionPopupContentRect(popupRect);
+            const int columns = GetCollectionPopupColumnCount(popupRect);
+            const int x = std::clamp<int>(
+                point.x,
+                static_cast<int>(content.left),
+                static_cast<int>(std::max<LONG>(content.left, content.right - 1)));
+            const int y = std::max<int>(static_cast<int>(content.top), point.y + popupScrollOffset_);
+            const int col = std::clamp<int>(
+                (x - static_cast<int>(content.left)) / kCollectionPopupCellWidth,
+                0,
+                std::max(0, columns - 1));
+            const int row = std::max<int>(0, (y - static_cast<int>(content.top)) / kCollectionPopupCellHeight);
+            size_t index = static_cast<size_t>(row * columns + col);
+            RECT cell = GetCollectionPopupItemRect(popupRect, std::min(index, count - 1));
+            if (index < count && point.x > (cell.left + cell.right) / 2)
+            {
+                ++index;
+            }
+            return std::min(index, count);
+        }
+
+        const bool compact = widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
+        const size_t visible = compact ? std::min<size_t>(4, count) : std::min(GetCollectionInlineCapacity(widget), count);
+        if (visible == 0)
+        {
+            return 0;
+        }
+        for (size_t i = 0; i < visible; ++i)
+        {
+            RECT slot = GetCollectionPreviewSlotRect(widget, i);
+            if (PtInRect(&slot, point))
+            {
+                return point.x > (slot.left + slot.right) / 2 ? std::min(i + 1, count) : i;
+            }
+        }
+
+        size_t allSlot = GetCollectionAllButtonSlot(widget);
+        if (allSlot != static_cast<size_t>(-1))
+        {
+            RECT allRect = GetCollectionPreviewSlotRect(widget, allSlot);
+            if (PtInRect(&allRect, point))
+            {
+                return count;
+            }
+        }
+        return count;
+    }
+
+    std::vector<std::wstring> GetSelectedItemKeysInDragOrder(size_t sourceWidget) const
+    {
+        std::vector<std::wstring> keys;
+        std::unordered_set<std::wstring> added;
+
+        auto addIfSelected = [&](const std::wstring& rawKey) {
+            std::wstring key = NormalizeLayoutKey(rawKey);
+            if (key.empty() || added.contains(key))
+            {
+                return;
+            }
+            size_t itemIndex = FindItemIndexByKey(key);
+            if (itemIndex != static_cast<size_t>(-1) && items_[itemIndex].selected)
+            {
+                keys.push_back(key);
+                added.insert(key);
+            }
+        };
+
+        if (sourceWidget < widgets_.size())
+        {
+            for (const auto& key : widgets_[sourceWidget].itemKeys)
+            {
+                addIfSelected(key);
+            }
+        }
+
+        for (const auto& item : items_)
+        {
+            if (item.selected)
+            {
+                addIfSelected(item.layoutKey);
+            }
+        }
+        return keys;
+    }
+
+    bool MoveSelectedItemsToCollection(size_t widgetIndex, size_t insertIndex, size_t sourceWidget)
+    {
+        if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        {
+            return false;
+        }
+
+        std::vector<std::wstring> selectedKeys = GetSelectedItemKeysInDragOrder(sourceWidget);
+        if (selectedKeys.empty())
+        {
+            return false;
+        }
+
+        std::unordered_set<std::wstring> selectedSet(selectedKeys.begin(), selectedKeys.end());
+        if (sourceWidget == widgetIndex)
+        {
+            size_t before = 0;
+            const auto& oldKeys = widgets_[widgetIndex].itemKeys;
+            for (size_t i = 0; i < std::min(insertIndex, oldKeys.size()); ++i)
+            {
+                if (selectedSet.contains(NormalizeLayoutKey(oldKeys[i])))
+                {
+                    ++before;
+                }
+            }
+            insertIndex -= std::min(insertIndex, before);
+        }
+
+        for (auto& widget : widgets_)
+        {
+            auto& keys = widget.itemKeys;
+            keys.erase(
+                std::remove_if(keys.begin(), keys.end(), [&](const std::wstring& key) {
+                    return selectedSet.contains(NormalizeLayoutKey(key));
+                }),
+                keys.end());
+        }
+
+        auto& targetKeys = widgets_[widgetIndex].itemKeys;
+        insertIndex = std::min(insertIndex, targetKeys.size());
+        targetKeys.insert(targetKeys.begin() + static_cast<std::ptrdiff_t>(insertIndex), selectedKeys.begin(), selectedKeys.end());
+        LayoutItems();
+        SaveLayoutSlots();
+        return true;
+    }
+
+    bool AddItemKeyToCollection(size_t widgetIndex, const std::wstring& key, size_t insertIndex = static_cast<size_t>(-1))
+    {
+        if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        {
+            return false;
+        }
+
+        std::wstring normalized = NormalizeLayoutKey(key);
+        RemoveItemKeyFromAllCollections(normalized);
+        auto& keys = widgets_[widgetIndex].itemKeys;
+        if (std::find(keys.begin(), keys.end(), normalized) == keys.end())
+        {
+            insertIndex = insertIndex == static_cast<size_t>(-1) ? keys.size() : std::min(insertIndex, keys.size());
+            keys.insert(keys.begin() + static_cast<std::ptrdiff_t>(insertIndex), normalized);
+            return true;
+        }
+        return false;
+    }
+
+    bool AddSelectedItemsToCollection(size_t widgetIndex, size_t insertIndex = static_cast<size_t>(-1))
+    {
+        if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        {
+            return false;
+        }
+
+        if (insertIndex != static_cast<size_t>(-1))
+        {
+            bool moved = MoveSelectedItemsToCollection(widgetIndex, insertIndex, static_cast<size_t>(-1));
+            if (moved)
+            {
+                return true;
+            }
+        }
+
+        bool changed = false;
+        for (auto& item : items_)
+        {
+            if (!item.selected || item.layoutKey.empty())
+            {
+                continue;
+            }
+            changed = AddItemKeyToCollection(widgetIndex, item.layoutKey) || changed;
+            item.selected = false;
+        }
+        selectedCount_ = 0;
+        if (changed)
+        {
+            LayoutItems();
+            SaveLayoutSlots();
+        }
+        return changed;
+    }
+
     int GetRowsPerColumn() const
     {
         return gridPages_.empty() ? 1 : std::max(1, gridPages_.front().rows);
@@ -2686,19 +4046,40 @@ private:
             return;
         }
 
-        int current = -1;
+        std::vector<size_t> visibleItems;
         for (size_t i = 0; i < items_.size(); ++i)
         {
+            if (!IsTopLevelItem(items_[i]))
+            {
+                continue;
+            }
             if (items_[i].selected)
+            {
+                visibleItems.push_back(i);
+            }
+            else if (!IsRectEmptyRect(items_[i].bounds))
+            {
+                visibleItems.push_back(i);
+            }
+        }
+
+        if (visibleItems.empty())
+        {
+            return;
+        }
+
+        int current = -1;
+        for (size_t i = 0; i < visibleItems.size(); ++i)
+        {
+            if (items_[visibleItems[i]].selected)
             {
                 current = static_cast<int>(i);
                 break;
             }
         }
-
         int next = current < 0 ? 0 : current + delta;
-        next = std::clamp(next, 0, static_cast<int>(items_.size()) - 1);
-        SelectOnly(static_cast<size_t>(next));
+        next = std::clamp(next, 0, static_cast<int>(visibleItems.size()) - 1);
+        SelectOnly(visibleItems[static_cast<size_t>(next)]);
         InvalidateRect(hwnd_, nullptr, TRUE);
     }
 
@@ -2881,6 +4262,11 @@ private:
 
     void OpenSelected()
     {
+        if (selectedWidgetIndex_ < widgets_.size())
+        {
+            OpenCollectionPopup(selectedWidgetIndex_);
+            return;
+        }
         for (size_t i = 0; i < items_.size(); ++i)
         {
             if (items_[i].selected)
@@ -2918,6 +4304,324 @@ private:
             }
         }
         return true;
+    }
+
+    bool IsShellFolderItem(const DesktopItem& item) const
+    {
+        if (!desktopFolder_ || item.childPidl.get() == nullptr)
+        {
+            return false;
+        }
+
+        SFGAOF attrs = SFGAO_FOLDER;
+        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get());
+        return SUCCEEDED(desktopFolder_->GetAttributesOf(1, &child, &attrs)) && (attrs & SFGAO_FOLDER) != 0;
+    }
+
+    std::wstring GetDesktopItemExtensionUpper(const DesktopItem& item) const
+    {
+        wchar_t path[MAX_PATH]{};
+        if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
+        {
+            return ToUpperInvariant(PathFindExtensionW(path));
+        }
+        return ToUpperInvariant(PathFindExtensionW(item.name.c_str()));
+    }
+
+    std::vector<std::wstring> GetFileCategoryOrder() const
+    {
+        return {
+            L"folders",
+            L"videos",
+            L"images",
+            L"documents",
+            L"archives",
+            L"audio",
+            L"programs",
+            L"others",
+        };
+    }
+
+    std::wstring GetFileCategoryLabel(const std::wstring& categoryId) const
+    {
+        if (categoryId == L"folders") return L"文件夹";
+        if (categoryId == L"videos") return L"视频";
+        if (categoryId == L"images") return L"图片";
+        if (categoryId == L"documents") return L"文档";
+        if (categoryId == L"archives") return L"压缩包";
+        if (categoryId == L"audio") return L"音频";
+        if (categoryId == L"programs") return L"程序";
+        return L"其他";
+    }
+
+    std::wstring GetFileCategoryId(const DesktopItem& item) const
+    {
+        if (IsShellFolderItem(item))
+        {
+            return L"folders";
+        }
+
+        const std::wstring ext = GetDesktopItemExtensionUpper(item);
+        if (ext == L".MP4" || ext == L".MOV" || ext == L".AVI" || ext == L".MKV" || ext == L".WMV" || ext == L".WEBM" || ext == L".M4V")
+        {
+            return L"videos";
+        }
+        if (ext == L".PNG" || ext == L".JPG" || ext == L".JPEG" || ext == L".GIF" || ext == L".BMP" || ext == L".WEBP" || ext == L".HEIC" || ext == L".SVG")
+        {
+            return L"images";
+        }
+        if (ext == L".TXT" || ext == L".MD" || ext == L".DOC" || ext == L".DOCX" || ext == L".PDF" || ext == L".XLS" || ext == L".XLSX" || ext == L".PPT" || ext == L".PPTX" || ext == L".CSV")
+        {
+            return L"documents";
+        }
+        if (ext == L".ZIP" || ext == L".RAR" || ext == L".7Z" || ext == L".TAR" || ext == L".GZ" || ext == L".BZ2" || ext == L".XZ")
+        {
+            return L"archives";
+        }
+        if (ext == L".MP3" || ext == L".WAV" || ext == L".FLAC" || ext == L".AAC" || ext == L".M4A" || ext == L".OGG")
+        {
+            return L"audio";
+        }
+        if (ext == L".EXE" || ext == L".MSI" || ext == L".BAT" || ext == L".CMD" || ext == L".LNK")
+        {
+            return L"programs";
+        }
+        return L"others";
+    }
+
+    bool IsFileCategoryCollectableItem(const DesktopItem& item) const
+    {
+        return !IsProtectedDesktopIcon(item) && !item.layoutKey.empty();
+    }
+
+    bool IsDesktopFileCategoryCandidate(const DesktopItem& item) const
+    {
+        return IsTopLevelItem(item) && IsFileCategoryCollectableItem(item);
+    }
+
+    std::vector<std::wstring> GetFileCategoryKeys(const DesktopWidget& widget, const std::wstring& categoryId = L"") const
+    {
+        std::vector<std::wstring> keys;
+        auto appendCategory = [&](const std::wstring& targetCategory) {
+            for (const auto& rawKey : widget.itemKeys)
+            {
+                size_t itemIndex = FindItemIndexByKey(rawKey);
+                if (itemIndex == static_cast<size_t>(-1) ||
+                    !IsFileCategoryCollectableItem(items_[itemIndex]) ||
+                    GetFileCategoryId(items_[itemIndex]) != targetCategory)
+                {
+                    continue;
+                }
+                keys.push_back(NormalizeLayoutKey(items_[itemIndex].layoutKey));
+            }
+        };
+
+        if (!categoryId.empty())
+        {
+            appendCategory(categoryId);
+            return keys;
+        }
+
+        for (const auto& id : GetFileCategoryOrder())
+        {
+            appendCategory(id);
+        }
+        return keys;
+    }
+
+    int GetFileCategoryCount(const DesktopWidget& widget, const std::wstring& categoryId) const
+    {
+        return static_cast<int>(GetFileCategoryKeys(widget, categoryId).size());
+    }
+
+    std::vector<std::wstring> GetVisibleFileCategoryIds(const DesktopWidget& widget) const
+    {
+        std::vector<std::wstring> ids;
+        for (const auto& id : GetFileCategoryOrder())
+        {
+            if (GetFileCategoryCount(widget, id) <= 0)
+            {
+                continue;
+            }
+            ids.push_back(id);
+        }
+        return ids;
+    }
+
+    std::wstring GetActiveFileCategoryId(const DesktopWidget& widget) const
+    {
+        std::vector<std::wstring> visible = GetVisibleFileCategoryIds(widget);
+        if (!widget.activeCategoryId.empty() &&
+            std::find(visible.begin(), visible.end(), widget.activeCategoryId) != visible.end())
+        {
+            return widget.activeCategoryId;
+        }
+        return visible.empty() ? L"" : visible.front();
+    }
+
+    RECT GetFileCategoryTabsRect(const DesktopWidget& widget) const
+    {
+        RECT body = GetWidgetBodyRect(widget);
+        InflateRect(&body, -10, -8);
+        if (IsRectEmptyRect(body))
+        {
+            return {};
+        }
+        return MakeRect(body.left, body.top, body.right, std::min<LONG>(body.bottom, body.top + 30));
+    }
+
+    RECT GetFileCategoryContentRect(const DesktopWidget& widget) const
+    {
+        RECT body = GetWidgetBodyRect(widget);
+        InflateRect(&body, -10, -8);
+        if (IsRectEmptyRect(body))
+        {
+            return {};
+        }
+        RECT tabs = GetFileCategoryTabsRect(widget);
+        body.top = std::min<LONG>(body.bottom, tabs.bottom + 8);
+        return body;
+    }
+
+    RECT GetFileCategoryTabRect(const DesktopWidget& widget, size_t index) const
+    {
+        std::vector<std::wstring> tabs = GetVisibleFileCategoryIds(widget);
+        if (index >= tabs.size())
+        {
+            return {};
+        }
+        RECT tabsRect = GetFileCategoryTabsRect(widget);
+        const int width = std::max<int>(1, static_cast<int>(tabsRect.right - tabsRect.left) / static_cast<int>(std::max<size_t>(1, tabs.size())));
+        RECT rect = MakeRect(
+            tabsRect.left + static_cast<LONG>(index * width),
+            tabsRect.top,
+            index + 1 == tabs.size() ? tabsRect.right : tabsRect.left + static_cast<LONG>((index + 1) * width),
+            tabsRect.bottom);
+        InflateRect(&rect, -2, -2);
+        return rect;
+    }
+
+    int GetFileCategoryTileColumnCount(const RECT& content) const
+    {
+        return std::max<int>(1, static_cast<int>(content.right - content.left) / kCellWidth);
+    }
+
+    int GetFileCategoryContentHeight(const DesktopWidget& widget, size_t itemCount) const
+    {
+        if (widget.listMode)
+        {
+            constexpr int rowHeight = 38;
+            return static_cast<int>(itemCount) * rowHeight;
+        }
+
+        RECT content = GetFileCategoryContentRect(widget);
+        const int columns = GetFileCategoryTileColumnCount(content);
+        const int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
+        return rows * kMinCellHeight;
+    }
+
+    int GetFileCategoryMaxScrollOffset(const DesktopWidget& widget) const
+    {
+        std::wstring categoryId = GetActiveFileCategoryId(widget);
+        std::vector<std::wstring> keys = GetFileCategoryKeys(widget, categoryId);
+        RECT content = GetFileCategoryContentRect(widget);
+        const int contentHeight = std::max<int>(1, static_cast<int>(content.bottom - content.top));
+        return std::max(0, GetFileCategoryContentHeight(widget, keys.size()) - contentHeight);
+    }
+
+    RECT GetFileCategoryItemRect(const DesktopWidget& widget, size_t linearIndex) const
+    {
+        RECT content = GetFileCategoryContentRect(widget);
+        const int scroll = std::clamp(widget.scrollOffset, 0, GetFileCategoryMaxScrollOffset(widget));
+        if (widget.listMode)
+        {
+            constexpr int rowHeight = 38;
+            RECT rect = MakeRect(
+                content.left,
+                content.top + static_cast<LONG>(linearIndex * rowHeight) - scroll,
+                content.right,
+                content.top + static_cast<LONG>((linearIndex + 1) * rowHeight) - scroll);
+            InflateRect(&rect, -4, -2);
+            return rect;
+        }
+
+        const int columns = GetFileCategoryTileColumnCount(content);
+        const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
+        const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
+        RECT rect = MakeRect(
+            content.left + col * kCellWidth,
+            content.top + row * kMinCellHeight - scroll,
+            content.left + (col + 1) * kCellWidth,
+            content.top + (row + 1) * kMinCellHeight - scroll);
+        return rect;
+    }
+
+    std::vector<std::wstring> GetPopupItemKeys(const DesktopWidget& widget) const
+    {
+        if (widget.type == DesktopWidgetType::FileCategories)
+        {
+            return GetFileCategoryKeys(widget, popupCategoryId_);
+        }
+        return widget.itemKeys;
+    }
+
+    bool CollectFilesIntoFileCategoryWidget(size_t widgetIndex, bool persist)
+    {
+        if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::FileCategories)
+        {
+            return false;
+        }
+
+        std::unordered_set<std::wstring> existing;
+        for (const auto& key : widgets_[widgetIndex].itemKeys)
+        {
+            existing.insert(NormalizeLayoutKey(key));
+        }
+
+        bool changed = false;
+        for (const auto& item : items_)
+        {
+            if (!IsDesktopFileCategoryCandidate(item))
+            {
+                continue;
+            }
+
+            std::wstring key = NormalizeLayoutKey(item.layoutKey);
+            if (key.empty() || existing.contains(key))
+            {
+                continue;
+            }
+            widgets_[widgetIndex].itemKeys.push_back(key);
+            existing.insert(key);
+            changed = true;
+        }
+
+        if (changed)
+        {
+            if (widgets_[widgetIndex].activeCategoryId.empty())
+            {
+                widgets_[widgetIndex].activeCategoryId = GetActiveFileCategoryId(widgets_[widgetIndex]);
+            }
+            widgets_[widgetIndex].scrollOffset = 0;
+            if (persist)
+            {
+                LayoutItems();
+                SaveLayoutSlots();
+                InvalidateRect(hwnd_, nullptr, TRUE);
+            }
+        }
+        return changed;
+    }
+
+    void ApplyAutoCollectFileCategoryWidgets()
+    {
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].type == DesktopWidgetType::FileCategories && widgets_[i].autoCollect)
+            {
+                CollectFilesIntoFileCategoryWidget(i, false);
+            }
+        }
     }
 
     void ShowCustomItemContextMenu(POINT screenPoint)
@@ -2975,6 +4679,84 @@ private:
         }
     }
 
+    void ShowCustomWidgetContextMenu(POINT screenPoint, size_t widgetIndex)
+    {
+        if (widgetIndex >= widgets_.size())
+        {
+            return;
+        }
+
+        HMENU menu = CreatePopupMenu();
+        if (menu == nullptr)
+        {
+            return;
+        }
+
+        AppendMenuW(menu, MF_STRING, kContextWidgetOpen, L"打开全部");
+        AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
+        if (widgets_[widgetIndex].type == DesktopWidgetType::FileCategories)
+        {
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
+            AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
+            AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
+        }
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
+
+        SetForegroundWindow(hwnd_);
+        UINT command = TrackPopupMenuEx(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint.x,
+            screenPoint.y,
+            hwnd_,
+            nullptr);
+        DestroyMenu(menu);
+
+        switch (command)
+        {
+        case kContextWidgetOpen:
+        {
+            POINT clientPoint = screenPoint;
+            ScreenToClient(hwnd_, &clientPoint);
+            OpenCollectionPopupAt(widgetIndex, clientPoint, L"");
+            break;
+        }
+        case kContextWidgetRename:
+            SelectWidgetOnly(widgetIndex);
+            BeginRenameSelected();
+            break;
+        case kContextWidgetManualCollect:
+            if (!CollectFilesIntoFileCategoryWidget(widgetIndex, true))
+            {
+                MessageBeep(MB_ICONINFORMATION);
+            }
+            break;
+        case kContextWidgetToggleAutoCollect:
+            widgets_[widgetIndex].autoCollect = !widgets_[widgetIndex].autoCollect;
+            if (widgets_[widgetIndex].autoCollect)
+            {
+                CollectFilesIntoFileCategoryWidget(widgetIndex, false);
+            }
+            LayoutItems();
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            break;
+        case kContextWidgetToggleListMode:
+            widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
+            widgets_[widgetIndex].scrollOffset = 0;
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            break;
+        case kContextWidgetDelete:
+            DeleteWidget(widgetIndex);
+            break;
+        default:
+            break;
+        }
+    }
+
     void ShowCustomBackgroundContextMenu(POINT screenPoint)
     {
         lastContextMenuScreenPoint_ = screenPoint;
@@ -3004,6 +4786,14 @@ private:
             AppendMenuW(gridMenu, MF_STRING, kContextGridAddColumn, L"增加列");
             AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveColumn, L"减少列");
             AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), L"行列调整");
+        }
+
+        HMENU widgetMenu = CreatePopupMenu();
+        if (widgetMenu != nullptr)
+        {
+            AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, L"集合");
+            AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, L"桌面文件分类");
+            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
         }
 
         HMENU zoomMenu = CreatePopupMenu();
@@ -3046,6 +4836,8 @@ private:
         if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridRemoveRow, RGB(180, 140, 60), L'-');
         if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridAddColumn, RGB(180, 140, 60), L'+');
         if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridRemoveColumn, RGB(180, 140, 60), L'-');
+        if (widgetMenu) SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget, RGB(90, 155, 220), L'C');
+        if (widgetMenu) SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, RGB(90, 170, 150), L'F');
 
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
@@ -3094,6 +4886,12 @@ private:
             break;
         case kContextThisDisplayFirstCommand:
             SetFirstPageMonitorFromPoint(screenPoint);
+            break;
+        case kContextAddCollectionWidget:
+            AddCollectionWidgetAt(screenPoint);
+            break;
+        case kContextAddFileCategoryWidget:
+            AddFileCategoryWidgetAt(screenPoint);
             break;
         case kContextPasteCommand:
             InvokeDesktopBackgroundVerb("paste");
@@ -3301,7 +5099,65 @@ private:
 
     void BeginRenameSelected()
     {
-        if (renameEdit_ != nullptr || selectedCount_ != 1)
+        if (renameEdit_ != nullptr)
+        {
+            return;
+        }
+
+        if (selectedWidgetIndex_ < widgets_.size())
+        {
+            renamingWidget_ = true;
+            renameIndex_ = selectedWidgetIndex_;
+            RECT rect = GetWidgetTitleRect(widgets_[renameIndex_]);
+            InflateRect(&rect, 2, 2);
+            RECT screenRect = rect;
+            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
+            renameEdit_ = CreateWindowExW(
+                WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                L"EDIT",
+                widgets_[renameIndex_].title.c_str(),
+                WS_POPUP | WS_VISIBLE | ES_CENTER | ES_AUTOVSCROLL,
+                screenRect.left,
+                screenRect.top,
+                screenRect.right - screenRect.left,
+                screenRect.bottom - screenRect.top,
+                hwnd_,
+                nullptr,
+                instance_,
+                nullptr);
+            if (renameEdit_ == nullptr)
+            {
+                renamingWidget_ = false;
+                return;
+            }
+            if (renameFont_ != nullptr)
+            {
+                DeleteObject(renameFont_);
+            }
+            renameFont_ = CreateFontW(
+                -15,
+                0,
+                0,
+                0,
+                FW_NORMAL,
+                FALSE,
+                FALSE,
+                FALSE,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE,
+                L"Segoe UI");
+            SendMessageW(renameEdit_, WM_SETFONT, reinterpret_cast<WPARAM>(renameFont_ != nullptr ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+            SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+            SetWindowSubclass(renameEdit_, &SnowDesktopApp::RenameEditSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
+            SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
+            SetFocus(renameEdit_);
+            return;
+        }
+
+        if (selectedCount_ != 1)
         {
             return;
         }
@@ -3314,7 +5170,12 @@ private:
             }
 
             renameIndex_ = i;
-            RECT rect = GetItemTextRect(items_[i], true);
+            RECT itemBounds = items_[i].bounds;
+            if (IsRectEmptyRect(itemBounds))
+            {
+                itemBounds = GetVisibleCollectionItemBounds(i);
+            }
+            RECT rect = IsRectEmptyRect(itemBounds) ? GetItemTextRect(items_[i], true) : GetItemTextRect(itemBounds, true);
             InflateRect(&rect, 2, 2);
             RECT screenRect = rect;
             MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
@@ -3385,7 +5246,7 @@ private:
         RemoveWindowSubclass(edit, &SnowDesktopApp::RenameEditSubclassProc, 1);
 
         std::wstring newName;
-        if (!cancel && renameIndex_ < items_.size())
+        if (!cancel)
         {
             int length = GetWindowTextLengthW(edit);
             if (length > 0)
@@ -3408,10 +5269,23 @@ private:
             renameBackgroundBrush_ = nullptr;
         }
 
+        if (renamingWidget_)
+        {
+            if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
+            {
+                widgets_[renameIndex_].title = newName;
+                SaveLayoutSlots();
+                InvalidateRect(hwnd_, nullptr, TRUE);
+            }
+            renamingWidget_ = false;
+            return;
+        }
+
         bool keepUpdatedLayoutSlots = false;
         if (!cancel && renameIndex_ < items_.size() && !newName.empty() && newName != items_[renameIndex_].name)
         {
             int oldSlot = items_[renameIndex_].slot;
+            std::wstring oldLayoutKey = items_[renameIndex_].layoutKey;
             PITEMID_CHILD newChild = nullptr;
             HRESULT hr = desktopFolder_->SetNameOf(
                 hwnd_,
@@ -3427,12 +5301,23 @@ private:
                     std::wstring newParsingName = StrRetToString(desktopFolder_.Get(), newChild, SHGDN_FORPARSING);
                     if (newAbsolute != nullptr)
                     {
+                        std::wstring newLayoutKey = GetStableLayoutKey(newAbsolute, newParsingName);
                         LayoutRecord record;
                         record.cell = items_[renameIndex_].gridCell;
                         record.span = items_[renameIndex_].gridSpan;
                         record.hasGrid = true;
                         record.legacySlot = oldSlot;
-                        layoutRecords_[GetStableLayoutKey(newAbsolute, newParsingName)] = record;
+                        layoutRecords_[newLayoutKey] = record;
+                        for (auto& widget : widgets_)
+                        {
+                            for (auto& key : widget.itemKeys)
+                            {
+                                if (NormalizeLayoutKey(key) == NormalizeLayoutKey(oldLayoutKey))
+                                {
+                                    key = newLayoutKey;
+                                }
+                            }
+                        }
                         keepUpdatedLayoutSlots = true;
                         ILFree(newAbsolute);
                     }
@@ -3652,9 +5537,14 @@ private:
             DrawD2DItemAt(context, item, item.bounds, item.selected);
         }
 
-        if (draggingItems_)
+        for (const auto& widget : widgets_)
         {
-            DrawD2DDraggedItems(context);
+            DrawD2DWidget(context, widget);
+        }
+
+        if (draggingWidget_ || resizingWidget_)
+        {
+            DrawD2DWidgetPreview(context);
         }
 
         RECT client{};
@@ -3673,18 +5563,43 @@ private:
 
         if (draggingItems_ && !draggingOverNav_)
         {
-            for (RECT targetRect : GetSelectedMovePreviewRects(GetDragTargetPoint(dragCurrentPoint_)))
+            const bool overPopup = IsPointInsideOpenPopup(dragCurrentPoint_);
+            if (!overPopup)
             {
-                targetRect.left += 3;
-                targetRect.top += 3;
-                targetRect.right -= 3;
-                targetRect.bottom -= 3;
-                DrawD2DFilledRectangle(
+                DrawD2DCollectionInsertionPreview(context, dragCurrentPoint_);
+            }
+            DesktopHit desktopHit = HitTestDesktop(dragCurrentPoint_);
+            if (!overPopup &&
+                (desktopHit.kind == DesktopHitKind::Widget ||
+                desktopHit.kind == DesktopHitKind::WidgetMember ||
+                desktopHit.kind == DesktopHitKind::WidgetAllButton) &&
+                desktopHit.widgetIndex < widgets_.size())
+            {
+                RECT targetRect = GetWidgetFrameRect(widgets_[desktopHit.widgetIndex]);
+                DrawD2DRoundedRectangle(
                     context,
                     targetRect,
-                    D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.14f),
-                    D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f),
+                    12.0f,
+                    D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.16f),
+                    D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.85f),
+                    1.4f,
                     dottedStrokeStyle_.Get());
+            }
+            if (!overPopup)
+            {
+                for (RECT targetRect : GetSelectedMovePreviewRects(GetDragTargetPoint(dragCurrentPoint_)))
+                {
+                    targetRect.left += 3;
+                    targetRect.top += 3;
+                    targetRect.right -= 3;
+                    targetRect.bottom -= 3;
+                    DrawD2DFilledRectangle(
+                        context,
+                        targetRect,
+                        D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.14f),
+                        D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f),
+                        dottedStrokeStyle_.Get());
+                }
             }
         }
 
@@ -3711,6 +5626,18 @@ private:
         if (navButtonsVisible_)
         {
             DrawD2DNavigationPanel(context);
+        }
+
+        DrawD2DCollectionPopup(context);
+
+        if (draggingItems_ && !draggingOverNav_ && IsPointInsideOpenPopup(dragCurrentPoint_))
+        {
+            DrawD2DCollectionInsertionPreview(context, dragCurrentPoint_);
+        }
+
+        if (draggingItems_)
+        {
+            DrawD2DDraggedItems(context);
         }
     }
 
@@ -3739,6 +5666,34 @@ private:
         }
 
         context->DrawRectangle(ToD2DRect(rect), brush.Get(), 1.0f, strokeStyle);
+    }
+
+    void DrawD2DRoundedRectangle(
+        ID2D1DeviceContext* context,
+        const RECT& rect,
+        float radius,
+        const D2D1_COLOR_F& fillColor,
+        const D2D1_COLOR_F& strokeColor,
+        float strokeWidth = 1.0f,
+        ID2D1StrokeStyle* strokeStyle = nullptr)
+    {
+        if (context == nullptr || IsRectEmptyRect(rect))
+        {
+            return;
+        }
+
+        D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(ToD2DRect(rect), radius, radius);
+        ComPtr<ID2D1SolidColorBrush> fillBrush;
+        if (fillColor.a > 0.0f && SUCCEEDED(context->CreateSolidColorBrush(fillColor, &fillBrush)) && fillBrush)
+        {
+            context->FillRoundedRectangle(rounded, fillBrush.Get());
+        }
+
+        ComPtr<ID2D1SolidColorBrush> strokeBrush;
+        if (strokeColor.a > 0.0f && SUCCEEDED(context->CreateSolidColorBrush(strokeColor, &strokeBrush)) && strokeBrush)
+        {
+            context->DrawRoundedRectangle(rounded, strokeBrush.Get(), strokeWidth, strokeStyle);
+        }
     }
 
     void DrawD2DButton(ID2D1DeviceContext* context, const RECT& rect, const std::wstring& label, bool enabled)
@@ -3786,6 +5741,610 @@ private:
             &textRect,
             textBrush.Get(),
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
+    void DrawD2DText(ID2D1DeviceContext* context, const std::wstring& text, RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color)
+    {
+        if (context == nullptr || format == nullptr || text.empty() || IsRectEmptyRect(rect))
+        {
+            return;
+        }
+
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (FAILED(context->CreateSolidColorBrush(color, &brush)) || !brush)
+        {
+            return;
+        }
+
+        D2D1_RECT_F d2dRect = ToD2DRect(rect);
+        context->DrawTextW(
+            text.c_str(),
+            static_cast<UINT32>(text.size()),
+            format,
+            &d2dRect,
+            brush.Get(),
+            D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
+    void DrawD2DItemThumbnail(ID2D1DeviceContext* context, const DesktopItem& item, RECT rect, bool showLabel, bool selected = false)
+    {
+        if (context == nullptr || IsRectEmptyRect(rect))
+        {
+            return;
+        }
+
+        if (selected)
+        {
+            DrawD2DRoundedRectangle(
+                context,
+                rect,
+                7.0f,
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.24f),
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f));
+        }
+
+        const int width = rect.right - rect.left;
+        const int height = rect.bottom - rect.top;
+        const int labelHeight = showLabel ? (selected ? std::min(34, std::max(18, height / 3)) : 18) : 0;
+        const int iconSize = std::max(16, std::min(width - 6, height - labelHeight - 4));
+        const int iconX = rect.left + (width - iconSize) / 2;
+        const int iconY = rect.top + 2;
+        ID2D1Bitmap1* iconBitmap = GetOrCreateD2DBitmap(item.iconBitmap);
+        if (iconBitmap != nullptr)
+        {
+            D2D1_RECT_F dst = D2D1::RectF(
+                static_cast<float>(iconX),
+                static_cast<float>(iconY),
+                static_cast<float>(iconX + iconSize),
+                static_cast<float>(iconY + iconSize));
+            context->DrawBitmap(iconBitmap, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+        }
+
+        if (showLabel && collectionItemTextFormat_ && !item.name.empty())
+        {
+            RECT textRect = MakeRect(rect.left, iconY + iconSize + 2, rect.right, rect.bottom);
+            IDWriteTextFormat* textFormat = selected && itemTextFormat_ ? itemTextFormat_.Get() : collectionItemTextFormat_.Get();
+            if (!selected)
+            {
+                textRect.bottom = std::min<LONG>(textRect.bottom, textRect.top + 18);
+            }
+            DrawD2DText(context, item.name, OffsetRectCopy(textRect, 1, 1), textFormat, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.62f));
+            DrawD2DText(context, item.name, textRect, textFormat, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f));
+        }
+    }
+
+    RECT OffsetRectCopy(RECT rect, int dx, int dy) const
+    {
+        OffsetRect(&rect, dx, dy);
+        return rect;
+    }
+
+    void DrawD2DCollectionMosaic(ID2D1DeviceContext* context, const DesktopWidget& widget, RECT rect, size_t startIndex)
+    {
+        if (context == nullptr || IsRectEmptyRect(rect))
+        {
+            return;
+        }
+
+        RECT inner = rect;
+        InflateRect(&inner, -8, -8);
+        const int columns = 2;
+        const int rows = 2;
+        const int tileW = std::max<int>(1, static_cast<int>(inner.right - inner.left) / columns);
+        const int tileH = std::max<int>(1, static_cast<int>(inner.bottom - inner.top) / rows);
+        bool hasRemainingIcon = false;
+        for (size_t i = 0; i < 4; ++i)
+        {
+            const size_t itemKeyIndex = startIndex + i;
+            if (itemKeyIndex < widget.itemKeys.size() &&
+                FindItemIndexByKey(widget.itemKeys[itemKeyIndex]) != static_cast<size_t>(-1))
+            {
+                hasRemainingIcon = true;
+                break;
+            }
+        }
+        if (!hasRemainingIcon && !PtInRect(&rect, lastMousePoint_))
+        {
+            return;
+        }
+
+        for (size_t i = 0; i < 4; ++i)
+        {
+            const int col = static_cast<int>(i % columns);
+            const int row = static_cast<int>(i / columns);
+            RECT tile = MakeRect(
+                inner.left + col * tileW,
+                inner.top + row * tileH,
+                col + 1 == columns ? inner.right : inner.left + (col + 1) * tileW,
+                row + 1 == rows ? inner.bottom : inner.top + (row + 1) * tileH);
+            InflateRect(&tile, -2, -2);
+
+            const size_t itemKeyIndex = startIndex + i;
+            if (itemKeyIndex < widget.itemKeys.size())
+            {
+                size_t itemIndex = FindItemIndexByKey(widget.itemKeys[itemKeyIndex]);
+                if (itemIndex != static_cast<size_t>(-1))
+                {
+                    InflateRect(&tile, -4, -4);
+                    DrawD2DItemThumbnail(context, items_[itemIndex], tile, false, items_[itemIndex].selected);
+                    continue;
+                }
+            }
+
+            if (!hasRemainingIcon)
+            {
+                const int tileWidth = static_cast<int>(tile.right - tile.left);
+                const int tileHeight = static_cast<int>(tile.bottom - tile.top);
+                const int squareSize = std::max(4, std::min(tileWidth, tileHeight) - 6);
+                tile.left += (tileWidth - squareSize) / 2;
+                tile.top += (tileHeight - squareSize) / 2;
+                tile.right = tile.left + squareSize;
+                tile.bottom = tile.top + squareSize;
+                DrawD2DRoundedRectangle(
+                    context,
+                    tile,
+                    3.0f,
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f));
+            }
+        }
+    }
+
+    void DrawD2DFileCategoryWidget(ID2D1DeviceContext* context, const DesktopWidget& widget)
+    {
+        if (context == nullptr)
+        {
+            return;
+        }
+
+        std::vector<std::wstring> categoryIds = GetVisibleFileCategoryIds(widget);
+        if (categoryIds.empty())
+        {
+            RECT body = GetWidgetBodyRect(widget);
+            InflateRect(&body, -12, -12);
+            DrawD2DText(context, L"暂无散文件", body, collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+            return;
+        }
+
+        std::wstring activeCategory = GetActiveFileCategoryId(widget);
+        RECT tabsRect = GetFileCategoryTabsRect(widget);
+        for (size_t i = 0; i < categoryIds.size(); ++i)
+        {
+            RECT tab = GetFileCategoryTabRect(widget, i);
+            if (IsRectEmptyRect(tab))
+            {
+                continue;
+            }
+
+            const bool active = categoryIds[i] == activeCategory;
+            const bool hovered = PtInRect(&tab, lastMousePoint_) != FALSE;
+            DrawD2DRoundedRectangle(
+                context,
+                tab,
+                7.0f,
+                active ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f) : (hovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.13f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f)),
+                active ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+
+            std::wstring label = GetFileCategoryLabel(categoryIds[i]) + L" " + std::to_wstring(GetFileCategoryCount(widget, categoryIds[i]));
+            DrawD2DText(context, label, MakeRect(tab.left + 4, tab.top + 7, tab.right - 4, tab.bottom), collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.98f : 0.78f));
+        }
+        if (!IsRectEmptyRect(tabsRect))
+        {
+            RECT line = MakeRect(tabsRect.left, tabsRect.bottom + 2, tabsRect.right, tabsRect.bottom + 3);
+            DrawD2DFilledRectangle(context, line, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f), nullptr);
+        }
+
+        std::vector<std::wstring> keys = GetFileCategoryKeys(widget, activeCategory);
+        RECT content = GetFileCategoryContentRect(widget);
+        if (IsRectEmptyRect(content))
+        {
+            return;
+        }
+
+        context->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        for (size_t i = 0; i < keys.size(); ++i)
+        {
+            RECT itemRect = GetFileCategoryItemRect(widget, i);
+            if (!RectsIntersect(itemRect, content))
+            {
+                continue;
+            }
+
+            size_t itemIndex = FindItemIndexByKey(keys[i]);
+            if (itemIndex == static_cast<size_t>(-1))
+            {
+                continue;
+            }
+
+            if (!widget.listMode)
+            {
+                DrawD2DItemAt(context, items_[itemIndex], itemRect, items_[itemIndex].selected);
+                continue;
+            }
+
+            const bool selected = items_[itemIndex].selected;
+            if (selected)
+            {
+                DrawD2DRoundedRectangle(
+                    context,
+                    itemRect,
+                    6.0f,
+                    D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.30f),
+                    D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.48f));
+            }
+            RECT iconRect = MakeRect(itemRect.left + 6, itemRect.top + 5, itemRect.left + 34, itemRect.top + 33);
+            ID2D1Bitmap1* iconBitmap = GetOrCreateD2DBitmap(items_[itemIndex].iconBitmap);
+            if (iconBitmap != nullptr)
+            {
+                context->DrawBitmap(iconBitmap, ToD2DRect(iconRect), 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+            }
+            RECT textRect = MakeRect(iconRect.right + 8, itemRect.top + 8, itemRect.right - 8, itemRect.bottom);
+            DrawD2DText(context, items_[itemIndex].name, OffsetRectCopy(textRect, 1, 1), collectionItemTextFormat_.Get(), D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.62f));
+            DrawD2DText(context, items_[itemIndex].name, textRect, collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.94f));
+        }
+        context->PopAxisAlignedClip();
+    }
+
+    void DrawD2DWidget(ID2D1DeviceContext* context, const DesktopWidget& widget)
+    {
+        RECT frame = GetWidgetFrameRect(widget);
+        RECT body = GetWidgetBodyRect(widget);
+        if (IsRectEmptyRect(frame) || IsRectEmptyRect(body))
+        {
+            return;
+        }
+
+        const bool selected = widget.selected;
+        DrawD2DRoundedRectangle(
+            context,
+            frame,
+            12.0f,
+            D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.36f),
+            selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.40f),
+            selected ? 1.6f : 1.0f,
+            selected ? dottedStrokeStyle_.Get() : nullptr);
+
+        if (widget.type == DesktopWidgetType::Collection)
+        {
+            const size_t inlineCapacity = std::min(GetCollectionInlineCapacity(widget), widget.itemKeys.size());
+            for (size_t i = 0; i < inlineCapacity; ++i)
+            {
+                size_t itemIndex = FindItemIndexByKey(widget.itemKeys[i]);
+                if (itemIndex == static_cast<size_t>(-1))
+                {
+                    continue;
+                }
+                RECT slotRect = GetCollectionPreviewSlotRect(widget, i);
+                if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1)
+                {
+                    DrawD2DItemThumbnail(context, items_[itemIndex], slotRect, false, items_[itemIndex].selected);
+                }
+                else
+                {
+                    DrawD2DItemAt(context, items_[itemIndex], slotRect, items_[itemIndex].selected);
+                }
+            }
+
+            size_t allSlot = GetCollectionAllButtonSlot(widget);
+            if (allSlot != static_cast<size_t>(-1))
+            {
+                RECT allRect = GetCollectionPreviewSlotRect(widget, allSlot);
+                DrawD2DCollectionMosaic(context, widget, allRect, GetCollectionInlineCapacity(widget));
+            }
+        }
+        else if (widget.type == DesktopWidgetType::FileCategories)
+        {
+            DrawD2DFileCategoryWidget(context, widget);
+        }
+
+        RECT titleRect = GetWidgetTitleRect(widget);
+        if (!widget.title.empty() && collectionItemTextFormat_)
+        {
+            DrawD2DText(context, widget.title, OffsetRectCopy(titleRect, 1, 1), collectionItemTextFormat_.Get(), D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f));
+            DrawD2DText(context, widget.title, titleRect, collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+        }
+    }
+
+    void DrawD2DWidgetPreview(ID2D1DeviceContext* context)
+    {
+        if (mouseDownWidgetIndex_ >= widgets_.size())
+        {
+            return;
+        }
+
+        DesktopWidget preview = widgets_[mouseDownWidgetIndex_];
+        preview.gridCell = widgetPreviewCell_;
+        preview.gridSpan = widgetPreviewSpan_;
+        preview.bounds = GetGridRect(preview.gridCell, preview.gridSpan);
+        RECT body = GetWidgetFrameRect(preview);
+        DrawD2DRoundedRectangle(
+            context,
+            body,
+            12.0f,
+            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.16f),
+            D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.85f),
+            1.4f,
+            dottedStrokeStyle_.Get());
+    }
+
+    RECT GetCollectionPopupRect(const DesktopWidget& widget) const
+    {
+        const GridPage* page = FindExactGridPage(widget.gridCell.pageId);
+        RECT work = page != nullptr ? page->workArea : layoutWorkArea_;
+        const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
+        const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
+        const int maxWidth = std::max(280, std::min(560, workWidth - 80));
+        const int maxColumns = std::max(1, (maxWidth - kCollectionPopupPaddingX * 2) / kCollectionPopupCellWidth);
+        const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
+        int columns = std::clamp(std::min(itemCount, 5), 1, maxColumns);
+        int rows = (itemCount + columns - 1) / columns;
+        const int maxHeight = std::max(220, workHeight - 80);
+        int width = kCollectionPopupPaddingX * 2 + columns * kCollectionPopupCellWidth;
+        int height = kCollectionPopupHeaderHeight + rows * kCollectionPopupCellHeight + kCollectionPopupBottomPadding;
+        if (height > maxHeight && columns < maxColumns)
+        {
+            columns = maxColumns;
+            rows = (itemCount + columns - 1) / columns;
+            width = kCollectionPopupPaddingX * 2 + columns * kCollectionPopupCellWidth;
+            height = kCollectionPopupHeaderHeight + rows * kCollectionPopupCellHeight + kCollectionPopupBottomPadding;
+        }
+        height = std::min(height, maxHeight);
+        int left = work.left + (workWidth - width) / 2;
+        int top = work.top + (workHeight - height) / 2;
+        if (popupHasAnchor_)
+        {
+            left = popupAnchorPoint_.x + 12;
+            top = popupAnchorPoint_.y + 12;
+            left = std::clamp(left, static_cast<int>(work.left + 12), static_cast<int>(std::max<LONG>(work.left + 12, work.right - width - 12)));
+            top = std::clamp(top, static_cast<int>(work.top + 12), static_cast<int>(std::max<LONG>(work.top + 12, work.bottom - height - 12)));
+        }
+        return MakeRect(left, top, left + width, top + height);
+    }
+
+    RECT GetCollectionPopupContentRect(const RECT& popup) const
+    {
+        return MakeRect(
+            popup.left + kCollectionPopupPaddingX,
+            popup.top + kCollectionPopupHeaderHeight,
+            popup.right - kCollectionPopupPaddingX,
+            popup.bottom - kCollectionPopupBottomPadding);
+    }
+
+    int GetCollectionPopupColumnCount(const RECT& popup) const
+    {
+        RECT content = GetCollectionPopupContentRect(popup);
+        return std::max<int>(1, static_cast<int>(content.right - content.left) / kCollectionPopupCellWidth);
+    }
+
+    int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const
+    {
+        const int columns = GetCollectionPopupColumnCount(popup);
+        const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
+        return (itemCount + columns - 1) / columns;
+    }
+
+    int GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const
+    {
+        RECT content = GetCollectionPopupContentRect(popup);
+        const int rows = GetCollectionPopupRowCount(widget, popup);
+        const int contentHeight = std::max<int>(1, static_cast<int>(content.bottom - content.top));
+        return std::max(0, rows * kCollectionPopupCellHeight - contentHeight);
+    }
+
+    RECT GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
+    {
+        RECT content = GetCollectionPopupContentRect(popup);
+        const int columns = GetCollectionPopupColumnCount(popup);
+        const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
+        const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
+        RECT rect = MakeRect(
+            content.left + col * kCollectionPopupCellWidth,
+            content.top + row * kCollectionPopupCellHeight - popupScrollOffset_,
+            content.left + (col + 1) * kCollectionPopupCellWidth,
+            content.top + (row + 1) * kCollectionPopupCellHeight - popupScrollOffset_);
+        return rect;
+    }
+
+    RECT GetVisibleCollectionItemBounds(size_t itemIndex) const
+    {
+        if (itemIndex >= items_.size())
+        {
+            return {};
+        }
+
+        const std::wstring key = NormalizeLayoutKey(items_[itemIndex].layoutKey);
+        if (popupWidgetIndex_ < widgets_.size())
+        {
+            const DesktopWidget& popupWidget = widgets_[popupWidgetIndex_];
+            std::vector<std::wstring> popupKeys = GetPopupItemKeys(popupWidget);
+            RECT popup = GetCollectionPopupRect(popupWidget);
+            RECT content = GetCollectionPopupContentRect(popup);
+            for (size_t i = 0; i < popupKeys.size(); ++i)
+            {
+                if (NormalizeLayoutKey(popupKeys[i]) != key)
+                {
+                    continue;
+                }
+                RECT rect = GetCollectionPopupItemRect(popup, i);
+                if (RectsIntersect(rect, content))
+                {
+                    return rect;
+                }
+            }
+        }
+
+        for (const auto& widget : widgets_)
+        {
+            if (widget.type == DesktopWidgetType::FileCategories)
+            {
+                std::vector<std::wstring> keys = GetFileCategoryKeys(widget, GetActiveFileCategoryId(widget));
+                RECT content = GetFileCategoryContentRect(widget);
+                for (size_t i = 0; i < keys.size(); ++i)
+                {
+                    if (NormalizeLayoutKey(keys[i]) != key)
+                    {
+                        continue;
+                    }
+                    RECT rect = GetFileCategoryItemRect(widget, i);
+                    if (RectsIntersect(rect, content))
+                    {
+                        return rect;
+                    }
+                }
+                continue;
+            }
+            if (widget.type != DesktopWidgetType::Collection)
+            {
+                continue;
+            }
+
+            const size_t inlineCapacity = std::min(GetCollectionInlineCapacity(widget), widget.itemKeys.size());
+            for (size_t i = 0; i < inlineCapacity; ++i)
+            {
+                if (NormalizeLayoutKey(widget.itemKeys[i]) == key)
+                {
+                    return GetCollectionPreviewSlotRect(widget, i);
+                }
+            }
+        }
+        return {};
+    }
+
+    RECT GetCollectionInsertionIndicatorRect(size_t widgetIndex, POINT point, bool popup) const
+    {
+        if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        {
+            return {};
+        }
+
+        const DesktopWidget& widget = widgets_[widgetIndex];
+        const size_t insertIndex = GetCollectionInsertIndex(widgetIndex, point, popup);
+        RECT anchor{};
+        if (popup)
+        {
+            RECT popupRect = GetCollectionPopupRect(widget);
+            RECT content = GetCollectionPopupContentRect(popupRect);
+            if (widget.itemKeys.empty())
+            {
+                return MakeRect(content.left, content.top + 8, content.left + 3, content.bottom - 8);
+            }
+            const size_t anchorIndex = std::min(insertIndex, widget.itemKeys.size() - 1);
+            anchor = GetCollectionPopupItemRect(popupRect, anchorIndex);
+            LONG x = insertIndex >= widget.itemKeys.size() ? anchor.right + 4 : anchor.left - 4;
+            return MakeRect(x, anchor.top + 8, x + 3, anchor.bottom - 8);
+        }
+
+        const bool compact = widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
+        const size_t visible = compact ? std::min<size_t>(4, widget.itemKeys.size()) : std::min(GetCollectionInlineCapacity(widget), widget.itemKeys.size());
+        if (visible == 0)
+        {
+            RECT body = GetWidgetBodyRect(widget);
+            return MakeRect(body.left + 12, body.top + 12, body.left + 15, body.bottom - 12);
+        }
+        const size_t anchorIndex = std::min(insertIndex, visible - 1);
+        anchor = GetCollectionPreviewSlotRect(widget, anchorIndex);
+        if (insertIndex >= visible)
+        {
+            size_t allSlot = GetCollectionAllButtonSlot(widget);
+            if (allSlot != static_cast<size_t>(-1))
+            {
+                anchor = GetCollectionPreviewSlotRect(widget, allSlot);
+                return MakeRect(anchor.left - 4, anchor.top + 8, anchor.left - 1, anchor.bottom - 8);
+            }
+            return MakeRect(anchor.right + 4, anchor.top + 8, anchor.right + 7, anchor.bottom - 8);
+        }
+        return MakeRect(anchor.left - 4, anchor.top + 8, anchor.left - 1, anchor.bottom - 8);
+    }
+
+    void DrawD2DCollectionInsertionPreview(ID2D1DeviceContext* context, POINT point)
+    {
+        if (context == nullptr)
+        {
+            return;
+        }
+
+        size_t widgetIndex = static_cast<size_t>(-1);
+        bool popup = false;
+        if (popupWidgetIndex_ < widgets_.size())
+        {
+            RECT popupRect = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+            if (PtInRect(&popupRect, point) &&
+                widgets_[popupWidgetIndex_].type == DesktopWidgetType::Collection)
+            {
+                widgetIndex = popupWidgetIndex_;
+                popup = true;
+            }
+        }
+
+        if (widgetIndex == static_cast<size_t>(-1))
+        {
+            DesktopHit hit = HitTestDesktop(point);
+            if ((hit.kind == DesktopHitKind::Widget ||
+                hit.kind == DesktopHitKind::WidgetMember ||
+                hit.kind == DesktopHitKind::WidgetAllButton) &&
+                hit.widgetIndex < widgets_.size() &&
+                widgets_[hit.widgetIndex].type == DesktopWidgetType::Collection)
+            {
+                widgetIndex = hit.widgetIndex;
+            }
+        }
+
+        if (widgetIndex == static_cast<size_t>(-1))
+        {
+            return;
+        }
+
+        RECT indicator = GetCollectionInsertionIndicatorRect(widgetIndex, point, popup);
+        DrawD2DRoundedRectangle(
+            context,
+            indicator,
+            2.0f,
+            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.92f),
+            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.92f));
+    }
+
+    void DrawD2DCollectionPopup(ID2D1DeviceContext* context)
+    {
+        if (popupWidgetIndex_ >= widgets_.size())
+        {
+            return;
+        }
+
+        const DesktopWidget& widget = widgets_[popupWidgetIndex_];
+        std::vector<std::wstring> popupKeys = GetPopupItemKeys(widget);
+        popupRect_ = GetCollectionPopupRect(widget);
+        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, GetCollectionPopupMaxScrollOffset(widget, popupRect_));
+        DrawD2DRoundedRectangle(
+            context,
+            popupRect_,
+            18.0f,
+            D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.92f),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.38f));
+
+        RECT titleRect = MakeRect(popupRect_.left + 22, popupRect_.top + 18, popupRect_.right - 22, popupRect_.top + 44);
+        std::wstring popupTitle = widget.title.empty() ? L"集合" : widget.title;
+        if (widget.type == DesktopWidgetType::FileCategories && !popupCategoryId_.empty())
+        {
+            popupTitle += L" / " + GetFileCategoryLabel(popupCategoryId_);
+        }
+        DrawD2DText(context, popupTitle, titleRect, itemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+
+        RECT content = GetCollectionPopupContentRect(popupRect_);
+        for (size_t i = 0; i < popupKeys.size(); ++i)
+        {
+            RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
+            if (!RectsIntersect(itemRect, content))
+            {
+                continue;
+            }
+
+            size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+            if (itemIndex == static_cast<size_t>(-1))
+            {
+                continue;
+            }
+            DrawD2DItemAt(context, items_[itemIndex], itemRect, items_[itemIndex].selected);
+        }
     }
 
     void UpdateNavButtonHover(POINT point)
@@ -3980,6 +6539,151 @@ private:
         return 0;
     }
 
+    RECT GetWidgetFrameRect(const DesktopWidget& widget) const
+    {
+        RECT rect = widget.bounds;
+        const GridPage* page = FindExactGridPage(widget.gridCell.pageId);
+        if (page != nullptr)
+        {
+            const int halfGapX = std::max(2, page->gapX / 2);
+            const int halfGapY = std::max(2, page->gapY / 2);
+            rect.left -= widget.gridCell.column > 0 ? halfGapX : 0;
+            rect.top -= widget.gridCell.row > 0 ? halfGapY : 0;
+            rect.right += (widget.gridCell.column + widget.gridSpan.columns) < page->columns ? halfGapX : 0;
+            rect.bottom += (widget.gridCell.row + widget.gridSpan.rows) < page->rows ? halfGapY : 0;
+            rect.left = std::max<LONG>(page->workArea.left, rect.left);
+            rect.top = std::max<LONG>(page->workArea.top, rect.top);
+            rect.right = std::min<LONG>(page->workArea.right, rect.right);
+            rect.bottom = std::min<LONG>(page->workArea.bottom, rect.bottom);
+        }
+        if ((rect.right - rect.left) > 16 && (rect.bottom - rect.top) > 16)
+        {
+            InflateRect(&rect, -4, -4);
+        }
+        return rect;
+    }
+
+    RECT GetWidgetTitleRect(const DesktopWidget& widget) const
+    {
+        RECT frame = GetWidgetFrameRect(widget);
+        constexpr int titleHeight = 20;
+        return MakeRect(frame.left + 4, frame.bottom - titleHeight - 2, frame.right - 4, frame.bottom - 2);
+    }
+
+    RECT GetWidgetBodyRect(const DesktopWidget& widget) const
+    {
+        RECT frame = GetWidgetFrameRect(widget);
+        if (widget.type == DesktopWidgetType::Collection && widget.gridSpan.rows <= 1)
+        {
+            return frame;
+        }
+        frame.bottom = std::max<LONG>(frame.top + 24, frame.bottom - 24);
+        return frame;
+    }
+
+    RECT GetWidgetHitRect(const DesktopWidget& widget) const
+    {
+        return GetWidgetFrameRect(widget);
+    }
+
+    RECT GetWidgetSelectionRect(const DesktopWidget& widget) const
+    {
+        return InflateCopy(GetWidgetHitRect(widget), 2);
+    }
+
+    int HitTestWidgetResizeEdges(const DesktopWidget& widget, POINT point) const
+    {
+        RECT frame = GetWidgetFrameRect(widget);
+        if (!PtInRect(&frame, point))
+        {
+            return kResizeNone;
+        }
+
+        constexpr int edge = 8;
+        int edges = kResizeNone;
+        if (point.x >= frame.left && point.x <= frame.left + edge)
+        {
+            edges |= kResizeLeft;
+        }
+        if (point.x >= frame.right - edge && point.x <= frame.right)
+        {
+            edges |= kResizeRight;
+        }
+        if (point.y >= frame.top && point.y <= frame.top + edge)
+        {
+            edges |= kResizeTop;
+        }
+        if (point.y >= frame.bottom - edge && point.y <= frame.bottom)
+        {
+            edges |= kResizeBottom;
+        }
+        return edges;
+    }
+
+    RECT GetCollectionPreviewSlotRect(const DesktopWidget& widget, size_t slot) const
+    {
+        RECT body = GetWidgetBodyRect(widget);
+        if (IsRectEmptyRect(body))
+        {
+            return {};
+        }
+
+        if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1)
+        {
+            InflateRect(&body, -10, -10);
+            const int columns = 2;
+            const int rows = 2;
+            const int col = static_cast<int>(slot % columns);
+            const int row = static_cast<int>(slot / columns);
+            const int width = std::max<int>(1, static_cast<int>(body.right - body.left) / columns);
+            const int height = std::max<int>(1, static_cast<int>(body.bottom - body.top) / rows);
+            RECT rect = MakeRect(
+                body.left + col * width,
+                body.top + row * height,
+                col + 1 == columns ? body.right : body.left + (col + 1) * width,
+                row + 1 == rows ? body.bottom : body.top + (row + 1) * height);
+            InflateRect(&rect, -3, -3);
+            return rect;
+        }
+
+        InflateRect(&body, -4, -4);
+        const int columns = std::max(1, widget.gridSpan.columns);
+        const int rows = std::max(1, widget.gridSpan.rows);
+        const int col = static_cast<int>(slot % static_cast<size_t>(columns));
+        const int row = static_cast<int>(slot / static_cast<size_t>(columns));
+        if (row >= rows)
+        {
+            return {};
+        }
+
+        const int width = std::max<int>(1, static_cast<int>(body.right - body.left) / columns);
+        const int height = std::max<int>(1, static_cast<int>(body.bottom - body.top) / rows);
+        RECT rect = MakeRect(
+            body.left + col * width,
+            body.top + row * height,
+            col + 1 == columns ? body.right : body.left + (col + 1) * width,
+            row + 1 == rows ? body.bottom : body.top + (row + 1) * height);
+        return rect;
+    }
+
+    size_t GetCollectionInlineCapacity(const DesktopWidget& widget) const
+    {
+        if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1)
+        {
+            return 4;
+        }
+        return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
+    }
+
+    size_t GetCollectionAllButtonSlot(const DesktopWidget& widget) const
+    {
+        if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1)
+        {
+            return static_cast<size_t>(-1);
+        }
+        return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
+    }
+
     bool HandlePageNavigationClick(POINT point)
     {
         const GridPage* page = nullptr;
@@ -4141,12 +6845,20 @@ private:
             {
                 continue;
             }
-            if (IsRectEmptyRect(item.bounds))
+            RECT sourceBounds = item.bounds;
+            if (IsRectEmptyRect(sourceBounds) &&
+                draggingCollectionMember_ &&
+                mouseDownHit_ >= 0 &&
+                &item == &items_[static_cast<size_t>(mouseDownHit_)])
+            {
+                sourceBounds = collectionDragStartBounds_;
+            }
+            if (IsRectEmptyRect(sourceBounds))
             {
                 continue;
             }
 
-            RECT moved = item.bounds;
+            RECT moved = sourceBounds;
             OffsetRect(&moved, dx, dy);
             DrawD2DItemAt(context, item, moved, true);
         }
@@ -4613,6 +7325,9 @@ private:
         case WM_MOUSEMOVE:
             OnMouseMove(wParam, lParam);
             return 0;
+        case WM_MOUSEWHEEL:
+            OnMouseWheel(wParam, lParam);
+            return 0;
         case WM_MOUSELEAVE:
             if (navButtonsVisible_)
             {
@@ -4665,7 +7380,7 @@ private:
             if (wParam == kShellChangeTimerId)
             {
                 KillTimer(hwnd_, kShellChangeTimerId);
-                if (!mouseDown_ && !draggingItems_ && !reloading_)
+                if (!mouseDown_ && !draggingItems_ && !draggingWidget_ && !resizingWidget_ && !reloading_)
                 {
                     ReloadItems();
                 }
@@ -4679,7 +7394,7 @@ private:
                 {
                     if (lastRecycleBinItemCount_ >= 0 && info.i64NumItems != lastRecycleBinItemCount_)
                     {
-                        if (!mouseDown_ && !draggingItems_ && !reloading_)
+                        if (!mouseDown_ && !draggingItems_ && !draggingWidget_ && !resizingWidget_ && !reloading_)
                         {
                             ReloadItems();
                         }
@@ -4719,9 +7434,20 @@ private:
         SetActiveWindow(hwnd_);
         SetFocus(hwnd_);
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        lastMousePoint_ = point;
         if (HandlePageNavigationClick(point))
         {
             return;
+        }
+
+        if (popupWidgetIndex_ < widgets_.size())
+        {
+            RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+            if (!PtInRect(&popup, point))
+            {
+                CloseCollectionPopup();
+                return;
+            }
         }
 
         SetCapture(hwnd_);
@@ -4731,23 +7457,86 @@ private:
         dragCurrentPoint_ = mouseDownPoint_;
         marqueeRect_ = MakeRect(mouseDownPoint_.x, mouseDownPoint_.y, mouseDownPoint_.x, mouseDownPoint_.y);
 
-        int hit = HitTest(mouseDownPoint_);
-        mouseDownHit_ = hit;
+        DesktopHit hit = HitTestDesktop(mouseDownPoint_);
+        mouseDownHit_ = hit.kind == DesktopHitKind::Item ||
+            hit.kind == DesktopHitKind::WidgetMember ||
+            hit.kind == DesktopHitKind::PopupMember
+            ? static_cast<int>(hit.itemIndex)
+            : -1;
+        mouseDownWidgetIndex_ = hit.widgetIndex;
         draggingItems_ = false;
+        draggingWidget_ = false;
+        resizingWidget_ = false;
+        draggingCollectionMember_ = false;
         draggingOverNav_ = false;
+        widgetResizeEdges_ = kResizeNone;
         bool ctrl = (wParam & MK_CONTROL) != 0;
-        if (hit >= 0)
+
+        if (popupWidgetIndex_ < widgets_.size() &&
+            hit.kind == DesktopHitKind::Widget &&
+            hit.widgetIndex == popupWidgetIndex_ &&
+            IsPointInsideOpenPopup(point))
+        {
+            if (!ctrl)
+            {
+                ClearSelection();
+            }
+            if (GetCapture() == hwnd_)
+            {
+                ReleaseCapture();
+            }
+            mouseDown_ = false;
+            mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            return;
+        }
+
+        if (hit.kind == DesktopHitKind::PopupMember || hit.kind == DesktopHitKind::WidgetMember)
         {
             if (ctrl)
             {
-                ToggleSelection(static_cast<size_t>(hit));
+                ToggleSelection(hit.itemIndex);
             }
-            else if (!items_[static_cast<size_t>(hit)].selected)
+            else if (!items_[hit.itemIndex].selected)
             {
-                SelectOnly(static_cast<size_t>(hit));
+                SelectOnly(hit.itemIndex);
+            }
+            collectionDragSourceWidget_ = hit.widgetIndex;
+            collectionDragSourceMember_ = hit.memberIndex;
+            collectionDragStartBounds_ = hit.bounds;
+            draggingCollectionMember_ = true;
+            dragGroupOriginX_ = hit.bounds.left;
+            dragGroupOriginY_ = hit.bounds.top;
+        }
+        else if (hit.kind == DesktopHitKind::Item)
+        {
+            if (ctrl)
+            {
+                ToggleSelection(hit.itemIndex);
+            }
+            else if (!items_[hit.itemIndex].selected)
+            {
+                SelectOnly(hit.itemIndex);
             }
 
-            UpdateDragGroupOrigin(static_cast<size_t>(hit));
+            UpdateDragGroupOrigin(hit.itemIndex);
+        }
+        else if (hit.kind == DesktopHitKind::Widget || hit.kind == DesktopHitKind::WidgetAllButton)
+        {
+            if (hit.widgetIndex < widgets_.size())
+            {
+                SelectWidgetOnly(hit.widgetIndex);
+                widgetDragOriginalCell_ = widgets_[hit.widgetIndex].gridCell;
+                widgetDragOriginalSpan_ = widgets_[hit.widgetIndex].gridSpan;
+                widgetPreviewCell_ = widgetDragOriginalCell_;
+                widgetPreviewSpan_ = widgetDragOriginalSpan_;
+                RECT bounds = widgets_[hit.widgetIndex].bounds;
+                dragGroupOriginX_ = bounds.left;
+                dragGroupOriginY_ = bounds.top;
+                widgetResizeEdges_ = hit.kind == DesktopHitKind::Widget
+                    ? HitTestWidgetResizeEdges(widgets_[hit.widgetIndex], point)
+                    : kResizeNone;
+            }
         }
         else if (!ctrl)
         {
@@ -4760,16 +7549,39 @@ private:
     void OnMouseMove(WPARAM, LPARAM lParam)
     {
         POINT current{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        POINT oldMousePoint = lastMousePoint_;
+        lastMousePoint_ = current;
         UpdateNavButtonHover(current);
 
         if (!mouseDown_)
         {
+            if (oldMousePoint.x != current.x || oldMousePoint.y != current.y)
+            {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
             return;
         }
         if (std::abs(current.x - mouseDownPoint_.x) > 3 || std::abs(current.y - mouseDownPoint_.y) > 3)
         {
             int hit = mouseDownHit_;
-            if (hit >= 0 && items_[static_cast<size_t>(hit)].selected)
+            if (mouseDownWidgetIndex_ < widgets_.size() && widgets_[mouseDownWidgetIndex_].selected)
+            {
+                dragCurrentPoint_ = current;
+                if (widgetResizeEdges_ != kResizeNone)
+                {
+                    resizingWidget_ = true;
+                    dragHint_ = L"释放：调整组件大小";
+                }
+                else
+                {
+                    draggingWidget_ = true;
+                    dragHint_ = L"释放：移动组件并挤占原位置";
+                }
+                UpdateWidgetPreviewFromPoint(current);
+                ShowDragHintWindow(dragCurrentPoint_, dragHint_);
+                InvalidateRect(hwnd_, nullptr, TRUE);
+            }
+            else if (hit >= 0 && items_[static_cast<size_t>(hit)].selected)
             {
                 RECT oldDirty = draggingItems_ ? GetInternalDragDirtyRect(dragCurrentPoint_) : GetSelectedDragBoundsAt(mouseDownPoint_);
                 draggingItems_ = true;
@@ -4798,6 +7610,43 @@ private:
         }
     }
 
+    void OnMouseWheel(WPARAM wParam, LPARAM lParam)
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ScreenToClient(hwnd_, &point);
+        if (popupWidgetIndex_ < widgets_.size())
+        {
+            RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+            if (PtInRect(&popup, point))
+            {
+                const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+                const int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
+                popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
+                InvalidateRect(hwnd_, nullptr, TRUE);
+                return;
+            }
+        }
+
+        const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        for (auto& widget : widgets_)
+        {
+            if (widget.type != DesktopWidgetType::FileCategories)
+            {
+                continue;
+            }
+            RECT content = GetFileCategoryContentRect(widget);
+            if (!PtInRect(&content, point))
+            {
+                continue;
+            }
+
+            const int maxScroll = GetFileCategoryMaxScrollOffset(widget);
+            widget.scrollOffset = std::clamp(widget.scrollOffset - delta / 2, 0, maxScroll);
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            return;
+        }
+    }
+
     void OnLeftButtonUp(WPARAM wParam, LPARAM lParam)
     {
         if (GetCapture() == hwnd_)
@@ -4805,9 +7654,19 @@ private:
             ReleaseCapture();
         }
 
-        if (draggingItems_)
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+
+        if (draggingWidget_ || resizingWidget_)
         {
-            POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (mouseDownWidgetIndex_ < widgets_.size())
+            {
+                UpdateWidgetPreviewFromPoint(point);
+                PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_);
+            }
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        else if (draggingItems_)
+        {
             int navDelta = HitTestNavButton(point);
             if (navDelta != 0)
             {
@@ -4827,21 +7686,50 @@ private:
             }
             else
             {
-                int hit = HitTest(point);
-                if (hit >= 0 && !items_[static_cast<size_t>(hit)].selected)
+                bool handledCollectionDrop = false;
+                if (popupWidgetIndex_ < widgets_.size())
                 {
-                    ComPtr<IDataObject> dataObject = CreateSelectedDataObject();
-                    if (dataObject)
+                    RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+                    if (PtInRect(&popup, point) &&
+                        widgets_[popupWidgetIndex_].type == DesktopWidgetType::Collection)
                     {
-                        DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
-                        DropDataObjectAt(dataObject.Get(), point, MK_LBUTTON, &effect);
-                        ReloadItems();
+                        size_t insertIndex = GetCollectionInsertIndex(popupWidgetIndex_, point, true);
+                        MoveSelectedItemsToCollection(popupWidgetIndex_, insertIndex, collectionDragSourceWidget_);
+                        handledCollectionDrop = true;
                     }
                 }
-                else
+
+                if (!handledCollectionDrop)
                 {
-                    MoveSelectedItemsToCell(CellFromPoint(GetDragTargetPoint(point)));
-                    LayoutItems();
+                    DesktopHit dropHit = HitTestDesktop(point);
+                    if ((dropHit.kind == DesktopHitKind::Widget ||
+                        dropHit.kind == DesktopHitKind::WidgetMember ||
+                        dropHit.kind == DesktopHitKind::WidgetAllButton) &&
+                        dropHit.widgetIndex < widgets_.size() &&
+                        widgets_[dropHit.widgetIndex].type == DesktopWidgetType::Collection)
+                    {
+                        size_t insertIndex = GetCollectionInsertIndex(dropHit.widgetIndex, point, false);
+                        MoveSelectedItemsToCollection(dropHit.widgetIndex, insertIndex, collectionDragSourceWidget_);
+                    }
+                    else if (dropHit.kind == DesktopHitKind::Item && !items_[dropHit.itemIndex].selected)
+                    {
+                        ComPtr<IDataObject> dataObject = CreateSelectedDataObject();
+                        if (dataObject)
+                        {
+                            DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+                            DropDataObjectAt(dataObject.Get(), point, MK_LBUTTON, &effect);
+                            ReloadItems();
+                        }
+                    }
+                    else
+                    {
+                        if (draggingCollectionMember_ && collectionDragSourceWidget_ < widgets_.size() && mouseDownHit_ >= 0)
+                        {
+                            RemoveSelectedItemsFromCollections(collectionDragSourceWidget_);
+                        }
+                        MoveSelectedItemsToCell(CellFromPoint(GetDragTargetPoint(point)));
+                        LayoutItems();
+                    }
                 }
             }
             InvalidateRect(hwnd_, nullptr, TRUE);
@@ -4870,41 +7758,101 @@ private:
             marqueeActive_ = false;
             InvalidateRect(hwnd_, nullptr, TRUE);
         }
+        else
+        {
+            DesktopHit clickHit = HitTestDesktop(point);
+            if (clickHit.kind == DesktopHitKind::WidgetAllButton ||
+                (clickHit.kind == DesktopHitKind::Widget &&
+                    clickHit.widgetIndex < widgets_.size() &&
+                    widgets_[clickHit.widgetIndex].gridSpan.columns <= 1 &&
+                    widgets_[clickHit.widgetIndex].gridSpan.rows <= 1))
+            {
+                OpenCollectionPopupAt(clickHit.widgetIndex, point, L"");
+            }
+            else if (clickHit.kind == DesktopHitKind::WidgetCategory && clickHit.widgetIndex < widgets_.size())
+            {
+                std::vector<std::wstring> categories = GetVisibleFileCategoryIds(widgets_[clickHit.widgetIndex]);
+                if (clickHit.memberIndex < categories.size())
+                {
+                    widgets_[clickHit.widgetIndex].activeCategoryId = categories[clickHit.memberIndex];
+                    widgets_[clickHit.widgetIndex].scrollOffset = 0;
+                    SaveLayoutSlots();
+                    InvalidateRect(hwnd_, nullptr, TRUE);
+                }
+            }
+        }
 
         mouseDown_ = false;
         draggingItems_ = false;
+        draggingWidget_ = false;
+        resizingWidget_ = false;
+        draggingCollectionMember_ = false;
         draggingOverNav_ = false;
         dragTargetCell_ = {};
         dragHint_.clear();
         HideDragHintWindow();
         mouseDownHit_ = -1;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        collectionDragSourceWidget_ = static_cast<size_t>(-1);
+        collectionDragSourceMember_ = static_cast<size_t>(-1);
+        widgetResizeEdges_ = kResizeNone;
     }
 
     void OnDoubleClick(LPARAM lParam)
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        int hit = HitTest(point);
-        if (hit >= 0)
+        DesktopHit hit = HitTestDesktop(point);
+        if (hit.kind == DesktopHitKind::Item ||
+            hit.kind == DesktopHitKind::WidgetMember ||
+            hit.kind == DesktopHitKind::PopupMember)
         {
-            OpenItem(static_cast<size_t>(hit));
+            OpenItem(hit.itemIndex);
+        }
+        else if (hit.kind == DesktopHitKind::WidgetCategory && hit.widgetIndex < widgets_.size())
+        {
+            std::vector<std::wstring> categories = GetVisibleFileCategoryIds(widgets_[hit.widgetIndex]);
+            if (hit.memberIndex < categories.size())
+            {
+                widgets_[hit.widgetIndex].activeCategoryId = categories[hit.memberIndex];
+                widgets_[hit.widgetIndex].scrollOffset = 0;
+                SaveLayoutSlots();
+                InvalidateRect(hwnd_, nullptr, TRUE);
+            }
+        }
+        else if (hit.kind == DesktopHitKind::Widget || hit.kind == DesktopHitKind::WidgetAllButton)
+        {
+            OpenCollectionPopupAt(hit.widgetIndex, point, L"");
         }
     }
 
     void OnRightButtonUp(LPARAM lParam)
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        int hit = HitTest(point);
-        if (hit >= 0 && !items_[static_cast<size_t>(hit)].selected)
+        DesktopHit hit = HitTestDesktop(point);
+        if ((hit.kind == DesktopHitKind::Item ||
+            hit.kind == DesktopHitKind::WidgetMember ||
+            hit.kind == DesktopHitKind::PopupMember) &&
+            !items_[hit.itemIndex].selected)
         {
-            SelectOnly(static_cast<size_t>(hit));
+            SelectOnly(hit.itemIndex);
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        else if ((hit.kind == DesktopHitKind::Widget ||
+            hit.kind == DesktopHitKind::WidgetAllButton ||
+            hit.kind == DesktopHitKind::WidgetCategory) &&
+            hit.widgetIndex < widgets_.size())
+        {
+            SelectWidgetOnly(hit.widgetIndex);
             InvalidateRect(hwnd_, nullptr, TRUE);
         }
 
         POINT screenPoint = point;
         ClientToScreen(hwnd_, &screenPoint);
-        if (hit >= 0)
+        if (hit.kind == DesktopHitKind::Item ||
+            hit.kind == DesktopHitKind::WidgetMember ||
+            hit.kind == DesktopHitKind::PopupMember)
         {
-            if (IsProtectedDesktopIcon(items_[static_cast<size_t>(hit)]))
+            if (IsProtectedDesktopIcon(items_[hit.itemIndex]))
             {
                 ShowShellContextMenu(screenPoint);
             }
@@ -4912,6 +7860,13 @@ private:
             {
                 ShowCustomItemContextMenu(screenPoint);
             }
+        }
+        else if ((hit.kind == DesktopHitKind::Widget ||
+            hit.kind == DesktopHitKind::WidgetAllButton ||
+            hit.kind == DesktopHitKind::WidgetCategory) &&
+            hit.widgetIndex < widgets_.size())
+        {
+            ShowCustomWidgetContextMenu(screenPoint, hit.widgetIndex);
         }
         else
         {
@@ -4984,6 +7939,11 @@ private:
         switch (key)
         {
         case VK_ESCAPE:
+            if (popupWidgetIndex_ < widgets_.size())
+            {
+                CloseCollectionPopup();
+                break;
+            }
             DestroyWindow(hwnd_);
             break;
         case VK_F5:
@@ -4993,7 +7953,14 @@ private:
             OpenSelected();
             break;
         case VK_DELETE:
-            InvokeSelectedShellVerb("delete");
+            if (selectedWidgetIndex_ < widgets_.size())
+            {
+                DeleteWidget(selectedWidgetIndex_);
+            }
+            else
+            {
+                InvokeSelectedShellVerb("delete");
+            }
             break;
         case VK_F2:
             BeginRenameSelected();
@@ -5034,9 +8001,13 @@ private:
                 ClearSelection();
                 for (auto& item : items_)
                 {
+                    if (!IsTopLevelItem(item))
+                    {
+                        continue;
+                    }
                     item.selected = true;
+                    ++selectedCount_;
                 }
-                selectedCount_ = static_cast<int>(items_.size());
                 InvalidateRect(hwnd_, nullptr, TRUE);
             }
             break;
@@ -5129,6 +8100,7 @@ private:
     ComPtr<IDCompositionSurface> dcompSurface_;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
+    ComPtr<IDWriteTextFormat> collectionItemTextFormat_;
     ComPtr<IDWriteTextFormat> statusTextFormat_;
     ComPtr<ID2D1StrokeStyle> dottedStrokeStyle_;
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
@@ -5142,6 +8114,7 @@ private:
     std::unordered_map<std::wstring, int> savedPageRows_;
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
+    std::vector<DesktopWidget> widgets_;
     int selectedCount_ = 0;
     LONG refCount_ = 1;
     int virtualLeft_ = 0;
@@ -5152,16 +8125,37 @@ private:
     bool mouseDown_ = false;
     bool marqueeActive_ = false;
     bool draggingItems_ = false;
+    bool draggingWidget_ = false;
+    bool resizingWidget_ = false;
     bool draggingOverNav_ = false;
     bool externalDragActive_ = false;
     bool dropTargetRegistered_ = false;
     int mouseDownHit_ = -1;
+    size_t mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    size_t selectedWidgetIndex_ = static_cast<size_t>(-1);
+    size_t popupWidgetIndex_ = static_cast<size_t>(-1);
+    size_t collectionDragSourceWidget_ = static_cast<size_t>(-1);
+    size_t collectionDragSourceMember_ = static_cast<size_t>(-1);
+    bool draggingCollectionMember_ = false;
+    bool renamingWidget_ = false;
+    int widgetResizeEdges_ = kResizeNone;
     GridCell dragTargetCell_;
+    GridCell widgetDragOriginalCell_;
+    GridCell widgetPreviewCell_;
+    GridSpan widgetDragOriginalSpan_;
+    GridSpan widgetPreviewSpan_;
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
     POINT mouseDownPoint_{};
     POINT dragCurrentPoint_{};
     POINT externalDragPoint_{};
+    POINT lastMousePoint_{};
+    RECT collectionDragStartBounds_{};
+    RECT popupRect_{};
+    int popupScrollOffset_ = 0;
+    bool popupHasAnchor_ = false;
+    POINT popupAnchorPoint_{};
+    std::wstring popupCategoryId_;
     std::wstring dragHint_;
     std::wstring externalDragHint_;
     std::wstring primaryMonitorId_;
