@@ -80,6 +80,10 @@ constexpr UINT kContextZoomIncrease = 41016;
 constexpr UINT kContextZoomDecrease = 41017;
 constexpr UINT kContextZoomPresetFirst = 41150;
 
+constexpr UINT kShellChangeMessage = WM_APP + 2;
+constexpr UINT_PTR kShellChangeTimerId = 2;
+constexpr UINT kShellChangeDebounceMs = 500;
+
 struct GridCell
 {
     std::wstring pageId;
@@ -1133,6 +1137,19 @@ public:
         RegisterOleDropTarget();
         AddTrayIcon();
         ReloadItems();
+
+        SHChangeNotifyEntry entries[1]{};
+        entries[0].pidl = desktopPidl_.get();
+        entries[0].fRecursive = FALSE;
+        shellChangeRegId_ = SHChangeNotifyRegister(
+            hwnd_,
+            SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
+            SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
+            SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
+            SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES,
+            kShellChangeMessage,
+            1,
+            entries);
 
         MSG msg{};
         while (GetMessageW(&msg, nullptr, 0, 0) > 0)
@@ -5488,10 +5505,19 @@ private:
         case kTrayCallbackMessage:
             OnTrayCallback(lParam);
             return 0;
+        case kShellChangeMessage:
+            SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+            return 0;
         case WM_TIMER:
             if (wParam == 1)
             {
                 DestroyWindow(hwnd_);
+                return 0;
+            }
+            if (wParam == kShellChangeTimerId)
+            {
+                KillTimer(hwnd_, kShellChangeTimerId);
+                ReloadItems();
                 return 0;
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
@@ -5504,6 +5530,12 @@ private:
             HideDragHintWindow();
             DestroyDragHintWindow();
             UnregisterOleDropTarget();
+            if (shellChangeRegId_ != 0)
+            {
+                SHChangeNotifyDeregister(shellChangeRegId_);
+                shellChangeRegId_ = 0;
+            }
+            KillTimer(hwnd_, kShellChangeTimerId);
             RemoveTrayIcon();
             RestoreExplorerIcons();
             PostQuitMessage(0);
@@ -5982,6 +6014,7 @@ private:
     std::wstring lastMonitorPageId_;
     int pageOffset_ = 0;
     float gapScale_ = 1.0f;
+    ULONG shellChangeRegId_ = 0;
     bool navButtonsVisible_ = false;
     RECT navButtonsHoverZone_{};
     POINT lastContextMenuScreenPoint_{};
