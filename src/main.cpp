@@ -1859,6 +1859,46 @@ private:
         ReloadItems();
     }
 
+    HBITMAP CreateMenuIconBitmap(COLORREF color, wchar_t glyph)
+    {
+        const int cx = GetSystemMetrics(SM_CXMENUCHECK);
+        const int cy = GetSystemMetrics(SM_CYMENUCHECK);
+        if (cx <= 0 || cy <= 0) return nullptr;
+
+        HDC screenDc = GetDC(nullptr);
+        HDC memDc = CreateCompatibleDC(screenDc);
+        HBITMAP bmp = CreateCompatibleBitmap(screenDc, cx, cy);
+        HGDIOBJ oldBmp = SelectObject(memDc, bmp);
+        HGDIOBJ oldFont = SelectObject(memDc, GetStockObject(DEFAULT_GUI_FONT));
+
+        HBRUSH fill = CreateSolidBrush(color);
+        RECT rc = {0, 0, cx, cy};
+        FillRect(memDc, &rc, fill);
+        DeleteObject(fill);
+
+        SetBkMode(memDc, TRANSPARENT);
+        SetTextColor(memDc, RGB(255, 255, 255));
+        DrawTextW(memDc, &glyph, 1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        SelectObject(memDc, oldFont);
+        SelectObject(memDc, oldBmp);
+        DeleteDC(memDc);
+        ReleaseDC(nullptr, screenDc);
+        return bmp;
+    }
+
+    void SetMenuItemIcon(HMENU menu, UINT command, COLORREF color, wchar_t glyph)
+    {
+        HBITMAP icon = CreateMenuIconBitmap(color, glyph);
+        if (icon == nullptr) return;
+
+        MENUITEMINFOW mii = { sizeof(mii) };
+        mii.fMask = MIIM_BITMAP;
+        mii.hbmpItem = icon;
+        SetMenuItemInfoW(menu, command, FALSE, &mii);
+        menuIconPool_.push_back(icon);
+    }
+
     void ShowTrayMenu(POINT screenPoint)
     {
         HMENU menu = CreatePopupMenu();
@@ -1866,11 +1906,6 @@ private:
         {
             return;
         }
-
-        AppendMenuW(menu, MF_STRING, kTrayReloadCommand, L"重新加载");
-        AppendMenuW(menu, MF_STRING, kTraySortByNameCommand, L"图标排序：按名称");
-        AppendMenuW(menu, MF_STRING, kTraySortByTypeCommand, L"图标排序：按类型");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
         HMENU iconSettingsMenu = CreatePopupMenu();
         if (iconSettingsMenu != nullptr)
@@ -3818,8 +3853,6 @@ private:
         AppendMenuW(menu, fileCommandFlag, kContextCopyCommand, L"复制");
         AppendMenuW(menu, fileCommandFlag, kContextDeleteCommand, L"删除");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
 
         SetForegroundWindow(hwnd_);
@@ -3848,9 +3881,6 @@ private:
             break;
         case kContextDeleteCommand:
             InvokeSelectedShellVerb("delete");
-            break;
-        case kContextThisDisplayFirstCommand:
-            SetFirstPageMonitorFromPoint(screenPoint);
             break;
         case kContextMoreCommand:
             ShowShellContextMenu(screenPoint);
@@ -3921,6 +3951,17 @@ private:
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
 
+        menuIconPool_.clear();
+        SetMenuItemIcon(menu, kContextRefreshCommand, RGB(60, 130, 220), L'R');
+        SetMenuItemIcon(menu, kContextPasteCommand, RGB(80, 160, 200), L'P');
+        SetMenuItemIcon(menu, kContextMoreCommand, RGB(120, 120, 200), L'>');
+        if (sortMenu) SetMenuItemIcon(sortMenu, kContextSortByNameCommand, RGB(100, 160, 100), L'N');
+        if (sortMenu) SetMenuItemIcon(sortMenu, kContextSortByTypeCommand, RGB(100, 160, 100), L'T');
+        if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridAddRow, RGB(180, 140, 60), L'+');
+        if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridRemoveRow, RGB(180, 140, 60), L'-');
+        if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridAddColumn, RGB(180, 140, 60), L'+');
+        if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridRemoveColumn, RGB(180, 140, 60), L'-');
+
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
             menu,
@@ -3930,6 +3971,8 @@ private:
             hwnd_,
             nullptr);
         DestroyMenu(menu);
+        for (HBITMAP bmp : menuIconPool_) { DeleteObject(bmp); }
+        menuIconPool_.clear();
 
         if (command >= kContextZoomPresetFirst && command <= kContextZoomPresetFirst + 150)
         {
@@ -6058,6 +6101,7 @@ private:
     ULONG shellChangeRegId_ = 0;
     bool reloading_ = false;
     LONGLONG lastRecycleBinItemCount_ = -1;
+    std::vector<HBITMAP> menuIconPool_;
     bool navButtonsVisible_ = false;
     RECT navButtonsHoverZone_{};
     POINT lastContextMenuScreenPoint_{};
