@@ -2644,42 +2644,64 @@ private:
             {
                 page.columns = colIt->second;
                 page.rows = rowIt->second;
-                ApplyZoomToPage(page);
+                ComputeReferenceGaps(page);
+                ApplyGapScaleToPage(page);
             }
         }
     }
 
-    void ApplyZoomToPage(GridPage& page)
+    void ComputeReferenceGaps(GridPage& page)
     {
-        page.cellWidth = static_cast<int>(kCellWidth * zoomLevel_);
-        page.cellHeight = static_cast<int>(kMinCellHeight * zoomLevel_);
+        const int cellW = kCellWidth;
+        const int cellH = kMinCellHeight;
         const int width = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
         const int height = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-        const int usableWidth = std::max(1, width - (page.marginX * 2));
-        const int usableHeight = std::max(1, height - (page.marginY * 2));
-        page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
-        page.gapY = page.rows > 1 ? std::max(0, (usableHeight - (page.rows * page.cellHeight)) / (page.rows - 1)) : 0;
+        const int usableW = std::max(1, width - (page.marginX * 2));
+        const int usableH = std::max(1, height - (page.marginY * 2));
+        const int refGapX = page.columns > 1
+            ? std::max(0, (usableW - (page.columns * cellW)) / (page.columns - 1)) : 0;
+        const int refGapY = page.rows > 1
+            ? std::max(0, (usableH - (page.rows * cellH)) / (page.rows - 1)) : 0;
+        referenceGapX_[page.id] = refGapX;
+        referenceGapY_[page.id] = refGapY;
     }
 
-    void ReconfigureAllPages()
+    void ApplyGapScaleToPage(GridPage& page)
     {
-        for (auto& page : gridPages_)
+        int refX = referenceGapX_[page.id];
+        int refY = referenceGapY_[page.id];
+        if (refX <= 0 && refY <= 0)
         {
-            ApplyZoomToPage(page);
+            ComputeReferenceGaps(page);
+            refX = referenceGapX_[page.id];
+            refY = referenceGapY_[page.id];
         }
+        const int effGapX = std::max(0, static_cast<int>(refX / gapScale_));
+        const int effGapY = std::max(0, static_cast<int>(refY / gapScale_));
+        const int usableW = std::max(1, static_cast<int>(page.workArea.right - page.workArea.left) - (page.marginX * 2));
+        const int usableH = std::max(1, static_cast<int>(page.workArea.bottom - page.workArea.top) - (page.marginY * 2));
+
+        page.cellWidth = page.columns > 1
+            ? std::max(kIconSize, (usableW - (page.columns - 1) * effGapX) / page.columns)
+            : usableW;
+        page.cellHeight = page.rows > 1
+            ? std::max(kMinCellHeight / 2, (usableH - (page.rows - 1) * effGapY) / page.rows)
+            : usableH;
+        page.gapX = page.columns > 1 ? (usableW - page.columns * page.cellWidth) / (page.columns - 1) : 0;
+        page.gapY = page.rows > 1 ? (usableH - page.rows * page.cellHeight) / (page.rows - 1) : 0;
     }
 
     void AdjustZoom(float delta)
     {
-        float newZoom = std::clamp(zoomLevel_ + delta, 0.5f, 2.0f);
-        if (newZoom == zoomLevel_)
+        float newVal = std::clamp(gapScale_ + delta, 0.5f, 2.0f);
+        if (newVal == gapScale_)
         {
             return;
         }
-        zoomLevel_ = newZoom;
+        gapScale_ = newVal;
         for (auto& page : gridPages_)
         {
-            ApplyZoomToPage(page);
+            ApplyGapScaleToPage(page);
         }
         LayoutItems();
         SaveLayoutSlots();
@@ -2718,7 +2740,8 @@ private:
         }
 
         targetPage->rows = newRows;
-        ApplyZoomToPage(*targetPage);
+        ComputeReferenceGaps(*targetPage);
+        ApplyGapScaleToPage(*targetPage);
 
         savedPageColumns_[targetPage->id] = targetPage->columns;
         savedPageRows_[targetPage->id] = targetPage->rows;
@@ -2758,7 +2781,8 @@ private:
         }
 
         targetPage->columns = newColumns;
-        ApplyZoomToPage(*targetPage);
+        ComputeReferenceGaps(*targetPage);
+        ApplyGapScaleToPage(*targetPage);
 
         savedPageColumns_[targetPage->id] = targetPage->columns;
         savedPageRows_[targetPage->id] = targetPage->rows;
@@ -2766,10 +2790,10 @@ private:
         ReloadItems(false);
     }
 
-    void ConfigureGridPage(GridPage& page) const
+    void ConfigureGridPage(GridPage& page)
     {
-        const int cellW = static_cast<int>(kCellWidth * zoomLevel_);
-        const int cellH = static_cast<int>(kMinCellHeight * zoomLevel_);
+        const int cellW = static_cast<int>(kCellWidth * gapScale_);
+        const int cellH = static_cast<int>(kMinCellHeight * gapScale_);
         const int width = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
         const int height = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
         const int usableWidth = std::max(1, width - (page.marginX * 2));
@@ -2781,6 +2805,9 @@ private:
         page.cellHeight = cellH;
         page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
         page.gapY = page.rows > 1 ? std::max(0, (usableHeight - (page.rows * page.cellHeight)) / (page.rows - 1)) : 0;
+
+        referenceGapX_[page.id] = page.gapX;
+        referenceGapY_[page.id] = page.gapY;
     }
 
     bool IsGeneratedExtraPageId(const std::wstring& pageId) const
@@ -3242,8 +3269,11 @@ private:
 
     RECT GetItemIconRect(RECT bounds) const
     {
-        const int cellW = static_cast<int>(kCellWidth * zoomLevel_);
-        const int iconSz = static_cast<int>(kIconSize * zoomLevel_);
+        const int cellW = bounds.right - bounds.left;
+        const int cellH = bounds.bottom - bounds.top;
+        const int maxIconW = std::max(16, cellW - 8);
+        const int maxIconH = std::max(16, cellH - kTextTop - kTextHeight - 4);
+        const int iconSz = std::min(maxIconW, maxIconH);
         const int iconX = bounds.left + (cellW - iconSz) / 2;
         const int iconY = bounds.top + 2;
         return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
@@ -3251,15 +3281,14 @@ private:
 
     RECT GetItemTextRect(RECT bounds, bool expanded) const
     {
-        const int textH = expanded
-            ? static_cast<int>(kTextExpandedHeight * zoomLevel_)
-            : static_cast<int>(kTextCollapsedHeight * zoomLevel_);
-        const int textTop = static_cast<int>(kTextTop * zoomLevel_);
+        RECT iconRect = GetItemIconRect(bounds);
+        const int textTop = iconRect.bottom + 2;
+        const int textH = expanded ? kTextExpandedHeight : kTextCollapsedHeight;
         return MakeRect(
             bounds.left + 4,
-            bounds.top + textTop,
+            textTop,
             bounds.right - 4,
-            bounds.top + textTop + textH);
+            textTop + textH);
     }
 
     RECT GetItemTextRect(const DesktopItem& item, bool expanded) const
@@ -3836,7 +3865,7 @@ private:
             AppendMenuW(zoomMenu, MF_STRING, kContextZoomIncrease, L"放大 (+10%)");
             AppendMenuW(zoomMenu, MF_STRING, kContextZoomDecrease, L"缩小 (-10%)");
             wchar_t zoomLabel[32]{};
-            swprintf_s(zoomLabel, L"缩放：%d%%", static_cast<int>(zoomLevel_ * 100));
+            swprintf_s(zoomLabel, L"缩放：%d%%", static_cast<int>(gapScale_ * 100));
             AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(zoomMenu), zoomLabel);
         }
 
@@ -5830,6 +5859,8 @@ private:
     std::vector<std::wstring> savedPageIds_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
     std::unordered_map<std::wstring, int> savedPageRows_;
+    std::unordered_map<std::wstring, int> referenceGapX_;
+    std::unordered_map<std::wstring, int> referenceGapY_;
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     int selectedCount_ = 0;
@@ -5857,7 +5888,7 @@ private:
     std::wstring firstPageMonitorId_;
     std::wstring pageNavigationPageId_;
     int pageOffset_ = 0;
-    float zoomLevel_ = 1.0f;
+    float gapScale_ = 1.0f;
     bool navButtonsVisible_ = false;
     RECT navButtonsHoverZone_{};
     POINT lastContextMenuScreenPoint_{};
