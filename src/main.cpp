@@ -4765,6 +4765,56 @@ private:
         DrawD2DButton(context, nextRect, L"下一页", pageOffset_ < MaxPageOffset());
     }
 
+    int HitTestNavButton(POINT point) const
+    {
+        const GridPage* page = nullptr;
+        if (!lastMonitorPageId_.empty())
+        {
+            page = FindExactGridPage(lastMonitorPageId_);
+        }
+        if (page == nullptr && !gridPages_.empty())
+        {
+            page = &gridPages_[0];
+        }
+        if (page == nullptr) return 0;
+
+        const bool hasPrev = pageOffset_ > 0;
+        const bool hasNext = pageOffset_ < MaxPageOffset();
+        if (!hasPrev && !hasNext) return 0;
+
+        constexpr LONG kButtonWidth = 68;
+        constexpr LONG kButtonHeight = 28;
+        constexpr LONG kGap = 8;
+        constexpr LONG kPanelPaddingX = 10;
+        constexpr LONG kPanelPaddingY = 8;
+        const int visibleCount = (hasPrev ? 1 : 0) + (hasNext ? 1 : 0);
+        const LONG kPanelWidth = kButtonWidth * visibleCount + kGap * (visibleCount - 1) + kPanelPaddingX * 2;
+        const LONG kPanelHeight = kButtonHeight + kPanelPaddingY * 2;
+
+        const LONG panelRight = std::max<LONG>(page->workArea.left + kPanelWidth,
+            page->workArea.right - page->marginX - 10);
+        const LONG panelBottom = std::max<LONG>(page->workArea.top + kPanelHeight,
+            page->workArea.bottom - page->marginY - 10);
+        const LONG panelLeft = panelRight - kPanelWidth;
+        const LONG panelTop = panelBottom - kPanelHeight;
+
+        LONG btnX = panelLeft + kPanelPaddingX;
+        if (hasPrev)
+        {
+            RECT prevRect = MakeRect(btnX, panelTop + kPanelPaddingY,
+                btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
+            if (PtInRect(&prevRect, point)) return -1;
+            btnX += kButtonWidth + kGap;
+        }
+        if (hasNext)
+        {
+            RECT nextRect = MakeRect(btnX, panelTop + kPanelPaddingY,
+                btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
+            if (PtInRect(&nextRect, point)) return 1;
+        }
+        return 0;
+    }
+
     bool HandlePageNavigationClick(POINT point)
     {
         const GridPage* page = nullptr;
@@ -5567,21 +5617,41 @@ private:
         if (draggingItems_)
         {
             POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            int hit = HitTest(point);
-            if (hit >= 0 && !items_[static_cast<size_t>(hit)].selected)
+            int navDelta = HitTestNavButton(point);
+            if (navDelta != 0)
             {
-                ComPtr<IDataObject> dataObject = CreateSelectedDataObject();
-                if (dataObject)
+                pageOffset_ = std::clamp(pageOffset_ + navDelta, 0, MaxPageOffset());
+                ApplyPageMapping();
+                for (auto& item : items_)
                 {
-                    DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
-                    DropDataObjectAt(dataObject.Get(), point, MK_LBUTTON, &effect);
-                    ReloadItems();
+                    if (item.selected)
+                    {
+                        item.gridCell.pageId = lastMonitorPageId_;
+                        item.gridCell.column = 0;
+                        item.gridCell.row = 0;
+                    }
                 }
+                SaveLayoutSlots();
+                ReloadItems(false);
             }
             else
             {
-                MoveSelectedItemsToCell(CellFromPoint(GetDragTargetPoint(point)));
-                LayoutItems();
+                int hit = HitTest(point);
+                if (hit >= 0 && !items_[static_cast<size_t>(hit)].selected)
+                {
+                    ComPtr<IDataObject> dataObject = CreateSelectedDataObject();
+                    if (dataObject)
+                    {
+                        DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+                        DropDataObjectAt(dataObject.Get(), point, MK_LBUTTON, &effect);
+                        ReloadItems();
+                    }
+                }
+                else
+                {
+                    MoveSelectedItemsToCell(CellFromPoint(GetDragTargetPoint(point)));
+                    LayoutItems();
+                }
             }
             InvalidateRect(hwnd_, nullptr, TRUE);
         }
