@@ -45,8 +45,8 @@ constexpr int kTextTop = 70;
 constexpr int kTextCollapsedHeight = 34;
 constexpr int kTextExpandedHeight = 58;
 constexpr int kTextHeight = kTextCollapsedHeight;
-constexpr int kDefaultGapX = 10;
-constexpr int kDefaultGapY = 10;
+constexpr int kDefaultGapX = 16;
+constexpr int kDefaultGapY = 16;
 constexpr int kRenameEditId = 1001;
 constexpr UINT kTrayCallbackMessage = WM_APP + 1;
 constexpr UINT_PTR kTrayIconId = 1;
@@ -78,6 +78,7 @@ constexpr UINT kContextGridAddColumn = 41014;
 constexpr UINT kContextGridRemoveColumn = 41015;
 constexpr UINT kContextZoomIncrease = 41016;
 constexpr UINT kContextZoomDecrease = 41017;
+constexpr UINT kContextZoomPresetFirst = 41150;
 
 struct GridCell
 {
@@ -2668,6 +2669,23 @@ private:
         page.gapY = page.rows > 1 ? (usableH - page.rows * page.cellHeight) / (page.rows - 1) : 0;
     }
 
+    void SetZoom(float value)
+    {
+        float clamped = std::clamp(value, 0.5f, 2.0f);
+        if (clamped == gapScale_)
+        {
+            return;
+        }
+        gapScale_ = clamped;
+        for (auto& page : gridPages_)
+        {
+            ApplyGapScaleToPage(page);
+        }
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
     void AdjustZoom(float delta)
     {
         float newVal = std::clamp(gapScale_ + delta, 0.5f, 2.0f);
@@ -3834,6 +3852,19 @@ private:
         HMENU zoomMenu = CreatePopupMenu();
         if (zoomMenu != nullptr)
         {
+            const int presets[] = {50, 70, 80, 90, 100, 110, 120, 130, 150, 200};
+            for (int pct : presets)
+            {
+                wchar_t label[16]{};
+                swprintf_s(label, L"%d%%", pct);
+                UINT flags = MF_STRING;
+                if (static_cast<int>(gapScale_ * 100) == pct)
+                {
+                    flags |= MF_CHECKED;
+                }
+                AppendMenuW(zoomMenu, flags, kContextZoomPresetFirst + static_cast<UINT>(pct), label);
+            }
+            AppendMenuW(zoomMenu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(zoomMenu, MF_STRING, kContextZoomIncrease, L"放大 (+10%)");
             AppendMenuW(zoomMenu, MF_STRING, kContextZoomDecrease, L"缩小 (-10%)");
             wchar_t zoomLabel[32]{};
@@ -3858,7 +3889,11 @@ private:
             nullptr);
         DestroyMenu(menu);
 
-        switch (command)
+        if (command >= kContextZoomPresetFirst && command <= kContextZoomPresetFirst + 150)
+        {
+            SetZoom(static_cast<float>(command - kContextZoomPresetFirst) / 100.0f);
+        }
+        else switch (command)
         {
         case kContextRefreshCommand:
             ReloadItems();
