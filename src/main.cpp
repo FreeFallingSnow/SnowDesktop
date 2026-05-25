@@ -2722,9 +2722,8 @@ private:
 
         savedPageColumns_[targetPage->id] = targetPage->columns;
         savedPageRows_[targetPage->id] = targetPage->rows;
-        LayoutItems();
         SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        ReloadItems(false);
     }
 
     void AdjustGridColumns(int delta)
@@ -2763,9 +2762,8 @@ private:
 
         savedPageColumns_[targetPage->id] = targetPage->columns;
         savedPageRows_[targetPage->id] = targetPage->rows;
-        LayoutItems();
         SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        ReloadItems(false);
     }
 
     void ConfigureGridPage(GridPage& page) const
@@ -3244,19 +3242,24 @@ private:
 
     RECT GetItemIconRect(RECT bounds) const
     {
-        const int iconX = bounds.left + (kCellWidth - kIconSize) / 2;
+        const int cellW = static_cast<int>(kCellWidth * zoomLevel_);
+        const int iconSz = static_cast<int>(kIconSize * zoomLevel_);
+        const int iconX = bounds.left + (cellW - iconSz) / 2;
         const int iconY = bounds.top + 2;
-        return MakeRect(iconX, iconY, iconX + kIconSize, iconY + kIconSize);
+        return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
     }
 
     RECT GetItemTextRect(RECT bounds, bool expanded) const
     {
-        const int textHeight = expanded ? kTextExpandedHeight : kTextCollapsedHeight;
+        const int textH = expanded
+            ? static_cast<int>(kTextExpandedHeight * zoomLevel_)
+            : static_cast<int>(kTextCollapsedHeight * zoomLevel_);
+        const int textTop = static_cast<int>(kTextTop * zoomLevel_);
         return MakeRect(
             bounds.left + 4,
-            bounds.top + kTextTop,
+            bounds.top + textTop,
             bounds.right - 4,
-            bounds.top + kTextTop + textHeight);
+            bounds.top + textTop + textH);
     }
 
     RECT GetItemTextRect(const DesktopItem& item, bool expanded) const
@@ -4534,17 +4537,28 @@ private:
 
     void DrawD2DButton(ID2D1DeviceContext* context, const RECT& rect, const std::wstring& label, bool enabled)
     {
-        if (context == nullptr)
+        if (context == nullptr || !enabled)
         {
             return;
         }
 
-        DrawD2DFilledRectangle(
-            context,
-            rect,
-            enabled ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f) : D2D1::ColorF(0.94f, 0.94f, 0.94f, 0.92f),
-            enabled ? D2D1::ColorF(0.56f, 0.60f, 0.66f, 0.95f) : D2D1::ColorF(0.70f, 0.72f, 0.76f, 0.80f),
-            nullptr);
+        constexpr float kRadius = 4.0f;
+        D2D1_RECT_F d2dRect = ToD2DRect(rect);
+        D2D1_ROUNDED_RECT roundedRect = D2D1::RoundedRect(d2dRect, kRadius, kRadius);
+
+        ComPtr<ID2D1SolidColorBrush> fillBrush;
+        context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f), &fillBrush);
+        if (fillBrush)
+        {
+            context->FillRoundedRectangle(roundedRect, fillBrush.Get());
+        }
+
+        ComPtr<ID2D1SolidColorBrush> strokeBrush;
+        context->CreateSolidColorBrush(D2D1::ColorF(0.56f, 0.60f, 0.66f, 0.95f), &strokeBrush);
+        if (strokeBrush)
+        {
+            context->DrawRoundedRectangle(roundedRect, strokeBrush.Get(), 1.0f);
+        }
 
         if (!itemTextFormat_)
         {
@@ -4552,9 +4566,7 @@ private:
         }
 
         ComPtr<ID2D1SolidColorBrush> textBrush;
-        context->CreateSolidColorBrush(
-            enabled ? D2D1::ColorF(0.10f, 0.13f, 0.18f, 1.0f) : D2D1::ColorF(0.45f, 0.48f, 0.54f, 0.95f),
-            &textBrush);
+        context->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.13f, 0.18f, 1.0f), &textBrush);
         if (!textBrush)
         {
             return;
@@ -4626,14 +4638,20 @@ private:
         }
         if (page == nullptr) return;
 
+        const bool hasPrev = pageOffset_ > 0;
+        const bool hasNext = pageOffset_ < MaxPageOffset();
+        if (!hasPrev && !hasNext) return;
+
         constexpr LONG kButtonWidth = 68;
         constexpr LONG kButtonHeight = 28;
         constexpr LONG kGap = 8;
         constexpr LONG kPanelPaddingX = 10;
         constexpr LONG kPanelPaddingY = 8;
-        constexpr LONG kPanelWidth = kButtonWidth * 2 + kGap + kPanelPaddingX * 2;
-        constexpr LONG kPanelHeight = kButtonHeight + kPanelPaddingY * 2;
         constexpr float kCornerRadius = 8.0f;
+
+        const int visibleCount = (hasPrev ? 1 : 0) + (hasNext ? 1 : 0);
+        const LONG kPanelWidth = kButtonWidth * visibleCount + kGap * (visibleCount - 1) + kPanelPaddingX * 2;
+        const LONG kPanelHeight = kButtonHeight + kPanelPaddingY * 2;
 
         const LONG panelRight = std::max<LONG>(page->workArea.left + kPanelWidth,
             page->workArea.right - page->marginX - 10);
@@ -4659,19 +4677,20 @@ private:
             context->DrawRoundedRectangle(roundedPanel, borderBrush.Get(), 1.0f);
         }
 
-        RECT prevRect = MakeRect(
-            panelLeft + kPanelPaddingX,
-            panelTop + kPanelPaddingY,
-            panelLeft + kPanelPaddingX + kButtonWidth,
-            panelTop + kPanelPaddingY + kButtonHeight);
-        RECT nextRect = MakeRect(
-            panelLeft + kPanelPaddingX + kButtonWidth + kGap,
-            panelTop + kPanelPaddingY,
-            panelLeft + kPanelPaddingX + kButtonWidth * 2 + kGap,
-            panelTop + kPanelPaddingY + kButtonHeight);
-
-        DrawD2DButton(context, prevRect, L"上一页", pageOffset_ > 0);
-        DrawD2DButton(context, nextRect, L"下一页", pageOffset_ < MaxPageOffset());
+        LONG btnX = panelLeft + kPanelPaddingX;
+        if (hasPrev)
+        {
+            RECT prevRect = MakeRect(btnX, panelTop + kPanelPaddingY,
+                btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
+            DrawD2DButton(context, prevRect, L"上一页", true);
+            btnX += kButtonWidth + kGap;
+        }
+        if (hasNext)
+        {
+            RECT nextRect = MakeRect(btnX, panelTop + kPanelPaddingY,
+                btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
+            DrawD2DButton(context, nextRect, L"下一页", true);
+        }
     }
 
     bool GetPageNavigationRects(RECT& previousRect, RECT& nextRect) const
@@ -4718,13 +4737,19 @@ private:
         }
         if (page == nullptr) return false;
 
+        const bool hasPrev = pageOffset_ > 0;
+        const bool hasNext = pageOffset_ < MaxPageOffset();
+        if (!hasPrev && !hasNext) return false;
+
         constexpr LONG kButtonWidth = 68;
         constexpr LONG kButtonHeight = 28;
         constexpr LONG kGap = 8;
         constexpr LONG kPanelPaddingX = 10;
         constexpr LONG kPanelPaddingY = 8;
-        constexpr LONG kPanelWidth = kButtonWidth * 2 + kGap + kPanelPaddingX * 2;
-        constexpr LONG kPanelHeight = kButtonHeight + kPanelPaddingY * 2;
+
+        const int visibleCount = (hasPrev ? 1 : 0) + (hasNext ? 1 : 0);
+        const LONG kPanelWidth = kButtonWidth * visibleCount + kGap * (visibleCount - 1) + kPanelPaddingX * 2;
+        const LONG kPanelHeight = kButtonHeight + kPanelPaddingY * 2;
 
         const LONG panelRight = std::max<LONG>(page->workArea.left + kPanelWidth,
             page->workArea.right - page->marginX - 10);
@@ -4733,38 +4758,28 @@ private:
         const LONG panelLeft = panelRight - kPanelWidth;
         const LONG panelTop = panelBottom - kPanelHeight;
 
-        RECT prevRect = MakeRect(
-            panelLeft + kPanelPaddingX,
-            panelTop + kPanelPaddingY,
-            panelLeft + kPanelPaddingX + kButtonWidth,
-            panelTop + kPanelPaddingY + kButtonHeight);
-        RECT nextRect = MakeRect(
-            panelLeft + kPanelPaddingX + kButtonWidth + kGap,
-            panelTop + kPanelPaddingY,
-            panelLeft + kPanelPaddingX + kButtonWidth * 2 + kGap,
-            panelTop + kPanelPaddingY + kButtonHeight);
-
+        LONG btnX = panelLeft + kPanelPaddingX;
         int delta = 0;
-        if (PtInRect(&prevRect, point))
+        if (hasPrev)
         {
-            delta = pageOffset_ > 0 ? -1 : 0;
+            RECT prevRect = MakeRect(btnX, panelTop + kPanelPaddingY,
+                btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
+            if (PtInRect(&prevRect, point)) delta = -1;
+            btnX += kButtonWidth + kGap;
         }
-        else if (PtInRect(&nextRect, point))
+        if (hasNext && delta == 0)
         {
-            delta = pageOffset_ < MaxPageOffset() ? 1 : 0;
-        }
-        else
-        {
-            return false;
+            RECT nextRect = MakeRect(btnX, panelTop + kPanelPaddingY,
+                btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
+            if (PtInRect(&nextRect, point)) delta = 1;
         }
 
-        if (delta != 0)
-        {
-            pageOffset_ = std::clamp(pageOffset_ + delta, 0, MaxPageOffset());
-            ApplyPageMapping();
-            LayoutItems();
-            InvalidateRect(hwnd_, nullptr, TRUE);
-        }
+        if (delta == 0) return false;
+
+        pageOffset_ = std::clamp(pageOffset_ + delta, 0, MaxPageOffset());
+        ApplyPageMapping();
+        LayoutItems();
+        InvalidateRect(hwnd_, nullptr, TRUE);
         return true;
     }
 
@@ -4776,9 +4791,9 @@ private:
         }
 
         RECT iconRect = GetItemIconRect(bounds);
-        const float drawSize = static_cast<float>(kIconSize) * zoomLevel_;
-        const float iconX = static_cast<float>(iconRect.left) + (static_cast<float>(kIconSize) - drawSize) * 0.5f;
-        const float iconY = static_cast<float>(iconRect.top) + (static_cast<float>(kIconSize) - drawSize) * 0.5f;
+        const float iconX = static_cast<float>(iconRect.left);
+        const float iconY = static_cast<float>(iconRect.top);
+        const float drawSize = static_cast<float>(iconRect.right - iconRect.left);
 
         if (selected)
         {
