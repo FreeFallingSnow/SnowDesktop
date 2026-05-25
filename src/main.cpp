@@ -481,7 +481,6 @@ void WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible)
     TryWriteDesktopIconRegistryValue(HKEY_CURRENT_USER,
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel",
         clsid, value);
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
 }
 
 bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& value)
@@ -1895,6 +1894,7 @@ private:
         settingsIconVisibility_[it->second] = newVisible;
         WriteDesktopIconRegistryValue(it->second, newVisible);
         SaveSettings();
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, nullptr, nullptr);
         ReloadItems();
     }
 
