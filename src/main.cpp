@@ -70,6 +70,12 @@ constexpr UINT kContextSortByNameCommand = 41008;
 constexpr UINT kContextSortByTypeCommand = 41009;
 constexpr UINT kContextMoreCommand = 41010;
 constexpr UINT kContextThisDisplayFirstCommand = 41011;
+constexpr UINT kContextGridAddRow = 41012;
+constexpr UINT kContextGridRemoveRow = 41013;
+constexpr UINT kContextGridAddColumn = 41014;
+constexpr UINT kContextGridRemoveColumn = 41015;
+constexpr UINT kContextZoomIncrease = 41016;
+constexpr UINT kContextZoomDecrease = 41017;
 
 struct GridCell
 {
@@ -2619,6 +2625,7 @@ private:
             }
         }
         ApplyPageMapping();
+        ApplySavedGridDimensions();
 
         if (!gridPages_.empty())
         {
@@ -2637,29 +2644,143 @@ private:
             {
                 page.columns = colIt->second;
                 page.rows = rowIt->second;
-                const int width = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
-                const int height = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-                const int usableWidth = std::max(1, width - (page.marginX * 2));
-                const int usableHeight = std::max(1, height - (page.marginY * 2));
-                page.cellWidth = kCellWidth;
-                page.cellHeight = kMinCellHeight;
-                page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
-                page.gapY = page.rows > 1 ? std::max(0, (usableHeight - (page.rows * page.cellHeight)) / (page.rows - 1)) : 0;
+                ApplyZoomToPage(page);
             }
         }
     }
 
+    void ApplyZoomToPage(GridPage& page)
+    {
+        page.cellWidth = static_cast<int>(kCellWidth * zoomLevel_);
+        page.cellHeight = static_cast<int>(kMinCellHeight * zoomLevel_);
+        const int width = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
+        const int height = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
+        const int usableWidth = std::max(1, width - (page.marginX * 2));
+        const int usableHeight = std::max(1, height - (page.marginY * 2));
+        page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
+        page.gapY = page.rows > 1 ? std::max(0, (usableHeight - (page.rows * page.cellHeight)) / (page.rows - 1)) : 0;
+    }
+
+    void ReconfigureAllPages()
+    {
+        for (auto& page : gridPages_)
+        {
+            ApplyZoomToPage(page);
+        }
+    }
+
+    void AdjustZoom(float delta)
+    {
+        float newZoom = std::clamp(zoomLevel_ + delta, 0.5f, 2.0f);
+        if (newZoom == zoomLevel_)
+        {
+            return;
+        }
+        zoomLevel_ = newZoom;
+        for (auto& page : gridPages_)
+        {
+            ApplyZoomToPage(page);
+        }
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    void AdjustGridRows(int delta)
+    {
+        if (gridPages_.empty())
+        {
+            return;
+        }
+        POINT clientPoint = lastContextMenuScreenPoint_;
+        ScreenToClient(hwnd_, &clientPoint);
+        const GridPage* found = GridPageFromPoint(clientPoint);
+        if (found == nullptr)
+        {
+            return;
+        }
+        GridPage* targetPage = nullptr;
+        for (auto& page : gridPages_)
+        {
+            if (page.id == found->id) { targetPage = &page; break; }
+        }
+        if (targetPage == nullptr)
+        {
+            return;
+        }
+
+        constexpr int kMinRows = 1;
+        constexpr int kMaxRows = 50;
+        const int newRows = std::clamp(targetPage->rows + delta, kMinRows, kMaxRows);
+        if (newRows == targetPage->rows)
+        {
+            return;
+        }
+
+        targetPage->rows = newRows;
+        ApplyZoomToPage(*targetPage);
+
+        savedPageColumns_[targetPage->id] = targetPage->columns;
+        savedPageRows_[targetPage->id] = targetPage->rows;
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    void AdjustGridColumns(int delta)
+    {
+        if (gridPages_.empty())
+        {
+            return;
+        }
+        POINT clientPoint = lastContextMenuScreenPoint_;
+        ScreenToClient(hwnd_, &clientPoint);
+        const GridPage* found = GridPageFromPoint(clientPoint);
+        if (found == nullptr)
+        {
+            return;
+        }
+        GridPage* targetPage = nullptr;
+        for (auto& page : gridPages_)
+        {
+            if (page.id == found->id) { targetPage = &page; break; }
+        }
+        if (targetPage == nullptr)
+        {
+            return;
+        }
+
+        constexpr int kMinColumns = 1;
+        constexpr int kMaxColumns = 50;
+        const int newColumns = std::clamp(targetPage->columns + delta, kMinColumns, kMaxColumns);
+        if (newColumns == targetPage->columns)
+        {
+            return;
+        }
+
+        targetPage->columns = newColumns;
+        ApplyZoomToPage(*targetPage);
+
+        savedPageColumns_[targetPage->id] = targetPage->columns;
+        savedPageRows_[targetPage->id] = targetPage->rows;
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
     void ConfigureGridPage(GridPage& page) const
     {
+        const int cellW = static_cast<int>(kCellWidth * zoomLevel_);
+        const int cellH = static_cast<int>(kMinCellHeight * zoomLevel_);
         const int width = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
         const int height = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
         const int usableWidth = std::max(1, width - (page.marginX * 2));
         const int usableHeight = std::max(1, height - (page.marginY * 2));
 
-        page.columns = std::max(1, usableWidth / kCellWidth);
-        page.rows = std::max(1, usableHeight / kMinCellHeight);
-        page.cellWidth = kCellWidth;
-        page.cellHeight = kMinCellHeight;
+        page.columns = std::max(1, usableWidth / cellW);
+        page.rows = std::max(1, usableHeight / cellH);
+        page.cellWidth = cellW;
+        page.cellHeight = cellH;
         page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
         page.gapY = page.rows > 1 ? std::max(0, (usableHeight - (page.rows * page.cellHeight)) / (page.rows - 1)) : 0;
     }
@@ -3677,6 +3798,8 @@ private:
 
     void ShowCustomBackgroundContextMenu(POINT screenPoint)
     {
+        lastContextMenuScreenPoint_ = screenPoint;
+
         HMENU menu = CreatePopupMenu();
         if (menu == nullptr)
         {
@@ -3685,8 +3808,35 @@ private:
 
         AppendMenuW(menu, MF_STRING, kContextRefreshCommand, L"刷新");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kContextSortByNameCommand, L"排序方式：名称");
-        AppendMenuW(menu, MF_STRING, kContextSortByTypeCommand, L"排序方式：类型");
+
+        HMENU sortMenu = CreatePopupMenu();
+        if (sortMenu != nullptr)
+        {
+            AppendMenuW(sortMenu, MF_STRING, kContextSortByNameCommand, L"名称");
+            AppendMenuW(sortMenu, MF_STRING, kContextSortByTypeCommand, L"类型");
+            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
+        }
+
+        HMENU gridMenu = CreatePopupMenu();
+        if (gridMenu != nullptr)
+        {
+            AppendMenuW(gridMenu, MF_STRING, kContextGridAddRow, L"增加行");
+            AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveRow, L"减少行");
+            AppendMenuW(gridMenu, MF_STRING, kContextGridAddColumn, L"增加列");
+            AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveColumn, L"减少列");
+            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), L"行列调整");
+        }
+
+        HMENU zoomMenu = CreatePopupMenu();
+        if (zoomMenu != nullptr)
+        {
+            AppendMenuW(zoomMenu, MF_STRING, kContextZoomIncrease, L"放大 (+10%)");
+            AppendMenuW(zoomMenu, MF_STRING, kContextZoomDecrease, L"缩小 (-10%)");
+            wchar_t zoomLabel[32]{};
+            swprintf_s(zoomLabel, L"缩放：%d%%", static_cast<int>(zoomLevel_ * 100));
+            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(zoomMenu), zoomLabel);
+        }
+
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -3714,6 +3864,24 @@ private:
             break;
         case kContextSortByTypeCommand:
             SortIconsByType();
+            break;
+        case kContextGridAddRow:
+            AdjustGridRows(1);
+            break;
+        case kContextGridRemoveRow:
+            AdjustGridRows(-1);
+            break;
+        case kContextGridAddColumn:
+            AdjustGridColumns(1);
+            break;
+        case kContextGridRemoveColumn:
+            AdjustGridColumns(-1);
+            break;
+        case kContextZoomIncrease:
+            AdjustZoom(+0.1f);
+            break;
+        case kContextZoomDecrease:
+            AdjustZoom(-0.1f);
             break;
         case kContextThisDisplayFirstCommand:
             SetFirstPageMonitorFromPoint(screenPoint);
@@ -4331,7 +4499,10 @@ private:
             DrawD2DRectangle(context, target, D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f), dottedStrokeStyle_.Get());
         }
 
-        DrawD2DPageNavigationControls(context);
+        if (navButtonsVisible_)
+        {
+            DrawD2DNavigationPanel(context);
+        }
     }
 
     void DrawD2DFilledRectangle(
@@ -4399,6 +4570,110 @@ private:
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
 
+    void UpdateNavButtonHover(POINT point)
+    {
+        const GridPage* page = nullptr;
+        if (!pageNavigationPageId_.empty())
+        {
+            page = FindExactGridPage(pageNavigationPageId_);
+        }
+        if (page == nullptr && !gridPages_.empty())
+        {
+            page = &gridPages_[0];
+        }
+        if (page == nullptr)
+        {
+            navButtonsVisible_ = false;
+            return;
+        }
+
+        constexpr LONG kHoverZoneWidth = 220;
+        constexpr LONG kHoverZoneHeight = 80;
+        RECT hoverZone = MakeRect(
+            page->workArea.right - kHoverZoneWidth,
+            page->workArea.bottom - kHoverZoneHeight,
+            page->workArea.right,
+            page->workArea.bottom);
+        navButtonsHoverZone_ = hoverZone;
+
+        bool wasVisible = navButtonsVisible_;
+        navButtonsVisible_ = PtInRect(&hoverZone, point) != FALSE;
+
+        if (wasVisible != navButtonsVisible_)
+        {
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+
+        if (!wasVisible && navButtonsVisible_)
+        {
+            TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd_, HOVER_DEFAULT };
+            TrackMouseEvent(&tme);
+        }
+    }
+
+    void DrawD2DNavigationPanel(ID2D1DeviceContext* context)
+    {
+        if (context == nullptr) return;
+
+        const GridPage* page = nullptr;
+        if (!pageNavigationPageId_.empty())
+        {
+            page = FindExactGridPage(pageNavigationPageId_);
+        }
+        if (page == nullptr && !gridPages_.empty())
+        {
+            page = &gridPages_[0];
+        }
+        if (page == nullptr) return;
+
+        constexpr LONG kButtonWidth = 68;
+        constexpr LONG kButtonHeight = 28;
+        constexpr LONG kGap = 8;
+        constexpr LONG kPanelPaddingX = 10;
+        constexpr LONG kPanelPaddingY = 8;
+        constexpr LONG kPanelWidth = kButtonWidth * 2 + kGap + kPanelPaddingX * 2;
+        constexpr LONG kPanelHeight = kButtonHeight + kPanelPaddingY * 2;
+        constexpr float kCornerRadius = 8.0f;
+
+        const LONG panelRight = std::max<LONG>(page->workArea.left + kPanelWidth,
+            page->workArea.right - page->marginX - 10);
+        const LONG panelBottom = std::max<LONG>(page->workArea.top + kPanelHeight,
+            page->workArea.bottom - page->marginY - 10);
+        const LONG panelLeft = panelRight - kPanelWidth;
+        const LONG panelTop = panelBottom - kPanelHeight;
+
+        D2D1_RECT_F panelRect = D2D1::RectF(
+            static_cast<float>(panelLeft), static_cast<float>(panelTop),
+            static_cast<float>(panelRight), static_cast<float>(panelBottom));
+        D2D1_ROUNDED_RECT roundedPanel = D2D1::RoundedRect(panelRect, kCornerRadius, kCornerRadius);
+
+        ComPtr<ID2D1SolidColorBrush> panelBrush;
+        if (SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f), &panelBrush)) && panelBrush)
+        {
+            context->FillRoundedRectangle(roundedPanel, panelBrush.Get());
+        }
+
+        ComPtr<ID2D1SolidColorBrush> borderBrush;
+        if (SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.70f), &borderBrush)) && borderBrush)
+        {
+            context->DrawRoundedRectangle(roundedPanel, borderBrush.Get(), 1.0f);
+        }
+
+        RECT prevRect = MakeRect(
+            panelLeft + kPanelPaddingX,
+            panelTop + kPanelPaddingY,
+            panelLeft + kPanelPaddingX + kButtonWidth,
+            panelTop + kPanelPaddingY + kButtonHeight);
+        RECT nextRect = MakeRect(
+            panelLeft + kPanelPaddingX + kButtonWidth + kGap,
+            panelTop + kPanelPaddingY,
+            panelLeft + kPanelPaddingX + kButtonWidth * 2 + kGap,
+            panelTop + kPanelPaddingY + kButtonHeight);
+
+        DrawD2DButton(context, prevRect, L"上一页", pageOffset_ > 0);
+        DrawD2DButton(context, nextRect, L"下一页", pageOffset_ < MaxPageOffset());
+    }
+
     bool GetPageNavigationRects(RECT& previousRect, RECT& nextRect) const
     {
         const GridPage* page = FindExactGridPage(pageNavigationPageId_);
@@ -4432,15 +4707,45 @@ private:
 
     bool HandlePageNavigationClick(POINT point)
     {
-        RECT previousRect{};
-        RECT nextRect{};
-        if (!GetPageNavigationRects(previousRect, nextRect))
+        const GridPage* page = nullptr;
+        if (!pageNavigationPageId_.empty())
         {
-            return false;
+            page = FindExactGridPage(pageNavigationPageId_);
         }
+        if (page == nullptr && !gridPages_.empty())
+        {
+            page = &gridPages_[0];
+        }
+        if (page == nullptr) return false;
+
+        constexpr LONG kButtonWidth = 68;
+        constexpr LONG kButtonHeight = 28;
+        constexpr LONG kGap = 8;
+        constexpr LONG kPanelPaddingX = 10;
+        constexpr LONG kPanelPaddingY = 8;
+        constexpr LONG kPanelWidth = kButtonWidth * 2 + kGap + kPanelPaddingX * 2;
+        constexpr LONG kPanelHeight = kButtonHeight + kPanelPaddingY * 2;
+
+        const LONG panelRight = std::max<LONG>(page->workArea.left + kPanelWidth,
+            page->workArea.right - page->marginX - 10);
+        const LONG panelBottom = std::max<LONG>(page->workArea.top + kPanelHeight,
+            page->workArea.bottom - page->marginY - 10);
+        const LONG panelLeft = panelRight - kPanelWidth;
+        const LONG panelTop = panelBottom - kPanelHeight;
+
+        RECT prevRect = MakeRect(
+            panelLeft + kPanelPaddingX,
+            panelTop + kPanelPaddingY,
+            panelLeft + kPanelPaddingX + kButtonWidth,
+            panelTop + kPanelPaddingY + kButtonHeight);
+        RECT nextRect = MakeRect(
+            panelLeft + kPanelPaddingX + kButtonWidth + kGap,
+            panelTop + kPanelPaddingY,
+            panelLeft + kPanelPaddingX + kButtonWidth * 2 + kGap,
+            panelTop + kPanelPaddingY + kButtonHeight);
 
         int delta = 0;
-        if (PtInRect(&previousRect, point))
+        if (PtInRect(&prevRect, point))
         {
             delta = pageOffset_ > 0 ? -1 : 0;
         }
@@ -4471,8 +4776,9 @@ private:
         }
 
         RECT iconRect = GetItemIconRect(bounds);
-        const float iconX = static_cast<float>(iconRect.left);
-        const float iconY = static_cast<float>(iconRect.top);
+        const float drawSize = static_cast<float>(kIconSize) * zoomLevel_;
+        const float iconX = static_cast<float>(iconRect.left) + (static_cast<float>(kIconSize) - drawSize) * 0.5f;
+        const float iconY = static_cast<float>(iconRect.top) + (static_cast<float>(kIconSize) - drawSize) * 0.5f;
 
         if (selected)
         {
@@ -4487,7 +4793,7 @@ private:
         ID2D1Bitmap1* iconBitmap = GetOrCreateD2DBitmap(item.iconBitmap);
         if (iconBitmap != nullptr)
         {
-            D2D1_RECT_F dst = D2D1::RectF(iconX, iconY, iconX + kIconSize, iconY + kIconSize);
+            D2D1_RECT_F dst = D2D1::RectF(iconX, iconY, iconX + drawSize, iconY + drawSize);
             context->DrawBitmap(iconBitmap, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
         }
         else if (item.sysIconIndex >= 0 && sysImageList_)
@@ -4496,11 +4802,11 @@ private:
             if (SUCCEEDED(sysImageList_->GetIcon(item.sysIconIndex, ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) && icon != nullptr)
             {
                 SIZE size{};
-                HBITMAP fallbackBitmap = CreateAlphaBitmapFromIcon(icon, kIconSize, kIconSize, size);
+                HBITMAP fallbackBitmap = CreateAlphaBitmapFromIcon(icon, static_cast<int>(std::ceil(drawSize)), static_cast<int>(std::ceil(drawSize)), size);
                 ComPtr<ID2D1Bitmap1> fallback = CreateD2DBitmapFromHBitmap(fallbackBitmap);
                 if (fallback)
                 {
-                    D2D1_RECT_F dst = D2D1::RectF(iconX, iconY, iconX + kIconSize, iconY + kIconSize);
+                    D2D1_RECT_F dst = D2D1::RectF(iconX, iconY, iconX + drawSize, iconY + drawSize);
                     context->DrawBitmap(fallback.Get(), dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
                 }
                 if (fallbackBitmap != nullptr)
@@ -5036,6 +5342,13 @@ private:
         case WM_MOUSEMOVE:
             OnMouseMove(wParam, lParam);
             return 0;
+        case WM_MOUSELEAVE:
+            if (navButtonsVisible_)
+            {
+                navButtonsVisible_ = false;
+                InvalidateRect(hwnd_, nullptr, TRUE);
+            }
+            return 0;
         case WM_LBUTTONUP:
             OnLeftButtonUp(wParam, lParam);
             return 0;
@@ -5159,12 +5472,13 @@ private:
 
     void OnMouseMove(WPARAM, LPARAM lParam)
     {
+        POINT current{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        UpdateNavButtonHover(current);
+
         if (!mouseDown_)
         {
             return;
         }
-
-        POINT current{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         if (std::abs(current.x - mouseDownPoint_.x) > 3 || std::abs(current.y - mouseDownPoint_.y) > 3)
         {
             int hit = mouseDownHit_;
@@ -5528,6 +5842,10 @@ private:
     std::wstring firstPageMonitorId_;
     std::wstring pageNavigationPageId_;
     int pageOffset_ = 0;
+    float zoomLevel_ = 1.0f;
+    bool navButtonsVisible_ = false;
+    RECT navButtonsHoverZone_{};
+    POINT lastContextMenuScreenPoint_{};
     RECT marqueeRect_{};
     ComPtr<IContextMenu2> activeContextMenu2_;
     ComPtr<IContextMenu3> activeContextMenu3_;
