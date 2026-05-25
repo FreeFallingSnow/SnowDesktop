@@ -3250,6 +3250,36 @@ private:
         };
     }
 
+    void UpdateDragGroupOrigin(size_t anchorIndex)
+    {
+        if (anchorIndex >= items_.size())
+        {
+            return;
+        }
+
+        int minCol = INT_MAX;
+        int minRow = INT_MAX;
+        for (const auto& item : items_)
+        {
+            if (item.selected)
+            {
+                minCol = std::min(minCol, item.gridCell.column);
+                minRow = std::min(minRow, item.gridCell.row);
+            }
+        }
+
+        GridCell groupOrigin = items_[anchorIndex].gridCell;
+        if (minCol != INT_MAX)
+        {
+            groupOrigin.column = minCol;
+            groupOrigin.row = minRow;
+        }
+
+        RECT groupRect = GetGridRect(groupOrigin, {1, 1});
+        dragGroupOriginX_ = groupRect.left;
+        dragGroupOriginY_ = groupRect.top;
+    }
+
     RECT GetTargetRectAt(POINT point) const
     {
         int hit = HitTest(point);
@@ -3291,7 +3321,7 @@ private:
     RECT GetInternalDragDirtyRect(POINT point) const
     {
         RECT dirty = GetSelectedDragBoundsAt(point);
-        for (const RECT& rect : GetSelectedMovePreviewRects(point))
+        for (const RECT& rect : GetSelectedMovePreviewRects(GetDragTargetPoint(point)))
         {
             dirty = UnionCopy(dirty, rect);
         }
@@ -3343,7 +3373,7 @@ private:
             return L"释放：交给「" + items_[static_cast<size_t>(hit)].name + L"」处理";
         }
 
-        if (BuildSelectedMove(CellFromPoint(point)).empty())
+        if (BuildSelectedMove(CellFromPoint(GetDragTargetPoint(point))).empty())
         {
             return L"释放：当前位置已有图标";
         }
@@ -5703,28 +5733,6 @@ private:
         bool ctrl = (wParam & MK_CONTROL) != 0;
         if (hit >= 0)
         {
-            int minCol = INT_MAX;
-            int minRow = INT_MAX;
-            for (const auto& item : items_)
-            {
-                if (item.selected)
-                {
-                    minCol = std::min(minCol, item.gridCell.column);
-                    minRow = std::min(minRow, item.gridCell.row);
-                }
-            }
-            if (minCol == INT_MAX)
-            {
-                minCol = items_[static_cast<size_t>(hit)].gridCell.column;
-                minRow = items_[static_cast<size_t>(hit)].gridCell.row;
-            }
-            GridCell groupOrigin = items_[static_cast<size_t>(hit)].gridCell;
-            groupOrigin.column = minCol;
-            groupOrigin.row = minRow;
-            RECT groupRect = GetGridRect(groupOrigin, {1, 1});
-            dragGroupOriginX_ = groupRect.left;
-            dragGroupOriginY_ = groupRect.top;
-
             if (ctrl)
             {
                 ToggleSelection(static_cast<size_t>(hit));
@@ -5733,6 +5741,8 @@ private:
             {
                 SelectOnly(static_cast<size_t>(hit));
             }
+
+            UpdateDragGroupOrigin(static_cast<size_t>(hit));
         }
         else if (!ctrl)
         {
