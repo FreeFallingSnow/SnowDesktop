@@ -61,6 +61,11 @@ constexpr UINT kTrayDesktopIconUserFiles = 40008;
 constexpr UINT kTrayDesktopIconNetwork = 40009;
 constexpr UINT kTrayDesktopIconControlPanel = 40010;
 constexpr UINT kTrayDesktopIconRecycleBin = 40011;
+constexpr wchar_t kDesktopIconClsidThisPC[] = L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+constexpr wchar_t kDesktopIconClsidUserFiles[] = L"{59031A47-3F72-44A7-89C5-5595FE6B30EE}";
+constexpr wchar_t kDesktopIconClsidNetwork[] = L"{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}";
+constexpr wchar_t kDesktopIconClsidControlPanel[] = L"{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}";
+constexpr wchar_t kDesktopIconClsidRecycleBin[] = L"{645FF040-5081-101B-9F08-00AA002F954E}";
 constexpr UINT kContextOpenCommand = 41001;
 constexpr UINT kContextRenameCommand = 41002;
 constexpr UINT kContextCutCommand = 41003;
@@ -170,6 +175,7 @@ struct DesktopItem
 {
     std::wstring name;
     std::wstring parsingName;
+    std::wstring desktopIconClsid;
     std::wstring typeName;
     Pidl absolutePidl;
     Pidl childPidl;
@@ -187,6 +193,7 @@ struct DesktopItem
     DesktopItem(DesktopItem&& other) noexcept
         : name(std::move(other.name)),
           parsingName(std::move(other.parsingName)),
+          desktopIconClsid(std::move(other.desktopIconClsid)),
           typeName(std::move(other.typeName)),
           absolutePidl(std::move(other.absolutePidl)),
           childPidl(std::move(other.childPidl)),
@@ -214,6 +221,7 @@ struct DesktopItem
 
             name = std::move(other.name);
             parsingName = std::move(other.parsingName);
+            desktopIconClsid = std::move(other.desktopIconClsid);
             typeName = std::move(other.typeName);
             absolutePidl = std::move(other.absolutePidl);
             childPidl = std::move(other.childPidl);
@@ -438,6 +446,45 @@ std::wstring ExtractClsidText(const std::wstring& parsingName)
     return ToUpperInvariant(parsingName.substr(open, close - open + 1));
 }
 
+std::wstring TrimTrailingPathSeparators(std::wstring path)
+{
+    while (path.size() > 3 && (path.back() == L'\\' || path.back() == L'/'))
+    {
+        path.pop_back();
+    }
+    return path;
+}
+
+bool PathsEqualInsensitive(std::wstring left, std::wstring right)
+{
+    left = TrimTrailingPathSeparators(std::move(left));
+    right = TrimTrailingPathSeparators(std::move(right));
+    if (left.empty() || right.empty())
+    {
+        return false;
+    }
+    return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
+}
+
+std::wstring ResolveDesktopIconClsid(
+    const std::wstring& parsingName,
+    const std::wstring& itemPath,
+    const std::wstring& userProfilePath)
+{
+    std::wstring clsid = ExtractClsidText(parsingName);
+    if (!clsid.empty())
+    {
+        return clsid;
+    }
+
+    if (PathsEqualInsensitive(itemPath, userProfilePath))
+    {
+        return kDesktopIconClsidUserFiles;
+    }
+
+    return {};
+}
+
 bool TryReadDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const std::wstring& clsid, DWORD& value)
 {
     HKEY key = nullptr;
@@ -509,9 +556,9 @@ bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& va
     return false;
 }
 
-bool IsVisibleByDesktopIconSettings(const std::wstring& parsingName, const std::unordered_map<std::wstring, bool>& settingsIconVisibility)
+bool IsVisibleByDesktopIconSettings(const std::wstring& desktopIconClsid, const std::unordered_map<std::wstring, bool>& settingsIconVisibility)
 {
-    std::wstring clsid = ExtractClsidText(parsingName);
+    std::wstring clsid = ToUpperInvariant(desktopIconClsid);
     if (clsid.empty())
     {
         return true;
@@ -530,11 +577,11 @@ bool IsVisibleByDesktopIconSettings(const std::wstring& parsingName, const std::
     }
 
     static const std::unordered_map<std::wstring, bool> defaultVisibility = {
-        { L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}", false }, // This PC
-        { L"{59031A47-3F72-44A7-89C5-5595FE6B30EE}", false }, // User files
-        { L"{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", false }, // Network
-        { L"{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}", false }, // Control Panel
-        { L"{645FF040-5081-101B-9F08-00AA002F954E}", true },  // Recycle Bin
+        { kDesktopIconClsidThisPC, false },
+        { kDesktopIconClsidUserFiles, false },
+        { kDesktopIconClsidNetwork, false },
+        { kDesktopIconClsidControlPanel, false },
+        { kDesktopIconClsidRecycleBin, true },
     };
 
     auto found = defaultVisibility.find(clsid);
@@ -1116,7 +1163,6 @@ public:
             MessageBoxW(nullptr, L"Unable to initialize the Shell desktop folder.", L"SnowDesktop", MB_ICONERROR);
             return 1;
         }
-        LoadSettings();
         LoadLayoutSlots();
 
         desktopWindows_ = FindDesktopWindows();
@@ -1857,11 +1903,11 @@ private:
         }
 
         static const std::unordered_map<std::wstring, bool> defaultVisibility = {
-            { L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}", false },
-            { L"{59031A47-3F72-44A7-89C5-5595FE6B30EE}", false },
-            { L"{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", false },
-            { L"{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}", false },
-            { L"{645FF040-5081-101B-9F08-00AA002F954E}", true },
+            { kDesktopIconClsidThisPC, false },
+            { kDesktopIconClsidUserFiles, false },
+            { kDesktopIconClsidNetwork, false },
+            { kDesktopIconClsidControlPanel, false },
+            { kDesktopIconClsidRecycleBin, true },
         };
 
         auto found = defaultVisibility.find(clsid);
@@ -1876,11 +1922,11 @@ private:
     void ToggleDesktopIconVisibility(UINT command)
     {
         static const std::unordered_map<UINT, std::wstring> commandToClsid = {
-            { kTrayDesktopIconThisPC, L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}" },
-            { kTrayDesktopIconUserFiles, L"{59031A47-3F72-44A7-89C5-5595FE6B30EE}" },
-            { kTrayDesktopIconNetwork, L"{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}" },
-            { kTrayDesktopIconControlPanel, L"{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}" },
-            { kTrayDesktopIconRecycleBin, L"{645FF040-5081-101B-9F08-00AA002F954E}" },
+            { kTrayDesktopIconThisPC, kDesktopIconClsidThisPC },
+            { kTrayDesktopIconUserFiles, kDesktopIconClsidUserFiles },
+            { kTrayDesktopIconNetwork, kDesktopIconClsidNetwork },
+            { kTrayDesktopIconControlPanel, kDesktopIconClsidControlPanel },
+            { kTrayDesktopIconRecycleBin, kDesktopIconClsidRecycleBin },
         };
 
         auto it = commandToClsid.find(command);
@@ -1891,10 +1937,12 @@ private:
 
         bool currentVisible = IsClsidCurrentlyVisible(it->second);
         bool newVisible = !currentVisible;
-        settingsIconVisibility_[it->second] = newVisible;
+        if (newVisible)
+            settingsIconVisibility_[it->second] = true;
+        else
+            settingsIconVisibility_.erase(it->second);
         WriteDesktopIconRegistryValue(it->second, newVisible);
-        SaveSettings();
-        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, nullptr, nullptr);
         ReloadItems();
     }
 
@@ -1956,11 +2004,11 @@ private:
                 const wchar_t* label;
             };
             const IconSetting settings[] = {
-                { kTrayDesktopIconThisPC, L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}", L"计算机" },
-                { kTrayDesktopIconUserFiles, L"{59031A47-3F72-44A7-89C5-5595FE6B30EE}", L"用户的文件" },
-                { kTrayDesktopIconNetwork, L"{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", L"网络" },
-                { kTrayDesktopIconControlPanel, L"{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}", L"控制面板" },
-                { kTrayDesktopIconRecycleBin, L"{645FF040-5081-101B-9F08-00AA002F954E}", L"回收站" },
+                { kTrayDesktopIconThisPC, kDesktopIconClsidThisPC, L"计算机" },
+                { kTrayDesktopIconUserFiles, kDesktopIconClsidUserFiles, L"用户的文件" },
+                { kTrayDesktopIconNetwork, kDesktopIconClsidNetwork, L"网络" },
+                { kTrayDesktopIconControlPanel, kDesktopIconClsidControlPanel, L"控制面板" },
+                { kTrayDesktopIconRecycleBin, kDesktopIconClsidRecycleBin, L"回收站" },
             };
 
             for (const auto& setting : settings)
@@ -2049,7 +2097,7 @@ private:
         ComPtr<IEnumIDList> enumItems;
         if (FAILED(desktopFolder_->EnumObjects(
                 hwnd_,
-                SHCONTF_FOLDERS | SHCONTF_NONFOLDERS,
+                SHCONTF_FOLDERS | SHCONTF_NONFOLDERS | SHCONTF_INCLUDEHIDDEN,
                 &enumItems)) ||
             !enumItems)
         {
@@ -2060,8 +2108,10 @@ private:
 
         wchar_t userDesktopPath[MAX_PATH]{};
         wchar_t commonDesktopPath[MAX_PATH]{};
+        wchar_t userProfilePath[MAX_PATH]{};
         SHGetSpecialFolderPathW(nullptr, userDesktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
         SHGetSpecialFolderPathW(nullptr, commonDesktopPath, CSIDL_COMMON_DESKTOPDIRECTORY, FALSE);
+        SHGetSpecialFolderPathW(nullptr, userProfilePath, CSIDL_PROFILE, FALSE);
         size_t userDesktopLen = wcslen(userDesktopPath);
         size_t commonDesktopLen = wcslen(commonDesktopPath);
 
@@ -2077,15 +2127,32 @@ private:
                 continue;
             }
 
-            SFGAOF attrs = SFGAO_HIDDEN | SFGAO_NONENUMERATED;
-            LPCITEMIDLIST childConst = child;
-            if (SUCCEEDED(desktopFolder_->GetAttributesOf(1, &childConst, &attrs)))
+            std::wstring parsingName = StrRetToString(
+                desktopFolder_.Get(),
+                reinterpret_cast<PCUITEMID_CHILD>(child),
+                SHGDN_FORPARSING);
+            wchar_t itemPathBuffer[MAX_PATH]{};
+            std::wstring itemPath;
+            if (SHGetPathFromIDListW(absolute, itemPathBuffer) && itemPathBuffer[0] != L'\0')
             {
-                if ((attrs & SFGAO_HIDDEN) != 0 || (attrs & SFGAO_NONENUMERATED) != 0)
+                itemPath = itemPathBuffer;
+            }
+
+            std::wstring desktopIconClsid = ResolveDesktopIconClsid(parsingName, itemPath, userProfilePath);
+            bool isDesktopIcon = !desktopIconClsid.empty();
+
+            if (!isDesktopIcon)
+            {
+                SFGAOF attrs = SFGAO_HIDDEN | SFGAO_NONENUMERATED;
+                LPCITEMIDLIST childConst = child;
+                if (SUCCEEDED(desktopFolder_->GetAttributesOf(1, &childConst, &attrs)))
                 {
-                    ILFree(absolute);
-                    ILFree(child);
-                    continue;
+                    if ((attrs & SFGAO_HIDDEN) != 0 || (attrs & SFGAO_NONENUMERATED) != 0)
+                    {
+                        ILFree(absolute);
+                        ILFree(child);
+                        continue;
+                    }
                 }
             }
 
@@ -2097,35 +2164,29 @@ private:
                 sizeof(info),
                 SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_DISPLAYNAME | SHGFI_TYPENAME);
 
-            std::wstring parsingName = StrRetToString(
-                desktopFolder_.Get(),
-                reinterpret_cast<PCUITEMID_CHILD>(child),
-                SHGDN_FORPARSING);
-            if (!IsVisibleByDesktopIconSettings(parsingName, settingsIconVisibility_))
+            if (!IsVisibleByDesktopIconSettings(desktopIconClsid, settingsIconVisibility_))
             {
                 ILFree(absolute);
                 ILFree(child);
                 continue;
             }
 
-            if (ExtractClsidText(parsingName).empty())
+            if (!isDesktopIcon)
             {
-                wchar_t itemPath[MAX_PATH]{};
-                if (!SHGetPathFromIDListW(absolute, itemPath) || itemPath[0] == L'\0')
+                if (!itemPath.empty())
                 {
-                    ILFree(absolute);
-                    ILFree(child);
-                    continue;
-                }
-                bool underUser = _wcsnicmp(itemPath, userDesktopPath, userDesktopLen) == 0 &&
-                    itemPath[userDesktopLen] == L'\\';
-                bool underCommon = _wcsnicmp(itemPath, commonDesktopPath, commonDesktopLen) == 0 &&
-                    itemPath[commonDesktopLen] == L'\\';
-                if (!underUser && !underCommon)
-                {
-                    ILFree(absolute);
-                    ILFree(child);
-                    continue;
+                    bool underUser = itemPath.size() > userDesktopLen &&
+                        _wcsnicmp(itemPath.c_str(), userDesktopPath, userDesktopLen) == 0 &&
+                        itemPath[userDesktopLen] == L'\\';
+                    bool underCommon = itemPath.size() > commonDesktopLen &&
+                        _wcsnicmp(itemPath.c_str(), commonDesktopPath, commonDesktopLen) == 0 &&
+                        itemPath[commonDesktopLen] == L'\\';
+                    if (!underUser && !underCommon)
+                    {
+                        ILFree(absolute);
+                        ILFree(child);
+                        continue;
+                    }
                 }
             }
 
@@ -2133,6 +2194,7 @@ private:
             item.absolutePidl.reset(absolute);
             item.childPidl.reset(reinterpret_cast<PIDLIST_ABSOLUTE>(child));
             item.parsingName = std::move(parsingName);
+            item.desktopIconClsid = std::move(desktopIconClsid);
             item.name = info.szDisplayName[0] != L'\0'
                 ? info.szDisplayName
                 : StrRetToString(desktopFolder_.Get(), reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()), SHGDN_NORMAL);
@@ -2140,7 +2202,7 @@ private:
             item.iconBitmap = GetHighResolutionShellIconBitmap(item.absolutePidl.get(), info.iIcon, item.iconBitmapSize);
             ClampAlphaToColorKey(item.iconBitmap, kTransparentKey);
             item.sysIconIndex = info.iIcon;
-            std::wstring key = GetStableLayoutKey(item.absolutePidl.get(), item.parsingName);
+            std::wstring key = GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid);
             if (seenKeys.contains(key))
             {
                 continue;
@@ -2171,10 +2233,10 @@ private:
         }
 
         std::stable_sort(items_.begin(), items_.end(), [](const DesktopItem& a, const DesktopItem& b) {
-            bool aIsClsid = a.parsingName.find(L'{') != std::wstring::npos;
-            bool bIsClsid = b.parsingName.find(L'{') != std::wstring::npos;
-            if (aIsClsid != bIsClsid) return aIsClsid;
-            if (aIsClsid)
+            bool aIsDesktopIcon = !a.desktopIconClsid.empty();
+            bool bIsDesktopIcon = !b.desktopIconClsid.empty();
+            if (aIsDesktopIcon != bIsDesktopIcon) return aIsDesktopIcon;
+            if (aIsDesktopIcon)
             {
                 int cmp = ToUpperInvariant(a.typeName).compare(ToUpperInvariant(b.typeName));
                 if (cmp != 0) return cmp < 0;
@@ -2188,6 +2250,10 @@ private:
         {
             item.gridSpan.columns = std::max(1, item.gridSpan.columns);
             item.gridSpan.rows = std::max(1, item.gridSpan.rows);
+            if (item.slot < 0)
+            {
+                continue;
+            }
             item.slot = SlotFromCell(item.gridCell);
             if (!item.gridCell.pageId.empty() && !HasGridPage(item.gridCell.pageId))
             {
@@ -2214,13 +2280,13 @@ private:
         }
 
         std::sort(unslotted.begin(), unslotted.end(), [](const DesktopItem* a, const DesktopItem* b) {
-            bool aIsClsid = a->parsingName.find(L'{') != std::wstring::npos;
-            bool bIsClsid = b->parsingName.find(L'{') != std::wstring::npos;
-            if (aIsClsid != bIsClsid)
+            bool aIsDesktopIcon = !a->desktopIconClsid.empty();
+            bool bIsDesktopIcon = !b->desktopIconClsid.empty();
+            if (aIsDesktopIcon != bIsDesktopIcon)
             {
-                return aIsClsid;
+                return aIsDesktopIcon;
             }
-            if (aIsClsid)
+            if (aIsDesktopIcon)
             {
                 int cmp = ToUpperInvariant(a->typeName).compare(ToUpperInvariant(b->typeName));
                 if (cmp != 0)
@@ -2277,88 +2343,22 @@ private:
         return ToUpperInvariant(key);
     }
 
-    std::wstring GetStableLayoutKey(PCIDLIST_ABSOLUTE pidl, const std::wstring& parsingName) const
+    std::wstring GetStableLayoutKey(
+        PCIDLIST_ABSOLUTE pidl,
+        const std::wstring& parsingName,
+        const std::wstring& desktopIconClsid = {}) const
     {
+        if (!desktopIconClsid.empty())
+        {
+            return ToUpperInvariant(desktopIconClsid);
+        }
+
         wchar_t path[MAX_PATH]{};
         if (SHGetPathFromIDListW(pidl, path) && path[0] != L'\0')
         {
             return ToUpperInvariant(path);
         }
         return ToUpperInvariant(parsingName);
-    }
-
-    std::wstring GetSettingsPath() const
-    {
-        wchar_t modulePath[MAX_PATH]{};
-        GetModuleFileNameW(nullptr, modulePath, static_cast<DWORD>(std::size(modulePath)));
-        PathRemoveFileSpecW(modulePath);
-        PathAppendW(modulePath, L"SnowDesktop.settings.json");
-        return modulePath;
-    }
-
-    void LoadSettings()
-    {
-        settingsIconVisibility_.clear();
-
-        std::ifstream file(GetSettingsPath(), std::ios::binary);
-        if (!file)
-        {
-            return;
-        }
-
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string text = buffer.str();
-
-        size_t pos = 0;
-        while ((pos = text.find('{', pos)) != std::string::npos)
-        {
-            size_t close = text.find('}', pos);
-            if (close == std::string::npos)
-            {
-                break;
-            }
-
-            std::string clsidUtf8 = text.substr(pos, close - pos + 1);
-            std::wstring clsid = Utf8ToWide(clsidUtf8);
-
-            size_t colon = text.find(':', close);
-            if (colon == std::string::npos)
-            {
-                pos = close + 1;
-                continue;
-            }
-
-            size_t truePos = text.find("true", colon);
-            size_t falsePos = text.find("false", colon);
-            bool visible = false;
-            if (truePos != std::string::npos && (falsePos == std::string::npos || truePos < falsePos))
-            {
-                visible = true;
-            }
-
-            settingsIconVisibility_[ToUpperInvariant(clsid)] = visible;
-            pos = close + 1;
-        }
-    }
-
-    void SaveSettings()
-    {
-        std::ofstream file(GetSettingsPath(), std::ios::binary | std::ios::trunc);
-        if (!file)
-        {
-            return;
-        }
-
-        file << "{\n";
-        size_t count = 0;
-        for (const auto& [clsid, visible] : settingsIconVisibility_)
-        {
-            file << "  \"" << JsonEscapeUtf8(clsid) << "\": " << (visible ? "true" : "false");
-            ++count;
-            file << (count == settingsIconVisibility_.size() ? "\n" : ",\n");
-        }
-        file << "}\n";
     }
 
     bool ReadJsonStringField(const std::string& objectText, const char* fieldName, std::string& value) const
@@ -2521,7 +2521,7 @@ private:
                 record.span = item.gridSpan;
                 record.hasGrid = true;
                 record.legacySlot = item.slot;
-                layoutRecords_[GetStableLayoutKey(item.absolutePidl.get(), item.parsingName)] = record;
+                layoutRecords_[GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid)] = record;
             }
         }
 
@@ -2569,7 +2569,7 @@ private:
         for (size_t i = 0; i < sortedItems.size(); ++i)
         {
             const DesktopItem* item = sortedItems[i];
-            file << "    { \"key\": \"" << JsonEscapeUtf8(GetStableLayoutKey(item->absolutePidl.get(), item->parsingName)) <<
+            file << "    { \"key\": \"" << JsonEscapeUtf8(GetStableLayoutKey(item->absolutePidl.get(), item->parsingName, item->desktopIconClsid)) <<
                 "\", \"page\": \"" << JsonEscapeUtf8(item->gridCell.pageId) <<
                 "\", \"x\": " << item->gridCell.column <<
                 ", \"y\": " << item->gridCell.row <<
@@ -2615,11 +2615,11 @@ private:
         }
 
         std::sort(order.begin(), order.end(), [this](size_t left, size_t right) {
-            bool leftIsClsid = items_[left].parsingName.find(L'{') != std::wstring::npos;
-            bool rightIsClsid = items_[right].parsingName.find(L'{') != std::wstring::npos;
-            if (leftIsClsid != rightIsClsid)
+            bool leftIsDesktopIcon = !items_[left].desktopIconClsid.empty();
+            bool rightIsDesktopIcon = !items_[right].desktopIconClsid.empty();
+            if (leftIsDesktopIcon != rightIsDesktopIcon)
             {
-                return leftIsClsid;
+                return leftIsDesktopIcon;
             }
             int cmp = ToUpperInvariant(items_[left].typeName).compare(ToUpperInvariant(items_[right].typeName));
             if (cmp != 0)
@@ -3858,9 +3858,14 @@ private:
 
     bool IsProtectedDesktopIcon(const DesktopItem& item) const
     {
-        std::wstring clsid = ExtractClsidText(item.parsingName);
-        return clsid == L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}" ||
-            clsid == L"{645FF040-5081-101B-9F08-00AA002F954E}";
+        std::wstring clsid = !item.desktopIconClsid.empty()
+            ? item.desktopIconClsid
+            : ExtractClsidText(item.parsingName);
+        return clsid == kDesktopIconClsidThisPC ||
+            clsid == kDesktopIconClsidUserFiles ||
+            clsid == kDesktopIconClsidNetwork ||
+            clsid == kDesktopIconClsidControlPanel ||
+            clsid == kDesktopIconClsidRecycleBin;
     }
 
     bool CanUseSelectedFileCommands() const
