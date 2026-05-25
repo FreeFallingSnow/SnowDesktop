@@ -45,6 +45,8 @@ constexpr int kTextTop = 70;
 constexpr int kTextCollapsedHeight = 34;
 constexpr int kTextExpandedHeight = 58;
 constexpr int kTextHeight = kTextCollapsedHeight;
+constexpr int kDefaultGapX = 10;
+constexpr int kDefaultGapY = 10;
 constexpr int kRenameEditId = 1001;
 constexpr UINT kTrayCallbackMessage = WM_APP + 1;
 constexpr UINT_PTR kTrayIconId = 1;
@@ -2644,48 +2646,23 @@ private:
             {
                 page.columns = colIt->second;
                 page.rows = rowIt->second;
-                ComputeReferenceGaps(page);
                 ApplyGapScaleToPage(page);
             }
         }
     }
 
-    void ComputeReferenceGaps(GridPage& page)
-    {
-        const int cellW = kCellWidth;
-        const int cellH = kMinCellHeight;
-        const int width = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
-        const int height = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-        const int usableW = std::max(1, width - (page.marginX * 2));
-        const int usableH = std::max(1, height - (page.marginY * 2));
-        const int refGapX = page.columns > 1
-            ? std::max(0, (usableW - (page.columns * cellW)) / (page.columns - 1)) : 0;
-        const int refGapY = page.rows > 1
-            ? std::max(0, (usableH - (page.rows * cellH)) / (page.rows - 1)) : 0;
-        referenceGapX_[page.id] = refGapX;
-        referenceGapY_[page.id] = refGapY;
-    }
-
     void ApplyGapScaleToPage(GridPage& page)
     {
-        int refX = referenceGapX_[page.id];
-        int refY = referenceGapY_[page.id];
-        if (refX <= 0 && refY <= 0)
-        {
-            ComputeReferenceGaps(page);
-            refX = referenceGapX_[page.id];
-            refY = referenceGapY_[page.id];
-        }
-        const int effGapX = std::max(0, static_cast<int>(refX / gapScale_));
-        const int effGapY = std::max(0, static_cast<int>(refY / gapScale_));
+        const int targetGapX = std::max(0, static_cast<int>(kDefaultGapX / gapScale_));
+        const int targetGapY = std::max(0, static_cast<int>(kDefaultGapY / gapScale_));
         const int usableW = std::max(1, static_cast<int>(page.workArea.right - page.workArea.left) - (page.marginX * 2));
         const int usableH = std::max(1, static_cast<int>(page.workArea.bottom - page.workArea.top) - (page.marginY * 2));
 
         page.cellWidth = page.columns > 1
-            ? std::max(kIconSize, (usableW - (page.columns - 1) * effGapX) / page.columns)
+            ? std::max(kIconSize, (usableW - (page.columns - 1) * targetGapX) / page.columns)
             : usableW;
         page.cellHeight = page.rows > 1
-            ? std::max(kMinCellHeight / 2, (usableH - (page.rows - 1) * effGapY) / page.rows)
+            ? std::max(kMinCellHeight / 2, (usableH - (page.rows - 1) * targetGapY) / page.rows)
             : usableH;
         page.gapX = page.columns > 1 ? (usableW - page.columns * page.cellWidth) / (page.columns - 1) : 0;
         page.gapY = page.rows > 1 ? (usableH - page.rows * page.cellHeight) / (page.rows - 1) : 0;
@@ -2740,7 +2717,6 @@ private:
         }
 
         targetPage->rows = newRows;
-        ComputeReferenceGaps(*targetPage);
         ApplyGapScaleToPage(*targetPage);
 
         savedPageColumns_[targetPage->id] = targetPage->columns;
@@ -2781,7 +2757,6 @@ private:
         }
 
         targetPage->columns = newColumns;
-        ComputeReferenceGaps(*targetPage);
         ApplyGapScaleToPage(*targetPage);
 
         savedPageColumns_[targetPage->id] = targetPage->columns;
@@ -2790,7 +2765,7 @@ private:
         ReloadItems(false);
     }
 
-    void ConfigureGridPage(GridPage& page)
+    void ConfigureGridPage(GridPage& page) const
     {
         const int cellW = static_cast<int>(kCellWidth * gapScale_);
         const int cellH = static_cast<int>(kMinCellHeight * gapScale_);
@@ -2805,9 +2780,6 @@ private:
         page.cellHeight = cellH;
         page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
         page.gapY = page.rows > 1 ? std::max(0, (usableHeight - (page.rows * page.cellHeight)) / (page.rows - 1)) : 0;
-
-        referenceGapX_[page.id] = page.gapX;
-        referenceGapY_[page.id] = page.gapY;
     }
 
     bool IsGeneratedExtraPageId(const std::wstring& pageId) const
@@ -3272,7 +3244,7 @@ private:
         const int cellW = bounds.right - bounds.left;
         const int cellH = bounds.bottom - bounds.top;
         const int maxIconW = std::max(16, cellW - 8);
-        const int maxIconH = std::max(16, cellH - kTextTop - kTextHeight - 4);
+        const int maxIconH = std::max(16, cellH - kTextHeight - 8);
         const int iconSz = std::min(maxIconW, maxIconH);
         const int iconX = bounds.left + (cellW - iconSz) / 2;
         const int iconY = bounds.top + 2;
@@ -5859,8 +5831,6 @@ private:
     std::vector<std::wstring> savedPageIds_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
     std::unordered_map<std::wstring, int> savedPageRows_;
-    std::unordered_map<std::wstring, int> referenceGapX_;
-    std::unordered_map<std::wstring, int> referenceGapY_;
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     int selectedCount_ = 0;
