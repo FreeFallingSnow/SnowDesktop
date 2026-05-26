@@ -229,6 +229,8 @@ public:
                 }
                 else if (targetWidget.type == DesktopWidgetType::FileCategories)
                 {
+                    if (draggingCollectionMember_ && collectionDragSourceWidget_ < widgets_.size())
+                        RemoveSelectedItemsFromCollections(collectionDragSourceWidget_);
                     AddSelectedItemsToFileCategoryWidget(dropHit.widgetIndex);
                 }
                 else if (targetWidget.type == DesktopWidgetType::FolderMapping)
@@ -3466,6 +3468,16 @@ private:
     {
         const int cellW = bounds.right - bounds.left;
         const int cellH = bounds.bottom - bounds.top;
+        if (cellH < 50)
+        {
+            // List mode: icon on the left, small
+            const int iconSz = std::min(32, cellH - 4);
+            return MakeRect(
+                bounds.left + 4,
+                bounds.top + (cellH - iconSz) / 2,
+                bounds.left + 4 + iconSz,
+                bounds.top + (cellH + iconSz) / 2);
+        }
         const int maxIconW = std::max(16, cellW - 8);
         const int maxIconH = std::max(16, cellH - kTextHeight - 8);
         const int iconSz = std::min(maxIconW, maxIconH);
@@ -9141,7 +9153,9 @@ private:
                 hit.kind == DesktopHitKind::WidgetContent ||
                 hit.kind == DesktopHitKind::WidgetAllButton) &&
                 hit.widgetIndex < widgets_.size() &&
-                widgets_[hit.widgetIndex].type == DesktopWidgetType::Collection)
+                (widgets_[hit.widgetIndex].type == DesktopWidgetType::Collection ||
+                 widgets_[hit.widgetIndex].type == DesktopWidgetType::FileCategories ||
+                 widgets_[hit.widgetIndex].type == DesktopWidgetType::FolderMapping))
             {
                 widgetIndex = hit.widgetIndex;
             }
@@ -9152,7 +9166,11 @@ private:
             return;
         }
 
-        RECT indicator = GetCollectionInsertionIndicatorRect(widgetIndex, point, popup);
+        RECT indicator;
+        if (widgets_[widgetIndex].type == DesktopWidgetType::Collection)
+            indicator = GetCollectionInsertionIndicatorRect(widgetIndex, point, popup);
+        else
+            indicator = GetWidgetInsertionIndicatorRect(widgetIndex, point);
         DrawD2DRoundedRectangle(
             context,
             indicator,
@@ -10693,16 +10711,14 @@ private:
 
                 if (memberHit.kind == DesktopHitKind::WidgetMember)
                 {
-                    if (memberHit.itemIndex < items_.size() && !items_[memberHit.itemIndex].selected &&
-                        IsPointInIconDropTarget(memberHit.bounds, current))
+                    if (memberHit.itemIndex < items_.size() && !items_[memberHit.itemIndex].selected)
                     {
                         dragHint_ = L"释放：交给「" + items_[memberHit.itemIndex].name + L"」处理";
                     }
                     else if (memberHit.widgetIndex < widgets_.size() &&
                         widgets_[memberHit.widgetIndex].type == DesktopWidgetType::FolderMapping &&
                         memberHit.memberIndex < widgets_[memberHit.widgetIndex].folderEntries.size() &&
-                        !widgets_[memberHit.widgetIndex].folderEntries[memberHit.memberIndex].selected &&
-                        IsPointInIconDropTarget(memberHit.bounds, current))
+                        !widgets_[memberHit.widgetIndex].folderEntries[memberHit.memberIndex].selected)
                     {
                         dragHint_ = L"释放：交给「" + widgets_[memberHit.widgetIndex].folderEntries[memberHit.memberIndex].name + L"」处理";
                     }
@@ -10946,7 +10962,7 @@ private:
                     canHandoff = !widgets_[dropHit.widgetIndex].folderEntries[dropHit.memberIndex].selected;
                 }
 
-                if (canHandoff && IsPointInIconDropTarget(dropHit.bounds, point))
+                if (canHandoff)
                 {
                     ComPtr<IDataObject> dataObject = CreateFolderEntriesDataObject(widgetMemberDragWidget_);
                     if (dataObject)
@@ -11256,6 +11272,8 @@ private:
                         fcDropHit.widgetIndex < widgets_.size() &&
                         widgets_[fcDropHit.widgetIndex].type == DesktopWidgetType::FileCategories)
                     {
+                        if (draggingCollectionMember_ && collectionDragSourceWidget_ < widgets_.size())
+                            RemoveSelectedItemsFromCollections(collectionDragSourceWidget_);
                         AddSelectedItemsToFileCategoryWidget(fcDropHit.widgetIndex);
                         handledCollectionDrop = true;
                     }
@@ -11271,6 +11289,8 @@ private:
                         fmDropHit.widgetIndex < widgets_.size() &&
                         widgets_[fmDropHit.widgetIndex].type == DesktopWidgetType::FolderMapping)
                     {
+                        if (draggingCollectionMember_ && collectionDragSourceWidget_ < widgets_.size())
+                            RemoveSelectedItemsFromCollections(collectionDragSourceWidget_);
                         CopyDesktopItemsToFolderMapping(fmDropHit.widgetIndex);
                         handledCollectionDrop = true;
                     }
