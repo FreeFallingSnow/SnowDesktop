@@ -2451,8 +2451,8 @@ private:
         const int usableWidth = std::max(1, width - (page.marginX * 2));
         const int usableHeight = std::max(1, height - (page.marginY * 2));
 
-        page.columns = std::max(1, usableWidth / cellW);
-        page.rows = std::max(1, usableHeight / cellH);
+        page.columns = std::max(4, usableWidth / cellW);
+        page.rows = std::max(3, usableHeight / cellH);
         page.cellWidth = cellW;
         page.cellHeight = cellH;
         page.gapX = page.columns > 1 ? std::max(0, (usableWidth - (page.columns * page.cellWidth)) / (page.columns - 1)) : 0;
@@ -10037,6 +10037,7 @@ private:
                 }
             }
             UpdateLayoutWorkArea();
+            ApplySavedGridDimensions();
             LayoutItems();
             InvalidateRect(hwnd_, nullptr, TRUE);
             return 0;
@@ -10055,6 +10056,7 @@ private:
                 }
             }
             UpdateLayoutWorkArea();
+            ApplySavedGridDimensions();
             LayoutItems();
             InvalidateRect(hwnd_, nullptr, TRUE);
             return 0;
