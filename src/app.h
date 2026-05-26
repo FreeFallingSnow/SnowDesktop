@@ -2956,13 +2956,15 @@ private:
         }
         if (desktopHit.kind == DesktopHitKind::WidgetMember)
         {
-            if (desktopHit.itemIndex < items_.size() && !items_[desktopHit.itemIndex].selected)
+            if (desktopHit.itemIndex < items_.size() && !items_[desktopHit.itemIndex].selected &&
+                IsPointInIconDropTarget(desktopHit.bounds, point))
             {
                 return L"释放：交给「" + items_[desktopHit.itemIndex].name + L"」处理";
             }
             if (desktopHit.widgetIndex < widgets_.size() &&
                 widgets_[desktopHit.widgetIndex].type == DesktopWidgetType::FolderMapping &&
-                desktopHit.memberIndex < widgets_[desktopHit.widgetIndex].folderEntries.size())
+                desktopHit.memberIndex < widgets_[desktopHit.widgetIndex].folderEntries.size() &&
+                IsPointInIconDropTarget(desktopHit.bounds, point))
             {
                 return L"释放：交给「" + widgets_[desktopHit.widgetIndex].folderEntries[desktopHit.memberIndex].name + L"」处理";
             }
@@ -2984,7 +2986,7 @@ private:
             }
         }
 
-        int hit = HitTest(point);
+        int hit = HitTestForDropTarget(point);
         if (hit >= 0 && !items_[static_cast<size_t>(hit)].selected)
         {
             return L"释放：交给「" + items_[static_cast<size_t>(hit)].name + L"」处理";
@@ -3040,6 +3042,23 @@ private:
             }
             RECT hitRect = GetItemHitRect(items_[static_cast<size_t>(i)]);
             if (PtInRect(&hitRect, point))
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    int HitTestForDropTarget(POINT point) const
+    {
+        for (int i = static_cast<int>(items_.size()) - 1; i >= 0; --i)
+        {
+            if (IsRectEmptyRect(items_[static_cast<size_t>(i)].bounds))
+            {
+                continue;
+            }
+            RECT dropRect = GetItemDropTargetRect(items_[static_cast<size_t>(i)]);
+            if (PtInRect(&dropRect, point))
             {
                 return i;
             }
@@ -3260,6 +3279,32 @@ private:
     RECT GetItemHitRect(const DesktopItem& item) const
     {
         return GetItemSelectionRect(item, item.selected);
+    }
+
+    RECT GetItemDropTargetRect(const DesktopItem& item) const
+    {
+        RECT iconRect = GetItemIconRect(item.bounds);
+        iconRect.left -= 4;
+        iconRect.top -= 2;
+        iconRect.right += 4;
+        iconRect.bottom += 4;
+        return iconRect;
+    }
+
+    RECT GetIconDropTargetRect(RECT bounds) const
+    {
+        RECT iconRect = GetItemIconRect(bounds);
+        iconRect.left -= 4;
+        iconRect.top -= 2;
+        iconRect.right += 4;
+        iconRect.bottom += 4;
+        return iconRect;
+    }
+
+    bool IsPointInIconDropTarget(RECT bounds, POINT point) const
+    {
+        RECT dropRect = GetIconDropTargetRect(bounds);
+        return PtInRect(&dropRect, point) != FALSE;
     }
 
     void ClearSelection()
@@ -9632,14 +9677,16 @@ private:
 
                 if (memberHit.kind == DesktopHitKind::WidgetMember)
                 {
-                    if (memberHit.itemIndex < items_.size() && !items_[memberHit.itemIndex].selected)
+                    if (memberHit.itemIndex < items_.size() && !items_[memberHit.itemIndex].selected &&
+                        IsPointInIconDropTarget(memberHit.bounds, current))
                     {
                         dragHint_ = L"释放：交给「" + items_[memberHit.itemIndex].name + L"」处理";
                     }
                     else if (memberHit.widgetIndex < widgets_.size() &&
                         widgets_[memberHit.widgetIndex].type == DesktopWidgetType::FolderMapping &&
                         memberHit.memberIndex < widgets_[memberHit.widgetIndex].folderEntries.size() &&
-                        !widgets_[memberHit.widgetIndex].folderEntries[memberHit.memberIndex].selected)
+                        !widgets_[memberHit.widgetIndex].folderEntries[memberHit.memberIndex].selected &&
+                        IsPointInIconDropTarget(memberHit.bounds, current))
                     {
                         dragHint_ = L"释放：交给「" + widgets_[memberHit.widgetIndex].folderEntries[memberHit.memberIndex].name + L"」处理";
                     }
@@ -9807,7 +9854,7 @@ private:
                     canHandoff = !widgets_[dropHit.widgetIndex].folderEntries[dropHit.memberIndex].selected;
                 }
 
-                if (canHandoff)
+                if (canHandoff && IsPointInIconDropTarget(dropHit.bounds, point))
                 {
                     ComPtr<IDataObject> dataObject = CreateFolderEntriesDataObject(widgetMemberDragWidget_);
                     if (dataObject)
@@ -9879,7 +9926,7 @@ private:
                         canHandoff = !widgets_[memberDropHit.widgetIndex].folderEntries[memberDropHit.memberIndex].selected;
                     }
 
-                    if (canHandoff)
+                    if (canHandoff && IsPointInIconDropTarget(memberDropHit.bounds, point))
                     {
                         ComPtr<IDataObject> dataObject = CreateSelectedDataObject();
                         if (dataObject)
@@ -9970,7 +10017,8 @@ private:
                         size_t insertIndex = GetCollectionInsertIndex(dropHit.widgetIndex, point, false);
                         MoveSelectedItemsToCollection(dropHit.widgetIndex, insertIndex, collectionDragSourceWidget_);
                     }
-                    else if (dropHit.kind == DesktopHitKind::Item && !items_[dropHit.itemIndex].selected)
+                    else if (dropHit.kind == DesktopHitKind::Item && !items_[dropHit.itemIndex].selected &&
+                        HitTestForDropTarget(point) == static_cast<int>(dropHit.itemIndex))
                     {
                         ComPtr<IDataObject> dataObject = CreateSelectedDataObject();
                         if (dataObject)
