@@ -306,6 +306,7 @@ struct DesktopWidget
     bool autoCollect = false;
     bool listMode = false;
     int scrollOffset = 0;
+    int tabScrollOffset = 0;
     std::wstring activeCategoryId;
     std::vector<std::wstring> itemKeys;
     std::vector<FolderEntry> folderEntries;
