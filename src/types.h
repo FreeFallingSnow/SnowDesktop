@@ -60,6 +60,7 @@ enum class DesktopWidgetType
 {
     Collection,
     FileCategories,
+    FolderMapping,
 };
 
 struct Pidl
@@ -178,6 +179,120 @@ struct DesktopItem
     }
 };
 
+struct FolderEntry
+{
+    std::wstring name;
+    std::wstring fullPath;
+    bool isDirectory = false;
+    int sysIconIndex = -1;
+    HBITMAP iconBitmap = nullptr;
+    SIZE iconBitmapSize{};
+    bool selected = false;
+
+    FolderEntry() = default;
+
+    FolderEntry(const FolderEntry& other)
+        : name(other.name),
+          fullPath(other.fullPath),
+          isDirectory(other.isDirectory),
+          sysIconIndex(other.sysIconIndex),
+          iconBitmap(nullptr),
+          iconBitmapSize(other.iconBitmapSize)
+    {
+        if (other.iconBitmap != nullptr)
+        {
+            iconBitmap = CopyFolderEntryBitmap(other.iconBitmap, iconBitmapSize);
+        }
+    }
+
+    FolderEntry& operator=(const FolderEntry& other)
+    {
+        if (this != &other)
+        {
+            if (iconBitmap != nullptr)
+            {
+                DeleteObject(iconBitmap);
+                iconBitmap = nullptr;
+                iconBitmapSize = {};
+            }
+            name = other.name;
+            fullPath = other.fullPath;
+            isDirectory = other.isDirectory;
+            sysIconIndex = other.sysIconIndex;
+            iconBitmapSize = other.iconBitmapSize;
+            if (other.iconBitmap != nullptr)
+            {
+                iconBitmap = CopyFolderEntryBitmap(other.iconBitmap, iconBitmapSize);
+            }
+        }
+        return *this;
+    }
+
+private:
+    static HBITMAP CopyFolderEntryBitmap(HBITMAP source, SIZE& outSize)
+    {
+        if (source == nullptr) return nullptr;
+        BITMAP bm{};
+        if (GetObjectW(source, sizeof(bm), &bm) == 0) return nullptr;
+        HDC screenDc = GetDC(nullptr);
+        HDC srcDc = CreateCompatibleDC(screenDc);
+        HDC dstDc = CreateCompatibleDC(screenDc);
+        HBITMAP result = CreateCompatibleBitmap(screenDc, bm.bmWidth, bm.bmHeight);
+        HBITMAP oldSrc = static_cast<HBITMAP>(SelectObject(srcDc, source));
+        HBITMAP oldDst = static_cast<HBITMAP>(SelectObject(dstDc, result));
+        BitBlt(dstDc, 0, 0, bm.bmWidth, bm.bmHeight, srcDc, 0, 0, SRCCOPY);
+        SelectObject(srcDc, oldSrc);
+        SelectObject(dstDc, oldDst);
+        DeleteDC(srcDc);
+        DeleteDC(dstDc);
+        ReleaseDC(nullptr, screenDc);
+        outSize = { bm.bmWidth, bm.bmHeight };
+        return result;
+    }
+
+public:
+
+    ~FolderEntry()
+    {
+        if (iconBitmap != nullptr)
+        {
+            DeleteObject(iconBitmap);
+        }
+    }
+
+    FolderEntry(FolderEntry&& other) noexcept
+        : name(std::move(other.name)),
+          fullPath(std::move(other.fullPath)),
+          isDirectory(other.isDirectory),
+          sysIconIndex(other.sysIconIndex),
+          iconBitmap(other.iconBitmap),
+          iconBitmapSize(other.iconBitmapSize)
+    {
+        other.iconBitmap = nullptr;
+        other.iconBitmapSize = {};
+    }
+
+    FolderEntry& operator=(FolderEntry&& other) noexcept
+    {
+        if (this != &other)
+        {
+            if (iconBitmap != nullptr)
+            {
+                DeleteObject(iconBitmap);
+            }
+            name = std::move(other.name);
+            fullPath = std::move(other.fullPath);
+            isDirectory = other.isDirectory;
+            sysIconIndex = other.sysIconIndex;
+            iconBitmap = other.iconBitmap;
+            iconBitmapSize = other.iconBitmapSize;
+            other.iconBitmap = nullptr;
+            other.iconBitmapSize = {};
+        }
+        return *this;
+    }
+};
+
 struct DesktopWidget
 {
     std::wstring id;
@@ -193,6 +308,7 @@ struct DesktopWidget
     int scrollOffset = 0;
     std::wstring activeCategoryId;
     std::vector<std::wstring> itemKeys;
+    std::vector<FolderEntry> folderEntries;
 };
 
 struct DesktopWindows

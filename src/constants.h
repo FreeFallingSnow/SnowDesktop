@@ -62,6 +62,9 @@ constexpr UINT kContextAddFileCategoryWidget = 41022;
 constexpr UINT kContextWidgetManualCollect = 41023;
 constexpr UINT kContextWidgetToggleAutoCollect = 41024;
 constexpr UINT kContextWidgetToggleListMode = 41025;
+constexpr UINT kContextAddFolderMappingWidget = 41026;
+constexpr UINT kContextWidgetOpenFolder = 41027;
+constexpr UINT kContextWidgetToggleFolderView = 41028;
 constexpr UINT kContextZoomPresetFirst = 41150;
 
 constexpr UINT kShellChangeMessage = WM_APP + 2;

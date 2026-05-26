@@ -16,7 +16,10 @@
       "Bash(git filter-branch *)",
       "Bash(git revert *)",
       "Bash(python)",
-      "Bash(bash build.bat)"
+      "Bash(bash build.bat)",
+      "Bash(git *)",
+      "Bash(cmd.exe /c build.bat)",
+      "Bash(cmake -G \"Visual Studio 18 2026\" -A x64 -S . -B .build)"
     ]
   }
 }
