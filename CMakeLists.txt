@@ -10,6 +10,8 @@ add_executable(SnowDesktop WIN32
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 
+target_include_directories(SnowDesktop PRIVATE third_party/spdlog/include)
+
 add_custom_command(TARGET SnowDesktop PRE_BUILD
     COMMAND cmd /c "taskkill /f /im SnowDesktop.exe 2>nul & exit 0"
     COMMENT "Stopping running SnowDesktop.exe before build..."
