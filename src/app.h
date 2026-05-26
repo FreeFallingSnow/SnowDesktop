@@ -6515,26 +6515,32 @@ private:
             return;
         }
 
+        if (widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
+        {
+            AppendNewSubmenuForFolder(menu, widgets_[widgetIndex].sourceFolderPath);
+        }
+        if (widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
+        {
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
+            AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+        }
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
         if (widgets_[widgetIndex].type == DesktopWidgetType::Collection)
         {
             AppendMenuW(menu, MF_STRING, kContextWidgetOpen, L"打开全部");
         }
-        AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
-        if (widgets_[widgetIndex].type == DesktopWidgetType::FileCategories)
+        else if (widgets_[widgetIndex].type == DesktopWidgetType::FileCategories)
         {
-            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
             AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
             AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
         }
         else if (widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
         {
-            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, L"打开文件夹");
             AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
-            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
-            AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
@@ -6548,6 +6554,7 @@ private:
             hwnd_,
             nullptr);
         DestroyMenu(menu);
+        newMenuContextMenu_.Reset();
 
         switch (command)
         {
@@ -6614,6 +6621,14 @@ private:
                 }
             }
             break;
+        case kContextNewMenu:
+            if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping &&
+                !widgets_[widgetIndex].sourceFolderPath.empty())
+            {
+                ShowNewMenuAndInvoke(screenPoint, widgets_[widgetIndex].sourceFolderPath);
+                RefreshFolderMappingWidget(widgetIndex);
+            }
+            break;
         default:
             break;
         }
@@ -6629,7 +6644,11 @@ private:
             return;
         }
 
+        AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
+        AppendNewSubmenu(menu);
         AppendMenuW(menu, MF_STRING, kContextRefreshCommand, L"刷新");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
         HMENU sortMenu = CreatePopupMenu();
@@ -6684,10 +6703,6 @@ private:
 
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
 
         menuIconPool_.clear();
         SetMenuItemIcon(menu, kContextRefreshCommand, RGB(60, 130, 220), L'R');
@@ -6712,6 +6727,7 @@ private:
             hwnd_,
             nullptr);
         DestroyMenu(menu);
+        newMenuContextMenu_.Reset();
         for (HBITMAP bmp : menuIconPool_) { DeleteObject(bmp); }
         menuIconPool_.clear();
 
@@ -6766,6 +6782,16 @@ private:
         case kContextMoreCommand:
             ShowDesktopBackgroundContextMenu(screenPoint);
             break;
+        case kContextNewMenu:
+        {
+            wchar_t desktopPath[MAX_PATH]{};
+            if (SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
+            {
+                ShowNewMenuAndInvoke(screenPoint, desktopPath);
+                ReloadItems();
+            }
+            break;
+        }
         default:
             break;
         }
@@ -6822,6 +6848,71 @@ private:
         }
 
         return false;
+    }
+
+    void AppendNewSubmenu(HMENU menu)
+    {
+        AppendMenuW(menu, MF_STRING, kContextNewMenu, L"新建");
+    }
+
+    void AppendNewSubmenuForFolder(HMENU menu, const std::wstring& folderPath)
+    {
+        AppendMenuW(menu, MF_STRING, kContextNewMenu, L"新建");
+    }
+
+    void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir)
+    {
+        ComPtr<IContextMenu> ctxMenu;
+        if (FAILED(CoCreateInstance(CLSID_NewMenu, nullptr, CLSCTX_INPROC_SERVER,
+            IID_IContextMenu, reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
+            return;
+
+        ComPtr<IShellExtInit> shellExtInit;
+        if (FAILED(ctxMenu.As(&shellExtInit)) || !shellExtInit)
+            return;
+
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (FAILED(SHParseDisplayName(targetDir.c_str(), nullptr, &pidl, 0, nullptr)) || pidl == nullptr)
+            return;
+
+        HRESULT hr = shellExtInit->Initialize(pidl, nullptr, 0);
+        ILFree(pidl);
+        if (FAILED(hr)) return;
+
+        HMENU tmpMenu = CreatePopupMenu();
+        if (tmpMenu == nullptr) return;
+        hr = ctxMenu->QueryContextMenu(tmpMenu, 0, 1, 0x7FFF, CMF_NORMAL);
+        if (FAILED(hr)) { DestroyMenu(tmpMenu); return; }
+
+        HMENU newSub = GetSubMenu(tmpMenu, 0);
+        if (newSub == nullptr) { DestroyMenu(tmpMenu); return; }
+
+        ctxMenu.As(&newMenuContextMenu_);
+
+        SetForegroundWindow(hwnd_);
+        UINT cmd = TrackPopupMenuEx(newSub, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
+            screenPoint.x, screenPoint.y, hwnd_, nullptr);
+        newMenuContextMenu_.Reset();
+
+        if (cmd != 0 && cmd >= 1)
+        {
+            CMINVOKECOMMANDINFOEX invoke{};
+            invoke.cbSize = sizeof(invoke);
+            invoke.fMask = CMIC_MASK_UNICODE;
+            invoke.hwnd = hwnd_;
+            invoke.lpVerb = MAKEINTRESOURCEA(cmd - 1);
+            invoke.lpVerbW = MAKEINTRESOURCEW(cmd - 1);
+            invoke.nShow = SW_SHOWNORMAL;
+            ctxMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        }
+
+        // Clean up other items in tmpMenu
+        for (int i = GetMenuItemCount(tmpMenu) - 1; i >= 0; --i)
+        {
+            if (GetSubMenu(tmpMenu, i) == nullptr)
+                RemoveMenu(tmpMenu, i, MF_BYPOSITION);
+        }
+        DestroyMenu(tmpMenu);
     }
 
     void ShowShellContextMenu(POINT screenPoint)
@@ -9779,6 +9870,11 @@ private:
 
     LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
     {
+        if (newMenuContextMenu_ && (message == WM_INITMENUPOPUP || message == WM_DRAWITEM || message == WM_MEASUREITEM))
+        {
+            if (SUCCEEDED(newMenuContextMenu_->HandleMenuMsg(message, wParam, lParam)))
+                return 0;
+        }
         if (activeContextMenu3_)
         {
             LRESULT result = 0;
@@ -10700,7 +10796,7 @@ private:
                 DesktopHit memberDropHit = HitTestDesktop(point);
                 {
                     wchar_t buf[256];
-                    swprintf_s(buf, L"DROP kind=%d dragColl=%d srcW=%zu selCnt=%zu",
+                    swprintf_s(buf, L"DROP kind=%d dragColl=%d srcW=%zu selCnt=%d",
                         static_cast<int>(memberDropHit.kind), draggingCollectionMember_,
                         collectionDragSourceWidget_, selectedCount_);
                     DebugLog(buf);
@@ -10773,7 +10869,7 @@ private:
                         size_t insertIndex = GetWidgetMemberInsertIndex(collectionDragSourceWidget_, point);
                         {
                             wchar_t buf[64];
-                            swprintf_s(buf, L"  EXEC insertIdx=%zu selCnt=%zu", insertIndex, selectedCount_);
+                            swprintf_s(buf, L"  EXEC insertIdx=%zu selCnt=%d", insertIndex, selectedCount_);
                             DebugLog(buf);
                         }
                         ReorderFileCategoryWidget(collectionDragSourceWidget_, insertIndex);
@@ -11403,6 +11499,7 @@ private:
     RECT marqueeRect_{};
     ComPtr<IContextMenu2> activeContextMenu2_;
     ComPtr<IContextMenu3> activeContextMenu3_;
+    ComPtr<IContextMenu2> newMenuContextMenu_;
     DWORD lastCreateWindowError_ = 0;
     HRESULT lastGraphicsError_ = S_OK;
     UINT compositionWidth_ = 0;

@@ -66,6 +66,7 @@ constexpr UINT kContextAddFolderMappingWidget = 41026;
 constexpr UINT kContextWidgetOpenFolder = 41027;
 constexpr UINT kContextWidgetToggleFolderView = 41028;
 constexpr UINT kContextZoomPresetFirst = 41150;
+constexpr UINT kContextNewMenu = 41400;
 
 constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT_PTR kShellChangeTimerId = 2;
