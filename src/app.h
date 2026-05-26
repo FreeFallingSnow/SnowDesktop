@@ -72,7 +72,20 @@ public:
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect) override
     {
         if (effect == nullptr) return E_POINTER;
-        if (selfDragActive_) { *effect = DROPEFFECT_NONE; return S_OK; }
+        if (selfDragActive_)
+        {
+            DebugLog(L"SELFDRAG DragEnter");
+            selfDragReturned_ = true;
+            draggingItems_ = true;
+            POINT client = ScreenPointToClient(point);
+            dragCurrentPoint_ = client;
+            dragTargetCell_ = FindBestDropCell(CellFromPoint(GetDragTargetPoint(client)));
+            dragHint_ = MakeInternalDragHint(client);
+            ShowDragHintWindow(client, dragHint_);
+            *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            return S_OK;
+        }
 
         externalDragActive_ = true;
         POINT oldPoint = externalDragPoint_;
@@ -88,7 +101,17 @@ public:
     HRESULT STDMETHODCALLTYPE DragOver(DWORD keyState, POINTL point, DWORD* effect) override
     {
         if (effect == nullptr) return E_POINTER;
-        if (selfDragActive_) { *effect = DROPEFFECT_NONE; return S_OK; }
+        if (selfDragActive_)
+        {
+            POINT client = ScreenPointToClient(point);
+            dragCurrentPoint_ = client;
+            dragTargetCell_ = FindBestDropCell(CellFromPoint(GetDragTargetPoint(client)));
+            dragHint_ = MakeInternalDragHint(client);
+            ShowDragHintWindow(client, dragHint_);
+            *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            return S_OK;
+        }
 
         RECT oldDirty = GetExternalDragDirtyRect(externalDragPoint_);
         externalDragActive_ = true;
@@ -102,6 +125,14 @@ public:
 
     HRESULT STDMETHODCALLTYPE DragLeave() override
     {
+        if (selfDragActive_)
+        {
+            draggingItems_ = false;
+            dragHint_.clear();
+            HideDragHintWindow();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            return S_OK;
+        }
         RECT oldDirty = GetExternalDragDirtyRect(externalDragPoint_);
         externalDragActive_ = false;
         externalDragHint_.clear();
@@ -137,11 +168,92 @@ public:
 
         if (selfDragActive_)
         {
+            DebugLog(L"SELFDROP hit, moving items");
             selfDragActive_ = false;
-            externalDragActive_ = false;
-            externalDragHint_.clear();
+            selfDragReturned_ = true;
+            draggingItems_ = false;
             HideDragHintWindow();
-            *effect = DROPEFFECT_NONE;
+            dragHint_.clear();
+            POINT clientPoint = ScreenPointToClient(point);
+            DesktopHit dropHit = HitTestDesktop(clientPoint);
+            bool handled = false;
+
+            // Within same widget → reorder
+            if (draggingCollectionMember_ && collectionDragSourceWidget_ < widgets_.size() &&
+                dropHit.kind == DesktopHitKind::WidgetMember &&
+                dropHit.widgetIndex == collectionDragSourceWidget_)
+            {
+                size_t insertIdx = GetWidgetMemberInsertIndex(collectionDragSourceWidget_, clientPoint);
+                ReorderFileCategoryWidget(collectionDragSourceWidget_, insertIdx);
+                handled = true;
+            }
+            // Handoff to another widget's member or desktop item
+            else if (dropHit.kind == DesktopHitKind::WidgetMember &&
+                dropHit.itemIndex < items_.size() && !items_[dropHit.itemIndex].selected &&
+                IsPointInIconDropTarget(dropHit.bounds, clientPoint))
+            {
+                ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+                if (dataObj)
+                {
+                    DWORD localEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+                    DropDataObjectToWidgetMember(dropHit, dataObj.Get(), clientPoint, MK_LBUTTON, &localEffect);
+                }
+                ReloadItems();
+                handled = true;
+            }
+            // Handoff to desktop item
+            else if (dropHit.kind == DesktopHitKind::Item && dropHit.itemIndex < items_.size() &&
+                !items_[dropHit.itemIndex].selected &&
+                IsPointInIconDropTarget(items_[dropHit.itemIndex].bounds, clientPoint))
+            {
+                ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+                if (dataObj)
+                {
+                    DWORD localEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+                    DropDataObjectAt(dataObj.Get(), clientPoint, MK_LBUTTON, &localEffect);
+                }
+                ReloadItems();
+                handled = true;
+            }
+            // Drop onto a different widget surface (or WidgetMember without icon-target handoff)
+            if (!handled && dropHit.widgetIndex < widgets_.size() &&
+                dropHit.widgetIndex != collectionDragSourceWidget_ &&
+                (IsWidgetDropSurface(dropHit) || dropHit.kind == DesktopHitKind::WidgetMember ||
+                 dropHit.kind == DesktopHitKind::WidgetContent))
+            {
+                const DesktopWidget& targetWidget = widgets_[dropHit.widgetIndex];
+                if (targetWidget.type == DesktopWidgetType::Collection)
+                {
+                    size_t insertIndex = GetCollectionInsertIndex(dropHit.widgetIndex, clientPoint, false);
+                    MoveSelectedItemsToCollection(dropHit.widgetIndex, insertIndex, collectionDragSourceWidget_);
+                }
+                else if (targetWidget.type == DesktopWidgetType::FileCategories)
+                {
+                    AddSelectedItemsToFileCategoryWidget(dropHit.widgetIndex);
+                }
+                else if (targetWidget.type == DesktopWidgetType::FolderMapping)
+                {
+                    ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+                    if (dataObj)
+                        DropExternalFilesToFolderMapping(dropHit.widgetIndex, dataObj.Get(), 0, nullptr);
+                }
+                LayoutItems();
+                SaveLayoutSlots();
+                handled = true;
+            }
+
+            // Default: place on desktop grid
+            if (!handled)
+            {
+                if (draggingCollectionMember_ && collectionDragSourceWidget_ < widgets_.size())
+                {
+                    RemoveSelectedItemsFromCollections(collectionDragSourceWidget_);
+                    SaveLayoutSlots();
+                }
+                MoveSelectedItemsToCell(FindBestDropCell(CellFromPoint(clientPoint)));
+                LayoutItems();
+            }
+            *effect = DROPEFFECT_MOVE;
             return S_OK;
         }
 
@@ -176,7 +288,36 @@ public:
         }
 
         DWORD localEffect = *effect;
-        HRESULT hr = DropDataObjectAt(dataObject, clientPoint, keyState, &localEffect);
+        HRESULT hr;
+        if (!selfDragOutKeys_.empty() && dataObject != nullptr)
+        {
+            std::vector<std::wstring> paths = GetDropPaths(dataObject);
+            if (!paths.empty())
+            {
+                std::unordered_set<std::wstring> pathSet(paths.begin(), paths.end());
+                bool allCached = true;
+                for (const auto& k : selfDragOutKeys_)
+                {
+                    size_t idx = FindItemIndexByKey(k);
+                    if (idx == static_cast<size_t>(-1)) { allCached = false; break; }
+                    std::wstring itemPath = items_[idx].parsingName;
+                    if (!pathSet.contains(itemPath)) { allCached = false; break; }
+                }
+                if (allCached)
+                {
+                    DebugLog(L"EXTCACHE matched, internal move");
+                    RemoveSelectedItemsFromCollections(static_cast<size_t>(-1));
+                    MoveSelectedItemsToCell(FindBestDropCell(CellFromPoint(clientPoint)));
+                    LayoutItems();
+                    selfDragOutKeys_.clear();
+                    *effect = DROPEFFECT_MOVE;
+                    InvalidateFast(oldDirty);
+                    return S_OK;
+                }
+            }
+            selfDragOutKeys_.clear();
+        }
+        hr = DropDataObjectAt(dataObject, clientPoint, keyState, &localEffect);
         *effect = localEffect;
         InvalidateFast(oldDirty);
         ReloadItems();
@@ -3839,14 +3980,44 @@ private:
 
         const int groupColumns = std::max(1, maxColumn - minColumn);
         const int groupRows = std::max(1, maxRow - minRow);
-        targetCell.column = std::clamp(targetCell.column, 0, std::max(0, page->columns - groupColumns));
+        const bool stacked = (groupColumns == 1 && groupRows == 1 && selectedIndexes.size() > 1);
+        const int maxCol = page->columns - 1;
+        const int maxPageRow = page->rows - 1;
+        const int spreadCols = stacked ? std::min(static_cast<int>(selectedIndexes.size()), page->columns) : groupColumns;
+        targetCell.column = std::clamp(targetCell.column, 0, std::max(0, page->columns - spreadCols));
         targetCell.row = std::clamp(targetCell.row, 0, std::max(0, page->rows - groupRows));
 
+        int seqIndex = 0;
+        std::unordered_set<std::wstring> usedSlots;
         for (size_t itemIndex : selectedIndexes)
         {
             GridCell movedCell = targetCell;
-            movedCell.column += items_[itemIndex].gridCell.column - minColumn;
-            movedCell.row += items_[itemIndex].gridCell.row - minRow;
+            if (stacked)
+            {
+                for (int attempt = 0; attempt < page->columns * page->rows; ++attempt)
+                {
+                    int col = seqIndex / page->rows;
+                    int row = seqIndex % page->rows;
+                    GridCell probe = targetCell;
+                    probe.column += col;
+                    probe.row += row;
+                    ++seqIndex;
+                    std::wstring slotKey = probe.pageId + L":" + std::to_wstring(SlotFromCell(probe));
+                    if (probe.column <= maxCol && probe.row <= maxPageRow &&
+                        !usedSlots.contains(slotKey) &&
+                        !IsGridAreaOccupiedByUnselected(probe, items_[itemIndex].gridSpan))
+                    {
+                        movedCell = probe;
+                        usedSlots.insert(slotKey);
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                movedCell.column += items_[itemIndex].gridCell.column - minColumn;
+                movedCell.row += items_[itemIndex].gridCell.row - minRow;
+            }
 
             if (!IsGridAreaValid(movedCell, items_[itemIndex].gridSpan) ||
                 IsGridAreaOccupiedByUnselected(movedCell, items_[itemIndex].gridSpan))
@@ -5210,6 +5381,30 @@ private:
 
         *effect = localEffect;
         return hr;
+    }
+
+    std::vector<std::wstring> GetDropPaths(IDataObject* dataObject)
+    {
+        std::vector<std::wstring> paths;
+        FORMATETC fmt{};
+        fmt.cfFormat = CF_HDROP;
+        fmt.dwAspect = DVASPECT_CONTENT;
+        fmt.lindex = -1;
+        fmt.tymed = TYMED_HGLOBAL;
+        STGMEDIUM med{};
+        if (SUCCEEDED(dataObject->GetData(&fmt, &med)))
+        {
+            HDROP hDrop = static_cast<HDROP>(med.hGlobal);
+            UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+            for (UINT i = 0; i < count; ++i)
+            {
+                wchar_t path[MAX_PATH]{};
+                if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
+                    paths.push_back(path);
+            }
+            ReleaseStgMedium(&med);
+        }
+        return paths;
     }
 
     HRESULT DropDataObjectToWidgetMember(const DesktopHit& hit, IDataObject* dataObject, POINT clientPoint, DWORD keyState, DWORD* effect)
@@ -6970,6 +7165,7 @@ private:
 
     void AppendNewSubmenuForFolder(HMENU menu, const std::wstring& folderPath)
     {
+        (void)folderPath;
         AppendMenuW(menu, MF_STRING, kContextNewMenu, L"新建");
     }
 
@@ -7930,7 +8126,9 @@ private:
                     hit.kind == DesktopHitKind::WidgetContent ||
                     hit.kind == DesktopHitKind::WidgetAllButton ||
                     hit.kind == DesktopHitKind::PopupMember);
-                if (!overWidget)
+                int handoffTarget = HitTestForDropTarget(dragCurrentPoint_);
+                bool overHandoff = (handoffTarget >= 0 && !items_[static_cast<size_t>(handoffTarget)].selected);
+                if (!overWidget && !overHandoff)
                 {
                     for (RECT targetRect : GetSelectedMovePreviewRectsForCell(dragTargetCell_))
                 {
@@ -9715,7 +9913,11 @@ private:
 
         if (draggingItems_ && !draggingOverNav_)
         {
-            RECT targetRect = GetGridRect(dragTargetCell_);
+            int gdiHandoff = HitTestForDropTarget(dragCurrentPoint_);
+            bool gdiOverHandoff = (gdiHandoff >= 0 && !items_[static_cast<size_t>(gdiHandoff)].selected);
+            if (!gdiOverHandoff)
+            {
+                RECT targetRect = GetGridRect(dragTargetCell_);
             targetRect.left += 3;
             targetRect.top += 3;
             targetRect.right -= 3;
@@ -9728,6 +9930,7 @@ private:
             SelectObject(memoryDc, oldBrush);
             SelectObject(memoryDc, oldPen);
             DeleteObject(pen);
+            }
         }
 
         if (externalDragActive_)
@@ -10567,15 +10770,30 @@ private:
 
                         DWORD oleEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
                         selfDragActive_ = true;
+                        selfDragReturned_ = false;
+                        selfDragOutKeys_.clear();
+                        for (size_t i = 0; i < items_.size(); ++i)
+                            if (items_[i].selected) selfDragOutKeys_.push_back(items_[i].layoutKey);
+                        DebugLog(L"SELFDRAG DoDragDrop start");
                         HRESULT hr = DoDragDrop(dataObj.Get(), static_cast<IDropSource*>(this), oleEffect, &oleEffect);
+                        DebugLog(L"SELFDRAG DoDragDrop end");
                         selfDragActive_ = false;
-                        if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE)
+                        if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE && !selfDragReturned_)
                         {
                             RemoveSelectedItemsFromDesktop();
                             SaveLayoutSlots();
                         }
-                        ClearSelection();
-                        ReloadItems();
+                        if (!selfDragReturned_)
+                        {
+                            ClearSelection();
+                            ReloadItems();
+                        }
+                        else
+                        {
+                            SaveLayoutSlots();
+                            ClearSelection();
+                            InvalidateRect(hwnd_, nullptr, TRUE);
+                        }
                         return;
                     }
                 }
@@ -11571,6 +11789,8 @@ private:
     bool draggingOverNav_ = false;
     bool externalDragActive_ = false;
     bool selfDragActive_ = false;
+    bool selfDragReturned_ = false;
+    std::vector<std::wstring> selfDragOutKeys_;
     bool dropTargetRegistered_ = false;
     int mouseDownHit_ = -1;
     size_t mouseDownWidgetIndex_ = static_cast<size_t>(-1);
