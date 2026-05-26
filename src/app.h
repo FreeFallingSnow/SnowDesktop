@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/basic_file_sink.h>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -69,10 +71,8 @@ public:
 
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect) override
     {
-        if (effect == nullptr)
-        {
-            return E_POINTER;
-        }
+        if (effect == nullptr) return E_POINTER;
+        if (selfDragActive_) { *effect = DROPEFFECT_NONE; return S_OK; }
 
         externalDragActive_ = true;
         POINT oldPoint = externalDragPoint_;
@@ -87,10 +87,8 @@ public:
 
     HRESULT STDMETHODCALLTYPE DragOver(DWORD keyState, POINTL point, DWORD* effect) override
     {
-        if (effect == nullptr)
-        {
-            return E_POINTER;
-        }
+        if (effect == nullptr) return E_POINTER;
+        if (selfDragActive_) { *effect = DROPEFFECT_NONE; return S_OK; }
 
         RECT oldDirty = GetExternalDragDirtyRect(externalDragPoint_);
         externalDragActive_ = true;
@@ -135,6 +133,16 @@ public:
         if (effect == nullptr)
         {
             return E_POINTER;
+        }
+
+        if (selfDragActive_)
+        {
+            selfDragActive_ = false;
+            externalDragActive_ = false;
+            externalDragHint_.clear();
+            HideDragHintWindow();
+            *effect = DROPEFFECT_NONE;
+            return S_OK;
         }
 
         RECT oldDirty = GetExternalDragDirtyRect(externalDragPoint_);
@@ -192,6 +200,8 @@ public:
             MessageBoxW(nullptr, L"OleInitialize failed.", L"SnowDesktop", MB_ICONERROR);
             return 1;
         }
+
+        DebugLog(L"=== SnowDesktop started ===");
 
         if (!InitializeGraphics())
         {
@@ -1333,6 +1343,40 @@ private:
             item.iconBitmap = GetHighResolutionShellIconBitmap(item.absolutePidl.get(), info.iIcon, item.iconBitmapSize);
             ClampAlphaToColorKey(item.iconBitmap, kTransparentKey);
             item.sysIconIndex = info.iIcon;
+            item.shortcutArrow = false;
+            {
+                std::wstring upper = item.parsingName;
+                for (auto& c : upper) c = static_cast<wchar_t>(towupper(c));
+                if (upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0)
+                {
+                    wchar_t lnkPath[MAX_PATH]{};
+                    if (SHGetPathFromIDListW(item.absolutePidl.get(), lnkPath))
+                    {
+                        ComPtr<IShellLinkW> shellLink;
+                        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                            IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                        {
+                            ComPtr<IPersistFile> persistFile;
+                            if (SUCCEEDED(shellLink.As(&persistFile)) &&
+                                SUCCEEDED(persistFile->Load(lnkPath, STGM_READ)))
+                            {
+                                wchar_t target[MAX_PATH]{};
+                                if (SUCCEEDED(shellLink->GetPath(target, MAX_PATH, nullptr, 0)))
+                                {
+                                    std::wstring t(target);
+                                    for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
+                                    if (t.size() < 4 || t.compare(t.size() - 4, 4, L".EXE") != 0)
+                                        item.shortcutArrow = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (item.shortcutArrow && item.iconBitmap != nullptr)
+            {
+                ApplyShortcutArrowToBitmap(item.iconBitmap, item.iconBitmapSize);
+            }
             std::wstring key = GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid);
             item.layoutKey = key;
             if (seenKeys.contains(key))
@@ -2884,12 +2928,25 @@ private:
     RECT GetInternalDragDirtyRect(POINT point) const
     {
         RECT dirty = GetSelectedDragBoundsAt(point);
-        dirty = UnionCopy(dirty, GetTargetRectAt(point));
-        for (const RECT& rect : GetSelectedMovePreviewRects(GetDragTargetPoint(point)))
+        dirty = UnionCopy(dirty, GetGridRect(dragTargetCell_));
+        for (const RECT& rect : GetSelectedMovePreviewRectsForCell(dragTargetCell_))
         {
             dirty = UnionCopy(dirty, rect);
         }
         return InflateCopy(dirty, 16);
+    }
+
+    std::vector<RECT> GetSelectedMovePreviewRectsForCell(GridCell cell) const
+    {
+        std::vector<RECT> rects;
+        std::vector<PendingGridMove> moves = BuildSelectedMove(cell);
+        rects.reserve(moves.size());
+        for (const PendingGridMove& move : moves)
+        {
+            RECT bounds = GetGridRect(move.cell, items_[move.index].gridSpan);
+            rects.push_back(GetItemSelectionRect(bounds, true));
+        }
+        return rects;
     }
 
     std::vector<RECT> GetSelectedMovePreviewRects(POINT point) const
@@ -2982,7 +3039,10 @@ private:
             }
             if (widget.type == DesktopWidgetType::FolderMapping)
             {
-                return L"释放：拖入映射文件夹「" + widget.title + L"」";
+                bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                return altDown
+                    ? L"释放：创建快捷方式到「" + widget.title + L"」"
+                    : L"释放：复制到映射文件夹「" + widget.title + L"」";
             }
         }
 
@@ -2992,7 +3052,8 @@ private:
             return L"释放：交给「" + items_[static_cast<size_t>(hit)].name + L"」处理";
         }
 
-        if (BuildSelectedMove(CellFromPoint(GetDragTargetPoint(point))).empty())
+        GridCell bestCell = FindBestDropCell(CellFromPoint(GetDragTargetPoint(point)));
+        if (BuildSelectedMove(bestCell).empty())
         {
             return L"释放：当前位置已有图标";
         }
@@ -3107,6 +3168,7 @@ private:
         for (int i = static_cast<int>(widgets_.size()) - 1; i >= 0; --i)
         {
             const auto& widget = widgets_[static_cast<size_t>(i)];
+
             if (widget.type == DesktopWidgetType::FolderMapping)
             {
                 RECT toggleRect = GetFolderMappingToggleRect(widget);
@@ -3119,12 +3181,77 @@ private:
                 {
                     return { DesktopHitKind::WidgetFolderOpen, static_cast<size_t>(-1), static_cast<size_t>(i), 0, openRect };
                 }
-            }
 
-            RECT moveHandle = GetWidgetMoveHandleRect(widget);
-            if (PtInRect(&moveHandle, point))
+                RECT moveHandle = GetWidgetMoveHandleRect(widget);
+                if (PtInRect(&moveHandle, point))
+                {
+                    return { DesktopHitKind::Widget, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), moveHandle };
+                }
+
+                RECT content = GetFolderMappingContentRect(widget);
+                for (size_t slot = 0; slot < widget.folderEntries.size(); ++slot)
+                {
+                    RECT itemRect = GetFolderMappingItemRect(widget, slot);
+                    if (itemRect.bottom > content.top && itemRect.top < content.bottom && PtInRect(&itemRect, point))
+                    {
+                        return { DesktopHitKind::WidgetMember, static_cast<size_t>(-1), static_cast<size_t>(i), slot, itemRect };
+                    }
+                }
+                if (PtInRect(&content, point))
+                {
+                    return { DesktopHitKind::WidgetContent, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), content };
+                }
+            }
+            else if (widget.type == DesktopWidgetType::FileCategories)
             {
-                return { DesktopHitKind::Widget, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), moveHandle };
+                RECT fcToggle = GetFileCategoryToggleRect(widget);
+                if (PtInRect(&fcToggle, point))
+                {
+                    return { DesktopHitKind::WidgetFolderToggle, static_cast<size_t>(-1), static_cast<size_t>(i), 0, fcToggle };
+                }
+
+                RECT moveHandle = GetWidgetMoveHandleRect(widget);
+                if (PtInRect(&moveHandle, point))
+                {
+                    return { DesktopHitKind::Widget, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), moveHandle };
+                }
+
+                std::vector<std::wstring> categoryIds = GetVisibleFileCategoryIds(widget);
+                for (size_t slot = 0; slot < categoryIds.size(); ++slot)
+                {
+                    RECT tab = GetFileCategoryTabRect(widget, slot);
+                    if (PtInRect(&tab, point))
+                    {
+                        return { DesktopHitKind::WidgetCategory, static_cast<size_t>(-1), static_cast<size_t>(i), slot, tab };
+                    }
+                }
+
+                std::vector<std::wstring> keys = GetFileCategoryKeys(widget, GetActiveFileCategoryId(widget));
+                RECT content = GetFileCategoryContentRect(widget);
+                for (size_t slot = 0; slot < keys.size(); ++slot)
+                {
+                    RECT itemRect = GetFileCategoryItemRect(widget, slot);
+                    if (itemRect.bottom > content.top && itemRect.top < content.bottom && PtInRect(&itemRect, point))
+                    {
+                        size_t itemIndex = FindItemIndexByKey(keys[slot]);
+                        if (itemIndex != static_cast<size_t>(-1))
+                        {
+                            return { DesktopHitKind::WidgetMember, itemIndex, static_cast<size_t>(i), slot, itemRect };
+                        }
+                    }
+                }
+                if (PtInRect(&content, point))
+                {
+                    return { DesktopHitKind::WidgetContent, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), content };
+                }
+            }
+            else
+            {
+                RECT moveHandle = GetWidgetMoveHandleRect(widget);
+                if (PtInRect(&moveHandle, point))
+                {
+                    return { DesktopHitKind::Widget, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), moveHandle };
+                }
             }
 
             if (widget.type == DesktopWidgetType::Collection)
@@ -3158,64 +3285,6 @@ private:
                             return { DesktopHitKind::WidgetAllButton, static_cast<size_t>(-1), static_cast<size_t>(i), allSlot, allRect };
                         }
                     }
-                }
-            }
-            else if (widget.type == DesktopWidgetType::FileCategories)
-            {
-                std::vector<std::wstring> categoryIds = GetVisibleFileCategoryIds(widget);
-                for (size_t slot = 0; slot < categoryIds.size(); ++slot)
-                {
-                    RECT tab = GetFileCategoryTabRect(widget, slot);
-                    if (PtInRect(&tab, point))
-                    {
-                        return { DesktopHitKind::WidgetCategory, static_cast<size_t>(-1), static_cast<size_t>(i), slot, tab };
-                    }
-                }
-
-                std::vector<std::wstring> keys = GetFileCategoryKeys(widget, GetActiveFileCategoryId(widget));
-                RECT content = GetFileCategoryContentRect(widget);
-                for (size_t slot = 0; slot < keys.size(); ++slot)
-                {
-                    RECT itemRect = GetFileCategoryItemRect(widget, slot);
-                    if (RectsIntersect(itemRect, content) && PtInRect(&itemRect, point))
-                    {
-                        size_t itemIndex = FindItemIndexByKey(keys[slot]);
-                        if (itemIndex != static_cast<size_t>(-1))
-                        {
-                            return { DesktopHitKind::WidgetMember, itemIndex, static_cast<size_t>(i), slot, itemRect };
-                        }
-                    }
-                }
-                if (PtInRect(&content, point))
-                {
-                    return { DesktopHitKind::WidgetContent, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), content };
-                }
-            }
-            else if (widget.type == DesktopWidgetType::FolderMapping)
-            {
-                RECT toggleRect = GetFolderMappingToggleRect(widget);
-                if (PtInRect(&toggleRect, point))
-                {
-                    return { DesktopHitKind::WidgetFolderToggle, static_cast<size_t>(-1), static_cast<size_t>(i), 0, toggleRect };
-                }
-                RECT openRect = GetFolderMappingOpenRect(widget);
-                if (PtInRect(&openRect, point))
-                {
-                    return { DesktopHitKind::WidgetFolderOpen, static_cast<size_t>(-1), static_cast<size_t>(i), 0, openRect };
-                }
-
-                RECT content = GetFolderMappingContentRect(widget);
-                for (size_t slot = 0; slot < widget.folderEntries.size(); ++slot)
-                {
-                    RECT itemRect = GetFolderMappingItemRect(widget, slot);
-                    if (RectsIntersect(itemRect, content) && PtInRect(&itemRect, point))
-                    {
-                        return { DesktopHitKind::WidgetMember, static_cast<size_t>(-1), static_cast<size_t>(i), slot, itemRect };
-                    }
-                }
-                if (PtInRect(&content, point))
-                {
-                    return { DesktopHitKind::WidgetContent, static_cast<size_t>(-1), static_cast<size_t>(i), static_cast<size_t>(-1), content };
                 }
             }
 
@@ -3663,6 +3732,68 @@ private:
         return false;
     }
 
+    GridCell FindBestDropCell(GridCell targetCell) const
+    {
+        if (!BuildSelectedMove(targetCell).empty()) return targetCell;
+
+        const GridPage* page = FindExactGridPage(targetCell.pageId);
+        if (!page) return targetCell;
+        const int maxCol = page->columns - 1;
+        const int maxRow = page->rows - 1;
+
+        int dx = dragCurrentPoint_.x - mouseDownPoint_.x;
+        int dy = dragCurrentPoint_.y - mouseDownPoint_.y;
+        int primaryCol = 0, primaryRow = 0;
+        if (std::abs(dx) >= std::abs(dy))
+            primaryCol = (dx >= 0) ? 1 : -1;
+        else
+            primaryRow = (dy >= 0) ? 1 : -1;
+        if (primaryCol == 0 && primaryRow == 0) primaryCol = 1;
+
+        // Try straight in primary direction
+        for (int dist = 1; dist <= 8; ++dist)
+        {
+            GridCell probe = targetCell;
+            probe.column += primaryCol * dist;
+            probe.row += primaryRow * dist;
+            if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow)
+                break;
+            if (!BuildSelectedMove(probe).empty()) return probe;
+        }
+
+        // Try the opposite direction
+        int oppCol = -primaryCol, oppRow = -primaryRow;
+        for (int dist = 1; dist <= 8; ++dist)
+        {
+            GridCell probe = targetCell;
+            probe.column += oppCol * dist;
+            probe.row += oppRow * dist;
+            if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow)
+                break;
+            if (!BuildSelectedMove(probe).empty()) return probe;
+        }
+
+        // Spiral outward: try all adjacent cells in increasing distance
+        for (int dist = 1; dist <= 6; ++dist)
+        {
+            for (int dc = -dist; dc <= dist; ++dc)
+            {
+                for (int dr = -dist; dr <= dist; ++dr)
+                {
+                    if (std::abs(dc) != dist && std::abs(dr) != dist) continue;
+                    GridCell probe = targetCell;
+                    probe.column += dc;
+                    probe.row += dr;
+                    if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow)
+                        continue;
+                    if (!BuildSelectedMove(probe).empty()) return probe;
+                }
+            }
+        }
+
+        return targetCell;
+    }
+
     std::vector<PendingGridMove> BuildSelectedMove(GridCell targetCell) const
     {
         std::vector<PendingGridMove> moves;
@@ -3805,8 +3936,15 @@ private:
         targetCell.column = std::clamp(targetCell.column, 0, std::max(0, page->columns - targetSpan.columns));
         targetCell.row = std::clamp(targetCell.row, 0, std::max(0, page->rows - targetSpan.rows));
 
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (i != widgetIndex && GridAreasOverlap(targetCell, targetSpan, widgets_[i].gridCell, widgets_[i].gridSpan))
+            {
+                return;
+            }
+        }
+
         std::vector<size_t> displacedItemOrder;
-        std::vector<size_t> displacedWidgetOrder;
         std::unordered_set<size_t> displacedItems;
         std::unordered_set<size_t> displacedWidgets;
         for (size_t i = 0; i < items_.size(); ++i)
@@ -3817,14 +3955,6 @@ private:
                 displacedItemOrder.push_back(i);
             }
         }
-        for (size_t i = 0; i < widgets_.size(); ++i)
-        {
-            if (i != widgetIndex && GridAreasOverlap(targetCell, targetSpan, widgets_[i].gridCell, widgets_[i].gridSpan))
-            {
-                displacedWidgets.insert(i);
-                displacedWidgetOrder.push_back(i);
-            }
-        }
 
         auto byGridOrder = [this](auto left, auto right) {
             const GridCell& l = items_[left].gridCell;
@@ -3833,17 +3963,12 @@ private:
             return SlotFromCell(l) < SlotFromCell(r);
         };
         std::sort(displacedItemOrder.begin(), displacedItemOrder.end(), byGridOrder);
-        std::sort(displacedWidgetOrder.begin(), displacedWidgetOrder.end(), [this](size_t left, size_t right) {
-            const GridCell& l = widgets_[left].gridCell;
-            const GridCell& r = widgets_[right].gridCell;
-            if (l.pageId != r.pageId) return l.pageId < r.pageId;
-            return SlotFromCell(l) < SlotFromCell(r);
-        });
 
         widgets_[widgetIndex].gridCell = targetCell;
         widgets_[widgetIndex].gridSpan = targetSpan;
         std::unordered_set<std::wstring> usedSlots;
-        AddOccupiedExcept(usedSlots, widgetIndex, displacedItems, displacedWidgets);
+        std::unordered_set<size_t> noDisplacedWidgets;
+        AddOccupiedExcept(usedSlots, widgetIndex, displacedItems, noDisplacedWidgets);
         MarkGridArea(usedSlots, targetCell, targetSpan);
 
         int searchStart = SlotFromCell(targetCell) + std::max(1, targetSpan.rows);
@@ -3855,16 +3980,6 @@ private:
                 items_[itemIndex].gridCell = freeCell;
                 items_[itemIndex].slot = SlotFromCell(freeCell);
                 MarkGridArea(usedSlots, freeCell, items_[itemIndex].gridSpan);
-            }
-        }
-
-        for (size_t otherWidget : displacedWidgetOrder)
-        {
-            GridCell freeCell;
-            if (TryFindFreeCell(widgets_[otherWidget].gridSpan, usedSlots, freeCell, targetCell.pageId, searchStart))
-            {
-                widgets_[otherWidget].gridCell = freeCell;
-                MarkGridArea(usedSlots, freeCell, widgets_[otherWidget].gridSpan);
             }
         }
 
@@ -3918,10 +4033,32 @@ private:
                  widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::FolderMapping);
             const int minCols = needsMinSpan ? 2 : 1;
             const int minRows = needsMinSpan ? 2 : 1;
+            const int preCols = span.columns;
+            const int preRows = span.rows;
+            const int preCellCol = cell.column;
+            const int preCellRow = cell.row;
             span.columns = std::clamp(span.columns, minCols, std::max(1, page->columns));
             span.rows = std::clamp(span.rows, minRows, std::max(1, page->rows));
             cell.column = std::clamp(cell.column, 0, std::max(0, page->columns - span.columns));
             cell.row = std::clamp(cell.row, 0, std::max(0, page->rows - span.rows));
+
+            widgetPreviewOccupied_ = false;
+            for (size_t i = 0; i < widgets_.size(); ++i)
+            {
+                if (i != mouseDownWidgetIndex_ &&
+                    GridAreasOverlap(cell, span, widgets_[i].gridCell, widgets_[i].gridSpan))
+                {
+                    widgetPreviewOccupied_ = true;
+                    break;
+                }
+            }
+            if (!widgetPreviewOccupied_ &&
+                (span.columns != preCols || span.rows != preRows ||
+                 cell.column != preCellCol || cell.row != preCellRow))
+            {
+                widgetPreviewOccupied_ = true;
+            }
+
             widgetPreviewCell_ = cell;
             widgetPreviewSpan_ = span;
             return;
@@ -3935,6 +4072,18 @@ private:
         }
         target.column = std::clamp(target.column, 0, std::max(0, page->columns - widgetDragOriginalSpan_.columns));
         target.row = std::clamp(target.row, 0, std::max(0, page->rows - widgetDragOriginalSpan_.rows));
+
+        widgetPreviewOccupied_ = false;
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (i != mouseDownWidgetIndex_ &&
+                GridAreasOverlap(target, widgetDragOriginalSpan_, widgets_[i].gridCell, widgets_[i].gridSpan))
+            {
+                widgetPreviewOccupied_ = true;
+                break;
+            }
+        }
+
         widgetPreviewCell_ = target;
         widgetPreviewSpan_ = widgetDragOriginalSpan_;
     }
@@ -4567,7 +4716,7 @@ private:
         op.wFunc = move ? FO_MOVE : FO_COPY;
         op.pFrom = fromStr.c_str();
         op.pTo = toStr.c_str();
-        op.fFlags = FOF_ALLOWUNDO;
+        op.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI;
         SHFileOperationW(&op);
     }
 
@@ -4602,27 +4751,58 @@ private:
         ReleaseStgMedium(&med);
         if (paths.empty()) return;
 
-        TASKDIALOGCONFIG config{};
-        config.cbSize = sizeof(config);
-        config.hwndParent = hwnd_;
-        config.pszWindowTitle = L"拖放文件";
-        config.pszMainInstruction = L"将文件拖入文件夹映射";
-        config.pszContent = L"请选择操作方式";
-        config.dwFlags = TDF_USE_COMMAND_LINKS | TDF_POSITION_RELATIVE_TO_WINDOW;
-        config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
-        TASKDIALOG_BUTTON buttons[] = {
-            { 1, L"复制文件\n将文件复制到映射文件夹" },
-            { 2, L"移动文件\n将文件移动到映射文件夹" },
-        };
-        config.pButtons = buttons;
-        config.cButtons = 2;
-        config.nDefaultButton = IDCANCEL;
-        config.pszMainIcon = TD_INFORMATION_ICON;
-        int result = 0;
-        if (FAILED(TaskDialogIndirect(&config, &result, nullptr, nullptr)) || result == IDCANCEL) return;
-        if (effect) *effect = (result == 2) ? DROPEFFECT_MOVE : DROPEFFECT_COPY;
+        bool isCut = false;
+        {
+            static UINT cfDropEffect = RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT);
+            FORMATETC fmtPe{};
+            fmtPe.cfFormat = cfDropEffect;
+            fmtPe.dwAspect = DVASPECT_CONTENT;
+            fmtPe.lindex = -1;
+            fmtPe.tymed = TYMED_HGLOBAL;
+            STGMEDIUM medPe{};
+            if (SUCCEEDED(dataObject->GetData(&fmtPe, &medPe)))
+            {
+                if (medPe.hGlobal)
+                {
+                    DWORD* pe = static_cast<DWORD*>(GlobalLock(medPe.hGlobal));
+                    if (pe)
+                    {
+                        isCut = (*pe == DROPEFFECT_MOVE);
+                        GlobalUnlock(medPe.hGlobal);
+                    }
+                }
+                ReleaseStgMedium(&medPe);
+            }
+        }
 
-        CopyFilesToFolder(paths, widgets_[widgetIndex].sourceFolderPath, result == 2);
+        bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+        std::wstring destFolder = widgets_[widgetIndex].sourceFolderPath;
+        if (!destFolder.empty() && destFolder.back() != L'\\') destFolder += L'\\';
+
+        if (altDown)
+        {
+            for (const auto& filePath : paths)
+            {
+                std::wstring name = PathFindFileNameW(filePath.c_str());
+                std::wstring linkPath = destFolder + name + L".lnk";
+                ComPtr<IShellLinkW> shellLink;
+                if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                    IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                {
+                    shellLink->SetPath(filePath.c_str());
+                    ComPtr<IPersistFile> persistFile;
+                    if (SUCCEEDED(shellLink.As(&persistFile)))
+                        persistFile->Save(linkPath.c_str(), TRUE);
+                }
+            }
+        }
+        else
+        {
+            CopyFilesToFolder(paths, destFolder, isCut);
+        }
+        if (effect) *effect = isCut ? DROPEFFECT_MOVE : DROPEFFECT_COPY;
+        RefreshFolderMappingWidget(widgetIndex);
+        if (isCut) ReloadItems();
     }
 
     std::unordered_set<std::wstring> SnapshotDesktopItemKeys() const
@@ -4723,99 +4903,67 @@ private:
         }
     }
 
-    void PerformFolderEntryDropAction(size_t widgetIndex, POINT dropPoint)
+    static void ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSize)
     {
-        if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping)
-        {
+        if (bitmap == nullptr) return;
+        SHSTOCKICONINFO sii{};
+        sii.cbSize = sizeof(sii);
+        if (FAILED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &sii)) || sii.hIcon == nullptr)
             return;
-        }
+        HDC hdc = CreateCompatibleDC(nullptr);
+        HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(hdc, bitmap));
+        const int arrowSz = 30;
+        DrawIconEx(hdc, 5, bitmapSize.cy - arrowSz,
+            sii.hIcon, arrowSz, arrowSz, 0, nullptr, DI_NORMAL);
+        SelectObject(hdc, oldBmp);
+        DeleteDC(hdc);
+        DestroyIcon(sii.hIcon);
+    }
 
+    static void DebugLog(const wchar_t* msg)
+    {
+        OutputDebugStringW(msg);
+        OutputDebugStringW(L"\n");
+
+        wchar_t path[MAX_PATH];
+        GetModuleFileNameW(nullptr, path, MAX_PATH);
+        wchar_t* lastSep = wcsrchr(path, L'\\');
+        if (lastSep) *(lastSep + 1) = L'\0';
+        wcscat_s(path, L"snow_debug.log");
+
+        try
+        {
+            auto logger = spdlog::get("snow");
+            if (!logger)
+            {
+                char logPath[MAX_PATH * 3];
+                WideCharToMultiByte(CP_UTF8, 0, path, -1, logPath, sizeof(logPath), nullptr, nullptr);
+                logger = spdlog::basic_logger_mt("snow", logPath, true);
+                logger->flush_on(spdlog::level::info);
+            }
+
+            char buf[512];
+            WideCharToMultiByte(CP_UTF8, 0, msg, -1, buf, sizeof(buf), nullptr, nullptr);
+            logger->info(buf);
+            logger->flush();
+        }
+        catch (...)
+        {
+            OutputDebugStringW(L"[DebugLog] spdlog exception\n");
+        }
+    }
+
+    std::vector<std::wstring> GetSelectedFolderEntryPaths(size_t widgetIndex) const
+    {
         std::vector<std::wstring> paths;
+        if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping)
+            return paths;
         for (const auto& entry : widgets_[widgetIndex].folderEntries)
         {
             if (entry.selected)
-            {
                 paths.push_back(entry.fullPath);
-            }
         }
-        if (paths.empty())
-        {
-            return;
-        }
-
-        TASKDIALOGCONFIG config{};
-        config.cbSize = sizeof(config);
-        config.hwndParent = hwnd_;
-        config.pszWindowTitle = L"拖放文件";
-        config.pszMainInstruction = L"将文件拖放至桌面";
-        config.pszContent = L"请选择操作方式";
-        config.dwFlags = TDF_USE_COMMAND_LINKS | TDF_POSITION_RELATIVE_TO_WINDOW;
-        config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
-        TASKDIALOG_BUTTON buttons[] = {
-            { 1, L"复制文件\n将文件复制到桌面" },
-            { 2, L"移动文件\n将文件移动到桌面" },
-            { 3, L"创建快捷方式\n创建指向该文件的快捷方式" },
-        };
-        config.pButtons = buttons;
-        config.cButtons = 3;
-        config.nDefaultButton = IDCANCEL;
-        config.pszMainIcon = TD_INFORMATION_ICON;
-        int result = 0;
-        if (FAILED(TaskDialogIndirect(&config, &result, nullptr, nullptr)) || result == IDCANCEL)
-        {
-            return;
-        }
-
-        wchar_t desktopPath[MAX_PATH]{};
-        if (!SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
-        {
-            return;
-        }
-
-        std::unordered_set<std::wstring> existingKeys = SnapshotDesktopItemKeys();
-        if (result == 3)
-        {
-            for (const auto& filePath : paths)
-            {
-                std::wstring name = PathFindFileNameW(filePath.c_str());
-                std::wstring linkPath = std::wstring(desktopPath) + L"\\" + name + L".lnk";
-
-                ComPtr<IShellLinkW> shellLink;
-                if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                    IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
-                {
-                    shellLink->SetPath(filePath.c_str());
-                    ComPtr<IPersistFile> persistFile;
-                    if (SUCCEEDED(shellLink.As(&persistFile)))
-                    {
-                        persistFile->Save(linkPath.c_str(), TRUE);
-                    }
-                }
-            }
-            SHChangeNotify(SHCNE_CREATE, SHCNF_PATH, desktopPath, nullptr);
-        }
-        else
-        {
-            std::wstring fromStr;
-            for (const auto& p : paths)
-            {
-                fromStr += p;
-                fromStr += L'\0';
-            }
-            fromStr += L'\0';
-
-            SHFILEOPSTRUCTW op{};
-            op.hwnd = hwnd_;
-            op.wFunc = (result == 2) ? FO_MOVE : FO_COPY;
-            op.pFrom = fromStr.c_str();
-            op.pTo = desktopPath;
-            op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION;
-            SHFileOperationW(&op);
-            SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATH, desktopPath, nullptr);
-        }
-
-        ReloadItems(false);
-        PlaceNewDesktopItemsAtDropPoint(existingKeys, dropPoint);
+        return paths;
     }
 
     POINT ScreenPointToClient(POINTL screenPoint) const
@@ -5411,7 +5559,7 @@ private:
         std::vector<std::wstring> keys = GetFileCategoryKeys(widget, categoryId);
         RECT content = GetFileCategoryContentRect(widget);
         const int contentHeight = std::max<int>(1, static_cast<int>(content.bottom - content.top));
-        return std::max(0, GetFileCategoryContentHeight(widget, keys.size()) - contentHeight);
+        return std::max(0, GetFileCategoryContentHeight(widget, keys.size()) - contentHeight + kMinCellHeight / 2);
     }
 
     RECT GetFileCategoryItemRect(const DesktopWidget& widget, size_t linearIndex) const
@@ -5467,6 +5615,15 @@ private:
             handle.right - resizeReserve - 2, handle.bottom - 3);
     }
 
+    RECT GetFileCategoryToggleRect(const DesktopWidget& widget) const
+    {
+        RECT handle = GetWidgetMoveHandleRect(widget);
+        constexpr int btnSize = 18;
+        constexpr int resizeReserve = 26;
+        return MakeRect(handle.right - resizeReserve - btnSize - 2, handle.top + 3,
+            handle.right - resizeReserve - 2, handle.bottom - 3);
+    }
+
     int GetFolderMappingTileColumnCount(const DesktopWidget& widget) const
     {
         return std::max<int>(1, widget.gridSpan.columns);
@@ -5489,7 +5646,7 @@ private:
     {
         RECT content = GetFolderMappingContentRect(widget);
         const int contentHeight = std::max<int>(1, static_cast<int>(content.bottom - content.top));
-        return std::max(0, GetFolderMappingContentHeight(widget, widget.folderEntries.size()) - contentHeight);
+        return std::max(0, GetFolderMappingContentHeight(widget, widget.folderEntries.size()) - contentHeight + kMinCellHeight / 2);
     }
 
     RECT GetFolderMappingItemRect(const DesktopWidget& widget, size_t linearIndex) const
@@ -5608,29 +5765,90 @@ private:
     void ReorderFileCategoryWidget(size_t widgetIndex, size_t insertIndex)
     {
         if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::FileCategories)
-        {
             return;
-        }
 
         DesktopWidget& widget = widgets_[widgetIndex];
         std::wstring active = GetActiveFileCategoryId(widget);
         std::vector<std::wstring> activeKeys = GetFileCategoryKeys(widget, active);
 
         std::vector<std::wstring> selectedKeys;
-        std::vector<size_t> selectedIndices;
         for (size_t i = 0; i < activeKeys.size(); ++i)
         {
             size_t itemIndex = FindItemIndexByKey(activeKeys[i]);
             if (itemIndex != static_cast<size_t>(-1) && items_[itemIndex].selected)
-            {
                 selectedKeys.push_back(activeKeys[i]);
-                selectedIndices.push_back(i);
-            }
         }
         if (selectedKeys.empty()) return;
 
+        {
+            wchar_t buf[256];
+            swprintf_s(buf, L"  REORDER enter: insertIdx=%zu activeCnt=%zu selCnt=%zu allCnt=%zu",
+                insertIndex, activeKeys.size(), selectedKeys.size(), widget.itemKeys.size());
+            DebugLog(buf);
+        }
+
         std::unordered_set<std::wstring> selectedSet(selectedKeys.begin(), selectedKeys.end());
         auto& allKeys = widget.itemKeys;
+
+        if (insertIndex < activeKeys.size())
+        {
+            size_t anchorIdx = insertIndex;
+            while (anchorIdx < activeKeys.size() && selectedSet.contains(NormalizeLayoutKey(activeKeys[anchorIdx])))
+                ++anchorIdx;
+
+            if (anchorIdx < activeKeys.size())
+            {
+                std::wstring anchorKey = NormalizeLayoutKey(activeKeys[anchorIdx]);
+                insertIndex = allKeys.size();
+                for (size_t i = 0; i < allKeys.size(); ++i)
+                {
+                    if (NormalizeLayoutKey(allKeys[i]) == anchorKey)
+                    {
+                        insertIndex = i;
+                        break;
+                    }
+                }
+                {
+                    wchar_t buf[256];
+                    swprintf_s(buf, L"  REORDER anchor: anchorIdx=%zu anchorKey=%ls newInsertIdx=%zu",
+                        anchorIdx, anchorKey.c_str(), insertIndex);
+                    DebugLog(buf);
+                }
+            }
+            else
+            {
+                insertIndex = allKeys.size();
+                {
+                    wchar_t buf[128];
+                    swprintf_s(buf, L"  REORDER anchor: fell off end, insertIdx=allKeys.size()=%zu", insertIndex);
+                    DebugLog(buf);
+                }
+            }
+        }
+        else
+        {
+            insertIndex = allKeys.size();
+            {
+                wchar_t buf[128];
+                swprintf_s(buf, L"  REORDER insertIdx>=activeCnt, insertIdx=allKeys.size()=%zu", insertIndex);
+                DebugLog(buf);
+            }
+        }
+
+        size_t before = 0;
+        for (size_t i = 0; i < std::min(insertIndex, allKeys.size()); ++i)
+        {
+            if (selectedSet.contains(NormalizeLayoutKey(allKeys[i])))
+                ++before;
+        }
+        insertIndex -= std::min(insertIndex, before);
+
+        {
+            wchar_t buf[128];
+            swprintf_s(buf, L"  REORDER beforeRemove: before=%zu finalInsertIdx=%zu", before, insertIndex);
+            DebugLog(buf);
+        }
+
         allKeys.erase(
             std::remove_if(allKeys.begin(), allKeys.end(),
                 [&](const std::wstring& k) { return selectedSet.contains(NormalizeLayoutKey(k)); }),
@@ -5641,6 +5859,12 @@ private:
         {
             size_t pos = std::min(insertIndex + i, allKeys.size());
             allKeys.insert(allKeys.begin() + static_cast<std::ptrdiff_t>(pos), selectedKeys[i]);
+        }
+
+        {
+            wchar_t buf[128];
+            swprintf_s(buf, L"  REORDER done: allKeys.size()=%zu", allKeys.size());
+            DebugLog(buf);
         }
 
         LayoutItems();
@@ -5665,6 +5889,13 @@ private:
         {
             return;
         }
+
+        size_t before = 0;
+        for (size_t i = 0; i < std::min(insertIndex, widget.folderEntries.size()); ++i)
+        {
+            if (widget.folderEntries[i].selected) ++before;
+        }
+        insertIndex -= std::min(insertIndex, before);
 
         std::vector<FolderEntry> selectedEntries;
         for (size_t i = widget.folderEntries.size(); i > 0; --i)
@@ -5744,9 +5975,7 @@ private:
     void CopyDesktopItemsToFolderMapping(size_t widgetIndex)
     {
         if (widgetIndex >= widgets_.size() || widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping)
-        {
             return;
-        }
 
         std::vector<std::wstring> paths;
         for (const auto& item : items_)
@@ -5754,32 +5983,35 @@ private:
             if (!item.selected || IsProtectedDesktopIcon(item)) continue;
             wchar_t path[MAX_PATH]{};
             if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-            {
                 paths.push_back(path);
-            }
         }
         if (paths.empty()) return;
 
-        TASKDIALOGCONFIG config{};
-        config.cbSize = sizeof(config);
-        config.hwndParent = hwnd_;
-        config.pszWindowTitle = L"拖放文件";
-        config.pszMainInstruction = L"将桌面文件拖入文件夹映射";
-        config.pszContent = L"请选择操作方式";
-        config.dwFlags = TDF_USE_COMMAND_LINKS | TDF_POSITION_RELATIVE_TO_WINDOW;
-        config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
-        TASKDIALOG_BUTTON buttons[] = {
-            { 1, L"复制文件\n将文件复制到映射文件夹" },
-            { 2, L"移动文件\n将文件移动到映射文件夹" },
-        };
-        config.pButtons = buttons;
-        config.cButtons = 2;
-        config.nDefaultButton = IDCANCEL;
-        config.pszMainIcon = TD_INFORMATION_ICON;
-        int result = 0;
-        if (FAILED(TaskDialogIndirect(&config, &result, nullptr, nullptr)) || result == IDCANCEL) return;
+        bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+        std::wstring destFolder = widgets_[widgetIndex].sourceFolderPath;
+        if (!destFolder.empty() && destFolder.back() != L'\\') destFolder += L'\\';
 
-        CopyFilesToFolder(paths, widgets_[widgetIndex].sourceFolderPath, result == 2);
+        if (altDown)
+        {
+            for (const auto& filePath : paths)
+            {
+                std::wstring name = PathFindFileNameW(filePath.c_str());
+                std::wstring linkPath = destFolder + name + L".lnk";
+                ComPtr<IShellLinkW> shellLink;
+                if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                    IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                {
+                    shellLink->SetPath(filePath.c_str());
+                    ComPtr<IPersistFile> persistFile;
+                    if (SUCCEEDED(shellLink.As(&persistFile)))
+                        persistFile->Save(linkPath.c_str(), TRUE);
+                }
+            }
+        }
+        else
+        {
+            CopyFilesToFolder(paths, destFolder, false);
+        }
         ReloadItems();
         RefreshFolderMappingWidget(widgetIndex);
     }
@@ -5885,13 +6117,44 @@ private:
             entry.isDirectory = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
             SHFILEINFOW info{};
-            if (SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info),
-                SHGFI_ICON | SHGFI_LARGEICON) && info.hIcon != nullptr)
-            {
-                entry.iconBitmap = CreateAlphaBitmapFromIcon(info.hIcon, 48, 48, entry.iconBitmapSize);
-                DestroyIcon(info.hIcon);
-            }
+            SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info),
+                SHGFI_SYSICONINDEX);
             entry.sysIconIndex = info.iIcon;
+
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
+            {
+                entry.iconBitmap = GetHighResolutionShellIconBitmap(pidl, info.iIcon, entry.iconBitmapSize);
+                ILFree(pidl);
+            }
+
+            if (entry.iconBitmap != nullptr)
+            {
+                ClampAlphaToColorKey(entry.iconBitmap, kTransparentKey);
+                std::wstring upper = entry.name;
+                for (auto& c : upper) c = static_cast<wchar_t>(towupper(c));
+                if (upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0)
+                {
+                    wchar_t target[MAX_PATH]{};
+                    ComPtr<IShellLinkW> shellLink;
+                    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                        IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                    {
+                        ComPtr<IPersistFile> persistFile;
+                        if (SUCCEEDED(shellLink.As(&persistFile)) &&
+                            SUCCEEDED(persistFile->Load(entry.fullPath.c_str(), STGM_READ)) &&
+                            SUCCEEDED(shellLink->GetPath(target, MAX_PATH, nullptr, 0)))
+                        {
+                            std::wstring t(target);
+                            for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
+                            if (t.size() < 4 || t.compare(t.size() - 4, 4, L".EXE") != 0)
+                            {
+                                ApplyShortcutArrowToBitmap(entry.iconBitmap, entry.iconBitmapSize);
+                            }
+                        }
+                    }
+                }
+            }
 
             widget.folderEntries.push_back(std::move(entry));
         } while (FindNextFileW(hFind, &findData));
@@ -6087,6 +6350,103 @@ private:
         ILFree(pidl);
     }
 
+    bool InvokeSelectedFolderEntryVerb(const char* verb)
+    {
+        for (size_t wi = 0; wi < widgets_.size(); ++wi)
+        {
+            if (widgets_[wi].type != DesktopWidgetType::FolderMapping)
+                continue;
+            for (size_t mi = 0; mi < widgets_[wi].folderEntries.size(); ++mi)
+            {
+                if (!widgets_[wi].folderEntries[mi].selected)
+                    continue;
+                const std::wstring& fullPath = widgets_[wi].folderEntries[mi].fullPath;
+                PIDLIST_ABSOLUTE pidl = nullptr;
+                if (FAILED(SHParseDisplayName(fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
+                    continue;
+                IShellFolder* parentFolder = nullptr;
+                PCUITEMID_CHILD child = nullptr;
+                if (FAILED(SHBindToParent(pidl, IID_IShellFolder,
+                    reinterpret_cast<void**>(&parentFolder), &child)))
+                {
+                    ILFree(pidl);
+                    continue;
+                }
+                ComPtr<IContextMenu> contextMenu;
+                HRESULT hr = parentFolder->GetUIObjectOf(
+                    hwnd_, 1, &child, IID_IContextMenu, nullptr,
+                    reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+                parentFolder->Release();
+                if (SUCCEEDED(hr) && contextMenu)
+                {
+                    CMINVOKECOMMANDINFO cmi{};
+                    cmi.cbSize = sizeof(cmi);
+                    cmi.lpVerb = verb;
+                    cmi.nShow = SW_NORMAL;
+                    contextMenu->InvokeCommand(&cmi);
+                }
+                ILFree(pidl);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool DeleteSelectedFolderEntries()
+    {
+        std::wstring fromStr;
+        for (size_t wi = 0; wi < widgets_.size(); ++wi)
+        {
+            if (widgets_[wi].type != DesktopWidgetType::FolderMapping)
+                continue;
+            auto& entries = widgets_[wi].folderEntries;
+            for (size_t i = entries.size(); i > 0; --i)
+            {
+                if (entries[i - 1].selected)
+                {
+                    fromStr += entries[i - 1].fullPath;
+                    fromStr += L'\0';
+                    entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(i - 1));
+                }
+            }
+        }
+        if (fromStr.empty()) return false;
+        fromStr += L'\0';
+
+        SHFILEOPSTRUCTW op{};
+        op.hwnd = hwnd_;
+        op.wFunc = FO_DELETE;
+        op.pFrom = fromStr.c_str();
+        op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION;
+        SHFileOperationW(&op);
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return true;
+    }
+
+    void PasteFromClipboardAtCursor()
+    {
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        ScreenToClient(hwnd_, &cursor);
+        DesktopHit hit = HitTestDesktop(cursor);
+        if (hit.widgetIndex < widgets_.size() &&
+            widgets_[hit.widgetIndex].type == DesktopWidgetType::FolderMapping &&
+            (hit.kind == DesktopHitKind::WidgetMember ||
+             hit.kind == DesktopHitKind::WidgetContent ||
+             hit.kind == DesktopHitKind::Widget))
+        {
+            ComPtr<IDataObject> dataObject;
+            if (SUCCEEDED(OleGetClipboard(&dataObject)) && dataObject)
+            {
+                DropExternalFilesToFolderMapping(hit.widgetIndex, dataObject.Get(), 0, nullptr);
+            }
+        }
+        else
+        {
+            InvokeDesktopBackgroundVerb("paste");
+        }
+    }
+
     void ShowCustomItemContextMenu(POINT screenPoint)
     {
         HMENU menu = CreatePopupMenu();
@@ -6155,7 +6515,10 @@ private:
             return;
         }
 
-        AppendMenuW(menu, MF_STRING, kContextWidgetOpen, L"打开全部");
+        if (widgets_[widgetIndex].type == DesktopWidgetType::Collection)
+        {
+            AppendMenuW(menu, MF_STRING, kContextWidgetOpen, L"打开全部");
+        }
         AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
         if (widgets_[widgetIndex].type == DesktopWidgetType::FileCategories)
         {
@@ -6169,6 +6532,9 @@ private:
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, L"打开文件夹");
             AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
+            AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
@@ -6227,6 +6593,26 @@ private:
             break;
         case kContextWidgetDelete:
             DeleteWidget(widgetIndex);
+            break;
+        case kContextPasteCommand:
+            if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
+            {
+                ComPtr<IDataObject> dataObject;
+                if (SUCCEEDED(OleGetClipboard(&dataObject)) && dataObject)
+                    DropExternalFilesToFolderMapping(widgetIndex, dataObject.Get(), 0, nullptr);
+            }
+            break;
+        case kContextMoreCommand:
+            if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
+            {
+                std::wstring folderPath = widgets_[widgetIndex].sourceFolderPath;
+                if (!folderPath.empty())
+                {
+                    POINT pt{};
+                    GetCursorPos(&pt);
+                    ShowShellContextMenuForPath(folderPath, pt);
+                }
+            }
             break;
         default:
             break;
@@ -6519,6 +6905,66 @@ private:
         }
 
         DestroyMenu(menu);
+    }
+
+    void ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
+    {
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (FAILED(SHParseDisplayName(folderPath.c_str(), nullptr, &pidl, 0, nullptr)))
+            return;
+
+        IShellFolder* parentFolder = nullptr;
+        PCUITEMID_CHILD child = nullptr;
+        if (FAILED(SHBindToParent(pidl, IID_IShellFolder,
+            reinterpret_cast<void**>(&parentFolder), &child)))
+        {
+            ILFree(pidl);
+            return;
+        }
+
+        IShellFolder* folder = nullptr;
+        HRESULT bindHr = parentFolder->BindToObject(child, nullptr, IID_IShellFolder, reinterpret_cast<void**>(&folder));
+        parentFolder->Release();
+        if (FAILED(bindHr) || folder == nullptr)
+        {
+            ILFree(pidl);
+            return;
+        }
+
+        ComPtr<IContextMenu> contextMenu;
+        HRESULT hr = folder->CreateViewObject(hwnd_, IID_IContextMenu, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+        folder->Release();
+        if (FAILED(hr) || !contextMenu)
+        {
+            ILFree(pidl);
+            return;
+        }
+
+        HMENU menu = CreatePopupMenu();
+        if (menu == nullptr) { ILFree(pidl); return; }
+
+        constexpr UINT kFirstCmd = 1;
+        constexpr UINT kLastCmd = 0x7FFF;
+        contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd, CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME);
+
+        UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint.x, screenPoint.y, hwnd_, nullptr);
+
+        if (command != 0)
+        {
+            CMINVOKECOMMANDINFOEX invoke{};
+            invoke.cbSize = sizeof(invoke);
+            invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
+            invoke.hwnd = hwnd_;
+            invoke.lpVerb = MAKEINTRESOURCEA(command - kFirstCmd);
+            invoke.lpVerbW = MAKEINTRESOURCEW(command - kFirstCmd);
+            invoke.nShow = SW_SHOWNORMAL;
+            invoke.ptInvoke = screenPoint;
+            contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        }
+
+        DestroyMenu(menu);
+        ILFree(pidl);
     }
 
     void ShowDesktopBackgroundContextMenu(POINT screenPoint)
@@ -7274,7 +7720,7 @@ private:
             }
             if (!overPopup)
             {
-                for (RECT targetRect : GetSelectedMovePreviewRects(GetDragTargetPoint(dragCurrentPoint_)))
+                for (RECT targetRect : GetSelectedMovePreviewRectsForCell(dragTargetCell_))
                 {
                     targetRect.left += 3;
                     targetRect.top += 3;
@@ -7586,6 +8032,29 @@ private:
         }
     }
 
+    void DrawD2DScrollbar(ID2D1DeviceContext* context, RECT content, int scrollOffset, int maxScroll, int contentHeight)
+    {
+        if (maxScroll <= 0) return;
+        const int trackHeight = std::max<int>(1, static_cast<int>(content.bottom - content.top));
+        const float ratio = std::min(1.0f, static_cast<float>(trackHeight) / static_cast<float>(std::max(1, contentHeight)));
+        const int thumbHeight = std::max<int>(16, static_cast<int>(ratio * trackHeight));
+        const int thumbRange = trackHeight - thumbHeight;
+        const int thumbTop = content.top + static_cast<int>(
+            static_cast<float>(scrollOffset) / static_cast<float>(maxScroll) * thumbRange);
+
+        constexpr int barWidth = 5;
+        RECT track = MakeRect(content.right - barWidth - 2, content.top + 2,
+            content.right - 2, content.bottom - 2);
+        RECT thumb = MakeRect(track.left, thumbTop, track.right, thumbTop + thumbHeight);
+
+        DrawD2DRoundedRectangle(context, track, 2.5f,
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f));
+        DrawD2DRoundedRectangle(context, thumb, 2.5f,
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.16f));
+    }
+
     void DrawD2DFileCategoryWidget(ID2D1DeviceContext* context, const DesktopWidget& widget)
     {
         if (context == nullptr)
@@ -7632,6 +8101,18 @@ private:
             DrawD2DFilledRectangle(context, line, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f), nullptr);
         }
 
+        RECT fcToggle = GetFileCategoryToggleRect(widget);
+        if (!IsRectEmptyRect(fcToggle))
+        {
+            bool toggleHovered = PtInRect(&fcToggle, lastMousePoint_) != FALSE;
+            DrawD2DRoundedRectangle(
+                context, fcToggle, 4.0f,
+                toggleHovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f));
+            DrawD2DText(context, widget.listMode ? L"▦" : L"≡", fcToggle,
+                collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
+        }
+
         std::vector<std::wstring> keys = GetFileCategoryKeys(widget, activeCategory);
         RECT content = GetFileCategoryContentRect(widget);
         if (IsRectEmptyRect(content))
@@ -7643,7 +8124,7 @@ private:
         for (size_t i = 0; i < keys.size(); ++i)
         {
             RECT itemRect = GetFileCategoryItemRect(widget, i);
-            if (!RectsIntersect(itemRect, content))
+            if (itemRect.bottom <= content.top || itemRect.top >= content.bottom)
             {
                 continue;
             }
@@ -7662,6 +8143,12 @@ private:
 
             DrawD2DItemGenericList(context, itemRect, items_[itemIndex].selected,
                 items_[itemIndex].iconBitmap, items_[itemIndex].name);
+        }
+        if (PtInRect(&widget.bounds, lastMousePoint_))
+        {
+            int maxScroll = GetFileCategoryMaxScrollOffset(widget);
+            int contentHeight = GetFileCategoryContentHeight(widget, keys.size());
+            DrawD2DScrollbar(context, content, widget.scrollOffset, maxScroll, contentHeight);
         }
         context->PopAxisAlignedClip();
     }
@@ -7717,20 +8204,12 @@ private:
         for (size_t i = 0; i < entryCount; ++i)
         {
             RECT itemRect = GetFolderMappingItemRect(widget, i);
-            if (!RectsIntersect(itemRect, content))
+            if (itemRect.bottom <= content.top || itemRect.top >= content.bottom)
             {
                 continue;
             }
 
             const FolderEntry& entry = widget.folderEntries[i];
-            const bool hovered = PtInRect(&itemRect, lastMousePoint_) != FALSE;
-
-            if (hovered && !entry.selected)
-            {
-                DrawD2DRoundedRectangle(context, itemRect, 6.0f,
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
-            }
 
             if (!widget.listMode)
             {
@@ -7740,6 +8219,12 @@ private:
             {
                 DrawD2DItemGenericList(context, itemRect, entry.selected, entry.iconBitmap, entry.name);
             }
+        }
+        if (PtInRect(&widget.bounds, lastMousePoint_))
+        {
+            int maxScroll = GetFolderMappingMaxScrollOffset(widget);
+            int contentHeight = GetFolderMappingContentHeight(widget, widget.folderEntries.size());
+            DrawD2DScrollbar(context, content, widget.scrollOffset, maxScroll, contentHeight);
         }
         context->PopAxisAlignedClip();
     }
@@ -7856,12 +8341,20 @@ private:
         preview.gridSpan = widgetPreviewSpan_;
         preview.bounds = GetGridRect(preview.gridCell, preview.gridSpan);
         RECT body = GetWidgetFrameRect(preview);
+
+        D2D1_COLOR_F fillColor = widgetPreviewOccupied_
+            ? D2D1::ColorF(1.0f, 0.35f, 0.35f, 0.20f)
+            : D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.16f);
+        D2D1_COLOR_F strokeColor = widgetPreviewOccupied_
+            ? D2D1::ColorF(1.0f, 0.30f, 0.30f, 0.85f)
+            : D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.85f);
+
         DrawD2DRoundedRectangle(
             context,
             body,
             12.0f,
-            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.16f),
-            D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.85f),
+            fillColor,
+            strokeColor,
             1.4f,
             dottedStrokeStyle_.Get());
     }
@@ -8121,6 +8614,17 @@ private:
             {
                 widgetIndex = widgetMemberDragWidget_;
             }
+            else if (hit.kind == DesktopHitKind::WidgetMember ||
+                     hit.kind == DesktopHitKind::WidgetContent ||
+                     hit.kind == DesktopHitKind::Widget)
+            {
+                if (hit.widgetIndex < widgets_.size() &&
+                    hit.widgetIndex != widgetMemberDragWidget_ &&
+                    widgets_[hit.widgetIndex].type == DesktopWidgetType::FileCategories)
+                {
+                    widgetIndex = hit.widgetIndex;
+                }
+            }
         }
         else if (draggingCollectionMember_ &&
             collectionDragSourceWidget_ < widgets_.size() &&
@@ -8262,7 +8766,7 @@ private:
         for (size_t i = 0; i < popupKeys.size(); ++i)
         {
             RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
-            if (!RectsIntersect(itemRect, content))
+            if (itemRect.bottom <= content.top || itemRect.top >= content.bottom)
             {
                 continue;
             }
@@ -8683,6 +9187,14 @@ private:
             return;
         }
 
+        const bool hovered = PtInRect(&bounds, lastMousePoint_) != FALSE;
+        if (hovered && !selected)
+        {
+            DrawD2DRoundedRectangle(context, bounds, 6.0f,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+        }
+
         RECT iconRect = GetItemIconRect(bounds);
         const float iconX = static_cast<float>(iconRect.left);
         const float iconY = static_cast<float>(iconRect.top);
@@ -8753,6 +9265,14 @@ private:
         if (IsRectEmptyRect(itemRect))
         {
             return;
+        }
+
+        const bool hovered = PtInRect(&itemRect, lastMousePoint_) != FALSE;
+        if (hovered && !selected)
+        {
+            DrawD2DRoundedRectangle(context, itemRect, 6.0f,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
         }
 
         if (selected)
@@ -8982,7 +9502,7 @@ private:
 
         if (draggingItems_ && !draggingOverNav_)
         {
-            RECT targetRect = GetTargetRectAt(GetDragTargetPoint(dragCurrentPoint_));
+            RECT targetRect = GetGridRect(dragTargetCell_);
             targetRect.left += 3;
             targetRect.top += 3;
             targetRect.right -= 3;
@@ -9348,6 +9868,23 @@ private:
         case WM_KEYDOWN:
             OnKeyDown(wParam);
             return 0;
+        case WM_SYSKEYDOWN:
+            if ((draggingItems_ || draggingWidgetMember_) && wParam == VK_MENU)
+            {
+                dragHint_ = MakeInternalDragHint(dragCurrentPoint_);
+                ShowDragHintWindow(dragCurrentPoint_, dragHint_);
+            }
+            if (wParam == VK_MENU) return 0;
+            OnKeyDown(wParam);
+            return 0;
+        case WM_KEYUP:
+        case WM_SYSKEYUP:
+            if ((draggingItems_ || draggingWidgetMember_) && wParam == VK_MENU)
+            {
+                dragHint_ = MakeInternalDragHint(dragCurrentPoint_);
+                ShowDragHintWindow(dragCurrentPoint_, dragHint_);
+            }
+            return 0;
         case WM_GETDLGCODE:
             return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
         case WM_CTLCOLOREDIT:
@@ -9645,6 +10182,14 @@ private:
         if (std::abs(current.x - mouseDownPoint_.x) > 3 || std::abs(current.y - mouseDownPoint_.y) > 3)
         {
             int hit = mouseDownHit_;
+            {
+                wchar_t buf[128];
+                swprintf_s(buf, L"MOUSEMOVE hit=%d dwm=%d dgc=%d wid=%zu widSel=%d",
+                    hit, draggingWidgetMember_, draggingCollectionMember_,
+                    mouseDownWidgetIndex_,
+                    mouseDownWidgetIndex_ < widgets_.size() ? widgets_[mouseDownWidgetIndex_].selected : -1);
+                DebugLog(buf);
+            }
             if (mouseDownWidgetIndex_ < widgets_.size() && widgets_[mouseDownWidgetIndex_].selected)
             {
                 dragCurrentPoint_ = current;
@@ -9659,6 +10204,10 @@ private:
                     dragHint_ = L"释放：移动组件并挤占原位置";
                 }
                 UpdateWidgetPreviewFromPoint(current);
+                if (widgetPreviewOccupied_)
+                {
+                    dragHint_ = resizingWidget_ ? L"释放：已到达最小尺寸或位置被占用" : L"此处已被占用";
+                }
                 ShowDragHintWindow(dragCurrentPoint_, dragHint_);
                 InvalidateRect(hwnd_, nullptr, TRUE);
             }
@@ -9721,12 +10270,47 @@ private:
                     }
                     else
                     {
-                        dragHint_ = insideSource ? L"释放：重新排序" : L"释放：拖入桌面当前位置";
+                        if (insideSource)
+                            dragHint_ = L"释放：重新排序";
+                        else
+                        {
+                            bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                            dragHint_ = altDown ? L"释放：创建快捷方式到桌面" : L"释放：复制到桌面";
+                        }
                     }
                 }
                 else
                 {
-                    dragHint_ = insideSource ? L"释放：重新排序" : L"释放：拖入桌面当前位置";
+                    if (!insideSource && IsWidgetDropSurface(memberHit))
+                    {
+                        const DesktopWidget& targetWidget = widgets_[memberHit.widgetIndex];
+                        if (targetWidget.type == DesktopWidgetType::Collection)
+                            dragHint_ = L"释放：加入集合「" + targetWidget.title + L"」";
+                        else if (targetWidget.type == DesktopWidgetType::FileCategories)
+                            dragHint_ = L"释放：加入桌面文件「" + targetWidget.title + L"」";
+                        else if (targetWidget.type == DesktopWidgetType::FolderMapping)
+                        {
+                            bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                            dragHint_ = altDown
+                                ? L"释放：创建快捷方式到「" + targetWidget.title + L"」"
+                                : L"释放：复制到映射文件夹「" + targetWidget.title + L"」";
+                        }
+                        else
+                        {
+                            bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                            dragHint_ = altDown ? L"释放：创建快捷方式到桌面" : L"释放：复制到桌面";
+                        }
+                    }
+                    else
+                    {
+                        if (insideSource)
+                            dragHint_ = L"释放：重新排序";
+                        else
+                        {
+                            bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                            dragHint_ = altDown ? L"释放：创建快捷方式到桌面" : L"释放：复制到桌面";
+                        }
+                    }
                 }
                 ShowDragHintWindow(dragCurrentPoint_, dragHint_);
                 size_t insertIdx = GetWidgetMemberInsertIndex(widgetMemberDragWidget_, current);
@@ -9762,12 +10346,15 @@ private:
                         InvalidateRect(hwnd_, nullptr, TRUE);
 
                         DWORD oleEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+                        selfDragActive_ = true;
                         HRESULT hr = DoDragDrop(dataObj.Get(), static_cast<IDropSource*>(this), oleEffect, &oleEffect);
+                        selfDragActive_ = false;
                         if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE)
                         {
                             RemoveSelectedItemsFromDesktop();
                             SaveLayoutSlots();
                         }
+                        ClearSelection();
                         ReloadItems();
                         return;
                     }
@@ -9782,7 +10369,7 @@ private:
                 else
                 {
                     draggingOverNav_ = false;
-                    dragTargetCell_ = CellFromPoint(GetDragTargetPoint(current));
+                    dragTargetCell_ = FindBestDropCell(CellFromPoint(GetDragTargetPoint(current)));
                     dragHint_ = MakeInternalDragHint(current);
                 }
                 ShowDragHintWindow(dragCurrentPoint_, dragHint_);
@@ -9868,6 +10455,14 @@ private:
 
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 
+        {
+            wchar_t buf[128];
+            swprintf_s(buf, L"LBUTTONUP dw=%d rs=%d dwm=%d di=%d dgc=%d",
+                draggingWidget_, resizingWidget_, draggingWidgetMember_,
+                draggingItems_, draggingCollectionMember_);
+            DebugLog(buf);
+        }
+
         if (draggingWidget_ || resizingWidget_)
         {
             if (mouseDownWidgetIndex_ < widgets_.size())
@@ -9925,7 +10520,154 @@ private:
             }
             else if (!handled)
             {
-                PerformFolderEntryDropAction(widgetMemberDragWidget_, point);
+                DesktopHit targetHit = HitTestDesktop(point);
+                bool isWidgetTarget = (targetHit.kind == DesktopHitKind::Widget ||
+                     targetHit.kind == DesktopHitKind::WidgetMember ||
+                     targetHit.kind == DesktopHitKind::WidgetContent ||
+                     targetHit.kind == DesktopHitKind::WidgetAllButton) &&
+                    targetHit.widgetIndex < widgets_.size() &&
+                    targetHit.widgetIndex != widgetMemberDragWidget_;
+
+                if (isWidgetTarget)
+                {
+                    const DesktopWidget& targetWidget = widgets_[targetHit.widgetIndex];
+                    if (targetWidget.type == DesktopWidgetType::FolderMapping)
+                    {
+                        std::wstring targetFolder = targetWidget.sourceFolderPath;
+                        if (!targetFolder.empty() && targetFolder.back() != L'\\')
+                            targetFolder += L'\\';
+                        std::vector<std::wstring> paths = GetSelectedFolderEntryPaths(widgetMemberDragWidget_);
+                        if (!paths.empty())
+                        {
+                            if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+                            {
+                                for (const auto& filePath : paths)
+                                {
+                                    std::wstring name = PathFindFileNameW(filePath.c_str());
+                                    std::wstring linkPath = targetFolder + name + L".lnk";
+                                    ComPtr<IShellLinkW> shellLink;
+                                    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                        IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                                    {
+                                        shellLink->SetPath(filePath.c_str());
+                                        ComPtr<IPersistFile> persistFile;
+                                        if (SUCCEEDED(shellLink.As(&persistFile)))
+                                            persistFile->Save(linkPath.c_str(), TRUE);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                CopyFilesToFolder(paths, targetFolder, false);
+                            }
+                            RefreshFolderMappingWidget(targetHit.widgetIndex);
+                        }
+                    }
+                    else if (targetWidget.type == DesktopWidgetType::Collection ||
+                             targetWidget.type == DesktopWidgetType::FileCategories)
+                    {
+                        std::vector<std::wstring> paths = GetSelectedFolderEntryPaths(widgetMemberDragWidget_);
+                        if (!paths.empty())
+                        {
+                            wchar_t desktopPath[MAX_PATH]{};
+                            if (SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
+                            {
+                                std::wstring destDir = desktopPath;
+                                if (!destDir.empty() && destDir.back() != L'\\') destDir += L'\\';
+                                std::unordered_set<std::wstring> existingKeys = SnapshotDesktopItemKeys();
+                                bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                                if (altDown)
+                                {
+                                    for (const auto& filePath : paths)
+                                    {
+                                        std::wstring name = PathFindFileNameW(filePath.c_str());
+                                        std::wstring linkPath = destDir + name + L".lnk";
+                                        ComPtr<IShellLinkW> shellLink;
+                                        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                            IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                                        {
+                                            shellLink->SetPath(filePath.c_str());
+                                            ComPtr<IPersistFile> persistFile;
+                                            if (SUCCEEDED(shellLink.As(&persistFile)))
+                                                persistFile->Save(linkPath.c_str(), TRUE);
+                                        }
+                                    }
+                                    SHChangeNotify(SHCNE_CREATE, SHCNF_PATH, desktopPath, nullptr);
+                                }
+                                else
+                                {
+                                    CopyFilesToFolder(paths, destDir, false);
+                                    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATH, desktopPath, nullptr);
+                                }
+                                ReloadItems(false);
+                                ClearSelection();
+                                selectedCount_ = 0;
+                                for (auto& item : items_)
+                                {
+                                    if (!existingKeys.contains(item.layoutKey) && !item.layoutKey.empty())
+                                    {
+                                        item.selected = true;
+                                        ++selectedCount_;
+                                    }
+                                }
+                                if (selectedCount_ > 0)
+                                {
+                                    if (targetWidget.type == DesktopWidgetType::Collection)
+                                    {
+                                        size_t insertIndex = GetCollectionInsertIndex(targetHit.widgetIndex, point, false);
+                                        MoveSelectedItemsToCollection(targetHit.widgetIndex, insertIndex, static_cast<size_t>(-1));
+                                    }
+                                    else
+                                    {
+                                        AddSelectedItemsToFileCategoryWidget(targetHit.widgetIndex);
+                                        size_t insertIndex = GetWidgetMemberInsertIndex(targetHit.widgetIndex, point);
+                                        ReorderFileCategoryWidget(targetHit.widgetIndex, insertIndex);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    std::vector<std::wstring> paths = GetSelectedFolderEntryPaths(widgetMemberDragWidget_);
+                    if (!paths.empty())
+                    {
+                        wchar_t desktopPath[MAX_PATH]{};
+                        if (SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
+                        {
+                            std::wstring destDir = desktopPath;
+                            if (!destDir.empty() && destDir.back() != L'\\') destDir += L'\\';
+                            std::unordered_set<std::wstring> existingKeys = SnapshotDesktopItemKeys();
+                            bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                            if (altDown)
+                            {
+                                for (const auto& filePath : paths)
+                                {
+                                    std::wstring name = PathFindFileNameW(filePath.c_str());
+                                    std::wstring linkPath = destDir + name + L".lnk";
+                                    ComPtr<IShellLinkW> shellLink;
+                                    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                        IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                                    {
+                                        shellLink->SetPath(filePath.c_str());
+                                        ComPtr<IPersistFile> persistFile;
+                                        if (SUCCEEDED(shellLink.As(&persistFile)))
+                                            persistFile->Save(linkPath.c_str(), TRUE);
+                                    }
+                                }
+                                SHChangeNotify(SHCNE_CREATE, SHCNF_PATH, desktopPath, nullptr);
+                            }
+                            else
+                            {
+                                CopyFilesToFolder(paths, destDir, false);
+                                SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATH, desktopPath, nullptr);
+                            }
+                            ReloadItems(false);
+                            PlaceNewDesktopItemsAtDropPoint(existingKeys, point);
+                        }
+                    }
+                }
                 RefreshFolderMappingWidget(widgetMemberDragWidget_);
             }
             draggingWidgetMember_ = false;
@@ -9956,8 +10698,27 @@ private:
             {
                 bool handledCollectionDrop = false;
                 DesktopHit memberDropHit = HitTestDesktop(point);
+                {
+                    wchar_t buf[256];
+                    swprintf_s(buf, L"DROP kind=%d dragColl=%d srcW=%zu selCnt=%zu",
+                        static_cast<int>(memberDropHit.kind), draggingCollectionMember_,
+                        collectionDragSourceWidget_, selectedCount_);
+                    DebugLog(buf);
+                }
                 if (memberDropHit.kind == DesktopHitKind::WidgetMember)
                 {
+                    bool isFileCategoryReorder = draggingCollectionMember_ &&
+                        collectionDragSourceWidget_ < widgets_.size() &&
+                        widgets_[collectionDragSourceWidget_].type == DesktopWidgetType::FileCategories &&
+                        memberDropHit.widgetIndex == collectionDragSourceWidget_;
+
+                    if (!isFileCategoryReorder)
+                    {
+                    {
+                        wchar_t buf[64];
+                        swprintf_s(buf, L"  handoff skip=%d", isFileCategoryReorder);
+                        DebugLog(buf);
+                    }
                     bool canHandoff = false;
                     if (memberDropHit.itemIndex < items_.size())
                     {
@@ -9985,8 +10746,10 @@ private:
                                     RefreshFolderMappingWidget(memberDropHit.widgetIndex);
                                 }
                                 handledCollectionDrop = true;
+                                MessageBeep(MB_ICONASTERISK);
                             }
                         }
+                    }
                     }
                 }
 
@@ -9996,11 +10759,23 @@ private:
                     widgets_[collectionDragSourceWidget_].type == DesktopWidgetType::FileCategories)
                 {
                     DesktopHit fcHit = HitTestDesktop(point);
+                    {
+                        wchar_t buf[128];
+                        swprintf_s(buf, L"  FCcheck fckind=%d fcW=%zu srcW=%zu handled=%d",
+                            static_cast<int>(fcHit.kind), fcHit.widgetIndex,
+                            collectionDragSourceWidget_, handledCollectionDrop);
+                        DebugLog(buf);
+                    }
                     if ((fcHit.kind == DesktopHitKind::WidgetMember ||
                          fcHit.kind == DesktopHitKind::WidgetContent) &&
                         fcHit.widgetIndex == collectionDragSourceWidget_)
                     {
                         size_t insertIndex = GetWidgetMemberInsertIndex(collectionDragSourceWidget_, point);
+                        {
+                            wchar_t buf[64];
+                            swprintf_s(buf, L"  EXEC insertIdx=%zu selCnt=%zu", insertIndex, selectedCount_);
+                            DebugLog(buf);
+                        }
                         ReorderFileCategoryWidget(collectionDragSourceWidget_, insertIndex);
                         handledCollectionDrop = true;
                     }
@@ -10078,7 +10853,7 @@ private:
                         {
                             RemoveSelectedItemsFromCollections(collectionDragSourceWidget_);
                         }
-                        MoveSelectedItemsToCell(CellFromPoint(GetDragTargetPoint(point)));
+                        MoveSelectedItemsToCell(FindBestDropCell(CellFromPoint(GetDragTargetPoint(point))));
                         LayoutItems();
                     }
                 }
@@ -10191,7 +10966,14 @@ private:
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         DesktopHit hit = HitTestDesktop(point);
-        if (hit.kind == DesktopHitKind::Item ||
+        if (hit.kind == DesktopHitKind::WidgetFolderToggle && hit.widgetIndex < widgets_.size())
+        {
+            widgets_[hit.widgetIndex].listMode = !widgets_[hit.widgetIndex].listMode;
+            widgets_[hit.widgetIndex].scrollOffset = 0;
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        else if (hit.kind == DesktopHitKind::Item ||
             hit.kind == DesktopHitKind::WidgetMember ||
             hit.kind == DesktopHitKind::PopupMember)
         {
@@ -10221,7 +11003,10 @@ private:
         }
         else if (hit.kind == DesktopHitKind::Widget || hit.kind == DesktopHitKind::WidgetAllButton)
         {
-            OpenCollectionPopupAt(hit.widgetIndex, point, L"");
+            if (hit.widgetIndex < widgets_.size() && widgets_[hit.widgetIndex].type == DesktopWidgetType::Collection)
+            {
+                OpenCollectionPopupAt(hit.widgetIndex, point, L"");
+            }
         }
     }
 
@@ -10287,6 +11072,7 @@ private:
             }
         }
         else if ((hit.kind == DesktopHitKind::Widget ||
+            hit.kind == DesktopHitKind::WidgetContent ||
             hit.kind == DesktopHitKind::WidgetAllButton ||
             hit.kind == DesktopHitKind::WidgetCategory ||
             hit.kind == DesktopHitKind::WidgetFolderToggle ||
@@ -10384,6 +11170,9 @@ private:
             {
                 DeleteWidget(selectedWidgetIndex_);
             }
+            else if (DeleteSelectedFolderEntries())
+            {
+            }
             else
             {
                 InvokeSelectedShellVerb("delete");
@@ -10407,19 +11196,23 @@ private:
         case 'C':
             if ((GetKeyState(VK_CONTROL) & 0x8000) != 0)
             {
+                if (InvokeSelectedFolderEntryVerb("copy"))
+                    break;
                 InvokeSelectedShellVerb("copy");
             }
             break;
         case 'X':
             if ((GetKeyState(VK_CONTROL) & 0x8000) != 0)
             {
+                if (InvokeSelectedFolderEntryVerb("cut"))
+                    break;
                 InvokeSelectedShellVerb("cut");
             }
             break;
         case 'V':
             if ((GetKeyState(VK_CONTROL) & 0x8000) != 0)
             {
-                InvokeDesktopBackgroundVerb("paste");
+                PasteFromClipboardAtCursor();
             }
             break;
         case 'A':
@@ -10557,6 +11350,7 @@ private:
     bool resizingWidget_ = false;
     bool draggingOverNav_ = false;
     bool externalDragActive_ = false;
+    bool selfDragActive_ = false;
     bool dropTargetRegistered_ = false;
     int mouseDownHit_ = -1;
     size_t mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -10578,6 +11372,7 @@ private:
     GridCell widgetPreviewCell_;
     GridSpan widgetDragOriginalSpan_;
     GridSpan widgetPreviewSpan_;
+    bool widgetPreviewOccupied_ = false;
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
     POINT mouseDownPoint_{};

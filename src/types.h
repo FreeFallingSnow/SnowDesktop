@@ -116,6 +116,7 @@ struct DesktopItem
     GridCell gridCell;
     GridSpan gridSpan;
     bool selected = false;
+    bool shortcutArrow = false;
 
     DesktopItem() = default;
 
@@ -134,7 +135,8 @@ struct DesktopItem
           slot(other.slot),
           gridCell(std::move(other.gridCell)),
           gridSpan(other.gridSpan),
-          selected(other.selected)
+          selected(other.selected),
+          shortcutArrow(other.shortcutArrow)
     {
         other.iconBitmap = nullptr;
         other.iconBitmapSize = {};
@@ -197,7 +199,8 @@ struct FolderEntry
           isDirectory(other.isDirectory),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(nullptr),
-          iconBitmapSize(other.iconBitmapSize)
+          iconBitmapSize(other.iconBitmapSize),
+          selected(other.selected)
     {
         if (other.iconBitmap != nullptr)
         {
@@ -220,6 +223,7 @@ struct FolderEntry
             isDirectory = other.isDirectory;
             sysIconIndex = other.sysIconIndex;
             iconBitmapSize = other.iconBitmapSize;
+            selected = other.selected;
             if (other.iconBitmap != nullptr)
             {
                 iconBitmap = CopyFolderEntryBitmap(other.iconBitmap, iconBitmapSize);
@@ -266,7 +270,8 @@ public:
           isDirectory(other.isDirectory),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(other.iconBitmap),
-          iconBitmapSize(other.iconBitmapSize)
+          iconBitmapSize(other.iconBitmapSize),
+          selected(other.selected)
     {
         other.iconBitmap = nullptr;
         other.iconBitmapSize = {};
@@ -286,6 +291,7 @@ public:
             sysIconIndex = other.sysIconIndex;
             iconBitmap = other.iconBitmap;
             iconBitmapSize = other.iconBitmapSize;
+            selected = other.selected;
             other.iconBitmap = nullptr;
             other.iconBitmapSize = {};
         }
