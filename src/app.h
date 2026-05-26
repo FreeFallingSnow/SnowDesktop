@@ -3192,7 +3192,10 @@ private:
                 for (size_t slot = 0; slot < widget.folderEntries.size(); ++slot)
                 {
                     RECT itemRect = GetFolderMappingItemRect(widget, slot);
-                    if (itemRect.bottom > content.top && itemRect.top < content.bottom && PtInRect(&itemRect, point))
+                    RECT clipped = itemRect;
+                    clipped.top = std::max(clipped.top, content.top);
+                    clipped.bottom = std::min(clipped.bottom, content.bottom);
+                    if (clipped.bottom > content.top && clipped.top < content.bottom && PtInRect(&clipped, point))
                     {
                         return { DesktopHitKind::WidgetMember, static_cast<size_t>(-1), static_cast<size_t>(i), slot, itemRect };
                     }
@@ -3231,7 +3234,10 @@ private:
                 for (size_t slot = 0; slot < keys.size(); ++slot)
                 {
                     RECT itemRect = GetFileCategoryItemRect(widget, slot);
-                    if (itemRect.bottom > content.top && itemRect.top < content.bottom && PtInRect(&itemRect, point))
+                    RECT clipped = itemRect;
+                    clipped.top = std::max(clipped.top, content.top);
+                    clipped.bottom = std::min(clipped.bottom, content.bottom);
+                    if (clipped.bottom > content.top && clipped.top < content.bottom && PtInRect(&clipped, point))
                     {
                         size_t itemIndex = FindItemIndexByKey(keys[slot]);
                         if (itemIndex != static_cast<size_t>(-1))
@@ -6536,11 +6542,27 @@ private:
             AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
             AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
             AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
+            HMENU sortMenu = CreatePopupMenu();
+            if (sortMenu != nullptr)
+            {
+                AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByName, L"名称");
+                AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByType, L"类型");
+                AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByDate, L"修改日期");
+                AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
+            }
         }
         else if (widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
         {
             AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, L"打开文件夹");
             AppendMenuW(menu, MF_STRING | (widgets_[widgetIndex].listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
+            HMENU sortMenu = CreatePopupMenu();
+            if (sortMenu != nullptr)
+            {
+                AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByName, L"名称");
+                AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByType, L"类型");
+                AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByDate, L"修改日期");
+                AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
+            }
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
@@ -6629,8 +6651,99 @@ private:
                 RefreshFolderMappingWidget(widgetIndex);
             }
             break;
+        case kContextWidgetSortByName:
+            SortWidgetContents(widgetIndex, 0);
+            break;
+        case kContextWidgetSortByType:
+            SortWidgetContents(widgetIndex, 1);
+            break;
+        case kContextWidgetSortByDate:
+            SortWidgetContents(widgetIndex, 2);
+            break;
         default:
             break;
+        }
+    }
+
+    void SortWidgetContents(size_t widgetIndex, int mode)
+    {
+        if (widgetIndex >= widgets_.size()) return;
+        DesktopWidget& w = widgets_[widgetIndex];
+
+        if (w.type == DesktopWidgetType::FolderMapping)
+        {
+            std::sort(w.folderEntries.begin(), w.folderEntries.end(),
+                [mode](const FolderEntry& a, const FolderEntry& b) {
+                    if (a.isDirectory != b.isDirectory) return a.isDirectory;
+                    int cmp = 0;
+                    if (mode == 0) cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+                    else if (mode == 1)
+                    {
+                        std::wstring extA = PathFindExtensionW(a.name.c_str());
+                        std::wstring extB = PathFindExtensionW(b.name.c_str());
+                        cmp = _wcsicmp(extA.c_str(), extB.c_str());
+                        if (cmp == 0) cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+                    }
+                    else if (mode == 2)
+                    {
+                        WIN32_FILE_ATTRIBUTE_DATA da{}, db{};
+                        if (GetFileAttributesExW(a.fullPath.c_str(), GetFileExInfoStandard, &da) &&
+                            GetFileAttributesExW(b.fullPath.c_str(), GetFileExInfoStandard, &db))
+                        {
+                            int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
+                            if (timeCmp != 0) return timeCmp < 0;
+                        }
+                        cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+                    }
+                    return cmp < 0;
+                });
+            RefreshFolderMappingWidget(widgetIndex);
+        }
+        else if (w.type == DesktopWidgetType::FileCategories)
+        {
+            std::wstring active = GetActiveFileCategoryId(w);
+            std::vector<std::wstring> keys = GetFileCategoryKeys(w, active);
+            std::sort(keys.begin(), keys.end(),
+                [this, mode](const std::wstring& ka, const std::wstring& kb) {
+                    size_t ia = FindItemIndexByKey(ka);
+                    size_t ib = FindItemIndexByKey(kb);
+                    if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
+                    int cmp = 0;
+                    if (mode == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                    else if (mode == 1)
+                    {
+                        cmp = _wcsicmp(items_[ia].typeName.c_str(), items_[ib].typeName.c_str());
+                        if (cmp == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                    }
+                    else if (mode == 2)
+                    {
+                        WIN32_FILE_ATTRIBUTE_DATA da{}, db{};
+                        if (GetFileAttributesExW(items_[ia].parsingName.c_str(), GetFileExInfoStandard, &da) &&
+                            GetFileAttributesExW(items_[ib].parsingName.c_str(), GetFileExInfoStandard, &db))
+                        {
+                            int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
+                            if (timeCmp != 0) return timeCmp < 0;
+                        }
+                        cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                    }
+                    return cmp < 0;
+                });
+            // Rebuild itemKeys: keep non-active-category keys, append sorted active keys
+            std::wstring activeId = GetActiveFileCategoryId(w);
+            std::vector<std::wstring> nonActive;
+            for (const auto& rawKey : w.itemKeys)
+            {
+                size_t idx = FindItemIndexByKey(rawKey);
+                if (idx == static_cast<size_t>(-1)) continue;
+                if (GetFileCategoryId(items_[idx]) != activeId)
+                    nonActive.push_back(NormalizeLayoutKey(items_[idx].layoutKey));
+            }
+            w.itemKeys = nonActive;
+            for (const auto& k : keys)
+                w.itemKeys.push_back(k);
+            LayoutItems();
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
         }
     }
 
@@ -7811,7 +7924,15 @@ private:
             }
             if (!overPopup)
             {
-                for (RECT targetRect : GetSelectedMovePreviewRectsForCell(dragTargetCell_))
+                DesktopHit hit = HitTestDesktop(dragCurrentPoint_);
+                bool overWidget = (hit.kind == DesktopHitKind::Widget ||
+                    hit.kind == DesktopHitKind::WidgetMember ||
+                    hit.kind == DesktopHitKind::WidgetContent ||
+                    hit.kind == DesktopHitKind::WidgetAllButton ||
+                    hit.kind == DesktopHitKind::PopupMember);
+                if (!overWidget)
+                {
+                    for (RECT targetRect : GetSelectedMovePreviewRectsForCell(dragTargetCell_))
                 {
                     targetRect.left += 3;
                     targetRect.top += 3;
@@ -7823,6 +7944,7 @@ private:
                         D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.14f),
                         D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f),
                         dottedStrokeStyle_.Get());
+                }
                 }
             }
         }

@@ -65,6 +65,9 @@ constexpr UINT kContextWidgetToggleListMode = 41025;
 constexpr UINT kContextAddFolderMappingWidget = 41026;
 constexpr UINT kContextWidgetOpenFolder = 41027;
 constexpr UINT kContextWidgetToggleFolderView = 41028;
+constexpr UINT kContextWidgetSortByName = 41029;
+constexpr UINT kContextWidgetSortByType = 41030;
+constexpr UINT kContextWidgetSortByDate = 41031;
 constexpr UINT kContextZoomPresetFirst = 41150;
 constexpr UINT kContextNewMenu = 41400;
 
