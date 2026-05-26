@@ -8723,9 +8723,15 @@ private:
         }
 
         RECT handle = GetWidgetMoveHandleRect(widget);
-        RECT gradientRect = MakeRect(handle.left, std::max<LONG>(body.top, handle.top - 28), handle.right, handle.bottom);
-        if (!IsRectEmptyRect(gradientRect))
+        RECT gradientRect = MakeRect(frame.left, std::max<LONG>(body.top, frame.bottom - 36), frame.right, frame.bottom);
+        if (!IsRectEmptyRect(gradientRect) && gradientRect.bottom > gradientRect.top)
         {
+            ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+            if (SUCCEEDED(d2dFactory_->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(ToD2DRect(frame), 12.0f, 12.0f), &clipGeo)) && clipGeo)
+            {
+                context->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
+            }
             ComPtr<ID2D1GradientStopCollection> stops;
             D2D1_GRADIENT_STOP stopDescs[] = {
                 { 0.0f, D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.0f) },
@@ -8744,6 +8750,7 @@ private:
                     context->FillRectangle(ToD2DRect(gradientRect), brush.Get());
                 }
             }
+            if (clipGeo) context->PopLayer();
         }
 
         RECT titleRect = GetWidgetTitleRect(widget);
