@@ -495,8 +495,6 @@ private:
     static constexpr int kCollectionPopupPaddingX = 18;
     static constexpr int kCollectionPopupHeaderHeight = 54;
     static constexpr int kCollectionPopupBottomPadding = 18;
-    static constexpr int kCollectionPopupCellWidth = kCellWidth;
-    static constexpr int kCollectionPopupCellHeight = kMinCellHeight;
 
     bool InitializeGraphics()
     {
@@ -2923,6 +2921,20 @@ private:
         return bestIndex;
     }
 
+    int GetDesktopCellWidth() const
+    {
+        if (!gridPages_.empty())
+            return gridPages_.front().cellWidth;
+        return static_cast<int>(kCellWidth * gapScale_);
+    }
+
+    int GetDesktopCellHeight() const
+    {
+        if (!gridPages_.empty())
+            return gridPages_.front().cellHeight;
+        return static_cast<int>(kMinCellHeight * gapScale_);
+    }
+
     RECT GetGridRect(const GridCell& cell, GridSpan span = {}) const
     {
         const GridPage* page = FindExactGridPage(cell.pageId);
@@ -4512,10 +4524,10 @@ private:
                 static_cast<int>(std::max<LONG>(content.left, content.right - 1)));
             const int y = std::max<int>(static_cast<int>(content.top), point.y + popupScrollOffset_);
             const int col = std::clamp<int>(
-                (x - static_cast<int>(content.left)) / kCollectionPopupCellWidth,
+                (x - static_cast<int>(content.left)) / GetDesktopCellWidth(),
                 0,
                 std::max(0, columns - 1));
-            const int row = std::max<int>(0, (y - static_cast<int>(content.top)) / kCollectionPopupCellHeight);
+            const int row = std::max<int>(0, (y - static_cast<int>(content.top)) / GetDesktopCellHeight());
             size_t index = static_cast<size_t>(row * columns + col);
             RECT cell = GetCollectionPopupItemRect(popupRect, std::min(index, count - 1));
             if (index < count && point.x > (cell.left + cell.right) / 2)
@@ -5751,7 +5763,7 @@ private:
         RECT content = GetFileCategoryContentRect(widget);
         const int columns = GetFileCategoryTileColumnCount(widget);
         const int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-        return rows * kMinCellHeight;
+        return rows * GetDesktopCellHeight();
     }
 
     int GetFileCategoryMaxScrollOffset(const DesktopWidget& widget) const
@@ -5783,11 +5795,12 @@ private:
         const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
         const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
         const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
+        const int cellH = GetDesktopCellHeight();
         RECT rect = MakeRect(
             content.left + col * itemW,
-            content.top + row * kMinCellHeight - scroll,
+            content.top + row * cellH - scroll,
             col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
-            content.top + (row + 1) * kMinCellHeight - scroll);
+            content.top + (row + 1) * cellH - scroll);
         return rect;
     }
 
@@ -5840,7 +5853,7 @@ private:
         RECT content = GetFolderMappingContentRect(widget);
         const int columns = GetFolderMappingTileColumnCount(widget);
         const int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-        return rows * kMinCellHeight;
+        return rows * GetDesktopCellHeight();
     }
 
     int GetFolderMappingMaxScrollOffset(const DesktopWidget& widget) const
@@ -5870,11 +5883,12 @@ private:
         const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
         const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
         const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
+        const int cellH = GetDesktopCellHeight();
         RECT rect = MakeRect(
             content.left + col * itemW,
-            content.top + row * kMinCellHeight - scroll,
+            content.top + row * cellH - scroll,
             col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
-            content.top + (row + 1) * kMinCellHeight - scroll);
+            content.top + (row + 1) * cellH - scroll);
         return rect;
     }
 
@@ -5917,7 +5931,7 @@ private:
             const int columns = GetFileCategoryTileColumnCount(widget);
             const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
             int col = std::clamp((static_cast<int>(point.x) - cx) / itemW, 0, columns - 1);
-            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / kMinCellHeight);
+            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / GetDesktopCellHeight());
             size_t index = static_cast<size_t>(row * columns + col);
             RECT cell = GetFileCategoryItemRect(widget, std::min(index, count - 1));
             if (index < count && point.x > (cell.left + cell.right) / 2) ++index;
@@ -5953,7 +5967,7 @@ private:
             const int columns = GetFolderMappingTileColumnCount(widget);
             const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
             int col = std::clamp((static_cast<int>(point.x) - cx) / itemW, 0, columns - 1);
-            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / kMinCellHeight);
+            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / GetDesktopCellHeight());
             size_t index = static_cast<size_t>(row * columns + col);
             RECT cell = GetFolderMappingItemRect(widget, std::min(index, count - 1));
             if (index < count && point.x > (cell.left + cell.right) / 2) ++index;
@@ -8777,19 +8791,19 @@ private:
         const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
         const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
         const int maxWidth = std::max(280, std::min(560, workWidth - 80));
-        const int maxColumns = std::max(1, (maxWidth - kCollectionPopupPaddingX * 2) / kCollectionPopupCellWidth);
+        const int maxColumns = std::max(1, (maxWidth - kCollectionPopupPaddingX * 2) / GetDesktopCellWidth());
         const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
         int columns = std::clamp(std::min(itemCount, 5), 1, maxColumns);
         int rows = (itemCount + columns - 1) / columns;
         const int maxHeight = std::max(220, workHeight - 80);
-        int width = kCollectionPopupPaddingX * 2 + columns * kCollectionPopupCellWidth;
-        int height = kCollectionPopupHeaderHeight + rows * kCollectionPopupCellHeight + kCollectionPopupBottomPadding;
+        int width = kCollectionPopupPaddingX * 2 + columns * GetDesktopCellWidth();
+        int height = kCollectionPopupHeaderHeight + rows * GetDesktopCellHeight() + kCollectionPopupBottomPadding;
         if (height > maxHeight && columns < maxColumns)
         {
             columns = maxColumns;
             rows = (itemCount + columns - 1) / columns;
-            width = kCollectionPopupPaddingX * 2 + columns * kCollectionPopupCellWidth;
-            height = kCollectionPopupHeaderHeight + rows * kCollectionPopupCellHeight + kCollectionPopupBottomPadding;
+            width = kCollectionPopupPaddingX * 2 + columns * GetDesktopCellWidth();
+            height = kCollectionPopupHeaderHeight + rows * GetDesktopCellHeight() + kCollectionPopupBottomPadding;
         }
         height = std::min(height, maxHeight);
         int left = work.left + (workWidth - width) / 2;
@@ -8816,7 +8830,7 @@ private:
     int GetCollectionPopupColumnCount(const RECT& popup) const
     {
         RECT content = GetCollectionPopupContentRect(popup);
-        return std::max<int>(1, static_cast<int>(content.right - content.left) / kCollectionPopupCellWidth);
+        return std::max<int>(1, static_cast<int>(content.right - content.left) / GetDesktopCellWidth());
     }
 
     int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const
@@ -8831,7 +8845,7 @@ private:
         RECT content = GetCollectionPopupContentRect(popup);
         const int rows = GetCollectionPopupRowCount(widget, popup);
         const int contentHeight = std::max<int>(1, static_cast<int>(content.bottom - content.top));
-        return std::max(0, rows * kCollectionPopupCellHeight - contentHeight);
+        return std::max(0, rows * GetDesktopCellHeight() - contentHeight);
     }
 
     RECT GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
@@ -8841,10 +8855,10 @@ private:
         const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
         const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
         RECT rect = MakeRect(
-            content.left + col * kCollectionPopupCellWidth,
-            content.top + row * kCollectionPopupCellHeight - popupScrollOffset_,
-            content.left + (col + 1) * kCollectionPopupCellWidth,
-            content.top + (row + 1) * kCollectionPopupCellHeight - popupScrollOffset_);
+            content.left + col * GetDesktopCellWidth(),
+            content.top + row * GetDesktopCellHeight() - popupScrollOffset_,
+            content.left + (col + 1) * GetDesktopCellWidth(),
+            content.top + (row + 1) * GetDesktopCellHeight() - popupScrollOffset_);
         return rect;
     }
 
@@ -9495,6 +9509,7 @@ private:
         }
 
         InflateRect(&body, -4, -4);
+        const int cellH = GetDesktopCellHeight();
         const int columns = std::max(1, widget.gridSpan.columns);
         const int rows = std::max(1, widget.gridSpan.rows);
         const int col = static_cast<int>(slot % static_cast<size_t>(columns));
@@ -9505,12 +9520,12 @@ private:
         }
 
         const int width = std::max<int>(1, static_cast<int>(body.right - body.left) / columns);
-        const int height = std::max<int>(1, static_cast<int>(body.bottom - body.top) / rows);
+        const int startY = body.top + (static_cast<int>(body.bottom - body.top) - rows * cellH) / 2;
         RECT rect = MakeRect(
             body.left + col * width,
-            body.top + row * height,
+            startY + row * cellH,
             col + 1 == columns ? body.right : body.left + (col + 1) * width,
-            row + 1 == rows ? body.bottom : body.top + (row + 1) * height);
+            startY + (row + 1) * cellH);
         return rect;
     }
 
