@@ -3130,16 +3130,19 @@ private:
             if (widget.type == DesktopWidgetType::Collection)
             {
                 const bool compact = widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
-                const size_t inlineCapacity = std::min(GetCollectionInlineCapacity(widget), widget.itemKeys.size());
-                for (size_t slot = 0; slot < inlineCapacity; ++slot)
+                if (!compact)
                 {
-                    RECT slotRect = GetCollectionPreviewSlotRect(widget, slot);
-                    if (PtInRect(&slotRect, point))
+                    const size_t inlineCapacity = std::min(GetCollectionInlineCapacity(widget), widget.itemKeys.size());
+                    for (size_t slot = 0; slot < inlineCapacity; ++slot)
                     {
-                        size_t itemIndex = FindItemIndexByKey(widget.itemKeys[slot]);
-                        if (itemIndex != static_cast<size_t>(-1))
+                        RECT slotRect = GetCollectionPreviewSlotRect(widget, slot);
+                        if (PtInRect(&slotRect, point))
                         {
-                            return { DesktopHitKind::WidgetMember, itemIndex, static_cast<size_t>(i), slot, slotRect };
+                            size_t itemIndex = FindItemIndexByKey(widget.itemKeys[slot]);
+                            if (itemIndex != static_cast<size_t>(-1))
+                            {
+                                return { DesktopHitKind::WidgetMember, itemIndex, static_cast<size_t>(i), slot, slotRect };
+                            }
                         }
                     }
                 }
@@ -3910,8 +3913,13 @@ private:
                 span.rows += deltaRows;
             }
 
-            span.columns = std::clamp(span.columns, 1, std::max(1, page->columns));
-            span.rows = std::clamp(span.rows, 1, std::max(1, page->rows));
+            const bool needsMinSpan = mouseDownWidgetIndex_ < widgets_.size() &&
+                (widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::FileCategories ||
+                 widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::FolderMapping);
+            const int minCols = needsMinSpan ? 2 : 1;
+            const int minRows = needsMinSpan ? 2 : 1;
+            span.columns = std::clamp(span.columns, minCols, std::max(1, page->columns));
+            span.rows = std::clamp(span.rows, minRows, std::max(1, page->rows));
             cell.column = std::clamp(cell.column, 0, std::max(0, page->columns - span.columns));
             cell.row = std::clamp(cell.row, 0, std::max(0, page->rows - span.rows));
             widgetPreviewCell_ = cell;
@@ -5213,12 +5221,17 @@ private:
 
     std::wstring GetFileCategoryId(const DesktopItem& item) const
     {
+        const std::wstring ext = GetDesktopItemExtensionUpper(item);
+        if (ext == L".ZIP" || ext == L".RAR" || ext == L".7Z" || ext == L".TAR" || ext == L".GZ" || ext == L".BZ2" || ext == L".XZ")
+        {
+            return L"archives";
+        }
+
         if (IsShellFolderItem(item))
         {
             return L"folders";
         }
 
-        const std::wstring ext = GetDesktopItemExtensionUpper(item);
         if (ext == L".MP4" || ext == L".MOV" || ext == L".AVI" || ext == L".MKV" || ext == L".WMV" || ext == L".WEBM" || ext == L".M4V")
         {
             return L"videos";
@@ -5230,10 +5243,6 @@ private:
         if (ext == L".TXT" || ext == L".MD" || ext == L".DOC" || ext == L".DOCX" || ext == L".PDF" || ext == L".XLS" || ext == L".XLSX" || ext == L".PPT" || ext == L".PPTX" || ext == L".CSV")
         {
             return L"documents";
-        }
-        if (ext == L".ZIP" || ext == L".RAR" || ext == L".7Z" || ext == L".TAR" || ext == L".GZ" || ext == L".BZ2" || ext == L".XZ")
-        {
-            return L"archives";
         }
         if (ext == L".MP3" || ext == L".WAV" || ext == L".FLAC" || ext == L".AAC" || ext == L".M4A" || ext == L".OGG")
         {
@@ -5342,7 +5351,7 @@ private:
     RECT GetFileCategoryContentRect(const DesktopWidget& widget) const
     {
         RECT body = GetWidgetBodyRect(widget);
-        InflateRect(&body, -10, -8);
+        InflateRect(&body, -4, -8);
         if (IsRectEmptyRect(body))
         {
             return {};
@@ -5360,11 +5369,18 @@ private:
             return {};
         }
         RECT tabsRect = GetFileCategoryTabsRect(widget);
-        const int width = std::max<int>(1, static_cast<int>(tabsRect.right - tabsRect.left) / static_cast<int>(std::max<size_t>(1, tabs.size())));
+        constexpr int minTabWidth = 64;
+        const int tabCount = static_cast<int>(tabs.size());
+        const int equalWidth = std::max<int>(1, static_cast<int>(tabsRect.right - tabsRect.left) / tabCount);
+        const int tabWidth = std::max(minTabWidth, equalWidth);
+        const int totalWidth = tabWidth * tabCount;
+        const int maxScroll = std::max(0, totalWidth - static_cast<int>(tabsRect.right - tabsRect.left));
+        const int scroll = std::clamp(widget.tabScrollOffset, 0, maxScroll);
+        const int startX = static_cast<int>(tabsRect.left) - scroll;
         RECT rect = MakeRect(
-            tabsRect.left + static_cast<LONG>(index * width),
+            startX + static_cast<LONG>(index * tabWidth),
             tabsRect.top,
-            index + 1 == tabs.size() ? tabsRect.right : tabsRect.left + static_cast<LONG>((index + 1) * width),
+            index + 1 == tabs.size() ? startX + totalWidth : startX + static_cast<LONG>((index + 1) * tabWidth),
             tabsRect.bottom);
         InflateRect(&rect, -2, -2);
         return rect;
@@ -5417,10 +5433,11 @@ private:
         const int columns = GetFileCategoryTileColumnCount(widget);
         const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
         const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
+        const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
         RECT rect = MakeRect(
-            content.left + col * kCellWidth,
+            content.left + col * itemW,
             content.top + row * kMinCellHeight - scroll,
-            content.left + (col + 1) * kCellWidth,
+            col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
             content.top + (row + 1) * kMinCellHeight - scroll);
         return rect;
     }
@@ -5428,7 +5445,7 @@ private:
     RECT GetFolderMappingContentRect(const DesktopWidget& widget) const
     {
         RECT body = GetWidgetBodyRect(widget);
-        InflateRect(&body, -10, -8);
+        InflateRect(&body, -4, -8);
         return body;
     }
 
@@ -5494,10 +5511,11 @@ private:
         const int columns = GetFolderMappingTileColumnCount(widget);
         const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
         const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
+        const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
         RECT rect = MakeRect(
-            content.left + col * kCellWidth,
+            content.left + col * itemW,
             content.top + row * kMinCellHeight - scroll,
-            content.left + (col + 1) * kCellWidth,
+            col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
             content.top + (row + 1) * kMinCellHeight - scroll);
         return rect;
     }
@@ -5539,9 +5557,9 @@ private:
             }
 
             const int columns = GetFileCategoryTileColumnCount(widget);
-            int col = std::clamp((static_cast<int>(point.x) - cx) / kCellWidth, 0, columns - 1);
-            int itemH = kMinCellHeight;
-            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / itemH);
+            const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
+            int col = std::clamp((static_cast<int>(point.x) - cx) / itemW, 0, columns - 1);
+            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / kMinCellHeight);
             size_t index = static_cast<size_t>(row * columns + col);
             RECT cell = GetFileCategoryItemRect(widget, std::min(index, count - 1));
             if (index < count && point.x > (cell.left + cell.right) / 2) ++index;
@@ -5575,9 +5593,9 @@ private:
             }
 
             const int columns = GetFolderMappingTileColumnCount(widget);
-            int col = std::clamp((static_cast<int>(point.x) - cx) / kCellWidth, 0, columns - 1);
-            int itemH = kMinCellHeight;
-            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / itemH);
+            const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
+            int col = std::clamp((static_cast<int>(point.x) - cx) / itemW, 0, columns - 1);
+            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / kMinCellHeight);
             size_t index = static_cast<size_t>(row * columns + col);
             RECT cell = GetFolderMappingItemRect(widget, std::min(index, count - 1));
             if (index < count && point.x > (cell.left + cell.right) / 2) ++index;
@@ -7254,24 +7272,6 @@ private:
                 DrawD2DWidgetMemberInsertionPreview(context, dragCurrentPoint_);
                 DrawD2DFolderEntryDesktopDropPreview(context, dragCurrentPoint_);
             }
-            DesktopHit desktopHit = HitTestDesktop(dragCurrentPoint_);
-            if (!overPopup &&
-                (desktopHit.kind == DesktopHitKind::Widget ||
-                desktopHit.kind == DesktopHitKind::WidgetMember ||
-                desktopHit.kind == DesktopHitKind::WidgetContent ||
-                desktopHit.kind == DesktopHitKind::WidgetAllButton) &&
-                desktopHit.widgetIndex < widgets_.size())
-            {
-                RECT targetRect = GetWidgetFrameRect(widgets_[desktopHit.widgetIndex]);
-                DrawD2DRoundedRectangle(
-                    context,
-                    targetRect,
-                    12.0f,
-                    D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.16f),
-                    D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.85f),
-                    1.4f,
-                    dottedStrokeStyle_.Get());
-            }
             if (!overPopup)
             {
                 for (RECT targetRect : GetSelectedMovePreviewRects(GetDragTargetPoint(dragCurrentPoint_)))
@@ -7484,7 +7484,7 @@ private:
         const int labelHeight = showLabel ? (selected ? std::min(34, std::max(18, height / 3)) : 18) : 0;
         const int iconSize = std::max(16, std::min(width - 6, height - labelHeight - 4));
         const int iconX = rect.left + (width - iconSize) / 2;
-        const int iconY = rect.top + 2;
+        const int iconY = showLabel ? rect.top + 2 : rect.top + (height - iconSize) / 2;
         ID2D1Bitmap1* iconBitmap = GetOrCreateD2DBitmap(item.iconBitmap);
         if (iconBitmap != nullptr)
         {
@@ -7604,6 +7604,7 @@ private:
 
         std::wstring activeCategory = GetActiveFileCategoryId(widget);
         RECT tabsRect = GetFileCategoryTabsRect(widget);
+        context->PushAxisAlignedClip(ToD2DRect(tabsRect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         for (size_t i = 0; i < categoryIds.size(); ++i)
         {
             RECT tab = GetFileCategoryTabRect(widget, i);
@@ -7624,6 +7625,7 @@ private:
             std::wstring label = GetFileCategoryLabel(categoryIds[i]) + L" " + std::to_wstring(GetFileCategoryCount(widget, categoryIds[i]));
             DrawD2DText(context, label, MakeRect(tab.left + 4, tab.top + 7, tab.right - 4, tab.bottom), collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.98f : 0.78f));
         }
+        context->PopAxisAlignedClip();
         if (!IsRectEmptyRect(tabsRect))
         {
             RECT line = MakeRect(tabsRect.left, tabsRect.bottom + 2, tabsRect.right, tabsRect.bottom + 3);
@@ -7796,6 +7798,30 @@ private:
         else if (widget.type == DesktopWidgetType::FolderMapping)
         {
             DrawD2DFolderMappingWidget(context, widget);
+        }
+
+        RECT handle = GetWidgetMoveHandleRect(widget);
+        RECT gradientRect = MakeRect(handle.left, std::max<LONG>(body.top, handle.top - 28), handle.right, handle.bottom);
+        if (!IsRectEmptyRect(gradientRect))
+        {
+            ComPtr<ID2D1GradientStopCollection> stops;
+            D2D1_GRADIENT_STOP stopDescs[] = {
+                { 0.0f, D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.0f) },
+                { 1.0f, D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.48f) },
+            };
+            if (SUCCEEDED(context->CreateGradientStopCollection(stopDescs, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
+            {
+                ComPtr<ID2D1LinearGradientBrush> brush;
+                if (SUCCEEDED(context->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(
+                        D2D1::Point2F(0.0f, static_cast<float>(gradientRect.top)),
+                        D2D1::Point2F(0.0f, static_cast<float>(gradientRect.bottom))),
+                    stops.Get(),
+                    &brush)) && brush)
+                {
+                    context->FillRectangle(ToD2DRect(gradientRect), brush.Get());
+                }
+            }
         }
 
         RECT titleRect = GetWidgetTitleRect(widget);
@@ -8080,7 +8106,7 @@ private:
 
     void DrawD2DWidgetMemberInsertionPreview(ID2D1DeviceContext* context, POINT point)
     {
-        if (context == nullptr)
+        if (context == nullptr || dragHint_.find(L"交给") != std::wstring::npos)
         {
             return;
         }
@@ -8160,7 +8186,7 @@ private:
 
     void DrawD2DCollectionInsertionPreview(ID2D1DeviceContext* context, POINT point)
     {
-        if (context == nullptr)
+        if (context == nullptr || dragHint_.find(L"交给") != std::wstring::npos)
         {
             return;
         }
@@ -8534,19 +8560,22 @@ private:
 
         if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1)
         {
-            InflateRect(&body, -10, -10);
+            InflateRect(&body, -6, -6);
             const int columns = 2;
             const int rows = 2;
+            const int bodyW = std::max<int>(1, static_cast<int>(body.right - body.left));
+            const int bodyH = std::max<int>(1, static_cast<int>(body.bottom - body.top));
+            const int gridSize = std::min(bodyW, bodyH);
+            const int gridTop = body.top + (bodyH - gridSize) / 2;
+            const int slotSz = std::max<int>(1, gridSize / 2);
             const int col = static_cast<int>(slot % columns);
             const int row = static_cast<int>(slot / columns);
-            const int width = std::max<int>(1, static_cast<int>(body.right - body.left) / columns);
-            const int height = std::max<int>(1, static_cast<int>(body.bottom - body.top) / rows);
             RECT rect = MakeRect(
-                body.left + col * width,
-                body.top + row * height,
-                col + 1 == columns ? body.right : body.left + (col + 1) * width,
-                row + 1 == rows ? body.bottom : body.top + (row + 1) * height);
-            InflateRect(&rect, -3, -3);
+                body.left + col * slotSz,
+                gridTop + row * slotSz,
+                col + 1 == columns ? body.right : body.left + (col + 1) * slotSz,
+                row + 1 == rows ? gridTop + gridSize : gridTop + (row + 1) * slotSz);
+            InflateRect(&rect, -1, -1);
             return rect;
         }
 
@@ -9790,6 +9819,21 @@ private:
         {
             if (widget.type == DesktopWidgetType::FileCategories)
             {
+                RECT tabsRect = GetFileCategoryTabsRect(widget);
+                if (PtInRect(&tabsRect, point))
+                {
+                    std::vector<std::wstring> tabs = GetVisibleFileCategoryIds(widget);
+                    constexpr int minTabWidth = 64;
+                    const int tabCount = static_cast<int>(tabs.size());
+                    const int equalWidth = std::max<int>(1, static_cast<int>(tabsRect.right - tabsRect.left) / std::max(1, tabCount));
+                    const int tabWidth = std::max(minTabWidth, equalWidth);
+                    const int totalWidth = tabWidth * tabCount;
+                    const int maxScroll = std::max(0, totalWidth - static_cast<int>(tabsRect.right - tabsRect.left));
+                    widget.tabScrollOffset = std::clamp(widget.tabScrollOffset - delta, 0, maxScroll);
+                    InvalidateRect(hwnd_, nullptr, TRUE);
+                    return;
+                }
+
                 RECT content = GetFileCategoryContentRect(widget);
                 if (!PtInRect(&content, point))
                 {
