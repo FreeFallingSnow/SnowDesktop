@@ -5,6 +5,8 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 
+struct ImGuiContext;
+
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
@@ -37,6 +39,7 @@ public:
     bool Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory);
     void Shutdown();
     void ReloadAll();
+    void ReloadAll();
     bool ReloadWidget(const std::wstring& scriptPath);
     void RenderAll(ID2D1DeviceContext* context);
     void RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds,
@@ -54,6 +57,9 @@ public:
 
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
     static std::vector<std::wstring> ListAvailable();
+
+    // ImGui rendering: call imguiRender on all widgets (called from settings window)
+    void RenderImGuiWidgets();
 
 private:
     bool LoadWidget(const std::wstring& path);

@@ -1,5 +1,9 @@
 #include "widget_engine.h"
 
+#include <imgui.h>
+#include <imgui_impl_win32.h>
+#include <imgui_impl_dx11.h>
+
 #include <shlwapi.h>
 #include <fstream>
 #include <sstream>
@@ -328,11 +332,26 @@ bool WidgetEngine::LoadWidget(const std::wstring& path)
 void WidgetEngine::RenderAll(ID2D1DeviceContext* context)
 {
     d2dState_->ctx = context;
-    // For global-scope widgets (no grid bounds), render at origin
-    // Grid-bound widgets use RenderWidget instead
 }
 
-// ── Render a specific widget within given bounds ─────────────────
+void WidgetEngine::RenderImGuiWidgets()
+{
+    for (auto& w : widgets_)
+    {
+        if (!w.valid) continue;
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); continue; }
+        lua_getfield(L_, -1, "imguiRender");
+        if (lua_isfunction(L_, -1))
+        {
+            ImGui::SeparatorText(w.name.c_str());
+            lua_pcall(L_, 0, 0, 0);
+        }
+        else { lua_pop(L_, 1); }
+        lua_pop(L_, 1);
+    }
+}
+
 void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds, float bgR, float bgG, float bgB, float alpha, float borderR, float borderG, float borderB, float gradientEndA)
 {
     // Find the loaded widget matching this script path

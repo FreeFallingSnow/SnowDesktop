@@ -199,8 +199,9 @@ void SettingsWindow::Render()
     {
     case 0: DrawGeneralPage(); break;
     case 1: DrawPersonalizationPage(); break;
-    case 2: DrawBackupPage(); break;
-    case 3: DrawAboutPage(); break;
+    case 2: DrawWidgetEditorPage(); break;
+    case 3: DrawBackupPage(); break;
+    case 4: DrawAboutPage(); break;
     }
     ImGui::EndChild();
 
@@ -346,8 +347,9 @@ void SettingsWindow::DrawSidebar()
 
     SideButton(0, "通用");
     SideButton(1, "个性化");
-    SideButton(2, "布局备份");
-    SideButton(3, "关于");
+    SideButton(2, "组件编辑");
+    SideButton(3, "布局备份");
+    SideButton(4, "关于");
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
