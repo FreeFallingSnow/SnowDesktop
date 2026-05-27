@@ -224,14 +224,22 @@ void SettingsWindow::DrawTitleBar()
     dl->AddText(ImVec2(p.x + 12, p.y + 7),
         ImColor(0.10f, 0.10f, 0.14f), "SnowDesktop 设置");
 
-    // Close button
+    // Close button — centering within titleH
     float btnX = p.x + size.x - 40.0f;
-    ImVec2 btnMin(btnX, p.y + 4);
-    ImVec2 btnMax(btnX + 28, p.y + titleH - 4);
+    float btnH = titleH - 8.0f;
+    float btnY = p.y + 4.0f;
+    ImVec2 btnMin(btnX, btnY);
+    ImVec2 btnMax(btnX + 28.0f, btnY + btnH);
     bool btnHovered = ImGui::IsMouseHoveringRect(btnMin, btnMax);
     dl->AddRectFilled(btnMin, btnMax,
         btnHovered ? ImColor(0.90f, 0.20f, 0.20f) : ImColor(0, 0, 0, 0), 4.0f);
-    dl->AddText(ImVec2(btnX + 8, p.y + 6), ImColor(0.45f, 0.45f, 0.50f), "X");
+
+    // Center X glyph in button
+    const char* xText = "X";
+    ImVec2 textSize = ImGui::CalcTextSize(xText);
+    float textX = btnX + (28.0f - textSize.x) * 0.5f;
+    float textY = btnY + (btnH - textSize.y) * 0.5f;
+    dl->AddText(ImVec2(textX, textY), ImColor(0.45f, 0.45f, 0.50f), xText);
 
     if (btnHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         ShowWindow(hwnd_, SW_HIDE);
@@ -649,6 +657,13 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             suggested->right - suggested->left,
             suggested->bottom - suggested->top,
             SWP_NOZORDER | SWP_NOACTIVATE);
+        return 0;
+    }
+    case WM_GETMINMAXINFO:
+    {
+        MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
+        mmi->ptMinTrackSize.x = 500;
+        mmi->ptMinTrackSize.y = 350;
         return 0;
     }
     case WM_CLOSE:
