@@ -7739,11 +7739,18 @@ private:
         HMENU gridMenu = CreatePopupMenu();
         if (gridMenu != nullptr)
         {
+            POINT clientPoint = screenPoint;
+            ScreenToClient(hwnd_, &clientPoint);
+            const GridPage* page = GridPageFromPoint(clientPoint);
+            wchar_t gridLabel[64]{};
+            int cols = page != nullptr ? page->columns : 0;
+            int rows = page != nullptr ? page->rows : 0;
+            swprintf_s(gridLabel, L"行列调整（%d列 × %d行）", cols, rows);
             AppendMenuW(gridMenu, MF_STRING, kContextGridAddRow, L"增加行");
             AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveRow, L"减少行");
             AppendMenuW(gridMenu, MF_STRING, kContextGridAddColumn, L"增加列");
             AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveColumn, L"减少列");
-            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), L"行列调整");
+            AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), gridLabel);
         }
 
         HMENU widgetMenu = CreatePopupMenu();
