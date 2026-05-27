@@ -10126,14 +10126,14 @@ private:
         {
             RECT prevRect = MakeRect(btnX, panelTop + kPanelPaddingY,
                 btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
-            DrawD2DButton(context, prevRect, L"", true);
+            DrawD2DButton(context, prevRect, L"上一页", true);
             btnX += kButtonWidth + kGap;
         }
         if (hasNext)
         {
             RECT nextRect = MakeRect(btnX, panelTop + kPanelPaddingY,
                 btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
-            DrawD2DButton(context, nextRect, L"", true);
+            DrawD2DButton(context, nextRect, L"下一页", true);
         }
     }
 
@@ -10164,8 +10164,8 @@ private:
             return;
         }
 
-        DrawD2DButton(context, previousRect, L"", pageOffset_ > 0);
-        DrawD2DButton(context, nextRect, L"", pageOffset_ < MaxPageOffset());
+        DrawD2DButton(context, previousRect, L"上一页", pageOffset_ > 0);
+        DrawD2DButton(context, nextRect, L"下一页", pageOffset_ < MaxPageOffset());
     }
 
     int HitTestNavButton(POINT point) const
