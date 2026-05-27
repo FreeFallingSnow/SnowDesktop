@@ -12482,6 +12482,13 @@ private:
             {
                 OpenCollectionPopupAt(clickHit.widgetIndex, point, L"");
             }
+            else if (clickHit.kind == DesktopHitKind::Widget &&
+                clickHit.widgetIndex < widgets_.size() &&
+                widgets_[clickHit.widgetIndex].type == DesktopWidgetType::LuaScript &&
+                widgetEngine_)
+            {
+                widgetEngine_->InvokeOpen(widgets_[clickHit.widgetIndex].scriptPath);
+            }
             else if (clickHit.kind == DesktopHitKind::WidgetCategory && clickHit.widgetIndex < widgets_.size())
             {
                 std::vector<std::wstring> categories = GetVisibleFileCategoryIds(widgets_[clickHit.widgetIndex]);

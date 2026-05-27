@@ -430,6 +430,26 @@ bool WidgetEngine::HasCustomStyle(const std::wstring& scriptPath) const
     return false;
 }
 
+void WidgetEngine::InvokeOpen(const std::wstring& scriptPath)
+{
+    for (auto& w : widgets_)
+    {
+        if (w.valid && w.filePath.size() >= scriptPath.size() &&
+            w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
+        {
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+            if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+            lua_getfield(L_, -1, "onOpen");
+            if (lua_isfunction(L_, -1))
+                lua_pcall(L_, 0, 0, 0);
+            else
+                lua_pop(L_, 1);
+            lua_pop(L_, 1);
+            return;
+        }
+    }
+}
+
 bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const
 {
     for (const auto& w : widgets_)
