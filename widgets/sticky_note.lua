@@ -27,3 +27,10 @@ function onEditCommit(text)
     storage.set("text", text)
     widget.focus("")
 end
+
+function imguiRender()
+    local text = imgui.input("##note", storage.get("text") or "")
+    if text ~= (storage.get("text") or "") then
+        storage.set("text", text)
+    end
+end

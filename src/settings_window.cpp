@@ -534,6 +534,24 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::EndChild();
 }
 
+void SettingsWindow::DrawWidgetEditorPage()
+{
+    const float pad = 16.0f * dpiScale_;
+    ImGui::SetCursorPos(ImVec2(pad, pad));
+    ImGui::BeginChild("##WidgetEditorInner", ImVec2(0, 0), ImGuiChildFlags_None);
+
+    ImGui::Text("组件编辑器");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (widgetEngine_)
+        widgetEngine_->RenderImGuiWidgets();
+    else
+        ImGui::TextDisabled("(未连接组件引擎)");
+
+    ImGui::EndChild();
+}
+
 void SettingsWindow::DrawAboutPage()
 {
     const float pad = 16.0f * dpiScale_;
