@@ -43,8 +43,8 @@ public:
         float bgR, float bgG, float bgB, float alpha, float borderR, float borderG, float borderB, float gradientEndA);
     bool HasCustomStyle(const std::wstring& scriptPath) const;
     void InvokeOpen(const std::wstring& scriptPath);
-    std::string GetStorage(const std::wstring& scriptPath, const char* key) const;
-    void SetStorage(const std::wstring& scriptPath, const char* key, const std::string& value);
+    std::string InvokeGetEditText(const std::wstring& scriptPath) const;
+    void InvokeEditCommit(const std::wstring& scriptPath, const std::string& text) const;
     bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
 
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }

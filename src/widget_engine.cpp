@@ -450,32 +450,51 @@ void WidgetEngine::InvokeOpen(const std::wstring& scriptPath)
     }
 }
 
-std::string WidgetEngine::GetStorage(const std::wstring& scriptPath, const char* key) const
+std::string WidgetEngine::InvokeGetEditText(const std::wstring& scriptPath) const
 {
-    std::wstring name = scriptPath;
-    auto slash = name.find_last_of(L"\\/");
-    if (slash != std::wstring::npos) name = name.substr(slash + 1);
-    if (name.size() > 4 && name.substr(name.size() - 4) == L".lua")
-        name = name.substr(0, name.size() - 4);
-    int len = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), nullptr, 0, nullptr, nullptr);
-    std::string prefix(len, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), &prefix[0], len, nullptr, nullptr);
-    auto it = g_storage.find(prefix + "." + key);
-    return it != g_storage.end() ? it->second : "";
+    for (const auto& w : widgets_)
+    {
+        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
+        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) != 0) continue;
+
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return ""; }
+        lua_getfield(L_, -1, "getEditText");
+        if (lua_isfunction(L_, -1))
+        {
+            lua_pcall(L_, 0, 1, 0);
+            const char* result = lua_tostring(L_, -1);
+            std::string r = result ? result : "";
+            lua_pop(L_, 2);
+            return r;
+        }
+        lua_pop(L_, 2);
+    }
+    return "";
 }
 
-void WidgetEngine::SetStorage(const std::wstring& scriptPath, const char* key, const std::string& value)
+void WidgetEngine::InvokeEditCommit(const std::wstring& scriptPath, const std::string& text) const
 {
-    std::wstring name = scriptPath;
-    auto slash = name.find_last_of(L"\\/");
-    if (slash != std::wstring::npos) name = name.substr(slash + 1);
-    if (name.size() > 4 && name.substr(name.size() - 4) == L".lua")
-        name = name.substr(0, name.size() - 4);
-    int len = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), nullptr, 0, nullptr, nullptr);
-    std::string prefix(len, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), &prefix[0], len, nullptr, nullptr);
-    g_storage[prefix + "." + key] = value;
-    SaveStorageFile();
+    for (auto& w : widgets_)
+    {
+        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
+        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) != 0) continue;
+
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+        lua_getfield(L_, -1, "onEditCommit");
+        if (lua_isfunction(L_, -1))
+        {
+            lua_pushstring(L_, text.c_str());
+            lua_pcall(L_, 1, 0, 0);
+        }
+        else
+        {
+            lua_pop(L_, 1);
+        }
+        lua_pop(L_, 1);
+        return;
+    }
 }
 
 bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const

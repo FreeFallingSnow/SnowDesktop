@@ -8773,8 +8773,7 @@ private:
                 widgets_[renameIndex_].type == DesktopWidgetType::LuaScript &&
                 widgetEngine_ && !cancel && !newName.empty())
             {
-                std::string text = WideToUtf8(newName);
-                widgetEngine_->SetStorage(widgets_[renameIndex_].scriptPath, "text", text);
+                widgetEngine_->InvokeEditCommit(widgets_[renameIndex_].scriptPath, WideToUtf8(newName));
             }
             else if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
             {
@@ -12549,22 +12548,17 @@ private:
             widgets_[hit.widgetIndex].type == DesktopWidgetType::LuaScript &&
             widgetEngine_)
         {
-            // Read current text from storage
-            std::string text = widgetEngine_->GetStorage(widgets_[hit.widgetIndex].scriptPath, "text");
-            // Save to temp storage for rename edit to read
-            widgetEngine_->SetStorage(widgets_[hit.widgetIndex].scriptPath, "text", text);
-
+            std::string text = widgetEngine_->InvokeGetEditText(widgets_[hit.widgetIndex].scriptPath);
+            std::wstring wtext = Utf8ToWide(text);
             renameIndex_ = hit.widgetIndex;
             renamingWidget_ = true;
             RECT widgetBounds = widgets_[hit.widgetIndex].bounds;
             InflateRect(&widgetBounds, -6, -6);
             RECT screenRect = widgetBounds;
             MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
-            std::wstring wtext = Utf8ToWide(text);
             renameEdit_ = CreateWindowExW(
                 WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                L"EDIT",
-                wtext.c_str(),
+                L"EDIT", wtext.c_str(),
                 WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_LEFT | ES_AUTOVSCROLL | ES_WANTRETURN,
                 screenRect.left, screenRect.top + 24,
                 screenRect.right - screenRect.left, screenRect.bottom - screenRect.top - 24,
