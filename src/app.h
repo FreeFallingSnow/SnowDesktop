@@ -2743,24 +2743,31 @@ private:
             pagesToWrite.push_back(gridPages_.front().id);
         }
 
-        std::vector<std::wstring> validPages;
-        for (size_t i = 0; i < pagesToWrite.size(); ++i)
+        // Persist current live page dimensions before writing
+        for (const auto& page : gridPages_)
         {
-            if (FindExactGridPage(pagesToWrite[i]) != nullptr)
-            {
-                validPages.push_back(pagesToWrite[i]);
-            }
+            savedPageColumns_[page.id] = page.columns;
+            savedPageRows_[page.id] = page.rows;
         }
 
         file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_) << "\",\n  \"pages\": [\n";
-        for (size_t i = 0; i < validPages.size(); ++i)
+        for (size_t i = 0; i < pagesToWrite.size(); ++i)
         {
-            const GridPage* page = FindExactGridPage(validPages[i]);
-            file << "    { \"id\": \"" << JsonEscapeUtf8(validPages[i]) << "\", \"monitor\": \"";
+            const GridPage* page = FindExactGridPage(pagesToWrite[i]);
+            file << "    { \"id\": \"" << JsonEscapeUtf8(pagesToWrite[i]) << "\", \"monitor\": \"";
             file << JsonEscapeUtf8(page != nullptr ? page->monitorId : L"");
-            file << "\", \"columns\": " << (page != nullptr ? page->columns : 1) <<
-                ", \"rows\": " << (page != nullptr ? page->rows : 1) << " }";
-            file << (i + 1 == validPages.size() ? "\n" : ",\n");
+            int columns = page != nullptr ? page->columns : 0;
+            int rows = page != nullptr ? page->rows : 0;
+            if (page == nullptr)
+            {
+                auto colIt = savedPageColumns_.find(pagesToWrite[i]);
+                auto rowIt = savedPageRows_.find(pagesToWrite[i]);
+                if (colIt != savedPageColumns_.end()) columns = colIt->second;
+                if (rowIt != savedPageRows_.end()) rows = rowIt->second;
+            }
+            file << "\", \"columns\": " << std::max(2, columns) <<
+                ", \"rows\": " << std::max(2, rows) << " }";
+            file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
         }
         file << "  ],\n  \"items\": [\n";
         for (size_t i = 0; i < sortedItems.size(); ++i)
