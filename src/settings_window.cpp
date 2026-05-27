@@ -157,6 +157,12 @@ void SettingsWindow::Show()
     }
 }
 
+void SettingsWindow::ShowExitConfirm()
+{
+    showExitConfirm_ = true;
+    Show();
+}
+
 void SettingsWindow::Render()
 {
     if (hwnd_ == nullptr || !IsWindowVisible(hwnd_) || IsIconic(hwnd_)) return;
@@ -196,6 +202,35 @@ void SettingsWindow::Render()
     ImGui::EndChild();
 
     ImGui::End();
+
+    // Exit confirmation modal
+    if (showExitConfirm_)
+    {
+        ImGui::OpenPopup("退出确认");
+        if (ImGui::BeginPopupModal("退出确认", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("确定要退出 SnowDesktop 吗？");
+            ImGui::Text("退出后将恢复 Windows 原生桌面。");
+            ImGui::Spacing();
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+            bool okClicked = ImGui::Button("确定退出", ImVec2(120, 0));
+            ImGui::PopStyleColor();
+            if (okClicked)
+            {
+                showExitConfirm_ = false;
+                ImGui::CloseCurrentPopup();
+                if (exitCallback_) exitCallback_();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("取消", ImVec2(80, 0)))
+            {
+                showExitConfirm_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
 
     ImGui::Render();
     const float clearColor[4] = { 0.96f, 0.96f, 0.97f, 1.0f };
@@ -722,6 +757,7 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         return 0;
     }
     case WM_CLOSE:
+        g_settingsWindow->showExitConfirm_ = false;
         ShowWindow(hwnd, SW_HIDE);
         return 0;
     case WM_DESTROY:

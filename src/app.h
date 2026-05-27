@@ -473,6 +473,7 @@ public:
         else
         {
             settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
+            settingsWindow_->SetExitCallback([this]() { DoExit(); });
         }
 
         // Init Lua widget engine
@@ -1207,12 +1208,16 @@ private:
 
     void RequestExit()
     {
-        int result = MessageBoxW(
-            hwnd_,
-            L"确定要退出 SnowDesktop 吗？\n退出后将恢复 Windows 原生桌面。",
-            L"SnowDesktop",
-            MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2);
-        if (result != IDOK) return;
+        if (settingsWindow_)
+        {
+            settingsWindow_->ShowExitConfirm();
+            return;
+        }
+        DoExit();
+    }
+
+    void DoExit()
+    {
 
         DebugLogWindow(L"RequestExit hwnd", hwnd_);
         exitRequested_ = true;

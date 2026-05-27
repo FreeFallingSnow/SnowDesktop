@@ -35,6 +35,8 @@ public:
     void Render();
 
     void SetReloadCallback(std::function<void()> callback) { reloadCallback_ = std::move(callback); }
+    void SetExitCallback(std::function<void()> callback) { exitCallback_ = std::move(callback); }
+    void ShowExitConfirm();
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -70,8 +72,10 @@ private:
     int activePage_ = 0;
     char backupNameBuf_[128] = {};
     bool titleBarHovered_ = false;
+    bool showExitConfirm_ = false;
 
     std::function<void()> reloadCallback_;
+    std::function<void()> exitCallback_;
 };
 
 extern SettingsWindow* g_settingsWindow;
