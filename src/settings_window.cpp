@@ -212,6 +212,9 @@ void SettingsWindow::Render()
         personalizationDirty_ = false;
     }
 
+    if (invalidateCallback_)
+        invalidateCallback_();
+
     // Exit confirmation modal
     if (showExitConfirm_)
     {

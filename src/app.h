@@ -474,6 +474,9 @@ public:
         {
             settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
             settingsWindow_->SetExitCallback([this]() { DoExit(); });
+            settingsWindow_->SetInvalidateCallback([this]() {
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            });
         }
 
         // Init Lua widget engine
