@@ -182,23 +182,49 @@ bool WidgetEngine::LoadWidget(const std::wstring& path)
     std::string source = ReadFile(path);
     if (source.empty()) return false;
 
-    // Each widget runs in a sandbox: function environment with its own globals
-    std::string chunk = "local _M = {}\n" + source + "\nreturn _M";
-    if (luaL_dostring(L_, chunk.c_str()) != LUA_OK)
+    // Create a sandbox table: all globals in the script go here
+    lua_newtable(L_);                        // sandbox = {}
+    lua_newtable(L_);                        // sandbox_meta = {}
+    lua_getglobal(L_, "_G");                // sandbox_meta, _G
+    lua_setfield(L_, -2, "__index");         // sandbox_meta.__index = _G (read access to globals)
+    lua_pushvalue(L_, -2);                  // sandbox_meta, sandbox
+    lua_setfield(L_, -2, "__newindex");      // sandbox_meta.__newindex = sandbox (writes go to sandbox)
+    lua_setmetatable(L_, -2);               // setmetatable(sandbox, sandbox_meta)
+
+    // Load the chunk with sandbox as _ENV
+    if (luaL_loadstring(L_, source.c_str()) != LUA_OK)
     {
-        const char* err = lua_tostring(L_, -1);
-        lua_pop(L_, 1);
+        lua_pop(L_, 2);  // pop sandbox and error
         return false;
     }
 
-    // Stack: _M table
-    lua_getfield(L_, -1, "name");
-    const char* nameStr = lua_tostring(L_, -1);
-    std::string name = nameStr ? nameStr : "Unnamed";
-    lua_pop(L_, 1);  // pop name
+    // Set _ENV of the chunk to sandbox
+    lua_pushvalue(L_, -2);  // chunk, sandbox
+    if (lua_setupvalue(L_, -2, 1) == nullptr)
+    {
+        // Fallback: use setfenv-style
+        lua_pop(L_, 3);
+        return false;
+    }
 
-    // Store the table in registry for later
+    // Execute the chunk
+    if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+    {
+        lua_pop(L_, 2);  // pop sandbox and error
+        return false;
+    }
+
+    // sandbox now contains name, render, etc.
+    // Store sandbox in registry
     int ref = luaL_ref(L_, LUA_REGISTRYINDEX);
+
+    // Read widget name
+    std::string name = "Unnamed";
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
+    lua_getfield(L_, -1, "name");
+    if (lua_isstring(L_, -1))
+        name = lua_tostring(L_, -1);
+    lua_pop(L_, 2);  // pop name and table
 
     LuaWidget w;
     w.name = name;
@@ -251,6 +277,25 @@ void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceConte
         lua_pop(L_, 1);
     }
     lua_pop(L_, 1);
+}
+
+// ── Check if widget uses custom style ────────────────────────────
+bool WidgetEngine::HasCustomStyle(const std::wstring& scriptPath) const
+{
+    for (const auto& w : widgets_)
+    {
+        if (w.valid && w.filePath.size() >= scriptPath.size() &&
+            w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
+        {
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+            if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return false; }
+            lua_getfield(L_, -1, "useCustomStyle");
+            bool result = lua_toboolean(L_, -1);
+            lua_pop(L_, 2);
+            return result;
+        }
+    }
+    return false;
 }
 
 // ── List available widget scripts ────────────────────────────────

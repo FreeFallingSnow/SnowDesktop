@@ -9618,7 +9618,12 @@ private:
             selected ? 1.6f : 1.0f,
             selected ? dottedStrokeStyle_.Get() : nullptr);
 
-        // Draw gradient first (under content + buttons)
+        // Check if Lua widget opts out of personalization styling
+        bool luaCustomStyle = widget.type == DesktopWidgetType::LuaScript
+            && widgetEngine_ && widgetEngine_->HasCustomStyle(widget.scriptPath);
+
+        // Draw gradient first (under content + buttons), skip for custom-style Lua widgets
+        if (!luaCustomStyle)
         {
             RECT body = GetWidgetBodyRect(widget);
             RECT gradientRect = MakeRect(frame.left, std::max<LONG>(body.top, frame.bottom - 36), frame.right, frame.bottom);
