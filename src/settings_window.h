@@ -55,6 +55,9 @@ private:
     bool RestoreBackup(const std::wstring& filename);
     bool DeleteBackup(const std::wstring& filename);
 
+    bool IsAutoStartEnabled() const;
+    void SetAutoStart(bool enable) const;
+
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
     ComPtr<ID3D11Device> device_;

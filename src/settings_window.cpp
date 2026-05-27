@@ -189,8 +189,8 @@ void SettingsWindow::Render()
     ImGui::BeginChild("##Content", ImVec2(0, 0), ImGuiChildFlags_None);
     switch (activePage_)
     {
-    case 0: DrawBackupPage(); break;
-    case 1: DrawGeneralPage(); break;
+    case 0: DrawGeneralPage(); break;
+    case 1: DrawBackupPage(); break;
     case 2: DrawAboutPage(); break;
     }
     ImGui::EndChild();
@@ -293,8 +293,8 @@ void SettingsWindow::DrawSidebar()
         if (active) ImGui::PopStyleColor(2);
     };
 
-    SideButton(0, "布局备份");
-    SideButton(1, "通用");
+    SideButton(0, "通用");
+    SideButton(1, "布局备份");
     SideButton(2, "关于");
 
     ImGui::PopStyleColor(4);
@@ -406,10 +406,24 @@ void SettingsWindow::DrawBackupPage()
 
 void SettingsWindow::DrawGeneralPage()
 {
+    const float pad = 16.0f * dpiScale_;
+    ImGui::SetCursorPos(ImVec2(pad, pad));
+    ImGui::BeginChild("##GeneralPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+
     ImGui::Text("通用设置");
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::TextDisabled("更多设置即将推出...");
+
+    // Auto-start
+    bool autoStart = IsAutoStartEnabled();
+    if (ImGui::Checkbox("开机自启", &autoStart))
+    {
+        SetAutoStart(autoStart);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(随 Windows 启动 SnowDesktop)");
+
+    ImGui::EndChild();
 }
 
 void SettingsWindow::DrawAboutPage()
@@ -628,6 +642,47 @@ void SettingsWindow::SetupFonts()
         io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f * dpiScale_, nullptr,
             io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
     }
+}
+
+// ── Auto Start ───────────────────────────────────────────────────
+bool SettingsWindow::IsAutoStartEnabled() const
+{
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        0, KEY_READ, &key) != ERROR_SUCCESS)
+        return false;
+
+    wchar_t value[256]{};
+    DWORD size = sizeof(value);
+    DWORD type = REG_SZ;
+    LONG result = RegQueryValueExW(key, L"SnowDesktop", nullptr, &type,
+        reinterpret_cast<BYTE*>(value), &size);
+    RegCloseKey(key);
+    return result == ERROR_SUCCESS;
+}
+
+void SettingsWindow::SetAutoStart(bool enable) const
+{
+    HKEY key;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+        return;
+
+    if (enable)
+    {
+        wchar_t path[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path)));
+        RegSetValueExW(key, L"SnowDesktop", 0, REG_SZ,
+            reinterpret_cast<const BYTE*>(path),
+            static_cast<DWORD>((wcslen(path) + 1) * sizeof(wchar_t)));
+    }
+    else
+    {
+        RegDeleteValueW(key, L"SnowDesktop");
+    }
+    RegCloseKey(key);
 }
 
 // ── WndProc ──────────────────────────────────────────────────────
