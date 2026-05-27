@@ -24,6 +24,7 @@ struct LuaWidget
     std::wstring filePath;
     int ref = LUA_NOREF;
     bool valid = false;
+    bool customStyle = false;
 };
 
 class WidgetEngine
