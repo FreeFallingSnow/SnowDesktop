@@ -5,20 +5,20 @@
 
 struct PersonalizationSettings
 {
-    // Widget background
+    // Widget background RGB
     float widgetBgR = 0.08f;
     float widgetBgG = 0.10f;
     float widgetBgB = 0.13f;
-    float widgetBgA = 0.36f;
 
-    // Widget border
+    // Widget border RGB
     float widgetBorderR = 1.0f;
     float widgetBorderG = 1.0f;
     float widgetBorderB = 1.0f;
-    float widgetBorderA = 0.40f;
 
-    // Gradient bottom
-    float gradientStartA = 0.05f;
+    // Unified alpha: background fill, border, gradient start
+    float widgetAlpha = 0.36f;
+
+    // Gradient bottom end alpha
     float gradientEndA = 0.65f;
 
     static PersonalizationSettings DarkPreset();

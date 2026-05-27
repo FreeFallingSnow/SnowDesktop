@@ -490,7 +490,7 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::Button("浅色预设")) { personalization_ = PersonalizationSettings::LightPreset(); personalizationDirty_ = true; }
     ImGui::Spacing();
 
-    // Background color + transparency
+    // Background color
     ImGui::Text("组件背景");
     float bgColor[3] = { personalization_.widgetBgR, personalization_.widgetBgG, personalization_.widgetBgB };
     if (ImGui::ColorEdit3("##WidgetBgColor", bgColor, ImGuiColorEditFlags_NoInputs))
@@ -499,12 +499,10 @@ void SettingsWindow::DrawPersonalizationPage()
         personalization_.widgetBgB = bgColor[2];
         personalizationDirty_ = true;
     }
-    if (ImGui::SliderFloat("背景不透明度", &personalization_.widgetBgA, 0.0f, 1.0f))
-        personalizationDirty_ = true;
 
     ImGui::Spacing();
 
-    // Border color + transparency
+    // Border color
     ImGui::Text("组件边框");
     float borderColor[3] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB };
     if (ImGui::ColorEdit3("##WidgetBorderColor", borderColor, ImGuiColorEditFlags_NoInputs))
@@ -513,14 +511,16 @@ void SettingsWindow::DrawPersonalizationPage()
         personalization_.widgetBorderB = borderColor[2];
         personalizationDirty_ = true;
     }
-    if (ImGui::SliderFloat("边框不透明度", &personalization_.widgetBorderA, 0.0f, 1.0f))
+
+    ImGui::Spacing();
+
+    // Unified transparency
+    if (ImGui::SliderFloat("整体不透明度", &personalization_.widgetAlpha, 0.0f, 1.0f))
         personalizationDirty_ = true;
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Text("底部渐变");
-    if (ImGui::SliderFloat("渐变起始透明度", &personalization_.gradientStartA, 0.0f, 1.0f))
-        personalizationDirty_ = true;
     if (ImGui::SliderFloat("渐变结束透明度", &personalization_.gradientEndA, 0.0f, 1.0f))
         personalizationDirty_ = true;
 
@@ -824,6 +824,11 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     }
     case WM_CLOSE:
         g_settingsWindow->showExitConfirm_ = false;
+        if (g_settingsWindow->personalizationDirty_)
+        {
+            SavePersonalization(GetPersonalizationPath().c_str(), g_settingsWindow->personalization_);
+            g_settingsWindow->personalizationDirty_ = false;
+        }
         ShowWindow(hwnd, SW_HIDE);
         return 0;
     case WM_DESTROY:

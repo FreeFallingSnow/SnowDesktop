@@ -39,18 +39,18 @@ static bool ReadDoubleField(const std::string& text, const char* field, double& 
 PersonalizationSettings PersonalizationSettings::DarkPreset()
 {
     PersonalizationSettings s;
-    s.widgetBgR = 0.08f; s.widgetBgG = 0.10f; s.widgetBgB = 0.13f; s.widgetBgA = 0.36f;
-    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f; s.widgetBorderA = 0.40f;
-    s.gradientStartA = 0.05f; s.gradientEndA = 0.65f;
+    s.widgetBgR = 0.08f; s.widgetBgG = 0.10f; s.widgetBgB = 0.13f;
+    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
+    s.widgetAlpha = 0.36f; s.gradientEndA = 0.65f;
     return s;
 }
 
 PersonalizationSettings PersonalizationSettings::LightPreset()
 {
     PersonalizationSettings s;
-    s.widgetBgR = 0.95f; s.widgetBgG = 0.96f; s.widgetBgB = 0.97f; s.widgetBgA = 0.60f;
-    s.widgetBorderR = 0.5f; s.widgetBorderG = 0.5f; s.widgetBorderB = 0.55f; s.widgetBorderA = 0.30f;
-    s.gradientStartA = 0.00f; s.gradientEndA = 0.50f;
+    s.widgetBgR = 0.95f; s.widgetBgG = 0.96f; s.widgetBgB = 0.97f;
+    s.widgetBorderR = 0.5f; s.widgetBorderG = 0.5f; s.widgetBorderB = 0.55f;
+    s.widgetAlpha = 0.60f; s.gradientEndA = 0.50f;
     return s;
 }
 
@@ -76,12 +76,10 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     if (ReadDoubleField(text, "widgetBgR", v)) s.widgetBgR = (float)v;
     if (ReadDoubleField(text, "widgetBgG", v)) s.widgetBgG = (float)v;
     if (ReadDoubleField(text, "widgetBgB", v)) s.widgetBgB = (float)v;
-    if (ReadDoubleField(text, "widgetBgA", v)) s.widgetBgA = (float)v;
     if (ReadDoubleField(text, "widgetBorderR", v)) s.widgetBorderR = (float)v;
     if (ReadDoubleField(text, "widgetBorderG", v)) s.widgetBorderG = (float)v;
     if (ReadDoubleField(text, "widgetBorderB", v)) s.widgetBorderB = (float)v;
-    if (ReadDoubleField(text, "widgetBorderA", v)) s.widgetBorderA = (float)v;
-    if (ReadDoubleField(text, "gradientStartA", v)) s.gradientStartA = (float)v;
+    if (ReadDoubleField(text, "widgetAlpha", v)) s.widgetAlpha = (float)v;
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
     return true;
 }
@@ -94,12 +92,10 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"widgetBgR\": " << s.widgetBgR << ",\n";
     file << "  \"widgetBgG\": " << s.widgetBgG << ",\n";
     file << "  \"widgetBgB\": " << s.widgetBgB << ",\n";
-    file << "  \"widgetBgA\": " << s.widgetBgA << ",\n";
     file << "  \"widgetBorderR\": " << s.widgetBorderR << ",\n";
     file << "  \"widgetBorderG\": " << s.widgetBorderG << ",\n";
     file << "  \"widgetBorderB\": " << s.widgetBorderB << ",\n";
-    file << "  \"widgetBorderA\": " << s.widgetBorderA << ",\n";
-    file << "  \"gradientStartA\": " << s.gradientStartA << ",\n";
+    file << "  \"widgetAlpha\": " << s.widgetAlpha << ",\n";
     file << "  \"gradientEndA\": " << s.gradientEndA << "\n";
     file << "}\n";
     return true;
