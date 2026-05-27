@@ -2692,8 +2692,12 @@ private:
             widget.gridSpan.rows = std::max(1, h);
             widget.autoCollect = autoCollect;
             widget.listMode = listMode;
-            widget.showTitle = false;
-            widget.bottomBarHover = true;
+
+            // Type-based defaults for new fields
+            widget.showTitle = (widget.type == DesktopWidgetType::FileCategories ||
+                               widget.type == DesktopWidgetType::FolderMapping ||
+                               widget.type == DesktopWidgetType::Collection);
+            widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection);
             ReadJsonBoolField(objectText, "showTitle", widget.showTitle);
             ReadJsonBoolField(objectText, "bottomBarHover", widget.bottomBarHover);
             widget.scrollOffset = std::max(0, scrollOffset);
