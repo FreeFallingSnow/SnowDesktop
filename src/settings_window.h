@@ -53,7 +53,10 @@ private:
     void DrawBackupPage();
     void DrawGeneralPage();
     void DrawPersonalizationPage();
+    void DrawWidgetEditorPage();
     void DrawAboutPage();
+
+    void SetWidgetEngine(class WidgetEngine* engine) { widgetEngine_ = engine; }
 
     // Backup helpers
     std::wstring GetBackupDir() const;
@@ -82,6 +85,7 @@ private:
     std::function<void()> reloadCallback_;
     std::function<void()> exitCallback_;
     std::function<void()> invalidateCallback_;
+    class WidgetEngine* widgetEngine_ = nullptr;
     PersonalizationSettings personalization_;
     bool personalizationDirty_ = false;
 };
