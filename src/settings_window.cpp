@@ -174,9 +174,11 @@ bool SettingsWindow::CreateSwapChain()
     hr = device_->CreateRenderTargetView(backBuffer.Get(), nullptr, &rtv_);
     if (FAILED(hr)) return false;
 
-    // Notify ImGui of the new display size
-    ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(windowWidth_), static_cast<float>(windowHeight_));
+    if (ImGui::GetCurrentContext() != nullptr)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(static_cast<float>(windowWidth_), static_cast<float>(windowHeight_));
+    }
 
     return true;
 }
@@ -185,11 +187,6 @@ void SettingsWindow::CleanupSwapChain()
 {
     rtv_.Reset();
     swapChain_.Reset();
-    if (context_ != nullptr)
-    {
-        context_->Flush();
-        context_.Reset();
-    }
 }
 
 void SettingsWindow::SetupFonts()
