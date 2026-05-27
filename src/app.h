@@ -9610,18 +9610,20 @@ private:
             borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetAlpha);
         }
 
-        DrawD2DRoundedRectangle(
-            context,
-            frame,
-            12.0f,
-            fillColor,
-            selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f) : borderColor,
-            selected ? 1.6f : 1.0f,
-            selected ? dottedStrokeStyle_.Get() : nullptr);
-
-        // Check if Lua widget opts out of personalization styling
         bool luaCustomStyle = widget.type == DesktopWidgetType::LuaScript
             && widgetEngine_ && widgetEngine_->HasCustomStyle(widget.scriptPath);
+
+        if (!luaCustomStyle)
+        {
+            DrawD2DRoundedRectangle(
+                context,
+                frame,
+                12.0f,
+                fillColor,
+                selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f) : borderColor,
+                selected ? 1.6f : 1.0f,
+                selected ? dottedStrokeStyle_.Get() : nullptr);
+        }
 
         // Draw gradient first (under content + buttons), skip for custom-style Lua widgets
         if (!luaCustomStyle)
