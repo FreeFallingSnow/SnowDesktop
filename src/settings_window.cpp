@@ -28,7 +28,7 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     RegisterClassExW(&wc);
 
     hwnd_ = CreateWindowExW(
-        WS_EX_TOOLWINDOW,
+        0,
         wc.lpszClassName,
         L"SnowDesktop 设置",
         WS_OVERLAPPEDWINDOW,
