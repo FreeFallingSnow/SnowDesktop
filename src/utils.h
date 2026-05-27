@@ -3,6 +3,8 @@
 
 #include <wrl/client.h>
 #include <shlobj.h>
+#include <d2d1_1.h>
+#include <dwrite.h>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -13,6 +15,8 @@ BOOL CALLBACK FindDefViewProc(HWND hwnd, LPARAM lParam);
 BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lParam);
 
 HICON LoadAppIcon();
+HANDLE LoadFontAwesome();
+IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize = 14.0f);
 DesktopWindows FindDesktopWindows();
 void RestoreExplorerIconLayerNow();
 

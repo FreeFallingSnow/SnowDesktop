@@ -1,4 +1,5 @@
 #pragma once
+#include "resource.h"
 #include "utils.h"
 
 #include <windowsx.h>
@@ -679,6 +680,32 @@ private:
         statusTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
         statusTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         statusTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+        // Font Awesome initialization
+        faFontHandle_ = LoadFontAwesome();
+        if (faFontHandle_ != nullptr)
+        {
+            faTextFormat_ = ComPtr<IDWriteTextFormat>(
+                CreateFaTextFormat(dwriteFactory_.Get(), 14.0f));
+
+            HDC screenDc = GetDC(nullptr);
+            int menuFontHeight = -MulDiv(
+                GetSystemMetrics(SM_CXMENUCHECK) * 3 / 8,
+                GetDeviceCaps(screenDc, LOGPIXELSY),
+                72);
+            ReleaseDC(nullptr, screenDc);
+            faMenuFont_ = CreateFontW(
+                menuFontHeight,
+                0, 0, 0,
+                FW_NORMAL,
+                FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE,
+                L"Font Awesome 6 Free Solid");
+        }
 
         D2D1_STROKE_STYLE_PROPERTIES dottedProps{};
         dottedProps.startCap = D2D1_CAP_STYLE_FLAT;
@@ -1536,7 +1563,13 @@ private:
 
         if (trayIcon_ == nullptr)
         {
-            trayIcon_ = LoadAppIcon();
+            trayIcon_ = static_cast<HICON>(LoadImageW(
+                GetModuleHandleW(nullptr),
+                MAKEINTRESOURCEW(IDI_APPICON_SMALL),
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXSMICON),
+                GetSystemMetrics(SM_CYSMICON),
+                LR_DEFAULTSIZE));
         }
 
         NOTIFYICONDATAW data{};
@@ -1673,37 +1706,71 @@ private:
         ReloadItems();
     }
 
-    HBITMAP CreateMenuIconBitmap(COLORREF color, wchar_t glyph)
+    HBITMAP CreateMenuIconBitmap(const wchar_t* text)
     {
         const int cx = GetSystemMetrics(SM_CXMENUCHECK);
         const int cy = GetSystemMetrics(SM_CYMENUCHECK);
         if (cx <= 0 || cy <= 0) return nullptr;
 
         HDC screenDc = GetDC(nullptr);
+
+        BITMAPINFO bmi{};
+        bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+        bmi.bmiHeader.biWidth = cx;
+        bmi.bmiHeader.biHeight = -cy;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        void* bits = nullptr;
+        HBITMAP bmp = CreateDIBSection(screenDc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (bmp == nullptr)
+        {
+            ReleaseDC(nullptr, screenDc);
+            return nullptr;
+        }
+
+        // Fill transparent
+        std::fill_n(static_cast<std::uint32_t*>(bits), cx * cy, 0u);
+
         HDC memDc = CreateCompatibleDC(screenDc);
-        HBITMAP bmp = CreateCompatibleBitmap(screenDc, cx, cy);
         HGDIOBJ oldBmp = SelectObject(memDc, bmp);
-        HGDIOBJ oldFont = SelectObject(memDc, GetStockObject(DEFAULT_GUI_FONT));
+        HGDIOBJ defaultFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HGDIOBJ oldFont = SelectObject(memDc, faMenuFont_ != nullptr ? faMenuFont_ : defaultFont);
 
-        HBRUSH fill = CreateSolidBrush(color);
-        RECT rc = {0, 0, cx, cy};
-        FillRect(memDc, &rc, fill);
-        DeleteObject(fill);
-
+        const int pad = std::max(1, cx / 10);
+        RECT rc = {pad, pad, cx - pad, cy - pad};
         SetBkMode(memDc, TRANSPARENT);
+        // Draw in white first, then convert to black with alpha
         SetTextColor(memDc, RGB(255, 255, 255));
-        DrawTextW(memDc, &glyph, 1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(memDc, text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
         SelectObject(memDc, oldFont);
         SelectObject(memDc, oldBmp);
         DeleteDC(memDc);
         ReleaseDC(nullptr, screenDc);
+
+        // Convert white pixels to opaque black
+        auto* pixels = static_cast<std::uint32_t*>(bits);
+        const size_t count = static_cast<size_t>(cx) * static_cast<size_t>(cy);
+        for (size_t i = 0; i < count; ++i)
+        {
+            std::uint32_t p = pixels[i];
+            if ((p & 0x00FFFFFF) != 0)
+            {
+                // Use the luminance from the white glyph as alpha
+                std::uint8_t lum = static_cast<std::uint8_t>(
+                    std::max({(p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF}));
+                pixels[i] = (static_cast<std::uint32_t>(lum) << 24);
+            }
+        }
+
         return bmp;
     }
 
-    void SetMenuItemIcon(HMENU menu, UINT command, COLORREF color, wchar_t glyph)
+    void SetMenuItemIcon(HMENU menu, UINT_PTR command, const wchar_t* text)
     {
-        HBITMAP icon = CreateMenuIconBitmap(color, glyph);
+        HBITMAP icon = CreateMenuIconBitmap(text);
         if (icon == nullptr) return;
 
         MENUITEMINFOW mii = { sizeof(mii) };
@@ -1765,6 +1832,9 @@ private:
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
+        menuIconPool_.clear();
+        SetMenuItemIcon(menu, kTrayExitCommand, L"");
+
         SetForegroundWindow(owner);
         DebugLogWindow(L"ShowTrayMenu after SetForegroundWindow owner", owner);
         UINT command = TrackPopupMenuEx(
@@ -1816,6 +1886,8 @@ private:
             DestroyMenu(iconSettingsMenu);
         }
         DestroyMenu(menu);
+        for (HBITMAP bmp : menuIconPool_) { DeleteObject(bmp); }
+        menuIconPool_.clear();
         RestoreDesktopWindowLayer();
         DebugLogWindow(L"ShowTrayMenu end", hwnd_);
     }
@@ -7259,6 +7331,14 @@ private:
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
 
+        menuIconPool_.clear();
+        SetMenuItemIcon(menu, kContextOpenCommand, L"");
+        SetMenuItemIcon(menu, kContextRenameCommand, L"");
+        SetMenuItemIcon(menu, kContextCutCommand, L"");
+        SetMenuItemIcon(menu, kContextCopyCommand, L"");
+        SetMenuItemIcon(menu, kContextDeleteCommand, L"");
+        SetMenuItemIcon(menu, kContextMoreCommand, L"");
+
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
             menu,
@@ -7268,6 +7348,8 @@ private:
             hwnd_,
             nullptr);
         DestroyMenu(menu);
+        for (HBITMAP bmp : menuIconPool_) { DeleteObject(bmp); }
+        menuIconPool_.clear();
         RestoreDesktopWindowLayer();
 
         switch (command)
@@ -7354,6 +7436,17 @@ private:
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
 
+        menuIconPool_.clear();
+        SetMenuItemIcon(menu, kContextPasteCommand, L"");
+        SetMenuItemIcon(menu, kContextMoreCommand, L"");
+        SetMenuItemIcon(menu, kContextWidgetRename, L"");
+        SetMenuItemIcon(menu, kContextWidgetOpen, L"");
+        SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
+        SetMenuItemIcon(menu, kContextWidgetToggleAutoCollect, L"");
+        SetMenuItemIcon(menu, kContextWidgetToggleListMode, L"");
+        SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
+        SetMenuItemIcon(menu, kContextWidgetDelete, L"");
+
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
             menu,
@@ -7363,6 +7456,8 @@ private:
             hwnd_,
             nullptr);
         DestroyMenu(menu);
+        for (HBITMAP bmp : menuIconPool_) { DeleteObject(bmp); }
+        menuIconPool_.clear();
         RestoreDesktopWindowLayer();
         newMenuContextMenu_.Reset();
 
@@ -7602,18 +7697,38 @@ private:
         AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
 
         menuIconPool_.clear();
-        SetMenuItemIcon(menu, kContextRefreshCommand, RGB(60, 130, 220), L'R');
-        SetMenuItemIcon(menu, kContextPasteCommand, RGB(80, 160, 200), L'P');
-        SetMenuItemIcon(menu, kContextMoreCommand, RGB(120, 120, 200), L'>');
-        if (sortMenu) SetMenuItemIcon(sortMenu, kContextSortByNameCommand, RGB(100, 160, 100), L'N');
-        if (sortMenu) SetMenuItemIcon(sortMenu, kContextSortByTypeCommand, RGB(100, 160, 100), L'T');
-        if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridAddRow, RGB(180, 140, 60), L'+');
-        if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridRemoveRow, RGB(180, 140, 60), L'-');
-        if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridAddColumn, RGB(180, 140, 60), L'+');
-        if (gridMenu) SetMenuItemIcon(gridMenu, kContextGridRemoveColumn, RGB(180, 140, 60), L'-');
-        if (widgetMenu) SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget, RGB(90, 155, 220), L'C');
-        if (widgetMenu) SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, RGB(90, 170, 150), L'F');
-        if (widgetMenu) SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, RGB(200, 140, 60), L'M');
+        SetMenuItemIcon(menu, kContextNewMenu, L"");
+        SetMenuItemIcon(menu, kContextRefreshCommand, L"");
+        SetMenuItemIcon(menu, kContextPasteCommand, L"");
+        SetMenuItemIcon(menu, kContextMoreCommand, L"");
+        if (sortMenu)
+        {
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
+            SetMenuItemIcon(sortMenu, kContextSortByNameCommand, L"");
+            SetMenuItemIcon(sortMenu, kContextSortByTypeCommand, L"");
+        }
+        if (gridMenu)
+        {
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(gridMenu), L"");
+            SetMenuItemIcon(gridMenu, kContextGridAddRow, L"");
+            SetMenuItemIcon(gridMenu, kContextGridRemoveRow, L"");
+            SetMenuItemIcon(gridMenu, kContextGridAddColumn, L"");
+            SetMenuItemIcon(gridMenu, kContextGridRemoveColumn, L"");
+        }
+        if (widgetMenu)
+        {
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu), L"");
+            SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget, L"");
+            SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, L"");
+            SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, L"");
+        }
+        if (zoomMenu)
+        {
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(zoomMenu), L"");
+            SetMenuItemIcon(zoomMenu, kContextZoomIncrease, L"");
+            SetMenuItemIcon(zoomMenu, kContextZoomDecrease, L"");
+        }
+        SetMenuItemIcon(menu, kContextThisDisplayFirstCommand, L"");
 
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
@@ -8870,7 +8985,17 @@ private:
             context->DrawRoundedRectangle(roundedRect, strokeBrush.Get(), 1.0f);
         }
 
-        if (!itemTextFormat_)
+        IDWriteTextFormat* textFormat = nullptr;
+        if (faTextFormat_ && !label.empty() && label[0] >= 0xF000)
+        {
+            textFormat = faTextFormat_.Get();
+        }
+        else if (itemTextFormat_)
+        {
+            textFormat = itemTextFormat_.Get();
+        }
+
+        if (!textFormat)
         {
             return;
         }
@@ -8886,7 +9011,7 @@ private:
         context->DrawTextW(
             label.c_str(),
             static_cast<UINT32>(label.size()),
-            itemTextFormat_.Get(),
+            textFormat,
             &textRect,
             textBrush.Get(),
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -9116,8 +9241,8 @@ private:
                 context, fcToggle, 4.0f,
                 toggleHovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f));
-            DrawD2DText(context, widget.listMode ? L"▦" : L"≡", fcToggle,
-                collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
+            DrawD2DText(context, widget.listMode ? L"" : L"", fcToggle,
+                (faTextFormat_ ? faTextFormat_.Get() : collectionItemTextFormat_.Get()), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
         }
 
         std::vector<std::wstring> keys = GetFileCategoryKeys(widget, activeCategory);
@@ -9175,8 +9300,8 @@ private:
                 context, toggleRect, 4.0f,
                 hovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f));
-            DrawD2DText(context, widget.listMode ? L"▦" : L"≡", toggleRect,
-                collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
+            DrawD2DText(context, widget.listMode ? L"" : L"", toggleRect,
+                (faTextFormat_ ? faTextFormat_.Get() : collectionItemTextFormat_.Get()), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
         }
 
         RECT openRect = GetFolderMappingOpenRect(widget);
@@ -9187,8 +9312,8 @@ private:
                 context, openRect, 4.0f,
                 hovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f));
-            DrawD2DText(context, L"\U0001F4C2", openRect,
-                collectionItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
+            DrawD2DText(context, L"", openRect,
+                (faTextFormat_ ? faTextFormat_.Get() : collectionItemTextFormat_.Get()), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
         }
 
         size_t entryCount = widget.folderEntries.size();
@@ -9900,14 +10025,14 @@ private:
         {
             RECT prevRect = MakeRect(btnX, panelTop + kPanelPaddingY,
                 btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
-            DrawD2DButton(context, prevRect, L"上一页", true);
+            DrawD2DButton(context, prevRect, L"", true);
             btnX += kButtonWidth + kGap;
         }
         if (hasNext)
         {
             RECT nextRect = MakeRect(btnX, panelTop + kPanelPaddingY,
                 btnX + kButtonWidth, panelTop + kPanelPaddingY + kButtonHeight);
-            DrawD2DButton(context, nextRect, L"下一页", true);
+            DrawD2DButton(context, nextRect, L"", true);
         }
     }
 
@@ -9938,8 +10063,8 @@ private:
             return;
         }
 
-        DrawD2DButton(context, previousRect, L"上一页", pageOffset_ > 0);
-        DrawD2DButton(context, nextRect, L"下一页", pageOffset_ < MaxPageOffset());
+        DrawD2DButton(context, previousRect, L"", pageOffset_ > 0);
+        DrawD2DButton(context, nextRect, L"", pageOffset_ < MaxPageOffset());
     }
 
     int HitTestNavButton(POINT point) const
@@ -11025,6 +11150,16 @@ private:
                 DebugLog(L"WM_DESTROY exitRequested=true no relaunch");
                 KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
                 RemoveTrayIcon();
+                if (faFontHandle_ != nullptr)
+                {
+                    RemoveFontMemResourceEx(faFontHandle_);
+                    faFontHandle_ = nullptr;
+                }
+                if (faMenuFont_ != nullptr)
+                {
+                    DeleteObject(faMenuFont_);
+                    faMenuFont_ = nullptr;
+                }
                 RestoreExplorerIcons();
                 if (controlHwnd_ != nullptr && IsWindow(controlHwnd_))
                 {
@@ -12504,6 +12639,9 @@ private:
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
     ComPtr<IDWriteTextFormat> statusTextFormat_;
     ComPtr<ID2D1StrokeStyle> dottedStrokeStyle_;
+    HANDLE faFontHandle_ = nullptr;
+    HFONT faMenuFont_ = nullptr;
+    ComPtr<IDWriteTextFormat> faTextFormat_;
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
     ComPtr<IShellFolder> desktopFolder_;
     Pidl desktopPidl_;
