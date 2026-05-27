@@ -216,7 +216,10 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     {
     case WM_SIZE:
         if (g_settingsWindow != nullptr && wParam != SIZE_MINIMIZED)
+        {
             g_settingsWindow->CreateSwapChain();
+            g_settingsWindow->Render();
+        }
         return 0;
 
     case WM_DPICHANGED:
