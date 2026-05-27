@@ -7779,7 +7779,7 @@ private:
             // Rebuild itemKeys: keep non-active-category keys, append sorted active keys
             std::wstring activeId = GetActiveFileCategoryId(w);
             std::vector<std::wstring> nonActive;
-            std::unordered_set<std::wstring> seen;
+            std::unordered_set<std::wstring> seenNonActive;
             for (const auto& rawKey : w.itemKeys)
             {
                 size_t idx = FindItemIndexByKey(rawKey);
@@ -7787,14 +7787,15 @@ private:
                 if (GetFileCategoryId(items_[idx]) != activeId)
                 {
                     std::wstring nk = NormalizeLayoutKey(items_[idx].layoutKey);
-                    if (seen.insert(nk).second)
+                    if (seenNonActive.insert(nk).second)
                         nonActive.push_back(nk);
                 }
             }
             w.itemKeys = nonActive;
+            std::unordered_set<std::wstring> seenActive;
             for (const auto& k : keys)
             {
-                if (seen.insert(k).second)
+                if (seenActive.insert(k).second)
                     w.itemKeys.push_back(k);
             }
             LayoutItems();
