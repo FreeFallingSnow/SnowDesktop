@@ -488,9 +488,11 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::Separator();
     ImGui::Spacing();
 
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
     if (ImGui::Button("深色预设")) { personalization_ = PersonalizationSettings::DarkPreset(); personalizationDirty_ = true; }
     ImGui::SameLine();
     if (ImGui::Button("浅色预设")) { personalization_ = PersonalizationSettings::LightPreset(); personalizationDirty_ = true; }
+    ImGui::PopStyleColor();
     ImGui::Spacing();
 
     // Background color

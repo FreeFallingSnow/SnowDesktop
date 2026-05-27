@@ -50,7 +50,7 @@ PersonalizationSettings PersonalizationSettings::LightPreset()
     PersonalizationSettings s;
     s.widgetBgR = 0.95f; s.widgetBgG = 0.96f; s.widgetBgB = 0.97f;
     s.widgetBorderR = 0.5f; s.widgetBorderG = 0.5f; s.widgetBorderB = 0.55f;
-    s.widgetAlpha = 0.60f; s.gradientEndA = 0.50f;
+    s.widgetAlpha = 0.15f; s.gradientEndA = 0.15f;
     return s;
 }
 
