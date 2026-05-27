@@ -3,6 +3,7 @@
 #include <shlwapi.h>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 static std::string ReadFile(const std::wstring& path)
 {
@@ -13,12 +14,63 @@ static std::string ReadFile(const std::wstring& path)
     return ss.str();
 }
 
+// ── Storage (shared localStorage for Lua widgets) ────────────────
+static std::unordered_map<std::string, std::string> g_storage;
+static std::wstring g_storagePath;
+
+static void LoadStorageFile()
+{
+    g_storage.clear();
+    if (g_storagePath.empty()) return;
+    std::ifstream file(g_storagePath, std::ios::binary);
+    if (!file) return;
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    std::string text = ss.str();
+    size_t pos = text.find('{');
+    if (pos == std::string::npos) return;
+    while (true)
+    {
+        pos = text.find('"', pos);
+        if (pos == std::string::npos) break;
+        size_t keyEnd = text.find('"', pos + 1);
+        if (keyEnd == std::string::npos) break;
+        std::string key = text.substr(pos + 1, keyEnd - pos - 1);
+        pos = text.find(':', keyEnd + 1);
+        if (pos == std::string::npos) break;
+        pos = text.find('"', pos + 1);
+        if (pos == std::string::npos) break;
+        size_t valEnd = text.find('"', pos + 1);
+        if (valEnd == std::string::npos) break;
+        g_storage[key] = text.substr(pos + 1, valEnd - pos - 1);
+        pos = valEnd + 1;
+    }
+}
+
+static void SaveStorageFile()
+{
+    if (g_storagePath.empty()) return;
+    std::ofstream file(g_storagePath, std::ios::binary | std::ios::trunc);
+    if (!file) return;
+    file << "{";
+    bool first = true;
+    for (const auto& kv : g_storage)
+    {
+        if (!first) file << ",";
+        file << "\n  \"" << kv.first << "\": \"" << kv.second << "\"";
+        first = false;
+    }
+    if (!g_storage.empty()) file << "\n";
+    file << "}\n";
+}
+
 // ── Drawing API ──────────────────────────────────────────────────
 struct D2DState
 {
     ID2D1DeviceContext* ctx = nullptr;
     IDWriteFactory* dwrite = nullptr;
     D2D1_RECT_F widgetRect{};
+    std::string storagePrefix;
 };
 
 static D2DState* GetD2D(lua_State* L)
@@ -136,6 +188,14 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     d2dState_->dwrite = dwriteFactory_.Get();
     lua_pushlightuserdata(L_, d2dState_);
     lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
+
+    // Init storage path
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    PathRemoveFileSpecW(exePath);
+    PathAppendW(exePath, L"SnowDesktop.storage.json");
+    g_storagePath = exePath;
+    LoadStorageFile();
 
     ReloadAll();
     return true;
@@ -285,6 +345,18 @@ void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceConte
         static_cast<float>(bounds.left), static_cast<float>(bounds.top),
         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
 
+    // Set storage prefix from script path
+    {
+        std::wstring name = scriptPath;
+        auto slash = name.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) name = name.substr(slash + 1);
+        if (name.size() > 4 && name.substr(name.size() - 4) == L".lua")
+            name = name.substr(0, name.size() - 4);
+        int len = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), nullptr, 0, nullptr, nullptr);
+        d2dState_->storagePrefix.resize(len);
+        WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), &d2dState_->storagePrefix[0], len, nullptr, nullptr);
+    }
+
     lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
     if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
 
@@ -383,7 +455,6 @@ std::vector<std::wstring> WidgetEngine::ListAvailable()
     return result;
 }
 
-// ── Layout API ────────────────────────────────────────────────────
 static int lua_DrawLine(lua_State* L)
 {
     float x1 = (float)luaL_checknumber(L, 1);
@@ -437,6 +508,41 @@ static int lua_DrawCircle(lua_State* L)
     return 0;
 }
 
+static int lua_StorageGet(lua_State* L)
+{
+    const char* key = luaL_checkstring(L, 1);
+    auto* s = GetD2D(L);
+    if (!s) { lua_pushnil(L); return 1; }
+    std::string fullKey = s->storagePrefix + "." + key;
+    auto it = g_storage.find(fullKey);
+    if (it != g_storage.end())
+        lua_pushstring(L, it->second.c_str());
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
+static int lua_StorageSet(lua_State* L)
+{
+    const char* key = luaL_checkstring(L, 1);
+    const char* value = luaL_checkstring(L, 2);
+    auto* s = GetD2D(L);
+    if (!s) return 0;
+    g_storage[s->storagePrefix + "." + key] = value;
+    SaveStorageFile();
+    return 0;
+}
+
+static int lua_StorageRemove(lua_State* L)
+{
+    const char* key = luaL_checkstring(L, 1);
+    auto* s = GetD2D(L);
+    if (!s) return 0;
+    g_storage.erase(s->storagePrefix + "." + key);
+    SaveStorageFile();
+    return 0;
+}
+
 static int lua_LayoutWidth(lua_State* L)
 {
     auto* s = GetD2D(L);
@@ -468,4 +574,10 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_LayoutWidth);  lua_setfield(L, -2, "width");
     lua_pushcfunction(L, lua_LayoutHeight); lua_setfield(L, -2, "height");
     lua_setglobal(L, "layout");
+
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_StorageGet);   lua_setfield(L, -2, "get");
+    lua_pushcfunction(L, lua_StorageSet);   lua_setfield(L, -2, "set");
+    lua_pushcfunction(L, lua_StorageRemove);lua_setfield(L, -2, "remove");
+    lua_setglobal(L, "storage");
 }
