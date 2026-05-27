@@ -7025,6 +7025,20 @@ private:
         InvalidateRect(hwnd_, nullptr, TRUE);
     }
 
+    bool OpenFolderMappingSource(size_t widgetIndex)
+    {
+        if (widgetIndex >= widgets_.size() ||
+            widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
+            widgets_[widgetIndex].sourceFolderPath.empty())
+        {
+            return false;
+        }
+
+        ShellExecuteW(hwnd_, L"open", widgets_[widgetIndex].sourceFolderPath.c_str(),
+            nullptr, nullptr, SW_SHOWNORMAL);
+        return true;
+    }
+
     void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex)
     {
         if (widgetIndex >= widgets_.size() || memberIndex >= widgets_[widgetIndex].folderEntries.size())
@@ -7388,11 +7402,7 @@ private:
             InvalidateRect(hwnd_, nullptr, TRUE);
             break;
         case kContextWidgetOpenFolder:
-            if (widgetIndex < widgets_.size() && !widgets_[widgetIndex].sourceFolderPath.empty())
-            {
-                ShellExecuteW(hwnd_, L"open", widgets_[widgetIndex].sourceFolderPath.c_str(),
-                    nullptr, nullptr, SW_SHOWNORMAL);
-            }
+            OpenFolderMappingSource(widgetIndex);
             break;
         case kContextWidgetDelete:
             DeleteWidget(widgetIndex);
@@ -11080,8 +11090,7 @@ private:
         }
         if (hit.kind == DesktopHitKind::WidgetFolderOpen && hit.widgetIndex < widgets_.size())
         {
-            ShellExecuteW(hwnd_, L"open", widgets_[hit.widgetIndex].sourceFolderPath.c_str(),
-                nullptr, nullptr, SW_SHOWNORMAL);
+            OpenFolderMappingSource(hit.widgetIndex);
             mouseDown_ = false;
             if (GetCapture() == hwnd_) ReleaseCapture();
             mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -12054,6 +12063,14 @@ private:
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         DesktopHit hit = HitTestDesktop(point);
+        if ((hit.kind == DesktopHitKind::Widget ||
+            hit.kind == DesktopHitKind::WidgetFolderOpen ||
+            hit.kind == DesktopHitKind::WidgetContent) &&
+            OpenFolderMappingSource(hit.widgetIndex))
+        {
+            return;
+        }
+
         if (hit.kind == DesktopHitKind::WidgetFolderToggle && hit.widgetIndex < widgets_.size())
         {
             widgets_[hit.widgetIndex].listMode = !widgets_[hit.widgetIndex].listMode;
