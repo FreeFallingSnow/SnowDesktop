@@ -524,22 +524,79 @@ void WidgetEngine::BlurActiveInput()
     d2dState_->activeInputId.clear();
     d2dState_->inputText.clear();
     d2dState_->cursorPos = 0;
+    focusedScriptPath_.clear();
 }
 
 bool WidgetEngine::HandleKeyDown(const std::wstring& scriptPath, int vk)
 {
-    // TODO: implement
+    if (d2dState_->activeInputId.empty()) return false;
+
+    // Find matching widget to verify this is the focused one
+    bool match = false;
+    for (auto& w : widgets_)
+    {
+        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
+        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
+        { match = true; break; }
+    }
+    if (!match || focusedScriptPath_ != scriptPath) return false;
+
+    auto& text = d2dState_->inputText;
+    auto& pos = d2dState_->cursorPos;
+
+    switch (vk)
+    {
+    case VK_LEFT:
+        if (pos > 0) --pos;
+        return true;
+    case VK_RIGHT:
+        if (pos < (int)text.size()) ++pos;
+        return true;
+    case VK_HOME:
+        pos = 0;
+        return true;
+    case VK_END:
+        pos = (int)text.size();
+        return true;
+    case VK_BACK:
+        if (pos > 0) { text.erase(pos - 1, 1); --pos; }
+        return true;
+    case VK_DELETE:
+        if (pos < (int)text.size()) text.erase(pos, 1);
+        return true;
+    case VK_RETURN:
+    case VK_ESCAPE:
+        // Commit: call onEditCommit
+        InvokeEditCommit(scriptPath, text);
+        BlurActiveInput();
+        return true;
+    }
     return false;
 }
 
 bool WidgetEngine::HandleChar(const std::wstring& scriptPath, wchar_t ch)
 {
-    // TODO: implement
-    return false;
+    if (d2dState_->activeInputId.empty()) return false;
+    if (focusedScriptPath_ != scriptPath) return false;
+    if (ch < 32) return false;  // control chars
+
+    auto& text = d2dState_->inputText;
+    auto& pos = d2dState_->cursorPos;
+
+    // Insert char at cursor
+    char utf8[8]{};
+    int len = WideCharToMultiByte(CP_UTF8, 0, &ch, 1, utf8, (int)sizeof(utf8), nullptr, nullptr);
+    if (len > 0)
+    {
+        text.insert(pos, utf8, len);
+        pos += len;
+    }
+    return true;
 }
 
 void WidgetEngine::InvokeClick(const std::wstring& scriptPath, int x, int y)
 {
+    focusedScriptPath_ = scriptPath;
     for (auto& w : widgets_)
     {
         if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
@@ -799,6 +856,8 @@ static int lua_WidgetFocus(lua_State* L)
         s->inputText.clear();
         s->cursorPos = 0;
     }
+    // Get engine via global... simpler: set focused path on engine
+    // We reach engine through the d2dState ptr. Let's add focusedScriptPath tracking.
     return 0;
 }
 
