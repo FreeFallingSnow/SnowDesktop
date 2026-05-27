@@ -8779,6 +8779,16 @@ private:
             return;
         }
 
+        if (renameIndex_ < widgets_.size() &&
+            widgets_[renameIndex_].type == DesktopWidgetType::LuaScript &&
+            widgetEngine_ && !cancel)
+        {
+            std::string text = WideToUtf8(newName);
+            widgetEngine_->SetStorage(widgets_[renameIndex_].scriptPath, "text", text);
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            return;
+        }
+
         bool keepUpdatedLayoutSlots = false;
         if (!cancel && renameIndex_ < items_.size() && !newName.empty() && newName != items_[renameIndex_].name)
         {
@@ -12542,7 +12552,37 @@ private:
             widgets_[hit.widgetIndex].type == DesktopWidgetType::LuaScript &&
             widgetEngine_)
         {
-            widgetEngine_->InvokeOpen(widgets_[hit.widgetIndex].scriptPath);
+            // Read current text from storage
+            std::string text = widgetEngine_->GetStorage(widgets_[hit.widgetIndex].scriptPath, "text");
+            // Save to temp storage for rename edit to read
+            widgetEngine_->SetStorage(widgets_[hit.widgetIndex].scriptPath, "text", text);
+
+            renameIndex_ = hit.widgetIndex;
+            renamingWidget_ = true;
+            RECT widgetBounds = widgets_[hit.widgetIndex].bounds;
+            InflateRect(&widgetBounds, -6, -6);
+            RECT screenRect = widgetBounds;
+            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
+            std::wstring wtext = Utf8ToWide(text);
+            renameEdit_ = CreateWindowExW(
+                WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                L"EDIT",
+                wtext.c_str(),
+                WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_LEFT | ES_AUTOVSCROLL | ES_WANTRETURN,
+                screenRect.left, screenRect.top + 24,
+                screenRect.right - screenRect.left, screenRect.bottom - screenRect.top - 24,
+                hwnd_, nullptr, instance_, nullptr);
+            if (renameEdit_)
+            {
+                if (renameFont_) DeleteObject(renameFont_);
+                renameFont_ = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                    DEFAULT_PITCH | FF_DONTCARE, L"Consolas");
+                SendMessageW(renameEdit_, WM_SETFONT, reinterpret_cast<WPARAM>(renameFont_), TRUE);
+                SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(8, 8));
+                SetWindowSubclass(renameEdit_, &SnowDesktopApp::RenameEditSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
+                SetFocus(renameEdit_);
+            }
         }
         else if (hit.kind == DesktopHitKind::Item ||
             hit.kind == DesktopHitKind::WidgetMember ||
