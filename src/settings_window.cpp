@@ -393,7 +393,7 @@ void SettingsWindow::DrawBackupPage()
                     reloadCallback_();
             }
             ImGui::SameLine();
-            if (ImGui::Button("删除", ImVec2(56, 0)))
+            if (BlueButton("删除", ImVec2(56, 0)))
             {
                 DeleteBackup(b.filename);
             }
