@@ -6625,8 +6625,8 @@ private:
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 14;
-        constexpr int gap = 2;
-        constexpr int resizeReserve = 24;
+        constexpr int gap = 4;
+        constexpr int resizeReserve = 20;
         return MakeRect(handle.right - resizeReserve - gap - btnSize - gap - btnSize, handle.top + 5,
             handle.right - resizeReserve - gap - btnSize - gap, handle.bottom - 3);
     }
@@ -6635,8 +6635,8 @@ private:
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 14;
-        constexpr int gap = 2;
-        constexpr int resizeReserve = 24;
+        constexpr int gap = 4;
+        constexpr int resizeReserve = 20;
         return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 5,
             handle.right - resizeReserve - gap, handle.bottom - 3);
     }
@@ -6645,8 +6645,8 @@ private:
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 14;
-        constexpr int gap = 2;
-        constexpr int resizeReserve = 24;
+        constexpr int gap = 4;
+        constexpr int resizeReserve = 20;
         return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 5,
             handle.right - resizeReserve - gap, handle.bottom - 3);
     }
