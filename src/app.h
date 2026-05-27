@@ -5023,6 +5023,8 @@ private:
         widget.id = MakeNewWidgetId();
         widget.type = DesktopWidgetType::Collection;
         widget.title = L"集合";
+        widget.showTitle = true;
+        widget.bottomBarHover = true;
         widget.gridCell = cell;
         widget.gridSpan = { 1, 1 };
         widgets_.push_back(std::move(widget));
@@ -5046,6 +5048,8 @@ private:
         widget.id = L"file-categories-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
         widget.type = DesktopWidgetType::FileCategories;
         widget.title = L"桌面文件";
+        widget.showTitle = true;
+        widget.bottomBarHover = false;
         widget.gridCell = cell;
         widget.gridSpan = { 2, 2 };
         widgets_.push_back(std::move(widget));
@@ -6303,7 +6307,8 @@ private:
     {
         if (selectedWidgetIndex_ < widgets_.size())
         {
-            OpenCollectionPopup(selectedWidgetIndex_);
+            if (widgets_[selectedWidgetIndex_].type == DesktopWidgetType::Collection)
+                OpenCollectionPopup(selectedWidgetIndex_);
             return;
         }
         for (size_t i = 0; i < items_.size(); ++i)
@@ -7268,6 +7273,8 @@ private:
         widget.id = L"folder-map-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
         widget.type = DesktopWidgetType::FolderMapping;
         widget.title = title;
+        widget.showTitle = true;
+        widget.bottomBarHover = false;
         widget.sourceFolderPath = path;
         widget.gridCell = cell;
         widget.gridSpan = { 2, 2 };
@@ -12462,11 +12469,12 @@ private:
         else
         {
             DesktopHit clickHit = HitTestDesktop(point);
-            if (clickHit.kind == DesktopHitKind::WidgetAllButton ||
+            if ((clickHit.kind == DesktopHitKind::WidgetAllButton ||
                 (clickHit.kind == DesktopHitKind::Widget &&
                     clickHit.widgetIndex < widgets_.size() &&
                     widgets_[clickHit.widgetIndex].gridSpan.columns <= 1 &&
-                    widgets_[clickHit.widgetIndex].gridSpan.rows <= 1))
+                    widgets_[clickHit.widgetIndex].gridSpan.rows <= 1 &&
+                    widgets_[clickHit.widgetIndex].type == DesktopWidgetType::Collection)))
             {
                 OpenCollectionPopupAt(clickHit.widgetIndex, point, L"");
             }
