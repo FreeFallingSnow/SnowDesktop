@@ -7977,6 +7977,12 @@ private:
         case kContextAddFolderMappingWidget:
             AddFolderMappingWidgetAt(screenPoint);
             break;
+        case kContextPasteCommand:
+            InvokeDesktopBackgroundVerb("paste");
+            break;
+        case kContextMoreCommand:
+            ShowDesktopBackgroundContextMenu(screenPoint);
+            break;
         case kContextNewMenu:
         {
             wchar_t desktopPath[MAX_PATH]{};
