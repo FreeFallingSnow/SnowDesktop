@@ -312,6 +312,8 @@ struct DesktopWidget
     bool selected = false;
     bool autoCollect = false;
     bool listMode = false;
+    bool showTitle = false;
+    bool bottomBarHover = true;
     int scrollOffset = 0;
     int tabScrollOffset = 0;
     std::wstring activeCategoryId;

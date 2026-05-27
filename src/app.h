@@ -2692,6 +2692,10 @@ private:
             widget.gridSpan.rows = std::max(1, h);
             widget.autoCollect = autoCollect;
             widget.listMode = listMode;
+            widget.showTitle = false;
+            widget.bottomBarHover = true;
+            ReadJsonBoolField(objectText, "showTitle", widget.showTitle);
+            ReadJsonBoolField(objectText, "bottomBarHover", widget.bottomBarHover);
             widget.scrollOffset = std::max(0, scrollOffset);
             widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
             ReadJsonStringArrayField(objectText, "items", widget.itemKeys);
@@ -2860,6 +2864,8 @@ private:
                 ", \"h\": " << std::max(1, widget.gridSpan.rows) <<
                 ", \"autoCollect\": " << (widget.autoCollect ? "true" : "false") <<
                 ", \"listMode\": " << (widget.listMode ? "true" : "false") <<
+                ", \"showTitle\": " << (widget.showTitle ? "true" : "false") <<
+                ", \"bottomBarHover\": " << (widget.bottomBarHover ? "true" : "false") <<
                 ", \"scrollOffset\": " << std::max(0, widget.scrollOffset) <<
                 ", \"items\": [";
             for (size_t j = 0; j < widget.itemKeys.size(); ++j)
@@ -4993,6 +4999,11 @@ private:
         widget.gridSpan = { 1, 1 };
         widgets_.push_back(std::move(widget));
         const size_t index = widgets_.size() - 1;
+        if (widgetEngine_)
+        {
+            widgets_[index].showTitle = widgetEngine_->ReadBoolFlag(scriptFilename, "showTitle", false);
+            widgets_[index].bottomBarHover = widgetEngine_->ReadBoolFlag(scriptFilename, "bottomBarHover", true);
+        }
         SelectWidgetOnly(index);
         PlaceWidgetWithDisplacement(index, cell, { 1, 1 });
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -9630,10 +9641,8 @@ private:
         {
             RECT body = GetWidgetBodyRect(widget);
             RECT gradientRect = MakeRect(frame.left, std::max<LONG>(body.top, frame.bottom - 36), frame.right, frame.bottom);
-            bool showGradient = widget.type != DesktopWidgetType::Collection
-                || (widget.gridSpan.columns > 1 || widget.gridSpan.rows > 1
-                    ? (PtInRect(&frame, lastMousePoint_) != FALSE)
-                    : true);
+            bool showGradient = !luaCustomStyle && (!widget.bottomBarHover
+                || (PtInRect(&frame, lastMousePoint_) != FALSE));
             if (showGradient && !IsRectEmptyRect(gradientRect) && gradientRect.bottom > gradientRect.top)
             {
                 ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
@@ -9719,20 +9728,21 @@ private:
                     settingsWindow_ ? settingsWindow_->GetPersonalization().gradientEndA : 0.65f);
         }
 
-        const bool isSmallCollection = widget.type == DesktopWidgetType::Collection
-            && widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
-        const bool hovered = (widget.type == DesktopWidgetType::Collection && !isSmallCollection)
+        const bool hovered = widget.bottomBarHover
             ? (PtInRect(&frame, lastMousePoint_) != FALSE)
             : true;
 
         if (hovered)
         {
-            RECT titleRect = GetWidgetTitleRect(widget);
-        if (!widget.title.empty() && listItemTextFormat_)
-        {
-            DrawD2DText(context, widget.title, OffsetRectCopy(titleRect, 1, 1), listItemTextFormat_.Get(), D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f));
-            DrawD2DText(context, widget.title, titleRect, listItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
-        }
+            if (widget.showTitle)
+            {
+                RECT titleRect = GetWidgetTitleRect(widget);
+                if (!widget.title.empty() && listItemTextFormat_)
+                {
+                    DrawD2DText(context, widget.title, OffsetRectCopy(titleRect, 1, 1), listItemTextFormat_.Get(), D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f));
+                    DrawD2DText(context, widget.title, titleRect, listItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+                }
+            }
 
         RECT resizeHandle = GetWidgetResizeHandleRect(widget);
         const int dot = 8;

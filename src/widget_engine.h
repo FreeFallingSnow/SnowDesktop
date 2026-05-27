@@ -40,6 +40,7 @@ public:
     void RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds,
         float bgR, float bgG, float bgB, float alpha, float borderR, float borderG, float borderB, float gradientEndA);
     bool HasCustomStyle(const std::wstring& scriptPath) const;
+    bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
 
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
     static std::vector<std::wstring> ListAvailable();
