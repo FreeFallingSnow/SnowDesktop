@@ -63,6 +63,7 @@ private:
     ComPtr<ID3D11RenderTargetView> rtv_;
     int windowWidth_ = 800;
     int windowHeight_ = 560;
+    float dpiScale_ = 1.0f;
     int activePage_ = 0;
     char backupNameBuf_[128] = {};
     bool titleBarHovered_ = false;

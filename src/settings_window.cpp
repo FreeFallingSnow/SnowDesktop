@@ -77,11 +77,25 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     wc.lpszClassName = L"SnowDesktopSettingsWindow";
     RegisterClassExW(&wc);
 
+    // Get DPI for initial sizing
+    UINT dpi = GetDpiForSystem();
+    {
+        HDC screenDc = GetDC(nullptr);
+        if (screenDc)
+        {
+            dpi = GetDeviceCaps(screenDc, LOGPIXELSX);
+            ReleaseDC(nullptr, screenDc);
+        }
+    }
+    dpiScale_ = static_cast<float>(dpi) / 96.0f;
+    windowWidth_ = static_cast<int>(800.0f * dpiScale_);
+    windowHeight_ = static_cast<int>(560.0f * dpiScale_);
+
     hwnd_ = CreateWindowExW(
-        0,
+        WS_EX_APPWINDOW,
         wc.lpszClassName,
         L"SnowDesktop 设置",
-        WS_OVERLAPPEDWINDOW,
+        WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT,
         windowWidth_, windowHeight_,
         nullptr, nullptr, instance, this);
@@ -184,7 +198,7 @@ void SettingsWindow::Render()
 // ── Title Bar ───────────────────────────────────────────────────
 void SettingsWindow::DrawTitleBar()
 {
-    const float titleH = 32.0f;
+    const float titleH = 32.0f * dpiScale_;
     ImGui::BeginChild("##TitleBar", ImVec2(0, titleH), ImGuiChildFlags_None);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -293,6 +307,9 @@ namespace {
 // ── Backup Page ─────────────────────────────────────────────────
 void SettingsWindow::DrawBackupPage()
 {
+    const float pad = 16.0f * dpiScale_;
+    ImGui::SetCursorPos(ImVec2(pad, pad));
+    ImGui::BeginChild("##BackupPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
     ImGui::Text("布局备份与恢复");
     ImGui::Separator();
     ImGui::Spacing();
@@ -357,6 +374,7 @@ void SettingsWindow::DrawBackupPage()
         }
         ImGui::EndChild();
     }
+    ImGui::EndChild();
 }
 
 void SettingsWindow::DrawGeneralPage()
@@ -534,7 +552,7 @@ void SettingsWindow::SetupFonts()
     if (FILE* f = fopen(fontPath.c_str(), "rb"))
     {
         fclose(f);
-        io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f, nullptr,
+        io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f * dpiScale_, nullptr,
             io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
     }
 }
@@ -556,6 +574,10 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         return 0;
     case WM_DPICHANGED:
     {
+        if (g_settingsWindow != nullptr)
+        {
+            g_settingsWindow->dpiScale_ = static_cast<float>(LOWORD(wParam)) / 96.0f;
+        }
         RECT* suggested = reinterpret_cast<RECT*>(lParam);
         SetWindowPos(hwnd, nullptr,
             suggested->left, suggested->top,
