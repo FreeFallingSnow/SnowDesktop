@@ -337,6 +337,34 @@ std::vector<std::wstring> WidgetEngine::ListAvailable()
 }
 
 // ── Layout API ────────────────────────────────────────────────────
+static int lua_DrawLine(lua_State* L)
+{
+    float x1 = (float)luaL_checknumber(L, 1);
+    float y1 = (float)luaL_checknumber(L, 2);
+    float x2 = (float)luaL_checknumber(L, 3);
+    float y2 = (float)luaL_checknumber(L, 4);
+    float thick = (float)luaL_optnumber(L, 5, 1);
+    int color = (int)luaL_optinteger(L, 6, 0xFFFFFF);
+    float alpha = (float)luaL_optnumber(L, 7, 1.0);
+
+    auto* s = GetD2D(L);
+    if (!s || !s->ctx) return 0;
+
+    float r = ((color >> 16) & 0xFF) / 255.0f;
+    float g = ((color >> 8) & 0xFF) / 255.0f;
+    float b = (color & 0xFF) / 255.0f;
+
+    ComPtr<ID2D1SolidColorBrush> brush;
+    s->ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b, alpha), &brush);
+    if (!brush) return 0;
+
+    s->ctx->DrawLine(
+        D2D1::Point2F(x1 + s->widgetRect.left, y1 + s->widgetRect.top),
+        D2D1::Point2F(x2 + s->widgetRect.left, y2 + s->widgetRect.top),
+        brush.Get(), thick);
+    return 0;
+}
+
 static int lua_LayoutWidth(lua_State* L)
 {
     auto* s = GetD2D(L);
@@ -356,6 +384,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_newtable(L);
     lua_pushcfunction(L, lua_DrawText);  lua_setfield(L, -2, "text");
     lua_pushcfunction(L, lua_DrawRect);  lua_setfield(L, -2, "rect");
+    lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
     lua_setglobal(L, "draw");
 
     lua_newtable(L);
