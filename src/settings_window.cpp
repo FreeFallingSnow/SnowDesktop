@@ -223,7 +223,11 @@ void SettingsWindow::Render()
                 if (exitCallback_) exitCallback_();
             }
             ImGui::SameLine();
-            if (ImGui::Button("取消", ImVec2(80, 0)))
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.55f, 0.60f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+            bool cancelClicked = ImGui::Button("取消", ImVec2(80, 0));
+            ImGui::PopStyleColor(2);
+            if (cancelClicked)
             {
                 showExitConfirm_ = false;
                 ImGui::CloseCurrentPopup();
