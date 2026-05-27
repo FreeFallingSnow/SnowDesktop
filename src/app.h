@@ -2691,9 +2691,17 @@ private:
             widget.scrollOffset = std::max(0, scrollOffset);
             widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
             ReadJsonStringArrayField(objectText, "items", widget.itemKeys);
-            for (auto& key : widget.itemKeys)
+            // Deduplicate normalized keys
             {
-                key = NormalizeLayoutKey(key);
+                std::unordered_set<std::wstring> seen;
+                std::vector<std::wstring> unique;
+                for (auto& key : widget.itemKeys)
+                {
+                    key = NormalizeLayoutKey(key);
+                    if (seen.insert(key).second)
+                        unique.push_back(key);
+                }
+                widget.itemKeys = std::move(unique);
             }
             RememberSavedPageId(widget.gridCell.pageId);
             widgets_.push_back(std::move(widget));
@@ -7771,16 +7779,24 @@ private:
             // Rebuild itemKeys: keep non-active-category keys, append sorted active keys
             std::wstring activeId = GetActiveFileCategoryId(w);
             std::vector<std::wstring> nonActive;
+            std::unordered_set<std::wstring> seen;
             for (const auto& rawKey : w.itemKeys)
             {
                 size_t idx = FindItemIndexByKey(rawKey);
                 if (idx == static_cast<size_t>(-1)) continue;
                 if (GetFileCategoryId(items_[idx]) != activeId)
-                    nonActive.push_back(NormalizeLayoutKey(items_[idx].layoutKey));
+                {
+                    std::wstring nk = NormalizeLayoutKey(items_[idx].layoutKey);
+                    if (seen.insert(nk).second)
+                        nonActive.push_back(nk);
+                }
             }
             w.itemKeys = nonActive;
             for (const auto& k : keys)
-                w.itemKeys.push_back(k);
+            {
+                if (seen.insert(k).second)
+                    w.itemKeys.push_back(k);
+            }
             LayoutItems();
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
