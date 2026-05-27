@@ -11348,6 +11348,22 @@ private:
             if (wParam == VK_MENU) return 0;
             OnKeyDown(wParam);
             return 0;
+        case WM_CHAR:
+        {
+            if (widgetEngine_)
+            {
+                for (size_t i = 0; i < widgets_.size(); ++i)
+                {
+                    if (widgets_[i].type == DesktopWidgetType::LuaScript &&
+                        widgetEngine_->HandleChar(widgets_[i].scriptPath, (wchar_t)wParam))
+                    {
+                        InvalidateRect(hwnd_, nullptr, TRUE);
+                        return 0;
+                    }
+                }
+            }
+            break;
+        }
         case WM_KEYUP:
         case WM_SYSKEYUP:
             if ((draggingItems_ || draggingWidgetMember_) && wParam == VK_MENU)
@@ -12479,6 +12495,18 @@ private:
         else
         {
             DesktopHit clickHit = HitTestDesktop(point);
+
+            // Forward click to Lua widgets
+            if (clickHit.kind == DesktopHitKind::Widget &&
+                clickHit.widgetIndex < widgets_.size() &&
+                widgets_[clickHit.widgetIndex].type == DesktopWidgetType::LuaScript &&
+                widgetEngine_)
+            {
+                RECT wb = widgets_[clickHit.widgetIndex].bounds;
+                widgetEngine_->InvokeClick(widgets_[clickHit.widgetIndex].scriptPath,
+                    point.x - wb.left, point.y - wb.top);
+            }
+
             if ((clickHit.kind == DesktopHitKind::WidgetAllButton ||
                 (clickHit.kind == DesktopHitKind::Widget &&
                     clickHit.widgetIndex < widgets_.size() &&
@@ -12758,6 +12786,20 @@ private:
         if (renameEdit_ != nullptr)
         {
             return;
+        }
+
+        // Forward to focused Lua widget input
+        if (widgetEngine_ && !widgetEngine_->GetWidgets().empty())
+        {
+            for (size_t i = 0; i < widgets_.size(); ++i)
+            {
+                if (widgets_[i].type == DesktopWidgetType::LuaScript &&
+                    widgetEngine_->HandleKeyDown(widgets_[i].scriptPath, (int)key))
+                {
+                    InvalidateRect(hwnd_, nullptr, TRUE);
+                    return;
+                }
+            }
         }
 
         switch (key)

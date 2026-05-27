@@ -61,6 +61,7 @@ private:
 
     lua_State* L_ = nullptr;
     D2DState* d2dState_ = nullptr;
+    std::wstring focusedScriptPath_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
     ComPtr<IDWriteFactory> dwriteFactory_;
     std::vector<LuaWidget> widgets_;
