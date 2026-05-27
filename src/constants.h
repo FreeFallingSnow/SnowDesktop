@@ -72,6 +72,7 @@ constexpr UINT kContextWidgetSortByType = 41030;
 constexpr UINT kContextWidgetSortByDate = 41031;
 constexpr UINT kContextZoomPresetFirst = 41150;
 constexpr UINT kContextNewMenu = 41400;
+constexpr UINT kContextSettingsCommand = 41401;
 
 constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT_PTR kShellChangeTimerId = 2;
