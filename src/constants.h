@@ -28,6 +28,7 @@ constexpr UINT kTraySwitchNativeCommand = 40003;
 constexpr UINT kTraySwitchCustomCommand = 40004;
 constexpr UINT kTrayExitCommand = 40005;
 constexpr UINT kTraySortByTypeCommand = 40006;
+constexpr UINT kTraySettingsCommand = 40012;
 constexpr UINT kTrayDesktopIconThisPC = 40007;
 constexpr UINT kTrayDesktopIconUserFiles = 40008;
 constexpr UINT kTrayDesktopIconNetwork = 40009;

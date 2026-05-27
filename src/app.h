@@ -1,6 +1,7 @@
 #pragma once
 #include "resource.h"
 #include "utils.h"
+#include "settings_window.h"
 
 #include <windowsx.h>
 #include <commctrl.h>
@@ -462,11 +463,20 @@ public:
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
         DebugLog(L"Timers started: recycle bin poll and desktop host watch");
 
+        // Init settings window
+        settingsWindow_ = std::make_unique<SettingsWindow>();
+        if (!settingsWindow_->Init(instance, d3dDevice_.Get()))
+        {
+            DebugLog(L"SettingsWindow Init failed");
+        }
+
         MSG msg{};
         while (GetMessageW(&msg, nullptr, 0, 0) > 0)
         {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+            if (settingsWindow_ && settingsWindow_->IsVisible())
+                settingsWindow_->Render();
         }
 
         return static_cast<int>(msg.wParam);
@@ -1892,6 +1902,8 @@ private:
         AppendMenuW(menu, customDesktopVisible_ ? MF_STRING : (MF_STRING | MF_GRAYED), kTraySwitchNativeCommand, L"切换原生桌面");
         AppendMenuW(menu, customDesktopVisible_ ? (MF_STRING | MF_GRAYED) : MF_STRING, kTraySwitchCustomCommand, L"切换自定义桌面");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
         menuIconPool_.clear();
@@ -1931,6 +1943,10 @@ private:
             break;
         case kTrayExitCommand:
             RequestExit();
+            break;
+        case kTraySettingsCommand:
+            if (settingsWindow_)
+                settingsWindow_->Show();
             break;
         case kTrayDesktopIconThisPC:
         case kTrayDesktopIconUserFiles:
@@ -12469,6 +12485,10 @@ private:
         case kTrayExitCommand:
             RequestExit();
             break;
+        case kTraySettingsCommand:
+            if (settingsWindow_)
+                settingsWindow_->Show();
+            break;
         case kTrayDesktopIconThisPC:
         case kTrayDesktopIconUserFiles:
         case kTrayDesktopIconNetwork:
@@ -12841,6 +12861,7 @@ private:
     bool trayMenuShowing_ = false;
     LONGLONG lastRecycleBinItemCount_ = -1;
     std::vector<HBITMAP> menuIconPool_;
+    std::unique_ptr<SettingsWindow> settingsWindow_;
     bool navButtonsVisible_ = false;
     RECT navButtonsHoverZone_{};
     POINT lastContextMenuScreenPoint_{};
