@@ -6429,18 +6429,14 @@ private:
     std::vector<std::wstring> GetFileCategoryKeys(const DesktopWidget& widget, const std::wstring& categoryId = L"") const
     {
         std::vector<std::wstring> keys;
-        auto appendCategory = [&](const std::wstring& targetCategory) {
-            for (const auto& rawKey : widget.itemKeys)
-            {
-                size_t itemIndex = FindItemIndexByKey(rawKey);
-                if (itemIndex == static_cast<size_t>(-1) ||
-                    !IsFileCategoryCollectableItem(items_[itemIndex]) ||
-                    GetFileCategoryId(items_[itemIndex]) != targetCategory)
-                {
-                    continue;
-                }
-                keys.push_back(NormalizeLayoutKey(items_[itemIndex].layoutKey));
-            }
+        std::unordered_set<std::wstring> seen;
+        auto appendKey = [&](const std::wstring& rawKey) {
+            size_t itemIndex = FindItemIndexByKey(rawKey);
+            if (itemIndex == static_cast<size_t>(-1) || !IsFileCategoryCollectableItem(items_[itemIndex]))
+                return;
+            std::wstring nk = NormalizeLayoutKey(items_[itemIndex].layoutKey);
+            if (seen.insert(nk).second)
+                keys.push_back(nk);
         };
 
         if (!categoryId.empty())
@@ -6448,22 +6444,33 @@ private:
             if (categoryId == L"all")
             {
                 for (const auto& rawKey : widget.itemKeys)
+                    appendKey(rawKey);
+            }
+            else
+            {
+                for (const auto& rawKey : widget.itemKeys)
                 {
                     size_t itemIndex = FindItemIndexByKey(rawKey);
-                    if (itemIndex != static_cast<size_t>(-1) && IsFileCategoryCollectableItem(items_[itemIndex]))
-                    {
-                        keys.push_back(NormalizeLayoutKey(items_[itemIndex].layoutKey));
-                    }
+                    if (itemIndex == static_cast<size_t>(-1) ||
+                        GetFileCategoryId(items_[itemIndex]) != categoryId)
+                        continue;
+                    appendKey(rawKey);
                 }
-                return keys;
             }
-            appendCategory(categoryId);
-            return keys;
         }
-
-        for (const auto& id : GetFileCategoryOrder())
+        else
         {
-            appendCategory(id);
+            for (const auto& id : GetFileCategoryOrder())
+            {
+                for (const auto& rawKey : widget.itemKeys)
+                {
+                    size_t itemIndex = FindItemIndexByKey(rawKey);
+                    if (itemIndex == static_cast<size_t>(-1) ||
+                        GetFileCategoryId(items_[itemIndex]) != id)
+                        continue;
+                    appendKey(rawKey);
+                }
+            }
         }
         return keys;
     }
