@@ -490,32 +490,39 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::Button("浅色预设")) { personalization_ = PersonalizationSettings::LightPreset(); personalizationDirty_ = true; }
     ImGui::Spacing();
 
-    ImGui::Text("组件背景色");
-    float bg[4] = { personalization_.widgetBgR, personalization_.widgetBgG, personalization_.widgetBgB, personalization_.widgetBgA };
-    if (ImGui::ColorEdit4("##WidgetBg", bg, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
+    // Background color + transparency
+    ImGui::Text("组件背景");
+    float bgColor[3] = { personalization_.widgetBgR, personalization_.widgetBgG, personalization_.widgetBgB };
+    if (ImGui::ColorEdit3("##WidgetBgColor", bgColor, ImGuiColorEditFlags_NoInputs))
     {
-        personalization_.widgetBgR = bg[0]; personalization_.widgetBgG = bg[1];
-        personalization_.widgetBgB = bg[2]; personalization_.widgetBgA = bg[3];
+        personalization_.widgetBgR = bgColor[0]; personalization_.widgetBgG = bgColor[1];
+        personalization_.widgetBgB = bgColor[2];
         personalizationDirty_ = true;
     }
+    if (ImGui::SliderFloat("背景不透明度", &personalization_.widgetBgA, 0.0f, 1.0f))
+        personalizationDirty_ = true;
 
     ImGui::Spacing();
-    ImGui::Text("组件边框色");
-    float border[4] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB, personalization_.widgetBorderA };
-    if (ImGui::ColorEdit4("##WidgetBorder", border, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
+
+    // Border color + transparency
+    ImGui::Text("组件边框");
+    float borderColor[3] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB };
+    if (ImGui::ColorEdit3("##WidgetBorderColor", borderColor, ImGuiColorEditFlags_NoInputs))
     {
-        personalization_.widgetBorderR = border[0]; personalization_.widgetBorderG = border[1];
-        personalization_.widgetBorderB = border[2]; personalization_.widgetBorderA = border[3];
+        personalization_.widgetBorderR = borderColor[0]; personalization_.widgetBorderG = borderColor[1];
+        personalization_.widgetBorderB = borderColor[2];
         personalizationDirty_ = true;
     }
+    if (ImGui::SliderFloat("边框不透明度", &personalization_.widgetBorderA, 0.0f, 1.0f))
+        personalizationDirty_ = true;
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Text("底部渐变透明度");
-    ImGui::SliderFloat("渐变起始", &personalization_.gradientStartA, 0.0f, 1.0f);
-    if (ImGui::IsItemDeactivatedAfterEdit()) personalizationDirty_ = true;
-    ImGui::SliderFloat("渐变结束", &personalization_.gradientEndA, 0.0f, 1.0f);
-    if (ImGui::IsItemDeactivatedAfterEdit()) personalizationDirty_ = true;
+    ImGui::Text("底部渐变");
+    if (ImGui::SliderFloat("渐变起始透明度", &personalization_.gradientStartA, 0.0f, 1.0f))
+        personalizationDirty_ = true;
+    if (ImGui::SliderFloat("渐变结束透明度", &personalization_.gradientEndA, 0.0f, 1.0f))
+        personalizationDirty_ = true;
 
     ImGui::EndChild();
 }
