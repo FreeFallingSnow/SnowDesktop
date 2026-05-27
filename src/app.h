@@ -8769,13 +8769,7 @@ private:
 
         if (renamingWidget_)
         {
-            if (renameIndex_ < widgets_.size() &&
-                widgets_[renameIndex_].type == DesktopWidgetType::LuaScript &&
-                widgetEngine_ && !cancel && !newName.empty())
-            {
-                widgetEngine_->InvokeEditCommit(widgets_[renameIndex_].scriptPath, WideToUtf8(newName));
-            }
-            else if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
+            if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
             {
                 widgets_[renameIndex_].title = newName;
                 SaveLayoutSlots();
@@ -12516,13 +12510,6 @@ private:
             {
                 OpenCollectionPopupAt(clickHit.widgetIndex, point, L"");
             }
-            else if (clickHit.kind == DesktopHitKind::Widget &&
-                clickHit.widgetIndex < widgets_.size() &&
-                widgets_[clickHit.widgetIndex].type == DesktopWidgetType::LuaScript &&
-                widgetEngine_)
-            {
-                widgetEngine_->InvokeOpen(widgets_[clickHit.widgetIndex].scriptPath);
-            }
             else if (clickHit.kind == DesktopHitKind::WidgetCategory && clickHit.widgetIndex < widgets_.size())
             {
                 std::vector<std::wstring> categories = GetVisibleFileCategoryIds(widgets_[clickHit.widgetIndex]);
@@ -12570,39 +12557,6 @@ private:
             widgets_[hit.widgetIndex].scrollOffset = 0;
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
-        }
-        else if (hit.kind == DesktopHitKind::Widget &&
-            hit.widgetIndex < widgets_.size() &&
-            widgets_[hit.widgetIndex].type == DesktopWidgetType::LuaScript &&
-            widgetEngine_ &&
-            widgetEngine_->HasEditSupport(widgets_[hit.widgetIndex].scriptPath))
-        {
-            std::string text = widgetEngine_->InvokeGetEditText(widgets_[hit.widgetIndex].scriptPath);
-            std::wstring wtext = Utf8ToWide(text);
-            renameIndex_ = hit.widgetIndex;
-            renamingWidget_ = true;
-            RECT widgetBounds = widgets_[hit.widgetIndex].bounds;
-            InflateRect(&widgetBounds, -6, -6);
-            RECT screenRect = widgetBounds;
-            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
-            renameEdit_ = CreateWindowExW(
-                WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                L"EDIT", wtext.c_str(),
-                WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_LEFT | ES_AUTOVSCROLL | ES_WANTRETURN,
-                screenRect.left, screenRect.top + 24,
-                screenRect.right - screenRect.left, screenRect.bottom - screenRect.top - 24,
-                hwnd_, nullptr, instance_, nullptr);
-            if (renameEdit_)
-            {
-                if (renameFont_) DeleteObject(renameFont_);
-                renameFont_ = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                    DEFAULT_PITCH | FF_DONTCARE, L"Consolas");
-                SendMessageW(renameEdit_, WM_SETFONT, reinterpret_cast<WPARAM>(renameFont_), TRUE);
-                SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(8, 8));
-                SetWindowSubclass(renameEdit_, &SnowDesktopApp::RenameEditSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
-                SetFocus(renameEdit_);
-            }
         }
         else if (hit.kind == DesktopHitKind::Item ||
             hit.kind == DesktopHitKind::WidgetMember ||

@@ -827,7 +827,7 @@ static int lua_WidgetInput(lua_State* L)
                 ComPtr<ID2D1SolidColorBrush> cursorBrush;
                 s->ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.6f), &cursorBrush);
                 if (cursorBrush)
-                    s->ctx->DrawLine(D2D1::Point2F(cx, ry + 4), D2D1::Point2F(cx, ry + h - 4),
+                    s->ctx->DrawLine(D2D1::Point2F(cx, ry + 5), D2D1::Point2F(cx, ry + h - 5),
                         cursorBrush.Get(), 1.5f);
             }
         }
