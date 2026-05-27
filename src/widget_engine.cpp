@@ -182,49 +182,61 @@ bool WidgetEngine::LoadWidget(const std::wstring& path)
     std::string source = ReadFile(path);
     if (source.empty()) return false;
 
-    // Create a sandbox table: all globals in the script go here
-    lua_newtable(L_);                        // sandbox = {}
-    lua_newtable(L_);                        // sandbox_meta = {}
+    // Create a sandbox table
+    lua_newtable(L_);                        // sandbox
+    lua_newtable(L_);                        // sandbox meta
     lua_getglobal(L_, "_G");                // sandbox_meta, _G
-    lua_setfield(L_, -2, "__index");         // sandbox_meta.__index = _G (read access to globals)
-    lua_pushvalue(L_, -2);                  // sandbox_meta, sandbox
-    lua_setfield(L_, -2, "__newindex");      // sandbox_meta.__newindex = sandbox (writes go to sandbox)
+    lua_setfield(L_, -2, "__index");         // sandbox_meta.__index = _G (reads fall through to globals)
     lua_setmetatable(L_, -2);               // setmetatable(sandbox, sandbox_meta)
+    // sandbox is at top of stack
 
-    // Load the chunk with sandbox as _ENV
+    // Load the chunk
     if (luaL_loadstring(L_, source.c_str()) != LUA_OK)
     {
-        lua_pop(L_, 2);  // pop sandbox and error
+        lua_pop(L_, 2);
         return false;
     }
 
-    // Set _ENV of the chunk to sandbox
-    lua_pushvalue(L_, -2);  // chunk, sandbox
-    if (lua_setupvalue(L_, -2, 1) == nullptr)
+    // Try to set the chunk's first upvalue (_ENV) to sandbox
+    const char* envName = lua_setupvalue(L_, -2, 1);
+    if (envName == nullptr)
     {
-        // Fallback: use setfenv-style
-        lua_pop(L_, 3);
-        return false;
+        // Chunk has no _ENV upvalue - run directly in sandbox via alternative method
+        // Pop the chunk, reload with explicit environment
+        lua_pop(L_, 1);  // pop chunk, keep sandbox
+        // Wrap the source to use the sandbox explicitly
+        std::string wrapped = "local _ENV = ...;\n" + source;
+        if (luaL_loadstring(L_, wrapped.c_str()) != LUA_OK)
+        {
+            lua_pop(L_, 2);
+            return false;
+        }
+        lua_pushvalue(L_, -2);  // push sandbox as argument
+        if (lua_pcall(L_, 1, 0, 0) != LUA_OK)
+        {
+            lua_pop(L_, 2);
+            return false;
+        }
     }
-
-    // Execute the chunk
-    if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+    else
     {
-        lua_pop(L_, 2);  // pop sandbox and error
-        return false;
+        // Execute the chunk
+        if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+        {
+            lua_pop(L_, 2);
+            return false;
+        }
     }
 
-    // sandbox now contains name, render, etc.
-    // Store sandbox in registry
+    // sandbox now contains the script's globals (name, render, etc.)
     int ref = luaL_ref(L_, LUA_REGISTRYINDEX);
 
-    // Read widget name
     std::string name = "Unnamed";
     lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
     lua_getfield(L_, -1, "name");
     if (lua_isstring(L_, -1))
         name = lua_tostring(L_, -1);
-    lua_pop(L_, 2);  // pop name and table
+    lua_pop(L_, 2);
 
     LuaWidget w;
     w.name = name;
