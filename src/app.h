@@ -12546,7 +12546,8 @@ private:
         else if (hit.kind == DesktopHitKind::Widget &&
             hit.widgetIndex < widgets_.size() &&
             widgets_[hit.widgetIndex].type == DesktopWidgetType::LuaScript &&
-            widgetEngine_)
+            widgetEngine_ &&
+            widgetEngine_->HasEditSupport(widgets_[hit.widgetIndex].scriptPath))
         {
             std::string text = widgetEngine_->InvokeGetEditText(widgets_[hit.widgetIndex].scriptPath);
             std::wstring wtext = Utf8ToWide(text);
