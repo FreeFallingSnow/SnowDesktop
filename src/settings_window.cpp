@@ -124,6 +124,8 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 
     SetupFonts();
 
+    LoadPersonalization(GetPersonalizationPath().c_str(), personalization_);
+
     g_settingsWindow = this;
 
     RECT rc;
@@ -196,12 +198,19 @@ void SettingsWindow::Render()
     switch (activePage_)
     {
     case 0: DrawGeneralPage(); break;
-    case 1: DrawBackupPage(); break;
-    case 2: DrawAboutPage(); break;
+    case 1: DrawPersonalizationPage(); break;
+    case 2: DrawBackupPage(); break;
+    case 3: DrawAboutPage(); break;
     }
     ImGui::EndChild();
 
     ImGui::End();
+
+    if (personalizationDirty_)
+    {
+        SavePersonalization(GetPersonalizationPath().c_str(), personalization_);
+        personalizationDirty_ = false;
+    }
 
     // Exit confirmation modal
     if (showExitConfirm_)
@@ -333,8 +342,9 @@ void SettingsWindow::DrawSidebar()
     };
 
     SideButton(0, "通用");
-    SideButton(1, "布局备份");
-    SideButton(2, "关于");
+    SideButton(1, "个性化");
+    SideButton(2, "布局备份");
+    SideButton(3, "关于");
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
@@ -461,6 +471,51 @@ void SettingsWindow::DrawGeneralPage()
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(随 Windows 启动 SnowDesktop)");
+
+    ImGui::EndChild();
+}
+
+void SettingsWindow::DrawPersonalizationPage()
+{
+    const float pad = 16.0f * dpiScale_;
+    ImGui::SetCursorPos(ImVec2(pad, pad));
+    ImGui::BeginChild("##PersonalizationPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+
+    ImGui::Text("个性化设置");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Button("深色预设")) { personalization_ = PersonalizationSettings::DarkPreset(); personalizationDirty_ = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("浅色预设")) { personalization_ = PersonalizationSettings::LightPreset(); personalizationDirty_ = true; }
+    ImGui::Spacing();
+
+    ImGui::Text("组件背景色");
+    float bg[4] = { personalization_.widgetBgR, personalization_.widgetBgG, personalization_.widgetBgB, personalization_.widgetBgA };
+    if (ImGui::ColorEdit4("##WidgetBg", bg, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
+    {
+        personalization_.widgetBgR = bg[0]; personalization_.widgetBgG = bg[1];
+        personalization_.widgetBgB = bg[2]; personalization_.widgetBgA = bg[3];
+        personalizationDirty_ = true;
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("组件边框色");
+    float border[4] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB, personalization_.widgetBorderA };
+    if (ImGui::ColorEdit4("##WidgetBorder", border, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
+    {
+        personalization_.widgetBorderR = border[0]; personalization_.widgetBorderG = border[1];
+        personalization_.widgetBorderB = border[2]; personalization_.widgetBorderA = border[3];
+        personalizationDirty_ = true;
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("底部渐变透明度");
+    ImGui::SliderFloat("渐变起始", &personalization_.gradientStartA, 0.0f, 1.0f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) personalizationDirty_ = true;
+    ImGui::SliderFloat("渐变结束", &personalization_.gradientEndA, 0.0f, 1.0f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) personalizationDirty_ = true;
 
     ImGui::EndChild();
 }
