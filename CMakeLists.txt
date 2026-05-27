@@ -7,6 +7,7 @@ add_executable(SnowDesktop WIN32
     src/app.cpp
     src/utils.cpp
     src/settings_window.cpp
+    src/personalization.cpp
     src/widget_engine.cpp
     src/resource.rc
     third_party/imgui/imgui.cpp

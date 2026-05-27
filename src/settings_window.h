@@ -5,6 +5,8 @@
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
+#include "personalization.h"
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -37,6 +39,7 @@ public:
     void SetReloadCallback(std::function<void()> callback) { reloadCallback_ = std::move(callback); }
     void SetExitCallback(std::function<void()> callback) { exitCallback_ = std::move(callback); }
     void ShowExitConfirm();
+    const PersonalizationSettings& GetPersonalization() const { return personalization_; }
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -48,6 +51,7 @@ private:
     void DrawSidebar();
     void DrawBackupPage();
     void DrawGeneralPage();
+    void DrawPersonalizationPage();
     void DrawAboutPage();
 
     // Backup helpers
@@ -76,6 +80,8 @@ private:
 
     std::function<void()> reloadCallback_;
     std::function<void()> exitCallback_;
+    PersonalizationSettings personalization_;
+    bool personalizationDirty_ = false;
 };
 
 extern SettingsWindow* g_settingsWindow;
