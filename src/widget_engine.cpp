@@ -473,6 +473,23 @@ std::string WidgetEngine::InvokeGetEditText(const std::wstring& scriptPath) cons
     return "";
 }
 
+bool WidgetEngine::HasEditSupport(const std::wstring& scriptPath) const
+{
+    for (const auto& w : widgets_)
+    {
+        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
+        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) != 0) continue;
+
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return false; }
+        lua_getfield(L_, -1, "getEditText");
+        bool has = lua_isfunction(L_, -1) != 0;
+        lua_pop(L_, 2);
+        return has;
+    }
+    return false;
+}
+
 void WidgetEngine::InvokeEditCommit(const std::wstring& scriptPath, const std::string& text) const
 {
     for (auto& w : widgets_)

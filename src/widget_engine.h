@@ -44,6 +44,7 @@ public:
     bool HasCustomStyle(const std::wstring& scriptPath) const;
     void InvokeOpen(const std::wstring& scriptPath);
     std::string InvokeGetEditText(const std::wstring& scriptPath) const;
+    bool HasEditSupport(const std::wstring& scriptPath) const;
     void InvokeEditCommit(const std::wstring& scriptPath, const std::string& text) const;
     bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
 
