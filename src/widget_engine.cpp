@@ -827,7 +827,7 @@ static int lua_WidgetInput(lua_State* L)
                 ComPtr<ID2D1SolidColorBrush> cursorBrush;
                 s->ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.6f), &cursorBrush);
                 if (cursorBrush)
-                    s->ctx->DrawLine(D2D1::Point2F(cx, ry + 5), D2D1::Point2F(cx, ry + h - 5),
+                    s->ctx->DrawLine(D2D1::Point2F(cx, ry + 5), D2D1::Point2F(cx, ry + 5 + 14),
                         cursorBrush.Get(), 1.5f);
             }
         }
@@ -848,16 +848,20 @@ static int lua_WidgetInput(lua_State* L)
 static int lua_WidgetFocus(lua_State* L)
 {
     const char* id = luaL_checkstring(L, 1);
+    const char* initText = luaL_optstring(L, 2, nullptr);
     auto* s = GetD2D(L);
     if (!s) return 0;
-    s->activeInputId = id;
+    s->activeInputId = id ? id : "";
+    if (id && id[0] && initText)
+    {
+        s->inputText = initText;
+        s->cursorPos = (int)s->inputText.size();
+    }
     if (!id || !id[0])
     {
         s->inputText.clear();
         s->cursorPos = 0;
     }
-    // Get engine via global... simpler: set focused path on engine
-    // We reach engine through the d2dState ptr. Let's add focusedScriptPath tracking.
     return 0;
 }
 
