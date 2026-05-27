@@ -761,6 +761,38 @@ static int lua_StorageSet(lua_State* L)
     return 0;
 }
 
+// ── ImGui Lua API ──────────────────────────────────────────────────
+static int lua_ImGuiText(lua_State* L) { ImGui::Text("%s", luaL_checkstring(L, 1)); return 0; }
+
+static int lua_ImGuiButton(lua_State* L)
+{
+    lua_pushboolean(L, ImGui::Button(luaL_checkstring(L, 1)));
+    return 1;
+}
+
+static int lua_ImGuiInputText(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    const char* text = luaL_optstring(L, 2, "");
+    char buf[4096]{};
+    strncpy_s(buf, sizeof(buf), text, _TRUNCATE);
+    if (ImGui::InputTextMultiline(label, buf, sizeof(buf), ImVec2(-1, 80)))
+        lua_pushstring(L, buf);
+    else
+        lua_pushstring(L, text);
+    return 1;
+}
+
+static int lua_ImGuiCheckbox(lua_State* L)
+{
+    bool v = lua_toboolean(L, 2) != 0;
+    if (ImGui::Checkbox(luaL_checkstring(L, 1), &v))
+        lua_pushboolean(L, v);
+    else
+        lua_pushboolean(L, lua_toboolean(L, 2) != 0);
+    return 1;
+}
+
 static int lua_StorageRemove(lua_State* L)
 {
     const char* key = luaL_checkstring(L, 1);
@@ -926,4 +958,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_StorageSet);   lua_setfield(L, -2, "set");
     lua_pushcfunction(L, lua_StorageRemove);lua_setfield(L, -2, "remove");
     lua_setglobal(L, "storage");
+
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_ImGuiText);     lua_setfield(L, -2, "text");
+    lua_pushcfunction(L, lua_ImGuiButton);   lua_setfield(L, -2, "button");
+    lua_pushcfunction(L, lua_ImGuiInputText);lua_setfield(L, -2, "input");
+    lua_pushcfunction(L, lua_ImGuiCheckbox); lua_setfield(L, -2, "checkbox");
+    lua_setglobal(L, "imgui");
 }

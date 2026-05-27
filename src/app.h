@@ -478,6 +478,7 @@ public:
             settingsWindow_->SetInvalidateCallback([this]() {
                 if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
             });
+            settingsWindow_->SetWidgetEngine(widgetEngine_.get());
         }
 
         // Init Lua widget engine
