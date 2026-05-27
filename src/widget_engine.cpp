@@ -71,6 +71,11 @@ struct D2DState
     IDWriteFactory* dwrite = nullptr;
     D2D1_RECT_F widgetRect{};
     std::string storagePrefix;
+
+    // Active input
+    std::string activeInputId;
+    std::string inputText;
+    int cursorPos = 0;
 };
 
 static D2DState* GetD2D(lua_State* L)
@@ -514,6 +519,50 @@ void WidgetEngine::InvokeEditCommit(const std::wstring& scriptPath, const std::s
     }
 }
 
+void WidgetEngine::BlurActiveInput()
+{
+    d2dState_->activeInputId.clear();
+    d2dState_->inputText.clear();
+    d2dState_->cursorPos = 0;
+}
+
+bool WidgetEngine::HandleKeyDown(const std::wstring& scriptPath, int vk)
+{
+    // TODO: implement
+    return false;
+}
+
+bool WidgetEngine::HandleChar(const std::wstring& scriptPath, wchar_t ch)
+{
+    // TODO: implement
+    return false;
+}
+
+void WidgetEngine::InvokeClick(const std::wstring& scriptPath, int x, int y)
+{
+    for (auto& w : widgets_)
+    {
+        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
+        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) != 0) continue;
+
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+        lua_getfield(L_, -1, "onClick");
+        if (lua_isfunction(L_, -1))
+        {
+            lua_pushinteger(L_, x);
+            lua_pushinteger(L_, y);
+            lua_pcall(L_, 2, 0, 0);
+        }
+        else
+        {
+            lua_pop(L_, 1);
+        }
+        lua_pop(L_, 1);
+        return;
+    }
+}
+
 bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const
 {
     for (const auto& w : widgets_)
@@ -646,6 +695,113 @@ static int lua_StorageRemove(lua_State* L)
     return 0;
 }
 
+static int lua_WidgetInput(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    float x = (float)luaL_checknumber(L, 2);
+    float y = (float)luaL_checknumber(L, 3);
+    float w = (float)luaL_checknumber(L, 4);
+    float h = (float)luaL_optnumber(L, 5, 24);
+    const char* defaultText = luaL_optstring(L, 6, "");
+
+    auto* s = GetD2D(L);
+    if (!s || !s->ctx) { lua_pushstring(L, defaultText); return 1; }
+
+    float rx = s->widgetRect.left + x;
+    float ry = s->widgetRect.top + y;
+
+    // Draw input background
+    ComPtr<ID2D1SolidColorBrush> bgBrush;
+    s->ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.08f), &bgBrush);
+    if (bgBrush)
+    {
+        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(rx, ry, rx + w, ry + h), 4, 4);
+        s->ctx->FillRoundedRectangle(rr, bgBrush.Get());
+    }
+
+    // Determine if this input is active
+    bool isActive = (s->activeInputId == id);
+    std::string text = isActive ? s->inputText : defaultText;
+
+    // Draw text
+    if (!text.empty())
+    {
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+        std::wstring wtext(wlen, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wtext.data(), wlen);
+
+        ComPtr<IDWriteTextFormat> fmt;
+        s->dwrite->CreateTextFormat(L"Consolas", nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 14, L"", &fmt);
+        if (fmt)
+        {
+            ComPtr<ID2D1SolidColorBrush> textBrush;
+            s->ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.9f), &textBrush);
+            if (textBrush)
+                s->ctx->DrawTextW(wtext.c_str(), (UINT32)(wtext.size() - 1), fmt.Get(),
+                    D2D1::RectF(rx + 6, ry + 3, rx + w - 6, ry + h - 3), textBrush.Get());
+        }
+    }
+
+    // Draw cursor
+    if (isActive)
+    {
+        // Measure text up to cursorPos
+        std::string before = text.substr(0, s->cursorPos);
+        int wlen2 = MultiByteToWideChar(CP_UTF8, 0, before.c_str(), -1, nullptr, 0);
+        std::wstring wbefore(wlen2, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, before.c_str(), -1, wbefore.data(), wlen2);
+
+        ComPtr<IDWriteTextFormat> fmt;
+        s->dwrite->CreateTextFormat(L"Consolas", nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 14, L"", &fmt);
+        if (fmt)
+        {
+            ComPtr<IDWriteTextLayout> layout;
+            s->dwrite->CreateTextLayout(wbefore.c_str(), (UINT32)(wbefore.size() - 1),
+                fmt.Get(), w, h, &layout);
+            if (layout)
+            {
+                DWRITE_TEXT_METRICS metrics;
+                layout->GetMetrics(&metrics);
+                float cx = rx + 6 + metrics.widthIncludingTrailingWhitespace;
+                ComPtr<ID2D1SolidColorBrush> cursorBrush;
+                s->ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.6f), &cursorBrush);
+                if (cursorBrush)
+                    s->ctx->DrawLine(D2D1::Point2F(cx, ry + 4), D2D1::Point2F(cx, ry + h - 4),
+                        cursorBrush.Get(), 1.5f);
+            }
+        }
+    }
+
+    // Handle click to focus
+    POINT mp;
+    GetCursorPos(&mp);
+    if (s->ctx)
+    {
+        // We can't get client coords easily from Lua. Use hit test from ImGui or mouse pos.
+    }
+
+    lua_pushstring(L, text.c_str());
+    return 1;
+}
+
+static int lua_WidgetFocus(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    auto* s = GetD2D(L);
+    if (!s) return 0;
+    s->activeInputId = id;
+    if (!id || !id[0])
+    {
+        s->inputText.clear();
+        s->cursorPos = 0;
+    }
+    return 0;
+}
+
 static int lua_LayoutWidth(lua_State* L)
 {
     auto* s = GetD2D(L);
@@ -668,6 +824,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
     lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");
     lua_setglobal(L, "draw");
+
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_WidgetInput);lua_setfield(L, -2, "input");
+    lua_pushcfunction(L, lua_WidgetFocus);lua_setfield(L, -2, "focus");
+    lua_setglobal(L, "widget");
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_GetTime);   lua_setfield(L, -2, "getTime");

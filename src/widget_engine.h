@@ -46,6 +46,10 @@ public:
     std::string InvokeGetEditText(const std::wstring& scriptPath) const;
     bool HasEditSupport(const std::wstring& scriptPath) const;
     void InvokeEditCommit(const std::wstring& scriptPath, const std::string& text) const;
+    void InvokeClick(const std::wstring& scriptPath, int x, int y);
+    bool HandleKeyDown(const std::wstring& scriptPath, int vk);
+    bool HandleChar(const std::wstring& scriptPath, wchar_t ch);
+    void BlurActiveInput();
     bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
 
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
