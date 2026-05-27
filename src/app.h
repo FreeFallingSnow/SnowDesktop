@@ -6626,7 +6626,7 @@ private:
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 18;
         constexpr int gap = 6;
-        constexpr int resizeReserve = 26;
+        constexpr int resizeReserve = 24;
         return MakeRect(handle.right - resizeReserve - gap - btnSize - gap - btnSize, handle.top + 3,
             handle.right - resizeReserve - gap - btnSize - gap, handle.bottom - 3);
     }
@@ -6636,7 +6636,7 @@ private:
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 18;
         constexpr int gap = 6;
-        constexpr int resizeReserve = 26;
+        constexpr int resizeReserve = 24;
         return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 3,
             handle.right - resizeReserve - gap, handle.bottom - 3);
     }
@@ -6646,7 +6646,7 @@ private:
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 18;
         constexpr int gap = 6;
-        constexpr int resizeReserve = 26;
+        constexpr int resizeReserve = 24;
         return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 3,
             handle.right - resizeReserve - gap, handle.bottom - 3);
     }
@@ -9467,7 +9467,7 @@ private:
             DrawD2DRoundedRectangle(
                 context, fcToggle, 4.0f,
                 toggleHovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f));
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
             DrawD2DText(context, widget.listMode ? L"" : L"", fcToggle,
                 (faTextFormat_ ? faTextFormat_.Get() : collectionItemTextFormat_.Get()), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
         }
@@ -9526,7 +9526,7 @@ private:
             DrawD2DRoundedRectangle(
                 context, toggleRect, 4.0f,
                 hovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f));
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
             DrawD2DText(context, widget.listMode ? L"" : L"", toggleRect,
                 (faTextFormat_ ? faTextFormat_.Get() : collectionItemTextFormat_.Get()), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
         }
@@ -9538,7 +9538,7 @@ private:
             DrawD2DRoundedRectangle(
                 context, openRect, 4.0f,
                 hovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f));
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
             DrawD2DText(context, L"", openRect,
                 (faTextFormat_ ? faTextFormat_.Get() : collectionItemTextFormat_.Get()), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
         }
