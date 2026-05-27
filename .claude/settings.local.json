@@ -29,7 +29,14 @@
       "Bash(python -c ' *)",
       "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --config Release --target SnowDesktop)",
       "Bash(cp __TRACKED_VAR__/imgui.cpp __TRACKED_VAR__/imgui.h __TRACKED_VAR__/imgui_draw.cpp __TRACKED_VAR__/imgui_tables.cpp __TRACKED_VAR__/imgui_widgets.cpp __TRACKED_VAR__/imgui_internal.h __TRACKED_VAR__/imconfig.h __TRACKED_VAR__/imstb_rectpack.h __TRACKED_VAR__/imstb_textedit.h __TRACKED_VAR__/imstb_truetype.h __TRACKED_VAR__/)",
-      "Bash(cp __TRACKED_VAR__/backends/imgui_impl_win32.cpp __TRACKED_VAR__/backends/imgui_impl_win32.h __TRACKED_VAR__/backends/imgui_impl_dx11.cpp __TRACKED_VAR__/backends/imgui_impl_dx11.h __TRACKED_VAR__/backends/)"
+      "Bash(cp __TRACKED_VAR__/backends/imgui_impl_win32.cpp __TRACKED_VAR__/backends/imgui_impl_win32.h __TRACKED_VAR__/backends/imgui_impl_dx11.cpp __TRACKED_VAR__/backends/imgui_impl_dx11.h __TRACKED_VAR__/backends/)",
+      "Bash(curl -L -o \"D:/Code/Other/SnowDesktop/lua-5.4.7.tar.gz\" \"https://www.lua.org/ftp/lua-5.4.7.tar.gz\")",
+      "Bash(tar -xzf \"D:/Code/Other/SnowDesktop/lua-5.4.7.tar.gz\" -C \"D:/Code/Other/SnowDesktop/\")",
+      "Bash(tar -xzf \"lua-5.4.7.tar.gz\")",
+      "Bash(mv lua-5.4.7/src third_party/lua)",
+      "Bash(rm -rf lua-5.4.7 lua-5.4.7.tar.gz)",
+      "Bash(cmake -S \"D:/Code/Other/SnowDesktop\" -B \"D:/Code/Other/SnowDesktop/.build\")",
+      "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --config Release --target SnowDesktop -v)"
     ]
   }
 }

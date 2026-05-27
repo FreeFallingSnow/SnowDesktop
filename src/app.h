@@ -2,6 +2,7 @@
 #include "resource.h"
 #include "utils.h"
 #include "settings_window.h"
+#include "widget_engine.h"
 
 #include <windowsx.h>
 #include <commctrl.h>
@@ -472,6 +473,13 @@ public:
         else
         {
             settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
+        }
+
+        // Init Lua widget engine
+        widgetEngine_ = std::make_unique<WidgetEngine>();
+        if (!widgetEngine_->Init(bitmapContext_.Get(), dwriteFactory_.Get()))
+        {
+            DebugLog(L"WidgetEngine Init failed");
         }
 
         MSG msg{};
@@ -8913,6 +8921,9 @@ private:
             DrawD2DWidget(context, widget);
         }
 
+        if (widgetEngine_)
+            widgetEngine_->RenderAll(context);
+
         if (draggingWidget_ || resizingWidget_)
         {
             DrawD2DWidgetPreview(context);
@@ -12873,6 +12884,7 @@ private:
     LONGLONG lastRecycleBinItemCount_ = -1;
     std::vector<HBITMAP> menuIconPool_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
+    std::unique_ptr<WidgetEngine> widgetEngine_;
     bool navButtonsVisible_ = false;
     RECT navButtonsHoverZone_{};
     POINT lastContextMenuScreenPoint_{};
