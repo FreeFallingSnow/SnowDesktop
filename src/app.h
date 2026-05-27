@@ -7783,26 +7783,28 @@ private:
                     }
                     return cmp < 0;
                 });
-            // Rebuild itemKeys: keep non-active-category keys, append sorted active keys
-            std::wstring activeId = GetActiveFileCategoryId(w);
-            std::vector<std::wstring> nonActive;
-            std::unordered_set<std::wstring> seenNonActive;
-            for (const auto& rawKey : w.itemKeys)
+            // Rebuild itemKeys: preserve non-active tab items, then sorted active tab
+            if (active == L"all")
             {
-                size_t idx = FindItemIndexByKey(rawKey);
-                if (idx == static_cast<size_t>(-1)) continue;
-                if (GetFileCategoryId(items_[idx]) != activeId)
-                {
-                    std::wstring nk = NormalizeLayoutKey(items_[idx].layoutKey);
-                    if (seenNonActive.insert(nk).second)
-                        nonActive.push_back(nk);
-                }
+                w.itemKeys = std::move(keys);
             }
-            w.itemKeys = nonActive;
-            std::unordered_set<std::wstring> seenActive;
-            for (const auto& k : keys)
+            else
             {
-                if (seenActive.insert(k).second)
+                std::vector<std::wstring> nonActive;
+                std::unordered_set<std::wstring> seenNonActive;
+                for (const auto& rawKey : w.itemKeys)
+                {
+                    size_t idx = FindItemIndexByKey(rawKey);
+                    if (idx == static_cast<size_t>(-1)) continue;
+                    if (GetFileCategoryId(items_[idx]) != active)
+                    {
+                        std::wstring nk = NormalizeLayoutKey(items_[idx].layoutKey);
+                        if (seenNonActive.insert(nk).second)
+                            nonActive.push_back(nk);
+                    }
+                }
+                w.itemKeys = std::move(nonActive);
+                for (const auto& k : keys)
                     w.itemKeys.push_back(k);
             }
             LayoutItems();
