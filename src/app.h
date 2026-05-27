@@ -345,6 +345,9 @@ public:
         }
 
         DebugLog(L"=== SnowDesktop started ===");
+        wchar_t startMessage[256]{};
+        swprintf_s(startMessage, L"Process id=%lu showCommand=%d smokeTestMs=%u", GetCurrentProcessId(), showCommand, smokeTestMs);
+        DebugLog(startMessage);
 
         if (!InitializeGraphics())
         {
@@ -376,12 +379,21 @@ public:
         LoadLayoutSlots();
 
         desktopWindows_ = FindDesktopWindows();
+        DebugLogDesktopWindows(L"Run FindDesktopWindows", desktopWindows_);
         if (desktopWindows_.listView != nullptr)
         {
             bool hiddenByPreviousRun = GetPropW(desktopWindows_.listView, kHiddenBySnowDesktopProp) != nullptr;
+            wchar_t iconLayerMessage[256]{};
+            swprintf_s(
+                iconLayerMessage,
+                L"Explorer icon layer before hide hiddenByPreviousRun=%s visible=%s",
+                DebugBool(hiddenByPreviousRun),
+                DebugBool(IsWindowVisible(desktopWindows_.listView) != FALSE));
+            DebugLog(iconLayerMessage);
             if (hiddenByPreviousRun && !IsWindowVisible(desktopWindows_.listView))
             {
                 ShowWindow(desktopWindows_.listView, SW_SHOW);
+                DebugLog(L"Explorer icon layer restored before re-hide");
             }
 
             desktopWindows_.listViewWasVisible = IsWindowVisible(desktopWindows_.listView) != FALSE || hiddenByPreviousRun;
@@ -389,12 +401,28 @@ public:
             {
                 SetPropW(desktopWindows_.listView, kHiddenBySnowDesktopProp, reinterpret_cast<HANDLE>(1));
                 ShowWindow(desktopWindows_.listView, SW_HIDE);
+                DebugLog(L"Explorer icon layer hidden by SnowDesktop");
             }
+        }
+        else
+        {
+            DebugLog(L"Explorer icon layer not found during startup");
         }
 
         if (!RegisterWindowClass())
         {
             MessageBoxW(nullptr, L"Unable to register the SnowDesktop window class.", L"SnowDesktop", MB_ICONERROR);
+            return 1;
+        }
+
+        taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
+        wchar_t taskbarMessage[128]{};
+        swprintf_s(taskbarMessage, L"RegisterWindowMessage(TaskbarCreated)=0x%X", taskbarRestartMsg_);
+        DebugLog(taskbarMessage);
+
+        if (!CreateControlWindow())
+        {
+            MessageBoxW(nullptr, L"Unable to create the SnowDesktop control window.", L"SnowDesktop", MB_ICONERROR);
             return 1;
         }
 
@@ -427,29 +455,11 @@ public:
         RegisterOleDropTarget();
         AddTrayIcon();
         ReloadItems();
-
-        SHChangeNotifyEntry entries[2]{};
-        entries[0].pidl = desktopPidl_.get();
-        entries[0].fRecursive = FALSE;
-        PIDLIST_ABSOLUTE rbPidl = nullptr;
-        if (SUCCEEDED(SHGetSpecialFolderLocation(nullptr, CSIDL_BITBUCKET, &rbPidl)))
-        {
-            recycleBinPidl_.reset(rbPidl);
-            entries[1].pidl = recycleBinPidl_.get();
-            entries[1].fRecursive = TRUE;
-        }
-        const int entryCount = recycleBinPidl_.get() != nullptr ? 2 : 1;
-        shellChangeRegId_ = SHChangeNotifyRegister(
-            hwnd_,
-            SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
-            SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
-            SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
-            SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES | SHCNE_ASSOCCHANGED,
-            kShellChangeMessage,
-            entryCount,
-            entries);
+        RegisterShellChangeNotifications();
 
         SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+        DebugLog(L"Timers started: recycle bin poll and desktop host watch");
 
         MSG msg{};
         while (GetMessageW(&msg, nullptr, 0, 0) > 0)
@@ -720,6 +730,19 @@ private:
             return false;
         }
 
+        WNDCLASSEXW control{};
+        control.cbSize = sizeof(control);
+        control.lpfnWndProc = &SnowDesktopApp::ControlWindowProcThunk;
+        control.hInstance = instance_;
+        control.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        control.hbrBackground = nullptr;
+        control.lpszClassName = kControlWindowClassName;
+
+        if (RegisterClassExW(&control) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        {
+            return false;
+        }
+
         WNDCLASSEXW hint{};
         hint.cbSize = sizeof(hint);
         hint.lpfnWndProc = DefWindowProcW;
@@ -733,6 +756,8 @@ private:
 
     bool CreateDesktopWindow(int showCommand)
     {
+        UNREFERENCED_PARAMETER(showCommand);
+
         virtualLeft_ = GetSystemMetrics(SM_XVIRTUALSCREEN);
         virtualTop_ = GetSystemMetrics(SM_YVIRTUALSCREEN);
         virtualWidth_ = GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -742,7 +767,20 @@ private:
         HWND parent = desktopWindows_.host != nullptr ? desktopWindows_.host : GetDesktopWindow();
         POINT origin{ virtualLeft_, virtualTop_ };
         ScreenToClient(parent, &origin);
-        bool attachedToDesktopHost = true;
+
+        wchar_t createMessage[512]{};
+        swprintf_s(
+            createMessage,
+            L"CreateDesktopWindow virtual=(%d,%d,%d,%d) parent=%p origin=(%ld,%ld)",
+            virtualLeft_,
+            virtualTop_,
+            virtualWidth_,
+            virtualHeight_,
+            parent,
+            origin.x,
+            origin.y);
+        DebugLog(createMessage);
+        DebugLogDesktopWindows(L"CreateDesktopWindow desktopWindows_", desktopWindows_);
 
         DWORD exStyle = WS_EX_TOOLWINDOW;
         hwnd_ = CreateWindowExW(
@@ -762,6 +800,9 @@ private:
         if (hwnd_ == nullptr)
         {
             lastCreateWindowError_ = GetLastError();
+            wchar_t createError[256]{};
+            swprintf_s(createError, L"CreateWindowExW child failed GetLastError=%lu", lastCreateWindowError_);
+            DebugLog(createError);
 
             hwnd_ = CreateWindowExW(
                 exStyle,
@@ -780,14 +821,20 @@ private:
             if (hwnd_ == nullptr)
             {
                 lastCreateWindowError_ = GetLastError();
+                swprintf_s(createError, L"CreateWindowExW popup fallback failed GetLastError=%lu", lastCreateWindowError_);
+                DebugLog(createError);
                 return false;
             }
+            DebugLogWindow(L"CreateWindowExW popup fallback created", hwnd_);
 
             if (parent != nullptr && parent != GetDesktopWindow())
             {
                 SetLastError(ERROR_SUCCESS);
                 SetParent(hwnd_, parent);
-                if (GetLastError() == ERROR_SUCCESS)
+                DWORD setParentError = GetLastError();
+                swprintf_s(createError, L"CreateDesktopWindow fallback SetParent parent=%p GetLastError=%lu", parent, setParentError);
+                DebugLog(createError);
+                if (setParentError == ERROR_SUCCESS)
                 {
                     LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
                     style &= ~WS_POPUP;
@@ -795,26 +842,16 @@ private:
                     SetWindowLongPtrW(hwnd_, GWL_STYLE, style);
                     SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
                 }
-                else
-                {
-                    attachedToDesktopHost = false;
-                }
             }
-            else
-            {
-                attachedToDesktopHost = false;
-            }
-        }
-
-        if (attachedToDesktopHost)
-        {
-            SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_SHOWWINDOW);
         }
         else
         {
-            SetWindowPos(hwnd_, HWND_BOTTOM, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+            DebugLogWindow(L"CreateWindowExW child created", hwnd_);
         }
-        ShowWindow(hwnd_, showCommand);
+
+        RestoreDesktopWindowLayer();
+        DebugLogWindow(L"CreateDesktopWindow after RestoreDesktopWindowLayer", hwnd_);
+        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
         UpdateWindow(hwnd_);
 
         HICON appIcon = LoadAppIcon();
@@ -824,6 +861,301 @@ private:
             SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
         }
         return CreateCompositionTarget();
+    }
+
+    bool CreateControlWindow()
+    {
+        if (controlHwnd_ != nullptr && IsWindow(controlHwnd_))
+        {
+            return true;
+        }
+
+        controlHwnd_ = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            kControlWindowClassName,
+            L"SnowDesktopControl",
+            WS_POPUP,
+            0,
+            0,
+            1,
+            1,
+            nullptr,
+            nullptr,
+            instance_,
+            this);
+        if (controlHwnd_ == nullptr)
+        {
+            wchar_t message[256]{};
+            swprintf_s(message, L"CreateControlWindow failed GetLastError=%lu", GetLastError());
+            DebugLog(message);
+            return false;
+        }
+
+        DebugLogWindow(L"CreateControlWindow created", controlHwnd_);
+        return true;
+    }
+
+    HWND TrayOwnerWindow() const
+    {
+        if (controlHwnd_ != nullptr && IsWindow(controlHwnd_))
+        {
+            return controlHwnd_;
+        }
+        return hwnd_;
+    }
+
+    void ResetDesktopWindowResources()
+    {
+        dcompTarget_.Reset();
+        dcompVisual_.Reset();
+        dcompSurface_.Reset();
+        compositionWidth_ = 0;
+        compositionHeight_ = 0;
+        dropTargetRegistered_ = false;
+        hwnd_ = nullptr;
+    }
+
+    bool IsDesktopWindowChild() const
+    {
+        return hwnd_ != nullptr && (GetWindowLongPtrW(hwnd_, GWL_STYLE) & WS_CHILD) != 0;
+    }
+
+    void RestoreDesktopWindowLayer()
+    {
+        if (hwnd_ == nullptr || !IsWindow(hwnd_))
+        {
+            return;
+        }
+
+        if (IsDesktopWindowChild())
+        {
+            HWND parent = GetParent(hwnd_);
+            POINT origin{ virtualLeft_, virtualTop_ };
+            if (parent != nullptr)
+            {
+                ScreenToClient(parent, &origin);
+            }
+            BOOL ok = SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+            if (!ok)
+            {
+                wchar_t message[256]{};
+                swprintf_s(message, L"RestoreDesktopWindowLayer child SetWindowPos failed GetLastError=%lu parent=%p", GetLastError(), parent);
+                DebugLog(message);
+            }
+            return;
+        }
+
+        BOOL ok = SetWindowPos(hwnd_, HWND_BOTTOM, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+        if (!ok)
+        {
+            wchar_t message[256]{};
+            swprintf_s(message, L"RestoreDesktopWindowLayer popup SetWindowPos failed GetLastError=%lu", GetLastError());
+            DebugLog(message);
+        }
+    }
+
+    void AttachWindowToDesktopHost(HWND host)
+    {
+        if (hwnd_ == nullptr || !IsWindow(hwnd_) || host == nullptr || !IsWindow(host))
+        {
+            wchar_t message[256]{};
+            swprintf_s(
+                message,
+                L"AttachWindowToDesktopHost skipped hwnd=%p hwndValid=%s host=%p hostValid=%s",
+                hwnd_,
+                DebugBool(hwnd_ != nullptr && IsWindow(hwnd_)),
+                host,
+                DebugBool(host != nullptr && IsWindow(host)));
+            DebugLog(message);
+            return;
+        }
+
+        DebugLogWindow(L"AttachWindowToDesktopHost before hwnd", hwnd_);
+        DebugLogWindow(L"AttachWindowToDesktopHost host", host);
+
+        if (GetParent(hwnd_) != host)
+        {
+            SetLastError(ERROR_SUCCESS);
+            SetParent(hwnd_, host);
+            DWORD error = GetLastError();
+            wchar_t message[256]{};
+            swprintf_s(message, L"AttachWindowToDesktopHost SetParent host=%p GetLastError=%lu", host, error);
+            DebugLog(message);
+            if (error != ERROR_SUCCESS)
+            {
+                return;
+            }
+        }
+        else
+        {
+            DebugLog(L"AttachWindowToDesktopHost parent already matches current host");
+        }
+
+        LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
+        style &= ~WS_POPUP;
+        style |= WS_CHILD | WS_VISIBLE;
+        SetWindowLongPtrW(hwnd_, GWL_STYLE, style);
+        RestoreDesktopWindowLayer();
+        ShowWindow(hwnd_, customDesktopVisible_ ? SW_SHOWNOACTIVATE : SW_HIDE);
+        DebugLogWindow(L"AttachWindowToDesktopHost after hwnd", hwnd_);
+    }
+
+    void RecoverDesktopHostAfterExplorerRestart()
+    {
+        DebugLog(L"RecoverDesktopHostAfterExplorerRestart begin");
+        DesktopWindows windows = FindDesktopWindows();
+        DebugLogDesktopWindows(L"RecoverDesktopHostAfterExplorerRestart FindDesktopWindows", windows);
+        if (windows.host == nullptr || !IsWindow(windows.host))
+        {
+            DebugLog(L"RecoverDesktopHostAfterExplorerRestart no valid host");
+            return;
+        }
+
+        desktopWindows_ = windows;
+        const bool desktopWindowValid = hwnd_ != nullptr && IsWindow(hwnd_);
+        if (desktopWindowValid)
+        {
+            AttachWindowToDesktopHost(desktopWindows_.host);
+        }
+        else
+        {
+            DebugLog(L"RecoverDesktopHostAfterExplorerRestart recreating desktop window");
+            ResetDesktopWindowResources();
+            if (!CreateDesktopWindow(SW_SHOWNOACTIVATE))
+            {
+                wchar_t message[256]{};
+                swprintf_s(
+                    message,
+                    L"RecoverDesktopHostAfterExplorerRestart CreateDesktopWindow failed createError=%lu graphicsHr=0x%08lX",
+                    lastCreateWindowError_,
+                    static_cast<unsigned long>(lastGraphicsError_));
+                DebugLog(message);
+                return;
+            }
+            RegisterOleDropTarget();
+            RegisterShellChangeNotifications();
+            SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
+        }
+
+        if (customDesktopVisible_)
+        {
+            HideExplorerIcons();
+            ReloadItems();
+        }
+
+        AddTrayIcon(true);
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+        DebugLogWindow(L"RecoverDesktopHostAfterExplorerRestart end hwnd", hwnd_);
+    }
+
+    void WatchDesktopHost()
+    {
+        if (hwnd_ == nullptr || !IsWindow(hwnd_))
+        {
+            DebugLog(L"WatchDesktopHost hwnd invalid - recovering");
+            RecoverDesktopHostAfterExplorerRestart();
+            return;
+        }
+
+        HWND parent = GetParent(hwnd_);
+        DesktopWindows windows = FindDesktopWindows();
+        HWND currentHost = windows.host;
+        const bool parentMissing = parent == nullptr || !IsWindow(parent);
+        const bool knownHostMissing = desktopWindows_.host == nullptr || !IsWindow(desktopWindows_.host);
+        const bool knownListViewMissing = customDesktopVisible_ &&
+            (desktopWindows_.listView == nullptr || !IsWindow(desktopWindows_.listView));
+        const bool hostChanged = currentHost != nullptr && IsWindow(currentHost) && currentHost != desktopWindows_.host;
+        const bool parentDetached = currentHost != nullptr && IsWindow(currentHost) && parent != currentHost;
+
+        if (parentMissing || knownHostMissing || knownListViewMissing || hostChanged || parentDetached)
+        {
+            wchar_t message[512]{};
+            swprintf_s(
+                message,
+                L"WatchDesktopHost check parent=%p currentHost=%p cachedHost=%p parentMissing=%s knownHostMissing=%s knownListViewMissing=%s hostChanged=%s parentDetached=%s",
+                parent,
+                currentHost,
+                desktopWindows_.host,
+                DebugBool(parentMissing),
+                DebugBool(knownHostMissing),
+                DebugBool(knownListViewMissing),
+                DebugBool(hostChanged),
+                DebugBool(parentDetached));
+            DebugLog(message);
+            DebugLogDesktopWindows(L"WatchDesktopHost current desktop windows", windows);
+            DebugLogWindow(L"WatchDesktopHost hwnd before recovery", hwnd_);
+        }
+
+        if (parentMissing || knownHostMissing || knownListViewMissing || hostChanged || parentDetached)
+        {
+            DebugLog(L"Desktop host watch - recovering");
+            desktopWindows_ = windows;
+            AttachWindowToDesktopHost(desktopWindows_.host);
+            if (customDesktopVisible_)
+            {
+                HideExplorerIcons();
+                ReloadItems();
+            }
+            AddTrayIcon(true);
+            DebugLogWindow(L"WatchDesktopHost hwnd after recovery", hwnd_);
+        }
+    }
+
+    void RequestExit()
+    {
+        DebugLogWindow(L"RequestExit hwnd", hwnd_);
+        exitRequested_ = true;
+        if (hwnd_ != nullptr && IsWindow(hwnd_))
+        {
+            DestroyWindow(hwnd_);
+        }
+        else
+        {
+            KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
+            RemoveTrayIcon();
+            RestoreExplorerIcons();
+            if (controlHwnd_ != nullptr && IsWindow(controlHwnd_))
+            {
+                DestroyWindow(controlHwnd_);
+                controlHwnd_ = nullptr;
+            }
+            PostQuitMessage(0);
+        }
+    }
+
+    void RelaunchSelfAfterExplorerRestart()
+    {
+        if (restartLaunched_)
+        {
+            DebugLog(L"RelaunchSelfAfterExplorerRestart skipped: already launched");
+            return;
+        }
+
+        wchar_t selfPath[MAX_PATH]{};
+        if (GetModuleFileNameW(nullptr, selfPath, MAX_PATH) == 0)
+        {
+            DebugLog(L"RelaunchSelfAfterExplorerRestart GetModuleFileNameW failed");
+            return;
+        }
+
+        HINSTANCE result = ShellExecuteW(
+            nullptr,
+            L"open",
+            selfPath,
+            L"--wait-for-desktop-host",
+            nullptr,
+            SW_SHOWNORMAL);
+        wchar_t message[512]{};
+        swprintf_s(
+            message,
+            L"RelaunchSelfAfterExplorerRestart ShellExecute result=%p selfPath=%s",
+            result,
+            selfPath);
+        DebugLog(message);
+        if (reinterpret_cast<INT_PTR>(result) > 32)
+        {
+            restartLaunched_ = true;
+        }
     }
 
     bool CreateCompositionTarget()
@@ -912,18 +1244,84 @@ private:
     {
         if (desktopWindows_.listView != nullptr && IsWindow(desktopWindows_.listView))
         {
+            DebugLogWindow(L"HideExplorerIcons listView before", desktopWindows_.listView);
             desktopWindows_.listViewWasVisible = true;
             SetPropW(desktopWindows_.listView, kHiddenBySnowDesktopProp, reinterpret_cast<HANDLE>(1));
             ShowWindow(desktopWindows_.listView, SW_HIDE);
+            DebugLogWindow(L"HideExplorerIcons listView after", desktopWindows_.listView);
         }
+        else
+        {
+            DebugLog(L"HideExplorerIcons skipped: listView invalid");
+        }
+    }
+
+    void RegisterShellChangeNotifications()
+    {
+        if (hwnd_ == nullptr || !IsWindow(hwnd_))
+        {
+            DebugLog(L"RegisterShellChangeNotifications skipped: hwnd invalid");
+            return;
+        }
+
+        if (shellChangeRegId_ != 0)
+        {
+            SHChangeNotifyDeregister(shellChangeRegId_);
+            shellChangeRegId_ = 0;
+        }
+
+        SHChangeNotifyEntry entries[2]{};
+        entries[0].pidl = desktopPidl_.get();
+        entries[0].fRecursive = FALSE;
+        if (recycleBinPidl_.get() == nullptr)
+        {
+            PIDLIST_ABSOLUTE rbPidl = nullptr;
+            if (SUCCEEDED(SHGetSpecialFolderLocation(nullptr, CSIDL_BITBUCKET, &rbPidl)))
+            {
+                recycleBinPidl_.reset(rbPidl);
+            }
+        }
+        if (recycleBinPidl_.get() != nullptr)
+        {
+            entries[1].pidl = recycleBinPidl_.get();
+            entries[1].fRecursive = TRUE;
+        }
+
+        const int entryCount = recycleBinPidl_.get() != nullptr ? 2 : 1;
+        shellChangeRegId_ = SHChangeNotifyRegister(
+            hwnd_,
+            SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
+            SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
+            SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
+            SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES | SHCNE_ASSOCCHANGED,
+            kShellChangeMessage,
+            entryCount,
+            entries);
+
+        wchar_t message[256]{};
+        swprintf_s(message, L"RegisterShellChangeNotifications hwnd=%p regId=%lu", hwnd_, shellChangeRegId_);
+        DebugLog(message);
     }
 
     void RestoreExplorerIcons()
     {
         if (desktopWindows_.listView != nullptr && IsWindow(desktopWindows_.listView) && desktopWindows_.listViewWasVisible)
         {
+            DebugLogWindow(L"RestoreExplorerIcons listView before", desktopWindows_.listView);
             ShowWindow(desktopWindows_.listView, SW_SHOW);
             RemovePropW(desktopWindows_.listView, kHiddenBySnowDesktopProp);
+            DebugLogWindow(L"RestoreExplorerIcons listView after", desktopWindows_.listView);
+        }
+        else
+        {
+            wchar_t message[256]{};
+            swprintf_s(
+                message,
+                L"RestoreExplorerIcons skipped listView=%p valid=%s listViewWasVisible=%s",
+                desktopWindows_.listView,
+                DebugBool(desktopWindows_.listView != nullptr && IsWindow(desktopWindows_.listView)),
+                DebugBool(desktopWindows_.listViewWasVisible));
+            DebugLog(message);
         }
     }
 
@@ -1108,59 +1506,106 @@ private:
         ReleaseDC(nullptr, screenDc);
     }
 
-    void AddTrayIcon()
+    void AddTrayIcon(bool force = false)
     {
-        if (trayIconAdded_ || hwnd_ == nullptr)
+        HWND owner = TrayOwnerWindow();
+        if (owner == nullptr || !IsWindow(owner))
         {
+            DebugLog(L"AddTrayIcon skipped: owner invalid");
+            return;
+        }
+        if (trayIconAdded_ && !force)
+        {
+            DebugLog(L"AddTrayIcon skipped: already added");
             return;
         }
 
-        trayIcon_ = LoadAppIcon();
+        if (force && trayIconAdded_)
+        {
+            NOTIFYICONDATAW removeData{};
+            removeData.cbSize = sizeof(removeData);
+            removeData.hWnd = trayIconOwnerHwnd_ != nullptr ? trayIconOwnerHwnd_ : owner;
+            removeData.uID = kTrayIconId;
+            BOOL removeOk = Shell_NotifyIconW(NIM_DELETE, &removeData);
+            wchar_t removeMessage[256]{};
+            swprintf_s(removeMessage, L"AddTrayIcon force delete ok=%s GetLastError=%lu", DebugBool(removeOk != FALSE), GetLastError());
+            DebugLog(removeMessage);
+            trayIconAdded_ = false;
+            trayIconOwnerHwnd_ = nullptr;
+        }
+
+        if (trayIcon_ == nullptr)
+        {
+            trayIcon_ = LoadAppIcon();
+        }
 
         NOTIFYICONDATAW data{};
         data.cbSize = sizeof(data);
-        data.hWnd = hwnd_;
+        data.hWnd = owner;
         data.uID = kTrayIconId;
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         data.uCallbackMessage = kTrayCallbackMessage;
         data.hIcon = trayIcon_;
         wcscpy_s(data.szTip, L"SnowDesktop 桌面验证");
 
-        trayIconAdded_ = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+        BOOL addOk = Shell_NotifyIconW(NIM_ADD, &data);
+        trayIconAdded_ = addOk != FALSE;
+        wchar_t addMessage[256]{};
+        swprintf_s(
+            addMessage,
+            L"AddTrayIcon NIM_ADD force=%s ok=%s hwnd=%p GetLastError=%lu",
+            DebugBool(force),
+            DebugBool(addOk != FALSE),
+            owner,
+            GetLastError());
+        DebugLog(addMessage);
         if (trayIconAdded_)
         {
+            trayIconOwnerHwnd_ = owner;
             data.uVersion = NOTIFYICON_VERSION_4;
-            Shell_NotifyIconW(NIM_SETVERSION, &data);
+            BOOL versionOk = Shell_NotifyIconW(NIM_SETVERSION, &data);
+            wchar_t versionMessage[256]{};
+            swprintf_s(versionMessage, L"AddTrayIcon NIM_SETVERSION ok=%s GetLastError=%lu", DebugBool(versionOk != FALSE), GetLastError());
+            DebugLog(versionMessage);
         }
     }
 
     void RegisterOleDropTarget()
     {
-        if (hwnd_ != nullptr && !dropTargetRegistered_)
+        if (hwnd_ != nullptr && IsWindow(hwnd_) && !dropTargetRegistered_)
         {
             dropTargetRegistered_ = SUCCEEDED(RegisterDragDrop(hwnd_, static_cast<IDropTarget*>(this)));
+            wchar_t message[256]{};
+            swprintf_s(message, L"RegisterOleDropTarget hwnd=%p success=%s", hwnd_, DebugBool(dropTargetRegistered_));
+            DebugLog(message);
         }
     }
 
     void UnregisterOleDropTarget()
     {
-        if (hwnd_ != nullptr && dropTargetRegistered_)
+        if (hwnd_ != nullptr && IsWindow(hwnd_) && dropTargetRegistered_)
         {
             RevokeDragDrop(hwnd_);
+            dropTargetRegistered_ = false;
+        }
+        else
+        {
             dropTargetRegistered_ = false;
         }
     }
 
     void RemoveTrayIcon()
     {
-        if (trayIconAdded_ && hwnd_ != nullptr)
+        HWND owner = trayIconOwnerHwnd_ != nullptr ? trayIconOwnerHwnd_ : TrayOwnerWindow();
+        if (trayIconAdded_ && owner != nullptr)
         {
             NOTIFYICONDATAW data{};
             data.cbSize = sizeof(data);
-            data.hWnd = hwnd_;
+            data.hWnd = owner;
             data.uID = kTrayIconId;
             Shell_NotifyIconW(NIM_DELETE, &data);
             trayIconAdded_ = false;
+            trayIconOwnerHwnd_ = nullptr;
         }
 
         if (trayIcon_ != nullptr)
@@ -1270,9 +1715,17 @@ private:
 
     void ShowTrayMenu(POINT screenPoint)
     {
+        wchar_t trayMessage[256]{};
+        swprintf_s(trayMessage, L"ShowTrayMenu begin point=(%ld,%ld)", screenPoint.x, screenPoint.y);
+        DebugLog(trayMessage);
+        DebugLogWindow(L"ShowTrayMenu hwnd before", hwnd_);
+        HWND owner = TrayOwnerWindow();
+        DebugLogWindow(L"ShowTrayMenu owner before", owner);
+
         HMENU menu = CreatePopupMenu();
         if (menu == nullptr)
         {
+            DebugLog(L"ShowTrayMenu CreatePopupMenu failed");
             return;
         }
 
@@ -1312,14 +1765,20 @@ private:
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
-        SetForegroundWindow(hwnd_);
+        SetForegroundWindow(owner);
+        DebugLogWindow(L"ShowTrayMenu after SetForegroundWindow owner", owner);
         UINT command = TrackPopupMenuEx(
             menu,
             TPM_RETURNCMD | TPM_RIGHTBUTTON,
             screenPoint.x,
             screenPoint.y,
-            hwnd_,
+            owner,
             nullptr);
+
+        swprintf_s(trayMessage, L"ShowTrayMenu TrackPopupMenuEx command=%u GetLastError=%lu", command, GetLastError());
+        DebugLog(trayMessage);
+        RestoreDesktopWindowLayer();
+        DebugLogWindow(L"ShowTrayMenu after RestoreDesktopWindowLayer", hwnd_);
 
         switch (command)
         {
@@ -1339,7 +1798,7 @@ private:
             SwitchToCustomDesktop();
             break;
         case kTrayExitCommand:
-            DestroyWindow(hwnd_);
+            RequestExit();
             break;
         case kTrayDesktopIconThisPC:
         case kTrayDesktopIconUserFiles:
@@ -1357,6 +1816,8 @@ private:
             DestroyMenu(iconSettingsMenu);
         }
         DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
+        DebugLogWindow(L"ShowTrayMenu end", hwnd_);
     }
 
     void ReloadItems(bool reloadLayoutFromDisk = true)
@@ -5154,6 +5615,92 @@ private:
         }
     }
 
+    static const wchar_t* DebugBool(bool value)
+    {
+        return value ? L"true" : L"false";
+    }
+
+    static void DebugWindowClass(HWND window, wchar_t* buffer, size_t bufferSize)
+    {
+        if (buffer == nullptr || bufferSize == 0)
+        {
+            return;
+        }
+
+        if (window == nullptr)
+        {
+            wcscpy_s(buffer, bufferSize, L"(null)");
+            return;
+        }
+
+        if (!IsWindow(window))
+        {
+            wcscpy_s(buffer, bufferSize, L"(invalid)");
+            return;
+        }
+
+        if (GetClassNameW(window, buffer, static_cast<int>(bufferSize)) == 0)
+        {
+            wcscpy_s(buffer, bufferSize, L"(class-error)");
+        }
+    }
+
+    static void DebugLogWindow(const wchar_t* label, HWND window)
+    {
+        wchar_t className[128]{};
+        DebugWindowClass(window, className, std::size(className));
+
+        const bool valid = window != nullptr && IsWindow(window);
+        HWND parent = valid ? GetParent(window) : nullptr;
+        HWND root = valid ? GetAncestor(window, GA_ROOT) : nullptr;
+        LONG_PTR style = valid ? GetWindowLongPtrW(window, GWL_STYLE) : 0;
+        LONG_PTR exStyle = valid ? GetWindowLongPtrW(window, GWL_EXSTYLE) : 0;
+        RECT rect{};
+        if (valid)
+        {
+            GetWindowRect(window, &rect);
+        }
+
+        wchar_t message[1024]{};
+        swprintf_s(
+            message,
+            L"%s hwnd=%p valid=%s class=%s parent=%p root=%p visible=%s style=0x%llX exStyle=0x%llX rect=(%ld,%ld,%ld,%ld)",
+            label,
+            window,
+            DebugBool(valid),
+            className,
+            parent,
+            root,
+            DebugBool(valid && IsWindowVisible(window) != FALSE),
+            static_cast<unsigned long long>(style),
+            static_cast<unsigned long long>(exStyle),
+            rect.left,
+            rect.top,
+            rect.right,
+            rect.bottom);
+        DebugLog(message);
+    }
+
+    static void DebugLogDesktopWindows(const wchar_t* label, const DesktopWindows& windows)
+    {
+        wchar_t message[512]{};
+        swprintf_s(
+            message,
+            L"%s summary progman=%p host=%p defView=%p listView=%p listViewWasVisible=%s",
+            label,
+            windows.progman,
+            windows.host,
+            windows.defView,
+            windows.listView,
+            DebugBool(windows.listViewWasVisible));
+        DebugLog(message);
+
+        DebugLogWindow(L"  progman", windows.progman);
+        DebugLogWindow(L"  host", windows.host);
+        DebugLogWindow(L"  defView", windows.defView);
+        DebugLogWindow(L"  listView", windows.listView);
+    }
+
     std::vector<std::wstring> GetSelectedFolderEntryPaths(size_t widgetIndex) const
     {
         std::vector<std::wstring> paths;
@@ -6526,6 +7073,7 @@ private:
         if (FAILED(hr))
         {
             DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
             ILFree(pidl);
             return;
         }
@@ -6553,12 +7101,14 @@ private:
             if (renameCommand)
             {
                 DestroyMenu(menu);
+                RestoreDesktopWindowLayer();
                 ILFree(pidl);
                 BeginRenameFolderEntry(widgetIndex, memberIndex);
                 return;
             }
 
             DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
             CMINVOKECOMMANDINFOEX invoke{};
             invoke.cbSize = sizeof(invoke);
             invoke.fMask = CMIC_MASK_UNICODE;
@@ -6572,6 +7122,7 @@ private:
         else
         {
             DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
         }
 
         ILFree(pidl);
@@ -6703,6 +7254,7 @@ private:
             hwnd_,
             nullptr);
         DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
 
         switch (command)
         {
@@ -6797,6 +7349,7 @@ private:
             hwnd_,
             nullptr);
         DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
         newMenuContextMenu_.Reset();
 
         switch (command)
@@ -7061,6 +7614,7 @@ private:
             hwnd_,
             nullptr);
         DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
         newMenuContextMenu_.Reset();
         for (HBITMAP bmp : menuIconPool_) { DeleteObject(bmp); }
         menuIconPool_.clear();
@@ -7283,6 +7837,7 @@ private:
         if (FAILED(hr))
         {
             DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
             return;
         }
 
@@ -7314,6 +7869,7 @@ private:
             if (renameCommand)
             {
                 DestroyMenu(menu);
+                RestoreDesktopWindowLayer();
                 BeginRenameSelected();
                 return;
             }
@@ -7331,6 +7887,7 @@ private:
         }
 
         DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
     }
 
     void ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
@@ -7390,6 +7947,7 @@ private:
         }
 
         DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
         ILFree(pidl);
     }
 
@@ -7414,6 +7972,7 @@ private:
         if (FAILED(hr))
         {
             DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
             return;
         }
 
@@ -7446,6 +8005,7 @@ private:
         }
 
         DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
     }
 
     void InvokeSelectedShellVerb(const char* verb)
@@ -10375,7 +10935,8 @@ private:
         case WM_TIMER:
             if (wParam == 1)
             {
-                DestroyWindow(hwnd_);
+                DebugLog(L"WM_TIMER smoke-test exit");
+                RequestExit();
                 return 0;
             }
             if (wParam == kShellChangeTimerId)
@@ -10404,8 +10965,29 @@ private:
                 }
                 return 0;
             }
+            if (wParam == kDesktopHostWatchTimerId)
+            {
+                WatchDesktopHost();
+                return 0;
+            }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
+        case WM_CLOSE:
+            DebugLog(L"WM_CLOSE RequestExit");
+            RequestExit();
+            return 0;
+        case WM_QUERYENDSESSION:
+            DebugLog(L"WM_QUERYENDSESSION");
+            exitRequested_ = true;
+            return TRUE;
+        case WM_ENDSESSION:
+            DebugLog(L"WM_ENDSESSION");
+            if (wParam != 0)
+            {
+                exitRequested_ = true;
+            }
+            return 0;
         case WM_DESTROY:
+            DebugLogWindow(L"WM_DESTROY hwnd", hwnd_);
             if (renameEdit_ != nullptr)
             {
                 CommitRename(true);
@@ -10420,11 +11002,37 @@ private:
                 shellChangeRegId_ = 0;
             }
             KillTimer(hwnd_, kShellChangeTimerId);
-            RemoveTrayIcon();
-            RestoreExplorerIcons();
-            PostQuitMessage(0);
+            KillTimer(hwnd_, kRecycleBinPollTimerId);
+            if (!exitRequested_)
+            {
+                DebugLog(L"Desktop window destroyed - keeping process alive for control-window recovery");
+                ResetDesktopWindowResources();
+                SetTimer(controlHwnd_, kDesktopHostWatchTimerId, 500, nullptr);
+                return 0;
+            }
+            else
+            {
+                DebugLog(L"WM_DESTROY exitRequested=true no relaunch");
+                KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
+                RemoveTrayIcon();
+                RestoreExplorerIcons();
+                if (controlHwnd_ != nullptr && IsWindow(controlHwnd_))
+                {
+                    DestroyWindow(controlHwnd_);
+                    controlHwnd_ = nullptr;
+                }
+                PostQuitMessage(0);
+            }
             return 0;
         default:
+            if (message == taskbarRestartMsg_ && message != 0)
+            {
+                DebugLog(L"TaskbarCreated - recovering");
+                DebugLogWindow(L"TaskbarCreated hwnd before recovery", hwnd_);
+                RecoverDesktopHostAfterExplorerRestart();
+                DebugLogWindow(L"TaskbarCreated hwnd after recovery", hwnd_);
+                return 0;
+            }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
         }
     }
@@ -11587,7 +12195,7 @@ private:
             SwitchToCustomDesktop();
             break;
         case kTrayExitCommand:
-            DestroyWindow(hwnd_);
+            RequestExit();
             break;
         case kTrayDesktopIconThisPC:
         case kTrayDesktopIconUserFiles:
@@ -11606,6 +12214,9 @@ private:
         UINT message = LOWORD(lParam);
         if (message == WM_CONTEXTMENU || message == WM_RBUTTONUP)
         {
+            wchar_t callbackMessage[256]{};
+            swprintf_s(callbackMessage, L"OnTrayCallback menu message=0x%X trayMenuShowing=%s", message, DebugBool(trayMenuShowing_));
+            DebugLog(callbackMessage);
             if (trayMenuShowing_)
             {
                 return;
@@ -11618,6 +12229,7 @@ private:
         }
         else if (message == WM_LBUTTONDBLCLK)
         {
+            DebugLog(L"OnTrayCallback left double click reload");
             ReloadItems();
         }
     }
@@ -11637,7 +12249,7 @@ private:
                 CloseCollectionPopup();
                 break;
             }
-            DestroyWindow(hwnd_);
+            RequestExit();
             break;
         case VK_F5:
             ReloadItems();
@@ -11739,6 +12351,75 @@ private:
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
+    LRESULT HandleControlMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+    {
+        if (message == taskbarRestartMsg_ && message != 0)
+        {
+            DebugLog(L"Control TaskbarCreated - recovering");
+            DebugLogWindow(L"Control TaskbarCreated desktop hwnd before", hwnd_);
+            RecoverDesktopHostAfterExplorerRestart();
+            DebugLogWindow(L"Control TaskbarCreated desktop hwnd after", hwnd_);
+            return 0;
+        }
+
+        switch (message)
+        {
+        case kTrayCallbackMessage:
+            OnTrayCallback(lParam);
+            return 0;
+        case WM_TIMER:
+            if (wParam == kDesktopHostWatchTimerId)
+            {
+                WatchDesktopHost();
+                return 0;
+            }
+            return DefWindowProcW(hwnd, message, wParam, lParam);
+        case WM_COMMAND:
+            OnCommand(LOWORD(wParam));
+            return 0;
+        case WM_CLOSE:
+            DebugLog(L"Control WM_CLOSE RequestExit");
+            RequestExit();
+            return 0;
+        case WM_DESTROY:
+            DebugLogWindow(L"Control WM_DESTROY", hwnd);
+            if (controlHwnd_ == hwnd)
+            {
+                controlHwnd_ = nullptr;
+            }
+            if (exitRequested_)
+            {
+                PostQuitMessage(0);
+            }
+            return 0;
+        default:
+            return DefWindowProcW(hwnd, message, wParam, lParam);
+        }
+    }
+
+    static LRESULT CALLBACK ControlWindowProcThunk(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+    {
+        SnowDesktopApp* app = nullptr;
+        if (message == WM_NCCREATE)
+        {
+            auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+            app = static_cast<SnowDesktopApp*>(create->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+            app->controlHwnd_ = hwnd;
+        }
+        else
+        {
+            app = reinterpret_cast<SnowDesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        }
+
+        if (app != nullptr)
+        {
+            return app->HandleControlMessage(hwnd, message, wParam, lParam);
+        }
+
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
     static LRESULT CALLBACK RenameEditSubclassProc(
         HWND hwnd,
         UINT message,
@@ -11780,12 +12461,14 @@ private:
 
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
+    HWND controlHwnd_ = nullptr;
     HWND hintHwnd_ = nullptr;
     HWND renameEdit_ = nullptr;
     HFONT renameFont_ = nullptr;
     HBRUSH renameBackgroundBrush_ = nullptr;
     size_t renameIndex_ = 0;
     bool trayIconAdded_ = false;
+    HWND trayIconOwnerHwnd_ = nullptr;
     HICON trayIcon_ = nullptr;
     bool customDesktopVisible_ = true;
     DesktopWindows desktopWindows_{};
@@ -11875,6 +12558,9 @@ private:
     int pageOffset_ = 0;
     float gapScale_ = 1.0f;
     ULONG shellChangeRegId_ = 0;
+    UINT taskbarRestartMsg_ = 0;
+    bool exitRequested_ = false;
+    bool restartLaunched_ = false;
     bool reloading_ = false;
     bool trayMenuShowing_ = false;
     LONGLONG lastRecycleBinItemCount_ = -1;
