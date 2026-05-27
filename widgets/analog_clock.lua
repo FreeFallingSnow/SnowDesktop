@@ -1,5 +1,5 @@
--- clock.lua - 桌面时钟
-name = "时钟"
+-- analog_clock.lua - 指针时钟
+name = "指针时钟"
 -- 背景由个性化设置提供
 
 function render()
