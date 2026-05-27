@@ -469,6 +469,10 @@ public:
         {
             DebugLog(L"SettingsWindow Init failed");
         }
+        else
+        {
+            settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
+        }
 
         MSG msg{};
         while (GetMessageW(&msg, nullptr, 0, 0) > 0)
