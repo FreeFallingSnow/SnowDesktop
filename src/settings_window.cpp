@@ -5,6 +5,7 @@
 #include <imgui_impl_dx11.h>
 
 #include <shlwapi.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -41,9 +42,9 @@ static void SetupLightTheme()
     c[ImGuiCol_Header]               = ImVec4(0.90f, 0.90f, 0.92f, 1.00f);
     c[ImGuiCol_HeaderHovered]        = ImVec4(0.84f, 0.84f, 0.87f, 1.00f);
     c[ImGuiCol_HeaderActive]         = ImVec4(0.78f, 0.78f, 0.82f, 1.00f);
-    c[ImGuiCol_Button]               = ImVec4(0.30f, 0.55f, 0.90f, 1.00f);
-    c[ImGuiCol_ButtonHovered]        = ImVec4(0.35f, 0.60f, 0.95f, 1.00f);
-    c[ImGuiCol_ButtonActive]         = ImVec4(0.25f, 0.50f, 0.85f, 1.00f);
+    c[ImGuiCol_Button]               = ImVec4(0.20f, 0.48f, 0.90f, 1.00f);
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.25f, 0.55f, 0.95f, 1.00f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(0.16f, 0.42f, 0.84f, 1.00f);
     c[ImGuiCol_CheckMark]            = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
     c[ImGuiCol_SliderGrab]           = ImVec4(0.30f, 0.55f, 0.90f, 1.00f);
     c[ImGuiCol_SliderGrabActive]     = ImVec4(0.25f, 0.50f, 0.85f, 1.00f);
@@ -206,9 +207,9 @@ void SettingsWindow::DrawTitleBar()
     ImVec2 size = ImGui::GetContentRegionAvail();
     size.y = titleH;
 
-    // Background
+    // Background — match window bg
     dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y),
-        ImColor(0.94f, 0.94f, 0.96f));
+        ImColor(0.96f, 0.96f, 0.97f));
 
     // Title text
     dl->AddText(ImVec2(p.x + 12, p.y + 7),
@@ -387,12 +388,58 @@ void SettingsWindow::DrawGeneralPage()
 
 void SettingsWindow::DrawAboutPage()
 {
+    const float pad = 16.0f * dpiScale_;
+    ImGui::SetCursorPos(ImVec2(pad, pad));
+    ImGui::BeginChild("##AboutPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+
     ImGui::Text("关于 SnowDesktop");
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::Text("SnowDesktop - Windows 桌面增强工具");
+
+    ImGui::TextWrapped("SnowDesktop 是一款 Windows 桌面增强工具，提供自定义桌面布局、"
+        "图标网格管理、集合组件、桌面文件分类等功能，让桌面更整洁高效。");
+
     ImGui::Spacing();
-    ImGui::TextWrapped("基于 Dear ImGui 框架构建，提供自定义桌面布局、组件管理等功能。");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("作者");
+    ImGui::Spacing();
+    ImGui::Text("    逍遥飘雪（郭云哲）");
+    ImGui::Spacing();
+    ImGui::Text("个人主页：");
+    ImGui::Spacing();
+
+    auto LinkButton = [](const char* label, const char* url) {
+        ImGui::Text("    ");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.20f, 0.48f, 0.90f, 1.00f), label);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("%s", url);
+        }
+        if (ImGui::IsItemClicked())
+        {
+            ShellExecuteW(nullptr, L"open", Utf8ToWide(url).c_str(), nullptr, nullptr, SW_SHOW);
+        }
+    };
+
+    ImGui::Dummy(ImVec2(0, 4));
+    LinkButton("Bilibili", "https://space.bilibili.com/32837853");
+    ImGui::Dummy(ImVec2(0, 2));
+    LinkButton("GitHub", "https://github.com/FreeFallingSnow/");
+    ImGui::Dummy(ImVec2(0, 2));
+    LinkButton("抖音", "https://www.douyin.com/user/MS4wLjABAAAA-O94bwF3BK2sj9JOwM2R2zRlTOiYf4BbaSyIF9DZPyM");
+    ImGui::Dummy(ImVec2(0, 2));
+    LinkButton("小红书", "https://www.xiaohongshu.com/user/profile/6819eed7000000000403bf0e");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextDisabled("SnowDesktop v1.0");
+
+    ImGui::EndChild();
 }
 
 // ── Backup Implementation ────────────────────────────────────────
