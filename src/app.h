@@ -462,6 +462,7 @@ public:
 
         SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+        SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
         DebugLog(L"Timers started: recycle bin poll and desktop host watch");
 
         // Init settings window
@@ -11383,6 +11384,12 @@ private:
             if (wParam == kDesktopHostWatchTimerId)
             {
                 WatchDesktopHost();
+                return 0;
+            }
+            if (wParam == kWidgetRefreshTimerId)
+            {
+                if (widgetEngine_ && !widgetEngine_->GetWidgets().empty())
+                    InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);

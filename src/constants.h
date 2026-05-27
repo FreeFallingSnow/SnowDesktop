@@ -82,3 +82,5 @@ constexpr UINT_PTR kRecycleBinPollTimerId = 3;
 constexpr UINT kRecycleBinPollIntervalMs = 2000;
 constexpr UINT_PTR kDesktopHostWatchTimerId = 4;
 constexpr UINT kDesktopHostWatchIntervalMs = 2000;
+constexpr UINT_PTR kWidgetRefreshTimerId = 5;
+constexpr UINT kWidgetRefreshIntervalMs = 1000;
