@@ -28,34 +28,45 @@ static void SetupLightTheme()
     s.TabRounding = 4.0f;
 
     ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]             = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
-    c[ImGuiCol_ChildBg]              = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_PopupBg]              = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_Border]               = ImVec4(0.82f, 0.82f, 0.85f, 1.00f);
-    c[ImGuiCol_FrameBg]              = ImVec4(0.93f, 0.93f, 0.94f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.88f, 0.88f, 0.90f, 1.00f);
-    c[ImGuiCol_FrameBgActive]        = ImVec4(0.82f, 0.82f, 0.85f, 1.00f);
-    c[ImGuiCol_TitleBg]              = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
-    c[ImGuiCol_TitleBgActive]        = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
-    c[ImGuiCol_Text]                 = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);
-    c[ImGuiCol_TextSelectedBg]       = ImVec4(0.30f, 0.55f, 0.90f, 0.35f);
-    c[ImGuiCol_Header]               = ImVec4(0.90f, 0.90f, 0.92f, 1.00f);
-    c[ImGuiCol_HeaderHovered]        = ImVec4(0.84f, 0.84f, 0.87f, 1.00f);
-    c[ImGuiCol_HeaderActive]         = ImVec4(0.78f, 0.78f, 0.82f, 1.00f);
-    c[ImGuiCol_Button]               = ImVec4(0.20f, 0.48f, 0.90f, 1.00f);
-    c[ImGuiCol_ButtonHovered]        = ImVec4(0.25f, 0.55f, 0.95f, 1.00f);
-    c[ImGuiCol_ButtonActive]         = ImVec4(0.16f, 0.42f, 0.84f, 1.00f);
-    c[ImGuiCol_CheckMark]            = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_SliderGrab]           = ImVec4(0.30f, 0.55f, 0.90f, 1.00f);
-    c[ImGuiCol_SliderGrabActive]     = ImVec4(0.25f, 0.50f, 0.85f, 1.00f);
-    c[ImGuiCol_Tab]                  = ImVec4(0.90f, 0.90f, 0.92f, 1.00f);
-    c[ImGuiCol_TabHovered]           = ImVec4(0.88f, 0.88f, 0.90f, 1.00f);
-    c[ImGuiCol_TabActive]            = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_TabUnfocused]         = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
-    c[ImGuiCol_TabUnfocusedActive]   = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_TableHeaderBg]        = ImVec4(0.92f, 0.92f, 0.94f, 1.00f);
-    c[ImGuiCol_TableBorderStrong]    = ImVec4(0.80f, 0.80f, 0.83f, 1.00f);
-    c[ImGuiCol_TableBorderLight]     = ImVec4(0.88f, 0.88f, 0.90f, 1.00f);
+    c[ImGuiCol_WindowBg]             = ImVec4(0.16f, 0.18f, 0.22f, 1.00f);
+    c[ImGuiCol_ChildBg]              = ImVec4(0.20f, 0.22f, 0.26f, 1.00f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.24f, 0.26f, 0.30f, 1.00f);
+    c[ImGuiCol_Border]               = ImVec4(0.30f, 0.32f, 0.38f, 1.00f);
+    c[ImGuiCol_FrameBg]              = ImVec4(0.26f, 0.28f, 0.34f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.30f, 0.32f, 0.38f, 1.00f);
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.22f, 0.24f, 0.30f, 1.00f);
+    c[ImGuiCol_TitleBg]              = ImVec4(0.16f, 0.18f, 0.22f, 1.00f);
+    c[ImGuiCol_TitleBgActive]        = ImVec4(0.16f, 0.18f, 0.22f, 1.00f);
+    c[ImGuiCol_Text]                 = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
+    c[ImGuiCol_TextDisabled]         = ImVec4(0.50f, 0.52f, 0.58f, 1.00f);
+    c[ImGuiCol_TextSelectedBg]       = ImVec4(0.25f, 0.55f, 0.90f, 0.40f);
+    c[ImGuiCol_Header]               = ImVec4(0.24f, 0.26f, 0.30f, 1.00f);
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.28f, 0.30f, 0.36f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(0.22f, 0.24f, 0.28f, 1.00f);
+    c[ImGuiCol_Button]               = ImVec4(0.18f, 0.50f, 0.92f, 1.00f);
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.24f, 0.56f, 0.96f, 1.00f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(0.14f, 0.42f, 0.84f, 1.00f);
+    c[ImGuiCol_CheckMark]            = ImVec4(0.95f, 0.95f, 0.97f, 1.00f);
+    c[ImGuiCol_SliderGrab]           = ImVec4(0.24f, 0.55f, 0.92f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]     = ImVec4(0.30f, 0.60f, 0.96f, 1.00f);
+    c[ImGuiCol_Tab]                  = ImVec4(0.22f, 0.24f, 0.28f, 1.00f);
+    c[ImGuiCol_TabHovered]           = ImVec4(0.28f, 0.30f, 0.36f, 1.00f);
+    c[ImGuiCol_TabActive]            = ImVec4(0.26f, 0.28f, 0.32f, 1.00f);
+    c[ImGuiCol_TabUnfocused]         = ImVec4(0.20f, 0.22f, 0.26f, 1.00f);
+    c[ImGuiCol_TabUnfocusedActive]   = ImVec4(0.26f, 0.28f, 0.32f, 1.00f);
+    c[ImGuiCol_TableHeaderBg]        = ImVec4(0.24f, 0.26f, 0.30f, 1.00f);
+    c[ImGuiCol_TableBorderStrong]    = ImVec4(0.32f, 0.34f, 0.40f, 1.00f);
+    c[ImGuiCol_TableBorderLight]     = ImVec4(0.26f, 0.28f, 0.34f, 1.00f);
+    c[ImGuiCol_Separator]            = ImVec4(0.30f, 0.32f, 0.38f, 1.00f);
+    c[ImGuiCol_SeparatorHovered]     = ImVec4(0.40f, 0.42f, 0.48f, 1.00f);
+    c[ImGuiCol_SeparatorActive]      = ImVec4(0.50f, 0.52f, 0.58f, 1.00f);
+    c[ImGuiCol_ResizeGrip]           = ImVec4(0.26f, 0.28f, 0.34f, 1.00f);
+    c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.40f, 0.42f, 0.48f, 1.00f);
+    c[ImGuiCol_ResizeGripActive]     = ImVec4(0.50f, 0.55f, 0.60f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.16f, 0.18f, 0.22f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.30f, 0.32f, 0.38f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.40f, 0.42f, 0.48f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.50f, 0.52f, 0.58f, 1.00f);
 }
 
 SettingsWindow::~SettingsWindow()
@@ -189,7 +200,7 @@ void SettingsWindow::Render()
     ImGui::End();
 
     ImGui::Render();
-    const float clearColor[4] = { 0.94f, 0.94f, 0.96f, 1.0f };
+    const float clearColor[4] = { 0.16f, 0.18f, 0.22f, 1.0f };
     context_->OMSetRenderTargets(1, rtv_.GetAddressOf(), nullptr);
     context_->ClearRenderTargetView(rtv_.Get(), clearColor);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
@@ -209,11 +220,11 @@ void SettingsWindow::DrawTitleBar()
 
     // Background — match window bg
     dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y),
-        ImColor(0.96f, 0.96f, 0.97f));
+        ImColor(0.16f, 0.18f, 0.22f));
 
     // Title text
     dl->AddText(ImVec2(p.x + 12, p.y + 7),
-        ImColor(0.12f, 0.12f, 0.15f), "SnowDesktop 设置");
+        ImColor(0.90f, 0.90f, 0.93f), "SnowDesktop 设置");
 
     // Close button
     float btnX = p.x + size.x - 40.0f;
@@ -222,7 +233,7 @@ void SettingsWindow::DrawTitleBar()
     bool btnHovered = ImGui::IsMouseHoveringRect(btnMin, btnMax);
     dl->AddRectFilled(btnMin, btnMax,
         btnHovered ? ImColor(0.90f, 0.20f, 0.20f) : ImColor(0, 0, 0, 0), 4.0f);
-    dl->AddText(ImVec2(btnX + 8, p.y + 6), ImColor(0.40f, 0.40f, 0.45f), "X");
+    dl->AddText(ImVec2(btnX + 8, p.y + 6), ImColor(0.70f, 0.72f, 0.78f), "X");
 
     if (btnHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         ShowWindow(hwnd_, SW_HIDE);
@@ -258,17 +269,17 @@ void SettingsWindow::DrawSidebar()
 {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.85f, 0.88f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.80f, 0.80f, 0.84f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.30f, 0.36f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.24f, 0.26f, 0.30f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.90f, 1.0f));
 
     ImGui::Dummy(ImVec2(0, 4));
 
     auto SideButton = [&](int idx, const char* label) {
         bool active = (activePage_ == idx);
         if (active) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.80f, 0.84f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.10f, 0.10f, 0.14f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.28f, 0.32f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.97f, 1.0f));
         }
         if (ImGui::Button(label, ImVec2(ImGui::GetContentRegionAvail().x, 32))) {
             activePage_ = idx;
@@ -413,7 +424,7 @@ void SettingsWindow::DrawAboutPage()
     auto LinkButton = [](const char* label, const char* url) {
         ImGui::Text("    ");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.20f, 0.48f, 0.90f, 1.00f), label);
+        ImGui::TextColored(ImVec4(0.30f, 0.60f, 0.95f, 1.00f), label);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
