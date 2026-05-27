@@ -2481,6 +2481,8 @@ private:
             return L"fileCategories";
         case DesktopWidgetType::FolderMapping:
             return L"folderMapping";
+        case DesktopWidgetType::LuaScript:
+            return L"lua";
         case DesktopWidgetType::Collection:
         default:
             return L"collection";
@@ -2497,6 +2499,10 @@ private:
         if (normalized == L"FOLDERMAPPING" || normalized == L"FOLDER_MAPPING")
         {
             return DesktopWidgetType::FolderMapping;
+        }
+        if (normalized == L"LUA" || normalized == L"LUASCRIPT" || normalized == L"LUA_SCRIPT")
+        {
+            return DesktopWidgetType::LuaScript;
         }
         if (normalized == L"COLLECTION")
         {
@@ -2651,6 +2657,8 @@ private:
             ReadJsonStringField(objectText, "type", typeUtf8);
             ReadJsonStringField(objectText, "title", titleUtf8);
             ReadJsonStringField(objectText, "sourceFolderPath", sourceUtf8);
+            std::string scriptUtf8;
+            ReadJsonStringField(objectText, "scriptPath", scriptUtf8);
             ReadJsonStringField(objectText, "activeCategory", activeCategoryUtf8);
             ReadJsonIntField(objectText, "w", w);
             ReadJsonIntField(objectText, "h", h);
@@ -2667,6 +2675,7 @@ private:
                    : L"集合")
                 : Utf8ToWide(titleUtf8);
             widget.sourceFolderPath = Utf8ToWide(sourceUtf8);
+            widget.scriptPath = Utf8ToWide(scriptUtf8);
             widget.gridCell.pageId = Utf8ToWide(pageUtf8);
             widget.gridCell.column = x;
             widget.gridCell.row = y;
@@ -2825,6 +2834,7 @@ private:
                 "\", \"type\": \"" << JsonEscapeUtf8(WidgetTypeToJson(widget.type)) <<
                 "\", \"title\": \"" << JsonEscapeUtf8(widget.title) <<
                 "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(widget.sourceFolderPath) <<
+                "\", \"scriptPath\": \"" << JsonEscapeUtf8(widget.scriptPath) <<
                 "\", \"activeCategory\": \"" << JsonEscapeUtf8(widget.activeCategoryId) <<
                 "\", \"page\": \"" << JsonEscapeUtf8(widget.gridCell.pageId) <<
                 "\", \"x\": " << widget.gridCell.column <<
@@ -4943,6 +4953,32 @@ private:
     std::wstring MakeNewWidgetId() const
     {
         return L"collection-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
+    }
+
+    void AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename)
+    {
+        POINT clientPoint = screenPoint;
+        ScreenToClient(hwnd_, &clientPoint);
+        GridCell cell = CellFromPoint(clientPoint);
+        if (cell.pageId.empty()) return;
+
+        // Extract name from script: read first line
+        std::wstring title = scriptFilename;
+        if (title.size() > 4 && title.substr(title.size() - 4) == L".lua")
+            title = title.substr(0, title.size() - 4);
+
+        DesktopWidget widget;
+        widget.id = MakeNewWidgetId();
+        widget.type = DesktopWidgetType::LuaScript;
+        widget.title = title;
+        widget.scriptPath = scriptFilename;
+        widget.gridCell = cell;
+        widget.gridSpan = { 1, 1 };
+        widgets_.push_back(std::move(widget));
+        const size_t index = widgets_.size() - 1;
+        SelectWidgetOnly(index);
+        PlaceWidgetWithDisplacement(index, cell, { 1, 1 });
+        InvalidateRect(hwnd_, nullptr, TRUE);
     }
 
     void AddCollectionWidgetAt(POINT screenPoint)
@@ -7794,6 +7830,19 @@ private:
             AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, L"集合");
             AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, L"桌面文件分类");
             AppendMenuW(widgetMenu, MF_STRING, kContextAddFolderMappingWidget, L"文件夹映射");
+            AppendMenuW(widgetMenu, MF_SEPARATOR, 0, nullptr);
+
+            // Add Lua widget scripts
+            std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
+            for (size_t li = 0; li < luaWidgets.size(); ++li)
+            {
+                std::wstring label = luaWidgets[li];
+                if (label.size() > 4 && label.substr(label.size() - 4) == L".lua")
+                    label = label.substr(0, label.size() - 4);
+                AppendMenuW(widgetMenu, MF_STRING,
+                    kContextAddLuaWidgetFirst + static_cast<UINT>(li), label.c_str());
+            }
+
             AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
         }
 
@@ -7923,12 +7972,6 @@ private:
         case kContextAddFolderMappingWidget:
             AddFolderMappingWidgetAt(screenPoint);
             break;
-        case kContextPasteCommand:
-            InvokeDesktopBackgroundVerb("paste");
-            break;
-        case kContextMoreCommand:
-            ShowDesktopBackgroundContextMenu(screenPoint);
-            break;
         case kContextNewMenu:
         {
             wchar_t desktopPath[MAX_PATH]{};
@@ -7940,6 +7983,15 @@ private:
             break;
         }
         default:
+            if (command >= kContextAddLuaWidgetFirst)
+            {
+                size_t idx = static_cast<size_t>(command - kContextAddLuaWidgetFirst);
+                auto scripts = WidgetEngine::ListAvailable();
+                if (idx < scripts.size())
+                {
+                    AddLuaWidgetAt(screenPoint, scripts[idx]);
+                }
+            }
             break;
         }
     }
@@ -8921,9 +8973,6 @@ private:
             DrawD2DWidget(context, widget);
         }
 
-        if (widgetEngine_)
-            widgetEngine_->RenderAll(context);
-
         if (draggingWidget_ || resizingWidget_)
         {
             DrawD2DWidgetPreview(context);
@@ -9558,6 +9607,11 @@ private:
         else if (widget.type == DesktopWidgetType::FolderMapping)
         {
             DrawD2DFolderMappingWidget(context, widget);
+        }
+        else if (widget.type == DesktopWidgetType::LuaScript)
+        {
+            if (widgetEngine_)
+                widgetEngine_->RenderWidget(widget.scriptPath, context, widget.bounds);
         }
 
         const bool isSmallCollection = widget.type == DesktopWidgetType::Collection

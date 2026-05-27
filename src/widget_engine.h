@@ -36,8 +36,10 @@ public:
     void Shutdown();
     void ReloadAll();
     void RenderAll(ID2D1DeviceContext* context);
+    void RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds);
 
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
+    static std::vector<std::wstring> ListAvailable();
 
 private:
     bool LoadWidget(const std::wstring& path);

@@ -61,6 +61,7 @@ enum class DesktopWidgetType
     Collection,
     FileCategories,
     FolderMapping,
+    LuaScript,
 };
 
 struct Pidl
@@ -314,6 +315,7 @@ struct DesktopWidget
     int scrollOffset = 0;
     int tabScrollOffset = 0;
     std::wstring activeCategoryId;
+    std::wstring scriptPath;
     std::vector<std::wstring> itemKeys;
     std::vector<FolderEntry> folderEntries;
 };
