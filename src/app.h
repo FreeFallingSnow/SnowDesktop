@@ -9682,8 +9682,7 @@ private:
             }
             ComPtr<ID2D1GradientStopCollection> stops;
             D2D1_GRADIENT_STOP stopDescs[] = {
-                { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b,
-                    settingsWindow_ ? settingsWindow_->GetPersonalization().widgetAlpha : 0.36f) },
+                { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
                 { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b,
                     settingsWindow_ ? settingsWindow_->GetPersonalization().gradientEndA : 0.65f) },
             };
