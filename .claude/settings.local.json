@@ -27,7 +27,9 @@
       "Bash(taskkill /f /im SnowDesktop.exe)",
       "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --target SnowDesktop)",
       "Bash(python -c ' *)",
-      "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --config Release --target SnowDesktop)"
+      "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --config Release --target SnowDesktop)",
+      "Bash(cp __TRACKED_VAR__/imgui.cpp __TRACKED_VAR__/imgui.h __TRACKED_VAR__/imgui_draw.cpp __TRACKED_VAR__/imgui_tables.cpp __TRACKED_VAR__/imgui_widgets.cpp __TRACKED_VAR__/imgui_internal.h __TRACKED_VAR__/imconfig.h __TRACKED_VAR__/imstb_rectpack.h __TRACKED_VAR__/imstb_textedit.h __TRACKED_VAR__/imstb_truetype.h __TRACKED_VAR__/)",
+      "Bash(cp __TRACKED_VAR__/backends/imgui_impl_win32.cpp __TRACKED_VAR__/backends/imgui_impl_win32.h __TRACKED_VAR__/backends/imgui_impl_dx11.cpp __TRACKED_VAR__/backends/imgui_impl_dx11.h __TRACKED_VAR__/backends/)"
     ]
   }
 }
