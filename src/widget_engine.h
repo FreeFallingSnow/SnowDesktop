@@ -25,6 +25,7 @@ struct LuaWidget
     int ref = LUA_NOREF;
     bool valid = false;
     bool customStyle = false;
+    FILETIME lastModified = {};
 };
 
 class WidgetEngine
@@ -36,6 +37,7 @@ public:
     bool Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory);
     void Shutdown();
     void ReloadAll();
+    bool ReloadWidget(const std::wstring& scriptPath);
     void RenderAll(ID2D1DeviceContext* context);
     void RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds,
         float bgR, float bgG, float bgB, float alpha, float borderR, float borderG, float borderB, float gradientEndA);
