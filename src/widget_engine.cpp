@@ -336,6 +336,21 @@ std::vector<std::wstring> WidgetEngine::ListAvailable()
     return result;
 }
 
+// ── Layout API ────────────────────────────────────────────────────
+static int lua_LayoutWidth(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushnumber(L, s ? s->widgetRect.right - s->widgetRect.left : 400);
+    return 1;
+}
+
+static int lua_LayoutHeight(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushnumber(L, s ? s->widgetRect.bottom - s->widgetRect.top : 300);
+    return 1;
+}
+
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
     lua_newtable(L);
@@ -346,4 +361,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_newtable(L);
     lua_pushcfunction(L, lua_GetTime);   lua_setfield(L, -2, "getTime");
     lua_setglobal(L, "sys");
+
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_LayoutWidth);  lua_setfield(L, -2, "width");
+    lua_pushcfunction(L, lua_LayoutHeight); lua_setfield(L, -2, "height");
+    lua_setglobal(L, "layout");
 }
