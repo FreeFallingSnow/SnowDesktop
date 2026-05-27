@@ -365,6 +365,31 @@ static int lua_DrawLine(lua_State* L)
     return 0;
 }
 
+static int lua_DrawCircle(lua_State* L)
+{
+    float cx = (float)luaL_checknumber(L, 1);
+    float cy = (float)luaL_checknumber(L, 2);
+    float r = (float)luaL_checknumber(L, 3);
+    int color = (int)luaL_optinteger(L, 4, 0xFFFFFF);
+    float alpha = (float)luaL_optnumber(L, 5, 1.0);
+
+    auto* s = GetD2D(L);
+    if (!s || !s->ctx) return 0;
+
+    float colR = ((color >> 16) & 0xFF) / 255.0f;
+    float colG = ((color >> 8) & 0xFF) / 255.0f;
+    float colB = (color & 0xFF) / 255.0f;
+
+    ComPtr<ID2D1SolidColorBrush> brush;
+    s->ctx->CreateSolidColorBrush(D2D1::ColorF(colR, colG, colB, alpha), &brush);
+    if (!brush) return 0;
+
+    s->ctx->FillEllipse(
+        D2D1::Ellipse(D2D1::Point2F(cx + s->widgetRect.left, cy + s->widgetRect.top), r, r),
+        brush.Get());
+    return 0;
+}
+
 static int lua_LayoutWidth(lua_State* L)
 {
     auto* s = GetD2D(L);
@@ -385,6 +410,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_DrawText);  lua_setfield(L, -2, "text");
     lua_pushcfunction(L, lua_DrawRect);  lua_setfield(L, -2, "rect");
     lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
+    lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");
     lua_setglobal(L, "draw");
 
     lua_newtable(L);
