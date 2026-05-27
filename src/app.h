@@ -6628,7 +6628,7 @@ private:
         constexpr int gap = 6;
         constexpr int resizeReserve = 26;
         return MakeRect(handle.right - resizeReserve - gap - btnSize - gap - btnSize, handle.top + 3,
-            handle.right - resizeReserve - gap - btnSize, handle.bottom - 3);
+            handle.right - resizeReserve - gap - btnSize - gap, handle.bottom - 3);
     }
 
     RECT GetFolderMappingOpenRect(const DesktopWidget& widget) const
