@@ -212,35 +212,71 @@ bool WidgetEngine::LoadWidget(const std::wstring& path)
 void WidgetEngine::RenderAll(ID2D1DeviceContext* context)
 {
     d2dState_->ctx = context;
+    // For global-scope widgets (no grid bounds), render at origin
+    // Grid-bound widgets use RenderWidget instead
+}
 
+// ── Render a specific widget within given bounds ─────────────────
+void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds)
+{
+    // Find the loaded widget matching this script path
+    LuaWidget* found = nullptr;
     for (auto& w : widgets_)
     {
-        if (!w.valid) continue;
-
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-        if (!lua_istable(L_, -1))
+        if (w.valid && w.filePath.size() >= scriptPath.size() &&
+            w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
         {
-            lua_pop(L_, 1);
-            continue;
+            found = &w;
+            break;
         }
-
-        // Set widget rect
-        lua_pushlightuserdata(L_, context);
-        lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
-
-        lua_getfield(L_, -1, "render");
-        if (lua_isfunction(L_, -1))
-        {
-            if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
-                lua_pop(L_, 1);
-        }
-        else
-        {
-            lua_pop(L_, 1);
-        }
-
-        lua_pop(L_, 1);  // pop widget table
     }
+    if (!found) return;
+
+    d2dState_->ctx = context;
+    d2dState_->widgetRect = D2D1::RectF(
+        static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+        static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
+
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
+    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+
+    lua_getfield(L_, -1, "render");
+    if (lua_isfunction(L_, -1))
+    {
+        if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+            lua_pop(L_, 1);
+    }
+    else
+    {
+        lua_pop(L_, 1);
+    }
+    lua_pop(L_, 1);
+}
+
+// ── List available widget scripts ────────────────────────────────
+std::vector<std::wstring> WidgetEngine::ListAvailable()
+{
+    std::vector<std::wstring> result;
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    PathRemoveFileSpecW(exePath);
+    PathAppendW(exePath, L"widgets");
+
+    std::wstring search = exePath;
+    search += L"\\*.lua";
+
+    WIN32_FIND_DATAW fd{};
+    HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return result;
+
+    do
+    {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        result.push_back(fd.cFileName);
+    } while (FindNextFileW(hFind, &fd));
+
+    FindClose(hFind);
+    return result;
 }
 
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
