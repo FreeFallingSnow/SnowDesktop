@@ -1,6 +1,6 @@
 -- digital_clock.lua - 数字时钟
 name = "数字时钟"
--- 背景由个性化设置提供
+useCustomStyle = true
 
 function render()
     local t = sys.getTime()
