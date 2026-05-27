@@ -19,7 +19,15 @@
       "Bash(bash build.bat)",
       "Bash(git *)",
       "Bash(cmd.exe /c build.bat)",
-      "Bash(cmake -G \"Visual Studio 18 2026\" -A x64 -S . -B .build)"
+      "Bash(cmake -G \"Visual Studio 18 2026\" -A x64 -S . -B .build)",
+      "Bash(cmd /c \"taskkill /f /im SnowDesktop.exe 2>nul & exit 0\")",
+      "Bash(cmd /c \"taskkill /f /im SnowDesktop.exe 2>nul & timeout /t 2 /nobreak >nul & del /f D:\\\\Code\\\\Other\\\\SnowDesktop\\\\.build\\\\Release\\\\SnowDesktop.exe 2>nul & exit 0\")",
+      "WebSearch",
+      "Bash(cmd /c build.bat)",
+      "Bash(taskkill /f /im SnowDesktop.exe)",
+      "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --target SnowDesktop)",
+      "Bash(python -c ' *)",
+      "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --config Release --target SnowDesktop)"
     ]
   }
 }

@@ -6,6 +6,7 @@ add_executable(SnowDesktop WIN32
     src/main.cpp
     src/app.cpp
     src/utils.cpp
+    src/resource.rc
 )
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)

@@ -1,9 +1,11 @@
 #include "utils.h"
+#include "resource.h"
 
 #include <commoncontrols.h>
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <d2d1_1.h>
+#include <dwrite_3.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -63,45 +65,128 @@ BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lPar
 
 HICON LoadAppIcon()
 {
-    constexpr int kSize = 32;
-    HDC screenDc = GetDC(nullptr);
-    HDC memDc = CreateCompatibleDC(screenDc);
-
-    BITMAPINFO bmi{};
-    bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
-    bmi.bmiHeader.biWidth = kSize;
-    bmi.bmiHeader.biHeight = -kSize;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-
-    void* bits = nullptr;
-    HBITMAP colorBmp = CreateDIBSection(memDc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    HBITMAP maskBmp = CreateBitmap(kSize, kSize, 1, 1, nullptr);
-    HGDIOBJ oldBmp = SelectObject(memDc, colorBmp);
-
-    HBRUSH bg = CreateSolidBrush(RGB(60, 130, 220));
-    RECT rc = {0, 0, kSize, kSize};
-    FillRect(memDc, &rc, bg);
-    DeleteObject(bg);
-
-    SetBkMode(memDc, TRANSPARENT);
-    SetTextColor(memDc, RGB(255, 255, 255));
-    HGDIOBJ oldFont = SelectObject(memDc, GetStockObject(DEFAULT_GUI_FONT));
-    DrawTextW(memDc, L"S", 1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    SelectObject(memDc, oldFont);
-
-    ICONINFO ii{};
-    ii.fIcon = TRUE;
-    ii.hbmColor = colorBmp;
-    ii.hbmMask = maskBmp;
-    HICON icon = CreateIconIndirect(&ii);
-
-    SelectObject(memDc, oldBmp);
-    DeleteObject(colorBmp);
-    DeleteObject(maskBmp);
-    DeleteDC(memDc);
-    ReleaseDC(nullptr, screenDc);
+    HICON icon = static_cast<HICON>(LoadImageW(
+        GetModuleHandleW(nullptr),
+        MAKEINTRESOURCEW(IDI_APPICON),
+        IMAGE_ICON,
+        32, 32,
+        LR_DEFAULTSIZE));
     return icon;
+}
+
+HANDLE LoadFontAwesome()
+{
+    HMODULE module = GetModuleHandleW(nullptr);
+    HRSRC res = FindResourceW(module, MAKEINTRESOURCEW(IDR_FA_FONT), RT_RCDATA);
+    if (res == nullptr) return nullptr;
+    HGLOBAL handle = LoadResource(module, res);
+    if (handle == nullptr) return nullptr;
+    void* data = LockResource(handle);
+    DWORD size = SizeofResource(module, res);
+    if (data == nullptr || size == 0) return nullptr;
+
+    DWORD count = 0;
+    HANDLE fontHandle = AddFontMemResourceEx(data, size, nullptr, &count);
+    return fontHandle;
+}
+
+namespace
+{
+    const void* g_faFontData = nullptr;
+    DWORD g_faFontSize = 0;
+
+    ComPtr<IDWriteFontCollection1> BuildFaFontCollection(IDWriteFactory* factory)
+    {
+        ComPtr<IDWriteFactory5> factory5;
+        if (FAILED(factory->QueryInterface(IID_PPV_ARGS(&factory5))))
+        {
+            return nullptr;
+        }
+
+        ComPtr<IDWriteInMemoryFontFileLoader> loader;
+        if (FAILED(factory5->CreateInMemoryFontFileLoader(&loader)))
+        {
+            return nullptr;
+        }
+        if (FAILED(factory5->RegisterFontFileLoader(loader.Get())))
+        {
+            return nullptr;
+        }
+
+        ComPtr<IDWriteFontFile> fontFile;
+        if (FAILED(loader->CreateInMemoryFontFileReference(
+                factory5.Get(),
+                g_faFontData,
+                g_faFontSize,
+                nullptr,
+                &fontFile)))
+        {
+            return nullptr;
+        }
+
+        ComPtr<IDWriteFontSetBuilder1> builder;
+        if (FAILED(factory5->CreateFontSetBuilder(&builder)))
+        {
+            return nullptr;
+        }
+        if (FAILED(builder->AddFontFile(fontFile.Get())))
+        {
+            return nullptr;
+        }
+
+        ComPtr<IDWriteFontSet> fontSet;
+        if (FAILED(builder->CreateFontSet(&fontSet)))
+        {
+            return nullptr;
+        }
+
+        ComPtr<IDWriteFontCollection1> collection;
+        factory5->CreateFontCollectionFromFontSet(fontSet.Get(), collection.GetAddressOf());
+        return collection;
+    }
+}
+
+IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize)
+{
+    if (factory == nullptr) return nullptr;
+
+    // Cache font data on first call
+    if (g_faFontData == nullptr)
+    {
+        HMODULE module = GetModuleHandleW(nullptr);
+        HRSRC res = FindResourceW(module, MAKEINTRESOURCEW(IDR_FA_FONT), RT_RCDATA);
+        if (res != nullptr)
+        {
+            HGLOBAL handle = LoadResource(module, res);
+            if (handle != nullptr)
+            {
+                g_faFontData = LockResource(handle);
+                g_faFontSize = SizeofResource(module, res);
+            }
+        }
+    }
+
+    ComPtr<IDWriteFontCollection1> fontCollection;
+    if (g_faFontData != nullptr)
+    {
+        fontCollection = BuildFaFontCollection(factory);
+    }
+
+    IDWriteTextFormat* format = nullptr;
+    HRESULT hr = factory->CreateTextFormat(
+        L"Font Awesome 6 Free Solid",
+        fontCollection.Get(),
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        fontSize,
+        L"",
+        &format);
+    if (FAILED(hr)) return nullptr;
+
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    return format;
 }
 
 DesktopWindows FindDesktopWindows()
