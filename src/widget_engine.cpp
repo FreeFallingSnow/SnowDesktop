@@ -236,13 +236,23 @@ bool WidgetEngine::LoadWidget(const std::wstring& path)
     lua_getfield(L_, -1, "name");
     if (lua_isstring(L_, -1))
         name = lua_tostring(L_, -1);
-    lua_pop(L_, 2);
+    lua_pop(L_, 1);
+
+    // Read customStyle flag
+    bool customStyle = false;
+    lua_getfield(L_, -1, "useCustomStyle");
+    if (!lua_isnil(L_, -1))
+        customStyle = lua_toboolean(L_, -1) != 0;
+    lua_pop(L_, 1);
+
+    lua_pop(L_, 1);  // pop table
 
     LuaWidget w;
     w.name = name;
     w.filePath = path;
     w.ref = ref;
     w.valid = true;
+    w.customStyle = customStyle;
     widgets_.push_back(w);
     return true;
 }
@@ -299,12 +309,7 @@ bool WidgetEngine::HasCustomStyle(const std::wstring& scriptPath) const
         if (w.valid && w.filePath.size() >= scriptPath.size() &&
             w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
         {
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-            if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return false; }
-            lua_getfield(L_, -1, "useCustomStyle");
-            bool result = lua_toboolean(L_, -1);
-            lua_pop(L_, 2);
-            return result;
+            return w.customStyle;
         }
     }
     return false;
