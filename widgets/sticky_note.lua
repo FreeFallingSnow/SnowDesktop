@@ -33,7 +33,7 @@ function render()
     draw.text(8, h - 18, info, 10, 0x666644)
 end
 
--- 保存内容的辅助（需要在组件内编辑，目前不支持）
-function setContent(text)
-    storage.set("text", text)
+function onOpen()
+    -- TODO: 编辑（需键盘输入API）
+    storage.set("opened", os.date("%H:%M:%S"))
 end
