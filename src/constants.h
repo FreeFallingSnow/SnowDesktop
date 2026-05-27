@@ -60,6 +60,7 @@ constexpr UINT kContextAddCollectionWidget = 41018;
 constexpr UINT kContextWidgetOpen = 41019;
 constexpr UINT kContextWidgetRename = 41020;
 constexpr UINT kContextWidgetDelete = 41021;
+constexpr UINT kContextWidgetEdit = 41032;
 constexpr UINT kContextAddFileCategoryWidget = 41022;
 constexpr UINT kContextWidgetManualCollect = 41023;
 constexpr UINT kContextWidgetToggleAutoCollect = 41024;

@@ -40,6 +40,9 @@ public:
     void SetExitCallback(std::function<void()> callback) { exitCallback_ = std::move(callback); }
     void SetInvalidateCallback(std::function<void()> callback) { invalidateCallback_ = std::move(callback); }
     void ShowExitConfirm();
+    void SetWidgetEngine(class WidgetEngine* engine) { widgetEngine_ = engine; }
+    void ShowWidgetEditor(size_t widgetIndex, const wchar_t* widgetId,
+        const wchar_t* widgetName, const wchar_t* scriptPath);
     const PersonalizationSettings& GetPersonalization() const { return personalization_; }
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -55,8 +58,6 @@ private:
     void DrawPersonalizationPage();
     void DrawWidgetEditorPage();
     void DrawAboutPage();
-
-    void SetWidgetEngine(class WidgetEngine* engine) { widgetEngine_ = engine; }
 
     // Backup helpers
     std::wstring GetBackupDir() const;
@@ -81,13 +82,20 @@ private:
     char backupNameBuf_[128] = {};
     bool titleBarHovered_ = false;
     bool showExitConfirm_ = false;
+    bool pendingClose_ = false;
 
     std::function<void()> reloadCallback_;
     std::function<void()> exitCallback_;
     std::function<void()> invalidateCallback_;
-    class WidgetEngine* widgetEngine_ = nullptr;
     PersonalizationSettings personalization_;
     bool personalizationDirty_ = false;
+
+    // Widget editor state
+    class WidgetEngine* widgetEngine_ = nullptr;
+    size_t editingWidgetIndex_ = static_cast<size_t>(-1);
+    std::wstring editingWidgetId_;
+    std::wstring editingWidgetName_;
+    std::wstring editingScriptPath_;
 };
 
 extern SettingsWindow* g_settingsWindow;

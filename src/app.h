@@ -478,7 +478,6 @@ public:
             settingsWindow_->SetInvalidateCallback([this]() {
                 if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
             });
-            settingsWindow_->SetWidgetEngine(widgetEngine_.get());
         }
 
         // Init Lua widget engine
@@ -486,6 +485,10 @@ public:
         if (!widgetEngine_->Init(bitmapContext_.Get(), dwriteFactory_.Get()))
         {
             DebugLog(L"WidgetEngine Init failed");
+        }
+        else
+        {
+            settingsWindow_->SetWidgetEngine(widgetEngine_.get());
         }
 
         MSG msg{};
@@ -4990,10 +4993,8 @@ private:
         GridCell cell = CellFromPoint(clientPoint);
         if (cell.pageId.empty()) return;
 
-        // Extract name from script: read first line
-        std::wstring title = scriptFilename;
-        if (title.size() > 4 && title.substr(title.size() - 4) == L".lua")
-            title = title.substr(0, title.size() - 4);
+        // Extract display name from script
+        std::wstring title = WidgetEngine::GetWidgetDisplayName(scriptFilename);
 
         DesktopWidget widget;
         widget.id = MakeNewWidgetId();
@@ -5006,6 +5007,7 @@ private:
         const size_t index = widgets_.size() - 1;
         if (widgetEngine_)
         {
+            widgetEngine_->EnsureWidgetLoaded(widgets_[index].id, scriptFilename);
             widgets_[index].showTitle = widgetEngine_->ReadBoolFlag(scriptFilename, "showTitle", false);
             widgets_[index].bottomBarHover = widgetEngine_->ReadBoolFlag(scriptFilename, "bottomBarHover", true);
         }
@@ -5089,7 +5091,13 @@ private:
                 DeleteObject(entry.iconBitmap);
             }
         }
+        // Unload Lua sandbox if present
+        if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript && widgetEngine_)
+            widgetEngine_->UnloadWidget(widgets_[widgetIndex].id);
+
+        // Close editor for this widget if open
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
+
         selectedWidgetIndex_ = static_cast<size_t>(-1);
         popupWidgetIndex_ = static_cast<size_t>(-1);
 
@@ -7584,6 +7592,14 @@ private:
         }
     }
 
+    void ShowWidgetEditorHost(size_t widgetIndex)
+    {
+        if (!settingsWindow_ || widgetIndex >= widgets_.size()) return;
+        const auto& w = widgets_[widgetIndex];
+        if (w.type != DesktopWidgetType::LuaScript) return;
+        settingsWindow_->ShowWidgetEditor(widgetIndex, w.id.c_str(), w.title.c_str(), w.scriptPath.c_str());
+    }
+
     void ShowCustomWidgetContextMenu(POINT screenPoint, size_t widgetIndex)
     {
         if (widgetIndex >= widgets_.size())
@@ -7608,6 +7624,10 @@ private:
             AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript)
+        {
+            AppendMenuW(menu, MF_STRING, kContextWidgetEdit, L"编辑组件");
+        }
         AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
         if (widgets_[widgetIndex].type == DesktopWidgetType::Collection)
         {
@@ -7681,6 +7701,11 @@ private:
             SelectWidgetOnly(widgetIndex);
             BeginRenameSelected();
             break;
+        case kContextWidgetEdit:
+        {
+            ShowWidgetEditorHost(widgetIndex);
+            break;
+        }
         case kContextWidgetManualCollect:
             if (!CollectFilesIntoFileCategoryWidget(widgetIndex, true))
             {
@@ -7898,11 +7923,9 @@ private:
             std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
             for (size_t li = 0; li < luaWidgets.size(); ++li)
             {
-                std::wstring label = luaWidgets[li];
-                if (label.size() > 4 && label.substr(label.size() - 4) == L".lua")
-                    label = label.substr(0, label.size() - 4);
+                std::wstring wname = WidgetEngine::GetWidgetDisplayName(luaWidgets[li]);
                 AppendMenuW(widgetMenu, MF_STRING,
-                    kContextAddLuaWidgetFirst + static_cast<UINT>(li), label.c_str());
+                    kContextAddLuaWidgetFirst + static_cast<UINT>(li), wname.c_str());
             }
 
             AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
@@ -9634,21 +9657,35 @@ private:
         }
 
         bool luaCustomStyle = widget.type == DesktopWidgetType::LuaScript
-            && widgetEngine_ && widgetEngine_->HasCustomStyle(widget.scriptPath);
+            && widgetEngine_ && widgetEngine_->HasCustomStyle(widget.id);
 
-        if (!luaCustomStyle)
+        // Ensure sandbox loaded for this widget instance
+        if (widget.type == DesktopWidgetType::LuaScript && widgetEngine_)
+            widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
+
+        // For custom-style Lua widgets, read colors from the script
+        if (luaCustomStyle)
         {
-            DrawD2DRoundedRectangle(
-                context,
-                frame,
-                12.0f,
-                fillColor,
-                selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f) : borderColor,
-                selected ? 1.6f : 1.0f,
-                selected ? dottedStrokeStyle_.Get() : nullptr);
+            float luaBgR, luaBgG, luaBgB, luaAlpha, luaBorderR, luaBorderG, luaBorderB, luaGradEnd;
+            if (widgetEngine_->ReadCustomColors(widget.id,
+                luaBgR, luaBgG, luaBgB, luaAlpha,
+                luaBorderR, luaBorderG, luaBorderB, luaGradEnd))
+            {
+                fillColor = D2D1::ColorF(luaBgR, luaBgG, luaBgB, luaAlpha);
+                borderColor = D2D1::ColorF(luaBorderR, luaBorderG, luaBorderB, luaAlpha);
+            }
         }
 
-        // Draw gradient first (under content + buttons), skip for custom-style Lua widgets
+        DrawD2DRoundedRectangle(
+            context,
+            frame,
+            12.0f,
+            fillColor,
+            selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f) : borderColor,
+            selected ? 1.6f : 1.0f,
+            selected ? dottedStrokeStyle_.Get() : nullptr);
+
+        // Draw gradient first (under content + buttons)
         if (!luaCustomStyle)
         {
             RECT body = GetWidgetBodyRect(widget);
@@ -9734,13 +9771,12 @@ private:
         else if (widget.type == DesktopWidgetType::LuaScript)
         {
             if (widgetEngine_)
-                widgetEngine_->RenderWidget(widget.scriptPath, context, widget.bounds,
-                    fillColor.r, fillColor.g, fillColor.b, fillColor.a,
-                    borderColor.r, borderColor.g, borderColor.b,
-                    settingsWindow_ ? settingsWindow_->GetPersonalization().gradientEndA : 0.65f);
+                widgetEngine_->RenderWidget(widget.id, widget.scriptPath, context, widget.bounds);
         }
 
-        const bool hovered = widget.bottomBarHover
+        const bool tinyCollection = (widget.type == DesktopWidgetType::Collection &&
+            widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1);
+        const bool hovered = (!tinyCollection && widget.bottomBarHover)
             ? (PtInRect(&frame, lastMousePoint_) != FALSE)
             : true;
 
@@ -11344,21 +11380,7 @@ private:
             OnKeyDown(wParam);
             return 0;
         case WM_CHAR:
-        {
-            if (widgetEngine_)
-            {
-                for (size_t i = 0; i < widgets_.size(); ++i)
-                {
-                    if (widgets_[i].type == DesktopWidgetType::LuaScript &&
-                        widgetEngine_->HandleChar(widgets_[i].scriptPath, (wchar_t)wParam))
-                    {
-                        InvalidateRect(hwnd_, nullptr, TRUE);
-                        return 0;
-                    }
-                }
-            }
             break;
-        }
         case WM_KEYUP:
         case WM_SYSKEYUP:
             if ((draggingItems_ || draggingWidgetMember_) && wParam == VK_MENU)
@@ -12498,7 +12520,7 @@ private:
                 widgetEngine_)
             {
                 RECT wb = widgets_[clickHit.widgetIndex].bounds;
-                widgetEngine_->InvokeClick(widgets_[clickHit.widgetIndex].scriptPath,
+                widgetEngine_->InvokeClick(widgets_[clickHit.widgetIndex].id,
                     point.x - wb.left, point.y - wb.top);
             }
 
@@ -12550,6 +12572,14 @@ private:
             OpenFolderMappingSource(hit.widgetIndex))
         {
             return;
+        }
+
+        // Double-click LuaScript widget -> open editor
+        if (hit.kind == DesktopHitKind::Widget &&
+            hit.widgetIndex < widgets_.size() &&
+            widgets_[hit.widgetIndex].type == DesktopWidgetType::LuaScript)
+        {
+            ShowWidgetEditorHost(hit.widgetIndex);
         }
 
         if (hit.kind == DesktopHitKind::WidgetFolderToggle && hit.widgetIndex < widgets_.size())
@@ -12741,20 +12771,6 @@ private:
         if (renameEdit_ != nullptr)
         {
             return;
-        }
-
-        // Forward to focused Lua widget input
-        if (widgetEngine_ && !widgetEngine_->GetWidgets().empty())
-        {
-            for (size_t i = 0; i < widgets_.size(); ++i)
-            {
-                if (widgets_[i].type == DesktopWidgetType::LuaScript &&
-                    widgetEngine_->HandleKeyDown(widgets_[i].scriptPath, (int)key))
-                {
-                    InvalidateRect(hwnd_, nullptr, TRUE);
-                    return;
-                }
-            }
         }
 
         switch (key)

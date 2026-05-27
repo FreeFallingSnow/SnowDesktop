@@ -2,35 +2,67 @@
 name = "便签"
 useCustomStyle = true
 
+-- 默认值
+bg = 0xFFF7D1
+border = 0xD0D0D0
+alpha = 1.0
+gradientEndA = 0.0
+textColor = 0x000000
+
+-- 从 storage 加载已保存的值覆盖默认
+function loadConfig()
+    bg = tonumber(storage.get("bg")) or bg
+    border = tonumber(storage.get("border")) or border
+    alpha = tonumber(storage.get("alpha")) or alpha
+    gradientEndA = tonumber(storage.get("gradientEndA")) or gradientEndA
+    textColor = tonumber(storage.get("textColor")) or textColor
+end
+
 function render()
+    loadConfig()
     local w = layout.width()
     local h = layout.height()
     local saved = storage.get("text") or ""
+    local pad = 14
 
-    draw.rect(0, 0, w, h, 0x2d2d1a, 8, 0.9)
-    local text = widget.input("main", 8, 8, w - 16, h - 24, saved)
+    if saved ~= "" then
+        draw.text(pad, pad, saved, 15, textColor, w - pad * 2)
+    else
+        draw.text(pad, pad, "双击或右键编辑...", 15, textColor, w - pad * 2)
+    end
 
     local t = sys.getTime()
-    draw.text(8, h - 16, string.format("便签 | %02d:%02d", t.hour, t.min), 10, 0x666644)
+    draw.text(pad, h - 16, string.format("便签 | %02d:%02d", t.hour, t.min), 10, textColor)
 end
 
 function onClick(x, y)
-    local saved = storage.get("text") or ""
-    if x >= 8 and x <= layout.width() - 8 and y >= 8 and y <= layout.height() - 24 then
-        widget.focus("main", saved)
-    else
-        widget.focus("")
-    end
-end
-
-function onEditCommit(text)
-    storage.set("text", text)
-    widget.focus("")
 end
 
 function imguiRender()
+    loadConfig()
+    imgui.text("便签内容")
+
     local text = imgui.input("##note", storage.get("text") or "")
     if text ~= (storage.get("text") or "") then
         storage.set("text", text)
     end
+
+    imgui.text("便签设置")
+
+    imgui.text("背景色")
+    local newBg = imgui.colorEdit3("##bg", bg)
+    if newBg ~= bg then bg = newBg; storage.set("bg", tostring(bg)) end
+
+    imgui.text("边框色")
+    local newBorder = imgui.colorEdit3("##border", border)
+    if newBorder ~= border then border = newBorder; storage.set("border", tostring(border)) end
+
+    imgui.text("文字色")
+    local newTc = imgui.colorEdit3("##tc", textColor)
+    if newTc ~= textColor then textColor = newTc; storage.set("textColor", tostring(textColor)) end
+
+    local newAlpha = imgui.sliderFloat("不透明度", alpha, 0.0, 1.0)
+    if newAlpha ~= alpha then alpha = newAlpha; storage.set("alpha", tostring(alpha)) end
+
+    
 end
