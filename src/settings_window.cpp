@@ -1,4 +1,5 @@
 #include "settings_window.h"
+#include "widget_engine.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -152,11 +153,15 @@ void SettingsWindow::Shutdown()
 
 void SettingsWindow::Show()
 {
-    if (hwnd_ != nullptr)
+    if (hwnd_ == nullptr)
     {
-        ShowWindow(hwnd_, SW_SHOW);
-        SetForegroundWindow(hwnd_);
+        if (!Init(instance_, device_.Get()))
+            return;
     }
+    ShowWindow(hwnd_, SW_SHOW);
+    BringWindowToTop(hwnd_);
+    SetForegroundWindow(hwnd_);
+    SetFocus(hwnd_);
 }
 
 void SettingsWindow::ShowExitConfirm()
@@ -172,6 +177,13 @@ void SettingsWindow::Render()
 
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
+
+    // Feed current mouse position so first click works without prior WM_MOUSEMOVE
+    POINT mp;
+    GetCursorPos(&mp);
+    ScreenToClient(hwnd_, &mp);
+    ImGui::GetIO().MousePos = ImVec2((float)mp.x, (float)mp.y);
+
     ImGui::NewFrame();
 
     // Fill entire client area
@@ -187,23 +199,29 @@ void SettingsWindow::Render()
 
     DrawTitleBar();
 
-    // Sidebar + Content layout
-    const float sidebarW = 160.0f;
-    ImGui::BeginChild("##Sidebar", ImVec2(sidebarW, 0), true);
-    DrawSidebar();
-    ImGui::EndChild();
-
-    ImGui::SameLine();
-    ImGui::BeginChild("##Content", ImVec2(0, 0), ImGuiChildFlags_None);
-    switch (activePage_)
+    if (editingWidgetIndex_ != static_cast<size_t>(-1))
     {
-    case 0: DrawGeneralPage(); break;
-    case 1: DrawPersonalizationPage(); break;
-    case 2: DrawWidgetEditorPage(); break;
-    case 3: DrawBackupPage(); break;
-    case 4: DrawAboutPage(); break;
+        DrawWidgetEditorPage();
     }
-    ImGui::EndChild();
+    else
+    {
+        // Sidebar + Content layout
+        const float sidebarW = 160.0f;
+        ImGui::BeginChild("##Sidebar", ImVec2(sidebarW, 0), true);
+        DrawSidebar();
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+        ImGui::BeginChild("##Content", ImVec2(0, 0), ImGuiChildFlags_None);
+        switch (activePage_)
+        {
+        case 0: DrawGeneralPage(); break;
+        case 1: DrawPersonalizationPage(); break;
+        case 2: DrawBackupPage(); break;
+        case 3: DrawAboutPage(); break;
+        }
+        ImGui::EndChild();
+    }
 
     ImGui::End();
 
@@ -250,6 +268,14 @@ void SettingsWindow::Render()
     }
 
     ImGui::Render();
+
+    if (pendingClose_)
+    {
+        pendingClose_ = false;
+        Shutdown();
+        return;
+    }
+
     const float clearColor[4] = { 0.96f, 0.96f, 0.97f, 1.0f };
     context_->OMSetRenderTargets(1, rtv_.GetAddressOf(), nullptr);
     context_->ClearRenderTargetView(rtv_.Get(), clearColor);
@@ -294,7 +320,11 @@ void SettingsWindow::DrawTitleBar()
     dl->AddText(ImVec2(textX, textY), ImColor(0.45f, 0.45f, 0.50f), xText);
 
     if (btnHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-        ShowWindow(hwnd_, SW_HIDE);
+    {
+        if (editingWidgetIndex_ != static_cast<size_t>(-1))
+            editingWidgetIndex_ = static_cast<size_t>(-1);
+        pendingClose_ = true;
+    }
 
     // Drag region
     ImGui::SetCursorScreenPos(p);
@@ -347,9 +377,8 @@ void SettingsWindow::DrawSidebar()
 
     SideButton(0, "通用");
     SideButton(1, "个性化");
-    SideButton(2, "组件编辑");
-    SideButton(3, "布局备份");
-    SideButton(4, "关于");
+    SideButton(2, "布局备份");
+    SideButton(3, "关于");
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
@@ -534,22 +563,39 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::EndChild();
 }
 
+void SettingsWindow::ShowWidgetEditor(size_t widgetIndex,
+    const wchar_t* widgetId, const wchar_t* widgetName, const wchar_t* scriptPath)
+{
+    editingWidgetIndex_ = widgetIndex;
+    editingWidgetId_ = widgetId;
+    editingWidgetName_ = widgetName;
+    editingScriptPath_ = scriptPath;
+    Show();
+}
+
 void SettingsWindow::DrawWidgetEditorPage()
 {
-    const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
-    ImGui::BeginChild("##WidgetEditorInner", ImVec2(0, 0), ImGuiChildFlags_None);
+    // Back button — white text on blue
+    if (BlueButton("返回主界面", ImVec2(100, 0)))
+    {
+        editingWidgetIndex_ = static_cast<size_t>(-1);
+        return;
+    }
 
-    ImGui::Text("组件编辑器");
+    ImGui::SameLine();
+    ImGui::Text("组件编辑: %s", WideToUtf8(editingWidgetName_).c_str());
     ImGui::Separator();
-    ImGui::Spacing();
 
     if (widgetEngine_)
-        widgetEngine_->RenderImGuiWidgets();
-    else
-        ImGui::TextDisabled("(未连接组件引擎)");
+    {
+        // Make input cursor clearly black
+        ImGui::PushStyleColor(ImGuiCol_InputTextCursor, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
 
-    ImGui::EndChild();
+        widgetEngine_->EnsureWidgetLoaded(editingWidgetId_, editingScriptPath_);
+        widgetEngine_->RenderWidgetEditor(editingWidgetId_, editingWidgetName_);
+
+        ImGui::PopStyleColor(1);
+    }
 }
 
 void SettingsWindow::DrawAboutPage()
@@ -819,6 +865,8 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 
     switch (msg)
     {
+    case WM_MOUSEACTIVATE:
+        return MA_ACTIVATE;
     case WM_SIZE:
         if (g_settingsWindow != nullptr && wParam != SIZE_MINIMIZED)
         {
@@ -848,7 +896,10 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         return 0;
     }
     case WM_CLOSE:
-        g_settingsWindow->showExitConfirm_ = false;
+        if (g_settingsWindow->editingWidgetIndex_ != static_cast<size_t>(-1))
+            g_settingsWindow->editingWidgetIndex_ = static_cast<size_t>(-1);
+        g_settingsWindow->pendingClose_ = true;
+        return 0;
         if (g_settingsWindow->personalizationDirty_)
         {
             SavePersonalization(GetPersonalizationPath().c_str(), g_settingsWindow->personalization_);

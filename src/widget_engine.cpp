@@ -18,6 +18,15 @@ static std::string ReadFile(const std::wstring& path)
     return ss.str();
 }
 
+static std::string WideToUtf8(const std::wstring& w)
+{
+    if (w.empty()) return {};
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string r(n, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), r.data(), n, nullptr, nullptr);
+    return r;
+}
+
 // ── Storage (shared localStorage for Lua widgets) ────────────────
 static std::unordered_map<std::string, std::string> g_storage;
 static std::wstring g_storagePath;
@@ -75,11 +84,6 @@ struct D2DState
     IDWriteFactory* dwrite = nullptr;
     D2D1_RECT_F widgetRect{};
     std::string storagePrefix;
-
-    // Active input
-    std::string activeInputId;
-    std::string inputText;
-    int cursorPos = 0;
 };
 
 static D2DState* GetD2D(lua_State* L)
@@ -97,6 +101,7 @@ static int lua_DrawText(lua_State* L)
     const char* text = luaL_checkstring(L, 3);
     float size = static_cast<float>(luaL_optnumber(L, 4, 14));
     int color = static_cast<int>(luaL_optinteger(L, 5, 0xFFFFFF));
+    float maxWidth = static_cast<float>(luaL_optnumber(L, 6, 0));
 
     auto* s = GetD2D(L);
     if (!s || !s->ctx || !s->dwrite) return 0;
@@ -119,10 +124,24 @@ static int lua_DrawText(lua_State* L)
     s->ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b), &brush);
     if (!brush) return 0;
 
-    D2D1_RECT_F rect = { x + s->widgetRect.left, y + s->widgetRect.top,
-        x + s->widgetRect.left + 800, y + s->widgetRect.top + 200 };
-    s->ctx->DrawTextW(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
-        format.Get(), &rect, brush.Get());
+    float bx = x + s->widgetRect.left;
+    float by = y + s->widgetRect.top;
+
+    if (maxWidth > 0)
+    {
+        // Use TextLayout for word wrapping
+        ComPtr<IDWriteTextLayout> layout;
+        s->dwrite->CreateTextLayout(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
+            format.Get(), maxWidth, 5000.0f, &layout);
+        if (layout)
+            s->ctx->DrawTextLayout(D2D1::Point2F(bx, by), layout.Get(), brush.Get());
+    }
+    else
+    {
+        D2D1_RECT_F rect = { bx, by, bx + 800, by + 200 };
+        s->ctx->DrawTextW(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
+            format.Get(), &rect, brush.Get());
+    }
     return 0;
 }
 
@@ -205,8 +224,6 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     PathAppendW(exePath, L"SnowDesktop.storage.json");
     g_storagePath = exePath;
     LoadStorageFile();
-
-    ReloadAll();
     return true;
 }
 
@@ -217,36 +234,51 @@ void WidgetEngine::Shutdown()
     delete d2dState_; d2dState_ = nullptr;
 }
 
-void WidgetEngine::ReloadAll()
+void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 {
-    widgets_.clear();
+    int idx = FindWidget(widgetId);
+    if (idx < 0) return;
+    luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
+    widgets_.erase(widgets_.begin() + idx);
+
+    // Remove storage data for this widget
+    std::string prefix = WideToUtf8(widgetId) + ".";
+    auto it = g_storage.begin();
+    while (it != g_storage.end())
+    {
+        if (it->first.compare(0, prefix.size(), prefix) == 0)
+            it = g_storage.erase(it);
+        else
+            ++it;
+    }
+    SaveStorageFile();
+}
+
+int WidgetEngine::FindWidget(const std::wstring& widgetId) const
+{
+    for (int i = 0; i < (int)widgets_.size(); ++i)
+    {
+        if (widgets_[i].valid && widgets_[i].widgetId == widgetId)
+            return i;
+    }
+    return -1;
+}
+
+bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& scriptPath)
+{
+    if (FindWidget(widgetId) >= 0) return true;
 
     wchar_t exePath[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
     PathRemoveFileSpecW(exePath);
     PathAppendW(exePath, L"widgets");
-    CreateDirectoryW(exePath, nullptr);
-
-    std::wstring search = exePath;
-    search += L"\\*.lua";
-
-    WIN32_FIND_DATAW fd{};
-    HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE) return;
-
-    do
-    {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        std::wstring path = exePath;
-        path += L"\\";
-        path += fd.cFileName;
-        LoadWidget(path);
-    } while (FindNextFileW(hFind, &fd));
-
-    FindClose(hFind);
+    std::wstring fullPath = exePath;
+    fullPath += L"\\";
+    fullPath += scriptPath;
+    return LoadWidget(fullPath, widgetId);
 }
 
-bool WidgetEngine::LoadWidget(const std::wstring& path)
+bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widgetId)
 {
     std::string source = ReadFile(path);
     if (source.empty()) return false;
@@ -317,6 +349,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path)
     lua_pop(L_, 1);  // pop table
 
     LuaWidget w;
+    w.widgetId = widgetId;
     w.name = name;
     w.filePath = path;
     w.ref = ref;
@@ -334,38 +367,42 @@ void WidgetEngine::RenderAll(ID2D1DeviceContext* context)
     d2dState_->ctx = context;
 }
 
-void WidgetEngine::RenderImGuiWidgets()
+bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName)
 {
-    for (auto& w : widgets_)
+    // Set storage prefix to widget instance ID
+    int len = WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), nullptr, 0, nullptr, nullptr);
+    d2dState_->storagePrefix.resize(len);
+    WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), &d2dState_->storagePrefix[0], len, nullptr, nullptr);
+
+    int idx = FindWidget(widgetId);
+    int ref = (idx >= 0) ? widgets_[idx].ref : LUA_NOREF;
+    if (ref == LUA_NOREF) return true;
+
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
+    if (lua_istable(L_, -1))
     {
-        if (!w.valid) continue;
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); continue; }
+        // Inject widgetId global
+        int wlen = WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), nullptr, 0, nullptr, nullptr);
+        std::string widUtf8(wlen, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), &widUtf8[0], wlen, nullptr, nullptr);
+        lua_pushstring(L_, widUtf8.c_str());
+        lua_setfield(L_, -2, "widgetId");
+
         lua_getfield(L_, -1, "imguiRender");
         if (lua_isfunction(L_, -1))
-        {
-            ImGui::SeparatorText(w.name.c_str());
             lua_pcall(L_, 0, 0, 0);
-        }
-        else { lua_pop(L_, 1); }
-        lua_pop(L_, 1);
+        else
+            lua_pop(L_, 1);
     }
+    lua_pop(L_, 1);
+    return true;
 }
 
-void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds, float bgR, float bgG, float bgB, float alpha, float borderR, float borderG, float borderB, float gradientEndA)
+void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds)
 {
-    // Find the loaded widget matching this script path
-    LuaWidget* found = nullptr;
-    for (auto& w : widgets_)
-    {
-        if (w.valid && w.filePath.size() >= scriptPath.size() &&
-            w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
-        {
-            found = &w;
-            break;
-        }
-    }
-    if (!found) return;
+    int idx = FindWidget(widgetId);
+    if (idx < 0) return;
+    LuaWidget* found = &widgets_[idx];
 
     // Hot-reload: check if file changed or deleted
     {
@@ -375,11 +412,12 @@ void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceConte
         if (CompareFileTime(&attr.ftLastWriteTime, &found->lastModified) != 0)
         {
             luaL_unref(L_, LUA_REGISTRYINDEX, found->ref);
-            std::wstring path = found->filePath;
             found->valid = false;
             found->ref = LUA_NOREF;
-            LoadWidget(path);
-            found = &widgets_.back();
+            LoadWidget(found->filePath, widgetId);
+            idx = FindWidget(widgetId);
+            if (idx < 0) return;
+            found = &widgets_[idx];
         }
     }
 
@@ -388,43 +426,23 @@ void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceConte
         static_cast<float>(bounds.left), static_cast<float>(bounds.top),
         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
 
-    // Set storage prefix from script path
+    // Set storage prefix from widget instance ID
     {
-        std::wstring name = scriptPath;
-        auto slash = name.find_last_of(L"\\/");
-        if (slash != std::wstring::npos) name = name.substr(slash + 1);
-        if (name.size() > 4 && name.substr(name.size() - 4) == L".lua")
-            name = name.substr(0, name.size() - 4);
-        int len = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), nullptr, 0, nullptr, nullptr);
+        int len = WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), nullptr, 0, nullptr, nullptr);
         d2dState_->storagePrefix.resize(len);
-        WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), &d2dState_->storagePrefix[0], len, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), &d2dState_->storagePrefix[0], len, nullptr, nullptr);
     }
 
     lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
     if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
 
-    // Inject style if widget uses custom styling
-    if (found->customStyle)
+    // Inject widgetId global
     {
-        lua_getfield(L_, -1, "style");
-        if (lua_isnil(L_, -1))
-        {
-            lua_pop(L_, 1);
-            lua_newtable(L_);
-            lua_pushnumber(L_, bgR);    lua_setfield(L_, -2, "bgR");
-            lua_pushnumber(L_, bgG);    lua_setfield(L_, -2, "bgG");
-            lua_pushnumber(L_, bgB);    lua_setfield(L_, -2, "bgB");
-            lua_pushnumber(L_, alpha);  lua_setfield(L_, -2, "alpha");
-            lua_pushnumber(L_, borderR);lua_setfield(L_, -2, "borderR");
-            lua_pushnumber(L_, borderG);lua_setfield(L_, -2, "borderG");
-            lua_pushnumber(L_, borderB);lua_setfield(L_, -2, "borderB");
-            lua_pushnumber(L_, gradientEndA); lua_setfield(L_, -2, "gradientEndA");
-            lua_setfield(L_, -2, "style");
-        }
-        else
-        {
-            lua_pop(L_, 1);
-        }
+        int wlen = WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), nullptr, 0, nullptr, nullptr);
+        std::string widUtf8(wlen, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), &widUtf8[0], wlen, nullptr, nullptr);
+        lua_pushstring(L_, widUtf8.c_str());
+        lua_setfield(L_, -2, "widgetId");
     }
 
     lua_getfield(L_, -1, "render");
@@ -441,202 +459,46 @@ void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceConte
 }
 
 // ── Check if widget uses custom style ────────────────────────────
-bool WidgetEngine::HasCustomStyle(const std::wstring& scriptPath) const
+bool WidgetEngine::HasCustomStyle(const std::wstring& widgetId) const
 {
-    for (const auto& w : widgets_)
-    {
-        if (w.valid && w.filePath.size() >= scriptPath.size() &&
-            w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
-        {
-            return w.customStyle;
-        }
-    }
-    return false;
+    int idx = FindWidget(widgetId);
+    return idx >= 0 && widgets_[idx].customStyle;
 }
 
-void WidgetEngine::InvokeOpen(const std::wstring& scriptPath)
+void WidgetEngine::InvokeOpen(const std::wstring& widgetId)
 {
-    for (auto& w : widgets_)
-    {
-        if (w.valid && w.filePath.size() >= scriptPath.size() &&
-            w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
-        {
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-            if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
-            lua_getfield(L_, -1, "onOpen");
-            if (lua_isfunction(L_, -1))
-                lua_pcall(L_, 0, 0, 0);
-            else
-                lua_pop(L_, 1);
-            lua_pop(L_, 1);
-            return;
-        }
-    }
-}
-
-std::string WidgetEngine::InvokeGetEditText(const std::wstring& scriptPath) const
-{
-    for (const auto& w : widgets_)
-    {
-        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
-        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) != 0) continue;
-
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return ""; }
-        lua_getfield(L_, -1, "getEditText");
-        if (lua_isfunction(L_, -1))
-        {
-            lua_pcall(L_, 0, 1, 0);
-            const char* result = lua_tostring(L_, -1);
-            std::string r = result ? result : "";
-            lua_pop(L_, 2);
-            return r;
-        }
-        lua_pop(L_, 2);
-    }
-    return "";
-}
-
-bool WidgetEngine::HasEditSupport(const std::wstring& scriptPath) const
-{
-    for (const auto& w : widgets_)
-    {
-        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
-        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) != 0) continue;
-
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return false; }
-        lua_getfield(L_, -1, "getEditText");
-        bool has = lua_isfunction(L_, -1) != 0;
-        lua_pop(L_, 2);
-        return has;
-    }
-    return false;
-}
-
-void WidgetEngine::InvokeEditCommit(const std::wstring& scriptPath, const std::string& text) const
-{
-    for (auto& w : widgets_)
-    {
-        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
-        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) != 0) continue;
-
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
-        lua_getfield(L_, -1, "onEditCommit");
-        if (lua_isfunction(L_, -1))
-        {
-            lua_pushstring(L_, text.c_str());
-            lua_pcall(L_, 1, 0, 0);
-        }
-        else
-        {
-            lua_pop(L_, 1);
-        }
+    int idx = FindWidget(widgetId);
+    if (idx < 0) return;
+    auto& w = widgets_[idx];
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+    lua_getfield(L_, -1, "onOpen");
+    if (lua_isfunction(L_, -1))
+        lua_pcall(L_, 0, 0, 0);
+    else
         lua_pop(L_, 1);
-        return;
-    }
+    lua_pop(L_, 1);
 }
 
-void WidgetEngine::BlurActiveInput()
+void WidgetEngine::InvokeClick(const std::wstring& widgetId, int x, int y)
 {
-    d2dState_->activeInputId.clear();
-    d2dState_->inputText.clear();
-    d2dState_->cursorPos = 0;
-    focusedScriptPath_.clear();
-}
-
-bool WidgetEngine::HandleKeyDown(const std::wstring& scriptPath, int vk)
-{
-    if (d2dState_->activeInputId.empty()) return false;
-
-    // Find matching widget to verify this is the focused one
-    bool match = false;
-    for (auto& w : widgets_)
+    int idx = FindWidget(widgetId);
+    if (idx < 0) return;
+    auto& w = widgets_[idx];
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+    lua_getfield(L_, -1, "onClick");
+    if (lua_isfunction(L_, -1))
     {
-        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
-        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
-        { match = true; break; }
+        lua_pushinteger(L_, x);
+        lua_pushinteger(L_, y);
+        lua_pcall(L_, 2, 0, 0);
     }
-    if (!match || focusedScriptPath_ != scriptPath) return false;
-
-    auto& text = d2dState_->inputText;
-    auto& pos = d2dState_->cursorPos;
-
-    switch (vk)
+    else
     {
-    case VK_LEFT:
-        if (pos > 0) --pos;
-        return true;
-    case VK_RIGHT:
-        if (pos < (int)text.size()) ++pos;
-        return true;
-    case VK_HOME:
-        pos = 0;
-        return true;
-    case VK_END:
-        pos = (int)text.size();
-        return true;
-    case VK_BACK:
-        if (pos > 0) { text.erase(pos - 1, 1); --pos; }
-        return true;
-    case VK_DELETE:
-        if (pos < (int)text.size()) text.erase(pos, 1);
-        return true;
-    case VK_RETURN:
-    case VK_ESCAPE:
-        // Commit: call onEditCommit
-        InvokeEditCommit(scriptPath, text);
-        BlurActiveInput();
-        return true;
-    }
-    return false;
-}
-
-bool WidgetEngine::HandleChar(const std::wstring& scriptPath, wchar_t ch)
-{
-    if (d2dState_->activeInputId.empty()) return false;
-    if (focusedScriptPath_ != scriptPath) return false;
-    if (ch < 32) return false;  // control chars
-
-    auto& text = d2dState_->inputText;
-    auto& pos = d2dState_->cursorPos;
-
-    // Insert char at cursor
-    char utf8[8]{};
-    int len = WideCharToMultiByte(CP_UTF8, 0, &ch, 1, utf8, (int)sizeof(utf8), nullptr, nullptr);
-    if (len > 0)
-    {
-        text.insert(pos, utf8, len);
-        pos += len;
-    }
-    return true;
-}
-
-void WidgetEngine::InvokeClick(const std::wstring& scriptPath, int x, int y)
-{
-    focusedScriptPath_ = scriptPath;
-    for (auto& w : widgets_)
-    {
-        if (!w.valid || w.filePath.size() < scriptPath.size()) continue;
-        if (w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) != 0) continue;
-
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
-        lua_getfield(L_, -1, "onClick");
-        if (lua_isfunction(L_, -1))
-        {
-            lua_pushinteger(L_, x);
-            lua_pushinteger(L_, y);
-            lua_pcall(L_, 2, 0, 0);
-        }
-        else
-        {
-            lua_pop(L_, 1);
-        }
         lua_pop(L_, 1);
-        return;
     }
+    lua_pop(L_, 1);
 }
 
 bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const
@@ -655,6 +517,41 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag
         }
     }
     return defaultVal;
+}
+
+bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
+    float& bgR, float& bgG, float& bgB, float& alpha,
+    float& borderR, float& borderG, float& borderB, float& gradientEndA) const
+{
+    int idx = FindWidget(widgetId);
+    if (idx < 0) return false;
+    const auto& w = widgets_[idx];
+
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return false; }
+
+            auto readHex = [&](const char* key, float& r, float& g, float& b, int def) {
+                lua_getfield(L_, -1, key);
+                int val = lua_isinteger(L_, -1) ? (int)lua_tointeger(L_, -1) : def;
+                lua_pop(L_, 1);
+                r = ((val >> 16) & 0xFF) / 255.0f;
+                g = ((val >> 8) & 0xFF) / 255.0f;
+                b = (val & 0xFF) / 255.0f;
+            };
+
+            auto readFloat = [&](const char* key, float& out, float def) {
+                lua_getfield(L_, -1, key);
+                out = lua_isnumber(L_, -1) ? (float)lua_tonumber(L_, -1) : def;
+                lua_pop(L_, 1);
+            };
+
+            readHex("bg", bgR, bgG, bgB, 0x151A21);
+            readHex("border", borderR, borderG, borderB, 0xFFFFFF);
+            readFloat("alpha", alpha, 0.36f);
+            readFloat("gradientEndA", gradientEndA, 0.0f);
+
+            lua_pop(L_, 1);
+            return true;
 }
 
 // ── List available widget scripts ────────────────────────────────
@@ -681,6 +578,55 @@ std::vector<std::wstring> WidgetEngine::ListAvailable()
 
     FindClose(hFind);
     return result;
+}
+
+std::wstring WidgetEngine::GetWidgetDisplayName(const std::wstring& filename)
+{
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    PathRemoveFileSpecW(exePath);
+    PathAppendW(exePath, L"widgets");
+    std::wstring fullPath = exePath;
+    fullPath += L"\\";
+    fullPath += filename;
+
+    std::ifstream file(fullPath, std::ios::binary);
+    if (!file) return {};
+    std::string line;
+    for (int i = 0; i < 10 && std::getline(file, line); ++i)
+    {
+        size_t pos = line.find_first_not_of(" \t\r");
+        if (pos == std::string::npos) continue;
+        if (line[pos] == '-' && pos + 1 < line.size() && line[pos + 1] == '-') continue;
+
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(pos, eq - pos);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        if (key != "name") continue;
+
+        size_t q1 = line.find('"', eq + 1);
+        size_t q2 = line.find('\'', eq + 1);
+        char quote = 0;
+        if (q1 != std::string::npos && (q2 == std::string::npos || q1 < q2)) { quote = '"'; pos = q1; }
+        else if (q2 != std::string::npos) { quote = '\''; pos = q2; }
+        else continue;
+
+        size_t qEnd = line.find(quote, pos + 1);
+        if (qEnd == std::string::npos) continue;
+
+        std::string utf8Name = line.substr(pos + 1, qEnd - pos - 1);
+        // Convert UTF-8 to wide string
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Name.c_str(), (int)utf8Name.size(), nullptr, 0);
+        std::wstring wname(wlen, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, utf8Name.c_str(), (int)utf8Name.size(), wname.data(), wlen);
+        return wname;
+    }
+    // Fallback: filename without extension
+    std::wstring fallback = filename;
+    if (fallback.size() > 4 && fallback.substr(fallback.size() - 4) == L".lua")
+        fallback = fallback.substr(0, fallback.size() - 4);
+    return fallback;
 }
 
 static int lua_DrawLine(lua_State* L)
@@ -770,13 +716,47 @@ static int lua_ImGuiButton(lua_State* L)
     return 1;
 }
 
+static int lua_ImGuiColorEdit3(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    int hex = (int)luaL_checkinteger(L, 2);
+    float col[3] = {
+        ((hex >> 16) & 0xFF) / 255.0f,
+        ((hex >> 8) & 0xFF) / 255.0f,
+        (hex & 0xFF) / 255.0f
+    };
+    if (ImGui::ColorEdit3(label, col, ImGuiColorEditFlags_NoInputs))
+    {
+        int r = (int)(col[0] * 255);
+        int g = (int)(col[1] * 255);
+        int b = (int)(col[2] * 255);
+        lua_pushinteger(L, (r << 16) | (g << 8) | b);
+    }
+    else
+        lua_pushinteger(L, hex);
+    return 1;
+}
+
+static int lua_ImGuiSliderFloat(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    float v = (float)luaL_checknumber(L, 2);
+    float min = (float)luaL_checknumber(L, 3);
+    float max = (float)luaL_checknumber(L, 4);
+    if (ImGui::SliderFloat(label, &v, min, max))
+        lua_pushnumber(L, v);
+    else
+        lua_pushnumber(L, (double)luaL_checknumber(L, 2));
+    return 1;
+}
+
 static int lua_ImGuiInputText(lua_State* L)
 {
     const char* label = luaL_checkstring(L, 1);
     const char* text = luaL_optstring(L, 2, "");
     char buf[4096]{};
     strncpy_s(buf, sizeof(buf), text, _TRUNCATE);
-    if (ImGui::InputTextMultiline(label, buf, sizeof(buf), ImVec2(-1, 80)))
+    if (ImGui::InputTextMultiline(label, buf, sizeof(buf), ImVec2(-1, 120)))
         lua_pushstring(L, buf);
     else
         lua_pushstring(L, text);
@@ -803,119 +783,6 @@ static int lua_StorageRemove(lua_State* L)
     return 0;
 }
 
-static int lua_WidgetInput(lua_State* L)
-{
-    const char* id = luaL_checkstring(L, 1);
-    float x = (float)luaL_checknumber(L, 2);
-    float y = (float)luaL_checknumber(L, 3);
-    float w = (float)luaL_checknumber(L, 4);
-    float h = (float)luaL_optnumber(L, 5, 24);
-    const char* defaultText = luaL_optstring(L, 6, "");
-
-    auto* s = GetD2D(L);
-    if (!s || !s->ctx) { lua_pushstring(L, defaultText); return 1; }
-
-    float rx = s->widgetRect.left + x;
-    float ry = s->widgetRect.top + y;
-
-    // Draw input background
-    ComPtr<ID2D1SolidColorBrush> bgBrush;
-    s->ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.08f), &bgBrush);
-    if (bgBrush)
-    {
-        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(rx, ry, rx + w, ry + h), 4, 4);
-        s->ctx->FillRoundedRectangle(rr, bgBrush.Get());
-    }
-
-    // Determine if this input is active
-    bool isActive = (s->activeInputId == id);
-    std::string text = isActive ? s->inputText : defaultText;
-
-    // Draw text
-    if (!text.empty())
-    {
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
-        std::wstring wtext(wlen, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wtext.data(), wlen);
-
-        ComPtr<IDWriteTextFormat> fmt;
-        s->dwrite->CreateTextFormat(L"Consolas", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 14, L"", &fmt);
-        if (fmt)
-        {
-            ComPtr<ID2D1SolidColorBrush> textBrush;
-            s->ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.9f), &textBrush);
-            if (textBrush)
-                s->ctx->DrawTextW(wtext.c_str(), (UINT32)(wtext.size() - 1), fmt.Get(),
-                    D2D1::RectF(rx + 6, ry + 3, rx + w - 6, ry + h - 3), textBrush.Get());
-        }
-    }
-
-    // Draw cursor
-    if (isActive)
-    {
-        // Measure text up to cursorPos
-        std::string before = text.substr(0, s->cursorPos);
-        int wlen2 = MultiByteToWideChar(CP_UTF8, 0, before.c_str(), -1, nullptr, 0);
-        std::wstring wbefore(wlen2, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, before.c_str(), -1, wbefore.data(), wlen2);
-
-        ComPtr<IDWriteTextFormat> fmt;
-        s->dwrite->CreateTextFormat(L"Consolas", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 14, L"", &fmt);
-        if (fmt)
-        {
-            ComPtr<IDWriteTextLayout> layout;
-            s->dwrite->CreateTextLayout(wbefore.c_str(), (UINT32)(wbefore.size() - 1),
-                fmt.Get(), w, h, &layout);
-            if (layout)
-            {
-                DWRITE_TEXT_METRICS metrics;
-                layout->GetMetrics(&metrics);
-                float cx = rx + 6 + metrics.widthIncludingTrailingWhitespace;
-                ComPtr<ID2D1SolidColorBrush> cursorBrush;
-                s->ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.6f), &cursorBrush);
-                if (cursorBrush)
-                    s->ctx->DrawLine(D2D1::Point2F(cx, ry + 5), D2D1::Point2F(cx, ry + 5 + 14),
-                        cursorBrush.Get(), 1.5f);
-            }
-        }
-    }
-
-    // Handle click to focus
-    POINT mp;
-    GetCursorPos(&mp);
-    if (s->ctx)
-    {
-        // We can't get client coords easily from Lua. Use hit test from ImGui or mouse pos.
-    }
-
-    lua_pushstring(L, text.c_str());
-    return 1;
-}
-
-static int lua_WidgetFocus(lua_State* L)
-{
-    const char* id = luaL_checkstring(L, 1);
-    const char* initText = luaL_optstring(L, 2, nullptr);
-    auto* s = GetD2D(L);
-    if (!s) return 0;
-    s->activeInputId = id ? id : "";
-    if (id && id[0] && initText)
-    {
-        s->inputText = initText;
-        s->cursorPos = (int)s->inputText.size();
-    }
-    if (!id || !id[0])
-    {
-        s->inputText.clear();
-        s->cursorPos = 0;
-    }
-    return 0;
-}
-
 static int lua_LayoutWidth(lua_State* L)
 {
     auto* s = GetD2D(L);
@@ -939,10 +806,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");
     lua_setglobal(L, "draw");
 
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_WidgetInput);lua_setfield(L, -2, "input");
-    lua_pushcfunction(L, lua_WidgetFocus);lua_setfield(L, -2, "focus");
-    lua_setglobal(L, "widget");
+    lua_newtable(L_);
+    lua_setglobal(L_, "widget");
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_GetTime);   lua_setfield(L, -2, "getTime");
@@ -964,5 +829,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_ImGuiButton);   lua_setfield(L, -2, "button");
     lua_pushcfunction(L, lua_ImGuiInputText);lua_setfield(L, -2, "input");
     lua_pushcfunction(L, lua_ImGuiCheckbox); lua_setfield(L, -2, "checkbox");
+    lua_pushcfunction(L, lua_ImGuiColorEdit3); lua_setfield(L, -2, "colorEdit3");
+    lua_pushcfunction(L, lua_ImGuiSliderFloat); lua_setfield(L, -2, "sliderFloat");
     lua_setglobal(L, "imgui");
 }

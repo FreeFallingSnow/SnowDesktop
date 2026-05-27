@@ -22,6 +22,7 @@ struct D2DState;
 
 struct LuaWidget
 {
+    std::wstring widgetId;
     std::string name;
     std::wstring filePath;
     int ref = LUA_NOREF;
@@ -38,36 +39,35 @@ public:
 
     bool Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory);
     void Shutdown();
-    void ReloadAll();
-    void ReloadAll();
-    bool ReloadWidget(const std::wstring& scriptPath);
+
+    // Load a widget script into a sandbox for a specific widget instance
+    bool EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& scriptPath);
+    void UnloadWidget(const std::wstring& widgetId);
+
     void RenderAll(ID2D1DeviceContext* context);
-    void RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds,
-        float bgR, float bgG, float bgB, float alpha, float borderR, float borderG, float borderB, float gradientEndA);
-    bool HasCustomStyle(const std::wstring& scriptPath) const;
-    void InvokeOpen(const std::wstring& scriptPath);
-    std::string InvokeGetEditText(const std::wstring& scriptPath) const;
-    bool HasEditSupport(const std::wstring& scriptPath) const;
-    void InvokeEditCommit(const std::wstring& scriptPath, const std::string& text) const;
-    void InvokeClick(const std::wstring& scriptPath, int x, int y);
-    bool HandleKeyDown(const std::wstring& scriptPath, int vk);
-    bool HandleChar(const std::wstring& scriptPath, wchar_t ch);
-    void BlurActiveInput();
+    void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds);
+    bool HasCustomStyle(const std::wstring& widgetId) const;
+    void InvokeOpen(const std::wstring& widgetId);
+    void InvokeClick(const std::wstring& widgetId, int x, int y);
     bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
+    bool ReadCustomColors(const std::wstring& widgetId,
+        float& bgR, float& bgG, float& bgB, float& alpha,
+        float& borderR, float& borderG, float& borderB, float& gradientEndA) const;
 
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
     static std::vector<std::wstring> ListAvailable();
+    static std::wstring GetWidgetDisplayName(const std::wstring& filename);
 
-    // ImGui rendering: call imguiRender on all widgets (called from settings window)
-    void RenderImGuiWidgets();
+    // Render the ImGui editor for a specific widget instance
+    bool RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName);
 
 private:
-    bool LoadWidget(const std::wstring& path);
+    bool LoadWidget(const std::wstring& path, const std::wstring& widgetId);
     void RegisterDrawAPI(lua_State* L);
+    int FindWidget(const std::wstring& widgetId) const;
 
     lua_State* L_ = nullptr;
     D2DState* d2dState_ = nullptr;
-    std::wstring focusedScriptPath_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
     ComPtr<IDWriteFactory> dwriteFactory_;
     std::vector<LuaWidget> widgets_;

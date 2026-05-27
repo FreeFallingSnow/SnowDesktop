@@ -2,6 +2,11 @@
 name = "数字时钟"
 useCustomStyle = true
 
+bg = 0x0A0F1A
+border = 0x404858
+alpha = 0.82
+gradientEndA = 0.40
+
 function render()
     local t = sys.getTime()
     local w = layout.width()
@@ -9,11 +14,8 @@ function render()
     local timeStr = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
     local dateStr = string.format("%d年%02d月%02d日", t.year, t.month, t.day)
 
-    -- 使用传入的边框颜色绘制分隔线
-    local sepColor = math.floor(style.borderR * 255) * 0x10000
-        + math.floor(style.borderG * 255) * 0x100
-        + math.floor(style.borderB * 255)
-    draw.line(8, h * 0.52, w - 8, h * 0.52, 1, sepColor, style.alpha * 0.5)
+    -- 分隔线
+    draw.line(8, h * 0.52, w - 8, h * 0.52, 1, border, alpha * 0.5)
 
     -- 居中显示
     local tw = #timeStr * 14
