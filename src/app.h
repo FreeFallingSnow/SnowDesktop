@@ -11389,7 +11389,10 @@ private:
             if (wParam == kWidgetRefreshTimerId)
             {
                 if (widgetEngine_ && !widgetEngine_->GetWidgets().empty())
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                {
+                    InvalidateRect(hwnd_, nullptr, TRUE);
+                    UpdateWindow(hwnd_);
+                }
                 return 0;
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
