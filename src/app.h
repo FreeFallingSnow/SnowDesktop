@@ -2743,15 +2743,24 @@ private:
             pagesToWrite.push_back(gridPages_.front().id);
         }
 
-        file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_) << "\",\n  \"pages\": [\n";
+        std::vector<std::wstring> validPages;
         for (size_t i = 0; i < pagesToWrite.size(); ++i)
         {
-            const GridPage* page = FindExactGridPage(pagesToWrite[i]);
-            file << "    { \"id\": \"" << JsonEscapeUtf8(pagesToWrite[i]) << "\", \"monitor\": \"";
+            if (FindExactGridPage(pagesToWrite[i]) != nullptr)
+            {
+                validPages.push_back(pagesToWrite[i]);
+            }
+        }
+
+        file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_) << "\",\n  \"pages\": [\n";
+        for (size_t i = 0; i < validPages.size(); ++i)
+        {
+            const GridPage* page = FindExactGridPage(validPages[i]);
+            file << "    { \"id\": \"" << JsonEscapeUtf8(validPages[i]) << "\", \"monitor\": \"";
             file << JsonEscapeUtf8(page != nullptr ? page->monitorId : L"");
             file << "\", \"columns\": " << (page != nullptr ? page->columns : 1) <<
                 ", \"rows\": " << (page != nullptr ? page->rows : 1) << " }";
-            file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
+            file << (i + 1 == validPages.size() ? "\n" : ",\n");
         }
         file << "  ],\n  \"items\": [\n";
         for (size_t i = 0; i < sortedItems.size(); ++i)
@@ -3029,7 +3038,7 @@ private:
             auto colIt = savedPageColumns_.find(page.id);
             auto rowIt = savedPageRows_.find(page.id);
             if (colIt != savedPageColumns_.end() && rowIt != savedPageRows_.end() &&
-                colIt->second > 0 && rowIt->second > 0)
+                colIt->second >= 2 && rowIt->second >= 2)
             {
                 page.columns = colIt->second;
                 page.rows = rowIt->second;
