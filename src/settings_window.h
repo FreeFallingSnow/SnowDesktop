@@ -38,6 +38,7 @@ public:
 
     void SetReloadCallback(std::function<void()> callback) { reloadCallback_ = std::move(callback); }
     void SetExitCallback(std::function<void()> callback) { exitCallback_ = std::move(callback); }
+    void SetInvalidateCallback(std::function<void()> callback) { invalidateCallback_ = std::move(callback); }
     void ShowExitConfirm();
     const PersonalizationSettings& GetPersonalization() const { return personalization_; }
 
@@ -80,6 +81,7 @@ private:
 
     std::function<void()> reloadCallback_;
     std::function<void()> exitCallback_;
+    std::function<void()> invalidateCallback_;
     PersonalizationSettings personalization_;
     bool personalizationDirty_ = false;
 };
