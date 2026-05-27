@@ -6624,30 +6624,30 @@ private:
     RECT GetFolderMappingToggleRect(const DesktopWidget& widget) const
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
-        constexpr int btnSize = 18;
+        constexpr int btnSize = 14;
         constexpr int gap = 6;
         constexpr int resizeReserve = 24;
-        return MakeRect(handle.right - resizeReserve - gap - btnSize - gap - btnSize, handle.top + 3,
+        return MakeRect(handle.right - resizeReserve - gap - btnSize - gap - btnSize, handle.top + 5,
             handle.right - resizeReserve - gap - btnSize - gap, handle.bottom - 3);
     }
 
     RECT GetFolderMappingOpenRect(const DesktopWidget& widget) const
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
-        constexpr int btnSize = 18;
+        constexpr int btnSize = 14;
         constexpr int gap = 6;
         constexpr int resizeReserve = 24;
-        return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 3,
+        return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 5,
             handle.right - resizeReserve - gap, handle.bottom - 3);
     }
 
     RECT GetFileCategoryToggleRect(const DesktopWidget& widget) const
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
-        constexpr int btnSize = 18;
+        constexpr int btnSize = 14;
         constexpr int gap = 6;
         constexpr int resizeReserve = 24;
-        return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 3,
+        return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 5,
             handle.right - resizeReserve - gap, handle.bottom - 3);
     }
 
