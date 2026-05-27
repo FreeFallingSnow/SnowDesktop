@@ -450,6 +450,34 @@ void WidgetEngine::InvokeOpen(const std::wstring& scriptPath)
     }
 }
 
+std::string WidgetEngine::GetStorage(const std::wstring& scriptPath, const char* key) const
+{
+    std::wstring name = scriptPath;
+    auto slash = name.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) name = name.substr(slash + 1);
+    if (name.size() > 4 && name.substr(name.size() - 4) == L".lua")
+        name = name.substr(0, name.size() - 4);
+    int len = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), nullptr, 0, nullptr, nullptr);
+    std::string prefix(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), &prefix[0], len, nullptr, nullptr);
+    auto it = g_storage.find(prefix + "." + key);
+    return it != g_storage.end() ? it->second : "";
+}
+
+void WidgetEngine::SetStorage(const std::wstring& scriptPath, const char* key, const std::string& value)
+{
+    std::wstring name = scriptPath;
+    auto slash = name.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) name = name.substr(slash + 1);
+    if (name.size() > 4 && name.substr(name.size() - 4) == L".lua")
+        name = name.substr(0, name.size() - 4);
+    int len = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), nullptr, 0, nullptr, nullptr);
+    std::string prefix(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), &prefix[0], len, nullptr, nullptr);
+    g_storage[prefix + "." + key] = value;
+    SaveStorageFile();
+}
+
 bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const
 {
     for (const auto& w : widgets_)
