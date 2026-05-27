@@ -1185,6 +1185,13 @@ private:
 
     void RequestExit()
     {
+        int result = MessageBoxW(
+            hwnd_,
+            L"确定要退出 SnowDesktop 吗？\n退出后将恢复 Windows 原生桌面。",
+            L"SnowDesktop",
+            MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2);
+        if (result != IDOK) return;
+
         DebugLogWindow(L"RequestExit hwnd", hwnd_);
         exitRequested_ = true;
         if (hwnd_ != nullptr && IsWindow(hwnd_))
