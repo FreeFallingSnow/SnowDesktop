@@ -707,6 +707,8 @@ private:
                 L"Font Awesome 6 Free Solid");
         }
 
+        UpdateTextFormats();
+
         D2D1_STROKE_STYLE_PROPERTIES dottedProps{};
         dottedProps.startCap = D2D1_CAP_STYLE_FLAT;
         dottedProps.endCap = D2D1_CAP_STYLE_FLAT;
@@ -719,6 +721,59 @@ private:
 
         lastGraphicsError_ = S_OK;
         return true;
+    }
+
+    void UpdateTextFormats()
+    {
+        const float s = gapScale_;
+
+        HRESULT hr = dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 15.0f * s, L"", &itemTextFormat_);
+        if (SUCCEEDED(hr) && itemTextFormat_)
+        {
+            itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 17.0f * s, 13.0f * s);
+        }
+
+        hr = dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 12.0f * s, L"", &collectionItemTextFormat_);
+        if (SUCCEEDED(hr) && collectionItemTextFormat_)
+        {
+            collectionItemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            collectionItemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            collectionItemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+
+        hr = dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 13.0f * s, L"", &listItemTextFormat_);
+        if (SUCCEEDED(hr) && listItemTextFormat_)
+        {
+            listItemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            listItemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            listItemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+
+        hr = dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 14.0f * s, L"", &statusTextFormat_);
+        if (SUCCEEDED(hr) && statusTextFormat_)
+        {
+            statusTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            statusTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            statusTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+
+        faTextFormat_.Reset();
+        if (faFontHandle_ != nullptr)
+        {
+            faTextFormat_ = ComPtr<IDWriteTextFormat>(
+                CreateFaTextFormat(dwriteFactory_.Get(), 14.0f * s));
+        }
     }
 
     bool InitializeShell()
@@ -3014,6 +3069,7 @@ private:
         {
             ApplyGapScaleToPage(page);
         }
+        UpdateTextFormats();
         LayoutItems();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -3031,6 +3087,7 @@ private:
         {
             ApplyGapScaleToPage(page);
         }
+        UpdateTextFormats();
         LayoutItems();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -3456,15 +3513,25 @@ private:
         return bestIndex;
     }
 
-    int GetDesktopCellWidth() const
+    int GetDesktopCellWidth(const std::wstring& pageId = {}) const
     {
+        if (!pageId.empty())
+        {
+            const GridPage* page = FindExactGridPage(pageId);
+            if (page != nullptr) return page->cellWidth;
+        }
         if (!gridPages_.empty())
             return gridPages_.front().cellWidth;
         return static_cast<int>(kCellWidth * gapScale_);
     }
 
-    int GetDesktopCellHeight() const
+    int GetDesktopCellHeight(const std::wstring& pageId = {}) const
     {
+        if (!pageId.empty())
+        {
+            const GridPage* page = FindExactGridPage(pageId);
+            if (page != nullptr) return page->cellHeight;
+        }
         if (!gridPages_.empty())
             return gridPages_.front().cellHeight;
         return static_cast<int>(kMinCellHeight * gapScale_);
@@ -4963,6 +5030,7 @@ private:
         popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
         popupAnchorPoint_ = anchorPoint;
         popupCategoryId_ = categoryId;
+        popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
         popupRect_ = GetCollectionPopupRect(widgets_[widgetIndex]);
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -4977,6 +5045,7 @@ private:
         popupWidgetIndex_ = static_cast<size_t>(-1);
         popupScrollOffset_ = 0;
         popupHasAnchor_ = false;
+        popupPageId_.clear();
         popupCategoryId_.clear();
         popupRect_ = {};
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -5069,10 +5138,10 @@ private:
                 static_cast<int>(std::max<LONG>(content.left, content.right - 1)));
             const int y = std::max<int>(static_cast<int>(content.top), point.y + popupScrollOffset_);
             const int col = std::clamp<int>(
-                (x - static_cast<int>(content.left)) / GetDesktopCellWidth(),
+                (x - static_cast<int>(content.left)) / GetDesktopCellWidth(widget.gridCell.pageId),
                 0,
                 std::max(0, columns - 1));
-            const int row = std::max<int>(0, (y - static_cast<int>(content.top)) / GetDesktopCellHeight());
+            const int row = std::max<int>(0, (y - static_cast<int>(content.top)) / GetDesktopCellHeight(widget.gridCell.pageId));
             size_t index = static_cast<size_t>(row * columns + col);
             RECT cell = GetCollectionPopupItemRect(popupRect, std::min(index, count - 1));
             if (index < count && point.x > (cell.left + cell.right) / 2)
@@ -6394,7 +6463,7 @@ private:
         RECT content = GetFileCategoryContentRect(widget);
         const int columns = GetFileCategoryTileColumnCount(widget);
         const int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-        return rows * GetDesktopCellHeight();
+        return rows * GetDesktopCellHeight(widget.gridCell.pageId);
     }
 
     int GetFileCategoryMaxScrollOffset(const DesktopWidget& widget) const
@@ -6426,7 +6495,7 @@ private:
         const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
         const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
         const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
-        const int cellH = GetDesktopCellHeight();
+        const int cellH = GetDesktopCellHeight(widget.gridCell.pageId);
         RECT rect = MakeRect(
             content.left + col * itemW,
             content.top + row * cellH - scroll,
@@ -6484,7 +6553,7 @@ private:
         RECT content = GetFolderMappingContentRect(widget);
         const int columns = GetFolderMappingTileColumnCount(widget);
         const int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-        return rows * GetDesktopCellHeight();
+        return rows * GetDesktopCellHeight(widget.gridCell.pageId);
     }
 
     int GetFolderMappingMaxScrollOffset(const DesktopWidget& widget) const
@@ -6514,7 +6583,7 @@ private:
         const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
         const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
         const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
-        const int cellH = GetDesktopCellHeight();
+        const int cellH = GetDesktopCellHeight(widget.gridCell.pageId);
         RECT rect = MakeRect(
             content.left + col * itemW,
             content.top + row * cellH - scroll,
@@ -6562,7 +6631,7 @@ private:
             const int columns = GetFileCategoryTileColumnCount(widget);
             const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
             int col = std::clamp((static_cast<int>(point.x) - cx) / itemW, 0, columns - 1);
-            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / GetDesktopCellHeight());
+            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / GetDesktopCellHeight(widget.gridCell.pageId));
             size_t index = static_cast<size_t>(row * columns + col);
             RECT cell = GetFileCategoryItemRect(widget, std::min(index, count - 1));
             if (index < count && point.x > (cell.left + cell.right) / 2) ++index;
@@ -6598,7 +6667,7 @@ private:
             const int columns = GetFolderMappingTileColumnCount(widget);
             const int itemW = std::max<int>(1, static_cast<int>(content.right - content.left) / columns);
             int col = std::clamp((static_cast<int>(point.x) - cx) / itemW, 0, columns - 1);
-            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / GetDesktopCellHeight());
+            int row = std::max<int>(0, (static_cast<int>(point.y) - cy + scroll) / GetDesktopCellHeight(widget.gridCell.pageId));
             size_t index = static_cast<size_t>(row * columns + col);
             RECT cell = GetFolderMappingItemRect(widget, std::min(index, count - 1));
             if (index < count && point.x > (cell.left + cell.right) / 2) ++index;
@@ -8336,7 +8405,10 @@ private:
         {
             renamingWidget_ = true;
             renameIndex_ = selectedWidgetIndex_;
-            RECT rect = GetWidgetTitleRect(widgets_[renameIndex_]);
+            RECT frame = GetWidgetFrameRect(widgets_[renameIndex_]);
+            RECT handle = GetWidgetMoveHandleRect(widgets_[renameIndex_]);
+            const int editHeight = std::max(40, static_cast<int>(handle.bottom - handle.top) * 2);
+            RECT rect = MakeRect(frame.left + 4, handle.top, frame.right - 4, handle.top + editHeight);
             InflateRect(&rect, 2, 2);
             RECT screenRect = rect;
             MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
@@ -8344,7 +8416,7 @@ private:
                 WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                 L"EDIT",
                 widgets_[renameIndex_].title.c_str(),
-                WS_POPUP | WS_VISIBLE | ES_LEFT | ES_AUTOVSCROLL,
+                WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_CENTER | ES_AUTOVSCROLL | ES_WANTRETURN,
                 screenRect.left,
                 screenRect.top,
                 screenRect.right - screenRect.left,
@@ -9147,13 +9219,8 @@ private:
 
             if (!hasRemainingIcon)
             {
-                const int tileWidth = static_cast<int>(tile.right - tile.left);
-                const int tileHeight = static_cast<int>(tile.bottom - tile.top);
-                const int squareSize = std::max(4, std::min(tileWidth, tileHeight) - 6);
-                tile.left += (tileWidth - squareSize) / 2;
-                tile.top += (tileHeight - squareSize) / 2;
-                tile.right = tile.left + squareSize;
-                tile.bottom = tile.top + squareSize;
+                constexpr int tilePad = 2;
+                InflateRect(&tile, -tilePad, -tilePad);
                 DrawD2DRoundedRectangle(
                     context,
                     tile,
@@ -9382,6 +9449,12 @@ private:
 
         if (widget.type == DesktopWidgetType::Collection)
         {
+            ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+            d2dFactory_->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(ToD2DRect(frame), 12.0f, 12.0f), &clipGeo);
+            if (clipGeo)
+                context->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
+
             const size_t inlineCapacity = std::min(GetCollectionInlineCapacity(widget), widget.itemKeys.size());
             for (size_t i = 0; i < inlineCapacity; ++i)
             {
@@ -9407,6 +9480,8 @@ private:
                 RECT allRect = GetCollectionPreviewSlotRect(widget, allSlot);
                 DrawD2DCollectionMosaic(context, widget, allRect, GetCollectionInlineCapacity(widget));
             }
+
+            if (clipGeo) context->PopLayer();
         }
         else if (widget.type == DesktopWidgetType::FileCategories)
         {
@@ -9417,9 +9492,15 @@ private:
             DrawD2DFolderMappingWidget(context, widget);
         }
 
+        const bool isSmallCollection = widget.type == DesktopWidgetType::Collection
+            && widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
+        const bool hovered = (widget.type == DesktopWidgetType::Collection && !isSmallCollection)
+            ? (PtInRect(&frame, lastMousePoint_) != FALSE)
+            : true;
+
         RECT handle = GetWidgetMoveHandleRect(widget);
         RECT gradientRect = MakeRect(frame.left, std::max<LONG>(body.top, frame.bottom - 36), frame.right, frame.bottom);
-        if (!IsRectEmptyRect(gradientRect) && gradientRect.bottom > gradientRect.top)
+        if (hovered && !IsRectEmptyRect(gradientRect) && gradientRect.bottom > gradientRect.top)
         {
             ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
             if (SUCCEEDED(d2dFactory_->CreateRoundedRectangleGeometry(
@@ -9429,8 +9510,8 @@ private:
             }
             ComPtr<ID2D1GradientStopCollection> stops;
             D2D1_GRADIENT_STOP stopDescs[] = {
-                { 0.0f, D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.0f) },
-                { 1.0f, D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.48f) },
+                { 0.0f, D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.05f) },
+                { 1.0f, D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.65f) },
             };
             if (SUCCEEDED(context->CreateGradientStopCollection(stopDescs, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
             {
@@ -9448,7 +9529,9 @@ private:
             if (clipGeo) context->PopLayer();
         }
 
-        RECT titleRect = GetWidgetTitleRect(widget);
+        if (hovered)
+        {
+            RECT titleRect = GetWidgetTitleRect(widget);
         if (!widget.title.empty() && listItemTextFormat_)
         {
             DrawD2DText(context, widget.title, OffsetRectCopy(titleRect, 1, 1), listItemTextFormat_.Get(), D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f));
@@ -9466,6 +9549,7 @@ private:
             4.0f,
             selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f));
+        }
     }
 
     void DrawD2DWidgetPreview(ID2D1DeviceContext* context)
@@ -9505,19 +9589,19 @@ private:
         const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
         const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
         const int maxWidth = std::max(280, std::min(560, workWidth - 80));
-        const int maxColumns = std::max(1, (maxWidth - kCollectionPopupPaddingX * 2) / GetDesktopCellWidth());
+        const int maxColumns = std::max(1, (maxWidth - kCollectionPopupPaddingX * 2) / GetDesktopCellWidth(widget.gridCell.pageId));
         const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
         int columns = std::clamp(std::min(itemCount, 5), 1, maxColumns);
         int rows = (itemCount + columns - 1) / columns;
         const int maxHeight = std::max(220, workHeight - 80);
-        int width = kCollectionPopupPaddingX * 2 + columns * GetDesktopCellWidth();
-        int height = kCollectionPopupHeaderHeight + rows * GetDesktopCellHeight() + kCollectionPopupBottomPadding;
+        int width = kCollectionPopupPaddingX * 2 + columns * GetDesktopCellWidth(widget.gridCell.pageId);
+        int height = kCollectionPopupHeaderHeight + rows * GetDesktopCellHeight(widget.gridCell.pageId) + kCollectionPopupBottomPadding;
         if (height > maxHeight && columns < maxColumns)
         {
             columns = maxColumns;
             rows = (itemCount + columns - 1) / columns;
-            width = kCollectionPopupPaddingX * 2 + columns * GetDesktopCellWidth();
-            height = kCollectionPopupHeaderHeight + rows * GetDesktopCellHeight() + kCollectionPopupBottomPadding;
+            width = kCollectionPopupPaddingX * 2 + columns * GetDesktopCellWidth(widget.gridCell.pageId);
+            height = kCollectionPopupHeaderHeight + rows * GetDesktopCellHeight(widget.gridCell.pageId) + kCollectionPopupBottomPadding;
         }
         height = std::min(height, maxHeight);
         int left = work.left + (workWidth - width) / 2;
@@ -9544,7 +9628,7 @@ private:
     int GetCollectionPopupColumnCount(const RECT& popup) const
     {
         RECT content = GetCollectionPopupContentRect(popup);
-        return std::max<int>(1, static_cast<int>(content.right - content.left) / GetDesktopCellWidth());
+        return std::max<int>(1, static_cast<int>(content.right - content.left) / GetDesktopCellWidth(popupPageId_));
     }
 
     int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const
@@ -9559,7 +9643,7 @@ private:
         RECT content = GetCollectionPopupContentRect(popup);
         const int rows = GetCollectionPopupRowCount(widget, popup);
         const int contentHeight = std::max<int>(1, static_cast<int>(content.bottom - content.top));
-        return std::max(0, rows * GetDesktopCellHeight() - contentHeight);
+        return std::max(0, rows * GetDesktopCellHeight(popupPageId_) - contentHeight);
     }
 
     RECT GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
@@ -9569,10 +9653,10 @@ private:
         const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
         const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
         RECT rect = MakeRect(
-            content.left + col * GetDesktopCellWidth(),
-            content.top + row * GetDesktopCellHeight() - popupScrollOffset_,
-            content.left + (col + 1) * GetDesktopCellWidth(),
-            content.top + (row + 1) * GetDesktopCellHeight() - popupScrollOffset_);
+            content.left + col * GetDesktopCellWidth(popupPageId_),
+            content.top + row * GetDesktopCellHeight(popupPageId_) - popupScrollOffset_,
+            content.left + (col + 1) * GetDesktopCellWidth(popupPageId_),
+            content.top + (row + 1) * GetDesktopCellHeight(popupPageId_) - popupScrollOffset_);
         return rect;
     }
 
@@ -9889,6 +9973,7 @@ private:
         }
 
         const DesktopWidget& widget = widgets_[popupWidgetIndex_];
+        popupPageId_ = widget.gridCell.pageId;
         std::vector<std::wstring> popupKeys = GetPopupItemKeys(widget);
         popupRect_ = GetCollectionPopupRect(widget);
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, GetCollectionPopupMaxScrollOffset(widget, popupRect_));
@@ -10215,7 +10300,9 @@ private:
             const int bodyW = std::max<int>(1, static_cast<int>(body.right - body.left));
             const int bodyH = std::max<int>(1, static_cast<int>(body.bottom - body.top));
             const int gridSize = std::min(bodyW, bodyH);
-            const int gridTop = body.top + (bodyH - gridSize) / 2;
+            const GridPage* page = FindExactGridPage(widget.gridCell.pageId);
+            const int gapY = page != nullptr ? page->gapY : 0;
+            const int gridTop = body.top + gapY / 2 - 10;
             const int slotSz = std::max<int>(1, gridSize / 2);
             const int col = static_cast<int>(slot % columns);
             const int row = static_cast<int>(slot / columns);
@@ -10229,7 +10316,9 @@ private:
         }
 
         InflateRect(&body, -4, -4);
-        const int cellH = GetDesktopCellHeight();
+        const GridPage* page = FindExactGridPage(widget.gridCell.pageId);
+        const int cellH = page != nullptr ? page->cellHeight : GetDesktopCellHeight();
+        const int gapY = page != nullptr ? page->gapY : 0;
         const int columns = std::max(1, widget.gridSpan.columns);
         const int rows = std::max(1, widget.gridSpan.rows);
         const int col = static_cast<int>(slot % static_cast<size_t>(columns));
@@ -10240,12 +10329,13 @@ private:
         }
 
         const int width = std::max<int>(1, static_cast<int>(body.right - body.left) / columns);
-        const int startY = body.top + (static_cast<int>(body.bottom - body.top) - rows * cellH) / 2;
+        const int startY = body.top + gapY / 2 - 8;
+        const int rowStep = cellH + gapY;
         RECT rect = MakeRect(
             body.left + col * width,
-            startY + row * cellH,
+            startY + row * rowStep,
             col + 1 == columns ? body.right : body.left + (col + 1) * width,
-            startY + (row + 1) * cellH);
+            startY + row * rowStep + cellH);
         return rect;
     }
 
@@ -12703,6 +12793,7 @@ private:
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
     bool popupHasAnchor_ = false;
+    std::wstring popupPageId_;
     POINT popupAnchorPoint_{};
     std::wstring popupCategoryId_;
     std::wstring dragHint_;
