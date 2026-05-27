@@ -265,7 +265,7 @@ void WidgetEngine::RenderAll(ID2D1DeviceContext* context)
 }
 
 // ── Render a specific widget within given bounds ─────────────────
-void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds)
+void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds, float bgR, float bgG, float bgB, float alpha, float borderR, float borderG, float borderB, float gradientEndA)
 {
     // Find the loaded widget matching this script path
     LuaWidget* found = nullptr;
@@ -287,6 +287,30 @@ void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceConte
 
     lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
     if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+
+    // Inject style if widget uses custom styling
+    if (found->customStyle)
+    {
+        lua_getfield(L_, -1, "style");
+        if (lua_isnil(L_, -1))
+        {
+            lua_pop(L_, 1);
+            lua_newtable(L_);
+            lua_pushnumber(L_, bgR);    lua_setfield(L_, -2, "bgR");
+            lua_pushnumber(L_, bgG);    lua_setfield(L_, -2, "bgG");
+            lua_pushnumber(L_, bgB);    lua_setfield(L_, -2, "bgB");
+            lua_pushnumber(L_, alpha);  lua_setfield(L_, -2, "alpha");
+            lua_pushnumber(L_, borderR);lua_setfield(L_, -2, "borderR");
+            lua_pushnumber(L_, borderG);lua_setfield(L_, -2, "borderG");
+            lua_pushnumber(L_, borderB);lua_setfield(L_, -2, "borderB");
+            lua_pushnumber(L_, gradientEndA); lua_setfield(L_, -2, "gradientEndA");
+            lua_setfield(L_, -2, "style");
+        }
+        else
+        {
+            lua_pop(L_, 1);
+        }
+    }
 
     lua_getfield(L_, -1, "render");
     if (lua_isfunction(L_, -1))
