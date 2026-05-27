@@ -313,6 +313,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path)
     w.ref = ref;
     w.valid = true;
     w.customStyle = customStyle;
+    WIN32_FILE_ATTRIBUTE_DATA attr{};
+    if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
+        w.lastModified = attr.ftLastWriteTime;
     widgets_.push_back(w);
     return true;
 }
@@ -339,6 +342,22 @@ void WidgetEngine::RenderWidget(const std::wstring& scriptPath, ID2D1DeviceConte
         }
     }
     if (!found) return;
+
+    // Hot-reload: check if file changed or deleted
+    {
+        WIN32_FILE_ATTRIBUTE_DATA attr{};
+        bool exists = GetFileAttributesExW(found->filePath.c_str(), GetFileExInfoStandard, &attr) != 0;
+        if (!exists) { found->valid = false; return; }
+        if (CompareFileTime(&attr.ftLastWriteTime, &found->lastModified) != 0)
+        {
+            luaL_unref(L_, LUA_REGISTRYINDEX, found->ref);
+            std::wstring path = found->filePath;
+            found->valid = false;
+            found->ref = LUA_NOREF;
+            LoadWidget(path);
+            found = &widgets_.back();
+        }
+    }
 
     d2dState_->ctx = context;
     d2dState_->widgetRect = D2D1::RectF(
