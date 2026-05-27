@@ -10,8 +10,9 @@ function render()
     local cy = h / 2
     local r = math.min(w, h) / 2 - 12
 
-    -- 圆形表盘背景
-    draw.circle(cx, cy, r + 6, 0x1a1a2e, 0.6)
+    -- 表盘背景（使用传入的个性化颜色）
+    local bgA = style.alpha * 0.5
+    draw.circle(cx, cy, r + 6, 0x000000, bgA)
 
     -- 中心点
     draw.circle(cx, cy, 3, 0x4488ff)

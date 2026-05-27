@@ -37,7 +37,8 @@ public:
     void Shutdown();
     void ReloadAll();
     void RenderAll(ID2D1DeviceContext* context);
-    void RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds);
+    void RenderWidget(const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds,
+        float bgR, float bgG, float bgB, float alpha, float borderR, float borderG, float borderB, float gradientEndA);
     bool HasCustomStyle(const std::wstring& scriptPath) const;
 
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }

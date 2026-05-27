@@ -9713,7 +9713,10 @@ private:
         else if (widget.type == DesktopWidgetType::LuaScript)
         {
             if (widgetEngine_)
-                widgetEngine_->RenderWidget(widget.scriptPath, context, widget.bounds);
+                widgetEngine_->RenderWidget(widget.scriptPath, context, widget.bounds,
+                    fillColor.r, fillColor.g, fillColor.b, fillColor.a,
+                    borderColor.r, borderColor.g, borderColor.b,
+                    settingsWindow_ ? settingsWindow_->GetPersonalization().gradientEndA : 0.65f);
         }
 
         const bool isSmallCollection = widget.type == DesktopWidgetType::Collection
