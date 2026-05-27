@@ -6626,9 +6626,10 @@ private:
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 14;
         constexpr int gap = 4;
+        constexpr int gapBetween = 7;
         constexpr int resizeReserve = 20;
-        return MakeRect(handle.right - resizeReserve - gap - btnSize - gap - btnSize, handle.top + 5,
-            handle.right - resizeReserve - gap - btnSize - gap, handle.bottom - 3);
+        return MakeRect(handle.right - resizeReserve - gap - btnSize - gapBetween - btnSize, handle.top + 5,
+            handle.right - resizeReserve - gap - btnSize - gapBetween, handle.bottom - 3);
     }
 
     RECT GetFolderMappingOpenRect(const DesktopWidget& widget) const
