@@ -7810,6 +7810,8 @@ private:
 
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextSettingsCommand, L"设置");
 
         menuIconPool_.clear();
         SetMenuItemIcon(menu, kContextNewMenu, L"");
@@ -7844,6 +7846,7 @@ private:
             SetMenuItemIcon(zoomMenu, kContextZoomDecrease, L"");
         }
         SetMenuItemIcon(menu, kContextThisDisplayFirstCommand, L"");
+        SetMenuItemIcon(menu, kContextSettingsCommand, L"");
 
         SetForegroundWindow(hwnd_);
         UINT command = TrackPopupMenuEx(
@@ -7894,6 +7897,10 @@ private:
             break;
         case kContextThisDisplayFirstCommand:
             SetFirstPageMonitorFromPoint(screenPoint);
+            break;
+        case kContextSettingsCommand:
+            if (settingsWindow_)
+                settingsWindow_->Show();
             break;
         case kContextAddCollectionWidget:
             AddCollectionWidgetAt(screenPoint);
