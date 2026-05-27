@@ -2,6 +2,7 @@
 #include <windows.h>
 
 constexpr wchar_t kWindowClassName[] = L"SnowDesktopNativeProofWindow";
+constexpr wchar_t kControlWindowClassName[] = L"SnowDesktopControlWindow";
 constexpr wchar_t kHintWindowClassName[] = L"SnowDesktopDragHintWindow";
 constexpr wchar_t kHiddenBySnowDesktopProp[] = L"SnowDesktop.HiddenExplorerIconLayer";
 constexpr COLORREF kTransparentKey = RGB(1, 2, 3);
@@ -76,3 +77,5 @@ constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 constexpr UINT_PTR kRecycleBinPollTimerId = 3;
 constexpr UINT kRecycleBinPollIntervalMs = 2000;
+constexpr UINT_PTR kDesktopHostWatchTimerId = 4;
+constexpr UINT kDesktopHostWatchIntervalMs = 2000;
