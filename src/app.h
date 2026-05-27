@@ -12537,6 +12537,13 @@ private:
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
         }
+        else if (hit.kind == DesktopHitKind::Widget &&
+            hit.widgetIndex < widgets_.size() &&
+            widgets_[hit.widgetIndex].type == DesktopWidgetType::LuaScript &&
+            widgetEngine_)
+        {
+            widgetEngine_->InvokeOpen(widgets_[hit.widgetIndex].scriptPath);
+        }
         else if (hit.kind == DesktopHitKind::Item ||
             hit.kind == DesktopHitKind::WidgetMember ||
             hit.kind == DesktopHitKind::PopupMember)
