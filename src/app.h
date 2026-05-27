@@ -6625,27 +6625,30 @@ private:
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 18;
+        constexpr int gap = 6;
         constexpr int resizeReserve = 26;
-        return MakeRect(handle.right - resizeReserve - btnSize - btnSize - 8, handle.top + 3,
-            handle.right - resizeReserve - btnSize - 4, handle.bottom - 3);
+        return MakeRect(handle.right - resizeReserve - gap - btnSize - gap - btnSize, handle.top + 3,
+            handle.right - resizeReserve - gap - btnSize, handle.bottom - 3);
     }
 
     RECT GetFolderMappingOpenRect(const DesktopWidget& widget) const
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 18;
+        constexpr int gap = 6;
         constexpr int resizeReserve = 26;
-        return MakeRect(handle.right - resizeReserve - btnSize - 2, handle.top + 3,
-            handle.right - resizeReserve - 2, handle.bottom - 3);
+        return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 3,
+            handle.right - resizeReserve - gap, handle.bottom - 3);
     }
 
     RECT GetFileCategoryToggleRect(const DesktopWidget& widget) const
     {
         RECT handle = GetWidgetMoveHandleRect(widget);
         constexpr int btnSize = 18;
+        constexpr int gap = 6;
         constexpr int resizeReserve = 26;
-        return MakeRect(handle.right - resizeReserve - btnSize - 2, handle.top + 3,
-            handle.right - resizeReserve - 2, handle.bottom - 3);
+        return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 3,
+            handle.right - resizeReserve - gap, handle.bottom - 3);
     }
 
     int GetFolderMappingTileColumnCount(const DesktopWidget& widget) const
@@ -9614,6 +9617,46 @@ private:
             selected ? 1.6f : 1.0f,
             selected ? dottedStrokeStyle_.Get() : nullptr);
 
+        // Draw gradient first (under content + buttons)
+        {
+            RECT body = GetWidgetBodyRect(widget);
+            RECT gradientRect = MakeRect(frame.left, std::max<LONG>(body.top, frame.bottom - 36), frame.right, frame.bottom);
+            bool showGradient = widget.type != DesktopWidgetType::Collection
+                || (widget.gridSpan.columns > 1 || widget.gridSpan.rows > 1
+                    ? (PtInRect(&frame, lastMousePoint_) != FALSE)
+                    : true);
+            if (showGradient && !IsRectEmptyRect(gradientRect) && gradientRect.bottom > gradientRect.top)
+            {
+                ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+                if (SUCCEEDED(d2dFactory_->CreateRoundedRectangleGeometry(
+                    D2D1::RoundedRect(ToD2DRect(frame), 12.0f, 12.0f), &clipGeo)) && clipGeo)
+                {
+                    context->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
+                }
+                ComPtr<ID2D1GradientStopCollection> stops;
+                D2D1_GRADIENT_STOP stopDescs[] = {
+                    { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
+                    { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b,
+                        settingsWindow_ ? settingsWindow_->GetPersonalization().gradientEndA : 0.65f) },
+                };
+                if (SUCCEEDED(context->CreateGradientStopCollection(stopDescs, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
+                {
+                    ComPtr<ID2D1LinearGradientBrush> brush;
+                    if (SUCCEEDED(context->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(
+                            D2D1::Point2F(0.0f, static_cast<float>(gradientRect.top)),
+                            D2D1::Point2F(0.0f, static_cast<float>(gradientRect.bottom))),
+                        stops.Get(),
+                        &brush)) && brush)
+                    {
+                        context->FillRectangle(ToD2DRect(gradientRect), brush.Get());
+                    }
+                }
+                if (clipGeo) context->PopLayer();
+            }
+        }
+
+        // Draw widget content (buttons render ON TOP of gradient)
         if (widget.type == DesktopWidgetType::Collection)
         {
             ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
@@ -9669,38 +9712,6 @@ private:
         const bool hovered = (widget.type == DesktopWidgetType::Collection && !isSmallCollection)
             ? (PtInRect(&frame, lastMousePoint_) != FALSE)
             : true;
-
-        RECT handle = GetWidgetMoveHandleRect(widget);
-        RECT gradientRect = MakeRect(frame.left, std::max<LONG>(body.top, frame.bottom - 36), frame.right, frame.bottom);
-        if (hovered && !IsRectEmptyRect(gradientRect) && gradientRect.bottom > gradientRect.top)
-        {
-            ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
-            if (SUCCEEDED(d2dFactory_->CreateRoundedRectangleGeometry(
-                D2D1::RoundedRect(ToD2DRect(frame), 12.0f, 12.0f), &clipGeo)) && clipGeo)
-            {
-                context->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
-            }
-            ComPtr<ID2D1GradientStopCollection> stops;
-            D2D1_GRADIENT_STOP stopDescs[] = {
-                { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
-                { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b,
-                    settingsWindow_ ? settingsWindow_->GetPersonalization().gradientEndA : 0.65f) },
-            };
-            if (SUCCEEDED(context->CreateGradientStopCollection(stopDescs, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
-            {
-                ComPtr<ID2D1LinearGradientBrush> brush;
-                if (SUCCEEDED(context->CreateLinearGradientBrush(
-                    D2D1::LinearGradientBrushProperties(
-                        D2D1::Point2F(0.0f, static_cast<float>(gradientRect.top)),
-                        D2D1::Point2F(0.0f, static_cast<float>(gradientRect.bottom))),
-                    stops.Get(),
-                    &brush)) && brush)
-                {
-                    context->FillRectangle(ToD2DRect(gradientRect), brush.Get());
-                }
-            }
-            if (clipGeo) context->PopLayer();
-        }
 
         if (hovered)
         {
