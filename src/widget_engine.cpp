@@ -339,6 +339,24 @@ bool WidgetEngine::HasCustomStyle(const std::wstring& scriptPath) const
     return false;
 }
 
+bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const
+{
+    for (const auto& w : widgets_)
+    {
+        if (w.valid && w.filePath.size() >= scriptPath.size() &&
+            w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
+        {
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
+            if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return defaultVal; }
+            lua_getfield(L_, -1, flag);
+            bool result = lua_isnil(L_, -1) ? defaultVal : (lua_toboolean(L_, -1) != 0);
+            lua_pop(L_, 2);
+            return result;
+        }
+    }
+    return defaultVal;
+}
+
 // ── List available widget scripts ────────────────────────────────
 std::vector<std::wstring> WidgetEngine::ListAvailable()
 {
