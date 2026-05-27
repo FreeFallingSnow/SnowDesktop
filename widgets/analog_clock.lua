@@ -1,6 +1,6 @@
 -- analog_clock.lua - 指针时钟
 name = "指针时钟"
--- 背景和边框由个性化设置提供
+useCustomStyle = true
 
 function render()
     local t = sys.getTime()
