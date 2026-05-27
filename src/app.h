@@ -9598,8 +9598,8 @@ private:
         if (settingsWindow_)
         {
             const auto& p = settingsWindow_->GetPersonalization();
-            fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetBgA);
-            borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetBorderA);
+            fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
+            borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetAlpha);
         }
 
         DrawD2DRoundedRectangle(
@@ -9680,7 +9680,7 @@ private:
             ComPtr<ID2D1GradientStopCollection> stops;
             D2D1_GRADIENT_STOP stopDescs[] = {
                 { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b,
-                    settingsWindow_ ? settingsWindow_->GetPersonalization().gradientStartA : 0.05f) },
+                    settingsWindow_ ? settingsWindow_->GetPersonalization().widgetAlpha : 0.36f) },
                 { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b,
                     settingsWindow_ ? settingsWindow_->GetPersonalization().gradientEndA : 0.65f) },
             };
