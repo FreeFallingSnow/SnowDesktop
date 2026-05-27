@@ -8769,22 +8769,19 @@ private:
 
         if (renamingWidget_)
         {
-            if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
+            if (renameIndex_ < widgets_.size() &&
+                widgets_[renameIndex_].type == DesktopWidgetType::LuaScript &&
+                widgetEngine_ && !cancel && !newName.empty())
+            {
+                std::string text = WideToUtf8(newName);
+                widgetEngine_->SetStorage(widgets_[renameIndex_].scriptPath, "text", text);
+            }
+            else if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
             {
                 widgets_[renameIndex_].title = newName;
                 SaveLayoutSlots();
-                InvalidateRect(hwnd_, nullptr, TRUE);
             }
             renamingWidget_ = false;
-            return;
-        }
-
-        if (renameIndex_ < widgets_.size() &&
-            widgets_[renameIndex_].type == DesktopWidgetType::LuaScript &&
-            widgetEngine_ && !cancel)
-        {
-            std::string text = WideToUtf8(newName);
-            widgetEngine_->SetStorage(widgets_[renameIndex_].scriptPath, "text", text);
             InvalidateRect(hwnd_, nullptr, TRUE);
             return;
         }
