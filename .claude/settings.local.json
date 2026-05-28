@@ -39,7 +39,28 @@
       "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --config Release --target SnowDesktop -v)",
       "Bash(cmake --build build --config Debug)",
       "Bash(cmake --build .build --config Debug)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(cmake --build . --config Release)",
+      "Bash(sed -i 's/bool draggingCollectionMember_ = false;/\\\\/\\\\/ REMOVED \\(replaced by DragOp\\): &/' src/app.h)",
+      "Bash(sed -i 's/bool draggingWidgetMember_ = false;/\\\\/\\\\/ REMOVED \\(replaced by DragOp\\): &/' src/app.h)",
+      "Bash(sed -i 's/size_t widgetMemberDragWidget_ = static_cast<size_t>\\(-1\\);/\\\\/\\\\/ REMOVED \\(replaced by DragOp\\): &/' src/app.h)",
+      "Bash(sed -i 's/size_t widgetMemberInsertPreview_ = static_cast<size_t>\\(-1\\);/\\\\/\\\\/ REMOVED \\(replaced by DragOp\\): &/' src/app.h)",
+      "Bash(sed -i 's/size_t collectionDragSourceWidget_ = static_cast<size_t>\\(-1\\);/\\\\/\\\\/ REMOVED \\(replaced by DragOp\\): &/' src/app.h)",
+      "Bash(sed -i '11847a #if 0 // OLD DRAG CODE \\(replaced by DragOp\\)' src/app.h)",
+      "Bash(sed -i '11951a #endif // OLD DRAG CODE' src/app.h)",
+      "Bash(python3)",
+      "Bash(where python *)",
+      "Bash(where python3 *)",
+      "Bash(python src/strip_old.py src/app.h)",
+      "Bash(sed -i 's/dragHint_ = MakeInternalDragHint\\(/dragHint_ = \\(dragOp_ ? dragOp_->hint : L\"\"\\); \\\\/\\\\//MakeInternalDragHint\\(/g' src/app.h)",
+      "Bash(sed -i 's/DrawD2DCollectionInsertionPreview\\(context, dragCurrentPoint_\\);/\\\\/\\\\/ OO handles this: dragOp_->Paint/g' src/app.h)",
+      "Bash(sed -i 's/DrawD2DWidgetMemberInsertionPreview\\(context, dragCurrentPoint_\\);/\\\\/\\\\/ OO handles this/g' src/app.h)",
+      "Bash(sed -i 's/DrawD2DFolderEntryDesktopDropPreview\\(context, dragCurrentPoint_\\);/\\\\/\\\\/ OO handles this/g' src/app.h)",
+      "Bash(sed -i 's/DrawD2DCollectionInsertionPreview\\(context, dragCurrentPoint_\\);/\\\\/\\\\/ OO handles this/g' src/app.h)",
+      "Bash(python -c \"print\\('ok'\\)\")",
+      "Bash(python D:/Code/Other/SnowDesktop/src/strip_old.py)",
+      "Bash(cp src/app.h src/app.h.bak)",
+      "Bash(sed -i '11801,11904d;11905,11984d' src/app.h)"
     ]
   }
 }
