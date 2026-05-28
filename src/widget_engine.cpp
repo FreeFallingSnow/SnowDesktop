@@ -5,6 +5,7 @@
 #include <imgui_impl_dx11.h>
 
 #include <shlwapi.h>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -77,6 +78,13 @@ static void SaveStorageFile()
     file << "}\n";
 }
 
+static bool EndsWithLastError(const std::string& key)
+{
+    constexpr const char* suffix = ".lastError";
+    constexpr size_t suffixLen = 10;
+    return key.size() >= suffixLen && key.compare(key.size() - suffixLen, suffixLen, suffix) == 0;
+}
+
 // ── Drawing API ──────────────────────────────────────────────────
 struct D2DState
 {
@@ -102,13 +110,15 @@ static int lua_DrawText(lua_State* L)
     float size = static_cast<float>(luaL_optnumber(L, 4, 14));
     int color = static_cast<int>(luaL_optinteger(L, 5, 0xFFFFFF));
     float maxWidth = static_cast<float>(luaL_optnumber(L, 6, 0));
+    bool bold = lua_toboolean(L, 7) != 0;
 
     auto* s = GetD2D(L);
     if (!s || !s->ctx || !s->dwrite) return 0;
 
     ComPtr<IDWriteTextFormat> format;
     s->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
-        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+        bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     if (!format) return 0;
 
@@ -143,6 +153,49 @@ static int lua_DrawText(lua_State* L)
             format.Get(), &rect, brush.Get());
     }
     return 0;
+}
+
+static int lua_MeasureText(lua_State* L)
+{
+    const char* text = luaL_checkstring(L, 1);
+    float size = static_cast<float>(luaL_optnumber(L, 2, 14));
+    float maxWidth = static_cast<float>(luaL_optnumber(L, 3, 0));
+    bool bold = lua_toboolean(L, 4) != 0;
+
+    auto pushSize = [&](float width, float height) {
+        lua_createtable(L, 0, 2);
+        lua_pushnumber(L, width);
+        lua_setfield(L, -2, "width");
+        lua_pushnumber(L, height);
+        lua_setfield(L, -2, "height");
+        return 1;
+    };
+
+    auto* s = GetD2D(L);
+    if (!s || !s->dwrite)
+        return pushSize(0.0f, 0.0f);
+
+    ComPtr<IDWriteTextFormat> format;
+    s->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+        bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+    if (!format)
+        return pushSize(0.0f, 0.0f);
+
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    std::wstring wtext(wlen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext.data(), wlen);
+
+    ComPtr<IDWriteTextLayout> layout;
+    const float layoutWidth = maxWidth > 0.0f ? maxWidth : 4096.0f;
+    if (FAILED(s->dwrite->CreateTextLayout(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
+        format.Get(), layoutWidth, 4096.0f, &layout)) || !layout)
+        return pushSize(0.0f, size);
+
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+    return pushSize(metrics.widthIncludingTrailingWhitespace, metrics.height);
 }
 
 static int lua_DrawRect(lua_State* L)
@@ -294,6 +347,11 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     // Load the chunk
     if (luaL_loadstring(L_, source.c_str()) != LUA_OK)
     {
+        const char* err = lua_tostring(L_, -1);
+        // store error to global storage for this widget path
+        std::string idUtf8 = WideToUtf8(widgetId);
+        g_storage[idUtf8 + ".lastError"] = err ? err : "(load error)";
+        SaveStorageFile();
         lua_pop(L_, 2);
         return false;
     }
@@ -324,6 +382,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
         // Execute the chunk
         if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
         {
+            const char* err = lua_tostring(L_, -1);
+            std::string idUtf8 = WideToUtf8(widgetId);
+            g_storage[idUtf8 + ".lastError"] = err ? err : "(pcall error)";
+            SaveStorageFile();
             lua_pop(L_, 2);
             return false;
         }
@@ -449,7 +511,53 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     if (lua_isfunction(L_, -1))
     {
         if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+        {
+            const char* err = lua_tostring(L_, -1);
+            std::string idUtf8 = WideToUtf8(widgetId);
+            g_storage[idUtf8 + ".lastError"] = err ? err : "(render error)";
+            SaveStorageFile();
             lua_pop(L_, 1);
+
+            // draw conspicuous placeholder
+            if (d2dState_ && d2dState_->ctx)
+            {
+                ComPtr<ID2D1SolidColorBrush> brush;
+                d2dState_->ctx->CreateSolidColorBrush(D2D1::ColorF(0.85f, 0.15f, 0.15f, 1.0f), &brush);
+                d2dState_->ctx->FillRectangle(d2dState_->widgetRect, brush.Get());
+
+                // draw white text
+                if (d2dState_->dwrite)
+                {
+                    ComPtr<IDWriteTextFormat> format;
+                    d2dState_->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+                        DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                        14.0f, L"", &format);
+                    if (format)
+                    {
+                        std::wstring wmsg = L"WIDGET ERROR: ";
+                        std::string serr = err ? err : "(unknown)";
+                        // append part of error
+                        size_t maxlen = 128;
+                        if (serr.size() > maxlen) serr = serr.substr(0, maxlen) + "...";
+                        int wlen = MultiByteToWideChar(CP_UTF8, 0, serr.c_str(), -1, nullptr, 0);
+                        std::wstring werr(wlen, L'\0');
+                        MultiByteToWideChar(CP_UTF8, 0, serr.c_str(), -1, &werr[0], wlen);
+                        wmsg += werr;
+
+                        D2D1_RECT_F r = d2dState_->widgetRect;
+                        r.left += 8; r.top += 8; r.right -= 8; r.bottom -= 8;
+                        ComPtr<ID2D1SolidColorBrush> textBrush;
+                        d2dState_->ctx->CreateSolidColorBrush(D2D1::ColorF(1,1,1,1), &textBrush);
+                        d2dState_->ctx->DrawTextW(wmsg.c_str(), (UINT32)wmsg.size() - 1, format.Get(), &r, textBrush.Get());
+                    }
+                }
+            }
+            // mark invalid to avoid repeated attempts
+            found->valid = false;
+            lua_pop(L_, 1);
+            lua_pop(L_, 1);
+            return;
+        }
     }
     else
     {
@@ -552,6 +660,33 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
 
             lua_pop(L_, 1);
             return true;
+}
+
+std::vector<WidgetErrorEntry> WidgetEngine::GetWidgetErrors() const
+{
+    std::vector<WidgetErrorEntry> result;
+    for (const auto& kv : g_storage)
+    {
+        if (!EndsWithLastError(kv.first))
+            continue;
+        result.push_back({ kv.first, kv.second });
+    }
+    std::sort(result.begin(), result.end(), [](const WidgetErrorEntry& a, const WidgetErrorEntry& b) {
+        return a.key < b.key;
+    });
+    return result;
+}
+
+void WidgetEngine::ClearWidgetErrors()
+{
+    for (auto it = g_storage.begin(); it != g_storage.end(); )
+    {
+        if (EndsWithLastError(it->first))
+            it = g_storage.erase(it);
+        else
+            ++it;
+    }
+    SaveStorageFile();
 }
 
 // ── List available widget scripts ────────────────────────────────
@@ -709,10 +844,56 @@ static int lua_StorageSet(lua_State* L)
 
 // ── ImGui Lua API ──────────────────────────────────────────────────
 static int lua_ImGuiText(lua_State* L) { ImGui::Text("%s", luaL_checkstring(L, 1)); return 0; }
+static int lua_ImGuiTextWrapped(lua_State* L) { ImGui::TextWrapped("%s", luaL_checkstring(L, 1)); return 0; }
+
+static int lua_ImGuiSeparator(lua_State* L)
+{
+    ImGui::Separator();
+    return 0;
+}
+
+static int lua_ImGuiSameLine(lua_State* L)
+{
+    float offset = (float)luaL_optnumber(L, 1, 0.0);
+    float spacing = (float)luaL_optnumber(L, 2, -1.0);
+    ImGui::SameLine(offset, spacing);
+    return 0;
+}
+
+static int lua_ImGuiSpacing(lua_State* L)
+{
+    ImGui::Spacing();
+    return 0;
+}
+
+static int lua_ImGuiCollapsingHeader(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    bool open = ImGui::CollapsingHeader(label);
+    lua_pushboolean(L, open);
+    return 1;
+}
+
+static int lua_ImGuiTreeNode(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    bool open = ImGui::TreeNode(label);
+    lua_pushboolean(L, open);
+    return 1;
+}
+
+static int lua_ImGuiTreePop(lua_State* L)
+{
+    ImGui::TreePop();
+    return 0;
+}
 
 static int lua_ImGuiButton(lua_State* L)
 {
-    lua_pushboolean(L, ImGui::Button(luaL_checkstring(L, 1)));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    bool clicked = ImGui::Button(luaL_checkstring(L, 1));
+    ImGui::PopStyleColor();
+    lua_pushboolean(L, clicked);
     return 1;
 }
 
@@ -763,6 +944,19 @@ static int lua_ImGuiInputText(lua_State* L)
     return 1;
 }
 
+static int lua_ImGuiInputTextSingle(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    const char* text = luaL_optstring(L, 2, "");
+    char buf[4096]{};
+    strncpy_s(buf, sizeof(buf), text, _TRUNCATE);
+    if (ImGui::InputText(label, buf, sizeof(buf)))
+        lua_pushstring(L, buf);
+    else
+        lua_pushstring(L, text);
+    return 1;
+}
+
 static int lua_ImGuiCheckbox(lua_State* L)
 {
     bool v = lua_toboolean(L, 2) != 0;
@@ -770,6 +964,19 @@ static int lua_ImGuiCheckbox(lua_State* L)
         lua_pushboolean(L, v);
     else
         lua_pushboolean(L, lua_toboolean(L, 2) != 0);
+    return 1;
+}
+
+static int lua_ImGuiSliderInt(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    int v = (int)luaL_checkinteger(L, 2);
+    int min = (int)luaL_checkinteger(L, 3);
+    int max = (int)luaL_checkinteger(L, 4);
+    if (ImGui::SliderInt(label, &v, min, max))
+        lua_pushinteger(L, v);
+    else
+        lua_pushinteger(L, (int)luaL_checkinteger(L, 2));
     return 1;
 }
 
@@ -781,6 +988,18 @@ static int lua_StorageRemove(lua_State* L)
     g_storage.erase(s->storagePrefix + "." + key);
     SaveStorageFile();
     return 0;
+}
+
+static int lua_StorageKeys(lua_State* L)
+{
+    lua_newtable(L);
+    int idx = 1;
+    for (const auto& kv : g_storage)
+    {
+        lua_pushstring(L, kv.first.c_str());
+        lua_rawseti(L, -2, idx++);
+    }
+    return 1;
 }
 
 static int lua_LayoutWidth(lua_State* L)
@@ -801,6 +1020,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
     lua_newtable(L);
     lua_pushcfunction(L, lua_DrawText);  lua_setfield(L, -2, "text");
+    lua_pushcfunction(L, lua_MeasureText); lua_setfield(L, -2, "measureText");
     lua_pushcfunction(L, lua_DrawRect);  lua_setfield(L, -2, "rect");
     lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
     lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");
@@ -822,14 +1042,24 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_StorageGet);   lua_setfield(L, -2, "get");
     lua_pushcfunction(L, lua_StorageSet);   lua_setfield(L, -2, "set");
     lua_pushcfunction(L, lua_StorageRemove);lua_setfield(L, -2, "remove");
+    lua_pushcfunction(L, lua_StorageKeys);  lua_setfield(L, -2, "keys");
     lua_setglobal(L, "storage");
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_ImGuiText);     lua_setfield(L, -2, "text");
+    lua_pushcfunction(L, lua_ImGuiTextWrapped); lua_setfield(L, -2, "textWrapped");
+    lua_pushcfunction(L, lua_ImGuiSeparator); lua_setfield(L, -2, "separator");
+    lua_pushcfunction(L, lua_ImGuiSameLine);  lua_setfield(L, -2, "sameLine");
+    lua_pushcfunction(L, lua_ImGuiSpacing);   lua_setfield(L, -2, "spacing");
+    lua_pushcfunction(L, lua_ImGuiCollapsingHeader); lua_setfield(L, -2, "collapsingHeader");
+    lua_pushcfunction(L, lua_ImGuiTreeNode);  lua_setfield(L, -2, "treeNode");
+    lua_pushcfunction(L, lua_ImGuiTreePop);   lua_setfield(L, -2, "treePop");
     lua_pushcfunction(L, lua_ImGuiButton);   lua_setfield(L, -2, "button");
     lua_pushcfunction(L, lua_ImGuiInputText);lua_setfield(L, -2, "input");
+    lua_pushcfunction(L, lua_ImGuiInputTextSingle); lua_setfield(L, -2, "inputText");
     lua_pushcfunction(L, lua_ImGuiCheckbox); lua_setfield(L, -2, "checkbox");
     lua_pushcfunction(L, lua_ImGuiColorEdit3); lua_setfield(L, -2, "colorEdit3");
     lua_pushcfunction(L, lua_ImGuiSliderFloat); lua_setfield(L, -2, "sliderFloat");
+    lua_pushcfunction(L, lua_ImGuiSliderInt); lua_setfield(L, -2, "sliderInt");
     lua_setglobal(L, "imgui");
 }

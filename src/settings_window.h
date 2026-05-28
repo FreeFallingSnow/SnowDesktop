@@ -51,12 +51,14 @@ private:
     bool CreateSwapChain();
     void CleanupSwapChain();
     void SetupFonts();
+    void RequestClose();
     void DrawTitleBar();
     void DrawSidebar();
     void DrawBackupPage();
     void DrawGeneralPage();
     void DrawPersonalizationPage();
     void DrawWidgetEditorPage();
+    void DrawDebugPage();
     void DrawAboutPage();
 
     // Backup helpers

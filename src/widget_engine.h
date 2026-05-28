@@ -31,6 +31,12 @@ struct LuaWidget
     FILETIME lastModified = {};
 };
 
+struct WidgetErrorEntry
+{
+    std::string key;
+    std::string message;
+};
+
 class WidgetEngine
 {
 public:
@@ -53,6 +59,8 @@ public:
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& gradientEndA) const;
+    std::vector<WidgetErrorEntry> GetWidgetErrors() const;
+    void ClearWidgetErrors();
 
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
     static std::vector<std::wstring> ListAvailable();
