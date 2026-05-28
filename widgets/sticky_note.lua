@@ -18,6 +18,19 @@ function loadConfig()
     textColor = tonumber(storage.get("textColor")) or textColor
 end
 
+function resetDefaults()
+    bg = 0xFFF7D1
+    border = 0xD0D0D0
+    alpha = 1.0
+    gradientEndA = 0.0
+    textColor = 0x000000
+    storage.set("bg", tostring(bg))
+    storage.set("border", tostring(border))
+    storage.set("alpha", tostring(alpha))
+    storage.set("gradientEndA", tostring(gradientEndA))
+    storage.set("textColor", tostring(textColor))
+end
+
 function render()
     loadConfig()
     local w = layout.width()
@@ -47,22 +60,24 @@ function imguiRender()
         storage.set("text", text)
     end
 
-    imgui.text("便签设置")
+    if imgui.collapsingHeader("便签设置") then
+        imgui.text("背景色")
+        local newBg = imgui.colorEdit3("##bg", bg)
+        if newBg ~= bg then bg = newBg; storage.set("bg", tostring(bg)) end
 
-    imgui.text("背景色")
-    local newBg = imgui.colorEdit3("##bg", bg)
-    if newBg ~= bg then bg = newBg; storage.set("bg", tostring(bg)) end
+        imgui.text("边框色")
+        local newBorder = imgui.colorEdit3("##border", border)
+        if newBorder ~= border then border = newBorder; storage.set("border", tostring(border)) end
 
-    imgui.text("边框色")
-    local newBorder = imgui.colorEdit3("##border", border)
-    if newBorder ~= border then border = newBorder; storage.set("border", tostring(border)) end
+        imgui.text("文字色")
+        local newTc = imgui.colorEdit3("##tc", textColor)
+        if newTc ~= textColor then textColor = newTc; storage.set("textColor", tostring(textColor)) end
 
-    imgui.text("文字色")
-    local newTc = imgui.colorEdit3("##tc", textColor)
-    if newTc ~= textColor then textColor = newTc; storage.set("textColor", tostring(textColor)) end
+        local newAlpha = imgui.sliderFloat("不透明度", alpha, 0.0, 1.0)
+        if newAlpha ~= alpha then alpha = newAlpha; storage.set("alpha", tostring(alpha)) end
 
-    local newAlpha = imgui.sliderFloat("不透明度", alpha, 0.0, 1.0)
-    if newAlpha ~= alpha then alpha = newAlpha; storage.set("alpha", tostring(alpha)) end
-
-    
+        if imgui.button("恢复默认设置") then
+            resetDefaults()
+        end
+    end
 end

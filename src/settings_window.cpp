@@ -170,6 +170,14 @@ void SettingsWindow::ShowExitConfirm()
     Show();
 }
 
+void SettingsWindow::RequestClose()
+{
+    showExitConfirm_ = false;
+    if (editingWidgetIndex_ != static_cast<size_t>(-1))
+        editingWidgetIndex_ = static_cast<size_t>(-1);
+    pendingClose_ = true;
+}
+
 void SettingsWindow::Render()
 {
     if (hwnd_ == nullptr || !IsWindowVisible(hwnd_) || IsIconic(hwnd_)) return;
@@ -218,7 +226,8 @@ void SettingsWindow::Render()
         case 0: DrawGeneralPage(); break;
         case 1: DrawPersonalizationPage(); break;
         case 2: DrawBackupPage(); break;
-        case 3: DrawAboutPage(); break;
+        case 3: DrawDebugPage(); break;
+        case 4: DrawAboutPage(); break;
         }
         ImGui::EndChild();
     }
@@ -321,9 +330,7 @@ void SettingsWindow::DrawTitleBar()
 
     if (btnHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
-        if (editingWidgetIndex_ != static_cast<size_t>(-1))
-            editingWidgetIndex_ = static_cast<size_t>(-1);
-        pendingClose_ = true;
+        RequestClose();
     }
 
     // Drag region
@@ -378,7 +385,8 @@ void SettingsWindow::DrawSidebar()
     SideButton(0, "通用");
     SideButton(1, "个性化");
     SideButton(2, "布局备份");
-    SideButton(3, "关于");
+    SideButton(3, "调试");
+    SideButton(4, "关于");
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
@@ -598,6 +606,66 @@ void SettingsWindow::DrawWidgetEditorPage()
     }
 }
 
+void SettingsWindow::DrawDebugPage()
+{
+    const float pad = 16.0f * dpiScale_;
+    ImGui::SetCursorPos(ImVec2(pad, pad));
+    ImGui::BeginChild("##DebugPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+
+    ImGui::Text("调试页");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    std::vector<WidgetErrorEntry> errors;
+    if (widgetEngine_)
+        errors = widgetEngine_->GetWidgetErrors();
+    ImGui::Text("错误记录: %d", static_cast<int>(errors.size()));
+    ImGui::SameLine();
+    if (ImGui::Button("复制全部"))
+    {
+        std::string copyText;
+        for (const auto& e : errors)
+        {
+            copyText += "[" + e.key + "]\n";
+            copyText += e.message;
+            copyText += "\n\n";
+        }
+        ImGui::SetClipboardText(copyText.c_str());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("清空全部"))
+    {
+        if (widgetEngine_)
+            widgetEngine_->ClearWidgetErrors();
+        errors.clear();
+    }
+
+    ImGui::Spacing();
+
+    if (errors.empty())
+    {
+        ImGui::TextDisabled("当前没有组件错误记录。\n当组件 Lua 加载失败或运行时出错时，会自动记录到这里。\n");
+        ImGui::EndChild();
+        return;
+    }
+
+    ImGui::BeginChild("##DebugScroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    for (const auto& e : errors)
+    {
+        std::string itemText = "[" + e.key + "]\n" + e.message;
+        if (ImGui::Selectable(itemText.c_str(), false, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 0)))
+            ImGui::SetClipboardText(itemText.c_str());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("点击复制这一条错误");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+    ImGui::EndChild();
+
+    ImGui::EndChild();
+}
+
 void SettingsWindow::DrawAboutPage()
 {
     const float pad = 16.0f * dpiScale_;
@@ -760,8 +828,8 @@ bool SettingsWindow::CreateSwapChain()
 {
     RECT cr;
     GetClientRect(hwnd_, &cr);
-    windowWidth_ = std::max(1L, cr.right - cr.left);
-    windowHeight_ = std::max(1L, cr.bottom - cr.top);
+    windowWidth_ = (cr.right - cr.left > 1) ? (cr.right - cr.left) : 1;
+    windowHeight_ = (cr.bottom - cr.top > 1) ? (cr.bottom - cr.top) : 1;
 
     CleanupSwapChain();
     device_->GetImmediateContext(&context_);
@@ -860,6 +928,12 @@ void SettingsWindow::SetAutoStart(bool enable) const
 // ── WndProc ──────────────────────────────────────────────────────
 LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    if (g_settingsWindow != nullptr && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && wParam == VK_ESCAPE)
+    {
+        g_settingsWindow->RequestClose();
+        return 0;
+    }
+
     if (g_settingsWindow != nullptr && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
         return true;
 
@@ -896,16 +970,7 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         return 0;
     }
     case WM_CLOSE:
-        if (g_settingsWindow->editingWidgetIndex_ != static_cast<size_t>(-1))
-            g_settingsWindow->editingWidgetIndex_ = static_cast<size_t>(-1);
-        g_settingsWindow->pendingClose_ = true;
-        return 0;
-        if (g_settingsWindow->personalizationDirty_)
-        {
-            SavePersonalization(GetPersonalizationPath().c_str(), g_settingsWindow->personalization_);
-            g_settingsWindow->personalizationDirty_ = false;
-        }
-        ShowWindow(hwnd, SW_HIDE);
+        g_settingsWindow->RequestClose();
         return 0;
     case WM_DESTROY:
         return 0;

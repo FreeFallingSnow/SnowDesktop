@@ -36,7 +36,10 @@
       "Bash(mv lua-5.4.7/src third_party/lua)",
       "Bash(rm -rf lua-5.4.7 lua-5.4.7.tar.gz)",
       "Bash(cmake -S \"D:/Code/Other/SnowDesktop\" -B \"D:/Code/Other/SnowDesktop/.build\")",
-      "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --config Release --target SnowDesktop -v)"
+      "Bash(cmake --build \"D:/Code/Other/SnowDesktop/.build\" --config Release --target SnowDesktop -v)",
+      "Bash(cmake --build build --config Debug)",
+      "Bash(cmake --build .build --config Debug)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
