@@ -292,6 +292,8 @@ inline LRESULT SnowDesktopAppOO::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, L
         }
         return 0;
     }
+    case WM_GETDLGCODE:
+        return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
         OnKeyDown(wp);
         return 0;

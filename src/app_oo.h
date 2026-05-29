@@ -65,6 +65,8 @@ private:
     HRESULT CreateOrResizeCompositionSurface();
     void OnPaint();
     void RenderFrame(ID2D1DeviceContext* ctx);
+    void DrawPageNavButtons(ID2D1DeviceContext* ctx);
+    void GetNavButtonRects(RECT& outPrev, RECT& outNext) const;
 
     // ── Data ────────────────────────────────────────────────
     void LoadDesktopItems();
@@ -90,10 +92,13 @@ private:
     void OnLeftButtonUp(WPARAM wp, LPARAM lp);
     void OnRightButtonUp(LPARAM lp);
     void OnKeyDown(WPARAM key);
+    void InvokeSelectedShellVerb(const char* verb);
+    void MoveKeyboardSelection(WPARAM arrowKey);
     void OnTimer(WPARAM timerId);
     void ClearSelection();
     void SelectOnly(int index);
     void ToggleSelection(int index);
+    bool HandlePageNavClick(POINT point);
     void SortIconsByName();
     void SortIconsByType();
     void UpdateCutState();
@@ -122,6 +127,8 @@ private:
     void AdjustZoom(float delta);
     void ApplyPageMapping();
     int MaxPageOffset() const;
+    bool PageHasContent(const std::wstring& pageId) const;
+    int NextNonEmptyOffset(int fromOffset, int direction) const;
     size_t FirstMonitorOrderIndex() const;
     std::vector<size_t> BuildMonitorRenderOrder() const;
     bool TryFindFreeCell(GridSpan span, std::unordered_set<std::wstring>& usedSlots, GridCell& result,
@@ -140,6 +147,7 @@ private:
     bool IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const;
     void MoveSelectedItemsToCell(GridCell targetCell);
     void UpdateDragGroupOrigin();
+    void MigrateSelectedItemsToLastMonitorPage();
     POINT GetDragTargetPoint(POINT current) const;
     ComPtr<IDataObject> CreateSelectedDataObject() const;
     void DropSelectedItemsOnTarget(int targetIndex);
@@ -210,6 +218,9 @@ private:
     std::wstring firstPageMonitorId_;
     std::wstring lastMonitorPageId_;
     int pageOffset_ = 0;
+    int navHoverSide_ = 0; // -1 left, +1 right, 0 none
+    DWORD navAutoFlipTick_ = 0;
+    int navAutoFlipDir_ = 0;
     POINT lastContextMenuScreenPoint_{};
 
     // Control window (for tray icon ownership + desktop host watch)

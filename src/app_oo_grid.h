@@ -133,11 +133,45 @@ inline std::vector<size_t> SnowDesktopAppOO::BuildMonitorRenderOrder() const
     return order;
 }
 
+inline bool SnowDesktopAppOO::PageHasContent(const std::wstring& pageId) const
+{
+    if (pageId.empty()) return false;
+    for (const auto& item : items_)
+        if (!item.name.empty() && item.gridCell.pageId == pageId) return true;
+    for (const auto& w : widgets_)
+        if (w.gridCell.pageId == pageId) return true;
+    return false;
+}
+
+inline int SnowDesktopAppOO::NextNonEmptyOffset(int fromOffset, int direction) const
+{
+    if (savedPageIds_.empty() || gridPages_.empty()) return fromOffset;
+    const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
+    int offset = fromOffset;
+    while (true)
+    {
+        offset += direction;
+        if (offset < 0 || offset > static_cast<int>(savedPageIds_.size()) - visiblePageCount)
+            return fromOffset;
+        size_t pageIdx = static_cast<size_t>((visiblePageCount - 1) + offset);
+        if (pageIdx < savedPageIds_.size() && PageHasContent(savedPageIds_[pageIdx]))
+            return offset;
+    }
+}
+
 inline int SnowDesktopAppOO::MaxPageOffset() const
 {
     if (savedPageIds_.empty() || gridPages_.empty()) return 0;
     const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
-    return std::max(0, static_cast<int>(savedPageIds_.size()) - visiblePageCount);
+    const int rawMax = std::max(0, static_cast<int>(savedPageIds_.size()) - visiblePageCount);
+    int result = 0;
+    for (int off = 1; off <= rawMax; ++off)
+    {
+        size_t pageIdx = static_cast<size_t>((visiblePageCount - 1) + off);
+        if (pageIdx < savedPageIds_.size() && PageHasContent(savedPageIds_[pageIdx]))
+            result = off;
+    }
+    return result;
 }
 
 inline void SnowDesktopAppOO::ApplyPageMapping()
@@ -754,6 +788,12 @@ inline void SnowDesktopAppOO::ReloadItems(bool reloadLayoutFromDisk)
             item.gridCell.pageId = gridPages_.front().id;
 
         auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
+        if (page == nullptr)
+        {
+            // Item belongs to a page not currently visible — preserve its grid slot
+            continue;
+        }
+
         bool validSlot = page != nullptr &&
             item.gridCell.column + item.gridSpan.columns <= page->columns &&
             item.gridCell.row + item.gridSpan.rows <= page->rows &&
@@ -1015,6 +1055,7 @@ inline void SnowDesktopAppOO::UpdateLayoutWorkArea()
     }
 
     ApplySavedGridDimensions();
+    ApplyPageMapping();
 }
 
 inline void SnowDesktopAppOO::ConfigureGridPage(GridPage& page) const
@@ -1274,21 +1315,82 @@ inline void SnowDesktopAppOO::MoveSelectedItemsToCell(GridCell targetCell)
 inline void SnowDesktopAppOO::UpdateDragGroupOrigin()
 {
     int minCol = INT_MAX, minRow = INT_MAX;
+    std::wstring anchorPageId;
     for (const auto& item : items_)
     {
         if (item.selected)
         {
+            if (anchorPageId.empty()) anchorPageId = item.gridCell.pageId;
             minCol = std::min(minCol, item.gridCell.column);
             minRow = std::min(minRow, item.gridCell.row);
         }
     }
     GridCell groupOrigin;
-    groupOrigin.pageId = gridPages_.empty() ? L"" : gridPages_.front().id;
+    groupOrigin.pageId = anchorPageId.empty()
+        ? (gridPages_.empty() ? L"" : gridPages_.front().id)
+        : anchorPageId;
     groupOrigin.column = minCol != INT_MAX ? minCol : 0;
     groupOrigin.row = minRow != INT_MAX ? minRow : 0;
     RECT groupRect = GetGridRect(gridPages_, groupOrigin, GridSpan{});
     dragGroupOriginX_ = groupRect.left;
     dragGroupOriginY_ = groupRect.top;
+}
+
+inline void SnowDesktopAppOO::MigrateSelectedItemsToLastMonitorPage()
+{
+    if (gridPages_.empty() || lastMonitorPageId_.empty()) return;
+    const GridPage* targetPage = FindGridPage(gridPages_, lastMonitorPageId_);
+    if (!targetPage) return;
+
+    std::unordered_set<std::wstring> usedSlots;
+    for (const auto& item : items_)
+    {
+        if (item.selected) continue;
+        if (item.name.empty()) continue;
+        if (item.gridCell.pageId == lastMonitorPageId_)
+            MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+    }
+    for (const auto& w : widgets_)
+        MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
+
+    for (auto& item : items_)
+    {
+        if (!item.selected) continue;
+        if (item.gridCell.pageId == lastMonitorPageId_) continue;
+
+        GridCell newCell;
+        newCell.pageId = lastMonitorPageId_;
+        newCell.column = std::min(item.gridCell.column, std::max(0, targetPage->columns - 1));
+        newCell.row = std::min(item.gridCell.row, std::max(0, targetPage->rows - 1));
+
+        GridSpan span = item.gridSpan;
+        span.columns = std::clamp(span.columns, 1, std::max(1, targetPage->columns));
+        span.rows = std::clamp(span.rows, 1, std::max(1, targetPage->rows));
+
+        if (!AreGridSlotsMarked(usedSlots, newCell, span))
+        {
+            MarkGridArea(usedSlots, newCell, span);
+            item.gridCell = newCell;
+            item.gridSpan = span;
+            continue;
+        }
+
+        bool found = false;
+        for (int r = 0; r < targetPage->rows && !found; ++r)
+        {
+            for (int c = 0; c < targetPage->columns && !found; ++c)
+            {
+                GridCell tryCell{ lastMonitorPageId_, c, r };
+                if (!AreGridSlotsMarked(usedSlots, tryCell, span))
+                {
+                    MarkGridArea(usedSlots, tryCell, span);
+                    item.gridCell = tryCell;
+                    item.gridSpan = span;
+                    found = true;
+                }
+            }
+        }
+    }
 }
 
 inline POINT SnowDesktopAppOO::GetDragTargetPoint(POINT current) const

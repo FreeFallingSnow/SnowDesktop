@@ -36,11 +36,14 @@ inline void SnowDesktopAppOO::ToggleSelection(int index)
 inline void SnowDesktopAppOO::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
+    SetFocus(hwnd_);
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     mouseDown_ = true;
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
+
+    if (HandlePageNavClick(pt)) return;
 
     int hit = HitTestItem(pt);
     mouseDownHit_ = hit;
@@ -129,7 +132,7 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
                         if (it->selected && !it->desktopIconClsid.empty()) continue;
                         if (!it->selected) continue;
                         wchar_t path[MAX_PATH]{};
-                        if (SHGetPathFromIDListW(it->absolutePidl.get(), path))
+                        if (SHGetPathFromIDList(it->absolutePidl.get(), path))
                         {
                             SHFILEOPSTRUCTW op{};
                             op.wFunc = FO_DELETE;
@@ -160,6 +163,46 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
             }
         }
 
+        {
+            RECT prevRect, nextRect;
+            GetNavButtonRects(prevRect, nextRect);
+            int navSide = 0;
+            const bool hasPrev = pageOffset_ > 0;
+            const bool hasNext = pageOffset_ < MaxPageOffset();
+            if (hasPrev && PtInRect(&prevRect, current)) navSide = -1;
+            else if (hasNext && PtInRect(&nextRect, current)) navSide = 1;
+            navHoverSide_ = navSide;
+
+            if (navSide != 0)
+            {
+                DWORD now = GetTickCount();
+                if (navAutoFlipDir_ != navSide)
+                {
+                    navAutoFlipDir_ = navSide;
+                    navAutoFlipTick_ = now;
+                }
+                else if (now - navAutoFlipTick_ > 500)
+                {
+                    int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
+                    if (newOffset != pageOffset_)
+                    {
+                        pageOffset_ = newOffset;
+                        ApplyPageMapping();
+                        MigrateSelectedItemsToLastMonitorPage();
+                        LayoutItems();
+                        UpdateDragGroupOrigin();
+                        SaveLayoutSlots();
+                        navAutoFlipTick_ = now;
+                    }
+                }
+            }
+            else
+            {
+                navAutoFlipDir_ = 0;
+                navAutoFlipTick_ = 0;
+            }
+        }
+
         std::wstring hint = MakeDragHint(current);
         ShowDragHintWindow(current, hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -186,6 +229,20 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
         }
     }
 
+    {
+        int oldHover = navHoverSide_;
+        navHoverSide_ = 0;
+        if (MaxPageOffset() > 0 || pageOffset_ > 0)
+        {
+            RECT prevRect, nextRect;
+            GetNavButtonRects(prevRect, nextRect);
+            if (pageOffset_ > 0 && PtInRect(&prevRect, current)) navHoverSide_ = -1;
+            else if (pageOffset_ < MaxPageOffset() && PtInRect(&nextRect, current)) navHoverSide_ = 1;
+        }
+        if (navHoverSide_ != oldHover)
+            InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
     if (oldMouse.x != current.x || oldMouse.y != current.y)
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -207,6 +264,8 @@ inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             {
                 DropSelectedItemsOnTarget(hitUnderCursor);
                 draggingItems_ = false;
+                navHoverSide_ = 0;
+                navAutoFlipDir_ = 0;
                 mouseDown_ = false;
                 mouseDownHit_ = -1;
                 ReleaseCapture();
@@ -231,6 +290,8 @@ inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         draggingItems_ = false;
         dragCopyMode_ = false;
         dragLinkMode_ = false;
+        navHoverSide_ = 0;
+        navAutoFlipDir_ = 0;
         mouseDown_ = false;
         mouseDownHit_ = -1;
         ReleaseCapture();
@@ -240,6 +301,8 @@ inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
     mouseDown_ = false;
     marqueeActive_ = false;
+    navHoverSide_ = 0;
+    navAutoFlipDir_ = 0;
     mouseDownHit_ = -1;
     ReleaseCapture();
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -249,10 +312,15 @@ inline void SnowDesktopAppOO::OnKeyDown(WPARAM key)
 {
     if (renameEdit_ != nullptr) return;
 
+    bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+
     switch (key)
     {
     case VK_F2:
-        BeginRenameSelected();
+    case 'R':
+        if (key == 'R' && !ctrl) break;
+        if (key == VK_F2 || ctrl)
+            BeginRenameSelected();
         break;
     case VK_F5:
         ReloadItems();
@@ -279,9 +347,249 @@ inline void SnowDesktopAppOO::OnKeyDown(WPARAM key)
         ReloadItems();
         break;
     }
+    case 'C':
+        if (!ctrl) break;
+        InvokeSelectedShellVerb("copy");
+        break;
+    case 'X':
+        if (!ctrl) break;
+    {
+        cutPaths_.clear();
+
+        std::vector<PCUITEMID_CHILD> pidls;
+        std::vector<size_t> selectedIndexes;
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            if (!items_[i].selected || !items_[i].desktopIconClsid.empty()) continue;
+            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(items_[i].childPidl.get()));
+            selectedIndexes.push_back(i);
+        }
+
+        if (!pidls.empty())
+        {
+            ComPtr<IDataObject> dataObj;
+            if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()),
+                pidls.data(), IID_IDataObject, nullptr,
+                reinterpret_cast<void**>(dataObj.GetAddressOf()))) && dataObj)
+            {
+                CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+                FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+                STGMEDIUM med{};
+                med.tymed = TYMED_HGLOBAL;
+                med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+                if (med.hGlobal)
+                {
+                    *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
+                    GlobalUnlock(med.hGlobal);
+                    dataObj->SetData(&fmt, &med, TRUE);
+                }
+
+                OleSetClipboard(dataObj.Get());
+                OleFlushClipboard();
+            }
+        }
+
+        for (size_t idx : selectedIndexes)
+        {
+            wchar_t path[MAX_PATH]{};
+            if (SHGetPathFromIDListW(items_[idx].absolutePidl.get(), path))
+                cutPaths_.insert(path);
+        }
+
+        UpdateCutState();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    break;
+    case 'V':
+        if (!ctrl) break;
+    {
+        bool fromDesktop = false;
+        std::unordered_set<std::wstring> clipPaths;
+
+        ComPtr<IDataObject> clipObj;
+        if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj)
+        {
+            CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+            FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+            STGMEDIUM medPref{};
+            if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
+            {
+                DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
+                bool isMove = pEffect && (*pEffect & DROPEFFECT_MOVE);
+                if (pEffect) GlobalUnlock(medPref.hGlobal);
+                if (isMove)
+                {
+                    FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+                    STGMEDIUM medDrop{};
+                    if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
+                    {
+                        HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
+                        UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+                        for (UINT i = 0; i < count; ++i)
+                        {
+                            wchar_t path[MAX_PATH]{};
+                            if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
+                                clipPaths.insert(path);
+                        }
+                        ReleaseStgMedium(&medDrop);
+                    }
+                }
+                ReleaseStgMedium(&medPref);
+            }
+        }
+
+        if (!clipPaths.empty())
+        {
+            for (const auto& item : items_)
+            {
+                wchar_t path[MAX_PATH]{};
+                if (SHGetPathFromIDListW(item.absolutePidl.get(), path) && clipPaths.contains(path))
+                {
+                    fromDesktop = true;
+                    break;
+                }
+            }
+        }
+
+        if (fromDesktop)
+        {
+            cutPaths_.clear();
+            if (OpenClipboard(hwnd_))
+            {
+                EmptyClipboard();
+                CloseClipboard();
+            }
+            UpdateCutState();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        else
+        {
+            ComPtr<IContextMenu> bgMenu;
+            if (SUCCEEDED(desktopFolder_->CreateViewObject(hwnd_, IID_IContextMenu,
+                reinterpret_cast<void**>(bgMenu.GetAddressOf()))) && bgMenu)
+            {
+                CMINVOKECOMMANDINFO info{};
+                info.cbSize = sizeof(info);
+                info.hwnd = hwnd_;
+                info.lpVerb = "paste";
+                info.nShow = SW_SHOWNORMAL;
+                bgMenu->InvokeCommand(&info);
+                cutPaths_.clear();
+                ReloadItems();
+            }
+        }
+    }
+    break;
+    case 'A':
+        if (!ctrl) break;
+    {
+        ClearSelection();
+        for (auto& item : items_)
+        {
+            if (item.name.empty()) continue;
+            item.selected = true;
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    break;
+    case VK_UP:
+    case VK_DOWN:
+    case VK_LEFT:
+    case VK_RIGHT:
+        MoveKeyboardSelection(key);
+        break;
     default:
         break;
     }
+}
+
+inline void SnowDesktopAppOO::InvokeSelectedShellVerb(const char* verb)
+{
+    std::vector<PCUITEMID_CHILD> pidls;
+    for (const auto& item : items_)
+    {
+        if (item.selected && item.childPidl.value)
+            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.value));
+    }
+    if (pidls.empty()) return;
+
+    ComPtr<IContextMenu> contextMenu;
+    HRESULT hr = desktopFolder_->GetUIObjectOf(
+        hwnd_, static_cast<UINT>(pidls.size()), pidls.data(),
+        IID_IContextMenu, nullptr,
+        reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+    if (FAILED(hr) || !contextMenu) return;
+
+    CMINVOKECOMMANDINFO info{};
+    info.cbSize = sizeof(info);
+    info.hwnd = hwnd_;
+    info.lpVerb = verb;
+    info.nShow = SW_SHOWNORMAL;
+    if (SUCCEEDED(contextMenu->InvokeCommand(&info)))
+        ReloadItems();
+}
+
+inline void SnowDesktopAppOO::MoveKeyboardSelection(WPARAM arrowKey)
+{
+    if (items_.empty()) return;
+
+    std::vector<size_t> visible;
+    for (size_t i = 0; i < items_.size(); ++i)
+    {
+        if (items_[i].name.empty()) continue;
+        if (items_[i].selected || !IsRectEmptyRect(items_[i].bounds))
+            visible.push_back(i);
+    }
+    if (visible.empty()) return;
+
+    int current = -1;
+    for (size_t i = 0; i < visible.size(); ++i)
+    {
+        if (items_[visible[i]].selected) { current = static_cast<int>(i); break; }
+    }
+    int delta = 0;
+    switch (arrowKey)
+    {
+    case VK_LEFT:  delta = -1; break;
+    case VK_RIGHT: delta =  1; break;
+    case VK_UP:    delta = -1; break;
+    case VK_DOWN:  delta =  1; break;
+    }
+    if (delta == 0) return;
+
+    int next = current < 0 ? 0 : current + delta;
+    next = std::clamp(next, 0, static_cast<int>(visible.size()) - 1);
+    SelectOnly(static_cast<int>(visible[static_cast<size_t>(next)]));
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+inline bool SnowDesktopAppOO::HandlePageNavClick(POINT point)
+{
+    if (gridPages_.empty()) return false;
+    const bool hasPrev = pageOffset_ > 0;
+    const bool hasNext = pageOffset_ < MaxPageOffset();
+    if (!hasPrev && !hasNext) return false;
+
+    RECT prevRect, nextRect;
+    GetNavButtonRects(prevRect, nextRect);
+
+    int delta = 0;
+    if (hasPrev && PtInRect(&prevRect, point)) delta = -1;
+    else if (hasNext && PtInRect(&nextRect, point)) delta = 1;
+    if (delta == 0) return false;
+
+    int newOffset = NextNonEmptyOffset(pageOffset_, delta);
+    if (newOffset == pageOffset_) return false;
+
+    bool wasDragging = draggingItems_;
+    pageOffset_ = newOffset;
+    ApplyPageMapping();
+    if (wasDragging) MigrateSelectedItemsToLastMonitorPage();
+    LayoutItems();
+    if (wasDragging) UpdateDragGroupOrigin();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    return true;
 }
 
 inline void SnowDesktopAppOO::OnRightButtonUp(LPARAM lp)
