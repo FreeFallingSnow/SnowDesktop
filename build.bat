@@ -1,32 +1,35 @@
 @echo off
-setlocal
+cd /d "%~dp0"
 
-echo === SnowDesktop Build Script ===
-
-if not exist ".build" (
-    mkdir .build
-    cd .build
-    echo.
-    echo [1/2] Configuring CMake...
-    cmake -G "Visual Studio 18 2026" -A x64 .. || (
-        echo ERROR: CMake configure failed.
-        pause
-        exit /b 1
-    )
-) else (
-    cd .build
-)
-
-echo.
-echo [2/2] Building Release...
-cmake --build . --config Release || (
-    echo ERROR: Build failed.
+echo === Configuring CMake (Release) ===
+cmake -B .build -S .
+if %ERRORLEVEL% NEQ 0 (
+    echo CMake configure FAILED
     pause
     exit /b 1
 )
 
 echo.
-echo === Build succeeded ===
-echo Output: .build\Release\SnowDesktop.exe
+echo === Building SnowDesktop.exe (Release) ===
+cmake --build .build --config Release --target SnowDesktop
+if %ERRORLEVEL% NEQ 0 (
+    echo SnowDesktop build FAILED
+    pause
+    exit /b 1
+)
+
+echo.
+echo === Building SnowDesktopOO.exe (Release) ===
+cmake --build .build --config Release --target SnowDesktopOO
+if %ERRORLEVEL% NEQ 0 (
+    echo SnowDesktopOO build FAILED
+    pause
+    exit /b 1
+)
+
+echo.
+echo === Build complete ===
+echo SnowDesktop.exe:   .build\Release\SnowDesktop.exe
+echo SnowDesktopOO.exe: .build\Release\SnowDesktopOO.exe
 echo.
 pause

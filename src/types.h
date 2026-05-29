@@ -118,6 +118,7 @@ struct DesktopItem
     GridSpan gridSpan;
     bool selected = false;
     bool shortcutArrow = false;
+    bool isCut = false;
 
     DesktopItem() = default;
 
@@ -137,7 +138,8 @@ struct DesktopItem
           gridCell(std::move(other.gridCell)),
           gridSpan(other.gridSpan),
           selected(other.selected),
-          shortcutArrow(other.shortcutArrow)
+          shortcutArrow(other.shortcutArrow),
+          isCut(other.isCut)
     {
         other.iconBitmap = nullptr;
         other.iconBitmapSize = {};
