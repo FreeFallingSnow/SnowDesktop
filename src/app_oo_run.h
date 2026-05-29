@@ -175,6 +175,8 @@ inline int SnowDesktopAppOO::Run(HINSTANCE instance, int showCommand)
     AddTrayIcon();
     RegisterShellChangeNotifications();
 
+    dropTargetRegistered_ = SUCCEEDED(RegisterDragDrop(hwnd_, static_cast<IDropTarget*>(this)));
+
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
@@ -326,6 +328,7 @@ inline LRESULT SnowDesktopAppOO::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, L
         SaveLayoutSlots();
         RemoveTrayIcon();
         DestroyDragHintWindow();
+        if (dropTargetRegistered_) { RevokeDragDrop(hwnd_); dropTargetRegistered_ = false; }
         KillTimer(hwnd_, kShellChangeTimerId);
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(controlHwnd_, kDesktopHostWatchTimerId);

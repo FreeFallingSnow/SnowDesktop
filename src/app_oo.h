@@ -32,11 +32,26 @@
 
 using Microsoft::WRL::ComPtr;
 
-class SnowDesktopAppOO
+class SnowDesktopAppOO : public IDropTarget, public IDropSource
 {
 public:
     SnowDesktopAppOO() = default;
     ~SnowDesktopAppOO();
+
+    // IUnknown
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override;
+    ULONG STDMETHODCALLTYPE AddRef() override;
+    ULONG STDMETHODCALLTYPE Release() override;
+
+    // IDropTarget
+    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect) override;
+    HRESULT STDMETHODCALLTYPE DragOver(DWORD keyState, POINTL point, DWORD* effect) override;
+    HRESULT STDMETHODCALLTYPE DragLeave() override;
+    HRESULT STDMETHODCALLTYPE Drop(IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect) override;
+
+    // IDropSource
+    HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escapePressed, DWORD keyState) override;
+    HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD effect) override;
 
     int Run(HINSTANCE instance, int showCommand);
 
@@ -128,6 +143,10 @@ private:
     POINT GetDragTargetPoint(POINT current) const;
     ComPtr<IDataObject> CreateSelectedDataObject() const;
     void DropSelectedItemsOnTarget(int targetIndex);
+    size_t FindItemIndexByKey(const std::wstring& key) const;
+    void CopySelectedItemsToCell(GridCell targetCell);
+    void CreateShortcutSelectedItemsToCell(GridCell targetCell);
+    void PlaceNewItemsAtDropPoint(const std::unordered_set<std::wstring>& existingKeys, GridCell targetCell);
 
     // ── Rendering helpers ───────────────────────────────────
     RECT GetItemIconRect(RECT bounds) const;
@@ -217,6 +236,32 @@ private:
     POINT dragCurrentPoint_{};
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
+    bool dragCopyMode_ = false;
+    bool dragLinkMode_ = false;
+
+    // OLE drag state
+    LONG refCount_ = 1;
+    bool selfDragActive_ = false;
+    bool selfDragReturned_ = false;
+    std::vector<std::wstring> selfDragOutKeys_;
+    bool externalDragActive_ = false;
+    POINT externalDragPoint_{};
+    int externalDropFileCount_ = 0;
+    GridCell cachedDropCell_;
+    bool hasCachedDropCell_ = false;
+    bool dropTargetRegistered_ = false;
+
+    // Pending placement (survives across ReloadItems for async file ops)
+    std::vector<std::wstring> pendingPlaceNames_;
+    GridCell pendingPlaceCell_;
+    bool hasPendingPlace_ = false;
+    DWORD pendingPlaceTick_ = 0;
+
+    POINT ScreenPointToClient(POINTL screen) const;
+    bool IsExternalDropWindowAt(POINT clientPoint) const;
+    bool IsKnownDesktopSurfaceWindow(HWND window) const;
+    static bool IsSameWindowTree(HWND parent, HWND window);
+    DWORD ChooseDropEffect(DWORD keyState, DWORD allowed) const;
 
     // Recycle bin polling
     int64_t lastRecycleBinItemCount_ = -1;
@@ -237,9 +282,15 @@ private:
     HWND hintHwnd_ = nullptr;
     bool EnsureDragHintWindow();
     void ShowDragHintWindow(POINT clientPoint, const std::wstring& text);
+    void ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text);
     void HideDragHintWindow();
     void DestroyDragHintWindow();
     std::wstring MakeDragHint(POINT point) const;
+    std::wstring MakeExternalDragHint(POINT point) const;
+    static std::vector<std::wstring> GetDropPaths(IDataObject* dataObject);
+    static std::wstring FileNameFromPath(const std::wstring& path);
+    static bool MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName);
+    void ApplyPendingPlacement();
 
     // OO system
     std::vector<std::unique_ptr<Container>> containers_;

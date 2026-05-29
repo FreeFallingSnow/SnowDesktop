@@ -104,9 +104,62 @@ inline void SnowDesktopAppOO::ShowBackgroundContextMenu(POINT screenPoint)
     }
     case kContextPasteCommand:
     {
-        if (!cutPaths_.empty())
+        bool fromDesktop = false;
+        std::unordered_set<std::wstring> clipPaths;
+
+        ComPtr<IDataObject> clipObj;
+        if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj)
+        {
+            CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+            FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+            STGMEDIUM medPref{};
+            if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
+            {
+                DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
+                bool isMove = pEffect && (*pEffect & DROPEFFECT_MOVE);
+                if (pEffect) GlobalUnlock(medPref.hGlobal);
+                if (isMove)
+                {
+                    FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+                    STGMEDIUM medDrop{};
+                    if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
+                    {
+                        HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
+                        UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+                        for (UINT i = 0; i < count; ++i)
+                        {
+                            wchar_t path[MAX_PATH]{};
+                            if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
+                                clipPaths.insert(path);
+                        }
+                        ReleaseStgMedium(&medDrop);
+                    }
+                }
+                ReleaseStgMedium(&medPref);
+            }
+        }
+
+        if (!clipPaths.empty())
+        {
+            for (const auto& item : items_)
+            {
+                wchar_t path[MAX_PATH]{};
+                if (SHGetPathFromIDListW(item.absolutePidl.get(), path) && clipPaths.contains(path))
+                {
+                    fromDesktop = true;
+                    break;
+                }
+            }
+        }
+
+        if (fromDesktop)
         {
             cutPaths_.clear();
+            if (OpenClipboard(hwnd_))
+            {
+                EmptyClipboard();
+                CloseClipboard();
+            }
             UpdateCutState();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
@@ -184,27 +237,53 @@ inline void SnowDesktopAppOO::ShowItemContextMenu(POINT screenPoint, int itemInd
     case kContextCopyCommand:
     {
         cutPaths_.clear();
-        for (auto& item : items_)
+
+        std::vector<PCUITEMID_CHILD> pidls;
+        std::vector<size_t> selectedIndexes;
+        for (size_t i = 0; i < items_.size(); ++i)
         {
-            if (!item.selected || item.desktopIconClsid.empty() == false) continue;
-            ComPtr<IContextMenu> ctxMenu;
-            LPCITEMIDLIST child = reinterpret_cast<LPCITEMIDLIST>(item.childPidl.get());
-            if (FAILED(desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IContextMenu, nullptr,
-                reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
-                continue;
-            CMINVOKECOMMANDINFO info{};
-            info.cbSize = sizeof(info);
-            info.hwnd = hwnd_;
-            info.lpVerb = command == kContextCutCommand ? "cut" : "copy";
-            info.nShow = SW_SHOWNORMAL;
-            ctxMenu->InvokeCommand(&info);
-            if (command == kContextCutCommand)
+            if (!items_[i].selected || !items_[i].desktopIconClsid.empty()) continue;
+            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(items_[i].childPidl.get()));
+            selectedIndexes.push_back(i);
+        }
+
+        if (!pidls.empty())
+        {
+            ComPtr<IDataObject> dataObj;
+            if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()),
+                pidls.data(), IID_IDataObject, nullptr,
+                reinterpret_cast<void**>(dataObj.GetAddressOf()))) && dataObj)
+            {
+                if (command == kContextCutCommand)
+                {
+            CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+                    FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+                    STGMEDIUM med{};
+                    med.tymed = TYMED_HGLOBAL;
+                    med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+                    if (med.hGlobal)
+                    {
+                        *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
+                        GlobalUnlock(med.hGlobal);
+                        dataObj->SetData(&fmt, &med, TRUE);
+                    }
+                }
+
+                OleSetClipboard(dataObj.Get());
+                OleFlushClipboard();
+            }
+        }
+
+        if (command == kContextCutCommand)
+        {
+            for (size_t idx : selectedIndexes)
             {
                 wchar_t path[MAX_PATH]{};
-                if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
+                if (SHGetPathFromIDListW(items_[idx].absolutePidl.get(), path))
                     cutPaths_.insert(path);
             }
         }
+
         UpdateCutState();
         InvalidateRect(hwnd_, nullptr, FALSE);
         break;

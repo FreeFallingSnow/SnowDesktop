@@ -332,13 +332,57 @@ inline void SnowDesktopAppOO::SortIconsByType()
 
 inline void SnowDesktopAppOO::UpdateCutState()
 {
+    std::unordered_set<std::wstring> clipCutPaths;
+
+    ComPtr<IDataObject> clipObj;
+    if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj)
+    {
+        CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+        FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+        STGMEDIUM medPref{};
+        bool isMove = false;
+
+        if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
+        {
+            DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
+            if (pEffect)
+            {
+                if (*pEffect & DROPEFFECT_MOVE)
+                    isMove = true;
+                GlobalUnlock(medPref.hGlobal);
+            }
+            ReleaseStgMedium(&medPref);
+        }
+
+        if (isMove)
+        {
+            FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+            STGMEDIUM medDrop{};
+            if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
+            {
+                HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
+                UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+                for (UINT i = 0; i < count; ++i)
+                {
+                    wchar_t path[MAX_PATH]{};
+                    if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
+                        clipCutPaths.insert(path);
+                }
+                ReleaseStgMedium(&medDrop);
+            }
+        }
+    }
+
     for (auto& item : items_)
     {
         item.isCut = false;
-        if (cutPaths_.empty() || item.desktopIconClsid.empty() == false) continue;
+        if (item.desktopIconClsid.empty() == false) continue;
         wchar_t path[MAX_PATH]{};
         if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-            item.isCut = cutPaths_.contains(path);
+        {
+            if (clipCutPaths.contains(path))
+                item.isCut = true;
+        }
     }
 }
 
@@ -688,6 +732,7 @@ inline void ClampAlphaToColorKey(HBITMAP bitmap, COLORREF key)
 
 inline void SnowDesktopAppOO::ReloadItems(bool reloadLayoutFromDisk)
 {
+    extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     if (reloading_) return;
     reloading_ = true;
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
@@ -757,6 +802,7 @@ inline void SnowDesktopAppOO::ReloadItems(bool reloadLayoutFromDisk)
     }
 
     LayoutItems();
+    ApplyPendingPlacement();
     SaveLayoutSlots();
     UpdateCutState();
     RebuildContainersAndItems();
@@ -1299,6 +1345,324 @@ inline void SnowDesktopAppOO::DropSelectedItemsOnTarget(int targetIndex)
         hr = dropTarget->Drop(dataObj.Get(), MK_LBUTTON, screenPtL, &effect);
     else
         dropTarget->DragLeave();
+}
+
+inline size_t SnowDesktopAppOO::FindItemIndexByKey(const std::wstring& key) const
+{
+    for (size_t i = 0; i < items_.size(); ++i)
+        if (items_[i].layoutKey == key) return i;
+    return static_cast<size_t>(-1);
+}
+
+inline void SnowDesktopAppOO::CopySelectedItemsToCell(GridCell targetCell)
+{
+    std::unordered_set<std::wstring> existingKeys;
+    for (const auto& item : items_)
+        if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
+
+    wchar_t desktopPath[MAX_PATH]{};
+    SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
+
+    for (const auto& item : items_)
+    {
+        if (!item.selected || !item.desktopIconClsid.empty()) continue;
+        wchar_t srcPath[MAX_PATH]{};
+        if (!SHGetPathFromIDListW(item.absolutePidl.get(), srcPath)) continue;
+
+        wchar_t nameNoExt[MAX_PATH]{};
+        wcscpy_s(nameNoExt, PathFindFileNameW(srcPath));
+        PathRemoveExtensionW(nameNoExt);
+        wchar_t ext[MAX_PATH]{};
+        wcscpy_s(ext, PathFindExtensionW(srcPath));
+
+        wchar_t newName[MAX_PATH]{};
+        swprintf_s(newName, L"%s - 副本%s", nameNoExt, ext);
+        wchar_t dstPath[MAX_PATH]{};
+        PathCombineW(dstPath, desktopPath, newName);
+
+        if (GetFileAttributesW(dstPath) != INVALID_FILE_ATTRIBUTES)
+        {
+            for (int i = 2; i < 100; ++i)
+            {
+                swprintf_s(newName, L"%s - 副本 (%d)%s", nameNoExt, i, ext);
+                PathCombineW(dstPath, desktopPath, newName);
+                if (GetFileAttributesW(dstPath) == INVALID_FILE_ATTRIBUTES) break;
+            }
+        }
+
+        std::wstring dstDir = desktopPath;
+        if (!dstDir.empty() && dstDir.back() != L'\\') dstDir += L'\\';
+        dstDir += newName;
+
+        SHFILEOPSTRUCTW op{};
+        op.wFunc = FO_COPY;
+        op.fFlags = FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR | FOF_RENAMEONCOLLISION;
+        wchar_t from[MAX_PATH + 2]{};
+        wcscpy_s(from, srcPath);
+        from[wcslen(srcPath) + 1] = L'\0';
+        op.pFrom = from;
+        op.pTo = desktopPath;
+        SHFileOperationW(&op);
+
+        if (GetFileAttributesW(dstPath) == INVALID_FILE_ATTRIBUTES)
+        {
+            swprintf_s(newName, L"%s - 副本 (%d)%s", nameNoExt, 2, ext);
+            PathCombineW(dstPath, desktopPath, newName);
+        }
+    }
+
+    ReloadItems(false);
+    PlaceNewItemsAtDropPoint(existingKeys, targetCell);
+}
+
+inline void SnowDesktopAppOO::CreateShortcutSelectedItemsToCell(GridCell targetCell)
+{
+    std::unordered_set<std::wstring> existingKeys;
+    for (const auto& item : items_)
+        if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
+
+    wchar_t desktopPath[MAX_PATH]{};
+    SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
+
+    for (const auto& item : items_)
+    {
+        if (!item.selected || !item.desktopIconClsid.empty()) continue;
+        wchar_t srcPath[MAX_PATH]{};
+        if (!SHGetPathFromIDListW(item.absolutePidl.get(), srcPath)) continue;
+
+        wchar_t nameNoExt[MAX_PATH]{};
+        wcscpy_s(nameNoExt, PathFindFileNameW(srcPath));
+        PathRemoveExtensionW(nameNoExt);
+
+        wchar_t lnkPath[MAX_PATH]{};
+        PathCombineW(lnkPath, desktopPath, (std::wstring(nameNoExt) + L".lnk").c_str());
+        if (GetFileAttributesW(lnkPath) != INVALID_FILE_ATTRIBUTES)
+        {
+            for (int i = 2; i < 100; ++i)
+            {
+                swprintf_s(lnkPath, L"%s\\%s (%d).lnk", desktopPath, nameNoExt, i);
+                if (GetFileAttributesW(lnkPath) == INVALID_FILE_ATTRIBUTES) break;
+            }
+        }
+
+        ComPtr<IShellLinkW> shellLink;
+        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+            IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+        {
+            shellLink->SetPath(srcPath);
+            shellLink->SetWorkingDirectory(desktopPath);
+            ComPtr<IPersistFile> persistFile;
+            if (SUCCEEDED(shellLink.As(&persistFile)))
+                persistFile->Save(lnkPath, TRUE);
+        }
+    }
+
+    ReloadItems(false);
+    PlaceNewItemsAtDropPoint(existingKeys, targetCell);
+}
+
+inline void SnowDesktopAppOO::ApplyPendingPlacement()
+{
+    if (!hasPendingPlace_) return;
+    if (GetTickCount() - pendingPlaceTick_ > 10000)
+    {
+        hasPendingPlace_ = false;
+        pendingPlaceNames_.clear();
+        return;
+    }
+
+    extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
+    extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
+
+    std::vector<std::wstring> srcFileNames;
+    srcFileNames.reserve(pendingPlaceNames_.size());
+    for (const auto& p : pendingPlaceNames_)
+        srcFileNames.push_back(FileNameFromPath(p));
+
+    GridCell startCell = pendingPlaceCell_;
+    if (startCell.pageId.empty() && !gridPages_.empty())
+        startCell.pageId = gridPages_.front().id;
+    const GridPage* page = FindGridPage(gridPages_, startCell.pageId);
+    if (!page) { hasPendingPlace_ = false; pendingPlaceNames_.clear(); return; }
+
+    std::unordered_set<std::wstring> usedSlots;
+    for (const auto& w : widgets_)
+        MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
+    for (size_t i = 0; i < items_.size(); ++i)
+    {
+        if (items_[i].name.empty() || items_[i].gridCell.pageId.empty()) continue;
+        bool isTarget = false;
+        for (const auto& src : srcFileNames)
+        {
+            if (MatchPendingName(items_[i].name, src) ||
+                (!items_[i].parsingName.empty() &&
+                 MatchPendingName(FileNameFromPath(items_[i].parsingName), src)))
+            {
+                isTarget = true;
+                break;
+            }
+        }
+        if (!isTarget && items_[i].slot >= 0)
+            MarkGridArea(usedSlots, items_[i].gridCell, items_[i].gridSpan);
+    }
+
+    struct Match { size_t itemIndex; size_t srcIndex; };
+    std::vector<Match> matches;
+    std::vector<bool> srcUsed(srcFileNames.size(), false);
+    for (size_t i = 0; i < items_.size(); ++i)
+    {
+        if (items_[i].name.empty()) continue;
+        for (size_t s = 0; s < srcFileNames.size(); ++s)
+        {
+            if (srcUsed[s]) continue;
+            if (MatchPendingName(items_[i].name, srcFileNames[s]) ||
+                (!items_[i].parsingName.empty() &&
+                 MatchPendingName(FileNameFromPath(items_[i].parsingName), srcFileNames[s])))
+            {
+                matches.push_back({i, s});
+                srcUsed[s] = true;
+                break;
+            }
+        }
+    }
+
+    if (matches.empty()) return;
+
+    int searchSlot = SlotFromCell(gridPages_, startCell);
+    bool changed = false;
+    GridCell nextCell = startCell;
+    for (const auto& m : matches)
+    {
+        GridSpan span = items_[m.itemIndex].gridSpan;
+        span.columns = std::max(1, span.columns);
+        span.rows = std::max(1, span.rows);
+
+        GridCell cell{};
+        bool found = false;
+        if (IsGridAreaValid(nextCell, span) && !AreGridSlotsMarked(usedSlots, nextCell, span))
+        {
+            cell = nextCell;
+            found = true;
+        }
+        if (!found)
+            found = TryFindFreeCell(span, usedSlots, cell, startCell.pageId, searchSlot);
+
+        if (!found) continue;
+
+        items_[m.itemIndex].gridCell = cell;
+        items_[m.itemIndex].gridSpan = span;
+        items_[m.itemIndex].slot = SlotFromCell(gridPages_, cell);
+        items_[m.itemIndex].selected = true;
+        MarkGridArea(usedSlots, cell, span);
+        searchSlot = items_[m.itemIndex].slot + 1;
+        nextCell = cell;
+        nextCell.column += span.columns;
+        if (nextCell.column >= page->columns)
+        {
+            nextCell.column = 0;
+            nextCell.row += span.rows;
+        }
+        changed = true;
+    }
+
+    std::vector<std::wstring> remaining;
+    for (size_t s = 0; s < srcFileNames.size(); ++s)
+    {
+        if (!srcUsed[s])
+            remaining.push_back(pendingPlaceNames_[s]);
+    }
+
+    if (!remaining.empty())
+    {
+        pendingPlaceNames_ = std::move(remaining);
+        pendingPlaceCell_ = nextCell;
+    }
+    else
+    {
+        hasPendingPlace_ = false;
+        pendingPlaceNames_.clear();
+    }
+
+    if (changed)
+    {
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+}
+
+inline void SnowDesktopAppOO::PlaceNewItemsAtDropPoint(
+    const std::unordered_set<std::wstring>& existingKeys, GridCell targetCell)
+{
+    std::vector<size_t> newItems;
+    for (size_t i = 0; i < items_.size(); ++i)
+    {
+        if (items_[i].layoutKey.empty()) continue;
+        if (!existingKeys.contains(items_[i].layoutKey))
+            newItems.push_back(i);
+    }
+    if (newItems.empty()) return;
+
+    if (targetCell.pageId.empty() && !gridPages_.empty())
+        targetCell.pageId = gridPages_.front().id;
+    const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
+    if (!page) return;
+
+    std::unordered_set<std::wstring> usedSlots;
+    for (const auto& w : widgets_)
+        MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
+    std::unordered_set<size_t> newSet(newItems.begin(), newItems.end());
+    for (size_t i = 0; i < items_.size(); ++i)
+    {
+        if (newSet.contains(i)) continue;
+        MarkGridArea(usedSlots, items_[i].gridCell, items_[i].gridSpan);
+    }
+
+    ClearSelection();
+    int searchSlot = SlotFromCell(gridPages_, targetCell);
+    bool changed = false;
+    for (size_t itemIndex : newItems)
+    {
+        GridSpan span = items_[itemIndex].gridSpan;
+        span.columns = std::max(1, span.columns);
+        span.rows = std::max(1, span.rows);
+
+        GridCell cell{};
+        bool found = false;
+        if (IsGridAreaValid(targetCell, span) && !AreGridSlotsMarked(usedSlots, targetCell, span))
+        {
+            cell = targetCell;
+            found = true;
+        }
+        else
+        {
+            found = TryFindFreeCell(span, usedSlots, cell, targetCell.pageId, searchSlot);
+        }
+
+        if (!found) continue;
+
+        items_[itemIndex].gridCell = cell;
+        items_[itemIndex].gridSpan = span;
+        items_[itemIndex].slot = SlotFromCell(gridPages_, cell);
+        items_[itemIndex].selected = true;
+        MarkGridArea(usedSlots, cell, span);
+        searchSlot = items_[itemIndex].slot + 1;
+        targetCell = cell;
+        targetCell.column += span.columns;
+        if (targetCell.column >= page->columns)
+        {
+            targetCell.column = 0;
+            targetCell.row += span.rows;
+        }
+        changed = true;
+    }
+
+    if (changed)
+    {
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
 }
 
 // ── Grid free functions ─────────────────────────────────────
