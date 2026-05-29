@@ -6,3 +6,4 @@ obj/
 *.suo
 TestResults/
 .build/
+build/

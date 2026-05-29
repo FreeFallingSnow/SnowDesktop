@@ -3,6 +3,11 @@
 #include "utils.h"
 #include "settings_window.h"
 #include "widget_engine.h"
+#include "item.h"
+#include "slot.h"
+#include "container.h"
+#include "desktop.h"
+#include "widget.h"
 
 #include <windowsx.h>
 #include <commctrl.h>
@@ -3000,6 +3005,7 @@ private:
             item.bounds = GetGridRect(item.gridCell, item.gridSpan);
         }
         LayoutWidgets();
+        RebuildContainersAndItems();
     }
 
     void LayoutWidgets()
@@ -3019,6 +3025,32 @@ private:
                 widget.gridCell.row = std::clamp(widget.gridCell.row, 0, std::max(0, page->rows - widget.gridSpan.rows));
             }
             widget.bounds = GetGridRect(widget.gridCell, widget.gridSpan);
+        }
+    }
+
+    void RebuildContainersAndItems()
+    {
+        containers_.clear();
+        items_oo_.clear();
+
+        // DesktopGrid: wraps all pages + items
+        auto grid = std::make_unique<DesktopGrid>(&gridPages_, &items_, this);
+        containers_.push_back(std::move(grid));
+
+        // One Widget adapter per DesktopWidget
+        for (auto& w : widgets_)
+        {
+            auto widget = CreateWidget(&w, this);
+            if (!widget) continue;
+            if (auto* wc = dynamic_cast<WidgetContainer*>(widget.get()))
+            {
+                widget.release();
+                containers_.push_back(std::unique_ptr<Container>(wc));
+            }
+            else
+            {
+                items_oo_.push_back(std::move(widget));
+            }
         }
     }
 
@@ -13034,6 +13066,10 @@ private:
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::vector<DesktopWidget> widgets_;
+
+    // OO drag-and-drop system
+    std::vector<std::unique_ptr<Container>> containers_;
+    std::vector<std::unique_ptr<Item>> items_oo_;
     int selectedCount_ = 0;
     LONG refCount_ = 1;
     int virtualLeft_ = 0;
