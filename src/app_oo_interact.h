@@ -88,6 +88,78 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
     if (draggingItems_)
     {
         dragCurrentPoint_ = current;
+        dragCopyMode_ = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        dragLinkMode_ = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+
+        POINT screenPt = current;
+        ClientToScreen(hwnd_, &screenPt);
+        bool overExternal = IsExternalDropWindowAt(current);
+
+        if (overExternal)
+        {
+            ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+            if (dataObj)
+            {
+                HideDragHintWindow();
+                ReleaseCapture();
+                mouseDown_ = false;
+                mouseDownHit_ = -1;
+                draggingItems_ = false;
+                dragCopyMode_ = false;
+                dragLinkMode_ = false;
+
+                selfDragActive_ = true;
+                selfDragReturned_ = false;
+                selfDragOutKeys_.clear();
+                for (const auto& item : items_)
+                    if (item.selected) selfDragOutKeys_.push_back(item.layoutKey);
+
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                UpdateWindow(hwnd_);
+
+                DWORD oleEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+                HRESULT hr = DoDragDrop(dataObj.Get(), static_cast<IDropSource*>(this), oleEffect, &oleEffect);
+                selfDragActive_ = false;
+                draggingItems_ = false;
+
+                if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE && !selfDragReturned_)
+                {
+                    for (auto it = items_.rbegin(); it != items_.rend(); ++it)
+                    {
+                        if (it->selected && !it->desktopIconClsid.empty()) continue;
+                        if (!it->selected) continue;
+                        wchar_t path[MAX_PATH]{};
+                        if (SHGetPathFromIDListW(it->absolutePidl.get(), path))
+                        {
+                            SHFILEOPSTRUCTW op{};
+                            op.wFunc = FO_DELETE;
+                            op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION;
+                            wchar_t from[MAX_PATH + 2]{};
+                            wcscpy_s(from, path);
+                            from[wcslen(path) + 1] = L'\0';
+                            op.pFrom = from;
+                            SHFileOperationW(&op);
+                        }
+                    }
+                    SaveLayoutSlots();
+                }
+
+                if (!selfDragReturned_)
+                {
+                    ClearSelection();
+                    ReloadItems();
+                }
+                else
+                {
+                    SaveLayoutSlots();
+                    ClearSelection();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+                selfDragOutKeys_.clear();
+                return;
+            }
+        }
+
         std::wstring hint = MakeDragHint(current);
         ShowDragHintWindow(current, hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -127,7 +199,6 @@ inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         HideDragHintWindow();
         POINT dropPoint = dragCurrentPoint_;
 
-        // Check if mouse is over an unselected item's icon area → hand off
         int hitUnderCursor = HitTestItem(dropPoint);
         if (hitUnderCursor >= 0 && !items_[hitUnderCursor].selected)
         {
@@ -145,8 +216,21 @@ inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         }
 
         GridCell targetCell = CellFromPoint(GetDragTargetPoint(dropPoint));
-        MoveSelectedItemsToCell(FindBestDropCell(targetCell));
+        targetCell = FindBestDropCell(targetCell);
+
+        bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+
+        if (altDown)
+            CreateShortcutSelectedItemsToCell(targetCell);
+        else if (ctrlDown)
+            CopySelectedItemsToCell(targetCell);
+        else
+            MoveSelectedItemsToCell(targetCell);
+
         draggingItems_ = false;
+        dragCopyMode_ = false;
+        dragLinkMode_ = false;
         mouseDown_ = false;
         mouseDownHit_ = -1;
         ReleaseCapture();
@@ -403,6 +487,438 @@ inline LRESULT CALLBACK SnowDesktopAppOO::RenameEditSubclassProc(
     return DefSubclassProc(hwnd, message, wParam, lParam);
 }
 
+inline bool SnowDesktopAppOO::IsSameWindowTree(HWND parent, HWND window)
+{
+    return parent != nullptr && window != nullptr && (window == parent || IsChild(parent, window));
+}
+
+inline bool SnowDesktopAppOO::IsKnownDesktopSurfaceWindow(HWND window) const
+{
+    if (!window) return false;
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root) root = window;
+
+    if (IsSameWindowTree(hwnd_, window) || window == hwnd_ || root == hwnd_) return true;
+    if (hintHwnd_ && (IsSameWindowTree(hintHwnd_, window) || root == hintHwnd_)) return true;
+    if (controlHwnd_ && (IsSameWindowTree(controlHwnd_, window) || root == controlHwnd_)) return true;
+
+    auto isSurface = [&](HWND candidate) {
+        return candidate && (window == candidate || root == candidate || IsChild(candidate, window));
+    };
+    if (isSurface(desktopWindows_.host) || isSurface(desktopWindows_.progman) ||
+        isSurface(desktopWindows_.defView) || isSurface(desktopWindows_.listView))
+        return true;
+
+    HWND desktop = GetDesktopWindow();
+    return window == desktop || root == desktop;
+}
+
+inline bool SnowDesktopAppOO::IsExternalDropWindowAt(POINT clientPoint) const
+{
+    POINT screenPoint = clientPoint;
+    ClientToScreen(hwnd_, &screenPoint);
+    HWND hit = WindowFromPoint(screenPoint);
+    if (!hit || IsKnownDesktopSurfaceWindow(hit)) return false;
+    HWND root = GetAncestor(hit, GA_ROOT);
+    if (!root) root = hit;
+    return IsWindowVisible(root) != FALSE;
+}
+
+inline DWORD SnowDesktopAppOO::ChooseDropEffect(DWORD keyState, DWORD allowed) const
+{
+    if ((keyState & MK_ALT)) return DROPEFFECT_LINK;
+    if ((keyState & MK_SHIFT)) return DROPEFFECT_MOVE;
+    if ((keyState & MK_CONTROL)) return DROPEFFECT_COPY;
+
+    DWORD available = allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
+    if (!available) available = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+    if (available & DROPEFFECT_MOVE) return DROPEFFECT_MOVE;
+    if (available & DROPEFFECT_COPY) return DROPEFFECT_COPY;
+    return DROPEFFECT_LINK;
+}
+
+// ── OLE drag-drop ───────────────────────────────────────────
+
+inline POINT SnowDesktopAppOO::ScreenPointToClient(POINTL screen) const
+{
+    POINT pt{ screen.x, screen.y };
+    if (hwnd_ && IsWindow(hwnd_))
+        ScreenToClient(hwnd_, &pt);
+    return pt;
+}
+
+inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::QueryInterface(REFIID riid, void** object)
+{
+    if (!object) return E_POINTER;
+    if (riid == IID_IUnknown || riid == IID_IDropTarget)
+    {
+        *object = static_cast<IDropTarget*>(this);
+        AddRef();
+        return S_OK;
+    }
+    if (riid == IID_IDropSource)
+    {
+        *object = static_cast<IDropSource*>(this);
+        AddRef();
+        return S_OK;
+    }
+    *object = nullptr;
+    return E_NOINTERFACE;
+}
+
+inline ULONG STDMETHODCALLTYPE SnowDesktopAppOO::AddRef()
+{
+    return static_cast<ULONG>(InterlockedIncrement(&refCount_));
+}
+
+inline ULONG STDMETHODCALLTYPE SnowDesktopAppOO::Release()
+{
+    return static_cast<ULONG>(InterlockedDecrement(&refCount_));
+}
+
+inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragEnter(
+    IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
+{
+    if (!effect) return E_POINTER;
+
+    if (selfDragActive_)
+    {
+        selfDragReturned_ = true;
+        draggingItems_ = true;
+        POINT client = ScreenPointToClient(point);
+        dragCurrentPoint_ = client;
+        std::wstring hint = MakeDragHint(client);
+        ShowDragHintWindowScreen({ point.x, point.y }, hint);
+        *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return S_OK;
+    }
+
+    externalDragActive_ = true;
+    externalDragPoint_ = ScreenPointToClient(point);
+    cachedDropCell_ = CellFromPoint(externalDragPoint_);
+    hasCachedDropCell_ = true;
+    if (dataObject)
+    {
+        auto paths = GetDropPaths(dataObject);
+        externalDropFileCount_ = static_cast<int>(paths.size());
+    }
+    else
+    {
+        externalDropFileCount_ = 1;
+    }
+    std::wstring hint = MakeExternalDragHint(externalDragPoint_);
+    ShowDragHintWindowScreen({ point.x, point.y }, hint);
+    *effect = ChooseDropEffect(keyState, *effect);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return S_OK;
+}
+
+inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragOver(
+    DWORD keyState, POINTL point, DWORD* effect)
+{
+    if (!effect) return E_POINTER;
+
+    if (selfDragActive_)
+    {
+        POINT client = ScreenPointToClient(point);
+        dragCurrentPoint_ = client;
+        std::wstring hint = MakeDragHint(client);
+        ShowDragHintWindowScreen({ point.x, point.y }, hint);
+        *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return S_OK;
+    }
+
+    externalDragActive_ = true;
+    externalDragPoint_ = ScreenPointToClient(point);
+    cachedDropCell_ = CellFromPoint(externalDragPoint_);
+    hasCachedDropCell_ = true;
+    std::wstring hint = MakeExternalDragHint(externalDragPoint_);
+    ShowDragHintWindowScreen({ point.x, point.y }, hint);
+    *effect = ChooseDropEffect(keyState, *effect);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return S_OK;
+}
+
+inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragLeave()
+{
+    if (selfDragActive_)
+    {
+        draggingItems_ = false;
+        HideDragHintWindow();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return S_OK;
+    }
+    externalDragActive_ = false;
+    externalDropFileCount_ = 0;
+    hasCachedDropCell_ = false;
+    HideDragHintWindow();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return S_OK;
+}
+
+inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::Drop(
+    IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
+{
+    if (!effect) return E_POINTER;
+    HideDragHintWindow();
+
+    POINT clientPoint = ScreenPointToClient(point);
+
+    if (selfDragActive_)
+    {
+        selfDragActive_ = false;
+        selfDragReturned_ = true;
+        draggingItems_ = false;
+
+        // Check icon hand-off
+        int hitUnderCursor = HitTestItem(clientPoint);
+        if (hitUnderCursor >= 0 && !items_[hitUnderCursor].selected)
+        {
+            RECT iconRect = GetItemIconRect(items_[hitUnderCursor].bounds);
+            if (PtInRect(&iconRect, clientPoint))
+            {
+                ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+                if (dataObj)
+                {
+                    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hitUnderCursor].childPidl.get());
+                    ComPtr<IDropTarget> dropTarget;
+                    if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
+                        reinterpret_cast<void**>(dropTarget.GetAddressOf()))) && dropTarget)
+                    {
+                        POINTL screenPtL{ point.x, point.y };
+                        DWORD localEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+                        dropTarget->DragEnter(dataObj.Get(), keyState, screenPtL, &localEffect);
+                        dropTarget->DragOver(keyState, screenPtL, &localEffect);
+                        dropTarget->Drop(dataObj.Get(), keyState, screenPtL, &localEffect);
+                    }
+                }
+                ClearSelection();
+                ReloadItems();
+                *effect = DROPEFFECT_MOVE;
+                return S_OK;
+            }
+        }
+
+        MoveSelectedItemsToCell(FindBestDropCell(CellFromPoint(GetDragTargetPoint(clientPoint))));
+        SaveLayoutSlots();
+        ClearSelection();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        *effect = DROPEFFECT_MOVE;
+        return S_OK;
+    }
+
+    // External drop
+    externalDragActive_ = false;
+    externalDropFileCount_ = 0;
+
+    GridCell dropTargetCell = hasCachedDropCell_
+        ? cachedDropCell_ : CellFromPoint(clientPoint);
+    hasCachedDropCell_ = false;
+
+    // Extract source file names for pending placement (survives async file ops)
+    std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
+
+    // Check icon hand-off for external data
+    int hitUnderCursor = HitTestItem(clientPoint);
+    if (hitUnderCursor >= 0 && dataObject)
+    {
+        RECT iconRect = GetItemIconRect(items_[hitUnderCursor].bounds);
+        if (PtInRect(&iconRect, clientPoint))
+        {
+            std::unordered_set<std::wstring> existingKeys;
+            for (const auto& item : items_)
+                if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
+
+            PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hitUnderCursor].childPidl.get());
+            ComPtr<IDropTarget> dropTarget;
+            if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
+                reinterpret_cast<void**>(dropTarget.GetAddressOf()))) && dropTarget)
+            {
+                DWORD localEffect = *effect;
+                POINTL screenPtL{ point.x, point.y };
+                dropTarget->DragEnter(dataObject, keyState, screenPtL, &localEffect);
+                dropTarget->DragOver(keyState, screenPtL, &localEffect);
+                HRESULT hr = dropTarget->Drop(dataObject, keyState, screenPtL, &localEffect);
+                *effect = localEffect;
+                if (!dropPaths.empty())
+                {
+                    pendingPlaceNames_ = dropPaths;
+                    pendingPlaceCell_ = dropTargetCell;
+                    hasPendingPlace_ = true;
+                    pendingPlaceTick_ = GetTickCount();
+                }
+                ReloadItems(false);
+                PlaceNewItemsAtDropPoint(existingKeys, dropTargetCell);
+                return hr;
+            }
+        }
+    }
+
+    // Check self-drag-out keys for internal move recognition
+    if (!selfDragOutKeys_.empty() && dataObject)
+    {
+        std::vector<std::wstring> paths = GetDropPaths(dataObject);
+        if (!paths.empty())
+        {
+            std::unordered_set<std::wstring> pathSet(paths.begin(), paths.end());
+            bool allCached = true;
+            for (const auto& k : selfDragOutKeys_)
+            {
+                size_t idx = FindItemIndexByKey(k);
+                if (idx == static_cast<size_t>(-1)) { allCached = false; break; }
+                if (!pathSet.contains(items_[idx].parsingName)) { allCached = false; break; }
+            }
+            if (allCached)
+            {
+                MoveSelectedItemsToCell(FindBestDropCell(CellFromPoint(clientPoint)));
+                LayoutItems();
+                SaveLayoutSlots();
+                selfDragOutKeys_.clear();
+                *effect = DROPEFFECT_MOVE;
+                ClearSelection();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return S_OK;
+            }
+        }
+        selfDragOutKeys_.clear();
+    }
+
+    // Default: delegate to shell desktop drop target with appropriate keyState
+    if (dataObject)
+    {
+        std::unordered_set<std::wstring> existingKeys;
+        for (const auto& item : items_)
+            if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
+
+        ComPtr<IDropTarget> desktopTarget;
+        if (SUCCEEDED(desktopFolder_->CreateViewObject(hwnd_, IID_IDropTarget,
+            reinterpret_cast<void**>(desktopTarget.GetAddressOf()))) && desktopTarget)
+        {
+            POINTL screenPtL{ point.x, point.y };
+
+            DWORD adjustedKeyState = keyState;
+            if (*effect == DROPEFFECT_MOVE)
+                adjustedKeyState = (keyState & ~MK_CONTROL & ~MK_ALT) | MK_SHIFT;
+            else if (*effect == DROPEFFECT_COPY)
+                adjustedKeyState = (keyState & ~MK_SHIFT & ~MK_ALT) | MK_CONTROL;
+            else if (*effect == DROPEFFECT_LINK)
+                adjustedKeyState = (keyState & ~MK_SHIFT & ~MK_CONTROL) | MK_ALT;
+
+            DWORD localEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+            desktopTarget->DragEnter(dataObject, adjustedKeyState, screenPtL, &localEffect);
+            desktopTarget->DragOver(adjustedKeyState, screenPtL, &localEffect);
+            HRESULT hr = desktopTarget->Drop(dataObject, adjustedKeyState, screenPtL, &localEffect);
+            *effect = localEffect;
+
+            if (!dropPaths.empty())
+            {
+                pendingPlaceNames_ = dropPaths;
+                pendingPlaceCell_ = dropTargetCell;
+                hasPendingPlace_ = true;
+                pendingPlaceTick_ = GetTickCount();
+            }
+            ReloadItems(false);
+            PlaceNewItemsAtDropPoint(existingKeys, dropTargetCell);
+            return hr;
+        }
+    }
+
+    *effect = DROPEFFECT_NONE;
+    return S_OK;
+}
+
+inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::QueryContinueDrag(BOOL escapePressed, DWORD keyState)
+{
+    if (escapePressed) return DRAGDROP_S_CANCEL;
+    if ((keyState & (MK_LBUTTON | MK_RBUTTON)) == 0) return DRAGDROP_S_DROP;
+    return S_OK;
+}
+
+inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::GiveFeedback(DWORD)
+{
+    return DRAGDROP_S_USEDEFAULTCURSORS;
+}
+
+inline std::vector<std::wstring> SnowDesktopAppOO::GetDropPaths(IDataObject* dataObject)
+{
+    std::vector<std::wstring> paths;
+    FORMATETC fmt{};
+    fmt.cfFormat = CF_HDROP;
+    fmt.dwAspect = DVASPECT_CONTENT;
+    fmt.lindex = -1;
+    fmt.tymed = TYMED_HGLOBAL;
+    STGMEDIUM med{};
+    if (SUCCEEDED(dataObject->GetData(&fmt, &med)))
+    {
+        HDROP hDrop = static_cast<HDROP>(med.hGlobal);
+        UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+        for (UINT i = 0; i < count; ++i)
+        {
+            wchar_t path[MAX_PATH]{};
+            if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
+                paths.push_back(path);
+        }
+        ReleaseStgMedium(&med);
+    }
+    return paths;
+}
+
+inline std::wstring SnowDesktopAppOO::FileNameFromPath(const std::wstring& path)
+{
+    size_t pos = path.find_last_of(L"\\/");
+    if (pos == std::wstring::npos) return path;
+    return path.substr(pos + 1);
+}
+
+inline bool SnowDesktopAppOO::MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName)
+{
+    static const std::wstring kShortcutSuffix = L" - 快捷方式";
+
+    auto stripLnk = [](const std::wstring& s) -> std::wstring {
+        if (s.size() > 4 && _wcsicmp(s.c_str() + s.size() - 4, L".lnk") == 0)
+            return s.substr(0, s.size() - 4);
+        return s;
+    };
+    auto stripExt = [](const std::wstring& s) -> std::wstring {
+        size_t dot = s.find_last_of(L'.');
+        if (dot == std::wstring::npos || dot == 0) return s;
+        return s.substr(0, dot);
+    };
+    auto stripShortcut = [&](const std::wstring& s) -> std::wstring {
+        if (s.size() > kShortcutSuffix.size() &&
+            s.compare(s.size() - kShortcutSuffix.size(), kShortcutSuffix.size(), kShortcutSuffix) == 0)
+            return s.substr(0, s.size() - kShortcutSuffix.size());
+        return s;
+    };
+    auto eqi = [](const std::wstring& a, const std::wstring& b) -> bool {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (towlower(a[i]) != towlower(b[i])) return false;
+        return true;
+    };
+
+    if (eqi(itemName, srcFileName)) return true;
+
+    std::wstring nameNoLnk = stripLnk(itemName);
+    std::wstring srcNoExt = stripExt(srcFileName);
+
+    if (eqi(nameNoLnk, srcFileName)) return true;
+    if (eqi(itemName, srcNoExt)) return true;
+    if (eqi(nameNoLnk, srcNoExt)) return true;
+
+    std::wstring nameNoShortcut = stripShortcut(itemName);
+    std::wstring nameNoLnkNoShortcut = stripShortcut(nameNoLnk);
+
+    if (eqi(nameNoShortcut, srcFileName)) return true;
+    if (eqi(nameNoShortcut, srcNoExt)) return true;
+    if (eqi(nameNoLnkNoShortcut, srcFileName)) return true;
+    if (eqi(nameNoLnkNoShortcut, srcNoExt)) return true;
+
+    return false;
+}
+
 // ── Drag hint ────────────────────────────────────────────────
 
 inline bool SnowDesktopAppOO::EnsureDragHintWindow()
@@ -527,8 +1043,130 @@ inline void SnowDesktopAppOO::ShowDragHintWindow(POINT clientPoint, const std::w
     ReleaseDC(nullptr, screenDc);
 }
 
+inline void SnowDesktopAppOO::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text)
+{
+    if (text.empty() || !EnsureDragHintWindow())
+    {
+        HideDragHintWindow();
+        return;
+    }
+
+    HDC screenDc = GetDC(nullptr);
+    HFONT font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HGDIOBJ oldFont = SelectObject(screenDc, font);
+    SIZE textSize{};
+    GetTextExtentPoint32W(screenDc, text.c_str(), static_cast<int>(text.size()), &textSize);
+    SelectObject(screenDc, oldFont);
+
+    int width = std::clamp(static_cast<int>(textSize.cx + 24), 130, 520);
+    int height = std::clamp(static_cast<int>(textSize.cy + 14), 32, 46);
+    POINT windowPos{ screenPoint.x + 48, screenPoint.y + 22 };
+
+    HMONITOR monitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (monitor && GetMonitorInfoW(monitor, &monitorInfo))
+    {
+        windowPos.x = std::clamp<LONG>(windowPos.x, monitorInfo.rcWork.left + 8,
+            monitorInfo.rcWork.right - static_cast<LONG>(width) - 8);
+        windowPos.y = std::clamp<LONG>(windowPos.y, monitorInfo.rcWork.top + 8,
+            monitorInfo.rcWork.bottom - static_cast<LONG>(height) - 8);
+    }
+
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+    bitmapInfo.bmiHeader.biWidth = width;
+    bitmapInfo.bmiHeader.biHeight = -height;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screenDc, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!bitmap || !bits)
+    {
+        DeleteObject(font);
+        ReleaseDC(nullptr, screenDc);
+        HideDragHintWindow();
+        return;
+    }
+
+    auto* pixels = static_cast<std::uint32_t*>(bits);
+    auto argb = [](std::uint8_t a, std::uint8_t r, std::uint8_t g, std::uint8_t b) -> std::uint32_t {
+        return (static_cast<std::uint32_t>(a) << 24) |
+            (static_cast<std::uint32_t>(r) << 16) |
+            (static_cast<std::uint32_t>(g) << 8) |
+            static_cast<std::uint32_t>(b);
+    };
+
+    const std::uint32_t bg = argb(255, 255, 255, 255);
+    const std::uint32_t bd = argb(255, 205, 211, 220);
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+            pixels[(y * width) + x] = (x == 0 || y == 0 || x == width - 1 || y == height - 1) ? bd : bg;
+
+    HDC memoryDc = CreateCompatibleDC(screenDc);
+    HGDIOBJ oldBmp = SelectObject(memoryDc, bitmap);
+    HGDIOBJ oldMFont = SelectObject(memoryDc, font);
+    SetBkMode(memoryDc, TRANSPARENT);
+    SetTextColor(memoryDc, RGB(25, 32, 42));
+    RECT textRect{ 10, 0, width - 10, height };
+    DrawTextW(memoryDc, text.c_str(), -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+    for (int i = 0; i < width * height; ++i)
+    {
+        std::uint32_t pixel = pixels[i];
+        std::uint8_t r = static_cast<std::uint8_t>((pixel >> 16) & 0xff);
+        std::uint8_t g = static_cast<std::uint8_t>((pixel >> 8) & 0xff);
+        std::uint8_t b = static_cast<std::uint8_t>(pixel & 0xff);
+        pixels[i] = argb(255, r, g, b);
+    }
+
+    POINT sourcePoint{ 0, 0 };
+    SIZE windowSize{ width, height };
+    BLENDFUNCTION blend{};
+    blend.BlendOp = AC_SRC_OVER;
+    blend.SourceConstantAlpha = 255;
+    blend.AlphaFormat = AC_SRC_ALPHA;
+
+    UpdateLayeredWindow(hintHwnd_, screenDc, &windowPos, &windowSize, memoryDc, &sourcePoint, 0, &blend, ULW_ALPHA);
+    ShowWindow(hintHwnd_, SW_SHOWNOACTIVATE);
+
+    SelectObject(memoryDc, oldMFont);
+    SelectObject(memoryDc, oldBmp);
+    DeleteDC(memoryDc);
+    DeleteObject(bitmap);
+    DeleteObject(font);
+    ReleaseDC(nullptr, screenDc);
+}
+
+inline std::wstring SnowDesktopAppOO::MakeExternalDragHint(POINT point) const
+{
+    bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool shiftDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+
+    int hit = HitTestItem(point);
+    if (hit >= 0)
+    {
+        RECT iconRect = GetItemIconRect(items_[hit].bounds);
+        if (PtInRect(&iconRect, point))
+            return L"释放：拖入「" + items_[hit].name + L"」";
+    }
+
+    if (altDown) return L"释放：创建快捷方式";
+    if (shiftDown) return L"释放：移动到桌面";
+    if (ctrlDown) return L"释放：复制到桌面";
+    return L"释放：放置到桌面";
+}
+
 inline std::wstring SnowDesktopAppOO::MakeDragHint(POINT point) const
 {
+    bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+
     int hit = HitTestItem(point);
     if (hit >= 0 && !items_[hit].selected)
     {
@@ -541,6 +1179,8 @@ inline std::wstring SnowDesktopAppOO::MakeDragHint(POINT point) const
     if (BuildSelectedMove(bestCell).empty())
         return L"释放：当前位置已有图标";
 
+    if (altDown) return L"释放：创建快捷方式到此空位";
+    if (ctrlDown) return L"释放：复制到此空位";
     return L"释放：移动到此空位";
 }
 

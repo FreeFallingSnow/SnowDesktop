@@ -208,14 +208,11 @@ extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCel
 
 inline void SnowDesktopAppOO::RenderFrame(ID2D1DeviceContext* ctx)
 {
-    GridCell dropTargetCell;
-    if (draggingItems_)
-        dropTargetCell = FindBestDropCell(CellFromPoint(GetDragTargetPoint(dragCurrentPoint_)));
 
     for (auto& item : items_)
     {
         if (IsRectEmptyRect(item.bounds)) continue;
-        if (draggingItems_ && item.selected) continue;
+        if (draggingItems_ && item.selected && !dragCopyMode_ && !dragLinkMode_) continue;
         RECT bounds = item.bounds;
 
         const bool hovered = PtInRect(&bounds, lastMousePoint_) != FALSE;
@@ -283,32 +280,69 @@ inline void SnowDesktopAppOO::RenderFrame(ID2D1DeviceContext* ctx)
     }
 
     // Draw drag target indicator or hand-off highlight
-    if (draggingItems_)
+    if (draggingItems_ || externalDragActive_)
     {
+        POINT dragPoint = draggingItems_ ? dragCurrentPoint_ : externalDragPoint_;
         bool showHandoff = false;
-        int hitUnderCursor = HitTestItem(dragCurrentPoint_);
-        if (hitUnderCursor >= 0 && !items_[hitUnderCursor].selected)
+        int hitUnderCursor = HitTestItem(dragPoint);
+        if (hitUnderCursor >= 0)
         {
-            RECT iconRect = GetItemIconRect(items_[hitUnderCursor].bounds);
-            if (PtInRect(&iconRect, dragCurrentPoint_))
+            if (draggingItems_ && items_[hitUnderCursor].selected)
             {
-                showHandoff = true;
-                DrawD2DRoundedRectangle(ctx, items_[hitUnderCursor].bounds, 6.0f,
-                    D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
-                    D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
+                // skip
+            }
+            else
+            {
+                RECT iconRect = GetItemIconRect(items_[hitUnderCursor].bounds);
+                if (PtInRect(&iconRect, dragPoint))
+                {
+                    showHandoff = true;
+                    DrawD2DRoundedRectangle(ctx, items_[hitUnderCursor].bounds, 6.0f,
+                        D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
+                        D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
+                }
             }
         }
-        if (!showHandoff && !dropTargetCell.pageId.empty())
+        if (!showHandoff)
         {
-            std::vector<PendingGridMove> moves = BuildSelectedMove(dropTargetCell);
-            if (!moves.empty())
+            GridCell targetCell = draggingItems_
+                ? FindBestDropCell(CellFromPoint(GetDragTargetPoint(dragPoint)))
+                : CellFromPoint(dragPoint);
+            if (!targetCell.pageId.empty())
             {
-                for (const auto& move : moves)
+                if (draggingItems_)
                 {
-                    RECT targetRect = GetGridRect(gridPages_, move.cell, items_[move.index].gridSpan);
-                    DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
-                        D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
-                        D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
+                    std::vector<PendingGridMove> moves = BuildSelectedMove(targetCell);
+                    if (!moves.empty())
+                    {
+                        for (const auto& move : moves)
+                        {
+                            RECT targetRect = GetGridRect(gridPages_, move.cell, items_[move.index].gridSpan);
+                            DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
+                                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
+                                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
+                        }
+                    }
+                }
+                else
+                {
+                    extern inline RECT GetGridRect(const std::vector<GridPage>&, const GridCell&, GridSpan);
+                    extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
+                    int previewCount = std::max(1, static_cast<int>(externalDropFileCount_));
+                    const GridPage* targetPage = FindGridPage(gridPages_, targetCell.pageId);
+                    int cols = targetPage ? targetPage->columns : 1;
+                    int row = targetCell.row;
+                    int col = targetCell.column;
+                    for (int i = 0; i < previewCount; ++i)
+                    {
+                        GridCell previewCell{ targetCell.pageId, col, row };
+                        RECT targetRect = GetGridRect(gridPages_, previewCell, GridSpan{1, 1});
+                        DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
+                            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
+                            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
+                        ++col;
+                        if (col >= cols) { col = 0; ++row; }
+                    }
                 }
             }
         }
