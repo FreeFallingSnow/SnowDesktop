@@ -408,4 +408,100 @@ inline void SnowDesktopAppOO::RenderFrame(ID2D1DeviceContext* ctx)
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
             D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
     }
+
+        DrawPageNavButtons(ctx);
 }
+
+inline void SnowDesktopAppOO::GetNavButtonRects(RECT& outPrev, RECT& outNext) const
+{
+    outPrev = {};
+    outNext = {};
+    if (gridPages_.empty()) return;
+
+    const GridPage* targetPage = nullptr;
+    for (const auto& page : gridPages_)
+    {
+        if (!lastMonitorPageId_.empty() && page.id == lastMonitorPageId_)
+        {
+            targetPage = &page;
+            break;
+        }
+    }
+    if (!targetPage) targetPage = &gridPages_.back();
+
+    constexpr LONG buttonW = 40, buttonH = 72, padX = 4;
+    const LONG cy = (targetPage->workArea.top + targetPage->workArea.bottom) / 2;
+    const LONG halfH = buttonH / 2;
+
+    outPrev = MakeRect(
+        targetPage->workArea.left + padX, cy - halfH,
+        targetPage->workArea.left + padX + buttonW, cy + halfH);
+    outNext = MakeRect(
+        targetPage->workArea.right - padX - buttonW, cy - halfH,
+        targetPage->workArea.right - padX, cy + halfH);
+}
+
+inline void SnowDesktopAppOO::DrawPageNavButtons(ID2D1DeviceContext* ctx)
+{
+    if (MaxPageOffset() <= 0 && pageOffset_ <= 0) return;
+    if (gridPages_.empty()) return;
+
+    const bool hasPrev = pageOffset_ > 0;
+    const bool hasNext = pageOffset_ < MaxPageOffset();
+    if (!hasPrev && !hasNext) return;
+
+    RECT prevRect, nextRect;
+    GetNavButtonRects(prevRect, nextRect);
+
+    auto drawArrow = [&](const RECT& rect, const std::wstring& arrow, bool visible, bool hovered) {
+        if (!visible) return;
+
+        D2D1_RECT_F d2dRect = D2D1::RectF(
+            static_cast<float>(rect.left), static_cast<float>(rect.top),
+            static_cast<float>(rect.right), static_cast<float>(rect.bottom));
+
+        float bgAlpha = hovered ? 1.0f : 0.85f;
+        ComPtr<ID2D1SolidColorBrush> bg;
+        ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, bgAlpha), &bg);
+        if (bg) ctx->FillRoundedRectangle(
+            D2D1::RoundedRect(d2dRect, 8.0f, 8.0f), bg.Get());
+
+        ComPtr<ID2D1SolidColorBrush> borderBrush;
+        ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f), &borderBrush);
+        if (borderBrush) ctx->DrawRoundedRectangle(
+            D2D1::RoundedRect(d2dRect, 8.0f, 8.0f), borderBrush.Get(), 1.0f);
+
+        float textAlpha = hovered ? 1.0f : 0.65f;
+        ComPtr<ID2D1SolidColorBrush> textBrush;
+        ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, textAlpha), &textBrush);
+        if (!textBrush || !dwriteFactory_) return;
+
+        float w = static_cast<float>(rect.right - rect.left);
+        float h = static_cast<float>(rect.bottom - rect.top);
+
+        ComPtr<IDWriteTextFormat> arrowFmt;
+        dwriteFactory_->CreateTextFormat(L"Segoe UI Symbol", nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 24.0f, L"", &arrowFmt);
+        if (!arrowFmt) return;
+        arrowFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        arrowFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        ComPtr<IDWriteTextLayout> layout;
+        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(arrow.c_str(),
+            static_cast<UINT32>(arrow.size()), arrowFmt.Get(), w, h, &layout)) && layout)
+        {
+            ctx->DrawTextLayout(
+                D2D1::Point2F(static_cast<float>(rect.left), static_cast<float>(rect.top)),
+                layout.Get(), textBrush.Get());
+        }
+    };
+
+    bool dragging = draggingItems_;
+    bool hoverPrev = (navHoverSide_ == -1);
+    bool hoverNext = (navHoverSide_ == 1);
+
+    if (hasPrev) drawArrow(prevRect, L"\u25C0", dragging || hoverPrev, hoverPrev);
+    if (hasNext) drawArrow(nextRect, L"\u25B6", dragging || hoverNext, hoverNext);
+}
+
