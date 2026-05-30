@@ -4,7 +4,11 @@
 
 const std::vector<std::unique_ptr<Slot>>& Container::GetSlots()
 {
-    cachedSlots_ = BuildSlots();
+    if (!slotsValid_)
+    {
+        cachedSlots_ = BuildSlots();
+        slotsValid_ = true;
+    }
     return cachedSlots_;
 }
 

@@ -1,16 +1,14 @@
 #include "desktop.h"
 #include "slot.h"
 #include "item.h"
+#include "widget.h"
+#include "app.h"
 #include "types.h"
 #include "constants.h"
 #include "utils.h"
 #include <algorithm>
-#ifdef SNOWDESKTOP_OO
-#include "widget.h"
-#include "app_oo.h"
-#endif
 
-DesktopGrid::DesktopGrid(std::vector<GridPage>* pages, std::vector<DesktopItem>* items, void* app)
+DesktopGrid::DesktopGrid(std::vector<GridPage>* pages, std::vector<DesktopItem>* items, DesktopApp* app)
     : pages_(pages), items_(items), app_(app)
 {
     if (pages_ && !pages_->empty())
@@ -29,11 +27,11 @@ DesktopGrid::DesktopGrid(std::vector<GridPage>* pages, std::vector<DesktopItem>*
 std::wstring DesktopGrid::GetTitle() const { return L"Desktop"; }
 RECT DesktopGrid::GetBounds() const { return bounds_; }
 
-bool DesktopGrid::EnsureSlotCache()
+std::vector<std::unique_ptr<Slot>> DesktopGrid::BuildSlots()
 {
-    if (slotsBuilt_) return false;
-    cachedSlots_.clear();
-    if (!pages_) return true;
+    std::vector<std::unique_ptr<Slot>> slots;
+    if (!pages_) return slots;
+
     for (const auto& page : *pages_)
     {
         for (int row = 0; row < page.rows; ++row)
@@ -46,26 +44,13 @@ bool DesktopGrid::EnsureSlotCache()
                     page.bounds.left + page.marginX + col * (page.cellWidth + page.gapX) + page.cellWidth,
                     page.bounds.top  + page.marginY + row * (page.cellHeight + page.gapY) + page.cellHeight
                 };
-                cachedSlots_.push_back(std::make_unique<Slot>(this, cellBounds, cachedSlots_.size()));
+                slots.push_back(std::make_unique<Slot>(this, cellBounds, slots.size()));
             }
         }
     }
-    slotsBuilt_ = true;
-    return true;
+    return slots;
 }
 
-std::vector<std::unique_ptr<Slot>> DesktopGrid::BuildSlots()
-{
-    slotsBuilt_ = false;
-    EnsureSlotCache();
-    // Return empty — the cached slots are used via GetSlots().BuildSlots() contract.
-    // Callers use GetSlots() which returns cachedSlots_ directly.
-    return {};
-}
-
-// O(1) hit test — uses page grid math for Empty/Sort, but delegates
-// Handoff detection to the caller (who has access to GetItemIconRect).
-// Returns the slot for the cell under the point.
 HitRegion DesktopGrid::HitTestAtPoint(POINT pt, Slot*& outSlot)
 {
     outSlot = nullptr;
@@ -90,7 +75,6 @@ HitRegion DesktopGrid::HitTestAtPoint(POINT pt, Slot*& outSlot)
     int col = axisIndex(*page, pt.x, true);
     int row = axisIndex(*page, pt.y, false);
 
-    // Find the slot index
     size_t idx = 0;
     for (const auto& p : *pages_)
     {
@@ -98,11 +82,10 @@ HitRegion DesktopGrid::HitTestAtPoint(POINT pt, Slot*& outSlot)
         idx += p.columns * p.rows;
     }
 
-    EnsureSlotCache();
-    if (idx >= cachedSlots_.size()) return HitRegion::Empty;
-    outSlot = cachedSlots_[idx].get();
+    auto& slots = GetSlots();
+    if (idx >= slots.size()) return HitRegion::Empty;
+    outSlot = slots[idx].get();
 
-    // Find occupied item
     DesktopItem* occupiedBy = nullptr;
     for (auto& item : *items_)
     {
@@ -116,48 +99,30 @@ HitRegion DesktopGrid::HitTestAtPoint(POINT pt, Slot*& outSlot)
     }
 
     if (!occupiedBy) return HitRegion::Empty;
-
-    // Handoff decision made by app via HitTestItem + GetItemIconRect
-    // We just return SortBefore; the app overrides with Handoff if needed
     return HitRegion::SortBefore;
 }
 
-#ifdef SNOWDESKTOP_OO
-#include "widget.h"
-#include "app_oo.h"
-
 void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
     Slot* targetSlot, HitRegion region, int mods)
 {
-    auto* app = static_cast<SnowDesktopAppOO*>(app_);
-    if (!app) return;
+    if (!app_) return;
 
-    // ── External files ──────────────────────────────────────────
     for (auto* src : sourceItems)
         if (dynamic_cast<ExternalFileItem*>(src)) return;
 
-    // ── Widget drag ─────────────────────────────────────────────
     for (auto* src : sourceItems)
         if (dynamic_cast<Widget*>(src)) return;
 
-    // ── DesktopIcon self-drag ───────────────────────────────────
-    POINT adjusted = app->GetDragTargetPoint(app->dragCurrentPoint_);
-    GridCell tc = app->FindBestDropCell(app->CellFromPoint(adjusted));
+    POINT adjusted = app_->GetDragTargetPoint(app_->dragCurrentPoint_);
+    GridCell tc = app_->FindBestDropCell(app_->CellFromPoint(adjusted));
 
     if (mods & MK_ALT)
-        app->CreateShortcutSelectedItemsToCell(tc);
+        app_->CreateShortcutSelectedItemsToCell(tc);
     else if (mods & MK_CONTROL)
-        app->CopySelectedItemsToCell(tc);
+        app_->CopySelectedItemsToCell(tc);
     else
-        app->MoveSelectedItemsToCell(tc);
+        app_->MoveSelectedItemsToCell(tc);
 }
-#else
-void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-    Slot* targetSlot, HitRegion region, int mods)
-{
-    (void)sourceItems; (void)origin; (void)targetSlot; (void)region; (void)mods;
-}
-#endif
 
 void DesktopGrid::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {

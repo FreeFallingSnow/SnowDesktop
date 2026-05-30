@@ -32,11 +32,11 @@
 
 using Microsoft::WRL::ComPtr;
 
-class SnowDesktopAppOO : public IDropTarget, public IDropSource
+class DesktopApp : public IDropTarget, public IDropSource
 {
 public:
-    SnowDesktopAppOO() = default;
-    ~SnowDesktopAppOO();
+    DesktopApp() = default;
+    ~DesktopApp();
 
     // IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override;
@@ -69,6 +69,7 @@ public:
     std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
     const std::vector<std::unique_ptr<Item>>& GetItemsOO() const { return items_oo_; }
     std::vector<std::unique_ptr<Item>>& GetItemsOO() { return items_oo_; }
+    DesktopGrid* GetDesktopGrid() { return static_cast<DesktopGrid*>(containers_.empty() ? nullptr : containers_[0].get()); }
 
 private:
     // ── Window ──────────────────────────────────────────────
@@ -102,6 +103,7 @@ private:
 
     // ── Interaction ─────────────────────────────────────────
     int HitTestItem(POINT pt) const;
+    DesktopIcon* HitTestIcon(POINT pt) const;
     void OnMouseMove(WPARAM wp, LPARAM lp);
     void OnLeftButtonDown(WPARAM wp, LPARAM lp);
     void OnLeftButtonUp(WPARAM wp, LPARAM lp);
@@ -258,7 +260,7 @@ private:
     POINT lastMousePoint_{};
     bool mouseDown_ = false;
     POINT mouseDownPoint_{};
-    int mouseDownHit_ = -1;
+    DesktopIcon* mouseDownHit_ = nullptr;
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
 
@@ -341,8 +343,8 @@ private:
 };
 
 // ── Inline implementations (split into sub-headers) ─────────
-#include "app_oo_run.h"
-#include "app_oo_gfx.h"
-#include "app_oo_interact.h"
-#include "app_oo_menu.h"
-#include "app_oo_grid.h"
+#include "app_run.h"
+#include "app_gfx.h"
+#include "app_interact.h"
+#include "app_menu.h"
+#include "app_grid.h"

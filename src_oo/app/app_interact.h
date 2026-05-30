@@ -1,31 +1,35 @@
 #pragma once
-// Inline implementations for SnowDesktopAppOO — Interaction & Tray.
-// This file is included by app_oo.h after the class definition.
+// Inline implementations for DesktopApp — Interaction & Tray.
+// This file is included by app.h after the class definition.
 
 // ── Interaction ─────────────────────────────────────────────
 
-inline int SnowDesktopAppOO::HitTestItem(POINT pt) const
+inline int DesktopApp::HitTestItem(POINT pt) const
 {
-    // OO-backed: walk DesktopIcons, return DesktopItem index for backward compat
+    // Backward-compat wrapper: returns items_ index for Shell/COM code
+    DesktopIcon* icon = HitTestIcon(pt);
+    if (!icon) return -1;
+    DesktopItem* di = icon->GetDesktopItem();
+    for (size_t j = 0; j < items_.size(); ++j)
+        if (&items_[j] == di) return static_cast<int>(j);
+    return -1;
+}
+
+inline DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
+{
     for (int i = static_cast<int>(items_oo_.size()) - 1; i >= 0; --i)
     {
         auto* icon = dynamic_cast<DesktopIcon*>(items_oo_[i].get());
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
         if (!di || IsRectEmptyRect(di->bounds)) continue;
-        RECT hitRect = GetItemSelectionRect(di->bounds, di->selected);
-        if (PtInRect(&hitRect, pt))
-        {
-            // Map back to items_ index
-            for (size_t j = 0; j < items_.size(); ++j)
-                if (&items_[j] == di) return static_cast<int>(j);
-            return -1;
-        }
+        RECT selRect = GetItemSelectionRect(di->bounds, di->selected);
+        if (PtInRect(&selRect, pt)) return icon;
     }
-    return -1;
+    return nullptr;
 }
 
-inline void SnowDesktopAppOO::ClearSelection()
+inline void DesktopApp::ClearSelection()
 {
     for (auto& oo : items_oo_)
     {
@@ -34,7 +38,7 @@ inline void SnowDesktopAppOO::ClearSelection()
     }
 }
 
-inline void SnowDesktopAppOO::SelectOnly(int index)
+inline void DesktopApp::SelectOnly(int index)
 {
     ClearSelection();
     if (index >= 0 && static_cast<size_t>(index) < items_.size())
@@ -44,13 +48,13 @@ inline void SnowDesktopAppOO::SelectOnly(int index)
     }
 }
 
-inline void SnowDesktopAppOO::ToggleSelection(int index)
+inline void DesktopApp::ToggleSelection(int index)
 {
     if (index >= 0 && static_cast<size_t>(index) < items_.size())
         items_[index].selected = !items_[index].selected;
 }
 
-inline void SnowDesktopAppOO::OnLeftButtonDown(WPARAM wp, LPARAM lp)
+inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
     SetFocus(hwnd_);
@@ -62,20 +66,22 @@ inline void SnowDesktopAppOO::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     if (HandlePageNavClick(pt)) return;
 
-    int hit = HitTestItem(pt);
+    DesktopIcon* hit = HitTestIcon(pt);
     mouseDownHit_ = hit;
 
     bool ctrl = (wp & MK_CONTROL) != 0;
 
-    if (hit >= 0)
+    if (hit)
     {
+        DesktopItem* di = hit->GetDesktopItem();
         if (ctrl)
         {
-            ToggleSelection(hit);
+            hit->SetSelected(!hit->IsSelected());
         }
-        else if (!items_[hit].selected)
+        else if (!di->selected)
         {
-            SelectOnly(hit);
+            ClearSelection();
+            hit->SetSelected(true);
         }
     }
     else if (!ctrl)
@@ -87,13 +93,13 @@ inline void SnowDesktopAppOO::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
+inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 {
     POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
 
-    if (mouseDown_ && mouseDownHit_ >= 0 && items_[mouseDownHit_].selected && !draggingItems_)
+    if (mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected() && !draggingItems_)
     {
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
@@ -123,7 +129,7 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
                 HideDragHintWindow();
                 ReleaseCapture();
                 mouseDown_ = false;
-                mouseDownHit_ = -1;
+                mouseDownHit_ = nullptr;
                 draggingItems_ = false;
                 dragCopyMode_ = false;
                 dragLinkMode_ = false;
@@ -287,7 +293,7 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
         return;
     }
 
-    if (mouseDown_ && mouseDownHit_ < 0)
+    if (mouseDown_ && !mouseDownHit_)
     {
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
@@ -325,7 +331,7 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
+inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 {
     (void)wp; (void)lp;
 
@@ -335,7 +341,7 @@ inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         marqueeActive_ = false;
         navHoverSide_ = 0;
         navAutoFlipDir_ = 0;
-        mouseDownHit_ = -1;
+        mouseDownHit_ = nullptr;
         ReleaseCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -388,7 +394,7 @@ inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             if (ts)
             {
                 std::vector<Item*> src;
-                Container* origin = containers_.empty() ? nullptr : containers_[0].get();
+                Container* origin = containers_.empty() ? nullptr : GetDesktopGrid();
                 for (auto& oo : items_oo_)
                 {
                     auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
@@ -411,11 +417,11 @@ cleanup:
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
     mouseDown_ = false;
-    mouseDownHit_ = -1;
+    mouseDownHit_ = nullptr;
     ReleaseCapture();
 }
 
-inline void SnowDesktopAppOO::OnKeyDown(WPARAM key)
+inline void DesktopApp::OnKeyDown(WPARAM key)
 {
     if (renameEdit_ != nullptr) return;
 
@@ -613,7 +619,7 @@ inline void SnowDesktopAppOO::OnKeyDown(WPARAM key)
     }
 }
 
-inline void SnowDesktopAppOO::InvokeSelectedShellVerb(const char* verb)
+inline void DesktopApp::InvokeSelectedShellVerb(const char* verb)
 {
     std::vector<PCUITEMID_CHILD> pidls;
     for (const auto& item : items_)
@@ -639,7 +645,7 @@ inline void SnowDesktopAppOO::InvokeSelectedShellVerb(const char* verb)
         ReloadItems();
 }
 
-inline void SnowDesktopAppOO::MoveKeyboardSelection(WPARAM arrowKey)
+inline void DesktopApp::MoveKeyboardSelection(WPARAM arrowKey)
 {
     if (items_.empty()) return;
 
@@ -673,7 +679,7 @@ inline void SnowDesktopAppOO::MoveKeyboardSelection(WPARAM arrowKey)
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-inline bool SnowDesktopAppOO::HandlePageNavClick(POINT point)
+inline bool DesktopApp::HandlePageNavClick(POINT point)
 {
     if (gridPages_.empty()) return false;
     const bool hasPrev = pageOffset_ > 0;
@@ -702,7 +708,7 @@ inline bool SnowDesktopAppOO::HandlePageNavClick(POINT point)
     return true;
 }
 
-inline void SnowDesktopAppOO::OnRightButtonUp(LPARAM lp)
+inline void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -726,7 +732,7 @@ inline void SnowDesktopAppOO::OnRightButtonUp(LPARAM lp)
         ShowBackgroundContextMenu(screenPt);
 }
 
-inline void SnowDesktopAppOO::OnTimer(WPARAM timerId)
+inline void DesktopApp::OnTimer(WPARAM timerId)
 {
     if (timerId == kShellChangeTimerId)
     {
@@ -768,7 +774,7 @@ inline void SnowDesktopAppOO::OnTimer(WPARAM timerId)
 
 // ── Rename ──────────────────────────────────────────────────
 
-inline void SnowDesktopAppOO::BeginRenameSelected()
+inline void DesktopApp::BeginRenameSelected()
 {
     if (renameEdit_ != nullptr) return;
 
@@ -816,19 +822,19 @@ inline void SnowDesktopAppOO::BeginRenameSelected()
     SendMessageW(renameEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
-    SetWindowSubclass(renameEdit_, &SnowDesktopAppOO::RenameEditSubclassProc, 1,
+    SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
     SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
     SetFocus(renameEdit_);
 }
 
-inline void SnowDesktopAppOO::CommitRename(bool cancel)
+inline void DesktopApp::CommitRename(bool cancel)
 {
     if (renameEdit_ == nullptr) return;
 
     HWND edit = renameEdit_;
     renameEdit_ = nullptr;
-    RemoveWindowSubclass(edit, &SnowDesktopAppOO::RenameEditSubclassProc, 1);
+    RemoveWindowSubclass(edit, &DesktopApp::RenameEditSubclassProc, 1);
 
     std::wstring newName;
     if (!cancel)
@@ -884,12 +890,12 @@ inline void SnowDesktopAppOO::CommitRename(bool cancel)
     ReloadItems(!keepLayoutSlots);
 }
 
-inline LRESULT CALLBACK SnowDesktopAppOO::RenameEditSubclassProc(
+inline LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam,
     UINT_PTR subclassId, DWORD_PTR refData)
 {
     (void)subclassId;
-    auto* app = reinterpret_cast<SnowDesktopAppOO*>(refData);
+    auto* app = reinterpret_cast<DesktopApp*>(refData);
     if (!app) return DefSubclassProc(hwnd, message, wParam, lParam);
 
     switch (message)
@@ -905,12 +911,12 @@ inline LRESULT CALLBACK SnowDesktopAppOO::RenameEditSubclassProc(
     return DefSubclassProc(hwnd, message, wParam, lParam);
 }
 
-inline bool SnowDesktopAppOO::IsSameWindowTree(HWND parent, HWND window)
+inline bool DesktopApp::IsSameWindowTree(HWND parent, HWND window)
 {
     return parent != nullptr && window != nullptr && (window == parent || IsChild(parent, window));
 }
 
-inline bool SnowDesktopAppOO::IsKnownDesktopSurfaceWindow(HWND window) const
+inline bool DesktopApp::IsKnownDesktopSurfaceWindow(HWND window) const
 {
     if (!window) return false;
     HWND root = GetAncestor(window, GA_ROOT);
@@ -931,7 +937,7 @@ inline bool SnowDesktopAppOO::IsKnownDesktopSurfaceWindow(HWND window) const
     return window == desktop || root == desktop;
 }
 
-inline bool SnowDesktopAppOO::IsExternalDropWindowAt(POINT clientPoint) const
+inline bool DesktopApp::IsExternalDropWindowAt(POINT clientPoint) const
 {
     POINT screenPoint = clientPoint;
     ClientToScreen(hwnd_, &screenPoint);
@@ -942,7 +948,7 @@ inline bool SnowDesktopAppOO::IsExternalDropWindowAt(POINT clientPoint) const
     return IsWindowVisible(root) != FALSE;
 }
 
-inline DWORD SnowDesktopAppOO::ChooseDropEffect(DWORD keyState, DWORD allowed) const
+inline DWORD DesktopApp::ChooseDropEffect(DWORD keyState, DWORD allowed) const
 {
     if ((keyState & MK_ALT)) return DROPEFFECT_LINK;
     if ((keyState & MK_SHIFT)) return DROPEFFECT_MOVE;
@@ -957,7 +963,7 @@ inline DWORD SnowDesktopAppOO::ChooseDropEffect(DWORD keyState, DWORD allowed) c
 
 // ── OLE drag-drop ───────────────────────────────────────────
 
-inline POINT SnowDesktopAppOO::ScreenPointToClient(POINTL screen) const
+inline POINT DesktopApp::ScreenPointToClient(POINTL screen) const
 {
     POINT pt{ screen.x, screen.y };
     if (hwnd_ && IsWindow(hwnd_))
@@ -965,7 +971,7 @@ inline POINT SnowDesktopAppOO::ScreenPointToClient(POINTL screen) const
     return pt;
 }
 
-inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::QueryInterface(REFIID riid, void** object)
+inline HRESULT STDMETHODCALLTYPE DesktopApp::QueryInterface(REFIID riid, void** object)
 {
     if (!object) return E_POINTER;
     if (riid == IID_IUnknown || riid == IID_IDropTarget)
@@ -984,17 +990,17 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::QueryInterface(REFIID riid, v
     return E_NOINTERFACE;
 }
 
-inline ULONG STDMETHODCALLTYPE SnowDesktopAppOO::AddRef()
+inline ULONG STDMETHODCALLTYPE DesktopApp::AddRef()
 {
     return static_cast<ULONG>(InterlockedIncrement(&refCount_));
 }
 
-inline ULONG STDMETHODCALLTYPE SnowDesktopAppOO::Release()
+inline ULONG STDMETHODCALLTYPE DesktopApp::Release()
 {
     return static_cast<ULONG>(InterlockedDecrement(&refCount_));
 }
 
-inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragEnter(
+inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
@@ -1052,7 +1058,7 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragEnter(
     return S_OK;
 }
 
-inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragOver(
+inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
@@ -1078,7 +1084,7 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragOver(
     return S_OK;
 }
 
-inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragLeave()
+inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
 {
     if (selfDragActive_)
     {
@@ -1094,7 +1100,7 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragLeave()
     return S_OK;
 }
 
-inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::Drop(
+inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
@@ -1259,19 +1265,19 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::Drop(
     return S_OK;
 }
 
-inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::QueryContinueDrag(BOOL escapePressed, DWORD keyState)
+inline HRESULT STDMETHODCALLTYPE DesktopApp::QueryContinueDrag(BOOL escapePressed, DWORD keyState)
 {
     if (escapePressed) return DRAGDROP_S_CANCEL;
     if ((keyState & (MK_LBUTTON | MK_RBUTTON)) == 0) return DRAGDROP_S_DROP;
     return S_OK;
 }
 
-inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::GiveFeedback(DWORD)
+inline HRESULT STDMETHODCALLTYPE DesktopApp::GiveFeedback(DWORD)
 {
     return DRAGDROP_S_USEDEFAULTCURSORS;
 }
 
-inline std::vector<std::wstring> SnowDesktopAppOO::GetDropPaths(IDataObject* dataObject)
+inline std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObject)
 {
     std::vector<std::wstring> paths;
     FORMATETC fmt{};
@@ -1295,14 +1301,14 @@ inline std::vector<std::wstring> SnowDesktopAppOO::GetDropPaths(IDataObject* dat
     return paths;
 }
 
-inline std::wstring SnowDesktopAppOO::FileNameFromPath(const std::wstring& path)
+inline std::wstring DesktopApp::FileNameFromPath(const std::wstring& path)
 {
     size_t pos = path.find_last_of(L"\\/");
     if (pos == std::wstring::npos) return path;
     return path.substr(pos + 1);
 }
 
-inline bool SnowDesktopAppOO::MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName)
+inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName)
 {
     static const std::wstring kShortcutSuffix = L" - 快捷方式";
 
@@ -1351,7 +1357,7 @@ inline bool SnowDesktopAppOO::MatchPendingName(const std::wstring& itemName, con
 
 // ── Drag hint ────────────────────────────────────────────────
 
-inline bool SnowDesktopAppOO::EnsureDragHintWindow()
+inline bool DesktopApp::EnsureDragHintWindow()
 {
     if (hintHwnd_) return true;
     hintHwnd_ = CreateWindowExW(
@@ -1361,17 +1367,17 @@ inline bool SnowDesktopAppOO::EnsureDragHintWindow()
     return hintHwnd_ != nullptr;
 }
 
-inline void SnowDesktopAppOO::HideDragHintWindow()
+inline void DesktopApp::HideDragHintWindow()
 {
     if (hintHwnd_) ShowWindow(hintHwnd_, SW_HIDE);
 }
 
-inline void SnowDesktopAppOO::DestroyDragHintWindow()
+inline void DesktopApp::DestroyDragHintWindow()
 {
     if (hintHwnd_) { DestroyWindow(hintHwnd_); hintHwnd_ = nullptr; }
 }
 
-inline void SnowDesktopAppOO::ShowDragHintWindow(POINT clientPoint, const std::wstring& text)
+inline void DesktopApp::ShowDragHintWindow(POINT clientPoint, const std::wstring& text)
 {
     if (text.empty() || !EnsureDragHintWindow())
     {
@@ -1473,7 +1479,7 @@ inline void SnowDesktopAppOO::ShowDragHintWindow(POINT clientPoint, const std::w
     ReleaseDC(nullptr, screenDc);
 }
 
-inline void SnowDesktopAppOO::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text)
+inline void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text)
 {
     if (text.empty() || !EnsureDragHintWindow())
     {
@@ -1572,7 +1578,7 @@ inline void SnowDesktopAppOO::ShowDragHintWindowScreen(POINT screenPoint, const 
     ReleaseDC(nullptr, screenDc);
 }
 
-inline void SnowDesktopAppOO::HitTestExternalAt(POINT pt)
+inline void DesktopApp::HitTestExternalAt(POINT pt)
 {
     dragTargetContainer_ = nullptr;
     dragTargetRegion_ = HitRegion::None;
@@ -1602,7 +1608,7 @@ inline void SnowDesktopAppOO::HitTestExternalAt(POINT pt)
     }
 }
 
-inline std::wstring SnowDesktopAppOO::MakeExternalDragHint(POINT point) const
+inline std::wstring DesktopApp::MakeExternalDragHint(POINT point) const
 {
     bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     bool shiftDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -1621,7 +1627,7 @@ inline std::wstring SnowDesktopAppOO::MakeExternalDragHint(POINT point) const
     return L"释放：放置到桌面";
 }
 
-inline std::wstring SnowDesktopAppOO::MakeDragHint(POINT point) const
+inline std::wstring DesktopApp::MakeDragHint(POINT point) const
 {
     bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
@@ -1645,7 +1651,7 @@ inline std::wstring SnowDesktopAppOO::MakeDragHint(POINT point) const
 
 // ── Tray ────────────────────────────────────────────────────
 
-inline void SnowDesktopAppOO::AddTrayIcon(bool force)
+inline void DesktopApp::AddTrayIcon(bool force)
 {
     HWND owner = controlHwnd_ ? controlHwnd_ : hwnd_;
     if (!owner || !IsWindow(owner)) return;
@@ -1685,7 +1691,7 @@ inline void SnowDesktopAppOO::AddTrayIcon(bool force)
     }
 }
 
-inline void SnowDesktopAppOO::RemoveTrayIcon()
+inline void DesktopApp::RemoveTrayIcon()
 {
     if (!trayIconAdded_) return;
     NOTIFYICONDATAW data{};
@@ -1696,7 +1702,7 @@ inline void SnowDesktopAppOO::RemoveTrayIcon()
     trayIconAdded_ = false;
 }
 
-inline void SnowDesktopAppOO::OnTrayCallback(LPARAM lParam)
+inline void DesktopApp::OnTrayCallback(LPARAM lParam)
 {
     UINT message = LOWORD(lParam);
     if (message == WM_CONTEXTMENU || message == WM_RBUTTONUP)
@@ -1711,7 +1717,7 @@ inline void SnowDesktopAppOO::OnTrayCallback(LPARAM lParam)
     }
 }
 
-inline void SnowDesktopAppOO::ShowTrayMenu(POINT screenPoint)
+inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
 {
     HMENU menu = CreatePopupMenu();
 

@@ -9,6 +9,7 @@
 using Microsoft::WRL::ComPtr;
 
 class Container;
+class DesktopApp;
 
 class Item
 {
@@ -35,7 +36,7 @@ struct FolderEntry;
 class DesktopIcon : public Item
 {
 public:
-    explicit DesktopIcon(DesktopItem* item, Container* container = nullptr, void* app = nullptr);
+    explicit DesktopIcon(DesktopItem* item, Container* container = nullptr, DesktopApp* app = nullptr);
     std::wstring GetTitle() const override;
     std::wstring GetPath() const override;
     HBITMAP GetIconBitmap() const override;
@@ -47,18 +48,18 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     ComPtr<IDataObject> CreateDataObject() override;
     DesktopItem* GetDesktopItem() const { return item_; }
-    void* GetApp() const { return app_; }
+    DesktopApp* GetApp() const { return app_; }
 
 private:
     DesktopItem* item_;
     Container* container_;
-    void* app_;
+    DesktopApp* app_;
 };
 
 class FolderEntryIcon : public Item
 {
 public:
-    explicit FolderEntryIcon(FolderEntry* entry, Container* container = nullptr, void* app = nullptr);
+    explicit FolderEntryIcon(FolderEntry* entry, Container* container = nullptr, DesktopApp* app = nullptr);
     std::wstring GetTitle() const override;
     std::wstring GetPath() const override;
     HBITMAP GetIconBitmap() const override;
@@ -70,12 +71,12 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     ComPtr<IDataObject> CreateDataObject() override;
     FolderEntry* GetFolderEntry() const { return entry_; }
-    void* GetApp() const { return app_; }
+    DesktopApp* GetApp() const { return app_; }
 
 private:
     FolderEntry* entry_;
     Container* container_;
-    void* app_;
+    DesktopApp* app_;
     RECT bounds_{};
 };
 

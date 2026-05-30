@@ -1,10 +1,10 @@
 #pragma once
-// Inline implementations for SnowDesktopAppOO — Graphics & Rendering.
+// Inline implementations for DesktopApp — Graphics & Rendering.
 // This file is included by app_oo.h after the class definition.
 
 // ── Graphics ─────────────────────────────────────────────────
 
-inline bool SnowDesktopAppOO::InitGraphics()
+inline bool DesktopApp::InitGraphics()
 {
     // D3D11
     D3D_FEATURE_LEVEL fl{};
@@ -65,7 +65,7 @@ inline bool SnowDesktopAppOO::InitGraphics()
     return true;
 }
 
-inline HRESULT SnowDesktopAppOO::CreateOrResizeCompositionSurface()
+inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
     {
         RECT client{};
         GetClientRect(hwnd_, &client);
@@ -100,7 +100,7 @@ inline HRESULT SnowDesktopAppOO::CreateOrResizeCompositionSurface()
         return S_OK;
     }
 
-inline void SnowDesktopAppOO::OnPaint()
+inline void DesktopApp::OnPaint()
     {
         auto L = [](const wchar_t* s) {
             HANDLE f = CreateFileW(L"SnowDesktopOO_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
@@ -134,13 +134,13 @@ inline void SnowDesktopAppOO::OnPaint()
         if (SUCCEEDED(hr)) dcompDevice_->Commit();
     }
 
-inline D2D1_RECT_F SnowDesktopAppOO::ToD2DRect(const RECT& r)
+inline D2D1_RECT_F DesktopApp::ToD2DRect(const RECT& r)
 {
     return D2D1::RectF(static_cast<float>(r.left), static_cast<float>(r.top),
         static_cast<float>(r.right), static_cast<float>(r.bottom));
 }
 
-inline RECT SnowDesktopAppOO::GetItemIconRect(RECT bounds) const
+inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
 {
     const int cellW = bounds.right - bounds.left;
     const int cellH = bounds.bottom - bounds.top;
@@ -161,7 +161,7 @@ inline RECT SnowDesktopAppOO::GetItemIconRect(RECT bounds) const
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
 }
 
-inline RECT SnowDesktopAppOO::GetItemTextRect(RECT bounds, bool expanded) const
+inline RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
 {
     RECT iconRect = GetItemIconRect(bounds);
     const int textTop = iconRect.bottom + 2;
@@ -169,7 +169,7 @@ inline RECT SnowDesktopAppOO::GetItemTextRect(RECT bounds, bool expanded) const
     return MakeRect(bounds.left + 4, textTop, bounds.right - 4, textTop + textH);
 }
 
-inline RECT SnowDesktopAppOO::GetItemSelectionRect(RECT bounds, bool expanded) const
+inline RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
 {
     RECT textRect = GetItemTextRect(bounds, expanded);
     RECT selection = UnionCopy(GetItemIconRect(bounds), textRect);
@@ -180,7 +180,7 @@ inline RECT SnowDesktopAppOO::GetItemSelectionRect(RECT bounds, bool expanded) c
     return selection;
 }
 
-inline void SnowDesktopAppOO::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT rect, float radius,
+inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT rect, float radius,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
@@ -193,7 +193,7 @@ inline void SnowDesktopAppOO::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, R
         ctx->DrawRoundedRectangle(rounded, strokeBrush.Get(), strokeWidth, nullptr);
 }
 
-inline void SnowDesktopAppOO::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rect,
+inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rect,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke)
 {
     ComPtr<ID2D1SolidColorBrush> fillBrush;
@@ -204,7 +204,7 @@ inline void SnowDesktopAppOO::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RE
         ctx->DrawRectangle(ToD2DRect(rect), strokeBrush.Get(), 1.0f, nullptr);
 }
 
-inline void SnowDesktopAppOO::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
+inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
     const std::wstring& text, bool selected, float opacity)
 {
     if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
@@ -241,7 +241,7 @@ inline void SnowDesktopAppOO::DrawItemText(ID2D1DeviceContext* context, RECT bou
 
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
 
-inline void SnowDesktopAppOO::RenderFrame(ID2D1DeviceContext* ctx)
+inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
 {
     // ── OO icon rendering ────────────────────────────────────
     for (auto& ooItem : items_oo_)
@@ -367,7 +367,7 @@ inline void SnowDesktopAppOO::RenderFrame(ID2D1DeviceContext* ctx)
         DrawPageNavButtons(ctx);
 }
 
-inline void SnowDesktopAppOO::GetNavButtonRects(RECT& outPrev, RECT& outNext) const
+inline void DesktopApp::GetNavButtonRects(RECT& outPrev, RECT& outNext) const
 {
     outPrev = {};
     outNext = {};
@@ -396,7 +396,7 @@ inline void SnowDesktopAppOO::GetNavButtonRects(RECT& outPrev, RECT& outNext) co
         targetPage->workArea.right - padX, cy + halfH);
 }
 
-inline void SnowDesktopAppOO::DrawPageNavButtons(ID2D1DeviceContext* ctx)
+inline void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
 {
     if (MaxPageOffset() <= 0 && pageOffset_ <= 0) return;
     if (gridPages_.empty()) return;

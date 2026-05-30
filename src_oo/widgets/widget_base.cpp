@@ -1,10 +1,10 @@
-#include "../widget.h"
-#include "../types.h"
-#include "../constants.h"
+#include "widget.h"
+#include "types.h"
+#include "constants.h"
 
 // ── Widget base (Item only) ─────────────────────────────────
 
-Widget::Widget(DesktopWidget* data, void* app)
+Widget::Widget(DesktopWidget* data, DesktopApp* app)
     : data_(data), app_(app) {}
 
 std::wstring Widget::GetTitle() const { return data_ ? data_->title : L""; }
@@ -30,7 +30,7 @@ ComPtr<IDataObject> Widget::CreateDataObject()
 
 // ── Factory ─────────────────────────────────────────────────
 
-std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, void* app)
+std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app)
 {
     if (!data) return nullptr;
     switch (data->type)

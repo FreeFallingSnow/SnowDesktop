@@ -10,7 +10,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo === Building SnowDesktop.exe (Release) ===
+echo === Building SnowDesktop.exe (new OO) ===
 cmake --build .build --config Release --target SnowDesktop
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
@@ -19,17 +19,17 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo === Building SnowDesktopOO.exe (Release) ===
-cmake --build .build --config Release --target SnowDesktopOO
+echo === Building SnowDesktopLegacy.exe (old) ===
+cmake --build .build --config Release --target SnowDesktopLegacy
 if %ERRORLEVEL% NEQ 0 (
-    echo SnowDesktopOO build FAILED
+    echo SnowDesktopLegacy build FAILED
     pause
     exit /b 1
 )
 
 echo.
 echo === Build complete ===
-echo SnowDesktop.exe:   .build\Release\SnowDesktop.exe
-echo SnowDesktopOO.exe: .build\Release\SnowDesktopOO.exe
+echo SnowDesktop.exe:       .build\Release\SnowDesktop.exe
+echo SnowDesktopLegacy.exe: .build\Release\SnowDesktopLegacy.exe
 echo.
 pause

@@ -17,8 +17,9 @@ public:
     virtual ~Container() = default;
     virtual std::wstring GetTitle() const = 0;
 
-    // Build and cache slots. Returns stable references valid until next BuildSlots call.
+    // Build and cache slots. Returns stable references valid until InvalidateSlots.
     const std::vector<std::unique_ptr<Slot>>& GetSlots();
+    void InvalidateSlots() { slotsValid_ = false; }
     virtual std::vector<std::unique_ptr<Slot>> BuildSlots() = 0;
 
     virtual void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
@@ -30,6 +31,7 @@ public:
 
 protected:
     std::vector<std::unique_ptr<Slot>> cachedSlots_;
+    bool slotsValid_ = false;
 };
 
 // ── GridContainer: 2D grid layout (only DesktopGrid uses this) ─

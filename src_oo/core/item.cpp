@@ -1,12 +1,10 @@
 #include "item.h"
 #include "types.h"
-#ifdef SNOWDESKTOP_OO
-#include "app_oo.h"
-#endif
+#include "app.h"
 
 // ── DesktopIcon ──────────────────────────────────────────────
 
-DesktopIcon::DesktopIcon(DesktopItem* item, Container* container, void* app)
+DesktopIcon::DesktopIcon(DesktopItem* item, Container* container, DesktopApp* app)
     : item_(item), container_(container), app_(app) {}
 
 std::wstring DesktopIcon::GetTitle() const { return item_ ? item_->name : L""; }
@@ -20,49 +18,46 @@ Container* DesktopIcon::GetContainer() const { return container_; }
 
 void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
-#ifdef SNOWDESKTOP_OO
-    auto* app = static_cast<SnowDesktopAppOO*>(app_);
-    if (!app || !item_) return;
+    if (!app_ || !item_) return;
     if (item_->bounds.left >= item_->bounds.right || item_->bounds.top >= item_->bounds.bottom) return;
 
     const bool hovered = (state == 1);
     const bool selected = (state == 2 || state == 3);
     const bool dragged = (state == 3);
-    const float opacity = dragged ? 0.6f : 1.0f;
+    const float cutOpacity = item_->isCut ? 0.4f : 1.0f;
+    const float dragOpacity = dragged ? 0.6f : 1.0f;
+    const float alpha = dragOpacity * cutOpacity;
 
     if (hovered && !selected)
     {
-        app->DrawD2DRoundedRectangle(context, rect, 6.0f,
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * opacity),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * opacity));
+        app_->DrawD2DRoundedRectangle(context, rect, 6.0f,
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * alpha),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * alpha));
     }
 
-    RECT iconRect = app->GetItemIconRect(rect);
+    RECT iconRect = app_->GetItemIconRect(rect);
 
     if (selected)
     {
-        app->DrawD2DFilledRectangle(context,
-            app->GetItemSelectionRect(rect, true),
-            D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),
-            D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
+        app_->DrawD2DFilledRectangle(context,
+            app_->GetItemSelectionRect(rect, true),
+            D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * alpha),
+            D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
 
     if (item_->iconBitmap)
     {
-        ID2D1Bitmap1* bmp = app->GetOrCreateD2DBitmap(item_->iconBitmap);
+        ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(item_->iconBitmap);
         if (bmp)
         {
             D2D1_RECT_F dst = D2D1::RectF(
                 static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
                 static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+            context->DrawBitmap(bmp, dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
         }
     }
 
-    app->DrawItemText(context, rect, item_->name, selected, opacity);
-#else
-    (void)context; (void)rect; (void)state;
-#endif
+    app_->DrawItemText(context, rect, item_->name, selected, alpha);
 }
 
 ComPtr<IDataObject> DesktopIcon::CreateDataObject()
@@ -72,7 +67,7 @@ ComPtr<IDataObject> DesktopIcon::CreateDataObject()
 
 // ── FolderEntryIcon ─────────────────────────────────────────
 
-FolderEntryIcon::FolderEntryIcon(FolderEntry* entry, Container* container, void* app)
+FolderEntryIcon::FolderEntryIcon(FolderEntry* entry, Container* container, DesktopApp* app)
     : entry_(entry), container_(container), app_(app) {}
 
 std::wstring FolderEntryIcon::GetTitle() const { return entry_ ? entry_->name : L""; }
@@ -86,9 +81,7 @@ Container* FolderEntryIcon::GetContainer() const { return container_; }
 
 void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
-#ifdef SNOWDESKTOP_OO
-    auto* app = static_cast<SnowDesktopAppOO*>(app_);
-    if (!app || !entry_) return;
+    if (!app_ || !entry_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
 
     const bool hovered = (state == 1);
@@ -98,24 +91,24 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (hovered && !selected)
     {
-        app->DrawD2DRoundedRectangle(context, rect, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, rect, 6.0f,
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * opacity),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * opacity));
     }
 
-    RECT iconRect = app->GetItemIconRect(rect);
+    RECT iconRect = app_->GetItemIconRect(rect);
 
     if (selected)
     {
-        app->DrawD2DFilledRectangle(context,
-            app->GetItemSelectionRect(rect, true),
+        app_->DrawD2DFilledRectangle(context,
+            app_->GetItemSelectionRect(rect, true),
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),
             D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
 
     if (entry_->iconBitmap)
     {
-        ID2D1Bitmap1* bmp = app->GetOrCreateD2DBitmap(entry_->iconBitmap);
+        ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(entry_->iconBitmap);
         if (bmp)
         {
             D2D1_RECT_F dst = D2D1::RectF(
@@ -125,10 +118,7 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         }
     }
 
-    app->DrawItemText(context, rect, entry_->name, selected, opacity);
-#else
-    (void)context; (void)rect; (void)state;
-#endif
+    app_->DrawItemText(context, rect, entry_->name, selected, opacity);
 }
 
 ComPtr<IDataObject> FolderEntryIcon::CreateDataObject()

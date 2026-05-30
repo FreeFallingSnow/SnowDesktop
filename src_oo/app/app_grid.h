@@ -1,11 +1,11 @@
 #pragma once
-// Inline implementations for SnowDesktopAppOO — Grid helpers, Shell, Filtering,
+// Inline implementations for DesktopApp — Grid helpers, Shell, Filtering,
 // Layout persistence, Control window, Bitmap cache, Data loading, and free functions.
 // This file is included by app_oo.h after the class definition.
 
 // ── Grid helpers ────────────────────────────────────────────
 
-inline const GridPage* SnowDesktopAppOO::GridPageFromPoint(POINT point) const
+inline const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
 {
     const GridPage* fallback = gridPages_.empty() ? nullptr : &gridPages_.front();
     for (const auto& page : gridPages_)
@@ -16,7 +16,7 @@ inline const GridPage* SnowDesktopAppOO::GridPageFromPoint(POINT point) const
     return fallback;
 }
 
-inline void SnowDesktopAppOO::AdjustGridRows(int delta)
+inline void DesktopApp::AdjustGridRows(int delta)
 {
     if (gridPages_.empty()) return;
     POINT clientPoint = lastContextMenuScreenPoint_;
@@ -43,7 +43,7 @@ inline void SnowDesktopAppOO::AdjustGridRows(int delta)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-inline void SnowDesktopAppOO::AdjustGridColumns(int delta)
+inline void DesktopApp::AdjustGridColumns(int delta)
 {
     if (gridPages_.empty()) return;
     POINT clientPoint = lastContextMenuScreenPoint_;
@@ -70,7 +70,7 @@ inline void SnowDesktopAppOO::AdjustGridColumns(int delta)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-inline void SnowDesktopAppOO::SetFirstPageMonitorFromPoint(POINT screenPoint)
+inline void DesktopApp::SetFirstPageMonitorFromPoint(POINT screenPoint)
 {
     POINT clientPoint = screenPoint;
     ScreenToClient(hwnd_, &clientPoint);
@@ -86,7 +86,7 @@ inline void SnowDesktopAppOO::SetFirstPageMonitorFromPoint(POINT screenPoint)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-inline void SnowDesktopAppOO::SetZoom(float value)
+inline void DesktopApp::SetZoom(float value)
 {
     float clamped = std::clamp(value, 0.5f, 2.0f);
     if (clamped == gapScale_) return;
@@ -98,7 +98,7 @@ inline void SnowDesktopAppOO::SetZoom(float value)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-inline void SnowDesktopAppOO::AdjustZoom(float delta)
+inline void DesktopApp::AdjustZoom(float delta)
 {
     float newVal = std::clamp(gapScale_ + delta, 0.5f, 2.0f);
     if (newVal == gapScale_) return;
@@ -110,7 +110,7 @@ inline void SnowDesktopAppOO::AdjustZoom(float delta)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-inline size_t SnowDesktopAppOO::FirstMonitorOrderIndex() const
+inline size_t DesktopApp::FirstMonitorOrderIndex() const
 {
     if (gridPages_.empty()) return 0;
     for (size_t i = 0; i < gridPages_.size(); ++i)
@@ -122,7 +122,7 @@ inline size_t SnowDesktopAppOO::FirstMonitorOrderIndex() const
     return 0;
 }
 
-inline std::vector<size_t> SnowDesktopAppOO::BuildMonitorRenderOrder() const
+inline std::vector<size_t> DesktopApp::BuildMonitorRenderOrder() const
 {
     std::vector<size_t> order;
     if (gridPages_.empty()) return order;
@@ -133,7 +133,7 @@ inline std::vector<size_t> SnowDesktopAppOO::BuildMonitorRenderOrder() const
     return order;
 }
 
-inline bool SnowDesktopAppOO::PageHasContent(const std::wstring& pageId) const
+inline bool DesktopApp::PageHasContent(const std::wstring& pageId) const
 {
     if (pageId.empty()) return false;
     for (const auto& item : items_)
@@ -143,7 +143,7 @@ inline bool SnowDesktopAppOO::PageHasContent(const std::wstring& pageId) const
     return false;
 }
 
-inline int SnowDesktopAppOO::NextNonEmptyOffset(int fromOffset, int direction) const
+inline int DesktopApp::NextNonEmptyOffset(int fromOffset, int direction) const
 {
     if (savedPageIds_.empty() || gridPages_.empty()) return fromOffset;
     const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
@@ -159,7 +159,7 @@ inline int SnowDesktopAppOO::NextNonEmptyOffset(int fromOffset, int direction) c
     }
 }
 
-inline int SnowDesktopAppOO::MaxPageOffset() const
+inline int DesktopApp::MaxPageOffset() const
 {
     if (savedPageIds_.empty() || gridPages_.empty()) return 0;
     const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
@@ -174,7 +174,7 @@ inline int SnowDesktopAppOO::MaxPageOffset() const
     return result;
 }
 
-inline void SnowDesktopAppOO::ApplyPageMapping()
+inline void DesktopApp::ApplyPageMapping()
 {
     lastMonitorPageId_.clear();
     if (gridPages_.empty()) return;
@@ -204,14 +204,14 @@ inline void SnowDesktopAppOO::ApplyPageMapping()
         lastMonitorPageId_.clear();
 }
 
-inline void SnowDesktopAppOO::MarkGridArea(std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
+inline void DesktopApp::MarkGridArea(std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
 {
     for (int c = cell.column; c < cell.column + span.columns; ++c)
         for (int r = cell.row; r < cell.row + span.rows; ++r)
             usedSlots.insert(cell.pageId + L":" + std::to_wstring(c) + L"," + std::to_wstring(r));
 }
 
-inline bool SnowDesktopAppOO::AreGridSlotsMarked(const std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
+inline bool DesktopApp::AreGridSlotsMarked(const std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
 {
     for (int c = cell.column; c < cell.column + span.columns; ++c)
         for (int r = cell.row; r < cell.row + span.rows; ++r)
@@ -220,14 +220,14 @@ inline bool SnowDesktopAppOO::AreGridSlotsMarked(const std::unordered_set<std::w
     return false;
 }
 
-inline bool SnowDesktopAppOO::IsGridAreaValid(const GridCell& cell, GridSpan span)
+inline bool DesktopApp::IsGridAreaValid(const GridCell& cell, GridSpan span)
 {
     if (span.columns < 1 || span.rows < 1) return false;
     if (cell.column < 0 || cell.row < 0) return false;
     return true;
 }
 
-inline bool SnowDesktopAppOO::TryFindFreeCell(
+inline bool DesktopApp::TryFindFreeCell(
     GridSpan span, std::unordered_set<std::wstring>& usedSlots, GridCell& result,
     const std::wstring& preferredPageId, int preferredStartSlot) const
 {
@@ -275,7 +275,7 @@ inline bool SnowDesktopAppOO::TryFindFreeCell(
     return false;
 }
 
-inline void SnowDesktopAppOO::RelayoutDisplacedItems()
+inline void DesktopApp::RelayoutDisplacedItems()
 {
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     std::unordered_set<std::wstring> usedSlots;
@@ -310,7 +310,7 @@ inline void SnowDesktopAppOO::RelayoutDisplacedItems()
     }
 }
 
-inline void SnowDesktopAppOO::SortIconsByName()
+inline void DesktopApp::SortIconsByName()
 {
     std::vector<size_t> order;
     order.reserve(items_.size());
@@ -336,7 +336,7 @@ inline void SnowDesktopAppOO::SortIconsByName()
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-inline void SnowDesktopAppOO::SortIconsByType()
+inline void DesktopApp::SortIconsByType()
 {
     std::vector<size_t> order;
     order.reserve(items_.size());
@@ -364,7 +364,7 @@ inline void SnowDesktopAppOO::SortIconsByType()
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-inline void SnowDesktopAppOO::UpdateCutState()
+inline void DesktopApp::UpdateCutState()
 {
     std::unordered_set<std::wstring> clipCutPaths;
 
@@ -422,7 +422,7 @@ inline void SnowDesktopAppOO::UpdateCutState()
 
 // ── Shell change notifications ──────────────────────────────
 
-inline void SnowDesktopAppOO::RegisterShellChangeNotifications()
+inline void DesktopApp::RegisterShellChangeNotifications()
 {
     if (shellChangeRegId_ != 0)
     {
@@ -455,7 +455,7 @@ inline void SnowDesktopAppOO::RegisterShellChangeNotifications()
 
 // ── Filtering ───────────────────────────────────────────────
 
-inline std::wstring SnowDesktopAppOO::GetStableLayoutKey(
+inline std::wstring DesktopApp::GetStableLayoutKey(
     PCIDLIST_ABSOLUTE pidl,
     const std::wstring& parsingName,
     const std::wstring& desktopIconClsid)
@@ -470,7 +470,7 @@ inline std::wstring SnowDesktopAppOO::GetStableLayoutKey(
     return ToUpperInvariant(parsingName);
 }
 
-inline void SnowDesktopAppOO::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSize)
+inline void DesktopApp::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSize)
 {
     if (!bitmap) return;
     SHSTOCKICONINFO sii{};
@@ -488,7 +488,7 @@ inline void SnowDesktopAppOO::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bi
 
 // ── Layout persistence ──────────────────────────────────────
 
-inline std::wstring SnowDesktopAppOO::GetLayoutPath() const
+inline std::wstring DesktopApp::GetLayoutPath() const
 {
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
@@ -497,7 +497,7 @@ inline std::wstring SnowDesktopAppOO::GetLayoutPath() const
     return path;
 }
 
-inline void SnowDesktopAppOO::LoadSavedPagesFromJson(const std::string& text)
+inline void DesktopApp::LoadSavedPagesFromJson(const std::string& text)
 {
     size_t pagesName = text.find("\"pages\"");
     if (pagesName == std::string::npos) return;
@@ -529,14 +529,14 @@ inline void SnowDesktopAppOO::LoadSavedPagesFromJson(const std::string& text)
     }
 }
 
-inline void SnowDesktopAppOO::RememberSavedPageId(const std::wstring& pageId)
+inline void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
 {
     if (pageId.empty()) return;
     if (std::find(savedPageIds_.begin(), savedPageIds_.end(), pageId) == savedPageIds_.end())
         savedPageIds_.push_back(pageId);
 }
 
-inline void SnowDesktopAppOO::LoadLayoutSlots()
+inline void DesktopApp::LoadLayoutSlots()
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     layoutRecords_.clear();
@@ -598,7 +598,7 @@ inline void SnowDesktopAppOO::LoadLayoutSlots()
     }
 }
 
-inline void SnowDesktopAppOO::SaveLayoutSlots()
+inline void DesktopApp::SaveLayoutSlots()
 {
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     layoutRecords_.clear();
@@ -672,7 +672,7 @@ inline void SnowDesktopAppOO::SaveLayoutSlots()
     file << "  ]\n}\n";
 }
 
-inline bool SnowDesktopAppOO::ReadJsonStringField(const std::string& objectText, const char* fieldName, std::string& value) const
+inline bool DesktopApp::ReadJsonStringField(const std::string& objectText, const char* fieldName, std::string& value) const
 {
     std::string marker = std::string("\"") + fieldName + "\"";
     size_t name = objectText.find(marker);
@@ -683,7 +683,7 @@ inline bool SnowDesktopAppOO::ReadJsonStringField(const std::string& objectText,
     return quote != std::string::npos && ParseJsonStringAt(objectText, quote, value, end);
 }
 
-inline bool SnowDesktopAppOO::ReadJsonIntField(const std::string& objectText, const char* fieldName, int& value) const
+inline bool DesktopApp::ReadJsonIntField(const std::string& objectText, const char* fieldName, int& value) const
 {
     std::string marker = std::string("\"") + fieldName + "\"";
     size_t name = objectText.find(marker);
@@ -697,24 +697,24 @@ inline bool SnowDesktopAppOO::ReadJsonIntField(const std::string& objectText, co
 
 // ── Control window ──────────────────────────────────────────
 
-inline LRESULT CALLBACK SnowDesktopAppOO::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+inline LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    SnowDesktopAppOO* app = nullptr;
+    DesktopApp* app = nullptr;
     if (msg == WM_NCCREATE)
     {
         auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
-        app = static_cast<SnowDesktopAppOO*>(cs->lpCreateParams);
+        app = static_cast<DesktopApp*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
     }
     else
     {
-        app = reinterpret_cast<SnowDesktopAppOO*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        app = reinterpret_cast<DesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
     if (app) return app->HandleControlMessage(hwnd, msg, wp, lp);
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-inline LRESULT SnowDesktopAppOO::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
     {
@@ -764,7 +764,7 @@ inline void ClampAlphaToColorKey(HBITMAP bitmap, COLORREF key)
     (void)key;
 }
 
-inline void SnowDesktopAppOO::ReloadItems(bool reloadLayoutFromDisk)
+inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     if (reloading_) return;
@@ -850,7 +850,7 @@ inline void SnowDesktopAppOO::ReloadItems(bool reloadLayoutFromDisk)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-inline void SnowDesktopAppOO::LoadDesktopItems()
+inline void DesktopApp::LoadDesktopItems()
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     auto L = [](const wchar_t* s) {
@@ -1022,7 +1022,7 @@ inline void SnowDesktopAppOO::LoadDesktopItems()
     L(buf);
 }
 
-inline void SnowDesktopAppOO::UpdateLayoutWorkArea()
+inline void DesktopApp::UpdateLayoutWorkArea()
 {
     layoutWorkArea_ = MakeRect(0, 0, virtualWidth_, virtualHeight_);
     gridPages_.clear();
@@ -1058,7 +1058,7 @@ inline void SnowDesktopAppOO::UpdateLayoutWorkArea()
     ApplyPageMapping();
 }
 
-inline void SnowDesktopAppOO::ConfigureGridPage(GridPage& page) const
+inline void DesktopApp::ConfigureGridPage(GridPage& page) const
 {
     const int cw = static_cast<int>(kCellWidth * gapScale_);
     const int ch = static_cast<int>(kMinCellHeight * gapScale_);
@@ -1074,7 +1074,7 @@ inline void SnowDesktopAppOO::ConfigureGridPage(GridPage& page) const
     page.gapY = page.rows    > 1 ? std::max(0, (uh - page.rows    * page.cellHeight) / (page.rows    - 1)) : 0;
 }
 
-inline void SnowDesktopAppOO::ApplySavedGridDimensions()
+inline void DesktopApp::ApplySavedGridDimensions()
 {
     for (auto& page : gridPages_)
     {
@@ -1090,7 +1090,7 @@ inline void SnowDesktopAppOO::ApplySavedGridDimensions()
     }
 }
 
-inline void SnowDesktopAppOO::ApplyGapScaleToPage(GridPage& page)
+inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
 {
     const int usableW = std::max(1, static_cast<int>(page.workArea.right - page.workArea.left) - (page.marginX * 2));
     const int usableH = std::max(1, static_cast<int>(page.workArea.bottom - page.workArea.top) - (page.marginY * 2));
@@ -1116,7 +1116,7 @@ extern inline int GetGridAxisOffset(const GridPage& page, int index, bool horizo
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
 extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
 
-inline int SnowDesktopAppOO::GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, bool horizontal)
+inline int DesktopApp::GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, bool horizontal)
 {
     const int count = horizontal ? page.columns : page.rows;
     if (count <= 1) return 0;
@@ -1133,7 +1133,7 @@ inline int SnowDesktopAppOO::GetGridAxisIndexFromPoint(const GridPage& page, int
     return bestIndex;
 }
 
-inline GridCell SnowDesktopAppOO::CellFromPoint(POINT point) const
+inline GridCell DesktopApp::CellFromPoint(POINT point) const
 {
     const GridPage* page = GridPageFromPoint(point);
     GridCell cell;
@@ -1144,7 +1144,7 @@ inline GridCell SnowDesktopAppOO::CellFromPoint(POINT point) const
     return cell;
 }
 
-inline bool SnowDesktopAppOO::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const
+inline bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const
 {
     for (const auto& item : items_)
     {
@@ -1172,7 +1172,7 @@ inline bool SnowDesktopAppOO::IsGridAreaOccupiedByUnselected(const GridCell& cel
     return false;
 }
 
-inline std::vector<SnowDesktopAppOO::PendingGridMove> SnowDesktopAppOO::BuildSelectedMove(GridCell targetCell) const
+inline std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell targetCell) const
 {
     std::vector<PendingGridMove> moves;
     std::vector<size_t> selectedIndexes;
@@ -1244,7 +1244,7 @@ inline std::vector<SnowDesktopAppOO::PendingGridMove> SnowDesktopAppOO::BuildSel
     return moves;
 }
 
-inline GridCell SnowDesktopAppOO::FindBestDropCell(GridCell targetCell) const
+inline GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
 {
     if (!BuildSelectedMove(targetCell).empty()) return targetCell;
 
@@ -1299,7 +1299,7 @@ inline GridCell SnowDesktopAppOO::FindBestDropCell(GridCell targetCell) const
     return targetCell;
 }
 
-inline void SnowDesktopAppOO::MoveSelectedItemsToCell(GridCell targetCell)
+inline void DesktopApp::MoveSelectedItemsToCell(GridCell targetCell)
 {
     std::vector<PendingGridMove> moves = BuildSelectedMove(std::move(targetCell));
     if (moves.empty()) return;
@@ -1312,7 +1312,7 @@ inline void SnowDesktopAppOO::MoveSelectedItemsToCell(GridCell targetCell)
     SaveLayoutSlots();
 }
 
-inline void SnowDesktopAppOO::UpdateDragGroupOrigin()
+inline void DesktopApp::UpdateDragGroupOrigin()
 {
     int minCol = INT_MAX, minRow = INT_MAX;
     std::wstring anchorPageId;
@@ -1336,7 +1336,7 @@ inline void SnowDesktopAppOO::UpdateDragGroupOrigin()
     dragGroupOriginY_ = groupRect.top;
 }
 
-inline void SnowDesktopAppOO::MigrateSelectedItemsToLastMonitorPage()
+inline void DesktopApp::MigrateSelectedItemsToLastMonitorPage()
 {
     if (gridPages_.empty() || lastMonitorPageId_.empty()) return;
     const GridPage* targetPage = FindGridPage(gridPages_, lastMonitorPageId_);
@@ -1393,7 +1393,7 @@ inline void SnowDesktopAppOO::MigrateSelectedItemsToLastMonitorPage()
     }
 }
 
-inline POINT SnowDesktopAppOO::GetDragTargetPoint(POINT current) const
+inline POINT DesktopApp::GetDragTargetPoint(POINT current) const
 {
     return {
         dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
@@ -1401,7 +1401,7 @@ inline POINT SnowDesktopAppOO::GetDragTargetPoint(POINT current) const
     };
 }
 
-inline ComPtr<IDataObject> SnowDesktopAppOO::CreateSelectedDataObject() const
+inline ComPtr<IDataObject> DesktopApp::CreateSelectedDataObject() const
 {
     std::vector<PCUITEMID_CHILD> pidls;
     for (const auto& item : items_)
@@ -1420,7 +1420,7 @@ inline ComPtr<IDataObject> SnowDesktopAppOO::CreateSelectedDataObject() const
     return dataObject;
 }
 
-inline void SnowDesktopAppOO::DropSelectedItemsOnTarget(int targetIndex)
+inline void DesktopApp::DropSelectedItemsOnTarget(int targetIndex)
 {
     if (targetIndex < 0 || static_cast<size_t>(targetIndex) >= items_.size()) return;
     auto& targetItem = items_[targetIndex];
@@ -1449,14 +1449,14 @@ inline void SnowDesktopAppOO::DropSelectedItemsOnTarget(int targetIndex)
         dropTarget->DragLeave();
 }
 
-inline size_t SnowDesktopAppOO::FindItemIndexByKey(const std::wstring& key) const
+inline size_t DesktopApp::FindItemIndexByKey(const std::wstring& key) const
 {
     for (size_t i = 0; i < items_.size(); ++i)
         if (items_[i].layoutKey == key) return i;
     return static_cast<size_t>(-1);
 }
 
-inline void SnowDesktopAppOO::CopySelectedItemsToCell(GridCell targetCell)
+inline void DesktopApp::CopySelectedItemsToCell(GridCell targetCell)
 {
     std::unordered_set<std::wstring> existingKeys;
     for (const auto& item : items_)
@@ -1517,7 +1517,7 @@ inline void SnowDesktopAppOO::CopySelectedItemsToCell(GridCell targetCell)
     PlaceNewItemsAtDropPoint(existingKeys, targetCell);
 }
 
-inline void SnowDesktopAppOO::CreateShortcutSelectedItemsToCell(GridCell targetCell)
+inline void DesktopApp::CreateShortcutSelectedItemsToCell(GridCell targetCell)
 {
     std::unordered_set<std::wstring> existingKeys;
     for (const auto& item : items_)
@@ -1563,7 +1563,7 @@ inline void SnowDesktopAppOO::CreateShortcutSelectedItemsToCell(GridCell targetC
     PlaceNewItemsAtDropPoint(existingKeys, targetCell);
 }
 
-inline void SnowDesktopAppOO::ApplyPendingPlacement()
+inline void DesktopApp::ApplyPendingPlacement()
 {
     if (!hasPendingPlace_) return;
     if (GetTickCount() - pendingPlaceTick_ > 10000)
@@ -1693,7 +1693,7 @@ inline void SnowDesktopAppOO::ApplyPendingPlacement()
     }
 }
 
-inline void SnowDesktopAppOO::PlaceNewItemsAtDropPoint(
+inline void DesktopApp::PlaceNewItemsAtDropPoint(
     const std::unordered_set<std::wstring>& existingKeys, GridCell targetCell)
 {
     std::vector<size_t> newItems;
@@ -1803,7 +1803,7 @@ inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell
     return std::max(0, cell.column) * std::max(1, rows) + std::max(0, cell.row);
 }
 
-inline void SnowDesktopAppOO::LayoutItems()
+inline void DesktopApp::LayoutItems()
 {
     for (auto& item : items_)
     {
@@ -1823,7 +1823,7 @@ inline void SnowDesktopAppOO::LayoutItems()
     }
 }
 
-inline void SnowDesktopAppOO::RebuildContainersAndItems()
+inline void DesktopApp::RebuildContainersAndItems()
 {
     containers_.clear();
     items_oo_.clear();
@@ -1859,7 +1859,7 @@ inline void SnowDesktopAppOO::RebuildContainersAndItems()
     }
 }
 
-inline ID2D1Bitmap1* SnowDesktopAppOO::GetOrCreateD2DBitmap(HBITMAP hbm)
+inline ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm)
 {
     if (!hbm) return nullptr;
     auto key = reinterpret_cast<std::uintptr_t>(hbm);

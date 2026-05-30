@@ -7,15 +7,14 @@
 #include <memory>
 
 struct DesktopWidget;
-// App pointer stored as void* to support both SnowDesktopApp and SnowDesktopAppOO targets.
-// Callers should cast to the appropriate type.
+class DesktopApp;
 
 // ── Widget : pure Item (draggable, renderable) ──────────────
 // Does NOT inherit Container — used for LuaScript which doesn't accept drops.
 class Widget : public Item
 {
 public:
-    Widget(DesktopWidget* data, void* app);
+    Widget(DesktopWidget* data, DesktopApp* app);
     virtual ~Widget() = default;
 
     // Item interface
@@ -31,11 +30,11 @@ public:
     ComPtr<IDataObject> CreateDataObject() override;
 
     DesktopWidget* GetWidgetData() const { return data_; }
-    void* GetApp() const { return app_; }
+    DesktopApp* GetApp() const { return app_; }
 
 protected:
     DesktopWidget* data_;
-    void* app_;
+    DesktopApp* app_;
 };
 
 // ── WidgetContainer : Widget + ListContainer ─
@@ -93,4 +92,4 @@ public:
 };
 
 // Factory
-std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, void* app);
+std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app);
