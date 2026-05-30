@@ -35,7 +35,7 @@ struct FolderEntry;
 class DesktopIcon : public Item
 {
 public:
-    explicit DesktopIcon(DesktopItem* item, Container* container = nullptr);
+    explicit DesktopIcon(DesktopItem* item, Container* container = nullptr, void* app = nullptr);
     std::wstring GetTitle() const override;
     std::wstring GetPath() const override;
     HBITMAP GetIconBitmap() const override;
@@ -47,16 +47,18 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     ComPtr<IDataObject> CreateDataObject() override;
     DesktopItem* GetDesktopItem() const { return item_; }
+    void* GetApp() const { return app_; }
 
 private:
     DesktopItem* item_;
     Container* container_;
+    void* app_;
 };
 
 class FolderEntryIcon : public Item
 {
 public:
-    explicit FolderEntryIcon(FolderEntry* entry, Container* container = nullptr);
+    explicit FolderEntryIcon(FolderEntry* entry, Container* container = nullptr, void* app = nullptr);
     std::wstring GetTitle() const override;
     std::wstring GetPath() const override;
     HBITMAP GetIconBitmap() const override;
@@ -68,9 +70,34 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     ComPtr<IDataObject> CreateDataObject() override;
     FolderEntry* GetFolderEntry() const { return entry_; }
+    void* GetApp() const { return app_; }
 
 private:
     FolderEntry* entry_;
     Container* container_;
+    void* app_;
     RECT bounds_{};
+};
+
+// ── ExternalFileItem : wraps paths from external drag-drop ───
+// Lightweight; only GetPath/GetTitle are meaningful. Used as source
+// when OnItemsDropped receives files from an external window.
+class ExternalFileItem : public Item
+{
+public:
+    explicit ExternalFileItem(const std::wstring& filePath);
+    std::wstring GetTitle() const override;
+    std::wstring GetPath() const override;
+    HBITMAP GetIconBitmap() const override;
+    RECT GetBounds() const override;
+    void SetBounds(RECT) override;
+    bool IsSelected() const override;
+    void SetSelected(bool) override;
+    Container* GetContainer() const override;
+    void Draw(ID2D1DeviceContext*, RECT, int) override;
+    ComPtr<IDataObject> CreateDataObject() override;
+
+private:
+    std::wstring path_;
+    std::wstring title_;
 };

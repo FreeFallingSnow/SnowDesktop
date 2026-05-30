@@ -66,15 +66,54 @@ function(configure_snowdesktop_target TARGET)
     )
 endfunction()
 
-# ── Target 1: SnowDesktop.exe (existing, unchanged) ───────────────────
-add_executable(SnowDesktop WIN32
+# ── New sources (src_oo/) ─────────────────────────────────────
+set(SOURCES_OO
+    src_oo/main.cpp
+    src_oo/app/app.cpp
+    src_oo/core/item.cpp
+    src_oo/core/slot.cpp
+    src_oo/core/container.cpp
+    src_oo/core/desktop.cpp
+    src_oo/utils.cpp
+    src_oo/settings_window.cpp
+    src_oo/personalization.cpp
+    src_oo/widget_engine.cpp
+    src_oo/widgets/widget_base.cpp
+    src_oo/widgets/collection.cpp
+    src_oo/widgets/file_categories.cpp
+    src_oo/widgets/folder_mapping.cpp
+    src_oo/widgets/lua_script.cpp
+)
+
+# ── Target 1: SnowDesktop.exe (legacy, src/) ───────────────────
+add_executable(SnowDesktopLegacy WIN32
     src/main.cpp
     src/app.cpp
     ${SHARED_SOURCES}
     ${THIRD_PARTY_SOURCES}
     src/resource.rc
 )
+configure_snowdesktop_target(SnowDesktopLegacy)
+
+add_custom_command(TARGET SnowDesktopLegacy PRE_BUILD
+    COMMAND cmd /c "taskkill /f /im SnowDesktopLegacy.exe 2>nul & exit 0"
+    COMMENT "Stopping running SnowDesktopLegacy.exe before build..."
+)
+add_custom_command(TARGET SnowDesktopLegacy POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/widgets"
+        "$<TARGET_FILE_DIR:SnowDesktopLegacy>/widgets"
+    COMMENT "Copying widget scripts to output (SnowDesktopLegacy)..."
+)
+
+# ── Target 2: SnowDesktop (new OO implementation) ────────────────
+add_executable(SnowDesktop WIN32
+    ${SOURCES_OO}
+    ${THIRD_PARTY_SOURCES}
+    src_oo/resource.rc
+)
 configure_snowdesktop_target(SnowDesktop)
+target_include_directories(SnowDesktop PRIVATE src_oo src_oo/core src_oo/app)
 
 add_custom_command(TARGET SnowDesktop PRE_BUILD
     COMMAND cmd /c "taskkill /f /im SnowDesktop.exe 2>nul & exit 0"
@@ -85,27 +124,6 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
         "${CMAKE_SOURCE_DIR}/widgets"
         "$<TARGET_FILE_DIR:SnowDesktop>/widgets"
     COMMENT "Copying widget scripts to output (SnowDesktop)..."
-)
-
-# ── Target 2: SnowDesktopOO.exe (new OO implementation) ───────────────
-add_executable(SnowDesktopOO WIN32
-    src/main_oo.cpp
-    src/app_oo.cpp
-    ${SHARED_SOURCES}
-    ${THIRD_PARTY_SOURCES}
-    src/resource.rc
-)
-configure_snowdesktop_target(SnowDesktopOO)
-
-add_custom_command(TARGET SnowDesktopOO PRE_BUILD
-    COMMAND cmd /c "taskkill /f /im SnowDesktopOO.exe 2>nul & exit 0"
-    COMMENT "Stopping running SnowDesktopOO.exe before build..."
-)
-add_custom_command(TARGET SnowDesktopOO POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/widgets"
-        "$<TARGET_FILE_DIR:SnowDesktopOO>/widgets"
-    COMMENT "Copying widget scripts to output (SnowDesktopOO)..."
 )
 
 # ── Lua: compile as C ───────────────────────────────────────

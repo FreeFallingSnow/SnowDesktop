@@ -204,124 +204,102 @@ inline void SnowDesktopAppOO::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RE
         ctx->DrawRectangle(ToD2DRect(rect), strokeBrush.Get(), 1.0f, nullptr);
 }
 
+inline void SnowDesktopAppOO::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
+    const std::wstring& text, bool selected, float opacity)
+{
+    if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
+
+    RECT textRect = GetItemTextRect(bounds, selected);
+    float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
+    float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
+
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwriteFactory_->CreateTextLayout(
+        text.c_str(), static_cast<UINT32>(text.size()),
+        itemTextFormat_.Get(), tw, th, &layout)) || !layout)
+        return;
+
+    ComPtr<ID2D1SolidColorBrush> shadowBrush;
+    ComPtr<ID2D1SolidColorBrush> textBrush;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f * opacity), &shadowBrush);
+    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity), &textBrush);
+
+    const float tx = static_cast<float>(textRect.left);
+    const float ty = static_cast<float>(textRect.top);
+    if (shadowBrush)
+    {
+        const D2D1_POINT_2F offsets[] = {
+            { tx - 1.0f, ty }, { tx + 1.0f, ty },
+            { tx, ty - 1.0f }, { tx, ty + 1.0f },
+        };
+        for (auto& pt : offsets)
+            context->DrawTextLayout(pt, layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+    if (textBrush)
+        context->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
 
 inline void SnowDesktopAppOO::RenderFrame(ID2D1DeviceContext* ctx)
 {
-
-    for (auto& item : items_)
+    // ── OO icon rendering ────────────────────────────────────
+    for (auto& ooItem : items_oo_)
     {
-        if (IsRectEmptyRect(item.bounds)) continue;
-        if (draggingItems_ && item.selected && !dragCopyMode_ && !dragLinkMode_) continue;
-        RECT bounds = item.bounds;
+        auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
+        if (!icon) continue;
+        DesktopItem* di = icon->GetDesktopItem();
+        if (!di || IsRectEmptyRect(di->bounds)) continue;
+        if (draggingItems_ && di->selected && !dragCopyMode_ && !dragLinkMode_) continue;
 
-        const bool hovered = PtInRect(&bounds, lastMousePoint_) != FALSE;
-        const float opacity = item.isCut ? 0.4f : 1.0f;
-
-        if (hovered && !item.selected)
-        {
-            DrawD2DRoundedRectangle(ctx, bounds, 6.0f,
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * opacity),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * opacity));
-        }
-
-        RECT iconRect = GetItemIconRect(bounds);
-
-        if (item.selected)
-        {
-            DrawD2DFilledRectangle(ctx,
-                GetItemSelectionRect(bounds, true),
-                D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),
-                D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
-        }
-
-        if (item.iconBitmap)
-        {
-            ID2D1Bitmap1* bmp = GetOrCreateD2DBitmap(item.iconBitmap);
-            if (bmp)
-            {
-                D2D1_RECT_F dst = D2D1::RectF(
-                    static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-                    static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-                ctx->DrawBitmap(bmp, dst, opacity, D2D1_INTERPOLATION_MODE_LINEAR);
-            }
-        }
-
-        if (dwriteFactory_ && itemTextFormat_ && !item.name.empty())
-        {
-            RECT textRect = GetItemTextRect(bounds, item.selected);
-            float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
-            float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
-            ComPtr<IDWriteTextLayout> layout;
-            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
-                item.name.c_str(), static_cast<UINT32>(item.name.size()),
-                itemTextFormat_.Get(), tw, th, &layout)) && layout)
-            {
-                ComPtr<ID2D1SolidColorBrush> shadowBrush;
-                ComPtr<ID2D1SolidColorBrush> textBrush;
-                ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f * opacity), &shadowBrush);
-                ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity), &textBrush);
-
-                const float tx = static_cast<float>(textRect.left);
-                const float ty = static_cast<float>(textRect.top);
-                if (shadowBrush)
-                {
-                    const D2D1_POINT_2F offsets[] = {
-                        { tx - 1.0f, ty }, { tx + 1.0f, ty },
-                        { tx, ty - 1.0f }, { tx, ty + 1.0f },
-                    };
-                    for (auto& pt : offsets)
-                        ctx->DrawTextLayout(pt, layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                }
-                if (textBrush)
-                    ctx->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            }
-        }
+        const bool hovered = PtInRect(&di->bounds, lastMousePoint_) != FALSE;
+        const bool selected = di->selected;
+        int state = selected ? 2 : (hovered ? 1 : 0);
+        icon->Draw(ctx, di->bounds, state);
     }
 
-    // Draw drag target indicator or hand-off highlight
+    // ── OO Drag indicator: handoff highlight or placement preview ─
     if (draggingItems_ || externalDragActive_)
     {
-        POINT dragPoint = draggingItems_ ? dragCurrentPoint_ : externalDragPoint_;
-        bool showHandoff = false;
-        int hitUnderCursor = HitTestItem(dragPoint);
-        if (hitUnderCursor >= 0)
+        bool onDesktop = dragTargetContainer_
+            && dynamic_cast<DesktopGrid*>(dragTargetContainer_) != nullptr;
+
+        if (dragTargetRegion_ == HitRegion::Handoff && onDesktop && draggingItems_)
         {
-            if (draggingItems_ && items_[hitUnderCursor].selected)
+            // Green handoff highlight — use existing HitTestItem for reliable detection
+            int hit = HitTestItem(dragCurrentPoint_);
+            if (hit >= 0 && !items_[hit].selected)
             {
-                // skip
-            }
-            else
-            {
-                RECT iconRect = GetItemIconRect(items_[hitUnderCursor].bounds);
-                if (PtInRect(&iconRect, dragPoint))
+                RECT iconRect = GetItemIconRect(items_[hit].bounds);
+                RECT hf = { iconRect.left - 4, iconRect.top - 2,
+                            iconRect.right + 4, iconRect.bottom + 4 };
+                if (PtInRect(&hf, dragCurrentPoint_))
                 {
-                    showHandoff = true;
-                    DrawD2DRoundedRectangle(ctx, items_[hitUnderCursor].bounds, 6.0f,
+                    DrawD2DRoundedRectangle(ctx, items_[hit].bounds, 6.0f,
                         D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
                         D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
                 }
             }
         }
-        if (!showHandoff)
+        else if (onDesktop)
         {
+            // Blue placement preview — same grid math as drop
+            POINT dragPoint = draggingItems_ ? dragCurrentPoint_ : externalDragPoint_;
             GridCell targetCell = draggingItems_
                 ? FindBestDropCell(CellFromPoint(GetDragTargetPoint(dragPoint)))
                 : CellFromPoint(dragPoint);
+
             if (!targetCell.pageId.empty())
             {
                 if (draggingItems_)
                 {
                     std::vector<PendingGridMove> moves = BuildSelectedMove(targetCell);
-                    if (!moves.empty())
+                    for (const auto& move : moves)
                     {
-                        for (const auto& move : moves)
-                        {
-                            RECT targetRect = GetGridRect(gridPages_, move.cell, items_[move.index].gridSpan);
-                            DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
-                                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
-                                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
-                        }
+                        RECT targetRect = GetGridRect(gridPages_, move.cell, items_[move.index].gridSpan);
+                        DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
+                            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
+                            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
                     }
                 }
                 else
@@ -354,51 +332,18 @@ inline void SnowDesktopAppOO::RenderFrame(ID2D1DeviceContext* ctx)
         int dx = dragCurrentPoint_.x - mouseDownPoint_.x;
         int dy = dragCurrentPoint_.y - mouseDownPoint_.y;
 
-        for (auto& item : items_)
+        for (auto& ooItem : items_oo_)
         {
-            if (!item.selected) continue;
-            if (IsRectEmptyRect(item.bounds)) continue;
-            RECT bounds = item.bounds;
-            RECT draggedBounds = MakeRect(bounds.left + dx, bounds.top + dy,
-                bounds.right + dx, bounds.bottom + dy);
+            auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
+            if (!icon) continue;
+            DesktopItem* di = icon->GetDesktopItem();
+            if (!di || !di->selected) continue;
+            if (IsRectEmptyRect(di->bounds)) continue;
 
-            RECT iconRect = GetItemIconRect(draggedBounds);
-
-            DrawD2DFilledRectangle(ctx,
-                GetItemSelectionRect(draggedBounds, true),
-                D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.28f),
-                D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.45f));
-
-            if (item.iconBitmap)
-            {
-                ID2D1Bitmap1* bmp = GetOrCreateD2DBitmap(item.iconBitmap);
-                if (bmp)
-                {
-                    D2D1_RECT_F dst = D2D1::RectF(
-                        static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-                        static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-                    ctx->DrawBitmap(bmp, dst, 0.7f, D2D1_INTERPOLATION_MODE_LINEAR);
-                }
-            }
-
-            if (dwriteFactory_ && itemTextFormat_ && !item.name.empty())
-            {
-                RECT textRect = GetItemTextRect(draggedBounds, true);
-                float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
-                float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
-                ComPtr<IDWriteTextLayout> layout;
-                if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
-                    item.name.c_str(), static_cast<UINT32>(item.name.size()),
-                    itemTextFormat_.Get(), tw, th, &layout)) && layout)
-                {
-                    ComPtr<ID2D1SolidColorBrush> textBrush;
-                    ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f), &textBrush);
-                    if (textBrush)
-                        ctx->DrawTextLayout(D2D1::Point2F(
-                            static_cast<float>(textRect.left), static_cast<float>(textRect.top)),
-                            layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                }
-            }
+            RECT draggedBounds = MakeRect(
+                di->bounds.left + dx, di->bounds.top + dy,
+                di->bounds.right + dx, di->bounds.bottom + dy);
+            icon->Draw(ctx, draggedBounds, 3); // state=3 = dragged
         }
     }
 
@@ -408,6 +353,16 @@ inline void SnowDesktopAppOO::RenderFrame(ID2D1DeviceContext* ctx)
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
             D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
     }
+
+        // OO drop indicator — only for non-desktop containers
+        // (DesktopGrid placement preview is already rendered by the procedural path above)
+        if (draggingItems_ && dragTargetContainer_ && dragTargetRegion_ != HitRegion::None
+            && !dynamic_cast<DesktopGrid*>(dragTargetContainer_))
+        {
+            auto& slots = dragTargetContainer_->GetSlots();
+            if (dragTargetSlotIndex_ < slots.size())
+                slots[dragTargetSlotIndex_]->DrawDropIndicator(ctx, dragTargetRegion_);
+        }
 
         DrawPageNavButtons(ctx);
 }

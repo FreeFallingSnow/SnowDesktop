@@ -1,0 +1,7 @@
+#include "resource.h"
+
+IDI_APPICON       ICON   "../assets/icon/icon.ico"
+IDI_APPICON_SMALL ICON   "../assets/icon/icon_small.ico"
+
+// Font Awesome Solid font, embedded as binary resource
+IDR_FA_FONT RCDATA "../assets/fonts/fa-solid-900.ttf"

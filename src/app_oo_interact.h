@@ -6,25 +6,42 @@
 
 inline int SnowDesktopAppOO::HitTestItem(POINT pt) const
 {
-    for (int i = static_cast<int>(items_.size()) - 1; i >= 0; --i)
+    // OO-backed: walk DesktopIcons, return DesktopItem index for backward compat
+    for (int i = static_cast<int>(items_oo_.size()) - 1; i >= 0; --i)
     {
-        if (IsRectEmptyRect(items_[i].bounds)) continue;
-        RECT hitRect = GetItemSelectionRect(items_[i].bounds, items_[i].selected);
-        if (PtInRect(&hitRect, pt)) return i;
+        auto* icon = dynamic_cast<DesktopIcon*>(items_oo_[i].get());
+        if (!icon) continue;
+        DesktopItem* di = icon->GetDesktopItem();
+        if (!di || IsRectEmptyRect(di->bounds)) continue;
+        RECT hitRect = GetItemSelectionRect(di->bounds, di->selected);
+        if (PtInRect(&hitRect, pt))
+        {
+            // Map back to items_ index
+            for (size_t j = 0; j < items_.size(); ++j)
+                if (&items_[j] == di) return static_cast<int>(j);
+            return -1;
+        }
     }
     return -1;
 }
 
 inline void SnowDesktopAppOO::ClearSelection()
 {
-    for (auto& item : items_) item.selected = false;
+    for (auto& oo : items_oo_)
+    {
+        auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
+        if (icon) icon->SetSelected(false);
+    }
 }
 
 inline void SnowDesktopAppOO::SelectOnly(int index)
 {
     ClearSelection();
     if (index >= 0 && static_cast<size_t>(index) < items_.size())
+    {
+        // Find the OO icon for this item
         items_[index].selected = true;
+    }
 }
 
 inline void SnowDesktopAppOO::ToggleSelection(int index)
@@ -203,7 +220,68 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
             }
         }
 
+        // OO Slot-based hit testing
+        dragTargetContainer_ = nullptr;
+        dragTargetRegion_ = HitRegion::None;
+        Slot* desktopSlot = nullptr;
+        for (auto& c : containers_)
+        {
+            if (auto* grid = dynamic_cast<DesktopGrid*>(c.get()))
+            {
+                HitRegion region = grid->HitTestAtPoint(current, desktopSlot);
+                if (region != HitRegion::None)
+                {
+                    dragTargetContainer_ = grid;
+                    dragTargetRegion_ = region;
+                    dragTargetSlotIndex_ = desktopSlot ? desktopSlot->GetIndex() : 0;
+
+                    // Override with Handoff if mouse is actually on another item's icon
+                    if (region == HitRegion::SortBefore)
+                    {
+                        int hit = HitTestItem(current);
+                        if (hit >= 0 && !items_[hit].selected)
+                        {
+                            RECT iconRect = GetItemIconRect(items_[hit].bounds);
+                            RECT hf = { iconRect.left - 4, iconRect.top - 2,
+                                        iconRect.right + 4, iconRect.bottom + 4 };
+                            if (PtInRect(&hf, current))
+                                dragTargetRegion_ = HitRegion::Handoff;
+                        }
+                    }
+                    if (dragTargetRegion_ == HitRegion::Handoff) break;
+                }
+            }
+            else
+            {
+                auto& slots = c->GetSlots();
+                for (size_t i = 0; i < slots.size(); ++i)
+                {
+                    HitRegion region = slots[i]->HitTest(current);
+                    if (region != HitRegion::None)
+                    {
+                        dragTargetContainer_ = c.get();
+                        dragTargetSlotIndex_ = i;
+                        dragTargetRegion_ = region;
+                        if (region == HitRegion::Handoff) goto show_hint;
+                    }
+                }
+            }
+        }
+    show_hint:
+        // Desktop hint uses existing grid-aware logic (modifier keys etc.)
         std::wstring hint = MakeDragHint(current);
+
+        // Only override with OO hint for non-desktop containers
+        if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None
+            && !dynamic_cast<DesktopGrid*>(dragTargetContainer_))
+        {
+            auto& slots = dragTargetContainer_->GetSlots();
+            if (dragTargetSlotIndex_ < slots.size())
+            {
+                std::wstring ooHint = slots[dragTargetSlotIndex_]->GetDropHint(dragTargetRegion_, {});
+                if (!ooHint.empty()) hint = ooHint;
+            }
+        }
         ShowDragHintWindow(current, hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -217,14 +295,14 @@ inline void SnowDesktopAppOO::OnMouseMove(WPARAM wp, LPARAM lp)
             marqueeActive_ = true;
             marqueeRect_ = NormalizeRect(mouseDownPoint_, current);
 
-            for (auto& item : items_)
+            for (auto& oo : items_oo_)
             {
-                if (IsRectEmptyRect(item.bounds)) continue;
-                RECT itemSelRect = GetItemSelectionRect(item.bounds, false);
-                if (RectsIntersect(itemSelRect, marqueeRect_))
-                    item.selected = true;
-                else
-                    item.selected = false;
+                auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
+                if (!icon) continue;
+                DesktopItem* di = icon->GetDesktopItem();
+                if (!di || IsRectEmptyRect(di->bounds)) continue;
+                RECT itemSelRect = GetItemSelectionRect(di->bounds, false);
+                di->selected = RectsIntersect(itemSelRect, marqueeRect_);
             }
         }
     }
@@ -251,61 +329,90 @@ inline void SnowDesktopAppOO::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 {
     (void)wp; (void)lp;
 
-    if (draggingItems_)
+    if (!draggingItems_)
     {
-        HideDragHintWindow();
-        POINT dropPoint = dragCurrentPoint_;
-
-        int hitUnderCursor = HitTestItem(dropPoint);
-        if (hitUnderCursor >= 0 && !items_[hitUnderCursor].selected)
-        {
-            RECT iconRect = GetItemIconRect(items_[hitUnderCursor].bounds);
-            if (PtInRect(&iconRect, dropPoint))
-            {
-                DropSelectedItemsOnTarget(hitUnderCursor);
-                draggingItems_ = false;
-                navHoverSide_ = 0;
-                navAutoFlipDir_ = 0;
-                mouseDown_ = false;
-                mouseDownHit_ = -1;
-                ReleaseCapture();
-                ReloadItems();
-                return;
-            }
-        }
-
-        GridCell targetCell = CellFromPoint(GetDragTargetPoint(dropPoint));
-        targetCell = FindBestDropCell(targetCell);
-
-        bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-
-        if (altDown)
-            CreateShortcutSelectedItemsToCell(targetCell);
-        else if (ctrlDown)
-            CopySelectedItemsToCell(targetCell);
-        else
-            MoveSelectedItemsToCell(targetCell);
-
-        draggingItems_ = false;
-        dragCopyMode_ = false;
-        dragLinkMode_ = false;
+        mouseDown_ = false;
+        marqueeActive_ = false;
         navHoverSide_ = 0;
         navAutoFlipDir_ = 0;
-        mouseDown_ = false;
         mouseDownHit_ = -1;
         ReleaseCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
 
-    mouseDown_ = false;
-    marqueeActive_ = false;
+    HideDragHintWindow();
+
+    if (!dragTargetContainer_ || dragTargetRegion_ == HitRegion::None)
+    {
+        goto cleanup;
+    }
+
+    {
+        int mods = 0;
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
+        if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
+
+        bool onDesktop = dynamic_cast<DesktopGrid*>(dragTargetContainer_) != nullptr;
+
+        if (dragTargetRegion_ == HitRegion::Handoff && onDesktop)
+        {
+            // Use HitTestItem for reliable handoff target detection
+            int hit = HitTestItem(dragCurrentPoint_);
+            if (hit >= 0 && !items_[hit].selected)
+                DropSelectedItemsOnTarget(hit);
+            SaveLayoutSlots();
+            ClearSelection();
+            ReloadItems();
+        }
+        else if (onDesktop)
+        {
+            // ── Desktop drop: exact same math as preview ────────
+            POINT adjusted = GetDragTargetPoint(dragCurrentPoint_);
+            GridCell tc = FindBestDropCell(CellFromPoint(adjusted));
+
+            if (mods & MK_ALT)      CreateShortcutSelectedItemsToCell(tc);
+            else if (mods & MK_CONTROL) CopySelectedItemsToCell(tc);
+            else                     MoveSelectedItemsToCell(tc);
+
+            SaveLayoutSlots();
+            ClearSelection();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        else
+        {
+            // ── Widget container drop ─────────────────────────
+            auto& slots = dragTargetContainer_->GetSlots();
+            Slot* ts = (dragTargetSlotIndex_ < slots.size()) ? slots[dragTargetSlotIndex_].get() : nullptr;
+            if (ts)
+            {
+                std::vector<Item*> src;
+                Container* origin = containers_.empty() ? nullptr : containers_[0].get();
+                for (auto& oo : items_oo_)
+                {
+                    auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
+                    if (icon && icon->IsSelected()) src.push_back(icon);
+                }
+                ts->ExecuteDrop(dragTargetRegion_, src, origin, mods);
+            }
+            SaveLayoutSlots();
+            ClearSelection();
+            ReloadItems();
+        }
+    }
+
+cleanup:
+    draggingItems_ = false;
+    dragCopyMode_ = false;
+    dragLinkMode_ = false;
+    dragTargetContainer_ = nullptr;
+    dragTargetRegion_ = HitRegion::None;
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
+    mouseDown_ = false;
     mouseDownHit_ = -1;
     ReleaseCapture();
-    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 inline void SnowDesktopAppOO::OnKeyDown(WPARAM key)
@@ -484,10 +591,13 @@ inline void SnowDesktopAppOO::OnKeyDown(WPARAM key)
         if (!ctrl) break;
     {
         ClearSelection();
-        for (auto& item : items_)
+        for (auto& oo : items_oo_)
         {
-            if (item.name.empty()) continue;
-            item.selected = true;
+            auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
+            if (!icon) continue;
+            DesktopItem* di = icon->GetDesktopItem();
+            if (!di || di->name.empty()) continue;
+            di->selected = true;
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
@@ -895,6 +1005,28 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragEnter(
         draggingItems_ = true;
         POINT client = ScreenPointToClient(point);
         dragCurrentPoint_ = client;
+
+        // OO hit-test for hint
+        HitRegion tmp;
+        Slot* s;
+        for (auto& c : containers_)
+        {
+            if (auto* grid = dynamic_cast<DesktopGrid*>(c.get()))
+            {
+                tmp = grid->HitTestAtPoint(client, s);
+                if (tmp != HitRegion::None)
+                {
+                    int hit = HitTestItem(client);
+                    if (hit >= 0 && !items_[hit].selected)
+                    {
+                        RECT ir = GetItemIconRect(items_[hit].bounds);
+                        RECT hf = { ir.left - 4, ir.top - 2, ir.right + 4, ir.bottom + 4 };
+                        if (PtInRect(&hf, client)) tmp = HitRegion::Handoff;
+                    }
+                    break;
+                }
+            }
+        }
         std::wstring hint = MakeDragHint(client);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
@@ -904,17 +1036,15 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragEnter(
 
     externalDragActive_ = true;
     externalDragPoint_ = ScreenPointToClient(point);
-    cachedDropCell_ = CellFromPoint(externalDragPoint_);
-    hasCachedDropCell_ = true;
+
+    // OO hit-test for external hint
+    HitTestExternalAt(externalDragPoint_);
+
     if (dataObject)
-    {
-        auto paths = GetDropPaths(dataObject);
-        externalDropFileCount_ = static_cast<int>(paths.size());
-    }
+        externalDropFileCount_ = static_cast<int>(GetDropPaths(dataObject).size());
     else
-    {
         externalDropFileCount_ = 1;
-    }
+
     std::wstring hint = MakeExternalDragHint(externalDragPoint_);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ChooseDropEffect(keyState, *effect);
@@ -940,8 +1070,7 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragOver(
 
     externalDragActive_ = true;
     externalDragPoint_ = ScreenPointToClient(point);
-    cachedDropCell_ = CellFromPoint(externalDragPoint_);
-    hasCachedDropCell_ = true;
+    HitTestExternalAt(externalDragPoint_);
     std::wstring hint = MakeExternalDragHint(externalDragPoint_);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ChooseDropEffect(keyState, *effect);
@@ -960,7 +1089,6 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::DragLeave()
     }
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
-    hasCachedDropCell_ = false;
     HideDragHintWindow();
     InvalidateRect(hwnd_, nullptr, FALSE);
     return S_OK;
@@ -980,36 +1108,38 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::Drop(
         selfDragReturned_ = true;
         draggingItems_ = false;
 
-        // Check icon hand-off
-        int hitUnderCursor = HitTestItem(clientPoint);
-        if (hitUnderCursor >= 0 && !items_[hitUnderCursor].selected)
+        if (dragTargetRegion_ == HitRegion::Handoff)
         {
-            RECT iconRect = GetItemIconRect(items_[hitUnderCursor].bounds);
-            if (PtInRect(&iconRect, clientPoint))
+            // ── Shell handoff via IShellFolder::IDropTarget ────
+            int hit = HitTestItem(clientPoint);
+            if (hit >= 0 && !items_[hit].selected)
             {
                 ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
                 if (dataObj)
                 {
-                    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hitUnderCursor].childPidl.get());
-                    ComPtr<IDropTarget> dropTarget;
+                    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hit].childPidl.get());
+                    ComPtr<IDropTarget> dt;
                     if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
-                        reinterpret_cast<void**>(dropTarget.GetAddressOf()))) && dropTarget)
+                        reinterpret_cast<void**>(dt.GetAddressOf()))) && dt)
                     {
-                        POINTL screenPtL{ point.x, point.y };
-                        DWORD localEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
-                        dropTarget->DragEnter(dataObj.Get(), keyState, screenPtL, &localEffect);
-                        dropTarget->DragOver(keyState, screenPtL, &localEffect);
-                        dropTarget->Drop(dataObj.Get(), keyState, screenPtL, &localEffect);
+                        POINTL spl{ point.x, point.y };
+                        DWORD le = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+                        dt->DragEnter(dataObj.Get(), keyState, spl, &le);
+                        dt->DragOver(keyState, spl, &le);
+                        dt->Drop(dataObj.Get(), keyState, spl, &le);
                     }
                 }
-                ClearSelection();
-                ReloadItems();
-                *effect = DROPEFFECT_MOVE;
-                return S_OK;
             }
+            ClearSelection();
+            ReloadItems();
+            *effect = DROPEFFECT_MOVE;
+            return S_OK;
         }
 
-        MoveSelectedItemsToCell(FindBestDropCell(CellFromPoint(GetDragTargetPoint(clientPoint))));
+        // ── Desktop drop: reuse same math as OnLeftButtonUp ────
+        POINT adjusted = GetDragTargetPoint(clientPoint);
+        GridCell tc = FindBestDropCell(CellFromPoint(adjusted));
+        MoveSelectedItemsToCell(tc);
         SaveLayoutSlots();
         ClearSelection();
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1017,59 +1147,59 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::Drop(
         return S_OK;
     }
 
-    // External drop
+    // ── External drop ──────────────────────────────────────────
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
 
-    GridCell dropTargetCell = hasCachedDropCell_
-        ? cachedDropCell_ : CellFromPoint(clientPoint);
-    hasCachedDropCell_ = false;
-
-    // Extract source file names for pending placement (survives async file ops)
     std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
 
-    // Check icon hand-off for external data
-    int hitUnderCursor = HitTestItem(clientPoint);
-    if (hitUnderCursor >= 0 && dataObject)
+    if (dragTargetRegion_ == HitRegion::Handoff && dataObject)
     {
-        RECT iconRect = GetItemIconRect(items_[hitUnderCursor].bounds);
-        if (PtInRect(&iconRect, clientPoint))
+        // ── Handoff on specific item ──
+        int hit = HitTestItem(clientPoint);
+        if (hit >= 0)
         {
             std::unordered_set<std::wstring> existingKeys;
             for (const auto& item : items_)
                 if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
 
-            PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hitUnderCursor].childPidl.get());
-            ComPtr<IDropTarget> dropTarget;
+            PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hit].childPidl.get());
+            ComPtr<IDropTarget> dt;
             if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
-                reinterpret_cast<void**>(dropTarget.GetAddressOf()))) && dropTarget)
+                reinterpret_cast<void**>(dt.GetAddressOf()))) && dt)
             {
-                DWORD localEffect = *effect;
-                POINTL screenPtL{ point.x, point.y };
-                dropTarget->DragEnter(dataObject, keyState, screenPtL, &localEffect);
-                dropTarget->DragOver(keyState, screenPtL, &localEffect);
-                HRESULT hr = dropTarget->Drop(dataObject, keyState, screenPtL, &localEffect);
-                *effect = localEffect;
+                DWORD le = *effect;
+                POINTL spl{ point.x, point.y };
+                dt->DragEnter(dataObject, keyState, spl, &le);
+                dt->DragOver(keyState, spl, &le);
+                dt->Drop(dataObject, keyState, spl, &le);
+                *effect = le;
+
                 if (!dropPaths.empty())
                 {
                     pendingPlaceNames_ = dropPaths;
-                    pendingPlaceCell_ = dropTargetCell;
+                    pendingPlaceCell_ = CellFromPoint(clientPoint);
                     hasPendingPlace_ = true;
                     pendingPlaceTick_ = GetTickCount();
                 }
                 ReloadItems(false);
-                PlaceNewItemsAtDropPoint(existingKeys, dropTargetCell);
-                return hr;
+                PlaceNewItemsAtDropPoint(existingKeys, CellFromPoint(clientPoint));
+                return S_OK;
             }
         }
     }
 
-    // Check self-drag-out keys for internal move recognition
-    if (!selfDragOutKeys_.empty() && dataObject)
+    // ── Non-handoff external drop: delegate to shell desktop ───
+    if (dataObject)
     {
-        std::vector<std::wstring> paths = GetDropPaths(dataObject);
-        if (!paths.empty())
+        std::unordered_set<std::wstring> existingKeys;
+        for (const auto& item : items_)
+            if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
+
+        // Self-drag-out recognition
+        if (!selfDragOutKeys_.empty())
         {
+            std::vector<std::wstring> paths = GetDropPaths(dataObject);
             std::unordered_set<std::wstring> pathSet(paths.begin(), paths.end());
             bool allCached = true;
             for (const auto& k : selfDragOutKeys_)
@@ -1091,45 +1221,37 @@ inline HRESULT STDMETHODCALLTYPE SnowDesktopAppOO::Drop(
             }
         }
         selfDragOutKeys_.clear();
-    }
 
-    // Default: delegate to shell desktop drop target with appropriate keyState
-    if (dataObject)
-    {
-        std::unordered_set<std::wstring> existingKeys;
-        for (const auto& item : items_)
-            if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
-
+        // Delegate to shell desktop folder's drop target
         ComPtr<IDropTarget> desktopTarget;
         if (SUCCEEDED(desktopFolder_->CreateViewObject(hwnd_, IID_IDropTarget,
             reinterpret_cast<void**>(desktopTarget.GetAddressOf()))) && desktopTarget)
         {
-            POINTL screenPtL{ point.x, point.y };
-
-            DWORD adjustedKeyState = keyState;
+            POINTL spl{ point.x, point.y };
+            DWORD adjustedKS = keyState;
             if (*effect == DROPEFFECT_MOVE)
-                adjustedKeyState = (keyState & ~MK_CONTROL & ~MK_ALT) | MK_SHIFT;
+                adjustedKS = (keyState & ~MK_CONTROL & ~MK_ALT) | MK_SHIFT;
             else if (*effect == DROPEFFECT_COPY)
-                adjustedKeyState = (keyState & ~MK_SHIFT & ~MK_ALT) | MK_CONTROL;
+                adjustedKS = (keyState & ~MK_SHIFT & ~MK_ALT) | MK_CONTROL;
             else if (*effect == DROPEFFECT_LINK)
-                adjustedKeyState = (keyState & ~MK_SHIFT & ~MK_CONTROL) | MK_ALT;
+                adjustedKS = (keyState & ~MK_SHIFT & ~MK_CONTROL) | MK_ALT;
 
-            DWORD localEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
-            desktopTarget->DragEnter(dataObject, adjustedKeyState, screenPtL, &localEffect);
-            desktopTarget->DragOver(adjustedKeyState, screenPtL, &localEffect);
-            HRESULT hr = desktopTarget->Drop(dataObject, adjustedKeyState, screenPtL, &localEffect);
-            *effect = localEffect;
+            DWORD le = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+            desktopTarget->DragEnter(dataObject, adjustedKS, spl, &le);
+            desktopTarget->DragOver(adjustedKS, spl, &le);
+            desktopTarget->Drop(dataObject, adjustedKS, spl, &le);
+            *effect = le;
 
             if (!dropPaths.empty())
             {
                 pendingPlaceNames_ = dropPaths;
-                pendingPlaceCell_ = dropTargetCell;
+                pendingPlaceCell_ = CellFromPoint(clientPoint);
                 hasPendingPlace_ = true;
                 pendingPlaceTick_ = GetTickCount();
             }
             ReloadItems(false);
-            PlaceNewItemsAtDropPoint(existingKeys, dropTargetCell);
-            return hr;
+            PlaceNewItemsAtDropPoint(existingKeys, CellFromPoint(clientPoint));
+            return S_OK;
         }
     }
 
@@ -1450,17 +1572,46 @@ inline void SnowDesktopAppOO::ShowDragHintWindowScreen(POINT screenPoint, const 
     ReleaseDC(nullptr, screenDc);
 }
 
+inline void SnowDesktopAppOO::HitTestExternalAt(POINT pt)
+{
+    dragTargetContainer_ = nullptr;
+    dragTargetRegion_ = HitRegion::None;
+    for (auto& c : containers_)
+    {
+        if (auto* grid = dynamic_cast<DesktopGrid*>(c.get()))
+        {
+            Slot* s;
+            HitRegion r = grid->HitTestAtPoint(pt, s);
+            if (r != HitRegion::None)
+            {
+                dragTargetContainer_ = grid;
+                dragTargetRegion_ = r;
+                dragTargetSlotIndex_ = s ? s->GetIndex() : 0;
+                // Check handoff override
+                int hit = HitTestItem(pt);
+                if (hit >= 0)
+                {
+                    RECT ir = GetItemIconRect(items_[hit].bounds);
+                    RECT hf = { ir.left - 4, ir.top - 2, ir.right + 4, ir.bottom + 4 };
+                    if (PtInRect(&hf, pt))
+                        dragTargetRegion_ = HitRegion::Handoff;
+                }
+            }
+            break;
+        }
+    }
+}
+
 inline std::wstring SnowDesktopAppOO::MakeExternalDragHint(POINT point) const
 {
     bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     bool shiftDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
 
-    int hit = HitTestItem(point);
-    if (hit >= 0)
+    if (dragTargetRegion_ == HitRegion::Handoff)
     {
-        RECT iconRect = GetItemIconRect(items_[hit].bounds);
-        if (PtInRect(&iconRect, point))
+        int hit = HitTestItem(point);
+        if (hit >= 0)
             return L"释放：拖入「" + items_[hit].name + L"」";
     }
 
@@ -1475,11 +1626,10 @@ inline std::wstring SnowDesktopAppOO::MakeDragHint(POINT point) const
     bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
 
-    int hit = HitTestItem(point);
-    if (hit >= 0 && !items_[hit].selected)
+    if (dragTargetRegion_ == HitRegion::Handoff)
     {
-        RECT iconRect = GetItemIconRect(items_[hit].bounds);
-        if (PtInRect(&iconRect, point))
+        int hit = HitTestItem(point);
+        if (hit >= 0 && !items_[hit].selected)
             return L"释放：交给「" + items_[hit].name + L"」处理";
     }
 
@@ -1491,6 +1641,7 @@ inline std::wstring SnowDesktopAppOO::MakeDragHint(POINT point) const
     if (ctrlDown) return L"释放：复制到此空位";
     return L"释放：移动到此空位";
 }
+
 
 // ── Tray ────────────────────────────────────────────────────
 

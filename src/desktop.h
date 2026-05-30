@@ -8,12 +8,10 @@ struct GridPage;
 struct DesktopItem;
 struct GridCell;
 
-class SnowDesktopApp;
-
 class DesktopGrid : public GridContainer
 {
 public:
-    DesktopGrid(std::vector<GridPage>* pages, std::vector<DesktopItem>* items, SnowDesktopApp* app);
+    DesktopGrid(std::vector<GridPage>* pages, std::vector<DesktopItem>* items, void* app);
     std::wstring GetTitle() const override;
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
@@ -24,9 +22,14 @@ public:
     std::vector<DesktopItem>& GetItems() { return *items_; }
     const std::vector<GridPage>& GetPages() const { return *pages_; }
 
+    // Direct point test — O(1), no slot allocation
+    HitRegion HitTestAtPoint(POINT pt, Slot*& outSlot);
+
 private:
+    bool EnsureSlotCache();
     std::vector<GridPage>* pages_;
     std::vector<DesktopItem>* items_;
-    SnowDesktopApp* app_;
+    void* app_;
     RECT bounds_{};
+    bool slotsBuilt_ = false;
 };

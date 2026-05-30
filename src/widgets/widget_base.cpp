@@ -4,7 +4,7 @@
 
 // ── Widget base (Item only) ─────────────────────────────────
 
-Widget::Widget(DesktopWidget* data, SnowDesktopApp* app)
+Widget::Widget(DesktopWidget* data, void* app)
     : data_(data), app_(app) {}
 
 std::wstring Widget::GetTitle() const { return data_ ? data_->title : L""; }
@@ -30,7 +30,7 @@ ComPtr<IDataObject> Widget::CreateDataObject()
 
 // ── Factory ─────────────────────────────────────────────────
 
-std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, SnowDesktopApp* app)
+std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, void* app)
 {
     if (!data) return nullptr;
     switch (data->type)

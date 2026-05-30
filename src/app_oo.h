@@ -55,6 +55,21 @@ public:
 
     int Run(HINSTANCE instance, int showCommand);
 
+    // Friends for OO rendering dispatch
+    friend class DesktopIcon;
+    friend class FolderEntryIcon;
+    friend class DesktopGrid;
+    friend class Widget;
+    friend class Collection;
+    friend class FileCategories;
+    friend class FolderMapping;
+    friend class LuaScript;
+
+    // OO system accessors
+    std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
+    const std::vector<std::unique_ptr<Item>>& GetItemsOO() const { return items_oo_; }
+    std::vector<std::unique_ptr<Item>>& GetItemsOO() { return items_oo_; }
+
 private:
     // ── Window ──────────────────────────────────────────────
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -164,7 +179,12 @@ private:
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth = 1.0f);
     void DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke);
+    void DrawItemText(ID2D1DeviceContext* ctx, RECT bounds,
+        const std::wstring& text, bool selected, float opacity = 1.0f);
     static D2D1_RECT_F ToD2DRect(const RECT& r);
+
+    // D2D bitmap cache — public for Item::Draw
+    ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
 
     // ── Filtering ───────────────────────────────────────────
     std::wstring GetStableLayoutKey(PCIDLIST_ABSOLUTE pidl,
@@ -250,6 +270,11 @@ private:
     bool dragCopyMode_ = false;
     bool dragLinkMode_ = false;
 
+    // OO drag state (Slot-based)
+    Container* dragTargetContainer_ = nullptr;
+    size_t dragTargetSlotIndex_ = 0;
+    HitRegion dragTargetRegion_ = HitRegion::None;
+
     // OLE drag state
     LONG refCount_ = 1;
     bool selfDragActive_ = false;
@@ -258,8 +283,6 @@ private:
     bool externalDragActive_ = false;
     POINT externalDragPoint_{};
     int externalDropFileCount_ = 0;
-    GridCell cachedDropCell_;
-    bool hasCachedDropCell_ = false;
     bool dropTargetRegistered_ = false;
 
     // Pending placement (survives across ReloadItems for async file ops)
@@ -298,6 +321,7 @@ private:
     void DestroyDragHintWindow();
     std::wstring MakeDragHint(POINT point) const;
     std::wstring MakeExternalDragHint(POINT point) const;
+    void HitTestExternalAt(POINT pt);
     static std::vector<std::wstring> GetDropPaths(IDataObject* dataObject);
     static std::wstring FileNameFromPath(const std::wstring& path);
     static bool MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName);
@@ -309,7 +333,6 @@ private:
 
     // D2D bitmap cache
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
-    ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
 
     // New menu COM context
     ComPtr<IContextMenu2> newMenuContextMenu_;

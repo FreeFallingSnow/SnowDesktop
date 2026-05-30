@@ -9,17 +9,27 @@ class Item;
 class Slot;
 enum class HitRegion;
 
+enum class BarStyle { VBar, HBar };
+
 class Container
 {
 public:
     virtual ~Container() = default;
     virtual std::wstring GetTitle() const = 0;
+
+    // Build and cache slots. Returns stable references valid until next BuildSlots call.
+    const std::vector<std::unique_ptr<Slot>>& GetSlots();
     virtual std::vector<std::unique_ptr<Slot>> BuildSlots() = 0;
+
     virtual void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) = 0;
     virtual void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) {}
     virtual void DrawContents(ID2D1DeviceContext* context);
     virtual RECT GetBounds() const = 0;
+    virtual BarStyle GetInsertionStyle() const = 0;
+
+protected:
+    std::vector<std::unique_ptr<Slot>> cachedSlots_;
 };
 
 // ── GridContainer: 2D grid layout (only DesktopGrid uses this) ─
@@ -27,7 +37,7 @@ public:
 class GridContainer : public Container
 {
 public:
-    // Default insertion style: VBar
+    BarStyle GetInsertionStyle() const override { return BarStyle::VBar; }
 };
 
 // ── ListContainer: 1D list layout (all Widgets use this) ─
@@ -36,7 +46,7 @@ public:
 class ListContainer : public Container
 {
 public:
-    // Default insertion style: HBar
+    BarStyle GetInsertionStyle() const override { return BarStyle::HBar; }
 
     enum class RenderMode { Fixed, ScrollingIcon, ScrollingRow };
     virtual RenderMode GetRenderMode() const { return RenderMode::Fixed; }

@@ -1829,20 +1829,20 @@ inline void SnowDesktopAppOO::RebuildContainersAndItems()
     items_oo_.clear();
 
     // DesktopGrid
-    auto grid = std::make_unique<DesktopGrid>(&gridPages_, &items_, nullptr);
+    auto grid = std::make_unique<DesktopGrid>(&gridPages_, &items_, this);
     containers_.push_back(std::move(grid));
 
     // DesktopIcon for each DesktopItem
     for (auto& item : items_)
     {
-        auto icon = std::make_unique<DesktopIcon>(&item, containers_.back().get());
+        auto icon = std::make_unique<DesktopIcon>(&item, containers_.back().get(), this);
         items_oo_.push_back(std::move(icon));
     }
 
     // Widgets
     for (auto& w : widgets_)
     {
-        auto widget = CreateWidget(&w, nullptr);
+        auto widget = CreateWidget(&w, this);
         if (!widget) continue;
 
         // WidgetContainer → containers_ (can receive drops)
