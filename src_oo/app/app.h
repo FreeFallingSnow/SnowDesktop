@@ -70,7 +70,12 @@ public:
     std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
     const std::vector<std::unique_ptr<Item>>& GetItemsOO() const { return items_oo_; }
     std::vector<std::unique_ptr<Item>>& GetItemsOO() { return items_oo_; }
+    const std::vector<DesktopItem>& GetDesktopItems() const { return items_; }
+    std::vector<DesktopItem>& GetDesktopItems() { return items_; }
     DesktopGrid* GetDesktopGrid() { return static_cast<DesktopGrid*>(containers_.empty() ? nullptr : containers_[0].get()); }
+    std::vector<DesktopWidget>& GetWidgets() { return widgets_; }
+    const std::vector<DesktopWidget>& GetWidgets() const { return widgets_; }
+    void InvalidateDesktop() { ::InvalidateRect(hwnd_, nullptr, TRUE); }
 
 private:
     // ── Window ──────────────────────────────────────────────
@@ -213,6 +218,8 @@ private:
     void AddFileCategoryWidgetAt(POINT screenPoint);
     void AddFolderMappingWidgetAt(POINT screenPoint);
     void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan);
+    void EnumerateFolderMappingEntries(DesktopWidget& widget);
+    void RefreshFolderMappingWidget(size_t widgetIndex);
 
     // ── Member variables ────────────────────────────────────
     HINSTANCE instance_ = nullptr;

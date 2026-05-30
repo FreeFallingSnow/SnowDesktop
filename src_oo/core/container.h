@@ -49,7 +49,15 @@ class ListContainer : public Container
 {
 public:
     BarStyle GetInsertionStyle() const override { return BarStyle::HBar; }
+    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
 
     enum class RenderMode { Fixed, ScrollingIcon, ScrollingRow };
     virtual RenderMode GetRenderMode() const { return RenderMode::Fixed; }
+
+    // Subclasses override these to control layout
+    virtual size_t GetSlotCount() const = 0;
+    virtual int  GetItemHeight() const { return 32; }
+    virtual int  GetItemWidth()  const { return 92; }
+    virtual bool SingleColumn() const { return false; }
+    virtual bool IncludeTrailingEmptySlot() const { return false; }
 };
