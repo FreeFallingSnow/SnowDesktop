@@ -86,35 +86,46 @@ class Collection : public WidgetContainer
 {
 public:
     using WidgetContainer::WidgetContainer;
-    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     WidgetHit HitTestWidget(POINT pt) const override;
+
+    size_t GetSlotCount() const override;
+    int  GetItemHeight() const override { return 136; }
+    int  GetItemWidth()  const override { return 92; }
 };
 
 class FileCategories : public WidgetContainer
 {
 public:
     using WidgetContainer::WidgetContainer;
-    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
+
+    size_t GetSlotCount() const override;
+    int  GetItemHeight() const override { return 32; }
+    bool SingleColumn() const override { return true; }
 };
 
 class FolderMapping : public WidgetContainer
 {
 public:
     using WidgetContainer::WidgetContainer;
-    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
+
+    size_t GetSlotCount() const override;
+    int  GetItemHeight() const override;
+    int  GetItemWidth()  const override;
+    bool SingleColumn() const override;
+    bool IncludeTrailingEmptySlot() const override { return true; }
 };
 
 // LuaScript: pure Widget, no Container

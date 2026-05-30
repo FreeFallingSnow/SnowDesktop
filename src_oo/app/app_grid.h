@@ -1988,13 +1988,21 @@ inline void DesktopApp::RebuildContainersAndItems()
     containers_.clear();
     items_oo_.clear();
 
+    // Collect keys of items that belong to widgets
+    std::unordered_set<std::wstring> collectedKeys;
+    for (auto& w : widgets_)
+        for (auto& k : w.itemKeys)
+            collectedKeys.insert(k);
+
     // DesktopGrid
     auto grid = std::make_unique<DesktopGrid>(&gridPages_, &items_, this);
     containers_.push_back(std::move(grid));
 
-    // DesktopIcon for each DesktopItem
+    // DesktopIcon for each NON-collected DesktopItem
     for (auto& item : items_)
     {
+        if (item.name.empty()) continue;
+        if (collectedKeys.contains(item.layoutKey)) continue;
         auto icon = std::make_unique<DesktopIcon>(&item, containers_.back().get(), this);
         items_oo_.push_back(std::move(icon));
     }
@@ -2005,18 +2013,50 @@ inline void DesktopApp::RebuildContainersAndItems()
         auto widget = CreateWidget(&w, this);
         if (!widget) continue;
 
-        // WidgetContainer → containers_ (can receive drops)
         if (auto* wc = dynamic_cast<WidgetContainer*>(widget.get()))
         {
-            widget.release(); // ownership transferred
+            widget.release();
             containers_.push_back(std::unique_ptr<Container>(wc));
         }
-        // Pure Widget → items_oo_ (draggable Item, not a Container)
         else
         {
             items_oo_.push_back(std::move(widget));
         }
     }
+}
+
+inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
+{
+    if (widget.sourceFolderPath.empty()) return;
+    std::wstring search = widget.sourceFolderPath + L"\\*";
+    WIN32_FIND_DATAW fd{};
+    HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        FolderEntry entry;
+        entry.name = fd.cFileName;
+        entry.fullPath = widget.sourceFolderPath + L"\\" + fd.cFileName;
+        entry.isDirectory = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        widget.folderEntries.push_back(std::move(entry));
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+}
+
+inline void DesktopApp::RefreshFolderMappingWidget(size_t widgetIndex)
+{
+    if (widgetIndex >= widgets_.size()) return;
+    auto& w = widgets_[widgetIndex];
+    for (auto& e : w.folderEntries)
+        if (e.iconBitmap) DeleteObject(e.iconBitmap);
+    w.folderEntries.clear();
+    EnumerateFolderMappingEntries(w);
+    for (auto& c : containers_)
+    {
+        auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+        if (wc && wc->GetWidgetData() == &w) { wc->InvalidateSlots(); break; }
+    }
+    RebuildContainersAndItems();
 }
 
 // ── Widget creation helpers ──────────────────────────────────
@@ -2070,11 +2110,35 @@ inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
 inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
+
+    // Pick source folder
+    BROWSEINFOW bi{};
+    bi.hwndOwner = hwnd_;
+    bi.lpszTitle = L"选择要映射的文件夹";
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+    if (!pidl) return;
+    wchar_t path[MAX_PATH]{};
+    SHGetPathFromIDListW(pidl, path);
+    CoTaskMemFree(pidl);
+
+    std::wstring folderPath(path);
+    std::wstring title = folderPath;
+    if (!title.empty() && title.back() == L'\\') title.pop_back();
+    size_t lastSep = title.find_last_of(L"\\/");
+    title = (lastSep != std::wstring::npos) ? title.substr(lastSep + 1) : title;
+
     DesktopWidget w;
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::FolderMapping;
-    w.title = L"文件夹映射";
+    w.title = title;
+    w.sourceFolderPath = folderPath;
     AddWidgetToGrid(std::move(w), { 2, 2 });
+
+    // Enumerate entries
+    size_t idx = widgets_.size() - 1;
+    EnumerateFolderMappingEntries(widgets_[idx]);
+    RebuildContainersAndItems();
 }
 
 inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan)

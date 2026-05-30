@@ -365,10 +365,44 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
         }
 
-        // OO Slot-based hit testing
+        // OO Slot-based hit testing: widgets first (on top), DesktopGrid last
         dragTargetContainer_ = nullptr;
         dragTargetRegion_ = HitRegion::None;
         Slot* desktopSlot = nullptr;
+
+        // Check widget containers first (reverse draw order = topmost first)
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(it->get());
+            if (!wc) continue;
+
+            // Also test: is the mouse inside the widget's frame at all?
+            RECT frame = wc->GetFrameRect();
+            if (!PtInRect(&frame, current)) continue;
+
+            auto& wslots = wc->GetSlots();
+            for (size_t i = 0; i < wslots.size(); ++i)
+            {
+                HitRegion region = wslots[i]->HitTest(current);
+                if (region != HitRegion::None)
+                {
+                    dragTargetContainer_ = wc;
+                    dragTargetSlotIndex_ = i;
+                    dragTargetRegion_ = region;
+                    goto show_hint;
+                }
+            }
+            // Mouse in frame but not on any slot → sort at end or into empty area
+            if (wslots.empty())
+                dragTargetSlotIndex_ = 0;
+            else
+                dragTargetSlotIndex_ = wslots.size();
+            dragTargetContainer_ = wc;
+            dragTargetRegion_ = HitRegion::SortAfter;
+            goto show_hint;
+        }
+
+        // DesktopGrid as fallback
         for (auto& c : containers_)
         {
             if (auto* grid = dynamic_cast<DesktopGrid*>(c.get()))
@@ -380,7 +414,6 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     dragTargetRegion_ = region;
                     dragTargetSlotIndex_ = desktopSlot ? desktopSlot->GetIndex() : 0;
 
-                    // Override with Handoff if mouse is actually on another item's icon
                     if (region == HitRegion::SortBefore)
                     {
                         int hit = HitTestItem(current);
@@ -395,21 +428,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     }
                     if (dragTargetRegion_ == HitRegion::Handoff) break;
                 }
-            }
-            else
-            {
-                auto& slots = c->GetSlots();
-                for (size_t i = 0; i < slots.size(); ++i)
-                {
-                    HitRegion region = slots[i]->HitTest(current);
-                    if (region != HitRegion::None)
-                    {
-                        dragTargetContainer_ = c.get();
-                        dragTargetSlotIndex_ = i;
-                        dragTargetRegion_ = region;
-                        if (region == HitRegion::Handoff) goto show_hint;
-                    }
-                }
+                break; // only one DesktopGrid
             }
         }
     show_hint:
