@@ -37,8 +37,12 @@ void Collection::OnItemsDropped(const std::vector<Item*>& sourceItems, Container
     (void)sourceItems; (void)origin; (void)targetSlot; (void)region; (void)mods;
 }
 
-void Collection::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
+void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
-    // TODO: list/icon toggle button, title bar, gradient bottom bar
-    (void)context; (void)mousePt;
+    (void)context; (void)body;
+}
+
+WidgetHit Collection::HitTestWidget(POINT pt) const
+{
+    return WidgetContainer::HitTestWidget(pt);
 }

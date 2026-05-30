@@ -8,6 +8,18 @@
 
 struct DesktopWidget;
 class DesktopApp;
+struct GridPage;
+
+// ── WidgetHit — granular hit-test result for chrome elements ──
+enum class WidgetHit {
+    None,
+    Content,        // member item area
+    MoveHandle,     // bottom bar (except resize corner) — drag to move
+    ResizeHandle,   // bottom-right 24px corner — drag to resize
+    ListToggleBtn,  // FolderMapping: toggle icon/list
+    OpenFolderBtn,  // FolderMapping: open source folder
+    CategoryTab,    // FileCategories: category tab
+};
 
 // ── Widget : pure Item (draggable, renderable) ──────────────
 // Does NOT inherit Container — used for LuaScript which doesn't accept drops.
@@ -49,7 +61,23 @@ public:
     std::wstring GetTitle() const override { return Widget::GetTitle(); }
     RECT GetBounds() const override { return Widget::GetBounds(); }
 
-    // Subclasses override BuildSlots + OnItemsDropped + DrawChrome
+    // ── Chrome geometry ──────────────────────────────────
+    RECT GetFrameRect() const;
+    RECT GetBodyRect() const;
+    RECT GetMoveHandleRect() const;
+    RECT GetResizeHandleRect() const;
+    RECT GetTitleRect() const;
+
+    // ── Hit testing ──────────────────────────────────────
+    virtual WidgetHit HitTestWidget(POINT pt) const;
+    bool HitResizeHandle(POINT pt) const;
+
+    // ── Rendering ────────────────────────────────────────
+    void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
+
+    // ── Content — subclasses override ────────────────────
+    virtual void DrawContent(ID2D1DeviceContext* context, RECT body) {}
+    virtual void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) {}
 };
 
 // ── Concrete widget types ───────────────────────────────────
@@ -61,7 +89,8 @@ public:
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
-    void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
+    void DrawContent(ID2D1DeviceContext* context, RECT body) override;
+    WidgetHit HitTestWidget(POINT pt) const override;
 };
 
 class FileCategories : public WidgetContainer
@@ -71,7 +100,9 @@ public:
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
-    void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
+    void DrawContent(ID2D1DeviceContext* context, RECT body) override;
+    void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    WidgetHit HitTestWidget(POINT pt) const override;
 };
 
 class FolderMapping : public WidgetContainer
@@ -81,7 +112,9 @@ public:
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
-    void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
+    void DrawContent(ID2D1DeviceContext* context, RECT body) override;
+    void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    WidgetHit HitTestWidget(POINT pt) const override;
 };
 
 // LuaScript: pure Widget, no Container

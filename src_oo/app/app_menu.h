@@ -41,6 +41,15 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), gridLabel);
     }
 
+    HMENU widgetMenu = CreatePopupMenu();
+    if (widgetMenu)
+    {
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, L"集合");
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, L"桌面文件分类");
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddFolderMappingWidget, L"文件夹映射");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
+    }
+
     HMENU zoomMenu = CreatePopupMenu();
     if (zoomMenu)
     {
@@ -71,6 +80,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
     if (sortMenu) DestroyMenu(sortMenu);
     if (gridMenu) DestroyMenu(gridMenu);
+    if (widgetMenu) DestroyMenu(widgetMenu);
     if (zoomMenu) DestroyMenu(zoomMenu);
     DestroyMenu(menu);
     newMenuContextMenu_.Reset();
@@ -92,6 +102,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextZoomIncrease: AdjustZoom(+0.1f); break;
     case kContextZoomDecrease: AdjustZoom(-0.1f); break;
     case kContextThisDisplayFirstCommand: SetFirstPageMonitorFromPoint(screenPoint); break;
+    case kContextAddCollectionWidget: AddCollectionWidgetAt(screenPoint); break;
+    case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;
+    case kContextAddFolderMappingWidget: AddFolderMappingWidgetAt(screenPoint); break;
     case kContextNewMenu:
     {
         wchar_t desktopPath[MAX_PATH]{};

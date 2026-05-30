@@ -58,8 +58,17 @@ void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
     (void)sourceItems; (void)origin; (void)targetSlot; (void)region; (void)mods;
 }
 
-void FolderMapping::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
+void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
-    // TODO: list/icon toggle, open folder, title bar, scrollbar, gradient bottom bar
-    (void)context; (void)mousePt;
+    (void)context; (void)body;
+}
+
+void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
+{
+    (void)context; (void)handleRect; (void)hovered;
+}
+
+WidgetHit FolderMapping::HitTestWidget(POINT pt) const
+{
+    return WidgetContainer::HitTestWidget(pt);
 }

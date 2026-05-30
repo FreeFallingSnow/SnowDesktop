@@ -54,6 +54,16 @@ inline void DesktopApp::ToggleSelection(int index)
         items_[index].selected = !items_[index].selected;
 }
 
+inline void DesktopApp::SelectWidgetOnly(size_t index)
+{
+    ClearSelection();
+    for (auto& w : widgets_)
+    {
+        w.selected = (&w == &widgets_[index]);
+        for (auto& e : w.folderEntries) e.selected = false;
+    }
+}
+
 inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
@@ -66,18 +76,81 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     if (HandlePageNavClick(pt)) return;
 
+    bool ctrl = (wp & MK_CONTROL) != 0;
+
+    // ── Widget hit-test ─────────────────────────────────────
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    widgetAction_ = WidgetAction::None;
+    for (size_t wi = 0; wi < widgets_.size(); ++wi)
+    {
+        WidgetContainer* wc = nullptr;
+        for (auto& c : containers_)
+        {
+            wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (wc && wc->GetWidgetData() == &widgets_[wi]) break;
+            wc = nullptr;
+        }
+        if (!wc) continue;
+
+        WidgetHit wh = wc->HitTestWidget(pt);
+        if (wh == WidgetHit::None) continue;
+
+        if (wh == WidgetHit::ResizeHandle)
+        {
+            SelectWidgetOnly(wi);
+            widgetAction_ = WidgetAction::Resize;
+            widgetDragOriginalCell_ = widgets_[wi].gridCell;
+            widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
+            widgetPreviewCell_ = widgetDragOriginalCell_;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        else if (wh == WidgetHit::MoveHandle)
+        {
+            SelectWidgetOnly(wi);
+            widgetAction_ = WidgetAction::Move;
+            widgetDragOriginalCell_ = widgets_[wi].gridCell;
+            widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
+            widgetPreviewCell_ = widgetDragOriginalCell_;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            RECT bounds = widgets_[wi].bounds;
+            dragGroupOriginX_ = bounds.left;
+            dragGroupOriginY_ = bounds.top;
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        else if (wh == WidgetHit::Content)
+        {
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
+
+    // ── Desktop icon hit-test ───────────────────────────────
     DesktopIcon* hit = HitTestIcon(pt);
     mouseDownHit_ = hit;
 
-    bool ctrl = (wp & MK_CONTROL) != 0;
+    // Clear widget selection when clicking desktop area
+    if (!hit && mouseDownWidgetIndex_ == static_cast<size_t>(-1) && !ctrl)
+    {
+        for (auto& w : widgets_) w.selected = false;
+    }
 
     if (hit)
     {
         DesktopItem* di = hit->GetDesktopItem();
         if (ctrl)
-        {
             hit->SetSelected(!hit->IsSelected());
-        }
         else if (!di->selected)
         {
             ClearSelection();
@@ -85,9 +158,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
     }
     else if (!ctrl)
-    {
         ClearSelection();
-    }
 
     SetCapture(hwnd_);
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -109,6 +180,74 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             UpdateDragGroupOrigin();
             dragCurrentPoint_ = current;
         }
+    }
+
+    if (mouseDown_ && !draggingItems_ && widgetAction_ == WidgetAction::None
+        && mouseDownWidgetIndex_ < widgets_.size() && widgets_[mouseDownWidgetIndex_].selected
+        && (std::abs(current.x - mouseDownPoint_.x) > 3 ||
+            std::abs(current.y - mouseDownPoint_.y) > 3))
+    {
+        // First significant move: activate the action
+        if (mouseDownWidgetIndex_ < widgets_.size())
+        {
+            dragCurrentPoint_ = current;
+            // Only set action based on hit type if not already set
+            // (action was set by OnLeftButtonDown, but we confirm it after threshold here)
+        }
+    }
+
+    // Widget resize preview
+    if (widgetAction_ == WidgetAction::Resize && mouseDownWidgetIndex_ < widgets_.size())
+    {
+        extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
+        const auto& wp = widgets_[mouseDownWidgetIndex_];
+        const GridPage* page = FindGridPage(gridPages_, wp.gridCell.pageId);
+        if (page)
+        {
+            int stepX = std::max(1, page->cellWidth + page->gapX);
+            int stepY = std::max(1, page->cellHeight + page->gapY);
+            int dCol = static_cast<int>(std::round(static_cast<double>(current.x - mouseDownPoint_.x) / static_cast<double>(stepX)));
+            int dRow = static_cast<int>(std::round(static_cast<double>(current.y - mouseDownPoint_.y) / static_cast<double>(stepY)));
+
+            GridCell cell = widgetDragOriginalCell_;
+            GridSpan span = widgetDragOriginalSpan_;
+            span.columns += dCol;
+            span.rows += dRow;
+            span.columns = std::clamp(span.columns, 1, page->columns - cell.column);
+            span.rows = std::clamp(span.rows, 1, page->rows - cell.row);
+
+            widgetPreviewCell_ = cell;
+            widgetPreviewSpan_ = span;
+        }
+        ShowDragHintWindow(current, L"释放：调整组件大小");
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return;
+    }
+
+    // Widget drag preview
+    if (widgetAction_ == WidgetAction::Move && mouseDownWidgetIndex_ < widgets_.size())
+    {
+        extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
+        extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
+        const auto& wp = widgets_[mouseDownWidgetIndex_];
+        POINT adjusted = {
+            dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
+            dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
+        };
+        GridCell cell = CellFromPoint(adjusted);
+        if (!cell.pageId.empty())
+        {
+            const GridPage* page = FindGridPage(gridPages_, cell.pageId);
+            if (page)
+            {
+                cell.column = std::clamp(cell.column, 0, page->columns - widgetDragOriginalSpan_.columns);
+                cell.row    = std::clamp(cell.row,    0, page->rows    - widgetDragOriginalSpan_.rows);
+            }
+            widgetPreviewCell_ = cell;
+        }
+        ShowDragHintWindow(current, L"释放：移动组件");
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return;
     }
 
     if (draggingItems_)
@@ -334,6 +473,23 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 {
     (void)wp; (void)lp;
+    HideDragHintWindow();
+
+    // ── Widget action completion ────────────────────────────
+    if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
+    {
+        if (widgetAction_ == WidgetAction::Resize)
+            PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_);
+        else if (widgetAction_ == WidgetAction::Move)
+            PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_);
+        widgetAction_ = WidgetAction::None;
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        ReleaseCapture();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     if (!draggingItems_)
     {
@@ -346,8 +502,6 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
-
-    HideDragHintWindow();
 
     if (!dragTargetContainer_ || dragTargetRegion_ == HitRegion::None)
     {
