@@ -37,8 +37,17 @@ void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Conta
     (void)sourceItems; (void)origin; (void)targetSlot; (void)region; (void)mods;
 }
 
-void FileCategories::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
+void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
-    // TODO: category tab bar, list/icon toggle button
-    (void)context; (void)mousePt;
+    (void)context; (void)body;
+}
+
+void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
+{
+    (void)context; (void)handleRect; (void)hovered;
+}
+
+WidgetHit FileCategories::HitTestWidget(POINT pt) const
+{
+    return WidgetContainer::HitTestWidget(pt);
 }

@@ -596,6 +596,78 @@ inline void DesktopApp::LoadLayoutSlots()
         layoutRecords_[ToUpperInvariant(Utf8ToWide(keyUtf8))] = record;
         pos = objEnd + 1;
     }
+
+    // Load widgets
+    {
+        size_t widgetsName = text.find("\"widgets\"");
+        if (widgetsName != std::string::npos)
+        {
+            size_t arrayStart = text.find('[', widgetsName);
+            if (arrayStart != std::string::npos)
+            {
+                size_t arrayEnd = FindJsonArrayEnd(text, arrayStart);
+                if (arrayEnd != std::string::npos && arrayEnd > arrayStart)
+                {
+                    size_t wp = arrayStart + 1;
+                    while ((wp = text.find('{', wp)) != std::string::npos && wp < arrayEnd)
+                    {
+                        size_t objectEnd = FindJsonObjectEnd(text, wp);
+                        if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
+                        std::string obj = text.substr(wp, objectEnd - wp + 1);
+                        std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
+                        int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0;
+                        bool autoCollect = false, listMode = false;
+                        if (!ReadJsonStringField(obj, "id", idUtf8) ||
+                            !ReadJsonStringField(obj, "page", pageUtf8) ||
+                            !ReadJsonIntField(obj, "x", x) ||
+                            !ReadJsonIntField(obj, "y", y))
+                        {
+                            wp = objectEnd + 1;
+                            continue;
+                        }
+                        ReadJsonStringField(obj, "type", typeUtf8);
+                        ReadJsonStringField(obj, "title", titleUtf8);
+                        ReadJsonStringField(obj, "sourceFolderPath", sourceUtf8);
+                        ReadJsonStringField(obj, "scriptPath", scriptUtf8);
+                        ReadJsonStringField(obj, "activeCategory", activeCategoryUtf8);
+                        ReadJsonIntField(obj, "w", w);
+                        ReadJsonIntField(obj, "h", h);
+                        ReadJsonIntField(obj, "scrollOffset", scrollOffset);
+                        ReadJsonBoolField(obj, "autoCollect", autoCollect);
+                        ReadJsonBoolField(obj, "listMode", listMode);
+
+                        DesktopWidget widget;
+                        widget.id = Utf8ToWide(idUtf8);
+                        widget.type = WidgetTypeFromJson(Utf8ToWide(typeUtf8));
+                        widget.title = titleUtf8.empty()
+                            ? (widget.type == DesktopWidgetType::FileCategories ? L"桌面文件"
+                               : widget.type == DesktopWidgetType::FolderMapping ? L"文件夹映射"
+                               : L"集合")
+                            : Utf8ToWide(titleUtf8);
+                        widget.sourceFolderPath = Utf8ToWide(sourceUtf8);
+                        widget.scriptPath = Utf8ToWide(scriptUtf8);
+                        widget.gridCell.pageId = Utf8ToWide(pageUtf8);
+                        widget.gridCell.column = x;
+                        widget.gridCell.row = y;
+                        widget.gridSpan.columns = std::max(1, w);
+                        widget.gridSpan.rows = std::max(1, h);
+                        widget.autoCollect = autoCollect;
+                        widget.listMode = listMode;
+                        widget.showTitle = true;
+                        widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection);
+                        ReadJsonBoolField(obj, "showTitle", widget.showTitle);
+                        ReadJsonBoolField(obj, "bottomBarHover", widget.bottomBarHover);
+                        widget.scrollOffset = std::max(0, scrollOffset);
+                        widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
+                        ReadJsonStringArrayField(obj, "items", widget.itemKeys);
+
+                        widgets_.push_back(std::move(widget));
+                        wp = objectEnd + 1;
+                    }
+                }
+            }
+        }
+    }
 }
 
 inline void DesktopApp::SaveLayoutSlots()
@@ -693,6 +765,78 @@ inline bool DesktopApp::ReadJsonIntField(const std::string& objectText, const ch
     if (numberStart == std::string::npos) return false;
     try { value = std::stoi(objectText.substr(numberStart)); return true; }
     catch (...) { return false; }
+}
+
+inline bool DesktopApp::ReadJsonBoolField(const std::string& objectText, const char* fieldName, bool& value) const
+{
+    std::string marker = std::string("\"") + fieldName + "\"";
+    size_t name = objectText.find(marker);
+    if (name == std::string::npos) return false;
+    size_t colon = objectText.find(':', name + marker.size());
+    size_t valueStart = objectText.find_first_not_of(" \t\r\n", colon == std::string::npos ? name + marker.size() : colon + 1);
+    if (valueStart == std::string::npos) return false;
+    if (objectText.compare(valueStart, 4, "true") == 0) { value = true; return true; }
+    if (objectText.compare(valueStart, 5, "false") == 0) { value = false; return true; }
+    return false;
+}
+
+inline size_t DesktopApp::FindJsonContainerEnd(const std::string& text, size_t start, char open, char close) const
+{
+    if (start >= text.size() || text[start] != open) return std::string::npos;
+    int depth = 1;
+    bool inString = false;
+    for (size_t i = start + 1; i < text.size(); ++i)
+    {
+        char ch = text[i];
+        if (ch == '"' && (i == 0 || text[i - 1] != '\\')) inString = !inString;
+        else if (!inString)
+        {
+            if (ch == open) ++depth;
+            else if (ch == close) { --depth; if (depth == 0) return i; }
+        }
+    }
+    return std::string::npos;
+}
+
+inline size_t DesktopApp::FindJsonObjectEnd(const std::string& text, size_t start) const
+    { return FindJsonContainerEnd(text, start, '{', '}'); }
+
+inline size_t DesktopApp::FindJsonArrayEnd(const std::string& text, size_t start) const
+    { return FindJsonContainerEnd(text, start, '[', ']'); }
+
+inline bool DesktopApp::ReadJsonStringArrayField(const std::string& objectText, const char* fieldName, std::vector<std::wstring>& values) const
+{
+    values.clear();
+    std::string marker = std::string("\"") + fieldName + "\"";
+    size_t name = objectText.find(marker);
+    if (name == std::string::npos) return false;
+    size_t colon = objectText.find(':', name + marker.size());
+    size_t arrayStart = objectText.find('[', colon == std::string::npos ? name + marker.size() : colon + 1);
+    if (arrayStart == std::string::npos) return false;
+    size_t arrayEnd = FindJsonArrayEnd(objectText, arrayStart);
+    if (arrayEnd == std::string::npos) return false;
+    size_t pos = arrayStart + 1;
+    while (pos < arrayEnd)
+    {
+        size_t quote = objectText.find('"', pos);
+        if (quote == std::string::npos || quote >= arrayEnd) break;
+        std::string utf8;
+        size_t end = 0;
+        if (!ParseJsonStringAt(objectText, quote, utf8, end)) break;
+        values.push_back(Utf8ToWide(utf8));
+        pos = end;
+    }
+    return true;
+}
+
+inline DesktopWidgetType DesktopApp::WidgetTypeFromJson(const std::wstring& type) const
+{
+    std::wstring n = ToUpperInvariant(type);
+    if (n == L"FILECATEGORIES" || n == L"FILE_CATEGORIES") return DesktopWidgetType::FileCategories;
+    if (n == L"FOLDERMAPPING" || n == L"FOLDER_MAPPING") return DesktopWidgetType::FolderMapping;
+    if (n == L"LUA" || n == L"LUASCRIPT" || n == L"LUA_SCRIPT") return DesktopWidgetType::LuaScript;
+    if (n == L"COLLECTION") return DesktopWidgetType::Collection;
+    return DesktopWidgetType::Collection;
 }
 
 // ── Control window ──────────────────────────────────────────
@@ -1821,6 +1965,22 @@ inline void DesktopApp::LayoutItems()
         item.slot   = SlotFromCell(gridPages_, item.gridCell);
         item.bounds = GetGridRect(gridPages_, item.gridCell, item.gridSpan);
     }
+
+    // Layout widgets
+    for (auto& widget : widgets_)
+    {
+        if (!gridPages_.empty() && widget.gridCell.pageId.empty())
+            widget.gridCell.pageId = gridPages_.front().id;
+        const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
+        if (page)
+        {
+            widget.gridSpan.columns = std::clamp(widget.gridSpan.columns, 1, std::max(1, page->columns));
+            widget.gridSpan.rows    = std::clamp(widget.gridSpan.rows,    1, std::max(1, page->rows));
+            widget.gridCell.column  = std::clamp(widget.gridCell.column,  0, std::max(0, page->columns - widget.gridSpan.columns));
+            widget.gridCell.row     = std::clamp(widget.gridCell.row,     0, std::max(0, page->rows    - widget.gridSpan.rows));
+        }
+        widget.bounds = GetGridRect(gridPages_, widget.gridCell, widget.gridSpan);
+    }
 }
 
 inline void DesktopApp::RebuildContainersAndItems()
@@ -1857,6 +2017,146 @@ inline void DesktopApp::RebuildContainersAndItems()
             items_oo_.push_back(std::move(widget));
         }
     }
+}
+
+// ── Widget creation helpers ──────────────────────────────────
+
+inline std::wstring DesktopApp::MakeNewWidgetId() const
+{
+    return L"widget-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
+}
+
+inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
+{
+    POINT clientPoint = lastContextMenuScreenPoint_;
+    ScreenToClient(hwnd_, &clientPoint);
+    GridCell cell = CellFromPoint(clientPoint);
+    if (cell.pageId.empty())
+    {
+        for (const auto& p : gridPages_) { cell = { p.id, 0, 0 }; break; }
+        if (cell.pageId.empty()) return;
+    }
+    widget.gridCell = cell;
+    widget.gridSpan = span;
+    widget.showTitle = true;
+    widgets_.push_back(std::move(widget));
+    LayoutItems();
+    RebuildContainersAndItems();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
+{
+    lastContextMenuScreenPoint_ = screenPoint;
+    DesktopWidget w;
+    w.id = MakeNewWidgetId();
+    w.type = DesktopWidgetType::Collection;
+    w.title = L"集合";
+    w.bottomBarHover = true;
+    AddWidgetToGrid(std::move(w), { 1, 1 });
+}
+
+inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
+{
+    lastContextMenuScreenPoint_ = screenPoint;
+    DesktopWidget w;
+    w.id = MakeNewWidgetId();
+    w.type = DesktopWidgetType::FileCategories;
+    w.title = L"桌面文件";
+    AddWidgetToGrid(std::move(w), { 2, 2 });
+}
+
+inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
+{
+    lastContextMenuScreenPoint_ = screenPoint;
+    DesktopWidget w;
+    w.id = MakeNewWidgetId();
+    w.type = DesktopWidgetType::FolderMapping;
+    w.title = L"文件夹映射";
+    AddWidgetToGrid(std::move(w), { 2, 2 });
+}
+
+inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan)
+{
+    if (widgetIndex >= widgets_.size()) return;
+    const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
+    if (!page) return;
+
+    targetSpan.columns = std::clamp(targetSpan.columns, 1, std::max(1, page->columns - targetCell.column));
+    targetSpan.rows    = std::clamp(targetSpan.rows,    1, std::max(1, page->rows    - targetCell.row));
+
+    // Widget-widget collision check
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (i == widgetIndex) continue;
+        if (widgets_[i].gridCell.pageId != targetCell.pageId) continue;
+        if (targetCell.column + targetSpan.columns <= widgets_[i].gridCell.column) continue;
+        if (widgets_[i].gridCell.column + widgets_[i].gridSpan.columns <= targetCell.column) continue;
+        if (targetCell.row + targetSpan.rows <= widgets_[i].gridCell.row) continue;
+        if (widgets_[i].gridCell.row + widgets_[i].gridSpan.rows <= targetCell.row) continue;
+        return; // overlaps another widget, reject
+    }
+
+    // Collect items displaced by this placement
+    std::vector<size_t> displaced;
+    for (size_t i = 0; i < items_.size(); ++i)
+    {
+        if (items_[i].name.empty()) continue;
+        if (items_[i].gridCell.pageId != targetCell.pageId) continue;
+        if (targetCell.column + targetSpan.columns <= items_[i].gridCell.column) continue;
+        if (items_[i].gridCell.column + items_[i].gridSpan.columns <= targetCell.column) continue;
+        if (targetCell.row + targetSpan.rows <= items_[i].gridCell.row) continue;
+        if (items_[i].gridCell.row + items_[i].gridSpan.rows <= targetCell.row) continue;
+        displaced.push_back(i);
+    }
+
+    // Build occupied slot set (all widgets + non-displaced items)
+    std::unordered_set<std::wstring> usedSlots;
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (i == widgetIndex) continue;
+        MarkGridArea(usedSlots, widgets_[i].gridCell, widgets_[i].gridSpan);
+    }
+    for (size_t i = 0; i < items_.size(); ++i)
+    {
+        if (items_[i].name.empty()) continue;
+        bool isDisplaced = std::find(displaced.begin(), displaced.end(), i) != displaced.end();
+        if (!isDisplaced)
+            MarkGridArea(usedSlots, items_[i].gridCell, items_[i].gridSpan);
+    }
+    MarkGridArea(usedSlots, targetCell, targetSpan);
+
+    // Sort displaced items by grid order for deterministic placement
+    auto byGrid = [this](size_t a, size_t b) {
+        if (items_[a].gridCell.pageId != items_[b].gridCell.pageId)
+            return items_[a].gridCell.pageId < items_[b].gridCell.pageId;
+        int sa = SlotFromCell(gridPages_, items_[a].gridCell);
+        int sb = SlotFromCell(gridPages_, items_[b].gridCell);
+        return sa < sb;
+    };
+    std::sort(displaced.begin(), displaced.end(), byGrid);
+
+    // Apply widget placement
+    widgets_[widgetIndex].gridCell = targetCell;
+    widgets_[widgetIndex].gridSpan = targetSpan;
+
+    // Re-home displaced items
+    int searchStart = SlotFromCell(gridPages_, targetCell) + std::max(1, targetSpan.rows);
+    for (size_t idx : displaced)
+    {
+        GridCell freeCell;
+        if (TryFindFreeCell(items_[idx].gridSpan, usedSlots, freeCell, targetCell.pageId, searchStart))
+        {
+            items_[idx].gridCell = freeCell;
+            items_[idx].slot = SlotFromCell(gridPages_, freeCell);
+            MarkGridArea(usedSlots, freeCell, items_[idx].gridSpan);
+        }
+    }
+
+    LayoutItems();
+    RebuildContainersAndItems();
+    SaveLayoutSlots();
 }
 
 inline ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm)

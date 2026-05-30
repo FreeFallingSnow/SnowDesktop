@@ -258,6 +258,53 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
         icon->Draw(ctx, di->bounds, state);
     }
 
+    // ── Widget chrome ────────────────────────────────────────
+    for (auto& c : containers_)
+    {
+        if (auto* wc = dynamic_cast<WidgetContainer*>(c.get()))
+        {
+            if (widgetAction_ != WidgetAction::None)
+            {
+                auto* wd = wc->GetWidgetData();
+                if (wd && mouseDownWidgetIndex_ < widgets_.size()
+                    && wd == &widgets_[mouseDownWidgetIndex_])
+                    continue;
+            }
+            wc->DrawChrome(ctx, lastMousePoint_);
+        }
+    }
+
+    // ── Widget drag/resize preview ───────────────────────────
+    if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
+    {
+        GridCell cell = widgetPreviewCell_;
+        GridSpan span = widgetPreviewSpan_;
+        RECT previewBounds = GetGridRect(gridPages_, cell, span);
+
+        // Check collision with other widgets
+        bool widgetConflict = false;
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (i == mouseDownWidgetIndex_) continue;
+            const auto& ow = widgets_[i];
+            if (ow.gridCell.pageId != cell.pageId) continue;
+            if (cell.column + span.columns <= ow.gridCell.column) continue;
+            if (ow.gridCell.column + ow.gridSpan.columns <= cell.column) continue;
+            if (cell.row + span.rows <= ow.gridCell.row) continue;
+            if (ow.gridCell.row + ow.gridSpan.rows <= cell.row) continue;
+            widgetConflict = true; break;
+        }
+
+        bool ok = !widgetConflict && !cell.pageId.empty();
+        float radius = 8.0f;
+        D2D1::ColorF fill = ok ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f)
+                              : D2D1::ColorF(1.0f, 0.30f, 0.30f, 0.18f);
+        D2D1::ColorF border = ok ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.75f)
+                                 : D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f);
+
+        DrawD2DRoundedRectangle(ctx, previewBounds, radius, fill, border, 2.0f);
+    }
+
     // ── OO Drag indicator: handoff highlight or placement preview ─
     if (draggingItems_ || externalDragActive_)
     {

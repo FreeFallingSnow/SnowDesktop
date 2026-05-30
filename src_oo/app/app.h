@@ -60,6 +60,7 @@ public:
     friend class FolderEntryIcon;
     friend class DesktopGrid;
     friend class Widget;
+    friend class WidgetContainer;
     friend class Collection;
     friend class FileCategories;
     friend class FolderMapping;
@@ -114,6 +115,7 @@ private:
     void OnTimer(WPARAM timerId);
     void ClearSelection();
     void SelectOnly(int index);
+    void SelectWidgetOnly(size_t index);
     void ToggleSelection(int index);
     bool HandlePageNavClick(POINT point);
     void SortIconsByName();
@@ -197,6 +199,20 @@ private:
     // ── JSON helpers ────────────────────────────────────────
     bool ReadJsonStringField(const std::string& objectText, const char* fieldName, std::string& value) const;
     bool ReadJsonIntField(const std::string& objectText, const char* fieldName, int& value) const;
+    bool ReadJsonBoolField(const std::string& objectText, const char* fieldName, bool& value) const;
+    bool ReadJsonStringArrayField(const std::string& objectText, const char* fieldName, std::vector<std::wstring>& values) const;
+    size_t FindJsonObjectEnd(const std::string& text, size_t start) const;
+    size_t FindJsonArrayEnd(const std::string& text, size_t start) const;
+    size_t FindJsonContainerEnd(const std::string& text, size_t start, char open, char close) const;
+    DesktopWidgetType WidgetTypeFromJson(const std::wstring& type) const;
+
+    // ── Widget helpers ──────────────────────────────────────
+    std::wstring MakeNewWidgetId() const;
+    void AddWidgetToGrid(DesktopWidget&& widget, GridSpan span);
+    void AddCollectionWidgetAt(POINT screenPoint);
+    void AddFileCategoryWidgetAt(POINT screenPoint);
+    void AddFolderMappingWidgetAt(POINT screenPoint);
+    void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan);
 
     // ── Member variables ────────────────────────────────────
     HINSTANCE instance_ = nullptr;
@@ -206,6 +222,7 @@ private:
     // D3D / D2D / DComp
     ComPtr<ID3D11Device> d3dDevice_;
     ComPtr<ID2D1Factory1> d2dFactory_;
+    ID2D1Factory1* GetD2DFactory() const { return d2dFactory_.Get(); }
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
@@ -277,6 +294,18 @@ private:
     size_t dragTargetSlotIndex_ = 0;
     HitRegion dragTargetRegion_ = HitRegion::None;
 
+    // Widget drag / resize state
+    size_t mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    bool draggingWidget_ = false;
+    bool resizingWidget_ = false;
+    enum class WidgetAction { None, Move, Resize };
+    WidgetAction widgetAction_ = WidgetAction::None;
+    GridCell widgetDragOriginalCell_{};
+    GridSpan widgetDragOriginalSpan_{};
+    GridCell widgetPreviewCell_{};
+    GridSpan widgetPreviewSpan_{};
+    bool widgetPreviewOccupied_ = false;
+
     // OLE drag state
     LONG refCount_ = 1;
     bool selfDragActive_ = false;
@@ -315,6 +344,7 @@ private:
         WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData);
 
     // Drag hint
+    std::wstring dragHint_;
     HWND hintHwnd_ = nullptr;
     bool EnsureDragHintWindow();
     void ShowDragHintWindow(POINT clientPoint, const std::wstring& text);
