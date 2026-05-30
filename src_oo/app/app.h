@@ -210,6 +210,7 @@ private:
     size_t FindJsonArrayEnd(const std::string& text, size_t start) const;
     size_t FindJsonContainerEnd(const std::string& text, size_t start, char open, char close) const;
     DesktopWidgetType WidgetTypeFromJson(const std::wstring& type) const;
+    std::wstring WidgetTypeToJson(DesktopWidgetType type) const;
 
     // ── Widget helpers ──────────────────────────────────────
     std::wstring MakeNewWidgetId() const;

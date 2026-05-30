@@ -94,6 +94,7 @@ public:
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override { return 136; }
     int  GetItemWidth()  const override { return 92; }
+    Item* GetSlotItem(size_t idx) const override;
 };
 
 class FileCategories : public WidgetContainer
@@ -109,6 +110,7 @@ public:
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override { return 32; }
     bool SingleColumn() const override { return true; }
+    Item* GetSlotItem(size_t idx) const override;
 };
 
 class FolderMapping : public WidgetContainer
@@ -126,6 +128,7 @@ public:
     int  GetItemWidth()  const override;
     bool SingleColumn() const override;
     bool IncludeTrailingEmptySlot() const override { return true; }
+    Item* GetSlotItem(size_t idx) const override;
 };
 
 // LuaScript: pure Widget, no Container

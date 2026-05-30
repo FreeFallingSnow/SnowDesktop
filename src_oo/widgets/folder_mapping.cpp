@@ -5,6 +5,8 @@
 #include "app.h"
 #include <algorithm>
 
+Item* FolderMapping::GetSlotItem(size_t idx) const { return nullptr; }
+
 size_t FolderMapping::GetSlotCount() const
 {
     return data_ ? data_->folderEntries.size() : 0;
