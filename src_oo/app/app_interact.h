@@ -564,17 +564,24 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             // ── Widget container drop ─────────────────────────
             auto& slots = dragTargetContainer_->GetSlots();
             Slot* ts = (dragTargetSlotIndex_ < slots.size()) ? slots[dragTargetSlotIndex_].get() : nullptr;
-            if (ts)
+
+            // Build source items from selected DesktopItems in items_[] (not items_oo_,
+            // which skips collected items). Create temporary DesktopIcon wrappers.
+            std::vector<std::unique_ptr<DesktopIcon>> tempIcons;
+            std::vector<Item*> src;
+            Container* origin = GetDesktopGrid();
+            for (auto& di : items_)
             {
-                std::vector<Item*> src;
-                Container* origin = containers_.empty() ? nullptr : GetDesktopGrid();
-                for (auto& oo : items_oo_)
+                if (di.selected && !di.name.empty())
                 {
-                    auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
-                    if (icon && icon->IsSelected()) src.push_back(icon);
+                    auto tmp = std::make_unique<DesktopIcon>(&di, origin);
+                    src.push_back(tmp.get());
+                    tempIcons.push_back(std::move(tmp));
                 }
-                ts->ExecuteDrop(dragTargetRegion_, src, origin, mods);
             }
+            if (ts && !src.empty())
+                ts->ExecuteDrop(dragTargetRegion_, src, origin, mods);
+
             SaveLayoutSlots();
             ClearSelection();
             ReloadItems();

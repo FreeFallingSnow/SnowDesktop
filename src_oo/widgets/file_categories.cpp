@@ -10,6 +10,8 @@ static void EraseKeyFromWidget(DesktopWidget& w, const std::wstring& key)
     if (it != w.itemKeys.end()) w.itemKeys.erase(it);
 }
 
+Item* FileCategories::GetSlotItem(size_t idx) const { return nullptr; }
+
 size_t FileCategories::GetSlotCount() const
 {
     if (!data_) return 0;

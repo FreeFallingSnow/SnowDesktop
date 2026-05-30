@@ -60,4 +60,5 @@ public:
     virtual int  GetItemWidth()  const { return 92; }
     virtual bool SingleColumn() const { return false; }
     virtual bool IncludeTrailingEmptySlot() const { return false; }
+    virtual Item* GetSlotItem(size_t idx) const { return nullptr; }
 };

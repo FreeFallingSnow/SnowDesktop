@@ -741,6 +741,35 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"slot\": " << it->slot << " }";
         file << (i + 1 == sorted.size() ? "\n" : ",\n");
     }
+    file << "  ],\n  \"widgets\": [\n";
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const DesktopWidget& w = widgets_[i];
+        file << "    { \"id\": \"" << JsonEscapeUtf8(w.id)
+             << "\", \"type\": \"" << JsonEscapeUtf8(WidgetTypeToJson(w.type))
+             << "\", \"title\": \"" << JsonEscapeUtf8(w.title)
+             << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
+             << "\", \"scriptPath\": \"" << JsonEscapeUtf8(w.scriptPath)
+             << "\", \"activeCategory\": \"" << JsonEscapeUtf8(w.activeCategoryId)
+             << "\", \"page\": \"" << JsonEscapeUtf8(w.gridCell.pageId)
+             << "\", \"x\": " << w.gridCell.column
+             << ", \"y\": " << w.gridCell.row
+             << ", \"w\": " << std::max(1, w.gridSpan.columns)
+             << ", \"h\": " << std::max(1, w.gridSpan.rows)
+             << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
+             << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
+             << ", \"bottomBarHover\": " << (w.bottomBarHover ? "true" : "false")
+             << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
+             << ", \"items\": [";
+        for (size_t j = 0; j < w.itemKeys.size(); ++j)
+        {
+            file << "\"" << JsonEscapeUtf8(w.itemKeys[j]) << "\"";
+            if (j + 1 != w.itemKeys.size()) file << ", ";
+        }
+        file << "] }";
+        file << (i + 1 == widgets_.size() ? "\n" : ",\n");
+    }
     file << "  ]\n}\n";
 }
 
@@ -837,6 +866,18 @@ inline DesktopWidgetType DesktopApp::WidgetTypeFromJson(const std::wstring& type
     if (n == L"LUA" || n == L"LUASCRIPT" || n == L"LUA_SCRIPT") return DesktopWidgetType::LuaScript;
     if (n == L"COLLECTION") return DesktopWidgetType::Collection;
     return DesktopWidgetType::Collection;
+}
+
+inline std::wstring DesktopApp::WidgetTypeToJson(DesktopWidgetType type) const
+{
+    switch (type)
+    {
+    case DesktopWidgetType::FileCategories: return L"fileCategories";
+    case DesktopWidgetType::FolderMapping:  return L"folderMapping";
+    case DesktopWidgetType::LuaScript:      return L"lua";
+    case DesktopWidgetType::Collection:
+    default:                                return L"collection";
+    }
 }
 
 // ── Control window ──────────────────────────────────────────
