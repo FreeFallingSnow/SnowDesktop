@@ -46,7 +46,7 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     RECT iconRect = app_->GetItemIconRect(rect);
 
-    if (selected)
+    if (selected && !dragged)
     {
         RECT sel = app_->GetItemSelectionRect(rect, true);
         app_->DrawD2DRoundedRectangle(context, sel, 6.0f,
@@ -66,7 +66,8 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         }
     }
 
-    app_->DrawItemText(context, rect, item_->name, selected, alpha);
+    if (!dragged)
+        app_->DrawItemText(context, rect, item_->name, selected, alpha);
 }
 
 ComPtr<IDataObject> DesktopIcon::CreateDataObject()
@@ -107,7 +108,7 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     RECT iconRect = app_->GetItemIconRect(rect);
 
-    if (selected)
+    if (selected && !dragged)
     {
         app_->DrawD2DFilledRectangle(context,
             app_->GetItemSelectionRect(rect, true),
@@ -127,7 +128,8 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         }
     }
 
-    app_->DrawItemText(context, rect, entry_->name, selected, opacity);
+    if (!dragged)
+        app_->DrawItemText(context, rect, entry_->name, selected, opacity);
 }
 
 ComPtr<IDataObject> FolderEntryIcon::CreateDataObject()

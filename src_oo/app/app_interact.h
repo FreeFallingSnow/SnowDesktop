@@ -971,9 +971,11 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
         SaveLayoutSlots();
         ClearSelection();
-        RebuildContainersAndItems();  // always rebuild OO view after drop
         if (needsReload)
-            ReloadItems();            // also refresh shell state
+        {
+            RebuildContainersAndItems();
+            ReloadItems();
+        }
         else
             InvalidateRect(hwnd_, nullptr, FALSE);
     }
@@ -2570,9 +2572,11 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
             SaveLayoutSlots();
             ClearSelection();
-            RebuildContainersAndItems();
             if (needsReload)
+            {
+                RebuildContainersAndItems();
                 ReloadItems();
+            }
             else
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }

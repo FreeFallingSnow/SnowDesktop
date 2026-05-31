@@ -204,24 +204,87 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT re
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
+
+    auto key = [](const D2D1_COLOR_F& c) -> std::uint64_t {
+        std::uint32_t r = *(const std::uint32_t*)&c.r;
+        std::uint32_t g = *(const std::uint32_t*)&c.g;
+        std::uint32_t b = *(const std::uint32_t*)&c.b;
+        std::uint32_t a = *(const std::uint32_t*)&c.a;
+        return ((std::uint64_t)r) ^ ((std::uint64_t)g << 16) ^ ((std::uint64_t)b << 32) ^ ((std::uint64_t)a << 48);
+    };
+
     D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(ToD2DRect(rect), radius, radius);
-    ComPtr<ID2D1SolidColorBrush> fillBrush;
-    if (fill.a > 0.0f && SUCCEEDED(ctx->CreateSolidColorBrush(fill, &fillBrush)) && fillBrush)
-        ctx->FillRoundedRectangle(rounded, fillBrush.Get());
-    ComPtr<ID2D1SolidColorBrush> strokeBrush;
-    if (stroke.a > 0.0f && SUCCEEDED(ctx->CreateSolidColorBrush(stroke, &strokeBrush)) && strokeBrush)
-        ctx->DrawRoundedRectangle(rounded, strokeBrush.Get(), strokeWidth, nullptr);
+    if (fill.a > 0.0f)
+    {
+        std::uint64_t k = key(fill);
+        auto it = brushCache_.find(k);
+        if (it == brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> b;
+            if (SUCCEEDED(ctx->CreateSolidColorBrush(fill, &b)) && b)
+                it = brushCache_.emplace(k, std::move(b)).first;
+            else
+                return;
+        }
+        if (it != brushCache_.end() && it->second)
+            ctx->FillRoundedRectangle(rounded, it->second.Get());
+    }
+    if (stroke.a > 0.0f)
+    {
+        std::uint64_t k = key(stroke) ^ 0x8000000080000000ULL;
+        auto it = brushCache_.find(k);
+        if (it == brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> b;
+            if (SUCCEEDED(ctx->CreateSolidColorBrush(stroke, &b)) && b)
+                it = brushCache_.emplace(k, std::move(b)).first;
+            else
+                return;
+        }
+        if (it != brushCache_.end() && it->second)
+            ctx->DrawRoundedRectangle(rounded, it->second.Get(), strokeWidth, nullptr);
+    }
 }
 
 inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rect,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke)
 {
-    ComPtr<ID2D1SolidColorBrush> fillBrush;
-    if (SUCCEEDED(ctx->CreateSolidColorBrush(fill, &fillBrush)) && fillBrush)
-        ctx->FillRectangle(ToD2DRect(rect), fillBrush.Get());
-    ComPtr<ID2D1SolidColorBrush> strokeBrush;
-    if (SUCCEEDED(ctx->CreateSolidColorBrush(stroke, &strokeBrush)) && strokeBrush)
-        ctx->DrawRectangle(ToD2DRect(rect), strokeBrush.Get(), 1.0f, nullptr);
+    if (!ctx || IsRectEmptyRect(rect)) return;
+
+    auto key = [](const D2D1_COLOR_F& c) -> std::uint64_t {
+        std::uint32_t r = *(const std::uint32_t*)&c.r;
+        std::uint32_t g = *(const std::uint32_t*)&c.g;
+        std::uint32_t b = *(const std::uint32_t*)&c.b;
+        std::uint32_t a = *(const std::uint32_t*)&c.a;
+        return ((std::uint64_t)r) ^ ((std::uint64_t)g << 16) ^ ((std::uint64_t)b << 32) ^ ((std::uint64_t)a << 48);
+    };
+
+    if (fill.a > 0.0f)
+    {
+        std::uint64_t k = key(fill);
+        auto it = brushCache_.find(k);
+        if (it == brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> b;
+            if (SUCCEEDED(ctx->CreateSolidColorBrush(fill, &b)) && b)
+                it = brushCache_.emplace(k, std::move(b)).first;
+        }
+        if (it != brushCache_.end() && it->second)
+            ctx->FillRectangle(ToD2DRect(rect), it->second.Get());
+    }
+    if (stroke.a > 0.0f)
+    {
+        std::uint64_t k = key(stroke) ^ 0x8000000080000000ULL;
+        auto it = brushCache_.find(k);
+        if (it == brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> b;
+            if (SUCCEEDED(ctx->CreateSolidColorBrush(stroke, &b)) && b)
+                it = brushCache_.emplace(k, std::move(b)).first;
+        }
+        if (it != brushCache_.end() && it->second)
+            ctx->DrawRectangle(ToD2DRect(rect), it->second.Get(), 1.0f, nullptr);
+    }
 }
 
 inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
@@ -577,6 +640,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
 inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
 {
+    brushCache_.clear();
     // ── Drag cache fast path ───────────────────────────────────
     if (draggingItems_ && dragBgCacheValid_ && dragBgCache_)
     {

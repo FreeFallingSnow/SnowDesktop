@@ -293,6 +293,9 @@ private:
     IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
+    // Per-frame brush cache (cleared at start of each RenderFrame)
+    std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;   // color -> brush
+    void* brushCacheCtx_ = nullptr;  // reset cache if ctx changes
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
