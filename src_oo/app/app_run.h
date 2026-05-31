@@ -407,6 +407,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (dropTargetRegistered_) { RevokeDragDrop(hwnd_); dropTargetRegistered_ = false; }
         KillTimer(hwnd_, kShellChangeTimerId);
         KillTimer(hwnd_, kRecycleBinPollTimerId);
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
         if (desktopWindows_.listView && IsWindow(desktopWindows_.listView))
         {

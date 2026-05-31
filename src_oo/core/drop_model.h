@@ -6,6 +6,7 @@
 #include "utils.h"
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 enum class DropAction
@@ -82,5 +83,134 @@ struct DropPayload
                 payload.filePaths.push_back(path);
         }
         return payload;
+    }
+};
+
+enum class DropSourceKind
+{
+    DesktopIcon,
+    FolderEntry,
+    ExternalFile,
+    Widget,
+    Unknown,
+};
+
+enum class DropTargetKind
+{
+    Desktop,
+    KeyedWidget,
+    FolderMapping,
+    External,
+    Handoff,
+    Unknown,
+};
+
+enum class DropLandingKind
+{
+    None,
+    DesktopCell,
+    WidgetIndex,
+    Folder,
+    External,
+};
+
+struct DragSourceEntry
+{
+    DropSourceKind kind = DropSourceKind::Unknown;
+    Item* item = nullptr;
+    size_t sourceIndex = 0;
+    size_t desktopIndex = static_cast<size_t>(-1);
+    size_t memberIndex = static_cast<size_t>(-1);
+    std::wstring desktopKey;
+    std::wstring filePath;
+    std::wstring displayName;
+    GridCell originalCell;
+    GridSpan originalSpan;
+    bool protectedDesktopIcon = false;
+};
+
+struct DragSourceList
+{
+    std::vector<DragSourceEntry> entries;
+    Container* origin = nullptr;
+    bool hasOriginWidget = false;
+    std::wstring originWidgetId;
+    DesktopWidgetType originWidgetType = DesktopWidgetType::Collection;
+    bool hasDesktopIcons = false;
+    bool hasFolderEntries = false;
+    bool hasExternalFiles = false;
+    bool hasWidgets = false;
+
+    bool Empty() const { return entries.empty(); }
+
+    std::vector<std::wstring> FilePaths() const
+    {
+        std::vector<std::wstring> paths;
+        for (const auto& entry : entries)
+            if (!entry.filePath.empty())
+                paths.push_back(entry.filePath);
+        return paths;
+    }
+
+    std::vector<std::wstring> DesktopKeys() const
+    {
+        std::vector<std::wstring> keys;
+        for (const auto& entry : entries)
+            if (!entry.desktopKey.empty())
+                keys.push_back(entry.desktopKey);
+        return keys;
+    }
+};
+
+struct DropLanding
+{
+    DropLandingKind kind = DropLandingKind::None;
+    size_t sourceIndex = 0;
+    GridCell cell;
+    size_t insertIndex = 0;
+    DesktopWidget* widget = nullptr;
+    std::wstring widgetId;
+};
+
+struct DropPreviewList
+{
+    DropTargetKind targetKind = DropTargetKind::Unknown;
+    DropAction action = DropAction::Move;
+    Container* targetContainer = nullptr;
+    DesktopWidget* targetWidget = nullptr;
+    GridCell anchorCell;
+    size_t insertIndex = 0;
+    bool fileBacked = false;
+    std::vector<DropLanding> landings;
+
+    bool Empty() const { return landings.empty(); }
+};
+
+struct PendingLandingEntry
+{
+    size_t sourceIndex = 0;
+    DropAction action = DropAction::Move;
+    DropLandingKind kind = DropLandingKind::None;
+    std::wstring sourcePath;
+    std::wstring sourceName;
+    GridCell cell;
+    size_t insertIndex = 0;
+    DesktopWidget* widget = nullptr;
+    std::wstring widgetId;
+};
+
+struct PendingLandingCache
+{
+    std::vector<PendingLandingEntry> entries;
+    std::unordered_set<std::wstring> existingDesktopKeys;
+    bool active = false;
+    DWORD tick = 0;
+
+    void Clear()
+    {
+        entries.clear();
+        existingDesktopKeys.clear();
+        active = false;
+        tick = 0;
     }
 };

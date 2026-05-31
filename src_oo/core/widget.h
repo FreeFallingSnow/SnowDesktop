@@ -88,6 +88,8 @@ public:
     virtual Item* GetMemberItem(size_t memberIndex) const { return nullptr; }
     virtual std::vector<size_t> GetSelectedMemberIndices() const { return {}; }
     virtual void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) {}
+    virtual size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const;
+    virtual bool AllowsDesktopKey(const std::wstring& key) const { (void)key; return true; }
 
     // ── Content — subclasses override ────────────────────
     virtual void DrawContent(ID2D1DeviceContext* context, RECT body) {}
@@ -143,12 +145,16 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
     BarStyle GetInsertionStyle() const override { return BarStyle::VBar; }
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override { return 136; }
     int  GetItemWidth()  const override { return 92; }
     Item* GetSlotItem(size_t idx) const override;
+
+    // Returns the rect of the "all" mosaic button (empty if none).
+    RECT GetAllButtonRect() const;
 
 private:
     void DrawThumbnail(ID2D1DeviceContext* context, const DesktopItem& item,
@@ -174,6 +180,8 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
+    bool AllowsDesktopKey(const std::wstring& key) const override;
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
@@ -199,6 +207,7 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
@@ -220,3 +229,7 @@ public:
 
 // Factory
 std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app);
+
+// Shared scrollbar helper — used by WidgetContainer and Collection popup
+void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
+    int visibleHeight, int scrollOffset, bool hovered);

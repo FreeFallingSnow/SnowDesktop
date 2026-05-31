@@ -2,6 +2,8 @@
 // Inline implementations for DesktopApp — Interaction & Tray.
 // This file is included by app.h after the class definition.
 
+#include "drop_model.h"
+
 // ── Interaction ─────────────────────────────────────────────
 
 inline int DesktopApp::HitTestItem(POINT pt) const
@@ -134,6 +136,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
     if (HandlePageNavClick(pt)) return;
@@ -196,6 +199,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
         if (!clickedPopupItem)
             mouseDownHit_ = nullptr;
+        marqueeWidgetIndex_ = popupWidgetIndex_;
         mouseDownWidgetIndex_ = popupWidgetIndex_;
         SetCapture(hwnd_);
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -367,7 +371,13 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (ctrl)
         {
             ClearSelectionOutsideDesktop();
-            hit->SetSelected(!hit->IsSelected());
+            size_t hitIndex = (di && !di->layoutKey.empty())
+                ? FindItemIndexByKey(di->layoutKey)
+                : static_cast<size_t>(-1);
+            if (hit->IsSelected())
+                pendingCtrlToggleDesktopIndex_ = hitIndex;
+            else
+                hit->SetSelected(true);
         }
         else if (!di->selected)
         {
@@ -400,12 +410,15 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             draggingItems_ = true;
             dragSource_ = mouseDownHit_->GetContainer();
             dragSourceItems_ = dragSource_ ? dragSource_->GetSelectedItems() : std::vector<Item*>{};
+            dragSourceList_ = BuildDragSourceList(dragSourceItems_, dragSource_);
             if (dragSourceItems_.empty())
             {
                 draggingItems_ = false;
                 dragSource_ = nullptr;
+                dragSourceList_ = {};
                 return;
             }
+            pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
             marqueeActive_ = false;
             marqueeWidgetIndex_ = static_cast<size_t>(-1);
             if (dragSource_ == GetDesktopGrid())
@@ -433,6 +446,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             dragCurrentPoint_ = current;
         }
     }
+
+    UpdateCollectionPopupDwell(current);
 
     if (mouseDown_ && !draggingItems_ && widgetAction_ == WidgetAction::None
         && mouseDownWidgetIndex_ < widgets_.size() && widgets_[mouseDownWidgetIndex_].selected
@@ -514,9 +529,13 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
         if (overExternal)
         {
-            ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+            DropPayload payload = DropPayload::From(dragSourceItems_);
+            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSourceItems_);
             if (dataObj)
             {
+                auto* sourceWidget = dynamic_cast<WidgetContainer*>(dragSource_);
+                DesktopWidget* sourceWidgetData = sourceWidget ? sourceWidget->GetWidgetData() : nullptr;
+
                 HideDragHintWindow();
                 ReleaseCapture();
                 mouseDown_ = false;
@@ -539,7 +558,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 selfDragActive_ = false;
                 draggingItems_ = false;
 
-                if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE && !selfDragReturned_)
+                if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE
+                    && !selfDragReturned_ && payload.hasDesktopIcons)
                 {
                     for (auto it = items_.rbegin(); it != items_.rend(); ++it)
                     {
@@ -561,6 +581,19 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     SaveLayoutSlots();
                 }
 
+                if (!selfDragReturned_ && sourceWidgetData
+                    && sourceWidgetData->type == DesktopWidgetType::FolderMapping)
+                {
+                    for (size_t i = 0; i < widgets_.size(); ++i)
+                    {
+                        if (&widgets_[i] == sourceWidgetData)
+                        {
+                            RefreshFolderMappingWidget(i);
+                            break;
+                        }
+                    }
+                }
+
                 if (!selfDragReturned_)
                 {
                     ClearSelection();
@@ -573,6 +606,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }
                 selfDragOutKeys_.clear();
+                dragSourceList_ = {};
                 return;
             }
         }
@@ -644,6 +678,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     size_t slotIndex = 0;
                     RECT slotBounds = content;
                     HitRegion region = HitRegion::Empty;
+                    Item* handoffItem = nullptr;
 
                     if (!popupKeys.empty())
                     {
@@ -657,11 +692,29 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                             if (clipped.bottom <= clipped.top || !PtInRect(&clipped, current))
                                 continue;
 
-                            slotIndex = i;
-                            slotBounds = itemRect;
-                            region = current.x < itemRect.left + (itemRect.right - itemRect.left) / 2
-                                ? HitRegion::SortBefore
-                                : HitRegion::SortAfter;
+                            // Check Handoff: mouse on icon area of unselected item
+                            size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                            if (itemIndex != static_cast<size_t>(-1) && !items_[itemIndex].selected)
+                            {
+                                RECT iconRect = GetItemIconRect(itemRect);
+                                RECT hf = { iconRect.left - 4, iconRect.top - 2,
+                                            iconRect.right + 4, iconRect.bottom + 4 };
+                                if (PtInRect(&hf, current))
+                                {
+                                    region = HitRegion::Handoff;
+                                    slotBounds = itemRect;
+                                    handoffItem = popupContainer->GetMemberItem(i);
+                                }
+                            }
+
+                            if (region != HitRegion::Handoff)
+                            {
+                                slotIndex = i;
+                                slotBounds = itemRect;
+                                region = current.x < itemRect.left + (itemRect.right - itemRect.left) / 2
+                                    ? HitRegion::SortBefore
+                                    : HitRegion::SortAfter;
+                            }
                             foundItem = true;
                             break;
                         }
@@ -675,6 +728,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     }
 
                     popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
+                    if (handoffItem)
+                        popupDragTargetSlot_->SetItem(handoffItem);
                     dragTargetContainer_ = popupContainer;
                     dragTargetSlot_ = popupDragTargetSlot_.get();
                     dragTargetRegion_ = region;
@@ -722,24 +777,42 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
             if (marqueeWidgetIndex_ < widgets_.size())
             {
-                // Marquee inside a widget — select member items
-                WidgetContainer* wc = nullptr;
-                for (auto& c : containers_)
+                if (popupWidgetIndex_ == marqueeWidgetIndex_)
                 {
-                    wc = dynamic_cast<WidgetContainer*>(c.get());
-                    if (wc && wc->GetWidgetData() == &widgets_[marqueeWidgetIndex_]) break;
-                    wc = nullptr;
-                }
-                if (wc)
-                {
-                    auto& slots = wc->GetSlots();
-                    for (auto& slot : slots)
+                    // Marquee inside collection popup
+                    RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+                    RECT content = GetCollectionPopupContentRect(popup);
+                    std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+                    for (size_t i = 0; i < popupKeys.size(); ++i)
                     {
-                        if (!slot) continue;
-                        RECT bounds = slot->GetBounds();
-                        bool intersect = RectsIntersect(bounds, marqueeRect_);
-                        if (auto* item = slot->GetItem())
-                            item->SetSelected(intersect);
+                        RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                        if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
+                        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                        if (itemIndex == static_cast<size_t>(-1)) continue;
+                        items_[itemIndex].selected = RectsIntersect(itemRect, marqueeRect_);
+                    }
+                }
+                else
+                {
+                    // Marquee inside a widget — select member items
+                    WidgetContainer* wc = nullptr;
+                    for (auto& c : containers_)
+                    {
+                        wc = dynamic_cast<WidgetContainer*>(c.get());
+                        if (wc && wc->GetWidgetData() == &widgets_[marqueeWidgetIndex_]) break;
+                        wc = nullptr;
+                    }
+                    if (wc)
+                    {
+                        auto& slots = wc->GetSlots();
+                        for (auto& slot : slots)
+                        {
+                            if (!slot) continue;
+                            RECT bounds = slot->GetBounds();
+                            bool intersect = RectsIntersect(bounds, marqueeRect_);
+                            if (auto* item = slot->GetItem())
+                                item->SetSelected(intersect);
+                        }
                     }
                 }
             }
@@ -799,6 +872,9 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
     if (!draggingItems_)
     {
+        if (pendingCtrlToggleDesktopIndex_ < items_.size())
+            items_[pendingCtrlToggleDesktopIndex_].selected = false;
+        pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
         mouseDown_ = false;
         marqueeActive_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
@@ -826,7 +902,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             && dragTargetSlot_->GetItem())
         {
             Item* targetItem = dragTargetSlot_->GetItem();
-            ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSourceItems_);
             if (dataObj)
             {
                 ComPtr<IDropTarget> dropTarget;
@@ -892,11 +968,15 @@ cleanup:
     dragLinkMode_ = false;
     dragSource_ = nullptr;
     dragSourceItems_.clear();
+    dragSourceList_ = {};
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
     dragTargetContainer_ = nullptr;
     dragTargetSlot_ = nullptr;
     dragTargetRegion_ = HitRegion::None;
+    pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+    popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+    KillTimer(hwnd_, kCollectionPopupDwellTimerId);
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
     mouseDown_ = false;
@@ -1415,6 +1495,85 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
             }
         }
     }
+    else if (timerId == kCollectionPopupDwellTimerId)
+    {
+        if (!draggingItems_ || popupWidgetIndex_ < widgets_.size() ||
+            popupDwellWidgetIndex_ >= widgets_.size())
+        {
+            popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+            KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+            return;
+        }
+
+        if (TryOpenDwellCollectionPopup(GetTickCount()))
+        {
+            KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+            OnMouseMove(0, MAKELPARAM(lastMousePoint_.x, lastMousePoint_.y));
+        }
+    }
+}
+
+inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
+{
+    if (!draggingItems_ || popupWidgetIndex_ < widgets_.size())
+    {
+        popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        return;
+    }
+
+    size_t hoveredCollection = static_cast<size_t>(-1);
+    for (auto& c : containers_)
+    {
+        auto* collection = dynamic_cast<Collection*>(c.get());
+        if (!collection) continue;
+
+        RECT buttonRect = collection->GetAllButtonRect();
+        if (IsRectEmptyRect(buttonRect) || !PtInRect(&buttonRect, point))
+            continue;
+
+        DesktopWidget* data = collection->GetWidgetData();
+        for (size_t wi = 0; wi < widgets_.size(); ++wi)
+        {
+            if (&widgets_[wi] == data)
+            {
+                hoveredCollection = wi;
+                break;
+            }
+        }
+        break;
+    }
+
+    if (hoveredCollection == static_cast<size_t>(-1))
+    {
+        popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        return;
+    }
+
+    DWORD now = GetTickCount();
+    if (popupDwellWidgetIndex_ != hoveredCollection)
+    {
+        popupDwellWidgetIndex_ = hoveredCollection;
+        popupDwellTick_ = now;
+        SetTimer(hwnd_, kCollectionPopupDwellTimerId, kCollectionPopupDwellIntervalMs, nullptr);
+        return;
+    }
+
+    TryOpenDwellCollectionPopup(now);
+}
+
+inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
+{
+    if (popupDwellWidgetIndex_ >= widgets_.size())
+        return false;
+    if (now - popupDwellTick_ < kCollectionPopupDwellDelayMs)
+        return false;
+
+    size_t widgetIndex = popupDwellWidgetIndex_;
+    OpenCollectionPopupAt(widgetIndex, lastMousePoint_);
+    UpdateWindow(hwnd_);
+    return true;
 }
 
 // ── Collection popup ─────────────────────────────────────────
@@ -1435,6 +1594,7 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupRect_ = GetCollectionPopupRect(widgets_[widgetIndex]);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
+    popupDwellWidgetIndex_ = static_cast<size_t>(-1);
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -2329,6 +2489,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         selfDragActive_ = false;
         selfDragReturned_ = true;
         draggingItems_ = false;
+        dragSourceList_ = {};
 
         if (dragTargetRegion_ == HitRegion::Handoff)
         {
@@ -2336,7 +2497,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             int hit = HitTestItem(clientPoint);
             if (hit >= 0 && !items_[hit].selected)
             {
-                ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+                ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSourceItems_);
                 if (dataObj)
                 {
                     PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hit].childPidl.get());
@@ -2394,10 +2555,6 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         int hit = HitTestItem(clientPoint);
         if (hit >= 0)
         {
-            std::unordered_set<std::wstring> existingKeys;
-            for (const auto& item : items_)
-                if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
-
             PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hit].childPidl.get());
             ComPtr<IDropTarget> dt;
             if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
@@ -2409,24 +2566,13 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 dt->DragOver(keyState, spl, &le);
                 dt->Drop(dataObject, keyState, spl, &le);
                 *effect = le;
-
-                if (!dropPaths.empty())
-                {
-                    pendingPlaceNames_ = dropPaths;
-                    pendingPlaceCell_ = CellFromPoint(clientPoint);
-                    hasPendingPlace_ = true;
-                    pendingPlaceTick_ = GetTickCount();
-                }
                 ReloadItems(false);
-                PlaceNewItemsAtDropPoint(existingKeys, CellFromPoint(clientPoint));
                 return S_OK;
             }
         }
     }
 
-    // ── Non-handoff external drop onto a widget: let the target container own it ───
-    if (dataObject && dragTargetContainer_ && dragTargetContainer_ != GetDesktopGrid()
-        && dragTargetRegion_ != HitRegion::None)
+    if (dataObject && !dropPaths.empty())
     {
         std::vector<std::unique_ptr<ExternalFileItem>> externalItems;
         std::vector<Item*> sourceItems;
@@ -2442,83 +2588,21 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         if (keyState & MK_ALT)     mods |= MK_ALT;
         if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
 
-        bool needsReload = dragTargetContainer_->NeedsShellReloadAfterDrop();
-        dragTargetContainer_->OnItemsDropped(sourceItems, nullptr,
-            dragTargetSlot_, dragTargetRegion_, mods);
-        SaveLayoutSlots();
-        RebuildContainersAndItems();
-        if (needsReload)
-            ReloadItems();
-        else
+        DragSourceList sourceList = BuildDragSourceList(sourceItems, nullptr);
+        Container* target = dragTargetContainer_ ? dragTargetContainer_ : GetDesktopGrid();
+        HitRegion targetRegion = dragTargetRegion_ != HitRegion::None ? dragTargetRegion_ : HitRegion::Empty;
+        DropPreviewList preview = BuildDropPreviewList(sourceList, target,
+            dragTargetContainer_ ? dragTargetSlot_ : nullptr, targetRegion, mods, clientPoint);
+        bool executed = ExecuteDropPipeline(sourceList, preview);
+        if (executed)
+        {
+            SaveLayoutSlots();
+            RebuildContainersAndItems();
             InvalidateRect(hwnd_, nullptr, FALSE);
-        *effect = ChooseDropEffect(keyState, *effect);
-        return S_OK;
-    }
-
-    // ── Non-handoff external drop: delegate to shell desktop ───
-    if (dataObject)
-    {
-        std::unordered_set<std::wstring> existingKeys;
-        for (const auto& item : items_)
-            if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
-
-        // Self-drag-out recognition
-        if (!selfDragOutKeys_.empty())
-        {
-            std::vector<std::wstring> paths = GetDropPaths(dataObject);
-            std::unordered_set<std::wstring> pathSet(paths.begin(), paths.end());
-            bool allCached = true;
-            for (const auto& k : selfDragOutKeys_)
-            {
-                size_t idx = FindItemIndexByKey(k);
-                if (idx == static_cast<size_t>(-1)) { allCached = false; break; }
-                if (!pathSet.contains(items_[idx].parsingName)) { allCached = false; break; }
-            }
-            if (allCached)
-            {
-                MoveSelectedItemsToCell(FindBestDropCell(CellFromPoint(clientPoint)));
-                LayoutItems();
-                SaveLayoutSlots();
-                selfDragOutKeys_.clear();
-                *effect = DROPEFFECT_MOVE;
-                ClearSelection();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                return S_OK;
-            }
-        }
-        selfDragOutKeys_.clear();
-
-        // Delegate to shell desktop folder's drop target
-        ComPtr<IDropTarget> desktopTarget;
-        if (SUCCEEDED(desktopFolder_->CreateViewObject(hwnd_, IID_IDropTarget,
-            reinterpret_cast<void**>(desktopTarget.GetAddressOf()))) && desktopTarget)
-        {
-            POINTL spl{ point.x, point.y };
-            DWORD adjustedKS = keyState;
-            if (*effect == DROPEFFECT_MOVE)
-                adjustedKS = (keyState & ~MK_CONTROL & ~MK_ALT) | MK_SHIFT;
-            else if (*effect == DROPEFFECT_COPY)
-                adjustedKS = (keyState & ~MK_SHIFT & ~MK_ALT) | MK_CONTROL;
-            else if (*effect == DROPEFFECT_LINK)
-                adjustedKS = (keyState & ~MK_SHIFT & ~MK_CONTROL) | MK_ALT;
-
-            DWORD le = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
-            desktopTarget->DragEnter(dataObject, adjustedKS, spl, &le);
-            desktopTarget->DragOver(adjustedKS, spl, &le);
-            desktopTarget->Drop(dataObject, adjustedKS, spl, &le);
-            *effect = le;
-
-            if (!dropPaths.empty())
-            {
-                pendingPlaceNames_ = dropPaths;
-                pendingPlaceCell_ = CellFromPoint(clientPoint);
-                hasPendingPlace_ = true;
-                pendingPlaceTick_ = GetTickCount();
-            }
-            ReloadItems(false);
-            PlaceNewItemsAtDropPoint(existingKeys, CellFromPoint(clientPoint));
+            *effect = ChooseDropEffect(keyState, *effect);
             return S_OK;
         }
+        selfDragOutKeys_.clear();
     }
 
     *effect = DROPEFFECT_NONE;
@@ -2571,6 +2655,7 @@ inline std::wstring DesktopApp::FileNameFromPath(const std::wstring& path)
 inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName)
 {
     static const std::wstring kShortcutSuffix = L" - 快捷方式";
+    static const std::wstring kCopySuffix = L" - 副本";
 
     auto stripLnk = [](const std::wstring& s) -> std::wstring {
         if (s.size() > 4 && _wcsicmp(s.c_str() + s.size() - 4, L".lnk") == 0)
@@ -2586,6 +2671,16 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
         if (s.size() > kShortcutSuffix.size() &&
             s.compare(s.size() - kShortcutSuffix.size(), kShortcutSuffix.size(), kShortcutSuffix) == 0)
             return s.substr(0, s.size() - kShortcutSuffix.size());
+        return s;
+    };
+    auto stripCopy = [&](const std::wstring& s) -> std::wstring {
+        std::wstring value = s;
+        size_t paren = value.rfind(L" (");
+        if (paren != std::wstring::npos && value.ends_with(L")"))
+            value = value.substr(0, paren);
+        if (value.size() > kCopySuffix.size() &&
+            value.compare(value.size() - kCopySuffix.size(), kCopySuffix.size(), kCopySuffix) == 0)
+            return value.substr(0, value.size() - kCopySuffix.size());
         return s;
     };
     auto eqi = [](const std::wstring& a, const std::wstring& b) -> bool {
@@ -2611,6 +2706,15 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
     if (eqi(nameNoShortcut, srcNoExt)) return true;
     if (eqi(nameNoLnkNoShortcut, srcFileName)) return true;
     if (eqi(nameNoLnkNoShortcut, srcNoExt)) return true;
+
+    std::wstring nameNoCopy = stripCopy(itemName);
+    std::wstring nameNoLnkNoCopy = stripCopy(nameNoLnk);
+    std::wstring nameNoExtNoCopy = stripCopy(stripExt(itemName));
+    if (eqi(nameNoCopy, srcFileName)) return true;
+    if (eqi(nameNoCopy, srcNoExt)) return true;
+    if (eqi(nameNoLnkNoCopy, srcFileName)) return true;
+    if (eqi(nameNoLnkNoCopy, srcNoExt)) return true;
+    if (eqi(nameNoExtNoCopy, srcNoExt)) return true;
 
     return false;
 }

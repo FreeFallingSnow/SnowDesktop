@@ -75,15 +75,6 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
         content.top + (row + 1) * cellH - scroll);
 }
 
-static void EraseKeyFromWidget(DesktopWidget& widget, const std::wstring& key)
-{
-    std::wstring normalized = ToUpperInvariant(key);
-    widget.itemKeys.erase(
-        std::remove_if(widget.itemKeys.begin(), widget.itemKeys.end(),
-            [&](const std::wstring& existing) { return ToUpperInvariant(existing) == normalized; }),
-        widget.itemKeys.end());
-}
-
 Item* FolderMapping::GetSlotItem(size_t idx) const
 {
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
@@ -152,6 +143,10 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
     if (adjusted > data_->folderEntries.size()) adjusted = data_->folderEntries.size();
     for (auto it = moving.rbegin(); it != moving.rend(); ++it)
         data_->folderEntries.insert(data_->folderEntries.begin() + static_cast<std::ptrdiff_t>(adjusted++), std::move(*it));
+    data_->itemKeys.clear();
+    data_->itemKeys.reserve(data_->folderEntries.size());
+    for (const auto& entry : data_->folderEntries)
+        data_->itemKeys.push_back(entry.fullPath);
     InvalidateSlots();
 }
 
@@ -192,100 +187,17 @@ void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
     Slot* targetSlot, HitRegion region, int mods)
 {
     if (!app_ || !data_) return;
+    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
+    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
+        app_->dragCurrentPoint_);
+    app_->ExecuteDropPipeline(sourceList, preview);
+}
 
-    if (origin == this)
-    {
-        // Same-source reorder via ReorderMembers
-        auto indices = GetSelectedMemberIndices();
-        size_t insertAt = targetSlot ? targetSlot->GetIndex() : data_->folderEntries.size();
-        ReorderMembers(indices, insertAt);
-        return;
-    }
-
-    // Cross-source: copy/move/link physical files to mapped folder
-    if (data_->sourceFolderPath.empty()) return;
-    DropPayload payload = DropPayload::From(sourceItems);
-    if (payload.filePaths.empty()) return;
-    DropAction action = DropActionFromMods(mods, payload.hasExternalFiles ? DropAction::Copy : DropAction::Move);
-
-    std::wstring destFolder = data_->sourceFolderPath;
-    if (!destFolder.empty() && destFolder.back() != L'\\') destFolder += L'\\';
-
-    if (action == DropAction::Link)
-    {
-        for (const auto& path : payload.filePaths)
-        {
-            std::wstring name = PathFindFileNameW(path.c_str());
-            std::wstring stem = name;
-            if (stem.size() > 4 && _wcsicmp(stem.c_str() + stem.size() - 4, L".lnk") == 0)
-                stem = stem.substr(0, stem.size() - 4);
-            std::wstring linkPath;
-            for (int i = 1; i < 1000; ++i)
-            {
-                linkPath = destFolder + stem + (i == 1 ? L".lnk" : L" (" + std::to_wstring(i) + L").lnk");
-                if (GetFileAttributesW(linkPath.c_str()) == INVALID_FILE_ATTRIBUTES)
-                    break;
-            }
-            ComPtr<IShellLinkW> shellLink;
-            if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
-            {
-                shellLink->SetPath(path.c_str());
-                shellLink->SetWorkingDirectory(destFolder.c_str());
-                ComPtr<IPersistFile> persistFile;
-                if (SUCCEEDED(shellLink.As(&persistFile)))
-                    persistFile->Save(linkPath.c_str(), TRUE);
-            }
-        }
-    }
-    else
-    {
-        std::wstring from;
-        for (const auto& path : payload.filePaths)
-        {
-            from += path;
-            from += L'\0';
-        }
-        from += L'\0';
-
-        std::wstring to = destFolder + L'\0';
-        SHFILEOPSTRUCTW op{};
-        op.hwnd = app_->hwnd_;
-        op.wFunc = (action == DropAction::Copy) ? FO_COPY : FO_MOVE;
-        op.pFrom = from.c_str();
-        op.pTo = to.c_str();
-        op.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_RENAMEONCOLLISION;
-        SHFileOperationW(&op);
-    }
-
-    if (action == DropAction::Move)
-    {
-        for (const auto& key : payload.desktopKeys)
-        {
-            for (auto& widget : app_->GetWidgets())
-                EraseKeyFromWidget(widget, key);
-        }
-    }
-
-    if (auto* sourceWidget = dynamic_cast<WidgetContainer*>(origin))
-    {
-        DesktopWidget* sourceData = sourceWidget->GetWidgetData();
-        if (action == DropAction::Move && sourceData && sourceData->type == DesktopWidgetType::FolderMapping)
-        {
-            auto& widgets = app_->GetWidgets();
-            for (size_t i = 0; i < widgets.size(); ++i)
-                if (&widgets[i] == sourceData) { app_->RefreshFolderMappingWidget(i); break; }
-        }
-    }
-
-    size_t widgetIndex = static_cast<size_t>(-1);
-    auto& widgets = app_->GetWidgets();
-    for (size_t i = 0; i < widgets.size(); ++i)
-        if (&widgets[i] == data_) { widgetIndex = i; break; }
-    if (widgetIndex != static_cast<size_t>(-1))
-        app_->RefreshFolderMappingWidget(widgetIndex);
-    InvalidateSlots();
-    (void)targetSlot; (void)region;
+size_t FolderMapping::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
+{
+    (void)region;
+    size_t insertAt = targetSlot ? targetSlot->GetIndex() : (data_ ? data_->folderEntries.size() : 0);
+    return data_ ? std::min(insertAt, data_->folderEntries.size()) : insertAt;
 }
 
 void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
@@ -328,8 +240,9 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         if (!listMode)
         {
+            bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_);
             FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
-            icon.Draw(context, cell, entry.selected ? 2 : 0);
+            icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0));
             continue;
         }
 

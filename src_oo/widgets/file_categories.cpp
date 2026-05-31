@@ -8,14 +8,6 @@
 #include <shlwapi.h>
 #include <unordered_set>
 
-static void EraseKeyFromWidget(DesktopWidget& w, const std::wstring& key)
-{
-    std::wstring normalized = ToUpperInvariant(key);
-    auto it = std::find_if(w.itemKeys.begin(), w.itemKeys.end(),
-        [&](const std::wstring& k) { return ToUpperInvariant(k) == normalized; });
-    if (it != w.itemKeys.end()) w.itemKeys.erase(it);
-}
-
 static std::vector<std::wstring> FileCategoryOrder()
 {
     return {
@@ -493,118 +485,24 @@ void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Conta
     Slot* targetSlot, HitRegion region, int mods)
 {
     if (!app_ || !data_) return;
-    if (region == HitRegion::Handoff) return;
+    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
+    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
+        app_->dragCurrentPoint_);
+    app_->ExecuteDropPipeline(sourceList, preview);
+}
 
+size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
+{
+    (void)region;
     size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
-    size_t insertAt = InsertIndexForVisibleSlot(app_, data_, visibleInsert);
+    return InsertIndexForVisibleSlot(app_, data_, visibleInsert);
+}
 
-    DropPayload payload = DropPayload::From(sourceItems);
-    DropAction action = DropActionFromMods(mods, payload.hasExternalFiles ? DropAction::Copy : DropAction::Move);
-
-    auto insertNewDesktopItems = [&](const std::unordered_set<std::wstring>& existingKeys) {
-        std::unordered_set<std::wstring> existingTarget;
-        for (const auto& key : data_->itemKeys)
-            existingTarget.insert(ToUpperInvariant(key));
-        for (const auto& key : app_->NewDesktopKeysSince(existingKeys))
-        {
-            if (key.empty() || existingTarget.contains(key)) continue;
-            size_t itemIdx = app_->FindItemIndexByKey(key);
-            if (itemIdx == static_cast<size_t>(-1)) continue;
-            auto& item = app_->GetDesktopItems()[itemIdx];
-            item.gridCell = data_->gridCell;
-            if (!IsCollectable(app_, item)) continue;
-            data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
-            existingTarget.insert(key);
-            ++insertAt;
-        }
-    };
-
-    if (!payload.filePaths.empty() &&
-        (payload.hasExternalFiles || payload.hasFolderEntries ||
-         action == DropAction::Copy || action == DropAction::Link))
-    {
-        std::unordered_set<std::wstring> existingKeys = app_->SnapshotDesktopKeys();
-        app_->DropFilePathsToDesktopCell(payload.filePaths, data_->gridCell,
-            DropActionToMods(action), action == DropAction::Copy && !payload.hasExternalFiles);
-        insertNewDesktopItems(existingKeys);
-        if (data_->activeCategoryId.empty())
-            data_->activeCategoryId = ActiveCategoryId(app_, data_);
-        if (action == DropAction::Move && payload.hasDesktopIcons)
-            app_->RemoveDesktopKeysFromWidgets(payload.desktopKeys);
-        if (action == DropAction::Move && origin)
-        {
-            if (auto* sourceWidget = dynamic_cast<WidgetContainer*>(origin))
-            {
-                if (DesktopWidget* sourceData = sourceWidget->GetWidgetData();
-                    sourceData && sourceData->type == DesktopWidgetType::FolderMapping)
-                {
-                    auto& widgets = app_->GetWidgets();
-                    for (size_t i = 0; i < widgets.size(); ++i)
-                        if (&widgets[i] == sourceData) { app_->RefreshFolderMappingWidget(i); break; }
-                }
-                sourceWidget->InvalidateSlots();
-            }
-        }
-        InvalidateSlots();
-        app_->GetDesktopGrid()->InvalidateSlots();
-        return;
-    }
-
-    if (origin == this)
-    {
-        auto indices = GetSelectedMemberIndices();
-        ReorderMembers(indices, visibleInsert);
-        app_->GetDesktopGrid()->InvalidateSlots();
-        return;
-    }
-
-    if (auto* srcWC = dynamic_cast<WidgetContainer*>(origin))
-    {
-        DesktopWidget* srcData = srcWC->GetWidgetData();
-        for (auto* src : sourceItems)
-        {
-            auto* icon = dynamic_cast<DesktopIcon*>(src);
-            if (!icon || !icon->GetDesktopItem()) continue;
-            if (!IsCollectable(app_, *icon->GetDesktopItem())) continue;
-            std::wstring key = ToUpperInvariant(icon->GetDesktopItem()->layoutKey);
-            if (action == DropAction::Move && srcData) EraseKeyFromWidget(*srcData, key);
-            auto it = std::find_if(data_->itemKeys.begin(), data_->itemKeys.end(),
-                [&](const std::wstring& existing) { return ToUpperInvariant(existing) == key; });
-            if (it == data_->itemKeys.end())
-            {
-                if (insertAt > data_->itemKeys.size()) insertAt = data_->itemKeys.size();
-                data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
-                ++insertAt;
-            }
-        }
-        srcWC->InvalidateSlots();
-        InvalidateSlots();
-        app_->GetDesktopGrid()->InvalidateSlots();
-        return;
-    }
-
-    // DesktopGrid origin
-    for (auto* src : sourceItems)
-    {
-        auto* icon = dynamic_cast<DesktopIcon*>(src);
-        if (!icon || !icon->GetDesktopItem()) continue;
-        if (!IsCollectable(app_, *icon->GetDesktopItem())) continue;
-        std::wstring key = ToUpperInvariant(icon->GetDesktopItem()->layoutKey);
-        if (action == DropAction::Move)
-            for (auto& w : app_->GetWidgets())
-                if (&w != data_) EraseKeyFromWidget(w, key);
-        auto it = std::find_if(data_->itemKeys.begin(), data_->itemKeys.end(),
-            [&](const std::wstring& existing) { return ToUpperInvariant(existing) == key; });
-        if (it == data_->itemKeys.end())
-        {
-            if (insertAt > data_->itemKeys.size()) insertAt = data_->itemKeys.size();
-            data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
-            ++insertAt;
-        }
-    }
-    InvalidateSlots();
-    app_->GetDesktopGrid()->InvalidateSlots();
-    (void)region; (void)mods;
+bool FileCategories::AllowsDesktopKey(const std::wstring& key) const
+{
+    size_t itemIdx = FindItemIndexByKeyPublic(app_, key);
+    return itemIdx != static_cast<size_t>(-1) &&
+        IsCollectable(app_, app_->GetDesktopItems()[itemIdx]);
 }
 
 void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
@@ -704,8 +602,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         if (!data_->listMode)
         {
+            bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_);
             DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
-            icon.Draw(context, itemRect, di.selected ? 2 : 0);
+            icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0));
             continue;
         }
 
