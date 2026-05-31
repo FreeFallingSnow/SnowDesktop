@@ -137,6 +137,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
     if (HandlePageNavClick(pt)) return;
@@ -273,7 +274,10 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (ctrl)
                 {
                     ClearSelectionOutsideWidget(wi);
-                    memberItem->SetSelected(!memberItem->IsSelected());
+                    if (memberItem->IsSelected())
+                        pendingCtrlToggleWidgetItem_ = memberItem;
+                    else
+                        memberItem->SetSelected(true);
                 }
                 else if (!memberItem->IsSelected())
                 {
@@ -282,8 +286,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 }
                 else
                 {
-                    ClearSelection();
-                    memberItem->SetSelected(true);
+                    ClearSelectionOutsideWidget(wi);
                 }
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = memberItem;
@@ -419,6 +422,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 return;
             }
             pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+            pendingCtrlToggleWidgetItem_ = nullptr;
             marqueeActive_ = false;
             marqueeWidgetIndex_ = static_cast<size_t>(-1);
             if (dragSource_ == GetDesktopGrid())
@@ -875,6 +879,11 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         if (pendingCtrlToggleDesktopIndex_ < items_.size())
             items_[pendingCtrlToggleDesktopIndex_].selected = false;
         pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+        if (pendingCtrlToggleWidgetItem_)
+        {
+            pendingCtrlToggleWidgetItem_->SetSelected(!pendingCtrlToggleWidgetItem_->IsSelected());
+            pendingCtrlToggleWidgetItem_ = nullptr;
+        }
         mouseDown_ = false;
         marqueeActive_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
@@ -975,6 +984,7 @@ cleanup:
     dragTargetSlot_ = nullptr;
     dragTargetRegion_ = HitRegion::None;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleWidgetItem_ = nullptr;
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
     KillTimer(hwnd_, kCollectionPopupDwellTimerId);
     navHoverSide_ = 0;

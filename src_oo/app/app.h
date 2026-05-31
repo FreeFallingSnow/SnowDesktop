@@ -352,6 +352,8 @@ private:
     RECT marqueeRect_{};
     size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);
     size_t pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+    size_t pendingCtrlToggleWidgetIndex_ = static_cast<size_t>(-1);
+    Item*  pendingCtrlToggleWidgetItem_ = nullptr;
 
     // Drag state
     bool draggingItems_ = false;
