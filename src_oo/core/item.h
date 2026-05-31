@@ -54,6 +54,8 @@ private:
     DesktopItem* item_;
     Container* container_;
     DesktopApp* app_;
+    RECT boundsOverride_{};
+    bool hasBoundsOverride_ = false;
 };
 
 class FolderEntryIcon : public Item

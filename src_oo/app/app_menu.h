@@ -4,9 +4,96 @@
 
 // ── Context menus ───────────────────────────────────────────
 
+inline HBITMAP DesktopApp::CreateMenuIconBitmap(const wchar_t* text)
+{
+    const int cx = std::max(20, GetSystemMetrics(SM_CXMENUCHECK));
+    const int cy = std::max(20, GetSystemMetrics(SM_CYMENUCHECK));
+    if (cx <= 0 || cy <= 0 || !text || !*text) return nullptr;
+
+    HDC screenDc = GetDC(nullptr);
+    BITMAPINFO bmi{};
+    bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+    bmi.bmiHeader.biWidth = cx;
+    bmi.bmiHeader.biHeight = -cy;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void* bits = nullptr;
+    HBITMAP bmp = CreateDIBSection(screenDc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!bmp)
+    {
+        ReleaseDC(nullptr, screenDc);
+        return nullptr;
+    }
+
+    std::fill_n(static_cast<std::uint32_t*>(bits), cx * cy, 0u);
+
+    HDC memDc = CreateCompatibleDC(screenDc);
+    HGDIOBJ oldBmp = SelectObject(memDc, bmp);
+    HGDIOBJ fallbackFont = GetStockObject(DEFAULT_GUI_FONT);
+    HGDIOBJ oldFont = SelectObject(memDc, faMenuFont_ ? faMenuFont_ : fallbackFont);
+
+    RECT rc{ 0, 0, cx, cy };
+    SetBkMode(memDc, TRANSPARENT);
+    SetTextColor(memDc, RGB(255, 255, 255));
+    DrawTextW(memDc, text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    SelectObject(memDc, oldFont);
+    SelectObject(memDc, oldBmp);
+    DeleteDC(memDc);
+    ReleaseDC(nullptr, screenDc);
+
+    auto* pixels = static_cast<std::uint32_t*>(bits);
+    const size_t count = static_cast<size_t>(cx) * static_cast<size_t>(cy);
+    for (size_t i = 0; i < count; ++i)
+    {
+        std::uint32_t p = pixels[i];
+        if ((p & 0x00FFFFFF) == 0) continue;
+        std::uint8_t lum = static_cast<std::uint8_t>(
+            std::max({ (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF }));
+        pixels[i] = static_cast<std::uint32_t>(lum) << 24;
+    }
+    return bmp;
+}
+
+inline void DesktopApp::SetMenuItemIcon(HMENU menu, UINT_PTR command, const wchar_t* text)
+{
+    HBITMAP icon = CreateMenuIconBitmap(text);
+    if (!icon) return;
+
+    MENUITEMINFOW mii{ sizeof(mii) };
+    mii.fMask = MIIM_BITMAP;
+    mii.hbmpItem = icon;
+
+    bool applied = false;
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count && !applied; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe)) continue;
+        if (probe.wID == command || reinterpret_cast<UINT_PTR>(probe.hSubMenu) == command)
+            applied = SetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &mii) != FALSE;
+    }
+
+    if (applied)
+        menuIconPool_.push_back(icon);
+    else
+        DeleteObject(icon);
+}
+
+inline void DesktopApp::ClearMenuIcons()
+{
+    for (HBITMAP bmp : menuIconPool_)
+        DeleteObject(bmp);
+    menuIconPool_.clear();
+}
+
 inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
+    ClearMenuIcons();
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
@@ -75,6 +162,40 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextSettingsCommand, L"设置");
 
+    SetMenuItemIcon(menu, kContextNewMenu, L"");
+    SetMenuItemIcon(menu, kContextRefreshCommand, L"");
+    SetMenuItemIcon(menu, kContextPasteCommand, L"");
+    SetMenuItemIcon(menu, kContextMoreCommand, L"");
+    if (sortMenu)
+    {
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
+        SetMenuItemIcon(sortMenu, kContextSortByNameCommand, L"");
+        SetMenuItemIcon(sortMenu, kContextSortByTypeCommand, L"");
+    }
+    if (gridMenu)
+    {
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(gridMenu), L"");
+        SetMenuItemIcon(gridMenu, kContextGridAddRow, L"");
+        SetMenuItemIcon(gridMenu, kContextGridRemoveRow, L"");
+        SetMenuItemIcon(gridMenu, kContextGridAddColumn, L"");
+        SetMenuItemIcon(gridMenu, kContextGridRemoveColumn, L"");
+    }
+    if (widgetMenu)
+    {
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu), L"");
+        SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget, L"");
+        SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, L"");
+        SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, L"");
+    }
+    if (zoomMenu)
+    {
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(zoomMenu), L"");
+        SetMenuItemIcon(zoomMenu, kContextZoomIncrease, L"");
+        SetMenuItemIcon(zoomMenu, kContextZoomDecrease, L"");
+    }
+    SetMenuItemIcon(menu, kContextThisDisplayFirstCommand, L"");
+    SetMenuItemIcon(menu, kContextSettingsCommand, L"");
+
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
@@ -84,6 +205,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (zoomMenu) DestroyMenu(zoomMenu);
     DestroyMenu(menu);
     newMenuContextMenu_.Reset();
+    ClearMenuIcons();
     RestoreDesktopWindowLayer();
 
     if (command >= kContextZoomPresetFirst && command <= kContextZoomPresetFirst + 200)
@@ -204,6 +326,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
+    ClearMenuIcons();
 
     int selectedCount = 0;
     for (const auto& item : items_) if (item.selected) ++selectedCount;
@@ -226,10 +349,18 @@ inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
 
+    SetMenuItemIcon(menu, kContextOpenCommand, L"");
+    SetMenuItemIcon(menu, kContextRenameCommand, L"");
+    SetMenuItemIcon(menu, kContextCutCommand, L"");
+    SetMenuItemIcon(menu, kContextCopyCommand, L"");
+    SetMenuItemIcon(menu, kContextDeleteCommand, L"");
+    SetMenuItemIcon(menu, kContextMoreCommand, L"");
+
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
     DestroyMenu(menu);
+    ClearMenuIcons();
     RestoreDesktopWindowLayer();
 
     switch (command)

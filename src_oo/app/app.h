@@ -115,10 +115,14 @@ private:
     void OnLeftButtonUp(WPARAM wp, LPARAM lp);
     void OnRightButtonUp(LPARAM lp);
     void OnKeyDown(WPARAM key);
+    void RefreshDragHintFromKeyboard();
     void InvokeSelectedShellVerb(const char* verb);
     void MoveKeyboardSelection(WPARAM arrowKey);
     void OnTimer(WPARAM timerId);
     void ClearSelection();
+    bool IsItemInAnyWidget(const DesktopItem& item) const;
+    void ClearSelectionOutsideWidget(size_t widgetIndex);
+    void ClearSelectionOutsideDesktop();
     void SelectOnly(int index);
     void SelectWidgetOnly(size_t index);
     void ToggleSelection(int index);
@@ -135,12 +139,18 @@ private:
 
     // ── Context menus ───────────────────────────────────────
     void ShowBackgroundContextMenu(POINT screenPoint);
+    void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex);
+    void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex);
     void ShowItemContextMenu(POINT screenPoint, int itemIndex);
     void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1);
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir);
     void ShowDesktopBackgroundContextMenu(POINT screenPoint);
+    HBITMAP CreateMenuIconBitmap(const wchar_t* text);
+    void SetMenuItemIcon(HMENU menu, UINT_PTR command, const wchar_t* text);
+    void ClearMenuIcons();
     void RestoreDesktopWindowLayer();
     bool IsProtectedDesktopIcon(const DesktopItem& item) const;
+    bool IsShellRenameCommand(IContextMenu* contextMenu, UINT commandOffset) const;
 
     // ── Grid helpers ────────────────────────────────────────
     const GridPage* GridPageFromPoint(POINT point) const;
@@ -176,6 +186,20 @@ private:
     ComPtr<IDataObject> CreateSelectedDataObject() const;
     void DropSelectedItemsOnTarget(int targetIndex);
     size_t FindItemIndexByKey(const std::wstring& key) const;
+    struct DesktopDropPayload
+    {
+        std::vector<std::wstring> filePaths;
+        std::vector<std::wstring> desktopKeys;
+        bool hasDesktopIcons = false;
+        bool hasPathItems = false;
+        bool hasWidgets = false;
+    };
+    DesktopDropPayload CollectDesktopDropPayload(const std::vector<Item*>& sourceItems) const;
+    void RemoveDesktopKeysFromWidgets(const std::vector<std::wstring>& keys);
+    std::unordered_set<std::wstring> SnapshotDesktopKeys() const;
+    std::vector<std::wstring> NewDesktopKeysSince(const std::unordered_set<std::wstring>& existingKeys) const;
+    bool DropFilePathsToDesktopCell(const std::vector<std::wstring>& paths, GridCell targetCell,
+        int mods, bool duplicateDesktopCopyNames);
     void CopySelectedItemsToCell(GridCell targetCell);
     void CreateShortcutSelectedItemsToCell(GridCell targetCell);
     void PlaceNewItemsAtDropPoint(const std::unordered_set<std::wstring>& existingKeys, GridCell targetCell);
@@ -190,6 +214,9 @@ private:
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke);
     void DrawItemText(ID2D1DeviceContext* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f);
+    void DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
+        RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color);
+    void DrawCollectionPopup(ID2D1DeviceContext* ctx);
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
     // D2D bitmap cache — public for Item::Draw
@@ -221,6 +248,25 @@ private:
     void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan);
     void EnumerateFolderMappingEntries(DesktopWidget& widget);
     void RefreshFolderMappingWidget(size_t widgetIndex);
+    bool CollectFileCategoryWidget(size_t widgetIndex, bool persist);
+    void ApplyAutoCollectFileCategoryWidgets();
+    void EnforceSingleAutoCollectFileCategory(size_t activeWidgetIndex);
+    void OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint, const std::wstring& categoryId = L"");
+    void CloseCollectionPopup();
+    bool IsPointInsideOpenPopup(POINT point) const;
+    std::vector<std::wstring> GetPopupItemKeys(const DesktopWidget& widget) const;
+    RECT GetCollectionPopupRect(const DesktopWidget& widget) const;
+    RECT GetCollectionPopupContentRect(const RECT& popup) const;
+    int GetCollectionPopupColumnCount(const RECT& popup) const;
+    int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const;
+    int GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const;
+    RECT GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const;
+    void OnMouseWheel(WPARAM wp, LPARAM lp);
+    RECT GetVisibleCollectionItemBounds(size_t itemIndex) const;
+    bool FindSingleSelectedFolderEntry(size_t& widgetIndex, size_t& memberIndex) const;
+    RECT GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const;
+    void BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex);
+    void CommitFolderEntryRename(const std::wstring& newName, bool cancel);
 
     // ── Member variables ────────────────────────────────────
     HINSTANCE instance_ = nullptr;
@@ -231,6 +277,7 @@ private:
     ComPtr<ID3D11Device> d3dDevice_;
     ComPtr<ID2D1Factory1> d2dFactory_;
     ID2D1Factory1* GetD2DFactory() const { return d2dFactory_.Get(); }
+    IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
@@ -241,6 +288,10 @@ private:
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
+    ComPtr<IDWriteTextFormat> faTextFormat_;
+    HANDLE faFontHandle_ = nullptr;
+    HFONT faMenuFont_ = nullptr;
+    std::vector<HBITMAP> menuIconPool_;
 
     // Shell
     ComPtr<IShellFolder> desktopFolder_;
@@ -285,7 +336,7 @@ private:
     POINT lastMousePoint_{};
     bool mouseDown_ = false;
     POINT mouseDownPoint_{};
-    DesktopIcon* mouseDownHit_ = nullptr;
+    Item* mouseDownHit_ = nullptr;
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
 
@@ -298,8 +349,10 @@ private:
     bool dragLinkMode_ = false;
 
     // OO drag state (Slot-based)
+    Container* dragSource_ = nullptr;
+    std::vector<Item*> dragSourceItems_;
     Container* dragTargetContainer_ = nullptr;
-    size_t dragTargetSlotIndex_ = 0;
+    Slot* dragTargetSlot_ = nullptr;
     HitRegion dragTargetRegion_ = HitRegion::None;
 
     // Widget drag / resize state
@@ -346,6 +399,10 @@ private:
     HWND renameEdit_ = nullptr;
     HFONT renameFont_ = nullptr;
     size_t renameIndex_ = static_cast<size_t>(-1);
+    bool renamingWidget_ = false;
+    bool renamingFolderEntry_ = false;
+    size_t renameFolderWidgetIndex_ = static_cast<size_t>(-1);
+    size_t renameFolderEntryIndex_ = static_cast<size_t>(-1);
     void BeginRenameSelected();
     void CommitRename(bool cancel);
     static LRESULT CALLBACK RenameEditSubclassProc(HWND hwnd, UINT message,
@@ -359,13 +416,21 @@ private:
     void ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text);
     void HideDragHintWindow();
     void DestroyDragHintWindow();
-    std::wstring MakeDragHint(POINT point) const;
-    std::wstring MakeExternalDragHint(POINT point) const;
-    void HitTestExternalAt(POINT pt);
     static std::vector<std::wstring> GetDropPaths(IDataObject* dataObject);
     static std::wstring FileNameFromPath(const std::wstring& path);
     static bool MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName);
     void ApplyPendingPlacement();
+
+    // Collection popup
+    size_t popupWidgetIndex_ = static_cast<size_t>(-1);
+    RECT popupRect_{};
+    int popupScrollOffset_ = 0;
+    bool popupHasAnchor_ = false;
+    POINT popupAnchorPoint_{};
+    std::wstring popupPageId_;
+    std::wstring popupCategoryId_;
+    std::unique_ptr<DesktopIcon> popupMouseDownItem_;
+    std::unique_ptr<Slot> popupDragTargetSlot_;
 
     // OO system
     std::vector<std::unique_ptr<Container>> containers_;

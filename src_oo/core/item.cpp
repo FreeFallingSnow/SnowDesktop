@@ -10,8 +10,17 @@ DesktopIcon::DesktopIcon(DesktopItem* item, Container* container, DesktopApp* ap
 std::wstring DesktopIcon::GetTitle() const { return item_ ? item_->name : L""; }
 std::wstring DesktopIcon::GetPath() const { return item_ ? item_->parsingName : L""; }
 HBITMAP DesktopIcon::GetIconBitmap() const { return item_ ? item_->iconBitmap : nullptr; }
-RECT DesktopIcon::GetBounds() const { return item_ ? item_->bounds : RECT{}; }
-void DesktopIcon::SetBounds(RECT bounds) { if (item_) item_->bounds = bounds; }
+RECT DesktopIcon::GetBounds() const
+{
+    if (hasBoundsOverride_) return boundsOverride_;
+    return item_ ? item_->bounds : RECT{};
+}
+
+void DesktopIcon::SetBounds(RECT bounds)
+{
+    boundsOverride_ = bounds;
+    hasBoundsOverride_ = true;
+}
 bool DesktopIcon::IsSelected() const { return item_ && item_->selected; }
 void DesktopIcon::SetSelected(bool selected) { if (item_) item_->selected = selected; }
 Container* DesktopIcon::GetContainer() const { return container_; }
@@ -19,7 +28,7 @@ Container* DesktopIcon::GetContainer() const { return container_; }
 void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
     if (!app_ || !item_) return;
-    if (item_->bounds.left >= item_->bounds.right || item_->bounds.top >= item_->bounds.bottom) return;
+    if (rect.left >= rect.right || rect.top >= rect.bottom) return;
 
     const bool hovered = (state == 1);
     const bool selected = (state == 2 || state == 3);

@@ -58,7 +58,9 @@ std::vector<std::unique_ptr<Slot>> ListContainer::BuildSlots()
             body.top  + row * itemH + itemH
         };
         auto s = std::make_unique<Slot>(this, cell, idx);
-        s->SetItem(GetSlotItem(idx));
+        Item* item = GetSlotItem(idx);
+        if (item) item->SetBounds(cell);
+        s->SetItem(item);
         slots.push_back(std::move(s));
     }
     return slots;
