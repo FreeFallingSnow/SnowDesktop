@@ -34,6 +34,10 @@ inline bool DesktopApp::InitGraphics()
     hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext_);
     if (FAILED(hr)) return false;
 
+    // Off-screen context for drag-bg-cache (pre-created, not on hot path)
+    hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dragBgCacheCtx_);
+    if (FAILED(hr)) return false;
+
     // DComp — create from the D2D device for interop
     hr = DCompositionCreateDevice2(d2dDevice_.Get(), __uuidof(IDCompositionDesktopDevice),
         reinterpret_cast<void**>(dcompDevice_.GetAddressOf()));
@@ -125,20 +129,13 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
 
 inline void DesktopApp::OnPaint()
     {
-        auto L = [](const wchar_t* s) {
-            HANDLE f = CreateFileW(L"SnowDesktopOO_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, s, static_cast<DWORD>(wcslen(s)*2), &w, nullptr);
-                WriteFile(f, L"\r\n", 4, &w, nullptr); CloseHandle(f); }
-        };
-        L(L"OnPaint");
-        if (FAILED(CreateOrResizeCompositionSurface())) { L(L"CreateSurface FAILED"); return; }
+        if (FAILED(CreateOrResizeCompositionSurface())) return;
 
         ID2D1DeviceContext* rawContext = nullptr;
         POINT updateOffset{};
         HRESULT hr = dcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(&rawContext), &updateOffset);
-        if (FAILED(hr)) { L(L"BeginDraw FAILED"); return; }
+        if (FAILED(hr)) return;
 
         ComPtr<ID2D1DeviceContext> context;
         context.Attach(rawContext);
@@ -461,9 +458,10 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
 
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
 
-inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
+// ── Static background layer (icons + widget chrome + popup) ──
+inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
 {
-    // ── OO icon rendering ────────────────────────────────────
+    // Desktop icons
     for (auto& ooItem : items_oo_)
     {
         auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
@@ -478,7 +476,7 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
         icon->Draw(ctx, di->bounds, state);
     }
 
-    // ── Widget chrome ────────────────────────────────────────
+    // Widget chrome
     for (auto& c : containers_)
     {
         if (widgetAction_ != WidgetAction::None)
@@ -496,15 +494,18 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
     }
 
     DrawCollectionPopup(ctx);
+}
 
-    // ── Widget drag/resize preview ───────────────────────────
+// ── Dynamic overlays (drag preview, dragged items, marquee, nav) ──
+inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
+{
+    // Widget drag/resize preview
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {
         GridCell cell = widgetPreviewCell_;
         GridSpan span = widgetPreviewSpan_;
         RECT previewBounds = GetGridRect(gridPages_, cell, span);
 
-        // Check collision with other widgets
         bool widgetConflict = false;
         for (size_t i = 0; i < widgets_.size(); ++i)
         {
@@ -528,11 +529,10 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
         DrawD2DRoundedRectangle(ctx, previewBounds, radius, fill, border, 2.0f);
     }
 
-    // ── OO Drag preview ──────────────────────────────────────
+    // Drop preview (blue bars / green Handoff box)
     if ((draggingItems_ || externalDragActive_) && dragTargetContainer_
         && dragTargetRegion_ != HitRegion::None)
     {
-        // Handoff green box — unified at app level so desktop & widgets share one path
         if (dragTargetRegion_ == HitRegion::Handoff && dragTargetSlot_)
         {
             RECT bounds = dragTargetSlot_->GetBounds();
@@ -546,7 +546,7 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
         }
     }
 
-    // Draw dragged items at offset
+    // Dragged items at offset
     if (draggingItems_)
     {
         int dx = dragCurrentPoint_.x - mouseDownPoint_.x;
@@ -561,7 +561,7 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
             RECT draggedBounds = MakeRect(
                 bounds.left + dx, bounds.top + dy,
                 bounds.right + dx, bounds.bottom + dy);
-            item->Draw(ctx, draggedBounds, 3); // state=3 = dragged
+            item->Draw(ctx, draggedBounds, 3);
         }
     }
 
@@ -573,6 +573,68 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
     }
 
     DrawPageNavButtons(ctx);
+}
+
+inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
+{
+    // ── Drag cache fast path ───────────────────────────────────
+    if (draggingItems_ && dragBgCacheValid_ && dragBgCache_)
+    {
+        D2D1_SIZE_F sz = dragBgCache_->GetSize();
+        ctx->DrawBitmap(dragBgCache_.Get(),
+            D2D1::RectF(0, 0, sz.width, sz.height), 1.0f,
+            D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        DrawDynamicOverlays(ctx);
+        return;
+    }
+
+    // ── First drag frame: render static bg to off-screen bitmap ─
+    if (draggingItems_)
+    {
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        UINT w = std::max<LONG>(1, client.right - client.left);
+        UINT h = std::max<LONG>(1, client.bottom - client.top);
+
+        if (!dragBgCache_ ||
+            dragBgCache_->GetPixelSize().width != w ||
+            dragBgCache_->GetPixelSize().height != h)
+        {
+            dragBgCache_.Reset();
+            D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_TARGET,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+            dragBgCacheCtx_->CreateBitmap(D2D1_SIZE_U{ w, h }, nullptr, 0, &bp, &dragBgCache_);
+        }
+
+        if (dragBgCache_)
+        {
+            dragBgCacheCtx_->SetTarget(dragBgCache_.Get());
+            dragBgCacheCtx_->BeginDraw();
+            dragBgCacheCtx_->Clear(D2D1::ColorF(0, 0, 0, 0));
+            dragBgCacheCtx_->SetDpi(96.0f, 96.0f);
+            dragBgCacheCtx_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+            DrawStaticBackground(dragBgCacheCtx_.Get());
+            HRESULT hr = dragBgCacheCtx_->EndDraw();
+            dragBgCacheCtx_->SetTarget(nullptr);
+            if (SUCCEEDED(hr))
+                dragBgCacheValid_ = true;
+        }
+
+        if (dragBgCacheValid_)
+        {
+            D2D1_SIZE_F sz = dragBgCache_->GetSize();
+            ctx->DrawBitmap(dragBgCache_.Get(),
+                D2D1::RectF(0, 0, sz.width, sz.height), 1.0f,
+                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        }
+        DrawDynamicOverlays(ctx);
+        return;
+    }
+
+    // ── Normal path (not dragging) ────────────────────────────
+    DrawStaticBackground(ctx);
+    DrawDynamicOverlays(ctx);
 }
 
 inline void DesktopApp::GetNavButtonRects(RECT& outPrev, RECT& outNext) const

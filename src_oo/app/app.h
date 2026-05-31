@@ -90,6 +90,8 @@ private:
     HRESULT CreateOrResizeCompositionSurface();
     void OnPaint();
     void RenderFrame(ID2D1DeviceContext* ctx);
+    void DrawStaticBackground(ID2D1DeviceContext* ctx);
+    void DrawDynamicOverlays(ID2D1DeviceContext* ctx);
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
     void GetNavButtonRects(RECT& outPrev, RECT& outNext) const;
 
@@ -357,6 +359,10 @@ private:
 
     // Drag state
     bool draggingItems_ = false;
+    // Drag background cache — avoids full re-render every frame during drag
+    ComPtr<ID2D1Bitmap1> dragBgCache_;
+    ComPtr<ID2D1DeviceContext> dragBgCacheCtx_;
+    bool dragBgCacheValid_ = false;
     POINT dragCurrentPoint_{};
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
@@ -424,6 +430,7 @@ private:
     // Drag hint
     std::wstring dragHint_;
     HWND hintHwnd_ = nullptr;
+    std::wstring hintTextCache_;
     bool EnsureDragHintWindow();
     void ShowDragHintWindow(POINT clientPoint, const std::wstring& text);
     void ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text);
@@ -451,6 +458,8 @@ private:
     // OO system
     std::vector<std::unique_ptr<Container>> containers_;
     std::vector<std::unique_ptr<Item>> items_oo_;
+    // Fast widget-key lookup for hit-test (rebuilt with containers)
+    std::unordered_set<std::wstring> collectedKeysCache_;
 
     // D2D bitmap cache
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
