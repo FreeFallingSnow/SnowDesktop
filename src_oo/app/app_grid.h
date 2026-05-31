@@ -3,6 +3,8 @@
 // Layout persistence, Control window, Bitmap cache, Data loading, and free functions.
 // This file is included by app_oo.h after the class definition.
 
+#include "drop_model.h"
+
 // ── Grid helpers ────────────────────────────────────────────
 
 inline const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
@@ -94,7 +96,6 @@ inline void DesktopApp::SetZoom(float value)
     for (auto& page : gridPages_)
         ApplyGapScaleToPage(page);
     LayoutItems();
-    RebuildContainersAndItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -107,7 +108,6 @@ inline void DesktopApp::AdjustZoom(float delta)
     for (auto& page : gridPages_)
         ApplyGapScaleToPage(page);
     LayoutItems();
-    RebuildContainersAndItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -1322,14 +1322,19 @@ inline void DesktopApp::ConfigureGridPage(GridPage& page) const
     const int ch = static_cast<int>(kMinCellHeight * gapScale_);
     const int w  = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int h  = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-    const int uw = std::max(1, w - page.marginX * 2);
-    const int uh = std::max(1, h - page.marginY * 2);
+    const int uw = std::max(1, w - kGridMarginX * 2);
+    const int uh = std::max(1, h - kGridMarginY * 2);
     page.columns   = std::max(4, uw / cw);
     page.rows      = std::max(3, uh / ch);
     page.cellWidth  = cw;
     page.cellHeight = ch;
     page.gapX = page.columns > 1 ? std::max(0, (uw - page.columns * page.cellWidth)  / (page.columns - 1)) : 0;
     page.gapY = page.rows    > 1 ? std::max(0, (uh - page.rows    * page.cellHeight) / (page.rows    - 1)) : 0;
+
+    int gridW = page.columns * page.cellWidth + std::max(0, page.columns - 1) * page.gapX;
+    int gridH = page.rows * page.cellHeight + std::max(0, page.rows - 1) * page.gapY;
+    page.marginX = std::max(kGridMarginX, (w - gridW) / 2);
+    page.marginY = std::max(kGridMarginY, (h - gridH) / 2);
 }
 
 inline void DesktopApp::ApplySavedGridDimensions()
@@ -1350,8 +1355,10 @@ inline void DesktopApp::ApplySavedGridDimensions()
 
 inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
 {
-    const int usableW = std::max(1, static_cast<int>(page.workArea.right - page.workArea.left) - (page.marginX * 2));
-    const int usableH = std::max(1, static_cast<int>(page.workArea.bottom - page.workArea.top) - (page.marginY * 2));
+    const int pageW = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
+    const int pageH = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
+    const int usableW = std::max(1, pageW - (kGridMarginX * 2));
+    const int usableH = std::max(1, pageH - (kGridMarginY * 2));
     const float cellRefW = static_cast<float>(usableW) / static_cast<float>(std::max(1, page.columns));
     const float cellRefH = static_cast<float>(usableH) / static_cast<float>(std::max(1, page.rows));
     const int targetGapX = std::max(0, static_cast<int>(cellRefW * kGapPercentX / gapScale_));
@@ -1363,8 +1370,13 @@ inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
     page.cellHeight = page.rows > 1
         ? std::max(kMinCellHeight / 2, (usableH - (page.rows - 1) * targetGapY) / page.rows)
         : usableH;
-    page.gapX = page.columns > 1 ? (usableW - page.columns * page.cellWidth) / (page.columns - 1) : 0;
-    page.gapY = page.rows    > 1 ? (usableH - page.rows    * page.cellHeight) / (page.rows - 1) : 0;
+    page.gapX = page.columns > 1 ? std::max(0, (usableW - page.columns * page.cellWidth) / (page.columns - 1)) : 0;
+    page.gapY = page.rows    > 1 ? std::max(0, (usableH - page.rows    * page.cellHeight) / (page.rows - 1)) : 0;
+
+    int gridW = page.columns * page.cellWidth + std::max(0, page.columns - 1) * page.gapX;
+    int gridH = page.rows * page.cellHeight + std::max(0, page.rows - 1) * page.gapY;
+    page.marginX = std::max(kGridMarginX, (pageW - gridW) / 2);
+    page.marginY = std::max(kGridMarginY, (pageH - gridH) / 2);
 }
 
 // ── Drag helpers ──────────────────────────────────────────────
@@ -1679,6 +1691,62 @@ inline ComPtr<IDataObject> DesktopApp::CreateSelectedDataObject() const
     return dataObject;
 }
 
+inline ComPtr<IDataObject> DesktopApp::CreateFileDropDataObject(const std::vector<std::wstring>& paths)
+{
+    if (paths.empty()) return nullptr;
+
+    std::vector<PIDLIST_ABSOLUTE> pidls;
+    pidls.reserve(paths.size());
+    for (const auto& path : paths)
+    {
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl)
+            pidls.push_back(pidl);
+    }
+
+    if (pidls.empty()) return nullptr;
+
+    auto freePidls = [&]() {
+        for (auto* pidl : pidls)
+            ILFree(pidl);
+    };
+
+    ComPtr<IShellFolder> parentFolder;
+    PCUITEMID_CHILD unusedChild = nullptr;
+    HRESULT hr = SHBindToParent(pidls.front(), IID_IShellFolder,
+        reinterpret_cast<void**>(parentFolder.GetAddressOf()), &unusedChild);
+    if (FAILED(hr) || !parentFolder)
+    {
+        freePidls();
+        return nullptr;
+    }
+
+    std::vector<PCUITEMID_CHILD> children;
+    children.reserve(pidls.size());
+    for (auto* pidl : pidls)
+        children.push_back(ILFindLastID(pidl));
+
+    ComPtr<IDataObject> dataObject;
+    hr = parentFolder->GetUIObjectOf(nullptr, static_cast<UINT>(children.size()), children.data(),
+        IID_IDataObject, nullptr, reinterpret_cast<void**>(dataObject.GetAddressOf()));
+    freePidls();
+
+    if (FAILED(hr)) return nullptr;
+    return dataObject;
+}
+
+inline ComPtr<IDataObject> DesktopApp::CreateDataObjectForItems(
+    const std::vector<Item*>& sourceItems) const
+{
+    DropPayload payload = DropPayload::From(sourceItems);
+    if (payload.hasDesktopIcons)
+    {
+        if (ComPtr<IDataObject> desktopObject = CreateSelectedDataObject())
+            return desktopObject;
+    }
+    return CreateFileDropDataObject(payload.filePaths);
+}
+
 inline void DesktopApp::DropSelectedItemsOnTarget(int targetIndex)
 {
     if (targetIndex < 0 || static_cast<size_t>(targetIndex) >= items_.size()) return;
@@ -1714,48 +1782,6 @@ inline size_t DesktopApp::FindItemIndexByKey(const std::wstring& key) const
     for (size_t i = 0; i < items_.size(); ++i)
         if (ToUpperInvariant(items_[i].layoutKey) == normalized) return i;
     return static_cast<size_t>(-1);
-}
-
-inline DesktopApp::DesktopDropPayload DesktopApp::CollectDesktopDropPayload(
-    const std::vector<Item*>& sourceItems) const
-{
-    DesktopDropPayload payload;
-    for (auto* src : sourceItems)
-    {
-        if (!src) continue;
-        if (dynamic_cast<Widget*>(src))
-        {
-            payload.hasWidgets = true;
-            continue;
-        }
-
-        if (auto* icon = dynamic_cast<DesktopIcon*>(src))
-        {
-            payload.hasDesktopIcons = true;
-            DesktopItem* item = icon->GetDesktopItem();
-            if (item && !item->layoutKey.empty())
-                payload.desktopKeys.push_back(item->layoutKey);
-
-            if (item && !IsProtectedDesktopIcon(*item))
-            {
-                std::wstring path = icon->GetPath();
-                if (!path.empty())
-                {
-                    payload.filePaths.push_back(path);
-                    payload.hasPathItems = true;
-                }
-            }
-            continue;
-        }
-
-        std::wstring path = src->GetPath();
-        if (!path.empty())
-        {
-            payload.filePaths.push_back(path);
-            payload.hasPathItems = true;
-        }
-    }
-    return payload;
 }
 
 inline void DesktopApp::RemoveDesktopKeysFromWidgets(const std::vector<std::wstring>& keys)
@@ -1802,24 +1828,403 @@ inline std::vector<std::wstring> DesktopApp::NewDesktopKeysSince(
     return keys;
 }
 
-inline bool DesktopApp::DropFilePathsToDesktopCell(const std::vector<std::wstring>& paths,
-    GridCell targetCell, int mods, bool duplicateDesktopCopyNames)
+inline std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
+    const DragSourceList& sourceList, GridCell targetCell, bool internalMove) const
 {
-    if (paths.empty()) return false;
+    std::vector<DropLanding> landings;
+    if (sourceList.Empty()) return landings;
 
-    std::unordered_set<std::wstring> existingKeys = SnapshotDesktopKeys();
+    if (targetCell.pageId.empty() && !gridPages_.empty())
+        targetCell.pageId = gridPages_.front().id;
+    const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
+    if (!page) return landings;
+
+    bool desktopToDesktopMove = internalMove && sourceList.hasDesktopIcons &&
+        !containers_.empty() && sourceList.origin == containers_.front().get();
+    if (desktopToDesktopMove)
+    {
+        std::vector<PendingGridMove> moves = BuildSelectedMove(targetCell);
+        if (moves.empty()) return landings;
+
+        for (const auto& entry : sourceList.entries)
+        {
+            auto it = std::find_if(moves.begin(), moves.end(),
+                [&](const PendingGridMove& move) { return move.index == entry.desktopIndex; });
+            if (it == moves.end()) continue;
+            DropLanding landing;
+            landing.kind = DropLandingKind::DesktopCell;
+            landing.sourceIndex = entry.sourceIndex;
+            landing.cell = it->cell;
+            landings.push_back(landing);
+        }
+        return landings;
+    }
+
+    auto advanceCell = [&](GridCell cell, GridSpan span) {
+        cell.column += std::max(1, span.columns);
+        if (cell.column >= page->columns)
+        {
+            cell.column = 0;
+            cell.row += std::max(1, span.rows);
+        }
+        return cell;
+    };
+
+    std::unordered_set<std::wstring> sourceKeys;
+    for (const auto& entry : sourceList.entries)
+        if (!entry.desktopKey.empty())
+            sourceKeys.insert(ToUpperInvariant(entry.desktopKey));
+
+    std::unordered_set<std::wstring> usedSlots;
+    for (const auto& w : widgets_)
+        MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
+    for (const auto& item : items_)
+    {
+        if (item.name.empty() || item.gridCell.pageId.empty()) continue;
+        if (IsItemInAnyWidget(item)) continue;
+        if (internalMove && sourceKeys.contains(ToUpperInvariant(item.layoutKey))) continue;
+        MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+    }
+
+    int searchSlot = SlotFromCell(gridPages_, targetCell);
+    GridCell cursor = targetCell;
+    for (const auto& entry : sourceList.entries)
+    {
+        GridSpan span = entry.originalSpan;
+        span.columns = std::max(1, span.columns);
+        span.rows = std::max(1, span.rows);
+
+        GridCell cell{};
+        bool found = false;
+        if (IsGridAreaValid(cursor, span) && !AreGridSlotsMarked(usedSlots, cursor, span))
+        {
+            cell = cursor;
+            found = true;
+        }
+        else
+        {
+            found = TryFindFreeCell(span, usedSlots, cell, cursor.pageId, searchSlot);
+        }
+        if (!found) continue;
+
+        DropLanding landing;
+        landing.kind = DropLandingKind::DesktopCell;
+        landing.sourceIndex = entry.sourceIndex;
+        landing.cell = cell;
+        landings.push_back(landing);
+
+        MarkGridArea(usedSlots, cell, span);
+        searchSlot = SlotFromCell(gridPages_, cell) + 1;
+        cursor = advanceCell(cell, span);
+    }
+    return landings;
+}
+
+inline DragSourceList DesktopApp::BuildDragSourceList(
+    const std::vector<Item*>& sourceItems, Container* origin) const
+{
+    DragSourceList list;
+    list.origin = origin;
+
+    WidgetContainer* originWidget = dynamic_cast<WidgetContainer*>(origin);
+    DesktopWidget* originData = originWidget ? originWidget->GetWidgetData() : nullptr;
+    if (originData)
+    {
+        list.hasOriginWidget = true;
+        list.originWidgetId = originData->id;
+        list.originWidgetType = originData->type;
+    }
+
+    for (auto* src : sourceItems)
+    {
+        if (!src) continue;
+        DragSourceEntry entry;
+        entry.item = src;
+        entry.sourceIndex = list.entries.size();
+        entry.displayName = src->GetTitle();
+        entry.filePath = src->GetPath();
+
+        if (dynamic_cast<Widget*>(src))
+        {
+            entry.kind = DropSourceKind::Widget;
+            list.hasWidgets = true;
+        }
+        else if (auto* icon = dynamic_cast<DesktopIcon*>(src))
+        {
+            entry.kind = DropSourceKind::DesktopIcon;
+            list.hasDesktopIcons = true;
+            if (DesktopItem* item = icon->GetDesktopItem())
+            {
+                entry.desktopKey = item->layoutKey;
+                entry.desktopIndex = FindItemIndexByKey(item->layoutKey);
+                entry.originalCell = item->gridCell;
+                entry.originalSpan = item->gridSpan;
+                entry.protectedDesktopIcon = IsProtectedDesktopIcon(*item);
+                if (entry.filePath.empty() && !entry.protectedDesktopIcon)
+                    entry.filePath = icon->GetPath();
+            }
+        }
+        else if (dynamic_cast<FolderEntryIcon*>(src))
+        {
+            entry.kind = DropSourceKind::FolderEntry;
+            list.hasFolderEntries = true;
+        }
+        else if (dynamic_cast<ExternalFileItem*>(src))
+        {
+            entry.kind = DropSourceKind::ExternalFile;
+            list.hasExternalFiles = true;
+        }
+
+        if (originData)
+        {
+            if (originData->type == DesktopWidgetType::FolderMapping)
+            {
+                auto it = std::find_if(originData->folderEntries.begin(), originData->folderEntries.end(),
+                    [&](const FolderEntry& folderEntry) {
+                        return PathsEqualInsensitive(folderEntry.fullPath, entry.filePath);
+                    });
+                if (it != originData->folderEntries.end())
+                    entry.memberIndex = static_cast<size_t>(std::distance(originData->folderEntries.begin(), it));
+            }
+            else if (!entry.desktopKey.empty())
+            {
+                auto it = std::find_if(originData->itemKeys.begin(), originData->itemKeys.end(),
+                    [&](const std::wstring& key) {
+                        return ToUpperInvariant(key) == ToUpperInvariant(entry.desktopKey);
+                    });
+                if (it != originData->itemKeys.end())
+                    entry.memberIndex = static_cast<size_t>(std::distance(originData->itemKeys.begin(), it));
+            }
+        }
+
+        if (entry.originalSpan.columns <= 0) entry.originalSpan.columns = 1;
+        if (entry.originalSpan.rows <= 0) entry.originalSpan.rows = 1;
+        list.entries.push_back(entry);
+    }
+    return list;
+}
+
+inline bool DesktopApp::IsDropFileBacked(const DragSourceList& sourceList,
+    DropTargetKind targetKind, DropAction action) const
+{
+    if (sourceList.Empty()) return false;
+    if (targetKind == DropTargetKind::FolderMapping) return true;
+    if (action == DropAction::Copy || action == DropAction::Link) return true;
+    return sourceList.hasExternalFiles || sourceList.hasFolderEntries;
+}
+
+inline DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceList,
+    Container* target, Slot* targetSlot, HitRegion region, int mods, POINT dropPoint) const
+{
+    DropPreviewList preview;
+    preview.targetContainer = target;
+    if (sourceList.Empty() || !target || sourceList.hasWidgets || region == HitRegion::Handoff)
+        return preview;
+
+    DropAction defaultAction = sourceList.hasExternalFiles ? DropAction::Copy : DropAction::Move;
+    preview.action = DropActionFromMods(mods, defaultAction);
+
+    if (!containers_.empty() && target == containers_.front().get())
+    {
+        preview.targetKind = DropTargetKind::Desktop;
+        POINT adjusted = sourceList.origin ? GetDragTargetPoint(dropPoint) : dropPoint;
+        GridCell targetCell = CellFromPoint(adjusted);
+        bool internalMove = !IsDropFileBacked(sourceList, preview.targetKind, preview.action);
+        if (internalMove)
+            targetCell = FindBestDropCell(targetCell);
+        preview.anchorCell = targetCell;
+        preview.fileBacked = !internalMove;
+        preview.landings = BuildDesktopLandings(sourceList, targetCell, internalMove);
+        return preview;
+    }
+
+    if (auto* widget = dynamic_cast<WidgetContainer*>(target))
+    {
+        preview.targetWidget = widget->GetWidgetData();
+        preview.targetKind = preview.targetWidget &&
+            preview.targetWidget->type == DesktopWidgetType::FolderMapping
+                ? DropTargetKind::FolderMapping
+                : DropTargetKind::KeyedWidget;
+        preview.fileBacked = !(sourceList.origin == target && preview.action == DropAction::Move) &&
+            IsDropFileBacked(sourceList, preview.targetKind, preview.action);
+        preview.insertIndex = widget->GetDropInsertIndex(targetSlot, region);
+        for (const auto& entry : sourceList.entries)
+        {
+            DropLanding landing;
+            landing.kind = preview.targetKind == DropTargetKind::FolderMapping
+                ? DropLandingKind::Folder
+                : DropLandingKind::WidgetIndex;
+            landing.sourceIndex = entry.sourceIndex;
+            landing.widget = preview.targetWidget;
+            if (preview.targetWidget)
+                landing.widgetId = preview.targetWidget->id;
+            landing.insertIndex = preview.insertIndex + preview.landings.size();
+            if (preview.targetWidget)
+                landing.cell = preview.targetWidget->gridCell;
+            preview.landings.push_back(landing);
+        }
+        return preview;
+    }
+
+    return preview;
+}
+
+inline DropPreviewList DesktopApp::BuildExternalDesktopPreviewList(GridCell targetCell, size_t count) const
+{
+    DragSourceList list;
+    list.hasExternalFiles = true;
+    for (size_t i = 0; i < count; ++i)
+    {
+        DragSourceEntry entry;
+        entry.kind = DropSourceKind::ExternalFile;
+        entry.sourceIndex = i;
+        entry.originalSpan = {1, 1};
+        list.entries.push_back(entry);
+    }
+
+    DropPreviewList preview;
+    preview.targetKind = DropTargetKind::Desktop;
+    preview.action = DropAction::Copy;
+    preview.fileBacked = true;
+    preview.anchorCell = targetCell;
+    preview.landings = BuildDesktopLandings(list, targetCell, false);
+    return preview;
+}
+
+inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
+    const DropPreviewList& preview)
+{
+    if (sourceList.Empty() || preview.Empty()) return false;
+    return preview.fileBacked
+        ? ExecuteFileBackedDropPlan(sourceList, preview)
+        : ExecuteInternalDropPlan(sourceList, preview);
+}
+
+inline bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
+    const DropPreviewList& preview)
+{
+    auto sourceMemberIndices = [&]() {
+        std::vector<size_t> indices;
+        for (const auto& entry : sourceList.entries)
+            if (entry.memberIndex != static_cast<size_t>(-1))
+                indices.push_back(entry.memberIndex);
+        std::sort(indices.begin(), indices.end());
+        indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+        return indices;
+    };
+
+    if (preview.targetKind == DropTargetKind::Desktop)
+    {
+        RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
+        bool changed = false;
+        for (const auto& landing : preview.landings)
+        {
+            auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
+                [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
+            if (it == sourceList.entries.end() || it->desktopIndex >= items_.size()) continue;
+            items_[it->desktopIndex].gridCell = landing.cell;
+            items_[it->desktopIndex].slot = SlotFromCell(gridPages_, landing.cell);
+            changed = true;
+        }
+        if (changed)
+        {
+            LayoutItems();
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        return changed;
+    }
+
+    if (preview.targetKind == DropTargetKind::KeyedWidget && preview.targetWidget)
+    {
+        WidgetContainer* targetWidget = nullptr;
+        for (auto& container : containers_)
+        {
+            auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+            if (widget && widget->GetWidgetData() == preview.targetWidget)
+            {
+                targetWidget = widget;
+                break;
+            }
+        }
+        if (!targetWidget) return false;
+
+        if (sourceList.origin == targetWidget && preview.action == DropAction::Move)
+        {
+            std::vector<size_t> indices = sourceMemberIndices();
+            if (indices.empty())
+                indices = targetWidget->GetSelectedMemberIndices();
+            targetWidget->ReorderMembers(indices, preview.insertIndex);
+            targetWidget->InvalidateSlots();
+            return true;
+        }
+
+        WidgetContainer* originWidget = dynamic_cast<WidgetContainer*>(sourceList.origin);
+        DesktopWidget* originData = originWidget ? originWidget->GetWidgetData() : nullptr;
+        size_t inserted = 0;
+        for (const auto& landing : preview.landings)
+        {
+            auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
+                [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
+            if (it == sourceList.entries.end() || it->desktopKey.empty()) continue;
+            std::wstring key = ToUpperInvariant(it->desktopKey);
+            if (!targetWidget->AllowsDesktopKey(key)) continue;
+
+            if (preview.action == DropAction::Move)
+            {
+                if (originData)
+                    RemoveDesktopKeysFromWidgets({key});
+                else
+                    RemoveDesktopKeysFromWidgets({key});
+            }
+
+            auto exists = std::find_if(preview.targetWidget->itemKeys.begin(),
+                preview.targetWidget->itemKeys.end(),
+                [&](const std::wstring& existing) { return ToUpperInvariant(existing) == key; });
+            if (exists == preview.targetWidget->itemKeys.end())
+            {
+                size_t insertAt = std::min(preview.insertIndex + inserted, preview.targetWidget->itemKeys.size());
+                preview.targetWidget->itemKeys.insert(
+                    preview.targetWidget->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
+                ++inserted;
+            }
+            size_t itemIndex = FindItemIndexByKey(key);
+            if (itemIndex != static_cast<size_t>(-1))
+                items_[itemIndex].gridCell = preview.targetWidget->gridCell;
+        }
+        if (originWidget) originWidget->InvalidateSlots();
+        targetWidget->InvalidateSlots();
+        if (GetDesktopGrid()) GetDesktopGrid()->InvalidateSlots();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return true;
+    }
+
+    if (preview.targetKind == DropTargetKind::FolderMapping &&
+        sourceList.origin == preview.targetContainer && preview.action == DropAction::Move)
+    {
+        auto* targetWidget = dynamic_cast<WidgetContainer*>(preview.targetContainer);
+        if (!targetWidget) return false;
+        std::vector<size_t> indices = sourceMemberIndices();
+        if (indices.empty())
+            indices = targetWidget->GetSelectedMemberIndices();
+        targetWidget->ReorderMembers(indices, preview.insertIndex);
+        return true;
+    }
+
+    return false;
+}
+
+inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
+    DropAction action, bool duplicateDesktopCopyNames)
+{
+    std::vector<std::wstring> paths = sourceList.FilePaths();
+    if (paths.empty()) return false;
 
     wchar_t desktopPathRaw[MAX_PATH]{};
     if (!SHGetSpecialFolderPathW(nullptr, desktopPathRaw, CSIDL_DESKTOPDIRECTORY, FALSE))
         return false;
     std::wstring desktopPath = TrimTrailingPathSeparators(desktopPathRaw);
-
-    auto sameParentAsDesktop = [&](const std::wstring& path) -> bool {
-        wchar_t parent[MAX_PATH]{};
-        wcscpy_s(parent, path.c_str());
-        if (!PathRemoveFileSpecW(parent)) return false;
-        return PathsEqualInsensitive(parent, desktopPath);
-    };
 
     auto doubleNull = [](const std::wstring& value) {
         std::wstring result = value;
@@ -1828,7 +2233,14 @@ inline bool DesktopApp::DropFilePathsToDesktopCell(const std::vector<std::wstrin
         return result;
     };
 
-    auto makeUniquePath = [&](const std::wstring& path, bool copySuffix) {
+    auto sameParentAsDesktop = [&](const std::wstring& path) -> bool {
+        wchar_t parent[MAX_PATH]{};
+        wcscpy_s(parent, path.c_str());
+        if (!PathRemoveFileSpecW(parent)) return false;
+        return PathsEqualInsensitive(parent, desktopPath);
+    };
+
+    auto makeUniqueCopyPath = [&](const std::wstring& path) {
         const wchar_t* fileName = PathFindFileNameW(path.c_str());
         DWORD attrs = GetFileAttributesW(path.c_str());
         bool isDir = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
@@ -1845,24 +2257,18 @@ inline bool DesktopApp::DropFilePathsToDesktopCell(const std::vector<std::wstrin
             ext = extPtr ? extPtr : L"";
         }
 
-        auto candidateName = [&](int index) {
-            if (!copySuffix)
-                return index <= 1 ? stem + ext : stem + L" (" + std::to_wstring(index) + L")" + ext;
-            return index <= 1
-                ? stem + L" - 副本" + ext
-                : stem + L" - 副本 (" + std::to_wstring(index) + L")" + ext;
-        };
-
         for (int i = 1; i < 1000; ++i)
         {
+            std::wstring name = i <= 1
+                ? stem + L" - 副本" + ext
+                : stem + L" - 副本 (" + std::to_wstring(i) + L")" + ext;
             wchar_t dst[MAX_PATH]{};
-            PathCombineW(dst, desktopPath.c_str(), candidateName(i).c_str());
+            PathCombineW(dst, desktopPath.c_str(), name.c_str());
             if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES)
                 return std::wstring(dst);
         }
-
         wchar_t fallback[MAX_PATH]{};
-        PathCombineW(fallback, desktopPath.c_str(), candidateName(1000).c_str());
+        PathCombineW(fallback, desktopPath.c_str(), (stem + L" - 副本 (1000)" + ext).c_str());
         return std::wstring(fallback);
     };
 
@@ -1883,7 +2289,6 @@ inline bool DesktopApp::DropFilePathsToDesktopCell(const std::vector<std::wstrin
             if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES)
                 return std::wstring(dst);
         }
-
         wchar_t fallback[MAX_PATH]{};
         PathCombineW(fallback, desktopPath.c_str(), (stem + L" (1000).lnk").c_str());
         return std::wstring(fallback);
@@ -1922,12 +2327,11 @@ inline bool DesktopApp::DropFilePathsToDesktopCell(const std::vector<std::wstrin
     };
 
     bool operated = false;
-    if (mods & MK_ALT)
+    if (action == DropAction::Link)
     {
         for (const auto& path : paths)
         {
             std::wstring dst = makeUniqueShortcutPath(path);
-
             ComPtr<IShellLinkW> shellLink;
             if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
                 IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
@@ -1941,20 +2345,15 @@ inline bool DesktopApp::DropFilePathsToDesktopCell(const std::vector<std::wstrin
             }
         }
     }
-    else if (mods & MK_CONTROL)
+    else if (action == DropAction::Copy)
     {
         std::vector<std::wstring> normalCopies;
         for (const auto& path : paths)
         {
             if (duplicateDesktopCopyNames && sameParentAsDesktop(path))
-            {
-                std::wstring dst = makeUniquePath(path, true);
-                operated = shellOperateOne(FO_COPY, path, dst) || operated;
-            }
+                operated = shellOperateOne(FO_COPY, path, makeUniqueCopyPath(path)) || operated;
             else
-            {
                 normalCopies.push_back(path);
-            }
         }
         if (!normalCopies.empty())
             operated = shellOperateManyToDesktop(FO_COPY, normalCopies) || operated;
@@ -1963,235 +2362,325 @@ inline bool DesktopApp::DropFilePathsToDesktopCell(const std::vector<std::wstrin
     {
         operated = shellOperateManyToDesktop(FO_MOVE, paths);
     }
+    return operated;
+}
 
-    if (!operated) return false;
+inline bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
+    const std::wstring& folderPath, DropAction action) const
+{
+    std::vector<std::wstring> paths = sourceList.FilePaths();
+    if (paths.empty() || folderPath.empty()) return false;
+
+    std::wstring folder = folderPath;
+    if (!folder.empty() && folder.back() != L'\\') folder += L'\\';
+
+    if (action == DropAction::Link)
+    {
+        bool createdAny = false;
+        for (const auto& path : paths)
+        {
+            std::wstring name = PathFindFileNameW(path.c_str());
+            std::wstring stem = name;
+            if (stem.size() > 4 && _wcsicmp(stem.c_str() + stem.size() - 4, L".lnk") == 0)
+                stem = stem.substr(0, stem.size() - 4);
+
+            std::wstring linkPath;
+            for (int i = 1; i < 1000; ++i)
+            {
+                linkPath = folder + stem + (i == 1 ? L".lnk" : L" (" + std::to_wstring(i) + L").lnk");
+                if (GetFileAttributesW(linkPath.c_str()) == INVALID_FILE_ATTRIBUTES)
+                    break;
+            }
+
+            ComPtr<IShellLinkW> shellLink;
+            if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                continue;
+
+            shellLink->SetPath(path.c_str());
+            shellLink->SetWorkingDirectory(folder.c_str());
+            ComPtr<IPersistFile> persistFile;
+            if (SUCCEEDED(shellLink.As(&persistFile)) &&
+                SUCCEEDED(persistFile->Save(linkPath.c_str(), TRUE)))
+                createdAny = true;
+        }
+        return createdAny;
+    }
+
+    std::wstring from;
+    for (const auto& path : paths)
+    {
+        from += path;
+        from += L'\0';
+    }
+    from += L'\0';
+
+    std::wstring to = folder;
+    to += L'\0';
+    SHFILEOPSTRUCTW op{};
+    op.hwnd = hwnd_;
+    op.wFunc = action == DropAction::Move ? FO_MOVE : FO_COPY;
+    op.pFrom = from.c_str();
+    op.pTo = to.c_str();
+    op.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_RENAMEONCOLLISION;
+    return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
+}
+
+inline void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
+    const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys)
+{
+    pendingLandingCache_.Clear();
+    pendingLandingCache_.existingDesktopKeys = existingKeys;
+    pendingLandingCache_.tick = GetTickCount();
+
+    for (const auto& landing : preview.landings)
+    {
+        if (landing.kind != DropLandingKind::DesktopCell &&
+            landing.kind != DropLandingKind::WidgetIndex)
+            continue;
+        auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
+            [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
+        if (it == sourceList.entries.end()) continue;
+
+        PendingLandingEntry entry;
+        entry.sourceIndex = it->sourceIndex;
+        entry.action = preview.action;
+        entry.kind = landing.kind;
+        entry.sourcePath = it->filePath;
+        entry.sourceName = !it->filePath.empty() ? FileNameFromPath(it->filePath) : it->displayName;
+        entry.cell = landing.kind == DropLandingKind::DesktopCell ? landing.cell : landing.cell;
+        entry.insertIndex = landing.insertIndex;
+        entry.widget = landing.widget;
+        entry.widgetId = landing.widgetId;
+        pendingLandingCache_.entries.push_back(entry);
+    }
+    pendingLandingCache_.active = !pendingLandingCache_.entries.empty();
+}
+
+inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
+    const DropPreviewList& preview)
+{
+    auto refreshFolderMappingById = [&](const std::wstring& widgetId) {
+        if (widgetId.empty()) return;
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].id == widgetId)
+            {
+                RefreshFolderMappingWidget(i);
+                break;
+            }
+        }
+    };
+
+    if (preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget)
+    {
+        size_t targetWidgetIndex = static_cast<size_t>(-1);
+        std::unordered_set<std::wstring> targetExistingPaths;
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (&widgets_[i] != preview.targetWidget) continue;
+            targetWidgetIndex = i;
+            for (const auto& entry : widgets_[i].folderEntries)
+                targetExistingPaths.insert(ToUpperInvariant(entry.fullPath));
+            break;
+        }
+
+        bool operated = MaterializeFilesToFolder(sourceList, preview.targetWidget->sourceFolderPath,
+            preview.action);
+        if (!operated) return false;
+        if (preview.action == DropAction::Move)
+            RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
+
+        if (sourceList.hasOriginWidget &&
+            sourceList.originWidgetType == DesktopWidgetType::FolderMapping)
+            refreshFolderMappingById(sourceList.originWidgetId);
+        if (targetWidgetIndex != static_cast<size_t>(-1))
+        {
+            RefreshFolderMappingWidget(targetWidgetIndex);
+            auto& target = widgets_[targetWidgetIndex];
+            std::vector<FolderEntry> inserted;
+            for (auto it = target.folderEntries.begin(); it != target.folderEntries.end(); )
+            {
+                if (targetExistingPaths.contains(ToUpperInvariant(it->fullPath)))
+                {
+                    ++it;
+                    continue;
+                }
+                inserted.push_back(std::move(*it));
+                it = target.folderEntries.erase(it);
+            }
+            if (!inserted.empty())
+            {
+                size_t insertAt = std::min(preview.insertIndex, target.folderEntries.size());
+                target.folderEntries.insert(target.folderEntries.begin() + static_cast<std::ptrdiff_t>(insertAt),
+                    std::make_move_iterator(inserted.begin()), std::make_move_iterator(inserted.end()));
+                target.itemKeys.clear();
+                target.itemKeys.reserve(target.folderEntries.size());
+                for (const auto& entry : target.folderEntries)
+                    target.itemKeys.push_back(entry.fullPath);
+            }
+            for (auto& c : containers_)
+            {
+                auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+                if (wc && wc->GetWidgetData() == &target) { wc->InvalidateSlots(); break; }
+            }
+        }
+        return true;
+    }
+
+    std::unordered_set<std::wstring> existingKeys = SnapshotDesktopKeys();
+    StorePendingLandingCache(sourceList, preview, existingKeys);
+
+    bool duplicateCopyNames = preview.action == DropAction::Copy && sourceList.hasDesktopIcons &&
+        !sourceList.hasExternalFiles;
+    bool operated = MaterializeFilesToDesktop(sourceList, preview.action, duplicateCopyNames);
+    if (!operated)
+    {
+        pendingLandingCache_.Clear();
+        return false;
+    }
 
     ReloadItems(false);
-    PlaceNewItemsAtDropPoint(existingKeys, targetCell);
+    if (preview.action == DropAction::Move && sourceList.hasDesktopIcons)
+        RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
+    if (sourceList.hasOriginWidget &&
+        sourceList.originWidgetType == DesktopWidgetType::FolderMapping)
+        refreshFolderMappingById(sourceList.originWidgetId);
     return true;
 }
 
-inline void DesktopApp::CopySelectedItemsToCell(GridCell targetCell)
+inline void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
+    const DropPreviewList& preview)
 {
-    std::vector<std::wstring> paths;
-    for (const auto& item : items_)
+    if (!ctx) return;
+    for (const auto& landing : preview.landings)
     {
-        if (!item.selected || !item.desktopIconClsid.empty()) continue;
-        wchar_t srcPath[MAX_PATH]{};
-        if (!SHGetPathFromIDListW(item.absolutePidl.get(), srcPath)) continue;
-        paths.push_back(srcPath);
+        if (landing.kind != DropLandingKind::DesktopCell) continue;
+        GridSpan span{1, 1};
+        auto it = std::find_if(items_.begin(), items_.end(), [&](const DesktopItem& item) {
+            return item.gridCell.pageId == landing.cell.pageId &&
+                item.gridCell.column == landing.cell.column &&
+                item.gridCell.row == landing.cell.row;
+        });
+        if (it != items_.end())
+            span = it->gridSpan;
+        RECT targetRect = GetGridRect(gridPages_, landing.cell, span);
+        DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
+            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
+            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
     }
-    DropFilePathsToDesktopCell(paths, targetCell, MK_CONTROL, true);
-}
-
-inline void DesktopApp::CreateShortcutSelectedItemsToCell(GridCell targetCell)
-{
-    std::vector<std::wstring> paths;
-    for (const auto& item : items_)
-    {
-        if (!item.selected || !item.desktopIconClsid.empty()) continue;
-        wchar_t srcPath[MAX_PATH]{};
-        if (!SHGetPathFromIDListW(item.absolutePidl.get(), srcPath)) continue;
-        paths.push_back(srcPath);
-    }
-    DropFilePathsToDesktopCell(paths, targetCell, MK_ALT, true);
 }
 
 inline void DesktopApp::ApplyPendingPlacement()
 {
-    if (!hasPendingPlace_) return;
-    if (GetTickCount() - pendingPlaceTick_ > 10000)
+    if (!pendingLandingCache_.active) return;
+    if (GetTickCount() - pendingLandingCache_.tick > 10000)
     {
-        hasPendingPlace_ = false;
-        pendingPlaceNames_.clear();
+        pendingLandingCache_.Clear();
         return;
     }
 
-    extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
-    extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
-
-    std::vector<std::wstring> srcFileNames;
-    srcFileNames.reserve(pendingPlaceNames_.size());
-    for (const auto& p : pendingPlaceNames_)
-        srcFileNames.push_back(FileNameFromPath(p));
-
-    GridCell startCell = pendingPlaceCell_;
-    if (startCell.pageId.empty() && !gridPages_.empty())
-        startCell.pageId = gridPages_.front().id;
-    const GridPage* page = FindGridPage(gridPages_, startCell.pageId);
-    if (!page) { hasPendingPlace_ = false; pendingPlaceNames_.clear(); return; }
-
     std::unordered_set<std::wstring> usedSlots;
     for (const auto& w : widgets_)
         MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
-    for (size_t i = 0; i < items_.size(); ++i)
+    for (const auto& item : items_)
     {
-        if (items_[i].name.empty() || items_[i].gridCell.pageId.empty()) continue;
-        bool isTarget = false;
-        for (const auto& src : srcFileNames)
-        {
-            if (MatchPendingName(items_[i].name, src) ||
-                (!items_[i].parsingName.empty() &&
-                 MatchPendingName(FileNameFromPath(items_[i].parsingName), src)))
-            {
-                isTarget = true;
-                break;
-            }
-        }
-        if (!isTarget && items_[i].slot >= 0)
-            MarkGridArea(usedSlots, items_[i].gridCell, items_[i].gridSpan);
+        std::wstring key = ToUpperInvariant(item.layoutKey);
+        if (!key.empty() && !pendingLandingCache_.existingDesktopKeys.contains(key))
+            continue;
+        if (!item.name.empty() && !IsItemInAnyWidget(item))
+            MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
     }
 
-    struct Match { size_t itemIndex; size_t srcIndex; };
-    std::vector<Match> matches;
-    std::vector<bool> srcUsed(srcFileNames.size(), false);
-    for (size_t i = 0; i < items_.size(); ++i)
-    {
-        if (items_[i].name.empty()) continue;
-        for (size_t s = 0; s < srcFileNames.size(); ++s)
+    auto findWidgetContainer = [&](const std::wstring& widgetId) -> WidgetContainer* {
+        for (auto& container : containers_)
         {
-            if (srcUsed[s]) continue;
-            if (MatchPendingName(items_[i].name, srcFileNames[s]) ||
-                (!items_[i].parsingName.empty() &&
-                 MatchPendingName(FileNameFromPath(items_[i].parsingName), srcFileNames[s])))
-            {
-                matches.push_back({i, s});
-                srcUsed[s] = true;
-                break;
-            }
+            auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+            DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+            if (data && data->id == widgetId)
+                return widget;
         }
-    }
+        return nullptr;
+    };
 
-    if (matches.empty()) return;
-
-    int searchSlot = SlotFromCell(gridPages_, startCell);
+    std::vector<bool> entryUsed(pendingLandingCache_.entries.size(), false);
     bool changed = false;
-    GridCell nextCell = startCell;
-    for (const auto& m : matches)
+    for (size_t itemIndex = 0; itemIndex < items_.size(); ++itemIndex)
     {
-        GridSpan span = items_[m.itemIndex].gridSpan;
-        span.columns = std::max(1, span.columns);
-        span.rows = std::max(1, span.rows);
+        auto& item = items_[itemIndex];
+        std::wstring key = ToUpperInvariant(item.layoutKey);
+        if (key.empty() || pendingLandingCache_.existingDesktopKeys.contains(key))
+            continue;
 
-        GridCell cell{};
-        bool found = false;
-        if (IsGridAreaValid(nextCell, span) && !AreGridSlotsMarked(usedSlots, nextCell, span))
+        for (size_t e = 0; e < pendingLandingCache_.entries.size(); ++e)
         {
-            cell = nextCell;
-            found = true;
+            if (entryUsed[e]) continue;
+            const auto& landing = pendingLandingCache_.entries[e];
+            if (!MatchPendingName(item.name, landing.sourceName) &&
+                (item.parsingName.empty() ||
+                 !MatchPendingName(FileNameFromPath(item.parsingName), landing.sourceName)))
+                continue;
+
+            if (landing.kind == DropLandingKind::WidgetIndex && !landing.widgetId.empty())
+            {
+                WidgetContainer* widget = findWidgetContainer(landing.widgetId);
+                DesktopWidget* widgetData = widget ? widget->GetWidgetData() : nullptr;
+                if (!widgetData) break;
+
+                item.gridCell = widgetData->gridCell;
+                bool allowKey = !widget || landing.action == DropAction::Link || widget->AllowsDesktopKey(key);
+                if (allowKey)
+                {
+                    auto exists = std::find_if(widgetData->itemKeys.begin(), widgetData->itemKeys.end(),
+                        [&](const std::wstring& existing) { return ToUpperInvariant(existing) == key; });
+                    if (exists == widgetData->itemKeys.end())
+                    {
+                        size_t insertAt = std::min(landing.insertIndex, widgetData->itemKeys.size());
+                        widgetData->itemKeys.insert(
+                            widgetData->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
+                    }
+                    if (widget) widget->InvalidateSlots();
+                }
+            }
+            else if (landing.kind == DropLandingKind::DesktopCell)
+            {
+                GridSpan span = item.gridSpan;
+                span.columns = std::max(1, span.columns);
+                span.rows = std::max(1, span.rows);
+
+                GridCell cell = landing.cell;
+                bool found = false;
+                if (IsGridAreaValid(cell, span) && !AreGridSlotsMarked(usedSlots, cell, span))
+                {
+                    found = true;
+                }
+                else
+                {
+                    found = TryFindFreeCell(span, usedSlots, cell, landing.cell.pageId,
+                        SlotFromCell(gridPages_, landing.cell));
+                }
+                if (!found) break;
+                item.gridCell = cell;
+                item.slot = SlotFromCell(gridPages_, cell);
+                item.selected = true;
+                MarkGridArea(usedSlots, cell, span);
+            }
+
+            entryUsed[e] = true;
+            changed = true;
+            break;
         }
-        if (!found)
-            found = TryFindFreeCell(span, usedSlots, cell, startCell.pageId, searchSlot);
-
-        if (!found) continue;
-
-        items_[m.itemIndex].gridCell = cell;
-        items_[m.itemIndex].gridSpan = span;
-        items_[m.itemIndex].slot = SlotFromCell(gridPages_, cell);
-        items_[m.itemIndex].selected = true;
-        MarkGridArea(usedSlots, cell, span);
-        searchSlot = items_[m.itemIndex].slot + 1;
-        nextCell = cell;
-        nextCell.column += span.columns;
-        if (nextCell.column >= page->columns)
-        {
-            nextCell.column = 0;
-            nextCell.row += span.rows;
-        }
-        changed = true;
     }
 
-    std::vector<std::wstring> remaining;
-    for (size_t s = 0; s < srcFileNames.size(); ++s)
-    {
-        if (!srcUsed[s])
-            remaining.push_back(pendingPlaceNames_[s]);
-    }
+    std::vector<PendingLandingEntry> remaining;
+    for (size_t i = 0; i < pendingLandingCache_.entries.size(); ++i)
+        if (!entryUsed[i])
+            remaining.push_back(pendingLandingCache_.entries[i]);
 
-    if (!remaining.empty())
-    {
-        pendingPlaceNames_ = std::move(remaining);
-        pendingPlaceCell_ = nextCell;
-    }
-    else
-    {
-        hasPendingPlace_ = false;
-        pendingPlaceNames_.clear();
-    }
-
-    if (changed)
-    {
-        LayoutItems();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
-    }
-}
-
-inline void DesktopApp::PlaceNewItemsAtDropPoint(
-    const std::unordered_set<std::wstring>& existingKeys, GridCell targetCell)
-{
-    std::vector<size_t> newItems;
-    for (size_t i = 0; i < items_.size(); ++i)
-    {
-        if (items_[i].layoutKey.empty()) continue;
-        if (!existingKeys.contains(ToUpperInvariant(items_[i].layoutKey)))
-            newItems.push_back(i);
-    }
-    if (newItems.empty()) return;
-
-    if (targetCell.pageId.empty() && !gridPages_.empty())
-        targetCell.pageId = gridPages_.front().id;
-    const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
-    if (!page) return;
-
-    std::unordered_set<std::wstring> usedSlots;
-    for (const auto& w : widgets_)
-        MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
-    std::unordered_set<size_t> newSet(newItems.begin(), newItems.end());
-    for (size_t i = 0; i < items_.size(); ++i)
-    {
-        if (newSet.contains(i)) continue;
-        MarkGridArea(usedSlots, items_[i].gridCell, items_[i].gridSpan);
-    }
-
-    ClearSelection();
-    int searchSlot = SlotFromCell(gridPages_, targetCell);
-    bool changed = false;
-    for (size_t itemIndex : newItems)
-    {
-        GridSpan span = items_[itemIndex].gridSpan;
-        span.columns = std::max(1, span.columns);
-        span.rows = std::max(1, span.rows);
-
-        GridCell cell{};
-        bool found = false;
-        if (IsGridAreaValid(targetCell, span) && !AreGridSlotsMarked(usedSlots, targetCell, span))
-        {
-            cell = targetCell;
-            found = true;
-        }
-        else
-        {
-            found = TryFindFreeCell(span, usedSlots, cell, targetCell.pageId, searchSlot);
-        }
-
-        if (!found) continue;
-
-        items_[itemIndex].gridCell = cell;
-        items_[itemIndex].gridSpan = span;
-        items_[itemIndex].slot = SlotFromCell(gridPages_, cell);
-        items_[itemIndex].selected = true;
-        MarkGridArea(usedSlots, cell, span);
-        searchSlot = items_[itemIndex].slot + 1;
-        targetCell = cell;
-        targetCell.column += span.columns;
-        if (targetCell.column >= page->columns)
-        {
-            targetCell.column = 0;
-            targetCell.row += span.rows;
-        }
-        changed = true;
-    }
+    pendingLandingCache_.entries = std::move(remaining);
+    pendingLandingCache_.active = !pendingLandingCache_.entries.empty();
+    if (!pendingLandingCache_.active)
+        pendingLandingCache_.existingDesktopKeys.clear();
 
     if (changed)
     {
@@ -2271,6 +2760,8 @@ inline void DesktopApp::LayoutItems()
         }
         widget.bounds = GetGridRect(gridPages_, widget.gridCell, widget.gridSpan);
     }
+
+    RebuildContainersAndItems();
 }
 
 inline void DesktopApp::RebuildContainersAndItems()
@@ -2356,6 +2847,26 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
             if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
             return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
         });
+    if (!widget.itemKeys.empty())
+    {
+        std::unordered_map<std::wstring, size_t> order;
+        for (size_t i = 0; i < widget.itemKeys.size(); ++i)
+            order[ToUpperInvariant(widget.itemKeys[i])] = i;
+        std::stable_sort(widget.folderEntries.begin(), widget.folderEntries.end(),
+            [&](const FolderEntry& a, const FolderEntry& b) {
+                auto ia = order.find(ToUpperInvariant(a.fullPath));
+                auto ib = order.find(ToUpperInvariant(b.fullPath));
+                bool ha = ia != order.end();
+                bool hb = ib != order.end();
+                if (ha != hb) return ha;
+                if (ha && hb) return ia->second < ib->second;
+                return false;
+            });
+    }
+    widget.itemKeys.clear();
+    widget.itemKeys.reserve(widget.folderEntries.size());
+    for (const auto& entry : widget.folderEntries)
+        widget.itemKeys.push_back(entry.fullPath);
 }
 
 inline void DesktopApp::RefreshFolderMappingWidget(size_t widgetIndex)
@@ -2442,7 +2953,6 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     widget.showTitle = true;
     widgets_.push_back(std::move(widget));
     LayoutItems();
-    RebuildContainersAndItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }

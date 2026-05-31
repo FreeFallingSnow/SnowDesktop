@@ -112,7 +112,6 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
     Slot* targetSlot, HitRegion region, int mods)
 {
     if (!app_) return;
-    (void)targetSlot;
 
     // Handoff: delegate to shell via DropSelectedItemsOnTarget
     if (region == HitRegion::Handoff)
@@ -126,48 +125,10 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
         return;
     }
 
-    DesktopApp::DesktopDropPayload payload = app_->CollectDesktopDropPayload(sourceItems);
-    if (payload.hasWidgets) return;
-
-    POINT adjusted = app_->GetDragTargetPoint(app_->dragCurrentPoint_);
-    GridCell tc = app_->FindBestDropCell(app_->CellFromPoint(adjusted));
-
-    if (!payload.hasDesktopIcons)
-    {
-        bool dropped = app_->DropFilePathsToDesktopCell(payload.filePaths, tc, mods, false);
-        if (dropped && origin && (mods & (MK_CONTROL | MK_ALT)) == 0)
-        {
-            auto* originWidget = dynamic_cast<WidgetContainer*>(origin);
-            DesktopWidget* data = originWidget ? originWidget->GetWidgetData() : nullptr;
-            if (data && data->type == DesktopWidgetType::FolderMapping)
-            {
-                auto& widgets = app_->GetWidgets();
-                for (size_t i = 0; i < widgets.size(); ++i)
-                {
-                    if (&widgets[i] == data)
-                    {
-                        app_->RefreshFolderMappingWidget(i);
-                        break;
-                    }
-                }
-            }
-        }
-        return;
-    }
-
-    if (mods & MK_ALT)
-    {
-        app_->DropFilePathsToDesktopCell(payload.filePaths, tc, MK_ALT, true);
-    }
-    else if (mods & MK_CONTROL)
-    {
-        app_->DropFilePathsToDesktopCell(payload.filePaths, tc, MK_CONTROL, true);
-    }
-    else
-    {
-        app_->RemoveDesktopKeysFromWidgets(payload.desktopKeys);
-        app_->MoveSelectedItemsToCell(tc);
-    }
+    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
+    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
+        app_->dragCurrentPoint_);
+    app_->ExecuteDropPipeline(sourceList, preview);
 }
 
 std::vector<Item*> DesktopGrid::GetSelectedItems() const
@@ -244,13 +205,14 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     }
 
     // Internal drag
+    if (altDown)  return L"释放：创建快捷方式到此空位";
+    if (ctrlDown) return L"释放：复制到此空位";
+
     GridCell bestCell = app_->FindBestDropCell(
         app_->CellFromPoint(app_->GetDragTargetPoint(dragPoint)));
     if (app_->BuildSelectedMove(bestCell).empty())
         return L"释放：当前位置已有图标";
 
-    if (altDown)  return L"释放：创建快捷方式到此空位";
-    if (ctrlDown) return L"释放：复制到此空位";
     return L"释放：移动到此空位";
 }
 
@@ -262,42 +224,22 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
     if (region == HitRegion::Handoff) return;
 
     POINT dragPoint = app_->draggingItems_ ? app_->dragCurrentPoint_ : app_->externalDragPoint_;
-    GridCell targetCell = app_->draggingItems_
-        ? app_->FindBestDropCell(app_->CellFromPoint(dragPoint))
-        : app_->CellFromPoint(dragPoint);
-
-    if (targetCell.pageId.empty()) return;
 
     if (app_->draggingItems_)
     {
-        std::vector<DesktopApp::PendingGridMove> moves = app_->BuildSelectedMove(targetCell);
-        for (const auto& move : moves)
-        {
-            RECT targetRect = GetGridRect(app_->gridPages_, move.cell, (*items_)[move.index].gridSpan);
-            app_->DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
-                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
-                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
-        }
+        int mods = 0;
+        if (app_->dragCopyMode_) mods |= MK_CONTROL;
+        if (app_->dragLinkMode_) mods |= MK_ALT;
+        DropPreviewList preview = app_->BuildDropPreviewList(app_->dragSourceList_, this, slot, region, mods, dragPoint);
+        app_->DrawDesktopDropPreviewList(ctx, preview);
     }
     else
     {
-        extern inline RECT GetGridRect(const std::vector<GridPage>&, const GridCell&, GridSpan);
-        extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
-        int previewCount = std::max(1, static_cast<int>(app_->externalDropFileCount_));
-        const GridPage* targetPage = FindGridPage(app_->gridPages_, targetCell.pageId);
-        int cols = targetPage ? targetPage->columns : 1;
-        int row = targetCell.row;
-        int col = targetCell.column;
-        for (int i = 0; i < previewCount; ++i)
-        {
-            GridCell previewCell{ targetCell.pageId, col, row };
-            RECT targetRect = GetGridRect(app_->gridPages_, previewCell, GridSpan{1, 1});
-            app_->DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
-                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
-                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
-            ++col;
-            if (col >= cols) { col = 0; ++row; }
-        }
+        GridCell targetCell = app_->CellFromPoint(dragPoint);
+        if (targetCell.pageId.empty()) return;
+        DropPreviewList preview = app_->BuildExternalDesktopPreviewList(targetCell,
+            static_cast<size_t>(std::max(1, app_->externalDropFileCount_)));
+        app_->DrawDesktopDropPreviewList(ctx, preview);
     }
 }
 

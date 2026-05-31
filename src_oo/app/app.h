@@ -4,6 +4,7 @@
 #include "container.h"
 #include "desktop.h"
 #include "widget.h"
+#include "drop_model.h"
 #include "utils.h"
 #include "types.h"
 #include "constants.h"
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -120,6 +122,8 @@ private:
     void InvokeSelectedShellVerb(const char* verb);
     void MoveKeyboardSelection(WPARAM arrowKey);
     void OnTimer(WPARAM timerId);
+    void UpdateCollectionPopupDwell(POINT point);
+    bool TryOpenDwellCollectionPopup(DWORD now);
     void ClearSelection();
     bool IsItemInAnyWidget(const DesktopItem& item) const;
     void ClearSelectionOutsideWidget(size_t widgetIndex);
@@ -179,31 +183,37 @@ private:
     GridCell FindBestDropCell(GridCell targetCell) const;
     struct PendingGridMove { size_t index; GridCell cell; };
     std::vector<PendingGridMove> BuildSelectedMove(GridCell targetCell) const;
+    std::vector<DropLanding> BuildDesktopLandings(const DragSourceList& sourceList,
+        GridCell targetCell, bool internalMove) const;
     bool IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const;
     void MoveSelectedItemsToCell(GridCell targetCell);
     void UpdateDragGroupOrigin();
     void MigrateSelectedItemsToLastMonitorPage();
     POINT GetDragTargetPoint(POINT current) const;
     ComPtr<IDataObject> CreateSelectedDataObject() const;
+    static ComPtr<IDataObject> CreateFileDropDataObject(const std::vector<std::wstring>& paths);
+    ComPtr<IDataObject> CreateDataObjectForItems(const std::vector<Item*>& sourceItems) const;
     void DropSelectedItemsOnTarget(int targetIndex);
     size_t FindItemIndexByKey(const std::wstring& key) const;
-    struct DesktopDropPayload
-    {
-        std::vector<std::wstring> filePaths;
-        std::vector<std::wstring> desktopKeys;
-        bool hasDesktopIcons = false;
-        bool hasPathItems = false;
-        bool hasWidgets = false;
-    };
-    DesktopDropPayload CollectDesktopDropPayload(const std::vector<Item*>& sourceItems) const;
     void RemoveDesktopKeysFromWidgets(const std::vector<std::wstring>& keys);
     std::unordered_set<std::wstring> SnapshotDesktopKeys() const;
     std::vector<std::wstring> NewDesktopKeysSince(const std::unordered_set<std::wstring>& existingKeys) const;
-    bool DropFilePathsToDesktopCell(const std::vector<std::wstring>& paths, GridCell targetCell,
-        int mods, bool duplicateDesktopCopyNames);
-    void CopySelectedItemsToCell(GridCell targetCell);
-    void CreateShortcutSelectedItemsToCell(GridCell targetCell);
-    void PlaceNewItemsAtDropPoint(const std::unordered_set<std::wstring>& existingKeys, GridCell targetCell);
+    DragSourceList BuildDragSourceList(const std::vector<Item*>& sourceItems, Container* origin) const;
+    DropPreviewList BuildDropPreviewList(const DragSourceList& sourceList, Container* target,
+        Slot* targetSlot, HitRegion region, int mods, POINT dropPoint) const;
+    DropPreviewList BuildExternalDesktopPreviewList(GridCell targetCell, size_t count) const;
+    bool ExecuteDropPipeline(const DragSourceList& sourceList, const DropPreviewList& preview);
+    bool ExecuteInternalDropPlan(const DragSourceList& sourceList, const DropPreviewList& preview);
+    bool ExecuteFileBackedDropPlan(const DragSourceList& sourceList, const DropPreviewList& preview);
+    bool MaterializeFilesToDesktop(const DragSourceList& sourceList, DropAction action,
+        bool duplicateDesktopCopyNames);
+    bool MaterializeFilesToFolder(const DragSourceList& sourceList, const std::wstring& folder,
+        DropAction action) const;
+    void StorePendingLandingCache(const DragSourceList& sourceList, const DropPreviewList& preview,
+        const std::unordered_set<std::wstring>& existingKeys);
+    bool IsDropFileBacked(const DragSourceList& sourceList, DropTargetKind targetKind,
+        DropAction action) const;
+    void DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx, const DropPreviewList& preview);
 
     // ── Rendering helpers ───────────────────────────────────
     RECT GetItemIconRect(RECT bounds) const;
@@ -341,6 +351,7 @@ private:
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
     size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    size_t pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
 
     // Drag state
     bool draggingItems_ = false;
@@ -353,6 +364,7 @@ private:
     // OO drag state (Slot-based)
     Container* dragSource_ = nullptr;
     std::vector<Item*> dragSourceItems_;
+    DragSourceList dragSourceList_;
     Container* dragTargetContainer_ = nullptr;
     Slot* dragTargetSlot_ = nullptr;
     HitRegion dragTargetRegion_ = HitRegion::None;
@@ -379,11 +391,8 @@ private:
     int externalDropFileCount_ = 0;
     bool dropTargetRegistered_ = false;
 
-    // Pending placement (survives across ReloadItems for async file ops)
-    std::vector<std::wstring> pendingPlaceNames_;
-    GridCell pendingPlaceCell_;
-    bool hasPendingPlace_ = false;
-    DWORD pendingPlaceTick_ = 0;
+    // Pending landing cache (source list -> preview list survives shell refresh)
+    PendingLandingCache pendingLandingCache_;
 
     POINT ScreenPointToClient(POINTL screen) const;
     bool IsExternalDropWindowAt(POINT clientPoint) const;
@@ -432,6 +441,9 @@ private:
     std::wstring popupPageId_;
     std::wstring popupCategoryId_;
     std::unique_ptr<DesktopIcon> popupMouseDownItem_;
+    // Dwell-to-open: hovering a Collection's "all" button during drag
+    size_t popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+    DWORD popupDwellTick_ = 0;
     std::unique_ptr<Slot> popupDragTargetSlot_;
 
     // OO system

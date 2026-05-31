@@ -212,6 +212,14 @@ void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRe
     slot->DrawDropIndicator(ctx, region);
 }
 
+size_t WidgetContainer::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
+{
+    size_t insertAt = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
+    if (targetSlot && region == HitRegion::SortAfter)
+        ++insertAt;
+    return std::min(insertAt, GetSlotCount());
+}
+
 // ── ScrollingItemWidget shared helpers ─────────────────────────
 
 bool ScrollingItemWidget::SingleColumn() const
@@ -289,24 +297,20 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     }
 }
 
-void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const
+// ── Scrollbar helper (free function, shared by WidgetContainer and popup) ─
+
+void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
+    int visibleHeight, int scrollOffset, bool hovered)
 {
-    int totalHeight = GetTotalContentHeight();
-    int visibleHeight = GetVisibleContentHeight();
-    if (totalHeight <= visibleHeight || visibleHeight <= 0) return;
+    if (contentHeight <= visibleHeight || visibleHeight <= 0) return;
     if (!hovered) return;
 
-    RECT frame = GetFrameRect();
-    RECT body = GetBodyRect();
-    if (IsRectEmptyRect(frame) || IsRectEmptyRect(body)) return;
-
-    int maxScroll = GetMaxScrollOffset();
+    int maxScroll = std::max(0, contentHeight - visibleHeight);
     if (maxScroll <= 0) return;
 
-    int scrollOffset = GetScrollOffset();
     constexpr int trackWidth = 5;
     constexpr int trackMargin = 2;
-    int trackLeft = frame.right - trackWidth - trackMargin;
+    int trackLeft = body.right - trackWidth - trackMargin;
     int trackTop = body.top + 4;
     int trackBottom = body.bottom - 4;
     int trackHeight = std::max(1, trackBottom - trackTop);
@@ -325,7 +329,7 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
     }
 
     // Thumb
-    float ratio = std::clamp((float)visibleHeight / (float)totalHeight, 0.08f, 1.0f);
+    float ratio = std::clamp((float)visibleHeight / (float)contentHeight, 0.08f, 1.0f);
     float scrollRatio = std::clamp((float)scrollOffset / (float)maxScroll, 0.0f, 1.0f);
     int thumbHeight = std::max(20, (int)(trackHeight * ratio));
     int thumbTravel = trackHeight - thumbHeight;
@@ -342,6 +346,13 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
             (float)trackWidth / 2.0f, (float)trackWidth / 2.0f);
         context->FillRoundedRectangle(rr, thumbBrush.Get());
     }
+}
+
+void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const
+{
+    RECT body = GetBodyRect();
+    DrawScrollbarAt(context, body, GetTotalContentHeight(),
+        GetVisibleContentHeight(), GetScrollOffset(), hovered);
 }
 
 // ── DrawChrome ────────────────────────────────────────────────

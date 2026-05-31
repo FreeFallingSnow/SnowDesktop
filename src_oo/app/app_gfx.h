@@ -373,8 +373,8 @@ inline int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& wi
         }
     }
     const int rows = GetCollectionPopupRowCount(widget, popup);
-    const int contentHeight = std::max(1, static_cast<int>(content.bottom - content.top));
-    return std::max(0, rows * std::max(1, cellH) - contentHeight);
+    const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
+    return std::max(0, rows * std::max(1, cellH) - visibleHeight);
 }
 
 inline RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
@@ -439,10 +439,24 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
         size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
         if (itemIndex == static_cast<size_t>(-1)) continue;
 
+        bool hovered = !items_[itemIndex].selected && PtInRect(&itemRect, lastMousePoint_);
         DesktopIcon icon(&items_[itemIndex], nullptr, this);
-        icon.Draw(ctx, itemRect, items_[itemIndex].selected ? 2 : 0);
+        icon.Draw(ctx, itemRect, items_[itemIndex].selected ? 2 : (hovered ? 1 : 0));
     }
     ctx->PopAxisAlignedClip();
+
+    // Scrollbar — same style as widget content areas
+    int cellH = kMinCellHeight;
+    for (const auto& page : gridPages_)
+    {
+        if (page.id == popupPageId_) { cellH = page.cellHeight; break; }
+    }
+    int columns = std::max(1, GetCollectionPopupColumnCount(popupRect_));
+    int rows = (static_cast<int>(popupKeys.size()) + columns - 1) / columns;
+    int contentHeight = rows * cellH;
+    int visibleHeight = std::max(1, (int)(content.bottom - content.top));
+    bool popupHovered = PtInRect(&popupRect_, lastMousePoint_);
+    DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered);
 }
 
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
