@@ -24,7 +24,8 @@ inline DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
         auto* icon = dynamic_cast<DesktopIcon*>(items_oo_[i].get());
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
-        if (!di || IsItemInAnyWidget(*di) || IsRectEmptyRect(di->bounds)) continue;
+        if (!di || IsRectEmptyRect(di->bounds)) continue;
+        if (!di->layoutKey.empty() && collectedKeysCache_.count(ToUpperInvariant(di->layoutKey))) continue;
         RECT selRect = GetItemSelectionRect(di->bounds, di->selected);
         if (PtInRect(&selRect, pt)) return icon;
     }
@@ -423,6 +424,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
             pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
             pendingCtrlToggleWidgetItem_ = nullptr;
+            dragBgCacheValid_ = false;
             marqueeActive_ = false;
             marqueeWidgetIndex_ = static_cast<size_t>(-1);
             if (dragSource_ == GetDesktopGrid())
@@ -545,6 +547,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 mouseDown_ = false;
                 mouseDownHit_ = nullptr;
                 draggingItems_ = false;
+                dragBgCacheValid_ = false;
                 dragCopyMode_ = false;
                 dragLinkMode_ = false;
 
@@ -642,6 +645,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                         ApplyPageMapping();
                         MigrateSelectedItemsToLastMonitorPage();
                         LayoutItems();
+                        dragBgCacheValid_ = false;
                         UpdateDragGroupOrigin();
                         SaveLayoutSlots();
                         navAutoFlipTick_ = now;
@@ -768,6 +772,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
         ShowDragHintWindow(current, hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
+        UpdateWindow(hwnd_);
         return;
     }
 
@@ -886,6 +891,8 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         }
         mouseDown_ = false;
         marqueeActive_ = false;
+        dragBgCache_.Reset();
+        dragBgCacheValid_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
         navHoverSide_ = 0;
         navAutoFlipDir_ = 0;
@@ -983,6 +990,8 @@ cleanup:
     dragTargetContainer_ = nullptr;
     dragTargetSlot_ = nullptr;
     dragTargetRegion_ = HitRegion::None;
+    dragBgCache_.Reset();
+    dragBgCacheValid_ = false;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
@@ -1220,12 +1229,13 @@ inline void DesktopApp::RefreshDragHintFromKeyboard()
         POINT screenPoint = externalDragActive_ ? externalDragPoint_ : dragCurrentPoint_;
         ClientToScreen(hwnd_, &screenPoint);
         ShowDragHintWindowScreen(screenPoint, hint);
+        OnPaint();
     }
     else
     {
         ShowDragHintWindow(dragCurrentPoint_, hint);
+        InvalidateRect(hwnd_, nullptr, FALSE);
     }
-    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 inline void DesktopApp::InvokeSelectedShellVerb(const char* verb)
@@ -2320,6 +2330,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     {
         selfDragReturned_ = true;
         draggingItems_ = true;
+        dragBgCacheValid_ = false;
         POINT client = ScreenPointToClient(point);
         dragCurrentPoint_ = client;
 
@@ -2351,7 +2362,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
                 dragSourceItems_, dragSource_, mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        OnPaint();
         return S_OK;
     }
 
@@ -2390,7 +2401,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ChooseDropEffect(keyState, *effect);
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    OnPaint();
     return S_OK;
 }
 
@@ -2432,7 +2443,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
                 dragSourceItems_, dragSource_, mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        OnPaint();
         return S_OK;
     }
 
@@ -2466,7 +2477,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ChooseDropEffect(keyState, *effect);
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    OnPaint();
     return S_OK;
 }
 
@@ -2475,14 +2486,16 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
     if (selfDragActive_)
     {
         draggingItems_ = false;
+        dragBgCacheValid_ = false;
         HideDragHintWindow();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        OnPaint();
         return S_OK;
     }
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
+    dragBgCacheValid_ = false;
     HideDragHintWindow();
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    OnPaint();
     return S_OK;
 }
 
@@ -2504,23 +2517,37 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         if (dragTargetRegion_ == HitRegion::Handoff)
         {
             // ── Shell handoff via IShellFolder::IDropTarget ────
-            int hit = HitTestItem(clientPoint);
-            if (hit >= 0 && !items_[hit].selected)
+            Item* targetItem = dragTargetSlot_ ? dragTargetSlot_->GetItem() : nullptr;
+            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSourceItems_);
+            if (dataObj && targetItem)
             {
-                ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSourceItems_);
-                if (dataObj)
+                ComPtr<IDropTarget> dt;
+                if (auto* icon = dynamic_cast<DesktopIcon*>(targetItem))
                 {
-                    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hit].childPidl.get());
-                    ComPtr<IDropTarget> dt;
-                    if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
-                        reinterpret_cast<void**>(dt.GetAddressOf()))) && dt)
+                    DesktopItem* di = icon->GetDesktopItem();
+                    if (di && di->childPidl.get())
                     {
-                        POINTL spl{ point.x, point.y };
-                        DWORD le = DROPEFFECT_COPY | DROPEFFECT_MOVE;
-                        dt->DragEnter(dataObj.Get(), keyState, spl, &le);
-                        dt->DragOver(keyState, spl, &le);
-                        dt->Drop(dataObj.Get(), keyState, spl, &le);
+                        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(di->childPidl.get());
+                        desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
+                            reinterpret_cast<void**>(dt.GetAddressOf()));
                     }
+                }
+                if (!dt && !targetItem->GetPath().empty())
+                {
+                    ComPtr<IShellItem> shellItem;
+                    if (SUCCEEDED(SHCreateItemFromParsingName(targetItem->GetPath().c_str(),
+                        nullptr, IID_PPV_ARGS(&shellItem))) && shellItem)
+                    {
+                        shellItem->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&dt));
+                    }
+                }
+                if (dt)
+                {
+                    POINTL spl{ point.x, point.y };
+                    DWORD le = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+                    dt->DragEnter(dataObj.Get(), keyState, spl, &le);
+                    dt->DragOver(keyState, spl, &le);
+                    dt->Drop(dataObj.Get(), keyState, spl, &le);
                 }
             }
             ClearSelection();
@@ -2561,24 +2588,42 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
     if (dragTargetRegion_ == HitRegion::Handoff && dataObject)
     {
-        // ── Handoff on specific item ──
-        int hit = HitTestItem(clientPoint);
-        if (hit >= 0)
+        // ── Handoff on item (desktop OR widget member) ──
+        Item* targetItem = dragTargetSlot_ ? dragTargetSlot_->GetItem() : nullptr;
+        ComPtr<IDropTarget> dt;
+        if (targetItem)
         {
-            PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[hit].childPidl.get());
-            ComPtr<IDropTarget> dt;
-            if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
-                reinterpret_cast<void**>(dt.GetAddressOf()))) && dt)
+            if (auto* icon = dynamic_cast<DesktopIcon*>(targetItem))
             {
-                DWORD le = *effect;
-                POINTL spl{ point.x, point.y };
-                dt->DragEnter(dataObject, keyState, spl, &le);
-                dt->DragOver(keyState, spl, &le);
-                dt->Drop(dataObject, keyState, spl, &le);
-                *effect = le;
-                ReloadItems(false);
-                return S_OK;
+                DesktopItem* di = icon->GetDesktopItem();
+                if (di && di->childPidl.get())
+                {
+                    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(di->childPidl.get());
+                    desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
+                        reinterpret_cast<void**>(dt.GetAddressOf()));
+                }
             }
+            if (!dt && !targetItem->GetPath().empty())
+            {
+                ComPtr<IShellItem> shellItem;
+                if (SUCCEEDED(SHCreateItemFromParsingName(targetItem->GetPath().c_str(),
+                    nullptr, IID_PPV_ARGS(&shellItem))) && shellItem)
+                {
+                    shellItem->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&dt));
+                }
+            }
+        }
+
+        if (dt)
+        {
+            DWORD le = *effect;
+            POINTL spl{ point.x, point.y };
+            dt->DragEnter(dataObject, keyState, spl, &le);
+            dt->DragOver(keyState, spl, &le);
+            dt->Drop(dataObject, keyState, spl, &le);
+            *effect = le;
+            ReloadItems(false);
+            return S_OK;
         }
     }
 
@@ -2743,7 +2788,7 @@ inline bool DesktopApp::EnsureDragHintWindow()
 
 inline void DesktopApp::HideDragHintWindow()
 {
-    if (hintHwnd_) ShowWindow(hintHwnd_, SW_HIDE);
+    if (hintHwnd_) { ShowWindow(hintHwnd_, SW_HIDE); hintTextCache_.clear(); }
 }
 
 inline void DesktopApp::DestroyDragHintWindow()
@@ -2753,7 +2798,28 @@ inline void DesktopApp::DestroyDragHintWindow()
 
 inline void DesktopApp::ShowDragHintWindow(POINT clientPoint, const std::wstring& text)
 {
-    if (text.empty() || !EnsureDragHintWindow())
+    if (text.empty())
+    {
+        HideDragHintWindow();
+        return;
+    }
+
+    // Skip expensive GDI rebuild if text hasn't changed — just move the window
+    if (text == hintTextCache_)
+    {
+        if (hintHwnd_ && IsWindowVisible(hintHwnd_))
+        {
+            POINT screenPoint = clientPoint;
+            ClientToScreen(hwnd_, &screenPoint);
+            SetWindowPos(hintHwnd_, HWND_TOPMOST,
+                screenPoint.x + 48, screenPoint.y + 22,
+                0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+        return;
+    }
+    hintTextCache_ = text;
+
+    if (!EnsureDragHintWindow())
     {
         HideDragHintWindow();
         return;

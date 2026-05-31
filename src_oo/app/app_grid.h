@@ -2771,9 +2771,14 @@ inline void DesktopApp::RebuildContainersAndItems()
 
     // Collect keys of items that belong to widgets
     std::unordered_set<std::wstring> collectedKeys;
+    collectedKeysCache_.clear();
     for (auto& w : widgets_)
         for (auto& k : w.itemKeys)
-            collectedKeys.insert(ToUpperInvariant(k));
+        {
+            auto upper = ToUpperInvariant(k);
+            collectedKeys.insert(upper);
+            collectedKeysCache_.insert(upper);
+        }
 
     // DesktopGrid
     auto grid = std::make_unique<DesktopGrid>(&gridPages_, &items_, this);

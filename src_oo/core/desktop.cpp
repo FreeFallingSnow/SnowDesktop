@@ -94,7 +94,7 @@ HitRegion DesktopGrid::HitTestAtPoint(POINT pt, Slot*& outSlot)
     DesktopItem* occupiedBy = nullptr;
     for (auto& item : *items_)
     {
-        if (app_ && app_->IsItemInAnyWidget(item)) continue;
+        if (app_ && app_->collectedKeysCache_.count(ToUpperInvariant(item.layoutKey))) continue;
         if (item.gridCell.pageId == page->id &&
             item.gridCell.column == col && item.gridCell.row == row &&
             item.bounds.left < item.bounds.right && item.bounds.top < item.bounds.bottom)
