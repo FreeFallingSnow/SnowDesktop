@@ -48,8 +48,8 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (selected)
     {
-        app_->DrawD2DFilledRectangle(context,
-            app_->GetItemSelectionRect(rect, true),
+        RECT sel = app_->GetItemSelectionRect(rect, true);
+        app_->DrawD2DRoundedRectangle(context, sel, 6.0f,
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * alpha),
             D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }

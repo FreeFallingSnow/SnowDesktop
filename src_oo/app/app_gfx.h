@@ -518,7 +518,18 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
     if ((draggingItems_ || externalDragActive_) && dragTargetContainer_
         && dragTargetRegion_ != HitRegion::None)
     {
-        dragTargetContainer_->DrawDropPreview(ctx, dragTargetSlot_, dragTargetRegion_);
+        // Handoff green box — unified at app level so desktop & widgets share one path
+        if (dragTargetRegion_ == HitRegion::Handoff && dragTargetSlot_)
+        {
+            RECT bounds = dragTargetSlot_->GetBounds();
+            DrawD2DRoundedRectangle(ctx, bounds, 6.0f,
+                D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
+                D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
+        }
+        else
+        {
+            dragTargetContainer_->DrawDropPreview(ctx, dragTargetSlot_, dragTargetRegion_);
+        }
     }
 
     // Draw dragged items at offset

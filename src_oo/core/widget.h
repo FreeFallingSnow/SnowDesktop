@@ -93,9 +93,37 @@ public:
     virtual void DrawContent(ID2D1DeviceContext* context, RECT body) {}
     virtual void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) {}
 
+    // ── Scrollbar — subclasses override ──────────────────
+    virtual int  GetScrollOffset() const { return 0; }
+    virtual int  GetMaxScrollOffset() const { return 0; }
+    virtual int  GetTotalContentHeight() const { return 0; }
+    virtual int  GetVisibleContentHeight() const { return 0; }
+    void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const;
+
 protected:
     mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
     mutable std::vector<std::unique_ptr<Item>> slotItemCache_;
+};
+
+// ── ScrollingItemWidget : WidgetContainer with list/icon toggle ─
+// Shared base for FileCategories and FolderMapping.
+// Provides SingleColumn (listMode-based), shared list-mode item
+// rendering (DrawListItem), and scroll metrics boilerplate.
+class ScrollingItemWidget : public WidgetContainer
+{
+public:
+    using WidgetContainer::WidgetContainer;
+
+    bool SingleColumn() const override;
+    int GetScrollOffset() const override;
+    int GetMaxScrollOffset() const override = 0;
+    int GetTotalContentHeight() const override = 0;
+    int GetVisibleContentHeight() const override = 0;
+
+    void DrawListItem(ID2D1DeviceContext* context, RECT cell,
+        HBITMAP iconBitmap, const std::wstring& name, bool selected) const;
+
+    BarStyle GetInsertionStyle() const override;
 };
 
 // ── Concrete widget types ───────────────────────────────────
@@ -127,10 +155,10 @@ private:
         RECT rect, bool selected) const;
 };
 
-class FileCategories : public WidgetContainer
+class FileCategories : public ScrollingItemWidget
 {
 public:
-    using WidgetContainer::WidgetContainer;
+    using ScrollingItemWidget::ScrollingItemWidget;
     bool CollectTopLevelDesktopItems();
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
@@ -139,24 +167,28 @@ public:
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
     std::wstring CategoryIdAtPoint(POINT pt) const;
+    bool IsPointInTabsRect(POINT pt) const;
+    bool TryScrollTabs(POINT pt, int delta);
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
-    BarStyle GetInsertionStyle() const override { return BarStyle::HBar; }
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth() const override;
-    bool SingleColumn() const override;
     Item* GetSlotItem(size_t idx) const override;
+
+    int GetMaxScrollOffset() const override;
+    int GetTotalContentHeight() const override;
+    int GetVisibleContentHeight() const override;
 };
 
-class FolderMapping : public WidgetContainer
+class FolderMapping : public ScrollingItemWidget
 {
 public:
-    using WidgetContainer::WidgetContainer;
+    using ScrollingItemWidget::ScrollingItemWidget;
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
@@ -167,14 +199,16 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
-    BarStyle GetInsertionStyle() const override;
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth()  const override;
-    bool SingleColumn() const override;
     bool IncludeTrailingEmptySlot() const override { return true; }
     Item* GetSlotItem(size_t idx) const override;
+
+    int GetMaxScrollOffset() const override;
+    int GetTotalContentHeight() const override;
+    int GetVisibleContentHeight() const override;
 };
 
 // LuaScript: pure Widget, no Container

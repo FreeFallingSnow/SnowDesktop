@@ -75,6 +75,28 @@ RECT WidgetContainer::GetFrameRect() const
 {
     if (!data_) return {};
     RECT rect = data_->bounds;
+
+    // Absorb half the grid gap so adjacent widget borders keep a fixed visual gap,
+    // matching legacy GetWidgetFrameRect behavior.
+    if (app_ && app_->GetDesktopGrid())
+    {
+        const auto& pages = app_->GetDesktopGrid()->GetPages();
+        const GridCell& cell = data_->gridCell;
+        for (const auto& p : pages)
+        {
+            if (p.id == cell.pageId)
+            {
+                int halfGapX = std::max(2, p.gapX / 2);
+                int halfGapY = std::max(2, p.gapY / 2);
+                if (cell.column > 0)                                   rect.left   -= halfGapX;
+                if (cell.row > 0)                                      rect.top    -= halfGapY;
+                if (cell.column + data_->gridSpan.columns < p.columns) rect.right  += halfGapX;
+                if (cell.row    + data_->gridSpan.rows    < p.rows)    rect.bottom += halfGapY;
+                break;
+            }
+        }
+    }
+
     if (rect.right - rect.left > 16 && rect.bottom - rect.top > 16)
         InflateRect(&rect, -4, -4);
     return rect;
@@ -188,6 +210,138 @@ void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRe
 {
     if (!slot || !ctx) return;
     slot->DrawDropIndicator(ctx, region);
+}
+
+// ── ScrollingItemWidget shared helpers ─────────────────────────
+
+bool ScrollingItemWidget::SingleColumn() const
+{
+    return data_ && data_->listMode;
+}
+
+int ScrollingItemWidget::GetScrollOffset() const
+{
+    return data_ ? std::clamp(data_->scrollOffset, 0, GetMaxScrollOffset()) : 0;
+}
+
+BarStyle ScrollingItemWidget::GetInsertionStyle() const
+{
+    return data_ && data_->listMode ? BarStyle::HBar : BarStyle::VBar;
+}
+
+void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
+    HBITMAP iconBitmap, const std::wstring& name, bool selected) const
+{
+    if (!app_ || !context || IsRectEmptyRect(cell)) return;
+
+    bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
+    if (hovered && !selected)
+        app_->DrawD2DRoundedRectangle(context, cell, 6.0f,
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+    if (selected)
+        app_->DrawD2DRoundedRectangle(context, cell, 6.0f,
+            D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.30f),
+            D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.48f));
+
+    int itemH = std::max<int>(1, cell.bottom - cell.top);
+    int iconSz = std::min(32, itemH - 4);
+    RECT iconRect = MakeRect(cell.left + 4, cell.top + (itemH - iconSz) / 2,
+        cell.left + 4 + iconSz, cell.top + (itemH + iconSz) / 2);
+
+    if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(iconBitmap))
+    {
+        context->DrawBitmap(bmp, app_->ToD2DRect(iconRect), 1.0f,
+            D2D1_INTERPOLATION_MODE_LINEAR);
+    }
+
+    RECT textRect = MakeRect(iconRect.right + 6, cell.top + 2,
+        cell.right - 6, cell.bottom - 2);
+    if (textRect.right > textRect.left && !name.empty())
+    {
+        ComPtr<IDWriteTextLayout> layout;
+        float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
+        float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
+        if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(name.c_str(),
+            static_cast<UINT32>(name.size()), app_->listItemTextFormat_.Get(),
+            tw, th, &layout)) && layout)
+        {
+            ComPtr<ID2D1SolidColorBrush> shadowBrush;
+            ComPtr<ID2D1SolidColorBrush> textBrush;
+            context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
+            context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &textBrush);
+            float tx = static_cast<float>(textRect.left);
+            float ty = static_cast<float>(textRect.top);
+            if (shadowBrush)
+            {
+                const D2D1_POINT_2F offsets[] = {
+                    D2D1::Point2F(tx - 1.0f, ty), D2D1::Point2F(tx + 1.0f, ty),
+                    D2D1::Point2F(tx, ty - 1.0f), D2D1::Point2F(tx, ty + 1.0f),
+                };
+                for (const auto& offset : offsets)
+                    context->DrawTextLayout(offset, layout.Get(), shadowBrush.Get(),
+                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
+            if (textBrush)
+                context->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(),
+                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+    }
+}
+
+void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const
+{
+    int totalHeight = GetTotalContentHeight();
+    int visibleHeight = GetVisibleContentHeight();
+    if (totalHeight <= visibleHeight || visibleHeight <= 0) return;
+    if (!hovered) return;
+
+    RECT frame = GetFrameRect();
+    RECT body = GetBodyRect();
+    if (IsRectEmptyRect(frame) || IsRectEmptyRect(body)) return;
+
+    int maxScroll = GetMaxScrollOffset();
+    if (maxScroll <= 0) return;
+
+    int scrollOffset = GetScrollOffset();
+    constexpr int trackWidth = 5;
+    constexpr int trackMargin = 2;
+    int trackLeft = frame.right - trackWidth - trackMargin;
+    int trackTop = body.top + 4;
+    int trackBottom = body.bottom - 4;
+    int trackHeight = std::max(1, trackBottom - trackTop);
+
+    // Track background
+    RECT trackRect = MakeRect(trackLeft, trackTop, trackLeft + trackWidth, trackBottom);
+    ComPtr<ID2D1SolidColorBrush> trackBrush;
+    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f), &trackBrush);
+    if (trackBrush)
+    {
+        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
+            D2D1::RectF((float)trackRect.left, (float)trackRect.top,
+                        (float)trackRect.right, (float)trackRect.bottom),
+            (float)trackWidth / 2.0f, (float)trackWidth / 2.0f);
+        context->FillRoundedRectangle(rr, trackBrush.Get());
+    }
+
+    // Thumb
+    float ratio = std::clamp((float)visibleHeight / (float)totalHeight, 0.08f, 1.0f);
+    float scrollRatio = std::clamp((float)scrollOffset / (float)maxScroll, 0.0f, 1.0f);
+    int thumbHeight = std::max(20, (int)(trackHeight * ratio));
+    int thumbTravel = trackHeight - thumbHeight;
+    int thumbTop = trackTop + (int)(thumbTravel * scrollRatio);
+    RECT thumbRect = MakeRect(trackLeft, thumbTop, trackLeft + trackWidth, thumbTop + thumbHeight);
+
+    ComPtr<ID2D1SolidColorBrush> thumbBrush;
+    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f), &thumbBrush);
+    if (thumbBrush)
+    {
+        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
+            D2D1::RectF((float)thumbRect.left, (float)thumbRect.top,
+                        (float)thumbRect.right, (float)thumbRect.bottom),
+            (float)trackWidth / 2.0f, (float)trackWidth / 2.0f);
+        context->FillRoundedRectangle(rr, thumbBrush.Get());
+    }
 }
 
 // ── DrawChrome ────────────────────────────────────────────────
@@ -372,6 +526,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             DrawButtons(context, handle, hovered);
         }
     }
+
+    // ── Scrollbar (on top of everything, hover only) ──────────
+    DrawScrollbar(context, hovered);
 }
 
 // ── Factory ─────────────────────────────────────────────────

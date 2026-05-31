@@ -256,31 +256,14 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
 
 void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
-    (void)slot;
     if (!app_ || !ctx) return;
 
-    if (region == HitRegion::Handoff && app_->draggingItems_)
-    {
-        int hit = app_->HitTestItem(app_->dragCurrentPoint_);
-        if (hit >= 0 && !(*items_)[hit].selected)
-        {
-            RECT iconRect = app_->GetItemIconRect((*items_)[hit].bounds);
-            RECT hf = { iconRect.left - 4, iconRect.top - 2,
-                        iconRect.right + 4, iconRect.bottom + 4 };
-            if (PtInRect(&hf, app_->dragCurrentPoint_))
-            {
-                app_->DrawD2DRoundedRectangle(ctx, (*items_)[hit].bounds, 6.0f,
-                    D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
-                    D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
-            }
-        }
-        return;
-    }
+    // Handoff now unified in RenderFrame — skip here
+    if (region == HitRegion::Handoff) return;
 
-    // Blue placement preview — grid math
     POINT dragPoint = app_->draggingItems_ ? app_->dragCurrentPoint_ : app_->externalDragPoint_;
     GridCell targetCell = app_->draggingItems_
-        ? app_->FindBestDropCell(app_->CellFromPoint(app_->GetDragTargetPoint(dragPoint)))
+        ? app_->FindBestDropCell(app_->CellFromPoint(dragPoint))
         : app_->CellFromPoint(dragPoint);
 
     if (targetCell.pageId.empty()) return;

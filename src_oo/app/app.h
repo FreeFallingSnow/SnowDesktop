@@ -64,6 +64,7 @@ public:
     friend class Collection;
     friend class FileCategories;
     friend class FolderMapping;
+    friend class ScrollingItemWidget;
     friend class LuaScript;
 
     // OO system accessors
@@ -339,6 +340,7 @@ private:
     Item* mouseDownHit_ = nullptr;
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
+    size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);
 
     // Drag state
     bool draggingItems_ = false;

@@ -84,11 +84,6 @@ static void EraseKeyFromWidget(DesktopWidget& widget, const std::wstring& key)
         widget.itemKeys.end());
 }
 
-BarStyle FolderMapping::GetInsertionStyle() const
-{
-    return data_ && data_->listMode ? BarStyle::HBar : BarStyle::VBar;
-}
-
 Item* FolderMapping::GetSlotItem(size_t idx) const
 {
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
@@ -177,9 +172,20 @@ int FolderMapping::GetItemWidth() const
     return std::max<int>(1, (content.right - content.left) / std::max(1, data_->gridSpan.columns));
 }
 
-bool FolderMapping::SingleColumn() const
+int FolderMapping::GetMaxScrollOffset() const
 {
-    return data_ && data_->listMode;
+    return FolderMappingMaxScrollOffset(const_cast<FolderMapping*>(this));
+}
+
+int FolderMapping::GetTotalContentHeight() const
+{
+    return FolderMappingContentHeight(const_cast<FolderMapping*>(this), data_ ? data_->folderEntries.size() : 0);
+}
+
+int FolderMapping::GetVisibleContentHeight() const
+{
+    RECT content = FolderMappingContentRect(const_cast<FolderMapping*>(this));
+    return std::max(1, (int)(content.bottom - content.top));
 }
 
 void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
@@ -319,38 +325,15 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         const FolderEntry& entry = data_->folderEntries[i];
         RECT cell = slots[i]->GetBounds();
         if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
-        if (entry.selected)
-        {
-            app_->DrawD2DFilledRectangle(context,
-                listMode ? cell : app_->GetItemSelectionRect(cell, true),
-                D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f),
-                D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f));
-        }
 
-        if (listMode)
-        {
-            int iconSz = std::min<LONG>(28, cell.bottom - cell.top - 4);
-            RECT iconR = { cell.left + 4, cell.top + (cell.bottom - cell.top - iconSz) / 2,
-                           cell.left + 4 + iconSz, cell.top + (cell.bottom - cell.top + iconSz) / 2 };
-            if (entry.iconBitmap)
-            {
-                ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(entry.iconBitmap);
-                if (bmp)
-                {
-                    D2D1_RECT_F d = D2D1::RectF((float)iconR.left, (float)iconR.top,
-                        (float)iconR.right, (float)iconR.bottom);
-                    context->DrawBitmap(bmp, d, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
-                }
-            }
-            RECT textR = { iconR.right + 4, cell.top + 2, cell.right - 4, cell.bottom - 2 };
-            if (textR.right > textR.left && !entry.name.empty())
-                app_->DrawItemText(context, textR, entry.name, false, 1.0f);
-        }
-        else
+        if (!listMode)
         {
             FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
             icon.Draw(context, cell, entry.selected ? 2 : 0);
+            continue;
         }
+
+        DrawListItem(context, cell, entry.iconBitmap, entry.name, entry.selected);
     }
     context->PopAxisAlignedClip();
 }

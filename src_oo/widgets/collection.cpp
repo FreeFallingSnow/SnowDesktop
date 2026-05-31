@@ -44,7 +44,7 @@ static RECT GetCollectionSlotRect(const DesktopWidget& widget, size_t slot,
         for (const auto& p : pages)
             if (p.id == widget.gridCell.pageId) { page = &p; break; }
         int gapY = page ? page->gapY : 0;
-        int gridTop = body.top + gapY / 2 - 16;
+        int gridTop = body.top + gapY / 2 - 10;
         int slotSz = std::max<int>(1, gridSize / 2);
         int col = (int)(slot % (size_t)columns);
         int row = (int)(slot / (size_t)columns);
@@ -70,7 +70,7 @@ static RECT GetCollectionSlotRect(const DesktopWidget& widget, size_t slot,
     if (rowIdx >= rows) return {};
 
     int width = std::max<int>(1, (int)(body.right - body.left) / columns);
-    int startY = body.top + gapY / 2 - 12;
+    int startY = body.top + gapY / 2 - 8;
     int rowStep = cellH + gapY;
     return { body.left + col * width, startY + rowIdx * rowStep,
              col + 1 == columns ? body.right : body.left + (col + 1) * width,
@@ -116,19 +116,19 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     const auto& items = app_->GetDesktopItems();
+    auto& slots = GetSlots();
     size_t inlineCapacity = std::min(GetCollectionInlineCapacity(*data_), data_->itemKeys.size());
 
-    for (size_t i = 0; i < inlineCapacity; ++i)
+    for (size_t i = 0; i < inlineCapacity && i < slots.size(); ++i)
     {
         if (i >= data_->itemKeys.size()) break;
         size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[i]);
         if (itemIdx == static_cast<size_t>(-1)) continue;
 
         const DesktopItem& di = items[itemIdx];
-        RECT slotRect = GetCollectionSlotRect(*data_, i, body, app_);
+        RECT slotRect = slots[i]->GetBounds();
         if (IsRectEmptyRect(slotRect)) continue;
 
-        // Draw using DesktopIcon::Draw which matches desktop icon sizing
         if (compact)
             DrawThumbnail(context, di, slotRect, di.selected);
         else
