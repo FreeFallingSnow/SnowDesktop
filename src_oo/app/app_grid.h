@@ -739,6 +739,25 @@ inline void DesktopApp::LoadLayoutSlots()
             }
         }
     }
+
+    // Ensure widget-owned items have layout records (they're not in the JSON items array)
+    extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
+    for (auto& w : widgets_)
+    {
+        for (auto& key : w.itemKeys)
+        {
+            auto upper = ToUpperInvariant(key);
+            if (layoutRecords_.count(upper) == 0)
+            {
+                LayoutRecord rec;
+                rec.cell = w.gridCell;
+                rec.span = {1, 1};
+                rec.hasGrid = true;
+                rec.legacySlot = SlotFromCell(gridPages_, w.gridCell);
+                layoutRecords_[upper] = rec;
+            }
+        }
+    }
 }
 
 inline void DesktopApp::SaveLayoutSlots()
@@ -800,9 +819,21 @@ inline void DesktopApp::SaveLayoutSlots()
         file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"items\": [\n";
+    // Collect widget-owned keys — items in widgets should not be saved
+    // to the desktop items array (they belong to their widget's items list)
+    std::unordered_set<std::wstring> widgetOwnedKeys;
+    for (auto& w : widgets_)
+        for (auto& k : w.itemKeys)
+            if (!k.empty())
+                widgetOwnedKeys.insert(ToUpperInvariant(k));
+
+    bool firstItem = true;
     for (size_t i = 0; i < sorted.size(); ++i)
     {
         const auto* it = sorted[i];
+        if (widgetOwnedKeys.count(ToUpperInvariant(it->layoutKey))) continue;
+        if (!firstItem) file << ",\n";
+        firstItem = false;
         file << "    { \"key\": \"" << JsonEscapeUtf8(it->layoutKey)
              << "\", \"page\": \"" << JsonEscapeUtf8(it->gridCell.pageId)
              << "\", \"x\": " << it->gridCell.column
@@ -810,8 +841,8 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"w\": " << std::max(1, it->gridSpan.columns)
              << ", \"h\": " << std::max(1, it->gridSpan.rows)
              << ", \"slot\": " << it->slot << " }";
-        file << (i + 1 == sorted.size() ? "\n" : ",\n");
     }
+    if (!firstItem) file << "\n";
     file << "  ],\n  \"widgets\": [\n";
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
@@ -1103,6 +1134,21 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     ApplyPendingPlacement();
     SaveLayoutSlots();
     UpdateCutState();
+
+    // Prune widget itemKeys that no longer exist (file was deleted from outside)
+    std::unordered_set<std::wstring> allKeys;
+    for (auto& item : items_)
+        if (!item.layoutKey.empty())
+            allKeys.insert(ToUpperInvariant(item.layoutKey));
+    for (auto& w : widgets_)
+    {
+        auto it = std::remove_if(w.itemKeys.begin(), w.itemKeys.end(),
+            [&](const std::wstring& key) {
+                return allKeys.count(ToUpperInvariant(key)) == 0;
+            });
+        w.itemKeys.erase(it, w.itemKeys.end());
+    }
+
     RebuildContainersAndItems();
     reloading_ = false;
     InvalidateRect(hwnd_, nullptr, TRUE);

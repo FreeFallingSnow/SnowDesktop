@@ -971,11 +971,9 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
         SaveLayoutSlots();
         ClearSelection();
+        RebuildContainersAndItems();
         if (needsReload)
-        {
-            RebuildContainersAndItems();
             ReloadItems();
-        }
         else
             InvalidateRect(hwnd_, nullptr, FALSE);
     }
@@ -2572,11 +2570,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
             SaveLayoutSlots();
             ClearSelection();
+            RebuildContainersAndItems();
             if (needsReload)
-            {
-                RebuildContainersAndItems();
                 ReloadItems();
-            }
             else
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }
