@@ -218,6 +218,7 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    bool NeedsShellReloadAfterDrop() const override { return false; }
 };
 
 // LuaScript: pure Widget, no Container

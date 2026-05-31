@@ -1,9 +1,12 @@
 #include "app.h"
+#include "crashlog.h"
 
 #include <tlhelp32.h>
 
-LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS*)
+LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
 {
+    CrashHandler(info); // write stack trace to log
+
     wchar_t selfPath[MAX_PATH]{};
     GetModuleFileNameW(nullptr, selfPath, MAX_PATH);
     ShellExecuteW(nullptr, L"open", selfPath, nullptr, nullptr, SW_SHOWNORMAL);

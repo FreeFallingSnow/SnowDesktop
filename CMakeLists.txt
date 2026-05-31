@@ -52,10 +52,11 @@ function(configure_snowdesktop_target TARGET)
         third_party/lua
     )
     if (MSVC)
-        target_compile_options(${TARGET} PRIVATE /W4 /permissive- /EHsc /utf-8)
+        target_compile_options(${TARGET} PRIVATE /W4 /permissive- /EHsc /utf-8 /Zi)
         target_compile_definitions(${TARGET} PRIVATE _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
         target_link_options(${TARGET} PRIVATE
-            "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'")
+            "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+            /DEBUG:FULL /OPT:REF /OPT:ICF)
     else()
         target_compile_options(${TARGET} PRIVATE -Wall -Wextra -pedantic)
         target_compile_definitions(${TARGET} PRIVATE _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
