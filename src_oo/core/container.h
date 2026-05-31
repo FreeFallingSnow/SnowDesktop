@@ -29,6 +29,29 @@ public:
     virtual RECT GetBounds() const = 0;
     virtual BarStyle GetInsertionStyle() const = 0;
 
+    // ── Drag source ──────────────────────────────────────
+    // Returns items currently selected within this container.
+    // Pointers may reference temporaries owned by the container; valid until next call.
+    virtual std::vector<Item*> GetSelectedItems() const { return {}; }
+
+    // ── Hit testing ──────────────────────────────────────
+    // Tests pt for a drop target within this container. Returns the hit region
+    // and sets outSlot to the target slot (may be null for empty/trailing areas).
+    virtual HitRegion HitTestDrag(POINT pt, Slot*& outSlot) = 0;
+
+    // ── Drag hint ────────────────────────────────────────
+    virtual std::wstring GetDragHint(Slot* slot, HitRegion region,
+        const std::vector<Item*>& sourceItems, Container* origin, int mods) const
+    { (void)slot; (void)region; (void)sourceItems; (void)origin; (void)mods; return L""; }
+
+    // ── Drop preview ─────────────────────────────────────
+    virtual void DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot,
+        HitRegion region) { (void)ctx; (void)slot; (void)region; }
+
+    // ── Post-drop cleanup hint ──────────────────────────
+    // Returns true if the app should reload shell items after a drop on this container.
+    virtual bool NeedsShellReloadAfterDrop() const { return false; }
+
 protected:
     std::vector<std::unique_ptr<Slot>> cachedSlots_;
     bool slotsValid_ = false;

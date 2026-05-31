@@ -22,19 +22,78 @@ inline DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
         auto* icon = dynamic_cast<DesktopIcon*>(items_oo_[i].get());
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
-        if (!di || IsRectEmptyRect(di->bounds)) continue;
+        if (!di || IsItemInAnyWidget(*di) || IsRectEmptyRect(di->bounds)) continue;
         RECT selRect = GetItemSelectionRect(di->bounds, di->selected);
         if (PtInRect(&selRect, pt)) return icon;
     }
     return nullptr;
 }
 
+inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
+{
+    std::wstring key = ToUpperInvariant(item.layoutKey);
+    if (key.empty()) return false;
+    for (const auto& widget : widgets_)
+    {
+        for (const auto& rawKey : widget.itemKeys)
+        {
+            if (ToUpperInvariant(rawKey) == key)
+                return true;
+        }
+    }
+    return false;
+}
+
 inline void DesktopApp::ClearSelection()
 {
-    for (auto& oo : items_oo_)
+    for (auto& item : items_)
+        item.selected = false;
+    for (auto& widget : widgets_)
     {
-        auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
-        if (icon) icon->SetSelected(false);
+        widget.selected = false;
+        for (auto& entry : widget.folderEntries)
+            entry.selected = false;
+    }
+}
+
+inline void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
+{
+    std::unordered_set<std::wstring> allowedKeys;
+    if (widgetIndex < widgets_.size())
+    {
+        for (const auto& key : widgets_[widgetIndex].itemKeys)
+            allowedKeys.insert(ToUpperInvariant(key));
+    }
+
+    for (auto& item : items_)
+    {
+        std::wstring key = ToUpperInvariant(item.layoutKey);
+        if (!allowedKeys.contains(key))
+            item.selected = false;
+    }
+
+    for (size_t wi = 0; wi < widgets_.size(); ++wi)
+    {
+        widgets_[wi].selected = false;
+        if (wi == widgetIndex && widgets_[wi].type == DesktopWidgetType::FolderMapping)
+            continue;
+        for (auto& entry : widgets_[wi].folderEntries)
+            entry.selected = false;
+    }
+}
+
+inline void DesktopApp::ClearSelectionOutsideDesktop()
+{
+    for (auto& item : items_)
+    {
+        if (IsItemInAnyWidget(item))
+            item.selected = false;
+    }
+    for (auto& widget : widgets_)
+    {
+        widget.selected = false;
+        for (auto& entry : widget.folderEntries)
+            entry.selected = false;
     }
 }
 
@@ -67,6 +126,8 @@ inline void DesktopApp::SelectWidgetOnly(size_t index)
 inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
+    popupMouseDownItem_.reset();
+    popupDragTargetSlot_.reset();
     SetFocus(hwnd_);
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     mouseDown_ = true;
@@ -77,6 +138,68 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (HandlePageNavClick(pt)) return;
 
     bool ctrl = (wp & MK_CONTROL) != 0;
+
+    if (popupWidgetIndex_ < widgets_.size())
+    {
+        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        if (!PtInRect(&popup, pt))
+        {
+            CloseCollectionPopup();
+            mouseDown_ = false;
+            return;
+        }
+
+        std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+        RECT content = GetCollectionPopupContentRect(popup);
+        bool clickedPopupItem = false;
+        for (size_t i = 0; i < popupKeys.size(); ++i)
+        {
+            RECT itemRect = GetCollectionPopupItemRect(popup, i);
+            RECT clipped = itemRect;
+            clipped.top = std::max(clipped.top, content.top);
+            clipped.bottom = std::min(clipped.bottom, content.bottom);
+            if (clipped.bottom <= clipped.top || !PtInRect(&clipped, pt)) continue;
+
+            size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+            if (itemIndex != static_cast<size_t>(-1))
+            {
+                if (ctrl)
+                {
+                    ClearSelectionOutsideWidget(popupWidgetIndex_);
+                    ToggleSelection(static_cast<int>(itemIndex));
+                }
+                else if (!items_[itemIndex].selected)
+                {
+                    SelectOnly(static_cast<int>(itemIndex));
+                }
+                else
+                {
+                    ClearSelectionOutsideWidget(popupWidgetIndex_);
+                }
+                WidgetContainer* wc = nullptr;
+                for (auto& c : containers_)
+                {
+                    wc = dynamic_cast<WidgetContainer*>(c.get());
+                    if (wc && wc->GetWidgetData() == &widgets_[popupWidgetIndex_]) break;
+                    wc = nullptr;
+                }
+                popupMouseDownItem_ = std::make_unique<DesktopIcon>(&items_[itemIndex], wc, this);
+                popupMouseDownItem_->SetBounds(itemRect);
+                mouseDownHit_ = popupMouseDownItem_.get();
+                clickedPopupItem = true;
+            }
+            break;
+        }
+        if (!clickedPopupItem && !ctrl)
+            ClearSelection();
+
+        if (!clickedPopupItem)
+            mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = popupWidgetIndex_;
+        SetCapture(hwnd_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     // ── Widget hit-test ─────────────────────────────────────
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -128,10 +251,100 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
         else if (wh == WidgetHit::Content)
         {
+            Item* memberItem = nullptr;
+            auto& slots = wc->GetSlots();
+            for (auto& slot : slots)
+            {
+                RECT bounds = slot->GetBounds();
+                if (PtInRect(&bounds, pt))
+                {
+                    memberItem = slot->GetItem();
+                    break;
+                }
+            }
+
+            if (memberItem)
+            {
+                if (ctrl)
+                {
+                    ClearSelectionOutsideWidget(wi);
+                    memberItem->SetSelected(!memberItem->IsSelected());
+                }
+                else if (!memberItem->IsSelected())
+                {
+                    ClearSelection();
+                    memberItem->SetSelected(true);
+                }
+                else
+                {
+                    ClearSelection();
+                    memberItem->SetSelected(true);
+                }
+                mouseDownWidgetIndex_ = wi;
+                mouseDownHit_ = memberItem;
+                SetCapture(hwnd_);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+
+            // Empty content selects the widget itself.
+            ClearSelection();
+            widgets_[wi].selected = true;
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        else if (wh == WidgetHit::CollectionOpenBtn)
+        {
+            SelectWidgetOnly(wi);
+            OpenCollectionPopupAt(wi, pt);
+            mouseDown_ = false;
+            mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+            mouseDownHit_ = nullptr;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        else if (wh == WidgetHit::ListToggleBtn)
+        {
+            if (widgets_[wi].type == DesktopWidgetType::FolderMapping ||
+                widgets_[wi].type == DesktopWidgetType::FileCategories)
+            {
+                widgets_[wi].listMode = !widgets_[wi].listMode;
+                wc->InvalidateSlots();
+                SaveLayoutSlots();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            return;
+        }
+        else if (wh == WidgetHit::OpenFolderBtn)
+        {
+            // FolderMapping: open source folder
+            if (widgets_[wi].type == DesktopWidgetType::FolderMapping
+                && !widgets_[wi].sourceFolderPath.empty())
+            {
+                ShellExecuteW(hwnd_, L"open", widgets_[wi].sourceFolderPath.c_str(),
+                    nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            return;
+        }
+        else if (wh == WidgetHit::CategoryTab)
+        {
+            if (widgets_[wi].type == DesktopWidgetType::FileCategories)
+            {
+                auto* fc = dynamic_cast<FileCategories*>(wc);
+                std::wstring id = fc ? fc->CategoryIdAtPoint(pt) : L"";
+                if (!id.empty())
+                {
+                    widgets_[wi].activeCategoryId = id;
+                    widgets_[wi].scrollOffset = 0;
+                    wc->InvalidateSlots();
+                    SaveLayoutSlots();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+            }
             return;
         }
     }
@@ -150,11 +363,18 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     {
         DesktopItem* di = hit->GetDesktopItem();
         if (ctrl)
+        {
+            ClearSelectionOutsideDesktop();
             hit->SetSelected(!hit->IsSelected());
+        }
         else if (!di->selected)
         {
             ClearSelection();
             hit->SetSelected(true);
+        }
+        else
+        {
+            ClearSelectionOutsideDesktop();
         }
     }
     else if (!ctrl)
@@ -176,8 +396,37 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
             draggingItems_ = true;
+            dragSource_ = mouseDownHit_->GetContainer();
+            dragSourceItems_ = dragSource_ ? dragSource_->GetSelectedItems() : std::vector<Item*>{};
+            if (dragSourceItems_.empty())
+            {
+                draggingItems_ = false;
+                dragSource_ = nullptr;
+                return;
+            }
             marqueeActive_ = false;
-            UpdateDragGroupOrigin();
+            if (dragSource_ == GetDesktopGrid())
+            {
+                UpdateDragGroupOrigin();
+            }
+            else
+            {
+                RECT groupBounds{};
+                bool hasBounds = false;
+                for (auto* item : dragSourceItems_)
+                {
+                    if (!item) continue;
+                    RECT bounds = item->GetBounds();
+                    if (IsRectEmptyRect(bounds)) continue;
+                    groupBounds = hasBounds ? UnionCopy(groupBounds, bounds) : bounds;
+                    hasBounds = true;
+                }
+                if (hasBounds)
+                {
+                    dragGroupOriginX_ = groupBounds.left;
+                    dragGroupOriginY_ = groupBounds.top;
+                }
+            }
             dragCurrentPoint_ = current;
         }
     }
@@ -365,87 +614,96 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
         }
 
-        // OO Slot-based hit testing: widgets first (on top), DesktopGrid last
+        // OO hit testing: iterate all containers in reverse (topmost first)
         dragTargetContainer_ = nullptr;
+        dragTargetSlot_ = nullptr;
         dragTargetRegion_ = HitRegion::None;
-        Slot* desktopSlot = nullptr;
+        popupDragTargetSlot_.reset();
 
-        // Check widget containers first (reverse draw order = topmost first)
-        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        if (popupWidgetIndex_ < widgets_.size())
         {
-            auto* wc = dynamic_cast<WidgetContainer*>(it->get());
-            if (!wc) continue;
-
-            // Also test: is the mouse inside the widget's frame at all?
-            RECT frame = wc->GetFrameRect();
-            if (!PtInRect(&frame, current)) continue;
-
-            auto& wslots = wc->GetSlots();
-            for (size_t i = 0; i < wslots.size(); ++i)
+            RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+            if (PtInRect(&popup, current))
             {
-                HitRegion region = wslots[i]->HitTest(current);
-                if (region != HitRegion::None)
+                WidgetContainer* popupContainer = nullptr;
+                for (auto& c : containers_)
                 {
-                    dragTargetContainer_ = wc;
-                    dragTargetSlotIndex_ = i;
-                    dragTargetRegion_ = region;
-                    goto show_hint;
+                    popupContainer = dynamic_cast<WidgetContainer*>(c.get());
+                    if (popupContainer && popupContainer->GetWidgetData() == &widgets_[popupWidgetIndex_])
+                        break;
+                    popupContainer = nullptr;
                 }
-            }
-            // Mouse in frame but not on any slot → sort at end or into empty area
-            if (wslots.empty())
-                dragTargetSlotIndex_ = 0;
-            else
-                dragTargetSlotIndex_ = wslots.size();
-            dragTargetContainer_ = wc;
-            dragTargetRegion_ = HitRegion::SortAfter;
-            goto show_hint;
-        }
 
-        // DesktopGrid as fallback
-        for (auto& c : containers_)
-        {
-            if (auto* grid = dynamic_cast<DesktopGrid*>(c.get()))
-            {
-                HitRegion region = grid->HitTestAtPoint(current, desktopSlot);
-                if (region != HitRegion::None)
+                if (popupContainer)
                 {
-                    dragTargetContainer_ = grid;
-                    dragTargetRegion_ = region;
-                    dragTargetSlotIndex_ = desktopSlot ? desktopSlot->GetIndex() : 0;
+                    std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+                    RECT content = GetCollectionPopupContentRect(popup);
+                    size_t slotIndex = 0;
+                    RECT slotBounds = content;
+                    HitRegion region = HitRegion::Empty;
 
-                    if (region == HitRegion::SortBefore)
+                    if (!popupKeys.empty())
                     {
-                        int hit = HitTestItem(current);
-                        if (hit >= 0 && !items_[hit].selected)
+                        bool foundItem = false;
+                        for (size_t i = 0; i < popupKeys.size(); ++i)
                         {
-                            RECT iconRect = GetItemIconRect(items_[hit].bounds);
-                            RECT hf = { iconRect.left - 4, iconRect.top - 2,
-                                        iconRect.right + 4, iconRect.bottom + 4 };
-                            if (PtInRect(&hf, current))
-                                dragTargetRegion_ = HitRegion::Handoff;
+                            RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                            RECT clipped = itemRect;
+                            clipped.top = std::max(clipped.top, content.top);
+                            clipped.bottom = std::min(clipped.bottom, content.bottom);
+                            if (clipped.bottom <= clipped.top || !PtInRect(&clipped, current))
+                                continue;
+
+                            slotIndex = i;
+                            slotBounds = itemRect;
+                            region = current.x < itemRect.left + (itemRect.right - itemRect.left) / 2
+                                ? HitRegion::SortBefore
+                                : HitRegion::SortAfter;
+                            foundItem = true;
+                            break;
+                        }
+
+                        if (!foundItem)
+                        {
+                            slotIndex = popupKeys.size() - 1;
+                            slotBounds = GetCollectionPopupItemRect(popup, slotIndex);
+                            region = HitRegion::SortAfter;
                         }
                     }
-                    if (dragTargetRegion_ == HitRegion::Handoff) break;
-                }
-                break; // only one DesktopGrid
-            }
-        }
-    show_hint:
-        // Desktop hint uses existing grid-aware logic (modifier keys etc.)
-        std::wstring hint = MakeDragHint(current);
 
-        // Only override with OO hint for non-desktop containers
-        if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None
-            && !dynamic_cast<DesktopGrid*>(dragTargetContainer_))
-        {
-            auto& slots = dragTargetContainer_->GetSlots();
-            if (dragTargetSlotIndex_ < slots.size())
-            {
-                std::wstring ooHint = slots[dragTargetSlotIndex_]->GetDropHint(dragTargetRegion_, {});
-                if (!ooHint.empty()) hint = ooHint;
+                    popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
+                    dragTargetContainer_ = popupContainer;
+                    dragTargetSlot_ = popupDragTargetSlot_.get();
+                    dragTargetRegion_ = region;
+                }
             }
         }
+
+        if (!dragTargetContainer_)
+        {
+            for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+            {
+                Slot* slot = nullptr;
+                HitRegion region = (*it)->HitTestDrag(current, slot);
+                if (region != HitRegion::None)
+                {
+                    dragTargetContainer_ = it->get();
+                    dragTargetSlot_ = slot;
+                    dragTargetRegion_ = region;
+                    break;
+                }
+            }
+        }
+        int mods = 0;
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
+        if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
+
+        std::wstring hint;
+        if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
+            hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_,
+                dragSourceItems_, dragSource_, mods);
+
         ShowDragHintWindow(current, hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -464,7 +722,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
                 if (!icon) continue;
                 DesktopItem* di = icon->GetDesktopItem();
-                if (!di || IsRectEmptyRect(di->bounds)) continue;
+                if (!di || IsItemInAnyWidget(*di) || IsRectEmptyRect(di->bounds)) continue;
                 RECT itemSelRect = GetItemSelectionRect(di->bounds, false);
                 di->selected = RectsIntersect(itemSelRect, marqueeRect_);
             }
@@ -517,6 +775,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         navHoverSide_ = 0;
         navAutoFlipDir_ = 0;
         mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         ReleaseCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -533,66 +792,80 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
         if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
 
-        bool onDesktop = dynamic_cast<DesktopGrid*>(dragTargetContainer_) != nullptr;
-
-        if (dragTargetRegion_ == HitRegion::Handoff && onDesktop)
+        if (dragTargetRegion_ == HitRegion::Handoff && dragTargetSlot_
+            && dragTargetSlot_->GetItem())
         {
-            // Use HitTestItem for reliable handoff target detection
-            int hit = HitTestItem(dragCurrentPoint_);
-            if (hit >= 0 && !items_[hit].selected)
-                DropSelectedItemsOnTarget(hit);
-            SaveLayoutSlots();
-            ClearSelection();
-            ReloadItems();
-        }
-        else if (onDesktop)
-        {
-            // ── Desktop drop: exact same math as preview ────────
-            POINT adjusted = GetDragTargetPoint(dragCurrentPoint_);
-            GridCell tc = FindBestDropCell(CellFromPoint(adjusted));
-
-            if (mods & MK_ALT)      CreateShortcutSelectedItemsToCell(tc);
-            else if (mods & MK_CONTROL) CopySelectedItemsToCell(tc);
-            else                     MoveSelectedItemsToCell(tc);
-
-            SaveLayoutSlots();
-            ClearSelection();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        else
-        {
-            // ── Widget container drop ─────────────────────────
-            auto& slots = dragTargetContainer_->GetSlots();
-            Slot* ts = (dragTargetSlotIndex_ < slots.size()) ? slots[dragTargetSlotIndex_].get() : nullptr;
-
-            // Build source items from selected DesktopItems in items_[] (not items_oo_,
-            // which skips collected items). Create temporary DesktopIcon wrappers.
-            std::vector<std::unique_ptr<DesktopIcon>> tempIcons;
-            std::vector<Item*> src;
-            Container* origin = GetDesktopGrid();
-            for (auto& di : items_)
+            Item* targetItem = dragTargetSlot_->GetItem();
+            ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
+            if (dataObj)
             {
-                if (di.selected && !di.name.empty())
+                ComPtr<IDropTarget> dropTarget;
+                if (auto* targetIcon = dynamic_cast<DesktopIcon*>(targetItem))
                 {
-                    auto tmp = std::make_unique<DesktopIcon>(&di, origin);
-                    src.push_back(tmp.get());
-                    tempIcons.push_back(std::move(tmp));
+                    DesktopItem* desktopItem = targetIcon->GetDesktopItem();
+                    if (desktopItem && desktopItem->childPidl.get())
+                    {
+                        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(desktopItem->childPidl.get());
+                        desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
+                            reinterpret_cast<void**>(dropTarget.GetAddressOf()));
+                    }
+                }
+                else if (!targetItem->GetPath().empty())
+                {
+                    ComPtr<IShellItem> shellItem;
+                    if (SUCCEEDED(SHCreateItemFromParsingName(targetItem->GetPath().c_str(),
+                        nullptr, IID_PPV_ARGS(&shellItem))) && shellItem)
+                    {
+                        shellItem->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&dropTarget));
+                    }
+                }
+
+                if (dropTarget)
+                {
+                    POINT screen = dragCurrentPoint_;
+                    ClientToScreen(hwnd_, &screen);
+                    POINTL spl{ screen.x, screen.y };
+                    DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+                    DWORD keyState = MK_LBUTTON;
+                    if (mods & MK_CONTROL) keyState |= MK_CONTROL;
+                    if (mods & MK_ALT)     keyState |= MK_ALT;
+                    if (mods & MK_SHIFT)   keyState |= MK_SHIFT;
+                    if (SUCCEEDED(dropTarget->DragEnter(dataObj.Get(), keyState, spl, &effect)))
+                    {
+                        dropTarget->DragOver(keyState, spl, &effect);
+                        dropTarget->Drop(dataObj.Get(), keyState, spl, &effect);
+                    }
                 }
             }
-            if (ts && !src.empty())
-                ts->ExecuteDrop(dragTargetRegion_, src, origin, mods);
-
             SaveLayoutSlots();
             ClearSelection();
             ReloadItems();
+            goto cleanup;
         }
+
+        bool needsReload = dragTargetContainer_->NeedsShellReloadAfterDrop();
+        dragTargetContainer_->OnItemsDropped(dragSourceItems_, dragSource_,
+            dragTargetSlot_, dragTargetRegion_, mods);
+
+        SaveLayoutSlots();
+        ClearSelection();
+        RebuildContainersAndItems();  // always rebuild OO view after drop
+        if (needsReload)
+            ReloadItems();            // also refresh shell state
+        else
+            InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
 cleanup:
     draggingItems_ = false;
     dragCopyMode_ = false;
     dragLinkMode_ = false;
+    dragSource_ = nullptr;
+    dragSourceItems_.clear();
+    popupMouseDownItem_.reset();
+    popupDragTargetSlot_.reset();
     dragTargetContainer_ = nullptr;
+    dragTargetSlot_ = nullptr;
     dragTargetRegion_ = HitRegion::None;
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
@@ -603,6 +876,12 @@ cleanup:
 
 inline void DesktopApp::OnKeyDown(WPARAM key)
 {
+    if (key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT)
+    {
+        RefreshDragHintFromKeyboard();
+        return;
+    }
+
     if (renameEdit_ != nullptr) return;
 
     bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -799,6 +1078,35 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     }
 }
 
+inline void DesktopApp::RefreshDragHintFromKeyboard()
+{
+    if (!draggingItems_ && !externalDragActive_ && !selfDragActive_) return;
+
+    int mods = 0;
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
+    if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
+
+    std::wstring hint;
+    if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
+    {
+        hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_,
+            dragSourceItems_, dragSource_, mods);
+    }
+
+    if (externalDragActive_ || selfDragActive_)
+    {
+        POINT screenPoint = externalDragActive_ ? externalDragPoint_ : dragCurrentPoint_;
+        ClientToScreen(hwnd_, &screenPoint);
+        ShowDragHintWindowScreen(screenPoint, hint);
+    }
+    else
+    {
+        ShowDragHintWindow(dragCurrentPoint_, hint);
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 inline void DesktopApp::InvokeSelectedShellVerb(const char* verb)
 {
     std::vector<PCUITEMID_CHILD> pidls;
@@ -892,6 +1200,134 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    POINT screenPt = pt;
+    ClientToScreen(hwnd_, &screenPt);
+
+    if (popupWidgetIndex_ < widgets_.size())
+    {
+        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        if (PtInRect(&popup, pt))
+        {
+            std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+            RECT content = GetCollectionPopupContentRect(popup);
+            for (size_t i = 0; i < popupKeys.size(); ++i)
+            {
+                RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                RECT clipped = itemRect;
+                clipped.top = std::max(clipped.top, content.top);
+                clipped.bottom = std::min(clipped.bottom, content.bottom);
+                if (clipped.bottom <= clipped.top || !PtInRect(&clipped, pt)) continue;
+
+                size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                if (itemIndex != static_cast<size_t>(-1))
+                {
+                    if (!items_[itemIndex].selected)
+                        SelectOnly(static_cast<int>(itemIndex));
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    if (IsProtectedDesktopIcon(items_[itemIndex]))
+                        ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
+                    else
+                        ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+                    return;
+                }
+            }
+        }
+    }
+
+    // Check widget member items first; otherwise the widget frame menu steals member right-clicks.
+    for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+    {
+        auto* wc = dynamic_cast<WidgetContainer*>(it->get());
+        if (!wc) continue;
+
+        auto& slots = wc->GetSlots();
+        for (auto& slot : slots)
+        {
+            if (!slot) continue;
+            RECT bounds = slot->GetBounds();
+            if (!PtInRect(&bounds, pt)) continue;
+
+            auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
+            DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
+            if (!item)
+            {
+                auto* folderIcon = dynamic_cast<FolderEntryIcon*>(slot->GetItem());
+                FolderEntry* entry = folderIcon ? folderIcon->GetFolderEntry() : nullptr;
+                if (!entry) break;
+
+                auto* folderWidget = dynamic_cast<WidgetContainer*>(wc);
+                DesktopWidget* data = folderWidget ? folderWidget->GetWidgetData() : nullptr;
+                size_t widgetIndex = static_cast<size_t>(-1);
+                size_t memberIndex = static_cast<size_t>(-1);
+                for (size_t wi = 0; wi < widgets_.size(); ++wi)
+                {
+                    if (&widgets_[wi] != data) continue;
+                    widgetIndex = wi;
+                    for (size_t mi = 0; mi < widgets_[wi].folderEntries.size(); ++mi)
+                    {
+                        if (&widgets_[wi].folderEntries[mi] == entry)
+                        {
+                            memberIndex = mi;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                if (widgetIndex == static_cast<size_t>(-1) ||
+                    memberIndex == static_cast<size_t>(-1))
+                    break;
+
+                if (!entry->selected)
+                {
+                    ClearSelection();
+                    widgets_[widgetIndex].folderEntries[memberIndex].selected = true;
+                }
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                ShowFolderEntryContextMenu(screenPt, widgetIndex, memberIndex);
+                return;
+            }
+
+            size_t itemIndex = FindItemIndexByKey(item->layoutKey);
+            if (itemIndex == static_cast<size_t>(-1)) break;
+
+            if (!items_[itemIndex].selected)
+                SelectOnly(static_cast<int>(itemIndex));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (IsProtectedDesktopIcon(items_[itemIndex]))
+                ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
+            else
+                ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+            return;
+        }
+    }
+
+    // Check widget hit after member items.
+    size_t hitWidget = static_cast<size_t>(-1);
+    for (size_t wi = 0; wi < widgets_.size(); ++wi)
+    {
+        for (auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (!wc || wc->GetWidgetData() != &widgets_[wi]) continue;
+            if (wc->HitTestWidget(pt) != WidgetHit::None)
+            {
+                hitWidget = wi;
+                break;
+            }
+        }
+        if (hitWidget != static_cast<size_t>(-1)) break;
+    }
+
+    if (hitWidget != static_cast<size_t>(-1))
+    {
+        // Select the widget and show its context menu
+        SelectWidgetOnly(hitWidget);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+
+        ShowWidgetContextMenu(screenPt, hitWidget);
+        return;
+    }
+
     int hit = HitTestItem(pt);
     if (hit >= 0 && !items_[hit].selected)
         SelectOnly(hit);
@@ -899,8 +1335,6 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         ClearSelection();
     InvalidateRect(hwnd_, nullptr, FALSE);
 
-    POINT screenPt = pt;
-    ClientToScreen(hwnd_, &screenPt);
     if (hit >= 0)
     {
         if (IsProtectedDesktopIcon(items_[hit]))
@@ -952,11 +1386,442 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
 }
 
+// ── Collection popup ─────────────────────────────────────────
+
+inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint,
+    const std::wstring& categoryId)
+{
+    if (widgetIndex >= widgets_.size() ||
+        widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        return;
+
+    popupWidgetIndex_ = widgetIndex;
+    popupScrollOffset_ = 0;
+    popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
+    popupAnchorPoint_ = anchorPoint;
+    popupCategoryId_ = categoryId;
+    popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
+    popupRect_ = GetCollectionPopupRect(widgets_[widgetIndex]);
+    popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
+        GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::CloseCollectionPopup()
+{
+    if (popupWidgetIndex_ == static_cast<size_t>(-1)) return;
+    popupWidgetIndex_ = static_cast<size_t>(-1);
+    popupScrollOffset_ = 0;
+    popupHasAnchor_ = false;
+    popupAnchorPoint_ = {};
+    popupPageId_.clear();
+    popupCategoryId_.clear();
+    popupRect_ = {};
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
+{
+    POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    ScreenToClient(hwnd_, &pt);
+    if (popupWidgetIndex_ < widgets_.size())
+    {
+        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        if (PtInRect(&popup, pt))
+        {
+            int delta = GET_WHEEL_DELTA_WPARAM(wp);
+            int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
+            popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+    }
+}
+
 // ── Rename ──────────────────────────────────────────────────
+
+inline RECT DesktopApp::GetVisibleCollectionItemBounds(size_t itemIndex) const
+{
+    if (itemIndex >= items_.size()) return {};
+    std::wstring key = ToUpperInvariant(items_[itemIndex].layoutKey);
+
+    if (popupWidgetIndex_ < widgets_.size())
+    {
+        const DesktopWidget& widget = widgets_[popupWidgetIndex_];
+        std::vector<std::wstring> keys = GetPopupItemKeys(widget);
+        RECT popup = GetCollectionPopupRect(widget);
+        RECT content = GetCollectionPopupContentRect(popup);
+        for (size_t i = 0; i < keys.size(); ++i)
+        {
+            if (ToUpperInvariant(keys[i]) != key) continue;
+            RECT rect = GetCollectionPopupItemRect(popup, i);
+            if (RectsIntersect(rect, content)) return rect;
+        }
+    }
+
+    for (const auto& c : containers_)
+    {
+        auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+        if (!wc) continue;
+        for (const auto& slot : wc->GetSlots())
+        {
+            auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
+            if (icon && icon->GetDesktopItem() == &items_[itemIndex])
+                return slot->GetBounds();
+        }
+    }
+    return {};
+}
+
+inline bool DesktopApp::FindSingleSelectedFolderEntry(size_t& widgetIndex, size_t& memberIndex) const
+{
+    size_t foundWidget = static_cast<size_t>(-1);
+    size_t foundMember = static_cast<size_t>(-1);
+    int count = 0;
+    for (size_t wi = 0; wi < widgets_.size(); ++wi)
+    {
+        const auto& widget = widgets_[wi];
+        if (widget.type != DesktopWidgetType::FolderMapping) continue;
+        for (size_t mi = 0; mi < widget.folderEntries.size(); ++mi)
+        {
+            if (!widget.folderEntries[mi].selected) continue;
+            foundWidget = wi;
+            foundMember = mi;
+            ++count;
+        }
+    }
+    if (count != 1) return false;
+    widgetIndex = foundWidget;
+    memberIndex = foundMember;
+    return true;
+}
+
+inline RECT DesktopApp::GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const
+{
+    if (widgetIndex >= widgets_.size() ||
+        memberIndex >= widgets_[widgetIndex].folderEntries.size())
+        return {};
+
+    for (const auto& c : containers_)
+    {
+        auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+        if (!wc || wc->GetWidgetData() != &widgets_[widgetIndex]) continue;
+        const auto& slots = wc->GetSlots();
+        if (memberIndex >= slots.size()) break;
+        RECT itemRect = slots[memberIndex]->GetBounds();
+        if (widgets_[widgetIndex].listMode)
+        {
+            const int itemH = std::max<int>(1, static_cast<int>(itemRect.bottom - itemRect.top));
+            const int iconSz = std::min(32, itemH - 4);
+            return MakeRect(itemRect.left + 4 + iconSz + 6, itemRect.top + 5,
+                itemRect.right - 6, itemRect.bottom - 5);
+        }
+        return GetItemTextRect(itemRect, true);
+    }
+    return {};
+}
+
+inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
+{
+    if (renameEdit_ != nullptr ||
+        widgetIndex >= widgets_.size() ||
+        widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
+        memberIndex >= widgets_[widgetIndex].folderEntries.size())
+        return;
+
+    ClearSelection();
+    widgets_[widgetIndex].folderEntries[memberIndex].selected = true;
+    renamingFolderEntry_ = true;
+    renameFolderWidgetIndex_ = widgetIndex;
+    renameFolderEntryIndex_ = memberIndex;
+
+    RECT rect = GetFolderEntryRenameRect(widgetIndex, memberIndex);
+    if (IsRectEmptyRect(rect))
+    {
+        renamingFolderEntry_ = false;
+        renameFolderWidgetIndex_ = static_cast<size_t>(-1);
+        renameFolderEntryIndex_ = static_cast<size_t>(-1);
+        return;
+    }
+    InflateRect(&rect, 2, 2);
+    RECT screenRect = rect;
+    MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
+
+    DWORD style = WS_POPUP | WS_VISIBLE | ES_AUTOVSCROLL;
+    style |= widgets_[widgetIndex].listMode ? ES_LEFT : (ES_MULTILINE | ES_CENTER | ES_WANTRETURN);
+    renameEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"EDIT", widgets_[widgetIndex].folderEntries[memberIndex].name.c_str(), style,
+        screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
+        hwnd_, nullptr, instance_, nullptr);
+
+    if (!renameEdit_)
+    {
+        renamingFolderEntry_ = false;
+        renameFolderWidgetIndex_ = static_cast<size_t>(-1);
+        renameFolderEntryIndex_ = static_cast<size_t>(-1);
+        return;
+    }
+
+    if (renameFont_) DeleteObject(renameFont_);
+    renameFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(renameEdit_, WM_SETFONT,
+        reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+    SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
+        reinterpret_cast<DWORD_PTR>(this));
+    SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
+    SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
+    SetFocus(renameEdit_);
+}
+
+inline bool DesktopApp::IsShellRenameCommand(IContextMenu* contextMenu, UINT commandOffset) const
+{
+    if (!contextMenu) return false;
+
+    wchar_t verbW[128]{};
+    if (SUCCEEDED(contextMenu->GetCommandString(commandOffset, GCS_VERBW, nullptr,
+        reinterpret_cast<LPSTR>(verbW), static_cast<UINT>(_countof(verbW)))) &&
+        lstrcmpiW(verbW, L"rename") == 0)
+        return true;
+
+    char verbA[128]{};
+    if (SUCCEEDED(contextMenu->GetCommandString(commandOffset, GCS_VERBA, nullptr,
+        verbA, static_cast<UINT>(_countof(verbA)))) &&
+        lstrcmpiA(verbA, "rename") == 0)
+        return true;
+
+    return false;
+}
+
+inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex)
+{
+    if (widgetIndex >= widgets_.size() ||
+        widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
+        memberIndex >= widgets_[widgetIndex].folderEntries.size())
+        return;
+
+    const std::wstring fullPath = widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHParseDisplayName(fullPath.c_str(), nullptr, &pidl, 0, nullptr)) || !pidl)
+        return;
+
+    IShellFolder* parentFolder = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    if (FAILED(SHBindToParent(pidl, IID_IShellFolder,
+        reinterpret_cast<void**>(&parentFolder), &child)) || !parentFolder)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    ComPtr<IContextMenu> contextMenu;
+    HRESULT hr = parentFolder->GetUIObjectOf(hwnd_, 1, &child, IID_IContextMenu,
+        nullptr, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+    parentFolder->Release();
+    if (FAILED(hr) || !contextMenu)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    constexpr UINT kFirstCmd = 1;
+    constexpr UINT kLastCmd = 0x7FFF;
+    hr = contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd, CMF_NORMAL | CMF_CANRENAME);
+    if (FAILED(hr))
+    {
+        DestroyMenu(menu);
+        ILFree(pidl);
+        RestoreDesktopWindowLayer();
+        return;
+    }
+
+    contextMenu.As(&activeContextMenu2_);
+    contextMenu.As(&activeContextMenu3_);
+
+    SetForegroundWindow(hwnd_);
+    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+
+    activeContextMenu2_.Reset();
+    activeContextMenu3_.Reset();
+
+    if (command >= kFirstCmd && command <= kLastCmd)
+    {
+        UINT commandOffset = command - kFirstCmd;
+        wchar_t menuText[128]{};
+        bool renameCommand = IsShellRenameCommand(contextMenu.Get(), commandOffset);
+        if (!renameCommand &&
+            GetMenuStringW(menu, command, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
+        {
+            renameCommand = StrStrIW(menuText, L"重命名") != nullptr ||
+                StrStrIW(menuText, L"Rename") != nullptr;
+        }
+
+        DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
+        ILFree(pidl);
+
+        if (renameCommand)
+        {
+            BeginRenameFolderEntry(widgetIndex, memberIndex);
+            return;
+        }
+
+        CMINVOKECOMMANDINFOEX invoke{};
+        invoke.cbSize = sizeof(invoke);
+        invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
+        invoke.hwnd = hwnd_;
+        invoke.lpVerb = MAKEINTRESOURCEA(commandOffset);
+        invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
+        invoke.nShow = SW_SHOWNORMAL;
+        invoke.ptInvoke = screenPoint;
+        contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        RefreshFolderMappingWidget(widgetIndex);
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return;
+    }
+
+    DestroyMenu(menu);
+    RestoreDesktopWindowLayer();
+    ILFree(pidl);
+}
+
+inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cancel)
+{
+    size_t widgetIndex = renameFolderWidgetIndex_;
+    size_t memberIndex = renameFolderEntryIndex_;
+    renamingFolderEntry_ = false;
+    renameFolderWidgetIndex_ = static_cast<size_t>(-1);
+    renameFolderEntryIndex_ = static_cast<size_t>(-1);
+
+    if (cancel ||
+        widgetIndex >= widgets_.size() ||
+        widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
+        memberIndex >= widgets_[widgetIndex].folderEntries.size() ||
+        newName.empty() ||
+        newName == widgets_[widgetIndex].folderEntries[memberIndex].name)
+        return;
+
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    const std::wstring oldPath = widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
+    if (FAILED(SHParseDisplayName(oldPath.c_str(), nullptr, &pidl, 0, nullptr)))
+    {
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+
+    IShellFolder* parentFolder = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    HRESULT hr = SHBindToParent(pidl, IID_IShellFolder,
+        reinterpret_cast<void**>(&parentFolder), &child);
+    if (SUCCEEDED(hr) && parentFolder)
+    {
+        PITEMID_CHILD newChild = nullptr;
+        hr = parentFolder->SetNameOf(hwnd_, child, newName.c_str(), SHGDN_NORMAL, &newChild);
+        if (newChild) ILFree(newChild);
+        parentFolder->Release();
+    }
+    ILFree(pidl);
+
+    if (FAILED(hr))
+    {
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+
+    RefreshFolderMappingWidget(widgetIndex);
+    RebuildContainersAndItems();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
 
 inline void DesktopApp::BeginRenameSelected()
 {
     if (renameEdit_ != nullptr) return;
+
+    int selectedWidgetCount = 0;
+    size_t selectedWidgetIndex = static_cast<size_t>(-1);
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (widgets_[i].selected)
+        {
+            ++selectedWidgetCount;
+            selectedWidgetIndex = i;
+        }
+    }
+    if (selectedWidgetCount == 1 && selectedWidgetIndex < widgets_.size())
+    {
+        renamingWidget_ = true;
+        renameIndex_ = selectedWidgetIndex;
+
+        RECT frame = widgets_[selectedWidgetIndex].bounds;
+        RECT handle = frame;
+        for (const auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (wc && wc->GetWidgetData() == &widgets_[selectedWidgetIndex])
+            {
+                frame = wc->GetFrameRect();
+                handle = wc->GetMoveHandleRect();
+                break;
+            }
+        }
+        const int editHeight = std::max(40, static_cast<int>(handle.bottom - handle.top) * 2);
+        RECT rect = MakeRect(frame.left + 4, handle.top, frame.right - 4, handle.top + editHeight);
+        InflateRect(&rect, 2, 2);
+        RECT screenRect = rect;
+        MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
+
+        renameEdit_ = CreateWindowExW(
+            WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            L"EDIT",
+            widgets_[selectedWidgetIndex].title.c_str(),
+            WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_CENTER | ES_AUTOVSCROLL | ES_WANTRETURN,
+            screenRect.left, screenRect.top,
+            screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
+            hwnd_, nullptr, instance_, nullptr);
+        if (!renameEdit_)
+        {
+            renamingWidget_ = false;
+            renameIndex_ = static_cast<size_t>(-1);
+            return;
+        }
+
+        if (renameFont_) DeleteObject(renameFont_);
+        renameFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        SendMessageW(renameEdit_, WM_SETFONT,
+            reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+        SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+        SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
+            reinterpret_cast<DWORD_PTR>(this));
+        SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
+            screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
+        SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
+        SetFocus(renameEdit_);
+        return;
+    }
+
+    size_t folderWidget = static_cast<size_t>(-1);
+    size_t folderMember = static_cast<size_t>(-1);
+    if (FindSingleSelectedFolderEntry(folderWidget, folderMember))
+    {
+        BeginRenameFolderEntry(folderWidget, folderMember);
+        return;
+    }
 
     int selectedCount = 0;
     int selectedIndex = -1;
@@ -975,7 +1840,11 @@ inline void DesktopApp::BeginRenameSelected()
     if (!SHGetPathFromIDListW(items_[selectedIndex].absolutePidl.get(), path)) return;
 
     renameIndex_ = static_cast<size_t>(selectedIndex);
-    RECT textRect = GetItemTextRect(items_[selectedIndex].bounds, true);
+    RECT itemBounds = GetVisibleCollectionItemBounds(renameIndex_);
+    if (IsRectEmptyRect(itemBounds))
+        itemBounds = items_[selectedIndex].bounds;
+    if (IsRectEmptyRect(itemBounds)) return;
+    RECT textRect = GetItemTextRect(itemBounds, true);
     InflateRect(&textRect, 2, 2);
     RECT screenRect = textRect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
@@ -1004,6 +1873,8 @@ inline void DesktopApp::BeginRenameSelected()
     SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
     SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
+    SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
     SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
     SetFocus(renameEdit_);
 }
@@ -1031,6 +1902,25 @@ inline void DesktopApp::CommitRename(bool cancel)
     DestroyWindow(edit);
     if (renameFont_) { DeleteObject(renameFont_); renameFont_ = nullptr; }
 
+    if (renamingFolderEntry_)
+    {
+        CommitFolderEntryRename(newName, cancel);
+        return;
+    }
+
+    if (renamingWidget_)
+    {
+        if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
+        {
+            widgets_[renameIndex_].title = newName;
+            SaveLayoutSlots();
+        }
+        renamingWidget_ = false;
+        renameIndex_ = static_cast<size_t>(-1);
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return;
+    }
+
     bool keepLayoutSlots = false;
     if (!cancel && renameIndex_ < items_.size() && !newName.empty() && newName != items_[renameIndex_].name)
     {
@@ -1054,6 +1944,14 @@ inline void DesktopApp::CommitRename(bool cancel)
                     record.hasGrid = true;
                     record.legacySlot = items_[renameIndex_].slot;
                     layoutRecords_[newLayoutKey] = record;
+                    for (auto& widget : widgets_)
+                    {
+                        for (auto& key : widget.itemKeys)
+                        {
+                            if (ToUpperInvariant(key) == ToUpperInvariant(oldLayoutKey))
+                                key = newLayoutKey;
+                        }
+                    }
                     keepLayoutSlots = true;
                     ILFree(newAbsolute);
                 }
@@ -1192,28 +2090,32 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         POINT client = ScreenPointToClient(point);
         dragCurrentPoint_ = client;
 
-        // OO hit-test for hint
-        HitRegion tmp;
-        Slot* s;
-        for (auto& c : containers_)
+        // OO hit-test
+        dragTargetContainer_ = nullptr;
+        dragTargetSlot_ = nullptr;
+        dragTargetRegion_ = HitRegion::None;
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
-            if (auto* grid = dynamic_cast<DesktopGrid*>(c.get()))
+            Slot* slot = nullptr;
+            HitRegion region = (*it)->HitTestDrag(client, slot);
+            if (region != HitRegion::None)
             {
-                tmp = grid->HitTestAtPoint(client, s);
-                if (tmp != HitRegion::None)
-                {
-                    int hit = HitTestItem(client);
-                    if (hit >= 0 && !items_[hit].selected)
-                    {
-                        RECT ir = GetItemIconRect(items_[hit].bounds);
-                        RECT hf = { ir.left - 4, ir.top - 2, ir.right + 4, ir.bottom + 4 };
-                        if (PtInRect(&hf, client)) tmp = HitRegion::Handoff;
-                    }
-                    break;
-                }
+                dragTargetContainer_ = it->get();
+                dragTargetSlot_ = slot;
+                dragTargetRegion_ = region;
+                break;
             }
         }
-        std::wstring hint = MakeDragHint(client);
+
+        int mods = 0;
+        if (keyState & MK_CONTROL) mods |= MK_CONTROL;
+        if (keyState & MK_ALT)     mods |= MK_ALT;
+        if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+
+        std::wstring hint;
+        if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
+            hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_,
+                dragSourceItems_, dragSource_, mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1223,15 +2125,36 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     externalDragActive_ = true;
     externalDragPoint_ = ScreenPointToClient(point);
 
-    // OO hit-test for external hint
-    HitTestExternalAt(externalDragPoint_);
+    // OO hit-test for external drop
+    dragTargetContainer_ = nullptr;
+    dragTargetSlot_ = nullptr;
+    dragTargetRegion_ = HitRegion::None;
+    for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+    {
+        Slot* slot = nullptr;
+        HitRegion region = (*it)->HitTestDrag(externalDragPoint_, slot);
+        if (region != HitRegion::None)
+        {
+            dragTargetContainer_ = it->get();
+            dragTargetSlot_ = slot;
+            dragTargetRegion_ = region;
+            break;
+        }
+    }
 
     if (dataObject)
         externalDropFileCount_ = static_cast<int>(GetDropPaths(dataObject).size());
     else
         externalDropFileCount_ = 1;
 
-    std::wstring hint = MakeExternalDragHint(externalDragPoint_);
+    int mods = 0;
+    if (keyState & MK_CONTROL) mods |= MK_CONTROL;
+    if (keyState & MK_ALT)     mods |= MK_ALT;
+    if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+
+    std::wstring hint;
+    if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
+        hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ChooseDropEffect(keyState, *effect);
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1247,7 +2170,33 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     {
         POINT client = ScreenPointToClient(point);
         dragCurrentPoint_ = client;
-        std::wstring hint = MakeDragHint(client);
+
+        // OO hit-test
+        dragTargetContainer_ = nullptr;
+        dragTargetSlot_ = nullptr;
+        dragTargetRegion_ = HitRegion::None;
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        {
+            Slot* slot = nullptr;
+            HitRegion region = (*it)->HitTestDrag(client, slot);
+            if (region != HitRegion::None)
+            {
+                dragTargetContainer_ = it->get();
+                dragTargetSlot_ = slot;
+                dragTargetRegion_ = region;
+                break;
+            }
+        }
+
+        int mods = 0;
+        if (keyState & MK_CONTROL) mods |= MK_CONTROL;
+        if (keyState & MK_ALT)     mods |= MK_ALT;
+        if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+
+        std::wstring hint;
+        if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
+            hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_,
+                dragSourceItems_, dragSource_, mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1256,8 +2205,32 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
 
     externalDragActive_ = true;
     externalDragPoint_ = ScreenPointToClient(point);
-    HitTestExternalAt(externalDragPoint_);
-    std::wstring hint = MakeExternalDragHint(externalDragPoint_);
+
+    // OO hit-test for external drop
+    dragTargetContainer_ = nullptr;
+    dragTargetSlot_ = nullptr;
+    dragTargetRegion_ = HitRegion::None;
+    for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+    {
+        Slot* slot = nullptr;
+        HitRegion region = (*it)->HitTestDrag(externalDragPoint_, slot);
+        if (region != HitRegion::None)
+        {
+            dragTargetContainer_ = it->get();
+            dragTargetSlot_ = slot;
+            dragTargetRegion_ = region;
+            break;
+        }
+    }
+
+    int mods = 0;
+    if (keyState & MK_CONTROL) mods |= MK_CONTROL;
+    if (keyState & MK_ALT)     mods |= MK_ALT;
+    if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+
+    std::wstring hint;
+    if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
+        hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ChooseDropEffect(keyState, *effect);
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1322,13 +2295,26 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             return S_OK;
         }
 
-        // ── Desktop drop: reuse same math as OnLeftButtonUp ────
-        POINT adjusted = GetDragTargetPoint(clientPoint);
-        GridCell tc = FindBestDropCell(CellFromPoint(adjusted));
-        MoveSelectedItemsToCell(tc);
-        SaveLayoutSlots();
-        ClearSelection();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        // ── OO dispatch ────────────────────────────────────
+        if (dragTargetContainer_)
+        {
+            int mods = 0;
+            if (keyState & MK_CONTROL) mods |= MK_CONTROL;
+            if (keyState & MK_ALT)     mods |= MK_ALT;
+            if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+
+            bool needsReload = dragTargetContainer_->NeedsShellReloadAfterDrop();
+            dragTargetContainer_->OnItemsDropped(dragSourceItems_, dragSource_,
+                dragTargetSlot_, dragTargetRegion_, mods);
+
+            SaveLayoutSlots();
+            ClearSelection();
+            RebuildContainersAndItems();
+            if (needsReload)
+                ReloadItems();
+            else
+                InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         *effect = DROPEFFECT_MOVE;
         return S_OK;
     }
@@ -1373,6 +2359,37 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 return S_OK;
             }
         }
+    }
+
+    // ── Non-handoff external drop onto a widget: let the target container own it ───
+    if (dataObject && dragTargetContainer_ && dragTargetContainer_ != GetDesktopGrid()
+        && dragTargetRegion_ != HitRegion::None)
+    {
+        std::vector<std::unique_ptr<ExternalFileItem>> externalItems;
+        std::vector<Item*> sourceItems;
+        for (const auto& path : dropPaths)
+        {
+            auto item = std::make_unique<ExternalFileItem>(path);
+            sourceItems.push_back(item.get());
+            externalItems.push_back(std::move(item));
+        }
+
+        int mods = 0;
+        if (keyState & MK_CONTROL) mods |= MK_CONTROL;
+        if (keyState & MK_ALT)     mods |= MK_ALT;
+        if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+
+        bool needsReload = dragTargetContainer_->NeedsShellReloadAfterDrop();
+        dragTargetContainer_->OnItemsDropped(sourceItems, nullptr,
+            dragTargetSlot_, dragTargetRegion_, mods);
+        SaveLayoutSlots();
+        RebuildContainersAndItems();
+        if (needsReload)
+            ReloadItems();
+        else
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        *effect = ChooseDropEffect(keyState, *effect);
+        return S_OK;
     }
 
     // ── Non-handoff external drop: delegate to shell desktop ───
@@ -1758,76 +2775,110 @@ inline void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::w
     ReleaseDC(nullptr, screenDc);
 }
 
-inline void DesktopApp::HitTestExternalAt(POINT pt)
+// ── Widget context menu ────────────────────────────────────
+
+inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex)
 {
-    dragTargetContainer_ = nullptr;
-    dragTargetRegion_ = HitRegion::None;
-    for (auto& c : containers_)
+    if (widgetIndex >= widgets_.size()) return;
+    ClearMenuIcons();
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+
+    const auto& widget = widgets_[widgetIndex];
+
+    if (widget.type == DesktopWidgetType::Collection)
     {
-        if (auto* grid = dynamic_cast<DesktopGrid*>(c.get()))
+        AppendMenuW(menu, MF_STRING, kContextWidgetOpen, L"打开全部");
+    }
+    else if (widget.type == DesktopWidgetType::FileCategories)
+    {
+        AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
+        AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
+        AppendMenuW(menu, MF_STRING | (widget.listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
+    }
+    else if (widget.type == DesktopWidgetType::FolderMapping)
+    {
+        AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, L"打开文件夹");
+        AppendMenuW(menu, MF_STRING | (widget.listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
+    }
+
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
+
+    SetMenuItemIcon(menu, kContextWidgetOpen, L"");
+    SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
+    SetMenuItemIcon(menu, kContextWidgetToggleAutoCollect, L"");
+    SetMenuItemIcon(menu, kContextWidgetToggleListMode, L"");
+    SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
+    SetMenuItemIcon(menu, kContextWidgetRename, L"");
+    SetMenuItemIcon(menu, kContextWidgetDelete, L"");
+
+    SetForegroundWindow(hwnd_);
+    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    DestroyMenu(menu);
+    ClearMenuIcons();
+
+    switch (command)
+    {
+    case kContextWidgetOpen:
+    {
+        POINT clientPoint = screenPoint;
+        ScreenToClient(hwnd_, &clientPoint);
+        OpenCollectionPopupAt(widgetIndex, clientPoint, L"");
+        break;
+    }
+    case kContextWidgetOpenFolder:
+        if (!widget.sourceFolderPath.empty())
+            ShellExecuteW(hwnd_, L"open", widget.sourceFolderPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+    case kContextWidgetToggleListMode:
+        widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
+        for (auto& c : containers_)
         {
-            Slot* s;
-            HitRegion r = grid->HitTestAtPoint(pt, s);
-            if (r != HitRegion::None)
-            {
-                dragTargetContainer_ = grid;
-                dragTargetRegion_ = r;
-                dragTargetSlotIndex_ = s ? s->GetIndex() : 0;
-                // Check handoff override
-                int hit = HitTestItem(pt);
-                if (hit >= 0)
-                {
-                    RECT ir = GetItemIconRect(items_[hit].bounds);
-                    RECT hf = { ir.left - 4, ir.top - 2, ir.right + 4, ir.bottom + 4 };
-                    if (PtInRect(&hf, pt))
-                        dragTargetRegion_ = HitRegion::Handoff;
-                }
-            }
-            break;
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
+            { wc->InvalidateSlots(); break; }
         }
-    }
-}
-
-inline std::wstring DesktopApp::MakeExternalDragHint(POINT point) const
-{
-    bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    bool shiftDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-    bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-
-    if (dragTargetRegion_ == HitRegion::Handoff)
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetToggleAutoCollect:
+        widgets_[widgetIndex].autoCollect = !widgets_[widgetIndex].autoCollect;
+        if (widgets_[widgetIndex].autoCollect)
+        {
+            EnforceSingleAutoCollectFileCategory(widgetIndex);
+            CollectFileCategoryWidget(widgetIndex, false);
+        }
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetManualCollect:
+        if (!CollectFileCategoryWidget(widgetIndex, true))
+            MessageBeep(MB_ICONINFORMATION);
+        break;
+    case kContextWidgetRename:
+        SelectWidgetOnly(widgetIndex);
+        BeginRenameSelected();
+        break;
+    case kContextWidgetDelete:
     {
-        int hit = HitTestItem(point);
-        if (hit >= 0)
-            return L"释放：拖入「" + items_[hit].name + L"」";
+        // Move widget's itemKeys back to desktop by just removing the widget
+        widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
+        LayoutItems();
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
     }
-
-    if (altDown) return L"释放：创建快捷方式";
-    if (shiftDown) return L"释放：移动到桌面";
-    if (ctrlDown) return L"释放：复制到桌面";
-    return L"释放：放置到桌面";
-}
-
-inline std::wstring DesktopApp::MakeDragHint(POINT point) const
-{
-    bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-
-    if (dragTargetRegion_ == HitRegion::Handoff)
-    {
-        int hit = HitTestItem(point);
-        if (hit >= 0 && !items_[hit].selected)
-            return L"释放：交给「" + items_[hit].name + L"」处理";
+    default:
+        break;
     }
-
-    GridCell bestCell = FindBestDropCell(CellFromPoint(GetDragTargetPoint(point)));
-    if (BuildSelectedMove(bestCell).empty())
-        return L"释放：当前位置已有图标";
-
-    if (altDown) return L"释放：创建快捷方式到此空位";
-    if (ctrlDown) return L"释放：复制到此空位";
-    return L"释放：移动到此空位";
 }
-
 
 // ── Tray ────────────────────────────────────────────────────
 
@@ -1899,6 +2950,7 @@ inline void DesktopApp::OnTrayCallback(LPARAM lParam)
 
 inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
 {
+    ClearMenuIcons();
     HMENU menu = CreatePopupMenu();
 
     HMENU iconMenu = CreatePopupMenu();
@@ -1936,12 +2988,15 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
+    SetMenuItemIcon(menu, kTrayExitCommand, L"");
+
     SetForegroundWindow(controlHwnd_ ? controlHwnd_ : hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, controlHwnd_ ? controlHwnd_ : hwnd_, nullptr);
 
     if (iconMenu) DestroyMenu(iconMenu);
     DestroyMenu(menu);
+    ClearMenuIcons();
     RestoreDesktopWindowLayer();
 
     switch (command)

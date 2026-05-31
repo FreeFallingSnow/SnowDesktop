@@ -8,6 +8,17 @@ inline DesktopApp::~DesktopApp()
 {
     items_oo_.clear();
     containers_.clear();
+    ClearMenuIcons();
+    if (faMenuFont_)
+    {
+        DeleteObject(faMenuFont_);
+        faMenuFont_ = nullptr;
+    }
+    if (faFontHandle_)
+    {
+        RemoveFontMemResourceEx(faFontHandle_);
+        faFontHandle_ = nullptr;
+    }
 }
 
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
@@ -278,12 +289,72 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_LBUTTONUP:
         OnLeftButtonUp(wp, lp);
         return 0;
+    case WM_MOUSEWHEEL:
+        OnMouseWheel(wp, lp);
+        return 0;
     case WM_RBUTTONUP:
         OnRightButtonUp(lp);
         return 0;
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (popupWidgetIndex_ < widgets_.size())
+        {
+            RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+            if (PtInRect(&popup, pt))
+            {
+                std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+                RECT content = GetCollectionPopupContentRect(popup);
+                for (size_t i = 0; i < popupKeys.size(); ++i)
+                {
+                    RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                    RECT clipped = itemRect;
+                    clipped.top = std::max(clipped.top, content.top);
+                    clipped.bottom = std::min(clipped.bottom, content.bottom);
+                    if (clipped.bottom <= clipped.top || !PtInRect(&clipped, pt)) continue;
+                    size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                    if (itemIndex != static_cast<size_t>(-1))
+                    {
+                        ShellExecuteW(nullptr, L"open", items_[itemIndex].parsingName.c_str(),
+                            nullptr, nullptr, SW_SHOWNORMAL);
+                        return 0;
+                    }
+                }
+            }
+        }
+
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(it->get());
+            if (!wc) continue;
+            for (auto& slot : wc->GetSlots())
+            {
+                if (!slot) continue;
+                RECT slotBounds = slot->GetBounds();
+                if (!PtInRect(&slotBounds, pt)) continue;
+                if (auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem()))
+                {
+                    DesktopItem* item = icon->GetDesktopItem();
+                    if (item)
+                    {
+                        ShellExecuteW(nullptr, L"open", item->parsingName.c_str(),
+                            nullptr, nullptr, SW_SHOWNORMAL);
+                        return 0;
+                    }
+                }
+                if (auto* folderIcon = dynamic_cast<FolderEntryIcon*>(slot->GetItem()))
+                {
+                    FolderEntry* entry = folderIcon->GetFolderEntry();
+                    if (entry)
+                    {
+                        ShellExecuteW(nullptr, L"open", entry->fullPath.c_str(),
+                            nullptr, nullptr, SW_SHOWNORMAL);
+                        return 0;
+                    }
+                }
+            }
+        }
+
         int hit = HitTestItem(pt);
         if (hit >= 0)
         {
@@ -296,6 +367,9 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
         OnKeyDown(wp);
+        return 0;
+    case WM_KEYUP:
+        RefreshDragHintFromKeyboard();
         return 0;
     case WM_DISPLAYCHANGE:
     case WM_SETTINGCHANGE:

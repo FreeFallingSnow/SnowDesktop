@@ -286,6 +286,7 @@ inline void DesktopApp::RelayoutDisplacedItems()
     for (auto& item : items_)
     {
         if (item.name.empty()) continue;
+        if (IsItemInAnyWidget(item)) continue;
         const GridPage* page = FindGridPage(gridPages_, item.gridCell.pageId);
         if (page &&
             item.gridCell.column + item.gridSpan.columns <= page->columns &&
@@ -312,24 +313,50 @@ inline void DesktopApp::RelayoutDisplacedItems()
 
 inline void DesktopApp::SortIconsByName()
 {
-    std::vector<size_t> order;
-    order.reserve(items_.size());
-    for (size_t i = 0; i < items_.size(); ++i) order.push_back(i);
+    auto sortForPage = [&](const GridPage& page) {
+        std::vector<size_t> order;
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            if (items_[i].name.empty() || IsItemInAnyWidget(items_[i])) continue;
+            if (items_[i].gridCell.pageId.empty())
+                items_[i].gridCell.pageId = gridPages_.empty() ? L"" : gridPages_.front().id;
+            if (items_[i].gridCell.pageId == page.id)
+                order.push_back(i);
+        }
 
-    std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
-        return ToUpperInvariant(items_[a].name) < ToUpperInvariant(items_[b].name);
-    });
+        std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
+            return ToUpperInvariant(items_[a].name) < ToUpperInvariant(items_[b].name);
+        });
 
-    int idx = 0;
-    for (size_t i : order)
-    {
-        if (!gridPages_.empty() && items_[i].gridCell.pageId.empty())
-            items_[i].gridCell.pageId = gridPages_.front().id;
-        items_[i].gridCell.column = idx / std::max(1, gridPages_.front().rows);
-        items_[i].gridCell.row = idx % std::max(1, gridPages_.front().rows);
-        items_[i].gridSpan = {1, 1};
-        ++idx;
-    }
+        std::unordered_set<std::wstring> usedSlots;
+        for (const auto& widget : widgets_)
+            if (widget.gridCell.pageId == page.id)
+                MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
+
+        int searchSlot = 0;
+        for (size_t itemIndex : order)
+        {
+            items_[itemIndex].gridSpan = { 1, 1 };
+            bool placed = false;
+            for (int slot = searchSlot; slot < page.columns * page.rows; ++slot)
+            {
+                GridCell cell{ page.id, slot / std::max(1, page.rows), slot % std::max(1, page.rows) };
+                if (cell.column >= page.columns || cell.row >= page.rows) continue;
+                if (AreGridSlotsMarked(usedSlots, cell, items_[itemIndex].gridSpan)) continue;
+                items_[itemIndex].gridCell = cell;
+                items_[itemIndex].slot = cell.column * std::max(1, page.rows) + cell.row;
+                MarkGridArea(usedSlots, cell, items_[itemIndex].gridSpan);
+                searchSlot = slot + 1;
+                placed = true;
+                break;
+            }
+            if (!placed)
+                MarkGridArea(usedSlots, items_[itemIndex].gridCell, items_[itemIndex].gridSpan);
+        }
+    };
+
+    for (const auto& page : gridPages_)
+        sortForPage(page);
 
     LayoutItems();
     SaveLayoutSlots();
@@ -338,26 +365,52 @@ inline void DesktopApp::SortIconsByName()
 
 inline void DesktopApp::SortIconsByType()
 {
-    std::vector<size_t> order;
-    order.reserve(items_.size());
-    for (size_t i = 0; i < items_.size(); ++i) order.push_back(i);
+    auto sortForPage = [&](const GridPage& page) {
+        std::vector<size_t> order;
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            if (items_[i].name.empty() || IsItemInAnyWidget(items_[i])) continue;
+            if (items_[i].gridCell.pageId.empty())
+                items_[i].gridCell.pageId = gridPages_.empty() ? L"" : gridPages_.front().id;
+            if (items_[i].gridCell.pageId == page.id)
+                order.push_back(i);
+        }
 
-    std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
-        int cmp = ToUpperInvariant(items_[a].typeName).compare(ToUpperInvariant(items_[b].typeName));
-        if (cmp != 0) return cmp < 0;
-        return ToUpperInvariant(items_[a].name) < ToUpperInvariant(items_[b].name);
-    });
+        std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
+            int cmp = ToUpperInvariant(items_[a].typeName).compare(ToUpperInvariant(items_[b].typeName));
+            if (cmp != 0) return cmp < 0;
+            return ToUpperInvariant(items_[a].name) < ToUpperInvariant(items_[b].name);
+        });
 
-    int idx = 0;
-    for (size_t i : order)
-    {
-        if (!gridPages_.empty() && items_[i].gridCell.pageId.empty())
-            items_[i].gridCell.pageId = gridPages_.front().id;
-        items_[i].gridCell.column = idx / std::max(1, gridPages_.front().rows);
-        items_[i].gridCell.row = idx % std::max(1, gridPages_.front().rows);
-        items_[i].gridSpan = {1, 1};
-        ++idx;
-    }
+        std::unordered_set<std::wstring> usedSlots;
+        for (const auto& widget : widgets_)
+            if (widget.gridCell.pageId == page.id)
+                MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
+
+        int searchSlot = 0;
+        for (size_t itemIndex : order)
+        {
+            items_[itemIndex].gridSpan = { 1, 1 };
+            bool placed = false;
+            for (int slot = searchSlot; slot < page.columns * page.rows; ++slot)
+            {
+                GridCell cell{ page.id, slot / std::max(1, page.rows), slot % std::max(1, page.rows) };
+                if (cell.column >= page.columns || cell.row >= page.rows) continue;
+                if (AreGridSlotsMarked(usedSlots, cell, items_[itemIndex].gridSpan)) continue;
+                items_[itemIndex].gridCell = cell;
+                items_[itemIndex].slot = cell.column * std::max(1, page.rows) + cell.row;
+                MarkGridArea(usedSlots, cell, items_[itemIndex].gridSpan);
+                searchSlot = slot + 1;
+                placed = true;
+                break;
+            }
+            if (!placed)
+                MarkGridArea(usedSlots, items_[itemIndex].gridCell, items_[itemIndex].gridSpan);
+        }
+    };
+
+    for (const auto& page : gridPages_)
+        sortForPage(page);
 
     LayoutItems();
     SaveLayoutSlots();
@@ -660,8 +713,24 @@ inline void DesktopApp::LoadLayoutSlots()
                         widget.scrollOffset = std::max(0, scrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
                         ReadJsonStringArrayField(obj, "items", widget.itemKeys);
+                        {
+                            std::unordered_set<std::wstring> seen;
+                            std::vector<std::wstring> unique;
+                            for (auto& key : widget.itemKeys)
+                            {
+                                key = ToUpperInvariant(key);
+                                if (!key.empty() && seen.insert(key).second)
+                                    unique.push_back(key);
+                            }
+                            widget.itemKeys = std::move(unique);
+                        }
 
                         widgets_.push_back(std::move(widget));
+                        if (widgets_.back().type == DesktopWidgetType::FolderMapping &&
+                            !widgets_.back().sourceFolderPath.empty())
+                        {
+                            EnumerateFolderMappingEntries(widgets_.back());
+                        }
                         wp = objectEnd + 1;
                     }
                 }
@@ -958,6 +1027,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     if (reloadLayoutFromDisk)
         LoadLayoutSlots();
     LoadDesktopItems();
+    ApplyAutoCollectFileCategoryWidgets();
 
     // Mark widgets as used
     std::unordered_set<std::wstring> usedSlots;
@@ -969,6 +1039,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     for (auto& item : items_)
     {
         if (item.name.empty()) continue;
+        if (IsItemInAnyWidget(item)) continue;
         if (!gridPages_.empty() && item.gridCell.pageId.empty())
             item.gridCell.pageId = gridPages_.front().id;
 
@@ -1001,7 +1072,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     std::vector<DesktopItem*> unslotted;
     for (auto& item : items_)
     {
-        if (!item.name.empty() && item.gridCell.pageId.empty())
+        if (!item.name.empty() && !IsItemInAnyWidget(item) && item.gridCell.pageId.empty())
             unslotted.push_back(&item);
     }
 
@@ -1334,6 +1405,7 @@ inline bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, Gri
     for (const auto& item : items_)
     {
         if (item.selected || item.name.empty()) continue;
+        if (IsItemInAnyWidget(item)) continue;
         if (item.gridCell.pageId != cell.pageId) continue;
         const int right1 = cell.column + std::max(1, span.columns);
         const int bottom1 = cell.row + std::max(1, span.rows);
@@ -1636,116 +1708,291 @@ inline void DesktopApp::DropSelectedItemsOnTarget(int targetIndex)
 
 inline size_t DesktopApp::FindItemIndexByKey(const std::wstring& key) const
 {
+    std::wstring normalized = ToUpperInvariant(key);
     for (size_t i = 0; i < items_.size(); ++i)
-        if (items_[i].layoutKey == key) return i;
+        if (ToUpperInvariant(items_[i].layoutKey) == normalized) return i;
     return static_cast<size_t>(-1);
+}
+
+inline DesktopApp::DesktopDropPayload DesktopApp::CollectDesktopDropPayload(
+    const std::vector<Item*>& sourceItems) const
+{
+    DesktopDropPayload payload;
+    for (auto* src : sourceItems)
+    {
+        if (!src) continue;
+        if (dynamic_cast<Widget*>(src))
+        {
+            payload.hasWidgets = true;
+            continue;
+        }
+
+        if (auto* icon = dynamic_cast<DesktopIcon*>(src))
+        {
+            payload.hasDesktopIcons = true;
+            DesktopItem* item = icon->GetDesktopItem();
+            if (item && !item->layoutKey.empty())
+                payload.desktopKeys.push_back(item->layoutKey);
+
+            if (item && !IsProtectedDesktopIcon(*item))
+            {
+                std::wstring path = icon->GetPath();
+                if (!path.empty())
+                {
+                    payload.filePaths.push_back(path);
+                    payload.hasPathItems = true;
+                }
+            }
+            continue;
+        }
+
+        std::wstring path = src->GetPath();
+        if (!path.empty())
+        {
+            payload.filePaths.push_back(path);
+            payload.hasPathItems = true;
+        }
+    }
+    return payload;
+}
+
+inline void DesktopApp::RemoveDesktopKeysFromWidgets(const std::vector<std::wstring>& keys)
+{
+    if (keys.empty()) return;
+
+    std::vector<std::wstring> normalizedKeys;
+    normalizedKeys.reserve(keys.size());
+    for (const auto& key : keys)
+        normalizedKeys.push_back(ToUpperInvariant(key));
+
+    for (auto& widget : widgets_)
+    {
+        widget.itemKeys.erase(
+            std::remove_if(widget.itemKeys.begin(), widget.itemKeys.end(),
+                [&](const std::wstring& existing) {
+                    std::wstring normalizedExisting = ToUpperInvariant(existing);
+                    return std::find(normalizedKeys.begin(), normalizedKeys.end(),
+                        normalizedExisting) != normalizedKeys.end();
+                }),
+            widget.itemKeys.end());
+    }
+}
+
+inline std::unordered_set<std::wstring> DesktopApp::SnapshotDesktopKeys() const
+{
+    std::unordered_set<std::wstring> keys;
+    for (const auto& item : items_)
+        if (!item.layoutKey.empty())
+            keys.insert(ToUpperInvariant(item.layoutKey));
+    return keys;
+}
+
+inline std::vector<std::wstring> DesktopApp::NewDesktopKeysSince(
+    const std::unordered_set<std::wstring>& existingKeys) const
+{
+    std::vector<std::wstring> keys;
+    for (const auto& item : items_)
+    {
+        std::wstring key = ToUpperInvariant(item.layoutKey);
+        if (!key.empty() && !existingKeys.contains(key))
+            keys.push_back(key);
+    }
+    return keys;
+}
+
+inline bool DesktopApp::DropFilePathsToDesktopCell(const std::vector<std::wstring>& paths,
+    GridCell targetCell, int mods, bool duplicateDesktopCopyNames)
+{
+    if (paths.empty()) return false;
+
+    std::unordered_set<std::wstring> existingKeys = SnapshotDesktopKeys();
+
+    wchar_t desktopPathRaw[MAX_PATH]{};
+    if (!SHGetSpecialFolderPathW(nullptr, desktopPathRaw, CSIDL_DESKTOPDIRECTORY, FALSE))
+        return false;
+    std::wstring desktopPath = TrimTrailingPathSeparators(desktopPathRaw);
+
+    auto sameParentAsDesktop = [&](const std::wstring& path) -> bool {
+        wchar_t parent[MAX_PATH]{};
+        wcscpy_s(parent, path.c_str());
+        if (!PathRemoveFileSpecW(parent)) return false;
+        return PathsEqualInsensitive(parent, desktopPath);
+    };
+
+    auto doubleNull = [](const std::wstring& value) {
+        std::wstring result = value;
+        result.push_back(L'\0');
+        result.push_back(L'\0');
+        return result;
+    };
+
+    auto makeUniquePath = [&](const std::wstring& path, bool copySuffix) {
+        const wchar_t* fileName = PathFindFileNameW(path.c_str());
+        DWORD attrs = GetFileAttributesW(path.c_str());
+        bool isDir = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+
+        std::wstring stem = fileName ? fileName : L"";
+        std::wstring ext;
+        if (!isDir)
+        {
+            wchar_t stemBuf[MAX_PATH]{};
+            wcscpy_s(stemBuf, stem.c_str());
+            PathRemoveExtensionW(stemBuf);
+            stem = stemBuf;
+            const wchar_t* extPtr = PathFindExtensionW(fileName);
+            ext = extPtr ? extPtr : L"";
+        }
+
+        auto candidateName = [&](int index) {
+            if (!copySuffix)
+                return index <= 1 ? stem + ext : stem + L" (" + std::to_wstring(index) + L")" + ext;
+            return index <= 1
+                ? stem + L" - 副本" + ext
+                : stem + L" - 副本 (" + std::to_wstring(index) + L")" + ext;
+        };
+
+        for (int i = 1; i < 1000; ++i)
+        {
+            wchar_t dst[MAX_PATH]{};
+            PathCombineW(dst, desktopPath.c_str(), candidateName(i).c_str());
+            if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES)
+                return std::wstring(dst);
+        }
+
+        wchar_t fallback[MAX_PATH]{};
+        PathCombineW(fallback, desktopPath.c_str(), candidateName(1000).c_str());
+        return std::wstring(fallback);
+    };
+
+    auto makeUniqueShortcutPath = [&](const std::wstring& path) {
+        const wchar_t* fileName = PathFindFileNameW(path.c_str());
+        wchar_t stemBuf[MAX_PATH]{};
+        wcscpy_s(stemBuf, fileName ? fileName : L"");
+        PathRemoveExtensionW(stemBuf);
+        std::wstring stem = stemBuf[0] != L'\0' ? stemBuf : L"快捷方式";
+
+        for (int i = 1; i < 1000; ++i)
+        {
+            std::wstring name = i <= 1
+                ? stem + L".lnk"
+                : stem + L" (" + std::to_wstring(i) + L").lnk";
+            wchar_t dst[MAX_PATH]{};
+            PathCombineW(dst, desktopPath.c_str(), name.c_str());
+            if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES)
+                return std::wstring(dst);
+        }
+
+        wchar_t fallback[MAX_PATH]{};
+        PathCombineW(fallback, desktopPath.c_str(), (stem + L" (1000).lnk").c_str());
+        return std::wstring(fallback);
+    };
+
+    auto shellOperateOne = [&](UINT func, const std::wstring& fromPath, const std::wstring& toPath) {
+        std::wstring from = doubleNull(fromPath);
+        std::wstring to = doubleNull(toPath);
+        SHFILEOPSTRUCTW op{};
+        op.hwnd = hwnd_;
+        op.wFunc = func;
+        op.pFrom = from.c_str();
+        op.pTo = to.c_str();
+        op.fFlags = FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR | FOF_NOERRORUI | FOF_RENAMEONCOLLISION;
+        return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
+    };
+
+    auto shellOperateManyToDesktop = [&](UINT func, const std::vector<std::wstring>& sourcePaths) {
+        std::wstring from;
+        for (const auto& path : sourcePaths)
+        {
+            from += path;
+            from.push_back(L'\0');
+        }
+        from.push_back(L'\0');
+
+        std::wstring to = desktopPath;
+        to.push_back(L'\0');
+        SHFILEOPSTRUCTW op{};
+        op.hwnd = hwnd_;
+        op.wFunc = func;
+        op.pFrom = from.c_str();
+        op.pTo = to.c_str();
+        op.fFlags = FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR | FOF_NOERRORUI | FOF_RENAMEONCOLLISION;
+        return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
+    };
+
+    bool operated = false;
+    if (mods & MK_ALT)
+    {
+        for (const auto& path : paths)
+        {
+            std::wstring dst = makeUniqueShortcutPath(path);
+
+            ComPtr<IShellLinkW> shellLink;
+            if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+            {
+                shellLink->SetPath(path.c_str());
+                shellLink->SetWorkingDirectory(desktopPath.c_str());
+                ComPtr<IPersistFile> persistFile;
+                if (SUCCEEDED(shellLink.As(&persistFile)) &&
+                    SUCCEEDED(persistFile->Save(dst.c_str(), TRUE)))
+                    operated = true;
+            }
+        }
+    }
+    else if (mods & MK_CONTROL)
+    {
+        std::vector<std::wstring> normalCopies;
+        for (const auto& path : paths)
+        {
+            if (duplicateDesktopCopyNames && sameParentAsDesktop(path))
+            {
+                std::wstring dst = makeUniquePath(path, true);
+                operated = shellOperateOne(FO_COPY, path, dst) || operated;
+            }
+            else
+            {
+                normalCopies.push_back(path);
+            }
+        }
+        if (!normalCopies.empty())
+            operated = shellOperateManyToDesktop(FO_COPY, normalCopies) || operated;
+    }
+    else
+    {
+        operated = shellOperateManyToDesktop(FO_MOVE, paths);
+    }
+
+    if (!operated) return false;
+
+    ReloadItems(false);
+    PlaceNewItemsAtDropPoint(existingKeys, targetCell);
+    return true;
 }
 
 inline void DesktopApp::CopySelectedItemsToCell(GridCell targetCell)
 {
-    std::unordered_set<std::wstring> existingKeys;
-    for (const auto& item : items_)
-        if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
-
-    wchar_t desktopPath[MAX_PATH]{};
-    SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
-
+    std::vector<std::wstring> paths;
     for (const auto& item : items_)
     {
         if (!item.selected || !item.desktopIconClsid.empty()) continue;
         wchar_t srcPath[MAX_PATH]{};
         if (!SHGetPathFromIDListW(item.absolutePidl.get(), srcPath)) continue;
-
-        wchar_t nameNoExt[MAX_PATH]{};
-        wcscpy_s(nameNoExt, PathFindFileNameW(srcPath));
-        PathRemoveExtensionW(nameNoExt);
-        wchar_t ext[MAX_PATH]{};
-        wcscpy_s(ext, PathFindExtensionW(srcPath));
-
-        wchar_t newName[MAX_PATH]{};
-        swprintf_s(newName, L"%s - 副本%s", nameNoExt, ext);
-        wchar_t dstPath[MAX_PATH]{};
-        PathCombineW(dstPath, desktopPath, newName);
-
-        if (GetFileAttributesW(dstPath) != INVALID_FILE_ATTRIBUTES)
-        {
-            for (int i = 2; i < 100; ++i)
-            {
-                swprintf_s(newName, L"%s - 副本 (%d)%s", nameNoExt, i, ext);
-                PathCombineW(dstPath, desktopPath, newName);
-                if (GetFileAttributesW(dstPath) == INVALID_FILE_ATTRIBUTES) break;
-            }
-        }
-
-        std::wstring dstDir = desktopPath;
-        if (!dstDir.empty() && dstDir.back() != L'\\') dstDir += L'\\';
-        dstDir += newName;
-
-        SHFILEOPSTRUCTW op{};
-        op.wFunc = FO_COPY;
-        op.fFlags = FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR | FOF_RENAMEONCOLLISION;
-        wchar_t from[MAX_PATH + 2]{};
-        wcscpy_s(from, srcPath);
-        from[wcslen(srcPath) + 1] = L'\0';
-        op.pFrom = from;
-        op.pTo = desktopPath;
-        SHFileOperationW(&op);
-
-        if (GetFileAttributesW(dstPath) == INVALID_FILE_ATTRIBUTES)
-        {
-            swprintf_s(newName, L"%s - 副本 (%d)%s", nameNoExt, 2, ext);
-            PathCombineW(dstPath, desktopPath, newName);
-        }
+        paths.push_back(srcPath);
     }
-
-    ReloadItems(false);
-    PlaceNewItemsAtDropPoint(existingKeys, targetCell);
+    DropFilePathsToDesktopCell(paths, targetCell, MK_CONTROL, true);
 }
 
 inline void DesktopApp::CreateShortcutSelectedItemsToCell(GridCell targetCell)
 {
-    std::unordered_set<std::wstring> existingKeys;
-    for (const auto& item : items_)
-        if (!item.layoutKey.empty()) existingKeys.insert(item.layoutKey);
-
-    wchar_t desktopPath[MAX_PATH]{};
-    SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
-
+    std::vector<std::wstring> paths;
     for (const auto& item : items_)
     {
         if (!item.selected || !item.desktopIconClsid.empty()) continue;
         wchar_t srcPath[MAX_PATH]{};
         if (!SHGetPathFromIDListW(item.absolutePidl.get(), srcPath)) continue;
-
-        wchar_t nameNoExt[MAX_PATH]{};
-        wcscpy_s(nameNoExt, PathFindFileNameW(srcPath));
-        PathRemoveExtensionW(nameNoExt);
-
-        wchar_t lnkPath[MAX_PATH]{};
-        PathCombineW(lnkPath, desktopPath, (std::wstring(nameNoExt) + L".lnk").c_str());
-        if (GetFileAttributesW(lnkPath) != INVALID_FILE_ATTRIBUTES)
-        {
-            for (int i = 2; i < 100; ++i)
-            {
-                swprintf_s(lnkPath, L"%s\\%s (%d).lnk", desktopPath, nameNoExt, i);
-                if (GetFileAttributesW(lnkPath) == INVALID_FILE_ATTRIBUTES) break;
-            }
-        }
-
-        ComPtr<IShellLinkW> shellLink;
-        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-            IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
-        {
-            shellLink->SetPath(srcPath);
-            shellLink->SetWorkingDirectory(desktopPath);
-            ComPtr<IPersistFile> persistFile;
-            if (SUCCEEDED(shellLink.As(&persistFile)))
-                persistFile->Save(lnkPath, TRUE);
-        }
+        paths.push_back(srcPath);
     }
-
-    ReloadItems(false);
-    PlaceNewItemsAtDropPoint(existingKeys, targetCell);
+    DropFilePathsToDesktopCell(paths, targetCell, MK_ALT, true);
 }
 
 inline void DesktopApp::ApplyPendingPlacement()
@@ -1885,7 +2132,7 @@ inline void DesktopApp::PlaceNewItemsAtDropPoint(
     for (size_t i = 0; i < items_.size(); ++i)
     {
         if (items_[i].layoutKey.empty()) continue;
-        if (!existingKeys.contains(items_[i].layoutKey))
+        if (!existingKeys.contains(ToUpperInvariant(items_[i].layoutKey)))
             newItems.push_back(i);
     }
     if (newItems.empty()) return;
@@ -2033,7 +2280,7 @@ inline void DesktopApp::RebuildContainersAndItems()
     std::unordered_set<std::wstring> collectedKeys;
     for (auto& w : widgets_)
         for (auto& k : w.itemKeys)
-            collectedKeys.insert(k);
+            collectedKeys.insert(ToUpperInvariant(k));
 
     // DesktopGrid
     auto grid = std::make_unique<DesktopGrid>(&gridPages_, &items_, this);
@@ -2043,7 +2290,7 @@ inline void DesktopApp::RebuildContainersAndItems()
     for (auto& item : items_)
     {
         if (item.name.empty()) continue;
-        if (collectedKeys.contains(item.layoutKey)) continue;
+        if (collectedKeys.contains(ToUpperInvariant(item.layoutKey))) continue;
         auto icon = std::make_unique<DesktopIcon>(&item, containers_.back().get(), this);
         items_oo_.push_back(std::move(icon));
     }
@@ -2068,6 +2315,9 @@ inline void DesktopApp::RebuildContainersAndItems()
 
 inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
 {
+    for (auto& entry : widget.folderEntries)
+        if (entry.iconBitmap) DeleteObject(entry.iconBitmap);
+    widget.folderEntries.clear();
     if (widget.sourceFolderPath.empty()) return;
     std::wstring search = widget.sourceFolderPath + L"\\*";
     WIN32_FIND_DATAW fd{};
@@ -2079,9 +2329,31 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
         entry.name = fd.cFileName;
         entry.fullPath = widget.sourceFolderPath + L"\\" + fd.cFileName;
         entry.isDirectory = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        SHFILEINFOW info{};
+        SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info), SHGFI_SYSICONINDEX);
+        entry.sysIconIndex = info.iIcon;
+
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
+        {
+            entry.iconBitmap = GetHighResolutionShellIconBitmap(pidl, info.iIcon, entry.iconBitmapSize);
+            ILFree(pidl);
+        }
+        if (entry.iconBitmap)
+        {
+            ClampAlphaToColorKey(entry.iconBitmap, kTransparentKey);
+            std::wstring upper = ToUpperInvariant(entry.name);
+            if (upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0)
+                ApplyShortcutArrowToBitmap(entry.iconBitmap, entry.iconBitmapSize);
+        }
         widget.folderEntries.push_back(std::move(entry));
     } while (FindNextFileW(hFind, &fd));
     FindClose(hFind);
+    std::sort(widget.folderEntries.begin(), widget.folderEntries.end(),
+        [](const FolderEntry& a, const FolderEntry& b) {
+            if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
+            return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+        });
 }
 
 inline void DesktopApp::RefreshFolderMappingWidget(size_t widgetIndex)
@@ -2097,7 +2369,53 @@ inline void DesktopApp::RefreshFolderMappingWidget(size_t widgetIndex)
         auto* wc = dynamic_cast<WidgetContainer*>(c.get());
         if (wc && wc->GetWidgetData() == &w) { wc->InvalidateSlots(); break; }
     }
-    RebuildContainersAndItems();
+    // NOTE: caller must RebuildContainersAndItems + SaveLayoutSlots + InvalidateDesktop
+}
+
+inline bool DesktopApp::CollectFileCategoryWidget(size_t widgetIndex, bool persist)
+{
+    if (widgetIndex >= widgets_.size() ||
+        widgets_[widgetIndex].type != DesktopWidgetType::FileCategories)
+        return false;
+
+    FileCategories collector(&widgets_[widgetIndex], this);
+    bool changed = collector.CollectTopLevelDesktopItems();
+    if (!changed) return false;
+
+    if (persist)
+    {
+        LayoutItems();
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+    return true;
+}
+
+inline void DesktopApp::EnforceSingleAutoCollectFileCategory(size_t activeWidgetIndex)
+{
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (i != activeWidgetIndex && widgets_[i].type == DesktopWidgetType::FileCategories)
+            widgets_[i].autoCollect = false;
+    }
+}
+
+inline void DesktopApp::ApplyAutoCollectFileCategoryWidgets()
+{
+    size_t active = static_cast<size_t>(-1);
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (widgets_[i].type == DesktopWidgetType::FileCategories && widgets_[i].autoCollect)
+        {
+            if (active == static_cast<size_t>(-1))
+                active = i;
+            else
+                widgets_[i].autoCollect = false;
+        }
+    }
+    if (active != static_cast<size_t>(-1))
+        CollectFileCategoryWidget(active, false);
 }
 
 // ── Widget creation helpers ──────────────────────────────────

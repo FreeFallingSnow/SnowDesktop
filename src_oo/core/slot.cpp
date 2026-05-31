@@ -1,6 +1,7 @@
 #include "slot.h"
 #include "container.h"
 #include "item.h"
+#include "constants.h"
 #include <wrl/client.h>
 #include <algorithm>
 
@@ -31,7 +32,7 @@ RECT Slot::GetIconRect() const
         };
     }
     const int maxIconW = std::max(16, cellW - 8);
-    const int maxIconH = std::max(16, cellH - 136 - 8);
+    const int maxIconH = std::max(16, cellH - kTextHeight - 8);
     const int iconSz = std::min(maxIconW, maxIconH);
     const int iconX = bounds_.left + (cellW - iconSz) / 2;
     const int iconY = bounds_.top + 2;
@@ -54,12 +55,10 @@ HitRegion Slot::HitTest(POINT pt) const
     const int cellW = bounds_.right - bounds_.left;
     const int cellH = bounds_.bottom - bounds_.top;
 
-    // ListContainer → HBar (top/bottom), GridContainer → VBar (left/right)
-    // For now, use a simple heuristic: if height < 50, use left/right split; else top/bottom
-    if (cellH < 50)
+    BarStyle style = parent_ ? parent_->GetInsertionStyle() : BarStyle::HBar;
+    if (style == BarStyle::VBar)
         return (pt.x < bounds_.left + cellW / 2) ? HitRegion::SortBefore : HitRegion::SortAfter;
-    else
-        return (pt.y < bounds_.top + cellH / 2) ? HitRegion::SortBefore : HitRegion::SortAfter;
+    return (pt.y < bounds_.top + cellH / 2) ? HitRegion::SortBefore : HitRegion::SortAfter;
 }
 
 std::wstring Slot::GetDropHint(HitRegion region, const std::vector<Item*>& sourceItems) const

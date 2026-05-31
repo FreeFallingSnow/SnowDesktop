@@ -85,3 +85,7 @@ constexpr UINT_PTR kDesktopHostWatchTimerId = 4;
 constexpr UINT kDesktopHostWatchIntervalMs = 2000;
 constexpr UINT_PTR kWidgetRefreshTimerId = 5;
 constexpr UINT kWidgetRefreshIntervalMs = 1000;
+
+constexpr int kCollectionPopupPaddingX = 18;
+constexpr int kCollectionPopupHeaderHeight = 54;
+constexpr int kCollectionPopupBottomPadding = 18;

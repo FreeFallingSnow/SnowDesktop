@@ -37,6 +37,40 @@ ComPtr<IDataObject> Widget::CreateDataObject()
 
 // ── WidgetContainer geometry ──────────────────────────────────
 
+std::vector<std::unique_ptr<Slot>> WidgetContainer::BuildSlots()
+{
+    slotItemCache_.clear();
+
+    std::vector<std::unique_ptr<Slot>> slots;
+    size_t count = GetSlotCount();
+    if (count == 0 && !IncludeTrailingEmptySlot()) return slots;
+
+    RECT body = GetBodyRect();
+    int bodyW = std::max(1L, static_cast<LONG>(body.right - body.left));
+    int itemW = GetItemWidth();
+    int itemH = GetItemHeight();
+    int cols = SingleColumn() ? 1 : std::max(1, bodyW / std::max(1, itemW));
+
+    size_t total = IncludeTrailingEmptySlot() ? count + 1 : count;
+    for (size_t idx = 0; idx < total; ++idx)
+    {
+        int col = static_cast<int>(idx) % cols;
+        int row = static_cast<int>(idx) / cols;
+        RECT cell = {
+            body.left + col * itemW,
+            body.top + row * itemH,
+            body.left + std::min<LONG>(col * itemW + itemW, body.right),
+            body.top + row * itemH + itemH
+        };
+        auto slot = std::make_unique<Slot>(this, cell, idx);
+        Item* item = GetSlotItem(idx);
+        if (item) item->SetBounds(cell);
+        slot->SetItem(item);
+        slots.push_back(std::move(slot));
+    }
+    return slots;
+}
+
 RECT WidgetContainer::GetFrameRect() const
 {
     if (!data_) return {};
@@ -83,7 +117,7 @@ RECT WidgetContainer::GetTitleRect() const
 {
     RECT handle = GetMoveHandleRect();
     LONG left = handle.left + 4;
-    const int reserved = data_->type == DesktopWidgetType::FolderMapping ? 76 : 26;
+    const int reserved = data_->type == DesktopWidgetType::FolderMapping ? 60 : 26;
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
     return { left, handle.top + 2, right, handle.bottom - 2 };
 }
@@ -109,6 +143,53 @@ WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
     return WidgetHit::Content;
 }
 
+// ── Container drag virtuals ──────────────────────────────────────
+
+HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
+{
+    outSlot = nullptr;
+    RECT frame = GetFrameRect();
+    if (!PtInRect(&frame, pt)) return HitRegion::None;
+
+    auto& slots = GetSlots();
+    for (size_t i = 0; i < slots.size(); ++i)
+    {
+        HitRegion region = slots[i]->HitTest(pt);
+        if (region != HitRegion::None)
+        {
+            outSlot = slots[i].get();
+            if (region == HitRegion::Handoff)
+            {
+                Item* item = outSlot->GetItem();
+                if (item && item->IsSelected())
+                {
+                    RECT r = outSlot->GetBounds();
+                    region = (pt.y < r.top + (r.bottom - r.top) / 2)
+                        ? HitRegion::SortBefore
+                        : HitRegion::SortAfter;
+                }
+            }
+            return region;
+        }
+    }
+    // Mouse in frame but not on any slot — sort at end
+    return HitRegion::SortAfter;
+}
+
+std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
+    const std::vector<Item*>& sourceItems, Container* origin, int mods) const
+{
+    if (!slot) return L"释放：放置到此处";
+    return slot->GetDropHint(region, sourceItems);
+    (void)origin; (void)mods;
+}
+
+void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
+{
+    if (!slot || !ctx) return;
+    slot->DrawDropIndicator(ctx, region);
+}
+
 // ── DrawChrome ────────────────────────────────────────────────
 
 void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
@@ -122,7 +203,6 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const bool selected = data_->selected;
     const bool hovered = PtInRect(&frame, mousePt) != FALSE;
 
-    // Colors — TODO: read from personalization
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
 
@@ -130,7 +210,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     float strokeW = selected ? 1.6f : 1.0f;
     D2D1::ColorF selBorder(0.39f, 0.66f, 1.0f, 0.90f);
 
-    // ── Background + border ────────────────────────────────
+    // ── 1. Background + border ────────────────────────────────
     {
         ComPtr<ID2D1SolidColorBrush> fillBrush;
         context->CreateSolidColorBrush(fillColor, &fillBrush);
@@ -143,11 +223,37 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         ComPtr<ID2D1SolidColorBrush> strokeBrush;
         context->CreateSolidColorBrush(selected ? selBorder : borderColor, &strokeBrush);
         if (strokeBrush)
-            context->DrawRoundedRectangle(rr, strokeBrush.Get(), strokeW,
-                selected ? nullptr : nullptr);
+            context->DrawRoundedRectangle(rr, strokeBrush.Get(), strokeW);
     }
 
-    // ── Gradient bottom bar (clipped to rounded frame) ────
+    // ── 2. Content (clipped to rounded frame, renders UNDER gradient) ──
+    {
+        auto* factory = app_->GetD2DFactory();
+        ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+        if (factory)
+            factory->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(
+                    D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
+                    radius, radius), &clipGeo);
+        if (clipGeo)
+            context->PushLayer(D2D1::LayerParameters(
+                D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
+                clipGeo.Get()), nullptr);
+
+        DrawContent(context, body);
+
+        if (clipGeo) context->PopLayer();
+    }
+
+    const bool tinyCollection = data_->type == DesktopWidgetType::Collection &&
+        data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
+    const bool persistentBottomBar = tinyCollection ||
+        data_->type == DesktopWidgetType::FileCategories ||
+        data_->type == DesktopWidgetType::FolderMapping;
+
+    // ── 3. Gradient bottom bar (over content, clipped to frame) ──
+    bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;
+    if (showGradient)
     {
         RECT gradRect = { frame.left, std::max<LONG>(body.top, frame.bottom - 36),
                           frame.right, frame.bottom };
@@ -167,7 +273,6 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                         D2D1::Point2F(0.0f, (float)gradRect.bottom)),
                     stops.Get(), &brush)) && brush)
                 {
-                    // Clip gradient to rounded frame
                     auto* factory = app_->GetD2DFactory();
                     ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
                     bool pushed = false;
@@ -181,57 +286,91 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                             clipGeo.Get()), nullptr);
                         pushed = true;
                     }
-
                     context->FillRectangle(
                         D2D1::RectF((float)gradRect.left, (float)gradRect.top,
                                      (float)gradRect.right, (float)gradRect.bottom),
                         brush.Get());
-
                     if (pushed) context->PopLayer();
                 }
             }
         }
     }
 
-    // ── Resize handle dot ──────────────────────────────────
-    {
-        RECT rh = GetResizeHandleRect();
-        const int dot = 8;
-        int cx = rh.left + (rh.right - rh.left) / 2;
-        int cy = rh.top + (rh.bottom - rh.top) / 2;
-        D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(
-            D2D1::RectF((float)(cx - dot/2), (float)(cy - dot/2),
-                         (float)(cx + dot/2), (float)(cy + dot/2)),
-            4.0f, 4.0f);
-        D2D1::ColorF dotFill = selected
-            ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f);
-        D2D1::ColorF dotStroke(1.0f, 1.0f, 1.0f, 0.50f);
+    // ── 4. Bottom-bar items (on top of gradient, visibility per bottomBarHover) ──
+    bool showHandle = persistentBottomBar || (data_->bottomBarHover ? hovered : true);
 
-        ComPtr<ID2D1SolidColorBrush> b;
-        if (SUCCEEDED(context->CreateSolidColorBrush(dotFill, &b)) && b)
-            context->FillRoundedRectangle(pill, b.Get());
-        if (SUCCEEDED(context->CreateSolidColorBrush(dotStroke, &b)) && b)
-            context->DrawRoundedRectangle(pill, b.Get(), 1.0f);
-    }
-
-    // ── Title text ─────────────────────────────────────────
-    if (!data_->title.empty())
+    if (showHandle)
     {
-        RECT titleRect = GetTitleRect();
-        // TODO: use DWrite text rendering via app helper
-        (void)titleRect;
-    }
+        // Title text (with shadow)
+        if (!data_->title.empty() && data_->showTitle)
+        {
+            RECT titleRect = GetTitleRect();
+            LONG tw = titleRect.right - titleRect.left;
+            LONG th = titleRect.bottom - titleRect.top;
+            if (tw > 0 && th > 0 && app_ && app_->GetDWriteFactory())
+            {
+                auto* dwrite = app_->GetDWriteFactory();
+                ComPtr<IDWriteTextFormat> fmt;
+                dwrite->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                    13.0f, L"", &fmt);
+                if (fmt)
+                {
+                    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-    // ── Subclass buttons ───────────────────────────────────
-    {
-        RECT handle = GetMoveHandleRect();
-        DrawButtons(context, handle, hovered);
-    }
+                    ComPtr<IDWriteTextLayout> layout;
+                    dwrite->CreateTextLayout(data_->title.c_str(),
+                        static_cast<UINT32>(data_->title.size()), fmt.Get(),
+                        (float)tw, (float)th, &layout);
+                    if (layout)
+                    {
+                        // Shadow
+                        ComPtr<ID2D1SolidColorBrush> shadowBrush;
+                        context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
+                        if (shadowBrush)
+                            context->DrawTextLayout(
+                                D2D1::Point2F((float)titleRect.left + 1.0f, (float)titleRect.top + 1.0f),
+                                layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 
-    // ── Content ────────────────────────────────────────────
-    {
-        DrawContent(context, body);
+                        ComPtr<ID2D1SolidColorBrush> textBrush;
+                        context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f), &textBrush);
+                        if (textBrush)
+                            context->DrawTextLayout(
+                                D2D1::Point2F((float)titleRect.left, (float)titleRect.top),
+                                layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    }
+                }
+            }
+        }
+
+        // Resize handle dot
+        {
+            RECT rh = GetResizeHandleRect();
+            const int dot = 8;
+            int cx = rh.left + (rh.right - rh.left) / 2;
+            int cy = rh.top + (rh.bottom - rh.top) / 2;
+            D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(
+                D2D1::RectF((float)(cx - dot/2), (float)(cy - dot/2),
+                             (float)(cx + dot/2), (float)(cy + dot/2)),
+                4.0f, 4.0f);
+            D2D1::ColorF dotFill = selected
+                ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f);
+            D2D1::ColorF dotStroke(1.0f, 1.0f, 1.0f, 0.50f);
+
+            ComPtr<ID2D1SolidColorBrush> b;
+            if (SUCCEEDED(context->CreateSolidColorBrush(dotFill, &b)) && b)
+                context->FillRoundedRectangle(pill, b.Get());
+            if (SUCCEEDED(context->CreateSolidColorBrush(dotStroke, &b)) && b)
+                context->DrawRoundedRectangle(pill, b.Get(), 1.0f);
+        }
+
+        // Subclass buttons
+        {
+            RECT handle = GetMoveHandleRect();
+            DrawButtons(context, handle, hovered);
+        }
     }
 }
 

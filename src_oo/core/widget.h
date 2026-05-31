@@ -19,6 +19,7 @@ enum class WidgetHit {
     ListToggleBtn,  // FolderMapping: toggle icon/list
     OpenFolderBtn,  // FolderMapping: open source folder
     CategoryTab,    // FileCategories: category tab
+    CollectionOpenBtn, // Collection: compact body / "all" mosaic
 };
 
 // ── Widget : pure Item (draggable, renderable) ──────────────
@@ -60,6 +61,7 @@ public:
     // Forward Container pure virtuals to Widget implementations
     std::wstring GetTitle() const override { return Widget::GetTitle(); }
     RECT GetBounds() const override { return Widget::GetBounds(); }
+    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
 
     // ── Chrome geometry ──────────────────────────────────
     RECT GetFrameRect() const;
@@ -75,9 +77,25 @@ public:
     // ── Rendering ────────────────────────────────────────
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
 
+    // ── Container drag virtuals ──────────────────────────
+    HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
+    std::wstring GetDragHint(Slot* slot, HitRegion region,
+        const std::vector<Item*>& sourceItems, Container* origin, int mods) const override;
+    void DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region) override;
+    bool NeedsShellReloadAfterDrop() const override { return true; }
+
+    // ── Member access — subclasses override ──────────────
+    virtual Item* GetMemberItem(size_t memberIndex) const { return nullptr; }
+    virtual std::vector<size_t> GetSelectedMemberIndices() const { return {}; }
+    virtual void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) {}
+
     // ── Content — subclasses override ────────────────────
     virtual void DrawContent(ID2D1DeviceContext* context, RECT body) {}
     virtual void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) {}
+
+protected:
+    mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
+    mutable std::vector<std::unique_ptr<Item>> slotItemCache_;
 };
 
 // ── Concrete widget types ───────────────────────────────────
@@ -86,30 +104,52 @@ class Collection : public WidgetContainer
 {
 public:
     using WidgetContainer::WidgetContainer;
+    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     WidgetHit HitTestWidget(POINT pt) const override;
+    std::wstring CategoryIdAtPoint(POINT pt) const;
+    std::vector<Item*> GetSelectedItems() const override;
+    bool NeedsShellReloadAfterDrop() const override { return false; }
+    Item* GetMemberItem(size_t idx) const override;
+    std::vector<size_t> GetSelectedMemberIndices() const override;
+    void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    BarStyle GetInsertionStyle() const override { return BarStyle::VBar; }
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override { return 136; }
     int  GetItemWidth()  const override { return 92; }
     Item* GetSlotItem(size_t idx) const override;
+
+private:
+    void DrawThumbnail(ID2D1DeviceContext* context, const DesktopItem& item,
+        RECT rect, bool selected) const;
 };
 
 class FileCategories : public WidgetContainer
 {
 public:
     using WidgetContainer::WidgetContainer;
+    bool CollectTopLevelDesktopItems();
+    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
+    std::wstring CategoryIdAtPoint(POINT pt) const;
+    std::vector<Item*> GetSelectedItems() const override;
+    bool NeedsShellReloadAfterDrop() const override { return false; }
+    Item* GetMemberItem(size_t idx) const override;
+    std::vector<size_t> GetSelectedMemberIndices() const override;
+    void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    BarStyle GetInsertionStyle() const override { return BarStyle::HBar; }
 
     size_t GetSlotCount() const override;
-    int  GetItemHeight() const override { return 32; }
-    bool SingleColumn() const override { return true; }
+    int  GetItemHeight() const override;
+    int  GetItemWidth() const override;
+    bool SingleColumn() const override;
     Item* GetSlotItem(size_t idx) const override;
 };
 
@@ -117,11 +157,17 @@ class FolderMapping : public WidgetContainer
 {
 public:
     using WidgetContainer::WidgetContainer;
+    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
+    std::vector<Item*> GetSelectedItems() const override;
+    Item* GetMemberItem(size_t idx) const override;
+    std::vector<size_t> GetSelectedMemberIndices() const override;
+    void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    BarStyle GetInsertionStyle() const override;
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;

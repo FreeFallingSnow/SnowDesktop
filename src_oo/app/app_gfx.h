@@ -62,6 +62,29 @@ inline bool DesktopApp::InitGraphics()
         listItemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
+    faFontHandle_ = LoadFontAwesome();
+    if (faFontHandle_)
+    {
+        faTextFormat_ = ComPtr<IDWriteTextFormat>(CreateFaTextFormat(dwriteFactory_.Get(), 14.0f));
+        if (faTextFormat_)
+        {
+            faTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            faTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            faTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+
+        HDC screenDc = GetDC(nullptr);
+        const int menuHeight = -MulDiv(
+            std::max(9, GetSystemMetrics(SM_CYMENUCHECK) * 11 / 20),
+            GetDeviceCaps(screenDc, LOGPIXELSY),
+            72);
+        ReleaseDC(nullptr, screenDc);
+        faMenuFont_ = CreateFontW(menuHeight, 0, 0, 0, FW_NORMAL,
+            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+            L"Font Awesome 6 Free Solid");
+    }
+
     return true;
 }
 
@@ -239,6 +262,189 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
         context->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
+inline void DesktopApp::DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
+    RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color)
+{
+    if (!ctx || !format || text.empty() || IsRectEmptyRect(rect)) return;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (SUCCEEDED(ctx->CreateSolidColorBrush(color, &brush)) && brush)
+    {
+        ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
+            ToD2DRect(rect), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+}
+
+inline std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidget& widget) const
+{
+    if (widget.type == DesktopWidgetType::Collection)
+        return widget.itemKeys;
+    return {};
+}
+
+inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
+{
+    const GridPage* page = nullptr;
+    for (const auto& p : gridPages_)
+    {
+        if (p.id == widget.gridCell.pageId)
+        {
+            page = &p;
+            break;
+        }
+    }
+
+    RECT work = page ? page->workArea : layoutWorkArea_;
+    const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
+    const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
+    const int cellW = page ? page->cellWidth : kCellWidth;
+    const int cellH = page ? page->cellHeight : kMinCellHeight;
+    const int maxWidth = std::max(280, std::min(560, workWidth - 80));
+    const int maxColumns = std::max(1, (maxWidth - kCollectionPopupPaddingX * 2) / std::max(1, cellW));
+    const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
+    int columns = std::clamp(std::min(itemCount, 5), 1, maxColumns);
+    int rows = (itemCount + columns - 1) / columns;
+    const int maxHeight = std::max(220, workHeight - 80);
+    int width = kCollectionPopupPaddingX * 2 + columns * cellW;
+    int height = kCollectionPopupHeaderHeight + rows * cellH + kCollectionPopupBottomPadding;
+    if (height > maxHeight && columns < maxColumns)
+    {
+        columns = maxColumns;
+        rows = (itemCount + columns - 1) / columns;
+        width = kCollectionPopupPaddingX * 2 + columns * cellW;
+        height = kCollectionPopupHeaderHeight + rows * cellH + kCollectionPopupBottomPadding;
+    }
+    height = std::min(height, maxHeight);
+
+    int left = work.left + (workWidth - width) / 2;
+    int top = work.top + (workHeight - height) / 2;
+    if (popupHasAnchor_)
+    {
+        left = popupAnchorPoint_.x + 12;
+        top = popupAnchorPoint_.y + 12;
+        left = std::clamp(left, static_cast<int>(work.left + 12),
+            static_cast<int>(std::max<LONG>(work.left + 12, work.right - width - 12)));
+        top = std::clamp(top, static_cast<int>(work.top + 12),
+            static_cast<int>(std::max<LONG>(work.top + 12, work.bottom - height - 12)));
+    }
+    return MakeRect(left, top, left + width, top + height);
+}
+
+inline RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
+{
+    return MakeRect(
+        popup.left + kCollectionPopupPaddingX,
+        popup.top + kCollectionPopupHeaderHeight,
+        popup.right - kCollectionPopupPaddingX,
+        popup.bottom - kCollectionPopupBottomPadding);
+}
+
+inline int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
+{
+    RECT content = GetCollectionPopupContentRect(popup);
+    int cellW = kCellWidth;
+    for (const auto& page : gridPages_)
+    {
+        if (page.id == popupPageId_)
+        {
+            cellW = page.cellWidth;
+            break;
+        }
+    }
+    return std::max(1, static_cast<int>(content.right - content.left) / std::max(1, cellW));
+}
+
+inline int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const
+{
+    const int columns = GetCollectionPopupColumnCount(popup);
+    const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
+    return (itemCount + columns - 1) / columns;
+}
+
+inline int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const
+{
+    RECT content = GetCollectionPopupContentRect(popup);
+    int cellH = kMinCellHeight;
+    for (const auto& page : gridPages_)
+    {
+        if (page.id == popupPageId_)
+        {
+            cellH = page.cellHeight;
+            break;
+        }
+    }
+    const int rows = GetCollectionPopupRowCount(widget, popup);
+    const int contentHeight = std::max(1, static_cast<int>(content.bottom - content.top));
+    return std::max(0, rows * std::max(1, cellH) - contentHeight);
+}
+
+inline RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
+{
+    RECT content = GetCollectionPopupContentRect(popup);
+    int cellW = kCellWidth;
+    int cellH = kMinCellHeight;
+    for (const auto& page : gridPages_)
+    {
+        if (page.id == popupPageId_)
+        {
+            cellW = page.cellWidth;
+            cellH = page.cellHeight;
+            break;
+        }
+    }
+    const int columns = GetCollectionPopupColumnCount(popup);
+    const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
+    const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
+    return MakeRect(
+        content.left + col * cellW,
+        content.top + row * cellH - popupScrollOffset_,
+        content.left + (col + 1) * cellW,
+        content.top + (row + 1) * cellH - popupScrollOffset_);
+}
+
+inline bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
+{
+    if (popupWidgetIndex_ >= widgets_.size()) return false;
+    RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+    return PtInRect(&popup, point) != FALSE;
+}
+
+inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
+{
+    if (!ctx || popupWidgetIndex_ >= widgets_.size()) return;
+
+    const DesktopWidget& widget = widgets_[popupWidgetIndex_];
+    popupPageId_ = widget.gridCell.pageId;
+    std::vector<std::wstring> popupKeys = GetPopupItemKeys(widget);
+    popupRect_ = GetCollectionPopupRect(widget);
+    popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
+        GetCollectionPopupMaxScrollOffset(widget, popupRect_));
+
+    DrawD2DRoundedRectangle(ctx, popupRect_, 18.0f,
+        D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.92f),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.38f), 1.4f);
+
+    RECT titleRect = MakeRect(popupRect_.left + 22, popupRect_.top + 18,
+        popupRect_.right - 22, popupRect_.top + 44);
+    std::wstring title = widget.title.empty() ? L"集合" : widget.title;
+    DrawD2DText(ctx, title, titleRect, itemTextFormat_.Get(),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+
+    RECT content = GetCollectionPopupContentRect(popupRect_);
+    ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    for (size_t i = 0; i < popupKeys.size(); ++i)
+    {
+        RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
+        if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
+
+        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+        if (itemIndex == static_cast<size_t>(-1)) continue;
+
+        DesktopIcon icon(&items_[itemIndex], nullptr, this);
+        icon.Draw(ctx, itemRect, items_[itemIndex].selected ? 2 : 0);
+    }
+    ctx->PopAxisAlignedClip();
+}
+
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
 
 inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
@@ -261,18 +467,21 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
     // ── Widget chrome ────────────────────────────────────────
     for (auto& c : containers_)
     {
-        if (auto* wc = dynamic_cast<WidgetContainer*>(c.get()))
+        if (widgetAction_ != WidgetAction::None)
         {
-            if (widgetAction_ != WidgetAction::None)
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (wc)
             {
                 auto* wd = wc->GetWidgetData();
                 if (wd && mouseDownWidgetIndex_ < widgets_.size()
                     && wd == &widgets_[mouseDownWidgetIndex_])
                     continue;
             }
-            wc->DrawChrome(ctx, lastMousePoint_);
         }
+        c->DrawChrome(ctx, lastMousePoint_);
     }
+
+    DrawCollectionPopup(ctx);
 
     // ── Widget drag/resize preview ───────────────────────────
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
@@ -305,72 +514,11 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
         DrawD2DRoundedRectangle(ctx, previewBounds, radius, fill, border, 2.0f);
     }
 
-    // ── OO Drag indicator: handoff highlight or placement preview ─
-    if (draggingItems_ || externalDragActive_)
+    // ── OO Drag preview ──────────────────────────────────────
+    if ((draggingItems_ || externalDragActive_) && dragTargetContainer_
+        && dragTargetRegion_ != HitRegion::None)
     {
-        bool onDesktop = dragTargetContainer_
-            && dynamic_cast<DesktopGrid*>(dragTargetContainer_) != nullptr;
-
-        if (dragTargetRegion_ == HitRegion::Handoff && onDesktop && draggingItems_)
-        {
-            // Green handoff highlight — use existing HitTestItem for reliable detection
-            int hit = HitTestItem(dragCurrentPoint_);
-            if (hit >= 0 && !items_[hit].selected)
-            {
-                RECT iconRect = GetItemIconRect(items_[hit].bounds);
-                RECT hf = { iconRect.left - 4, iconRect.top - 2,
-                            iconRect.right + 4, iconRect.bottom + 4 };
-                if (PtInRect(&hf, dragCurrentPoint_))
-                {
-                    DrawD2DRoundedRectangle(ctx, items_[hit].bounds, 6.0f,
-                        D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
-                        D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
-                }
-            }
-        }
-        else if (onDesktop)
-        {
-            // Blue placement preview — same grid math as drop
-            POINT dragPoint = draggingItems_ ? dragCurrentPoint_ : externalDragPoint_;
-            GridCell targetCell = draggingItems_
-                ? FindBestDropCell(CellFromPoint(GetDragTargetPoint(dragPoint)))
-                : CellFromPoint(dragPoint);
-
-            if (!targetCell.pageId.empty())
-            {
-                if (draggingItems_)
-                {
-                    std::vector<PendingGridMove> moves = BuildSelectedMove(targetCell);
-                    for (const auto& move : moves)
-                    {
-                        RECT targetRect = GetGridRect(gridPages_, move.cell, items_[move.index].gridSpan);
-                        DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
-                            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
-                            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
-                    }
-                }
-                else
-                {
-                    extern inline RECT GetGridRect(const std::vector<GridPage>&, const GridCell&, GridSpan);
-                    extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
-                    int previewCount = std::max(1, static_cast<int>(externalDropFileCount_));
-                    const GridPage* targetPage = FindGridPage(gridPages_, targetCell.pageId);
-                    int cols = targetPage ? targetPage->columns : 1;
-                    int row = targetCell.row;
-                    int col = targetCell.column;
-                    for (int i = 0; i < previewCount; ++i)
-                    {
-                        GridCell previewCell{ targetCell.pageId, col, row };
-                        RECT targetRect = GetGridRect(gridPages_, previewCell, GridSpan{1, 1});
-                        DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
-                            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
-                            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);
-                        ++col;
-                        if (col >= cols) { col = 0; ++row; }
-                    }
-                }
-            }
-        }
+        dragTargetContainer_->DrawDropPreview(ctx, dragTargetSlot_, dragTargetRegion_);
     }
 
     // Draw dragged items at offset
@@ -379,18 +527,16 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
         int dx = dragCurrentPoint_.x - mouseDownPoint_.x;
         int dy = dragCurrentPoint_.y - mouseDownPoint_.y;
 
-        for (auto& ooItem : items_oo_)
+        for (auto* item : dragSourceItems_)
         {
-            auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
-            if (!icon) continue;
-            DesktopItem* di = icon->GetDesktopItem();
-            if (!di || !di->selected) continue;
-            if (IsRectEmptyRect(di->bounds)) continue;
+            if (!item) continue;
+            RECT bounds = item->GetBounds();
+            if (IsRectEmptyRect(bounds)) continue;
 
             RECT draggedBounds = MakeRect(
-                di->bounds.left + dx, di->bounds.top + dy,
-                di->bounds.right + dx, di->bounds.bottom + dy);
-            icon->Draw(ctx, draggedBounds, 3); // state=3 = dragged
+                bounds.left + dx, bounds.top + dy,
+                bounds.right + dx, bounds.bottom + dy);
+            item->Draw(ctx, draggedBounds, 3); // state=3 = dragged
         }
     }
 
@@ -401,17 +547,7 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
             D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
     }
 
-        // OO drop indicator — only for non-desktop containers
-        // (DesktopGrid placement preview is already rendered by the procedural path above)
-        if (draggingItems_ && dragTargetContainer_ && dragTargetRegion_ != HitRegion::None
-            && !dynamic_cast<DesktopGrid*>(dragTargetContainer_))
-        {
-            auto& slots = dragTargetContainer_->GetSlots();
-            if (dragTargetSlotIndex_ < slots.size())
-                slots[dragTargetSlotIndex_]->DrawDropIndicator(ctx, dragTargetRegion_);
-        }
-
-        DrawPageNavButtons(ctx);
+    DrawPageNavButtons(ctx);
 }
 
 inline void DesktopApp::GetNavButtonRects(RECT& outPrev, RECT& outNext) const
@@ -506,4 +642,3 @@ inline void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
     if (hasPrev) drawArrow(prevRect, L"\u25C0", dragging || hoverPrev, hoverPrev);
     if (hasNext) drawArrow(nextRect, L"\u25B6", dragging || hoverNext, hoverNext);
 }
-
