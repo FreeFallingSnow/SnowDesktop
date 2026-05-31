@@ -94,6 +94,7 @@ inline void DesktopApp::SetZoom(float value)
     for (auto& page : gridPages_)
         ApplyGapScaleToPage(page);
     LayoutItems();
+    RebuildContainersAndItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -106,6 +107,7 @@ inline void DesktopApp::AdjustZoom(float delta)
     for (auto& page : gridPages_)
         ApplyGapScaleToPage(page);
     LayoutItems();
+    RebuildContainersAndItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }

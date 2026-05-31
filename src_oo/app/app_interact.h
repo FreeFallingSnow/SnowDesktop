@@ -133,6 +133,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     mouseDown_ = true;
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
+    marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
     if (HandlePageNavClick(pt)) return;
@@ -291,6 +292,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             ClearSelection();
             widgets_[wi].selected = true;
             mouseDownWidgetIndex_ = wi;
+            marqueeWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -405,6 +407,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 return;
             }
             marqueeActive_ = false;
+            marqueeWidgetIndex_ = static_cast<size_t>(-1);
             if (dragSource_ == GetDesktopGrid())
             {
                 UpdateDragGroupOrigin();
@@ -717,14 +720,40 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             marqueeActive_ = true;
             marqueeRect_ = NormalizeRect(mouseDownPoint_, current);
 
-            for (auto& oo : items_oo_)
+            if (marqueeWidgetIndex_ < widgets_.size())
             {
-                auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
-                if (!icon) continue;
-                DesktopItem* di = icon->GetDesktopItem();
-                if (!di || IsItemInAnyWidget(*di) || IsRectEmptyRect(di->bounds)) continue;
-                RECT itemSelRect = GetItemSelectionRect(di->bounds, false);
-                di->selected = RectsIntersect(itemSelRect, marqueeRect_);
+                // Marquee inside a widget — select member items
+                WidgetContainer* wc = nullptr;
+                for (auto& c : containers_)
+                {
+                    wc = dynamic_cast<WidgetContainer*>(c.get());
+                    if (wc && wc->GetWidgetData() == &widgets_[marqueeWidgetIndex_]) break;
+                    wc = nullptr;
+                }
+                if (wc)
+                {
+                    auto& slots = wc->GetSlots();
+                    for (auto& slot : slots)
+                    {
+                        if (!slot) continue;
+                        RECT bounds = slot->GetBounds();
+                        bool intersect = RectsIntersect(bounds, marqueeRect_);
+                        if (auto* item = slot->GetItem())
+                            item->SetSelected(intersect);
+                    }
+                }
+            }
+            else
+            {
+                for (auto& oo : items_oo_)
+                {
+                    auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
+                    if (!icon) continue;
+                    DesktopItem* di = icon->GetDesktopItem();
+                    if (!di || IsItemInAnyWidget(*di) || IsRectEmptyRect(di->bounds)) continue;
+                    RECT itemSelRect = GetItemSelectionRect(di->bounds, false);
+                    di->selected = RectsIntersect(itemSelRect, marqueeRect_);
+                }
             }
         }
     }
@@ -772,6 +801,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     {
         mouseDown_ = false;
         marqueeActive_ = false;
+        marqueeWidgetIndex_ = static_cast<size_t>(-1);
         navHoverSide_ = 0;
         navAutoFlipDir_ = 0;
         mouseDownHit_ = nullptr;
@@ -871,6 +901,7 @@ cleanup:
     navAutoFlipDir_ = 0;
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
+    marqueeWidgetIndex_ = static_cast<size_t>(-1);
     ReleaseCapture();
 }
 
@@ -1433,7 +1464,39 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
             popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
             InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
         }
+    }
+
+    // Scroll widgets with overflow content
+    for (auto& c : containers_)
+    {
+        auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+        if (!wc || !wc->GetWidgetData()) continue;
+        RECT frame = wc->GetFrameRect();
+        if (!PtInRect(&frame, pt)) continue;
+
+        int delta = GET_WHEEL_DELTA_WPARAM(wp);
+        DesktopWidget* data = wc->GetWidgetData();
+
+        // FileCategories: horizontal scroll for tabs area
+        if (data->type == DesktopWidgetType::FileCategories)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(wc);
+            if (fc && fc->TryScrollTabs(pt, delta))
+            {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+        }
+
+        int maxScroll = wc->GetMaxScrollOffset();
+        if (maxScroll <= 0) continue;
+
+        data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
+        wc->InvalidateSlots();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     }
 }
 

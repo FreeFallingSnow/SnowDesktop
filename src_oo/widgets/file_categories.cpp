@@ -472,9 +472,21 @@ int FileCategories::GetItemWidth() const
     return std::max<int>(1, (content.right - content.left) / std::max(1, data_->gridSpan.columns));
 }
 
-bool FileCategories::SingleColumn() const
+int FileCategories::GetMaxScrollOffset() const
 {
-    return data_ && data_->listMode;
+    return FileCategoryMaxScrollOffset(const_cast<FileCategories*>(this));
+}
+
+int FileCategories::GetTotalContentHeight() const
+{
+    auto keys = CategoryKeys(app_, data_, ActiveCategoryId(app_, data_));
+    return FileCategoryContentHeight(const_cast<FileCategories*>(this), keys.size());
+}
+
+int FileCategories::GetVisibleContentHeight() const
+{
+    RECT content = FileCategoryContentRect(const_cast<FileCategories*>(this));
+    return std::max(1, (int)(content.bottom - content.top));
 }
 
 void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
@@ -645,8 +657,22 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             std::wstring label = FileCategoryLabel(categoryIds[i]) + L" " +
                 std::to_wstring(CategoryKeys(app_, data_, categoryIds[i]).size());
             RECT textRect = MakeRect(tab.left + 4, tab.top, tab.right - 4, tab.bottom);
+
+            ComPtr<IDWriteTextFormat> tabFmt;
+            if (app_->dwriteFactory_)
+            {
+                app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+                    DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL,
+                    DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &tabFmt);
+                if (tabFmt)
+                {
+                    tabFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    tabFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    tabFmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                }
+            }
             app_->DrawD2DText(context, label, textRect,
-                app_->itemTextFormat_ ? app_->itemTextFormat_.Get() : app_->listItemTextFormat_.Get(),
+                tabFmt ? tabFmt.Get() : app_->listItemTextFormat_.Get(),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.98f : 0.78f));
         }
         context->PopAxisAlignedClip();
@@ -683,59 +709,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             continue;
         }
 
-        bool hovered = PtInRect(&itemRect, app_->lastMousePoint_) != FALSE;
-        if (hovered && !di.selected)
-            app_->DrawD2DRoundedRectangle(context, itemRect, 6.0f,
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
-        if (di.selected)
-            app_->DrawD2DRoundedRectangle(context, itemRect, 6.0f,
-                D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.30f),
-                D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.48f));
-
-        int itemH = std::max<int>(1, itemRect.bottom - itemRect.top);
-        int iconSz = std::min(32, itemH - 4);
-        RECT iconRect = MakeRect(itemRect.left + 4, itemRect.top + (itemH - iconSz) / 2,
-            itemRect.left + 4 + iconSz, itemRect.top + (itemH + iconSz) / 2);
-
-        if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(di.iconBitmap))
-        {
-            context->DrawBitmap(bmp, app_->ToD2DRect(iconRect), 1.0f,
-                D2D1_INTERPOLATION_MODE_LINEAR);
-        }
-
-        RECT textRect = MakeRect(iconRect.right + 6, itemRect.top,
-            itemRect.right - 6, itemRect.bottom);
-        if (!di.name.empty())
-        {
-            ComPtr<IDWriteTextLayout> layout;
-            float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
-            float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
-            if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(di.name.c_str(),
-                static_cast<UINT32>(di.name.size()), app_->listItemTextFormat_.Get(),
-                tw, th, &layout)) && layout)
-            {
-                ComPtr<ID2D1SolidColorBrush> shadowBrush;
-                ComPtr<ID2D1SolidColorBrush> textBrush;
-                context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
-                context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &textBrush);
-                float tx = static_cast<float>(textRect.left);
-                float ty = static_cast<float>(textRect.top);
-                if (shadowBrush)
-                {
-                    const D2D1_POINT_2F offsets[] = {
-                        D2D1::Point2F(tx - 1.0f, ty), D2D1::Point2F(tx + 1.0f, ty),
-                        D2D1::Point2F(tx, ty - 1.0f), D2D1::Point2F(tx, ty + 1.0f),
-                    };
-                    for (const auto& offset : offsets)
-                        context->DrawTextLayout(offset, layout.Get(), shadowBrush.Get(),
-                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                }
-                if (textBrush)
-                    context->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(),
-                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            }
-        }
+        DrawListItem(context, itemRect, di.iconBitmap, di.name, di.selected);
     }
     context->PopAxisAlignedClip();
 }
@@ -782,6 +756,34 @@ std::wstring FileCategories::CategoryIdAtPoint(POINT pt) const
             return categories[i];
     }
     return L"";
+}
+
+bool FileCategories::IsPointInTabsRect(POINT pt) const
+{
+    RECT tabs = FileCategoryTabsRect(const_cast<FileCategories*>(this));
+    return !IsRectEmptyRect(tabs) && PtInRect(&tabs, pt) != FALSE;
+}
+
+bool FileCategories::TryScrollTabs(POINT pt, int delta)
+{
+    if (!data_ || !app_) return false;
+    RECT tabs = FileCategoryTabsRect(this);
+    if (IsRectEmptyRect(tabs) || !PtInRect(&tabs, pt)) return false;
+
+    auto categories = VisibleCategoryIds(app_, data_);
+    int tabCount = static_cast<int>(categories.size());
+    if (tabCount <= 0) return false;
+
+    constexpr int minTabWidth = 64;
+    int tabsWidth = tabs.right - tabs.left;
+    int equalWidth = std::max(1, tabsWidth / tabCount);
+    int tabWidth = std::max(minTabWidth, equalWidth);
+    int totalWidth = tabWidth * tabCount;
+    int maxScroll = std::max(0, totalWidth - tabsWidth);
+    if (maxScroll <= 0) return false;
+
+    data_->tabScrollOffset = std::clamp(data_->tabScrollOffset - delta / 2, 0, maxScroll);
+    return true;
 }
 
 std::vector<Item*> FileCategories::GetSelectedItems() const
