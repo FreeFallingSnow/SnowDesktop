@@ -286,7 +286,7 @@ private:
     void AddCollectionWidgetAt(POINT screenPoint);
     void AddFileCategoryWidgetAt(POINT screenPoint);
     void AddFolderMappingWidgetAt(POINT screenPoint);
-    void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan);
+    void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove = false);
     void EnumerateFolderMappingEntries(DesktopWidget& widget);
     void RefreshFolderMappingWidget(size_t widgetIndex);
     bool CollectFileCategoryWidget(size_t widgetIndex, bool persist);
@@ -397,7 +397,7 @@ private:
     size_t mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     bool draggingWidget_ = false;
     bool resizingWidget_ = false;
-    enum class WidgetAction { None, Move, Resize };
+    enum class WidgetAction { None, PendingMove, PendingResize, Move, Resize };
     WidgetAction widgetAction_ = WidgetAction::None;
     GridCell widgetDragOriginalCell_{};
     GridSpan widgetDragOriginalSpan_{};

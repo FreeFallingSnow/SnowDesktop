@@ -281,7 +281,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (wh == WidgetHit::ResizeHandle)
         {
             SelectWidgetOnly(wi);
-            widgetAction_ = WidgetAction::Resize;
+            widgetAction_ = WidgetAction::PendingResize;
             InvalidateDragStaticScene();
             widgetDragOriginalCell_ = widgets_[wi].gridCell;
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
@@ -296,7 +296,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::MoveHandle)
         {
             SelectWidgetOnly(wi);
-            widgetAction_ = WidgetAction::Move;
+            widgetAction_ = WidgetAction::PendingMove;
             InvalidateDragStaticScene();
             widgetDragOriginalCell_ = widgets_[wi].gridCell;
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
@@ -507,17 +507,17 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
     UpdateCollectionPopupDwell(current);
 
-    if (mouseDown_ && !dragSession_.IsActive() && widgetAction_ == WidgetAction::None
-        && mouseDownWidgetIndex_ < widgets_.size() && widgets_[mouseDownWidgetIndex_].selected
+    if (mouseDown_ && !dragSession_.IsActive()
+        && (widgetAction_ == WidgetAction::PendingMove || widgetAction_ == WidgetAction::PendingResize)
+        && mouseDownWidgetIndex_ < widgets_.size()
         && (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3))
     {
-        // First significant move: activate the action
-        if (mouseDownWidgetIndex_ < widgets_.size())
-        {
-            // Only set action based on hit type if not already set
-            // (action was set by OnLeftButtonDown, but we confirm it after threshold here)
-        }
+        if (widgetAction_ == WidgetAction::PendingMove)
+            widgetAction_ = WidgetAction::Move;
+        else if (widgetAction_ == WidgetAction::PendingResize)
+            widgetAction_ = WidgetAction::Resize;
+        InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
     // Widget resize preview
@@ -912,10 +912,11 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     // ── Widget action completion ────────────────────────────
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {
-        if (widgetAction_ == WidgetAction::Resize)
-            PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_);
-        else if (widgetAction_ == WidgetAction::Move)
-            PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_);
+        if (widgetAction_ == WidgetAction::Move)
+            PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, true);
+        else if (widgetAction_ == WidgetAction::Resize)
+            PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
+        // PendingMove/PendingResize: just cancel without displacement
         widgetAction_ = WidgetAction::None;
         InvalidateDragStaticScene();
         mouseDown_ = false;
