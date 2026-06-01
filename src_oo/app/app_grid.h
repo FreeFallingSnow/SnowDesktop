@@ -455,7 +455,7 @@ inline void DesktopApp::UpdateCutState()
                 {
                     wchar_t path[MAX_PATH]{};
                     if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
-                        clipCutPaths.insert(path);
+                        clipCutPaths.insert(ToUpperInvariant(path));
                 }
                 ReleaseStgMedium(&medDrop);
             }
@@ -469,8 +469,21 @@ inline void DesktopApp::UpdateCutState()
         wchar_t path[MAX_PATH]{};
         if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
         {
-            if (clipCutPaths.contains(path))
+            if (clipCutPaths.contains(ToUpperInvariant(path)))
                 item.isCut = true;
+        }
+    }
+
+    for (auto& widget : widgets_)
+    {
+        if (widget.type != DesktopWidgetType::FolderMapping)
+            continue;
+        for (auto& entry : widget.folderEntries)
+        {
+            entry.isCut = false;
+            if (!entry.fullPath.empty() &&
+                clipCutPaths.contains(ToUpperInvariant(entry.fullPath)))
+                entry.isCut = true;
         }
     }
 }
@@ -1132,16 +1145,18 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 
     LayoutItems();
     ApplyPendingPlacement();
-    SaveLayoutSlots();
     UpdateCutState();
 
-    // Prune widget itemKeys that no longer exist (file was deleted from outside)
+    // Prune desktop-backed widget itemKeys that no longer exist (file was deleted from outside).
+    // FolderMapping keys are mapped-folder paths, not desktop layout keys.
     std::unordered_set<std::wstring> allKeys;
     for (auto& item : items_)
         if (!item.layoutKey.empty())
             allKeys.insert(ToUpperInvariant(item.layoutKey));
     for (auto& w : widgets_)
     {
+        if (w.type == DesktopWidgetType::FolderMapping)
+            continue;
         auto it = std::remove_if(w.itemKeys.begin(), w.itemKeys.end(),
             [&](const std::wstring& key) {
                 return allKeys.count(ToUpperInvariant(key)) == 0;
@@ -1149,6 +1164,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         w.itemKeys.erase(it, w.itemKeys.end());
     }
 
+    SaveLayoutSlots();
     RebuildContainersAndItems();
     reloading_ = false;
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -1570,8 +1586,10 @@ inline GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
     const int maxCol = page->columns - 1;
     const int maxRow = page->rows - 1;
 
-    int dx = dragCurrentPoint_.x - mouseDownPoint_.x;
-    int dy = dragCurrentPoint_.y - mouseDownPoint_.y;
+    POINT current = dragSession_.CurrentPoint();
+    POINT mouseDown = dragSession_.MouseDownPoint();
+    int dx = current.x - mouseDown.x;
+    int dy = current.y - mouseDown.y;
     int primaryCol = 0, primaryRow = 0;
     if (std::abs(dx) >= std::abs(dy))
         primaryCol = (dx >= 0) ? 1 : -1;
@@ -1808,7 +1826,7 @@ inline void DesktopApp::DropSelectedItemsOnTarget(int targetIndex)
         reinterpret_cast<void**>(dropTarget.GetAddressOf()));
     if (FAILED(hr) || !dropTarget) return;
 
-    POINT screenPt = dragCurrentPoint_;
+    POINT screenPt = dragSession_.CurrentPoint();
     ClientToScreen(hwnd_, &screenPt);
     POINTL screenPtL{ screenPt.x, screenPt.y };
 
@@ -1841,6 +1859,8 @@ inline void DesktopApp::RemoveDesktopKeysFromWidgets(const std::vector<std::wstr
 
     for (auto& widget : widgets_)
     {
+        if (widget.type == DesktopWidgetType::FolderMapping)
+            continue;
         widget.itemKeys.erase(
             std::remove_if(widget.itemKeys.begin(), widget.itemKeys.end(),
                 [&](const std::wstring& existing) {
@@ -2517,6 +2537,31 @@ inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceLi
             }
         }
     };
+    auto removeDesktopItemsByKeys = [&](const std::vector<std::wstring>& keys) {
+        if (keys.empty()) return false;
+
+        std::unordered_set<std::wstring> normalizedKeys;
+        normalizedKeys.reserve(keys.size());
+        for (const auto& key : keys)
+            if (!key.empty())
+                normalizedKeys.insert(ToUpperInvariant(key));
+        if (normalizedKeys.empty()) return false;
+
+        size_t oldSize = items_.size();
+        items_.erase(
+            std::remove_if(items_.begin(), items_.end(),
+                [&](const DesktopItem& item) {
+                    return !item.layoutKey.empty() &&
+                        normalizedKeys.contains(ToUpperInvariant(item.layoutKey));
+                }),
+            items_.end());
+        if (items_.size() == oldSize) return false;
+
+        d2dIconCache_.clear();
+        if (GetDesktopGrid())
+            GetDesktopGrid()->InvalidateSlots();
+        return true;
+    };
 
     if (preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget)
     {
@@ -2535,7 +2580,10 @@ inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceLi
             preview.action);
         if (!operated) return false;
         if (preview.action == DropAction::Move)
+        {
             RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
+            removeDesktopItemsByKeys(sourceList.DesktopKeys());
+        }
 
         if (sourceList.hasOriginWidget &&
             sourceList.originWidgetType == DesktopWidgetType::FolderMapping)
@@ -2855,6 +2903,8 @@ inline void DesktopApp::RebuildContainersAndItems()
             items_oo_.push_back(std::move(widget));
         }
     }
+    RebindDragSourceAfterRebuild();
+    InvalidateDragStaticScene();
 }
 
 inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)

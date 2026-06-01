@@ -201,9 +201,31 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
     const std::vector<Item*>& sourceItems, Container* origin, int mods) const
 {
-    if (!slot) return L"释放：放置到此处";
-    return slot->GetDropHint(region, sourceItems);
-    (void)origin; (void)mods;
+    DropAction action = DropActionFromMods(mods, sourceItems.empty() ? DropAction::Copy : DropAction::Move);
+    auto actionText = [&]() -> std::wstring {
+        switch (action)
+        {
+        case DropAction::Copy:
+            return L"复制";
+        case DropAction::Link:
+            return L"创建快捷方式";
+        case DropAction::Move:
+        default:
+            return L"移动";
+        }
+    };
+
+    if (region == HitRegion::SortBefore || region == HitRegion::SortAfter)
+    {
+        if (origin == this && action == DropAction::Move)
+            return L"释放：重新排序";
+        return L"释放：" + actionText() + L"并插入到此处";
+    }
+    if (region == HitRegion::Empty)
+        return L"释放：" + actionText() + L"到此处";
+    if (slot)
+        return slot->GetDropHint(region, sourceItems);
+    return L"释放：" + actionText() + L"到此处";
 }
 
 void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)

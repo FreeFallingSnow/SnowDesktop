@@ -5,6 +5,7 @@
 #include "desktop.h"
 #include "widget.h"
 #include "drop_model.h"
+#include "drag_session.h"
 #include "utils.h"
 #include "types.h"
 #include "constants.h"
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -33,6 +35,22 @@
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
+
+class DragRenderCache
+{
+public:
+    void Reset();
+    bool Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize, std::uint64_t revision,
+        const std::function<void(ID2D1DeviceContext*)>& drawStatic);
+    void Draw(ID2D1DeviceContext* ctx) const;
+
+private:
+    ComPtr<ID2D1Bitmap1> bitmap_;
+    ComPtr<ID2D1DeviceContext> context_;
+    UINT width_ = 0;
+    UINT height_ = 0;
+    std::uint64_t revision_ = 0;
+};
 
 class DesktopApp : public IDropTarget, public IDropSource
 {
@@ -94,6 +112,9 @@ private:
     void DrawDynamicOverlays(ID2D1DeviceContext* ctx);
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
     void GetNavButtonRects(RECT& outPrev, RECT& outNext) const;
+    void InvalidateDragStaticScene();
+    void EndDragSession();
+    void RebindDragSourceAfterRebuild();
 
     // ── Data ────────────────────────────────────────────────
     void LoadDesktopItems();
@@ -122,6 +143,11 @@ private:
     void OnKeyDown(WPARAM key);
     void RefreshDragHintFromKeyboard();
     void InvokeSelectedShellVerb(const char* verb);
+    std::vector<std::wstring> GetSelectedFolderEntryPaths(size_t* firstWidgetIndex = nullptr) const;
+    size_t FindFolderMappingShortcutTarget() const;
+    bool CopyCutSelectedFolderEntries(bool cut);
+    bool DeleteSelectedFolderEntries();
+    bool PasteClipboardToFolderMapping(size_t widgetIndex);
     void MoveKeyboardSelection(WPARAM arrowKey);
     void OnTimer(WPARAM timerId);
     void UpdateCollectionPopupDwell(POINT point);
@@ -295,7 +321,6 @@ private:
     ComPtr<ID2D1DeviceContext> d2dContext_;
     // Per-frame brush cache (cleared at start of each RenderFrame)
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;   // color -> brush
-    void* brushCacheCtx_ = nullptr;  // reset cache if ctx changes
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
@@ -361,24 +386,10 @@ private:
     Item*  pendingCtrlToggleWidgetItem_ = nullptr;
 
     // Drag state
-    bool draggingItems_ = false;
-    // Drag background cache — avoids full re-render every frame during drag
-    ComPtr<ID2D1Bitmap1> dragBgCache_;
-    ComPtr<ID2D1DeviceContext> dragBgCacheCtx_;
-    bool dragBgCacheValid_ = false;
-    POINT dragCurrentPoint_{};
+    DragSession dragSession_;
+    DragRenderCache dragRenderCache_;
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
-    bool dragCopyMode_ = false;
-    bool dragLinkMode_ = false;
-
-    // OO drag state (Slot-based)
-    Container* dragSource_ = nullptr;
-    std::vector<Item*> dragSourceItems_;
-    DragSourceList dragSourceList_;
-    Container* dragTargetContainer_ = nullptr;
-    Slot* dragTargetSlot_ = nullptr;
-    HitRegion dragTargetRegion_ = HitRegion::None;
 
     // Widget drag / resize state
     size_t mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -398,7 +409,6 @@ private:
     bool selfDragReturned_ = false;
     std::vector<std::wstring> selfDragOutKeys_;
     bool externalDragActive_ = false;
-    POINT externalDragPoint_{};
     int externalDropFileCount_ = 0;
     bool dropTargetRegistered_ = false;
 

@@ -2,7 +2,72 @@
 // Inline implementations for DesktopApp — Graphics & Rendering.
 // This file is included by app_oo.h after the class definition.
 
+#include <cstring>
+
 // ── Graphics ─────────────────────────────────────────────────
+
+inline void DragRenderCache::Reset()
+{
+    bitmap_.Reset();
+    width_ = 0;
+    height_ = 0;
+    revision_ = 0;
+    if (context_)
+        context_->SetTarget(nullptr);
+}
+
+inline bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
+    std::uint64_t revision, const std::function<void(ID2D1DeviceContext*)>& drawStatic)
+{
+    if (!device || pixelSize.width == 0 || pixelSize.height == 0 || !drawStatic)
+        return false;
+
+    if (bitmap_ && width_ == pixelSize.width && height_ == pixelSize.height &&
+        revision_ == revision)
+        return true;
+
+    if (!context_)
+    {
+        HRESULT hr = device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context_);
+        if (FAILED(hr) || !context_)
+            return false;
+    }
+
+    bitmap_.Reset();
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    HRESULT hr = context_->CreateBitmap(pixelSize, nullptr, 0, &bp, &bitmap_);
+    if (FAILED(hr) || !bitmap_)
+        return false;
+
+    context_->SetTarget(bitmap_.Get());
+    context_->SetDpi(96.0f, 96.0f);
+    context_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    context_->BeginDraw();
+    context_->Clear(D2D1::ColorF(0, 0, 0, 0));
+    drawStatic(context_.Get());
+    hr = context_->EndDraw();
+    context_->SetTarget(nullptr);
+    if (FAILED(hr))
+    {
+        bitmap_.Reset();
+        return false;
+    }
+
+    width_ = pixelSize.width;
+    height_ = pixelSize.height;
+    revision_ = revision;
+    return true;
+}
+
+inline void DragRenderCache::Draw(ID2D1DeviceContext* ctx) const
+{
+    if (!ctx || !bitmap_) return;
+    D2D1_SIZE_F sz = bitmap_->GetSize();
+    ctx->DrawBitmap(bitmap_.Get(), D2D1::RectF(0, 0, sz.width, sz.height),
+        1.0f, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+}
 
 inline bool DesktopApp::InitGraphics()
 {
@@ -32,10 +97,6 @@ inline bool DesktopApp::InitGraphics()
     hr = d2dFactory_->CreateDevice(dxgiDevice.Get(), &d2dDevice_);
     if (FAILED(hr)) return false;
     hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext_);
-    if (FAILED(hr)) return false;
-
-    // Off-screen context for drag-bg-cache (pre-created, not on hot path)
-    hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dragBgCacheCtx_);
     if (FAILED(hr)) return false;
 
     // DComp — create from the D2D device for interop
@@ -160,6 +221,19 @@ inline D2D1_RECT_F DesktopApp::ToD2DRect(const RECT& r)
         static_cast<float>(r.right), static_cast<float>(r.bottom));
 }
 
+inline std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& c)
+{
+    std::uint32_t r = 0, g = 0, b = 0, a = 0;
+    std::memcpy(&r, &c.r, sizeof(r));
+    std::memcpy(&g, &c.g, sizeof(g));
+    std::memcpy(&b, &c.b, sizeof(b));
+    std::memcpy(&a, &c.a, sizeof(a));
+    return static_cast<std::uint64_t>(r) ^
+        (static_cast<std::uint64_t>(g) << 16) ^
+        (static_cast<std::uint64_t>(b) << 32) ^
+        (static_cast<std::uint64_t>(a) << 48);
+}
+
 inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
 {
     const int cellW = bounds.right - bounds.left;
@@ -205,18 +279,10 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT re
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
 
-    auto key = [](const D2D1_COLOR_F& c) -> std::uint64_t {
-        std::uint32_t r = *(const std::uint32_t*)&c.r;
-        std::uint32_t g = *(const std::uint32_t*)&c.g;
-        std::uint32_t b = *(const std::uint32_t*)&c.b;
-        std::uint32_t a = *(const std::uint32_t*)&c.a;
-        return ((std::uint64_t)r) ^ ((std::uint64_t)g << 16) ^ ((std::uint64_t)b << 32) ^ ((std::uint64_t)a << 48);
-    };
-
     D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(ToD2DRect(rect), radius, radius);
     if (fill.a > 0.0f)
     {
-        std::uint64_t k = key(fill);
+        std::uint64_t k = D2DColorBrushKey(fill);
         auto it = brushCache_.find(k);
         if (it == brushCache_.end())
         {
@@ -231,7 +297,7 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT re
     }
     if (stroke.a > 0.0f)
     {
-        std::uint64_t k = key(stroke) ^ 0x8000000080000000ULL;
+        std::uint64_t k = D2DColorBrushKey(stroke) ^ 0x8000000080000000ULL;
         auto it = brushCache_.find(k);
         if (it == brushCache_.end())
         {
@@ -251,17 +317,9 @@ inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rec
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
 
-    auto key = [](const D2D1_COLOR_F& c) -> std::uint64_t {
-        std::uint32_t r = *(const std::uint32_t*)&c.r;
-        std::uint32_t g = *(const std::uint32_t*)&c.g;
-        std::uint32_t b = *(const std::uint32_t*)&c.b;
-        std::uint32_t a = *(const std::uint32_t*)&c.a;
-        return ((std::uint64_t)r) ^ ((std::uint64_t)g << 16) ^ ((std::uint64_t)b << 32) ^ ((std::uint64_t)a << 48);
-    };
-
     if (fill.a > 0.0f)
     {
-        std::uint64_t k = key(fill);
+        std::uint64_t k = D2DColorBrushKey(fill);
         auto it = brushCache_.find(k);
         if (it == brushCache_.end())
         {
@@ -274,7 +332,7 @@ inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rec
     }
     if (stroke.a > 0.0f)
     {
-        std::uint64_t k = key(stroke) ^ 0x8000000080000000ULL;
+        std::uint64_t k = D2DColorBrushKey(stroke) ^ 0x8000000080000000ULL;
         auto it = brushCache_.find(k);
         if (it == brushCache_.end())
         {
@@ -531,7 +589,9 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
         if (!di || IsRectEmptyRect(di->bounds)) continue;
-        if (draggingItems_ && di->selected && !dragCopyMode_ && !dragLinkMode_) continue;
+        if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
+            dragSession_.IsMoveAction() && di->selected)
+            continue;
 
         const bool hovered = PtInRect(&di->bounds, lastMousePoint_) != FALSE;
         const bool selected = di->selected;
@@ -593,29 +653,34 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     }
 
     // Drop preview (blue bars / green Handoff box)
-    if ((draggingItems_ || externalDragActive_) && dragTargetContainer_
-        && dragTargetRegion_ != HitRegion::None)
+    Container* targetContainer = dragSession_.TargetContainer();
+    Slot* targetSlot = dragSession_.TargetSlot();
+    HitRegion targetRegion = dragSession_.TargetRegion();
+    if ((dragSession_.IsActive() || externalDragActive_) && targetContainer
+        && targetRegion != HitRegion::None)
     {
-        if (dragTargetRegion_ == HitRegion::Handoff && dragTargetSlot_)
+        if (targetRegion == HitRegion::Handoff && targetSlot)
         {
-            RECT bounds = dragTargetSlot_->GetBounds();
+            RECT bounds = targetSlot->GetBounds();
             DrawD2DRoundedRectangle(ctx, bounds, 6.0f,
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
         }
         else
         {
-            dragTargetContainer_->DrawDropPreview(ctx, dragTargetSlot_, dragTargetRegion_);
+            targetContainer->DrawDropPreview(ctx, targetSlot, targetRegion);
         }
     }
 
     // Dragged items at offset
-    if (draggingItems_)
+    if (dragSession_.IsActive() && !dragSession_.Items().empty())
     {
-        int dx = dragCurrentPoint_.x - mouseDownPoint_.x;
-        int dy = dragCurrentPoint_.y - mouseDownPoint_.y;
+        POINT current = dragSession_.CurrentPoint();
+        POINT mouseDown = dragSession_.MouseDownPoint();
+        int dx = current.x - mouseDown.x;
+        int dy = current.y - mouseDown.y;
 
-        for (auto* item : dragSourceItems_)
+        for (auto* item : dragSession_.Items())
         {
             if (!item) continue;
             RECT bounds = item->GetBounds();
@@ -641,57 +706,21 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
 {
     brushCache_.clear();
-    // ── Drag cache fast path ───────────────────────────────────
-    if (draggingItems_ && dragBgCacheValid_ && dragBgCache_)
-    {
-        D2D1_SIZE_F sz = dragBgCache_->GetSize();
-        ctx->DrawBitmap(dragBgCache_.Get(),
-            D2D1::RectF(0, 0, sz.width, sz.height), 1.0f,
-            D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-        DrawDynamicOverlays(ctx);
-        return;
-    }
-
-    // ── First drag frame: render static bg to off-screen bitmap ─
-    if (draggingItems_)
+    if (dragSession_.IsActive())
     {
         RECT client{};
         GetClientRect(hwnd_, &client);
         UINT w = std::max<LONG>(1, client.right - client.left);
         UINT h = std::max<LONG>(1, client.bottom - client.top);
 
-        if (!dragBgCache_ ||
-            dragBgCache_->GetPixelSize().width != w ||
-            dragBgCache_->GetPixelSize().height != h)
-        {
-            dragBgCache_.Reset();
-            D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
-                D2D1_BITMAP_OPTIONS_TARGET,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-            dragBgCacheCtx_->CreateBitmap(D2D1_SIZE_U{ w, h }, nullptr, 0, &bp, &dragBgCache_);
-        }
-
-        if (dragBgCache_)
-        {
-            dragBgCacheCtx_->SetTarget(dragBgCache_.Get());
-            dragBgCacheCtx_->BeginDraw();
-            dragBgCacheCtx_->Clear(D2D1::ColorF(0, 0, 0, 0));
-            dragBgCacheCtx_->SetDpi(96.0f, 96.0f);
-            dragBgCacheCtx_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-            DrawStaticBackground(dragBgCacheCtx_.Get());
-            HRESULT hr = dragBgCacheCtx_->EndDraw();
-            dragBgCacheCtx_->SetTarget(nullptr);
-            if (SUCCEEDED(hr))
-                dragBgCacheValid_ = true;
-        }
-
-        if (dragBgCacheValid_)
-        {
-            D2D1_SIZE_F sz = dragBgCache_->GetSize();
-            ctx->DrawBitmap(dragBgCache_.Get(),
-                D2D1::RectF(0, 0, sz.width, sz.height), 1.0f,
-                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-        }
+        bool cacheReady = dragRenderCache_.Ensure(d2dDevice_.Get(), D2D1_SIZE_U{ w, h },
+            dragSession_.StaticSceneRevision(),
+            [&](ID2D1DeviceContext* cacheCtx) { DrawStaticBackground(cacheCtx); });
+        brushCache_.clear();
+        if (cacheReady)
+            dragRenderCache_.Draw(ctx);
+        else
+            DrawStaticBackground(ctx);
         DrawDynamicOverlays(ctx);
         return;
     }
@@ -786,7 +815,7 @@ inline void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
         }
     };
 
-    bool dragging = draggingItems_;
+    bool dragging = dragSession_.IsActive() && !dragSession_.Items().empty();
     bool hoverPrev = (navHoverSide_ == -1);
     bool hoverNext = (navHoverSide_ == 1);
 

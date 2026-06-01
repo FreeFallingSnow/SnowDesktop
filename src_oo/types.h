@@ -193,6 +193,7 @@ struct FolderEntry
     HBITMAP iconBitmap = nullptr;
     SIZE iconBitmapSize{};
     bool selected = false;
+    bool isCut = false;
 
     FolderEntry() = default;
 
@@ -203,7 +204,8 @@ struct FolderEntry
           sysIconIndex(other.sysIconIndex),
           iconBitmap(nullptr),
           iconBitmapSize(other.iconBitmapSize),
-          selected(other.selected)
+          selected(other.selected),
+          isCut(other.isCut)
     {
         if (other.iconBitmap != nullptr)
         {
@@ -227,6 +229,7 @@ struct FolderEntry
             sysIconIndex = other.sysIconIndex;
             iconBitmapSize = other.iconBitmapSize;
             selected = other.selected;
+            isCut = other.isCut;
             if (other.iconBitmap != nullptr)
             {
                 iconBitmap = CopyFolderEntryBitmap(other.iconBitmap, iconBitmapSize);
