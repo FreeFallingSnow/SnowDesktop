@@ -138,12 +138,7 @@ inline bool DesktopApp::InitGraphics()
             faTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         }
 
-        HDC screenDc = GetDC(nullptr);
-        const int menuHeight = -MulDiv(
-            std::max(9, GetSystemMetrics(SM_CYMENUCHECK) * 11 / 20),
-            GetDeviceCaps(screenDc, LOGPIXELSY),
-            72);
-        ReleaseDC(nullptr, screenDc);
+        const int menuHeight = -std::max(9, GetSystemMetrics(SM_CYMENUCHECK) * 7 / 10);
         faMenuFont_ = CreateFontW(menuHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
