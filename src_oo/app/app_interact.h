@@ -3315,12 +3315,12 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
         AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
-        AppendMenuW(menu, MF_STRING | (widget.listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
     }
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, L"打开文件夹");
-        AppendMenuW(menu, MF_STRING | (widget.listMode ? MF_CHECKED : 0), kContextWidgetToggleListMode, L"列表显示");
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -3330,8 +3330,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
 
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
     SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
-    SetMenuItemIcon(menu, kContextWidgetToggleAutoCollect, L"");
-    SetMenuItemIcon(menu, kContextWidgetToggleListMode, L"");
+    SetMenuItemIcon(menu, kContextWidgetToggleListMode, widget.listMode ? L"" : L"");
     SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
     SetMenuItemIcon(menu, kContextWidgetRename, L"");
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
