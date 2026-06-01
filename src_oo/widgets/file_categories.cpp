@@ -602,7 +602,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         if (!data_->listMode)
         {
-            bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_);
+            RECT bodyRect = GetBodyRect();
+            bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
             DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
             icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0));
             continue;

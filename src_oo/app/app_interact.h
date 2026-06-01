@@ -47,6 +47,18 @@ inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
     return false;
 }
 
+inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
+{
+    for (auto& c : containers_)
+    {
+        auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+        if (!wc) continue;
+        if (wc->HitTestWidget(pt) != WidgetHit::None)
+            return true;
+    }
+    return false;
+}
+
 inline void DesktopApp::InvalidateDragStaticScene()
 {
     if (!dragSession_.IsActive()) return;
@@ -314,11 +326,12 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::Content)
         {
             Item* memberItem = nullptr;
+            RECT bodyRect = wc->GetBodyRect();
             auto& slots = wc->GetSlots();
             for (auto& slot : slots)
             {
                 RECT bounds = slot->GetBounds();
-                if (PtInRect(&bounds, pt))
+                if (PtInRect(&bounds, pt) && PtInRect(&bodyRect, pt))
                 {
                     memberItem = slot->GetItem();
                     break;
@@ -1621,12 +1634,19 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         auto* wc = dynamic_cast<WidgetContainer*>(it->get());
         if (!wc) continue;
 
+        WidgetHit wh = wc->HitTestWidget(pt);
+        if (wh == WidgetHit::MoveHandle || wh == WidgetHit::ResizeHandle)
+            continue;
+
+        RECT bodyRect = wc->GetBodyRect();
+
         auto& slots = wc->GetSlots();
         for (auto& slot : slots)
         {
             if (!slot) continue;
             RECT bounds = slot->GetBounds();
             if (!PtInRect(&bounds, pt)) continue;
+            if (!PtInRect(&bodyRect, pt)) continue;
 
             auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
             DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
@@ -1706,6 +1726,14 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
 
         ShowWidgetContextMenu(screenPt, hitWidget);
+        return;
+    }
+
+    if (IsPointOverWidgetChrome(pt))
+    {
+        ClearSelection();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        ShowBackgroundContextMenu(screenPt);
         return;
     }
 

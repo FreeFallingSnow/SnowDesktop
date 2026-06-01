@@ -588,7 +588,7 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
             dragSession_.IsMoveAction() && di->selected)
             continue;
 
-        const bool hovered = PtInRect(&di->bounds, lastMousePoint_) != FALSE;
+        const bool hovered = !IsPointOverWidgetChrome(lastMousePoint_) && PtInRect(&di->bounds, lastMousePoint_) != FALSE;
         const bool selected = di->selected;
         int state = selected ? 2 : (hovered ? 1 : 0);
         icon->Draw(ctx, di->bounds, state);

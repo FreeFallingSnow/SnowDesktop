@@ -154,6 +154,7 @@ private:
     bool TryOpenDwellCollectionPopup(DWORD now);
     void ClearSelection();
     bool IsItemInAnyWidget(const DesktopItem& item) const;
+    bool IsPointOverWidgetChrome(POINT pt) const;
     void ClearSelectionOutsideWidget(size_t widgetIndex);
     void ClearSelectionOutsideDesktop();
     void SelectOnly(int index);

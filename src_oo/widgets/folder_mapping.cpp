@@ -240,7 +240,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         if (!listMode)
         {
-            bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_);
+            RECT bodyRect = GetBodyRect();
+            bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
             FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
             icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0));
             continue;

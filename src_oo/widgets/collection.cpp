@@ -133,7 +133,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             DrawThumbnail(context, di, slotRect, di.selected);
         else
         {
-            bool hovered = PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected;
+            RECT bodyRect = GetBodyRect();
+            bool hovered = PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
             DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
             icon.Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0));
         }
