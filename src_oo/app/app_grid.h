@@ -3178,6 +3178,41 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
         for (const auto& p : gridPages_) { cell = { p.id, 0, 0 }; break; }
         if (cell.pageId.empty()) return;
     }
+
+    std::unordered_set<std::wstring> usedSlots;
+    for (const auto& w : widgets_)
+        MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
+    for (const auto& item : items_)
+    {
+        if (item.name.empty() || IsItemInAnyWidget(item)) continue;
+        MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+    }
+
+    GridCell freeCell;
+    const GridPage* cellPage = FindGridPage(gridPages_, cell.pageId);
+    bool needSearch = AreGridSlotsMarked(usedSlots, cell, span) ||
+        !IsGridAreaValid(cell, span);
+    if (!needSearch && cellPage)
+    {
+        if (cell.column + span.columns > cellPage->columns ||
+            cell.row + span.rows > cellPage->rows)
+            needSearch = true;
+    }
+    if (needSearch)
+    {
+        int startSlot = 0;
+        const GridPage* page = FindGridPage(gridPages_, cell.pageId);
+        if (page)
+            startSlot = cell.column * std::max(1, page->rows) + cell.row;
+        if (!TryFindFreeCell(span, usedSlots, freeCell, cell.pageId, startSlot))
+        {
+            if (!TryFindFreeCell(span, usedSlots, freeCell, cell.pageId, 0))
+                TryFindFreeCell(span, usedSlots, freeCell, L"", 0);
+        }
+        if (freeCell.pageId.empty()) return;
+        cell = freeCell;
+    }
+
     widget.gridCell = cell;
     widget.gridSpan = span;
     widget.showTitle = true;
@@ -3242,7 +3277,7 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
     RebuildContainersAndItems();
 }
 
-inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan)
+inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove)
 {
     if (widgetIndex >= widgets_.size()) return;
     const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
@@ -3263,7 +3298,7 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
         return; // overlaps another widget, reject
     }
 
-    // Collect items displaced by this placement
+    // Collect items displaced by this placement (at target location)
     std::vector<size_t> displaced;
     for (size_t i = 0; i < items_.size(); ++i)
     {
@@ -3276,46 +3311,107 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
         displaced.push_back(i);
     }
 
-    // Build occupied slot set (all widgets + non-displaced items)
+    // The widget's old cell
+    GridCell oldCell = widgets_[widgetIndex].gridCell;
+    GridSpan oldSpan = widgets_[widgetIndex].gridSpan;
+
+    // Build occupied slot set (all widgets except self + non-displaced items)
     std::unordered_set<std::wstring> usedSlots;
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         if (i == widgetIndex) continue;
         MarkGridArea(usedSlots, widgets_[i].gridCell, widgets_[i].gridSpan);
     }
+    // Mark the new target area as occupied
+    MarkGridArea(usedSlots, targetCell, targetSpan);
+
     for (size_t i = 0; i < items_.size(); ++i)
     {
         if (items_[i].name.empty()) continue;
         bool isDisplaced = std::find(displaced.begin(), displaced.end(), i) != displaced.end();
         if (!isDisplaced)
-            MarkGridArea(usedSlots, items_[i].gridCell, items_[i].gridSpan);
-    }
-    MarkGridArea(usedSlots, targetCell, targetSpan);
-
-    // Sort displaced items by grid order for deterministic placement
-    auto byGrid = [this](size_t a, size_t b) {
-        if (items_[a].gridCell.pageId != items_[b].gridCell.pageId)
-            return items_[a].gridCell.pageId < items_[b].gridCell.pageId;
-        int sa = SlotFromCell(gridPages_, items_[a].gridCell);
-        int sb = SlotFromCell(gridPages_, items_[b].gridCell);
-        return sa < sb;
-    };
-    std::sort(displaced.begin(), displaced.end(), byGrid);
-
-    // Apply widget placement
-    widgets_[widgetIndex].gridCell = targetCell;
-    widgets_[widgetIndex].gridSpan = targetSpan;
-
-    // Re-home displaced items
-    int searchStart = SlotFromCell(gridPages_, targetCell) + std::max(1, targetSpan.rows);
-    for (size_t idx : displaced)
-    {
-        GridCell freeCell;
-        if (TryFindFreeCell(items_[idx].gridSpan, usedSlots, freeCell, targetCell.pageId, searchStart))
         {
-            items_[idx].gridCell = freeCell;
-            items_[idx].slot = SlotFromCell(gridPages_, freeCell);
-            MarkGridArea(usedSlots, freeCell, items_[idx].gridSpan);
+            if (isMove)
+            {
+                // For move: also free items that overlap the old widget area,
+                // so displaced items can be placed there.
+                if (items_[i].gridCell.pageId == oldCell.pageId &&
+                    !(items_[i].gridCell.column + items_[i].gridSpan.columns <= oldCell.column) &&
+                    !(oldCell.column + oldSpan.columns <= items_[i].gridCell.column) &&
+                    !(items_[i].gridCell.row + items_[i].gridSpan.rows <= oldCell.row) &&
+                    !(oldCell.row + oldSpan.rows <= items_[i].gridCell.row))
+                    continue;
+            }
+            MarkGridArea(usedSlots, items_[i].gridCell, items_[i].gridSpan);
+        }
+    }
+
+    if (isMove)
+    {
+        // For move: displaced items go to the widget's old position area
+        // Free the old area in usedSlots so items can be placed there
+        // (it's already excluded since we skipped widgetIndex)
+        // Sort displaced by grid order
+        auto byGrid = [this](size_t a, size_t b) {
+            if (items_[a].gridCell.pageId != items_[b].gridCell.pageId)
+                return items_[a].gridCell.pageId < items_[b].gridCell.pageId;
+            int sa = SlotFromCell(gridPages_, items_[a].gridCell);
+            int sb = SlotFromCell(gridPages_, items_[b].gridCell);
+            return sa < sb;
+        };
+        std::sort(displaced.begin(), displaced.end(), byGrid);
+
+        // Apply widget placement
+        widgets_[widgetIndex].gridCell = targetCell;
+        widgets_[widgetIndex].gridSpan = targetSpan;
+
+        // Place displaced items into the old widget area first, then elsewhere
+        int oldAreaSlot = SlotFromCell(gridPages_, oldCell);
+        for (size_t idx : displaced)
+        {
+            GridCell freeCell;
+            if (TryFindFreeCell(items_[idx].gridSpan, usedSlots, freeCell, oldCell.pageId, oldAreaSlot))
+            {
+                items_[idx].gridCell = freeCell;
+                items_[idx].slot = SlotFromCell(gridPages_, freeCell);
+                MarkGridArea(usedSlots, freeCell, items_[idx].gridSpan);
+            }
+            else if (TryFindFreeCell(items_[idx].gridSpan, usedSlots, freeCell, targetCell.pageId, 0))
+            {
+                items_[idx].gridCell = freeCell;
+                items_[idx].slot = SlotFromCell(gridPages_, freeCell);
+                MarkGridArea(usedSlots, freeCell, items_[idx].gridSpan);
+            }
+        }
+    }
+    else
+    {
+        // For resize: push displaced items to new free cells (original behavior)
+        // Sort displaced by grid order for deterministic placement
+        auto byGrid = [this](size_t a, size_t b) {
+            if (items_[a].gridCell.pageId != items_[b].gridCell.pageId)
+                return items_[a].gridCell.pageId < items_[b].gridCell.pageId;
+            int sa = SlotFromCell(gridPages_, items_[a].gridCell);
+            int sb = SlotFromCell(gridPages_, items_[b].gridCell);
+            return sa < sb;
+        };
+        std::sort(displaced.begin(), displaced.end(), byGrid);
+
+        // Apply widget placement
+        widgets_[widgetIndex].gridCell = targetCell;
+        widgets_[widgetIndex].gridSpan = targetSpan;
+
+        // Re-home displaced items starting after target
+        int searchStart = SlotFromCell(gridPages_, targetCell) + std::max(1, targetSpan.rows);
+        for (size_t idx : displaced)
+        {
+            GridCell freeCell;
+            if (TryFindFreeCell(items_[idx].gridSpan, usedSlots, freeCell, targetCell.pageId, searchStart))
+            {
+                items_[idx].gridCell = freeCell;
+                items_[idx].slot = SlotFromCell(gridPages_, freeCell);
+                MarkGridArea(usedSlots, freeCell, items_[idx].gridSpan);
+            }
         }
     }
 

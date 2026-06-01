@@ -597,7 +597,7 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
     // Widget chrome
     for (auto& c : containers_)
     {
-        if (widgetAction_ != WidgetAction::None)
+        if (widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());
             if (wc)
@@ -618,7 +618,7 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
 inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 {
     // Widget drag/resize preview
-    if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
+    if ((widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize) && mouseDownWidgetIndex_ < widgets_.size())
     {
         GridCell cell = widgetPreviewCell_;
         GridSpan span = widgetPreviewSpan_;
