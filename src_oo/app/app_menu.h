@@ -635,3 +635,72 @@ inline bool DesktopApp::IsProtectedDesktopIcon(const DesktopItem& item) const
         clsid == kDesktopIconClsidControlPanel ||
         clsid == kDesktopIconClsidRecycleBin;
 }
+
+inline void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
+{
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHParseDisplayName(folderPath.c_str(), nullptr, &pidl, 0, nullptr)))
+        return;
+
+    IShellFolder* parentFolder = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    if (FAILED(SHBindToParent(pidl, IID_IShellFolder,
+        reinterpret_cast<void**>(&parentFolder), &child)))
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    IShellFolder* folder = nullptr;
+    HRESULT bindHr = parentFolder->BindToObject(child, nullptr, IID_IShellFolder, reinterpret_cast<void**>(&folder));
+    parentFolder->Release();
+    if (FAILED(bindHr) || folder == nullptr)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    ComPtr<IContextMenu> contextMenu;
+    HRESULT hr = folder->CreateViewObject(hwnd_, IID_IContextMenu, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+    folder->Release();
+    if (FAILED(hr) || !contextMenu)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) { ILFree(pidl); return; }
+
+    constexpr UINT kFirstCmd = 1;
+    constexpr UINT kLastCmd = 0x7FFF;
+    contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd, CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME);
+
+    contextMenu.As(&activeContextMenu2_);
+    contextMenu.As(&activeContextMenu3_);
+
+    SetForegroundWindow(hwnd_);
+    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+
+    activeContextMenu2_.Reset();
+    activeContextMenu3_.Reset();
+
+    if (command != 0)
+    {
+        CMINVOKECOMMANDINFOEX invoke{};
+        invoke.cbSize = sizeof(invoke);
+        invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
+        invoke.hwnd = hwnd_;
+        invoke.lpVerb = MAKEINTRESOURCEA(command - kFirstCmd);
+        invoke.lpVerbW = MAKEINTRESOURCEW(command - kFirstCmd);
+        invoke.nShow = SW_SHOWNORMAL;
+        invoke.ptInvoke = screenPoint;
+        contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        ReloadItems();
+    }
+
+    DestroyMenu(menu);
+    RestoreDesktopWindowLayer();
+    ILFree(pidl);
+}

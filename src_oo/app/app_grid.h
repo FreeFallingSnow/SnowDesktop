@@ -419,6 +419,135 @@ inline void DesktopApp::SortIconsByType()
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
+{
+    if (widgetIndex >= widgets_.size()) return;
+    DesktopWidget& w = widgets_[widgetIndex];
+
+    if (w.type == DesktopWidgetType::FolderMapping)
+    {
+        std::sort(w.folderEntries.begin(), w.folderEntries.end(),
+            [mode](const FolderEntry& a, const FolderEntry& b) {
+                if (a.isDirectory != b.isDirectory) return a.isDirectory;
+                int cmp = 0;
+                if (mode == 0) cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+                else if (mode == 1)
+                {
+                    std::wstring extA = PathFindExtensionW(a.name.c_str());
+                    std::wstring extB = PathFindExtensionW(b.name.c_str());
+                    cmp = _wcsicmp(extA.c_str(), extB.c_str());
+                    if (cmp == 0) cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+                }
+                else if (mode == 2)
+                {
+                    WIN32_FILE_ATTRIBUTE_DATA da{}, db{};
+                    if (GetFileAttributesExW(a.fullPath.c_str(), GetFileExInfoStandard, &da) &&
+                        GetFileAttributesExW(b.fullPath.c_str(), GetFileExInfoStandard, &db))
+                    {
+                        int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
+                        if (timeCmp != 0) return timeCmp < 0;
+                    }
+                    cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+                }
+                return cmp < 0;
+            });
+        w.itemKeys.clear();
+        w.itemKeys.reserve(w.folderEntries.size());
+        for (const auto& entry : w.folderEntries)
+            w.itemKeys.push_back(entry.fullPath);
+        RefreshFolderMappingWidget(widgetIndex);
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+    else if (w.type == DesktopWidgetType::FileCategories)
+    {
+        std::vector<std::wstring> keys;
+        std::unordered_set<std::wstring> seen;
+        for (const auto& rawKey : w.itemKeys)
+        {
+            std::wstring nk = ToUpperInvariant(rawKey);
+            if (seen.insert(nk).second)
+                keys.push_back(rawKey);
+        }
+
+        std::sort(keys.begin(), keys.end(),
+            [this, mode](const std::wstring& ka, const std::wstring& kb) {
+                size_t ia = FindItemIndexByKey(ka);
+                size_t ib = FindItemIndexByKey(kb);
+                if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
+                int cmp = 0;
+                if (mode == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                else if (mode == 1)
+                {
+                    cmp = _wcsicmp(items_[ia].typeName.c_str(), items_[ib].typeName.c_str());
+                    if (cmp == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                }
+                else if (mode == 2)
+                {
+                    WIN32_FILE_ATTRIBUTE_DATA da{}, db{};
+                    if (GetFileAttributesExW(items_[ia].parsingName.c_str(), GetFileExInfoStandard, &da) &&
+                        GetFileAttributesExW(items_[ib].parsingName.c_str(), GetFileExInfoStandard, &db))
+                    {
+                        int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
+                        if (timeCmp != 0) return timeCmp < 0;
+                    }
+                    cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                }
+                return cmp < 0;
+            });
+
+        w.itemKeys = std::move(keys);
+        LayoutItems();
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+    else if (w.type == DesktopWidgetType::Collection)
+    {
+        std::vector<std::wstring> keys;
+        std::unordered_set<std::wstring> seen;
+        for (const auto& rawKey : w.itemKeys)
+        {
+            std::wstring nk = ToUpperInvariant(rawKey);
+            if (seen.insert(nk).second)
+                keys.push_back(rawKey);
+        }
+
+        std::sort(keys.begin(), keys.end(),
+            [this, mode](const std::wstring& ka, const std::wstring& kb) {
+                size_t ia = FindItemIndexByKey(ka);
+                size_t ib = FindItemIndexByKey(kb);
+                if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
+                int cmp = 0;
+                if (mode == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                else if (mode == 1)
+                {
+                    cmp = _wcsicmp(items_[ia].typeName.c_str(), items_[ib].typeName.c_str());
+                    if (cmp == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                }
+                else if (mode == 2)
+                {
+                    WIN32_FILE_ATTRIBUTE_DATA da{}, db{};
+                    if (GetFileAttributesExW(items_[ia].parsingName.c_str(), GetFileExInfoStandard, &da) &&
+                        GetFileAttributesExW(items_[ib].parsingName.c_str(), GetFileExInfoStandard, &db))
+                    {
+                        int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
+                        if (timeCmp != 0) return timeCmp < 0;
+                    }
+                    cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                }
+                return cmp < 0;
+            });
+
+        w.itemKeys = std::move(keys);
+        LayoutItems();
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+}
+
 inline void DesktopApp::UpdateCutState()
 {
     std::unordered_set<std::wstring> clipCutPaths;
