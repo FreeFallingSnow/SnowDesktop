@@ -116,7 +116,7 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
     // Handoff: delegate to shell via DropSelectedItemsOnTarget
     if (region == HitRegion::Handoff)
     {
-        int hit = app_->HitTestItem(app_->dragCurrentPoint_);
+        int hit = app_->HitTestItem(app_->dragSession_.CurrentPoint());
         if (hit >= 0 && !(*items_)[hit].selected)
             app_->DropSelectedItemsOnTarget(hit);
         app_->SaveLayoutSlots();
@@ -127,7 +127,7 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
 
     DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
     DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
-        app_->dragCurrentPoint_);
+        app_->dragSession_.CurrentPoint());
     app_->ExecuteDropPipeline(sourceList, preview);
 }
 
@@ -181,7 +181,7 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     bool altDown  = (mods & MK_ALT) != 0;
     bool shiftDown = (mods & MK_SHIFT) != 0;
 
-    POINT dragPoint = origin ? app_->dragCurrentPoint_ : app_->externalDragPoint_;
+    POINT dragPoint = app_->dragSession_.CurrentPoint();
 
     if (region == HitRegion::Handoff)
     {
@@ -223,14 +223,14 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
     // Handoff now unified in RenderFrame — skip here
     if (region == HitRegion::Handoff) return;
 
-    POINT dragPoint = app_->draggingItems_ ? app_->dragCurrentPoint_ : app_->externalDragPoint_;
+    const bool hasItemDrag = app_->dragSession_.IsActive() && !app_->dragSession_.Items().empty();
+    POINT dragPoint = app_->dragSession_.CurrentPoint();
 
-    if (app_->draggingItems_)
+    if (hasItemDrag)
     {
-        int mods = 0;
-        if (app_->dragCopyMode_) mods |= MK_CONTROL;
-        if (app_->dragLinkMode_) mods |= MK_ALT;
-        DropPreviewList preview = app_->BuildDropPreviewList(app_->dragSourceList_, this, slot, region, mods, dragPoint);
+        int mods = DropActionToMods(app_->dragSession_.Action());
+        DropPreviewList preview = app_->BuildDropPreviewList(app_->dragSession_.SourceList(),
+            this, slot, region, mods, dragPoint);
         app_->DrawDesktopDropPreviewList(ctx, preview);
     }
     else

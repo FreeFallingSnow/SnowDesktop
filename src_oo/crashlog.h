@@ -5,6 +5,8 @@
 
 inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
 {
+    if (!info || !info->ExceptionRecord) return EXCEPTION_CONTINUE_SEARCH;
+
     wchar_t path[MAX_PATH];
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::wstring dir(path);
@@ -22,20 +24,30 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
     DWORD w;
     WriteFile(f, buf, (DWORD)(wcslen(buf) * 2), &w, nullptr);
 
-    // Map crash address to module+offset
-    HMODULE exe = GetModuleHandleW(nullptr);
+    // Map crash address to its owning module, not always the main executable.
+    HMODULE crashModule = nullptr;
     MODULEINFO mi{};
-    if (exe && GetModuleInformation(GetCurrentProcess(), exe, &mi, sizeof(mi)))
+    if (GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(info->ExceptionRecord->ExceptionAddress), &crashModule) &&
+        crashModule && GetModuleInformation(GetCurrentProcess(), crashModule, &mi, sizeof(mi)))
     {
         DWORD64 base = (DWORD64)mi.lpBaseOfDll;
         DWORD64 offset = addr - base;
-        wsprintfW(buf, L"  Module base=0x%016I64X  offset=%I64u (0x%IX)\r\n", base, offset, (DWORD)offset);
+        wchar_t modulePath[MAX_PATH]{};
+        GetModuleFileNameW(crashModule, modulePath, MAX_PATH);
+        wsprintfW(buf, L"  Module=%s  base=0x%016I64X  offset=%I64u (0x%016I64X)\r\n",
+            modulePath, base, offset, offset);
         WriteFile(f, buf, (DWORD)(wcslen(buf) * 2), &w, nullptr);
     }
 
     // Dump register context
     CONTEXT* ctx = info->ContextRecord;
+#if defined(_M_X64)
     wsprintfW(buf, L"  RIP=%016I64X RSP=%016I64X RBP=%016I64X\r\n", ctx->Rip, ctx->Rsp, ctx->Rbp);
+#else
+    wsprintfW(buf, L"  EIP=%08lX ESP=%08lX EBP=%08lX\r\n", ctx->Eip, ctx->Esp, ctx->Ebp);
+#endif
     WriteFile(f, buf, (DWORD)(wcslen(buf) * 2), &w, nullptr);
 
     // Mini stack: simple RtlCaptureStackBackTrace

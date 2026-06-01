@@ -487,7 +487,7 @@ void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Conta
     if (!app_ || !data_) return;
     DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
     DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
-        app_->dragCurrentPoint_);
+        app_->dragSession_.CurrentPoint());
     app_->ExecuteDropPipeline(sourceList, preview);
 }
 

@@ -47,6 +47,59 @@ inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
     return false;
 }
 
+inline void DesktopApp::InvalidateDragStaticScene()
+{
+    if (!dragSession_.IsActive()) return;
+    dragSession_.InvalidateStaticScene();
+    dragRenderCache_.Reset();
+}
+
+inline void DesktopApp::EndDragSession()
+{
+    dragSession_.End();
+    dragRenderCache_.Reset();
+}
+
+inline void DesktopApp::RebindDragSourceAfterRebuild()
+{
+    if (!dragSession_.IsActive() || dragSession_.Items().empty()) return;
+
+    Container* source = nullptr;
+    const DragSourceList& oldSourceList = dragSession_.SourceList();
+    if (oldSourceList.hasOriginWidget)
+    {
+        for (auto& c : containers_)
+        {
+            auto* widget = dynamic_cast<WidgetContainer*>(c.get());
+            DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+            if (data && data->id == oldSourceList.originWidgetId)
+            {
+                source = widget;
+                break;
+            }
+        }
+    }
+    else
+    {
+        source = GetDesktopGrid();
+    }
+
+    if (!source)
+    {
+        EndDragSession();
+        return;
+    }
+
+    std::vector<Item*> reboundItems = source->GetSelectedItems();
+    if (reboundItems.empty())
+    {
+        EndDragSession();
+        return;
+    }
+    DragSourceList reboundList = BuildDragSourceList(reboundItems, source);
+    dragSession_.RebindSource(source, std::move(reboundItems), std::move(reboundList));
+}
+
 inline void DesktopApp::ClearSelection()
 {
     for (auto& item : items_)
@@ -229,6 +282,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             SelectWidgetOnly(wi);
             widgetAction_ = WidgetAction::Resize;
+            InvalidateDragStaticScene();
             widgetDragOriginalCell_ = widgets_[wi].gridCell;
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
             widgetPreviewCell_ = widgetDragOriginalCell_;
@@ -243,6 +297,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             SelectWidgetOnly(wi);
             widgetAction_ = WidgetAction::Move;
+            InvalidateDragStaticScene();
             widgetDragOriginalCell_ = widgets_[wi].gridCell;
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
             widgetPreviewCell_ = widgetDragOriginalCell_;
@@ -402,32 +457,30 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
 inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 {
+    (void)wp;
     POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
 
-    if (mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected() && !draggingItems_)
+    if (mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected() && !dragSession_.IsActive())
     {
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
-            draggingItems_ = true;
-            dragSource_ = mouseDownHit_->GetContainer();
-            dragSourceItems_ = dragSource_ ? dragSource_->GetSelectedItems() : std::vector<Item*>{};
-            dragSourceList_ = BuildDragSourceList(dragSourceItems_, dragSource_);
-            if (dragSourceItems_.empty())
+            Container* source = mouseDownHit_->GetContainer();
+            std::vector<Item*> sourceItems = source ? source->GetSelectedItems() : std::vector<Item*>{};
+            DragSourceList sourceList = BuildDragSourceList(sourceItems, source);
+            if (sourceItems.empty())
             {
-                draggingItems_ = false;
-                dragSource_ = nullptr;
-                dragSourceList_ = {};
                 return;
             }
+            dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
+                mouseDownPoint_, current);
             pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
             pendingCtrlToggleWidgetItem_ = nullptr;
-            dragBgCacheValid_ = false;
             marqueeActive_ = false;
             marqueeWidgetIndex_ = static_cast<size_t>(-1);
-            if (dragSource_ == GetDesktopGrid())
+            if (source == GetDesktopGrid())
             {
                 UpdateDragGroupOrigin();
             }
@@ -435,7 +488,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             {
                 RECT groupBounds{};
                 bool hasBounds = false;
-                for (auto* item : dragSourceItems_)
+                for (auto* item : dragSession_.Items())
                 {
                     if (!item) continue;
                     RECT bounds = item->GetBounds();
@@ -449,13 +502,12 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     dragGroupOriginY_ = groupBounds.top;
                 }
             }
-            dragCurrentPoint_ = current;
         }
     }
 
     UpdateCollectionPopupDwell(current);
 
-    if (mouseDown_ && !draggingItems_ && widgetAction_ == WidgetAction::None
+    if (mouseDown_ && !dragSession_.IsActive() && widgetAction_ == WidgetAction::None
         && mouseDownWidgetIndex_ < widgets_.size() && widgets_[mouseDownWidgetIndex_].selected
         && (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3))
@@ -463,7 +515,6 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         // First significant move: activate the action
         if (mouseDownWidgetIndex_ < widgets_.size())
         {
-            dragCurrentPoint_ = current;
             // Only set action based on hit type if not already set
             // (action was set by OnLeftButtonDown, but we confirm it after threshold here)
         }
@@ -473,8 +524,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     if (widgetAction_ == WidgetAction::Resize && mouseDownWidgetIndex_ < widgets_.size())
     {
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
-        const auto& wp = widgets_[mouseDownWidgetIndex_];
-        const GridPage* page = FindGridPage(gridPages_, wp.gridCell.pageId);
+        const auto& widget = widgets_[mouseDownWidgetIndex_];
+        const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (page)
         {
             int stepX = std::max(1, page->cellWidth + page->gapX);
@@ -502,7 +553,6 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     {
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
-        const auto& wp = widgets_[mouseDownWidgetIndex_];
         POINT adjusted = {
             dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
             dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
@@ -523,11 +573,14 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         return;
     }
 
-    if (draggingItems_)
+    if (dragSession_.IsActive() && !dragSession_.Items().empty())
     {
-        dragCurrentPoint_ = current;
-        dragCopyMode_ = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        dragLinkMode_ = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+        dragSession_.UpdatePoint(current);
+        int currentMods = 0;
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
+        if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
+        dragSession_.UpdateActionFromMods(currentMods);
 
         POINT screenPt = current;
         ClientToScreen(hwnd_, &screenPt);
@@ -535,21 +588,17 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
         if (overExternal)
         {
-            DropPayload payload = DropPayload::From(dragSourceItems_);
-            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSourceItems_);
+            DropPayload payload = DropPayload::From(dragSession_.Items());
+            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {
-                auto* sourceWidget = dynamic_cast<WidgetContainer*>(dragSource_);
+                auto* sourceWidget = dynamic_cast<WidgetContainer*>(dragSession_.Source());
                 DesktopWidget* sourceWidgetData = sourceWidget ? sourceWidget->GetWidgetData() : nullptr;
 
                 HideDragHintWindow();
                 ReleaseCapture();
                 mouseDown_ = false;
                 mouseDownHit_ = nullptr;
-                draggingItems_ = false;
-                dragBgCacheValid_ = false;
-                dragCopyMode_ = false;
-                dragLinkMode_ = false;
 
                 selfDragActive_ = true;
                 selfDragReturned_ = false;
@@ -563,7 +612,6 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 DWORD oleEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
                 HRESULT hr = DoDragDrop(dataObj.Get(), static_cast<IDropSource*>(this), oleEffect, &oleEffect);
                 selfDragActive_ = false;
-                draggingItems_ = false;
 
                 if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE
                     && !selfDragReturned_ && payload.hasDesktopIcons)
@@ -604,16 +652,17 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 if (!selfDragReturned_)
                 {
                     ClearSelection();
+                    EndDragSession();
                     ReloadItems();
                 }
                 else
                 {
                     SaveLayoutSlots();
                     ClearSelection();
+                    EndDragSession();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }
                 selfDragOutKeys_.clear();
-                dragSourceList_ = {};
                 return;
             }
         }
@@ -645,7 +694,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                         ApplyPageMapping();
                         MigrateSelectedItemsToLastMonitorPage();
                         LayoutItems();
-                        dragBgCacheValid_ = false;
+                        InvalidateDragStaticScene();
                         UpdateDragGroupOrigin();
                         SaveLayoutSlots();
                         navAutoFlipTick_ = now;
@@ -660,9 +709,9 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         }
 
         // OO hit testing: iterate all containers in reverse (topmost first)
-        dragTargetContainer_ = nullptr;
-        dragTargetSlot_ = nullptr;
-        dragTargetRegion_ = HitRegion::None;
+        Container* targetContainer = nullptr;
+        Slot* targetSlot = nullptr;
+        HitRegion targetRegion = HitRegion::None;
         popupDragTargetSlot_.reset();
 
         if (popupWidgetIndex_ < widgets_.size())
@@ -738,14 +787,14 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
                     if (handoffItem)
                         popupDragTargetSlot_->SetItem(handoffItem);
-                    dragTargetContainer_ = popupContainer;
-                    dragTargetSlot_ = popupDragTargetSlot_.get();
-                    dragTargetRegion_ = region;
+                    targetContainer = popupContainer;
+                    targetSlot = popupDragTargetSlot_.get();
+                    targetRegion = region;
                 }
             }
         }
 
-        if (!dragTargetContainer_)
+        if (!targetContainer)
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
@@ -753,22 +802,19 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 HitRegion region = (*it)->HitTestDrag(current, slot);
                 if (region != HitRegion::None)
                 {
-                    dragTargetContainer_ = it->get();
-                    dragTargetSlot_ = slot;
-                    dragTargetRegion_ = region;
+                    targetContainer = it->get();
+                    targetSlot = slot;
+                    targetRegion = region;
                     break;
                 }
             }
         }
-        int mods = 0;
-        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
-        if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
+        dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 
         std::wstring hint;
-        if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
-            hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_,
-                dragSourceItems_, dragSource_, mods);
+        if (targetContainer && targetRegion != HitRegion::None)
+            hint = targetContainer->GetDragHint(targetSlot, targetRegion,
+                dragSession_.Items(), dragSession_.Source(), currentMods);
 
         ShowDragHintWindow(current, hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -871,6 +917,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         else if (widgetAction_ == WidgetAction::Move)
             PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_);
         widgetAction_ = WidgetAction::None;
+        InvalidateDragStaticScene();
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -879,7 +926,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         return;
     }
 
-    if (!draggingItems_)
+    if (!dragSession_.IsActive())
     {
         if (pendingCtrlToggleDesktopIndex_ < items_.size())
             items_[pendingCtrlToggleDesktopIndex_].selected = false;
@@ -891,8 +938,6 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         }
         mouseDown_ = false;
         marqueeActive_ = false;
-        dragBgCache_.Reset();
-        dragBgCacheValid_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
         navHoverSide_ = 0;
         navAutoFlipDir_ = 0;
@@ -903,7 +948,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         return;
     }
 
-    if (!dragTargetContainer_ || dragTargetRegion_ == HitRegion::None)
+    if (!dragSession_.TargetContainer() || dragSession_.TargetRegion() == HitRegion::None)
     {
         goto cleanup;
     }
@@ -914,11 +959,11 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
         if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
 
-        if (dragTargetRegion_ == HitRegion::Handoff && dragTargetSlot_
-            && dragTargetSlot_->GetItem())
+        if (dragSession_.TargetRegion() == HitRegion::Handoff && dragSession_.TargetSlot()
+            && dragSession_.TargetSlot()->GetItem())
         {
-            Item* targetItem = dragTargetSlot_->GetItem();
-            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSourceItems_);
+            Item* targetItem = dragSession_.TargetSlot()->GetItem();
+            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {
                 ComPtr<IDropTarget> dropTarget;
@@ -944,7 +989,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
                 if (dropTarget)
                 {
-                    POINT screen = dragCurrentPoint_;
+                    POINT screen = dragSession_.CurrentPoint();
                     ClientToScreen(hwnd_, &screen);
                     POINTL spl{ screen.x, screen.y };
                     DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
@@ -961,16 +1006,19 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             }
             SaveLayoutSlots();
             ClearSelection();
+            EndDragSession();
             ReloadItems();
             goto cleanup;
         }
 
-        bool needsReload = dragTargetContainer_->NeedsShellReloadAfterDrop();
-        dragTargetContainer_->OnItemsDropped(dragSourceItems_, dragSource_,
-            dragTargetSlot_, dragTargetRegion_, mods);
+        Container* targetContainer = dragSession_.TargetContainer();
+        bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
+        targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
+            dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
 
         SaveLayoutSlots();
         ClearSelection();
+        EndDragSession();
         RebuildContainersAndItems();
         if (needsReload)
             ReloadItems();
@@ -979,19 +1027,9 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     }
 
 cleanup:
-    draggingItems_ = false;
-    dragCopyMode_ = false;
-    dragLinkMode_ = false;
-    dragSource_ = nullptr;
-    dragSourceItems_.clear();
-    dragSourceList_ = {};
+    EndDragSession();
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
-    dragTargetContainer_ = nullptr;
-    dragTargetSlot_ = nullptr;
-    dragTargetRegion_ = HitRegion::None;
-    dragBgCache_.Reset();
-    dragBgCacheValid_ = false;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
@@ -1002,6 +1040,203 @@ cleanup:
     mouseDownHit_ = nullptr;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     ReleaseCapture();
+}
+
+inline std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t* firstWidgetIndex) const
+{
+    if (firstWidgetIndex)
+        *firstWidgetIndex = static_cast<size_t>(-1);
+
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const auto& widget = widgets_[i];
+        if (widget.type != DesktopWidgetType::FolderMapping)
+            continue;
+
+        std::vector<std::wstring> paths;
+        for (const auto& entry : widget.folderEntries)
+            if (entry.selected && !entry.fullPath.empty())
+                paths.push_back(entry.fullPath);
+
+        if (!paths.empty())
+        {
+            if (firstWidgetIndex)
+                *firstWidgetIndex = i;
+            return paths;
+        }
+    }
+
+    return {};
+}
+
+inline size_t DesktopApp::FindFolderMappingShortcutTarget() const
+{
+    size_t selectedEntryWidget = static_cast<size_t>(-1);
+    (void)GetSelectedFolderEntryPaths(&selectedEntryWidget);
+    if (selectedEntryWidget < widgets_.size())
+        return selectedEntryWidget;
+
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const auto& widget = widgets_[i];
+        if (widget.type != DesktopWidgetType::FolderMapping || widget.sourceFolderPath.empty())
+            continue;
+        if (PtInRect(&widget.bounds, lastMousePoint_))
+            return i;
+    }
+
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const auto& widget = widgets_[i];
+        if (widget.type == DesktopWidgetType::FolderMapping &&
+            widget.selected && !widget.sourceFolderPath.empty())
+            return i;
+    }
+
+    return static_cast<size_t>(-1);
+}
+
+inline bool DesktopApp::CopyCutSelectedFolderEntries(bool cut)
+{
+    std::vector<std::wstring> paths = GetSelectedFolderEntryPaths();
+    if (paths.empty()) return false;
+
+    ComPtr<IDataObject> dataObj = CreateFileDropDataObject(paths);
+    if (!dataObj) return false;
+
+    cutPaths_.clear();
+    if (cut)
+    {
+        CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+        FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+        STGMEDIUM med{};
+        med.tymed = TYMED_HGLOBAL;
+        med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+        if (med.hGlobal)
+        {
+            *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
+            GlobalUnlock(med.hGlobal);
+            dataObj->SetData(&fmt, &med, TRUE);
+        }
+
+        for (const auto& path : paths)
+            cutPaths_.insert(path);
+    }
+
+    OleSetClipboard(dataObj.Get());
+    OleFlushClipboard();
+    UpdateCutState();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+inline bool DesktopApp::DeleteSelectedFolderEntries()
+{
+    std::vector<std::wstring> paths = GetSelectedFolderEntryPaths();
+    if (paths.empty()) return false;
+
+    std::wstring from;
+    for (const auto& path : paths)
+    {
+        cutPaths_.erase(path);
+        from += path;
+        from.push_back(L'\0');
+    }
+    from.push_back(L'\0');
+
+    SHFILEOPSTRUCTW op{};
+    op.hwnd = hwnd_;
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI;
+    if (SHFileOperationW(&op) != 0 || op.fAnyOperationsAborted)
+        return true;
+
+    for (size_t i = 0; i < widgets_.size(); ++i)
+        if (widgets_[i].type == DesktopWidgetType::FolderMapping)
+            RefreshFolderMappingWidget(i);
+    ReloadItems(false);
+    return true;
+}
+
+inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
+{
+    if (widgetIndex >= widgets_.size()) return false;
+    DesktopWidget& widget = widgets_[widgetIndex];
+    if (widget.type != DesktopWidgetType::FolderMapping || widget.sourceFolderPath.empty())
+        return false;
+
+    ComPtr<IDataObject> clipObj;
+    if (FAILED(OleGetClipboard(&clipObj)) || !clipObj)
+        return false;
+
+    DropAction action = DropAction::Copy;
+    CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+    FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM medPref{};
+    if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
+    {
+        DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
+        if (pEffect)
+        {
+            if (*pEffect & DROPEFFECT_MOVE)
+                action = DropAction::Move;
+            else if (*pEffect & DROPEFFECT_LINK)
+                action = DropAction::Link;
+            GlobalUnlock(medPref.hGlobal);
+        }
+        ReleaseStgMedium(&medPref);
+    }
+
+    std::vector<std::wstring> paths;
+    FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM medDrop{};
+    if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
+    {
+        HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
+        UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+        paths.reserve(count);
+        for (UINT i = 0; i < count; ++i)
+        {
+            wchar_t path[MAX_PATH]{};
+            if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
+                paths.push_back(path);
+        }
+        ReleaseStgMedium(&medDrop);
+    }
+    if (paths.empty()) return false;
+
+    DragSourceList sourceList;
+    sourceList.hasExternalFiles = true;
+    sourceList.entries.reserve(paths.size());
+    for (const auto& path : paths)
+    {
+        DragSourceEntry entry;
+        entry.kind = DropSourceKind::ExternalFile;
+        entry.sourceIndex = sourceList.entries.size();
+        entry.filePath = path;
+        entry.displayName = FileNameFromPath(path);
+        sourceList.entries.push_back(std::move(entry));
+    }
+
+    if (!MaterializeFilesToFolder(sourceList, widget.sourceFolderPath, action))
+        return true;
+
+    if (action == DropAction::Move)
+    {
+        cutPaths_.clear();
+        if (OpenClipboard(hwnd_))
+        {
+            EmptyClipboard();
+            CloseClipboard();
+        }
+    }
+
+    for (size_t i = 0; i < widgets_.size(); ++i)
+        if (widgets_[i].type == DesktopWidgetType::FolderMapping)
+            RefreshFolderMappingWidget(i);
+    ReloadItems(false);
+    return true;
 }
 
 inline void DesktopApp::OnKeyDown(WPARAM key)
@@ -1029,6 +1264,9 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
         break;
     case VK_DELETE:
     {
+        if (DeleteSelectedFolderEntries())
+            break;
+
         cutPaths_.clear();
         for (const auto& item : items_)
         {
@@ -1051,11 +1289,16 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     }
     case 'C':
         if (!ctrl) break;
+        if (CopyCutSelectedFolderEntries(false))
+            break;
         InvokeSelectedShellVerb("copy");
         break;
     case 'X':
         if (!ctrl) break;
     {
+        if (CopyCutSelectedFolderEntries(true))
+            break;
+
         cutPaths_.clear();
 
         std::vector<PCUITEMID_CHILD> pidls;
@@ -1105,6 +1348,9 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     case 'V':
         if (!ctrl) break;
     {
+        if (PasteClipboardToFolderMapping(FindFolderMappingShortcutTarget()))
+            break;
+
         bool fromDesktop = false;
         std::unordered_set<std::wstring> clipPaths;
 
@@ -1210,30 +1456,32 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
 
 inline void DesktopApp::RefreshDragHintFromKeyboard()
 {
-    if (!draggingItems_ && !externalDragActive_ && !selfDragActive_) return;
+    if (!dragSession_.IsActive() && !externalDragActive_ && !selfDragActive_) return;
 
     int mods = 0;
     if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
     if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
     if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
+    if (dragSession_.IsActive())
+        dragSession_.UpdateActionFromMods(mods, externalDragActive_ ? DropAction::Copy : DropAction::Move);
 
     std::wstring hint;
-    if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
+    if (dragSession_.TargetContainer() && dragSession_.TargetRegion() != HitRegion::None)
     {
-        hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_,
-            dragSourceItems_, dragSource_, mods);
+        hint = dragSession_.TargetContainer()->GetDragHint(dragSession_.TargetSlot(),
+            dragSession_.TargetRegion(), dragSession_.Items(), dragSession_.Source(), mods);
     }
 
     if (externalDragActive_ || selfDragActive_)
     {
-        POINT screenPoint = externalDragActive_ ? externalDragPoint_ : dragCurrentPoint_;
+        POINT screenPoint = dragSession_.CurrentPoint();
         ClientToScreen(hwnd_, &screenPoint);
         ShowDragHintWindowScreen(screenPoint, hint);
         OnPaint();
     }
     else
     {
-        ShowDragHintWindow(dragCurrentPoint_, hint);
+        ShowDragHintWindow(dragSession_.CurrentPoint(), hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 }
@@ -1316,11 +1564,12 @@ inline bool DesktopApp::HandlePageNavClick(POINT point)
     int newOffset = NextNonEmptyOffset(pageOffset_, delta);
     if (newOffset == pageOffset_) return false;
 
-    bool wasDragging = draggingItems_;
+    bool wasDragging = dragSession_.IsActive();
     pageOffset_ = newOffset;
     ApplyPageMapping();
     if (wasDragging) MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
+    if (wasDragging) InvalidateDragStaticScene();
     if (wasDragging) UpdateDragGroupOrigin();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -1517,7 +1766,7 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
-        if (!draggingItems_ || popupWidgetIndex_ < widgets_.size() ||
+        if (!dragSession_.IsActive() || popupWidgetIndex_ < widgets_.size() ||
             popupDwellWidgetIndex_ >= widgets_.size())
         {
             popupDwellWidgetIndex_ = static_cast<size_t>(-1);
@@ -1535,7 +1784,7 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
 
 inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
-    if (!draggingItems_ || popupWidgetIndex_ < widgets_.size())
+    if (!dragSession_.IsActive() || popupWidgetIndex_ < widgets_.size())
     {
         popupDwellWidgetIndex_ = static_cast<size_t>(-1);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -1615,6 +1864,7 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+    InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -1628,6 +1878,7 @@ inline void DesktopApp::CloseCollectionPopup()
     popupPageId_.clear();
     popupCategoryId_.clear();
     popupRect_ = {};
+    InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -1643,6 +1894,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
             popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
+            InvalidateDragStaticScene();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1665,6 +1917,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             auto* fc = dynamic_cast<FileCategories*>(wc);
             if (fc && fc->TryScrollTabs(pt, delta))
             {
+                InvalidateDragStaticScene();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -1675,6 +1928,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
         data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
         wc->InvalidateSlots();
+        InvalidateDragStaticScene();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -2329,27 +2583,30 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     if (selfDragActive_)
     {
         selfDragReturned_ = true;
-        draggingItems_ = true;
-        dragBgCacheValid_ = false;
         POINT client = ScreenPointToClient(point);
-        dragCurrentPoint_ = client;
+        if (dragSession_.IsActive())
+        {
+            dragSession_.UpdatePoint(client);
+            dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
+        }
 
         // OO hit-test
-        dragTargetContainer_ = nullptr;
-        dragTargetSlot_ = nullptr;
-        dragTargetRegion_ = HitRegion::None;
+        Container* targetContainer = nullptr;
+        Slot* targetSlot = nullptr;
+        HitRegion targetRegion = HitRegion::None;
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
             Slot* slot = nullptr;
             HitRegion region = (*it)->HitTestDrag(client, slot);
             if (region != HitRegion::None)
             {
-                dragTargetContainer_ = it->get();
-                dragTargetSlot_ = slot;
-                dragTargetRegion_ = region;
+                targetContainer = it->get();
+                targetSlot = slot;
+                targetRegion = region;
                 break;
             }
         }
+        dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 
         int mods = 0;
         if (keyState & MK_CONTROL) mods |= MK_CONTROL;
@@ -2357,9 +2614,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
 
         std::wstring hint;
-        if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
-            hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_,
-                dragSourceItems_, dragSource_, mods);
+        if (targetContainer && targetRegion != HitRegion::None)
+            hint = targetContainer->GetDragHint(targetSlot, targetRegion,
+                dragSession_.Items(), dragSession_.Source(), mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
         OnPaint();
@@ -2367,24 +2624,29 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     }
 
     externalDragActive_ = true;
-    externalDragPoint_ = ScreenPointToClient(point);
+    POINT client = ScreenPointToClient(point);
+    if (!dragSession_.IsActive() || !dragSession_.Items().empty())
+        dragSession_.Begin(nullptr, {}, {}, client, client);
+    else
+        dragSession_.UpdatePoint(client);
 
     // OO hit-test for external drop
-    dragTargetContainer_ = nullptr;
-    dragTargetSlot_ = nullptr;
-    dragTargetRegion_ = HitRegion::None;
+    Container* targetContainer = nullptr;
+    Slot* targetSlot = nullptr;
+    HitRegion targetRegion = HitRegion::None;
     for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
     {
         Slot* slot = nullptr;
-        HitRegion region = (*it)->HitTestDrag(externalDragPoint_, slot);
+        HitRegion region = (*it)->HitTestDrag(client, slot);
         if (region != HitRegion::None)
         {
-            dragTargetContainer_ = it->get();
-            dragTargetSlot_ = slot;
-            dragTargetRegion_ = region;
+            targetContainer = it->get();
+            targetSlot = slot;
+            targetRegion = region;
             break;
         }
     }
+    dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 
     if (dataObject)
         externalDropFileCount_ = static_cast<int>(GetDropPaths(dataObject).size());
@@ -2395,10 +2657,11 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
     if (keyState & MK_ALT)     mods |= MK_ALT;
     if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+    dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
     std::wstring hint;
-    if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
-        hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_, {}, nullptr, mods);
+    if (targetContainer && targetRegion != HitRegion::None)
+        hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ChooseDropEffect(keyState, *effect);
     OnPaint();
@@ -2413,24 +2676,29 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     if (selfDragActive_)
     {
         POINT client = ScreenPointToClient(point);
-        dragCurrentPoint_ = client;
+        if (dragSession_.IsActive())
+        {
+            dragSession_.UpdatePoint(client);
+            dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
+        }
 
         // OO hit-test
-        dragTargetContainer_ = nullptr;
-        dragTargetSlot_ = nullptr;
-        dragTargetRegion_ = HitRegion::None;
+        Container* targetContainer = nullptr;
+        Slot* targetSlot = nullptr;
+        HitRegion targetRegion = HitRegion::None;
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
             Slot* slot = nullptr;
             HitRegion region = (*it)->HitTestDrag(client, slot);
             if (region != HitRegion::None)
             {
-                dragTargetContainer_ = it->get();
-                dragTargetSlot_ = slot;
-                dragTargetRegion_ = region;
+                targetContainer = it->get();
+                targetSlot = slot;
+                targetRegion = region;
                 break;
             }
         }
+        dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 
         int mods = 0;
         if (keyState & MK_CONTROL) mods |= MK_CONTROL;
@@ -2438,9 +2706,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
 
         std::wstring hint;
-        if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
-            hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_,
-                dragSourceItems_, dragSource_, mods);
+        if (targetContainer && targetRegion != HitRegion::None)
+            hint = targetContainer->GetDragHint(targetSlot, targetRegion,
+                dragSession_.Items(), dragSession_.Source(), mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
         OnPaint();
@@ -2448,33 +2716,39 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     }
 
     externalDragActive_ = true;
-    externalDragPoint_ = ScreenPointToClient(point);
+    POINT client = ScreenPointToClient(point);
+    if (!dragSession_.IsActive() || !dragSession_.Items().empty())
+        dragSession_.Begin(nullptr, {}, {}, client, client);
+    else
+        dragSession_.UpdatePoint(client);
 
     // OO hit-test for external drop
-    dragTargetContainer_ = nullptr;
-    dragTargetSlot_ = nullptr;
-    dragTargetRegion_ = HitRegion::None;
+    Container* targetContainer = nullptr;
+    Slot* targetSlot = nullptr;
+    HitRegion targetRegion = HitRegion::None;
     for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
     {
         Slot* slot = nullptr;
-        HitRegion region = (*it)->HitTestDrag(externalDragPoint_, slot);
+        HitRegion region = (*it)->HitTestDrag(client, slot);
         if (region != HitRegion::None)
         {
-            dragTargetContainer_ = it->get();
-            dragTargetSlot_ = slot;
-            dragTargetRegion_ = region;
+            targetContainer = it->get();
+            targetSlot = slot;
+            targetRegion = region;
             break;
         }
     }
+    dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 
     int mods = 0;
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
     if (keyState & MK_ALT)     mods |= MK_ALT;
     if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+    dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
     std::wstring hint;
-    if (dragTargetContainer_ && dragTargetRegion_ != HitRegion::None)
-        hint = dragTargetContainer_->GetDragHint(dragTargetSlot_, dragTargetRegion_, {}, nullptr, mods);
+    if (targetContainer && targetRegion != HitRegion::None)
+        hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ChooseDropEffect(keyState, *effect);
     OnPaint();
@@ -2485,15 +2759,14 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
 {
     if (selfDragActive_)
     {
-        draggingItems_ = false;
-        dragBgCacheValid_ = false;
+        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
         HideDragHintWindow();
         OnPaint();
         return S_OK;
     }
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
-    dragBgCacheValid_ = false;
+    EndDragSession();
     HideDragHintWindow();
     OnPaint();
     return S_OK;
@@ -2511,14 +2784,12 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     {
         selfDragActive_ = false;
         selfDragReturned_ = true;
-        draggingItems_ = false;
-        dragSourceList_ = {};
 
-        if (dragTargetRegion_ == HitRegion::Handoff)
+        if (dragSession_.TargetRegion() == HitRegion::Handoff)
         {
             // ── Shell handoff via IShellFolder::IDropTarget ────
-            Item* targetItem = dragTargetSlot_ ? dragTargetSlot_->GetItem() : nullptr;
-            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSourceItems_);
+            Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
+            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj && targetItem)
             {
                 ComPtr<IDropTarget> dt;
@@ -2551,25 +2822,28 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 }
             }
             ClearSelection();
+            EndDragSession();
             ReloadItems();
             *effect = DROPEFFECT_MOVE;
             return S_OK;
         }
 
         // ── OO dispatch ────────────────────────────────────
-        if (dragTargetContainer_)
+        if (dragSession_.TargetContainer())
         {
             int mods = 0;
             if (keyState & MK_CONTROL) mods |= MK_CONTROL;
             if (keyState & MK_ALT)     mods |= MK_ALT;
             if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
 
-            bool needsReload = dragTargetContainer_->NeedsShellReloadAfterDrop();
-            dragTargetContainer_->OnItemsDropped(dragSourceItems_, dragSource_,
-                dragTargetSlot_, dragTargetRegion_, mods);
+            Container* targetContainer = dragSession_.TargetContainer();
+            bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
+            targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
+                dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
 
             SaveLayoutSlots();
             ClearSelection();
+            EndDragSession();
             RebuildContainersAndItems();
             if (needsReload)
                 ReloadItems();
@@ -2586,10 +2860,10 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
     std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
 
-    if (dragTargetRegion_ == HitRegion::Handoff && dataObject)
+    if (dragSession_.TargetRegion() == HitRegion::Handoff && dataObject)
     {
         // ── Handoff on item (desktop OR widget member) ──
-        Item* targetItem = dragTargetSlot_ ? dragTargetSlot_->GetItem() : nullptr;
+        Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
         ComPtr<IDropTarget> dt;
         if (targetItem)
         {
@@ -2622,6 +2896,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             dt->DragOver(keyState, spl, &le);
             dt->Drop(dataObject, keyState, spl, &le);
             *effect = le;
+            EndDragSession();
             ReloadItems(false);
             return S_OK;
         }
@@ -2644,14 +2919,15 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
 
         DragSourceList sourceList = BuildDragSourceList(sourceItems, nullptr);
-        Container* target = dragTargetContainer_ ? dragTargetContainer_ : GetDesktopGrid();
-        HitRegion targetRegion = dragTargetRegion_ != HitRegion::None ? dragTargetRegion_ : HitRegion::Empty;
+        Container* target = dragSession_.TargetContainer() ? dragSession_.TargetContainer() : GetDesktopGrid();
+        HitRegion targetRegion = dragSession_.TargetRegion() != HitRegion::None ? dragSession_.TargetRegion() : HitRegion::Empty;
         DropPreviewList preview = BuildDropPreviewList(sourceList, target,
-            dragTargetContainer_ ? dragTargetSlot_ : nullptr, targetRegion, mods, clientPoint);
+            dragSession_.TargetContainer() ? dragSession_.TargetSlot() : nullptr, targetRegion, mods, clientPoint);
         bool executed = ExecuteDropPipeline(sourceList, preview);
         if (executed)
         {
             SaveLayoutSlots();
+            EndDragSession();
             RebuildContainersAndItems();
             InvalidateRect(hwnd_, nullptr, FALSE);
             *effect = ChooseDropEffect(keyState, *effect);
@@ -2661,6 +2937,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     }
 
     *effect = DROPEFFECT_NONE;
+    EndDragSession();
     return S_OK;
 }
 

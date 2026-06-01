@@ -97,7 +97,7 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     const bool hovered = (state == 1);
     const bool selected = (state == 2 || state == 3);
     const bool dragged = (state == 3);
-    const float opacity = dragged ? 0.6f : 1.0f;
+    const float opacity = dragged ? 0.6f : (entry_->isCut ? 0.4f : 1.0f);
 
     if (hovered && !selected)
     {
