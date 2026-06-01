@@ -3321,6 +3321,22 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, L"打开文件夹");
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
+        AppendMenuW(menu, MF_STRING, kContextNewMenu, L"新建");
+        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+    }
+
+    if (widget.type == DesktopWidgetType::FileCategories ||
+        widget.type == DesktopWidgetType::FolderMapping ||
+        widget.type == DesktopWidgetType::Collection)
+    {
+        HMENU sortMenu = CreatePopupMenu();
+        if (sortMenu)
+        {
+            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByName, L"名称");
+            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByType, L"类型");
+            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByDate, L"修改日期");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
+        }
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -3328,12 +3344,48 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
 
-    SetMenuItemIcon(menu, kContextWidgetOpen, L"");
+    SetMenuItemIcon(menu, kContextWidgetOpen, L"");
     SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
     SetMenuItemIcon(menu, kContextWidgetToggleListMode, widget.listMode ? L"" : L"");
     SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
+    SetMenuItemIcon(menu, kContextNewMenu, L"");
+    SetMenuItemIcon(menu, kContextMoreCommand, L"");
     SetMenuItemIcon(menu, kContextWidgetRename, L"");
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
+    {
+        MENUITEMINFOW sortMii{ sizeof(sortMii) };
+        sortMii.fMask = MIIM_SUBMENU;
+        for (int i = 0; i < GetMenuItemCount(menu); ++i)
+        {
+            if (GetMenuItemInfoW(menu, i, TRUE, &sortMii) && sortMii.hSubMenu)
+            {
+                wchar_t label[64]{};
+                if (GetMenuStringW(menu, i, label, _countof(label), MF_BYPOSITION) && wcsstr(label, L"排序方式"))
+                {
+                    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMii.hSubMenu), L"");
+                    break;
+                }
+            }
+        }
+    }
+    {
+        MENUITEMINFOW sortMii2{ sizeof(sortMii2) };
+        sortMii2.fMask = MIIM_SUBMENU;
+        for (int i = 0; i < GetMenuItemCount(menu); ++i)
+        {
+            if (GetMenuItemInfoW(menu, i, TRUE, &sortMii2) && sortMii2.hSubMenu)
+            {
+                wchar_t label[64]{};
+                if (GetMenuStringW(menu, i, label, _countof(label), MF_BYPOSITION) && wcsstr(label, L"排序方式"))
+                {
+                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByName, L"");
+                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByType, L"");
+                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByDate, L"");
+                    break;
+                }
+            }
+        }
+    }
 
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -3394,6 +3446,33 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     }
+    case kContextNewMenu:
+        if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping &&
+            !widgets_[widgetIndex].sourceFolderPath.empty())
+        {
+            ShowNewMenuAndInvoke(screenPoint, widgets_[widgetIndex].sourceFolderPath);
+            RefreshFolderMappingWidget(widgetIndex);
+            RebuildContainersAndItems();
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        break;
+    case kContextMoreCommand:
+        if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping &&
+            !widgets_[widgetIndex].sourceFolderPath.empty())
+        {
+            ShowShellContextMenuForPath(widgets_[widgetIndex].sourceFolderPath, screenPoint);
+        }
+        break;
+    case kContextWidgetSortByName:
+        SortWidgetContents(widgetIndex, 0);
+        break;
+    case kContextWidgetSortByType:
+        SortWidgetContents(widgetIndex, 1);
+        break;
+    case kContextWidgetSortByDate:
+        SortWidgetContents(widgetIndex, 2);
+        break;
     default:
         break;
     }

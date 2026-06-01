@@ -162,6 +162,7 @@ private:
     bool HandlePageNavClick(POINT point);
     void SortIconsByName();
     void SortIconsByType();
+    void SortWidgetContents(size_t widgetIndex, int mode);
     void UpdateCutState();
 
     // ── Tray ────────────────────────────────────────────────
@@ -178,6 +179,7 @@ private:
     void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1);
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir);
     void ShowDesktopBackgroundContextMenu(POINT screenPoint);
+    void ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint);
     HBITMAP CreateMenuIconBitmap(const wchar_t* text);
     void SetMenuItemIcon(HMENU menu, UINT_PTR command, const wchar_t* text);
     void ClearMenuIcons();
