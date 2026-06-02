@@ -226,6 +226,7 @@ class LuaScript : public Widget
 {
 public:
     using Widget::Widget;
+    void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
 };
 
 // Factory

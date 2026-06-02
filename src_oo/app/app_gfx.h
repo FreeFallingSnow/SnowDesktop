@@ -594,21 +594,34 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
         icon->Draw(ctx, di->bounds, state);
     }
 
-    // Widget chrome
-    for (auto& c : containers_)
+    // Widgets
+    for (auto& widgetData : widgets_)
     {
         if (widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize)
         {
-            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
-            if (wc)
-            {
-                auto* wd = wc->GetWidgetData();
-                if (wd && mouseDownWidgetIndex_ < widgets_.size()
-                    && wd == &widgets_[mouseDownWidgetIndex_])
-                    continue;
-            }
+            if (mouseDownWidgetIndex_ < widgets_.size() &&
+                &widgetData == &widgets_[mouseDownWidgetIndex_])
+                continue;
         }
-        c->DrawChrome(ctx, lastMousePoint_);
+
+        bool drawn = false;
+        for (auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (!wc || wc->GetWidgetData() != &widgetData) continue;
+            wc->DrawChrome(ctx, lastMousePoint_);
+            drawn = true;
+            break;
+        }
+        if (drawn) continue;
+
+        for (auto& ooItem : items_oo_)
+        {
+            auto* widget = dynamic_cast<Widget*>(ooItem.get());
+            if (!widget || widget->GetWidgetData() != &widgetData) continue;
+            widget->Draw(ctx, widgetData.bounds, widgetData.selected ? 2 : 0);
+            break;
+        }
     }
 
     DrawCollectionPopup(ctx);

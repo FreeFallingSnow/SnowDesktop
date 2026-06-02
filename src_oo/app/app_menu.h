@@ -128,12 +128,24 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), gridLabel);
     }
 
+    std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
     HMENU widgetMenu = CreatePopupMenu();
     if (widgetMenu)
     {
         AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, L"集合");
         AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, L"桌面文件分类");
         AppendMenuW(widgetMenu, MF_STRING, kContextAddFolderMappingWidget, L"文件夹映射");
+        if (!luaWidgets.empty())
+        {
+            AppendMenuW(widgetMenu, MF_SEPARATOR, 0, nullptr);
+            for (size_t i = 0; i < luaWidgets.size() && i < 48; ++i)
+            {
+                std::wstring label = WidgetEngine::GetWidgetDisplayName(luaWidgets[i]);
+                if (label.empty()) label = luaWidgets[i];
+                AppendMenuW(widgetMenu, MF_STRING,
+                    kContextAddLuaWidgetFirst + static_cast<UINT>(i), label.c_str());
+            }
+        }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
     }
 
@@ -208,7 +220,13 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
 
-    if (command >= kContextZoomPresetFirst && command <= kContextZoomPresetFirst + 200)
+    if (command >= kContextAddLuaWidgetFirst &&
+        command < kContextAddLuaWidgetFirst + static_cast<UINT>(std::min<size_t>(luaWidgets.size(), 48)))
+    {
+        size_t scriptIndex = static_cast<size_t>(command - kContextAddLuaWidgetFirst);
+        AddLuaWidgetAt(screenPoint, luaWidgets[scriptIndex]);
+    }
+    else if (command >= kContextZoomPresetFirst && command <= kContextZoomPresetFirst + 200)
     {
         SetZoom(static_cast<float>(command - kContextZoomPresetFirst) / 100.0f);
     }
@@ -318,7 +336,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextMoreCommand:
         ShowDesktopBackgroundContextMenu(screenPoint);
         break;
-    case kContextSettingsCommand: break;
+    case kContextSettingsCommand: ShowSettingsWindow(); break;
     default: break;
     }
 }
