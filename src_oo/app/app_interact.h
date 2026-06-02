@@ -72,6 +72,121 @@ inline void DesktopApp::EndDragSession()
     dragRenderCache_.Reset();
 }
 
+inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
+{
+    if (!dragSession_.IsActive()) return;
+
+    dragSession_.UpdatePoint(clientPoint);
+
+    Container* targetContainer = nullptr;
+    Slot* targetSlot = nullptr;
+    HitRegion targetRegion = HitRegion::None;
+    popupDragTargetSlot_.reset();
+
+    if (popupWidgetIndex_ < widgets_.size())
+    {
+        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        if (PtInRect(&popup, clientPoint))
+        {
+            WidgetContainer* popupContainer = nullptr;
+            for (auto& c : containers_)
+            {
+                popupContainer = dynamic_cast<WidgetContainer*>(c.get());
+                if (popupContainer && popupContainer->GetWidgetData() == &widgets_[popupWidgetIndex_])
+                    break;
+                popupContainer = nullptr;
+            }
+
+            if (popupContainer)
+            {
+                std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+                RECT content = GetCollectionPopupContentRect(popup);
+                size_t slotIndex = 0;
+                RECT slotBounds = content;
+                HitRegion region = HitRegion::Empty;
+                Item* handoffItem = nullptr;
+
+                if (!popupKeys.empty())
+                {
+                    bool foundItem = false;
+                    for (size_t i = 0; i < popupKeys.size(); ++i)
+                    {
+                        RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                        RECT clipped = itemRect;
+                        clipped.top = std::max(clipped.top, content.top);
+                        clipped.bottom = std::min(clipped.bottom, content.bottom);
+                        if (clipped.bottom <= clipped.top || !PtInRect(&clipped, clientPoint))
+                            continue;
+
+                        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                        if (itemIndex != static_cast<size_t>(-1) && !items_[itemIndex].selected)
+                        {
+                            RECT iconRect = GetItemIconRect(itemRect);
+                            RECT handoffRect = { iconRect.left - 4, iconRect.top - 2,
+                                                 iconRect.right + 4, iconRect.bottom + 4 };
+                            if (PtInRect(&handoffRect, clientPoint))
+                            {
+                                region = HitRegion::Handoff;
+                                slotBounds = itemRect;
+                                handoffItem = popupContainer->GetMemberItem(i);
+                            }
+                        }
+
+                        if (region != HitRegion::Handoff)
+                        {
+                            slotIndex = i;
+                            slotBounds = itemRect;
+                            region = clientPoint.x < itemRect.left + (itemRect.right - itemRect.left) / 2
+                                ? HitRegion::SortBefore
+                                : HitRegion::SortAfter;
+                        }
+                        foundItem = true;
+                        break;
+                    }
+
+                    if (!foundItem)
+                    {
+                        slotIndex = popupKeys.size() - 1;
+                        slotBounds = GetCollectionPopupItemRect(popup, slotIndex);
+                        region = HitRegion::SortAfter;
+                    }
+                }
+
+                popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
+                if (handoffItem)
+                    popupDragTargetSlot_->SetItem(handoffItem);
+                targetContainer = popupContainer;
+                targetSlot = popupDragTargetSlot_.get();
+                targetRegion = region;
+            }
+        }
+    }
+
+    if (!targetContainer)
+    {
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        {
+            Slot* slot = nullptr;
+            HitRegion region = (*it)->HitTestDrag(clientPoint, slot);
+            if (region != HitRegion::None)
+            {
+                targetContainer = it->get();
+                targetSlot = slot;
+                targetRegion = region;
+                break;
+            }
+        }
+    }
+
+    dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+
+    std::wstring hint;
+    if (targetContainer && targetRegion != HitRegion::None)
+        hint = targetContainer->GetDragHint(targetSlot, targetRegion,
+            dragSession_.Items(), dragSession_.Source(), mods);
+    ShowDragHintWindow(clientPoint, hint);
+}
+
 inline void DesktopApp::RebindDragSourceAfterRebuild()
 {
     if (!dragSession_.IsActive() || dragSession_.Items().empty()) return;
@@ -1915,6 +2030,20 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 {
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     ScreenToClient(hwnd_, &pt);
+    int currentMods = 0;
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
+    if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
+    if (dragSession_.IsActive())
+        dragSession_.UpdateActionFromMods(currentMods, externalDragActive_ ? DropAction::Copy : DropAction::Move);
+
+    auto refreshDragAfterScroll = [&]()
+    {
+        if (!dragSession_.IsActive()) return;
+        RefreshDragTargetAt(pt, currentMods);
+        InvalidateDragStaticScene();
+    };
+
     if (popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -1923,7 +2052,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
             popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
-            InvalidateDragStaticScene();
+            refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1946,7 +2075,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             auto* fc = dynamic_cast<FileCategories*>(wc);
             if (fc && fc->TryScrollTabs(pt, delta))
             {
-                InvalidateDragStaticScene();
+                refreshDragAfterScroll();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -1957,7 +2086,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
         data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
         wc->InvalidateSlots();
-        InvalidateDragStaticScene();
+        refreshDragAfterScroll();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }

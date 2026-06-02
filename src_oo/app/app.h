@@ -304,6 +304,7 @@ private:
     int GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const;
     RECT GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const;
     void OnMouseWheel(WPARAM wp, LPARAM lp);
+    void RefreshDragTargetAt(POINT clientPoint, int mods);
     RECT GetVisibleCollectionItemBounds(size_t itemIndex) const;
     bool FindSingleSelectedFolderEntry(size_t& widgetIndex, size_t& memberIndex) const;
     RECT GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const;
