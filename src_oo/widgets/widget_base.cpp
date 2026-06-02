@@ -392,6 +392,14 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
+    float gradientEndA = 0.65f;
+    if (app_ && app_->settingsWindow_)
+    {
+        const auto& p = app_->settingsWindow_->GetPersonalization();
+        fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
+        borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetAlpha);
+        gradientEndA = p.gradientEndA;
+    }
 
     float radius = 12.0f;
     float strokeW = selected ? 1.6f : 1.0f;
@@ -449,7 +457,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             ComPtr<ID2D1GradientStopCollection> stops;
             D2D1_GRADIENT_STOP sd[] = {
                 { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
-                { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.65f) },
+                { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, gradientEndA) },
             };
             if (SUCCEEDED(context->CreateGradientStopCollection(sd, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
             {

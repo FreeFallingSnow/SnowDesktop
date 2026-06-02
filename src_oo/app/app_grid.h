@@ -836,13 +836,26 @@ inline void DesktopApp::LoadLayoutSlots()
                         DesktopWidget widget;
                         widget.id = Utf8ToWide(idUtf8);
                         widget.type = WidgetTypeFromJson(Utf8ToWide(typeUtf8));
-                        widget.title = titleUtf8.empty()
-                            ? (widget.type == DesktopWidgetType::FileCategories ? L"桌面文件"
-                               : widget.type == DesktopWidgetType::FolderMapping ? L"文件夹映射"
-                               : L"集合")
-                            : Utf8ToWide(titleUtf8);
                         widget.sourceFolderPath = Utf8ToWide(sourceUtf8);
                         widget.scriptPath = Utf8ToWide(scriptUtf8);
+                        if (titleUtf8.empty())
+                        {
+                            if (widget.type == DesktopWidgetType::LuaScript)
+                            {
+                                widget.title = WidgetEngine::GetWidgetDisplayName(widget.scriptPath);
+                                if (widget.title.empty()) widget.title = widget.scriptPath;
+                            }
+                            else
+                            {
+                                widget.title = widget.type == DesktopWidgetType::FileCategories ? L"桌面文件"
+                                    : widget.type == DesktopWidgetType::FolderMapping ? L"文件夹映射"
+                                    : L"集合";
+                            }
+                        }
+                        else
+                        {
+                            widget.title = Utf8ToWide(titleUtf8);
+                        }
                         widget.gridCell.pageId = Utf8ToWide(pageUtf8);
                         widget.gridCell.column = x;
                         widget.gridCell.row = y;
@@ -850,8 +863,9 @@ inline void DesktopApp::LoadLayoutSlots()
                         widget.gridSpan.rows = std::max(1, h);
                         widget.autoCollect = autoCollect;
                         widget.listMode = listMode;
-                        widget.showTitle = true;
-                        widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection);
+                        widget.showTitle = widget.type != DesktopWidgetType::LuaScript;
+                        widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
+                            widget.type == DesktopWidgetType::LuaScript);
                         ReadJsonBoolField(obj, "showTitle", widget.showTitle);
                         ReadJsonBoolField(obj, "bottomBarHover", widget.bottomBarHover);
                         widget.scrollOffset = std::max(0, scrollOffset);
@@ -3215,7 +3229,6 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 
     widget.gridCell = cell;
     widget.gridSpan = span;
-    widget.showTitle = true;
     widgets_.push_back(std::move(widget));
     LayoutItems();
     SaveLayoutSlots();
@@ -3229,6 +3242,7 @@ inline void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::Collection;
     w.title = L"集合";
+    w.showTitle = true;
     w.bottomBarHover = true;
     AddWidgetToGrid(std::move(w), { 1, 1 });
 }
@@ -3240,6 +3254,7 @@ inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::FileCategories;
     w.title = L"桌面文件";
+    w.showTitle = true;
     AddWidgetToGrid(std::move(w), { 2, 2 });
 }
 
@@ -3268,6 +3283,7 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::FolderMapping;
     w.title = title;
+    w.showTitle = true;
     w.sourceFolderPath = folderPath;
     AddWidgetToGrid(std::move(w), { 2, 2 });
 
@@ -3275,6 +3291,32 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
     size_t idx = widgets_.size() - 1;
     EnumerateFolderMappingEntries(widgets_[idx]);
     RebuildContainersAndItems();
+}
+
+inline void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename)
+{
+    if (scriptFilename.empty()) return;
+    lastContextMenuScreenPoint_ = screenPoint;
+
+    DesktopWidget w;
+    w.id = MakeNewWidgetId();
+    w.type = DesktopWidgetType::LuaScript;
+    w.title = WidgetEngine::GetWidgetDisplayName(scriptFilename);
+    if (w.title.empty())
+    {
+        w.title = scriptFilename;
+        if (w.title.size() > 4 && ToUpperInvariant(w.title.substr(w.title.size() - 4)) == L".LUA")
+            w.title.resize(w.title.size() - 4);
+    }
+    w.scriptPath = scriptFilename;
+    w.bottomBarHover = true;
+    if (widgetEngine_)
+    {
+        widgetEngine_->EnsureWidgetLoaded(w.id, scriptFilename);
+        w.showTitle = widgetEngine_->ReadBoolFlag(scriptFilename, "showTitle", false);
+        w.bottomBarHover = widgetEngine_->ReadBoolFlag(scriptFilename, "bottomBarHover", true);
+    }
+    AddWidgetToGrid(std::move(w), { 1, 1 });
 }
 
 inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove)

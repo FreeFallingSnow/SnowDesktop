@@ -6,6 +6,8 @@
 
 inline DesktopApp::~DesktopApp()
 {
+    widgetEngine_.reset();
+    settingsWindow_.reset();
     items_oo_.clear();
     containers_.clear();
     ClearMenuIcons();
@@ -191,6 +193,35 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+    SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
+
+    settingsWindow_ = std::make_unique<SettingsWindow>();
+    if (settingsWindow_->Init(instance, d3dDevice_.Get()))
+    {
+        settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
+        settingsWindow_->SetExitCallback([this]() {
+            if (hwnd_ && IsWindow(hwnd_))
+                DestroyWindow(hwnd_);
+        });
+        settingsWindow_->SetInvalidateCallback([this]() {
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        });
+    }
+    else
+    {
+        settingsWindow_.reset();
+    }
+
+    widgetEngine_ = std::make_unique<WidgetEngine>();
+    if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
+    {
+        if (settingsWindow_)
+            settingsWindow_->SetWidgetEngine(widgetEngine_.get());
+    }
+    else
+    {
+        widgetEngine_.reset();
+    }
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -202,6 +233,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
+        if (settingsWindow_ && settingsWindow_->IsVisible())
+            settingsWindow_->Render();
     }
     OleUninitialize();
     return static_cast<int>(msg.wParam);
@@ -323,6 +356,14 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             }
         }
 
+        size_t standaloneWidget = HitTestStandaloneWidgetIndex(pt);
+        if (standaloneWidget != static_cast<size_t>(-1) &&
+            widgets_[standaloneWidget].type == DesktopWidgetType::LuaScript)
+        {
+            ShowWidgetEditorHost(standaloneWidget);
+            return 0;
+        }
+
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(it->get());
@@ -407,6 +448,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (dropTargetRegistered_) { RevokeDragDrop(hwnd_); dropTargetRegistered_ = false; }
         KillTimer(hwnd_, kShellChangeTimerId);
         KillTimer(hwnd_, kRecycleBinPollTimerId);
+        KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
         if (desktopWindows_.listView && IsWindow(desktopWindows_.listView))

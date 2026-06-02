@@ -47,6 +47,75 @@ inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
     return false;
 }
 
+inline RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
+{
+    RECT rect = widget.bounds;
+    for (const auto& page : gridPages_)
+    {
+        if (page.id != widget.gridCell.pageId) continue;
+        int halfGapX = std::max(2, page.gapX / 2);
+        int halfGapY = std::max(2, page.gapY / 2);
+        if (widget.gridCell.column > 0) rect.left -= halfGapX;
+        if (widget.gridCell.row > 0) rect.top -= halfGapY;
+        if (widget.gridCell.column + widget.gridSpan.columns < page.columns) rect.right += halfGapX;
+        if (widget.gridCell.row + widget.gridSpan.rows < page.rows) rect.bottom += halfGapY;
+        break;
+    }
+    if (rect.right - rect.left > 16 && rect.bottom - rect.top > 16)
+        InflateRect(&rect, -4, -4);
+    return rect;
+}
+
+inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) const
+{
+    RECT frame = GetStandaloneWidgetFrameRect(widget);
+    constexpr int handleHeight = 24;
+    return {
+        frame.left + 4,
+        std::max<LONG>(frame.top, frame.bottom - handleHeight - 2),
+        frame.right - 4,
+        frame.bottom - 2
+    };
+}
+
+inline RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget) const
+{
+    RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
+    constexpr int handleWidth = 24;
+    return {
+        std::max<LONG>(handle.left, handle.right - handleWidth),
+        handle.top,
+        handle.right,
+        handle.bottom
+    };
+}
+
+inline WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT pt) const
+{
+    if (widgetIndex >= widgets_.size()) return WidgetHit::None;
+    const DesktopWidget& widget = widgets_[widgetIndex];
+    if (widget.type != DesktopWidgetType::LuaScript) return WidgetHit::None;
+
+    RECT frame = GetStandaloneWidgetFrameRect(widget);
+    if (!PtInRect(&frame, pt)) return WidgetHit::None;
+    RECT resize = GetStandaloneWidgetResizeHandleRect(widget);
+    if (PtInRect(&resize, pt)) return WidgetHit::ResizeHandle;
+    RECT move = GetStandaloneWidgetMoveHandleRect(widget);
+    if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
+    return WidgetHit::Content;
+}
+
+inline size_t DesktopApp::HitTestStandaloneWidgetIndex(POINT pt) const
+{
+    for (size_t n = widgets_.size(); n > 0; --n)
+    {
+        size_t i = n - 1;
+        if (HitTestStandaloneWidget(i, pt) != WidgetHit::None)
+            return i;
+    }
+    return static_cast<size_t>(-1);
+}
+
 inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 {
     for (auto& c : containers_)
@@ -56,7 +125,7 @@ inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
         if (wc->HitTestWidget(pt) != WidgetHit::None)
             return true;
     }
-    return false;
+    return HitTestStandaloneWidgetIndex(pt) != static_cast<size_t>(-1);
 }
 
 inline void DesktopApp::InvalidateDragStaticScene()
@@ -70,6 +139,14 @@ inline void DesktopApp::EndDragSession()
 {
     dragSession_.End();
     dragRenderCache_.Reset();
+}
+
+inline void DesktopApp::ShowSettingsWindow()
+{
+    if (settingsWindow_)
+        settingsWindow_->Show();
+    else
+        MessageBeep(MB_ICONWARNING);
 }
 
 inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
@@ -391,6 +468,55 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     // ── Widget hit-test ─────────────────────────────────────
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     widgetAction_ = WidgetAction::None;
+    for (size_t n = widgets_.size(); n > 0; --n)
+    {
+        size_t wi = n - 1;
+        WidgetHit wh = HitTestStandaloneWidget(wi, pt);
+        if (wh == WidgetHit::None) continue;
+
+        if (wh == WidgetHit::ResizeHandle)
+        {
+            SelectWidgetOnly(wi);
+            widgetAction_ = WidgetAction::PendingResize;
+            InvalidateDragStaticScene();
+            widgetDragOriginalCell_ = widgets_[wi].gridCell;
+            widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
+            widgetPreviewCell_ = widgetDragOriginalCell_;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+
+        if (wh == WidgetHit::MoveHandle)
+        {
+            SelectWidgetOnly(wi);
+            widgetAction_ = WidgetAction::PendingMove;
+            InvalidateDragStaticScene();
+            widgetDragOriginalCell_ = widgets_[wi].gridCell;
+            widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
+            widgetPreviewCell_ = widgetDragOriginalCell_;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            RECT bounds = widgets_[wi].bounds;
+            dragGroupOriginX_ = bounds.left;
+            dragGroupOriginY_ = bounds.top;
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+
+        SelectWidgetOnly(wi);
+        mouseDownWidgetIndex_ = wi;
+        mouseDownHit_ = nullptr;
+        SetCapture(hwnd_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
     {
         WidgetContainer* wc = nullptr;
@@ -1034,7 +1160,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
 inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 {
-    (void)wp; (void)lp;
+    (void)wp;
+    POINT upPoint{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     HideDragHintWindow();
 
     // ── Widget action completion ────────────────────────────
@@ -1057,6 +1184,17 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
     if (!dragSession_.IsActive())
     {
+        if (mouseDownWidgetIndex_ < widgets_.size() &&
+            widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
+            HitTestStandaloneWidget(mouseDownWidgetIndex_, upPoint) == WidgetHit::Content &&
+            widgetEngine_)
+        {
+            RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
+            widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
+                widgets_[mouseDownWidgetIndex_].scriptPath);
+            widgetEngine_->InvokeClick(widgets_[mouseDownWidgetIndex_].id,
+                upPoint.x - frame.left, upPoint.y - frame.top);
+        }
         if (pendingCtrlToggleDesktopIndex_ < items_.size())
             items_[pendingCtrlToggleDesktopIndex_].selected = false;
         pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
@@ -1844,6 +1982,15 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         return;
     }
 
+    size_t hitStandaloneWidget = HitTestStandaloneWidgetIndex(pt);
+    if (hitStandaloneWidget != static_cast<size_t>(-1))
+    {
+        SelectWidgetOnly(hitStandaloneWidget);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        ShowWidgetContextMenu(screenPt, hitStandaloneWidget);
+        return;
+    }
+
     if (IsPointOverWidgetChrome(pt))
     {
         ClearSelection();
@@ -1907,6 +2054,20 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
                 SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
             }
         }
+    }
+    else if (timerId == kWidgetRefreshTimerId)
+    {
+        bool hasLuaWidget = false;
+        for (const auto& widget : widgets_)
+        {
+            if (widget.type == DesktopWidgetType::LuaScript)
+            {
+                hasLuaWidget = true;
+                break;
+            }
+        }
+        if (hasLuaWidget)
+            InvalidateRect(hwnd_, nullptr, FALSE);
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
@@ -3455,6 +3616,15 @@ inline void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::w
 
 // ── Widget context menu ────────────────────────────────────
 
+inline void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
+{
+    if (!settingsWindow_ || widgetIndex >= widgets_.size()) return;
+    const auto& widget = widgets_[widgetIndex];
+    if (widget.type != DesktopWidgetType::LuaScript) return;
+    settingsWindow_->ShowWidgetEditor(widgetIndex, widget.id.c_str(),
+        widget.title.c_str(), widget.scriptPath.c_str());
+}
+
 inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex)
 {
     if (widgetIndex >= widgets_.size()) return;
@@ -3482,6 +3652,10 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         AppendMenuW(menu, MF_STRING, kContextNewMenu, L"新建");
         AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
     }
+    else if (widget.type == DesktopWidgetType::LuaScript)
+    {
+        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, L"编辑组件");
+    }
 
     if (widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
@@ -3508,6 +3682,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
     SetMenuItemIcon(menu, kContextNewMenu, L"");
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
+    SetMenuItemIcon(menu, kContextWidgetEdit, L"");
     SetMenuItemIcon(menu, kContextWidgetRename, L"");
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
     {
@@ -3594,8 +3769,13 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         SelectWidgetOnly(widgetIndex);
         BeginRenameSelected();
         break;
+    case kContextWidgetEdit:
+        ShowWidgetEditorHost(widgetIndex);
+        break;
     case kContextWidgetDelete:
     {
+        if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript && widgetEngine_)
+            widgetEngine_->UnloadWidget(widgets_[widgetIndex].id);
         // Move widget's itemKeys back to desktop by just removing the widget
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
         LayoutItems();
@@ -3742,8 +3922,10 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
     AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
+    SetMenuItemIcon(menu, kTraySettingsCommand, L"");
     SetMenuItemIcon(menu, kTrayExitCommand, L"");
 
     SetForegroundWindow(controlHwnd_ ? controlHwnd_ : hwnd_);
@@ -3757,8 +3939,14 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     switch (command)
     {
+    case kTraySettingsCommand:
+        ShowSettingsWindow();
+        break;
     case kTrayExitCommand:
-        DestroyWindow(hwnd_);
+        if (settingsWindow_)
+            settingsWindow_->ShowExitConfirm();
+        else
+            DestroyWindow(hwnd_);
         break;
     case kTrayDesktopIconThisPC:
     case kTrayDesktopIconUserFiles:

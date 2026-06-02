@@ -6,7 +6,9 @@
 #include "widget.h"
 #include "drop_model.h"
 #include "drag_session.h"
+#include "settings_window.h"
 #include "utils.h"
+#include "widget_engine.h"
 #include "types.h"
 #include "constants.h"
 #include "resource.h"
@@ -125,6 +127,7 @@ private:
     void ApplyGapScaleToPage(GridPage& page);
     void LayoutItems();
     void RebuildContainersAndItems();
+    void ShowSettingsWindow();
 
     // ── Layout persistence ──────────────────────────────────
     std::wstring GetLayoutPath() const;
@@ -287,6 +290,7 @@ private:
     void AddCollectionWidgetAt(POINT screenPoint);
     void AddFileCategoryWidgetAt(POINT screenPoint);
     void AddFolderMappingWidgetAt(POINT screenPoint);
+    void AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename);
     void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove = false);
     void EnumerateFolderMappingEntries(DesktopWidget& widget);
     void RefreshFolderMappingWidget(size_t widgetIndex);
@@ -305,6 +309,12 @@ private:
     RECT GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const;
     void OnMouseWheel(WPARAM wp, LPARAM lp);
     void RefreshDragTargetAt(POINT clientPoint, int mods);
+    RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
+    RECT GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) const;
+    RECT GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget) const;
+    WidgetHit HitTestStandaloneWidget(size_t widgetIndex, POINT pt) const;
+    size_t HitTestStandaloneWidgetIndex(POINT pt) const;
+    void ShowWidgetEditorHost(size_t widgetIndex);
     RECT GetVisibleCollectionItemBounds(size_t itemIndex) const;
     bool FindSingleSelectedFolderEntry(size_t& widgetIndex, size_t& memberIndex) const;
     RECT GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const;
@@ -337,6 +347,8 @@ private:
     HANDLE faFontHandle_ = nullptr;
     HFONT faMenuFont_ = nullptr;
     std::vector<HBITMAP> menuIconPool_;
+    std::unique_ptr<SettingsWindow> settingsWindow_;
+    std::unique_ptr<WidgetEngine> widgetEngine_;
 
     // Shell
     ComPtr<IShellFolder> desktopFolder_;
