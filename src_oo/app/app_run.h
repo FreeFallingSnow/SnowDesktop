@@ -23,6 +23,242 @@ inline DesktopApp::~DesktopApp()
     }
 }
 
+inline void DesktopApp::HideExplorerIcons()
+{
+    if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
+        return;
+
+    const bool hiddenBySnowDesktop = GetPropW(desktopWindows_.listView,
+        kHiddenBySnowDesktopProp) != nullptr;
+    const bool shouldHide = IsWindowVisible(desktopWindows_.listView) != FALSE ||
+        hiddenBySnowDesktop;
+    desktopWindows_.listViewWasVisible = shouldHide;
+    if (!shouldHide)
+        return;
+
+    SetPropW(desktopWindows_.listView, kHiddenBySnowDesktopProp,
+        reinterpret_cast<HANDLE>(1));
+    ShowWindow(desktopWindows_.listView, SW_HIDE);
+}
+
+inline void DesktopApp::RestoreExplorerIcons()
+{
+    if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
+        return;
+
+    const bool hiddenBySnowDesktop = GetPropW(desktopWindows_.listView,
+        kHiddenBySnowDesktopProp) != nullptr;
+    if (desktopWindows_.listViewWasVisible || hiddenBySnowDesktop)
+        ShowWindow(desktopWindows_.listView, SW_SHOW);
+    RemovePropW(desktopWindows_.listView, kHiddenBySnowDesktopProp);
+    desktopWindows_.listViewWasVisible = false;
+}
+
+inline void DesktopApp::RegisterOleDropTarget()
+{
+    if (!hwnd_ || !IsWindow(hwnd_) || dropTargetRegistered_)
+        return;
+    dropTargetRegistered_ = SUCCEEDED(RegisterDragDrop(hwnd_, static_cast<IDropTarget*>(this)));
+}
+
+inline void DesktopApp::ResetDesktopWindowResources()
+{
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        KillTimer(hwnd_, kShellChangeTimerId);
+        KillTimer(hwnd_, kRecycleBinPollTimerId);
+        KillTimer(hwnd_, kWidgetRefreshTimerId);
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        if (dropTargetRegistered_)
+            RevokeDragDrop(hwnd_);
+    }
+    dropTargetRegistered_ = false;
+
+    if (shellChangeRegId_ != 0)
+    {
+        SHChangeNotifyDeregister(shellChangeRegId_);
+        shellChangeRegId_ = 0;
+    }
+
+    DestroyDragHintWindow();
+    dragRenderCache_.Reset();
+    dcompSurface_.Reset();
+    dcompVisual_.Reset();
+    dcompTarget_.Reset();
+    compositionWidth_ = 0;
+    compositionHeight_ = 0;
+    hwnd_ = nullptr;
+}
+
+inline void DesktopApp::AttachWindowToDesktopHost(HWND host)
+{
+    if (!hwnd_ || !IsWindow(hwnd_) || !host || !IsWindow(host))
+        return;
+
+    if (GetParent(hwnd_) != host)
+        SetParent(hwnd_, host);
+
+    LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
+    style &= ~WS_POPUP;
+    style |= WS_CHILD | WS_VISIBLE;
+    SetWindowLongPtrW(hwnd_, GWL_STYLE, style);
+
+    POINT origin{ virtualLeft_, virtualTop_ };
+    ScreenToClient(host, &origin);
+    SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
+        SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+}
+
+inline bool DesktopApp::CreateDesktopOverlayWindow()
+{
+    auto fail = [this]() {
+        if (hwnd_ && IsWindow(hwnd_))
+            DestroyWindow(hwnd_);
+        ResetDesktopWindowResources();
+        return false;
+    };
+
+    HWND parent = desktopWindows_.host && IsWindow(desktopWindows_.host)
+        ? desktopWindows_.host
+        : GetDesktopWindow();
+    POINT origin{ virtualLeft_, virtualTop_ };
+    ScreenToClient(parent, &origin);
+
+    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, L"SnowDesktopWindow", L"SnowDesktop",
+        WS_CHILD | WS_VISIBLE, origin.x, origin.y, virtualWidth_, virtualHeight_,
+        parent, nullptr, instance_, this);
+    if (!hwnd_)
+    {
+        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, L"SnowDesktopWindow", L"SnowDesktop",
+            WS_POPUP | WS_VISIBLE, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
+            nullptr, nullptr, instance_, this);
+        if (hwnd_ && parent && parent != GetDesktopWindow())
+            AttachWindowToDesktopHost(parent);
+    }
+    if (!hwnd_)
+        return false;
+
+    SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
+        SWP_NOACTIVATE);
+
+    if (FAILED(dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_)))
+        return fail();
+    if (FAILED(dcompDevice_->CreateVisual(&dcompVisual_)))
+        return fail();
+    dcompTarget_->SetRoot(dcompVisual_.Get());
+    if (FAILED(CreateOrResizeCompositionSurface()))
+        return fail();
+
+    if (HICON appIcon = LoadAppIcon())
+    {
+        SendMessageW(hwnd_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(appIcon));
+        SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
+    }
+
+    RegisterOleDropTarget();
+    RegisterShellChangeNotifications();
+    SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
+    SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
+
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    UpdateWindow(hwnd_);
+    return true;
+}
+
+inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
+{
+    if (exitRequested_)
+        return;
+
+    DesktopWindows current = FindDesktopWindows();
+    if (!current.host || !IsWindow(current.host))
+        return;
+
+    desktopWindows_ = current;
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        AttachWindowToDesktopHost(desktopWindows_.host);
+        RegisterOleDropTarget();
+        RegisterShellChangeNotifications();
+    }
+    else
+    {
+        ResetDesktopWindowResources();
+        if (!CreateDesktopOverlayWindow())
+            return;
+    }
+
+    HideExplorerIcons();
+    AddTrayIcon(true);
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+
+    if (!mouseDown_ && !reloading_)
+        ReloadItems(false);
+    else if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::WatchDesktopHost()
+{
+    if (exitRequested_)
+        return;
+
+    if (!hwnd_ || !IsWindow(hwnd_))
+    {
+        RecoverDesktopHostAfterExplorerRestart();
+        return;
+    }
+
+    DesktopWindows current = FindDesktopWindows();
+    HWND currentHost = current.host;
+    HWND parent = GetParent(hwnd_);
+    const bool parentMissing = parent == nullptr || !IsWindow(parent);
+    const bool knownHostMissing = desktopWindows_.host == nullptr || !IsWindow(desktopWindows_.host);
+    const bool knownListViewMissing = desktopWindows_.listView != nullptr &&
+        !IsWindow(desktopWindows_.listView);
+    const bool hostChanged = currentHost && IsWindow(currentHost) &&
+        currentHost != desktopWindows_.host;
+    const bool parentDetached = currentHost && IsWindow(currentHost) &&
+        parent != currentHost;
+
+    if (parentMissing || knownHostMissing || knownListViewMissing ||
+        hostChanged || parentDetached)
+    {
+        RecoverDesktopHostAfterExplorerRestart();
+        return;
+    }
+
+    if (current.listView && IsWindow(current.listView) && IsWindowVisible(current.listView))
+    {
+        desktopWindows_ = current;
+        HideExplorerIcons();
+    }
+}
+
+inline void DesktopApp::RequestExit()
+{
+    if (exitRequested_)
+        return;
+    exitRequested_ = true;
+    RestoreExplorerIcons();
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        DestroyWindow(hwnd_);
+        return;
+    }
+
+    SaveLayoutSlots();
+    RemoveTrayIcon();
+    ResetDesktopWindowResources();
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        DestroyWindow(controlHwnd_);
+    else
+        PostQuitMessage(0);
+}
+
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     auto L = [](const wchar_t* s) {
@@ -53,16 +289,11 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             desktopWindows_.listView, desktopWindows_.host);
         L(buf);
     }
-    if (desktopWindows_.listView && IsWindowVisible(desktopWindows_.listView))
-    {
-        SetPropW(desktopWindows_.listView, kHiddenBySnowDesktopProp, reinterpret_cast<HANDLE>(1));
-        ShowWindow(desktopWindows_.listView, SW_HIDE);
+    HideExplorerIcons();
+    if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
         L(L"Explorer icon layer hidden");
-    }
     else
-    {
         L(L"Explorer icon layer not found or already hidden");
-    }
 
     // Create desktop overlay window as child of desktop host
     virtualLeft_ = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -187,8 +418,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     AddTrayIcon();
     RegisterShellChangeNotifications();
-
-    dropTargetRegistered_ = SUCCEEDED(RegisterDragDrop(hwnd_, static_cast<IDropTarget*>(this)));
+    RegisterOleDropTarget();
 
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
@@ -199,10 +429,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (settingsWindow_->Init(instance, d3dDevice_.Get()))
     {
         settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
-        settingsWindow_->SetExitCallback([this]() {
-            if (hwnd_ && IsWindow(hwnd_))
-                DestroyWindow(hwnd_);
-        });
+        settingsWindow_->SetExitCallback([this]() { RequestExit(); });
         settingsWindow_->SetInvalidateCallback([this]() {
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         });
@@ -434,33 +661,22 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         OnTrayCallback(lp);
         return 0;
     case WM_CLOSE:
-        if (desktopWindows_.listView && IsWindow(desktopWindows_.listView))
-        {
-            ShowWindow(desktopWindows_.listView, SW_SHOW);
-            RemovePropW(desktopWindows_.listView, kHiddenBySnowDesktopProp);
-        }
-        DestroyWindow(hwnd);
+        RequestExit();
         return 0;
     case WM_DESTROY:
+        if (!exitRequested_)
+        {
+            ResetDesktopWindowResources();
+            if (controlHwnd_ && IsWindow(controlHwnd_))
+                SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+            return 0;
+        }
         SaveLayoutSlots();
         RemoveTrayIcon();
-        DestroyDragHintWindow();
-        if (dropTargetRegistered_) { RevokeDragDrop(hwnd_); dropTargetRegistered_ = false; }
-        KillTimer(hwnd_, kShellChangeTimerId);
-        KillTimer(hwnd_, kRecycleBinPollTimerId);
-        KillTimer(hwnd_, kWidgetRefreshTimerId);
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
-        KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
-        if (desktopWindows_.listView && IsWindow(desktopWindows_.listView))
-        {
-            ShowWindow(desktopWindows_.listView, SW_SHOW);
-            RemovePropW(desktopWindows_.listView, kHiddenBySnowDesktopProp);
-        }
-        if (shellChangeRegId_ != 0)
-        {
-            SHChangeNotifyDeregister(shellChangeRegId_);
-            shellChangeRegId_ = 0;
-        }
+        ResetDesktopWindowResources();
+        if (controlHwnd_ && IsWindow(controlHwnd_))
+            KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
+        RestoreExplorerIcons();
         PostQuitMessage(0);
         return 0;
     }
