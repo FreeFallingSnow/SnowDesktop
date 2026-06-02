@@ -2041,19 +2041,7 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kDesktopHostWatchTimerId)
     {
-        DesktopWindows current = FindDesktopWindows();
-        if (current.host != desktopWindows_.host || !IsWindow(desktopWindows_.host))
-        {
-            desktopWindows_ = current;
-            if (hwnd_ && IsWindow(hwnd_))
-            {
-                HWND parent = desktopWindows_.host ? desktopWindows_.host : GetDesktopWindow();
-                SetParent(hwnd_, parent);
-                POINT origin{ virtualLeft_, virtualTop_ };
-                ScreenToClient(parent, &origin);
-                SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
-            }
-        }
+        WatchDesktopHost();
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
@@ -3946,7 +3934,7 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
         if (settingsWindow_)
             settingsWindow_->ShowExitConfirm();
         else
-            DestroyWindow(hwnd_);
+            RequestExit();
         break;
     case kTrayDesktopIconThisPC:
     case kTrayDesktopIconUserFiles:

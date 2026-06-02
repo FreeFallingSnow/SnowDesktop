@@ -104,6 +104,15 @@ private:
     // ── Window ──────────────────────────────────────────────
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    bool CreateDesktopOverlayWindow();
+    void ResetDesktopWindowResources();
+    void AttachWindowToDesktopHost(HWND host);
+    void RequestExit();
+    void HideExplorerIcons();
+    void RestoreExplorerIcons();
+    void RegisterOleDropTarget();
+    void RecoverDesktopHostAfterExplorerRestart();
+    void WatchDesktopHost();
 
     // ── Graphics ────────────────────────────────────────────
     bool InitGraphics();
@@ -383,6 +392,7 @@ private:
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     UINT taskbarRestartMsg_ = 0;
+    bool exitRequested_ = false;
 
     // Tray
     HICON trayIcon_ = nullptr;

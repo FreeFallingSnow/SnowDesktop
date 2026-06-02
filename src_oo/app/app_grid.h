@@ -1161,7 +1161,7 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
 {
     if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
     {
-        AddTrayIcon(true);
+        RecoverDesktopHostAfterExplorerRestart();
         return 0;
     }
     switch (msg)
@@ -1175,7 +1175,7 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
     case WM_COMMAND:
         return 0;
     case WM_CLOSE:
-        DestroyWindow(hwnd_);
+        RequestExit();
         return 0;
     case WM_DESTROY:
         controlHwnd_ = nullptr;
