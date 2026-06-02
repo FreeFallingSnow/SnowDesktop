@@ -249,11 +249,13 @@ private:
     bool ExecuteInternalDropPlan(const DragSourceList& sourceList, const DropPreviewList& preview);
     bool ExecuteFileBackedDropPlan(const DragSourceList& sourceList, const DropPreviewList& preview);
     bool MaterializeFilesToDesktop(const DragSourceList& sourceList, DropAction action,
-        bool duplicateDesktopCopyNames);
+        bool duplicateDesktopCopyNames,
+        std::unordered_map<size_t, std::wstring>* createdPathsBySource = nullptr);
     bool MaterializeFilesToFolder(const DragSourceList& sourceList, const std::wstring& folder,
         DropAction action) const;
     void StorePendingLandingCache(const DragSourceList& sourceList, const DropPreviewList& preview,
-        const std::unordered_set<std::wstring>& existingKeys);
+        const std::unordered_set<std::wstring>& existingKeys,
+        const std::unordered_map<size_t, std::wstring>* createdPathsBySource = nullptr);
     bool IsDropFileBacked(const DragSourceList& sourceList, DropTargetKind targetKind,
         DropAction action) const;
     void DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx, const DropPreviewList& preview);
@@ -436,6 +438,7 @@ private:
     std::vector<std::wstring> selfDragOutKeys_;
     bool externalDragActive_ = false;
     int externalDropFileCount_ = 0;
+    bool externalDropHasShortcut_ = false;
     bool dropTargetRegistered_ = false;
 
     // Pending landing cache (source list -> preview list survives shell refresh)

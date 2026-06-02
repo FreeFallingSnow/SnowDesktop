@@ -2250,6 +2250,22 @@ inline DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& so
     if (auto* widget = dynamic_cast<WidgetContainer*>(target))
     {
         preview.targetWidget = widget->GetWidgetData();
+        if (preview.targetWidget &&
+            preview.targetWidget->type == DesktopWidgetType::FileCategories)
+        {
+            auto isShortcutPath = [](const std::wstring& path) {
+                return !path.empty() && _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+            };
+            bool sourceHasShortcut = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
+                [&](const DragSourceEntry& entry) {
+                    return isShortcutPath(entry.filePath) || isShortcutPath(entry.displayName);
+                });
+            if (preview.action == DropAction::Link || sourceHasShortcut)
+            {
+                preview.targetKind = DropTargetKind::KeyedWidget;
+                return preview;
+            }
+        }
         preview.targetKind = preview.targetWidget &&
             preview.targetWidget->type == DesktopWidgetType::FolderMapping
                 ? DropTargetKind::FolderMapping
@@ -2425,10 +2441,13 @@ inline bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList
 }
 
 inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
-    DropAction action, bool duplicateDesktopCopyNames)
+    DropAction action, bool duplicateDesktopCopyNames,
+    std::unordered_map<size_t, std::wstring>* createdPathsBySource)
 {
     std::vector<std::wstring> paths = sourceList.FilePaths();
     if (paths.empty()) return false;
+    if (createdPathsBySource)
+        createdPathsBySource->clear();
 
     wchar_t desktopPathRaw[MAX_PATH]{};
     if (!SHGetSpecialFolderPathW(nullptr, desktopPathRaw, CSIDL_DESKTOPDIRECTORY, FALSE))
@@ -2538,8 +2557,11 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
     bool operated = false;
     if (action == DropAction::Link)
     {
-        for (const auto& path : paths)
+        for (const auto& source : sourceList.entries)
         {
+            const auto& path = source.filePath;
+            if (path.empty()) continue;
+
             std::wstring dst = makeUniqueShortcutPath(path);
             ComPtr<IShellLinkW> shellLink;
             if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
@@ -2550,7 +2572,11 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
                 ComPtr<IPersistFile> persistFile;
                 if (SUCCEEDED(shellLink.As(&persistFile)) &&
                     SUCCEEDED(persistFile->Save(dst.c_str(), TRUE)))
+                {
+                    if (createdPathsBySource)
+                        (*createdPathsBySource)[source.sourceIndex] = dst;
                     operated = true;
+                }
             }
         }
     }
@@ -2636,7 +2662,8 @@ inline bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceLis
 }
 
 inline void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
-    const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys)
+    const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
+    const std::unordered_map<size_t, std::wstring>* createdPathsBySource)
 {
     pendingLandingCache_.Clear();
     pendingLandingCache_.existingDesktopKeys = existingKeys;
@@ -2657,6 +2684,12 @@ inline void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceLis
         entry.kind = landing.kind;
         entry.sourcePath = it->filePath;
         entry.sourceName = !it->filePath.empty() ? FileNameFromPath(it->filePath) : it->displayName;
+        if (createdPathsBySource)
+        {
+            auto created = createdPathsBySource->find(it->sourceIndex);
+            if (created != createdPathsBySource->end())
+                entry.createdPath = created->second;
+        }
         entry.cell = landing.kind == DropLandingKind::DesktopCell ? landing.cell : landing.cell;
         entry.insertIndex = landing.insertIndex;
         entry.widget = landing.widget;
@@ -2765,17 +2798,20 @@ inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceLi
         return true;
     }
 
-    std::unordered_set<std::wstring> existingKeys = SnapshotDesktopKeys();
-    StorePendingLandingCache(sourceList, preview, existingKeys);
-
     bool duplicateCopyNames = preview.action == DropAction::Copy && sourceList.hasDesktopIcons &&
         !sourceList.hasExternalFiles;
-    bool operated = MaterializeFilesToDesktop(sourceList, preview.action, duplicateCopyNames);
+    std::unordered_set<std::wstring> existingKeys = SnapshotDesktopKeys();
+    std::unordered_map<size_t, std::wstring> createdPathsBySource;
+    std::unordered_map<size_t, std::wstring>* createdPaths =
+        preview.action == DropAction::Link ? &createdPathsBySource : nullptr;
+    bool operated = MaterializeFilesToDesktop(sourceList, preview.action, duplicateCopyNames,
+        createdPaths);
     if (!operated)
     {
         pendingLandingCache_.Clear();
         return false;
     }
+    StorePendingLandingCache(sourceList, preview, existingKeys, createdPaths);
 
     ReloadItems(false);
     if (preview.action == DropAction::Move && sourceList.hasDesktopIcons)
@@ -2853,10 +2889,23 @@ inline void DesktopApp::ApplyPendingPlacement()
         {
             if (entryUsed[e]) continue;
             const auto& landing = pendingLandingCache_.entries[e];
-            if (!MatchPendingName(item.name, landing.sourceName) &&
-                (item.parsingName.empty() ||
-                 !MatchPendingName(FileNameFromPath(item.parsingName), landing.sourceName)))
-                continue;
+            bool matchesLanding = false;
+            if (!landing.createdPath.empty())
+            {
+                matchesLanding =
+                    PathsEqualInsensitive(item.parsingName, landing.createdPath) ||
+                    PathsEqualInsensitive(FileNameFromPath(item.parsingName),
+                        FileNameFromPath(landing.createdPath)) ||
+                    PathsEqualInsensitive(item.name, FileNameFromPath(landing.createdPath));
+            }
+            if (!matchesLanding)
+            {
+                matchesLanding =
+                    MatchPendingName(item.name, landing.sourceName) ||
+                    (!item.parsingName.empty() &&
+                     MatchPendingName(FileNameFromPath(item.parsingName), landing.sourceName));
+            }
+            if (!matchesLanding) continue;
 
             if (landing.kind == DropLandingKind::WidgetIndex && !landing.widgetId.empty())
             {

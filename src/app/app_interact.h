@@ -2955,10 +2955,20 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     }
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 
+    externalDropHasShortcut_ = false;
     if (dataObject)
-        externalDropFileCount_ = static_cast<int>(GetDropPaths(dataObject).size());
+    {
+        std::vector<std::wstring> paths = GetDropPaths(dataObject);
+        externalDropFileCount_ = static_cast<int>(paths.size());
+        externalDropHasShortcut_ = std::any_of(paths.begin(), paths.end(),
+            [](const std::wstring& path) {
+                return _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+            });
+    }
     else
+    {
         externalDropFileCount_ = 1;
+    }
 
     int mods = 0;
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
@@ -3073,6 +3083,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
     }
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
+    externalDropHasShortcut_ = false;
     EndDragSession();
     HideDragHintWindow();
     OnPaint();
@@ -3091,6 +3102,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     {
         selfDragActive_ = false;
         selfDragReturned_ = true;
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        ReleaseCapture();
 
         if (dragSession_.TargetRegion() == HitRegion::Handoff)
         {
@@ -3164,6 +3178,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     // ── External drop ──────────────────────────────────────────
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
+    externalDropHasShortcut_ = false;
 
     std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
 

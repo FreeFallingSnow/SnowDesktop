@@ -202,6 +202,31 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
     const std::vector<Item*>& sourceItems, Container* origin, int mods) const
 {
     DropAction action = DropActionFromMods(mods, sourceItems.empty() ? DropAction::Copy : DropAction::Move);
+    if (data_ && data_->type == DesktopWidgetType::FileCategories)
+    {
+        auto isShortcutPath = [](const std::wstring& path) {
+            return _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+        };
+
+        bool sourceHasShortcut = sourceItems.empty() && app_ && app_->externalDragActive_ &&
+            app_->externalDropHasShortcut_;
+        for (auto* item : sourceItems)
+        {
+            if (!item) continue;
+            std::wstring path = item->GetPath();
+            if (!path.empty() && isShortcutPath(path))
+            {
+                sourceHasShortcut = true;
+                break;
+            }
+        }
+
+        if (sourceHasShortcut)
+            return L"桌面文件不支持收纳快捷方式";
+        if (action == DropAction::Link)
+            return L"桌面文件不支持创建快捷方式";
+    }
+
     auto actionText = [&]() -> std::wstring {
         switch (action)
         {
