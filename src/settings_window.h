@@ -52,7 +52,6 @@ private:
     void CleanupSwapChain();
     void SetupFonts();
     void RequestClose();
-    void DrawTitleBar();
     void DrawSidebar();
     void DrawBackupPage();
     void DrawGeneralPage();
@@ -67,6 +66,7 @@ private:
     bool SaveBackup(const std::wstring& name);
     bool RestoreBackup(const std::wstring& filename);
     bool DeleteBackup(const std::wstring& filename);
+    std::wstring MakeBackupTimestampName() const;
 
     bool IsAutoStartEnabled() const;
     void SetAutoStart(bool enable) const;
@@ -82,9 +82,10 @@ private:
     float dpiScale_ = 1.0f;
     int activePage_ = 0;
     char backupNameBuf_[128] = {};
-    bool titleBarHovered_ = false;
     bool showExitConfirm_ = false;
     bool pendingClose_ = false;
+    bool debugUnlocked_ = false;
+    int versionClickCount_ = 0;
 
     std::function<void()> reloadCallback_;
     std::function<void()> exitCallback_;

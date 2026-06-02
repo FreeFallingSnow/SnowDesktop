@@ -3840,8 +3840,8 @@ inline void DesktopApp::AddTrayIcon(bool force)
     if (!trayIcon_)
     {
         trayIcon_ = static_cast<HICON>(LoadImageW(
-            GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APPICON),
-            IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTSIZE));
+            GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APPICON_SMALL),
+            IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     }
 
     NOTIFYICONDATAW data{};

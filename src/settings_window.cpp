@@ -1,5 +1,6 @@
 #include "settings_window.h"
 #include "widget_engine.h"
+#include "resource.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -8,6 +9,7 @@
 #include <shlwapi.h>
 #include <shellapi.h>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -47,7 +49,7 @@ static void SetupLightTheme()
     c[ImGuiCol_Button]               = ImVec4(0.18f, 0.50f, 0.92f, 1.00f);
     c[ImGuiCol_ButtonHovered]        = ImVec4(0.24f, 0.56f, 0.96f, 1.00f);
     c[ImGuiCol_ButtonActive]         = ImVec4(0.14f, 0.42f, 0.84f, 1.00f);
-    c[ImGuiCol_CheckMark]            = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_CheckMark]            = ImVec4(0.18f, 0.50f, 0.92f, 1.00f);
     c[ImGuiCol_SliderGrab]           = ImVec4(0.24f, 0.55f, 0.92f, 1.00f);
     c[ImGuiCol_SliderGrabActive]     = ImVec4(0.30f, 0.60f, 0.96f, 1.00f);
     c[ImGuiCol_Tab]                  = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
@@ -84,6 +86,9 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     wc.lpfnWndProc = WndProc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APPICON));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_APPICON_SMALL),
+        IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = L"SnowDesktopSettingsWindow";
     RegisterClassExW(&wc);
@@ -106,12 +111,16 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
         WS_EX_APPWINDOW,
         wc.lpszClassName,
         L"SnowDesktop 设置",
-        WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+        WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         windowWidth_, windowHeight_,
         nullptr, nullptr, instance, this);
 
     if (hwnd_ == nullptr) return false;
+    if (wc.hIcon)
+        SendMessageW(hwnd_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wc.hIcon));
+    if (wc.hIconSm)
+        SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
 
     if (!CreateSwapChain()) return false;
 
@@ -205,8 +214,6 @@ void SettingsWindow::Render()
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar(2);
 
-    DrawTitleBar();
-
     if (editingWidgetIndex_ != static_cast<size_t>(-1))
     {
         DrawWidgetEditorPage();
@@ -226,8 +233,13 @@ void SettingsWindow::Render()
         case 0: DrawGeneralPage(); break;
         case 1: DrawPersonalizationPage(); break;
         case 2: DrawBackupPage(); break;
-        case 3: DrawDebugPage(); break;
         case 4: DrawAboutPage(); break;
+        case 3:
+            if (debugUnlocked_)
+                DrawDebugPage();
+            else
+                DrawAboutPage();
+            break;
         }
         ImGui::EndChild();
     }
@@ -293,72 +305,6 @@ void SettingsWindow::Render()
 }
 
 // ── Title Bar ───────────────────────────────────────────────────
-void SettingsWindow::DrawTitleBar()
-{
-    const float titleH = 32.0f * dpiScale_;
-    ImGui::BeginChild("##TitleBar", ImVec2(0, titleH), ImGuiChildFlags_None);
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    ImVec2 size = ImGui::GetContentRegionAvail();
-    size.y = titleH;
-
-    // Background — match window bg
-    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y),
-        ImColor(0.96f, 0.96f, 0.97f));
-
-    // Title text
-    dl->AddText(ImVec2(p.x + 12, p.y + 7),
-        ImColor(0.10f, 0.10f, 0.14f), "SnowDesktop 设置");
-
-    // Close button — centering within titleH
-    float btnX = p.x + size.x - 40.0f;
-    float btnH = titleH - 8.0f;
-    float btnY = p.y + 4.0f;
-    ImVec2 btnMin(btnX, btnY);
-    ImVec2 btnMax(btnX + 28.0f, btnY + btnH);
-    bool btnHovered = ImGui::IsMouseHoveringRect(btnMin, btnMax);
-    dl->AddRectFilled(btnMin, btnMax,
-        btnHovered ? ImColor(0.90f, 0.20f, 0.20f) : ImColor(0, 0, 0, 0), 4.0f);
-
-    // Center X glyph in button
-    const char* xText = "X";
-    ImVec2 textSize = ImGui::CalcTextSize(xText);
-    float textX = btnX + (28.0f - textSize.x) * 0.5f;
-    float textY = btnY + (btnH - textSize.y) * 0.5f;
-    dl->AddText(ImVec2(textX, textY), ImColor(0.45f, 0.45f, 0.50f), xText);
-
-    if (btnHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-    {
-        RequestClose();
-    }
-
-    // Drag region
-    ImGui::SetCursorScreenPos(p);
-    ImGui::InvisibleButton("##TitleDrag", ImVec2(size.x - 44, titleH));
-    if (ImGui::IsItemActive())
-    {
-        static POINT dragStart = {};
-        static RECT dragStartRect = {};
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-        {
-            GetCursorPos(&dragStart);
-            GetWindowRect(hwnd_, &dragStartRect);
-        }
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
-        {
-            POINT pt;
-            GetCursorPos(&pt);
-            SetWindowPos(hwnd_, nullptr,
-                dragStartRect.left + pt.x - dragStart.x,
-                dragStartRect.top + pt.y - dragStart.y,
-                0, 0, SWP_NOSIZE | SWP_NOZORDER);
-        }
-    }
-
-    ImGui::EndChild();
-}
-
 // ── Sidebar ──────────────────────────────────────────────────────
 void SettingsWindow::DrawSidebar()
 {
@@ -385,8 +331,9 @@ void SettingsWindow::DrawSidebar()
     SideButton(0, "通用");
     SideButton(1, "个性化");
     SideButton(2, "布局备份");
-    SideButton(3, "调试");
     SideButton(4, "关于");
+    if (debugUnlocked_)
+        SideButton(3, "调试");
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
@@ -427,7 +374,10 @@ void SettingsWindow::DrawBackupPage()
 {
     const float pad = 16.0f * dpiScale_;
     ImGui::SetCursorPos(ImVec2(pad, pad));
-    ImGui::BeginChild("##BackupPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x - pad);
+    pageSize.y = std::max(1.0f, pageSize.y - pad);
+    ImGui::BeginChild("##BackupPageInner", pageSize, ImGuiChildFlags_None);
     ImGui::Text("布局备份与恢复");
     ImGui::Separator();
     ImGui::Spacing();
@@ -441,7 +391,7 @@ void SettingsWindow::DrawBackupPage()
     if (BlueButton("保存备份"))
     {
         std::wstring name = Utf8ToWide(backupNameBuf_);
-        if (name.empty()) name = L"auto";
+        if (name.empty()) name = MakeBackupTimestampName();
         if (SaveBackup(name))
         {
             backupNameBuf_[0] = '\0';
@@ -499,7 +449,10 @@ void SettingsWindow::DrawGeneralPage()
 {
     const float pad = 16.0f * dpiScale_;
     ImGui::SetCursorPos(ImVec2(pad, pad));
-    ImGui::BeginChild("##GeneralPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x - pad);
+    pageSize.y = std::max(1.0f, pageSize.y - pad);
+    ImGui::BeginChild("##GeneralPageInner", pageSize, ImGuiChildFlags_None);
 
     ImGui::Text("通用设置");
     ImGui::Separator();
@@ -521,22 +474,66 @@ void SettingsWindow::DrawPersonalizationPage()
 {
     const float pad = 16.0f * dpiScale_;
     ImGui::SetCursorPos(ImVec2(pad, pad));
-    ImGui::BeginChild("##PersonalizationPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x - pad);
+    pageSize.y = std::max(1.0f, pageSize.y - pad);
+    ImGui::BeginChild("##PersonalizationPageInner", pageSize, ImGuiChildFlags_None);
+
+    auto nearlyEqual = [](float a, float b) {
+        return std::fabs(a - b) < 0.001f;
+    };
+    auto sameSettings = [&](const PersonalizationSettings& a, const PersonalizationSettings& b) {
+        return nearlyEqual(a.widgetBgR, b.widgetBgR) &&
+            nearlyEqual(a.widgetBgG, b.widgetBgG) &&
+            nearlyEqual(a.widgetBgB, b.widgetBgB) &&
+            nearlyEqual(a.widgetBorderR, b.widgetBorderR) &&
+            nearlyEqual(a.widgetBorderG, b.widgetBorderG) &&
+            nearlyEqual(a.widgetBorderB, b.widgetBorderB) &&
+            nearlyEqual(a.widgetAlpha, b.widgetAlpha) &&
+            nearlyEqual(a.gradientEndA, b.gradientEndA);
+    };
+    auto percentText = [](float value) {
+        return std::to_string(static_cast<int>(std::round(std::clamp(value, 0.0f, 1.0f) * 100.0f))) + "%";
+    };
+    auto drawSectionTitle = [](const char* title) {
+        ImGui::Spacing();
+        ImGui::Text("%s", title);
+        ImGui::Separator();
+        ImGui::Spacing();
+    };
+
+    const bool modifiedFromDefault = !sameSettings(personalization_, PersonalizationSettings::DarkPreset());
 
     ImGui::Text("个性化设置");
+    if (modifiedFromDefault)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("已修改");
+    }
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-    if (ImGui::Button("深色预设")) { personalization_ = PersonalizationSettings::DarkPreset(); personalizationDirty_ = true; }
+    drawSectionTitle("预设");
+    if (BlueButton("恢复默认", ImVec2(96, 0)))
+    {
+        personalization_ = PersonalizationSettings::DarkPreset();
+        personalizationDirty_ = true;
+    }
     ImGui::SameLine();
-    if (ImGui::Button("浅色预设")) { personalization_ = PersonalizationSettings::LightPreset(); personalizationDirty_ = true; }
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
+    if (BlueButton("浅色预设", ImVec2(96, 0)))
+    {
+        personalization_ = PersonalizationSettings::LightPreset();
+        personalizationDirty_ = true;
+    }
 
-    // Background color
+    drawSectionTitle("组件颜色");
+    const float labelW = 110.0f * dpiScale_;
+    const float colorW = 210.0f * dpiScale_;
+
     ImGui::Text("组件背景");
+    ImGui::SameLine(labelW);
     float bgColor[3] = { personalization_.widgetBgR, personalization_.widgetBgG, personalization_.widgetBgB };
+    ImGui::SetNextItemWidth(colorW);
     if (ImGui::ColorEdit3("##WidgetBgColor", bgColor, ImGuiColorEditFlags_NoInputs))
     {
         personalization_.widgetBgR = bgColor[0]; personalization_.widgetBgG = bgColor[1];
@@ -544,11 +541,10 @@ void SettingsWindow::DrawPersonalizationPage()
         personalizationDirty_ = true;
     }
 
-    ImGui::Spacing();
-
-    // Border color
     ImGui::Text("组件边框");
     float borderColor[3] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB };
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(colorW);
     if (ImGui::ColorEdit3("##WidgetBorderColor", borderColor, ImGuiColorEditFlags_NoInputs))
     {
         personalization_.widgetBorderR = borderColor[0]; personalization_.widgetBorderG = borderColor[1];
@@ -556,17 +552,35 @@ void SettingsWindow::DrawPersonalizationPage()
         personalizationDirty_ = true;
     }
 
-    ImGui::Spacing();
+    drawSectionTitle("透明度与渐变");
+    const float sliderW = 260.0f * dpiScale_;
 
-    // Unified transparency
-    if (ImGui::SliderFloat("整体不透明度", &personalization_.widgetAlpha, 0.0f, 1.0f))
+    ImGui::Text("整体不透明度");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetAlpha", &personalization_.widgetAlpha, 0.0f, 1.0f, ""))
         personalizationDirty_ = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", percentText(personalization_.widgetAlpha).c_str());
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text("底部渐变");
-    if (ImGui::SliderFloat("渐变结束透明度", &personalization_.gradientEndA, 0.0f, 1.0f))
+    bool gradientEnabled = personalization_.gradientEndA > 0.001f;
+    bool gradientToggle = gradientEnabled;
+    if (ImGui::Checkbox("启用底部渐变", &gradientToggle))
+    {
+        personalization_.gradientEndA = gradientToggle ? PersonalizationSettings::DarkPreset().gradientEndA : 0.0f;
         personalizationDirty_ = true;
+        gradientEnabled = gradientToggle;
+    }
+
+    ImGui::Text("渐变结束透明度");
+    ImGui::SameLine(labelW);
+    ImGui::BeginDisabled(!gradientEnabled);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##GradientEndAlpha", &personalization_.gradientEndA, 0.0f, 1.0f, ""))
+        personalizationDirty_ = true;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", percentText(personalization_.gradientEndA).c_str());
 
     ImGui::EndChild();
 }
@@ -610,7 +624,10 @@ void SettingsWindow::DrawDebugPage()
 {
     const float pad = 16.0f * dpiScale_;
     ImGui::SetCursorPos(ImVec2(pad, pad));
-    ImGui::BeginChild("##DebugPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x - pad);
+    pageSize.y = std::max(1.0f, pageSize.y - pad);
+    ImGui::BeginChild("##DebugPageInner", pageSize, ImGuiChildFlags_None);
 
     ImGui::Text("调试页");
     ImGui::Separator();
@@ -621,7 +638,7 @@ void SettingsWindow::DrawDebugPage()
         errors = widgetEngine_->GetWidgetErrors();
     ImGui::Text("错误记录: %d", static_cast<int>(errors.size()));
     ImGui::SameLine();
-    if (ImGui::Button("复制全部"))
+    if (BlueButton("复制全部"))
     {
         std::string copyText;
         for (const auto& e : errors)
@@ -633,7 +650,7 @@ void SettingsWindow::DrawDebugPage()
         ImGui::SetClipboardText(copyText.c_str());
     }
     ImGui::SameLine();
-    if (ImGui::Button("清空全部"))
+    if (BlueButton("清空全部"))
     {
         if (widgetEngine_)
             widgetEngine_->ClearWidgetErrors();
@@ -670,7 +687,10 @@ void SettingsWindow::DrawAboutPage()
 {
     const float pad = 16.0f * dpiScale_;
     ImGui::SetCursorPos(ImVec2(pad, pad));
-    ImGui::BeginChild("##AboutPageInner", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x - pad);
+    pageSize.y = std::max(1.0f, pageSize.y - pad);
+    ImGui::BeginChild("##AboutPageInner", pageSize, ImGuiChildFlags_None);
 
     ImGui::Text("关于 SnowDesktop");
     ImGui::Separator();
@@ -718,6 +738,18 @@ void SettingsWindow::DrawAboutPage()
     ImGui::Separator();
     ImGui::Spacing();
     ImGui::TextDisabled("SnowDesktop v1.0");
+    if (ImGui::IsItemClicked())
+    {
+        if (!debugUnlocked_)
+        {
+            ++versionClickCount_;
+            if (versionClickCount_ >= 5)
+            {
+                debugUnlocked_ = true;
+                activePage_ = 3;
+            }
+        }
+    }
 
     ImGui::EndChild();
 }
@@ -802,6 +834,16 @@ bool SettingsWindow::SaveBackup(const std::wstring& name)
     return CopyFileW(layoutPath, backupPath.c_str(), FALSE) != FALSE;
 }
 
+std::wstring SettingsWindow::MakeBackupTimestampName() const
+{
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    wchar_t name[64]{};
+    swprintf_s(name, L"%04d-%02d-%02d %02d-%02d-%02d",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    return name;
+}
+
 bool SettingsWindow::RestoreBackup(const std::wstring& filename)
 {
     wchar_t layoutPath[MAX_PATH]{};
@@ -811,8 +853,8 @@ bool SettingsWindow::RestoreBackup(const std::wstring& filename)
 
     std::wstring backupPath = GetBackupDir() + L"\\" + filename;
 
-    // First save current layout as auto-backup before restoring
-    SaveBackup(L"[恢复前自动备份]");
+    // First save current layout before restoring.
+    SaveBackup(MakeBackupTimestampName() + L"（恢复前备份）");
 
     return CopyFileW(backupPath.c_str(), layoutPath, FALSE) != FALSE;
 }
