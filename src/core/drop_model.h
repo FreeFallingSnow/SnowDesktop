@@ -193,6 +193,7 @@ struct PendingLandingEntry
     DropLandingKind kind = DropLandingKind::None;
     std::wstring sourcePath;
     std::wstring sourceName;
+    std::wstring createdPath;
     GridCell cell;
     size_t insertIndex = 0;
     DesktopWidget* widget = nullptr;
