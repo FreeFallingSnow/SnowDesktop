@@ -3836,7 +3836,7 @@ inline void DesktopApp::AddTrayIcon(bool force)
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = kTrayCallbackMessage;
     data.hIcon = trayIcon_;
-    wcscpy_s(data.szTip, L"SnowDesktopOO");
+    wcscpy_s(data.szTip, L"SnowDesktop");
     if (Shell_NotifyIconW(NIM_ADD, &data))
     {
         trayIconAdded_ = true;

@@ -1317,7 +1317,7 @@ inline void DesktopApp::LoadDesktopItems()
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     auto L = [](const wchar_t* s) {
-        HANDLE f = CreateFileW(L"SnowDesktopOO_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+        HANDLE f = CreateFileW(L"SnowDesktop_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, s, static_cast<DWORD>(wcslen(s)*2), &w, nullptr);
             WriteFile(f, L"\r\n", 4, &w, nullptr); CloseHandle(f); }

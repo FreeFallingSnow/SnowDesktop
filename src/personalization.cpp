@@ -5,24 +5,6 @@
 #include <fstream>
 #include <sstream>
 
-static std::string WideToUtf8(const std::wstring& w)
-{
-    if (w.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string r(n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), r.data(), n, nullptr, nullptr);
-    return r;
-}
-
-static std::wstring Utf8ToWide(const std::string& u)
-{
-    if (u.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, 0, u.c_str(), (int)u.size(), nullptr, 0);
-    std::wstring r(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, u.c_str(), (int)u.size(), r.data(), n);
-    return r;
-}
-
 static bool ReadDoubleField(const std::string& text, const char* field, double& out)
 {
     std::string marker = "\"" + std::string(field) + "\"";

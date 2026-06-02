@@ -261,6 +261,8 @@ inline void DesktopApp::RequestExit()
 
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
+    (void)showCommand;
+
     auto L = [](const wchar_t* s) {
         HANDLE f = CreateFileW(L"SnowDesktop_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
