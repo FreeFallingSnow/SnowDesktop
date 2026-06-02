@@ -82,7 +82,6 @@ inline void DesktopApp::SetFirstPageMonitorFromPoint(POINT screenPoint)
     firstPageMonitorId_ = page->monitorId;
     pageOffset_ = 0;
     ApplyPageMapping();
-    ApplySavedGridDimensions();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -204,6 +203,8 @@ inline void DesktopApp::ApplyPageMapping()
     }
     if (!lastMonitorPageId_.empty() && savedPageIds_.size() <= gridPages_.size())
         lastMonitorPageId_.clear();
+
+    ApplySavedGridDimensions();
 }
 
 inline void DesktopApp::MarkGridArea(std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
@@ -1517,7 +1518,6 @@ inline void DesktopApp::UpdateLayoutWorkArea()
         ConfigureGridPage(page);
     }
 
-    ApplySavedGridDimensions();
     ApplyPageMapping();
 }
 
