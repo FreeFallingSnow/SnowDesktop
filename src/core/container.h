@@ -24,7 +24,11 @@ public:
 
     virtual void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) = 0;
-    virtual void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) {}
+    virtual void DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
+    {
+        (void)context;
+        (void)mousePt;
+    }
     virtual void DrawContents(ID2D1DeviceContext* context);
     virtual RECT GetBounds() const = 0;
     virtual BarStyle GetInsertionStyle() const = 0;
@@ -83,5 +87,5 @@ public:
     virtual int  GetItemWidth()  const { return 92; }
     virtual bool SingleColumn() const { return false; }
     virtual bool IncludeTrailingEmptySlot() const { return false; }
-    virtual Item* GetSlotItem(size_t idx) const { return nullptr; }
+    virtual Item* GetSlotItem(size_t idx) const { (void)idx; return nullptr; }
 };

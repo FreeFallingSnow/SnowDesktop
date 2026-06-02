@@ -85,15 +85,28 @@ public:
     bool NeedsShellReloadAfterDrop() const override { return true; }
 
     // ── Member access — subclasses override ──────────────
-    virtual Item* GetMemberItem(size_t memberIndex) const { return nullptr; }
+    virtual Item* GetMemberItem(size_t memberIndex) const { (void)memberIndex; return nullptr; }
     virtual std::vector<size_t> GetSelectedMemberIndices() const { return {}; }
-    virtual void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) {}
+    virtual void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
+    {
+        (void)indices;
+        (void)insertBefore;
+    }
     virtual size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const;
     virtual bool AllowsDesktopKey(const std::wstring& key) const { (void)key; return true; }
 
     // ── Content — subclasses override ────────────────────
-    virtual void DrawContent(ID2D1DeviceContext* context, RECT body) {}
-    virtual void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) {}
+    virtual void DrawContent(ID2D1DeviceContext* context, RECT body)
+    {
+        (void)context;
+        (void)body;
+    }
+    virtual void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
+    {
+        (void)context;
+        (void)handleRect;
+        (void)hovered;
+    }
 
     // ── Scrollbar — subclasses override ──────────────────
     virtual int  GetScrollOffset() const { return 0; }

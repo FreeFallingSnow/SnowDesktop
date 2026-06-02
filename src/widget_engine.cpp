@@ -431,6 +431,8 @@ void WidgetEngine::RenderAll(ID2D1DeviceContext* context)
 
 bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName)
 {
+    (void)widgetName;
+
     // Set storage prefix to widget instance ID
     int len = WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), nullptr, 0, nullptr, nullptr);
     d2dState_->storagePrefix.resize(len);
@@ -462,6 +464,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
 
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds)
 {
+    (void)scriptPath;
+
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     LuaWidget* found = &widgets_[idx];
@@ -848,6 +852,7 @@ static int lua_ImGuiTextWrapped(lua_State* L) { ImGui::TextWrapped("%s", luaL_ch
 
 static int lua_ImGuiSeparator(lua_State* L)
 {
+    (void)L;
     ImGui::Separator();
     return 0;
 }
@@ -862,6 +867,7 @@ static int lua_ImGuiSameLine(lua_State* L)
 
 static int lua_ImGuiSpacing(lua_State* L)
 {
+    (void)L;
     ImGui::Spacing();
     return 0;
 }
@@ -884,6 +890,7 @@ static int lua_ImGuiTreeNode(lua_State* L)
 
 static int lua_ImGuiTreePop(lua_State* L)
 {
+    (void)L;
     ImGui::TreePop();
     return 0;
 }
