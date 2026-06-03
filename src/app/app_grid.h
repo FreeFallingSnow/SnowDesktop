@@ -7,6 +7,15 @@
 
 // ── Grid helpers ────────────────────────────────────────────
 
+inline bool GridAreaFitsPage(const GridPage& page, const GridCell& cell, GridSpan span)
+{
+    if (span.columns < 1 || span.rows < 1) return false;
+    if (cell.pageId != page.id) return false;
+    if (cell.column < 0 || cell.row < 0) return false;
+    return cell.column + span.columns <= page.columns &&
+        cell.row + span.rows <= page.rows;
+}
+
 inline const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
 {
     const GridPage* fallback = gridPages_.empty() ? nullptr : &gridPages_.front();
@@ -242,7 +251,7 @@ inline bool DesktopApp::TryFindFreeCell(
             candidate.pageId = page.id;
             candidate.column = slot / std::max(1, page.rows);
             candidate.row = slot % std::max(1, page.rows);
-            if (IsGridAreaValid(candidate, span) && !AreGridSlotsMarked(usedSlots, candidate, span))
+            if (GridAreaFitsPage(page, candidate, span) && !AreGridSlotsMarked(usedSlots, candidate, span))
             {
                 found = candidate;
                 return true;
@@ -281,34 +290,96 @@ inline bool DesktopApp::TryFindFreeCell(
 inline void DesktopApp::RelayoutDisplacedItems()
 {
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
+    extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     std::unordered_set<std::wstring> usedSlots;
-    for (const auto& w : widgets_)
-        MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
+    auto findFreeCellOrGrow = [&](GridSpan span, GridCell& result, const std::wstring& preferredPageId) -> bool {
+        if (TryFindFreeCell(span, usedSlots, result, preferredPageId))
+            return true;
 
-    std::unordered_set<std::wstring> placedKeys;
+        GridPage* targetPage = nullptr;
+        for (auto& page : gridPages_)
+        {
+            if (page.id == preferredPageId)
+            {
+                targetPage = &page;
+                break;
+            }
+        }
+        if (!targetPage && !gridPages_.empty())
+            targetPage = &gridPages_.front();
+        if (!targetPage)
+            return false;
+
+        constexpr int kMaxRows = 50;
+        while (targetPage->rows < kMaxRows)
+        {
+            ++targetPage->rows;
+            ApplyGapScaleToPage(*targetPage);
+            savedPageColumns_[targetPage->id] = targetPage->columns;
+            savedPageRows_[targetPage->id] = targetPage->rows;
+            if (TryFindFreeCell(span, usedSlots, result, targetPage->id))
+                return true;
+        }
+        return false;
+    };
+
+    std::vector<size_t> displacedWidgets;
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        auto& widget = widgets_[i];
+        const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
+        if (!page)
+        {
+            displacedWidgets.push_back(i);
+            continue;
+        }
+
+        widget.gridSpan.columns = std::clamp(widget.gridSpan.columns, 1, std::max(1, page->columns));
+        widget.gridSpan.rows = std::clamp(widget.gridSpan.rows, 1, std::max(1, page->rows));
+        if (GridAreaFitsPage(*page, widget.gridCell, widget.gridSpan) &&
+            !AreGridSlotsMarked(usedSlots, widget.gridCell, widget.gridSpan))
+        {
+            MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
+        }
+        else
+        {
+            displacedWidgets.push_back(i);
+        }
+    }
+
+    for (size_t widgetIndex : displacedWidgets)
+    {
+        auto& widget = widgets_[widgetIndex];
+        GridCell freeCell;
+        if (findFreeCellOrGrow(widget.gridSpan, freeCell, widget.gridCell.pageId))
+        {
+            widget.gridCell = freeCell;
+            MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
+        }
+    }
+
     for (auto& item : items_)
     {
         if (item.name.empty()) continue;
         if (IsItemInAnyWidget(item)) continue;
         const GridPage* page = FindGridPage(gridPages_, item.gridCell.pageId);
-        if (page &&
-            item.gridCell.column + item.gridSpan.columns <= page->columns &&
-            item.gridCell.row + item.gridSpan.rows <= page->rows)
+        if (page)
         {
-            std::wstring key = item.gridCell.pageId + L":" +
-                std::to_wstring(item.gridCell.column) + L"," + std::to_wstring(item.gridCell.row);
-            if (!AreGridSlotsMarked(usedSlots, item.gridCell, item.gridSpan))
+            item.gridSpan.columns = std::clamp(item.gridSpan.columns, 1, std::max(1, page->columns));
+            item.gridSpan.rows = std::clamp(item.gridSpan.rows, 1, std::max(1, page->rows));
+            if (GridAreaFitsPage(*page, item.gridCell, item.gridSpan) &&
+                !AreGridSlotsMarked(usedSlots, item.gridCell, item.gridSpan))
             {
                 MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
-                placedKeys.insert(item.layoutKey);
                 continue;
             }
         }
 
         GridCell freeCell;
-        if (TryFindFreeCell(item.gridSpan, usedSlots, freeCell, item.gridCell.pageId))
+        if (findFreeCellOrGrow(item.gridSpan, freeCell, item.gridCell.pageId))
         {
             item.gridCell = freeCell;
+            item.slot = SlotFromCell(gridPages_, freeCell);
             MarkGridArea(usedSlots, freeCell, item.gridSpan);
         }
     }
@@ -1215,7 +1286,10 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     reloading_ = true;
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     if (reloadLayoutFromDisk)
+    {
         LoadLayoutSlots();
+        ApplyPageMapping();
+    }
     LoadDesktopItems();
     ApplyAutoCollectFileCategoryWidgets();
 
@@ -1311,6 +1385,8 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     SaveLayoutSlots();
     RebuildContainersAndItems();
     reloading_ = false;
+    if (widgetEngine_)
+        widgetEngine_->NotifyDesktopChanged("reload");
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -3365,7 +3441,10 @@ inline void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& sc
         w.showTitle = widgetEngine_->ReadBoolFlag(scriptFilename, "showTitle", false);
         w.bottomBarHover = widgetEngine_->ReadBoolFlag(scriptFilename, "bottomBarHover", true);
     }
-    AddWidgetToGrid(std::move(w), { 1, 1 });
+    int defaultColumns = 1;
+    int defaultRows = 1;
+    WidgetEngine::GetWidgetDefaultSpan(scriptFilename, defaultColumns, defaultRows);
+    AddWidgetToGrid(std::move(w), { defaultColumns, defaultRows });
 }
 
 inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove)

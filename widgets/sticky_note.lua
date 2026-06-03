@@ -41,7 +41,7 @@ function render()
     if saved ~= "" then
         draw.text(pad, pad, saved, 15, textColor, w - pad * 2)
     else
-        draw.text(pad, pad, "双击或右键编辑...", 15, textColor, w - pad * 2)
+        draw.text(pad, pad, "双击编辑...", 15, textColor, w - pad * 2)
     end
 
     local t = sys.getTime()
@@ -49,6 +49,28 @@ function render()
 end
 
 function onClick(x, y)
+end
+
+function onDoubleClick(x, y)
+    local w = layout.width()
+    local h = layout.height()
+    loadConfig()
+    widget.editText("text", 12, 12, w - 24, h - 36, true, storage.get("text") or "", false, textColor)
+end
+
+function getContextMenu()
+    return {
+        { id = 1, label = "清空便签" },
+        { id = 2, label = "恢复便签默认样式" },
+    }
+end
+
+function onMenu(id)
+    if id == 1 then
+        storage.remove("text")
+    elseif id == 2 then
+        resetDefaults()
+    end
 end
 
 function imguiRender()

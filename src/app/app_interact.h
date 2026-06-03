@@ -116,6 +116,172 @@ inline size_t DesktopApp::HitTestStandaloneWidgetIndex(POINT pt) const
     return static_cast<size_t>(-1);
 }
 
+inline std::string LuaWidgetWideToUtf8(const std::wstring& value)
+{
+    if (value.empty()) return {};
+    int len = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()),
+        nullptr, 0, nullptr, nullptr);
+    std::string result(static_cast<size_t>(len), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()),
+        result.data(), len, nullptr, nullptr);
+    return result;
+}
+
+inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaDesktopSnapshot(bool selectedOnly) const
+{
+    std::vector<LuaDesktopItemInfo> result;
+    auto appendDesktopItem = [&](const DesktopItem& item, const std::wstring& source) {
+        if (selectedOnly && !item.selected) return;
+        LuaDesktopItemInfo info;
+        info.id = LuaWidgetWideToUtf8(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
+        info.title = LuaWidgetWideToUtf8(item.name);
+        info.path = LuaWidgetWideToUtf8(item.parsingName);
+        info.source = LuaWidgetWideToUtf8(source);
+        info.type = LuaWidgetWideToUtf8(item.typeName.empty() ? L"desktopItem" : item.typeName);
+        info.selected = item.selected;
+        result.push_back(std::move(info));
+    };
+
+    for (const auto& item : items_)
+    {
+        if (!IsItemInAnyWidget(item))
+            appendDesktopItem(item, L"desktop");
+    }
+
+    for (const auto& widget : widgets_)
+    {
+        if (widget.type == DesktopWidgetType::FolderMapping)
+        {
+            for (const auto& entry : widget.folderEntries)
+            {
+                if (selectedOnly && !entry.selected) continue;
+                LuaDesktopItemInfo info;
+                info.id = LuaWidgetWideToUtf8(entry.fullPath);
+                info.title = LuaWidgetWideToUtf8(entry.name);
+                info.path = LuaWidgetWideToUtf8(entry.fullPath);
+                info.source = LuaWidgetWideToUtf8(widget.title.empty() ? L"folderMapping" : widget.title);
+                info.type = entry.isDirectory ? "folder" : "file";
+                info.selected = entry.selected;
+                result.push_back(std::move(info));
+            }
+            continue;
+        }
+
+        for (const auto& key : widget.itemKeys)
+        {
+            size_t idx = FindItemIndexByKey(key);
+            if (idx != static_cast<size_t>(-1))
+                appendDesktopItem(items_[idx], widget.title.empty() ? L"widget" : widget.title);
+        }
+    }
+    return result;
+}
+
+inline bool DesktopApp::LuaOpenPath(const std::wstring& path)
+{
+    if (path.empty()) return false;
+    HINSTANCE result = ShellExecuteW(hwnd_, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32;
+}
+
+inline bool DesktopApp::LuaRevealPath(const std::wstring& path)
+{
+    if (path.empty()) return false;
+    std::wstring params = L"/select,\"" + path + L"\"";
+    HINSTANCE result = ShellExecuteW(hwnd_, L"open", L"explorer.exe", params.c_str(), nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32;
+}
+
+inline void DesktopApp::LuaSetWidgetTitle(const std::wstring& widgetId, const std::wstring& title)
+{
+    if (title.empty()) return;
+    for (auto& widget : widgets_)
+    {
+        if (widget.id != widgetId) continue;
+        if (widget.title == title) return;
+        widget.title = title;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+}
+
+inline void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& request)
+{
+    if (renameEdit_ != nullptr || request.widgetId.empty() || request.storageKey.empty())
+        return;
+    if (luaInlineEdit_ != nullptr)
+        CommitLuaInlineTextEdit(false);
+
+    size_t widgetIndex = static_cast<size_t>(-1);
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (widgets_[i].id == request.widgetId && widgets_[i].type == DesktopWidgetType::LuaScript)
+        {
+            widgetIndex = i;
+            break;
+        }
+    }
+    if (widgetIndex == static_cast<size_t>(-1))
+        return;
+
+    RECT frame = GetStandaloneWidgetFrameRect(widgets_[widgetIndex]);
+    RECT rect = {
+        frame.left + request.localRect.left,
+        frame.top + request.localRect.top,
+        frame.left + request.localRect.right,
+        frame.top + request.localRect.bottom
+    };
+    rect.left = std::max<LONG>(frame.left + 2, std::min<LONG>(rect.left, frame.right - 4));
+    rect.top = std::max<LONG>(frame.top + 2, std::min<LONG>(rect.top, frame.bottom - 4));
+    rect.right = std::min<LONG>(std::max<LONG>(rect.right, rect.left + 24), frame.right - 2);
+    rect.bottom = std::min<LONG>(std::max<LONG>(rect.bottom, rect.top + 22), frame.bottom - 2);
+    if (IsRectEmptyRect(rect))
+        return;
+
+    RECT screenRect = rect;
+    MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
+
+    std::wstring initial = Utf8ToWide(request.text);
+    DWORD style = WS_POPUP | WS_VISIBLE | ES_LEFT | ES_NOHIDESEL | ES_AUTOVSCROLL;
+    if (request.multiline)
+        style |= ES_MULTILINE | ES_WANTRETURN | WS_VSCROLL;
+    else
+        style |= ES_AUTOHSCROLL;
+
+    luaInlineEdit_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"EDIT", initial.c_str(), style,
+        screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
+        hwnd_, nullptr, instance_, nullptr);
+    if (!luaInlineEdit_)
+        return;
+
+    luaInlineEditWidgetId_ = request.widgetId;
+    luaInlineEditStorageKey_ = request.storageKey;
+    luaInlineEditMultiline_ = request.multiline;
+    luaInlineEditTextColor_ = RGB((request.textColor >> 16) & 0xFF,
+        (request.textColor >> 8) & 0xFF, request.textColor & 0xFF);
+
+    if (luaInlineEditFont_) DeleteObject(luaInlineEditFont_);
+    luaInlineEditFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(luaInlineEdit_, WM_SETFONT,
+        reinterpret_cast<WPARAM>(luaInlineEditFont_ ? luaInlineEditFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+    SendMessageW(luaInlineEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(8, 8));
+    SetWindowSubclass(luaInlineEdit_, &DesktopApp::LuaInlineEditSubclassProc, 1,
+        reinterpret_cast<DWORD_PTR>(this));
+    SetWindowPos(luaInlineEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
+    if (request.selectAll)
+        SendMessageW(luaInlineEdit_, EM_SETSEL, 0, -1);
+    else
+        SendMessageW(luaInlineEdit_, EM_SETSEL,
+            static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
+    SetFocus(luaInlineEdit_);
+}
+
 inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 {
     for (auto& c : containers_)
@@ -513,6 +679,13 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         mouseDownWidgetIndex_ = wi;
         mouseDownHit_ = nullptr;
         SetCapture(hwnd_);
+        if (widgetEngine_ && widgets_[wi].type == DesktopWidgetType::LuaScript)
+        {
+            RECT frame = GetStandaloneWidgetFrameRect(widgets_[wi]);
+            widgetEngine_->EnsureWidgetLoaded(widgets_[wi].id, widgets_[wi].scriptPath);
+            widgetEngine_->InvokeMouseEvent(widgets_[wi].id, "onMouseDown",
+                pt.x - frame.left, pt.y - frame.top, 1, 0);
+        }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -715,6 +888,23 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+
+    if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
+        mouseDownWidgetIndex_ < widgets_.size() &&
+        widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
+        widgetEngine_)
+    {
+        WidgetHit hit = HitTestStandaloneWidget(mouseDownWidgetIndex_, current);
+        if (hit == WidgetHit::Content)
+        {
+            RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
+            widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
+                widgets_[mouseDownWidgetIndex_].scriptPath);
+            widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseMove",
+                current.x - frame.left, current.y - frame.top,
+                (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
+        }
+    }
 
     if (mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected() && !dragSession_.IsActive())
     {
@@ -1192,6 +1382,8 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
             widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
                 widgets_[mouseDownWidgetIndex_].scriptPath);
+            widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseUp",
+                upPoint.x - frame.left, upPoint.y - frame.top, 1, 0);
             widgetEngine_->InvokeClick(widgets_[mouseDownWidgetIndex_].id,
                 upPoint.x - frame.left, upPoint.y - frame.top);
         }
@@ -2186,6 +2378,21 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     if (dragSession_.IsActive())
         dragSession_.UpdateActionFromMods(currentMods, externalDragActive_ ? DropAction::Copy : DropAction::Move);
 
+    size_t luaWidget = HitTestStandaloneWidgetIndex(pt);
+    if (luaWidget != static_cast<size_t>(-1) &&
+        widgets_[luaWidget].type == DesktopWidgetType::LuaScript &&
+        HitTestStandaloneWidget(luaWidget, pt) == WidgetHit::Content &&
+        widgetEngine_)
+    {
+        int delta = GET_WHEEL_DELTA_WPARAM(wp);
+        RECT frame = GetStandaloneWidgetFrameRect(widgets_[luaWidget]);
+        widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].scriptPath);
+        widgetEngine_->InvokeMouseEvent(widgets_[luaWidget].id, "onWheel",
+            pt.x - frame.left, pt.y - frame.top, 0, delta);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
     auto refreshDragAfterScroll = [&]()
     {
         if (!dragSession_.IsActive()) return;
@@ -2793,6 +3000,68 @@ inline LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
     return DefSubclassProc(hwnd, message, wParam, lParam);
 }
 
+inline void DesktopApp::CommitLuaInlineTextEdit(bool cancel)
+{
+    if (luaInlineEdit_ == nullptr) return;
+
+    HWND edit = luaInlineEdit_;
+    luaInlineEdit_ = nullptr;
+    RemoveWindowSubclass(edit, &DesktopApp::LuaInlineEditSubclassProc, 1);
+
+    std::wstring value;
+    if (!cancel)
+    {
+        int length = GetWindowTextLengthW(edit);
+        std::vector<wchar_t> buffer(static_cast<size_t>(std::max(0, length)) + 1);
+        GetWindowTextW(edit, buffer.data(), length + 1);
+        value.assign(buffer.data());
+    }
+
+    DestroyWindow(edit);
+    if (luaInlineEditFont_) { DeleteObject(luaInlineEditFont_); luaInlineEditFont_ = nullptr; }
+
+    if (!cancel && widgetEngine_ && !luaInlineEditWidgetId_.empty() && !luaInlineEditStorageKey_.empty())
+    {
+        widgetEngine_->RuntimeSetStorageValue(luaInlineEditWidgetId_, luaInlineEditStorageKey_,
+            LuaWidgetWideToUtf8(value));
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    luaInlineEditWidgetId_.clear();
+    luaInlineEditStorageKey_.clear();
+    luaInlineEditMultiline_ = false;
+    luaInlineEditTextColor_ = RGB(0, 0, 0);
+}
+
+inline LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
+    HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam,
+    UINT_PTR subclassId, DWORD_PTR refData)
+{
+    (void)subclassId;
+    auto* app = reinterpret_cast<DesktopApp*>(refData);
+    if (!app) return DefSubclassProc(hwnd, message, wParam, lParam);
+
+    switch (message)
+    {
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) { app->CommitLuaInlineTextEdit(true); return 0; }
+        if (wParam == VK_RETURN)
+        {
+            bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            if (!app->luaInlineEditMultiline_ || ctrl)
+            {
+                app->CommitLuaInlineTextEdit(false);
+                return 0;
+            }
+        }
+        break;
+    case WM_KILLFOCUS:
+        app->CommitLuaInlineTextEdit(false);
+        return 0;
+    }
+    return DefSubclassProc(hwnd, message, wParam, lParam);
+}
+
 inline bool DesktopApp::IsSameWindowTree(HWND parent, HWND window)
 {
     return parent != nullptr && window != nullptr && (window == parent || IsChild(parent, window));
@@ -2805,6 +3074,7 @@ inline bool DesktopApp::IsKnownDesktopSurfaceWindow(HWND window) const
     if (!root) root = window;
 
     if (IsSameWindowTree(hwnd_, window) || window == hwnd_ || root == hwnd_) return true;
+    if (luaInlineEdit_ && (IsSameWindowTree(luaInlineEdit_, window) || root == luaInlineEdit_)) return true;
     if (hintHwnd_ && (IsSameWindowTree(hintHwnd_, window) || root == hintHwnd_)) return true;
     if (controlHwnd_ && (IsSameWindowTree(controlHwnd_, window) || root == controlHwnd_)) return true;
 
@@ -3637,6 +3907,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     if (!menu) return;
 
     const auto& widget = widgets_[widgetIndex];
+    std::vector<LuaWidgetMenuItem> luaMenuItems;
 
     if (widget.type == DesktopWidgetType::Collection)
     {
@@ -3658,6 +3929,25 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     else if (widget.type == DesktopWidgetType::LuaScript)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetEdit, L"编辑组件");
+        if (widgetEngine_)
+        {
+            widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
+            luaMenuItems = widgetEngine_->GetContextMenu(widget.id);
+            for (size_t i = 0; i < luaMenuItems.size() &&
+                kContextLuaWidgetMenuFirst + static_cast<UINT>(i) <= kContextLuaWidgetMenuLast; ++i)
+            {
+                const auto& item = luaMenuItems[i];
+                if (item.separator)
+                {
+                    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+                    continue;
+                }
+                UINT flags = MF_STRING | (item.enabled ? 0 : MF_GRAYED);
+                AppendMenuW(menu, flags,
+                    kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
+                    Utf8ToWide(item.label).c_str());
+            }
+        }
     }
 
     if (widget.type == DesktopWidgetType::FileCategories ||
@@ -3728,6 +4018,17 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
     DestroyMenu(menu);
     ClearMenuIcons();
+
+    if (command >= kContextLuaWidgetMenuFirst && command <= kContextLuaWidgetMenuLast)
+    {
+        size_t itemIndex = static_cast<size_t>(command - kContextLuaWidgetMenuFirst);
+        if (itemIndex < luaMenuItems.size() && widgetEngine_)
+        {
+            widgetEngine_->InvokeMenu(widgets_[widgetIndex].id, luaMenuItems[itemIndex].id);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
 
     switch (command)
     {
