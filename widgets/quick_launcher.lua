@@ -1,4 +1,5 @@
 name = "快速启动"
+bottomBarHover = false
 
 function currentQuery()
     return storage.get("query") or ""
@@ -97,8 +98,7 @@ function render()
     elseif #items > maxRows then
         local barH = math.max(12, math.floor((maxRows / #items) * (maxRows * rowH)))
         local barY = listY + math.floor(((top - 1) / math.max(1, #items - maxRows)) * (maxRows * rowH - barH))
-        draw.rect(w - pad - 4, listY, 3, maxRows * rowH, theme.bg, 2, math.min(0.50, theme.alpha + 0.10))
-        draw.rect(w - pad - 4, barY, 3, barH, theme.border, 2, math.min(0.95, theme.alpha + 0.35))
+        draw.rect(w - pad - 4, barY, 3, barH, 0xFFFFFF, 2, 0.82)
     end
 end
 

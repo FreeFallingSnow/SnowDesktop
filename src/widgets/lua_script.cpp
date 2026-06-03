@@ -66,6 +66,12 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         app_->widgetEngine_->RenderWidget(data_->id, data_->scriptPath, context, frame);
     context->PopAxisAlignedClip();
 
+    if (app_->widgetEngine_)
+    {
+        data_->showTitle = app_->widgetEngine_->ReadBoolFlag(data_->scriptPath, "showTitle", false);
+        data_->bottomBarHover = app_->widgetEngine_->ReadBoolFlag(data_->scriptPath, "bottomBarHover", true);
+    }
+
     bool showHandle = data_->bottomBarHover ? hovered : true;
     if (!showHandle) return;
 
@@ -89,7 +95,24 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                     D2D1::Point2F(0.0f, static_cast<float>(gradientRect.bottom))),
                 stops.Get(), &brush)) && brush)
             {
+                auto* factory = app_->GetD2DFactory();
+                Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+                bool pushed = false;
+                if (factory && SUCCEEDED(factory->CreateRoundedRectangleGeometry(
+                    D2D1::RoundedRect(
+                        D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+                            static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
+                        12.0f, 12.0f), &clipGeo)) && clipGeo)
+                {
+                    context->PushLayer(D2D1::LayerParameters(
+                        D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+                            static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
+                        clipGeo.Get()), nullptr);
+                    pushed = true;
+                }
                 context->FillRectangle(app_->ToD2DRect(gradientRect), brush.Get());
+                if (pushed)
+                    context->PopLayer();
             }
         }
     }
