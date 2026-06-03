@@ -938,8 +938,6 @@ inline void DesktopApp::LoadLayoutSlots()
                         widget.showTitle = widget.type != DesktopWidgetType::LuaScript;
                         widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
                             widget.type == DesktopWidgetType::LuaScript);
-                        ReadJsonBoolField(obj, "showTitle", widget.showTitle);
-                        ReadJsonBoolField(obj, "bottomBarHover", widget.bottomBarHover);
                         widget.scrollOffset = std::max(0, scrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
                         ReadJsonStringArrayField(obj, "items", widget.itemKeys);
@@ -1088,8 +1086,6 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
-             << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
-             << ", \"bottomBarHover\": " << (w.bottomBarHover ? "true" : "false")
              << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
              << ", \"items\": [";
         for (size_t j = 0; j < w.itemKeys.size(); ++j)
