@@ -661,22 +661,98 @@ void SettingsWindow::DrawDebugPage()
 
     if (errors.empty())
     {
-        ImGui::TextDisabled("当前没有组件错误记录。\n当组件 Lua 加载失败或运行时出错时，会自动记录到这里。\n");
+        ImGui::TextDisabled("当前没有组件错误记录。");
+        ImGui::Spacing();
+    }
+    else
+    {
+        ImGui::BeginChild("##DebugScroll", ImVec2(0, 160.0f * dpiScale_), true, ImGuiWindowFlags_HorizontalScrollbar);
+        for (const auto& e : errors)
+        {
+            std::string itemText = "[" + e.key + "]\n" + e.message;
+            if (ImGui::Selectable(itemText.c_str(), false, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 0)))
+                ImGui::SetClipboardText(itemText.c_str());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("点击复制这一条错误");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+        ImGui::EndChild();
+        ImGui::Spacing();
+    }
+
+    ImGui::Separator();
+    ImGui::Text("组件诊断");
+
+    std::vector<WidgetDiagnosticEntry> diagnostics;
+    if (widgetEngine_)
+        diagnostics = widgetEngine_->GetWidgetDiagnostics();
+
+    if (diagnostics.empty())
+    {
+        ImGui::TextDisabled("当前没有已加载的 Lua 组件。");
         ImGui::EndChild();
         return;
     }
 
-    ImGui::BeginChild("##DebugScroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-    for (const auto& e : errors)
+    if (BlueButton("复制诊断信息"))
     {
-        std::string itemText = "[" + e.key + "]\n" + e.message;
-        if (ImGui::Selectable(itemText.c_str(), false, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 0)))
-            ImGui::SetClipboardText(itemText.c_str());
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("点击复制这一条错误");
-        ImGui::Spacing();
+        std::string text;
+        for (const auto& d : diagnostics)
+        {
+            text += "[" + WideToUtf8(d.widgetId) + "] " + d.name + "\n";
+            text += std::string("valid=") + (d.valid ? "true" : "false") +
+                ", manifest=" + (d.hasManifest ? "true" : "false") + "\n";
+            text += "permissions=";
+            for (size_t i = 0; i < d.permissions.size(); ++i)
+            {
+                if (i > 0) text += ",";
+                text += d.permissions[i];
+            }
+            text += "\n";
+            if (!d.lastError.empty())
+                text += "lastError=" + d.lastError + "\n";
+            for (const auto& log : d.logs)
+                text += log.level + ": " + log.message + "\n";
+            text += "\n";
+        }
+        ImGui::SetClipboardText(text.c_str());
+    }
+
+    ImGui::BeginChild("##WidgetDiagnostics", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    for (auto& d : diagnostics)
+    {
+        std::string header = "[" + WideToUtf8(d.widgetId) + "] " + d.name;
+        if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Text("脚本: %s", WideToUtf8(d.scriptPath).c_str());
+            ImGui::Text("状态: %s | Manifest: %s", d.valid ? "有效" : "无效",
+                d.hasManifest ? "是" : "否");
+            std::string perms;
+            for (size_t i = 0; i < d.permissions.size(); ++i)
+            {
+                if (i > 0) perms += ", ";
+                perms += d.permissions[i];
+            }
+            ImGui::Text("权限: %s", perms.empty() ? "(无)" : perms.c_str());
+            if (!d.lastError.empty())
+                ImGui::TextWrapped("最近错误: %s", d.lastError.c_str());
+            if (BlueButton(("重新加载##" + WideToUtf8(d.widgetId)).c_str(), ImVec2(96, 0)))
+            {
+                if (widgetEngine_)
+                    widgetEngine_->ReloadWidget(d.widgetId);
+                if (invalidateCallback_)
+                    invalidateCallback_();
+            }
+            if (!d.logs.empty())
+            {
+                ImGui::Text("最近日志");
+                for (const auto& log : d.logs)
+                    ImGui::TextWrapped("[%s] %s", log.level.c_str(), log.message.c_str());
+            }
+        }
         ImGui::Separator();
-        ImGui::Spacing();
     }
     ImGui::EndChild();
 

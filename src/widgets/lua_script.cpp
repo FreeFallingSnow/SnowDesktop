@@ -41,6 +41,20 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 gradientEndA = luaGradientEndA;
             }
         }
+
+        auto colorToRgb = [](const D2D1::ColorF& color) {
+            auto toByte = [](float v) {
+                v = std::max(0.0f, std::min(1.0f, v));
+                return static_cast<int>(v * 255.0f + 0.5f);
+            };
+            return (toByte(color.r) << 16) | (toByte(color.g) << 8) | toByte(color.b);
+        };
+        LuaWidgetTheme theme;
+        theme.bg = colorToRgb(fillColor);
+        theme.border = colorToRgb(borderColor);
+        theme.alpha = fillColor.a;
+        theme.gradientEndA = gradientEndA;
+        app_->widgetEngine_->SetWidgetTheme(data_->id, theme);
     }
 
     app_->DrawD2DRoundedRectangle(context, frame, 12.0f, fillColor,

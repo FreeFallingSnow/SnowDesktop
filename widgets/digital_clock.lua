@@ -49,7 +49,7 @@ function render()
     local timeStr = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
     local dateStr = string.format("%d年%02d月%02d日", t.year, t.month, t.day)
     local weekDays = { "日", "一", "二", "三", "四", "五", "六" }
-    local weekdayStr = "星期" .. weekDays[os.date("*t").wday]
+    local weekdayStr = "星期" .. weekDays[t.wday or 1]
 
     local timeBaseSize = 28
     local secondaryBaseSize = 9

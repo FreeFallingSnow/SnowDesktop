@@ -444,6 +444,30 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     widgetEngine_ = std::make_unique<WidgetEngine>();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
     {
+        widgetEngine_->SetDesktopSnapshotProvider([this]() {
+            return BuildLuaDesktopSnapshot(false);
+        });
+        widgetEngine_->SetSelectionProvider([this]() {
+            return BuildLuaDesktopSnapshot(true);
+        });
+        widgetEngine_->SetWidgetTitleCallback([this](const std::wstring& widgetId, const std::wstring& title) {
+            LuaSetWidgetTitle(widgetId, title);
+        });
+        widgetEngine_->SetInvalidateCallback([this]() {
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        });
+        widgetEngine_->SetDesktopOpenCallback([this](const std::wstring& path) {
+            return LuaOpenPath(path);
+        });
+        widgetEngine_->SetDesktopRevealCallback([this](const std::wstring& path) {
+            return LuaRevealPath(path);
+        });
+        widgetEngine_->SetDesktopRefreshCallback([this]() {
+            ReloadItems();
+        });
+        widgetEngine_->SetInlineTextEditCallback([this](const LuaInlineTextEditRequest& request) {
+            BeginLuaInlineTextEdit(request);
+        });
         if (settingsWindow_)
             settingsWindow_->SetWidgetEngine(widgetEngine_.get());
     }
@@ -589,7 +613,14 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (standaloneWidget != static_cast<size_t>(-1) &&
             widgets_[standaloneWidget].type == DesktopWidgetType::LuaScript)
         {
-            ShowWidgetEditorHost(standaloneWidget);
+            if (HitTestStandaloneWidget(standaloneWidget, pt) == WidgetHit::Content && widgetEngine_)
+            {
+                RECT frame = GetStandaloneWidgetFrameRect(widgets_[standaloneWidget]);
+                widgetEngine_->EnsureWidgetLoaded(widgets_[standaloneWidget].id,
+                    widgets_[standaloneWidget].scriptPath);
+                widgetEngine_->InvokeMouseEvent(widgets_[standaloneWidget].id, "onDoubleClick",
+                    pt.x - frame.left, pt.y - frame.top, 1, 0);
+            }
             return 0;
         }
 
@@ -666,6 +697,8 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         RequestExit();
         return 0;
     case WM_DESTROY:
+        if (luaInlineEdit_)
+            CommitLuaInlineTextEdit(false);
         if (!exitRequested_)
         {
             ResetDesktopWindowResources();

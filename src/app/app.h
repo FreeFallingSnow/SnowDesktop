@@ -326,6 +326,12 @@ private:
     WidgetHit HitTestStandaloneWidget(size_t widgetIndex, POINT pt) const;
     size_t HitTestStandaloneWidgetIndex(POINT pt) const;
     void ShowWidgetEditorHost(size_t widgetIndex);
+    std::vector<LuaDesktopItemInfo> BuildLuaDesktopSnapshot(bool selectedOnly) const;
+    bool LuaOpenPath(const std::wstring& path);
+    bool LuaRevealPath(const std::wstring& path);
+    void LuaSetWidgetTitle(const std::wstring& widgetId, const std::wstring& title);
+    void BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& request);
+    void CommitLuaInlineTextEdit(bool cancel);
     RECT GetVisibleCollectionItemBounds(size_t itemIndex) const;
     bool FindSingleSelectedFolderEntry(size_t& widgetIndex, size_t& memberIndex) const;
     RECT GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const;
@@ -467,6 +473,14 @@ private:
     void BeginRenameSelected();
     void CommitRename(bool cancel);
     static LRESULT CALLBACK RenameEditSubclassProc(HWND hwnd, UINT message,
+        WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData);
+    HWND luaInlineEdit_ = nullptr;
+    HFONT luaInlineEditFont_ = nullptr;
+    std::wstring luaInlineEditWidgetId_;
+    std::string luaInlineEditStorageKey_;
+    bool luaInlineEditMultiline_ = false;
+    COLORREF luaInlineEditTextColor_ = RGB(0, 0, 0);
+    static LRESULT CALLBACK LuaInlineEditSubclassProc(HWND hwnd, UINT message,
         WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData);
 
     // Drag hint
