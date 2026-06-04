@@ -135,6 +135,7 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     SetupFonts();
 
     LoadPersonalization(GetPersonalizationPath().c_str(), personalization_);
+    LoadNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
 
     g_settingsWindow = this;
 
@@ -250,6 +251,14 @@ void SettingsWindow::Render()
     {
         SavePersonalization(GetPersonalizationPath().c_str(), personalization_);
         personalizationDirty_ = false;
+    }
+
+    if (navigationSettingsDirty_)
+    {
+        SaveNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
+        navigationSettingsDirty_ = false;
+        if (navigationSettingsChangedCallback_)
+            navigationSettingsChangedCallback_();
     }
 
     if (invalidateCallback_)
@@ -369,6 +378,46 @@ static bool BlueButton(const char* label, const ImVec2& size = ImVec2(0, 0))
     return clicked;
 }
 
+struct HotkeyOption
+{
+    UINT virtualKey;
+    const char* label;
+};
+
+static const HotkeyOption* NavigationHotkeyOptions(size_t& count)
+{
+    static const HotkeyOption options[] = {
+        { VK_SPACE, "Space" },
+        { VK_TAB, "Tab" },
+        { VK_RETURN, "Enter" },
+        { VK_OEM_3, "`" },
+        { 'A', "A" }, { 'B', "B" }, { 'C', "C" }, { 'D', "D" },
+        { 'E', "E" }, { 'F', "F" }, { 'G', "G" }, { 'H', "H" },
+        { 'I', "I" }, { 'J', "J" }, { 'K', "K" }, { 'L', "L" },
+        { 'M', "M" }, { 'N', "N" }, { 'O', "O" }, { 'P', "P" },
+        { 'Q', "Q" }, { 'R', "R" }, { 'S', "S" }, { 'T', "T" },
+        { 'U', "U" }, { 'V', "V" }, { 'W', "W" }, { 'X', "X" },
+        { 'Y', "Y" }, { 'Z', "Z" },
+        { VK_F1, "F1" }, { VK_F2, "F2" }, { VK_F3, "F3" }, { VK_F4, "F4" },
+        { VK_F5, "F5" }, { VK_F6, "F6" }, { VK_F7, "F7" }, { VK_F8, "F8" },
+        { VK_F9, "F9" }, { VK_F10, "F10" }, { VK_F11, "F11" }, { VK_F12, "F12" },
+    };
+    count = sizeof(options) / sizeof(options[0]);
+    return options;
+}
+
+static int NavigationHotkeyOptionIndex(UINT virtualKey)
+{
+    size_t count = 0;
+    const HotkeyOption* options = NavigationHotkeyOptions(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (options[i].virtualKey == virtualKey)
+            return static_cast<int>(i);
+    }
+    return 0;
+}
+
 // ── Backup Page ─────────────────────────────────────────────────
 void SettingsWindow::DrawBackupPage()
 {
@@ -466,6 +515,57 @@ void SettingsWindow::DrawGeneralPage()
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(随 Windows 启动 SnowDesktop)");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("快捷导航");
+    ImGui::Spacing();
+
+    if (ImGui::Checkbox("启用全局快捷导航", &navigationSettings_.enabled))
+        navigationSettingsDirty_ = true;
+
+    ImGui::BeginDisabled(!navigationSettings_.enabled);
+
+    bool ctrl = (navigationSettings_.modifiers & MOD_CONTROL) != 0;
+    bool alt = (navigationSettings_.modifiers & MOD_ALT) != 0;
+    bool shift = (navigationSettings_.modifiers & MOD_SHIFT) != 0;
+    bool win = (navigationSettings_.modifiers & MOD_WIN) != 0;
+    bool modifiersChanged = false;
+    modifiersChanged |= ImGui::Checkbox("Ctrl", &ctrl);
+    ImGui::SameLine();
+    modifiersChanged |= ImGui::Checkbox("Alt", &alt);
+    ImGui::SameLine();
+    modifiersChanged |= ImGui::Checkbox("Shift", &shift);
+    ImGui::SameLine();
+    modifiersChanged |= ImGui::Checkbox("Win", &win);
+    if (modifiersChanged)
+    {
+        navigationSettings_.modifiers = 0;
+        if (ctrl) navigationSettings_.modifiers |= MOD_CONTROL;
+        if (alt) navigationSettings_.modifiers |= MOD_ALT;
+        if (shift) navigationSettings_.modifiers |= MOD_SHIFT;
+        if (win) navigationSettings_.modifiers |= MOD_WIN;
+        navigationSettingsDirty_ = true;
+    }
+
+    size_t optionCount = 0;
+    const HotkeyOption* options = NavigationHotkeyOptions(optionCount);
+    int selected = NavigationHotkeyOptionIndex(navigationSettings_.virtualKey);
+    ImGui::SetNextItemWidth(160.0f * dpiScale_);
+    if (ImGui::Combo("主键", &selected, [](void* data, int idx, const char** outText) {
+            auto* opts = static_cast<const HotkeyOption*>(data);
+            *outText = opts[idx].label;
+            return true;
+        }, const_cast<HotkeyOption*>(options), static_cast<int>(optionCount)))
+    {
+        navigationSettings_.virtualKey = options[selected].virtualKey;
+        navigationSettingsDirty_ = true;
+    }
+
+    std::wstring hotkeyText = FormatNavigationHotkey(navigationSettings_);
+    ImGui::TextDisabled("当前快捷键: %s", WideToUtf8(hotkeyText).c_str());
+    ImGui::EndDisabled();
 
     ImGui::EndChild();
 }

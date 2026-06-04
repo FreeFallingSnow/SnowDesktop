@@ -12,6 +12,7 @@ set(SNOWDESKTOP_SOURCES
     src/utils.cpp
     src/settings_window.cpp
     src/personalization.cpp
+    src/navigation_settings.cpp
     src/widget_engine.cpp
     src/widgets/widget_base.cpp
     src/widgets/collection.cpp

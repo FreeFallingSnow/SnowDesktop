@@ -4,9 +4,11 @@
 constexpr wchar_t kWindowClassName[] = L"SnowDesktopNativeProofWindow";
 constexpr wchar_t kControlWindowClassName[] = L"SnowDesktopControlWindow";
 constexpr wchar_t kHintWindowClassName[] = L"SnowDesktopDragHintWindow";
+constexpr wchar_t kQuickNavigationWindowClassName[] = L"SnowDesktopQuickNavigationWindow";
 constexpr wchar_t kHiddenBySnowDesktopProp[] = L"SnowDesktop.HiddenExplorerIconLayer";
 constexpr COLORREF kTransparentKey = RGB(1, 2, 3);
 constexpr int kIconSize = 64;
+constexpr int kIconBitmapSize = 64;
 constexpr int kCellWidth = 92;
 constexpr int kMinCellHeight = 136;
 constexpr int kGridMarginX = 6;
@@ -90,7 +92,10 @@ constexpr UINT kWidgetRefreshIntervalMs = 1000;
 constexpr UINT_PTR kCollectionPopupDwellTimerId = 6;
 constexpr UINT kCollectionPopupDwellIntervalMs = 50;
 constexpr DWORD kCollectionPopupDwellDelayMs = 600;
+constexpr int kQuickNavigationHotkeyId = 101;
 
 constexpr int kCollectionPopupPaddingX = 18;
 constexpr int kCollectionPopupHeaderHeight = 54;
 constexpr int kCollectionPopupBottomPadding = 18;
+constexpr int kQuickNavigationCellWidth = 72;
+constexpr int kQuickNavigationCellHeight = 80;

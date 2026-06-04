@@ -6,6 +6,7 @@
 #include <wrl/client.h>
 
 #include "personalization.h"
+#include "navigation_settings.h"
 
 #include <functional>
 #include <memory>
@@ -39,6 +40,7 @@ public:
     void SetReloadCallback(std::function<void()> callback) { reloadCallback_ = std::move(callback); }
     void SetExitCallback(std::function<void()> callback) { exitCallback_ = std::move(callback); }
     void SetInvalidateCallback(std::function<void()> callback) { invalidateCallback_ = std::move(callback); }
+    void SetNavigationSettingsChangedCallback(std::function<void()> callback) { navigationSettingsChangedCallback_ = std::move(callback); }
     void ShowExitConfirm();
     void SetWidgetEngine(class WidgetEngine* engine) { widgetEngine_ = engine; }
     void ShowWidgetEditor(size_t widgetIndex, const wchar_t* widgetId,
@@ -90,8 +92,11 @@ private:
     std::function<void()> reloadCallback_;
     std::function<void()> exitCallback_;
     std::function<void()> invalidateCallback_;
+    std::function<void()> navigationSettingsChangedCallback_;
     PersonalizationSettings personalization_;
     bool personalizationDirty_ = false;
+    NavigationSettings navigationSettings_;
+    bool navigationSettingsDirty_ = false;
 
     // Widget editor state
     class WidgetEngine* widgetEngine_ = nullptr;

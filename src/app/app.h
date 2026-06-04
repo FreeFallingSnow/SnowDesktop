@@ -7,6 +7,7 @@
 #include "drop_model.h"
 #include "drag_session.h"
 #include "settings_window.h"
+#include "navigation_settings.h"
 #include "utils.h"
 #include "widget_engine.h"
 #include "types.h"
@@ -89,6 +90,24 @@ public:
     friend class ScrollingItemWidget;
     friend class LuaScript;
 
+    struct QuickNavigationEntry
+    {
+        enum class Kind
+        {
+            DesktopItem,
+            FolderEntry,
+        };
+
+Kind kind = Kind::DesktopItem;
+        size_t itemIndex = static_cast<size_t>(-1);
+        size_t widgetIndex = static_cast<size_t>(-1);
+        size_t folderEntryIndex = static_cast<size_t>(-1);
+        std::wstring name;
+        std::wstring path;
+std::wstring source;
+        HBITMAP iconBitmap = nullptr;
+    };
+
     // OO system accessors
     std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
     const std::vector<std::unique_ptr<Item>>& GetItemsOO() const { return items_oo_; }
@@ -103,7 +122,9 @@ public:
 private:
     // ── Window ──────────────────────────────────────────────
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    static LRESULT CALLBACK QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    LRESULT HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     bool CreateDesktopOverlayWindow();
     void ResetDesktopWindowResources();
     void AttachWindowToDesktopHost(HWND host);
@@ -137,6 +158,20 @@ private:
     void LayoutItems();
     void RebuildContainersAndItems();
     void ShowSettingsWindow();
+    void LoadNavigationSettingsAndApply();
+    void ApplyNavigationHotkey();
+    void UnregisterNavigationHotkey();
+    void ToggleQuickNavigation();
+    void OpenQuickNavigation();
+    void CloseQuickNavigation();
+    bool CreateQuickNavigationWindow();
+    void DestroyQuickNavigationWindow();
+    void PositionQuickNavigationWindow();
+    void InvalidateQuickNavigationWindow();
+    void PaintQuickNavigationWindow(HWND hwnd);
+    void EnsureQuickNavigationSearchEdit();
+    void UpdateQuickNavigationSearchEditRect();
+    void RefreshQuickNavigationSearchText();
 
     // ── Layout persistence ──────────────────────────────────
     std::wstring GetLayoutPath() const;
@@ -273,6 +308,7 @@ private:
     void DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color);
     void DrawCollectionPopup(ID2D1DeviceContext* ctx);
+    void DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx);
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
     // D2D bitmap cache — public for Item::Draw
@@ -312,6 +348,21 @@ private:
     void CloseCollectionPopup();
     bool IsPointInsideOpenPopup(POINT point) const;
     std::vector<std::wstring> GetPopupItemKeys(const DesktopWidget& widget) const;
+    std::vector<size_t> GetQuickNavigationCollectionIndices() const;
+    std::vector<std::wstring> GetQuickNavigationItemKeys() const;
+    std::vector<QuickNavigationEntry> GetQuickNavigationEntries() const;
+    RECT GetQuickNavigationRect() const;
+    RECT GetQuickNavigationSearchRect(const RECT& overlay) const;
+    RECT GetQuickNavigationTabsRect(const RECT& overlay) const;
+    RECT GetQuickNavigationContentRect(const RECT& overlay) const;
+    int GetQuickNavigationTabStripContentWidth(const RECT& overlay) const;
+    int GetQuickNavigationMaxTabScrollOffset(const RECT& overlay) const;
+    RECT GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex) const;
+RECT GetQuickNavigationItemRect(const RECT& overlay, size_t linearIndex) const;
+    int GetQuickNavigationColumnCount(const RECT& overlay) const;
+    int GetQuickNavigationGap(const RECT& overlay) const;
+    int GetQuickNavigationMaxScrollOffset(const RECT& overlay) const;
+    bool HandleQuickNavigationClick(POINT point);
     RECT GetCollectionPopupRect(const DesktopWidget& widget) const;
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     int GetCollectionPopupColumnCount(const RECT& popup) const;
@@ -360,12 +411,15 @@ private:
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
+    ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
     HANDLE faFontHandle_ = nullptr;
     HFONT faMenuFont_ = nullptr;
     std::vector<HBITMAP> menuIconPool_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
+    NavigationSettings navigationSettings_;
+    bool navigationHotkeyRegistered_ = false;
 
     // Shell
     ComPtr<IShellFolder> desktopFolder_;
@@ -397,6 +451,9 @@ private:
 
     // Control window (for tray icon ownership + desktop host watch)
     HWND controlHwnd_ = nullptr;
+    HWND quickNavigationHwnd_ = nullptr;
+    HWND quickNavigationSearchEdit_ = nullptr;
+    HFONT quickNavigationSearchFont_ = nullptr;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     UINT taskbarRestartMsg_ = 0;
@@ -474,6 +531,8 @@ private:
     void CommitRename(bool cancel);
     static LRESULT CALLBACK RenameEditSubclassProc(HWND hwnd, UINT message,
         WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData);
+    static LRESULT CALLBACK QuickNavigationSearchSubclassProc(HWND hwnd, UINT message,
+        WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData);
     HWND luaInlineEdit_ = nullptr;
     HFONT luaInlineEditFont_ = nullptr;
     std::wstring luaInlineEditWidgetId_;
@@ -510,6 +569,15 @@ private:
     size_t popupDwellWidgetIndex_ = static_cast<size_t>(-1);
     DWORD popupDwellTick_ = 0;
     std::unique_ptr<Slot> popupDragTargetSlot_;
+
+    // Quick navigation
+    bool quickNavigationOpen_ = false;
+    size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
+    int quickNavigationScrollOffset_ = 0;
+    int quickNavigationTabScrollOffset_ = 0;
+    POINT quickNavigationOpenPoint_{};
+    RECT quickNavigationRect_{};
+    std::wstring quickNavigationSearchText_;
 
     // OO system
     std::vector<std::unique_ptr<Container>> containers_;

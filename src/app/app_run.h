@@ -65,6 +65,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
 {
     if (hwnd_ && IsWindow(hwnd_))
     {
+        UnregisterNavigationHotkey();
         KillTimer(hwnd_, kShellChangeTimerId);
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(hwnd_, kWidgetRefreshTimerId);
@@ -81,6 +82,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
     }
 
     DestroyDragHintWindow();
+    DestroyQuickNavigationWindow();
     dragRenderCache_.Reset();
     dcompSurface_.Reset();
     dcompVisual_.Reset();
@@ -157,6 +159,7 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     }
 
     RegisterOleDropTarget();
+    ApplyNavigationHotkey();
     RegisterShellChangeNotifications();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
@@ -329,6 +332,17 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         hint.lpszClassName = kHintWindowClassName;
         RegisterClassExW(&hint);
     }
+    {
+        WNDCLASSEXW nav{};
+        nav.cbSize = sizeof(nav);
+        nav.style = CS_DBLCLKS;
+        nav.lpfnWndProc = QuickNavigationWndProc;
+        nav.hInstance = instance;
+        nav.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        nav.hbrBackground = nullptr;
+        nav.lpszClassName = kQuickNavigationWindowClassName;
+        RegisterClassExW(&nav);
+    }
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"SnowDesktop",
         WS_CHILD | WS_VISIBLE, origin.x, origin.y, virtualWidth_, virtualHeight_,
@@ -421,6 +435,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     AddTrayIcon();
     RegisterShellChangeNotifications();
     RegisterOleDropTarget();
+    LoadNavigationSettingsAndApply();
 
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
@@ -434,6 +449,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
         settingsWindow_->SetInvalidateCallback([this]() {
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        });
+        settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
+            LoadNavigationSettingsAndApply();
         });
     }
     else
@@ -525,6 +543,25 @@ inline LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+inline LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    DesktopApp* app = nullptr;
+    if (msg == WM_NCCREATE)
+    {
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+        app = static_cast<DesktopApp*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+    }
+    else
+    {
+        app = reinterpret_cast<DesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+
+    if (app)
+        return app->HandleQuickNavigationMessage(hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (newMenuContextMenu_ && (msg == WM_INITMENUPOPUP || msg == WM_DRAWITEM || msg == WM_MEASUREITEM))
@@ -584,6 +621,12 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (quickNavigationOpen_)
+        {
+            HandleQuickNavigationClick(pt);
+            return 0;
+        }
+
         if (popupWidgetIndex_ < widgets_.size())
         {
             RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -669,6 +712,13 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_KEYDOWN:
         OnKeyDown(wp);
         return 0;
+    case WM_HOTKEY:
+        if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
+        {
+            ToggleQuickNavigation();
+            return 0;
+        }
+        break;
     case WM_KEYUP:
         RefreshDragHintFromKeyboard();
         return 0;
@@ -699,6 +749,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_DESTROY:
         if (luaInlineEdit_)
             CommitLuaInlineTextEdit(false);
+        UnregisterNavigationHotkey();
         if (!exitRequested_)
         {
             ResetDesktopWindowResources();
