@@ -315,6 +315,540 @@ inline void DesktopApp::ShowSettingsWindow()
         MessageBeep(MB_ICONWARNING);
 }
 
+inline void DesktopApp::LoadNavigationSettingsAndApply()
+{
+    NavigationSettings settings;
+    LoadNavigationSettings(GetNavigationSettingsPath().c_str(), settings);
+    navigationSettings_ = settings;
+    ApplyNavigationHotkey();
+}
+
+inline void DesktopApp::UnregisterNavigationHotkey()
+{
+    if (navigationHotkeyRegistered_ && hwnd_)
+    {
+        UnregisterHotKey(hwnd_, kQuickNavigationHotkeyId);
+        navigationHotkeyRegistered_ = false;
+    }
+}
+
+inline bool DesktopApp::CreateQuickNavigationWindow()
+{
+    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+        return true;
+
+    quickNavigationHwnd_ = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        kQuickNavigationWindowClassName,
+L"SnowDesktop 快捷导航",
+        WS_POPUP | WS_CLIPCHILDREN,
+        0, 0, 1, 1,
+        nullptr, nullptr, instance_, this);
+    if (!quickNavigationHwnd_)
+        return false;
+
+    return true;
+}
+
+inline void DesktopApp::DestroyQuickNavigationWindow()
+{
+    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+    {
+        RemoveWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1);
+        DestroyWindow(quickNavigationSearchEdit_);
+    }
+    quickNavigationSearchEdit_ = nullptr;
+    if (quickNavigationSearchFont_)
+    {
+        DeleteObject(quickNavigationSearchFont_);
+        quickNavigationSearchFont_ = nullptr;
+    }
+    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+        DestroyWindow(quickNavigationHwnd_);
+    quickNavigationHwnd_ = nullptr;
+}
+
+inline void DesktopApp::EnsureQuickNavigationSearchEdit()
+{
+    if (!quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
+        return;
+    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+        return;
+
+    quickNavigationSearchEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        0, 0, 1, 1, quickNavigationHwnd_, reinterpret_cast<HMENU>(1002),
+        instance_, nullptr);
+    if (!quickNavigationSearchEdit_)
+        return;
+
+    quickNavigationSearchFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    SendMessageW(quickNavigationSearchEdit_, WM_SETFONT,
+        reinterpret_cast<WPARAM>(quickNavigationSearchFont_ ? quickNavigationSearchFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+    SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(10, 10));
+    SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"搜索应用、桌面文件、映射文件夹..."));
+    SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
+        reinterpret_cast<DWORD_PTR>(this));
+}
+
+inline void DesktopApp::UpdateQuickNavigationSearchEditRect()
+{
+    if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
+        return;
+    RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
+    OffsetRect(&search, -quickNavigationRect_.left, -quickNavigationRect_.top);
+    SetWindowPos(quickNavigationSearchEdit_, HWND_TOP,
+        search.left + 4, search.top + 4,
+        std::max<LONG>(1, search.right - search.left - 8),
+        std::max<LONG>(1, search.bottom - search.top - 8),
+        SWP_SHOWWINDOW);
+}
+
+inline void DesktopApp::RefreshQuickNavigationSearchText()
+{
+    quickNavigationSearchText_.clear();
+    if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
+        return;
+    int len = GetWindowTextLengthW(quickNavigationSearchEdit_);
+    if (len <= 0) return;
+    std::wstring buffer(static_cast<size_t>(len) + 1, L'\0');
+    GetWindowTextW(quickNavigationSearchEdit_, buffer.data(), len + 1);
+    buffer.resize(static_cast<size_t>(len));
+    quickNavigationSearchText_ = std::move(buffer);
+}
+
+inline void DesktopApp::PositionQuickNavigationWindow()
+{
+    if (!quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
+        return;
+
+    quickNavigationRect_ = GetQuickNavigationRect();
+    const int width = std::max<LONG>(1, quickNavigationRect_.right - quickNavigationRect_.left);
+    const int height = std::max<LONG>(1, quickNavigationRect_.bottom - quickNavigationRect_.top);
+    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, 36, 36);
+    if (region)
+        SetWindowRgn(quickNavigationHwnd_, region, TRUE);
+
+    SetWindowPos(quickNavigationHwnd_, HWND_TOPMOST,
+        quickNavigationRect_.left + virtualLeft_,
+        quickNavigationRect_.top + virtualTop_,
+        width, height,
+        SWP_SHOWWINDOW);
+    EnsureQuickNavigationSearchEdit();
+    UpdateQuickNavigationSearchEditRect();
+}
+
+inline void DesktopApp::InvalidateQuickNavigationWindow()
+{
+    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+        InvalidateRect(quickNavigationHwnd_, nullptr, FALSE);
+}
+
+inline void DesktopApp::ApplyNavigationHotkey()
+{
+    UnregisterNavigationHotkey();
+    if (!hwnd_ || !navigationSettings_.enabled || navigationSettings_.virtualKey == 0)
+        return;
+
+    UINT modifiers = navigationSettings_.modifiers | MOD_NOREPEAT;
+    navigationHotkeyRegistered_ =
+        RegisterHotKey(hwnd_, kQuickNavigationHotkeyId, modifiers, navigationSettings_.virtualKey) != FALSE;
+}
+
+inline void DesktopApp::OpenQuickNavigation()
+{
+    if (dragSession_.IsActive() || externalDragActive_)
+        return;
+    CloseCollectionPopup();
+    POINT cursor{};
+    if (GetCursorPos(&cursor))
+    {
+        quickNavigationOpenPoint_ = { cursor.x - virtualLeft_, cursor.y - virtualTop_ };
+        lastMousePoint_ = quickNavigationOpenPoint_;
+    }
+    else
+    {
+        quickNavigationOpenPoint_ = lastMousePoint_;
+    }
+    quickNavigationOpen_ = true;
+    if (quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
+        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection)
+    {
+        quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
+    }
+    quickNavigationScrollOffset_ = 0;
+    quickNavigationTabScrollOffset_ = 0;
+    quickNavigationSearchText_.clear();
+    if (!CreateQuickNavigationWindow())
+    {
+        quickNavigationOpen_ = false;
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    PositionQuickNavigationWindow();
+    if (quickNavigationSearchEdit_)
+        SetWindowTextW(quickNavigationSearchEdit_, L"");
+    ShowWindow(quickNavigationHwnd_, SW_SHOWNORMAL);
+    SetForegroundWindow(quickNavigationHwnd_);
+    SetFocus(quickNavigationHwnd_);
+    InvalidateQuickNavigationWindow();
+    InvalidateDragStaticScene();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::CloseQuickNavigation()
+{
+    if (!quickNavigationOpen_) return;
+    quickNavigationOpen_ = false;
+    quickNavigationScrollOffset_ = 0;
+    quickNavigationTabScrollOffset_ = 0;
+    quickNavigationSearchText_.clear();
+    quickNavigationRect_ = {};
+    DestroyQuickNavigationWindow();
+    InvalidateDragStaticScene();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::ToggleQuickNavigation()
+{
+    if (quickNavigationOpen_)
+        CloseQuickNavigation();
+    else
+        OpenQuickNavigation();
+}
+
+inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
+{
+    if (!quickNavigationOpen_)
+        return false;
+
+    RECT overlay = GetQuickNavigationRect();
+    if (!PtInRect(&overlay, point))
+    {
+        CloseQuickNavigation();
+        return true;
+    }
+
+    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
+    if (quickNavigationSearchText_.empty())
+    {
+        for (size_t tab = 0; tab <= collectionIndices.size(); ++tab)
+        {
+            RECT tabRect = GetQuickNavigationTabRect(overlay, tab);
+            if (!PtInRect(&tabRect, point)) continue;
+            quickNavigationActiveWidgetIndex_ =
+                tab == 0 ? static_cast<size_t>(-1) : collectionIndices[tab - 1];
+            quickNavigationScrollOffset_ = 0;
+            InvalidateDragStaticScene();
+            InvalidateQuickNavigationWindow();
+            return true;
+        }
+    }
+
+    RECT content = GetQuickNavigationContentRect(overlay);
+    if (!PtInRect(&content, point))
+        return true;
+
+    std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+        RECT itemRect = GetQuickNavigationItemRect(overlay, i);
+        RECT clipped = itemRect;
+        clipped.top = std::max(clipped.top, content.top);
+        clipped.bottom = std::min(clipped.bottom, content.bottom);
+        if (clipped.bottom <= clipped.top || !PtInRect(&clipped, point)) continue;
+
+        const QuickNavigationEntry entry = std::move(entries[i]);
+        CloseQuickNavigation();
+        if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
+            entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
+        {
+            ShellExecuteW(nullptr, L"open", items_[entry.itemIndex].parsingName.c_str(),
+                nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
+        {
+            ShellExecuteW(nullptr, L"open", entry.path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        return true;
+    }
+
+    return true;
+}
+
+inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
+{
+    PAINTSTRUCT ps{};
+    HDC hdc = BeginPaint(hwnd, &ps);
+    if (!hdc)
+        return;
+
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    HDC memoryDc = CreateCompatibleDC(hdc);
+    HBITMAP memoryBitmap = CreateCompatibleBitmap(hdc,
+        std::max<LONG>(1, client.right - client.left),
+        std::max<LONG>(1, client.bottom - client.top));
+    HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(memoryDc, memoryBitmap));
+    SetBkMode(memoryDc, TRANSPARENT);
+    SetStretchBltMode(memoryDc, HALFTONE);
+
+    auto offsetRect = [&](RECT rect) {
+        OffsetRect(&rect, -quickNavigationRect_.left, -quickNavigationRect_.top);
+        return rect;
+    };
+    auto fillRound = [&](RECT rect, COLORREF fill, COLORREF stroke, int radius) {
+        HBRUSH brush = CreateSolidBrush(fill);
+        HPEN pen = CreatePen(PS_SOLID, 1, stroke);
+        HGDIOBJ oldBrush = SelectObject(memoryDc, brush);
+        HGDIOBJ oldPen = SelectObject(memoryDc, pen);
+        RoundRect(memoryDc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+        SelectObject(memoryDc, oldPen);
+        SelectObject(memoryDc, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+    };
+    auto drawText = [&](const std::wstring& text, RECT rect, HFONT font, COLORREF color, UINT flags) {
+        HGDIOBJ oldFont = SelectObject(memoryDc, font);
+        SetTextColor(memoryDc, color);
+        DrawTextW(memoryDc, text.c_str(), static_cast<int>(text.size()), &rect, flags);
+        SelectObject(memoryDc, oldFont);
+    };
+    auto drawBitmap = [&](HBITMAP bitmap, RECT dst) {
+        if (!bitmap) return;
+        BITMAP bm{};
+        if (GetObjectW(bitmap, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
+            return;
+        HDC srcDc = CreateCompatibleDC(memoryDc);
+        HBITMAP oldSrc = static_cast<HBITMAP>(SelectObject(srcDc, bitmap));
+        BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+        AlphaBlend(memoryDc, dst.left, dst.top, dst.right - dst.left, dst.bottom - dst.top,
+            srcDc, 0, 0, bm.bmWidth, bm.bmHeight, blend);
+        SelectObject(srcDc, oldSrc);
+        DeleteDC(srcDc);
+    };
+
+    HBRUSH background = CreateSolidBrush(RGB(18, 22, 30));
+    FillRect(memoryDc, &client, background);
+    DeleteObject(background);
+    HPEN border = CreatePen(PS_SOLID, 1, RGB(120, 130, 150));
+    HGDIOBJ oldPen = SelectObject(memoryDc, border);
+    HGDIOBJ oldBrush = SelectObject(memoryDc, GetStockObject(NULL_BRUSH));
+    RoundRect(memoryDc, client.left, client.top, client.right - 1, client.bottom - 1, 36, 36);
+    SelectObject(memoryDc, oldBrush);
+    SelectObject(memoryDc, oldPen);
+    DeleteObject(border);
+
+    HFONT titleFont = CreateFontW(-18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    HFONT tabFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    HFONT itemFont = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+
+    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
+    std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
+    quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
+        GetQuickNavigationMaxTabScrollOffset(quickNavigationRect_));
+    quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
+        GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
+
+    RECT titleRect = offsetRect(MakeRect(quickNavigationRect_.left + 24, quickNavigationRect_.top + 18,
+        quickNavigationRect_.right - 24, quickNavigationRect_.top + 46));
+    std::wstring title = L"快捷导航";
+    if (!entries.empty())
+        title += L"  " + std::to_wstring(entries.size()) + L" 项";
+    drawText(title, titleRect, titleFont, RGB(245, 248, 252),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    RECT searchRect = offsetRect(GetQuickNavigationSearchRect(quickNavigationRect_));
+    fillRound(searchRect, RGB(236, 239, 245), RGB(92, 105, 128), 12);
+
+    if (quickNavigationSearchText_.empty())
+    {
+        RECT tabs = offsetRect(GetQuickNavigationTabsRect(quickNavigationRect_));
+        SaveDC(memoryDc);
+        IntersectClipRect(memoryDc, tabs.left, tabs.top, tabs.right, tabs.bottom);
+        for (size_t tab = 0; tab <= collectionIndices.size(); ++tab)
+        {
+            RECT tabRect = offsetRect(GetQuickNavigationTabRect(quickNavigationRect_, tab));
+            if (tabRect.right <= tabs.left || tabRect.left >= tabs.right) continue;
+
+            const bool active = tab == 0
+                ? quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1)
+                : quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 1];
+            RECT tabRectApp = GetQuickNavigationTabRect(quickNavigationRect_, tab);
+            const bool hovered = PtInRect(&tabRectApp, lastMousePoint_) != FALSE;
+            fillRound(tabRect,
+                active ? RGB(48, 112, 215) : hovered ? RGB(66, 72, 84) : RGB(42, 47, 58),
+                active ? RGB(82, 140, 235) : RGB(68, 76, 92),
+                14);
+
+            std::wstring label = L"全部";
+            if (tab > 0)
+            {
+                const DesktopWidget& widget = widgets_[collectionIndices[tab - 1]];
+                label = widget.title.empty() ? L"集合" + std::to_wstring(tab) : widget.title;
+            }
+            RECT textRect = tabRect;
+            textRect.left += 8;
+            textRect.right -= 8;
+            drawText(label, textRect, tabFont, RGB(245, 248, 252),
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        RestoreDC(memoryDc, -1);
+    }
+
+    RECT content = offsetRect(GetQuickNavigationContentRect(quickNavigationRect_));
+    SaveDC(memoryDc);
+    IntersectClipRect(memoryDc, content.left, content.top, content.right, content.bottom);
+    if (entries.empty())
+    {
+        RECT emptyRect = content;
+        emptyRect.top += 28;
+        drawText(quickNavigationSearchText_.empty()
+                ? (collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目")
+                : L"没有匹配结果",
+            emptyRect, itemFont, RGB(160, 168, 182), DT_CENTER | DT_TOP | DT_SINGLELINE);
+    }
+    else
+    {
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            RECT itemRectApp = GetQuickNavigationItemRect(quickNavigationRect_, i);
+            if (itemRectApp.bottom <= quickNavigationRect_.top ||
+                itemRectApp.top >= quickNavigationRect_.bottom)
+                continue;
+
+            const QuickNavigationEntry& entry = entries[i];
+
+RECT selectionApp = GetItemSelectionRect(itemRectApp, false);
+            if (PtInRect(&itemRectApp, lastMousePoint_) != FALSE)
+                fillRound(offsetRect(selectionApp), RGB(58, 68, 86), RGB(78, 92, 118), 12);
+
+            drawBitmap(entry.iconBitmap, offsetRect(GetItemIconRect(itemRectApp)));
+
+            RECT textRect = offsetRect(GetItemTextRect(itemRectApp, false));
+            drawText(entry.name, textRect, itemFont, RGB(245, 248, 252),
+                DT_CENTER | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+        }
+    }
+    RestoreDC(memoryDc, -1);
+
+    const int columns = GetQuickNavigationColumnCount(quickNavigationRect_);
+    const int rows = entries.empty() ? 1 : (static_cast<int>(entries.size()) + columns - 1) / columns;
+    const int contentHeight = rows * kQuickNavigationCellHeight;
+    const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
+    if (contentHeight > visibleHeight)
+    {
+        const int trackW = 5;
+        RECT track = MakeRect(content.right - trackW - 2, content.top + 4, content.right - 2, content.bottom - 4);
+        fillRound(track, RGB(55, 62, 76), RGB(55, 62, 76), trackW);
+        const int trackH = std::max<LONG>(1, track.bottom - track.top);
+        const int thumbH = std::clamp(visibleHeight * trackH / contentHeight, 20, trackH);
+        const int maxScroll = std::max(1, contentHeight - visibleHeight);
+        const int thumbTop = track.top + quickNavigationScrollOffset_ * (trackH - thumbH) / maxScroll;
+        RECT thumb = MakeRect(track.left, thumbTop, track.right, thumbTop + thumbH);
+        fillRound(thumb, RGB(136, 146, 166), RGB(136, 146, 166), trackW);
+    }
+
+    BitBlt(hdc, 0, 0, client.right - client.left, client.bottom - client.top, memoryDc, 0, 0, SRCCOPY);
+
+    DeleteObject(itemFont);
+    DeleteObject(tabFont);
+    DeleteObject(titleFont);
+    SelectObject(memoryDc, oldBitmap);
+    DeleteObject(memoryBitmap);
+    DeleteDC(memoryDc);
+    EndPaint(hwnd, &ps);
+}
+
+inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg)
+    {
+    case WM_PAINT:
+        PaintQuickNavigationWindow(hwnd);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_MOUSEMOVE:
+    {
+        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        lastMousePoint_ = { pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
+        InvalidateQuickNavigationWindow();
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        POINT appPoint{ pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
+        HandleQuickNavigationClick(appPoint);
+        return 0;
+    }
+    case WM_MOUSEWHEEL:
+        OnMouseWheel(wp, lp);
+        return 0;
+    case WM_COMMAND:
+        if (reinterpret_cast<HWND>(lp) == quickNavigationSearchEdit_ && HIWORD(wp) == EN_CHANGE)
+        {
+            RefreshQuickNavigationSearchText();
+            quickNavigationScrollOffset_ = 0;
+            InvalidateQuickNavigationWindow();
+            return 0;
+        }
+        break;
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE)
+        {
+            CloseQuickNavigation();
+            return 0;
+        }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(wp) == WA_INACTIVE)
+        {
+            CloseQuickNavigation();
+            return 0;
+        }
+        break;
+    case WM_CLOSE:
+        CloseQuickNavigation();
+        return 0;
+    case WM_DESTROY:
+        if (quickNavigationHwnd_ == hwnd)
+            quickNavigationHwnd_ = nullptr;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+inline LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
+    HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData)
+{
+    (void)subclassId;
+    auto* app = reinterpret_cast<DesktopApp*>(refData);
+    if (!app) return DefSubclassProc(hwnd, message, wParam, lParam);
+
+    if (message == WM_KEYDOWN && wParam == VK_ESCAPE)
+    {
+        app->CloseQuickNavigation();
+        return 0;
+    }
+    if (message == WM_MOUSEWHEEL)
+    {
+        app->OnMouseWheel(wParam, lParam);
+        return 0;
+    }
+
+    return DefSubclassProc(hwnd, message, wParam, lParam);
+}
+
 inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
 {
     if (!dragSession_.IsActive()) return;
@@ -563,6 +1097,12 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
+
+    if (HandleQuickNavigationClick(pt))
+    {
+        mouseDown_ = false;
+        return;
+    }
 
     if (HandlePageNavClick(pt)) return;
 
@@ -1708,6 +2248,15 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
 
     if (renameEdit_ != nullptr) return;
 
+    if (quickNavigationOpen_)
+    {
+        if (key == VK_ESCAPE)
+        {
+            CloseQuickNavigation();
+            return;
+        }
+    }
+
     bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 
     switch (key)
@@ -2378,6 +2927,31 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     if (dragSession_.IsActive())
         dragSession_.UpdateActionFromMods(currentMods, externalDragActive_ ? DropAction::Copy : DropAction::Move);
 
+    if (quickNavigationOpen_)
+    {
+        RECT overlay = GetQuickNavigationRect();
+        if (PtInRect(&overlay, pt))
+        {
+            int delta = GET_WHEEL_DELTA_WPARAM(wp);
+            RECT tabs = GetQuickNavigationTabsRect(overlay);
+            if (quickNavigationSearchText_.empty() && PtInRect(&tabs, pt))
+            {
+                int maxTabScroll = GetQuickNavigationMaxTabScrollOffset(overlay);
+                quickNavigationTabScrollOffset_ =
+                    std::clamp(quickNavigationTabScrollOffset_ - delta / 2, 0, maxTabScroll);
+            }
+            else
+            {
+                int maxScroll = GetQuickNavigationMaxScrollOffset(overlay);
+                quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_ - delta / 2, 0, maxScroll);
+            }
+            InvalidateDragStaticScene();
+            InvalidateQuickNavigationWindow();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
+
     size_t luaWidget = HitTestStandaloneWidgetIndex(pt);
     if (luaWidget != static_cast<size_t>(-1) &&
         widgets_[luaWidget].type == DesktopWidgetType::LuaScript &&
@@ -2432,6 +3006,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             if (fc && fc->TryScrollTabs(pt, delta))
             {
                 refreshDragAfterScroll();
+                SaveLayoutSlots();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -2443,6 +3018,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
         wc->InvalidateSlots();
         refreshDragAfterScroll();
+        SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }

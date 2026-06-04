@@ -884,7 +884,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
                         std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
-                        int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0;
+                        int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0, tabScrollOffset = 0;
                         bool autoCollect = false, listMode = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
                             !ReadJsonStringField(obj, "page", pageUtf8) ||
@@ -902,6 +902,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         ReadJsonIntField(obj, "w", w);
                         ReadJsonIntField(obj, "h", h);
                         ReadJsonIntField(obj, "scrollOffset", scrollOffset);
+ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         ReadJsonBoolField(obj, "autoCollect", autoCollect);
                         ReadJsonBoolField(obj, "listMode", listMode);
 
@@ -939,6 +940,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
                             widget.type == DesktopWidgetType::LuaScript);
                         widget.scrollOffset = std::max(0, scrollOffset);
+widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
                         ReadJsonStringArrayField(obj, "items", widget.itemKeys);
                         {
@@ -1087,6 +1089,7 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
              << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
+             << ", \"tabScrollOffset\": " << std::max(0, w.tabScrollOffset)
              << ", \"items\": [";
         for (size_t j = 0; j < w.itemKeys.size(); ++j)
         {

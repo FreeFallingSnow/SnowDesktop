@@ -1,4 +1,4 @@
-#include "utils.h"
+﻿#include "utils.h"
 #include "resource.h"
 
 #include <commoncontrols.h>
@@ -640,7 +640,7 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackInd
     ComPtr<IShellItemImageFactory> imageFactory;
     if (SUCCEEDED(SHCreateItemFromIDList(pidl, IID_PPV_ARGS(&imageFactory))) && imageFactory)
     {
-        SIZE size{ kIconSize, kIconSize };
+        SIZE size{ kIconBitmapSize, kIconBitmapSize };
         HBITMAP bitmap = nullptr;
         if (SUCCEEDED(imageFactory->GetImage(size, SIIGBF_ICONONLY, &bitmap)) && bitmap != nullptr)
         {
@@ -672,7 +672,7 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackInd
         imageList->GetIcon(fallbackIndex, ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon);
         if (icon != nullptr)
         {
-            HBITMAP bitmap = CreateAlphaBitmapFromIcon(icon, kIconSize, kIconSize, bitmapSize);
+            HBITMAP bitmap = CreateAlphaBitmapFromIcon(icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
             DestroyIcon(icon);
             if (bitmap != nullptr)
             {
@@ -691,7 +691,7 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackInd
     icon = iconInfo.hIcon;
     if (icon != nullptr)
     {
-        HBITMAP bitmap = CreateAlphaBitmapFromIcon(icon, kIconSize, kIconSize, bitmapSize);
+        HBITMAP bitmap = CreateAlphaBitmapFromIcon(icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
         DestroyIcon(icon);
         return bitmap;
     }
