@@ -7,3 +7,4 @@ obj/
 TestResults/
 .build/
 build/
+.build_debug/
