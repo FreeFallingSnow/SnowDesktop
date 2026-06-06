@@ -73,6 +73,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     CloseExistingInstances();
 
     SetUnhandledExceptionFilter(UnhandledFilter);
+    InstallCrashHandler();
     RegisterApplicationRestart(nullptr, RESTART_NO_CRASH | RESTART_NO_HANG);
 
     DesktopApp app;

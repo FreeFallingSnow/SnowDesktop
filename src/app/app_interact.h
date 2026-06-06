@@ -3017,6 +3017,8 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
         data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
         wc->InvalidateSlots();
+        if (mouseDownHit_ && mouseDownHit_->GetContainer() == wc)
+            mouseDownHit_ = nullptr;
         refreshDragAfterScroll();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, FALSE);
