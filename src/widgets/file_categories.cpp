@@ -493,8 +493,9 @@ void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Conta
 
 size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
 {
-    (void)region;
     size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
+    if (targetSlot && region == HitRegion::SortAfter)
+        ++visibleInsert;
     return InsertIndexForVisibleSlot(app_, data_, visibleInsert);
 }
 

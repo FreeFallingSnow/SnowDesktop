@@ -220,7 +220,6 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
-    size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;

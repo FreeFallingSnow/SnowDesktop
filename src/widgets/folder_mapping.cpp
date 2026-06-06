@@ -193,13 +193,6 @@ void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
     app_->ExecuteDropPipeline(sourceList, preview);
 }
 
-size_t FolderMapping::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
-{
-    (void)region;
-    size_t insertAt = targetSlot ? targetSlot->GetIndex() : (data_ ? data_->folderEntries.size() : 0);
-    return data_ ? std::min(insertAt, data_->folderEntries.size()) : insertAt;
-}
-
 void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
