@@ -1,3 +1,9 @@
+/**
+ * @file crashlog.h
+ * @brief 崩溃日志处理
+ * @details 使用 dbghelp.dll 捕获未处理异常并生成包含调用栈的崩溃日志文件 crash.log
+ */
+
 #pragma once
 #include <windows.h>
 #include <dbghelp.h>
@@ -6,7 +12,10 @@
 
 #pragma comment(lib, "dbghelp.lib")
 
-// Called exactly once at startup. dbghelp must NOT be re-initialised later.
+/**
+ * @brief 安装崩溃处理程序
+ * @details 初始化 Symbol 加载器，必须在程序启动时精确调用一次，不可重复初始化
+ */
 inline void InstallCrashHandler()
 {
     wchar_t exeDir[MAX_PATH];
@@ -19,10 +28,18 @@ inline void InstallCrashHandler()
     SymInitializeW(GetCurrentProcess(), exeDir, TRUE);
 }
 
+/**
+ * @brief 顶层未处理异常处理函数
+ * @details 通过 SetUnhandledExceptionFilter 注册，异常发生时生成包含调用栈的崩溃日志，
+ *          日志写入可执行文件所在目录的 crash.log 文件
+ * @param info 异常指针，包含异常记录与线程上下文
+ * @return 始终返回 EXCEPTION_EXECUTE_HANDLER，终止进程
+ */
 inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
 {
     if (!info || !info->ExceptionRecord) return EXCEPTION_CONTINUE_SEARCH;
 
+    // --- 打开崩溃日志文件 crash.log（追加模式） ---
     wchar_t exePath[MAX_PATH];
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     std::wstring dir(exePath);
@@ -32,6 +49,7 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
         nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) return EXCEPTION_CONTINUE_SEARCH;
 
+    // --- 写入崩溃头部信息：异常代码、地址、进程 ID、运行时长 ---
     DWORD code = info->ExceptionRecord->ExceptionCode;
     DWORD64 addr = (DWORD64)info->ExceptionRecord->ExceptionAddress;
     wchar_t buf[1024];
@@ -45,6 +63,7 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
         code, addr, GetCurrentProcessId(), GetTickCount());
     write(buf);
 
+    // --- 写入寄存器上下文（RIP/EIP、RSP/ESP、RBP/EBP） ---
     CONTEXT* ctx = info->ContextRecord;
 #if defined(_M_X64)
     wsprintfW(buf, L"  RIP=%016I64X RSP=%016I64X RBP=%016I64X\r\n",
@@ -55,7 +74,7 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
 #endif
     write(buf);
 
-    // --- symbol-resolved call stack ---
+    // --- 符号解析与调用栈遍历 ---
     HANDLE hProcess = GetCurrentProcess();
 
     constexpr DWORD kSymBufSize = sizeof(SYMBOL_INFOW) + 512 * sizeof(wchar_t);
@@ -75,6 +94,7 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
         DWORD64 frameAddr = (DWORD64)frames[i];
         DWORD64 displacement = 0;
 
+        // --- 通过 SymFromAddrW 解析符号名称 ---
         if (SymFromAddrW(hProcess, frameAddr, &displacement, sym))
         {
             IMAGEHLP_MODULEW64 modInfo{};
@@ -83,6 +103,7 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
             if (SymGetModuleInfoW64(hProcess, sym->ModBase, &modInfo))
                 modName = modInfo.ModuleName;
 
+            // --- 尝试解析源码文件名与行号 ---
             DWORD lineDisp = 0;
             if (SymGetLineFromAddrW64(hProcess, frameAddr, &lineDisp, &line))
             {
@@ -96,6 +117,7 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
                     i, modName, sym->Name, displacement);
             }
         }
+        // --- 符号解析失败时，回退显示模块基址偏移 ---
         else
         {
             HMODULE mod = nullptr;
@@ -123,6 +145,7 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
         write(buf);
     }
 
+    // --- 写入结束标记并关闭文件 ---
     wsprintfW(buf, L"=== END ===\r\n");
     write(buf);
     CloseHandle(f);

@@ -1,3 +1,13 @@
+/**
+ * @file folder_mapping.cpp
+ * @brief 映射文件夹组件实现
+ *
+ * 该组件用于在桌面网格中显示磁盘上的映射文件夹内容，
+ * 支持图标模式与列表模式切换，以及打开文件夹按钮。
+ * 提供文件夹条目在桌面网格中的布局、绘制、
+ * 拖放排序和滚动等功能。
+ */
+
 #include "widget.h"
 #include "slot.h"
 #include "item.h"
@@ -8,6 +18,11 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 
+/**
+ * @brief 计算映射文件夹内容区域的矩形
+ * @param widget FolderMapping 组件指针
+ * @return 内容区域的 RECT，已向内缩进 4 像素（水平）和 8 像素（垂直）
+ */
 static RECT FolderMappingContentRect(FolderMapping* widget)
 {
     if (!widget) return {};
@@ -16,6 +31,11 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
     return body;
 }
 
+/**
+ * @brief 获取映射文件夹图标模式下每个单元格的高度
+ * @param widget FolderMapping 组件指针
+ * @return 单元格高度（像素），失败时返回最小单元格高度 kMinCellHeight
+ */
 static int FolderMappingCellHeight(FolderMapping* widget)
 {
     if (!widget || !widget->GetApp() || !widget->GetApp()->GetDesktopGrid())
@@ -27,6 +47,13 @@ static int FolderMappingCellHeight(FolderMapping* widget)
     return kMinCellHeight;
 }
 
+/**
+ * @brief 计算映射文件夹所有条目占用的总内容高度
+ * @param widget    FolderMapping 组件指针
+ * @param itemCount 条目数量
+ * @return 总内容高度（像素）。列表模式下每行 38 像素；
+ *         图标模式下按列数计算行数乘以单元格高度
+ */
 static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
@@ -38,6 +65,11 @@ static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
     return rows * FolderMappingCellHeight(widget);
 }
 
+/**
+ * @brief 计算映射文件夹在垂直方向上的最大滚动偏移量
+ * @param widget FolderMapping 组件指针
+ * @return 最大滚动偏移量（像素），确保内容底部能够滚动到可视区域底部
+ */
 static int FolderMappingMaxScrollOffset(FolderMapping* widget)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
@@ -47,6 +79,13 @@ static int FolderMappingMaxScrollOffset(FolderMapping* widget)
     return std::max(0, FolderMappingContentHeight(widget, data->folderEntries.size()) - contentHeight + kMinCellHeight / 2);
 }
 
+/**
+ * @brief 根据线性索引计算文件夹条目的绘制矩形区域
+ * @param widget      FolderMapping 组件指针
+ * @param linearIndex 条目在线性列表中的序号
+ * @return 条目所占的 RECT。列表模式下为单行水平条；
+ *         图标模式下按网格列数计算行列位置
+ */
 static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
@@ -75,6 +114,14 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
         content.top + (row + 1) * cellH - scroll);
 }
 
+/**
+ * @brief 获取指定索引位置的槽位条目对象
+ * @param idx 条目索引
+ * @return 指向 Item 的指针，若索引无效则返回 nullptr
+ *
+ * 创建 FolderEntryIcon 作为条目图标并缓存到 slotItemCache_ 中，
+ * 确保在槽位重建期间对象生命周期有效。
+ */
 Item* FolderMapping::GetSlotItem(size_t idx) const
 {
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
@@ -85,6 +132,13 @@ Item* FolderMapping::GetSlotItem(size_t idx) const
     return result;
 }
 
+/**
+ * @brief 构建当前可见的槽位列表
+ * @return 槽位独占指针的向量
+ *
+ * 遍历所有文件夹条目（及可选的末尾空槽位），计算每个条目
+ * 在内容区域中的矩形位置，跳过完全不可见的条目以优化性能。
+ */
 std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
 {
     slotItemCache_.clear();
@@ -108,6 +162,14 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
     return slots;
 }
 
+/**
+ * @brief 获取指定索引位置的拖拽源条目对象
+ * @param idx 条目索引
+ * @return 指向 Item 的指针，索引无效时返回 nullptr
+ *
+ * 与 GetSlotItem 类似，但条目缓存于 dragSourceCache_ 中，
+ * 用于拖放操作期间保持条目对象的有效性。
+ */
 Item* FolderMapping::GetMemberItem(size_t idx) const
 {
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
@@ -118,6 +180,10 @@ Item* FolderMapping::GetMemberItem(size_t idx) const
     return result;
 }
 
+/**
+ * @brief 获取当前选中的条目索引列表
+ * @return 选中条目的索引向量
+ */
 std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
 {
     std::vector<size_t> result;
@@ -127,6 +193,14 @@ std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
     return result;
 }
 
+/**
+ * @brief 重新排序文件夹条目
+ * @param indices      需要移动的条目索引列表（逆序处理以保持索引正确）
+ * @param insertBefore 目标插入位置（移动完成后会调整以补偿移除的索引）
+ *
+ * 将指定索引的条目从原位置移除，再按顺序插入到 insertBefore 指定的位置，
+ * 并同步更新 data_->itemKeys 使其与新的条目顺序保持一致。
+ */
 void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
     if (!data_) return;
@@ -150,16 +224,30 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
     InvalidateSlots();
 }
 
+/**
+ * @brief 获取文件夹条目总数
+ * @return 条目数量
+ */
 size_t FolderMapping::GetSlotCount() const
 {
     return data_ ? data_->folderEntries.size() : 0;
 }
 
+/**
+ * @brief 获取每个条目的高度
+ * @return 条目高度（像素）。列表模式下固定为 38 像素，
+ *         图标模式下取当前单元格高度
+ */
 int FolderMapping::GetItemHeight() const
 {
     return (data_ && data_->listMode) ? 38 : FolderMappingCellHeight(const_cast<FolderMapping*>(this));
 }
 
+/**
+ * @brief 获取每个条目的宽度
+ * @return 条目宽度（像素）。列表模式下返回父类默认宽度；
+ *         图标模式下按内容区域宽度除以列数计算
+ */
 int FolderMapping::GetItemWidth() const
 {
     if (!data_ || data_->listMode) return WidgetContainer::GetItemWidth();
@@ -167,22 +255,45 @@ int FolderMapping::GetItemWidth() const
     return std::max<int>(1, (content.right - content.left) / std::max(1, data_->gridSpan.columns));
 }
 
+/**
+ * @brief 获取最大滚动偏移量
+ * @return 最大滚动偏移值（像素），委托给 FolderMappingMaxScrollOffset
+ */
 int FolderMapping::GetMaxScrollOffset() const
 {
     return FolderMappingMaxScrollOffset(const_cast<FolderMapping*>(this));
 }
 
+/**
+ * @brief 获取所有条目的总内容高度
+ * @return 总高度（像素），委托给 FolderMappingContentHeight
+ */
 int FolderMapping::GetTotalContentHeight() const
 {
     return FolderMappingContentHeight(const_cast<FolderMapping*>(this), data_ ? data_->folderEntries.size() : 0);
 }
 
+/**
+ * @brief 获取内容区域的可视高度
+ * @return 可视区域高度（像素），即内容裁剪矩形的高度
+ */
 int FolderMapping::GetVisibleContentHeight() const
 {
     RECT content = FolderMappingContentRect(const_cast<FolderMapping*>(this));
     return std::max(1, (int)(content.bottom - content.top));
 }
 
+/**
+ * @brief 处理外部条目拖放到本组件时的回调
+ * @param sourceItems 拖拽源条目列表
+ * @param origin      源容器
+ * @param targetSlot  目标槽位
+ * @param region      命中区域
+ * @param mods        键盘修饰键状态
+ *
+ * 通过 App 的拖放管道（BuildDragSourceList -> BuildDropPreviewList ->
+ * ExecuteDropPipeline）执行完整的拖放处理流程。
+ */
 void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
     Slot* targetSlot, HitRegion region, int mods)
 {
@@ -193,6 +304,16 @@ void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
     app_->ExecuteDropPipeline(sourceList, preview);
 }
 
+/**
+ * @brief 绘制映射文件夹的内容区域
+ * @param context D2D 设备上下文
+ * @param body    组件主体矩形（未使用，内容区域由 FolderMappingContentRect 决定）
+ *
+ * 当文件夹为空时显示居中提示文字"空文件夹"。
+ * 非空时根据当前模式（图标/列表）分别绘制条目，
+ * 图标模式下绘制 FolderEntryIcon，列表模式下绘制列表项。
+ * 绘制前会设置裁剪区域以确保内容不溢出。
+ */
 void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
@@ -245,6 +366,17 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     context->PopAxisAlignedClip();
 }
 
+/**
+ * @brief 绘制标题栏上的切换视图和打开文件夹按钮
+ * @param context    D2D 设备上下文
+ * @param handleRect 标题栏矩形
+ * @param hovered    标题栏是否处于悬停状态（当前未使用）
+ *
+ * 在标题栏右侧绘制两个按钮：
+ * - 切换按钮：在图标模式（网格）和列表模式之间切换
+ * - 打开文件夹按钮：打开当前映射的磁盘文件夹
+ * 按钮使用 Font Awesome 图标，并具有悬停高亮效果。
+ */
 void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
@@ -281,6 +413,12 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
     (void)hovered;
 }
 
+/**
+ * @brief 测试鼠标点击位置命中了哪个组件区域
+ * @param pt 鼠标点击坐标
+ * @return 命中类型。若命中了标题栏，进一步判断是否命中
+ *         视图切换按钮或打开文件夹按钮
+ */
 WidgetHit FolderMapping::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
@@ -308,6 +446,14 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     return base;
 }
 
+/**
+ * @brief 获取当前选中的所有条目对象
+ * @return 选中条目的 Item 指针向量
+ *
+ * 遍历当前槽位，收集所有被选中（entry.selected == true）的条目，
+ * 创建对应的 FolderEntryIcon 并缓存到 dragSourceCache_ 中
+ * 以支持拖放操作。
+ */
 std::vector<Item*> FolderMapping::GetSelectedItems() const
 {
     dragSourceCache_.clear();

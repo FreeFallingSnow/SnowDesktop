@@ -1,3 +1,19 @@
+/**
+ * @file settings_window.cpp
+ * @brief SnowDesktop 设置窗口实现
+ *
+ * 本文件实现了 SettingsWindow 类 —— 基于 ImGui 构建的设置界面。
+ * 包含以下设置页面：
+ *   - 通用（General）：开机自启、快捷导航快捷键配置
+ *   - 个性化（Personalization）：组件颜色、透明度、渐变等外观定制
+ *   - 布局备份（Backup）：布局文件的保存、恢复与删除
+ *   - 调试（Debug）：组件错误日志、组件诊断与重新加载
+ *   - 关于（About）：应用信息、作者链接与开发者模式解锁
+ *
+ * 此外还管理窗口的 DirectX 交换链、字体加载、DPI 感知和
+ *  Windows 消息处理（WndProc）。
+ */
+
 #include "settings_window.h"
 #include "widget_engine.h"
 #include "resource.h"
@@ -18,7 +34,13 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 SettingsWindow* g_settingsWindow = nullptr;
 
-// ── Light theme colors ──────────────────────────────────────────
+/**
+ * @brief 配置 ImGui 的浅色主题配色方案。
+ *
+ * 对 ImGui 样式表逐项设置圆角半径和颜色值，为整个设置窗口
+ * 提供统一的浅色外观。颜色值覆盖窗口背景、子窗口背景、边框、
+ * 按钮、标签页、滚动条、调节手柄等全部 UI 元素。
+ */
 static void SetupLightTheme()
 {
     ImGuiStyle& s = ImGui::GetStyle();
@@ -70,11 +92,30 @@ static void SetupLightTheme()
     c[ImGuiCol_ResizeGripActive]     = ImVec4(0.55f, 0.55f, 0.60f, 1.00f);
 }
 
+/**
+ * @brief 析构函数，自动调用 Shutdown() 释放资源。
+ */
 SettingsWindow::~SettingsWindow()
 {
     Shutdown();
 }
 
+/**
+ * @brief 初始化设置窗口。
+ *
+ * 执行以下初始化序列：
+ * 1. 注册窗口类并创建 Win32 窗口（DPI 感知初始尺寸）
+ * 2. 创建 DirectX 交换链和渲染目标视图
+ * 3. 初始化 ImGui 上下文（Win32 + DX11 后端）
+ * 4. 应用浅色主题、加载字体
+ * 5. 从磁盘读取个性化与导航设置
+ * 6. 将窗口居中显示在屏幕上
+ *
+ * @param instance  应用程序实例句柄（HINSTANCE）
+ * @param device    Direct3D 11 设备指针（ComPtr 的原始指针）
+ * @return true  初始化成功
+ * @return false 初始化失败（窗口创建或交换链创建失败）
+ */
 bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 {
     instance_ = instance;
@@ -151,6 +192,12 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     return true;
 }
 
+/**
+ * @brief 关闭设置窗口并释放所有 ImGui 与 DirectX 资源。
+ *
+ * 清理顺序：销毁全局指针、关闭 ImGui DX11/Win32 后端、
+ * 销毁 ImGui 上下文、清理交换链、销毁窗口句柄。
+ */
 void SettingsWindow::Shutdown()
 {
     g_settingsWindow = nullptr;
@@ -161,6 +208,11 @@ void SettingsWindow::Shutdown()
     if (hwnd_ != nullptr) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
 }
 
+/**
+ * @brief 显示设置窗口（若尚未初始化则先初始化再显示）。
+ *
+ * 将窗口置于前台并设置焦点。
+ */
 void SettingsWindow::Show()
 {
     if (hwnd_ == nullptr)
@@ -174,12 +226,24 @@ void SettingsWindow::Show()
     SetFocus(hwnd_);
 }
 
+/**
+ * @brief 显示退出确认对话框。
+ *
+ * 设置 showExitConfirm_ 标记后调用 Show()，
+ * 在下一帧 Render() 中弹出模态确认框。
+ */
 void SettingsWindow::ShowExitConfirm()
 {
     showExitConfirm_ = true;
     Show();
 }
 
+/**
+ * @brief 请求关闭设置窗口。
+ *
+ * 重置组件编辑状态并设置 pendingClose_ 标记，
+ * Render() 在下一帧末尾检测到该标记时执行 Shutdown()。
+ */
 void SettingsWindow::RequestClose()
 {
     showExitConfirm_ = false;
@@ -188,6 +252,22 @@ void SettingsWindow::RequestClose()
     pendingClose_ = true;
 }
 
+/**
+ * @brief 主渲染函数，每帧被调用以绘制设置窗口 UI。
+ *
+ * 执行流程：
+ * 1. 检查窗口可见性，不可见或最小化时提前返回
+ * 2. 启动 ImGui 帧（DX11 + Win32 后端）
+ * 3. 手动修正鼠标坐标（确保首次点击有效）
+ * 4. 创建全客户区主窗口，根据编辑状态选择：
+ *    - 正在编辑组件时绘制组件编辑器页面
+ *    - 否则绘制左侧边栏 + 右侧活动页面
+ * 5. 持久化标记为脏的个人化/导航设置
+ * 6. 调用失效回调以通知外部刷新
+ * 7. 处理退出确认模态弹窗
+ * 8. 执行 ImGui 渲染并 Present 到交换链
+ * 9. 检测 pendingClose_ 标记并执行清理
+ */
 void SettingsWindow::Render()
 {
     if (hwnd_ == nullptr || !IsWindowVisible(hwnd_) || IsIconic(hwnd_)) return;
@@ -313,8 +393,13 @@ void SettingsWindow::Render()
     swapChain_->Present(1, 0);
 }
 
-// ── Title Bar ───────────────────────────────────────────────────
-// ── Sidebar ──────────────────────────────────────────────────────
+/**
+ * @brief 绘制左侧导航边栏。
+ *
+ * 使用透明背景按钮样式，高亮当前激活页面。
+ * 提供"通用"、"个性化"、"布局备份"、"关于"等入口；
+ * 当 debugUnlocked_ 为 true 时额外显示"调试"入口。
+ */
 void SettingsWindow::DrawSidebar()
 {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
@@ -350,6 +435,11 @@ void SettingsWindow::DrawSidebar()
 
 // ── UTF helpers ──────────────────────────────────────────────────
 namespace {
+/**
+ * @brief 将 std::wstring 转换为 UTF-8 编码的 std::string。
+ * @param w 宽字符串输入
+ * @return UTF-8 编码的窄字符串，输入为空时返回空串
+ */
     std::string WideToUtf8(const std::wstring& w)
     {
         if (w.empty()) return {};
@@ -359,6 +449,11 @@ namespace {
         return r;
     }
 
+/**
+ * @brief 将 UTF-8 编码的 std::string 转换为 std::wstring。
+ * @param u UTF-8 编码的窄字符串输入
+ * @return 宽字符串，输入为空时返回空串
+ */
     std::wstring Utf8ToWide(const std::string& u)
     {
         if (u.empty()) return {};
@@ -369,7 +464,14 @@ namespace {
     }
 }
 
-// ── Blue button helper (white text on blue) ─────────────────────
+/**
+ * @brief 蓝色文字按钮辅助函数。
+ *
+ * 自动设置白色文字颜色，点击后恢复原始颜色。
+ * @param label 按钮标签文本
+ * @param size  按钮尺寸（可缺省，默认自适应）
+ * @return true 按钮被点击
+ */
 static bool BlueButton(const char* label, const ImVec2& size = ImVec2(0, 0))
 {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
@@ -378,12 +480,22 @@ static bool BlueButton(const char* label, const ImVec2& size = ImVec2(0, 0))
     return clicked;
 }
 
+/**
+ * @brief 描述一个快捷键选项（虚拟键码 + 显示文本）。
+ */
 struct HotkeyOption
 {
     UINT virtualKey;
     const char* label;
 };
 
+/**
+ * @brief 获取全局导航快捷键可选项列表。
+ *
+ * 包含 Space、Tab、Enter、反引号、字母 A-Z、功能键 F1-F12。
+ * @param count 输出参数，接收选项总数
+ * @return 指向静态常量 HotkeyOption 数组的指针
+ */
 static const HotkeyOption* NavigationHotkeyOptions(size_t& count)
 {
     static const HotkeyOption options[] = {
@@ -406,6 +518,11 @@ static const HotkeyOption* NavigationHotkeyOptions(size_t& count)
     return options;
 }
 
+/**
+ * @brief 根据虚拟键码查找 NavigationHotkeyOptions 中的索引。
+ * @param virtualKey 要查找的 Windows 虚拟键码
+ * @return 匹配的选项索引，未找到时返回 0（Space）
+ */
 static int NavigationHotkeyOptionIndex(UINT virtualKey)
 {
     size_t count = 0;
@@ -418,7 +535,14 @@ static int NavigationHotkeyOptionIndex(UINT virtualKey)
     return 0;
 }
 
-// ── Backup Page ─────────────────────────────────────────────────
+/**
+ * @brief 绘制"布局备份"页面。
+ *
+ * 提供以下功能区域：
+ * - 输入备份名称并保存当前布局
+ * - 列出已有备份，每项提供"恢复"与"删除"按钮
+ * - 恢复操作成功后触发 reloadCallback_ 通知外部重载
+ */
 void SettingsWindow::DrawBackupPage()
 {
     const float pad = 16.0f * dpiScale_;
@@ -494,6 +618,14 @@ void SettingsWindow::DrawBackupPage()
     ImGui::EndChild();
 }
 
+/**
+ * @brief 绘制"通用设置"页面。
+ *
+ * 提供以下配置项：
+ * - 开机自启开关（通过 Windows 注册表 Run 键实现）
+ * - 全局快捷导航开关、修饰键（Ctrl/Alt/Shift/Win）和主键组合选择
+ * - 修改后的导航设置自动持久化并触发回调
+ */
 void SettingsWindow::DrawGeneralPage()
 {
     const float pad = 16.0f * dpiScale_;
@@ -570,6 +702,16 @@ void SettingsWindow::DrawGeneralPage()
     ImGui::EndChild();
 }
 
+/**
+ * @brief 绘制"个性化设置"页面。
+ *
+ * 提供以下定制能力：
+ * - 预设快速切换（恢复默认暗色 / 浅色预设）
+ * - 组件背景色与边框颜色选取
+ * - 整体不透明度滑条
+ * - 底部渐变开关与渐变结束透明度控制
+ * - 所有修改标记 personalizationDirty_，在 Render() 末尾持久化
+ */
 void SettingsWindow::DrawPersonalizationPage()
 {
     const float pad = 16.0f * dpiScale_;
@@ -685,6 +827,16 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::EndChild();
 }
 
+/**
+ * @brief 打开组件编辑器界面。
+ *
+ * 设置当前编辑的组件索引、ID、名称和脚本路径，
+ * 然后显示设置窗口（切换到编辑器页面）。
+ * @param widgetIndex 在组件列表中的索引
+ * @param widgetId    组件的唯一标识符
+ * @param widgetName  组件的显示名称
+ * @param scriptPath  组件脚本文件路径
+ */
 void SettingsWindow::ShowWidgetEditor(size_t widgetIndex,
     const wchar_t* widgetId, const wchar_t* widgetName, const wchar_t* scriptPath)
 {
@@ -695,6 +847,13 @@ void SettingsWindow::ShowWidgetEditor(size_t widgetIndex,
     Show();
 }
 
+/**
+ * @brief 绘制组件编辑器页面。
+ *
+ * 页面顶部提供"返回主界面"按钮，显示当前正在编辑的组件名称。
+ * 委托 WidgetEngine 进行具体编辑界面的渲染（调用
+ * EnsureWidgetLoaded 和 RenderWidgetEditor）。
+ */
 void SettingsWindow::DrawWidgetEditorPage()
 {
     // Back button — white text on blue
@@ -720,6 +879,14 @@ void SettingsWindow::DrawWidgetEditorPage()
     }
 }
 
+/**
+ * @brief 绘制"调试"页面。
+ *
+ * 提供以下功能：
+ * - 组件错误记录列表（支持复制全部 / 清空全部 / 逐条点击复制）
+ * - 组件诊断信息（列出已加载的 Lua 组件，显示状态、权限、最近错误与日志）
+ * - 每项诊断支持重新加载组件按钮
+ */
 void SettingsWindow::DrawDebugPage()
 {
     const float pad = 16.0f * dpiScale_;
@@ -859,6 +1026,12 @@ void SettingsWindow::DrawDebugPage()
     ImGui::EndChild();
 }
 
+/**
+ * @brief 绘制"关于"页面。
+ *
+ * 显示应用简介、作者信息、社交主页链接（Bilibili / GitHub / 抖音 / 小红书）。
+ * 版本号支持彩蛋点击 —— 连续点击 5 次可解锁调试页面（debugUnlocked_）。
+ */
 void SettingsWindow::DrawAboutPage()
 {
     const float pad = 16.0f * dpiScale_;
@@ -930,7 +1103,16 @@ void SettingsWindow::DrawAboutPage()
     ImGui::EndChild();
 }
 
-// ── Backup Implementation ────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  布局备份：目录、列举、保存、恢复、删除
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * @brief 获取备份文件存储目录路径。
+ *
+ * 目录位于可执行文件所在目录下的 "backups" 子文件夹。
+ * @return 备份目录的完整宽字符串路径
+ */
 std::wstring SettingsWindow::GetBackupDir() const
 {
     wchar_t path[MAX_PATH]{};
@@ -940,6 +1122,13 @@ std::wstring SettingsWindow::GetBackupDir() const
     return path;
 }
 
+/**
+ * @brief 列举所有已有备份。
+ *
+ * 扫描备份目录下所有 *.json 文件，解析文件名和最后写入时间，
+ * 组装为 LayoutBackup 条目并按照时间倒序（最新在前）排序。
+ * @return 备份条目列表，可能为空
+ */
 std::vector<LayoutBackup> SettingsWindow::ListBackups() const
 {
     std::vector<LayoutBackup> result;
@@ -983,6 +1172,15 @@ std::vector<LayoutBackup> SettingsWindow::ListBackups() const
     return result;
 }
 
+/**
+ * @brief 保存当前布局文件到备份目录。
+ *
+ * 将 SnowDesktop.layout.json 复制到 backups/ 下，
+ * 备份文件名中不允许出现 : / \\ 字符（替换为 _），
+ * 同名文件存在时自动在末尾追加递增序号。
+ * @param name 备份名称
+ * @return true 复制成功
+ */
 bool SettingsWindow::SaveBackup(const std::wstring& name)
 {
     std::wstring backupDir = GetBackupDir();
@@ -1010,6 +1208,10 @@ bool SettingsWindow::SaveBackup(const std::wstring& name)
     return CopyFileW(layoutPath, backupPath.c_str(), FALSE) != FALSE;
 }
 
+/**
+ * @brief 基于当前系统时间生成备份文件名（含年月日时分秒）。
+ * @return 格式为 "YYYY-MM-DD hh-mm-ss" 的宽字符串
+ */
 std::wstring SettingsWindow::MakeBackupTimestampName() const
 {
     SYSTEMTIME st{};
@@ -1020,6 +1222,13 @@ std::wstring SettingsWindow::MakeBackupTimestampName() const
     return name;
 }
 
+/**
+ * @brief 从备份文件恢复布局。
+ *
+ * 恢复前自动调用 SaveBackup() 生成一份"恢复前备份"快照。
+ * @param filename 备份文件名（仅文件名，不含路径）
+ * @return true 复制成功
+ */
 bool SettingsWindow::RestoreBackup(const std::wstring& filename)
 {
     wchar_t layoutPath[MAX_PATH]{};
@@ -1035,13 +1244,29 @@ bool SettingsWindow::RestoreBackup(const std::wstring& filename)
     return CopyFileW(backupPath.c_str(), layoutPath, FALSE) != FALSE;
 }
 
+/**
+ * @brief 删除指定的备份文件。
+ * @param filename 要删除的备份文件名
+ * @return true 删除成功
+ */
 bool SettingsWindow::DeleteBackup(const std::wstring& filename)
 {
     std::wstring backupPath = GetBackupDir() + L"\\" + filename;
     return DeleteFileW(backupPath.c_str()) != FALSE;
 }
 
-// ── Swap Chain ───────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  交换链：创建与清理
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * @brief 创建 DirectX 交换链及渲染目标视图。
+ *
+ * 根据窗口当前客户区尺寸重新创建交换链，
+ * 同时更新 ImGui 的 DisplaySize。
+ * 调用前会清理旧的交换链资源。
+ * @return true 创建成功
+ */
 bool SettingsWindow::CreateSwapChain()
 {
     RECT cr;
@@ -1083,13 +1308,26 @@ bool SettingsWindow::CreateSwapChain()
     return true;
 }
 
+/**
+ * @brief 释放交换链和渲染目标视图的 COM 资源。
+ */
 void SettingsWindow::CleanupSwapChain()
 {
     rtv_.Reset();
     swapChain_.Reset();
 }
 
-// ── Fonts ────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  字体：加载系统字体
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * @brief 加载系统字体用于 ImGui 渲染。
+ *
+ * 从 C:\\Windows\\Fonts\\msyh.ttc 加载微软雅黑字体，
+ * 字体大小根据 DPI 缩放系数调整，
+ * 并包含简体中文常用字形范围。
+ */
 void SettingsWindow::SetupFonts()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -1102,7 +1340,17 @@ void SettingsWindow::SetupFonts()
     }
 }
 
-// ── Auto Start ───────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  开机自启：查询与设置（通过 Windows 注册表 Run 键）
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * @brief 检查当前是否已启用开机自启。
+ *
+ * 读取 HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
+ * 下 "SnowDesktop" 条目是否存在。
+ * @return true 已启用开机自启
+ */
 bool SettingsWindow::IsAutoStartEnabled() const
 {
     HKEY key;
@@ -1120,6 +1368,13 @@ bool SettingsWindow::IsAutoStartEnabled() const
     return result == ERROR_SUCCESS;
 }
 
+/**
+ * @brief 设置或取消开机自启。
+ *
+ * 在 HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
+ * 下创建或删除 "SnowDesktop" 条目。
+ * @param enable true 添加注册表项启用自启，false 删除
+ */
 void SettingsWindow::SetAutoStart(bool enable) const
 {
     HKEY key;
@@ -1143,7 +1398,27 @@ void SettingsWindow::SetAutoStart(bool enable) const
     RegCloseKey(key);
 }
 
-// ── WndProc ──────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  窗口过程：消息处理
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * @brief 静态窗口过程函数，处理设置窗口的 Windows 消息。
+ *
+ * 处理的消息包括：
+ * - ESC 键按下时请求关闭窗口
+ * - 将输入事件转发给 ImGui 的 Win32 处理器
+ * - WM_MOUSEACTIVATE：确保鼠标激活
+ * - WM_SIZE：窗口尺寸变化时重建交换链并重绘
+ * - WM_DPICHANGED：DPI 变化时更新缩放系数和建议尺寸
+ * - WM_GETMINMAXINFO：设置最小窗口尺寸（500x350）
+ * - WM_CLOSE：请求关闭而非直接销毁
+ * @param hwnd   窗口句柄
+ * @param msg    消息 ID
+ * @param wParam 消息参数 WPARAM
+ * @param lParam 消息参数 LPARAM
+ * @return 消息处理结果（0 表示已处理，否则返回 DefWindowProcW）
+ */
 LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (g_settingsWindow != nullptr && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && wParam == VK_ESCAPE)

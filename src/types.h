@@ -1,3 +1,10 @@
+/**
+ * @file types.h
+ * @brief 桌面网格系统核心类型定义
+ * @details 定义桌面网格布局、桌面项、组件、文件夹条目等核心数据结构，
+ *          以及 PIDL 智能包装器和枚举上下文等辅助类型
+ */
+
 #pragma once
 #include <shlobj.h>
 
@@ -6,6 +13,12 @@
 #include <string>
 #include <vector>
 
+// ── Grid Layout Types ──────────────────────
+
+/**
+ * @brief 网格单元格
+ * @details 表示桌面网格中的一个单元格位置，包含页面ID、列号和行号
+ */
 struct GridCell
 {
     std::wstring pageId;
@@ -13,12 +26,20 @@ struct GridCell
     int row = 0;
 };
 
+/**
+ * @brief 网格跨度
+ * @details 表示单元格在网格中占据的列数和行数
+ */
 struct GridSpan
 {
     int columns = 1;
     int rows = 1;
 };
 
+/**
+ * @brief 布局记录
+ * @details 记录桌面项在网格中的完整布局信息，包含单元格位置、跨度和传统布局槽位
+ */
 struct LayoutRecord
 {
     GridCell cell;
@@ -27,6 +48,10 @@ struct LayoutRecord
     int legacySlot = -1;
 };
 
+/**
+ * @brief 网格页面
+ * @details 表示一个显示器对应的网格页面，包含显示器边界、工作区、网格行列数及边距等布局参数
+ */
 struct GridPage
 {
     std::wstring id;
@@ -44,26 +69,41 @@ struct GridPage
     int marginY = kGridMarginY;
 };
 
+/**
+ * @brief 待处理的网格移动
+ * @details 记录网格项待执行的目标单元格移动操作
+ */
 struct PendingGridMove
 {
     size_t index = 0;
     GridCell cell;
 };
 
+/**
+ * @brief 待处理的组件移动
+ * @details 记录组件待执行的目标单元格移动操作
+ */
 struct PendingWidgetMove
 {
     size_t index = 0;
     GridCell cell;
 };
 
+/** 桌面组件类型 */
 enum class DesktopWidgetType
 {
-    Collection,
-    FileCategories,
-    FolderMapping,
-    LuaScript,
+    Collection,      /**< 集合组件 */
+    FileCategories,  /**< 文件分类组件 */
+    FolderMapping,   /**< 文件夹映射组件 */
+    LuaScript,       /**< Lua 脚本组件 */
 };
 
+// ── PIDL Wrapper ───────────────────────────
+
+/**
+ * @brief PIDL 智能包装器
+ * @details 封装 PIDLIST_ABSOLUTE 的生命周期管理，支持移动语义，禁止拷贝。自动调用 ILFree 释放
+ */
 struct Pidl
 {
     PIDLIST_ABSOLUTE value = nullptr;
@@ -100,6 +140,13 @@ struct Pidl
     [[nodiscard]] PIDLIST_ABSOLUTE get() const { return value; }
 };
 
+// ── DesktopItem ────────────────────────────
+
+/**
+ * @brief 桌面项
+ * @details 表示桌面上的一个图标项，包含名称、PIDL、图标、布局信息、选择状态等属性。
+ *          支持移动语义，管理图标位图的生命周期
+ */
 struct DesktopItem
 {
     std::wstring name;
@@ -184,6 +231,12 @@ struct DesktopItem
     }
 };
 
+// ── FolderEntry ────────────────────────────
+
+/**
+ * @brief 文件夹条目
+ * @details 表示文件夹映射组件中的一个文件或子目录条目，包含路径、图标、选择状态等信息
+ */
 struct FolderEntry
 {
     std::wstring name;
@@ -305,6 +358,11 @@ public:
     }
 };
 
+/**
+ * @brief 桌面组件
+ * @details 表示桌面上的一个组件实例，可以是集合、文件分类、文件夹映射或 Lua 脚本组件。
+ *          包含位置、尺寸、滚动状态及内部条目列表等完整状态信息
+ */
 struct DesktopWidget
 {
     std::wstring id;
@@ -327,6 +385,10 @@ struct DesktopWidget
     std::vector<FolderEntry> folderEntries;
 };
 
+/**
+ * @brief 桌面窗口句柄集合
+ * @details 缓存桌面相关的重要窗口句柄，包括 Progman、DefView、ListView 等
+ */
 struct DesktopWindows
 {
     HWND progman = nullptr;
@@ -336,12 +398,20 @@ struct DesktopWindows
     bool listViewWasVisible = false;
 };
 
+/**
+ * @brief DefView 搜索结果
+ * @details 存储通过 FindWindow 搜索 DefView 窗口的结果
+ */
 struct DefViewSearch
 {
     HWND defView = nullptr;
     HWND parent = nullptr;
 };
 
+/**
+ * @brief 显示器枚举上下文
+ * @details 在枚举显示器时传递的上下文参数，用于收集所有显示器的虚拟坐标和网格页面信息
+ */
 struct MonitorEnumContext
 {
     int virtualLeft = 0;

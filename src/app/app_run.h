@@ -1,9 +1,26 @@
+/**
+ * @file app_run.h
+ * @brief DesktopApp 内联实现 —— 主循环、窗口过程、桌面宿主管理、拖放支持
+ *
+ * 本文件包含 DesktopApp 类的内联方法实现，在 app_oo.h 中类定义之后
+ * 通过 #include 引入。涵盖主消息循环（Run）、静态窗口过程（WndProc）、
+ * 桌面覆盖层窗口的创建与销毁、资源管理器桌面图标的隐藏与恢复、
+ * OLE 拖放支持注册、桌面宿主状态监视与恢复、快捷导航、
+ * 以及部件（Widget）管理等相关功能。
+ */
+
 #pragma once
 // Inline implementations for DesktopApp — destructor, Run, WndProc, HandleMessage.
 // This file is included by app_oo.h after the class definition.
 
 // ── Inline implementations ──────────────────────────────────
 
+/**
+ * @brief 析构函数
+ *
+ * 依次释放 WidgetEngine、SettingsWindow、桌面项与容器等资源，
+ * 清理 FontAwesome 菜单字体与内存字体资源的加载句柄。
+ */
 inline DesktopApp::~DesktopApp()
 {
     widgetEngine_.reset();
@@ -23,6 +40,13 @@ inline DesktopApp::~DesktopApp()
     }
 }
 
+/**
+ * @brief 隐藏资源管理器桌面图标层
+ *
+ * 通过 ShowWindow(SW_HIDE) 隐藏桌面的 ListView 窗口（即图标层），
+ * 并用窗口属性 kHiddenBySnowDesktopProp 标记此操作为 SnowDesktop 所为，
+ * 以便后续恢复时判断。
+ */
 inline void DesktopApp::HideExplorerIcons()
 {
     if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
@@ -41,6 +65,13 @@ inline void DesktopApp::HideExplorerIcons()
     ShowWindow(desktopWindows_.listView, SW_HIDE);
 }
 
+/**
+ * @brief 恢复显示资源管理器桌面图标
+ *
+ * 若之前由 SnowDesktop 隐藏且记录为可见状态，
+ * 则调用 ShowWindow(SW_SHOW) 恢复 ListView 显示，
+ * 并清除隐藏标记属性。
+ */
 inline void DesktopApp::RestoreExplorerIcons()
 {
     if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
@@ -54,6 +85,12 @@ inline void DesktopApp::RestoreExplorerIcons()
     desktopWindows_.listViewWasVisible = false;
 }
 
+/**
+ * @brief 注册 OLE 拖放目标
+ *
+ * 调用 RegisterDragDrop 将主窗口注册为 OLE 拖放目标，
+ * 使外部文件可拖放至桌面覆盖层。仅在首次成功时执行一次。
+ */
 inline void DesktopApp::RegisterOleDropTarget()
 {
     if (!hwnd_ || !IsWindow(hwnd_) || dropTargetRegistered_)
@@ -61,6 +98,13 @@ inline void DesktopApp::RegisterOleDropTarget()
     dropTargetRegistered_ = SUCCEEDED(RegisterDragDrop(hwnd_, static_cast<IDropTarget*>(this)));
 }
 
+/**
+ * @brief 重置桌面窗口相关资源（反初始化）
+ *
+ * 注销导航热键、销毁各定时器、撤销 OLE 拖放注册、
+ * 注销 Shell 变更通知、销毁拖拽提示窗口与快捷导航窗口、
+ * 释放 DirectComposition 表面/视觉/目标，并将窗口句柄置空。
+ */
 inline void DesktopApp::ResetDesktopWindowResources()
 {
     if (hwnd_ && IsWindow(hwnd_))
@@ -92,6 +136,14 @@ inline void DesktopApp::ResetDesktopWindowResources()
     hwnd_ = nullptr;
 }
 
+/**
+ * @brief 将桌面覆盖层窗口附加到指定桌面宿主窗口
+ *
+ * @param host 目标桌面宿主窗口句柄（通常是 WorkerW 或 Progman）
+ *
+ * 将主窗口样式改为 WS_CHILD 并设置 parent 为 host，
+ * 同时调整位置到虚拟屏幕原点并显示窗口。
+ */
 inline void DesktopApp::AttachWindowToDesktopHost(HWND host)
 {
     if (!hwnd_ || !IsWindow(hwnd_) || !host || !IsWindow(host))
@@ -112,6 +164,16 @@ inline void DesktopApp::AttachWindowToDesktopHost(HWND host)
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
 }
 
+/**
+ * @brief 创建桌面覆盖层窗口
+ *
+ * @return true  窗口创建成功且所有组件初始化完成
+ * @return false 创建失败，已自动回滚相关资源
+ *
+ * 依次创建覆盖层窗口（首选子窗口，兜底弹窗）、DirectComposition 目标
+ * 与视觉树、组合表面，设置应用图标，注册 OLE 拖放与导航热键，
+ * 启动 Shell 变更通知和定时器，最终使窗口可见并触发首次绘制。
+ */
 inline bool DesktopApp::CreateDesktopOverlayWindow()
 {
     auto fail = [this]() {
@@ -170,6 +232,13 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     return true;
 }
 
+/**
+ * @brief 资源管理器重启后恢复桌面宿主连接
+ *
+ * 重新查找当前桌面窗口（WorkerW/Progman），将覆盖层窗口重新附加为子窗口，
+ * 恢复 OLE 拖放注册与 Shell 变更通知，隐藏桌面图标，添加托盘图标。
+ * 若原有窗口已失效则重建覆盖层窗口，并根据当前状态决定是否重载桌面项。
+ */
 inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
 {
     if (exitRequested_)
@@ -204,6 +273,13 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 定时监视桌面宿主窗口状态
+ *
+ * 检查主窗口的父窗口是否仍为正确的桌面宿主窗口，
+ * 若检测到宿主丢失、ListView 消失或宿主发生变化，
+ * 则调用 RecoverDesktopHostAfterExplorerRestart 进行恢复。
+ */
 inline void DesktopApp::WatchDesktopHost()
 {
     if (exitRequested_)
@@ -241,6 +317,13 @@ inline void DesktopApp::WatchDesktopHost()
     }
 }
 
+/**
+ * @brief 请求退出应用程序
+ *
+ * 设置退出标志，恢复资源管理器桌面图标，销毁主窗口触发 WM_DESTROY，
+ * 或直接执行清理流程（保存布局槽位、移除托盘图标、重置资源）
+ * 并发送 PostQuitMessage 退出消息循环。
+ */
 inline void DesktopApp::RequestExit()
 {
     if (exitRequested_)
@@ -262,6 +345,19 @@ inline void DesktopApp::RequestExit()
         PostQuitMessage(0);
 }
 
+/**
+ * @brief 应用程序主入口 —— 初始化与消息循环
+ *
+ * @param instance  当前应用程序实例句柄
+ * @param showCommand 窗口显示命令（由系统传入，暂未使用）
+ * @return int 消息循环的退出码（WM_QUIT 的 wParam）
+ *
+ * 执行完整初始化流程：设置 DPI 感知、初始化通用控件与 OLE、
+ * 查找桌面窗口并隐藏图标、注册窗口类、创建覆盖层窗口、
+ * 初始化 DirectComposition 图形管线、加载桌面项与网格布局、
+ * 创建 SettingsWindow 与 WidgetEngine，最后进入 GetMessage 消息循环
+ * 直至收到 WM_QUIT。
+ */
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
@@ -511,6 +607,18 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     return static_cast<int>(msg.wParam);
 }
 
+/**
+ * @brief 主窗口的静态窗口过程
+ *
+ * @param hwnd 窗口句柄
+ * @param msg  消息标识符
+ * @param wp   WPARAM 参数
+ * @param lp   LPARAM 参数
+ * @return LRESULT 消息处理结果
+ *
+ * 在 WM_NCCREATE 时将 DesktopApp 实例指针存入 GWLP_USERDATA，
+ * 后续消息中取出实例并转发至 HandleMessage。
+ */
 inline LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     DesktopApp* app = nullptr;
@@ -543,6 +651,18 @@ inline LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+/**
+ * @brief 快捷导航窗口的静态窗口过程
+ *
+ * @param hwnd 窗口句柄
+ * @param msg  消息标识符
+ * @param wp   WPARAM 参数
+ * @param lp   LPARAM 参数
+ * @return LRESULT 消息处理结果
+ *
+ * 在 WM_NCCREATE 时存储 DesktopApp 实例指针，
+ * 后续消息转发至 HandleQuickNavigationMessage 处理。
+ */
 inline LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     DesktopApp* app = nullptr;
@@ -562,6 +682,25 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, 
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+/**
+ * @brief 主窗口消息处理函数
+ *
+ * @param hwnd 窗口句柄
+ * @param msg  消息标识符
+ * @param wp   WPARAM 参数
+ * @param lp   LPARAM 参数
+ * @return LRESULT 消息处理结果，未处理的消息交由 DefWindowProcW
+ *
+ * 集中处理桌面覆盖层窗口的所有消息：
+ * - 上下文菜单（IContextMenu 接口路由）
+ * - WM_PAINT / WM_ERASEBKGND 绘制
+ * - WM_SIZE 尺寸变更及布局重算
+ * - 鼠标消息（左键/右键/滚轮/双击及快捷导航点击）
+ * - 键盘消息与导航热键
+ * - WM_DISPLAYCHANGE / WM_SETTINGCHANGE 多显示器变更
+ * - Shell 变更通知与各定时器回调
+ * - 托盘回调、WM_CLOSE 关闭、WM_DESTROY 销毁清理
+ */
 inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (newMenuContextMenu_ && (msg == WM_INITMENUPOPUP || msg == WM_DRAWITEM || msg == WM_MEASUREITEM))

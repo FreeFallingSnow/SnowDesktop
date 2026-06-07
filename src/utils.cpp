@@ -1,4 +1,13 @@
-﻿#include "utils.h"
+﻿/**
+ * @file utils.cpp
+ * @brief 杂项工具函数实现
+ *
+ * 本文件汇集了桌面窗口枚举、资源加载、字符串/路径处理、
+ * 注册表操作、位图/图标创建、RECT 几何计算以及 UTF-8/Wide
+ * 字符串转换与 JSON 解析等通用工具函数。
+ */
+
+#include "utils.h"
 #include "resource.h"
 
 #include <commoncontrols.h>
@@ -12,6 +21,20 @@
 #include <unordered_set>
 #include <vector>
 
+// ============================================================================
+// 窗口枚举回调函数
+// ============================================================================
+
+/**
+ * @brief EnumWindows 回调函数，查找 SHELLDLL_DefView 窗口。
+ *
+ * 遍历顶层窗口，查找包含 "SHELLDLL_DefView" 子窗口的父窗口，
+ * 并将结果写入 search 结构体。找到后返回 FALSE 以停止枚举。
+ *
+ * @param hwnd 当前枚举到的窗口句柄。
+ * @param lParam 指向 DefViewSearch 结构的指针。
+ * @return FALSE 表示找到目标并停止枚举；TRUE 表示继续枚举。
+ */
 BOOL CALLBACK FindDefViewProc(HWND hwnd, LPARAM lParam)
 {
     auto* search = reinterpret_cast<DefViewSearch*>(lParam);
@@ -25,6 +48,16 @@ BOOL CALLBACK FindDefViewProc(HWND hwnd, LPARAM lParam)
     return TRUE;
 }
 
+/**
+ * @brief EnumDisplayMonitors 回调函数，枚举所有显示器并构建 GridPage 列表。
+ *
+ * 为每台显示器创建 GridPage 记录，包含显示器 ID、是否为
+ * 主显示器、相对于虚拟桌面左上角的边界矩形和工作区矩形。
+ *
+ * @param monitor 当前枚举到的显示器句柄。
+ * @param lParam 指向 MonitorEnumContext 结构的指针。
+ * @return TRUE 表示继续枚举。
+ */
 BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lParam)
 {
     auto* context = reinterpret_cast<MonitorEnumContext*>(lParam);
@@ -63,6 +96,17 @@ BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lPar
     return TRUE;
 }
 
+// ============================================================================
+// 资源加载函数
+// ============================================================================
+
+/**
+ * @brief 从应用程序资源中加载应用程序图标。
+ *
+ * 从当前模块资源中加载 IDI_APPICON 图标，尺寸为 32x32。
+ *
+ * @return 成功时返回图标句柄，失败时返回 nullptr。
+ */
 HICON LoadAppIcon()
 {
     HICON icon = static_cast<HICON>(LoadImageW(
@@ -74,6 +118,14 @@ HICON LoadAppIcon()
     return icon;
 }
 
+/**
+ * @brief 从资源中加载 Font Awesome 字体到内存中。
+ *
+ * 从 RT_RCDATA 资源中读取 Font Awesome 字体数据，
+ * 并通过 AddFontMemResourceEx 注册为内存字体。
+ *
+ * @return 成功时返回字体句柄，失败时返回 nullptr。
+ */
 HANDLE LoadFontAwesome()
 {
     HMODULE module = GetModuleHandleW(nullptr);
@@ -95,6 +147,15 @@ namespace
     const void* g_faFontData = nullptr;
     DWORD g_faFontSize = 0;
 
+    /**
+     * @brief 构建 Font Awesome 内存字体的 DirectWrite 字体集合。
+     *
+     * 使用 IDWriteInMemoryFontFileLoader 从内存字体数据创建
+     * IDWriteFontCollection1 集合，供 CreateTextFormat 使用。
+     *
+     * @param factory IDWriteFactory 接口指针。
+     * @return 成功时返回字体集合，失败时返回 nullptr。
+     */
     ComPtr<IDWriteFontCollection1> BuildFaFontCollection(IDWriteFactory* factory)
     {
         ComPtr<IDWriteFactory5> factory5;
@@ -146,6 +207,16 @@ namespace
     }
 }
 
+/**
+ * @brief 创建 Font Awesome 文本格式对象。
+ *
+ * 首次调用时缓存字体数据，构建字体集合，然后创建居中对齐的
+ * IDWriteTextFormat 用于渲染 Font Awesome 图标字符。
+ *
+ * @param factory IDWriteFactory 接口指针，不能为 nullptr。
+ * @param fontSize 字体大小（DIP）。
+ * @return 成功时返回 IDWriteTextFormat 指针，失败时返回 nullptr。
+ */
 IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize)
 {
     if (factory == nullptr) return nullptr;
@@ -189,6 +260,19 @@ IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize)
     return format;
 }
 
+// ============================================================================
+// 桌面窗口管理
+// ============================================================================
+
+/**
+ * @brief 查找桌面窗口及其子窗口（Progman、DefView、ListView）。
+ *
+ * 通过查找 "Progman" 窗口并发送 0x052C 消息触发工作区创建，
+ * 然后递归查找 SHELLDLL_DefView 和 SysListView32 子窗口。
+ * 如果在 Progman 下未找到 DefView，则通过 EnumWindows 全局查找。
+ *
+ * @return DesktopWindows 结构体，包含 progman、defView、host、listView 句柄。
+ */
 DesktopWindows FindDesktopWindows()
 {
     DesktopWindows result{};
@@ -226,6 +310,12 @@ DesktopWindows FindDesktopWindows()
     return result;
 }
 
+/**
+ * @brief 立即恢复资源管理器桌面图标层。
+ *
+ * 显示 ListView 窗口并移除隐藏属性，使被 SnowDesktop 隐藏的
+ * 桌面图标重新可见。
+ */
 void RestoreExplorerIconLayerNow()
 {
     DesktopWindows windows = FindDesktopWindows();
@@ -236,6 +326,21 @@ void RestoreExplorerIconLayerNow()
     }
 }
 
+// ============================================================================
+// 字符串与路径工具函数
+// ============================================================================
+
+/**
+ * @brief 将 IShellFolder 的显示名称转换为 std::wstring。
+ *
+ * 调用 GetDisplayNameOf 获取 STRRET，再通过 StrRetToBufW
+ * 转换为宽字符串。
+ *
+ * @param folder IShellFolder 接口指针。
+ * @param child 子项的 PIDL。
+ * @param flags 显示名称的获取标志（SHGDNF）。
+ * @return 成功时返回显示名称字符串，失败时返回空字符串。
+ */
 std::wstring StrRetToString(IShellFolder* folder, PCUITEMID_CHILD child, SHGDNF flags)
 {
     STRRET str{};
@@ -253,12 +358,28 @@ std::wstring StrRetToString(IShellFolder* folder, PCUITEMID_CHILD child, SHGDNF 
     return buffer;
 }
 
+/**
+ * @brief 将字符串转换为大写（原地转换）。
+ *
+ * 使用 CharUpperBuffW API 将字符串中的小写字母转为大写。
+ *
+ * @param value 要转换的字符串。
+ * @return 转换后的大写字符串。
+ */
 std::wstring ToUpperInvariant(std::wstring value)
 {
     CharUpperBuffW(value.data(), static_cast<DWORD>(value.size()));
     return value;
 }
 
+/**
+ * @brief 从解析名中提取 CLSID（花括号内的 GUID 文本）。
+ *
+ * 在字符串中查找 '{' 和 '}' 之间的内容并转为大写返回。
+ *
+ * @param parsingName 包含 CLSID 的解析名字符串。
+ * @return 找到时返回大写的 CLSID 字符串（含花括号），未找到时返回空字符串。
+ */
 std::wstring ExtractClsidText(const std::wstring& parsingName)
 {
     size_t open = parsingName.find(L'{');
@@ -271,6 +392,12 @@ std::wstring ExtractClsidText(const std::wstring& parsingName)
     return ToUpperInvariant(parsingName.substr(open, close - open + 1));
 }
 
+/**
+ * @brief 去除路径末尾的分隔符（'\\' 和 '/'），但保留驱动器根路径（如 "C:\\"）。
+ *
+ * @param path 原始路径字符串。
+ * @return 去除末尾分隔符后的路径字符串。
+ */
 std::wstring TrimTrailingPathSeparators(std::wstring path)
 {
     while (path.size() > 3 && (path.back() == L'\\' || path.back() == L'/'))
@@ -280,6 +407,15 @@ std::wstring TrimTrailingPathSeparators(std::wstring path)
     return path;
 }
 
+/**
+ * @brief 不区分大小写比较两个路径是否相等（去除末尾分隔符后）。
+ *
+ * 使用 CompareStringOrdinal 进行不区分大小写的序数比较。
+ *
+ * @param left 左侧路径。
+ * @param right 右侧路径。
+ * @return 如果路径相等则返回 true，否则返回 false。
+ */
 bool PathsEqualInsensitive(std::wstring left, std::wstring right)
 {
     left = TrimTrailingPathSeparators(std::move(left));
@@ -291,6 +427,18 @@ bool PathsEqualInsensitive(std::wstring left, std::wstring right)
     return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
 }
 
+/**
+ * @brief 解析桌面图标的 CLSID。
+ *
+ * 优先从 parsingName 中提取 CLSID；如果 parsingName 中没有
+ * GUID，且 itemPath 与用户配置文件夹路径匹配，则返回
+ * 用户文件桌面图标 CLSID。
+ *
+ * @param parsingName 项解析名字符串。
+ * @param itemPath 项的文件系统路径。
+ * @param userProfilePath 用户配置文件夹路径。
+ * @return 解析得到的 CLSID 字符串，或空字符串。
+ */
 std::wstring ResolveDesktopIconClsid(
     const std::wstring& parsingName,
     const std::wstring& itemPath,
@@ -310,6 +458,22 @@ std::wstring ResolveDesktopIconClsid(
     return {};
 }
 
+// ============================================================================
+// 桌面图标注册表操作
+// ============================================================================
+
+/**
+ * @brief 从注册表中读取桌面图标的可见性设置值。
+ *
+ * 尝试以 KEY_READ | KEY_WOW64_64KEY 权限打开注册表键，
+ * 读取指定 CLSID 的 REG_DWORD 值。
+ *
+ * @param root 注册表根键（如 HKEY_CURRENT_USER）。
+ * @param subKey 注册表子键路径。
+ * @param clsid 桌面图标的 CLSID 字符串。
+ * @param value [out] 读取到的 DWORD 值。
+ * @return 读取成功时返回 true，否则返回 false。
+ */
 bool TryReadDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const std::wstring& clsid, DWORD& value)
 {
     HKEY key = nullptr;
@@ -334,6 +498,18 @@ bool TryReadDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const std
     return false;
 }
 
+/**
+ * @brief 将桌面图标的可见性设置写入注册表。
+ *
+ * 创建或打开注册表键，写入指定 CLSID 的 REG_DWORD 值。
+ * 优先尝试 KEY_WOW64_64KEY 访问。
+ *
+ * @param root 注册表根键。
+ * @param subKey 注册表子键路径。
+ * @param clsid 桌面图标的 CLSID 字符串。
+ * @param value 要写入的 DWORD 值。
+ * @return 写入成功时返回 true，否则返回 false。
+ */
 bool TryWriteDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const std::wstring& clsid, DWORD value)
 {
     HKEY key = nullptr;
@@ -347,6 +523,14 @@ bool TryWriteDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const st
     return status == ERROR_SUCCESS;
 }
 
+/**
+ * @brief 写入桌面图标的可见性设置（NewStartPanel 路径）。
+ *
+ * visible 为 true 时写入 0（显示），false 时写入 1（隐藏）。
+ *
+ * @param clsid 桌面图标的 CLSID 字符串。
+ * @param visible 是否可见。
+ */
 void WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible)
 {
     DWORD value = visible ? 0 : 1;
@@ -355,6 +539,15 @@ void WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible)
         clsid, value);
 }
 
+/**
+ * @brief 在多个注册表位置中查找桌面图标的可见性设置。
+ *
+ * 依次查找 HKCU 和 HKLM 的 NewStartPanel 和 ClassicStartMenu 路径。
+ *
+ * @param clsid 桌面图标的 CLSID 字符串。
+ * @param value [out] 找到的注册表值。
+ * @return 在任意位置找到有效值时返回 true，否则返回 false。
+ */
 bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& value)
 {
     static const wchar_t* keys[] = {
@@ -381,6 +574,17 @@ bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& va
     return false;
 }
 
+/**
+ * @brief 判断桌面图标在系统设置中是否可见。
+ *
+ * 优先级：1) settingsIconVisibility 缓存；2) 注册表设置；
+ * 3) 系统桌面图标默认可见性（此电脑、用户文件、网络、控制面板
+ * 默认为隐藏，回收站默认为显示）；4) 其他图标默认为隐藏。
+ *
+ * @param desktopIconClsid 桌面图标的 CLSID。
+ * @param settingsIconVisibility 来自应用设置的图标可见性映射表。
+ * @return 如果图标应可见则返回 true，否则返回 false。
+ */
 bool IsVisibleByDesktopIconSettings(const std::wstring& desktopIconClsid, const std::unordered_map<std::wstring, bool>& settingsIconVisibility)
 {
     std::wstring clsid = ToUpperInvariant(desktopIconClsid);
@@ -418,6 +622,21 @@ bool IsVisibleByDesktopIconSettings(const std::wstring& desktopIconClsid, const 
     return false;
 }
 
+// ============================================================================
+// 位图与图标创建/操作函数
+// ============================================================================
+
+/**
+ * @brief 创建 32 位自顶向下的 DIB 节位图。
+ *
+ * biHeight 设为负数以创建自顶向下（非翻转）的 DIB 位图。
+ *
+ * @param referenceDc 参考 DC 句柄。
+ * @param width 位图宽度（像素）。
+ * @param height 位图高度（像素）。
+ * @param bits [out] 指向位图像素数据的指针。
+ * @return 成功时返回 HBITMAP 句柄，失败时返回 nullptr。
+ */
 HBITMAP CreateTopDown32BppDib(HDC referenceDc, int width, int height, void** bits)
 {
     if (width <= 0 || height <= 0)
@@ -436,6 +655,17 @@ HBITMAP CreateTopDown32BppDib(HDC referenceDc, int width, int height, void** bit
     return CreateDIBSection(referenceDc, &bitmapInfo, DIB_RGB_COLORS, bits, nullptr, 0);
 }
 
+/**
+ * @brief 对 BGRA 像素缓冲区执行预乘 Alpha 操作。
+ *
+ * 遍历像素检查是否有需要预乘的像素（Alpha 分量不为 0 或 255
+ * 且颜色分量超过 Alpha），如有则对每个非纯透明像素执行
+ * 预乘 Alpha 计算，使颜色值乘以 Alpha/255。
+ *
+ * @param pixels BGRA 像素数据指针。
+ * @param width 图像宽度（像素）。
+ * @param height 图像高度（像素）。
+ */
 void PremultiplyBgraPixels(std::uint32_t* pixels, int width, int height)
 {
     if (pixels == nullptr || width <= 0 || height <= 0)
@@ -491,6 +721,17 @@ void PremultiplyBgraPixels(std::uint32_t* pixels, int width, int height)
     }
 }
 
+/**
+ * @brief 将源位图复制为带有 Alpha 通道的 DIB 位图。
+ *
+ * 通过 GetDIBits 获取源位图像素数据，检查是否需要为无 Alpha
+ * 但有可见像素的位图添加不透明 Alpha 通道，然后执行预乘 Alpha
+ * 并创建新的自顶向下 DIB 位图。
+ *
+ * @param source 源位图句柄。
+ * @param size [out] 输出位图的尺寸。
+ * @return 成功时返回新的 HBITMAP 句柄，失败时返回 nullptr。
+ */
 HBITMAP CopyBitmapToAlphaDib(HBITMAP source, SIZE& size)
 {
     size = {};
@@ -566,6 +807,18 @@ HBITMAP CopyBitmapToAlphaDib(HBITMAP source, SIZE& size)
     return copy;
 }
 
+/**
+ * @brief 从图标创建带有 Alpha 通道的位图。
+ *
+ * 创建自顶向下 DIB 位图，使用 DrawIconEx 将图标绘制到位图上，
+ * 然后执行 Alpha 检查与预乘操作。
+ *
+ * @param icon 源图标句柄。
+ * @param width 目标位图宽度。
+ * @param height 目标位图高度。
+ * @param size [out] 输出位图的尺寸。
+ * @return 成功时返回 HBITMAP 句柄，失败时返回 nullptr。
+ */
 HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
 {
     size = {};
@@ -634,6 +887,18 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
     return bitmap;
 }
 
+/**
+ * @brief 获取 Shell 项的高分辨率图标位图。
+ *
+ * 优先通过 IShellItemImageFactory 获取高分辨率图标，
+ * 失败时依次尝试 JUMBO/EXTRALARGE/LARGE 图像列表，
+ * 最后回退到 SHGetFileInfo 获取图标。
+ *
+ * @param pidl Shell 项的绝对 PIDL。
+ * @param fallbackIndex 图像列表中的回退索引。
+ * @param bitmapSize [out] 输出位图的尺寸。
+ * @return 成功时返回带有 Alpha 通道的 HBITMAP，失败时返回 nullptr。
+ */
 HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackIndex, SIZE& bitmapSize)
 {
     bitmapSize = {};
@@ -699,34 +964,89 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackInd
     return nullptr;
 }
 
+// ============================================================================
+// RECT 几何工具函数
+// ============================================================================
+
+/**
+ * @brief 根据四个边创建 RECT 结构。
+ *
+ * @param left 左边界。
+ * @param top 上边界。
+ * @param right 右边界。
+ * @param bottom 下边界。
+ * @return 构造的 RECT 结构。
+ */
 RECT MakeRect(int left, int top, int right, int bottom)
 {
     RECT r{ left, top, right, bottom };
     return r;
 }
 
+/**
+ * @brief 判断两个 RECT 是否相交。
+ *
+ * 封装 IntersectRect API。
+ *
+ * @param a 第一个矩形。
+ * @param b 第二个矩形。
+ * @return 如果相交则返回 true，否则返回 false。
+ */
 bool RectsIntersect(const RECT& a, const RECT& b)
 {
     RECT tmp{};
     return IntersectRect(&tmp, &a, &b) != FALSE;
 }
 
+/**
+ * @brief 根据两个对角点创建归一化的 RECT（确保 left < right, top < bottom）。
+ *
+ * 取最小 x/y 作为 left/top，最大 x/y 作为 right/bottom。
+ *
+ * @param a 第一个点。
+ * @param b 第二个点。
+ * @return 归一化后的 RECT。
+ */
 RECT NormalizeRect(POINT a, POINT b)
 {
     return MakeRect(std::min(a.x, b.x), std::min(a.y, b.y), std::max(a.x, b.x), std::max(a.y, b.y));
 }
 
+/**
+ * @brief 判断 RECT 是否为空（宽度或高度小于等于 0）。
+ *
+ * @param rect 要判断的矩形。
+ * @return 如果矩形为空则返回 true，否则返回 false。
+ */
 bool IsRectEmptyRect(const RECT& rect)
 {
     return rect.right <= rect.left || rect.bottom <= rect.top;
 }
 
+/**
+ * @brief 对 RECT 进行膨胀（向内为负值）并返回副本。
+ *
+ * 对矩形的四个边同时增加指定的像素量。
+ *
+ * @param rect 原始矩形。
+ * @param amount 每个边膨胀的像素数。
+ * @return 膨胀后的 RECT。
+ */
 RECT InflateCopy(RECT rect, int amount)
 {
     InflateRect(&rect, amount, amount);
     return rect;
 }
 
+/**
+ * @brief 计算两个 RECT 的并集矩形。
+ *
+ * 如果任一矩形为空，则直接返回另一个矩形。
+ *
+ * @param a 第一个矩形。
+ * @param b 第二个矩形。
+ * @return 包含两个矩形的最小矩形。
+ */
 RECT UnionCopy(const RECT& a, const RECT& b)
 {
     if (IsRectEmptyRect(a))
@@ -743,6 +1063,18 @@ RECT UnionCopy(const RECT& a, const RECT& b)
     return result;
 }
 
+// ============================================================================
+// UTF-8/Wide 字符串转换与 JSON 处理
+// ============================================================================
+
+/**
+ * @brief 将宽字符串（UTF-16）转换为 UTF-8 编码字符串。
+ *
+ * 使用 WideCharToMultiByte API 进行转换。
+ *
+ * @param value 要转换的宽字符串。
+ * @return UTF-8 编码的 std::string。
+ */
 std::string WideToUtf8(const std::wstring& value)
 {
     if (value.empty())
@@ -756,6 +1088,14 @@ std::string WideToUtf8(const std::wstring& value)
     return result;
 }
 
+/**
+ * @brief 将 UTF-8 字符串转换为宽字符串（UTF-16）。
+ *
+ * 使用 MultiByteToWideChar API 进行转换。
+ *
+ * @param value 要转换的 UTF-8 字符串。
+ * @return UTF-16 编码的 std::wstring。
+ */
 std::wstring Utf8ToWide(const std::string& value)
 {
     if (value.empty())
@@ -769,6 +1109,14 @@ std::wstring Utf8ToWide(const std::string& value)
     return result;
 }
 
+/**
+ * @brief 对宽字符串进行 JSON 转义，输出 UTF-8 格式字符串。
+ *
+ * 转义特殊字符：反斜杠、双引号、换行符、回车符、制表符。
+ *
+ * @param value 要转义的原始宽字符串。
+ * @return JSON 安全转义后的 UTF-8 字符串。
+ */
 std::string JsonEscapeUtf8(const std::wstring& value)
 {
     std::string input = WideToUtf8(value);
@@ -801,6 +1149,18 @@ std::string JsonEscapeUtf8(const std::wstring& value)
     return output;
 }
 
+/**
+ * @brief 从 JSON 字符串的指定位置解析一个字符串值（含转义处理）。
+ *
+ * 从 quote 位置的引号开始读取，处理 \\n、\\r、\\t 等转义序列，
+ * 直到找到闭合引号为止。
+ *
+ * @param text JSON 源文本。
+ * @param quote 起始引号的位置索引。
+ * @param value [out] 解析出的字符串值（不含外层引号）。
+ * @param end [out] 闭合引号后的下一个位置。
+ * @return 成功解析到闭合引号时返回 true，否则返回 false。
+ */
 bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value, size_t& end)
 {
     if (quote >= text.size() || text[quote] != '"')

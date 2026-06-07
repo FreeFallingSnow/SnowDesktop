@@ -1,3 +1,12 @@
+/**
+ * @file app_interact.h
+ * @brief DesktopApp 交互与拖放操作的内联实现
+ *
+ * 本文件包含 DesktopApp 类的所有交互处理内联方法，包括鼠标事件、键盘事件、
+ * 拖放操作、重命名、窗口小部件、集合弹窗、快捷导航面板以及系统托盘等功能。
+ * 该文件在 app.h 中类定义之后通过 #include 包含。
+ */
+
 #pragma once
 // Inline implementations for DesktopApp — Interaction & Tray.
 // This file is included by app.h after the class definition.
@@ -6,6 +15,11 @@
 
 // ── Interaction ─────────────────────────────────────────────
 
+/**
+ * @brief 命中测试：根据点坐标查找桌面项索引（向后兼容包装）
+ * @param pt 客户端坐标点
+ * @return 项在 items_ 数组中的索引，未找到返回 -1
+ */
 inline int DesktopApp::HitTestItem(POINT pt) const
 {
     // Backward-compat wrapper: returns items_ index for Shell/COM code
@@ -17,6 +31,11 @@ inline int DesktopApp::HitTestItem(POINT pt) const
     return -1;
 }
 
+/**
+ * @brief 命中测试：根据点坐标查找桌面图标对象
+ * @param pt 客户端坐标点
+ * @return 指向 DesktopIcon 的指针，未找到返回 nullptr
+ */
 inline DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
 {
     for (int i = static_cast<int>(items_oo_.size()) - 1; i >= 0; --i)
@@ -32,6 +51,11 @@ inline DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
     return nullptr;
 }
 
+/**
+ * @brief 判断指定桌面项是否位于任意窗口小部件内
+ * @param item 要检查的桌面项
+ * @return 若在任意小部件内返回 true
+ */
 inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
 {
     std::wstring key = ToUpperInvariant(item.layoutKey);
@@ -47,6 +71,11 @@ inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
     return false;
 }
 
+/**
+ * @brief 获取独立窗口小部件的框架矩形（考虑网格间距）
+ * @param widget 桌面小部件引用
+ * @return 框架矩形
+ */
 inline RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
 {
     RECT rect = widget.bounds;
@@ -66,6 +95,11 @@ inline RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget
     return rect;
 }
 
+/**
+ * @brief 获取独立窗口小部件的移动手柄矩形
+ * @param widget 桌面小部件引用
+ * @return 移动手柄矩形
+ */
 inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) const
 {
     RECT frame = GetStandaloneWidgetFrameRect(widget);
@@ -78,6 +112,11 @@ inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& w
     };
 }
 
+/**
+ * @brief 获取独立窗口小部件的调整大小手柄矩形
+ * @param widget 桌面小部件引用
+ * @return 调整大小手柄矩形
+ */
 inline RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget) const
 {
     RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
@@ -90,6 +129,12 @@ inline RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget&
     };
 }
 
+/**
+ * @brief 对独立窗口小部件进行命中测试
+ * @param widgetIndex 小部件索引
+ * @param pt 客户端坐标点
+ * @return 命中类型（无/移动手柄/调整大小手柄/内容区域）
+ */
 inline WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT pt) const
 {
     if (widgetIndex >= widgets_.size()) return WidgetHit::None;
@@ -105,6 +150,11 @@ inline WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT p
     return WidgetHit::Content;
 }
 
+/**
+ * @brief 命中测试：查找鼠标点所在的独立小部件索引
+ * @param pt 客户端坐标点
+ * @return 小部件索引，未找到返回 (size_t)-1
+ */
 inline size_t DesktopApp::HitTestStandaloneWidgetIndex(POINT pt) const
 {
     for (size_t n = widgets_.size(); n > 0; --n)
@@ -116,6 +166,11 @@ inline size_t DesktopApp::HitTestStandaloneWidgetIndex(POINT pt) const
     return static_cast<size_t>(-1);
 }
 
+/**
+ * @brief 将宽字符串转换为 UTF-8 编码（用于 Lua 交互）
+ * @param value 输入的宽字符串
+ * @return UTF-8 编码的字符串
+ */
 inline std::string LuaWidgetWideToUtf8(const std::wstring& value)
 {
     if (value.empty()) return {};
@@ -127,6 +182,11 @@ inline std::string LuaWidgetWideToUtf8(const std::wstring& value)
     return result;
 }
 
+/**
+ * @brief 构建 Lua 桌面快照：收集所有桌面项和文件夹条目的信息
+ * @param selectedOnly 是否仅包含选中的项
+ * @return LuaDesktopItemInfo 向量，供 Lua 脚本使用
+ */
 inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaDesktopSnapshot(bool selectedOnly) const
 {
     std::vector<LuaDesktopItemInfo> result;
@@ -177,6 +237,11 @@ inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaDesktopSnapshot(bool 
     return result;
 }
 
+/**
+ * @brief Lua 调用：通过 ShellExecute 打开指定路径
+ * @param path 要打开的文件或文件夹路径
+ * @return 是否成功打开
+ */
 inline bool DesktopApp::LuaOpenPath(const std::wstring& path)
 {
     if (path.empty()) return false;
@@ -184,6 +249,11 @@ inline bool DesktopApp::LuaOpenPath(const std::wstring& path)
     return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
+/**
+ * @brief Lua 调用：在资源管理器中选中并显示指定路径
+ * @param path 要揭示的文件或文件夹路径
+ * @return 是否成功执行
+ */
 inline bool DesktopApp::LuaRevealPath(const std::wstring& path)
 {
     if (path.empty()) return false;
@@ -192,6 +262,11 @@ inline bool DesktopApp::LuaRevealPath(const std::wstring& path)
     return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
+/**
+ * @brief Lua 调用：设置指定小部件的标题
+ * @param widgetId 小部件 ID
+ * @param title 新标题
+ */
 inline void DesktopApp::LuaSetWidgetTitle(const std::wstring& widgetId, const std::wstring& title)
 {
     if (title.empty()) return;
@@ -206,6 +281,10 @@ inline void DesktopApp::LuaSetWidgetTitle(const std::wstring& widgetId, const st
     }
 }
 
+/**
+ * @brief 开始 Lua 内联文本编辑（创建弹出式编辑框）
+ * @param request 编辑请求参数（位置、文本、多行模式等）
+ */
 inline void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& request)
 {
     if (renameEdit_ != nullptr || request.widgetId.empty() || request.storageKey.empty())
@@ -282,6 +361,11 @@ inline void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& r
     SetFocus(luaInlineEdit_);
 }
 
+/**
+ * @brief 判断鼠标点是否位于任意小部件的装饰区域（含独立小部件）
+ * @param pt 客户端坐标点
+ * @return 若在小部件装饰区上返回 true
+ */
 inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 {
     for (auto& c : containers_)
@@ -294,6 +378,9 @@ inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
     return HitTestStandaloneWidgetIndex(pt) != static_cast<size_t>(-1);
 }
 
+/**
+ * @brief 使拖拽静态场景失效（更新拖拽渲染缓存）
+ */
 inline void DesktopApp::InvalidateDragStaticScene()
 {
     if (!dragSession_.IsActive()) return;
@@ -301,12 +388,18 @@ inline void DesktopApp::InvalidateDragStaticScene()
     dragRenderCache_.Reset();
 }
 
+/**
+ * @brief 结束当前拖拽会话，重置拖拽渲染缓存
+ */
 inline void DesktopApp::EndDragSession()
 {
     dragSession_.End();
     dragRenderCache_.Reset();
 }
 
+/**
+ * @brief 显示设置窗口
+ */
 inline void DesktopApp::ShowSettingsWindow()
 {
     if (settingsWindow_)
@@ -315,6 +408,9 @@ inline void DesktopApp::ShowSettingsWindow()
         MessageBeep(MB_ICONWARNING);
 }
 
+/**
+ * @brief 加载导航设置并应用热键注册
+ */
 inline void DesktopApp::LoadNavigationSettingsAndApply()
 {
     NavigationSettings settings;
@@ -323,6 +419,9 @@ inline void DesktopApp::LoadNavigationSettingsAndApply()
     ApplyNavigationHotkey();
 }
 
+/**
+ * @brief 注销快捷导航热键
+ */
 inline void DesktopApp::UnregisterNavigationHotkey()
 {
     if (navigationHotkeyRegistered_ && hwnd_)
@@ -332,6 +431,10 @@ inline void DesktopApp::UnregisterNavigationHotkey()
     }
 }
 
+/**
+ * @brief 创建快捷导航窗口（若已存在则直接返回）
+ * @return 窗口创建是否成功
+ */
 inline bool DesktopApp::CreateQuickNavigationWindow()
 {
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
@@ -350,6 +453,9 @@ L"SnowDesktop 快捷导航",
     return true;
 }
 
+/**
+ * @brief 销毁快捷导航窗口及其子控件
+ */
 inline void DesktopApp::DestroyQuickNavigationWindow()
 {
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
@@ -368,6 +474,9 @@ inline void DesktopApp::DestroyQuickNavigationWindow()
     quickNavigationHwnd_ = nullptr;
 }
 
+/**
+ * @brief 确保快捷导航的搜索编辑框已创建
+ */
 inline void DesktopApp::EnsureQuickNavigationSearchEdit()
 {
     if (!quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
@@ -393,6 +502,9 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
         reinterpret_cast<DWORD_PTR>(this));
 }
 
+/**
+ * @brief 更新快捷导航搜索编辑框的位置和大小
+ */
 inline void DesktopApp::UpdateQuickNavigationSearchEditRect()
 {
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
@@ -406,6 +518,9 @@ inline void DesktopApp::UpdateQuickNavigationSearchEditRect()
         SWP_SHOWWINDOW);
 }
 
+/**
+ * @brief 刷新快捷导航搜索文本内容（从编辑框读取）
+ */
 inline void DesktopApp::RefreshQuickNavigationSearchText()
 {
     quickNavigationSearchText_.clear();
@@ -419,6 +534,9 @@ inline void DesktopApp::RefreshQuickNavigationSearchText()
     quickNavigationSearchText_ = std::move(buffer);
 }
 
+/**
+ * @brief 定位并显示快捷导航窗口（含圆角区域设置）
+ */
 inline void DesktopApp::PositionQuickNavigationWindow()
 {
     if (!quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
@@ -440,12 +558,18 @@ inline void DesktopApp::PositionQuickNavigationWindow()
     UpdateQuickNavigationSearchEditRect();
 }
 
+/**
+ * @brief 使快捷导航窗口失效并触发重绘
+ */
 inline void DesktopApp::InvalidateQuickNavigationWindow()
 {
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         InvalidateRect(quickNavigationHwnd_, nullptr, FALSE);
 }
 
+/**
+ * @brief 应用并注册导航热键
+ */
 inline void DesktopApp::ApplyNavigationHotkey()
 {
     UnregisterNavigationHotkey();
@@ -457,6 +581,9 @@ inline void DesktopApp::ApplyNavigationHotkey()
         RegisterHotKey(hwnd_, kQuickNavigationHotkeyId, modifiers, navigationSettings_.virtualKey) != FALSE;
 }
 
+/**
+ * @brief 打开快捷导航面板
+ */
 inline void DesktopApp::OpenQuickNavigation()
 {
     if (dragSession_.IsActive() || externalDragActive_)
@@ -498,6 +625,9 @@ inline void DesktopApp::OpenQuickNavigation()
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 关闭快捷导航面板
+ */
 inline void DesktopApp::CloseQuickNavigation()
 {
     if (!quickNavigationOpen_) return;
@@ -511,6 +641,9 @@ inline void DesktopApp::CloseQuickNavigation()
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 切换快捷导航面板的打开/关闭状态
+ */
 inline void DesktopApp::ToggleQuickNavigation()
 {
     if (quickNavigationOpen_)
@@ -519,6 +652,11 @@ inline void DesktopApp::ToggleQuickNavigation()
         OpenQuickNavigation();
 }
 
+/**
+ * @brief 处理快捷导航面板内的点击事件
+ * @param point 点击坐标（客户端坐标）
+ * @return 是否已处理
+ */
 inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
 {
     if (!quickNavigationOpen_)
@@ -578,6 +716,10 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     return true;
 }
 
+/**
+ * @brief 绘制快捷导航窗口（含搜索栏、标签页、列表、滚动条）
+ * @param hwnd 窗口句柄
+ */
 inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 {
     PAINTSTRUCT ps{};
@@ -768,6 +910,14 @@ RECT selectionApp = GetItemSelectionRect(itemRectApp, false);
     EndPaint(hwnd, &ps);
 }
 
+/**
+ * @brief 快捷导航窗口的消息处理函数
+ * @param hwnd 窗口句柄
+ * @param msg 消息 ID
+ * @param wp wParam
+ * @param lp lParam
+ * @return 消息处理结果
+ */
 inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg)
@@ -828,6 +978,16 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+/**
+ * @brief 快捷导航搜索编辑框的子类化窗口过程
+ * @param hwnd 编辑框句柄
+ * @param message 消息 ID
+ * @param wParam wParam
+ * @param lParam lParam
+ * @param subclassId 子类化 ID
+ * @param refData 引用数据（指向 DesktopApp 实例）
+ * @return 消息处理结果
+ */
 inline LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData)
 {
@@ -849,6 +1009,11 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     return DefSubclassProc(hwnd, message, wParam, lParam);
 }
 
+/**
+ * @brief 刷新拖拽目标：根据鼠标位置更新目标容器、槽位和区域
+ * @param clientPoint 客户端坐标点
+ * @param mods 修饰键状态
+ */
 inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
 {
     if (!dragSession_.IsActive()) return;
@@ -964,6 +1129,10 @@ inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
     ShowDragHintWindow(clientPoint, hint);
 }
 
+/**
+ * @brief 在重建容器后重新绑定拖拽源
+ * @note 用于在容器重建后恢复拖拽会话的源引用
+ */
 inline void DesktopApp::RebindDragSourceAfterRebuild()
 {
     if (!dragSession_.IsActive() || dragSession_.Items().empty()) return;
@@ -1004,6 +1173,9 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
     dragSession_.RebindSource(source, std::move(reboundItems), std::move(reboundList));
 }
 
+/**
+ * @brief 清除所有桌面项、小部件和文件夹条目的选中状态
+ */
 inline void DesktopApp::ClearSelection()
 {
     for (auto& item : items_)
@@ -1016,6 +1188,10 @@ inline void DesktopApp::ClearSelection()
     }
 }
 
+/**
+ * @brief 清除指定小部件之外的所有选中状态
+ * @param widgetIndex 保留选中的小部件索引
+ */
 inline void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
 {
     std::unordered_set<std::wstring> allowedKeys;
@@ -1042,6 +1218,9 @@ inline void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
     }
 }
 
+/**
+ * @brief 清除桌面区域之外（即小部件内）的所有选中状态
+ */
 inline void DesktopApp::ClearSelectionOutsideDesktop()
 {
     for (auto& item : items_)
@@ -1057,6 +1236,10 @@ inline void DesktopApp::ClearSelectionOutsideDesktop()
     }
 }
 
+/**
+ * @brief 仅选中指定索引的桌面项（清除其他所有选中状态）
+ * @param index 桌面项索引
+ */
 inline void DesktopApp::SelectOnly(int index)
 {
     ClearSelection();
@@ -1067,12 +1250,20 @@ inline void DesktopApp::SelectOnly(int index)
     }
 }
 
+/**
+ * @brief 切换指定桌面项的选中/未选中状态
+ * @param index 桌面项索引
+ */
 inline void DesktopApp::ToggleSelection(int index)
 {
     if (index >= 0 && static_cast<size_t>(index) < items_.size())
         items_[index].selected = !items_[index].selected;
 }
 
+/**
+ * @brief 仅选中指定小部件（清除其他所有选中状态）
+ * @param index 小部件索引
+ */
 inline void DesktopApp::SelectWidgetOnly(size_t index)
 {
     ClearSelection();
@@ -1083,6 +1274,12 @@ inline void DesktopApp::SelectWidgetOnly(size_t index)
     }
 }
 
+/**
+ * @brief 处理鼠标左键按下事件
+ * @param wp WPARAM（含修饰键状态）
+ * @param lp LPARAM（含鼠标坐标）
+ * @details 处理逻辑：集合弹窗点击 -> 页面导航点击 -> 小部件点击 -> 桌面图标点击
+ */
 inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
@@ -1422,6 +1619,12 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+/**
+ * @brief 处理鼠标移动事件
+ * @param wp WPARAM
+ * @param lp LPARAM（含鼠标坐标）
+ * @details 处理拖拽会话、小部件移动/调整大小、框选、导航按钮悬停等
+ */
 inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 {
     (void)wp;
@@ -1888,6 +2091,12 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+/**
+ * @brief 处理鼠标左键释放事件
+ * @param wp WPARAM
+ * @param lp LPARAM（含鼠标坐标）
+ * @details 完成拖拽放置、小部件移动/调整大小、Ctrl 点击切换等
+ */
 inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 {
     (void)wp;
@@ -2041,6 +2250,11 @@ cleanup:
     ReleaseCapture();
 }
 
+/**
+ * @brief 获取所有选中的文件夹条目路径
+ * @param firstWidgetIndex [out] 第一个包含选中条目的部件索引
+ * @return 选中的文件路径列表
+ */
 inline std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t* firstWidgetIndex) const
 {
     if (firstWidgetIndex)
@@ -2068,6 +2282,10 @@ inline std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t*
     return {};
 }
 
+/**
+ * @brief 查找文件夹映射的快捷操作目标部件
+ * @return 部件索引，未找到返回 (size_t)-1
+ */
 inline size_t DesktopApp::FindFolderMappingShortcutTarget() const
 {
     size_t selectedEntryWidget = static_cast<size_t>(-1);
@@ -2095,6 +2313,11 @@ inline size_t DesktopApp::FindFolderMappingShortcutTarget() const
     return static_cast<size_t>(-1);
 }
 
+/**
+ * @brief 复制或剪切选中的文件夹条目到剪贴板
+ * @param cut true 为剪切，false 为复制
+ * @return 是否成功
+ */
 inline bool DesktopApp::CopyCutSelectedFolderEntries(bool cut)
 {
     std::vector<std::wstring> paths = GetSelectedFolderEntryPaths();
@@ -2129,6 +2352,10 @@ inline bool DesktopApp::CopyCutSelectedFolderEntries(bool cut)
     return true;
 }
 
+/**
+ * @brief 删除选中的文件夹条目（移至回收站）
+ * @return 是否执行了删除操作
+ */
 inline bool DesktopApp::DeleteSelectedFolderEntries()
 {
     std::vector<std::wstring> paths = GetSelectedFolderEntryPaths();
@@ -2158,6 +2385,11 @@ inline bool DesktopApp::DeleteSelectedFolderEntries()
     return true;
 }
 
+/**
+ * @brief 将剪贴板内容粘贴到指定文件夹映射部件中
+ * @param widgetIndex 目标部件索引
+ * @return 是否成功粘贴
+ */
 inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
 {
     if (widgetIndex >= widgets_.size()) return false;
@@ -2238,6 +2470,10 @@ inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
     return true;
 }
 
+/**
+ * @brief 处理键盘按键按下事件
+ * @param key 虚拟键码
+ */
 inline void DesktopApp::OnKeyDown(WPARAM key)
 {
     if (key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT)
@@ -2462,6 +2698,9 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     }
 }
 
+/**
+ * @brief 根据键盘修饰键状态刷新拖拽提示信息
+ */
 inline void DesktopApp::RefreshDragHintFromKeyboard()
 {
     if (!dragSession_.IsActive() && !externalDragActive_ && !selfDragActive_) return;
@@ -2494,6 +2733,10 @@ inline void DesktopApp::RefreshDragHintFromKeyboard()
     }
 }
 
+/**
+ * @brief 对选中的桌面项调用 Shell 动词（如 "copy"）
+ * @param verb Shell 动词字符串
+ */
 inline void DesktopApp::InvokeSelectedShellVerb(const char* verb)
 {
     std::vector<PCUITEMID_CHILD> pidls;
@@ -2520,6 +2763,10 @@ inline void DesktopApp::InvokeSelectedShellVerb(const char* verb)
         ReloadItems();
 }
 
+/**
+ * @brief 使用键盘方向键移动选中项
+ * @param arrowKey 方向键虚拟键码
+ */
 inline void DesktopApp::MoveKeyboardSelection(WPARAM arrowKey)
 {
     if (items_.empty()) return;
@@ -2554,6 +2801,11 @@ inline void DesktopApp::MoveKeyboardSelection(WPARAM arrowKey)
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+/**
+ * @brief 处理页面导航按钮点击事件（上一页/下一页）
+ * @param point 点击坐标
+ * @return 是否已处理导航
+ */
 inline bool DesktopApp::HandlePageNavClick(POINT point)
 {
     if (gridPages_.empty()) return false;
@@ -2584,6 +2836,10 @@ inline bool DesktopApp::HandlePageNavClick(POINT point)
     return true;
 }
 
+/**
+ * @brief 处理鼠标右键释放事件（显示上下文菜单）
+ * @param lp LPARAM（含鼠标坐标）
+ */
 inline void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
@@ -2758,6 +3014,10 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         ShowBackgroundContextMenu(screenPt);
 }
 
+/**
+ * @brief 处理定时器事件
+ * @param timerId 定时器 ID
+ */
 inline void DesktopApp::OnTimer(WPARAM timerId)
 {
     if (timerId == kShellChangeTimerId)
@@ -2816,6 +3076,10 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
 }
 
+/**
+ * @brief 更新集合弹窗的停留检测逻辑
+ * @param point 当前鼠标位置
+ */
 inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
     if (!dragSession_.IsActive() || popupWidgetIndex_ < widgets_.size())
@@ -2866,6 +3130,11 @@ inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     TryOpenDwellCollectionPopup(now);
 }
 
+/**
+ * @brief 尝试在停留时间达标后打开集合弹窗
+ * @param now 当前时间（毫秒）
+ * @return 是否成功打开了弹窗
+ */
 inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
 {
     if (popupDwellWidgetIndex_ >= widgets_.size())
@@ -2881,6 +3150,12 @@ inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
 
 // ── Collection popup ─────────────────────────────────────────
 
+/**
+ * @brief 在指定位置打开集合弹窗
+ * @param widgetIndex 集合小部件索引
+ * @param anchorPoint 锚点位置
+ * @param categoryId 可选的分类 ID
+ */
 inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint,
     const std::wstring& categoryId)
 {
@@ -2902,6 +3177,9 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 关闭当前打开的集合弹窗
+ */
 inline void DesktopApp::CloseCollectionPopup()
 {
     if (popupWidgetIndex_ == static_cast<size_t>(-1)) return;
@@ -2916,6 +3194,11 @@ inline void DesktopApp::CloseCollectionPopup()
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 处理鼠标滚轮事件
+ * @param wp WPARAM（含滚轮增量）
+ * @param lp LPARAM（含鼠标坐标）
+ */
 inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 {
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -3028,6 +3311,11 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
 // ── Rename ──────────────────────────────────────────────────
 
+/**
+ * @brief 获取集合中可见项的边界矩形
+ * @param itemIndex 桌面项索引
+ * @return 边界矩形（在弹窗或小部件中可见的部分）
+ */
 inline RECT DesktopApp::GetVisibleCollectionItemBounds(size_t itemIndex) const
 {
     if (itemIndex >= items_.size()) return {};
@@ -3061,6 +3349,12 @@ inline RECT DesktopApp::GetVisibleCollectionItemBounds(size_t itemIndex) const
     return {};
 }
 
+/**
+ * @brief 查找唯一选中的文件夹条目
+ * @param widgetIndex [out] 部件索引
+ * @param memberIndex [out] 条目在部件中的索引
+ * @return 是否恰好有一个选中条目
+ */
 inline bool DesktopApp::FindSingleSelectedFolderEntry(size_t& widgetIndex, size_t& memberIndex) const
 {
     size_t foundWidget = static_cast<size_t>(-1);
@@ -3084,6 +3378,12 @@ inline bool DesktopApp::FindSingleSelectedFolderEntry(size_t& widgetIndex, size_
     return true;
 }
 
+/**
+ * @brief 获取文件夹条目重命名编辑框的矩形位置
+ * @param widgetIndex 部件索引
+ * @param memberIndex 条目索引
+ * @return 重命名编辑框的矩形
+ */
 inline RECT DesktopApp::GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const
 {
     if (widgetIndex >= widgets_.size() ||
@@ -3109,6 +3409,11 @@ inline RECT DesktopApp::GetFolderEntryRenameRect(size_t widgetIndex, size_t memb
     return {};
 }
 
+/**
+ * @brief 开始对文件夹条目进行重命名（创建弹出式编辑框）
+ * @param widgetIndex 部件索引
+ * @param memberIndex 条目索引
+ */
 inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
 {
     if (renameEdit_ != nullptr ||
@@ -3166,6 +3471,12 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
     SetFocus(renameEdit_);
 }
 
+/**
+ * @brief 判断 Shell 上下文菜单命令是否为重命名命令
+ * @param contextMenu Shell 上下文菜单接口
+ * @param commandOffset 命令偏移量
+ * @return 如果是重命名命令返回 true
+ */
 inline bool DesktopApp::IsShellRenameCommand(IContextMenu* contextMenu, UINT commandOffset) const
 {
     if (!contextMenu) return false;
@@ -3185,6 +3496,12 @@ inline bool DesktopApp::IsShellRenameCommand(IContextMenu* contextMenu, UINT com
     return false;
 }
 
+/**
+ * @brief 显示文件夹条目的 Shell 上下文菜单
+ * @param screenPoint 屏幕坐标点
+ * @param widgetIndex 部件索引
+ * @param memberIndex 条目索引
+ */
 inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex)
 {
     if (widgetIndex >= widgets_.size() ||
@@ -3287,6 +3604,11 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
     ILFree(pidl);
 }
 
+/**
+ * @brief 提交或取消文件夹条目的重命名
+ * @param newName 新名称
+ * @param cancel 是否取消重命名
+ */
 inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cancel)
 {
     size_t widgetIndex = renameFolderWidgetIndex_;
@@ -3336,6 +3658,9 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 开始重命名选中的元素（小部件、文件夹条目或桌面项）
+ */
 inline void DesktopApp::BeginRenameSelected()
 {
     if (renameEdit_ != nullptr) return;
@@ -3468,6 +3793,10 @@ inline void DesktopApp::BeginRenameSelected()
     SetFocus(renameEdit_);
 }
 
+/**
+ * @brief 提交或取消重命名编辑
+ * @param cancel 是否取消重命名
+ */
 inline void DesktopApp::CommitRename(bool cancel)
 {
     if (renameEdit_ == nullptr) return;
@@ -3557,6 +3886,9 @@ inline void DesktopApp::CommitRename(bool cancel)
     ReloadItems(!keepLayoutSlots);
 }
 
+/**
+ * @brief 重命名编辑框的子类化窗口过程
+ */
 inline LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam,
     UINT_PTR subclassId, DWORD_PTR refData)
@@ -3578,6 +3910,10 @@ inline LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
     return DefSubclassProc(hwnd, message, wParam, lParam);
 }
 
+/**
+ * @brief 提交或取消 Lua 内联文本编辑
+ * @param cancel 是否取消编辑
+ */
 inline void DesktopApp::CommitLuaInlineTextEdit(bool cancel)
 {
     if (luaInlineEdit_ == nullptr) return;
@@ -3611,6 +3947,9 @@ inline void DesktopApp::CommitLuaInlineTextEdit(bool cancel)
     luaInlineEditTextColor_ = RGB(0, 0, 0);
 }
 
+/**
+ * @brief Lua 内联编辑框的子类化窗口过程
+ */
 inline LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam,
     UINT_PTR subclassId, DWORD_PTR refData)
@@ -3640,11 +3979,22 @@ inline LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
     return DefSubclassProc(hwnd, message, wParam, lParam);
 }
 
+/**
+ * @brief 判断两个窗口是否在同一窗口树中
+ * @param parent 父窗口
+ * @param window 待检查窗口
+ * @return 若 window 是 parent 自身或子窗口则返回 true
+ */
 inline bool DesktopApp::IsSameWindowTree(HWND parent, HWND window)
 {
     return parent != nullptr && window != nullptr && (window == parent || IsChild(parent, window));
 }
 
+/**
+ * @brief 判断是否为已知的桌面表层窗口
+ * @param window 待检查窗口句柄
+ * @return 若属于桌面表层窗口体系返回 true
+ */
 inline bool DesktopApp::IsKnownDesktopSurfaceWindow(HWND window) const
 {
     if (!window) return false;
@@ -3667,6 +4017,11 @@ inline bool DesktopApp::IsKnownDesktopSurfaceWindow(HWND window) const
     return window == desktop || root == desktop;
 }
 
+/**
+ * @brief 判断指定点是否位于外部可放置窗口上
+ * @param clientPoint 客户端坐标点
+ * @return 如果是外部窗口返回 true
+ */
 inline bool DesktopApp::IsExternalDropWindowAt(POINT clientPoint) const
 {
     POINT screenPoint = clientPoint;
@@ -3678,6 +4033,12 @@ inline bool DesktopApp::IsExternalDropWindowAt(POINT clientPoint) const
     return IsWindowVisible(root) != FALSE;
 }
 
+/**
+ * @brief 根据修饰键状态和允许的效果选择拖放效果
+ * @param keyState 键盘修饰键状态
+ * @param allowed 允许的拖放效果标志
+ * @return 选择的 DROPEFFECT
+ */
 inline DWORD DesktopApp::ChooseDropEffect(DWORD keyState, DWORD allowed) const
 {
     if ((keyState & MK_ALT)) return DROPEFFECT_LINK;
@@ -3693,6 +4054,11 @@ inline DWORD DesktopApp::ChooseDropEffect(DWORD keyState, DWORD allowed) const
 
 // ── OLE drag-drop ───────────────────────────────────────────
 
+/**
+ * @brief 将屏幕坐标转换为客户端坐标
+ * @param screen 屏幕坐标点
+ * @return 客户端坐标点
+ */
 inline POINT DesktopApp::ScreenPointToClient(POINTL screen) const
 {
     POINT pt{ screen.x, screen.y };
@@ -3701,6 +4067,12 @@ inline POINT DesktopApp::ScreenPointToClient(POINTL screen) const
     return pt;
 }
 
+/**
+ * @brief COM QueryInterface 实现
+ * @param riid 接口 ID
+ * @param object [out] 返回的接口指针
+ * @return S_OK 或 E_NOINTERFACE
+ */
 inline HRESULT STDMETHODCALLTYPE DesktopApp::QueryInterface(REFIID riid, void** object)
 {
     if (!object) return E_POINTER;
@@ -3720,16 +4092,32 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::QueryInterface(REFIID riid, void** 
     return E_NOINTERFACE;
 }
 
+/**
+ * @brief COM AddRef 实现（递增引用计数）
+ * @return 新的引用计数值
+ */
 inline ULONG STDMETHODCALLTYPE DesktopApp::AddRef()
 {
     return static_cast<ULONG>(InterlockedIncrement(&refCount_));
 }
 
+/**
+ * @brief COM Release 实现（递减引用计数）
+ * @return 新的引用计数值
+ */
 inline ULONG STDMETHODCALLTYPE DesktopApp::Release()
 {
     return static_cast<ULONG>(InterlockedDecrement(&refCount_));
 }
 
+/**
+ * @brief COM IDropTarget::DragEnter 实现
+ * @param dataObject 拖放数据对象
+ * @param keyState 键盘修饰键状态
+ * @param point 鼠标屏幕坐标
+ * @param effect [in/out] 拖放效果
+ * @return S_OK 或错误码
+ */
 inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
@@ -3833,6 +4221,13 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     return S_OK;
 }
 
+/**
+ * @brief COM IDropTarget::DragOver 实现
+ * @param keyState 键盘修饰键状态
+ * @param point 鼠标屏幕坐标
+ * @param effect [in/out] 拖放效果
+ * @return S_OK 或错误码
+ */
 inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     DWORD keyState, POINTL point, DWORD* effect)
 {
@@ -3920,6 +4315,10 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     return S_OK;
 }
 
+/**
+ * @brief COM IDropTarget::DragLeave 实现
+ * @return S_OK
+ */
 inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
 {
     if (selfDragActive_)
@@ -3938,6 +4337,13 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
     return S_OK;
 }
 
+/**
+ * @brief COM IDropTarget::Drop 实现 — 处理拖放完成事件
+ * @param dataObject 拖放数据对象
+ * @param keyState 键盘修饰键状态
+ * @param point 鼠标屏幕坐标
+ * @param effect [in/out] 拖放效果
+ */
 inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
@@ -4111,6 +4517,12 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     return S_OK;
 }
 
+/**
+ * @brief COM IDropSource::QueryContinueDrag 实现
+ * @param escapePressed 是否按下了 Escape
+ * @param keyState 键盘修饰键状态
+ * @return DRAGDROP_S_CANCEL、DRAGDROP_S_DROP 或 S_OK
+ */
 inline HRESULT STDMETHODCALLTYPE DesktopApp::QueryContinueDrag(BOOL escapePressed, DWORD keyState)
 {
     if (escapePressed) return DRAGDROP_S_CANCEL;
@@ -4118,11 +4530,20 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::QueryContinueDrag(BOOL escapePresse
     return S_OK;
 }
 
+/**
+ * @brief COM IDropSource::GiveFeedback 实现
+ * @return DRAGDROP_S_USEDEFAULTCURSORS（使用默认光标）
+ */
 inline HRESULT STDMETHODCALLTYPE DesktopApp::GiveFeedback(DWORD)
 {
     return DRAGDROP_S_USEDEFAULTCURSORS;
 }
 
+/**
+ * @brief 从数据对象中提取文件路径列表
+ * @param dataObject COM 数据对象
+ * @return 文件路径列表
+ */
 inline std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObject)
 {
     std::vector<std::wstring> paths;
@@ -4147,6 +4568,11 @@ inline std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObjec
     return paths;
 }
 
+/**
+ * @brief 从完整路径中提取文件名部分
+ * @param path 完整路径
+ * @return 文件名
+ */
 inline std::wstring DesktopApp::FileNameFromPath(const std::wstring& path)
 {
     size_t pos = path.find_last_of(L"\\/");
@@ -4154,6 +4580,12 @@ inline std::wstring DesktopApp::FileNameFromPath(const std::wstring& path)
     return path.substr(pos + 1);
 }
 
+/**
+ * @brief 匹配待处理文件名（支持快捷方式和副本后缀的模糊匹配）
+ * @param itemName 现有项名称
+ * @param srcFileName 源文件名
+ * @return 是否匹配成功
+ */
 inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName)
 {
     static const std::wstring kShortcutSuffix = L" - 快捷方式";
@@ -4223,6 +4655,10 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
 
 // ── Drag hint ────────────────────────────────────────────────
 
+/**
+ * @brief 确保拖拽提示窗口已创建
+ * @return 窗口是否可用
+ */
 inline bool DesktopApp::EnsureDragHintWindow()
 {
     if (hintHwnd_) return true;
@@ -4233,16 +4669,27 @@ inline bool DesktopApp::EnsureDragHintWindow()
     return hintHwnd_ != nullptr;
 }
 
+/**
+ * @brief 隐藏拖拽提示窗口
+ */
 inline void DesktopApp::HideDragHintWindow()
 {
     if (hintHwnd_) { ShowWindow(hintHwnd_, SW_HIDE); hintTextCache_.clear(); }
 }
 
+/**
+ * @brief 销毁拖拽提示窗口
+ */
 inline void DesktopApp::DestroyDragHintWindow()
 {
     if (hintHwnd_) { DestroyWindow(hintHwnd_); hintHwnd_ = nullptr; }
 }
 
+/**
+ * @brief 显示拖拽提示窗口（客户端坐标版本）
+ * @param clientPoint 客户端坐标点
+ * @param text 提示文本内容
+ */
 inline void DesktopApp::ShowDragHintWindow(POINT clientPoint, const std::wstring& text)
 {
     if (text.empty())
@@ -4366,6 +4813,11 @@ inline void DesktopApp::ShowDragHintWindow(POINT clientPoint, const std::wstring
     ReleaseDC(nullptr, screenDc);
 }
 
+/**
+ * @brief 显示拖拽提示窗口（屏幕坐标版本）
+ * @param screenPoint 屏幕坐标点
+ * @param text 提示文本内容
+ */
 inline void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text)
 {
     if (text.empty() || !EnsureDragHintWindow())
@@ -4467,6 +4919,10 @@ inline void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::w
 
 // ── Widget context menu ────────────────────────────────────
 
+/**
+ * @brief 显示 Lua 小部件的编辑器宿主页
+ * @param widgetIndex 小部件索引
+ */
 inline void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
 {
     if (!settingsWindow_ || widgetIndex >= widgets_.size()) return;
@@ -4476,6 +4932,11 @@ inline void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
         widget.title.c_str(), widget.scriptPath.c_str());
 }
 
+/**
+ * @brief 显示窗口小部件的右键上下文菜单
+ * @param screenPoint 屏幕坐标点
+ * @param widgetIndex 小部件索引
+ */
 inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex)
 {
     if (widgetIndex >= widgets_.size()) return;
@@ -4700,6 +5161,10 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
 
 // ── Tray ────────────────────────────────────────────────────
 
+/**
+ * @brief 添加系统托盘图标
+ * @param force 是否强制重新添加
+ */
 inline void DesktopApp::AddTrayIcon(bool force)
 {
     HWND owner = controlHwnd_ ? controlHwnd_ : hwnd_;
@@ -4740,6 +5205,9 @@ inline void DesktopApp::AddTrayIcon(bool force)
     }
 }
 
+/**
+ * @brief 移除系统托盘图标
+ */
 inline void DesktopApp::RemoveTrayIcon()
 {
     if (!trayIconAdded_) return;
@@ -4751,6 +5219,10 @@ inline void DesktopApp::RemoveTrayIcon()
     trayIconAdded_ = false;
 }
 
+/**
+ * @brief 处理系统托盘回调消息
+ * @param lParam 消息参数（含右键点击、双击等事件）
+ */
 inline void DesktopApp::OnTrayCallback(LPARAM lParam)
 {
     UINT message = LOWORD(lParam);
@@ -4766,6 +5238,10 @@ inline void DesktopApp::OnTrayCallback(LPARAM lParam)
     }
 }
 
+/**
+ * @brief 显示系统托盘右键菜单
+ * @param screenPoint 屏幕坐标点
+ */
 inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
 {
     ClearMenuIcons();

@@ -1,3 +1,12 @@
+/**
+ * @file file_categories.cpp
+ * @brief 实现 FileCategories 组件——一个带分类标签页的可滚动文件分类面板。
+ *
+ * 该组件将桌面项目按类型（文件夹、视频、图片、文档、压缩包、音频、程序等）
+ * 分类展示，支持标签页切换、列表/网格模式切换、拖拽排序、滚动等功能。
+ * 所有桌面级散文件会自动收集到"全部"分类下，并按扩展名归入对应类别。
+ */
+
 #include "widget.h"
 #include "slot.h"
 #include "types.h"
@@ -8,6 +17,10 @@
 #include <shlwapi.h>
 #include <unordered_set>
 
+/**
+ * @brief 获取文件分类的有序列表。
+ * @return 包含所有分类 ID 的字符串向量，顺序决定了标签页的排列顺序。
+ */
 static std::vector<std::wstring> FileCategoryOrder()
 {
     return {
@@ -16,6 +29,11 @@ static std::vector<std::wstring> FileCategoryOrder()
     };
 }
 
+/**
+ * @brief 获取分类 ID 对应的中文显示标签。
+ * @param id 分类 ID，如 "all"、"folders"、"videos" 等。
+ * @return 对应的中文标签字符串，如"全部"、"文件夹"、"视频"。未知 ID 返回"其他"。
+ */
 static std::wstring FileCategoryLabel(const std::wstring& id)
 {
     if (id == L"all") return L"全部";
@@ -29,6 +47,11 @@ static std::wstring FileCategoryLabel(const std::wstring& id)
     return L"其他";
 }
 
+/**
+ * @brief 获取桌面项目文件扩展名的大写形式。
+ * @param item 桌面项目，包含 PIDL 路径和文件名信息。
+ * @return 全大写扩展名字符串（含点号），如 ".PNG"、".DOCX"。
+ */
 static std::wstring DesktopItemExtensionUpper(const DesktopItem& item)
 {
     wchar_t path[MAX_PATH]{};
@@ -37,11 +60,21 @@ static std::wstring DesktopItemExtensionUpper(const DesktopItem& item)
     return ToUpperInvariant(PathFindExtensionW(item.name.c_str()));
 }
 
+/**
+ * @brief 判断桌面项目是否为快捷方式（.lnk）。
+ * @param item 桌面项目。
+ * @return true 如果扩展名为 .LNK；否则返回 false。
+ */
 static bool IsShortcutItem(const DesktopItem& item)
 {
     return DesktopItemExtensionUpper(item) == L".LNK";
 }
 
+/**
+ * @brief 判断桌面项目是否为文件系统上的真实文件夹。
+ * @param item 桌面项目。
+ * @return true 如果 PIDL 可解析为路径且文件属性包含 FILE_ATTRIBUTE_DIRECTORY。
+ */
 static bool IsFilesystemFolder(const DesktopItem& item)
 {
     wchar_t path[MAX_PATH]{};
@@ -50,6 +83,12 @@ static bool IsFilesystemFolder(const DesktopItem& item)
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
+/**
+ * @brief 根据扩展名或属性确定桌面项目所属的分类 ID。
+ * @param item 桌面项目。
+ * @return 分类 ID 字符串，可能为 "folders"、"videos"、"images"、"documents"、
+ *         "archives"、"audio"、"programs" 或 "others"。
+ */
 static std::wstring FileCategoryIdForItem(const DesktopItem& item)
 {
     const std::wstring ext = DesktopItemExtensionUpper(item);
@@ -77,6 +116,13 @@ static std::wstring FileCategoryIdForItem(const DesktopItem& item)
     return L"others";
 }
 
+/**
+ * @brief 判断桌面项目是否应收录到分类面板中。
+ *        排除系统图标（此电脑、用户文件、网络、控制面板、回收站）和快捷方式。
+ * @param app DesktopApp 实例指针。
+ * @param item 待判断的桌面项目。
+ * @return true 如果项目应被收录；false 如果受保护或为快捷方式。
+ */
 static bool IsCollectable(DesktopApp* app, const DesktopItem& item)
 {
     (void)app;
@@ -91,6 +137,12 @@ static bool IsCollectable(DesktopApp* app, const DesktopItem& item)
     return !protectedIcon && !IsShortcutItem(item) && !item.layoutKey.empty();
 }
 
+/**
+ * @brief 根据 layoutKey 在桌面项目列表中查找对应的索引位置。
+ * @param app DesktopApp 实例指针。
+ * @param key 要查找的 layoutKey（不区分大小写）。
+ * @return 项目索引，如果未找到则返回 (size_t)-1。
+ */
 static size_t FindItemIndexByKeyPublic(DesktopApp* app, const std::wstring& key)
 {
     if (!app) return static_cast<size_t>(-1);
@@ -102,6 +154,14 @@ static size_t FindItemIndexByKeyPublic(DesktopApp* app, const std::wstring& key)
     return static_cast<size_t>(-1);
 }
 
+/**
+ * @brief 获取指定分类下的所有项目 layoutKey 列表，去重并按原始顺序排列。
+ * @param app DesktopApp 实例指针。
+ * @param data 桌面组件数据，包含 itemKeys。
+ * @param categoryId 分类 ID。为空字符串时按分类顺序遍历所有类别；
+ *                   为 "all" 时返回所有可收录项目；否则返回指定分类的项目。
+ * @return 符合条件的 layoutKey 字符串向量。
+ */
 static std::vector<std::wstring> CategoryKeys(DesktopApp* app, const DesktopWidget* data,
     const std::wstring& categoryId)
 {
@@ -151,6 +211,12 @@ static std::vector<std::wstring> CategoryKeys(DesktopApp* app, const DesktopWidg
     return keys;
 }
 
+/**
+ * @brief 获取当前有项目的可见分类 ID 列表（按 FileCategoryOrder 顺序）。
+ * @param app DesktopApp 实例指针。
+ * @param data 桌面组件数据。
+ * @return 至少含一个项目的分类 ID 列表。
+ */
 static std::vector<std::wstring> VisibleCategoryIds(DesktopApp* app, const DesktopWidget* data)
 {
     std::vector<std::wstring> ids;
@@ -164,6 +230,13 @@ static std::vector<std::wstring> VisibleCategoryIds(DesktopApp* app, const Deskt
 
 static std::wstring ActiveCategoryId(DesktopApp* app, const DesktopWidget* data);
 
+/**
+ * @brief 收集顶级桌面项目中可收录的项到 widget 的 itemKeys 中。
+ *        跳过已在其他组件中的项目以及已存在的 key。
+ * @return true 如果至少新增了一个项目；false 如果没有变化或参数无效。
+ *
+ * 收集完成后会重置滚动偏移并更新激活分类。
+ */
 bool FileCategories::CollectTopLevelDesktopItems()
 {
     if (!data_ || !app_) return false;
@@ -197,6 +270,13 @@ bool FileCategories::CollectTopLevelDesktopItems()
     return changed;
 }
 
+/**
+ * @brief 获取当前激活的分类 ID。
+ *        优先保持之前激活的分类，如果该分类不再可见则返回第一个可见分类。
+ * @param app DesktopApp 实例指针。
+ * @param data 桌面组件数据。
+ * @return 有效的分类 ID，如果没有可见分类则返回空字符串。
+ */
 static std::wstring ActiveCategoryId(DesktopApp* app, const DesktopWidget* data)
 {
     if (!data) return L"";
@@ -207,6 +287,11 @@ static std::wstring ActiveCategoryId(DesktopApp* app, const DesktopWidget* data)
     return visible.empty() ? L"" : visible.front();
 }
 
+/**
+ * @brief 计算分类标签页区域的矩形范围。
+ * @param widget FileCategories 组件指针。
+ * @return 标签页区域矩形，如果组件无效或区域过小则返回空矩形。
+ */
 static RECT FileCategoryTabsRect(FileCategories* widget)
 {
     if (!widget) return {};
@@ -217,6 +302,11 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
         std::min<LONG>(body.bottom, body.top + 30));
 }
 
+/**
+ * @brief 计算文件分类内容区域的矩形范围（标签页下方）。
+ * @param widget FileCategories 组件指针。
+ * @return 内容区域矩形，如果组件无效或区域过小则返回空矩形。
+ */
 static RECT FileCategoryContentRect(FileCategories* widget)
 {
     if (!widget) return {};
@@ -228,6 +318,13 @@ static RECT FileCategoryContentRect(FileCategories* widget)
     return body;
 }
 
+/**
+ * @brief 计算指定索引的单个分类标签页的矩形范围。
+ *        支持标签页横向滚动（通过 tabScrollOffset）。
+ * @param widget FileCategories 组件指针。
+ * @param index 标签页索引（从 0 开始）。
+ * @return 标签页矩形，如果索引超出范围或组件无效则返回空矩形。
+ */
 static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
 {
     if (!widget) return {};
@@ -254,6 +351,11 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
     return rect;
 }
 
+/**
+ * @brief 获取网格模式下每个单元格的高度。
+ * @param widget FileCategories 组件指针。
+ * @return 单元格高度（像素），默认 kMinCellHeight。
+ */
 static int FileCategoryCellHeight(FileCategories* widget)
 {
     if (!widget || !widget->GetApp() || !widget->GetApp()->GetDesktopGrid())
@@ -265,6 +367,12 @@ static int FileCategoryCellHeight(FileCategories* widget)
     return kMinCellHeight;
 }
 
+/**
+ * @brief 计算指定数量项目所需的内容总高度。
+ * @param widget FileCategories 组件指针。
+ * @param itemCount 项目数量。
+ * @return 内容总高度（像素），列表模式下每项 38px，网格模式下按行列数计算。
+ */
 static int FileCategoryContentHeight(FileCategories* widget, size_t itemCount)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
@@ -276,6 +384,11 @@ static int FileCategoryContentHeight(FileCategories* widget, size_t itemCount)
     return rows * FileCategoryCellHeight(widget);
 }
 
+/**
+ * @brief 计算内容区域的最大滚动偏移量。
+ * @param widget FileCategories 组件指针。
+ * @return 最大滚动偏移（像素，非负值），当内容高度小于可视区域时返回 0。
+ */
 static int FileCategoryMaxScrollOffset(FileCategories* widget)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
@@ -286,6 +399,13 @@ static int FileCategoryMaxScrollOffset(FileCategories* widget)
     return std::max(0, FileCategoryContentHeight(widget, keys.size()) - contentHeight + kMinCellHeight / 2);
 }
 
+/**
+ * @brief 计算指定线性索引的项目在内容区域中的矩形位置。
+ *        支持滚动偏移和列表/网格两种布局模式。
+ * @param widget FileCategories 组件指针。
+ * @param linearIndex 项目在分类中的线性索引（从 0 开始）。
+ * @return 项目矩形，如果组件无效则返回空矩形。
+ */
 static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
@@ -314,6 +434,11 @@ static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex)
         content.top + (row + 1) * cellH - scroll);
 }
 
+/**
+ * @brief 计算列表/网格模式切换按钮的矩形范围（位于拖拽手柄右侧）。
+ * @param widget FileCategories 组件指针。
+ * @return 切换按钮矩形。
+ */
 static RECT FileCategoryToggleRect(FileCategories* widget)
 {
     if (!widget) return {};
@@ -325,6 +450,13 @@ static RECT FileCategoryToggleRect(FileCategories* widget)
         handle.right - resizeReserve - gap, handle.bottom - 3);
 }
 
+/**
+ * @brief 根据可见槽位索引计算在 data->itemKeys 中的实际插入位置。
+ * @param app DesktopApp 实例指针。
+ * @param data 桌面组件数据。
+ * @param visibleIndex 在激活分类可见列表中的索引。
+ * @return data->itemKeys 中对应的插入位置索引。
+ */
 static size_t InsertIndexForVisibleSlot(DesktopApp* app, DesktopWidget* data, size_t visibleIndex)
 {
     if (!app || !data) return 0;
@@ -338,6 +470,11 @@ static size_t InsertIndexForVisibleSlot(DesktopApp* app, DesktopWidget* data, si
     return data->itemKeys.size();
 }
 
+/**
+ * @brief 构建当前激活分类下所有可见项目的 Slot 列表。
+ *        每个 Slot 对应一个可视区域内的桌面项目。
+ * @return 唯一指针向量，包含所有可见项目对应的 Slot。
+ */
 std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 {
     slotItemCache_.clear();
@@ -359,6 +496,12 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
     return slots;
 }
 
+/**
+ * @brief 获取指定索引的 Slot 对应的 Item（桌面图标）。
+ *        结果缓存在 slotItemCache_ 中。
+ * @param idx 在激活分类可见列表中的索引。
+ * @return 指向 Item 的指针，如果索引无效或组件无效则返回 nullptr。
+ */
 Item* FileCategories::GetSlotItem(size_t idx) const
 {
     if (!data_ || !app_) return nullptr;
@@ -373,6 +516,12 @@ Item* FileCategories::GetSlotItem(size_t idx) const
     return result;
 }
 
+/**
+ * @brief 获取指定索引的成员 Item，用于拖拽操作。
+ *        结果缓存在 dragSourceCache_ 中。
+ * @param idx 在激活分类可见列表中的索引。
+ * @return 指向 Item 的指针，如果索引无效或组件无效则返回 nullptr。
+ */
 Item* FileCategories::GetMemberItem(size_t idx) const
 {
     if (!data_ || !app_) return nullptr;
@@ -387,6 +536,10 @@ Item* FileCategories::GetMemberItem(size_t idx) const
     return result;
 }
 
+/**
+ * @brief 获取在激活分类中处于选中状态的项目索引列表。
+ * @return 选中项目的索引向量，如果无选中项或组件无效则返回空向量。
+ */
 std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
 {
     std::vector<size_t> result;
@@ -402,6 +555,11 @@ std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
     return result;
 }
 
+/**
+ * @brief 重新排序成员项目：将选中的项目移动到指定可见索引之前。
+ * @param indices 未使用的参数，保留以匹配接口。实际使用选中状态来确定移动项目。
+ * @param insertBefore 目标插入位置的可见索引。
+ */
 void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
     if (!data_ || !app_) return;
@@ -445,18 +603,30 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
     InvalidateSlots();
 }
 
+/**
+ * @brief 获取当前激活分类下的项目总数。
+ * @return Slot 数量，如果组件数据无效则返回 0。
+ */
 size_t FileCategories::GetSlotCount() const
 {
     if (!data_) return 0;
     return CategoryKeys(app_, data_, ActiveCategoryId(app_, data_)).size();
 }
 
+/**
+ * @brief 获取每个项目的高度。
+ * @return 列表模式下返回 38px，网格模式下返回单元格高度。
+ */
 int FileCategories::GetItemHeight() const
 {
     if (!data_) return 38;
     return data_->listMode ? 38 : FileCategoryCellHeight(const_cast<FileCategories*>(this));
 }
 
+/**
+ * @brief 获取每个项目的宽度。
+ * @return 列表模式下返回 WidgetContainer 的默认宽度，网格模式下按列均分。
+ */
 int FileCategories::GetItemWidth() const
 {
     if (!data_ || data_->listMode) return WidgetContainer::GetItemWidth();
@@ -464,23 +634,43 @@ int FileCategories::GetItemWidth() const
     return std::max<int>(1, (content.right - content.left) / std::max(1, data_->gridSpan.columns));
 }
 
+/**
+ * @brief 获取内容区域的最大允许滚动偏移量。
+ * @return 最大滚动偏移值（像素）。
+ */
 int FileCategories::GetMaxScrollOffset() const
 {
     return FileCategoryMaxScrollOffset(const_cast<FileCategories*>(this));
 }
 
+/**
+ * @brief 获取当前激活分类下所有项目的总内容高度。
+ * @return 总高度（像素）。
+ */
 int FileCategories::GetTotalContentHeight() const
 {
     auto keys = CategoryKeys(app_, data_, ActiveCategoryId(app_, data_));
     return FileCategoryContentHeight(const_cast<FileCategories*>(this), keys.size());
 }
 
+/**
+ * @brief 获取内容区域的可视高度（减去标签页区域后的剩余高度）。
+ * @return 可视内容高度（像素，至少为 1）。
+ */
 int FileCategories::GetVisibleContentHeight() const
 {
     RECT content = FileCategoryContentRect(const_cast<FileCategories*>(this));
     return std::max(1, (int)(content.bottom - content.top));
 }
 
+/**
+ * @brief 处理项目拖放事件，执行拖放管道操作。
+ * @param sourceItems 被拖拽的源项目列表。
+ * @param origin 来源容器。
+ * @param targetSlot 目标槽位（可为空）。
+ * @param region 拖放命中区域。
+ * @param mods 按键修饰符。
+ */
 void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
     Slot* targetSlot, HitRegion region, int mods)
 {
@@ -491,6 +681,12 @@ void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Conta
     app_->ExecuteDropPipeline(sourceList, preview);
 }
 
+/**
+ * @brief 获取拖放操作的插入索引。
+ * @param targetSlot 目标槽位，为空时追加到末尾。
+ * @param region 命中区域，SortAfter 表示插入到目标之后。
+ * @return 在 data->itemKeys 中的插入位置。
+ */
 size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
 {
     size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
@@ -499,6 +695,11 @@ size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) co
     return InsertIndexForVisibleSlot(app_, data_, visibleInsert);
 }
 
+/**
+ * @brief 判断指定的 layoutKey 是否允许添加到本组件中。
+ * @param key 要检查的 layoutKey。
+ * @return true 如果该项目存在且可收录；否则返回 false。
+ */
 bool FileCategories::AllowsDesktopKey(const std::wstring& key) const
 {
     size_t itemIdx = FindItemIndexByKeyPublic(app_, key);
@@ -506,6 +707,11 @@ bool FileCategories::AllowsDesktopKey(const std::wstring& key) const
         IsCollectable(app_, app_->GetDesktopItems()[itemIdx]);
 }
 
+/**
+ * @brief 绘制组件的内容区域，包括分类标签页、分隔线和项目列表/网格。
+ * @param context D2D 设备上下文。
+ * @param body 组件的 body 矩形。
+ */
 void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
@@ -615,6 +821,12 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     context->PopAxisAlignedClip();
 }
 
+/**
+ * @brief 绘制组件右上角的列表/网格模式切换按钮。
+ * @param context D2D 设备上下文。
+ * @param handleRect 拖拽手柄矩形。
+ * @param hovered 手柄是否悬停。
+ */
 void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
@@ -630,6 +842,11 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     (void)hovered;
 }
 
+/**
+ * @brief 对指定点进行命中测试，判断该点落在组件的哪个区域。
+ * @param pt 测试点的屏幕坐标。
+ * @return 命中结果，可能为 None、MoveHandle、CategoryTab、ListToggleBtn 等。
+ */
 WidgetHit FileCategories::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
@@ -647,6 +864,11 @@ WidgetHit FileCategories::HitTestWidget(POINT pt) const
     return base;
 }
 
+/**
+ * @brief 获取指定坐标点所在的分类标签 ID。
+ * @param pt 测试点的屏幕坐标。
+ * @return 分类 ID 字符串，如果未落在任何标签上则返回空字符串。
+ */
 std::wstring FileCategories::CategoryIdAtPoint(POINT pt) const
 {
     auto categories = VisibleCategoryIds(app_, data_);
@@ -659,12 +881,23 @@ std::wstring FileCategories::CategoryIdAtPoint(POINT pt) const
     return L"";
 }
 
+/**
+ * @brief 判断指定点是否落在标签页矩形区域内。
+ * @param pt 测试点的屏幕坐标。
+ * @return true 如果点在标签页区域内；否则返回 false。
+ */
 bool FileCategories::IsPointInTabsRect(POINT pt) const
 {
     RECT tabs = FileCategoryTabsRect(const_cast<FileCategories*>(this));
     return !IsRectEmptyRect(tabs) && PtInRect(&tabs, pt) != FALSE;
 }
 
+/**
+ * @brief 尝试在标签页区域进行横向滚动。
+ * @param pt 鼠标坐标，用于判断是否在标签页区域内。
+ * @param delta 鼠标滚轮滚动量。
+ * @return true 如果成功处理滚动（点在标签页内且可滚动）；否则返回 false。
+ */
 bool FileCategories::TryScrollTabs(POINT pt, int delta)
 {
     if (!data_ || !app_) return false;
@@ -687,6 +920,11 @@ bool FileCategories::TryScrollTabs(POINT pt, int delta)
     return true;
 }
 
+/**
+ * @brief 获取当前处于选中状态的 Item 列表，用于拖拽操作。
+ *        结果缓存在 dragSourceCache_ 中。
+ * @return 选中项的 Item 指针向量。
+ */
 std::vector<Item*> FileCategories::GetSelectedItems() const
 {
     dragSourceCache_.clear();

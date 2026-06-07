@@ -1,3 +1,11 @@
+/**
+ * @file personalization.cpp
+ * @brief 个性化设置持久化实现
+ *
+ * 提供个性化配置（深色/浅色预设）的加载、保存及路径管理功能。
+ * 配置以 JSON 格式存储于可执行文件同目录下的 SnowDesktop.personalization.json 文件中。
+ */
+
 #include "personalization.h"
 
 #include <windows.h>
@@ -5,6 +13,17 @@
 #include <fstream>
 #include <sstream>
 
+/**
+ * @brief 从 JSON 文本中读取指定字段的 double 值
+ *
+ * 在文本中搜索 "fieldName" 标记，定位到其后的冒号并解析数值。
+ *
+ * @param text   JSON 格式的字符串
+ * @param field  要读取的字段名（不含引号）
+ * @param out    输出参数，解析成功时写入对应的 double 值
+ * @return true  字段找到且数值解析成功
+ * @return false 字段不存在或解析失败
+ */
 static bool ReadDoubleField(const std::string& text, const char* field, double& out)
 {
     std::string marker = "\"" + std::string(field) + "\"";
@@ -18,6 +37,13 @@ static bool ReadDoubleField(const std::string& text, const char* field, double& 
     return true;
 }
 
+/**
+ * @brief 获取深色主题预设
+ *
+ * 返回一组适用于深色背景的组件颜色参数，包括半透明深色背景和白色边框。
+ *
+ * @return PersonalizationSettings 深色主题配置
+ */
 PersonalizationSettings PersonalizationSettings::DarkPreset()
 {
     PersonalizationSettings s;
@@ -27,6 +53,13 @@ PersonalizationSettings PersonalizationSettings::DarkPreset()
     return s;
 }
 
+/**
+ * @brief 获取浅色主题预设
+ *
+ * 返回一组适用于浅色背景的组件颜色参数，包括半透明浅色背景和灰色边框。
+ *
+ * @return PersonalizationSettings 浅色主题配置
+ */
 PersonalizationSettings PersonalizationSettings::LightPreset()
 {
     PersonalizationSettings s;
@@ -36,6 +69,13 @@ PersonalizationSettings PersonalizationSettings::LightPreset()
     return s;
 }
 
+/**
+ * @brief 获取个性化配置文件的完整路径
+ *
+ * 构造可执行文件所在目录下的 SnowDesktop.personalization.json 路径。
+ *
+ * @return std::wstring 配置文件的绝对路径
+ */
 std::wstring GetPersonalizationPath()
 {
     wchar_t path[MAX_PATH]{};
@@ -45,6 +85,17 @@ std::wstring GetPersonalizationPath()
     return path;
 }
 
+/**
+ * @brief 从 JSON 文件加载个性化设置
+ *
+ * 读取指定路径的 JSON 文件并反序列化各字段到 PersonalizationSettings 结构体。
+ * 文件中不存在的字段将保持结构体中的原值不变。
+ *
+ * @param path JSON 配置文件路径
+ * @param s    输出参数，从文件中读取到的设置值
+ * @return true  加载成功（文件存在且非空）
+ * @return false 文件打开失败或内容为空
+ */
 bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
 {
     std::ifstream file(path, std::ios::binary);
@@ -66,6 +117,17 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     return true;
 }
 
+/**
+ * @brief 将个性化设置保存为 JSON 文件
+ *
+ * 将 PersonalizationSettings 结构体中的各字段序列化并写入指定路径的 JSON 文件。
+ * 文件以覆盖方式写入（trunc）。
+ *
+ * @param path 输出 JSON 文件路径
+ * @param s    待保存的个性化设置
+ * @return true  保存成功
+ * @return false 文件打开失败
+ */
 bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
 {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
