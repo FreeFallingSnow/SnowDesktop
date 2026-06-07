@@ -8,3 +8,4 @@ TestResults/
 .build/
 build/
 .build_debug/
+release/
