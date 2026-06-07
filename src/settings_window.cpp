@@ -913,7 +913,7 @@ void SettingsWindow::DrawAboutPage()
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::TextDisabled("SnowDesktop v1.0");
+    ImGui::TextDisabled("SnowDesktop v" SNOWDESKTOP_VERSION);
     if (ImGui::IsItemClicked())
     {
         if (!debugUnlocked_)

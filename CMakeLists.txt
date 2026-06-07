@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.24)
 
 project(SnowDesktop LANGUAGES CXX)
 
+file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
+string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
+message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
+
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
@@ -69,14 +73,16 @@ target_include_directories(SnowDesktop PRIVATE
 if (MSVC)
     target_compile_options(SnowDesktop PRIVATE /W4 /permissive- /EHsc /utf-8 /Zi /FS)
     target_compile_definitions(SnowDesktop PRIVATE
-        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
     target_link_options(SnowDesktop PRIVATE
         "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
         /DEBUG:FULL /OPT:REF /OPT:ICF)
 else()
     target_compile_options(SnowDesktop PRIVATE -Wall -Wextra -pedantic)
     target_compile_definitions(SnowDesktop PRIVATE
-        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
