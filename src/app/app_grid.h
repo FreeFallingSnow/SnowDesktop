@@ -1,12 +1,23 @@
+/**
+ * @file app_grid.h
+ * @brief DesktopApp 的网格辅助、布局持久化、拖拽、控件窗口、位图缓存及数据加载等内联实现。
+ *
+ * 该文件在 app_oo.h 中类定义之后被包含，提供所有网格布局计算、布局文件的读写、
+ * Shell 变更通知注册、拖拽操作、控件窗口消息处理、图标位图缓存及桌面项加载等功能。
+ */
 #pragma once
-// Inline implementations for DesktopApp — Grid helpers, Shell, Filtering,
-// Layout persistence, Control window, Bitmap cache, Data loading, and free functions.
-// This file is included by app_oo.h after the class definition.
 
 #include "drop_model.h"
 
-// ── Grid helpers ────────────────────────────────────────────
+// ── 网格辅助函数 ──────────────────────────────────────────
 
+/**
+ * @brief 判断指定的网格区域是否在页面范围内。
+ * @param page  目标网格页面。
+ * @param cell  起始单元格。
+ * @param span  跨度（列数 x 行数）。
+ * @return 如果区域完全在页面边界内返回 true，否则返回 false。
+ */
 inline bool GridAreaFitsPage(const GridPage& page, const GridCell& cell, GridSpan span)
 {
     if (span.columns < 1 || span.rows < 1) return false;
@@ -16,6 +27,11 @@ inline bool GridAreaFitsPage(const GridPage& page, const GridCell& cell, GridSpa
         cell.row + span.rows <= page.rows;
 }
 
+/**
+ * @brief 根据屏幕坐标查找所在的网格页面。
+ * @param point 客户区坐标。
+ * @return 指向对应 GridPage 的指针，未找到时返回第一个页面或 nullptr。
+ */
 inline const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
 {
     const GridPage* fallback = gridPages_.empty() ? nullptr : &gridPages_.front();
@@ -27,6 +43,10 @@ inline const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
     return fallback;
 }
 
+/**
+ * @brief 在右键菜单所在页面调整行数（增/减）。
+ * @param delta 行数变化量（正数增加，负数减少）。
+ */
 inline void DesktopApp::AdjustGridRows(int delta)
 {
     if (gridPages_.empty()) return;
@@ -54,6 +74,10 @@ inline void DesktopApp::AdjustGridRows(int delta)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 在右键菜单所在页面调整列数（增/减）。
+ * @param delta 列数变化量（正数增加，负数减少）。
+ */
 inline void DesktopApp::AdjustGridColumns(int delta)
 {
     if (gridPages_.empty()) return;
@@ -81,6 +105,10 @@ inline void DesktopApp::AdjustGridColumns(int delta)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 将指定物理坐标的页面设为首个监控器页面。
+ * @param screenPoint 屏幕坐标点。
+ */
 inline void DesktopApp::SetFirstPageMonitorFromPoint(POINT screenPoint)
 {
     POINT clientPoint = screenPoint;
@@ -96,6 +124,10 @@ inline void DesktopApp::SetFirstPageMonitorFromPoint(POINT screenPoint)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 设置网格缩放比例（0.5 ~ 2.0），并重新布局。
+ * @param value 新的缩放值。
+ */
 inline void DesktopApp::SetZoom(float value)
 {
     float clamped = std::clamp(value, 0.5f, 2.0f);
@@ -108,6 +140,10 @@ inline void DesktopApp::SetZoom(float value)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 以增量方式调整网格缩放比例。
+ * @param delta 缩放变化量。
+ */
 inline void DesktopApp::AdjustZoom(float delta)
 {
     float newVal = std::clamp(gapScale_ + delta, 0.5f, 2.0f);
@@ -120,6 +156,10 @@ inline void DesktopApp::AdjustZoom(float delta)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 获取首个监控器页面在页面列表中的索引。
+ * @return 页面索引，默认返回 0。
+ */
 inline size_t DesktopApp::FirstMonitorOrderIndex() const
 {
     if (gridPages_.empty()) return 0;
@@ -132,6 +172,10 @@ inline size_t DesktopApp::FirstMonitorOrderIndex() const
     return 0;
 }
 
+/**
+ * @brief 构建监控器渲染顺序（以首个显示器页面为起点）。
+ * @return 页面索引的顺序列表。
+ */
 inline std::vector<size_t> DesktopApp::BuildMonitorRenderOrder() const
 {
     std::vector<size_t> order;
@@ -143,6 +187,11 @@ inline std::vector<size_t> DesktopApp::BuildMonitorRenderOrder() const
     return order;
 }
 
+/**
+ * @brief 检查指定页面是否包含任何内容（项目或组件）。
+ * @param pageId 页面 ID。
+ * @return 有内容返回 true，否则 false。
+ */
 inline bool DesktopApp::PageHasContent(const std::wstring& pageId) const
 {
     if (pageId.empty()) return false;
@@ -153,6 +202,12 @@ inline bool DesktopApp::PageHasContent(const std::wstring& pageId) const
     return false;
 }
 
+/**
+ * @brief 从当前偏移位置沿指定方向查找下一个非空页面的偏移量。
+ * @param fromOffset 起始偏移量。
+ * @param direction 方向（1 向前 / -1 向后）。
+ * @return 找到的偏移量，未找到则返回原偏移量。
+ */
 inline int DesktopApp::NextNonEmptyOffset(int fromOffset, int direction) const
 {
     if (savedPageIds_.empty() || gridPages_.empty()) return fromOffset;
@@ -169,6 +224,10 @@ inline int DesktopApp::NextNonEmptyOffset(int fromOffset, int direction) const
     }
 }
 
+/**
+ * @brief 计算最大页面偏移量（最后一个有内容的页面位置）。
+ * @return 最大偏移值。
+ */
 inline int DesktopApp::MaxPageOffset() const
 {
     if (savedPageIds_.empty() || gridPages_.empty()) return 0;
@@ -184,6 +243,9 @@ inline int DesktopApp::MaxPageOffset() const
     return result;
 }
 
+/**
+ * @brief 将已保存的页面 ID 映射到当前网格页面，并应用保存的列/行数。
+ */
 inline void DesktopApp::ApplyPageMapping()
 {
     lastMonitorPageId_.clear();
@@ -216,6 +278,12 @@ inline void DesktopApp::ApplyPageMapping()
     ApplySavedGridDimensions();
 }
 
+/**
+ * @brief 在 usedSlots 集合中标记一个网格区域的所有格子被占用。
+ * @param usedSlots 已占用格子集合。
+ * @param cell 起始单元格。
+ * @param span 跨度。
+ */
 inline void DesktopApp::MarkGridArea(std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
 {
     for (int c = cell.column; c < cell.column + span.columns; ++c)
@@ -223,6 +291,13 @@ inline void DesktopApp::MarkGridArea(std::unordered_set<std::wstring>& usedSlots
             usedSlots.insert(cell.pageId + L":" + std::to_wstring(c) + L"," + std::to_wstring(r));
 }
 
+/**
+ * @brief 检查某个网格区域是否有任何格子已被标记。
+ * @param usedSlots 已占用格子集合。
+ * @param cell 起始单元格。
+ * @param span 跨度。
+ * @return 如果有任何格子被标记返回 true。
+ */
 inline bool DesktopApp::AreGridSlotsMarked(const std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
 {
     for (int c = cell.column; c < cell.column + span.columns; ++c)
@@ -232,6 +307,12 @@ inline bool DesktopApp::AreGridSlotsMarked(const std::unordered_set<std::wstring
     return false;
 }
 
+/**
+ * @brief 判断网格区域是否合法（跨度 >=1，行列非负）。
+ * @param cell 起始单元格。
+ * @param span 跨度。
+ * @return 合法返回 true。
+ */
 inline bool DesktopApp::IsGridAreaValid(const GridCell& cell, GridSpan span)
 {
     if (span.columns < 1 || span.rows < 1) return false;
@@ -239,6 +320,15 @@ inline bool DesktopApp::IsGridAreaValid(const GridCell& cell, GridSpan span)
     return true;
 }
 
+/**
+ * @brief 尝试在网格中查找一个空闲单元格以放置指定跨度的项目。
+ * @param span 所需跨度。
+ * @param usedSlots 已占用的格子集合。
+ * @param result 输出参数，找到的空闲单元格。
+ * @param preferredPageId 首选页面 ID。
+ * @param preferredStartSlot 首选起始槽位。
+ * @return 找到返回 true。
+ */
 inline bool DesktopApp::TryFindFreeCell(
     GridSpan span, std::unordered_set<std::wstring>& usedSlots, GridCell& result,
     const std::wstring& preferredPageId, int preferredStartSlot) const
@@ -287,6 +377,11 @@ inline bool DesktopApp::TryFindFreeCell(
     return false;
 }
 
+/**
+ * @brief 重新放置所有因页面尺寸变化而被移出边界的项目和组件。
+ *
+ * 对于无法放入原位置的项目，自动扩展页面或寻找空闲单元格安置。
+ */
 inline void DesktopApp::RelayoutDisplacedItems()
 {
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
@@ -385,6 +480,9 @@ inline void DesktopApp::RelayoutDisplacedItems()
     }
 }
 
+/**
+ * @brief 按名称对桌面图标排序（在每个页面内）。
+ */
 inline void DesktopApp::SortIconsByName()
 {
     auto sortForPage = [&](const GridPage& page) {
@@ -437,6 +535,9 @@ inline void DesktopApp::SortIconsByName()
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 按类型名称对桌面图标排序，相同类型内按名称排序。
+ */
 inline void DesktopApp::SortIconsByType()
 {
     auto sortForPage = [&](const GridPage& page) {
@@ -491,6 +592,11 @@ inline void DesktopApp::SortIconsByType()
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 对指定组件（文件夹映射/桌面文件/集合）中的内容排序。
+ * @param widgetIndex 组件索引。
+ * @param mode 排序模式：0 按名称，1 按类型，2 按修改时间。
+ */
 inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
 {
     if (widgetIndex >= widgets_.size()) return;
@@ -620,6 +726,9 @@ inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
     }
 }
 
+/**
+ * @brief 更新所有桌面项的剪切状态（从剪贴板读取 DROPEFFECT_MOVE）。
+ */
 inline void DesktopApp::UpdateCutState()
 {
     std::unordered_set<std::wstring> clipCutPaths;
@@ -689,8 +798,11 @@ inline void DesktopApp::UpdateCutState()
     }
 }
 
-// ── Shell change notifications ──────────────────────────────
+// ── Shell 变更通知 ──────────────────────────────────────────
 
+/**
+ * @brief 注册 Shell 变更通知（文件创建、删除、重命名、属性变更等），用于实时刷新桌面。
+ */
 inline void DesktopApp::RegisterShellChangeNotifications()
 {
     if (shellChangeRegId_ != 0)
@@ -722,8 +834,15 @@ inline void DesktopApp::RegisterShellChangeNotifications()
         kShellChangeMessage, entryCount, entries);
 }
 
-// ── Filtering ───────────────────────────────────────────────
+// ── 过滤与键值 ───────────────────────────────────────────────
 
+/**
+ * @brief 获取稳定的布局键值，优先级：桌面图标 CLSID > 文件路径 > 解析名称。
+ * @param pidl 绝对 PIDL。
+ * @param parsingName 解析名称。
+ * @param desktopIconClsid 桌面图标 CLSID。
+ * @return 规范化为大写的布局键。
+ */
 inline std::wstring DesktopApp::GetStableLayoutKey(
     PCIDLIST_ABSOLUTE pidl,
     const std::wstring& parsingName,
@@ -739,6 +858,11 @@ inline std::wstring DesktopApp::GetStableLayoutKey(
     return ToUpperInvariant(parsingName);
 }
 
+/**
+ * @brief 给快捷方式的位图左下角绘制小箭头图标。
+ * @param bitmap 目标位图。
+ * @param bitmapSize 位图尺寸。
+ */
 inline void DesktopApp::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSize)
 {
     if (!bitmap) return;
@@ -755,8 +879,12 @@ inline void DesktopApp::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSi
     DestroyIcon(sii.hIcon);
 }
 
-// ── Layout persistence ──────────────────────────────────────
+// ── 布局持久化 ──────────────────────────────────────────────
 
+/**
+ * @brief 获取布局文件的完整路径（与 exe 同目录下的 SnowDesktop.layout.json）。
+ * @return 布局文件路径。
+ */
 inline std::wstring DesktopApp::GetLayoutPath() const
 {
     wchar_t path[MAX_PATH]{};
@@ -766,6 +894,10 @@ inline std::wstring DesktopApp::GetLayoutPath() const
     return path;
 }
 
+/**
+ * @brief 从 JSON 文本中解析保存的页面信息（ID、行数、列数）。
+ * @param text JSON 格式的布局文本。
+ */
 inline void DesktopApp::LoadSavedPagesFromJson(const std::string& text)
 {
     size_t pagesName = text.find("\"pages\"");
@@ -798,6 +930,10 @@ inline void DesktopApp::LoadSavedPagesFromJson(const std::string& text)
     }
 }
 
+/**
+ * @brief 记录页面 ID 到已保存页面列表（去重）。
+ * @param pageId 页面 ID。
+ */
 inline void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
 {
     if (pageId.empty()) return;
@@ -805,6 +941,11 @@ inline void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
         savedPageIds_.push_back(pageId);
 }
 
+/**
+ * @brief 从布局 JSON 文件加载所有页面、组件和项目的网格位置信息。
+ *
+ * 解析内容包括：首选监视器、页面 ID/行列数、每个项目的网格位置及组件定义。
+ */
 inline void DesktopApp::LoadLayoutSlots()
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
@@ -986,8 +1127,20 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
             }
         }
     }
+
+    {
+        std::vector<std::wstring> savedOrder;
+        ReadJsonStringArrayField(text, "navTabOrder", savedOrder);
+        navTabOrder_ = std::move(savedOrder);
+    }
+    EnsureNavTabOrder();
 }
 
+/**
+ * @brief 将所有项目、组件和页面的网格布局信息持久化到 JSON 文件。
+ *
+ * 写入内容包括：首选监视器、页面列表、桌面项（排除组件所属项）以及所有组件的完整定义。
+ */
 inline void DesktopApp::SaveLayoutSlots()
 {
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
@@ -1099,9 +1252,22 @@ inline void DesktopApp::SaveLayoutSlots()
         file << "] }";
         file << (i + 1 == widgets_.size() ? "\n" : ",\n");
     }
-    file << "  ]\n}\n";
+    file << "  ],\n  \"navTabOrder\": [";
+    for (size_t i = 0; i < navTabOrder_.size(); ++i)
+    {
+        file << "\"" << JsonEscapeUtf8(navTabOrder_[i]) << "\"";
+        if (i + 1 != navTabOrder_.size()) file << ", ";
+    }
+    file << "]\n}\n";
 }
 
+/**
+ * @brief 从 JSON 对象文本中读取字符串字段值。
+ * @param objectText JSON 对象文本。
+ * @param fieldName 字段名。
+ * @param value 输出参数，UTF-8 编码的值。
+ * @return 读取成功返回 true。
+ */
 inline bool DesktopApp::ReadJsonStringField(const std::string& objectText, const char* fieldName, std::string& value) const
 {
     std::string marker = std::string("\"") + fieldName + "\"";
@@ -1113,6 +1279,13 @@ inline bool DesktopApp::ReadJsonStringField(const std::string& objectText, const
     return quote != std::string::npos && ParseJsonStringAt(objectText, quote, value, end);
 }
 
+/**
+ * @brief 从 JSON 对象文本中读取整数字段值。
+ * @param objectText JSON 对象文本。
+ * @param fieldName 字段名。
+ * @param value 输出参数，整数值。
+ * @return 读取成功返回 true。
+ */
 inline bool DesktopApp::ReadJsonIntField(const std::string& objectText, const char* fieldName, int& value) const
 {
     std::string marker = std::string("\"") + fieldName + "\"";
@@ -1125,6 +1298,13 @@ inline bool DesktopApp::ReadJsonIntField(const std::string& objectText, const ch
     catch (...) { return false; }
 }
 
+/**
+ * @brief 从 JSON 对象文本中读取布尔字段值。
+ * @param objectText JSON 对象文本。
+ * @param fieldName 字段名。
+ * @param value 输出参数，布尔值。
+ * @return 读取成功返回 true。
+ */
 inline bool DesktopApp::ReadJsonBoolField(const std::string& objectText, const char* fieldName, bool& value) const
 {
     std::string marker = std::string("\"") + fieldName + "\"";
@@ -1138,6 +1318,14 @@ inline bool DesktopApp::ReadJsonBoolField(const std::string& objectText, const c
     return false;
 }
 
+/**
+ * @brief 在 JSON 文本中查找匹配的闭合括号位置（支持字符串内转义）。
+ * @param text JSON 文本。
+ * @param start 起始位置（应为 '{' 或 '['）。
+ * @param open 起始括号字符。
+ * @param close 闭合括号字符。
+ * @return 闭合位置，未找到返回 npos。
+ */
 inline size_t DesktopApp::FindJsonContainerEnd(const std::string& text, size_t start, char open, char close) const
 {
     if (start >= text.size() || text[start] != open) return std::string::npos;
@@ -1156,12 +1344,25 @@ inline size_t DesktopApp::FindJsonContainerEnd(const std::string& text, size_t s
     return std::string::npos;
 }
 
+/**
+ * @brief 在 JSON 文本中查找对象结束位置。
+ */
 inline size_t DesktopApp::FindJsonObjectEnd(const std::string& text, size_t start) const
     { return FindJsonContainerEnd(text, start, '{', '}'); }
 
+/**
+ * @brief 在 JSON 文本中查找数组结束位置。
+ */
 inline size_t DesktopApp::FindJsonArrayEnd(const std::string& text, size_t start) const
     { return FindJsonContainerEnd(text, start, '[', ']'); }
 
+/**
+ * @brief 从 JSON 对象文本中读取字符串数组字段。
+ * @param objectText JSON 对象文本。
+ * @param fieldName 字段名。
+ * @param values 输出参数，宽字符串数组。
+ * @return 读取成功返回 true。
+ */
 inline bool DesktopApp::ReadJsonStringArrayField(const std::string& objectText, const char* fieldName, std::vector<std::wstring>& values) const
 {
     values.clear();
@@ -1187,6 +1388,11 @@ inline bool DesktopApp::ReadJsonStringArrayField(const std::string& objectText, 
     return true;
 }
 
+/**
+ * @brief 将 JSON 字符串转换为组件类型枚举。
+ * @param type 类型字符串（不区分大小写）。
+ * @return 对应的 DesktopWidgetType 枚举值。
+ */
 inline DesktopWidgetType DesktopApp::WidgetTypeFromJson(const std::wstring& type) const
 {
     std::wstring n = ToUpperInvariant(type);
@@ -1197,6 +1403,11 @@ inline DesktopWidgetType DesktopApp::WidgetTypeFromJson(const std::wstring& type
     return DesktopWidgetType::Collection;
 }
 
+/**
+ * @brief 将组件类型枚举转换为 JSON 字符串。
+ * @param type 组件类型。
+ * @return 对应的字符串表示。
+ */
 inline std::wstring DesktopApp::WidgetTypeToJson(DesktopWidgetType type) const
 {
     switch (type)
@@ -1209,8 +1420,16 @@ inline std::wstring DesktopApp::WidgetTypeToJson(DesktopWidgetType type) const
     }
 }
 
-// ── Control window ──────────────────────────────────────────
+// ── 控件窗口 ──────────────────────────────────────────
 
+/**
+ * @brief 控件窗口的消息处理函数（静态回调），将消息转发到 HandleControlMessage。
+ * @param hwnd 窗口句柄。
+ * @param msg 消息 ID。
+ * @param wp wParam。
+ * @param lp lParam。
+ * @return 消息处理结果。
+ */
 inline LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     DesktopApp* app = nullptr;
@@ -1228,6 +1447,14 @@ inline LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM w
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+/**
+ * @brief 处理控件窗口的消息：任务栏重启、托盘回调、定时器、命令、关闭、销毁等。
+ * @param hwnd 窗口句柄。
+ * @param msg 消息 ID。
+ * @param wp wParam。
+ * @param lp lParam。
+ * @return 消息处理结果。
+ */
 inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
@@ -1256,8 +1483,13 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// ── Bitmap cache ────────────────────────────────────────────
+// ── 位图缓存 ────────────────────────────────────────────
 
+/**
+ * @brief 将半透明暗色像素（alpha < 250 且 RGB 和 < 150）的 alpha 钳制为 0。
+ * @param bitmap 32 位 DIB 位图句柄。
+ * @param key 颜色键（未使用，保留参数）。
+ */
 inline void ClampAlphaToColorKey(HBITMAP bitmap, COLORREF key)
 {
     if (!bitmap) return;
@@ -1278,6 +1510,10 @@ inline void ClampAlphaToColorKey(HBITMAP bitmap, COLORREF key)
     (void)key;
 }
 
+/**
+ * @brief 重新加载桌面项，可选择是否重新从磁盘读取布局。
+ * @param reloadLayoutFromDisk 是否重新加载布局文件。
+ */
 inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
@@ -1389,6 +1625,11 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 枚举桌面文件夹中的所有项，构建 DesktopItem 列表，包含图标、布局键和网格位置。
+ *
+ * 会过滤隐藏项和非桌面路径项，并为 .lnk 文件检测快捷方式箭头。
+ */
 inline void DesktopApp::LoadDesktopItems()
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
@@ -1561,6 +1802,9 @@ inline void DesktopApp::LoadDesktopItems()
     L(buf);
 }
 
+/**
+ * @brief 更新布局工作区，枚举显示器并创建对应 GridPage，然后应用页面映射。
+ */
 inline void DesktopApp::UpdateLayoutWorkArea()
 {
     layoutWorkArea_ = MakeRect(0, 0, virtualWidth_, virtualHeight_);
@@ -1596,6 +1840,10 @@ inline void DesktopApp::UpdateLayoutWorkArea()
     ApplyPageMapping();
 }
 
+/**
+ * @brief 根据工作区尺寸和缩放比例配置网格页面的列数、行数、单元格尺寸和间距。
+ * @param page 待配置的网格页面。
+ */
 inline void DesktopApp::ConfigureGridPage(GridPage& page) const
 {
     const int cw = static_cast<int>(kCellWidth * gapScale_);
@@ -1617,6 +1865,9 @@ inline void DesktopApp::ConfigureGridPage(GridPage& page) const
     page.marginY = std::max(kGridMarginY, (h - gridH) / 2);
 }
 
+/**
+ * @brief 将保存的列/行数设置应用到当前网格页面。
+ */
 inline void DesktopApp::ApplySavedGridDimensions()
 {
     for (auto& page : gridPages_)
@@ -1633,6 +1884,10 @@ inline void DesktopApp::ApplySavedGridDimensions()
     }
 }
 
+/**
+ * @brief 根据缩放比例重新计算页面的单元格尺寸和间距。
+ * @param page 目标网格页面。
+ */
 inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
 {
     const int pageW = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
@@ -1659,13 +1914,20 @@ inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
     page.marginY = std::max(kGridMarginY, (pageH - gridH) / 2);
 }
 
-// ── Drag helpers ──────────────────────────────────────────────
+// ── 拖拽辅助函数 ──────────────────────────────────────────────
 
 extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
 extern inline int GetGridAxisOffset(const GridPage& page, int index, bool horizontal);
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
 extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
 
+/**
+ * @brief 根据坐标计算网格轴上的索引位置（采用最近距离法）。
+ * @param page 网格页面。
+ * @param coordinate 像素坐标。
+ * @param horizontal true 为水平轴，false 为垂直轴。
+ * @return 最近的轴索引。
+ */
 inline int DesktopApp::GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, bool horizontal)
 {
     const int count = horizontal ? page.columns : page.rows;
@@ -1683,6 +1945,11 @@ inline int DesktopApp::GetGridAxisIndexFromPoint(const GridPage& page, int coord
     return bestIndex;
 }
 
+/**
+ * @brief 根据点坐标获取对应的网格单元格（页面 ID + 行列）。
+ * @param point 客户区坐标。
+ * @return 对应的 GridCell。
+ */
 inline GridCell DesktopApp::CellFromPoint(POINT point) const
 {
     const GridPage* page = GridPageFromPoint(point);
@@ -1694,6 +1961,12 @@ inline GridCell DesktopApp::CellFromPoint(POINT point) const
     return cell;
 }
 
+/**
+ * @brief 检查网格区域是否被未选中的项目或组件占据。
+ * @param cell 起始单元格。
+ * @param span 跨度。
+ * @return 被占据返回 true。
+ */
 inline bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const
 {
     for (const auto& item : items_)
@@ -1723,6 +1996,11 @@ inline bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, Gri
     return false;
 }
 
+/**
+ * @brief 构建选中项目的移动计划（将选中项目平移到目标单元格并保持相对位置）。
+ * @param targetCell 目标单元格。
+ * @return 移动计划列表，无法移动时返回空列表。
+ */
 inline std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell targetCell) const
 {
     std::vector<PendingGridMove> moves;
@@ -1795,6 +2073,11 @@ inline std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(Gr
     return moves;
 }
 
+/**
+ * @brief 寻找最佳的放置单元格（优先沿拖拽方向查找空闲位置）。
+ * @param targetCell 初始目标单元格。
+ * @return 最佳的可用单元格。
+ */
 inline GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
 {
     if (!BuildSelectedMove(targetCell).empty()) return targetCell;
@@ -1852,6 +2135,10 @@ inline GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
     return targetCell;
 }
 
+/**
+ * @brief 将选中的项目移动到目标网格单元格。
+ * @param targetCell 目标单元格。
+ */
 inline void DesktopApp::MoveSelectedItemsToCell(GridCell targetCell)
 {
     std::vector<PendingGridMove> moves = BuildSelectedMove(std::move(targetCell));
@@ -1865,6 +2152,9 @@ inline void DesktopApp::MoveSelectedItemsToCell(GridCell targetCell)
     SaveLayoutSlots();
 }
 
+/**
+ * @brief 更新拖拽组的原点位置（用于计算拖拽时的偏移）。
+ */
 inline void DesktopApp::UpdateDragGroupOrigin()
 {
     int minCol = INT_MAX, minRow = INT_MAX;
@@ -1889,6 +2179,9 @@ inline void DesktopApp::UpdateDragGroupOrigin()
     dragGroupOriginY_ = groupRect.top;
 }
 
+/**
+ * @brief 将选中的项目迁移到最后一个监视器页面。
+ */
 inline void DesktopApp::MigrateSelectedItemsToLastMonitorPage()
 {
     if (gridPages_.empty() || lastMonitorPageId_.empty()) return;
@@ -1946,6 +2239,11 @@ inline void DesktopApp::MigrateSelectedItemsToLastMonitorPage()
     }
 }
 
+/**
+ * @brief 获取拖拽目标点的屏幕坐标。
+ * @param current 当前鼠标位置。
+ * @return 拖拽目标点。
+ */
 inline POINT DesktopApp::GetDragTargetPoint(POINT current) const
 {
     return {
@@ -1954,6 +2252,10 @@ inline POINT DesktopApp::GetDragTargetPoint(POINT current) const
     };
 }
 
+/**
+ * @brief 为选中的桌面项创建 IDataObject（用于拖拽/剪贴板）。
+ * @return COM 数据对象，失败返回 nullptr。
+ */
 inline ComPtr<IDataObject> DesktopApp::CreateSelectedDataObject() const
 {
     std::vector<PCUITEMID_CHILD> pidls;
@@ -1973,6 +2275,11 @@ inline ComPtr<IDataObject> DesktopApp::CreateSelectedDataObject() const
     return dataObject;
 }
 
+/**
+ * @brief 为指定文件路径列表创建文件拖拽数据对象。
+ * @param paths 文件路径列表。
+ * @return COM 数据对象，失败返回 nullptr。
+ */
 inline ComPtr<IDataObject> DesktopApp::CreateFileDropDataObject(const std::vector<std::wstring>& paths)
 {
     if (paths.empty()) return nullptr;
@@ -2017,6 +2324,11 @@ inline ComPtr<IDataObject> DesktopApp::CreateFileDropDataObject(const std::vecto
     return dataObject;
 }
 
+/**
+ * @brief 根据源项目列表创建数据对象（桌面图标优先，否则用文件路径）。
+ * @param sourceItems 源项目列表。
+ * @return COM 数据对象，失败返回 nullptr。
+ */
 inline ComPtr<IDataObject> DesktopApp::CreateDataObjectForItems(
     const std::vector<Item*>& sourceItems) const
 {
@@ -2029,6 +2341,10 @@ inline ComPtr<IDataObject> DesktopApp::CreateDataObjectForItems(
     return CreateFileDropDataObject(payload.filePaths);
 }
 
+/**
+ * @brief 将选中项目拖拽放置到目标桌面项上（调用 Shell IDropTarget 接口）。
+ * @param targetIndex 目标桌面项的索引。
+ */
 inline void DesktopApp::DropSelectedItemsOnTarget(int targetIndex)
 {
     if (targetIndex < 0 || static_cast<size_t>(targetIndex) >= items_.size()) return;
@@ -2058,6 +2374,11 @@ inline void DesktopApp::DropSelectedItemsOnTarget(int targetIndex)
         dropTarget->DragLeave();
 }
 
+/**
+ * @brief 根据布局键查找项目索引。
+ * @param key 项目布局键。
+ * @return 项目索引，未找到返回 -1。
+ */
 inline size_t DesktopApp::FindItemIndexByKey(const std::wstring& key) const
 {
     std::wstring normalized = ToUpperInvariant(key);
@@ -2066,6 +2387,10 @@ inline size_t DesktopApp::FindItemIndexByKey(const std::wstring& key) const
     return static_cast<size_t>(-1);
 }
 
+/**
+ * @brief 从所有组件中移除指定桌面键。
+ * @param keys 要移除的布局键列表。
+ */
 inline void DesktopApp::RemoveDesktopKeysFromWidgets(const std::vector<std::wstring>& keys)
 {
     if (keys.empty()) return;
@@ -2090,6 +2415,10 @@ inline void DesktopApp::RemoveDesktopKeysFromWidgets(const std::vector<std::wstr
     }
 }
 
+/**
+ * @brief 快照当前所有桌面项的布局键。
+ * @return 布局键的集合。
+ */
 inline std::unordered_set<std::wstring> DesktopApp::SnapshotDesktopKeys() const
 {
     std::unordered_set<std::wstring> keys;
@@ -2099,6 +2428,11 @@ inline std::unordered_set<std::wstring> DesktopApp::SnapshotDesktopKeys() const
     return keys;
 }
 
+/**
+ * @brief 获取自快照以来新增的桌面项布局键。
+ * @param existingKeys 之前的键快照。
+ * @return 新增的键列表。
+ */
 inline std::vector<std::wstring> DesktopApp::NewDesktopKeysSince(
     const std::unordered_set<std::wstring>& existingKeys) const
 {
@@ -2112,6 +2446,13 @@ inline std::vector<std::wstring> DesktopApp::NewDesktopKeysSince(
     return keys;
 }
 
+/**
+ * @brief 构建桌面放置列表，为拖拽源中的每个条目分配网格位置。
+ * @param sourceList 拖拽源列表。
+ * @param targetCell 目标网格单元格。
+ * @param internalMove 是否为内部移动。
+ * @return 放置操作列表。
+ */
 inline std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
     const DragSourceList& sourceList, GridCell targetCell, bool internalMove) const
 {
@@ -2204,6 +2545,12 @@ inline std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
     return landings;
 }
 
+/**
+ * @brief 根据源项目和所属容器构建拖拽源列表。
+ * @param sourceItems 源项目指针列表。
+ * @param origin 来源容器。
+ * @return 拖拽源列表。
+ */
 inline DragSourceList DesktopApp::BuildDragSourceList(
     const std::vector<Item*>& sourceItems, Container* origin) const
 {
@@ -2288,6 +2635,13 @@ inline DragSourceList DesktopApp::BuildDragSourceList(
     return list;
 }
 
+/**
+ * @brief 判断拖拽操作是否需要文件系统支持（复制/链接到文件夹映射等场景）。
+ * @param sourceList 拖拽源列表。
+ * @param targetKind 目标类型。
+ * @param action 拖拽动作。
+ * @return 需要文件系统支持返回 true。
+ */
 inline bool DesktopApp::IsDropFileBacked(const DragSourceList& sourceList,
     DropTargetKind targetKind, DropAction action) const
 {
@@ -2297,6 +2651,16 @@ inline bool DesktopApp::IsDropFileBacked(const DragSourceList& sourceList,
     return sourceList.hasExternalFiles || sourceList.hasFolderEntries;
 }
 
+/**
+ * @brief 构建拖拽预览列表，计算放置目标、动作和落点。
+ * @param sourceList 拖拽源列表。
+ * @param target 目标容器。
+ * @param targetSlot 目标槽位。
+ * @param region 命中区域。
+ * @param mods 修饰键。
+ * @param dropPoint 放置点坐标。
+ * @return 拖拽预览列表。
+ */
 inline DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceList,
     Container* target, Slot* targetSlot, HitRegion region, int mods, POINT dropPoint) const
 {
@@ -2369,6 +2733,12 @@ inline DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& so
     return preview;
 }
 
+/**
+ * @brief 构建外部文件拖入桌面的放置预览列表。
+ * @param targetCell 目标网格单元格。
+ * @param count 外部文件数量。
+ * @return 拖拽预览列表。
+ */
 inline DropPreviewList DesktopApp::BuildExternalDesktopPreviewList(GridCell targetCell, size_t count) const
 {
     DragSourceList list;
@@ -2391,6 +2761,12 @@ inline DropPreviewList DesktopApp::BuildExternalDesktopPreviewList(GridCell targ
     return preview;
 }
 
+/**
+ * @brief 执行拖拽管线的完整流程（文件落地或内部移动）。
+ * @param sourceList 拖拽源列表。
+ * @param preview 拖拽预览列表。
+ * @return 执行成功返回 true。
+ */
 inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     const DropPreviewList& preview)
 {
@@ -2400,6 +2776,12 @@ inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         : ExecuteInternalDropPlan(sourceList, preview);
 }
 
+/**
+ * @brief 执行内部拖拽放置计划（桌面间移动或组件间重排）。
+ * @param sourceList 拖拽源列表。
+ * @param preview 拖拽预览列表。
+ * @return 执行成功返回 true。
+ */
 inline bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
     const DropPreviewList& preview)
 {
@@ -2515,6 +2897,14 @@ inline bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList
     return false;
 }
 
+/**
+ * @brief 将文件实际复制/移动/创建快捷方式到桌面目录。
+ * @param sourceList 拖拽源列表。
+ * @param action 拖拽动作（复制/移动/链接）。
+ * @param duplicateDesktopCopyNames 是否对已在桌面的文件生成副本名称。
+ * @param createdPathsBySource 输出参数，记录每个源索引对应的创建路径。
+ * @return 操作成功返回 true。
+ */
 inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
     DropAction action, bool duplicateDesktopCopyNames,
     std::unordered_map<size_t, std::wstring>* createdPathsBySource)
@@ -2675,6 +3065,13 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
     return operated;
 }
 
+/**
+ * @brief 将文件实际复制/移动/创建快捷方式到指定文件夹。
+ * @param sourceList 拖拽源列表。
+ * @param folderPath 目标文件夹路径。
+ * @param action 拖拽动作。
+ * @return 操作成功返回 true。
+ */
 inline bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
     const std::wstring& folderPath, DropAction action) const
 {
@@ -2736,6 +3133,13 @@ inline bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceLis
     return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
 }
 
+/**
+ * @brief 缓存待处理的放置结果，供后续 ApplyPendingPlacement 使用。
+ * @param sourceList 拖拽源列表。
+ * @param preview 拖拽预览列表。
+ * @param existingKeys 放置前的桌面键快照。
+ * @param createdPathsBySource 可选参数，记录每个源索引对应的创建路径。
+ */
 inline void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
     const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
     const std::unordered_map<size_t, std::wstring>* createdPathsBySource)
@@ -2774,6 +3178,12 @@ inline void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceLis
     pendingLandingCache_.active = !pendingLandingCache_.entries.empty();
 }
 
+/**
+ * @brief 执行基于文件系统的拖拽放置计划（复制/移动到桌面或文件夹映射）。
+ * @param sourceList 拖拽源列表。
+ * @param preview 拖拽预览列表。
+ * @return 执行成功返回 true。
+ */
 inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     const DropPreviewList& preview)
 {
@@ -2897,6 +3307,11 @@ inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceLi
     return true;
 }
 
+/**
+ * @brief 在 D2D 设备上下文上绘制拖拽放置预览（高亮目标区域）。
+ * @param ctx D2D 设备上下文。
+ * @param preview 拖拽预览列表。
+ */
 inline void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
     const DropPreviewList& preview)
 {
@@ -2919,6 +3334,9 @@ inline void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
     }
 }
 
+/**
+ * @brief 应用缓存的放置结果，将新创建的文件分配到正确的网格位置或组件中。
+ */
 inline void DesktopApp::ApplyPendingPlacement()
 {
     if (!pendingLandingCache_.active) return;
@@ -3051,20 +3469,40 @@ inline void DesktopApp::ApplyPendingPlacement()
     }
 }
 
-// ── Grid free functions ─────────────────────────────────────
+// ── 网格全局函数 ──────────────────────────────────────────
 
+/**
+ * @brief 根据页面 ID 在页面列表中查找对应的网格页面。
+ * @param pages 页面列表。
+ * @param pageId 页面 ID。
+ * @return 找到的页面指针，未找到返回 nullptr。
+ */
 inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId)
 {
     for (auto& p : pages) if (p.id == pageId) return &p;
     return nullptr;
 }
 
+/**
+ * @brief 获取网格轴上指定索引的偏移像素值。
+ * @param page 网格页面。
+ * @param index 索引。
+ * @param horizontal true 为水平轴，false 为垂直轴。
+ * @return 偏移像素值。
+ */
 inline int GetGridAxisOffset(const GridPage& page, int index, bool horizontal)
 {
     return index * ((horizontal ? page.cellWidth : page.cellHeight) +
                     (horizontal ? page.gapX      : page.gapY));
 }
 
+/**
+ * @brief 根据网格页面和单元格计算对应的矩形区域。
+ * @param pages 页面列表。
+ * @param cell 起始单元格。
+ * @param span 跨度（默认 {1,1}）。
+ * @return 计算出的 RECT。
+ */
 inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span = {})
 {
     auto* page = FindGridPage(pages, cell.pageId);
@@ -3080,6 +3518,12 @@ inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell
     return MakeRect(x, y, r, b);
 }
 
+/**
+ * @brief 根据网格页面和单元格计算槽位索引。
+ * @param pages 页面列表。
+ * @param cell 单元格。
+ * @return 槽位索引。
+ */
 inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell)
 {
     auto* page = FindGridPage(pages, cell.pageId);
@@ -3087,6 +3531,9 @@ inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell
     return std::max(0, cell.column) * std::max(1, rows) + std::max(0, cell.row);
 }
 
+/**
+ * @brief 对所有桌面项和组件执行网格布局计算，更新每个项的边界矩形和槽位。
+ */
 inline void DesktopApp::LayoutItems()
 {
     for (auto& item : items_)
@@ -3125,6 +3572,12 @@ inline void DesktopApp::LayoutItems()
     RebuildContainersAndItems();
 }
 
+/**
+ * @brief 重建容器和项目对象层次结构（DesktopGrid、DesktopIcon、WidgetContainer 等）。
+ *
+ * 根据 items_ 和 widgets_ 数据重建运行时的 Container 和 Item 对象，
+ * 并重新绑定拖拽源。
+ */
 inline void DesktopApp::RebuildContainersAndItems()
 {
     containers_.clear();
@@ -3174,6 +3627,10 @@ inline void DesktopApp::RebuildContainersAndItems()
     InvalidateDragStaticScene();
 }
 
+/**
+ * @brief 枚举文件夹映射组件对应的物理目录，填充 folderEntries 列表。
+ * @param widget 目标组件。
+ */
 inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
 {
     for (auto& entry : widget.folderEntries)
@@ -3237,6 +3694,10 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
         widget.itemKeys.push_back(entry.fullPath);
 }
 
+/**
+ * @brief 刷新文件夹映射组件的内容（重新枚举目录）。
+ * @param widgetIndex 组件索引。
+ */
 inline void DesktopApp::RefreshFolderMappingWidget(size_t widgetIndex)
 {
     if (widgetIndex >= widgets_.size()) return;
@@ -3253,6 +3714,12 @@ inline void DesktopApp::RefreshFolderMappingWidget(size_t widgetIndex)
     // NOTE: caller must RebuildContainersAndItems + SaveLayoutSlots + InvalidateDesktop
 }
 
+/**
+ * @brief 收集桌面文件到文件分类组件中。
+ * @param widgetIndex 组件索引。
+ * @param persist 是否立即持久化布局。
+ * @return 有变化返回 true。
+ */
 inline bool DesktopApp::CollectFileCategoryWidget(size_t widgetIndex, bool persist)
 {
     if (widgetIndex >= widgets_.size() ||
@@ -3273,6 +3740,10 @@ inline bool DesktopApp::CollectFileCategoryWidget(size_t widgetIndex, bool persi
     return true;
 }
 
+/**
+ * @brief 确保只有一个文件分类组件开启自动收集模式。
+ * @param activeWidgetIndex 当前激活的组件索引。
+ */
 inline void DesktopApp::EnforceSingleAutoCollectFileCategory(size_t activeWidgetIndex)
 {
     for (size_t i = 0; i < widgets_.size(); ++i)
@@ -3282,6 +3753,9 @@ inline void DesktopApp::EnforceSingleAutoCollectFileCategory(size_t activeWidget
     }
 }
 
+/**
+ * @brief 应用所有开启了 autoCollect 的文件分类组件的自动收集。
+ */
 inline void DesktopApp::ApplyAutoCollectFileCategoryWidgets()
 {
     size_t active = static_cast<size_t>(-1);
@@ -3299,13 +3773,22 @@ inline void DesktopApp::ApplyAutoCollectFileCategoryWidgets()
         CollectFileCategoryWidget(active, false);
 }
 
-// ── Widget creation helpers ──────────────────────────────────
+// ── 组件创建辅助函数 ──────────────────────────────────
 
+/**
+ * @brief 生成一个新的唯一组件 ID。
+ * @return 组件 ID 字符串。
+ */
 inline std::wstring DesktopApp::MakeNewWidgetId() const
 {
     return L"widget-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
 }
 
+/**
+ * @brief 将组件添加到网格中，自动查找空闲位置。
+ * @param widget 组件对象（移动语义）。
+ * @param span 组件跨度。
+ */
 inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 {
     POINT clientPoint = lastContextMenuScreenPoint_;
@@ -3354,11 +3837,16 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     widget.gridCell = cell;
     widget.gridSpan = span;
     widgets_.push_back(std::move(widget));
+    EnsureNavTabOrder();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+/**
+ * @brief 在右键菜单位置添加集合组件。
+ * @param screenPoint 屏幕坐标点。
+ */
 inline void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
@@ -3371,6 +3859,10 @@ inline void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
     AddWidgetToGrid(std::move(w), { 1, 1 });
 }
 
+/**
+ * @brief 在右键菜单位置添加桌面文件分类组件。
+ * @param screenPoint 屏幕坐标点。
+ */
 inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
@@ -3382,6 +3874,10 @@ inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
     AddWidgetToGrid(std::move(w), { 2, 2 });
 }
 
+/**
+ * @brief 在右键菜单位置添加文件夹映射组件（弹出文件夹选择对话框）。
+ * @param screenPoint 屏幕坐标点。
+ */
 inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
@@ -3417,6 +3913,11 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
     RebuildContainersAndItems();
 }
 
+/**
+ * @brief 在右键菜单位置添加 Lua 脚本组件。
+ * @param screenPoint 屏幕坐标点。
+ * @param scriptFilename 脚本文件名。
+ */
 inline void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename)
 {
     if (scriptFilename.empty()) return;
@@ -3446,6 +3947,13 @@ inline void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& sc
     AddWidgetToGrid(std::move(w), { defaultColumns, defaultRows });
 }
 
+/**
+ * @brief 将组件放置到指定网格位置，并重新安置被挤占的桌面项。
+ * @param widgetIndex 组件索引。
+ * @param targetCell 目标单元格。
+ * @param targetSpan 目标跨度。
+ * @param isMove 是否为移动操作（而非缩放）。
+ */
 inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove)
 {
     if (widgetIndex >= widgets_.size()) return;
@@ -3589,6 +4097,11 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
     SaveLayoutSlots();
 }
 
+/**
+ * @brief 获取或创建 HBITMAP 对应的 Direct2D 位图（带缓存）。
+ * @param hbm HBITMAP 句柄。
+ * @return ID2D1Bitmap1 指针，失败返回 nullptr。
+ */
 inline ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm)
 {
     if (!hbm) return nullptr;

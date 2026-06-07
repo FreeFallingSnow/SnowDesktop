@@ -1,3 +1,8 @@
+/**
+ * @file resource.h
+ * @brief 资源标识符定义
+ * @details 定义应用程序图标、字体等资源的ID
+ */
 #pragma once
 
 #define IDI_APPICON 1

@@ -1,3 +1,22 @@
+/**
+ * @file widget.h
+ * @brief 桌面组件（Widget）体系：组件类型定义与工厂函数
+ *
+ * 组件层级关系（自上而下）：
+ * - Widget（纯 Item，不可接收拖放）← LuaScript
+ * - WidgetContainer（Widget + ListContainer，可接收拖放）
+ *   - Collection（分类集合，固定大小缩略图网格）
+ *   - ScrollingItemWidget（可滚动的列表/图标视图基类）
+ *     - FileCategories（文件分类面板，带分类标签页）
+ *     - FolderMapping（映射文件夹，文件列表/图标模式）
+ *
+ * 设计要点：
+ * - Widget 继承自 Item，表示桌面上一个可渲染、可拖动的矩形区域
+ * - WidgetContainer 同时继承 Widget 和 ListContainer，使其既能渲染又能接收子项拖放
+ * - ScrollingItemWidget 提供滚动条管理，供需要纵向滚动的列表/图标视图使用
+ * - LuaScript 是纯渲染 Widget，无容器能力，完全由 Lua 脚本驱动
+ */
+
 #pragma once
 #include "item.h"
 #include "container.h"
@@ -10,20 +29,38 @@ struct DesktopWidget;
 class DesktopApp;
 struct GridPage;
 
-// ── WidgetHit — granular hit-test result for chrome elements ──
+/**
+ * @enum WidgetHit
+ * @brief 组件 chrome 区域的精细化命中测试结果
+ *
+ * 用于判断鼠标点击落在组件边框/底栏的哪个功能区，从而触发不同的交互行为。
+ */
 enum class WidgetHit {
-    None,
-    Content,        // member item area
-    MoveHandle,     // bottom bar (except resize corner) — drag to move
-    ResizeHandle,   // bottom-right 24px corner — drag to resize
-    ListToggleBtn,  // FolderMapping: toggle icon/list
-    OpenFolderBtn,  // FolderMapping: open source folder
-    CategoryTab,    // FileCategories: category tab
-    CollectionOpenBtn, // Collection: compact body / "all" mosaic
+    None,               ///< 未命中任何有效区域
+    Content,            ///< 成员项区域（item 列表/网格区）
+    MoveHandle,         ///< 底栏（除右下角缩放角外）—— 拖拽移动组件
+    ResizeHandle,       ///< 右下角 24px 缩放角 —— 拖拽调整组件大小
+    ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
+    OpenFolderBtn,      ///< FolderMapping：打开源文件夹按钮
+    CategoryTab,        ///< FileCategories：分类标签页
+    CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
 };
 
-// ── Widget : pure Item (draggable, renderable) ──────────────
-// Does NOT inherit Container — used for LuaScript which doesn't accept drops.
+/**
+ * @class Widget
+ * @brief 纯 Item 组件，不具备容器（Container）能力
+ *
+ * Widget 是桌面上可渲染、可拖动的矩形区域，继承自 Item。
+ * 它不继承 Container，因此不能作为拖放目标接收其他 Item。
+ * 主要用于 LuaScript——由 Lua 脚本完全控制渲染和行为，
+ * 不需要接收外部拖放。
+ *
+ * 职责范围：
+ * - 提供标题、路径、图标等 Item 接口
+ * - 管理组件位置（SetBounds/GetBounds）
+ * - 通过 Draw 方法在 Direct2D 上下文中渲染自身
+ * - 支持拖拽时创建数据对象（CreateDataObject）
+ */
 class Widget : public Item
 {
 public:
@@ -50,9 +87,22 @@ protected:
     DesktopApp* app_;
 };
 
-// ── WidgetContainer : Widget + ListContainer ─
-// Widget that can receive drops. Uses 1D list layout (ListContainer).
-// Does NOT accept other Widgets as drop targets.
+/**
+ * @class WidgetContainer
+ * @brief 可接收拖放的组件，Widget + ListContainer 的组合体
+ *
+ * WidgetContainer 同时继承 Widget（渲染和拖动能力）与 ListContainer（一维列表容器能力），
+ * 使其桌面组件既能渲染自身 UI，又能作为拖放目标接收其他 Item。
+ *
+ * 重要约束：WidgetContainer 不接收其他 Widget 作为拖放目标（即不允许组件嵌套组件）。
+ *
+ * 主要职责：
+ * - 定义组件 chrome 区域（边框、底栏、标题区、缩放角）的几何计算
+ * - 提供命中测试（HitTestWidget/Handle），区分底栏拖拽与缩放
+ * - 绘制组件边框、背景、标题、滚动条等 chrome 元素
+ * - 拖放预览：HitTestDrag、DrawDropPreview 等虚拟接口
+ * - 子类覆盖 GetMemberItem、DrawContent、DrawButtons 等实现具体内容
+ */
 class WidgetContainer : public Widget, public ListContainer
 {
 public:
@@ -120,10 +170,17 @@ protected:
     mutable std::vector<std::unique_ptr<Item>> slotItemCache_;
 };
 
-// ── ScrollingItemWidget : WidgetContainer with list/icon toggle ─
-// Shared base for FileCategories and FolderMapping.
-// Provides SingleColumn (listMode-based), shared list-mode item
-// rendering (DrawListItem), and scroll metrics boilerplate.
+/**
+ * @class ScrollingItemWidget
+ * @brief 可滚动的列表/图标视图组件基类
+ *
+ * 作为 FileCategories 和 FolderMapping 的公共基类，
+ * 封装了列表模式（listMode）与图标模式（SingleColumn）的切换逻辑，
+ * 以及列表模式下统一的项目绘制方法（DrawListItem）。
+ *
+ * 滚动相关接口（GetScrollOffset、GetMaxScrollOffset 等）在此声明，
+ * 由子类提供具体实现。滚动条绘制由 WidgetContainer::DrawScrollbar 统一处理。
+ */
 class ScrollingItemWidget : public WidgetContainer
 {
 public:
@@ -141,8 +198,21 @@ public:
     BarStyle GetInsertionStyle() const override;
 };
 
-// ── Concrete widget types ───────────────────────────────────
-
+/**
+ * @class Collection
+ * @brief 分类集合组件，固定大小缩略图网格
+ *
+ * Collection 是一种不可滚动的 WidgetContainer，成员以固定大小（136x92）
+ * 的缩略图网格形式排列。支持分类标签，通过 CategoryIdAtPoint 确定
+ * 点击位置属于哪个分类。
+ *
+ * 特性：
+ * - 固定 item 尺寸（136x92），无滚动条
+ * - 支持分类标签页点击切换
+ * - "全部"马赛克按钮（GetAllButtonRect），点击展开所有分类
+ * - 拖放插入样式为 VBar（竖线指示器）
+ * - 无需外壳刷新（NeedsShellReloadAfterDrop = false）
+ */
 class Collection : public WidgetContainer
 {
 public:
@@ -174,6 +244,21 @@ private:
         RECT rect, bool selected) const;
 };
 
+/**
+ * @class FileCategories
+ * @brief 文件分类面板组件，带可滚动的分类标签页
+ *
+ * 继承自 ScrollingItemWidget，支持列表/图标模式切换。
+ * 按文件类型分类（文档、图片、视频、音乐等），每个分类有独立的标签页，
+ * 标签页支持横向滚动（TryScrollTabs）。
+ *
+ * 特性：
+ * - 顶部分类标签栏，支持标签滚动
+ * - 根据用户桌面文件自动分类（CollectTopLevelDesktopItems）
+ * - 支持按分类过滤显示文件
+ * - 列表模式与图标模式可通过 SingleColumn 切换
+ * - 部分桌面键（DesktopKey）可被屏蔽（AllowsDesktopKey）
+ */
 class FileCategories : public ScrollingItemWidget
 {
 public:
@@ -206,6 +291,20 @@ public:
     int GetVisibleContentHeight() const override;
 };
 
+/**
+ * @class FolderMapping
+ * @brief 映射文件夹组件，显示文件夹内容的列表/图标视图
+ *
+ * 继承自 ScrollingItemWidget，映射磁盘上的一个文件夹到桌面组件中。
+ * 支持列表模式和图标模式切换（由 ListToggleBtn 触发）。
+ *
+ * 特性：
+ * - 显示文件夹内文件的列表或图标视图
+ * - 底栏包含列表/图标切换按钮和打开源文件夹按钮
+ * - 文件可拖入/拖出进行复制或移动
+ * - 末尾始终包含一个空插槽（IncludeTrailingEmptySlot = true）
+ * - 支持纵向滚动
+ */
 class FolderMapping : public ScrollingItemWidget
 {
 public:
@@ -233,7 +332,19 @@ public:
     bool NeedsShellReloadAfterDrop() const override { return false; }
 };
 
-// LuaScript: pure Widget, no Container
+/**
+ * @class LuaScript
+ * @brief Lua 脚本驱动的纯渲染组件
+ *
+ * LuaScript 继承自 Widget（纯 Item），不具备容器能力，
+ * 不接受外部拖放。其所有渲染和行为完全由关联的 Lua 脚本控制。
+ *
+ * 与 WidgetContainer 系列不同，LuaScript：
+ * - 没有底栏、边框等 chrome 元素
+ * - 没有成员项列表
+ * - 不可以作为拖放目标
+ * - 完全由 Lua 脚本的 Draw 回调决定呈现内容
+ */
 class LuaScript : public Widget
 {
 public:
@@ -241,9 +352,34 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
 };
 
-// Factory
+/**
+ * @brief 创建组件实例的工厂函数
+ *
+ * 根据 DesktopWidget::Type 决定创建哪种组件子类：
+ * - Type::Collection    → Collection
+ * - Type::FileCategories → FileCategories
+ * - Type::FolderMapping → FolderMapping
+ * - Type::LuaScript     → LuaScript
+ * - 其他                → WidgetContainer
+ *
+ * @param data  组件数据源（持久化配置）
+ * @param app   桌面应用主对象指针
+ * @return 新创建的组件实例，已确定具体子类类型
+ */
 std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app);
 
-// Shared scrollbar helper — used by WidgetContainer and Collection popup
+/**
+ * @brief 共享滚动条绘制辅助函数
+ *
+ * 在给定矩形区域内绘制纵向滚动条。被 WidgetContainer::DrawScrollbar
+ * 和 Collection 弹窗共用，避免重复实现。
+ *
+ * @param context       Direct2D 绘制上下文
+ * @param body          内容区域矩形（滚动条绘制在此区域右侧）
+ * @param contentHeight 内容总高度（像素）
+ * @param visibleHeight 可见区域高度（像素）
+ * @param scrollOffset  当前滚动偏移量（像素）
+ * @param hovered       鼠标是否悬停在滚动条区域
+ */
 void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     int visibleHeight, int scrollOffset, bool hovered);

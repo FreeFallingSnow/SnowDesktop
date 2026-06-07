@@ -1,3 +1,16 @@
+/**
+ * @file widget_base.cpp
+ * @brief Widget 基类、容器布局、滚动列表、组件 Chrome 绘制、滚动条绘制及组件工厂的实现。
+ *
+ * 本文件聚合了桌面组件系统中所有抽象基类的默认行为：
+ * - Widget：所有组件的纯虚基类，提供标题、边界、选择状态等基本接口。
+ * - WidgetContainer：容器类组件的通用布局引擎，负责网格化的 Slot 构建、
+ *   帧区域计算、命中测试、拖放预览和通用 chrome 绘制。
+ * - ScrollingItemWidget：支持滚动的列表/网格组件基类，提供列表项绘制、
+ *   滚动偏移和插入指示器等共享逻辑。
+ * - DrawScrollbarAt：被多个组件共享的滚动条绘制工具函数。
+ * - CreateWidget：组件工厂函数，根据 DesktopWidgetType 创建对应的具体组件实例。
+ */
 #include "widget.h"
 #include "types.h"
 #include "constants.h"
@@ -11,18 +24,61 @@ using Microsoft::WRL::ComPtr;
 
 // ── Widget base (Item only) ─────────────────────────────────
 
+/**
+ * @brief 构造 Widget 基类实例。
+ * @param data 关联的桌面组件数据对象。
+ * @param app  桌面应用实例指针，用于访问 D2D/DWrite 工厂等全局资源。
+ */
 Widget::Widget(DesktopWidget* data, DesktopApp* app)
     : data_(data), app_(app) {}
 
+/**
+ * @brief 获取组件标题
+ * @return 标题字符串，无数据时返回空
+ */
 std::wstring Widget::GetTitle() const { return data_ ? data_->title : L""; }
+/**
+ * @brief 获取组件路径（Widget 基类不实现）
+ * @return 空字符串
+ */
 std::wstring Widget::GetPath() const { return L""; }
+/**
+ * @brief 获取图标位图（Widget 基类不实现）
+ * @return nullptr
+ */
 HBITMAP Widget::GetIconBitmap() const { return nullptr; }
+/**
+ * @brief 获取边界矩形
+ * @return 组件边界，无数据时返回空矩形
+ */
 RECT Widget::GetBounds() const { return data_ ? data_->bounds : RECT{}; }
+/**
+ * @brief 设置边界矩形
+ * @param bounds 新的边界矩形
+ */
 void Widget::SetBounds(RECT bounds) { if (data_) data_->bounds = bounds; }
+/**
+ * @brief 判断组件是否处于选中状态
+ * @return 选中状态
+ */
 bool Widget::IsSelected() const { return data_ && data_->selected; }
+/**
+ * @brief 设置选中状态
+ * @param selected 是否选中
+ */
 void Widget::SetSelected(bool selected) { if (data_) data_->selected = selected; }
+/**
+ * @brief 获取父容器指针（Widget 基类不属于容器）
+ * @return nullptr
+ */
 Container* Widget::GetContainer() const { return nullptr; }
 
+/**
+ * @brief 绘制组件（Widget 基类为空操作，由子类覆盖）
+ * @param context D2D 设备上下文
+ * @param rect 绘制区域
+ * @param state 绘制状态（0=普通, 1=悬停, 2=选中, 3=拖拽中）
+ */
 void Widget::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
     (void)context;
@@ -30,6 +86,10 @@ void Widget::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     (void)state;
 }
 
+/**
+ * @brief 创建数据对象（Widget 基类不实现 OLE 拖拽）
+ * @return nullptr
+ */
 ComPtr<IDataObject> Widget::CreateDataObject()
 {
     return nullptr;
@@ -37,6 +97,11 @@ ComPtr<IDataObject> Widget::CreateDataObject()
 
 // ── WidgetContainer geometry ──────────────────────────────────
 
+/**
+ * @brief WidgetContainer 构建插槽列表
+ * @details 根据 GetBodyRect 返回的内容区域按行列网格化生成插槽，每个插槽通过 GetSlotItem 获取关联的 Item
+ * @return 插槽列表
+ */
 std::vector<std::unique_ptr<Slot>> WidgetContainer::BuildSlots()
 {
     slotItemCache_.clear();
@@ -71,6 +136,10 @@ std::vector<std::unique_ptr<Slot>> WidgetContainer::BuildSlots()
     return slots;
 }
 
+/**
+ * @brief 获取组件外框矩形（吸收半个网格间距使相邻组件视觉上保持固定间隙）
+ * @return 外框边界矩形
+ */
 RECT WidgetContainer::GetFrameRect() const
 {
     if (!data_) return {};
@@ -102,6 +171,10 @@ RECT WidgetContainer::GetFrameRect() const
     return rect;
 }
 
+/**
+ * @brief 获取内容区域矩形（去除底部操作栏区域）
+ * @return 内容边界矩形
+ */
 RECT WidgetContainer::GetBodyRect() const
 {
     RECT frame = GetFrameRect();
@@ -111,6 +184,10 @@ RECT WidgetContainer::GetBodyRect() const
     return frame;
 }
 
+/**
+ * @brief 获取底部移动操作栏区域
+ * @return 移动操作栏边界矩形
+ */
 RECT WidgetContainer::GetMoveHandleRect() const
 {
     RECT frame = GetFrameRect();
@@ -123,6 +200,10 @@ RECT WidgetContainer::GetMoveHandleRect() const
     };
 }
 
+/**
+ * @brief 获取右下角缩放手柄区域
+ * @return 缩放手柄边界矩形（24x24 区域）
+ */
 RECT WidgetContainer::GetResizeHandleRect() const
 {
     RECT handle = GetMoveHandleRect();
@@ -135,6 +216,10 @@ RECT WidgetContainer::GetResizeHandleRect() const
     };
 }
 
+/**
+ * @brief 获取标题文字显示区域
+ * @return 标题边界矩形
+ */
 RECT WidgetContainer::GetTitleRect() const
 {
     RECT handle = GetMoveHandleRect();
@@ -146,12 +231,22 @@ RECT WidgetContainer::GetTitleRect() const
 
 // ── Hit testing ───────────────────────────────────────────────
 
+/**
+ * @brief 判断点是否在缩放手柄区域内
+ * @param pt 屏幕坐标点
+ * @return 是否命中缩放手柄
+ */
 bool WidgetContainer::HitResizeHandle(POINT pt) const
 {
     RECT r = GetResizeHandleRect();
     return PtInRect(&r, pt) != FALSE;
 }
 
+/**
+ * @brief 组件级命中测试（缩放手柄 > 移动操作栏 > 内容区）
+ * @param pt 屏幕坐标点
+ * @return 命中的组件区域类型
+ */
 WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
 {
     RECT frame = GetFrameRect();
@@ -167,6 +262,12 @@ WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
 
 // ── Container drag virtuals ──────────────────────────────────────
 
+/**
+ * @brief 拖放命中测试 - 遍历插槽检查点坐标
+ * @param pt 屏幕坐标点
+ * @param outSlot [out] 命中的插槽指针
+ * @return 命中区域类型
+ */
 HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 {
     outSlot = nullptr;
@@ -198,6 +299,15 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
     return HitRegion::SortAfter;
 }
 
+/**
+ * @brief 获取拖放提示文本
+ * @param slot 目标插槽
+ * @param region 命中区域类型
+ * @param sourceItems 拖拽源项目列表
+ * @param origin 源容器
+ * @param mods 键盘修饰键
+ * @return 提示字符串
+ */
 std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
     const std::vector<Item*>& sourceItems, Container* origin, int mods) const
 {
@@ -253,12 +363,24 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
     return L"释放：" + actionText() + L"到此处";
 }
 
+/**
+ * @brief 绘制拖放预览指示器
+ * @param ctx D2D 设备上下文
+ * @param slot 目标插槽
+ * @param region 命中区域类型
+ */
 void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
     if (!slot || !ctx) return;
     slot->DrawDropIndicator(ctx, region);
 }
 
+/**
+ * @brief 计算拖放插入索引位置
+ * @param targetSlot 目标插槽
+ * @param region 命中区域（决定插入前/后）
+ * @return 插入位置的索引
+ */
 size_t WidgetContainer::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
 {
     size_t insertAt = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
@@ -269,21 +391,41 @@ size_t WidgetContainer::GetDropInsertIndex(Slot* targetSlot, HitRegion region) c
 
 // ── ScrollingItemWidget shared helpers ─────────────────────────
 
+/**
+ * @brief 判断是否使用单列（列表）模式
+ * @return 列表模式返回 true，网格模式返回 false
+ */
 bool ScrollingItemWidget::SingleColumn() const
 {
     return data_ && data_->listMode;
 }
 
+/**
+ * @brief 获取当前滚动偏移量（自动限制在有效范围内）
+ * @return 非负滚动偏移值
+ */
 int ScrollingItemWidget::GetScrollOffset() const
 {
     return data_ ? std::clamp(data_->scrollOffset, 0, GetMaxScrollOffset()) : 0;
 }
 
+/**
+ * @brief 获取插入指示条样式
+ * @return 列表模式使用水平条(HBar)，网格模式使用竖直条(VBar)
+ */
 BarStyle ScrollingItemWidget::GetInsertionStyle() const
 {
     return data_ && data_->listMode ? BarStyle::HBar : BarStyle::VBar;
 }
 
+/**
+ * @brief 绘制列表模式下的单个项目（图标+文字）
+ * @param context D2D 设备上下文
+ * @param cell 项目单元格区域
+ * @param iconBitmap 图标位图
+ * @param name 项目名称
+ * @param selected 是否选中
+ */
 void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     HBITMAP iconBitmap, const std::wstring& name, bool selected) const
 {
@@ -346,6 +488,15 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
 
 // ── Scrollbar helper (free function, shared by WidgetContainer and popup) ─
 
+/**
+ * @brief 共享滚动条绘制函数（被 WidgetContainer 和 Collection 弹出面板共用）
+ * @param context D2D 设备上下文
+ * @param body 内容区域边界
+ * @param contentHeight 内容总高度
+ * @param visibleHeight 可见区域高度
+ * @param scrollOffset 当前滚动偏移
+ * @param hovered 鼠标是否悬停在滚动区域
+ */
 void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     int visibleHeight, int scrollOffset, bool hovered)
 {
@@ -395,6 +546,11 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     }
 }
 
+/**
+ * @brief 绘制组件滚动条（通过 DrawScrollbarAt 实现）
+ * @param context D2D 设备上下文
+ * @param hovered 鼠标是否悬停在组件上
+ */
 void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const
 {
     RECT body = GetBodyRect();
@@ -404,6 +560,11 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
 
 // ── DrawChrome ────────────────────────────────────────────────
 
+/**
+ * @brief 绘制组件装饰层（背景、边框、内容、渐变底栏、标题、缩放手柄、按钮、滚动条）
+ * @param context D2D 设备上下文
+ * @param mousePt 当前鼠标位置
+ */
 void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
     if (!data_ || !context) return;
@@ -599,6 +760,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
 // ── Factory ─────────────────────────────────────────────────
 
+/**
+ * @brief 组件工厂函数，根据类型创建对应的具体组件实例
+ * @param data 桌面组件数据
+ * @param app 桌面应用实例
+ * @return 组件实例的唯一指针，类型不匹配时返回 nullptr
+ */
 std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app)
 {
     if (!data) return nullptr;
