@@ -9,3 +9,4 @@ TestResults/
 build/
 .build_debug/
 release/
+docs/

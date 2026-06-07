@@ -1,3 +1,16 @@
+/**
+ * @file widget_engine.cpp
+ * @brief WidgetEngine 类的实现，管理 Lua 小部件的完整生命周期
+ *
+ * 该文件实现了 WidgetEngine 类及其相关辅助功能，负责：
+ * - 将 Lua 脚本加载到 Lua 5.x 沙盒环境中安全执行
+ * - 注册绘制 API（draw.*）、系统 API（sys.*）、桌面 API（desktop.*）等 Lua 可调用的 C 函数
+ * - 通过 D2D 渲染小部件内容并处理交互事件（点击、菜单、桌面变更等）
+ * - 管理小部件的持久化键值存储（localStorage）、文件变更热重载与错误记录
+ * - 集成 ImGui 为 Lua 脚本提供 imgui.* 界面控件 API
+ * - 读取并解析 .widget.json 清单文件以获取权限、尺寸等元信息
+ */
+
 #include "widget_engine.h"
 #include "utils.h"
 
@@ -19,6 +32,11 @@
 
 #pragma comment(lib, "windowscodecs.lib")
 
+/**
+ * @brief 以二进制模式读取文本文件全部内容
+ * @param path 文件路径（宽字符）
+ * @return 文件内容的 UTF-8 字符串，读取失败时返回空串
+ */
 static std::string ReadTextFile(const std::wstring& path)
 {
     std::ifstream file(path, std::ios::binary);
@@ -28,6 +46,11 @@ static std::string ReadTextFile(const std::wstring& path)
     return ss.str();
 }
 
+/**
+ * @brief 将宽字符串（UTF-16）转换为 UTF-8 编码
+ * @param w 输入的宽字符串
+ * @return UTF-8 编码的 std::string，输入为空时返回空串
+ */
 static std::string WidgetWideToUtf8(const std::wstring& w)
 {
     if (w.empty()) return {};
@@ -37,6 +60,11 @@ static std::string WidgetWideToUtf8(const std::wstring& w)
     return r;
 }
 
+/**
+ * @brief 将 UTF-8 字符串转换为本地宽字符串（UTF-16）
+ * @param s 输入的 UTF-8 字符串
+ * @return UTF-16 编码的 std::wstring，输入为空时返回空串
+ */
 static std::wstring Utf8ToWideLocal(const std::string& s)
 {
     if (s.empty()) return {};
@@ -46,6 +74,16 @@ static std::wstring Utf8ToWideLocal(const std::string& s)
     return r;
 }
 
+/**
+ * @brief 简易 JSON 字符串字段解析器（不依赖第三方库）
+ * @param text  待解析的 JSON 文本
+ * @param field 目标字段名
+ * @param out   输出参数，解析成功后写入字段值
+ * @retval true  成功找到并解析出字段值
+ * @retval false 字段不存在或解析失败
+ * @note 仅支持简单的 \"key\": \"value\" 格式，不处理嵌套对象。
+ *       支持 \\n、\\r、\\t、\\"、\\\\ 等转义序列。
+ */
 static bool JsonReadString(const std::string& text, const char* field, std::string& out)
 {
     std::string marker = std::string("\"") + field + "\"";

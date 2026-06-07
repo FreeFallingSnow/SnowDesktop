@@ -1,3 +1,16 @@
+/**
+ * @file main.cpp
+ * @brief 应用程序入口点
+ *
+ * 负责单实例管理、异常崩溃处理以及 DesktopApp 的启动。
+ * 启动流程：
+ *   1. 检测命令行特殊开关（例如 --restore-explorer-icons）
+ *   2. 关闭已存在的同名进程实例（单实例保证）
+ *   3. 注册全局未处理异常过滤器和崩溃日志处理器
+ *   4. 注册应用程序重启回调
+ *   5. 创建 DesktopApp 对象并进入消息循环
+ */
+
 #include "app.h"
 #include "crashlog.h"
 
@@ -62,20 +75,33 @@ static void CloseExistingInstances()
     CloseHandle(snapshot);
 }
 
+/**
+ * @brief Windows GUI 应用程序入口
+ * @param instance 当前应用程序实例句柄
+ * @param commandLine 命令行参数（Unicode）
+ * @param showCommand 窗口显示方式（SW_SHOWNORMAL 等）
+ * @return 应用程序退出码
+ */
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    /* 处理特殊命令行开关：仅恢复资源管理器图标后立即退出 */
     if (commandLine != nullptr && wcsstr(commandLine, L"--restore-explorer-icons") != nullptr)
     {
         RestoreExplorerIconLayerNow();
         return 0;
     }
 
+    /* 关闭已存在的同名实例，确保单实例运行 */
     CloseExistingInstances();
 
+    /* 注册全局未处理异常过滤器与崩溃日志处理器 */
     SetUnhandledExceptionFilter(UnhandledFilter);
     InstallCrashHandler();
+
+    /* 注册应用程序自动重启，遇到某些崩溃后可自动重启 */
     RegisterApplicationRestart(nullptr, RESTART_NO_CRASH | RESTART_NO_HANG);
 
+    /* 创建主应用实例并进入消息循环 */
     DesktopApp app;
     return app.Run(instance, showCommand);
 }

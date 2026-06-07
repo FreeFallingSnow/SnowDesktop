@@ -1,9 +1,20 @@
+/**
+ * @file app_menu.h
+ * @brief DesktopApp 的上下文菜单相关内联实现。
+ *
+ * 该文件在 app_oo.h 中类定义之后被包含，提供桌面背景菜单、图标右键菜单、
+ * Shell 扩展菜单、新建菜单以及菜单图标位图创建等功能。
+ * 所有菜单均使用 TrackPopupMenuEx 以右键菜单方式弹出，并支持图标渲染。
+ */
 #pragma once
-// Inline implementations for DesktopApp — Context menus.
-// This file is included by app_oo.h after the class definition.
 
-// ── Context menus ───────────────────────────────────────────
-
+/**
+ * @brief 根据文本创建菜单图标位图（使用 DIB 段）。
+ *        将文本渲染到透明位图上，再提取亮度通道作为 alpha 通道，
+ *        生成适合菜单图标使用的灰度位图。
+ * @param text 要渲染的文本内容（通常为 Segoe MDL2 Assets 图标字符）。
+ * @return 成功返回创建的位图句柄，失败返回 nullptr。
+ */
 inline HBITMAP DesktopApp::CreateMenuIconBitmap(const wchar_t* text)
 {
     const int cx = std::max(20, GetSystemMetrics(SM_CXMENUCHECK));
@@ -57,6 +68,14 @@ inline HBITMAP DesktopApp::CreateMenuIconBitmap(const wchar_t* text)
     return bmp;
 }
 
+/**
+ * @brief 为指定菜单项设置位图图标。
+ *        通过 CreateMenuIconBitmap 创建图标位图后，使用 MIIM_BITMAP
+ *        将位图关联到菜单项上。创建的位图由 menuIconPool_ 统一管理。
+ * @param menu    目标菜单句柄。
+ * @param command 菜单项的 ID（或子菜单句柄）。
+ * @param text    用于生成图标的文本（图标字符）。
+ */
 inline void DesktopApp::SetMenuItemIcon(HMENU menu, UINT_PTR command, const wchar_t* text)
 {
     HBITMAP icon = CreateMenuIconBitmap(text);
@@ -83,6 +102,10 @@ inline void DesktopApp::SetMenuItemIcon(HMENU menu, UINT_PTR command, const wcha
         DeleteObject(icon);
 }
 
+/**
+ * @brief 清除所有缓存的菜单图标位图。
+ *        遍历 menuIconPool_ 逐一 DeleteObject 释放 GDI 资源，然后清空容器。
+ */
 inline void DesktopApp::ClearMenuIcons()
 {
     for (HBITMAP bmp : menuIconPool_)
@@ -90,6 +113,13 @@ inline void DesktopApp::ClearMenuIcons()
     menuIconPool_.clear();
 }
 
+/**
+ * @brief 显示桌面背景右键菜单。
+ *        在屏幕坐标处弹出菜单，包含粘贴、新建、刷新、排序方式、
+ *        行列调整、添加组件、缩放等选项。菜单项均带图标。
+ *        选中 Lua 组件或缩放预设时直接处理，其余通过命令 ID 分发。
+ * @param screenPoint 菜单弹出的屏幕坐标。
+ */
 inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
@@ -341,6 +371,14 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
 }
 
+/**
+ * @brief 显示桌面图标（文件/快捷方式）的右键菜单。
+ *        包含打开、重命名、剪切、复制、删除及"展开更多选项"。
+ *        仅在选中项为文件系统项时可操作（非系统图标如此电脑等）。
+ *        剪切/复制通过 IDataObject 与 OLE 剪贴板交互。
+ * @param screenPoint 菜单弹出的屏幕坐标。
+ * @param itemIndex   当前右键点击的桌面项索引。
+ */
 inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
@@ -479,6 +517,13 @@ inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
     }
 }
 
+/**
+ * @brief 调用 Windows Shell 的 IContextMenu 显示系统右键菜单。
+ *        收集所有选中项的 PIDL，通过 desktopFolder_->GetUIObjectOf
+ *        获取 IContextMenu 接口，显示 Shell 提供的标准右键菜单。
+ * @param screenPoint 菜单弹出的屏幕坐标。
+ * @param itemIndex   当前右键点击的项索引（用于确定 PIDL 列表的锚点）。
+ */
 inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
 {
     std::vector<LPCITEMIDLIST> pidls;
@@ -530,6 +575,14 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
     RestoreDesktopWindowLayer();
 }
 
+/**
+ * @brief 显示 Windows 的"新建"子菜单并创建对应类型的文件。
+ *        通过 CLSID_NewMenu 获取系统"新建"菜单的 IContextMenu 接口，
+ *        使用 IShellExtInit 初始化到目标目录，弹出子菜单。
+ *        用户选择后调用 InvokeCommand 创建对应类型的文件。
+ * @param screenPoint 菜单弹出的屏幕坐标。
+ * @param targetDir   新建文件的目标目录路径。
+ */
 inline void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir)
 {
     ComPtr<IContextMenu> ctxMenu;
@@ -583,6 +636,12 @@ inline void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstri
     DestroyMenu(tmpMenu);
 }
 
+/**
+ * @brief 通过 Shell IContextMenu 显示桌面的系统背景右键菜单。
+ *        使用 desktopFolder_->CreateViewObject 获取桌面文件夹的
+ *        IContextMenu 接口，显示系统提供的背景菜单（如显示设置、个性化等）。
+ * @param screenPoint 菜单弹出的屏幕坐标。
+ */
 inline void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 {
     ComPtr<IContextMenu> contextMenu;
@@ -626,6 +685,11 @@ inline void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     RestoreDesktopWindowLayer();
 }
 
+/**
+ * @brief 恢复桌面窗口的 Z 序层次位置。
+ *        菜单弹出后可能改变窗口 Z 序，此方法将窗口恢复到正确的位置。
+ *        有父窗口时置顶（HWND_TOP），无父窗口时置底（HWND_BOTTOM）。
+ */
 inline void DesktopApp::RestoreDesktopWindowLayer()
 {
     if (!hwnd_ || !IsWindow(hwnd_)) return;
@@ -642,6 +706,13 @@ inline void DesktopApp::RestoreDesktopWindowLayer()
     }
 }
 
+/**
+ * @brief 判断指定桌面项是否为受保护的系统图标。
+ *        通过比较 CLSID 判断是否为此电脑、用户文件、网络、
+ *        控制面板或回收站等系统图标。
+ * @param item 要检查的桌面项。
+ * @return 如果是受保护的系统图标返回 true，否则返回 false。
+ */
 inline bool DesktopApp::IsProtectedDesktopIcon(const DesktopItem& item) const
 {
     std::wstring clsid = !item.desktopIconClsid.empty()
@@ -654,6 +725,13 @@ inline bool DesktopApp::IsProtectedDesktopIcon(const DesktopItem& item) const
         clsid == kDesktopIconClsidRecycleBin;
 }
 
+/**
+ * @brief 对指定的文件夹路径显示 Shell 右键菜单。
+ *        解析路径的 PIDL，绑定到 IShellFolder，通过 CreateViewObject
+ *        获取 IContextMenu 接口后弹出系统右键菜单。
+ * @param folderPath  目标文件夹的路径。
+ * @param screenPoint 菜单弹出的屏幕坐标。
+ */
 inline void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
 {
     PIDLIST_ABSOLUTE pidl = nullptr;

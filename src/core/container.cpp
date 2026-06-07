@@ -1,8 +1,21 @@
+/**
+ * @file container.cpp
+ * @brief Container 与 ListContainer 的实现
+ * @details 提供容器类对 Slot（槽位）的管理，包括 Slot 的懒加载构建、
+ *          内容绘制以及列表式容器的网格布局排版。
+ */
+
 #include "container.h"
 #include "slot.h"
 #include "item.h"
 #include <algorithm>
 
+/**
+ * @brief 获取当前容器的所有槽位
+ * @details 采用懒加载模式，当 slotsValid_ 标记失效时自动调用 BuildSlots()
+ *          重建槽位列表并缓存。
+ * @return 缓存后的槽位只读引用
+ */
 const std::vector<std::unique_ptr<Slot>>& Container::GetSlots()
 {
     if (!slotsValid_)
@@ -13,6 +26,12 @@ const std::vector<std::unique_ptr<Slot>>& Container::GetSlots()
     return cachedSlots_;
 }
 
+/**
+ * @brief 绘制容器内所有槽位中的内容
+ * @details 遍历所有槽位，获取每个槽位中的 Item 并调用其 Draw 方法进行绘制。
+ *          当选中的 Item 时绘制边框（厚度为 2），否则不绘制边框（厚度为 0）。
+ * @param context Direct2D 设备上下文指针，用于执行绘制操作
+ */
 void Container::DrawContents(ID2D1DeviceContext* context)
 {
     auto& slots = GetSlots();
@@ -26,6 +45,12 @@ void Container::DrawContents(ID2D1DeviceContext* context)
     }
 }
 
+/**
+ * @brief 构建列表容器的槽位网格
+ * @details 根据容器边界、Item 尺寸和列数计算每个槽位的矩形区域，
+ *          并按行优先顺序创建 Slot 对象。支持末尾空槽位的可选添加。
+ * @return 构建完成的槽位智能指针向量
+ */
 std::vector<std::unique_ptr<Slot>> ListContainer::BuildSlots()
 {
     std::vector<std::unique_ptr<Slot>> slots;

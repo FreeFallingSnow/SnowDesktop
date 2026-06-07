@@ -1,7 +1,37 @@
+/**
+ * @file lua_script.cpp
+ * @brief LuaScript 控件实现
+ *
+ * LuaScript 是一个纯渲染控件，由 Lua 脚本驱动绘制逻辑。
+ * 它不包含任何 Chrome 元素（窗口装饰、标题栏等），也不具备容器能力，
+ * 完全依靠脚本引擎提供的自定义样式和渲染内容来呈现。
+ * 同时负责处理选中态、悬停态、渐变底色、标题显示、缩放手柄等交互细节。
+ */
+
 #include "widget.h"
 #include "types.h"
 #include "app.h"
 
+/**
+ * @brief 绘制 LuaScript 控件
+ *
+ * 本函数完成以下绘制流程：
+ *   1. 获取控件窗口矩形并进行空区域检测；
+ *   2. 根据选中/悬停状态选取填充色与边框色，支持从 Personalization 配置读取；
+ *   3. 检测 Lua 脚本是否定义了自定义样式（CustomStyle），若有则覆盖默认颜色；
+ *   4. 构造 LuaWidgetTheme 结构体并传递给脚本引擎，供 Lua 渲染时参考；
+ *   5. 绘制圆角矩形背景与选中边框；
+ *   6. 设置裁剪区域，调用脚本引擎的 RenderWidget 执行 Lua 自定义绘制；
+ *   7. 从脚本读取 showTitle / bottomBarHover 等标志位；
+ *   8. 若不总是显示底部栏，则在非悬停时提前返回；
+ *   9. 绘制底部渐变条（无自定义样式时）；
+ *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
+ *  11. 绘制右下角的缩放手柄（圆角小方块）。
+ *
+ * @param context  Direct2D 设备上下文，用于所有绘制调用
+ * @param rect     控件的原始矩形区域（未使用，实际采用 GetStandaloneWidgetFrameRect）
+ * @param state    额外状态标记（state == 2 时强制视为选中态）
+ */
 void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
     (void)rect;
