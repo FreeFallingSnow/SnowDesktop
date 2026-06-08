@@ -491,12 +491,13 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
     if (!quickNavigationSearchEdit_)
         return;
 
-    quickNavigationSearchFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    quickNavigationSearchFont_ = CreateFontW(-QuickNavScale(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     SendMessageW(quickNavigationSearchEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(quickNavigationSearchFont_ ? quickNavigationSearchFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(10, 10));
+    SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELPARAM(QuickNavScale(10), QuickNavScale(10)));
     SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"搜索应用、桌面文件、映射文件夹..."));
     SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
@@ -512,9 +513,9 @@ inline void DesktopApp::UpdateQuickNavigationSearchEditRect()
     RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
     OffsetRect(&search, -quickNavigationRect_.left, -quickNavigationRect_.top);
     SetWindowPos(quickNavigationSearchEdit_, HWND_TOP,
-        search.left + 4, search.top + 4,
-        std::max<LONG>(1, search.right - search.left - 8),
-        std::max<LONG>(1, search.bottom - search.top - 8),
+        search.left + QuickNavScale(4), search.top + QuickNavScale(4),
+        std::max<LONG>(1, search.right - search.left - QuickNavScale(8)),
+        std::max<LONG>(1, search.bottom - search.top - QuickNavScale(8)),
         SWP_SHOWWINDOW);
 }
 
@@ -545,7 +546,8 @@ inline void DesktopApp::PositionQuickNavigationWindow()
     quickNavigationRect_ = GetQuickNavigationRect();
     const int width = std::max<LONG>(1, quickNavigationRect_.right - quickNavigationRect_.left);
     const int height = std::max<LONG>(1, quickNavigationRect_.bottom - quickNavigationRect_.top);
-    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, 36, 36);
+    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
+        QuickNavScale(36), QuickNavScale(36));
     if (region)
         SetWindowRgn(quickNavigationHwnd_, region, TRUE);
 
@@ -594,6 +596,11 @@ inline void DesktopApp::OpenQuickNavigation()
     {
         quickNavigationOpenPoint_ = { cursor.x - virtualLeft_, cursor.y - virtualTop_ };
         lastMousePoint_ = quickNavigationOpenPoint_;
+        HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        UINT dpiX = 96, dpiY = 96;
+        if (monitor)
+            GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
+        quickNavDpiScale_ = static_cast<float>(dpiX) / 96.0f;
     }
     else
     {
@@ -617,7 +624,8 @@ inline void DesktopApp::OpenQuickNavigation()
     PositionQuickNavigationWindow();
     if (quickNavigationSearchEdit_)
         SetWindowTextW(quickNavigationSearchEdit_, L"");
-    ShowWindow(quickNavigationHwnd_, SW_SHOWNORMAL);
+    ShowWindow(quickNavigationHwnd_, SW_SHOWNA);
+    AnimateWindow(quickNavigationHwnd_, 160, AW_BLEND);
     SetForegroundWindow(quickNavigationHwnd_);
     SetFocus(quickNavigationHwnd_);
     InvalidateQuickNavigationWindow();
@@ -636,6 +644,8 @@ inline void DesktopApp::CloseQuickNavigation()
     quickNavigationTabScrollOffset_ = 0;
     quickNavigationSearchText_.clear();
     quickNavigationRect_ = {};
+    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+        AnimateWindow(quickNavigationHwnd_, 120, AW_BLEND | AW_HIDE);
     DestroyQuickNavigationWindow();
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -778,18 +788,19 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     HPEN border = CreatePen(PS_SOLID, 1, RGB(120, 130, 150));
     HGDIOBJ oldPen = SelectObject(memoryDc, border);
     HGDIOBJ oldBrush = SelectObject(memoryDc, GetStockObject(NULL_BRUSH));
-    RoundRect(memoryDc, client.left, client.top, client.right - 1, client.bottom - 1, 36, 36);
+    RoundRect(memoryDc, client.left, client.top, client.right - 1, client.bottom - 1,
+        QuickNavScale(36), QuickNavScale(36));
     SelectObject(memoryDc, oldBrush);
     SelectObject(memoryDc, oldPen);
     DeleteObject(border);
 
-    HFONT titleFont = CreateFontW(-18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+    HFONT titleFont = CreateFontW(-QuickNavScale(18), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    HFONT tabFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    HFONT tabFont = CreateFontW(-QuickNavScale(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    HFONT itemFont = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    HFONT itemFont = CreateFontW(-QuickNavScale(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
 
@@ -800,8 +811,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
         GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
 
-    RECT titleRect = offsetRect(MakeRect(quickNavigationRect_.left + 24, quickNavigationRect_.top + 18,
-        quickNavigationRect_.right - 24, quickNavigationRect_.top + 46));
+    RECT titleRect = offsetRect(MakeRect(quickNavigationRect_.left + QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(18),
+        quickNavigationRect_.right - QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(46)));
     std::wstring title = L"快捷导航";
     if (!entries.empty())
         title += L"  " + std::to_wstring(entries.size()) + L" 项";
@@ -809,7 +820,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     RECT searchRect = offsetRect(GetQuickNavigationSearchRect(quickNavigationRect_));
-    fillRound(searchRect, RGB(236, 239, 245), RGB(92, 105, 128), 12);
+    fillRound(searchRect, RGB(236, 239, 245), RGB(92, 105, 128), QuickNavScale(12));
 
     if (quickNavigationSearchText_.empty())
     {
@@ -829,7 +840,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             fillRound(tabRect,
                 active ? RGB(48, 112, 215) : hovered ? RGB(66, 72, 84) : RGB(42, 47, 58),
                 active ? RGB(82, 140, 235) : RGB(68, 76, 92),
-                14);
+                QuickNavScale(14));
 
             std::wstring label = L"全部";
             if (tab > 0)
@@ -838,8 +849,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 label = widget.title.empty() ? L"集合" + std::to_wstring(tab) : widget.title;
             }
             RECT textRect = tabRect;
-            textRect.left += 8;
-            textRect.right -= 8;
+            textRect.left += QuickNavScale(8);
+            textRect.right -= QuickNavScale(8);
             drawText(label, textRect, tabFont, RGB(245, 248, 252),
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
@@ -852,7 +863,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     if (entries.empty())
     {
         RECT emptyRect = content;
-        emptyRect.top += 28;
+        emptyRect.top += QuickNavScale(28);
         drawText(quickNavigationSearchText_.empty()
                 ? (collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目")
                 : L"没有匹配结果",
@@ -869,14 +880,29 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
             const QuickNavigationEntry& entry = entries[i];
 
-RECT selectionApp = GetItemSelectionRect(itemRectApp, false);
+            const int cellW = itemRectApp.right - itemRectApp.left;
+            const int cellH = itemRectApp.bottom - itemRectApp.top;
+            const int maxIconW = std::max(QuickNavScale(16), cellW - QuickNavScale(8));
+            const int maxIconH = std::max(QuickNavScale(16), cellH - QuickNavScale(kTextHeight) - QuickNavScale(8));
+            const int iconSz = std::min(maxIconW, maxIconH);
+            const int iconX = itemRectApp.left + (cellW - iconSz) / 2;
+            const int iconY = itemRectApp.top + QuickNavScale(2);
+            RECT iconRect = MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
+            const int textTop = iconRect.bottom + QuickNavScale(2);
+            RECT textRect = MakeRect(itemRectApp.left + QuickNavScale(4), textTop,
+                itemRectApp.right - QuickNavScale(4), textTop + QuickNavScale(kTextCollapsedHeight));
+            RECT selRect = textRect;
+            selRect.top = std::max(itemRectApp.top, iconRect.top - QuickNavScale(2));
+            selRect.left = std::max(itemRectApp.left + QuickNavScale(3), iconRect.left - QuickNavScale(4));
+            selRect.right = std::min(itemRectApp.right - QuickNavScale(3), iconRect.right + QuickNavScale(4));
+            selRect.bottom = std::min(itemRectApp.bottom - QuickNavScale(2), textRect.bottom);
+
             if (PtInRect(&itemRectApp, lastMousePoint_) != FALSE)
-                fillRound(offsetRect(selectionApp), RGB(58, 68, 86), RGB(78, 92, 118), 12);
+                fillRound(offsetRect(selRect), RGB(58, 68, 86), RGB(78, 92, 118), QuickNavScale(12));
 
-            drawBitmap(entry.iconBitmap, offsetRect(GetItemIconRect(itemRectApp)));
+            drawBitmap(entry.iconBitmap, offsetRect(iconRect));
 
-            RECT textRect = offsetRect(GetItemTextRect(itemRectApp, false));
-            drawText(entry.name, textRect, itemFont, RGB(245, 248, 252),
+            drawText(entry.name, offsetRect(textRect), itemFont, RGB(245, 248, 252),
                 DT_CENTER | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
         }
     }
@@ -884,15 +910,16 @@ RECT selectionApp = GetItemSelectionRect(itemRectApp, false);
 
     const int columns = GetQuickNavigationColumnCount(quickNavigationRect_);
     const int rows = entries.empty() ? 1 : (static_cast<int>(entries.size()) + columns - 1) / columns;
-    const int contentHeight = rows * kQuickNavigationCellHeight;
+    const int contentHeight = rows * QuickNavScale(kQuickNavigationCellHeight);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
     if (contentHeight > visibleHeight)
     {
-        const int trackW = 5;
-        RECT track = MakeRect(content.right - trackW - 2, content.top + 4, content.right - 2, content.bottom - 4);
+        const int trackW = QuickNavScale(5);
+        RECT track = MakeRect(content.right - trackW - QuickNavScale(2), content.top + QuickNavScale(4),
+            content.right - QuickNavScale(2), content.bottom - QuickNavScale(4));
         fillRound(track, RGB(55, 62, 76), RGB(55, 62, 76), trackW);
         const int trackH = std::max<LONG>(1, track.bottom - track.top);
-        const int thumbH = std::clamp(visibleHeight * trackH / contentHeight, 20, trackH);
+        const int thumbH = std::clamp(visibleHeight * trackH / contentHeight, QuickNavScale(20), trackH);
         const int maxScroll = std::max(1, contentHeight - visibleHeight);
         const int thumbTop = track.top + quickNavigationScrollOffset_ * (trackH - thumbH) / maxScroll;
         RECT thumb = MakeRect(track.left, thumbTop, track.right, thumbTop + thumbH);

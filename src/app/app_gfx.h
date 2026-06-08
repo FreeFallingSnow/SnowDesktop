@@ -607,6 +607,36 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
     {
         for (const auto& key : GetQuickNavigationItemKeys())
             appendDesktop(FindItemIndexByKey(key), L"集合");
+
+        bool isAllTab = quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
+            widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection;
+        if (isAllTab)
+        {
+            std::unordered_set<std::wstring> collectionKeys;
+            for (const auto& widget : widgets_)
+            {
+                if (widget.type != DesktopWidgetType::Collection) continue;
+                for (const auto& key : widget.itemKeys)
+                    collectionKeys.insert(ToUpperInvariant(key));
+            }
+
+            auto isLnkOrUrl = [](const std::wstring& path) -> bool {
+                if (path.size() < 4) return false;
+                std::wstring ext = path.substr(path.size() - 4);
+                for (auto& c : ext) c = static_cast<wchar_t>(towupper(c));
+                return ext == L".LNK" || ext == L".URL";
+            };
+
+            for (size_t i = 0; i < items_.size(); ++i)
+            {
+                const DesktopItem& item = items_[i];
+                std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
+                if (collectionKeys.contains(key)) continue;
+                if (!isLnkOrUrl(item.parsingName)) continue;
+                appendDesktop(i, L"自由桌面");
+            }
+        }
+
         return result;
     }
 
@@ -688,10 +718,10 @@ inline RECT DesktopApp::GetQuickNavigationRect() const
 
     const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
     const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
-    const int widthLimit = std::max(320, workWidth - 48);
-    const int heightLimit = std::max(280, workHeight - 48);
-    const int width = std::min(widthLimit, std::max(520, std::min(860, workWidth - 120)));
-    const int height = std::min(heightLimit, std::max(360, std::min(620, workHeight - 120)));
+    const int widthLimit = std::max(QuickNavScale(320), workWidth - QuickNavScale(48));
+    const int heightLimit = std::max(QuickNavScale(280), workHeight - QuickNavScale(48));
+    const int width = std::min(widthLimit, std::max(QuickNavScale(520), std::min(QuickNavScale(860), workWidth - QuickNavScale(120))));
+    const int height = std::min(heightLimit, std::max(QuickNavScale(360), std::min(QuickNavScale(620), workHeight - QuickNavScale(120))));
     const int left = work.left + (workWidth - width) / 2;
     const int top = work.top + (workHeight - height) / 2;
     return MakeRect(left, top, left + width, top + height);
@@ -699,19 +729,23 @@ inline RECT DesktopApp::GetQuickNavigationRect() const
 
 inline RECT DesktopApp::GetQuickNavigationSearchRect(const RECT& overlay) const
 {
-    return MakeRect(overlay.left + 16, overlay.top + 54, overlay.right - 16, overlay.top + 86);
+    return MakeRect(overlay.left + QuickNavScale(16), overlay.top + QuickNavScale(54),
+        overlay.right - QuickNavScale(16), overlay.top + QuickNavScale(86));
 }
 
 inline RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
 {
-    return MakeRect(overlay.left + 22, overlay.top + 100, overlay.right - 22, overlay.top + 134);
+    return MakeRect(overlay.left + QuickNavScale(22), overlay.top + QuickNavScale(100),
+        overlay.right - QuickNavScale(22), overlay.top + QuickNavScale(134));
 }
 
 inline RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
 {
     if (!quickNavigationSearchText_.empty())
-        return MakeRect(overlay.left + 12, overlay.top + 102, overlay.right - 12, overlay.bottom - 12);
-    return MakeRect(overlay.left + 12, overlay.top + 148, overlay.right - 12, overlay.bottom - 12);
+        return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(102),
+            overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
+    return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(148),
+        overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
 }
 
 inline int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& overlay) const
@@ -721,10 +755,10 @@ inline int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& overla
     const size_t tabCount = collectionIndices.size() + 1;
     if (tabCount == 0) return 0;
 
-    const int gap = 8;
+    const int gap = QuickNavScale(8);
     const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
     int tabWidth = std::clamp((available - gap * static_cast<int>(tabCount - 1)) / static_cast<int>(tabCount),
-        72, 150);
+        QuickNavScale(72), QuickNavScale(150));
     return static_cast<int>(tabCount) * tabWidth + static_cast<int>(tabCount - 1) * gap;
 }
 
@@ -740,12 +774,12 @@ inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t ta
     RECT tabs = GetQuickNavigationTabsRect(overlay);
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     const size_t tabCount = collectionIndices.size() + 1;
-    const int gap = 8;
+    const int gap = QuickNavScale(8);
     const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
-    int tabWidth = 92;
+    int tabWidth = QuickNavScale(92);
     if (tabCount > 0)
         tabWidth = std::clamp((available - gap * static_cast<int>(tabCount - 1)) / static_cast<int>(tabCount),
-            72, 150);
+            QuickNavScale(72), QuickNavScale(150));
     const int left = tabs.left + static_cast<int>(tabIndex) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
     return MakeRect(left, tabs.top, left + tabWidth, tabs.bottom);
 }
@@ -753,15 +787,16 @@ inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t ta
 inline int DesktopApp::GetQuickNavigationColumnCount(const RECT& overlay) const
 {
     RECT content = GetQuickNavigationContentRect(overlay);
+    const int cellW = QuickNavScale(kCellWidth);
     const int contentWidth = std::max(1, static_cast<int>(content.right - content.left));
-    if (contentWidth < kCellWidth) return 1;
-    int columns = contentWidth / kCellWidth;
+    if (contentWidth < cellW) return 1;
+    int columns = contentWidth / cellW;
     if (columns <= 1) return 1;
-    int gap = (contentWidth - columns * kCellWidth) / (columns - 1);
-    while (columns > 1 && gap < 8)
+    int gap = (contentWidth - columns * cellW) / (columns - 1);
+    while (columns > 1 && gap < QuickNavScale(8))
     {
         --columns;
-        gap = (contentWidth - columns * kCellWidth) / (columns - 1);
+        gap = (contentWidth - columns * cellW) / (columns - 1);
     }
     return std::max(1, columns);
 }
@@ -769,26 +804,29 @@ inline int DesktopApp::GetQuickNavigationColumnCount(const RECT& overlay) const
 inline int DesktopApp::GetQuickNavigationGap(const RECT& overlay) const
 {
     RECT content = GetQuickNavigationContentRect(overlay);
+    const int cellW = QuickNavScale(kCellWidth);
     const int columns = GetQuickNavigationColumnCount(overlay);
     if (columns <= 0) return 0;
     const int contentWidth = std::max(1, static_cast<int>(content.right - content.left));
-    int totalGaps = contentWidth - columns * kCellWidth;
+    int totalGaps = contentWidth - columns * cellW;
     return totalGaps / columns;
 }
 
 inline RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t linearIndex) const
 {
     RECT content = GetQuickNavigationContentRect(overlay);
+    const int cellW = QuickNavScale(kCellWidth);
+    const int cellH = QuickNavScale(kQuickNavigationCellHeight);
     const int columns = GetQuickNavigationColumnCount(overlay);
     const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
     const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
     const int gap = GetQuickNavigationGap(overlay);
     int halfPad = gap / 2;
     return MakeRect(
-        content.left + halfPad + col * (kCellWidth + gap),
-        content.top + row * kQuickNavigationCellHeight - quickNavigationScrollOffset_,
-        content.left + halfPad + col * (kCellWidth + gap) + kCellWidth,
-        content.top + (row + 1) * kQuickNavigationCellHeight - quickNavigationScrollOffset_);
+        content.left + halfPad + col * (cellW + gap),
+        content.top + row * cellH - quickNavigationScrollOffset_,
+        content.left + halfPad + col * (cellW + gap) + cellW,
+        content.top + (row + 1) * cellH - quickNavigationScrollOffset_);
 }
 
 inline int DesktopApp::GetQuickNavigationMaxScrollOffset(const RECT& overlay) const
@@ -797,7 +835,7 @@ inline int DesktopApp::GetQuickNavigationMaxScrollOffset(const RECT& overlay) co
     const int columns = GetQuickNavigationColumnCount(overlay);
     const int itemCount = static_cast<int>(GetQuickNavigationEntries().size());
     const int rows = itemCount == 0 ? 1 : (itemCount + columns - 1) / columns;
-    const int contentHeight = rows * kQuickNavigationCellHeight;
+    const int contentHeight = rows * QuickNavScale(kQuickNavigationCellHeight);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
     return std::max(0, contentHeight - visibleHeight);
 }
@@ -873,12 +911,12 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
     quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
         GetQuickNavigationMaxTabScrollOffset(quickNavigationRect_));
 
-    DrawD2DRoundedRectangle(ctx, quickNavigationRect_, 18.0f,
+    DrawD2DRoundedRectangle(ctx, quickNavigationRect_, static_cast<float>(QuickNavScale(18)),
         D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.94f),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.38f), 1.4f);
 
-    RECT titleRect = MakeRect(quickNavigationRect_.left + 24, quickNavigationRect_.top + 18,
-        quickNavigationRect_.right - 24, quickNavigationRect_.top + 46);
+    RECT titleRect = MakeRect(quickNavigationRect_.left + QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(18),
+        quickNavigationRect_.right - QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(46));
     std::wstring title = L"快捷导航";
     if (!keys.empty())
         title += L"  " + std::to_wstring(keys.size()) + L" 项";
@@ -901,7 +939,7 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
             : hovered
                 ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
-        DrawD2DRoundedRectangle(ctx, tabRect, 7.0f, fill,
+        DrawD2DRoundedRectangle(ctx, tabRect, static_cast<float>(QuickNavScale(7)), fill,
             D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.28f : 0.14f), 1.0f);
 
         std::wstring label = L"全部";
@@ -913,8 +951,8 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
                 : widget.title;
         }
         RECT textRect = tabRect;
-        textRect.left += 8;
-        textRect.right -= 8;
+        textRect.left += QuickNavScale(8);
+        textRect.right -= QuickNavScale(8);
         DrawD2DText(ctx, label, textRect,
             navTabTextFormat_ ? navTabTextFormat_.Get() : itemTextFormat_.Get(),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 1.0f : 0.88f));
@@ -926,7 +964,7 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
     if (keys.empty())
     {
         RECT emptyRect = content;
-        emptyRect.top += 28;
+        emptyRect.top += QuickNavScale(28);
         DrawD2DText(ctx, collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目",
             emptyRect, itemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.58f));
     }
@@ -949,7 +987,7 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
 
     const int columns = GetQuickNavigationColumnCount(quickNavigationRect_);
     const int rows = keys.empty() ? 1 : (static_cast<int>(keys.size()) + columns - 1) / columns;
-    const int contentHeight = rows * kQuickNavigationCellHeight;
+    const int contentHeight = rows * QuickNavScale(kQuickNavigationCellHeight);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
     const bool hovered = PtInRect(&quickNavigationRect_, lastMousePoint_) != FALSE;
     DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, quickNavigationScrollOffset_, hovered);
