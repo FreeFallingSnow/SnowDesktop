@@ -35,6 +35,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <shellscalingapi.h>
 #include <d2d1_1.h>
 #include <d3d11.h>
 #include <dcomp.h>
@@ -1361,6 +1362,9 @@ private:
     POINT quickNavigationOpenPoint_{};
     RECT quickNavigationRect_{};
     std::wstring quickNavigationSearchText_;
+    float quickNavDpiScale_ = 1.0f;
+
+    int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
     /** @} */
 
     /** @name 面向对象系统 */
