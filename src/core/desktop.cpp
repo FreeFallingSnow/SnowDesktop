@@ -295,6 +295,16 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
 
     GridCell bestCell = app_->FindBestDropCell(
         app_->CellFromPoint(app_->GetDragTargetPoint(dragPoint)));
+
+    // When dragging from a widget (not from desktop itself), the selected items
+    // are not in the desktop items_ — check cell occupancy directly instead.
+    if (origin != app_->GetDesktopGrid())
+    {
+        if (app_->IsGridAreaOccupiedByUnselected(bestCell, {1, 1}))
+            return L"释放：当前位置已有图标";
+        return L"释放：移动到此空位";
+    }
+
     if (app_->BuildSelectedMove(bestCell).empty())
         return L"释放：当前位置已有图标";
 
