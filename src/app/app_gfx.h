@@ -533,10 +533,28 @@ inline bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
 inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
 {
     std::vector<size_t> result;
+    std::unordered_set<size_t> seen;
+
+    for (const auto& id : navTabOrder_)
+    {
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].type == DesktopWidgetType::Collection &&
+                widgets_[i].id == id && !seen.count(i))
+            {
+                result.push_back(i);
+                seen.insert(i);
+                break;
+            }
+        }
+    }
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
-        if (widgets_[i].type == DesktopWidgetType::Collection)
+        if (widgets_[i].type == DesktopWidgetType::Collection && !seen.count(i))
+        {
             result.push_back(i);
+            seen.insert(i);
+        }
     }
     return result;
 }
@@ -563,11 +581,10 @@ inline std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         return result;
     }
 
-    for (const auto& widget : widgets_)
+    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
+    for (size_t ci : collectionIndices)
     {
-        if (widget.type != DesktopWidgetType::Collection)
-            continue;
-        for (const auto& key : widget.itemKeys)
+        for (const auto& key : widgets_[ci].itemKeys)
             appendKey(key);
     }
     return result;
@@ -643,10 +660,9 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
     for (size_t i = 0; i < items_.size(); ++i)
         appendDesktop(i, L"桌面");
 
-    for (const auto& widget : widgets_)
+    for (size_t ci : GetQuickNavigationCollectionIndices())
     {
-        if (widget.type != DesktopWidgetType::Collection)
-            continue;
+        const DesktopWidget& widget = widgets_[ci];
         std::wstring source = widget.title.empty() ? L"集合" : widget.title;
         for (const auto& key : widget.itemKeys)
             appendDesktop(FindItemIndexByKey(key), source);
@@ -767,6 +783,40 @@ inline int DesktopApp::GetQuickNavigationMaxTabScrollOffset(const RECT& overlay)
     RECT tabs = GetQuickNavigationTabsRect(overlay);
     const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
     return std::max(0, GetQuickNavigationTabStripContentWidth(overlay) - available);
+}
+
+inline int DesktopApp::GetQuickNavigationTabWidth() const
+{
+    RECT overlay = quickNavigationRect_;
+    RECT tabs = GetQuickNavigationTabsRect(overlay);
+    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
+    const size_t tabCount = collectionIndices.size() + 1;
+    if (tabCount == 0) return QuickNavScale(92);
+    const int gap = QuickNavScale(8);
+    const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
+    return std::clamp((available - gap * static_cast<int>(tabCount - 1)) / static_cast<int>(tabCount),
+        QuickNavScale(72), QuickNavScale(150));
+}
+
+inline void DesktopApp::EnsureNavTabOrder()
+{
+    std::unordered_set<std::wstring> orderSet(navTabOrder_.begin(), navTabOrder_.end());
+    for (const auto& w : widgets_)
+    {
+        if (w.type == DesktopWidgetType::Collection && !orderSet.count(w.id))
+        {
+            navTabOrder_.push_back(w.id);
+            orderSet.insert(w.id);
+        }
+    }
+    navTabOrder_.erase(
+        std::remove_if(navTabOrder_.begin(), navTabOrder_.end(),
+            [this](const std::wstring& id) {
+                for (const auto& w : widgets_)
+                    if (w.type == DesktopWidgetType::Collection && w.id == id) return false;
+                return true;
+            }),
+        navTabOrder_.end());
 }
 
 inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex) const
@@ -925,38 +975,113 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
 
     RECT tabs = GetQuickNavigationTabsRect(quickNavigationRect_);
     ctx->PushAxisAlignedClip(ToD2DRect(tabs), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    for (size_t tab = 0; tab <= collectionIndices.size(); ++tab)
+
     {
-        RECT tabRect = GetQuickNavigationTabRect(quickNavigationRect_, tab);
-        if (tabRect.right <= tabs.left || tabRect.left >= tabs.right) continue;
+        const size_t tabCount = collectionIndices.size() + 1;
+        const int tabWidth = GetQuickNavigationTabWidth();
+        const int gap = QuickNavScale(8);
 
-        const bool active = tab == 0
-            ? quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1)
-            : quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 1];
-        const bool hovered = PtInRect(&tabRect, lastMousePoint_) != FALSE;
-        D2D1_COLOR_F fill = active
-            ? D2D1::ColorF(0.20f, 0.48f, 0.90f, 0.96f)
-            : hovered
-                ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
-        DrawD2DRoundedRectangle(ctx, tabRect, static_cast<float>(QuickNavScale(7)), fill,
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.28f : 0.14f), 1.0f);
+        auto calcTabPosX = [&](size_t tabIdx) -> int {
+            return tabs.left + static_cast<int>(tabIdx) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
+        };
 
-        std::wstring label = L"全部";
-        if (tab > 0)
+        int dragTargetTab = -1;
+        if (quickNavTabDragging_ && quickNavTabDragIndex_ != static_cast<size_t>(-1))
         {
-            const DesktopWidget& widget = widgets_[collectionIndices[tab - 1]];
-            label = widget.title.empty()
-                ? L"集合" + std::to_wstring(tab)
-                : widget.title;
+            int unit = tabWidth + gap;
+            dragTargetTab = static_cast<int>(quickNavTabDragIndex_) + quickNavTabDragDeltaX_ / unit;
+            if (dragTargetTab < 1) dragTargetTab = 1;
+            if (dragTargetTab > static_cast<int>(collectionIndices.size())) dragTargetTab = static_cast<int>(collectionIndices.size());
         }
-        RECT textRect = tabRect;
-        textRect.left += QuickNavScale(8);
-        textRect.right -= QuickNavScale(8);
-        DrawD2DText(ctx, label, textRect,
-            navTabTextFormat_ ? navTabTextFormat_.Get() : itemTextFormat_.Get(),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 1.0f : 0.88f));
+
+        auto drawTab = [&](size_t tab, int offsetX) {
+            int posX = calcTabPosX(tab) + offsetX;
+            RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
+            if (tabRect.right <= tabs.left || tabRect.left >= tabs.right) return;
+
+            bool active = tab == 0
+                ? quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1)
+                : quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 1];
+            bool hovered = false;
+            if (!quickNavTabDragging_)
+                hovered = PtInRect(&tabRect, lastMousePoint_) != FALSE;
+
+            D2D1_COLOR_F fill, stroke;
+            if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
+            {
+                fill = D2D1::ColorF(0.30f, 0.36f, 0.44f, 0.96f);
+                stroke = D2D1::ColorF(0.47f, 0.55f, 0.71f, 0.9f);
+            }
+            else
+            {
+                fill = active
+                    ? D2D1::ColorF(0.20f, 0.48f, 0.90f, 0.96f)
+                    : hovered
+                        ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f)
+                        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
+                stroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.28f : 0.14f);
+            }
+            DrawD2DRoundedRectangle(ctx, tabRect, static_cast<float>(QuickNavScale(7)), fill, stroke, 1.0f);
+
+            std::wstring label = L"全部";
+            if (tab > 0)
+            {
+                const DesktopWidget& widget = widgets_[collectionIndices[tab - 1]];
+                label = widget.title.empty() ? L"集合" + std::to_wstring(tab) : widget.title;
+            }
+            RECT textRect = tabRect;
+            textRect.left += QuickNavScale(8);
+            textRect.right -= QuickNavScale(8);
+            DrawD2DText(ctx, label, textRect,
+                navTabTextFormat_ ? navTabTextFormat_.Get() : itemTextFormat_.Get(),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 1.0f : 0.88f));
+        };
+
+        for (size_t tab = 0; tab < tabCount; ++tab)
+        {
+            if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
+                continue;
+            int offsetX = 0;
+            if (quickNavTabDragging_ && dragTargetTab >= 1)
+            {
+                int src = static_cast<int>(quickNavTabDragIndex_);
+                int cur = static_cast<int>(tab);
+                if (cur > src && cur <= dragTargetTab) offsetX = -(tabWidth + gap);
+                else if (cur < src && cur >= dragTargetTab) offsetX = tabWidth + gap;
+            }
+            drawTab(tab, offsetX);
+        }
+
+        if (quickNavTabDragging_ && quickNavTabDragIndex_ != static_cast<size_t>(-1))
+        {
+            int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
+            RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
+
+            std::wstring label = L"全部";
+            if (quickNavTabDragIndex_ > 0)
+            {
+                const DesktopWidget& widget = widgets_[collectionIndices[quickNavTabDragIndex_ - 1]];
+                label = widget.title.empty() ? L"集合" + std::to_wstring(quickNavTabDragIndex_) : widget.title;
+            }
+            DrawD2DRoundedRectangle(ctx, tabRect, static_cast<float>(QuickNavScale(7)),
+                D2D1::ColorF(0.24f, 0.31f, 0.43f, 0.96f),
+                D2D1::ColorF(0.39f, 0.51f, 0.78f, 0.9f), 1.0f);
+            RECT textRect = tabRect;
+            textRect.left += QuickNavScale(8);
+            textRect.right -= QuickNavScale(8);
+            DrawD2DText(ctx, label, textRect,
+                navTabTextFormat_ ? navTabTextFormat_.Get() : itemTextFormat_.Get(),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
+
+            if (dragTargetTab >= 1 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size())
+            {
+                int insertX = calcTabPosX(static_cast<size_t>(dragTargetTab)) - gap / 2;
+                RECT indicatorRect = MakeRect(insertX - 1, tabs.top + QuickNavScale(4), insertX + 1, tabs.bottom - QuickNavScale(4));
+                DrawD2DFilledRectangle(ctx, indicatorRect, D2D1::ColorF(0.32f, 0.55f, 0.92f, 0.9f), D2D1::ColorF(0.32f, 0.55f, 0.92f, 0.9f));
+            }
+        }
     }
+
     ctx->PopAxisAlignedClip();
 
     RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
