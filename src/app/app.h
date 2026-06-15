@@ -1333,6 +1333,12 @@ private:
     void DestroyDragHintWindow();
     /** @brief 从拖拽数据对象中提取文件路径列表。 @param dataObject 数据对象 @return 路径列表 */
     static std::vector<std::wstring> GetDropPaths(IDataObject* dataObject);
+    static std::vector<std::wstring> TryGetNonFileDropPaths(IDataObject* dataObject);
+    static std::vector<std::wstring> TryExtractUrlFromDataObject(IDataObject* dataObject);
+    static std::vector<std::wstring> TryExtractImageFromDataObject(IDataObject* dataObject);
+    static std::vector<std::wstring> TryExtractTextFromDataObject(IDataObject* dataObject);
+    static bool IsFileDownloadUrl(const std::wstring& url, std::wstring& fileName);
+    static std::wstring HandleUrlContent(const std::wstring& url);
     /** @brief 从完整路径中提取文件名。 @param path 完整路径 @return 文件名 */
     static std::wstring FileNameFromPath(const std::wstring& path);
     /** @brief 判断项名与源文件名是否匹配（用于放置后定位）。 @param itemName 项名称 @param srcFileName 源文件名 @return 匹配返回 true */
