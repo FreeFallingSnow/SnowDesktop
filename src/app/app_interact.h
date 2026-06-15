@@ -484,7 +484,7 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
         return;
 
-    quickNavigationSearchEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+    quickNavigationSearchEdit_ = CreateWindowExW(0, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
         0, 0, 1, 1, quickNavigationHwnd_, reinterpret_cast<HMENU>(1002),
         instance_, nullptr);
@@ -513,9 +513,9 @@ inline void DesktopApp::UpdateQuickNavigationSearchEditRect()
     RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
     OffsetRect(&search, -quickNavigationRect_.left, -quickNavigationRect_.top);
     SetWindowPos(quickNavigationSearchEdit_, HWND_TOP,
-        search.left + QuickNavScale(4), search.top + QuickNavScale(4),
+        search.left + QuickNavScale(4), search.top + QuickNavScale(6),
         std::max<LONG>(1, search.right - search.left - QuickNavScale(8)),
-        std::max<LONG>(1, search.bottom - search.top - QuickNavScale(8)),
+        std::max<LONG>(1, search.bottom - search.top - QuickNavScale(10)),
         SWP_SHOWWINDOW);
 }
 
@@ -820,7 +820,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     RECT searchRect = offsetRect(GetQuickNavigationSearchRect(quickNavigationRect_));
-    fillRound(searchRect, RGB(236, 239, 245), RGB(92, 105, 128), QuickNavScale(12));
+    fillRound(searchRect, RGB(255, 255, 255), RGB(92, 105, 128), QuickNavScale(12));
 
     if (quickNavigationSearchText_.empty())
     {
@@ -893,8 +893,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 itemRectApp.right - QuickNavScale(4), textTop + QuickNavScale(kTextCollapsedHeight));
             RECT selRect = textRect;
             selRect.top = std::max(itemRectApp.top, iconRect.top - QuickNavScale(2));
-            selRect.left = std::max(itemRectApp.left + QuickNavScale(3), iconRect.left - QuickNavScale(4));
-            selRect.right = std::min(itemRectApp.right - QuickNavScale(3), iconRect.right + QuickNavScale(4));
+            selRect.left = itemRectApp.left + QuickNavScale(3);
+            selRect.right = itemRectApp.right - QuickNavScale(3);
             selRect.bottom = std::min(itemRectApp.bottom - QuickNavScale(2), textRect.bottom);
 
             if (PtInRect(&itemRectApp, lastMousePoint_) != FALSE)
