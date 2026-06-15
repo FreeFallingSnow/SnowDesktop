@@ -607,6 +607,7 @@ inline void DesktopApp::OpenQuickNavigation()
         quickNavigationOpenPoint_ = lastMousePoint_;
     }
     quickNavigationOpen_ = true;
+    EnsureNavTabOrder();
     if (quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
         widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection)
     {
@@ -644,6 +645,9 @@ inline void DesktopApp::CloseQuickNavigation()
     quickNavigationTabScrollOffset_ = 0;
     quickNavigationSearchText_.clear();
     quickNavigationRect_ = {};
+    quickNavTabDragIndex_ = static_cast<size_t>(-1);
+    quickNavTabDragDeltaX_ = 0;
+    quickNavTabDragging_ = false;
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         AnimateWindow(quickNavigationHwnd_, 120, AW_BLEND | AW_HIDE);
     DestroyQuickNavigationWindow();
@@ -682,12 +686,10 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     if (quickNavigationSearchText_.empty())
     {
-        for (size_t tab = 0; tab <= collectionIndices.size(); ++tab)
+        RECT tab0Rect = GetQuickNavigationTabRect(overlay, 0);
+        if (PtInRect(&tab0Rect, point))
         {
-            RECT tabRect = GetQuickNavigationTabRect(overlay, tab);
-            if (!PtInRect(&tabRect, point)) continue;
-            quickNavigationActiveWidgetIndex_ =
-                tab == 0 ? static_cast<size_t>(-1) : collectionIndices[tab - 1];
+            quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
             quickNavigationScrollOffset_ = 0;
             InvalidateDragStaticScene();
             InvalidateQuickNavigationWindow();
@@ -827,20 +829,52 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         RECT tabs = offsetRect(GetQuickNavigationTabsRect(quickNavigationRect_));
         SaveDC(memoryDc);
         IntersectClipRect(memoryDc, tabs.left, tabs.top, tabs.right, tabs.bottom);
-        for (size_t tab = 0; tab <= collectionIndices.size(); ++tab)
+
+        const size_t tabCount = collectionIndices.size() + 1;
+        const int tabWidth = GetQuickNavigationTabWidth();
+        const int gap = QuickNavScale(8);
+
+        auto calcTabPosX = [&](size_t tabIdx) -> int {
+            return tabs.left + static_cast<int>(tabIdx) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
+        };
+
+        int dragTargetTab = -1;
+        if (quickNavTabDragging_ && quickNavTabDragIndex_ != static_cast<size_t>(-1))
         {
-            RECT tabRect = offsetRect(GetQuickNavigationTabRect(quickNavigationRect_, tab));
-            if (tabRect.right <= tabs.left || tabRect.left >= tabs.right) continue;
+            int unit = tabWidth + gap;
+            dragTargetTab = static_cast<int>(quickNavTabDragIndex_) +
+                quickNavTabDragDeltaX_ / unit;
+            if (dragTargetTab < 1) dragTargetTab = 1;
+            if (dragTargetTab > static_cast<int>(collectionIndices.size())) dragTargetTab = static_cast<int>(collectionIndices.size());
+        }
+
+        auto drawTab = [&](size_t tab, int offsetX) {
+            int posX = calcTabPosX(tab) + offsetX;
+            RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
+            if (tabRect.right <= tabs.left || tabRect.left >= tabs.right) return;
+            tabRect.left = std::max(tabRect.left, tabs.left);
+            tabRect.right = std::min(tabRect.right, tabs.right);
 
             const bool active = tab == 0
                 ? quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1)
                 : quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 1];
-            RECT tabRectApp = GetQuickNavigationTabRect(quickNavigationRect_, tab);
-            const bool hovered = PtInRect(&tabRectApp, lastMousePoint_) != FALSE;
-            fillRound(tabRect,
-                active ? RGB(48, 112, 215) : hovered ? RGB(66, 72, 84) : RGB(42, 47, 58),
-                active ? RGB(82, 140, 235) : RGB(68, 76, 92),
-                QuickNavScale(14));
+            bool hovered = false;
+            RECT tabRectApp = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
+            if (!quickNavTabDragging_)
+                hovered = PtInRect(&tabRectApp, lastMousePoint_) != FALSE;
+
+            COLORREF fill, stroke;
+            if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
+            {
+                fill = RGB(80, 92, 112);
+                stroke = RGB(120, 140, 180);
+            }
+            else
+            {
+                fill = active ? RGB(48, 112, 215) : hovered ? RGB(66, 72, 84) : RGB(42, 47, 58);
+                stroke = active ? RGB(82, 140, 235) : RGB(68, 76, 92);
+            }
+            fillRound(tabRect, fill, stroke, QuickNavScale(14));
 
             std::wstring label = L"全部";
             if (tab > 0)
@@ -853,7 +887,56 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             textRect.right -= QuickNavScale(8);
             drawText(label, textRect, tabFont, RGB(245, 248, 252),
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        };
+
+        for (size_t tab = 0; tab < tabCount; ++tab)
+        {
+            if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
+                continue;
+            int offsetX = 0;
+            if (quickNavTabDragging_ && dragTargetTab >= 1)
+            {
+                size_t src = quickNavTabDragIndex_;
+                int dst = dragTargetTab;
+                int cur = static_cast<int>(tab);
+                if (cur > src && cur <= dst) offsetX = -(tabWidth + gap);
+                else if (cur < src && cur >= dst) offsetX = tabWidth + gap;
+            }
+            drawTab(tab, offsetX);
         }
+
+        if (quickNavTabDragging_ && quickNavTabDragIndex_ != static_cast<size_t>(-1))
+        {
+            int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
+            RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
+            tabRect.left = std::max(tabRect.left, tabs.left);
+            tabRect.right = std::min(tabRect.right, tabs.right);
+            fillRound(tabRect, RGB(60, 80, 110), RGB(100, 130, 200), QuickNavScale(14));
+
+            std::wstring label = L"全部";
+            if (quickNavTabDragIndex_ > 0)
+            {
+                const DesktopWidget& widget = widgets_[collectionIndices[quickNavTabDragIndex_ - 1]];
+                label = widget.title.empty() ? L"集合" + std::to_wstring(quickNavTabDragIndex_) : widget.title;
+            }
+            RECT textRect = tabRect;
+            textRect.left += QuickNavScale(8);
+            textRect.right -= QuickNavScale(8);
+            drawText(label, textRect, tabFont, RGB(245, 248, 252),
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+            if (dragTargetTab >= 1 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size())
+            {
+                int insertX = calcTabPosX(static_cast<size_t>(dragTargetTab));
+                HPEN indicatorPen = CreatePen(PS_SOLID, QuickNavScale(2), RGB(82, 140, 235));
+                HGDIOBJ savedPen = SelectObject(memoryDc, indicatorPen);
+                MoveToEx(memoryDc, insertX - gap / 2, tabs.top + QuickNavScale(4), nullptr);
+                LineTo(memoryDc, insertX - gap / 2, tabs.bottom - QuickNavScale(4));
+                SelectObject(memoryDc, savedPen);
+                DeleteObject(indicatorPen);
+            }
+        }
+
         RestoreDC(memoryDc, -1);
     }
 
@@ -954,19 +1037,107 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
         return 0;
     case WM_ERASEBKGND:
         return 1;
-    case WM_MOUSEMOVE:
-    {
-        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        lastMousePoint_ = { pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
-        InvalidateQuickNavigationWindow();
-        return 0;
-    }
     case WM_LBUTTONDOWN:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT appPoint{ pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
+
+        if (quickNavigationSearchText_.empty())
+        {
+            RECT overlay = quickNavigationRect_;
+            std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
+            for (size_t tab = 1; tab <= ci.size(); ++tab)
+            {
+                RECT tabRect = GetQuickNavigationTabRect(overlay, tab);
+                if (PtInRect(&tabRect, appPoint))
+                {
+                    quickNavTabDragIndex_ = tab;
+                    quickNavTabDragStartPoint_ = appPoint;
+                    quickNavTabDragDeltaX_ = 0;
+                    quickNavTabDragging_ = false;
+                    SetCapture(hwnd);
+                    return 0;
+                }
+            }
+        }
+
         HandleQuickNavigationClick(appPoint);
         return 0;
+    }
+    case WM_MOUSEMOVE:
+    {
+        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        POINT appPoint{ pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
+        lastMousePoint_ = appPoint;
+
+        if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
+        {
+            int dx = appPoint.x - quickNavTabDragStartPoint_.x;
+            if (!quickNavTabDragging_ && std::abs(dx) > 4)
+                quickNavTabDragging_ = true;
+            if (quickNavTabDragging_)
+                quickNavTabDragDeltaX_ = dx;
+            InvalidateQuickNavigationWindow();
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        InvalidateQuickNavigationWindow();
+        return 0;
+    }
+    case WM_LBUTTONUP:
+    {
+        if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
+        {
+            ReleaseCapture();
+            size_t dragTab = quickNavTabDragIndex_;
+
+            if (quickNavTabDragging_)
+            {
+                std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
+                size_t tabCount = ci.size();
+                int tabWidth = GetQuickNavigationTabWidth();
+                int gap = QuickNavScale(8);
+                int unit = tabWidth + gap;
+                int targetTab = static_cast<int>(dragTab) + quickNavTabDragDeltaX_ / unit;
+                targetTab = std::clamp(targetTab, 1, static_cast<int>(tabCount));
+
+                if (targetTab != static_cast<int>(dragTab) && targetTab >= 1 && static_cast<size_t>(targetTab) <= tabCount)
+                {
+                    size_t srcIdx = dragTab - 1;
+                    size_t dstIdx = static_cast<size_t>(targetTab) - 1;
+                    EnsureNavTabOrder();
+
+                    if (srcIdx < navTabOrder_.size() && dstIdx < navTabOrder_.size())
+                    {
+                        std::wstring id = navTabOrder_[srcIdx];
+                        navTabOrder_.erase(navTabOrder_.begin() + srcIdx);
+                        navTabOrder_.insert(navTabOrder_.begin() + dstIdx, id);
+                        quickNavigationActiveWidgetIndex_ = ci[dstIdx];
+                        quickNavigationScrollOffset_ = 0;
+                        SaveLayoutSlots();
+                    }
+                }
+            }
+            else
+            {
+                std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
+                if (dragTab - 1 < ci.size())
+                {
+                    quickNavigationActiveWidgetIndex_ = ci[dragTab - 1];
+                    quickNavigationScrollOffset_ = 0;
+                }
+            }
+
+            quickNavTabDragIndex_ = static_cast<size_t>(-1);
+            quickNavTabDragDeltaX_ = 0;
+            quickNavTabDragging_ = false;
+            InvalidateQuickNavigationWindow();
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        break;
     }
     case WM_MOUSEWHEEL:
         OnMouseWheel(wp, lp);
@@ -983,6 +1154,17 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE)
         {
+            if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
+            {
+                ReleaseCapture();
+                quickNavTabDragIndex_ = static_cast<size_t>(-1);
+                quickNavTabDragDeltaX_ = 0;
+                quickNavTabDragging_ = false;
+                InvalidateQuickNavigationWindow();
+                InvalidateDragStaticScene();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
             CloseQuickNavigation();
             return 0;
         }
@@ -990,6 +1172,13 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
     case WM_ACTIVATE:
         if (LOWORD(wp) == WA_INACTIVE)
         {
+            if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
+            {
+                ReleaseCapture();
+                quickNavTabDragIndex_ = static_cast<size_t>(-1);
+                quickNavTabDragDeltaX_ = 0;
+                quickNavTabDragging_ = false;
+            }
             CloseQuickNavigation();
             return 0;
         }
@@ -5148,6 +5337,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             widgetEngine_->UnloadWidget(widgets_[widgetIndex].id);
         // Move widget's itemKeys back to desktop by just removing the widget
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
+        EnsureNavTabOrder();
         LayoutItems();
         RebuildContainersAndItems();
         SaveLayoutSlots();

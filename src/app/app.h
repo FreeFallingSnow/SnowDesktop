@@ -376,6 +376,10 @@ private:
     void UpdateQuickNavigationSearchEditRect();
     /** @brief 刷新快速导航搜索文本内容。 */
     void RefreshQuickNavigationSearchText();
+    /** @brief 计算快捷导航标签页的宽度。 */
+    int GetQuickNavigationTabWidth() const;
+    /** @brief 确保 navTabOrder_ 包含所有集合组件 ID。 */
+    void EnsureNavTabOrder();
 
     // ── Layout persistence ──────────────────────────────────
     /** @brief 获取布局文件的完整路径。 @return 布局文件路径（JSON 格式） */
@@ -1363,6 +1367,11 @@ private:
     RECT quickNavigationRect_{};
     std::wstring quickNavigationSearchText_;
     float quickNavDpiScale_ = 1.0f;
+    std::vector<std::wstring> navTabOrder_;
+    size_t quickNavTabDragIndex_ = static_cast<size_t>(-1);
+    int quickNavTabDragDeltaX_ = 0;
+    POINT quickNavTabDragStartPoint_{};
+    bool quickNavTabDragging_ = false;
 
     int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
     /** @} */

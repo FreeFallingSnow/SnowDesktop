@@ -1127,6 +1127,13 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
             }
         }
     }
+
+    {
+        std::vector<std::wstring> savedOrder;
+        ReadJsonStringArrayField(text, "navTabOrder", savedOrder);
+        navTabOrder_ = std::move(savedOrder);
+    }
+    EnsureNavTabOrder();
 }
 
 /**
@@ -1245,7 +1252,13 @@ inline void DesktopApp::SaveLayoutSlots()
         file << "] }";
         file << (i + 1 == widgets_.size() ? "\n" : ",\n");
     }
-    file << "  ]\n}\n";
+    file << "  ],\n  \"navTabOrder\": [";
+    for (size_t i = 0; i < navTabOrder_.size(); ++i)
+    {
+        file << "\"" << JsonEscapeUtf8(navTabOrder_[i]) << "\"";
+        if (i + 1 != navTabOrder_.size()) file << ", ";
+    }
+    file << "]\n}\n";
 }
 
 /**
@@ -3824,6 +3837,7 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     widget.gridCell = cell;
     widget.gridSpan = span;
     widgets_.push_back(std::move(widget));
+    EnsureNavTabOrder();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
