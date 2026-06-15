@@ -442,6 +442,16 @@ static int lua_GetTime(lua_State* L)
     return 1;
 }
 
+static int lua_Notify(lua_State* L)
+{
+    const char* title = luaL_checkstring(L, 1);
+    const char* message = luaL_checkstring(L, 2);
+    auto* s = GetD2D(L);
+    if (s && s->engine)
+        s->engine->RuntimeNotify(Utf8ToWideLocal(title), Utf8ToWideLocal(message));
+    return 0;
+}
+
 static bool RequirePermission(lua_State* L, const char* permission)
 {
     auto* s = GetD2D(L);
@@ -1217,6 +1227,9 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(const std::wstring& 
                     lua_getfield(L_, -1, "label");
                     item.label = lua_isstring(L_, -1) ? lua_tostring(L_, -1) : "";
                     lua_pop(L_, 1);
+                    lua_getfield(L_, -1, "icon");
+                    item.icon = lua_isstring(L_, -1) ? lua_tostring(L_, -1) : "";
+                    lua_pop(L_, 1);
                     lua_getfield(L_, -1, "enabled");
                     item.enabled = lua_isnil(L_, -1) ? true : (lua_toboolean(L_, -1) != 0);
                     lua_pop(L_, 1);
@@ -1482,6 +1495,12 @@ void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& re
         inlineTextEditCallback_(request);
 }
 
+void WidgetEngine::RuntimeNotify(const std::wstring& title, const std::wstring& message)
+{
+    if (notifyCallback_)
+        notifyCallback_(title, message);
+}
+
 LuaWidgetTheme WidgetEngine::RuntimeGetWidgetTheme(const std::wstring& widgetId) const
 {
     int idx = FindWidget(widgetId);
@@ -1561,22 +1580,52 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     JsonReadString(text, "version", manifest.version);
     JsonReadString(text, "description", manifest.description);
     manifest.permissions = JsonReadStringArray(text, "permissions");
-    std::string sizeText = text;
-    size_t sizeName = text.find("\"defaultSize\"");
-    if (sizeName != std::string::npos)
-    {
-        size_t open = text.find('{', sizeName);
-        size_t close = text.find('}', open == std::string::npos ? sizeName : open + 1);
+    auto sizeObject = [&text](const char* field) {
+        std::string result;
+        std::string key = std::string("\"") + field + "\"";
+        size_t name = text.find(key);
+        if (name == std::string::npos) return result;
+        size_t open = text.find('{', name + key.size());
+        size_t close = text.find('}', open == std::string::npos ? name : open + 1);
         if (open != std::string::npos && close != std::string::npos && close > open)
-            sizeText = text.substr(open, close - open + 1);
-    }
+            result = text.substr(open, close - open + 1);
+        return result;
+    };
 
+    std::string sizeText = sizeObject("defaultSize");
     int columns = manifest.defaultColumns;
     int rows = manifest.defaultRows;
-    if (JsonReadInt(sizeText, "columns", columns))
+    if (!sizeText.empty() && JsonReadInt(sizeText, "columns", columns))
         manifest.defaultColumns = std::clamp(columns, 1, 8);
-    if (JsonReadInt(sizeText, "rows", rows))
+    if (!sizeText.empty() && JsonReadInt(sizeText, "rows", rows))
         manifest.defaultRows = std::clamp(rows, 1, 8);
+
+    std::string minSizeText = sizeObject("minSize");
+    columns = manifest.minColumns;
+    rows = manifest.minRows;
+    if (!minSizeText.empty() && JsonReadInt(minSizeText, "columns", columns))
+        manifest.minColumns = std::max(1, columns);
+    if (!minSizeText.empty() && JsonReadInt(minSizeText, "rows", rows))
+        manifest.minRows = std::max(1, rows);
+
+    std::string maxSizeText = sizeObject("maxSize");
+    columns = manifest.maxColumns;
+    rows = manifest.maxRows;
+    if (!maxSizeText.empty() && JsonReadInt(maxSizeText, "columns", columns))
+        manifest.maxColumns = std::max(0, columns);
+    if (!maxSizeText.empty() && JsonReadInt(maxSizeText, "rows", rows))
+        manifest.maxRows = std::max(0, rows);
+
+    if (manifest.maxColumns > 0)
+        manifest.maxColumns = std::max(manifest.maxColumns, manifest.minColumns);
+    if (manifest.maxRows > 0)
+        manifest.maxRows = std::max(manifest.maxRows, manifest.minRows);
+    manifest.defaultColumns = std::max(manifest.defaultColumns, manifest.minColumns);
+    manifest.defaultRows = std::max(manifest.defaultRows, manifest.minRows);
+    if (manifest.maxColumns > 0)
+        manifest.defaultColumns = std::min(manifest.defaultColumns, manifest.maxColumns);
+    if (manifest.maxRows > 0)
+        manifest.defaultRows = std::min(manifest.defaultRows, manifest.maxRows);
 
     if (manifest.permissions.empty())
         manifest.permissions = {};
@@ -1950,6 +1999,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_GetTime);   lua_setfield(L, -2, "getTime");
+    lua_pushcfunction(L, lua_Notify);    lua_setfield(L, -2, "notify");
     lua_setglobal(L, "sys");
 
     lua_newtable(L);

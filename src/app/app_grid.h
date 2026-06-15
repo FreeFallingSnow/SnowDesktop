@@ -429,8 +429,8 @@ inline void DesktopApp::RelayoutDisplacedItems()
             continue;
         }
 
-        widget.gridSpan.columns = std::clamp(widget.gridSpan.columns, 1, std::max(1, page->columns));
-        widget.gridSpan.rows = std::clamp(widget.gridSpan.rows, 1, std::max(1, page->rows));
+        widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan,
+            page->columns, page->rows);
         if (GridAreaFitsPage(*page, widget.gridCell, widget.gridSpan) &&
             !AreGridSlotsMarked(usedSlots, widget.gridCell, widget.gridSpan))
         {
@@ -1084,6 +1084,7 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
 widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
                         ReadJsonStringArrayField(obj, "items", widget.itemKeys);
+                        ConfigureWidgetGridLimits(widget);
                         {
                             std::unordered_set<std::wstring> seen;
                             std::vector<std::wstring> unique;
@@ -1846,23 +1847,28 @@ inline void DesktopApp::UpdateLayoutWorkArea()
  */
 inline void DesktopApp::ConfigureGridPage(GridPage& page) const
 {
-    const int cw = static_cast<int>(kCellWidth * gapScale_);
-    const int ch = static_cast<int>(kMinCellHeight * gapScale_);
+    const float dpiScaleX = static_cast<float>(page.dpiX) / 96.0f;
+    const float dpiScaleY = static_cast<float>(page.dpiY) / 96.0f;
+    const int marginX = std::max(1, static_cast<int>(std::round(kGridMarginX * dpiScaleX)));
+    const int marginY = std::max(1, static_cast<int>(std::round(kGridMarginY * dpiScaleY)));
+    const int cw = std::max(1, static_cast<int>(std::round(kCellWidth * gapScale_ * dpiScaleX)));
+    const int ch = std::max(1, static_cast<int>(std::round(kMinCellHeight * gapScale_ * dpiScaleY)));
     const int w  = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int h  = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-    const int uw = std::max(1, w - kGridMarginX * 2);
-    const int uh = std::max(1, h - kGridMarginY * 2);
+    const int uw = std::max(1, w - marginX * 2);
+    const int uh = std::max(1, h - marginY * 2);
     page.columns   = std::max(4, uw / cw);
     page.rows      = std::max(3, uh / ch);
     page.cellWidth  = cw;
     page.cellHeight = ch;
-    page.gapX = page.columns > 1 ? std::max(0, (uw - page.columns * page.cellWidth)  / (page.columns - 1)) : 0;
-    page.gapY = page.rows    > 1 ? std::max(0, (uh - page.rows    * page.cellHeight) / (page.rows    - 1)) : 0;
-
-    int gridW = page.columns * page.cellWidth + std::max(0, page.columns - 1) * page.gapX;
-    int gridH = page.rows * page.cellHeight + std::max(0, page.rows - 1) * page.gapY;
-    page.marginX = std::max(kGridMarginX, (w - gridW) / 2);
-    page.marginY = std::max(kGridMarginY, (h - gridH) / 2);
+    page.gapX = page.columns > 1
+        ? std::max(0, (uw - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
+        : 0;
+    page.gapY = page.rows > 1
+        ? std::max(0, (uh - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
+        : 0;
+    page.marginX = marginX;
+    page.marginY = marginY;
 }
 
 /**
@@ -1890,28 +1896,35 @@ inline void DesktopApp::ApplySavedGridDimensions()
  */
 inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
 {
+    const float dpiScaleX = static_cast<float>(page.dpiX) / 96.0f;
+    const float dpiScaleY = static_cast<float>(page.dpiY) / 96.0f;
+    const int marginX = std::max(1, static_cast<int>(std::round(kGridMarginX * dpiScaleX)));
+    const int marginY = std::max(1, static_cast<int>(std::round(kGridMarginY * dpiScaleY)));
     const int pageW = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int pageH = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-    const int usableW = std::max(1, pageW - (kGridMarginX * 2));
-    const int usableH = std::max(1, pageH - (kGridMarginY * 2));
+    const int usableW = std::max(1, pageW - marginX * 2);
+    const int usableH = std::max(1, pageH - marginY * 2);
     const float cellRefW = static_cast<float>(usableW) / static_cast<float>(std::max(1, page.columns));
     const float cellRefH = static_cast<float>(usableH) / static_cast<float>(std::max(1, page.rows));
     const int targetGapX = std::max(0, static_cast<int>(cellRefW * kGapPercentX / gapScale_));
     const int targetGapY = std::max(0, static_cast<int>(cellRefH * kGapPercentY / gapScale_));
 
+    const int minIconWidth = std::max(1, static_cast<int>(std::round(kIconSize * dpiScaleX)));
+    const int minCellHeight = std::max(1, static_cast<int>(std::round((kMinCellHeight / 2.0f) * dpiScaleY)));
     page.cellWidth = page.columns > 1
-        ? std::max(kIconSize, (usableW - (page.columns - 1) * targetGapX) / page.columns)
+        ? std::max(minIconWidth, (usableW - (page.columns - 1) * targetGapX) / page.columns)
         : usableW;
     page.cellHeight = page.rows > 1
-        ? std::max(kMinCellHeight / 2, (usableH - (page.rows - 1) * targetGapY) / page.rows)
+        ? std::max(minCellHeight, (usableH - (page.rows - 1) * targetGapY) / page.rows)
         : usableH;
-    page.gapX = page.columns > 1 ? std::max(0, (usableW - page.columns * page.cellWidth) / (page.columns - 1)) : 0;
-    page.gapY = page.rows    > 1 ? std::max(0, (usableH - page.rows    * page.cellHeight) / (page.rows - 1)) : 0;
-
-    int gridW = page.columns * page.cellWidth + std::max(0, page.columns - 1) * page.gapX;
-    int gridH = page.rows * page.cellHeight + std::max(0, page.rows - 1) * page.gapY;
-    page.marginX = std::max(kGridMarginX, (pageW - gridW) / 2);
-    page.marginY = std::max(kGridMarginY, (pageH - gridH) / 2);
+    page.gapX = page.columns > 1
+        ? std::max(0, (usableW - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
+        : 0;
+    page.gapY = page.rows > 1
+        ? std::max(0, (usableH - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
+        : 0;
+    page.marginX = marginX;
+    page.marginY = marginY;
 }
 
 // ── 拖拽辅助函数 ──────────────────────────────────────────────
@@ -3492,8 +3505,21 @@ inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const st
  */
 inline int GetGridAxisOffset(const GridPage& page, int index, bool horizontal)
 {
-    return index * ((horizontal ? page.cellWidth : page.cellHeight) +
-                    (horizontal ? page.gapX      : page.gapY));
+    const int count = horizontal ? page.columns : page.rows;
+    const int cellSize = horizontal ? page.cellWidth : page.cellHeight;
+    if (index <= 0 || count <= 1) return std::max(0, index) * cellSize;
+
+    const int extent = horizontal
+        ? static_cast<int>(page.workArea.right - page.workArea.left)
+        : static_cast<int>(page.workArea.bottom - page.workArea.top);
+    const int margin = horizontal ? page.marginX : page.marginY;
+    const int gapSpace = std::max(0, extent - margin * 2 - count * cellSize);
+    const int gapCount = count - 1;
+
+    // Use a cumulative ratio so integer remainders are spread across all
+    // internal gaps instead of being absorbed by the two outer margins.
+    const int distributedGap = (index * gapSpace + gapCount / 2) / gapCount;
+    return index * cellSize + distributedGap;
 }
 
 /**
@@ -3561,8 +3587,8 @@ inline void DesktopApp::LayoutItems()
         const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (page)
         {
-            widget.gridSpan.columns = std::clamp(widget.gridSpan.columns, 1, std::max(1, page->columns));
-            widget.gridSpan.rows    = std::clamp(widget.gridSpan.rows,    1, std::max(1, page->rows));
+            widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan,
+                page->columns, page->rows);
             widget.gridCell.column  = std::clamp(widget.gridCell.column,  0, std::max(0, page->columns - widget.gridSpan.columns));
             widget.gridCell.row     = std::clamp(widget.gridCell.row,     0, std::max(0, page->rows    - widget.gridSpan.rows));
         }
@@ -3784,6 +3810,49 @@ inline std::wstring DesktopApp::MakeNewWidgetId() const
     return L"widget-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
 }
 
+inline void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
+{
+    widget.minGridSpan = { 1, 1 };
+    widget.maxGridSpan = { 0, 0 };
+
+    if (widget.type == DesktopWidgetType::FileCategories ||
+        widget.type == DesktopWidgetType::FolderMapping)
+    {
+        widget.minGridSpan = { 2, 2 };
+    }
+    else if (widget.type == DesktopWidgetType::LuaScript && !widget.scriptPath.empty())
+    {
+        LuaWidgetManifest manifest = WidgetEngine::GetWidgetManifest(widget.scriptPath);
+        widget.minGridSpan = {
+            std::max(1, manifest.minColumns),
+            std::max(1, manifest.minRows)
+        };
+        widget.maxGridSpan = {
+            std::max(0, manifest.maxColumns),
+            std::max(0, manifest.maxRows)
+        };
+    }
+}
+
+inline GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
+    int availableColumns, int availableRows) const
+{
+    const int pageMaxColumns = std::max(1, availableColumns);
+    const int pageMaxRows = std::max(1, availableRows);
+    const int maxColumns = widget.maxGridSpan.columns > 0
+        ? std::min(pageMaxColumns, widget.maxGridSpan.columns)
+        : pageMaxColumns;
+    const int maxRows = widget.maxGridSpan.rows > 0
+        ? std::min(pageMaxRows, widget.maxGridSpan.rows)
+        : pageMaxRows;
+    const int minColumns = std::min(maxColumns, std::max(1, widget.minGridSpan.columns));
+    const int minRows = std::min(maxRows, std::max(1, widget.minGridSpan.rows));
+
+    span.columns = std::clamp(span.columns, minColumns, maxColumns);
+    span.rows = std::clamp(span.rows, minRows, maxRows);
+    return span;
+}
+
 /**
  * @brief 将组件添加到网格中，自动查找空闲位置。
  * @param widget 组件对象（移动语义）。
@@ -3791,6 +3860,7 @@ inline std::wstring DesktopApp::MakeNewWidgetId() const
  */
 inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 {
+    ConfigureWidgetGridLimits(widget);
     POINT clientPoint = lastContextMenuScreenPoint_;
     ScreenToClient(hwnd_, &clientPoint);
     GridCell cell = CellFromPoint(clientPoint);
@@ -3811,6 +3881,8 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 
     GridCell freeCell;
     const GridPage* cellPage = FindGridPage(gridPages_, cell.pageId);
+    if (cellPage)
+        span = ClampWidgetGridSpan(widget, span, cellPage->columns, cellPage->rows);
     bool needSearch = AreGridSlotsMarked(usedSlots, cell, span) ||
         !IsGridAreaValid(cell, span);
     if (!needSearch && cellPage)
@@ -3960,8 +4032,8 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
     const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
     if (!page) return;
 
-    targetSpan.columns = std::clamp(targetSpan.columns, 1, std::max(1, page->columns - targetCell.column));
-    targetSpan.rows    = std::clamp(targetSpan.rows,    1, std::max(1, page->rows    - targetCell.row));
+    targetSpan = ClampWidgetGridSpan(widgets_[widgetIndex], targetSpan,
+        page->columns - targetCell.column, page->rows - targetCell.row);
 
     // Widget-widget collision check
     for (size_t i = 0; i < widgets_.size(); ++i)

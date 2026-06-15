@@ -57,6 +57,10 @@ struct LuaWidgetManifest
     std::string description;           ///< 功能描述文本
     int defaultColumns = 1;            ///< 默认占据列数（桌面栅格）
     int defaultRows = 1;               ///< 默认占据行数（桌面栅格）
+    int minColumns = 1;                ///< 最少占据列数
+    int minRows = 1;                   ///< 最少占据行数
+    int maxColumns = 0;                ///< 最多占据列数，0 表示不限制
+    int maxRows = 0;                   ///< 最多占据行数，0 表示不限制
     std::vector<std::string> permissions; ///< 声明的权限列表，如 "filesystem", "exec"
 };
 
@@ -87,6 +91,7 @@ struct LuaWidgetMenuItem
 {
     int id = 0;                ///< 菜单项标识符，回调时回传
     std::string label;         ///< 菜单项显示文本
+    std::string icon;          ///< 可选 Font Awesome 图标字符
     bool enabled = true;       ///< 是否可用（灰显）
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
 };
@@ -227,6 +232,7 @@ public:
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
     using DesktopRefreshCallback = std::function<void()>;
     using InlineTextEditCallback = std::function<void(const LuaInlineTextEditRequest&)>;
+    using NotifyCallback = std::function<void(const std::wstring&, const std::wstring&)>;
 
     /** @brief 设置桌面快照提供者回调 */
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
@@ -244,6 +250,8 @@ public:
     void SetDesktopRefreshCallback(DesktopRefreshCallback callback) { desktopRefreshCallback_ = std::move(callback); }
     /** @brief 设置内联文本编辑回调 */
     void SetInlineTextEditCallback(InlineTextEditCallback callback) { inlineTextEditCallback_ = std::move(callback); }
+    /** @brief 设置系统通知回调 */
+    void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
 
     /**
      * @brief 确保小部件已加载到沙箱中
@@ -519,6 +527,13 @@ public:
      */
     void SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetTheme& theme);
 
+    /**
+     * @brief 发送系统通知
+     * @param title 通知标题
+     * @param message 通知内容
+     */
+    void RuntimeNotify(const std::wstring& title, const std::wstring& message);
+
 private:
     /**
      * @brief 内部加载小部件脚本到沙箱
@@ -561,4 +576,5 @@ private:
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
     DesktopRefreshCallback desktopRefreshCallback_;    ///< 刷新桌面的回调
     InlineTextEditCallback inlineTextEditCallback_;    ///< 内联文本编辑请求的回调
+    NotifyCallback notifyCallback_;                     ///< 系统通知回调
 };

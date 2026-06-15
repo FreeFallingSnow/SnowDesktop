@@ -59,6 +59,8 @@ struct GridPage
     RECT bounds{};
     RECT workArea{};
     bool isPrimary = false;
+    UINT dpiX = 96;
+    UINT dpiY = 96;
     int columns = 1;
     int rows = 1;
     int cellWidth = kCellWidth;
@@ -371,6 +373,8 @@ struct DesktopWidget
     std::wstring sourceFolderPath;
     GridCell gridCell;
     GridSpan gridSpan;
+    GridSpan minGridSpan{ 1, 1 };
+    GridSpan maxGridSpan{ 0, 0 }; // 0 means unrestricted (up to the current grid page)
     RECT bounds{};
     bool selected = false;
     bool autoCollect = false;
