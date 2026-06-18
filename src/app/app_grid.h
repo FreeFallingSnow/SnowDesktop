@@ -1846,23 +1846,28 @@ inline void DesktopApp::UpdateLayoutWorkArea()
  */
 inline void DesktopApp::ConfigureGridPage(GridPage& page) const
 {
-    const int cw = static_cast<int>(kCellWidth * gapScale_);
-    const int ch = static_cast<int>(kMinCellHeight * gapScale_);
+    const float dpiScaleX = static_cast<float>(page.dpiX) / 96.0f;
+    const float dpiScaleY = static_cast<float>(page.dpiY) / 96.0f;
+    const int marginX = std::max(1, static_cast<int>(std::round(kGridMarginX * dpiScaleX)));
+    const int marginY = std::max(1, static_cast<int>(std::round(kGridMarginY * dpiScaleY)));
+    const int cw = std::max(1, static_cast<int>(std::round(kCellWidth * gapScale_ * dpiScaleX)));
+    const int ch = std::max(1, static_cast<int>(std::round(kMinCellHeight * gapScale_ * dpiScaleY)));
     const int w  = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int h  = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-    const int uw = std::max(1, w - kGridMarginX * 2);
-    const int uh = std::max(1, h - kGridMarginY * 2);
+    const int uw = std::max(1, w - marginX * 2);
+    const int uh = std::max(1, h - marginY * 2);
     page.columns   = std::max(4, uw / cw);
     page.rows      = std::max(3, uh / ch);
     page.cellWidth  = cw;
     page.cellHeight = ch;
-    page.gapX = page.columns > 1 ? std::max(0, (uw - page.columns * page.cellWidth)  / (page.columns - 1)) : 0;
-    page.gapY = page.rows    > 1 ? std::max(0, (uh - page.rows    * page.cellHeight) / (page.rows    - 1)) : 0;
-
-    int gridW = page.columns * page.cellWidth + std::max(0, page.columns - 1) * page.gapX;
-    int gridH = page.rows * page.cellHeight + std::max(0, page.rows - 1) * page.gapY;
-    page.marginX = std::max(kGridMarginX, (w - gridW) / 2);
-    page.marginY = std::max(kGridMarginY, (h - gridH) / 2);
+    page.gapX = page.columns > 1
+        ? std::max(0, (uw - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
+        : 0;
+    page.gapY = page.rows > 1
+        ? std::max(0, (uh - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
+        : 0;
+    page.marginX = marginX;
+    page.marginY = marginY;
 }
 
 /**
@@ -1890,28 +1895,35 @@ inline void DesktopApp::ApplySavedGridDimensions()
  */
 inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
 {
+    const float dpiScaleX = static_cast<float>(page.dpiX) / 96.0f;
+    const float dpiScaleY = static_cast<float>(page.dpiY) / 96.0f;
+    const int marginX = std::max(1, static_cast<int>(std::round(kGridMarginX * dpiScaleX)));
+    const int marginY = std::max(1, static_cast<int>(std::round(kGridMarginY * dpiScaleY)));
     const int pageW = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int pageH = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-    const int usableW = std::max(1, pageW - (kGridMarginX * 2));
-    const int usableH = std::max(1, pageH - (kGridMarginY * 2));
+    const int usableW = std::max(1, pageW - marginX * 2);
+    const int usableH = std::max(1, pageH - marginY * 2);
     const float cellRefW = static_cast<float>(usableW) / static_cast<float>(std::max(1, page.columns));
     const float cellRefH = static_cast<float>(usableH) / static_cast<float>(std::max(1, page.rows));
     const int targetGapX = std::max(0, static_cast<int>(cellRefW * kGapPercentX / gapScale_));
     const int targetGapY = std::max(0, static_cast<int>(cellRefH * kGapPercentY / gapScale_));
 
+    const int minIconWidth = std::max(1, static_cast<int>(std::round(kIconSize * dpiScaleX)));
+    const int minCellHeight = std::max(1, static_cast<int>(std::round((kMinCellHeight / 2.0f) * dpiScaleY)));
     page.cellWidth = page.columns > 1
-        ? std::max(kIconSize, (usableW - (page.columns - 1) * targetGapX) / page.columns)
+        ? std::max(minIconWidth, (usableW - (page.columns - 1) * targetGapX) / page.columns)
         : usableW;
     page.cellHeight = page.rows > 1
-        ? std::max(kMinCellHeight / 2, (usableH - (page.rows - 1) * targetGapY) / page.rows)
+        ? std::max(minCellHeight, (usableH - (page.rows - 1) * targetGapY) / page.rows)
         : usableH;
-    page.gapX = page.columns > 1 ? std::max(0, (usableW - page.columns * page.cellWidth) / (page.columns - 1)) : 0;
-    page.gapY = page.rows    > 1 ? std::max(0, (usableH - page.rows    * page.cellHeight) / (page.rows - 1)) : 0;
-
-    int gridW = page.columns * page.cellWidth + std::max(0, page.columns - 1) * page.gapX;
-    int gridH = page.rows * page.cellHeight + std::max(0, page.rows - 1) * page.gapY;
-    page.marginX = std::max(kGridMarginX, (pageW - gridW) / 2);
-    page.marginY = std::max(kGridMarginY, (pageH - gridH) / 2);
+    page.gapX = page.columns > 1
+        ? std::max(0, (usableW - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
+        : 0;
+    page.gapY = page.rows > 1
+        ? std::max(0, (usableH - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
+        : 0;
+    page.marginX = marginX;
+    page.marginY = marginY;
 }
 
 // ── 拖拽辅助函数 ──────────────────────────────────────────────
@@ -3492,8 +3504,21 @@ inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const st
  */
 inline int GetGridAxisOffset(const GridPage& page, int index, bool horizontal)
 {
-    return index * ((horizontal ? page.cellWidth : page.cellHeight) +
-                    (horizontal ? page.gapX      : page.gapY));
+    const int count = horizontal ? page.columns : page.rows;
+    const int cellSize = horizontal ? page.cellWidth : page.cellHeight;
+    if (index <= 0 || count <= 1) return std::max(0, index) * cellSize;
+
+    const int extent = horizontal
+        ? static_cast<int>(page.workArea.right - page.workArea.left)
+        : static_cast<int>(page.workArea.bottom - page.workArea.top);
+    const int margin = horizontal ? page.marginX : page.marginY;
+    const int gapSpace = std::max(0, extent - margin * 2 - count * cellSize);
+    const int gapCount = count - 1;
+
+    // Use a cumulative ratio so integer remainders are spread across all
+    // internal gaps instead of being absorbed by the two outer margins.
+    const int distributedGap = (index * gapSpace + gapCount / 2) / gapCount;
+    return index * cellSize + distributedGap;
 }
 
 /**

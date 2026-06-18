@@ -505,6 +505,8 @@ private:
     void AddTrayIcon(bool force = false);
     /** @brief 移除托盘图标。 */
     void RemoveTrayIcon();
+    /** @brief 显示托盘气泡通知。 @param title 标题 @param message 内容 */
+    void ShowBalloonNotification(const std::wstring& title, const std::wstring& message);
     /** @brief 在托盘图标上显示上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowTrayMenu(POINT screenPoint);
     /** @brief 处理托盘图标回调事件。 @param lParam 消息的 LPARAM */
@@ -797,6 +799,8 @@ private:
     RECT GetItemIconRect(RECT bounds) const;
     /** @brief 从项边界矩形计算文本区域。 @param bounds 项边界 @param expanded 是否展开 @return 文本矩形 */
     RECT GetItemTextRect(RECT bounds, bool expanded) const;
+    /** @brief 获取项目所在显示器相对于 96 DPI 的缩放比例。 */
+    float GetItemDpiScale(RECT bounds) const;
     /** @brief 从项边界矩形计算选中框区域。 @param bounds 项边界 @param expanded 是否展开 @return 选中框矩形 */
     RECT GetItemSelectionRect(RECT bounds, bool expanded) const;
     /**

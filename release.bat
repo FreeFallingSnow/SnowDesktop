@@ -33,12 +33,11 @@ copy /Y ".build\Release\SnowDesktop.exe" "release\" >nul
 if errorlevel 1 ( echo Failed to copy SnowDesktop.exe & pause & exit /b 1 )
 echo   OK
 
-if exist ".build\Release\widgets" (
-    echo Copying widgets\ ...
-    if exist "release\widgets" rd /s /q "release\widgets"
-    xcopy /E /I /Y ".build\Release\widgets" "release\widgets" >nul
-    echo   OK
-)
+echo Copying widgets\ (including documentation and skills)...
+if exist "release\widgets" rd /s /q "release\widgets"
+xcopy /E /I /Y "widgets" "release\widgets" >nul
+if errorlevel 1 ( echo Failed to copy widgets & pause & exit /b 1 )
+echo   OK
 
 echo.
 echo [3/3] Changes staged in release\ for tag %TAG%
