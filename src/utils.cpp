@@ -12,6 +12,7 @@
 
 #include <commoncontrols.h>
 #include <shellapi.h>
+#include <shellscalingapi.h>
 #include <shlwapi.h>
 #include <d2d1_1.h>
 #include <dwrite_3.h>
@@ -79,6 +80,7 @@ BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lPar
         : (L"Monitor" + std::to_wstring(context->pages->size()));
     page.id = page.monitorId;
     page.isPrimary = (monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0;
+    GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &page.dpiX, &page.dpiY);
     page.bounds = {
         monitorInfo.rcMonitor.left - context->virtualLeft,
         monitorInfo.rcMonitor.top - context->virtualTop,

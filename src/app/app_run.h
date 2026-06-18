@@ -582,6 +582,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetInlineTextEditCallback([this](const LuaInlineTextEditRequest& request) {
             BeginLuaInlineTextEdit(request);
         });
+        widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
+            ShowBalloonNotification(title, message);
+        });
         if (settingsWindow_)
             settingsWindow_->SetWidgetEngine(widgetEngine_.get());
     }

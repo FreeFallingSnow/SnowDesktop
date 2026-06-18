@@ -442,6 +442,16 @@ static int lua_GetTime(lua_State* L)
     return 1;
 }
 
+static int lua_Notify(lua_State* L)
+{
+    const char* title = luaL_checkstring(L, 1);
+    const char* message = luaL_checkstring(L, 2);
+    auto* s = GetD2D(L);
+    if (s && s->engine)
+        s->engine->RuntimeNotify(Utf8ToWideLocal(title), Utf8ToWideLocal(message));
+    return 0;
+}
+
 static bool RequirePermission(lua_State* L, const char* permission)
 {
     auto* s = GetD2D(L);
@@ -1482,6 +1492,12 @@ void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& re
         inlineTextEditCallback_(request);
 }
 
+void WidgetEngine::RuntimeNotify(const std::wstring& title, const std::wstring& message)
+{
+    if (notifyCallback_)
+        notifyCallback_(title, message);
+}
+
 LuaWidgetTheme WidgetEngine::RuntimeGetWidgetTheme(const std::wstring& widgetId) const
 {
     int idx = FindWidget(widgetId);
@@ -1950,6 +1966,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_GetTime);   lua_setfield(L, -2, "getTime");
+    lua_pushcfunction(L, lua_Notify);    lua_setfield(L, -2, "notify");
     lua_setglobal(L, "sys");
 
     lua_newtable(L);

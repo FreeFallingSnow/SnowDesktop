@@ -109,13 +109,14 @@ inline bool DesktopApp::InitGraphics()
         reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
     if (FAILED(hr)) return false;
     dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 15.0f, L"", &itemTextFormat_);
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, kItemFontSize, L"", &itemTextFormat_);
     if (itemTextFormat_)
     {
         itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-        itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 17.0f, 13.0f);
+        itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+            kItemLineHeight, kItemBaseline);
     }
 
     dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
@@ -238,33 +239,58 @@ inline std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& c)
         (static_cast<std::uint64_t>(a) << 48);
 }
 
+inline float DesktopApp::GetItemDpiScale(RECT bounds) const
+{
+    const POINT center = {
+        bounds.left + (bounds.right - bounds.left) / 2,
+        bounds.top + (bounds.bottom - bounds.top) / 2
+    };
+    for (const auto& page : gridPages_)
+    {
+        if (PtInRect(&page.bounds, center))
+            return std::max(0.5f, static_cast<float>(page.dpiY) / 96.0f);
+    }
+    return 1.0f;
+}
+
 inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
 {
+    const float dpiScale = GetItemDpiScale(bounds);
+    const int inset = std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
+    const int topInset = std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
+    const int textHeight = std::max(1, static_cast<int>(std::round(kTextHeight * dpiScale)));
     const int cellW = bounds.right - bounds.left;
     const int cellH = bounds.bottom - bounds.top;
-    if (cellH < 50)
+    if (cellH < static_cast<int>(std::round(50.0f * dpiScale)))
     {
-        const int iconSz = std::min(32, cellH - 4);
+        const int iconSz = std::max(1, std::min(
+            static_cast<int>(std::round(32.0f * dpiScale)),
+            cellH - inset));
         return MakeRect(
-            bounds.left + 4,
+            bounds.left + inset,
             bounds.top + (cellH - iconSz) / 2,
-            bounds.left + 4 + iconSz,
+            bounds.left + inset + iconSz,
             bounds.top + (cellH + iconSz) / 2);
     }
-    const int maxIconW = std::max(16, cellW - 8);
-    const int maxIconH = std::max(16, cellH - kTextHeight - 8);
+    const int minIcon = std::max(1, static_cast<int>(std::round(16.0f * dpiScale)));
+    const int maxIconW = std::max(minIcon, cellW - inset * 2);
+    const int maxIconH = std::max(minIcon, cellH - textHeight - inset * 2);
     const int iconSz = std::min(maxIconW, maxIconH);
     const int iconX = bounds.left + (cellW - iconSz) / 2;
-    const int iconY = bounds.top + 2;
+    const int iconY = bounds.top + topInset;
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
 }
 
 inline RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
 {
+    const float dpiScale = GetItemDpiScale(bounds);
     RECT iconRect = GetItemIconRect(bounds);
-    const int textTop = iconRect.bottom + 2;
-    const int textH = expanded ? kTextExpandedHeight : kTextCollapsedHeight;
-    return MakeRect(bounds.left + 4, textTop, bounds.right - 4, textTop + textH);
+    const int inset = std::max(1, static_cast<int>(std::round(4.0f * dpiScale)));
+    const int textTop = iconRect.bottom +
+        std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
+    const int baseHeight = expanded ? kTextExpandedHeight : kTextCollapsedHeight;
+    const int textH = std::max(1, static_cast<int>(std::round(baseHeight * dpiScale)));
+    return MakeRect(bounds.left + inset, textTop, bounds.right - inset, textTop + textH);
 }
 
 inline RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
@@ -363,6 +389,12 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
         text.c_str(), static_cast<UINT32>(text.size()),
         itemTextFormat_.Get(), tw, th, &layout)) || !layout)
         return;
+
+    const float dpiScale = GetItemDpiScale(bounds);
+    const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
+    layout->SetFontSize(kItemFontSize * dpiScale, fullRange);
+    layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+        kItemLineHeight * dpiScale, kItemBaseline * dpiScale);
 
     ComPtr<ID2D1SolidColorBrush> shadowBrush;
     ComPtr<ID2D1SolidColorBrush> textBrush;

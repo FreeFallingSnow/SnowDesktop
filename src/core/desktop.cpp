@@ -78,11 +78,13 @@ std::vector<std::unique_ptr<Slot>> DesktopGrid::BuildSlots()
         {
             for (int col = 0; col < page.columns; ++col)
             {
+                const int x = GetGridAxisOffset(page, col, true);
+                const int y = GetGridAxisOffset(page, row, false);
                 RECT cellBounds = {
-                    page.bounds.left + page.marginX + col * (page.cellWidth + page.gapX),
-                    page.bounds.top  + page.marginY + row * (page.cellHeight + page.gapY),
-                    page.bounds.left + page.marginX + col * (page.cellWidth + page.gapX) + page.cellWidth,
-                    page.bounds.top  + page.marginY + row * (page.cellHeight + page.gapY) + page.cellHeight
+                    page.workArea.left + page.marginX + x,
+                    page.workArea.top  + page.marginY + y,
+                    page.workArea.left + page.marginX + x + page.cellWidth,
+                    page.workArea.top  + page.marginY + y + page.cellHeight
                 };
                 slots.push_back(std::make_unique<Slot>(this, cellBounds, slots.size()));
             }
@@ -113,12 +115,23 @@ HitRegion DesktopGrid::HitTestAtPoint(POINT pt, Slot*& outSlot)
     if (!page) return HitRegion::None;
 
     auto axisIndex = [](const GridPage& pg, int coord, bool horizontal) -> int {
+        const int count = horizontal ? pg.columns : pg.rows;
         int margin = horizontal ? pg.marginX : pg.marginY;
         int cellSize = horizontal ? pg.cellWidth : pg.cellHeight;
-        int gap = horizontal ? pg.gapX : pg.gapY;
-        int origin = horizontal ? pg.bounds.left : pg.bounds.top;
-        int idx = (coord - origin - margin + gap / 2) / (cellSize + gap);
-        return std::clamp(idx, 0, horizontal ? pg.columns - 1 : pg.rows - 1);
+        int origin = horizontal ? pg.workArea.left : pg.workArea.top;
+        int bestIndex = 0;
+        int bestDistance = INT_MAX;
+        for (int i = 0; i < count; ++i)
+        {
+            int center = origin + margin + GetGridAxisOffset(pg, i, horizontal) + cellSize / 2;
+            int distance = std::abs(coord - center);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestIndex = i;
+            }
+        }
+        return bestIndex;
     };
 
     int col = axisIndex(*page, pt.x, true);

@@ -3675,7 +3675,9 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    renameFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    const float renameScale = GetItemDpiScale(rect);
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+        0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(renameEdit_, WM_SETFONT,
@@ -3932,7 +3934,9 @@ inline void DesktopApp::BeginRenameSelected()
         }
 
         if (renameFont_) DeleteObject(renameFont_);
-        renameFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        const float renameScale = GetItemDpiScale(frame);
+        renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+            0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         SendMessageW(renameEdit_, WM_SETFONT,
@@ -3997,7 +4001,9 @@ inline void DesktopApp::BeginRenameSelected()
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    renameFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    const float renameScale = GetItemDpiScale(itemBounds);
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+        0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(renameEdit_, WM_SETFONT,
@@ -5846,6 +5852,30 @@ inline void DesktopApp::RemoveTrayIcon()
     data.uID = kTrayIconId;
     Shell_NotifyIconW(NIM_DELETE, &data);
     trayIconAdded_ = false;
+}
+
+/**
+ * @brief 显示系统托盘气泡通知
+ * @param title 通知标题
+ * @param message 通知内容
+ */
+inline void DesktopApp::ShowBalloonNotification(const std::wstring& title, const std::wstring& message)
+{
+    HWND owner = controlHwnd_ ? controlHwnd_ : hwnd_;
+    if (!owner || !IsWindow(owner)) return;
+
+    AddTrayIcon();
+
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = owner;
+    nid.uID = kTrayIconId;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_INFO;
+    wcsncpy_s(nid.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(nid.szInfo, message.c_str(), _TRUNCATE);
+    nid.uTimeout = 10000;
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
 /**
