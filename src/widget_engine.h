@@ -544,6 +544,8 @@ public:
      */
     void RuntimeInvalidateHost();
 
+    void ReloadStorage();
+
     /**
      * @brief 获取小部件的持久化存储值
      * @param widgetId 小部件实例 ID

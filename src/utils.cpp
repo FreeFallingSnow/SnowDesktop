@@ -239,10 +239,17 @@ IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize)
         }
     }
 
+    static ComPtr<IDWriteFontCollection1> s_faFontCollection;
     ComPtr<IDWriteFontCollection1> fontCollection;
     if (g_faFontData != nullptr)
     {
-        fontCollection = BuildFaFontCollection(factory);
+        if (s_faFontCollection)
+            fontCollection = s_faFontCollection;
+        else
+        {
+            fontCollection = BuildFaFontCollection(factory);
+            s_faFontCollection = fontCollection;
+        }
     }
 
     IDWriteTextFormat* format = nullptr;
