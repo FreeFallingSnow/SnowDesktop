@@ -2295,6 +2295,11 @@ void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const st
     SaveStorageFile();
 }
 
+void WidgetEngine::ReloadStorage()
+{
+    LoadStorageFile();
+}
+
 void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& request)
 {
     if (inlineTextEditCallback_)

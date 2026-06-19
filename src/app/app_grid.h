@@ -1525,6 +1525,8 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     {
         LoadLayoutSlots();
         ApplyPageMapping();
+        if (widgetEngine_)
+            widgetEngine_->ReloadStorage();
     }
     LoadDesktopItems();
     ApplyAutoCollectFileCategoryWidgets();
