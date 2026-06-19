@@ -107,7 +107,7 @@ Colors use `0xRRGGBB`.
 ### `draw.text`
 
 ```lua
-draw.text(x, y, text, size?, color?, maxWidth?, bold?, singleLine?)
+draw.text(x, y, text, size?, color?, maxWidth?, bold?, singleLine?, maxHeight?)
 ```
 
 - Defaults: `size=14`, `color=0xFFFFFF`, `maxWidth=0`.
@@ -130,6 +130,8 @@ draw.rect(x, y, width, height, color?, radius?, alpha?)
 draw.strokeRect(x, y, width, height, color?, radius?, thickness?, alpha?)
 draw.line(x1, y1, x2, y2, thickness?, color?, alpha?)
 draw.circle(centerX, centerY, radius, color?, alpha?)
+draw.pushClip(x, y, width, height)
+draw.popClip()
 ```
 
 Defaults:
@@ -137,6 +139,10 @@ Defaults:
 - Color: `0xFFFFFF`.
 - Alpha: `1.0`.
 - Radius: `0`.
+
+Use `pushClip` / `popClip` around scrollable content so partially visible rows
+cannot draw over fixed headers or reserved areas. The host automatically unwinds
+unbalanced widget clips after each render.
 - Thickness: `1.0`.
 
 `draw.circle` draws a filled circle.

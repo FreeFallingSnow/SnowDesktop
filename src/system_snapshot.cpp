@@ -248,6 +248,35 @@ void SystemSnapshotService::SampleSystem()
     SYSTEM_INFO systemInfo{};
     GetNativeSystemInfo(&systemInfo);
     cpu.logicalProcessors = systemInfo.dwNumberOfProcessors;
+
+    {
+        static std::string cachedCpuName;
+        if (cachedCpuName.empty())
+        {
+            HKEY key = nullptr;
+            if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+                0, KEY_READ, &key) == ERROR_SUCCESS)
+            {
+                wchar_t buf[256]{};
+                DWORD size = sizeof(buf);
+                if (RegQueryValueExW(key, L"ProcessorNameString", nullptr, nullptr,
+                    reinterpret_cast<LPBYTE>(buf), &size) == ERROR_SUCCESS)
+                {
+                    int len = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
+                    if (len > 1)
+                    {
+                        cachedCpuName.resize(static_cast<size_t>(len));
+                        WideCharToMultiByte(CP_UTF8, 0, buf, -1,
+                            cachedCpuName.data(), len, nullptr, nullptr);
+                        cachedCpuName.resize(static_cast<size_t>(len - 1));
+                    }
+                }
+                RegCloseKey(key);
+            }
+        }
+        cpu.name = cachedCpuName;
+    }
     FILETIME idle{}, kernel{}, user{};
     if (GetSystemTimes(&idle, &kernel, &user))
     {

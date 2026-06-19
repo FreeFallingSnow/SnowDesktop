@@ -14,7 +14,6 @@
 #include "widget_engine.h"
 #include "system_snapshot.h"
 #include "utils.h"
-#include "utils.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -265,6 +264,7 @@ struct D2DState
     int gridCellW = 92;
     int gridCellH = 136;
     int gridGapY = 8;
+    int widgetClipDepth = 0;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
 };
 
@@ -301,6 +301,7 @@ static int lua_DrawText(lua_State* L)
     float maxWidth = static_cast<float>(luaL_optnumber(L, 6, 0));
     bool bold = lua_toboolean(L, 7) != 0;
     bool singleLine = lua_toboolean(L, 8) != 0;
+    float requestedHeight = static_cast<float>(luaL_optnumber(L, 9, 0));
 
     auto* s = GetD2D(L);
     if (!s || !s->ctx || !s->dwrite) return 0;
@@ -332,10 +333,12 @@ static int lua_DrawText(lua_State* L)
         format->SetWordWrapping(singleLine ? DWRITE_WORD_WRAPPING_NO_WRAP : DWRITE_WORD_WRAPPING_WRAP);
 
         ComPtr<IDWriteTextLayout> layout;
-        const float maxHeight = singleLine ? std::max(size * 1.35f, size + 4.0f) : 5000.0f;
+        const float maxHeight = requestedHeight > 0
+            ? requestedHeight
+            : (singleLine ? std::max(size * 1.35f, size + 4.0f) : 5000.0f);
         s->dwrite->CreateTextLayout(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
             format.Get(), maxWidth, maxHeight, &layout);
-        if (layout && singleLine)
+        if (layout && (singleLine || requestedHeight > 0))
         {
             ComPtr<IDWriteInlineObject> ellipsis;
             if (SUCCEEDED(s->dwrite->CreateEllipsisTrimmingSign(format.Get(), &ellipsis)) && ellipsis)
@@ -432,6 +435,33 @@ static int lua_DrawRect(lua_State* L)
     {
         s->ctx->FillRectangle(rect, brush.Get());
     }
+    return 0;
+}
+
+static int lua_DrawPushClip(lua_State* L)
+{
+    float x = static_cast<float>(luaL_checknumber(L, 1));
+    float y = static_cast<float>(luaL_checknumber(L, 2));
+    float width = std::max(0.0f, static_cast<float>(luaL_checknumber(L, 3)));
+    float height = std::max(0.0f, static_cast<float>(luaL_checknumber(L, 4)));
+    auto* s = GetD2D(L);
+    if (!s || !s->ctx) return 0;
+    s->ctx->PushAxisAlignedClip(D2D1::RectF(
+        s->widgetRect.left + x,
+        s->widgetRect.top + y,
+        s->widgetRect.left + x + width,
+        s->widgetRect.top + y + height),
+        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    ++s->widgetClipDepth;
+    return 0;
+}
+
+static int lua_DrawPopClip(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    if (!s || !s->ctx || s->widgetClipDepth <= 0) return 0;
+    s->ctx->PopAxisAlignedClip();
+    --s->widgetClipDepth;
     return 0;
 }
 
@@ -597,10 +627,11 @@ static int lua_SystemCpu(lua_State* L)
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
     CpuSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetCpuSnapshot() : CpuSnapshot{};
-    lua_createtable(L, 0, 3);
+    lua_createtable(L, 0, 4);
     SetBooleanField(L, "available", snapshot.available);
     SetNumberField(L, "usagePercent", snapshot.usagePercent);
     SetNumberField(L, "logicalProcessors", snapshot.logicalProcessors);
+    lua_pushstring(L, snapshot.name.c_str()); lua_setfield(L, -2, "name");
     return 1;
 }
 
@@ -892,7 +923,6 @@ static int lua_UiScrollArea(lua_State* L)
     float height = static_cast<float>(luaL_checknumber(L, 5));
     int contentHeight = static_cast<int>(luaL_checkinteger(L, 6));
     auto* s = GetD2D(L);
-    int offset = s && s->engine ? s->engine->RuntimeGetScrollOffset(s->currentWidgetId, id) : 0;
     if (s && s->engine)
     {
         LuaWidget::HostControl control;
@@ -904,6 +934,7 @@ static int lua_UiScrollArea(lua_State* L)
             static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
         s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
     }
+    int offset = s && s->engine ? s->engine->RuntimeGetScrollOffset(s->currentWidgetId, id) : 0;
     lua_pushinteger(L, offset);
     return 1;
 }
@@ -917,21 +948,23 @@ static int lua_UiVirtualList(lua_State* L)
     float height = static_cast<float>(luaL_checknumber(L, 5));
     int itemHeight = std::max(1, static_cast<int>(luaL_checkinteger(L, 6)));
     int count = std::max(0, static_cast<int>(luaL_checkinteger(L, 7)));
+    const int viewportHeight = std::max(1, static_cast<int>(height));
     auto* s = GetD2D(L);
-    int offset = s && s->engine ? s->engine->RuntimeGetScrollOffset(s->currentWidgetId, id) : 0;
     if (s && s->engine)
     {
         LuaWidget::HostControl control;
         control.type = LuaWidget::HostControl::Type::Scroll;
         control.id = id;
         control.contentHeight = count * itemHeight;
-        control.viewportHeight = static_cast<int>(height);
+        control.viewportHeight = viewportHeight;
         control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
             static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
         s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
     }
+    int offset = s && s->engine ? s->engine->RuntimeGetScrollOffset(s->currentWidgetId, id) : 0;
     int first = count == 0 ? 0 : offset / itemHeight + 1;
-    int last = count == 0 ? 0 : std::min(count, (offset + static_cast<int>(height) + itemHeight - 1) / itemHeight);
+    int last = count == 0 ? 0 : std::min(count,
+        (offset + viewportHeight + itemHeight - 1) / itemHeight);
     lua_createtable(L, 0, 3);
     lua_pushinteger(L, first); lua_setfield(L, -2, "first");
     lua_pushinteger(L, last); lua_setfield(L, -2, "last");
@@ -1723,6 +1756,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     found->lastRenderTime = std::chrono::steady_clock::now();
     found->hostControls.clear();
+    d2dState_->widgetClipDepth = 0;
 
     lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
     if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
@@ -1744,6 +1778,11 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             const char* err = lua_tostring(L_, -1);
             RuntimeRecordError(widgetId, err ? err : "(render error)");
             lua_pop(L_, 1);
+            while (d2dState_->widgetClipDepth > 0)
+            {
+                d2dState_->ctx->PopAxisAlignedClip();
+                --d2dState_->widgetClipDepth;
+            }
 
             // draw conspicuous placeholder
             if (d2dState_ && d2dState_->ctx)
@@ -1782,13 +1821,17 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             // mark invalid to avoid repeated attempts
             found->valid = false;
             lua_pop(L_, 1);
-            lua_pop(L_, 1);
             return;
         }
     }
     else
     {
         lua_pop(L_, 1);
+    }
+    while (d2dState_->widgetClipDepth > 0)
+    {
+        d2dState_->ctx->PopAxisAlignedClip();
+        --d2dState_->widgetClipDepth;
     }
     lua_pop(L_, 1);
 }
@@ -2351,7 +2394,14 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
     LuaWidget::HostControl control)
 {
     int index = FindWidget(widgetId);
-    if (index >= 0) widgets_[index].hostControls.push_back(std::move(control));
+    if (index < 0) return;
+    if (control.type == LuaWidget::HostControl::Type::Scroll)
+    {
+        const int maximum = std::max(0, control.contentHeight - control.viewportHeight);
+        int& offset = widgets_[index].scrollOffsets[control.id];
+        offset = std::clamp(offset, 0, maximum);
+    }
+    widgets_[index].hostControls.push_back(std::move(control));
 }
 
 int WidgetEngine::RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const
@@ -3142,6 +3192,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_DrawText);  lua_setfield(L, -2, "text");
     lua_pushcfunction(L, lua_MeasureText); lua_setfield(L, -2, "measureText");
     lua_pushcfunction(L, lua_DrawRect);  lua_setfield(L, -2, "rect");
+    lua_pushcfunction(L, lua_DrawPushClip); lua_setfield(L, -2, "pushClip");
+    lua_pushcfunction(L, lua_DrawPopClip); lua_setfield(L, -2, "popClip");
     lua_pushcfunction(L, lua_DrawStrokeRect); lua_setfield(L, -2, "strokeRect");
     lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
     lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");

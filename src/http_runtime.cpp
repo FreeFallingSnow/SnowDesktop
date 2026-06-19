@@ -49,6 +49,7 @@ bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
     {
         std::wstring allowed(raw.begin(), raw.end());
         allowed = Lower(allowed);
+        if (allowed == L"*") return true;
         if (allowed == actual) return true;
         if (allowed.starts_with(L"*."))
         {
