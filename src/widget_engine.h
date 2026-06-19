@@ -24,6 +24,8 @@
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
+#include "system_snapshot.h"
+#include "http_runtime.h"
 
 struct ImGuiContext;
 
@@ -36,6 +38,9 @@ extern "C" {
 #include <string>
 #include <vector>
 #include <functional>
+#include <chrono>
+#include <memory>
+#include <unordered_map>
 #include <unordered_set>
 
 using Microsoft::WRL::ComPtr;
@@ -51,6 +56,16 @@ struct D2DState;
  */
 struct LuaWidgetManifest
 {
+    struct Setting
+    {
+        std::string key;
+        std::string label;
+        std::string type;
+        std::string defaultValue;
+        double minValue = 0.0;
+        double maxValue = 100.0;
+        std::vector<std::string> options;
+    };
     bool hasManifest = false;          ///< 是否存在清单文件
     std::string name;                  ///< 小部件显示名称
     std::string version;               ///< 版本号字符串
@@ -61,6 +76,14 @@ struct LuaWidgetManifest
     int minRows = 1;                   ///< 最少占据行数
     int maxColumns = 0;                ///< 最多占据列数，0 表示不限制
     int maxRows = 0;                   ///< 最多占据行数，0 表示不限制
+    std::vector<std::string> networkDomains; ///< network.http 允许访问的域名
+    std::vector<Setting> settings;        ///< 宿主生成的声明式设置
+    std::string publisher;
+    std::string minHostVersion;
+    std::string preview;
+    std::string entry;
+    std::string signature;
+    bool signatureValid = true;
     std::vector<std::string> permissions; ///< 声明的权限列表，如 "filesystem", "exec"
 };
 
@@ -175,6 +198,16 @@ struct LuaWidgetTheme
  */
 struct LuaWidget
 {
+    struct HostControl
+    {
+        enum class Type { Button, Toggle, Scroll };
+        Type type = Type::Button;
+        std::string id;
+        RECT rect{};
+        bool value = false;
+        int contentHeight = 0;
+        int viewportHeight = 0;
+    };
     std::wstring widgetId;               ///< 小部件实例唯一 ID
     std::string name;                    ///< 小部件名称
     std::wstring filePath;               ///< Lua 脚本文件的完整路径
@@ -186,6 +219,20 @@ struct LuaWidget
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
     FILETIME lastModified = {};          ///< 脚本文件最后修改时间，用于变更检测
     RECT lastBounds{};                   ///< 最后一次渲染时的边界矩形
+    int lastColumns = 1;
+    int lastRows = 1;
+    bool hostVisible = false;
+    std::chrono::steady_clock::time_point lastRenderTime{};
+    struct Timer
+    {
+        std::string name;
+        int intervalMs = 1000;
+        bool repeat = true;
+        std::chrono::steady_clock::time_point due;
+    };
+    std::unordered_map<std::string, Timer> timers;
+    std::vector<HostControl> hostControls;
+    std::unordered_map<std::string, int> scrollOffsets;
 };
 
 /**
@@ -250,6 +297,8 @@ public:
     void SetDesktopRefreshCallback(DesktopRefreshCallback callback) { desktopRefreshCallback_ = std::move(callback); }
     /** @brief 设置内联文本编辑回调 */
     void SetInlineTextEditCallback(InlineTextEditCallback callback) { inlineTextEditCallback_ = std::move(callback); }
+    /** @brief 设置打开组件设置面板回调 */
+    void SetOpenWidgetSettingsCallback(WidgetTitleCallback callback) { openWidgetSettingsCallback_ = std::move(callback); }
     /** @brief 设置系统通知回调 */
     void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
 
@@ -287,7 +336,9 @@ public:
      * @param context Direct2D 设备上下文
      * @param bounds 小部件在桌面栅格中的边界矩形
      */
-    void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds);
+    void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
+        ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
+    void TickRuntime();
 
     /**
      * @brief 查询指定小部件是否启用了自定义主题样式
@@ -379,6 +430,7 @@ public:
      * @return 诊断条目数组
      */
     std::vector<WidgetDiagnosticEntry> GetWidgetDiagnostics() const;
+    std::string GetSystemSnapshotError() const;
 
     /**
      * @brief 清除所有运行时错误记录
@@ -416,6 +468,7 @@ public:
      * @return 成功读取返回 true
      */
     static bool GetWidgetDefaultSpan(const std::wstring& filename, int& columns, int& rows);
+    static bool InstallWidgetPackage(const std::wstring& manifestPath, std::wstring& error);
 
     /**
      * @brief 渲染指定小部件的 ImGui 编辑器界面
@@ -528,11 +581,34 @@ public:
     void SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetTheme& theme);
 
     /**
+     * @brief 设置当前渲染上下文的网格单元格实际像素尺寸，供 layout.cellWidth/cellHeight 使用
+     */
+    void SetGridCellSize(int cellWidth, int cellHeight);
+    void SetGridCellGap(int gapY);
+    void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
+
+    /**
      * @brief 发送系统通知
      * @param title 通知标题
      * @param message 通知内容
      */
     void RuntimeNotify(const std::wstring& title, const std::wstring& message);
+    CpuSnapshot RuntimeGetCpuSnapshot() const;
+    MemorySnapshot RuntimeGetMemorySnapshot() const;
+    BatterySnapshot RuntimeGetBatterySnapshot() const;
+    NetworkSnapshot RuntimeGetNetworkSnapshot() const;
+    GpuSnapshot RuntimeGetGpuSnapshot() const;
+    MediaSnapshot RuntimeGetMediaSnapshot() const;
+    bool RuntimeMediaPlayPause();
+    bool RuntimeMediaNext();
+    bool RuntimeMediaPrevious();
+    bool RuntimeSetTimer(const std::wstring& widgetId, const std::string& name, int intervalMs, bool repeat);
+    bool RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name);
+    int RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options);
+    bool RuntimeHttpCancel(const std::wstring& widgetId, int requestId);
+    void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
+    int RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const;
+    bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y, int delta, bool wheel);
 
 private:
     /**
@@ -562,6 +638,7 @@ private:
      * @return 找到返回索引，否则返回 -1
      */
     int FindWidget(const std::wstring& widgetId) const;
+    void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
 
     lua_State* L_ = nullptr;                           ///< 全局 Lua 状态机指针
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
@@ -571,10 +648,13 @@ private:
     DesktopSnapshotProvider desktopSnapshotProvider_;  ///< 桌面快照提供者回调
     DesktopSnapshotProvider selectionProvider_;        ///< 当前选中项提供者回调
     WidgetTitleCallback setWidgetTitleCallback_;       ///< 设置小部件标题的回调
+    WidgetTitleCallback openWidgetSettingsCallback_;   ///< 打开小部件设置面板的回调
     InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
     DesktopRefreshCallback desktopRefreshCallback_;    ///< 刷新桌面的回调
     InlineTextEditCallback inlineTextEditCallback_;    ///< 内联文本编辑请求的回调
     NotifyCallback notifyCallback_;                     ///< 系统通知回调
+    std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
+    std::unique_ptr<AsyncHttpService> httpService_;
 };

@@ -365,6 +365,7 @@ private:
 
     /// 内嵌 Font Awesome 字体中实际存在的私有区字符
     std::vector<unsigned int> faDebugCodepoints_;
+    std::string packageInstallStatus_;
 
     /** @} */
 

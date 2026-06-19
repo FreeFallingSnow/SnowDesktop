@@ -350,6 +350,13 @@ class LuaScript : public Widget
 public:
     using Widget::Widget;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+
+private:
+    struct WidgetLoadResult { bool ok = false; bool customStyle = false; };
+    WidgetLoadResult SafeLoadWidget(const std::wstring& id, const std::wstring& scriptPath);
+    bool SafeRenderWidget(const std::wstring& id, const std::wstring& scriptPath,
+        ID2D1DeviceContext* context, RECT frame, int columns, int rows);
+    bool SafeReadFlags(const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover);
 };
 
 /**

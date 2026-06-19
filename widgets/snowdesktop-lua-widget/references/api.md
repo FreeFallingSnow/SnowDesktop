@@ -18,11 +18,24 @@ Scripts run in a sandbox containing:
 
 - Base functions: `assert`, `error`, `ipairs`, `next`, `pairs`, `pcall`, `select`, `tonumber`, `tostring`, `type`, `xpcall`.
 - Libraries: `string`, `table`, `math`, `utf8`.
-- Host APIs: `draw`, `sys`, `layout`, `storage`, `widget`, `desktop`.
+- Host APIs: `draw`, `sys`, `layout`, `storage`, `widget`, `desktop`, `media`,
+  `http`, and `ui`.
 - `imgui` only when the manifest declares `ui.input`.
 - `widgetId`, a unique string for the current component instance.
 
 Coordinates passed to drawing and mouse callbacks are local to the component. The origin is its upper-left corner.
+
+Coordinates passed to drawing and mouse callbacks are local to the component. The origin is its upper-left corner.
+
+### Script-level flags
+
+```lua
+showTitle = true        -- display widget.setTitle() value in the bottom bar
+bottomBarHover = true   -- show the bottom bar only while hovering (default: true)
+useCustomStyle = true   -- read bg/border/alpha/gradientEndA globals instead of personalization
+```
+
+The host reads these from the script globals before each render. `showTitle` defaults to `false`.
 
 The host checks the script timestamp and hot-reloads it while rendering. Persistent storage is scoped by component instance ID, so two instances of the same script keep separate values.
 
@@ -41,6 +54,12 @@ function onMouseMove(x, y, button, delta) end
 function onMouseUp(x, y, button, delta) end
 function onWheel(x, y, button, delta) end
 function onDesktopChanged(reason) end
+function onVisible() end
+function onHidden() end
+function onSizeChanged(columns, rows) end
+function onTimer(name) end
+function onHttpResponse(id, response) end
+function onUiAction(id, value) end
 function getContextMenu() return {} end
 function onMenu(id) end
 ```
@@ -122,6 +141,17 @@ Defaults:
 
 `draw.circle` draws a filled circle.
 
+### `draw.fa`
+
+```lua
+draw.fa(glyph, x, y, size?, color?)
+```
+
+Renders a single Font Awesome 6 Free Solid glyph at the given position.
+Defaults: `size=20`, `color=0xFFFFFF`. The glyph is drawn centered in a square
+of `size × size` pixels. Useful glyph codes include media controls (`` `` `` ``)
+and icons (`` `` ``).
+
 ### Images and shell icons
 
 ```lua
@@ -149,7 +179,15 @@ local theme = widget.theme()
 
 widget.editText(key, x, y, width, height, multiline,
     initialText?, selectAll?, textColor?)
+
+widget.openSettings()
 ```
+
+`widget.openSettings` opens the host settings panel for the current widget
+instance. Call this from `onDoubleClick` or `onMenu` to let the user configure
+the widget without using the right-click menu.
+
+`widget.editText` opens a host edit control and saves the result to `storage` under `key`. Defaults:
 
 `widget.editText` opens a host edit control and saves the result to `storage` under `key`. Defaults:
 
@@ -177,7 +215,98 @@ Layout:
 ```lua
 local width = layout.width()
 local height = layout.height()
+local columns = layout.columns()
+local rows = layout.rows()
+local sizeClass = layout.sizeClass() -- small, medium, large
+local cellW = layout.cellWidth()     -- grid cell width (DPI-aware, px)
+local cellH = layout.cellHeight()    -- grid cell height (DPI-aware, px)
+local gapY = layout.cellGap()        -- grid vertical gap (DPI-aware, px)
 ```
+
+`cellWidth` and `cellHeight` return the current monitor's DPI-scaled grid cell
+dimensions — the same values used to size desktop icons and collection items.
+`cellGap` returns the vertical grid gap in DPI-scaled pixels.
+
+Cached system snapshots require `system.read`:
+
+```lua
+local cpu = sys.cpu()
+-- available, usagePercent, logicalProcessors
+local memory = sys.memory()
+-- available, totalBytes, usedBytes, freeBytes, usagePercent
+local battery = sys.battery()
+-- available, percent, charging, pluggedIn, saver
+local network = sys.network()
+-- available, connected, downloadBytesPerSec, uploadBytesPerSec,
+-- receivedBytes, sentBytes
+local gpu = sys.gpu()
+-- available, name, usagePercent, vramTotalBytes, vramUsedBytes
+```
+
+Media requires `media.read`; controls require `media.action`:
+
+```lua
+local current = media.current()
+-- available, title, artist, album, sourceApp, playbackStatus,
+-- canPlayPause, canNext, canPrevious
+media.playPause()
+media.next()
+media.previous()
+```
+
+Named timers:
+
+```lua
+widget.setTimer("refresh", 60000, true)
+widget.cancelTimer("refresh")
+function onTimer(name) end
+```
+
+Intervals are clamped to 100 ms through 24 hours. One-shot timers pass `false`
+as the third argument.
+
+## Asynchronous HTTP
+
+Declare `network.http` and list exact or wildcard hosts in `networkDomains`.
+
+```lua
+local requestId = http.request({
+    url = "https://api.example.com/data",
+    method = "GET",
+    headers = { ["Accept"] = "application/json" },
+    body = "",
+    timeoutMs = 10000,
+    cacheSeconds = 300
+})
+
+function onHttpResponse(id, response)
+    -- response.ok, status, body, error, fromCache
+end
+
+http.cancel(requestId)
+```
+
+The host permits at most four concurrent requests per widget, a 64 KiB request
+body, a 1 MiB response, three redirects, and a 30-second maximum timeout.
+Callbacks are dispatched on the Lua host thread. Every redirect target must
+still match `networkDomains`, and `response.ok` is true only for HTTP 2xx.
+
+## Host controls
+
+```lua
+ui.button(id, label, x, y, width, height, enabled?)
+ui.toggle(id, label, x, y, width, height, value)
+ui.progress(x, y, width, height, value0To1, color?)
+local offset = ui.scrollArea(id, x, y, width, height, contentHeight)
+local range = ui.virtualList(id, x, y, width, height, itemHeight, itemCount)
+-- range.first, range.last, range.offset
+
+function onUiAction(id, value)
+end
+```
+
+Buttons and toggles use host hit-testing. Scroll areas and virtual lists consume
+the mouse wheel while the pointer is inside their bounds.
 
 ## Storage
 
@@ -274,7 +403,16 @@ The manifest filename is derived by replacing `.lua` with `.widget.json`.
   "defaultSize": { "columns": 2, "rows": 1 },
   "minSize": { "columns": 2, "rows": 1 },
   "maxSize": { "columns": 4, "rows": 3 },
-  "permissions": ["ui.input"]
+  "permissions": ["ui.input", "network.http"],
+  "networkDomains": ["api.example.com", "*.example.net"],
+  "publisher": "Example",
+  "minHostVersion": "0.1.2",
+  "entry": "example.lua",
+  "settings": [
+    { "key": "enabled", "label": "启用", "type": "bool", "default": "1" },
+    { "key": "count", "label": "数量", "type": "int", "default": "5", "min": 1, "max": 20 },
+    { "key": "mode", "label": "模式", "type": "select", "default": "A", "options": ["A", "B"] }
+  ]
 }
 ```
 
@@ -290,8 +428,23 @@ restoring saved layouts, and reacting to grid changes.
 | `ui.contextMenu` | `getContextMenu()`, `onMenu(id)` |
 | `desktop.read` | `desktop.items`, `selection`, `find`, `draw.icon`, desktop-change callback |
 | `desktop.action` | `desktop.open`, `reveal`, `refresh` |
+| `system.read` | `sys.cpu`, `memory`, `battery`, `network`, `gpu` |
+| `media.read` | `media.current` |
+| `media.action` | Media playback controls |
+| `network.http` | `http.request`, `http.cancel` |
 
 Missing permissions produce a runtime error for guarded APIs. Context menus and desktop-change callbacks are skipped by the host when their permission is absent.
+
+Declarative setting types are `text`, `bool`, `int`, `float`, and `select`.
+Values are stored in the same per-instance string storage used by `storage`.
+
+For local package installation, select a `.widget.json` from
+**设置 → 调试 → 安装/升级组件包**. The optional `entry` field names the paired
+Lua file. Reinstalling the same manifest stem upgrades it. An optional
+`signature` field accepts `sha256:<64 lowercase hex characters>` and is checked
+against the Lua entry file. `minHostVersion` hides and rejects incompatible
+widgets. Installation validates temporary files first and restores the previous
+version if replacement fails.
 
 ## Troubleshooting
 

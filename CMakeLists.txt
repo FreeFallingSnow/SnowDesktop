@@ -18,6 +18,8 @@ set(SNOWDESKTOP_SOURCES
     src/personalization.cpp
     src/navigation_settings.cpp
     src/widget_engine.cpp
+    src/system_snapshot.cpp
+    src/http_runtime.cpp
     src/widgets/widget_base.cpp
     src/widgets/collection.cpp
     src/widgets/file_categories.cpp
@@ -74,6 +76,7 @@ if (MSVC)
     target_compile_options(SnowDesktop PRIVATE /W4 /permissive- /EHsc /utf-8 /Zi /FS)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+        WINVER=0x0A00 _WIN32_WINNT=0x0A00
         SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
     target_link_options(SnowDesktop PRIVATE
         "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
@@ -87,7 +90,7 @@ endif()
 
 target_link_libraries(SnowDesktop PRIVATE
     comctl32 d2d1 d3d11 dbghelp dcomp dwrite dxgi gdi32 msimg32
-    ole32 shcore shell32 shlwapi urlmon user32 windowscodecs uuid
+    bcrypt iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowscodecs uuid winhttp
 )
 
 add_custom_command(TARGET SnowDesktop PRE_BUILD

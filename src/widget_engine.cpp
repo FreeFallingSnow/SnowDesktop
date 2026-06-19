@@ -12,6 +12,8 @@
  */
 
 #include "widget_engine.h"
+#include "system_snapshot.h"
+#include "utils.h"
 #include "utils.h"
 
 #include <imgui.h>
@@ -22,6 +24,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <wincodec.h>
+#include <bcrypt.h>
 #include <algorithm>
 #include <cctype>
 #include <deque>
@@ -257,6 +260,11 @@ struct D2DState
     WidgetEngine* engine = nullptr;
     std::string storagePrefix;
     std::wstring currentWidgetId;
+    int gridColumns = 1;
+    int gridRows = 1;
+    int gridCellW = 92;
+    int gridCellH = 136;
+    int gridGapY = 8;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
 };
 
@@ -452,6 +460,485 @@ static int lua_Notify(lua_State* L)
     return 0;
 }
 
+static std::string Sha256File(const std::wstring& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return {};
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    DWORD objectSize = 0, resultSize = 0;
+    std::vector<unsigned char> object;
+    std::vector<unsigned char> digest(32);
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+        return {};
+    if (BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
+        reinterpret_cast<PUCHAR>(&objectSize), sizeof(objectSize), &resultSize, 0) < 0)
+    {
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        return {};
+    }
+    object.resize(objectSize);
+    if (BCryptCreateHash(algorithm, &hash, object.data(), objectSize, nullptr, 0, 0) < 0)
+    {
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        return {};
+    }
+    char buffer[8192];
+    while (file)
+    {
+        file.read(buffer, sizeof(buffer));
+        auto count = file.gcount();
+        if (count > 0)
+            BCryptHashData(hash, reinterpret_cast<PUCHAR>(buffer), static_cast<ULONG>(count), 0);
+    }
+    BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0);
+    BCryptDestroyHash(hash);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(64);
+    for (unsigned char byte : digest)
+    {
+        result.push_back(hex[byte >> 4]);
+        result.push_back(hex[byte & 0x0F]);
+    }
+    return result;
+}
+
+static int CompareVersions(const std::string& left, const std::string& right)
+{
+    std::istringstream a(left), b(right);
+    std::string ap, bp;
+    for (int i = 0; i < 4; ++i)
+    {
+        int av = 0, bv = 0;
+        if (std::getline(a, ap, '.')) av = std::atoi(ap.c_str());
+        if (std::getline(b, bp, '.')) bv = std::atoi(bp.c_str());
+        if (av != bv) return av < bv ? -1 : 1;
+    }
+    return 0;
+}
+
+static bool JsonReadDouble(const std::string& text, const char* field, double& out)
+{
+    std::string marker = std::string("\"") + field + "\"";
+    size_t p = text.find(marker);
+    if (p == std::string::npos) return false;
+    p = text.find(':', p + marker.size());
+    if (p == std::string::npos) return false;
+    ++p;
+    while (p < text.size() && std::isspace(static_cast<unsigned char>(text[p]))) ++p;
+    char* end = nullptr;
+    out = std::strtod(text.c_str() + p, &end);
+    return end != text.c_str() + p;
+}
+
+static std::vector<std::string> JsonReadObjectArray(const std::string& text, const char* field)
+{
+    std::vector<std::string> result;
+    std::string marker = std::string("\"") + field + "\"";
+    size_t p = text.find(marker);
+    if (p == std::string::npos) return result;
+    size_t arrayStart = text.find('[', p + marker.size());
+    if (arrayStart == std::string::npos) return result;
+    bool inString = false;
+    bool escaped = false;
+    int arrayDepth = 0;
+    int objectDepth = 0;
+    size_t objectStart = std::string::npos;
+    for (size_t i = arrayStart; i < text.size(); ++i)
+    {
+        char ch = text[i];
+        if (inString)
+        {
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') inString = false;
+            continue;
+        }
+        if (ch == '"') { inString = true; continue; }
+        if (ch == '[') ++arrayDepth;
+        else if (ch == ']')
+        {
+            if (--arrayDepth == 0) break;
+        }
+        else if (ch == '{')
+        {
+            if (objectDepth++ == 0) objectStart = i;
+        }
+        else if (ch == '}' && objectDepth > 0)
+        {
+            if (--objectDepth == 0 && objectStart != std::string::npos)
+            {
+                result.push_back(text.substr(objectStart, i - objectStart + 1));
+                objectStart = std::string::npos;
+            }
+        }
+    }
+    return result;
+}
+
+static bool RequirePermission(lua_State* L, const char* permission);
+
+static void SetNumberField(lua_State* L, const char* key, lua_Number value)
+{
+    lua_pushnumber(L, value);
+    lua_setfield(L, -2, key);
+}
+
+static void SetBooleanField(lua_State* L, const char* key, bool value)
+{
+    lua_pushboolean(L, value);
+    lua_setfield(L, -2, key);
+}
+
+static int lua_SystemCpu(lua_State* L)
+{
+    if (!RequirePermission(L, "system.read")) return 0;
+    auto* s = GetD2D(L);
+    CpuSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetCpuSnapshot() : CpuSnapshot{};
+    lua_createtable(L, 0, 3);
+    SetBooleanField(L, "available", snapshot.available);
+    SetNumberField(L, "usagePercent", snapshot.usagePercent);
+    SetNumberField(L, "logicalProcessors", snapshot.logicalProcessors);
+    return 1;
+}
+
+static int lua_SystemMemory(lua_State* L)
+{
+    if (!RequirePermission(L, "system.read")) return 0;
+    auto* s = GetD2D(L);
+    MemorySnapshot snapshot = s && s->engine ? s->engine->RuntimeGetMemorySnapshot() : MemorySnapshot{};
+    lua_createtable(L, 0, 5);
+    SetBooleanField(L, "available", snapshot.available);
+    SetNumberField(L, "totalBytes", static_cast<lua_Number>(snapshot.totalBytes));
+    SetNumberField(L, "usedBytes", static_cast<lua_Number>(snapshot.usedBytes));
+    SetNumberField(L, "freeBytes", static_cast<lua_Number>(snapshot.freeBytes));
+    SetNumberField(L, "usagePercent", snapshot.usagePercent);
+    return 1;
+}
+
+static int lua_SystemBattery(lua_State* L)
+{
+    if (!RequirePermission(L, "system.read")) return 0;
+    auto* s = GetD2D(L);
+    BatterySnapshot snapshot = s && s->engine ? s->engine->RuntimeGetBatterySnapshot() : BatterySnapshot{};
+    lua_createtable(L, 0, 5);
+    SetBooleanField(L, "available", snapshot.available);
+    SetNumberField(L, "percent", snapshot.percent);
+    SetBooleanField(L, "charging", snapshot.charging);
+    SetBooleanField(L, "pluggedIn", snapshot.pluggedIn);
+    SetBooleanField(L, "saver", snapshot.saver);
+    return 1;
+}
+
+static int lua_SystemNetwork(lua_State* L)
+{
+    if (!RequirePermission(L, "system.read")) return 0;
+    auto* s = GetD2D(L);
+    NetworkSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetNetworkSnapshot() : NetworkSnapshot{};
+    lua_createtable(L, 0, 7);
+    SetBooleanField(L, "available", snapshot.available);
+    SetBooleanField(L, "connected", snapshot.connected);
+    SetNumberField(L, "downloadBytesPerSec", static_cast<lua_Number>(snapshot.downloadBytesPerSec));
+    SetNumberField(L, "uploadBytesPerSec", static_cast<lua_Number>(snapshot.uploadBytesPerSec));
+    SetNumberField(L, "receivedBytes", static_cast<lua_Number>(snapshot.receivedBytes));
+    SetNumberField(L, "sentBytes", static_cast<lua_Number>(snapshot.sentBytes));
+    return 1;
+}
+
+static int lua_SystemGpu(lua_State* L)
+{
+    if (!RequirePermission(L, "system.read")) return 0;
+    auto* s = GetD2D(L);
+    GpuSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetGpuSnapshot() : GpuSnapshot{};
+    lua_createtable(L, 0, 5);
+    SetBooleanField(L, "available", snapshot.available);
+    lua_pushstring(L, snapshot.name.c_str()); lua_setfield(L, -2, "name");
+    SetNumberField(L, "usagePercent", snapshot.usagePercent);
+    SetNumberField(L, "vramTotalBytes", static_cast<lua_Number>(snapshot.vramTotalBytes));
+    SetNumberField(L, "vramUsedBytes", static_cast<lua_Number>(snapshot.vramUsedBytes));
+    return 1;
+}
+
+static int lua_MediaCurrent(lua_State* L)
+{
+    if (!RequirePermission(L, "media.read")) return 0;
+    auto* s = GetD2D(L);
+    MediaSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetMediaSnapshot() : MediaSnapshot{};
+    lua_createtable(L, 0, 10);
+    SetBooleanField(L, "available", snapshot.available);
+    lua_pushstring(L, WidgetWideToUtf8(snapshot.title).c_str()); lua_setfield(L, -2, "title");
+    lua_pushstring(L, WidgetWideToUtf8(snapshot.artist).c_str()); lua_setfield(L, -2, "artist");
+    lua_pushstring(L, WidgetWideToUtf8(snapshot.album).c_str()); lua_setfield(L, -2, "album");
+    lua_pushstring(L, WidgetWideToUtf8(snapshot.sourceApp).c_str()); lua_setfield(L, -2, "sourceApp");
+    lua_pushstring(L, snapshot.playbackStatus.c_str()); lua_setfield(L, -2, "playbackStatus");
+    SetBooleanField(L, "canPlayPause", snapshot.canPlayPause);
+    SetBooleanField(L, "canNext", snapshot.canNext);
+    SetBooleanField(L, "canPrevious", snapshot.canPrevious);
+    return 1;
+}
+
+static int lua_MediaPlayPause(lua_State* L)
+{
+    if (!RequirePermission(L, "media.action")) return 0;
+    auto* s = GetD2D(L);
+    lua_pushboolean(L, s && s->engine && s->engine->RuntimeMediaPlayPause());
+    return 1;
+}
+
+static int lua_MediaNext(lua_State* L)
+{
+    if (!RequirePermission(L, "media.action")) return 0;
+    auto* s = GetD2D(L);
+    lua_pushboolean(L, s && s->engine && s->engine->RuntimeMediaNext());
+    return 1;
+}
+
+static int lua_MediaPrevious(lua_State* L)
+{
+    if (!RequirePermission(L, "media.action")) return 0;
+    auto* s = GetD2D(L);
+    lua_pushboolean(L, s && s->engine && s->engine->RuntimeMediaPrevious());
+    return 1;
+}
+
+static int lua_WidgetSetTimer(lua_State* L)
+{
+    const char* name = luaL_checkstring(L, 1);
+    int intervalMs = static_cast<int>(luaL_checkinteger(L, 2));
+    bool repeat = lua_isnoneornil(L, 3) || lua_toboolean(L, 3) != 0;
+    auto* s = GetD2D(L);
+    lua_pushboolean(L, s && s->engine &&
+        s->engine->RuntimeSetTimer(s->currentWidgetId, name ? name : "", intervalMs, repeat));
+    return 1;
+}
+
+static int lua_WidgetCancelTimer(lua_State* L)
+{
+    const char* name = luaL_checkstring(L, 1);
+    auto* s = GetD2D(L);
+    lua_pushboolean(L, s && s->engine &&
+        s->engine->RuntimeCancelTimer(s->currentWidgetId, name ? name : ""));
+    return 1;
+}
+
+static int lua_HttpRequest(lua_State* L)
+{
+    if (!RequirePermission(L, "network.http")) return 0;
+    luaL_checktype(L, 1, LUA_TTABLE);
+    auto* s = GetD2D(L);
+    if (!s || !s->engine) { lua_pushnil(L); return 1; }
+
+    HttpRequestOptions options;
+    options.widgetId = s->currentWidgetId;
+    lua_getfield(L, 1, "url");
+    options.url = Utf8ToWideLocal(luaL_checkstring(L, -1));
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "method");
+    if (lua_isstring(L, -1)) options.method = Utf8ToWideLocal(lua_tostring(L, -1));
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "body");
+    if (lua_isstring(L, -1)) options.body = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "timeoutMs");
+    if (lua_isinteger(L, -1)) options.timeoutMs = static_cast<int>(lua_tointeger(L, -1));
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "cacheSeconds");
+    if (lua_isinteger(L, -1)) options.cacheSeconds = static_cast<int>(lua_tointeger(L, -1));
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "headers");
+    if (lua_istable(L, -1))
+    {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0)
+        {
+            if (lua_isstring(L, -2) && lua_isstring(L, -1))
+            {
+                options.headers += Utf8ToWideLocal(lua_tostring(L, -2));
+                options.headers += L": ";
+                options.headers += Utf8ToWideLocal(lua_tostring(L, -1));
+                options.headers += L"\r\n";
+            }
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+
+    int id = s->engine->RuntimeHttpRequest(s->currentWidgetId, std::move(options));
+    if (id > 0) lua_pushinteger(L, id); else lua_pushnil(L);
+    return 1;
+}
+
+static int lua_HttpCancel(lua_State* L)
+{
+    if (!RequirePermission(L, "network.http")) return 0;
+    int id = static_cast<int>(luaL_checkinteger(L, 1));
+    auto* s = GetD2D(L);
+    lua_pushboolean(L, s && s->engine && s->engine->RuntimeHttpCancel(s->currentWidgetId, id));
+    return 1;
+}
+
+static void DrawHostRect(D2DState* state, float x, float y, float width, float height,
+    int color, float radius, float alpha)
+{
+    if (!state || !state->ctx) return;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    state->ctx->CreateSolidColorBrush(D2D1::ColorF(
+        ((color >> 16) & 0xFF) / 255.0f,
+        ((color >> 8) & 0xFF) / 255.0f,
+        (color & 0xFF) / 255.0f, alpha), &brush);
+    D2D1_RECT_F rect = D2D1::RectF(
+        state->widgetRect.left + x, state->widgetRect.top + y,
+        state->widgetRect.left + x + width, state->widgetRect.top + y + height);
+    if (radius > 0)
+        state->ctx->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
+    else
+        state->ctx->FillRectangle(rect, brush.Get());
+}
+
+static void DrawHostText(D2DState* state, const std::wstring& text,
+    float x, float y, float width, float height, float size, int color)
+{
+    if (!state || !state->ctx || !state->dwrite) return;
+    ComPtr<IDWriteTextFormat> format;
+    if (FAILED(state->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return;
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    state->ctx->CreateSolidColorBrush(D2D1::ColorF(
+        ((color >> 16) & 0xFF) / 255.0f,
+        ((color >> 8) & 0xFF) / 255.0f,
+        (color & 0xFF) / 255.0f, 1.0f), &brush);
+    state->ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format.Get(),
+        D2D1::RectF(state->widgetRect.left + x, state->widgetRect.top + y,
+            state->widgetRect.left + x + width, state->widgetRect.top + y + height),
+        brush.Get());
+}
+
+static int lua_UiButton(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    const char* label = luaL_checkstring(L, 2);
+    float x = static_cast<float>(luaL_checknumber(L, 3));
+    float y = static_cast<float>(luaL_checknumber(L, 4));
+    float width = static_cast<float>(luaL_checknumber(L, 5));
+    float height = static_cast<float>(luaL_checknumber(L, 6));
+    bool enabled = lua_isnoneornil(L, 7) || lua_toboolean(L, 7) != 0;
+    auto* s = GetD2D(L);
+    DrawHostRect(s, x, y, width, height, enabled ? 0x3478D4 : 0x555B65, 6, enabled ? 0.95f : 0.55f);
+    DrawHostText(s, Utf8ToWideLocal(label), x, y, width, height, 13, 0xFFFFFF);
+    if (enabled && s && s->engine)
+    {
+        LuaWidget::HostControl control;
+        control.type = LuaWidget::HostControl::Type::Button;
+        control.id = id;
+        control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
+            static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
+        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+    }
+    return 0;
+}
+
+static int lua_UiToggle(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    const char* label = luaL_checkstring(L, 2);
+    float x = static_cast<float>(luaL_checknumber(L, 3));
+    float y = static_cast<float>(luaL_checknumber(L, 4));
+    float width = static_cast<float>(luaL_checknumber(L, 5));
+    float height = static_cast<float>(luaL_checknumber(L, 6));
+    bool value = lua_toboolean(L, 7) != 0;
+    auto* s = GetD2D(L);
+    DrawHostRect(s, x, y, width, height, 0x29323B, 6, 0.95f);
+    DrawHostText(s, Utf8ToWideLocal(label), x + 6, y, width - height - 8, height, 12, 0xFFFFFF);
+    DrawHostRect(s, x + width - height + 3, y + 3, height - 6, height - 6,
+        value ? 0x39B980 : 0x69717A, (height - 6) / 2, 1.0f);
+    if (s && s->engine)
+    {
+        LuaWidget::HostControl control;
+        control.type = LuaWidget::HostControl::Type::Toggle;
+        control.id = id;
+        control.value = value;
+        control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
+            static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
+        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+    }
+    return 0;
+}
+
+static int lua_UiProgress(lua_State* L)
+{
+    float x = static_cast<float>(luaL_checknumber(L, 1));
+    float y = static_cast<float>(luaL_checknumber(L, 2));
+    float width = static_cast<float>(luaL_checknumber(L, 3));
+    float height = static_cast<float>(luaL_checknumber(L, 4));
+    float value = std::clamp(static_cast<float>(luaL_checknumber(L, 5)), 0.0f, 1.0f);
+    int color = static_cast<int>(luaL_optinteger(L, 6, 0x4EA1FF));
+    auto* s = GetD2D(L);
+    DrawHostRect(s, x, y, width, height, 0x26313A, height / 2, 1.0f);
+    DrawHostRect(s, x, y, width * value, height, color, height / 2, 1.0f);
+    return 0;
+}
+
+static int lua_UiScrollArea(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    float x = static_cast<float>(luaL_checknumber(L, 2));
+    float y = static_cast<float>(luaL_checknumber(L, 3));
+    float width = static_cast<float>(luaL_checknumber(L, 4));
+    float height = static_cast<float>(luaL_checknumber(L, 5));
+    int contentHeight = static_cast<int>(luaL_checkinteger(L, 6));
+    auto* s = GetD2D(L);
+    int offset = s && s->engine ? s->engine->RuntimeGetScrollOffset(s->currentWidgetId, id) : 0;
+    if (s && s->engine)
+    {
+        LuaWidget::HostControl control;
+        control.type = LuaWidget::HostControl::Type::Scroll;
+        control.id = id;
+        control.contentHeight = std::max(contentHeight, static_cast<int>(height));
+        control.viewportHeight = static_cast<int>(height);
+        control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
+            static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
+        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+    }
+    lua_pushinteger(L, offset);
+    return 1;
+}
+
+static int lua_UiVirtualList(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    float x = static_cast<float>(luaL_checknumber(L, 2));
+    float y = static_cast<float>(luaL_checknumber(L, 3));
+    float width = static_cast<float>(luaL_checknumber(L, 4));
+    float height = static_cast<float>(luaL_checknumber(L, 5));
+    int itemHeight = std::max(1, static_cast<int>(luaL_checkinteger(L, 6)));
+    int count = std::max(0, static_cast<int>(luaL_checkinteger(L, 7)));
+    auto* s = GetD2D(L);
+    int offset = s && s->engine ? s->engine->RuntimeGetScrollOffset(s->currentWidgetId, id) : 0;
+    if (s && s->engine)
+    {
+        LuaWidget::HostControl control;
+        control.type = LuaWidget::HostControl::Type::Scroll;
+        control.id = id;
+        control.contentHeight = count * itemHeight;
+        control.viewportHeight = static_cast<int>(height);
+        control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
+            static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
+        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+    }
+    int first = count == 0 ? 0 : offset / itemHeight + 1;
+    int last = count == 0 ? 0 : std::min(count, (offset + static_cast<int>(height) + itemHeight - 1) / itemHeight);
+    lua_createtable(L, 0, 3);
+    lua_pushinteger(L, first); lua_setfield(L, -2, "first");
+    lua_pushinteger(L, last); lua_setfield(L, -2, "last");
+    lua_pushinteger(L, offset); lua_setfield(L, -2, "offset");
+    return 1;
+}
+
 static bool RequirePermission(lua_State* L, const char* permission)
 {
     auto* s = GetD2D(L);
@@ -507,6 +994,14 @@ static int lua_WidgetSetTitle(lua_State* L)
     auto* s = GetD2D(L);
     if (s && s->engine)
         s->engine->RuntimeSetWidgetTitle(s->currentWidgetId, Utf8ToWideLocal(title ? title : ""));
+    return 0;
+}
+
+static int lua_WidgetOpenSettings(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    if (s && s->engine)
+        s->engine->RuntimeOpenWidgetSettings(s->currentWidgetId);
     return 0;
 }
 
@@ -810,11 +1305,29 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     PathAppendW(exePath, L"SnowDesktop.storage.json");
     g_storagePath = exePath;
     LoadStorageFile();
+    systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
+    systemSnapshotService_->Start([this]() { RuntimeInvalidateHost(); });
+    httpService_ = std::make_unique<AsyncHttpService>();
     return true;
 }
 
 void WidgetEngine::Shutdown()
 {
+    for (auto& widget : widgets_)
+    {
+        if (widget.valid && widget.hostVisible)
+            InvokeSimpleCallback(widget, "onHidden");
+    }
+    if (systemSnapshotService_)
+    {
+        systemSnapshotService_->Stop();
+        systemSnapshotService_.reset();
+    }
+    if (httpService_)
+    {
+        httpService_->Stop();
+        httpService_.reset();
+    }
     widgets_.clear();
     if (L_) { lua_close(L_); L_ = nullptr; }
     delete d2dState_; d2dState_ = nullptr;
@@ -824,8 +1337,14 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
+    if (widgets_[idx].hostVisible)
+        InvokeSimpleCallback(widgets_[idx], "onHidden");
+    if (httpService_) httpService_->CancelWidget(widgetId);
     luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
     widgets_.erase(widgets_.begin() + idx);
+    std::erase_if(widgets_, [&widgetId](const LuaWidget& widget) {
+        return widget.widgetId == widgetId;
+    });
 
     // Remove storage data for this widget
     std::string prefix = WidgetWideToUtf8(widgetId) + ".";
@@ -848,6 +1367,27 @@ int WidgetEngine::FindWidget(const std::wstring& widgetId) const
             return i;
     }
     return -1;
+}
+
+void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackName)
+{
+    SetWidgetExecutionContext(d2dState_, widget.widgetId);
+    SetWidgetRectContext(d2dState_, widget.lastBounds);
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+    lua_getfield(L_, -1, callbackName);
+    if (lua_isfunction(L_, -1))
+    {
+        if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+        {
+            const char* error = lua_tostring(L_, -1);
+            RuntimeRecordError(widget.widgetId, error ? error : "(callback error)");
+            lua_pop(L_, 1);
+        }
+    }
+    else
+        lua_pop(L_, 1);
+    lua_pop(L_, 1);
 }
 
 void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
@@ -874,6 +1414,9 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     lua_getglobal(L, "storage"); lua_setfield(L, -2, "storage");
     lua_getglobal(L, "widget");  lua_setfield(L, -2, "widget");
     lua_getglobal(L, "desktop"); lua_setfield(L, -2, "desktop");
+    lua_getglobal(L, "media");   lua_setfield(L, -2, "media");
+    lua_getglobal(L, "http");    lua_setfield(L, -2, "http");
+    lua_getglobal(L, "ui");      lua_setfield(L, -2, "ui");
 
     if (widget.permissions.contains("ui.input"))
     {
@@ -900,6 +1443,18 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     pending.widgetId = widgetId;
     pending.filePath = path;
     pending.manifest = GetWidgetManifest(PathFindFileNameW(path.c_str()));
+    if (!pending.manifest.signatureValid)
+    {
+        RuntimeRecordError(widgetId, "Widget signature validation failed");
+        return false;
+    }
+    if (!pending.manifest.minHostVersion.empty() &&
+        CompareVersions(SNOWDESKTOP_VERSION, pending.manifest.minHostVersion) < 0)
+    {
+        RuntimeRecordError(widgetId, "Widget requires SnowDesktop " +
+            pending.manifest.minHostVersion + " or newer");
+        return false;
+    }
     for (const auto& permission : pending.manifest.permissions)
         pending.permissions.insert(permission);
     SetWidgetExecutionContext(d2dState_, widgetId);
@@ -1003,6 +1558,83 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
     int ref = (idx >= 0) ? widgets_[idx].ref : LUA_NOREF;
     if (ref == LUA_NOREF) return true;
 
+    if (idx >= 0 && !widgets_[idx].manifest.settings.empty())
+    {
+        ImGui::Text("基础设置");
+        ImGui::Separator();
+        const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
+        for (const auto& setting : widgets_[idx].manifest.settings)
+        {
+            std::string fullKey = prefix + setting.key;
+            std::string current = g_storage.contains(fullKey)
+                ? g_storage[fullKey] : setting.defaultValue;
+            bool changed = false;
+            std::string next = current;
+            ImGui::PushID(setting.key.c_str());
+            if (setting.type == "bool")
+            {
+                bool value = current == "1" || current == "true";
+                if (ImGui::Checkbox(setting.label.c_str(), &value))
+                {
+                    next = value ? "1" : "0";
+                    changed = true;
+                }
+            }
+            else if (setting.type == "int")
+            {
+                int value = std::atoi(current.c_str());
+                if (ImGui::SliderInt(setting.label.c_str(), &value,
+                    static_cast<int>(setting.minValue), static_cast<int>(setting.maxValue)))
+                {
+                    next = std::to_string(value);
+                    changed = true;
+                }
+            }
+            else if (setting.type == "float")
+            {
+                float value = static_cast<float>(std::atof(current.c_str()));
+                if (ImGui::SliderFloat(setting.label.c_str(), &value,
+                    static_cast<float>(setting.minValue), static_cast<float>(setting.maxValue)))
+                {
+                    next = std::to_string(value);
+                    changed = true;
+                }
+            }
+            else if (setting.type == "select" && !setting.options.empty())
+            {
+                int selected = 0;
+                for (size_t i = 0; i < setting.options.size(); ++i)
+                    if (setting.options[i] == current) selected = static_cast<int>(i);
+                std::vector<const char*> labels;
+                for (const auto& option : setting.options) labels.push_back(option.c_str());
+                if (ImGui::Combo(setting.label.c_str(), &selected, labels.data(),
+                    static_cast<int>(labels.size())))
+                {
+                    next = setting.options[selected];
+                    changed = true;
+                }
+            }
+            else
+            {
+                char buffer[512]{};
+                strncpy_s(buffer, current.c_str(), _TRUNCATE);
+                if (ImGui::InputText(setting.label.c_str(), buffer, sizeof(buffer)))
+                {
+                    next = buffer;
+                    changed = true;
+                }
+            }
+            ImGui::PopID();
+            if (changed)
+            {
+                g_storage[fullKey] = next;
+                SaveStorageFile();
+                RuntimeInvalidateHost();
+            }
+        }
+        ImGui::Spacing();
+    }
+
     lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
     if (lua_istable(L_, -1))
     {
@@ -1030,7 +1662,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
     return true;
 }
 
-void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath, ID2D1DeviceContext* context, RECT bounds)
+void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
+    ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {
     (void)scriptPath;
 
@@ -1045,10 +1678,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         if (!exists) { found->valid = false; return; }
         if (CompareFileTime(&attr.ftLastWriteTime, &found->lastModified) != 0)
         {
-            luaL_unref(L_, LUA_REGISTRYINDEX, found->ref);
-            found->valid = false;
-            found->ref = LUA_NOREF;
-            LoadWidget(found->filePath, widgetId);
+            if (!ReloadWidget(widgetId)) return;
             idx = FindWidget(widgetId);
             if (idx < 0) return;
             found = &widgets_[idx];
@@ -1058,7 +1688,41 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     d2dState_->ctx = context;
     SetWidgetExecutionContext(d2dState_, widgetId);
     found->lastBounds = bounds;
+    d2dState_->gridColumns = std::max(1, columns);
+    d2dState_->gridRows = std::max(1, rows);
     SetWidgetRectContext(d2dState_, bounds);
+
+    if (!found->hostVisible)
+    {
+        found->hostVisible = true;
+        InvokeSimpleCallback(*found, "onVisible");
+    }
+    if (found->lastColumns != columns || found->lastRows != rows)
+    {
+        found->lastColumns = std::max(1, columns);
+        found->lastRows = std::max(1, rows);
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
+        if (lua_istable(L_, -1))
+        {
+            lua_getfield(L_, -1, "onSizeChanged");
+            if (lua_isfunction(L_, -1))
+            {
+                lua_pushinteger(L_, found->lastColumns);
+                lua_pushinteger(L_, found->lastRows);
+                if (lua_pcall(L_, 2, 0, 0) != LUA_OK)
+                {
+                    const char* error = lua_tostring(L_, -1);
+                    RuntimeRecordError(widgetId, error ? error : "(onSizeChanged error)");
+                    lua_pop(L_, 1);
+                }
+            }
+            else
+                lua_pop(L_, 1);
+        }
+        lua_pop(L_, 1);
+    }
+    found->lastRenderTime = std::chrono::steady_clock::now();
+    found->hostControls.clear();
 
     lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
     if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
@@ -1127,6 +1791,94 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         lua_pop(L_, 1);
     }
     lua_pop(L_, 1);
+}
+
+void WidgetEngine::TickRuntime()
+{
+    if (httpService_)
+    {
+        for (auto& response : httpService_->Drain())
+        {
+            int index = FindWidget(response.widgetId);
+            if (index < 0) continue;
+            auto& widget = widgets_[index];
+            SetWidgetExecutionContext(d2dState_, widget.widgetId);
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+            if (lua_istable(L_, -1))
+            {
+                lua_getfield(L_, -1, "onHttpResponse");
+                if (lua_isfunction(L_, -1))
+                {
+                    lua_pushinteger(L_, response.id);
+                    lua_createtable(L_, 0, 5);
+                    lua_pushinteger(L_, response.status); lua_setfield(L_, -2, "status");
+                    lua_pushlstring(L_, response.body.data(), response.body.size()); lua_setfield(L_, -2, "body");
+                    lua_pushstring(L_, response.error.c_str()); lua_setfield(L_, -2, "error");
+                    lua_pushboolean(L_, response.fromCache); lua_setfield(L_, -2, "fromCache");
+                    lua_pushboolean(L_, response.error.empty() &&
+                        response.status >= 200 && response.status < 300);
+                    lua_setfield(L_, -2, "ok");
+                    if (lua_pcall(L_, 2, 0, 0) != LUA_OK)
+                    {
+                        const char* error = lua_tostring(L_, -1);
+                        RuntimeRecordError(widget.widgetId, error ? error : "(onHttpResponse error)");
+                        lua_pop(L_, 1);
+                    }
+                    RuntimeInvalidateHost();
+                }
+                else
+                    lua_pop(L_, 1);
+            }
+            lua_pop(L_, 1);
+        }
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    for (auto& widget : widgets_)
+    {
+        if (!widget.valid) continue;
+        if (widget.hostVisible && widget.lastRenderTime.time_since_epoch().count() > 0 &&
+            now - widget.lastRenderTime > std::chrono::milliseconds(2500))
+        {
+            widget.hostVisible = false;
+            InvokeSimpleCallback(widget, "onHidden");
+        }
+
+        std::vector<std::string> dueNames;
+        for (const auto& [name, timer] : widget.timers)
+            if (now >= timer.due) dueNames.push_back(name);
+        for (const auto& name : dueNames)
+        {
+            auto it = widget.timers.find(name);
+            if (it == widget.timers.end()) continue;
+            const auto timer = it->second;
+            if (timer.repeat)
+                it->second.due = now + std::chrono::milliseconds(timer.intervalMs);
+            else
+                widget.timers.erase(it);
+
+            SetWidgetExecutionContext(d2dState_, widget.widgetId);
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+            if (lua_istable(L_, -1))
+            {
+                lua_getfield(L_, -1, "onTimer");
+                if (lua_isfunction(L_, -1))
+                {
+                    lua_pushstring(L_, name.c_str());
+                    if (lua_pcall(L_, 1, 0, 0) != LUA_OK)
+                    {
+                        const char* error = lua_tostring(L_, -1);
+                        RuntimeRecordError(widget.widgetId, error ? error : "(onTimer error)");
+                        lua_pop(L_, 1);
+                    }
+                    RuntimeInvalidateHost();
+                }
+                else
+                    lua_pop(L_, 1);
+            }
+            lua_pop(L_, 1);
+        }
+    }
 }
 
 // ── Check if widget uses custom style ────────────────────────────
@@ -1385,6 +2137,11 @@ std::vector<WidgetErrorEntry> WidgetEngine::GetWidgetErrors() const
     return result;
 }
 
+std::string WidgetEngine::GetSystemSnapshotError() const
+{
+    return systemSnapshotService_ ? systemSnapshotService_->GetLastError() : std::string{};
+}
+
 void WidgetEngine::ClearWidgetErrors()
 {
     for (auto it = g_storage.begin(); it != g_storage.end(); )
@@ -1402,8 +2159,14 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
     std::wstring path = widgets_[idx].filePath;
+    if (widgets_[idx].hostVisible)
+        InvokeSimpleCallback(widgets_[idx], "onHidden");
+    if (httpService_) httpService_->CancelWidget(widgetId);
     luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
     widgets_.erase(widgets_.begin() + idx);
+    std::erase_if(widgets_, [&widgetId](const LuaWidget& widget) {
+        return widget.widgetId == widgetId;
+    });
     return LoadWidget(path, widgetId);
 }
 
@@ -1501,6 +2264,153 @@ void WidgetEngine::RuntimeNotify(const std::wstring& title, const std::wstring& 
         notifyCallback_(title, message);
 }
 
+CpuSnapshot WidgetEngine::RuntimeGetCpuSnapshot() const
+{
+    return systemSnapshotService_ ? systemSnapshotService_->GetCpu() : CpuSnapshot{};
+}
+
+MemorySnapshot WidgetEngine::RuntimeGetMemorySnapshot() const
+{
+    return systemSnapshotService_ ? systemSnapshotService_->GetMemory() : MemorySnapshot{};
+}
+
+BatterySnapshot WidgetEngine::RuntimeGetBatterySnapshot() const
+{
+    return systemSnapshotService_ ? systemSnapshotService_->GetBattery() : BatterySnapshot{};
+}
+
+NetworkSnapshot WidgetEngine::RuntimeGetNetworkSnapshot() const
+{
+    return systemSnapshotService_ ? systemSnapshotService_->GetNetwork() : NetworkSnapshot{};
+}
+
+GpuSnapshot WidgetEngine::RuntimeGetGpuSnapshot() const
+{
+    return systemSnapshotService_ ? systemSnapshotService_->GetGpu() : GpuSnapshot{};
+}
+
+MediaSnapshot WidgetEngine::RuntimeGetMediaSnapshot() const
+{
+    return systemSnapshotService_ ? systemSnapshotService_->GetMedia() : MediaSnapshot{};
+}
+
+bool WidgetEngine::RuntimeMediaPlayPause()
+{
+    return systemSnapshotService_ && systemSnapshotService_->RequestMediaPlayPause();
+}
+
+bool WidgetEngine::RuntimeMediaNext()
+{
+    return systemSnapshotService_ && systemSnapshotService_->RequestMediaNext();
+}
+
+bool WidgetEngine::RuntimeMediaPrevious()
+{
+    return systemSnapshotService_ && systemSnapshotService_->RequestMediaPrevious();
+}
+
+bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::string& name,
+    int intervalMs, bool repeat)
+{
+    int index = FindWidget(widgetId);
+    if (index < 0 || name.empty()) return false;
+    intervalMs = std::clamp(intervalMs, 100, 86400000);
+    LuaWidget::Timer timer;
+    timer.name = name;
+    timer.intervalMs = intervalMs;
+    timer.repeat = repeat;
+    timer.due = std::chrono::steady_clock::now() + std::chrono::milliseconds(intervalMs);
+    widgets_[index].timers[name] = std::move(timer);
+    return true;
+}
+
+bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name)
+{
+    int index = FindWidget(widgetId);
+    return index >= 0 && widgets_[index].timers.erase(name) > 0;
+}
+
+int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options)
+{
+    int index = FindWidget(widgetId);
+    if (index < 0 || !httpService_) return 0;
+    options.widgetId = widgetId;
+    options.allowedDomains = widgets_[index].manifest.networkDomains;
+    options.timeoutMs = std::clamp(options.timeoutMs, 1000, 30000);
+    options.cacheSeconds = std::clamp(options.cacheSeconds, 0, 86400);
+    if (options.body.size() > 64 * 1024) return 0;
+    return httpService_->Submit(std::move(options));
+}
+
+bool WidgetEngine::RuntimeHttpCancel(const std::wstring& widgetId, int requestId)
+{
+    return httpService_ && httpService_->Cancel(widgetId, requestId);
+}
+
+void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
+    LuaWidget::HostControl control)
+{
+    int index = FindWidget(widgetId);
+    if (index >= 0) widgets_[index].hostControls.push_back(std::move(control));
+}
+
+int WidgetEngine::RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const
+{
+    int index = FindWidget(widgetId);
+    if (index < 0) return 0;
+    auto it = widgets_[index].scrollOffsets.find(id);
+    return it == widgets_[index].scrollOffsets.end() ? 0 : it->second;
+}
+
+bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
+    int delta, bool wheel)
+{
+    int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    auto& widget = widgets_[index];
+    POINT point{ x, y };
+    for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
+    {
+        if (!PtInRect(&it->rect, point)) continue;
+        if (wheel && it->type == LuaWidget::HostControl::Type::Scroll)
+        {
+            int maximum = std::max(0, it->contentHeight - it->viewportHeight);
+            int& offset = widget.scrollOffsets[it->id];
+            offset = std::clamp(offset - delta / WHEEL_DELTA * 48, 0, maximum);
+            RuntimeInvalidateHost();
+            return true;
+        }
+        if (wheel) continue;
+        if (it->type == LuaWidget::HostControl::Type::Button ||
+            it->type == LuaWidget::HostControl::Type::Toggle)
+        {
+            SetWidgetExecutionContext(d2dState_, widgetId);
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+            if (lua_istable(L_, -1))
+            {
+                lua_getfield(L_, -1, "onUiAction");
+                if (lua_isfunction(L_, -1))
+                {
+                    lua_pushstring(L_, it->id.c_str());
+                    lua_pushboolean(L_, it->type == LuaWidget::HostControl::Type::Toggle ? !it->value : true);
+                    if (lua_pcall(L_, 2, 0, 0) != LUA_OK)
+                    {
+                        const char* error = lua_tostring(L_, -1);
+                        RuntimeRecordError(widgetId, error ? error : "(onUiAction error)");
+                        lua_pop(L_, 1);
+                    }
+                }
+                else
+                    lua_pop(L_, 1);
+            }
+            lua_pop(L_, 1);
+            RuntimeInvalidateHost();
+            return true;
+        }
+    }
+    return false;
+}
+
 LuaWidgetTheme WidgetEngine::RuntimeGetWidgetTheme(const std::wstring& widgetId) const
 {
     int idx = FindWidget(widgetId);
@@ -1512,6 +2422,27 @@ void WidgetEngine::SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetT
     int idx = FindWidget(widgetId);
     if (idx >= 0)
         widgets_[idx].theme = theme;
+}
+
+void WidgetEngine::SetGridCellSize(int cellWidth, int cellHeight)
+{
+    if (d2dState_)
+    {
+        d2dState_->gridCellW = std::max(4, cellWidth);
+        d2dState_->gridCellH = std::max(4, cellHeight);
+    }
+}
+
+void WidgetEngine::SetGridCellGap(int gapY)
+{
+    if (d2dState_)
+        d2dState_->gridGapY = std::max(0, gapY);
+}
+
+void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
+{
+    if (openWidgetSettingsCallback_)
+        openWidgetSettingsCallback_(widgetId, L"");
 }
 
 std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
@@ -1556,6 +2487,11 @@ std::vector<std::wstring> WidgetEngine::ListAvailable()
     do
     {
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        LuaWidgetManifest manifest = GetWidgetManifest(fd.cFileName);
+        if (!manifest.signatureValid) continue;
+        if (!manifest.minHostVersion.empty() &&
+            CompareVersions(SNOWDESKTOP_VERSION, manifest.minHostVersion) < 0)
+            continue;
         result.push_back(fd.cFileName);
     } while (FindNextFileW(hFind, &fd));
 
@@ -1579,7 +2515,29 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     JsonReadString(text, "name", manifest.name);
     JsonReadString(text, "version", manifest.version);
     JsonReadString(text, "description", manifest.description);
+    JsonReadString(text, "publisher", manifest.publisher);
+    JsonReadString(text, "minHostVersion", manifest.minHostVersion);
+    JsonReadString(text, "preview", manifest.preview);
+    JsonReadString(text, "entry", manifest.entry);
+    JsonReadString(text, "signature", manifest.signature);
     manifest.permissions = JsonReadStringArray(text, "permissions");
+    manifest.networkDomains = JsonReadStringArray(text, "networkDomains");
+    for (const auto& object : JsonReadObjectArray(text, "settings"))
+    {
+        LuaWidgetManifest::Setting setting;
+        JsonReadString(object, "key", setting.key);
+        JsonReadString(object, "label", setting.label);
+        JsonReadString(object, "type", setting.type);
+        JsonReadString(object, "default", setting.defaultValue);
+        JsonReadDouble(object, "min", setting.minValue);
+        JsonReadDouble(object, "max", setting.maxValue);
+        setting.options = JsonReadStringArray(object, "options");
+        if (!setting.key.empty() && !setting.label.empty())
+        {
+            if (setting.type.empty()) setting.type = "text";
+            manifest.settings.push_back(std::move(setting));
+        }
+    }
     auto sizeObject = [&text](const char* field) {
         std::string result;
         std::string key = std::string("\"") + field + "\"";
@@ -1629,7 +2587,132 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
 
     if (manifest.permissions.empty())
         manifest.permissions = {};
+    if (!manifest.signature.empty())
+    {
+        std::string expected = manifest.signature;
+        if (expected.starts_with("sha256:")) expected.erase(0, 7);
+        std::transform(expected.begin(), expected.end(), expected.begin(),
+            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        manifest.signatureValid = expected == Sha256File(fullPath);
+    }
     return manifest;
+}
+
+bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::wstring& error)
+{
+    std::string text = ReadTextFile(manifestPath);
+    if (text.empty()) { error = L"无法读取组件包清单。"; return false; }
+    std::string entry;
+    JsonReadString(text, "entry", entry);
+    wchar_t sourceDirBuffer[MAX_PATH]{};
+    wcsncpy_s(sourceDirBuffer, manifestPath.c_str(), _TRUNCATE);
+    PathRemoveFileSpecW(sourceDirBuffer);
+    std::wstring sourceDir = sourceDirBuffer;
+    std::wstring sourceScript;
+    if (!entry.empty())
+        sourceScript = sourceDir + L"\\" + Utf8ToWideLocal(entry);
+    else
+    {
+        sourceScript = manifestPath;
+        if (sourceScript.size() > 12 &&
+            sourceScript.substr(sourceScript.size() - 12) == L".widget.json")
+            sourceScript.replace(sourceScript.size() - 12, 12, L".lua");
+    }
+    if (GetFileAttributesW(sourceScript.c_str()) == INVALID_FILE_ATTRIBUTES)
+    {
+        error = L"组件包缺少 entry 指定的 Lua 文件。";
+        return false;
+    }
+    wchar_t canonicalDir[MAX_PATH]{};
+    wchar_t canonicalScript[MAX_PATH]{};
+    if (!GetFullPathNameW(sourceDir.c_str(), MAX_PATH, canonicalDir, nullptr) ||
+        !GetFullPathNameW(sourceScript.c_str(), MAX_PATH, canonicalScript, nullptr))
+    {
+        error = L"无法解析组件包路径。";
+        return false;
+    }
+    std::wstring allowedPrefix = canonicalDir;
+    if (!allowedPrefix.empty() && allowedPrefix.back() != L'\\')
+        allowedPrefix.push_back(L'\\');
+    if (_wcsnicmp(canonicalScript, allowedPrefix.c_str(), allowedPrefix.size()) != 0 ||
+        _wcsicmp(PathFindExtensionW(canonicalScript), L".lua") != 0)
+    {
+        error = L"entry 必须指向组件包目录内的 Lua 文件。";
+        return false;
+    }
+
+    std::wstring stem = PathFindFileNameW(manifestPath.c_str());
+    if (stem.size() > 12 && stem.substr(stem.size() - 12) == L".widget.json")
+        stem.resize(stem.size() - 12);
+    std::wstring targetDir = GetExeWidgetsDir();
+    std::wstring targetManifest = targetDir + L"\\" + stem + L".widget.json";
+    std::wstring targetScript = targetDir + L"\\" + stem + L".lua";
+    std::wstring tempStem = stem + L".installing";
+    std::wstring tempManifest = targetDir + L"\\" + tempStem + L".widget.json";
+    std::wstring tempScript = targetDir + L"\\" + tempStem + L".lua";
+    DeleteFileW(tempScript.c_str());
+    DeleteFileW(tempManifest.c_str());
+    if (!CopyFileW(sourceScript.c_str(), tempScript.c_str(), FALSE) ||
+        !CopyFileW(manifestPath.c_str(), tempManifest.c_str(), FALSE))
+    {
+        DeleteFileW(tempScript.c_str());
+        DeleteFileW(tempManifest.c_str());
+        error = L"复制组件包文件失败。";
+        return false;
+    }
+    LuaWidgetManifest installed = GetWidgetManifest(tempScript);
+    if (!installed.signatureValid)
+    {
+        DeleteFileW(tempScript.c_str());
+        DeleteFileW(tempManifest.c_str());
+        error = L"组件包 SHA-256 签名校验失败。";
+        return false;
+    }
+    if (!installed.minHostVersion.empty() &&
+        CompareVersions(SNOWDESKTOP_VERSION, installed.minHostVersion) < 0)
+    {
+        DeleteFileW(tempScript.c_str());
+        DeleteFileW(tempManifest.c_str());
+        error = L"组件包要求更高版本的 SnowDesktop。";
+        return false;
+    }
+
+    const std::wstring backupScript = targetScript + L".backup";
+    const std::wstring backupManifest = targetManifest + L".backup";
+    DeleteFileW(backupScript.c_str());
+    DeleteFileW(backupManifest.c_str());
+    const bool hadScript = GetFileAttributesW(targetScript.c_str()) != INVALID_FILE_ATTRIBUTES;
+    const bool hadManifest = GetFileAttributesW(targetManifest.c_str()) != INVALID_FILE_ATTRIBUTES;
+    if ((hadScript && !MoveFileExW(targetScript.c_str(), backupScript.c_str(), MOVEFILE_REPLACE_EXISTING)) ||
+        (hadManifest && !MoveFileExW(targetManifest.c_str(), backupManifest.c_str(), MOVEFILE_REPLACE_EXISTING)))
+    {
+        if (GetFileAttributesW(backupScript.c_str()) != INVALID_FILE_ATTRIBUTES)
+            MoveFileExW(backupScript.c_str(), targetScript.c_str(), MOVEFILE_REPLACE_EXISTING);
+        DeleteFileW(tempScript.c_str());
+        DeleteFileW(tempManifest.c_str());
+        error = L"无法备份现有组件版本。";
+        return false;
+    }
+    const bool scriptInstalled = MoveFileExW(tempScript.c_str(), targetScript.c_str(), MOVEFILE_REPLACE_EXISTING);
+    const bool manifestInstalled = scriptInstalled &&
+        MoveFileExW(tempManifest.c_str(), targetManifest.c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (!manifestInstalled)
+    {
+        DeleteFileW(targetScript.c_str());
+        DeleteFileW(targetManifest.c_str());
+        if (hadScript)
+            MoveFileExW(backupScript.c_str(), targetScript.c_str(), MOVEFILE_REPLACE_EXISTING);
+        if (hadManifest)
+            MoveFileExW(backupManifest.c_str(), targetManifest.c_str(), MOVEFILE_REPLACE_EXISTING);
+        DeleteFileW(tempScript.c_str());
+        DeleteFileW(tempManifest.c_str());
+        error = L"替换组件包文件失败，已恢复旧版本。";
+        return false;
+    }
+    DeleteFileW(backupScript.c_str());
+    DeleteFileW(backupManifest.c_str());
+    error.clear();
+    return true;
 }
 
 bool WidgetEngine::GetWidgetDefaultSpan(const std::wstring& filename, int& columns, int& rows)
@@ -1702,6 +2785,41 @@ static int lua_DrawCircle(lua_State* L)
     s->ctx->FillEllipse(
         D2D1::Ellipse(D2D1::Point2F(cx + s->widgetRect.left, cy + s->widgetRect.top), r, r),
         brush.Get());
+    return 0;
+}
+
+static int lua_DrawFa(lua_State* L)
+{
+    const char* glyph = luaL_checkstring(L, 1);
+    float x = static_cast<float>(luaL_checknumber(L, 2));
+    float y = static_cast<float>(luaL_checknumber(L, 3));
+    float size = static_cast<float>(luaL_optnumber(L, 4, 20));
+    int color = static_cast<int>(luaL_optinteger(L, 5, 0xFFFFFF));
+
+    auto* s = GetD2D(L);
+    if (!s || !s->ctx || !s->dwrite) return 0;
+
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, glyph, -1, nullptr, 0);
+    if (wlen <= 1) return 0;
+    std::wstring wtext(wlen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, glyph, -1, wtext.data(), wlen);
+
+    ComPtr<IDWriteTextFormat> format(CreateFaTextFormat(s->dwrite, size));
+    if (!format) return 0;
+
+    float r = ((color >> 16) & 0xFF) / 255.0f;
+    float g = ((color >> 8) & 0xFF) / 255.0f;
+    float b = (color & 0xFF) / 255.0f;
+
+    ComPtr<ID2D1SolidColorBrush> brush;
+    s->ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b), &brush);
+    if (!brush) return 0;
+
+    float bx = x + s->widgetRect.left;
+    float by = y + s->widgetRect.top;
+    D2D1_RECT_F rect = { bx, by, bx + size, by + size };
+    s->ctx->DrawTextW(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
+        format.Get(), &rect, brush.Get());
     return 0;
 }
 
@@ -1975,6 +3093,49 @@ static int lua_LayoutHeight(lua_State* L)
     return 1;
 }
 
+static int lua_LayoutColumns(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushinteger(L, s ? s->gridColumns : 1);
+    return 1;
+}
+
+static int lua_LayoutRows(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushinteger(L, s ? s->gridRows : 1);
+    return 1;
+}
+
+static int lua_LayoutSizeClass(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    int area = s ? s->gridColumns * s->gridRows : 1;
+    lua_pushstring(L, area <= 2 ? "small" : (area <= 6 ? "medium" : "large"));
+    return 1;
+}
+
+static int lua_LayoutCellWidth(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushinteger(L, s ? std::max(4, s->gridCellW) : 92);
+    return 1;
+}
+
+static int lua_LayoutCellHeight(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushinteger(L, s ? std::max(4, s->gridCellH) : 136);
+    return 1;
+}
+
+static int lua_LayoutCellGap(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushinteger(L, s ? std::max(0, s->gridGapY) : 8);
+    return 1;
+}
+
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
     lua_newtable(L);
@@ -1984,6 +3145,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_DrawStrokeRect); lua_setfield(L, -2, "strokeRect");
     lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
     lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");
+    lua_pushcfunction(L, lua_DrawFa);    lua_setfield(L, -2, "fa");
     lua_pushcfunction(L, lua_DrawImage); lua_setfield(L, -2, "image");
     lua_pushcfunction(L, lua_DrawIcon);  lua_setfield(L, -2, "icon");
     lua_setglobal(L, "draw");
@@ -1991,16 +3153,44 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_newtable(L);
     lua_pushcfunction(L, lua_WidgetInfo); lua_setfield(L, -2, "info");
     lua_pushcfunction(L, lua_WidgetSetTitle); lua_setfield(L, -2, "setTitle");
+    lua_pushcfunction(L, lua_WidgetOpenSettings); lua_setfield(L, -2, "openSettings");
     lua_pushcfunction(L, lua_WidgetInvalidate); lua_setfield(L, -2, "invalidate");
     lua_pushcfunction(L, lua_WidgetLog); lua_setfield(L, -2, "log");
     lua_pushcfunction(L, lua_WidgetTheme); lua_setfield(L, -2, "theme");
     lua_pushcfunction(L, lua_WidgetEditText); lua_setfield(L, -2, "editText");
+    lua_pushcfunction(L, lua_WidgetSetTimer); lua_setfield(L, -2, "setTimer");
+    lua_pushcfunction(L, lua_WidgetCancelTimer); lua_setfield(L, -2, "cancelTimer");
     lua_setglobal(L, "widget");
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_GetTime);   lua_setfield(L, -2, "getTime");
     lua_pushcfunction(L, lua_Notify);    lua_setfield(L, -2, "notify");
+    lua_pushcfunction(L, lua_SystemCpu); lua_setfield(L, -2, "cpu");
+    lua_pushcfunction(L, lua_SystemMemory); lua_setfield(L, -2, "memory");
+    lua_pushcfunction(L, lua_SystemBattery); lua_setfield(L, -2, "battery");
+    lua_pushcfunction(L, lua_SystemNetwork); lua_setfield(L, -2, "network");
+    lua_pushcfunction(L, lua_SystemGpu); lua_setfield(L, -2, "gpu");
     lua_setglobal(L, "sys");
+
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_MediaCurrent); lua_setfield(L, -2, "current");
+    lua_pushcfunction(L, lua_MediaPlayPause); lua_setfield(L, -2, "playPause");
+    lua_pushcfunction(L, lua_MediaNext); lua_setfield(L, -2, "next");
+    lua_pushcfunction(L, lua_MediaPrevious); lua_setfield(L, -2, "previous");
+    lua_setglobal(L, "media");
+
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_HttpRequest); lua_setfield(L, -2, "request");
+    lua_pushcfunction(L, lua_HttpCancel); lua_setfield(L, -2, "cancel");
+    lua_setglobal(L, "http");
+
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_UiButton); lua_setfield(L, -2, "button");
+    lua_pushcfunction(L, lua_UiToggle); lua_setfield(L, -2, "toggle");
+    lua_pushcfunction(L, lua_UiProgress); lua_setfield(L, -2, "progress");
+    lua_pushcfunction(L, lua_UiScrollArea); lua_setfield(L, -2, "scrollArea");
+    lua_pushcfunction(L, lua_UiVirtualList); lua_setfield(L, -2, "virtualList");
+    lua_setglobal(L, "ui");
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_DesktopItems); lua_setfield(L, -2, "items");
@@ -2014,6 +3204,12 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_newtable(L);
     lua_pushcfunction(L, lua_LayoutWidth);  lua_setfield(L, -2, "width");
     lua_pushcfunction(L, lua_LayoutHeight); lua_setfield(L, -2, "height");
+    lua_pushcfunction(L, lua_LayoutColumns); lua_setfield(L, -2, "columns");
+    lua_pushcfunction(L, lua_LayoutRows); lua_setfield(L, -2, "rows");
+    lua_pushcfunction(L, lua_LayoutSizeClass); lua_setfield(L, -2, "sizeClass");
+    lua_pushcfunction(L, lua_LayoutCellWidth); lua_setfield(L, -2, "cellWidth");
+    lua_pushcfunction(L, lua_LayoutCellHeight); lua_setfield(L, -2, "cellHeight");
+    lua_pushcfunction(L, lua_LayoutCellGap);    lua_setfield(L, -2, "cellGap");
     lua_setglobal(L, "layout");
 
     lua_newtable(L);

@@ -585,6 +585,16 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
             ShowBalloonNotification(title, message);
         });
+        widgetEngine_->SetOpenWidgetSettingsCallback([this](const std::wstring& widgetId, const std::wstring&) {
+            for (size_t i = 0; i < widgets_.size(); ++i)
+            {
+                if (widgets_[i].id == widgetId && widgets_[i].type == DesktopWidgetType::LuaScript)
+                {
+                    ShowWidgetEditorHost(i);
+                    break;
+                }
+            }
+        });
         if (settingsWindow_)
             settingsWindow_->SetWidgetEngine(widgetEngine_.get());
     }

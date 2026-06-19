@@ -86,10 +86,10 @@ inline RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget
         if (page.id != widget.gridCell.pageId) continue;
         int halfGapX = std::max(2, page.gapX / 2);
         int halfGapY = std::max(2, page.gapY / 2);
-        if (widget.gridCell.column > 0) rect.left -= halfGapX;
-        if (widget.gridCell.row > 0) rect.top -= halfGapY;
-        if (widget.gridCell.column + widget.gridSpan.columns < page.columns) rect.right += halfGapX;
-        if (widget.gridCell.row + widget.gridSpan.rows < page.rows) rect.bottom += halfGapY;
+        rect.left   -= halfGapX;
+        rect.top    -= halfGapY;
+        rect.right  += halfGapX;
+        rect.bottom += halfGapY;
         break;
     }
     if (rect.right - rect.left > 16 && rect.bottom - rect.top > 16)
@@ -1638,8 +1638,11 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[wi]);
             widgetEngine_->EnsureWidgetLoaded(widgets_[wi].id, widgets_[wi].scriptPath);
-            widgetEngine_->InvokeMouseEvent(widgets_[wi].id, "onMouseDown",
-                pt.x - frame.left, pt.y - frame.top, 1, 0);
+            int localX = pt.x - frame.left;
+            int localY = pt.y - frame.top;
+            if (!widgetEngine_->HandleHostUiPointer(widgets_[wi].id, localX, localY, 0, false))
+                widgetEngine_->InvokeMouseEvent(widgets_[wi].id, "onMouseDown",
+                    localX, localY, 1, 0);
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -3264,6 +3267,8 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
+        if (widgetEngine_)
+            widgetEngine_->TickRuntime();
         bool hasLuaWidget = false;
         for (const auto& widget : widgets_)
         {
@@ -3462,8 +3467,11 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
         RECT frame = GetStandaloneWidgetFrameRect(widgets_[luaWidget]);
         widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].scriptPath);
-        widgetEngine_->InvokeMouseEvent(widgets_[luaWidget].id, "onWheel",
-            pt.x - frame.left, pt.y - frame.top, 0, delta);
+        int localX = pt.x - frame.left;
+        int localY = pt.y - frame.top;
+        if (!widgetEngine_->HandleHostUiPointer(widgets_[luaWidget].id, localX, localY, delta, true))
+            widgetEngine_->InvokeMouseEvent(widgets_[luaWidget].id, "onWheel",
+                localX, localY, 0, delta);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }

@@ -12,6 +12,53 @@
 #include "types.h"
 #include "app.h"
 
+LuaScript::WidgetLoadResult LuaScript::SafeLoadWidget(const std::wstring& id, const std::wstring& scriptPath)
+{
+    WidgetLoadResult result;
+    __try
+    {
+        app_->widgetEngine_->EnsureWidgetLoaded(id, scriptPath);
+        result.customStyle = app_->widgetEngine_->HasCustomStyle(id);
+        result.ok = true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        OutputDebugStringA("SnowDesktop: LuaScript::Draw widget init crash\n");
+    }
+    return result;
+}
+
+bool LuaScript::SafeRenderWidget(const std::wstring& id, const std::wstring& scriptPath,
+    ID2D1DeviceContext* context, RECT frame, int columns, int rows)
+{
+    __try
+    {
+        app_->widgetEngine_->RenderWidget(id, scriptPath, context, frame, columns, rows);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        OutputDebugStringA("SnowDesktop: LuaScript::Draw RenderWidget crash\n");
+        return false;
+    }
+}
+
+bool LuaScript::SafeReadFlags(const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover)
+{
+    __try
+    {
+        showTitle = app_->widgetEngine_->ReadBoolFlag(scriptPath, "showTitle", false);
+        bottomBarHover = app_->widgetEngine_->ReadBoolFlag(scriptPath, "bottomBarHover", true);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        showTitle = false;
+        bottomBarHover = true;
+        return false;
+    }
+}
+
 /**
  * @brief 绘制 LuaScript 控件
  *
@@ -55,11 +102,14 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     }
 
     bool customStyle = false;
+    bool widgetOk = false;
     if (app_->widgetEngine_)
     {
-        app_->widgetEngine_->EnsureWidgetLoaded(data_->id, data_->scriptPath);
-        customStyle = app_->widgetEngine_->HasCustomStyle(data_->id);
-        if (customStyle)
+        auto loadResult = SafeLoadWidget(data_->id, data_->scriptPath);
+        widgetOk = loadResult.ok;
+        customStyle = loadResult.customStyle;
+
+        if (customStyle && widgetOk)
         {
             float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
             float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, luaGradientEndA = gradientEndA;
@@ -72,19 +122,22 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             }
         }
 
-        auto colorToRgb = [](const D2D1::ColorF& color) {
-            auto toByte = [](float v) {
-                v = std::max(0.0f, std::min(1.0f, v));
-                return static_cast<int>(v * 255.0f + 0.5f);
+        if (widgetOk)
+        {
+            auto colorToRgb = [](const D2D1::ColorF& color) {
+                auto toByte = [](float v) {
+                    v = std::max(0.0f, std::min(1.0f, v));
+                    return static_cast<int>(v * 255.0f + 0.5f);
+                };
+                return (toByte(color.r) << 16) | (toByte(color.g) << 8) | toByte(color.b);
             };
-            return (toByte(color.r) << 16) | (toByte(color.g) << 8) | toByte(color.b);
-        };
-        LuaWidgetTheme theme;
-        theme.bg = colorToRgb(fillColor);
-        theme.border = colorToRgb(borderColor);
-        theme.alpha = fillColor.a;
-        theme.gradientEndA = gradientEndA;
-        app_->widgetEngine_->SetWidgetTheme(data_->id, theme);
+            LuaWidgetTheme theme;
+            theme.bg = colorToRgb(fillColor);
+            theme.border = colorToRgb(borderColor);
+            theme.alpha = fillColor.a;
+            theme.gradientEndA = gradientEndA;
+            app_->widgetEngine_->SetWidgetTheme(data_->id, theme);
+        }
     }
 
     app_->DrawD2DRoundedRectangle(context, frame, 12.0f, fillColor,
@@ -92,15 +145,40 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         selected ? 1.6f : 1.0f);
 
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (app_->widgetEngine_)
-        app_->widgetEngine_->RenderWidget(data_->id, data_->scriptPath, context, frame);
+    if (app_->widgetEngine_ && widgetOk)
+    {
+        const POINT center = { (frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2 };
+        const GridPage* realPage = nullptr;
+        for (const auto& p : app_->gridPages_)
+        {
+            if (PtInRect(&p.bounds, center)) { realPage = &p; break; }
+        }
+        if (!realPage)
+            realPage = FindGridPage(app_->gridPages_, data_->gridCell.pageId);
+        if (realPage)
+        {
+            app_->widgetEngine_->SetGridCellSize(realPage->cellWidth, realPage->cellHeight);
+            app_->widgetEngine_->SetGridCellGap(realPage->gapY);
+            if (data_->gridCell.pageId != realPage->id)
+            {
+                data_->gridCell.pageId = realPage->id;
+                RECT correctBounds = GetGridRect(app_->gridPages_, data_->gridCell, data_->gridSpan);
+                int hgx = std::max(2, realPage->gapX / 2);
+                int hgy = std::max(2, realPage->gapY / 2);
+                frame = correctBounds;
+                frame.left   -= hgx; frame.top    -= hgy;
+                frame.right  += hgx; frame.bottom += hgy;
+                if (frame.right - frame.left > 16 && frame.bottom - frame.top > 16)
+                    InflateRect(&frame, -4, -4);
+            }
+        }
+        SafeRenderWidget(data_->id, data_->scriptPath, context, frame,
+            data_->gridSpan.columns, data_->gridSpan.rows);
+    }
     context->PopAxisAlignedClip();
 
-    if (app_->widgetEngine_)
-    {
-        data_->showTitle = app_->widgetEngine_->ReadBoolFlag(data_->scriptPath, "showTitle", false);
-        data_->bottomBarHover = app_->widgetEngine_->ReadBoolFlag(data_->scriptPath, "bottomBarHover", true);
-    }
+    if (app_->widgetEngine_ && widgetOk)
+        SafeReadFlags(data_->scriptPath, data_->showTitle, data_->bottomBarHover);
 
     bool showHandle = data_->bottomBarHover ? hovered : true;
     if (!showHandle) return;
