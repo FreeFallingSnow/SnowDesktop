@@ -56,9 +56,9 @@ Menu example:
 ```lua
 function getContextMenu()
     return {
-        { id = 1, label = "执行操作" },
+        { id = 1, label = "执行操作", icon = "" },
         { separator = true },
-        { id = 2, label = "不可用项", enabled = false }
+        { id = 2, label = "不可用项", icon = "", enabled = false }
     }
 end
 
@@ -66,6 +66,20 @@ function onMenu(id)
     if id == 1 then widget.log("info", "menu action") end
 end
 ```
+
+Menu item fields:
+
+- `id`: integer passed to `onMenu(id)`.
+- `label`: displayed text.
+- `icon`: optional Font Awesome 6 Free Solid glyph rendered by the host menu.
+- `enabled`: optional boolean; defaults to `true`.
+- `separator`: set to `true` for a separator and omit the other fields.
+
+The built-in Lua widget settings command is labeled **详细设置** and opens
+`imguiRender()`.
+Use the debug page's **Font Awesome 图标字符** grid to preview the embedded font
+and click-copy a glyph for the `icon` field. To unlock **调试**, open
+**设置 → 关于** and click the version number five times.
 
 ## Drawing
 
@@ -258,9 +272,17 @@ The manifest filename is derived by replacing `.lua` with `.widget.json`.
   "version": "1.0.0",
   "description": "示例说明。",
   "defaultSize": { "columns": 2, "rows": 1 },
+  "minSize": { "columns": 2, "rows": 1 },
+  "maxSize": { "columns": 4, "rows": 3 },
   "permissions": ["ui.input"]
 }
 ```
+
+`minSize` and `maxSize` are optional grid-span constraints. If omitted, the
+component can use any valid grid span from `1 x 1` up to the current page size.
+A `maxSize` dimension of `0` is also treated as unrestricted. The host adjusts
+`defaultSize` into the declared range and enforces the limits while resizing,
+restoring saved layouts, and reacting to grid changes.
 
 | Permission | Required for |
 |---|---|
@@ -285,6 +307,7 @@ Missing permissions produce a runtime error for guarded APIs. Context menus and 
 - Match `example.lua` with `example.widget.json`.
 - Validate JSON syntax.
 - Keep `defaultSize` values between 1 and 8.
+- Ensure `defaultSize` is compatible with optional `minSize` and `maxSize`.
 
 ### `imgui` is nil
 

@@ -429,8 +429,8 @@ inline void DesktopApp::RelayoutDisplacedItems()
             continue;
         }
 
-        widget.gridSpan.columns = std::clamp(widget.gridSpan.columns, 1, std::max(1, page->columns));
-        widget.gridSpan.rows = std::clamp(widget.gridSpan.rows, 1, std::max(1, page->rows));
+        widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan,
+            page->columns, page->rows);
         if (GridAreaFitsPage(*page, widget.gridCell, widget.gridSpan) &&
             !AreGridSlotsMarked(usedSlots, widget.gridCell, widget.gridSpan))
         {
@@ -1084,6 +1084,7 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
 widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
                         ReadJsonStringArrayField(obj, "items", widget.itemKeys);
+                        ConfigureWidgetGridLimits(widget);
                         {
                             std::unordered_set<std::wstring> seen;
                             std::vector<std::wstring> unique;
@@ -3586,8 +3587,8 @@ inline void DesktopApp::LayoutItems()
         const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (page)
         {
-            widget.gridSpan.columns = std::clamp(widget.gridSpan.columns, 1, std::max(1, page->columns));
-            widget.gridSpan.rows    = std::clamp(widget.gridSpan.rows,    1, std::max(1, page->rows));
+            widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan,
+                page->columns, page->rows);
             widget.gridCell.column  = std::clamp(widget.gridCell.column,  0, std::max(0, page->columns - widget.gridSpan.columns));
             widget.gridCell.row     = std::clamp(widget.gridCell.row,     0, std::max(0, page->rows    - widget.gridSpan.rows));
         }
@@ -3809,6 +3810,49 @@ inline std::wstring DesktopApp::MakeNewWidgetId() const
     return L"widget-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(widgets_.size() + 1);
 }
 
+inline void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
+{
+    widget.minGridSpan = { 1, 1 };
+    widget.maxGridSpan = { 0, 0 };
+
+    if (widget.type == DesktopWidgetType::FileCategories ||
+        widget.type == DesktopWidgetType::FolderMapping)
+    {
+        widget.minGridSpan = { 2, 2 };
+    }
+    else if (widget.type == DesktopWidgetType::LuaScript && !widget.scriptPath.empty())
+    {
+        LuaWidgetManifest manifest = WidgetEngine::GetWidgetManifest(widget.scriptPath);
+        widget.minGridSpan = {
+            std::max(1, manifest.minColumns),
+            std::max(1, manifest.minRows)
+        };
+        widget.maxGridSpan = {
+            std::max(0, manifest.maxColumns),
+            std::max(0, manifest.maxRows)
+        };
+    }
+}
+
+inline GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
+    int availableColumns, int availableRows) const
+{
+    const int pageMaxColumns = std::max(1, availableColumns);
+    const int pageMaxRows = std::max(1, availableRows);
+    const int maxColumns = widget.maxGridSpan.columns > 0
+        ? std::min(pageMaxColumns, widget.maxGridSpan.columns)
+        : pageMaxColumns;
+    const int maxRows = widget.maxGridSpan.rows > 0
+        ? std::min(pageMaxRows, widget.maxGridSpan.rows)
+        : pageMaxRows;
+    const int minColumns = std::min(maxColumns, std::max(1, widget.minGridSpan.columns));
+    const int minRows = std::min(maxRows, std::max(1, widget.minGridSpan.rows));
+
+    span.columns = std::clamp(span.columns, minColumns, maxColumns);
+    span.rows = std::clamp(span.rows, minRows, maxRows);
+    return span;
+}
+
 /**
  * @brief 将组件添加到网格中，自动查找空闲位置。
  * @param widget 组件对象（移动语义）。
@@ -3816,6 +3860,7 @@ inline std::wstring DesktopApp::MakeNewWidgetId() const
  */
 inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 {
+    ConfigureWidgetGridLimits(widget);
     POINT clientPoint = lastContextMenuScreenPoint_;
     ScreenToClient(hwnd_, &clientPoint);
     GridCell cell = CellFromPoint(clientPoint);
@@ -3836,6 +3881,8 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 
     GridCell freeCell;
     const GridPage* cellPage = FindGridPage(gridPages_, cell.pageId);
+    if (cellPage)
+        span = ClampWidgetGridSpan(widget, span, cellPage->columns, cellPage->rows);
     bool needSearch = AreGridSlotsMarked(usedSlots, cell, span) ||
         !IsGridAreaValid(cell, span);
     if (!needSearch && cellPage)
@@ -3985,8 +4032,8 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
     const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
     if (!page) return;
 
-    targetSpan.columns = std::clamp(targetSpan.columns, 1, std::max(1, page->columns - targetCell.column));
-    targetSpan.rows    = std::clamp(targetSpan.rows,    1, std::max(1, page->rows    - targetCell.row));
+    targetSpan = ClampWidgetGridSpan(widgets_[widgetIndex], targetSpan,
+        page->columns - targetCell.column, page->rows - targetCell.row);
 
     // Widget-widget collision check
     for (size_t i = 0; i < widgets_.size(); ++i)

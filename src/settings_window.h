@@ -25,6 +25,8 @@
 
 using Microsoft::WRL::ComPtr;
 
+struct ImFont;
+
 /**
  * @brief 布局备份条目结构体
  *
@@ -357,6 +359,12 @@ private:
 
     /// 版本号点击计数（用于激活调试页面的彩蛋逻辑）
     int versionClickCount_ = 0;
+
+    /// 调试页使用的 Font Awesome 字体
+    ImFont* faDebugFont_ = nullptr;
+
+    /// 内嵌 Font Awesome 字体中实际存在的私有区字符
+    std::vector<unsigned int> faDebugCodepoints_;
 
     /** @} */
 

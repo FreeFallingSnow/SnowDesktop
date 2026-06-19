@@ -57,6 +57,10 @@ struct LuaWidgetManifest
     std::string description;           ///< 功能描述文本
     int defaultColumns = 1;            ///< 默认占据列数（桌面栅格）
     int defaultRows = 1;               ///< 默认占据行数（桌面栅格）
+    int minColumns = 1;                ///< 最少占据列数
+    int minRows = 1;                   ///< 最少占据行数
+    int maxColumns = 0;                ///< 最多占据列数，0 表示不限制
+    int maxRows = 0;                   ///< 最多占据行数，0 表示不限制
     std::vector<std::string> permissions; ///< 声明的权限列表，如 "filesystem", "exec"
 };
 
@@ -87,6 +91,7 @@ struct LuaWidgetMenuItem
 {
     int id = 0;                ///< 菜单项标识符，回调时回传
     std::string label;         ///< 菜单项显示文本
+    std::string icon;          ///< 可选 Font Awesome 图标字符
     bool enabled = true;       ///< 是否可用（灰显）
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
 };

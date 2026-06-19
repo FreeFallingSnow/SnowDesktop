@@ -945,6 +945,13 @@ private:
     // ── Widget helpers ──────────────────────────────────────
     /** @brief 生成新的唯一部件 ID。 @return 部件 ID 字符串 */
     std::wstring MakeNewWidgetId() const;
+    /** @brief 判断组件是否允许通过宿主界面重命名。 */
+    bool CanRenameWidget(const DesktopWidget& widget) const;
+    /** @brief 根据组件类型或 Lua 清单初始化网格尺寸限制。 */
+    void ConfigureWidgetGridLimits(DesktopWidget& widget) const;
+    /** @brief 将组件跨度限制在组件声明和当前页面允许的范围内。 */
+    GridSpan ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
+        int availableColumns, int availableRows) const;
     /**
      * @brief 将部件添加到网格中。
      * @param widget 部件对象（移动语义）

@@ -32,7 +32,7 @@ end
 
 function getContextMenu()
     return {
-        { id = 1, label = "恢复默认文字" }
+        { id = 1, label = "恢复默认文字", icon = "" }
     }
 end
 

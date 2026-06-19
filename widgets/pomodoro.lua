@@ -258,6 +258,12 @@ function render()
     local label = stateLabelText()
     local inSet = sessionsInSet()
 
+    local btnW = 78
+    local btnH = 28
+    local btnGap = 12
+    local bottomReserved = 24
+    local btnY = h - btnH - bottomReserved - 4
+
     local ringR     = math.min(w, h) * 0.26
     local ringThick = math.max(5, ringR * 0.14)
 
@@ -281,15 +287,12 @@ function render()
     local lm = draw.measureText(label .. sub, 12)
     draw.text(cx - lm.width / 2, labelY, label .. sub, 12, TXT_MUTED)
 
-    if s ~= "paused" then
-        drawDots(cx, labelY + 32, inSet, longBreakInterval, accent, 1.0)
+    local dotsY = math.min(labelY + 28, btnY - 12)
+    if s ~= "paused" and dotsY >= labelY + 16 then
+        drawDots(cx, dotsY, inSet, longBreakInterval, accent, 1.0)
     end
 
     -- ---- buttons ----
-    local btnW = 78
-    local btnH = 28
-    local btnGap = 12
-    local btnY = h - btnH - 12
 
     if s == "idle" then
         local totalW = btnW * 2 + btnGap
@@ -348,16 +351,16 @@ function getContextMenu()
     local menu = {}
 
     if s == "idle" then
-        menu[#menu + 1] = { id = 1, label = "开始专注" }
+        menu[#menu + 1] = { id = 1, label = "开始专注", icon = "" }
     elseif s == "paused" then
-        menu[#menu + 1] = { id = 2, label = "继续计时" }
-        menu[#menu + 1] = { id = 3, label = "停止计时" }
+        menu[#menu + 1] = { id = 2, label = "继续计时", icon = "" }
+        menu[#menu + 1] = { id = 3, label = "停止计时", icon = "" }
     else
-        menu[#menu + 1] = { id = 5, label = "跳过当前阶段" }
-        menu[#menu + 1] = { id = 3, label = "停止计时" }
+        menu[#menu + 1] = { id = 5, label = "跳过当前阶段", icon = "" }
+        menu[#menu + 1] = { id = 3, label = "停止计时", icon = "" }
     end
     menu[#menu + 1] = { separator = true }
-    menu[#menu + 1] = { id = 10, label = "重置计数" }
+    menu[#menu + 1] = { id = 10, label = "重置计数", icon = "" }
 
     return menu
 end
