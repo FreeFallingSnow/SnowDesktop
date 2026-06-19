@@ -1867,8 +1867,18 @@ inline void DesktopApp::ConfigureGridPage(GridPage& page) const
     page.gapY = page.rows > 1
         ? std::max(0, (uh - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
         : 0;
-    page.marginX = marginX;
-    page.marginY = marginY;
+    // Absorb half-gap into margins so widget frames have enough edge room
+    page.marginX = marginX + std::max(2, page.gapX / 2);
+    page.marginY = marginY + std::max(2, page.gapY / 2);
+    // Recompute gaps with the enlarged margins to keep values consistent
+    const int uw2 = std::max(1, w - page.marginX * 2);
+    const int uh2 = std::max(1, h - page.marginY * 2);
+    page.gapX = page.columns > 1
+        ? std::max(0, (uw2 - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
+        : 0;
+    page.gapY = page.rows > 1
+        ? std::max(0, (uh2 - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
+        : 0;
 }
 
 /**
@@ -1917,14 +1927,45 @@ inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
     page.cellHeight = page.rows > 1
         ? std::max(minCellHeight, (usableH - (page.rows - 1) * targetGapY) / page.rows)
         : usableH;
+    // Prevent overflow when saved columns/rows exceed usable area
+    if (page.columns > 1)
+    {
+        if (page.columns * page.cellWidth > usableW)
+        {
+            int maxFit = std::max(1, usableW / minIconWidth);
+            if (maxFit < page.columns)
+                page.columns = std::max(4, maxFit);
+            page.cellWidth = std::max(minIconWidth, usableW / page.columns);
+        }
+    }
+    if (page.rows > 1)
+    {
+        if (page.rows * page.cellHeight > usableH)
+        {
+            int maxFit = std::max(1, usableH / minCellHeight);
+            if (maxFit < page.rows)
+                page.rows = std::max(3, maxFit);
+            page.cellHeight = std::max(minCellHeight, usableH / page.rows);
+        }
+    }
     page.gapX = page.columns > 1
         ? std::max(0, (usableW - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
         : 0;
     page.gapY = page.rows > 1
         ? std::max(0, (usableH - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
         : 0;
-    page.marginX = marginX;
-    page.marginY = marginY;
+    // Absorb half-gap into margins so widget frames have enough edge room
+    page.marginX = marginX + std::max(2, page.gapX / 2);
+    page.marginY = marginY + std::max(2, page.gapY / 2);
+    // Recompute gaps with the enlarged margins to keep values consistent
+    const int usableW2 = std::max(1, pageW - page.marginX * 2);
+    const int usableH2 = std::max(1, pageH - page.marginY * 2);
+    page.gapX = page.columns > 1
+        ? std::max(0, (usableW2 - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
+        : 0;
+    page.gapY = page.rows > 1
+        ? std::max(0, (usableH2 - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
+        : 0;
 }
 
 // ── 拖拽辅助函数 ──────────────────────────────────────────────

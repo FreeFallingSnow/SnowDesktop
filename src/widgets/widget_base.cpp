@@ -145,8 +145,8 @@ RECT WidgetContainer::GetFrameRect() const
     if (!data_) return {};
     RECT rect = data_->bounds;
 
-    // Absorb half the grid gap so adjacent widget borders keep a fixed visual gap,
-    // matching legacy GetWidgetFrameRect behavior.
+    // Absorb half the grid gap on all four sides so widget frames have
+    // consistent visual size regardless of grid position.
     if (app_ && app_->GetDesktopGrid())
     {
         const auto& pages = app_->GetDesktopGrid()->GetPages();
@@ -157,10 +157,10 @@ RECT WidgetContainer::GetFrameRect() const
             {
                 int halfGapX = std::max(2, p.gapX / 2);
                 int halfGapY = std::max(2, p.gapY / 2);
-                if (cell.column > 0)                                   rect.left   -= halfGapX;
-                if (cell.row > 0)                                      rect.top    -= halfGapY;
-                if (cell.column + data_->gridSpan.columns < p.columns) rect.right  += halfGapX;
-                if (cell.row    + data_->gridSpan.rows    < p.rows)    rect.bottom += halfGapY;
+                rect.left   -= halfGapX;
+                rect.top    -= halfGapY;
+                rect.right  += halfGapX;
+                rect.bottom += halfGapY;
                 break;
             }
         }
