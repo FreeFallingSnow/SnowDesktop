@@ -5,9 +5,19 @@ bottomBarHover = true
 local prevCols = 0
 local prevRows = 0
 local scrollGen = 0
+local subLineIdx = 0
+local timerStarted = false
+
+local wrappedLineCache = {}
 
 local function clamp(v)
     return math.max(0, math.min(100, v or 0))
+end
+
+local function usageColor(pct)
+    if pct >= 90 then return 0xFF6B6B
+    elseif pct >= 70 then return 0xFFD166
+    else return 0x4ECB71 end
 end
 
 local function formatRate(bytes)
@@ -29,6 +39,24 @@ local function readConfig()
         cardTextColor = tonumber(storage.get("cardTextColor")) or 0xFFFFFF,
         cardSubColor  = tonumber(storage.get("cardSubColor"))  or 0x94A3B8,
     }
+end
+
+local function splitWrap(text, fontSize, maxWidth)
+    local lines = {}
+    local line = ""
+    for _, codepoint in utf8.codes(text) do
+        local char = utf8.char(codepoint)
+        local candidate = line .. char
+        local metrics = draw.measureText(candidate, fontSize, 0, false)
+        if line ~= "" and metrics.width > maxWidth then
+            lines[#lines + 1] = line
+            line = char
+        else
+            line = candidate
+        end
+    end
+    if line ~= "" then lines[#lines + 1] = line end
+    return lines
 end
 
 local function drawCard(x, y, w, h, info, theme, cfg)
@@ -63,7 +91,21 @@ local function drawCard(x, y, w, h, info, theme, cfg)
 
     if info.sub then
         local subY = info.progress and (y + h - 30) or (y + h - 16)
-        draw.text(x + 8, subY, info.sub, 10, cfg.cardSubColor, w - 16, false, true)
+        if info.rotateLines then
+            local subW = w - 16
+            local cacheKey = info.sub .. "\n" .. tostring(subW)
+            local lines = wrappedLineCache[cacheKey]
+            if not lines then
+                lines = splitWrap(info.sub, 10, subW)
+                wrappedLineCache[cacheKey] = lines
+            end
+            if #lines > 1 then
+                local line = lines[(subLineIdx % #lines) + 1]
+                draw.text(x + 8, subY, line, 10, cfg.cardSubColor, subW, false, true)
+                return
+            end
+        end
+        draw.text(x + 8, subY, info.sub, 10, cfg.cardSubColor, w - 16, false, false)
     end
 end
 
@@ -81,21 +123,24 @@ function render()
     local cards = {}
 
     if showCard("cpu") then
+        local pct = clamp(cpu.usagePercent)
         table.insert(cards, {
             title = "CPU",
-            value = string.format("%.0f%%", clamp(cpu.usagePercent)),
-            progress = clamp(cpu.usagePercent) / 100,
-            color = 0x4EA1FF,
-            sub = cpu.logicalProcessors and cpu.logicalProcessors > 0 and (cpu.logicalProcessors .. " 线程") or nil
+            value = string.format("%.0f%%", pct),
+            progress = pct / 100,
+            color = usageColor(pct),
+            sub = cpu.name ~= "" and cpu.name or (cpu.logicalProcessors and cpu.logicalProcessors > 0 and (cpu.logicalProcessors .. " 线程") or nil),
+            rotateLines = true
         })
     end
 
     if showCard("memory") then
+        local pct = clamp(memory.usagePercent)
         table.insert(cards, {
             title = "内存",
-            value = string.format("%.0f%%", clamp(memory.usagePercent)),
-            progress = clamp(memory.usagePercent) / 100,
-            color = 0x8B7CFF,
+            value = string.format("%.0f%%", pct),
+            progress = pct / 100,
+            color = usageColor(pct),
             sub = memory.totalBytes and memory.totalBytes > 0 and
                 string.format("%.1f / %.1f GB",
                     memory.usedBytes / 1024 / 1024 / 1024,
@@ -104,12 +149,14 @@ function render()
     end
 
     if showCard("gpu") and gpu and gpu.available then
+        local pct = clamp(gpu.usagePercent)
         table.insert(cards, {
             title = "GPU",
-            value = string.format("%.0f%%", clamp(gpu.usagePercent)),
-            progress = clamp(gpu.usagePercent) / 100,
-            color = 0x4ECDC4,
-            sub = gpu.name or ""
+            value = string.format("%.0f%%", pct),
+            progress = pct / 100,
+            color = usageColor(pct),
+            sub = gpu.name or "",
+            rotateLines = true
         })
     end
 
@@ -121,7 +168,7 @@ function render()
             title = "显存",
             value = string.format("%.0f%%", vramPct),
             progress = vramPct / 100,
-            color = 0x4ECDC4,
+            color = usageColor(vramPct),
             sub = string.format("%.1f / %.1f GB", vramUsed, vramTotal)
         })
     end
@@ -140,21 +187,17 @@ function render()
     end
 
     if showCard("battery") and battery.available then
-        local batColor = 0xFFD166
         local batPct = battery.percent or 100
-        if batPct <= 20 then batColor = 0xFF6B6B
-        elseif batPct >= 90 then batColor = 0x4ECB71
-        end
         local status = nil
         if battery.charging then status = "充电中"
         elseif battery.pluggedIn then status = "已接通"
-        elseif (battery.percent or 100) <= 20 then status = "电量低"
+        elseif batPct <= 20 then status = "电量低"
         end
         table.insert(cards, {
             title = "电池",
             value = string.format("%.0f%%", clamp(batPct)),
             progress = clamp(batPct) / 100,
-            color = batColor,
+            color = usageColor(100 - batPct),
             sub = status
         })
     end
@@ -203,6 +246,25 @@ function render()
     end
 end
 
+function onVisible()
+    if not timerStarted then
+        widget.setTimer("subLine", 3000, true)
+        timerStarted = true
+    end
+end
+
+function onHidden()
+    widget.cancelTimer("subLine")
+    timerStarted = false
+end
+
+function onTimer(name)
+    if name == "subLine" then
+        subLineIdx = subLineIdx + 1
+        widget.invalidate()
+    end
+end
+
 function getContextMenu()
     return {
         { id = 1, label = "刷新数据", icon = "" },
@@ -213,7 +275,7 @@ end
 
 function onMenu(id)
     if id == 1 then
-        desktop.refresh()
+        widget.invalidate()
     elseif id == 2 then
         for _, k in ipairs({ "cardBgColor", "cardBgAlpha", "cardBdColor", "cardBdAlpha", "cardTextColor", "cardSubColor" }) do
             storage.remove(k)

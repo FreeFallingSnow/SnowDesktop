@@ -13,6 +13,7 @@ struct CpuSnapshot
     bool available = false;
     double usagePercent = 0.0;
     unsigned int logicalProcessors = 0;
+    std::string name;
 };
 
 struct MemorySnapshot
