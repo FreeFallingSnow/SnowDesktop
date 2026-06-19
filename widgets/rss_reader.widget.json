@@ -1,0 +1,9 @@
+{
+  "name": "RSS 阅读器",
+  "version": "1.0.0",
+  "description": "演示异步 HTTP、缓存、定时器、生命周期与虚拟列表。",
+  "defaultSize": { "columns": 3, "rows": 2 },
+  "minSize": { "columns": 2, "rows": 2 },
+  "permissions": ["network.http"],
+  "networkDomains": ["hnrss.org"]
+}
