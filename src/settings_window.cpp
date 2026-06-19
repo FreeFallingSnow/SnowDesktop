@@ -23,9 +23,11 @@
 #include <imgui_impl_dx11.h>
 
 #include <shlwapi.h>
+#include <shobjidl.h>
 #include <shellapi.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -900,6 +902,57 @@ void SettingsWindow::DrawDebugPage()
     ImGui::Separator();
     ImGui::Spacing();
 
+    if (BlueButton("安装/升级组件包"))
+    {
+        ComPtr<IFileOpenDialog> dialog;
+        if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&dialog))))
+        {
+            COMDLG_FILTERSPEC filters[] = {
+                { L"SnowDesktop 组件清单", L"*.widget.json" },
+                { L"JSON 文件", L"*.json" }
+            };
+            dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
+            dialog->SetTitle(L"选择要安装或升级的组件包清单");
+            if (SUCCEEDED(dialog->Show(hwnd_)))
+            {
+                ComPtr<IShellItem> item;
+                if (SUCCEEDED(dialog->GetResult(&item)))
+                {
+                    PWSTR path = nullptr;
+                    if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
+                    {
+                        std::wstring error;
+                        bool installed = WidgetEngine::InstallWidgetPackage(path, error);
+                        packageInstallStatus_ = installed
+                            ? "组件包安装成功；请在桌面菜单中添加或重新加载组件。"
+                            : WideToUtf8(error);
+                        CoTaskMemFree(path);
+                    }
+                }
+            }
+        }
+    }
+    if (!packageInstallStatus_.empty())
+    {
+        ImGui::SameLine();
+        ImGui::TextWrapped("%s", packageInstallStatus_.c_str());
+    }
+    ImGui::Spacing();
+
+    if (widgetEngine_)
+    {
+        const std::string snapshotError = widgetEngine_->GetSystemSnapshotError();
+        if (ImGui::CollapsingHeader("系统与媒体采样"))
+        {
+            if (snapshotError.empty())
+                ImGui::TextDisabled("采样服务运行正常。");
+            else
+                ImGui::TextWrapped("最近采样错误:\n%s", snapshotError.c_str());
+        }
+        ImGui::Spacing();
+    }
+
     if (ImGui::CollapsingHeader("Font Awesome 图标字符", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::TextDisabled("点击图标复制字符，可直接粘贴到 Lua 菜单项的 icon 字段。");
@@ -1194,12 +1247,17 @@ std::vector<LayoutBackup> SettingsWindow::ListBackups() const
     {
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
 
+        std::wstring filename = fd.cFileName;
+        // Skip storage companion files
+        if (filename.size() > 13 && filename.substr(filename.size() - 13) == L".storage.json")
+            continue;
+
         LayoutBackup b;
-        b.filename = fd.cFileName;
+        b.filename = filename;
         b.timestamp = fd.ftLastWriteTime;
 
         // Parse display name from filename: remove .json and format timestamp
-        std::wstring name = fd.cFileName;
+        std::wstring name = filename;
         if (name.size() > 5 && name.substr(name.size() - 5) == L".json")
             name = name.substr(0, name.size() - 5);
 
@@ -1237,26 +1295,33 @@ bool SettingsWindow::SaveBackup(const std::wstring& name)
     std::wstring backupDir = GetBackupDir();
     CreateDirectoryW(backupDir.c_str(), nullptr);
 
-    wchar_t layoutPath[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, layoutPath, static_cast<DWORD>(std::size(layoutPath)));
-    PathRemoveFileSpecW(layoutPath);
-    PathAppendW(layoutPath, L"SnowDesktop.layout.json");
+    wchar_t exeDir[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exeDir, static_cast<DWORD>(std::size(exeDir)));
+    PathRemoveFileSpecW(exeDir);
+
+    std::wstring layoutPath = std::wstring(exeDir) + L"\\SnowDesktop.layout.json";
+    std::wstring storagePath = std::wstring(exeDir) + L"\\SnowDesktop.storage.json";
 
     // Sanitize: remove colons for filename safety
     std::wstring safeName = name;
     for (auto& c : safeName) { if (c == L':' || c == L'\\' || c == L'/') c = L'_'; }
 
-    std::wstring backupPath = backupDir + L"\\" + safeName + L".json";
+    std::wstring backupLayout = backupDir + L"\\" + safeName + L".json";
+    std::wstring backupStorage = backupDir + L"\\" + safeName + L".storage.json";
 
     // Find existing file with same name, increment count
     int counter = 1;
-    while (GetFileAttributesW(backupPath.c_str()) != INVALID_FILE_ATTRIBUTES)
+    while (GetFileAttributesW(backupLayout.c_str()) != INVALID_FILE_ATTRIBUTES)
     {
-        backupPath = backupDir + L"\\" + safeName + L"(" + std::to_wstring(counter) + L").json";
+        backupLayout = backupDir + L"\\" + safeName + L"(" + std::to_wstring(counter) + L").json";
+        backupStorage = backupDir + L"\\" + safeName + L"(" + std::to_wstring(counter) + L").storage.json";
         ++counter;
     }
 
-    return CopyFileW(layoutPath, backupPath.c_str(), FALSE) != FALSE;
+    bool ok = CopyFileW(layoutPath.c_str(), backupLayout.c_str(), FALSE) != FALSE;
+    if (GetFileAttributesW(storagePath.c_str()) != INVALID_FILE_ATTRIBUTES)
+        CopyFileW(storagePath.c_str(), backupStorage.c_str(), FALSE);
+    return ok;
 }
 
 /**
@@ -1282,17 +1347,28 @@ std::wstring SettingsWindow::MakeBackupTimestampName() const
  */
 bool SettingsWindow::RestoreBackup(const std::wstring& filename)
 {
-    wchar_t layoutPath[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, layoutPath, static_cast<DWORD>(std::size(layoutPath)));
-    PathRemoveFileSpecW(layoutPath);
-    PathAppendW(layoutPath, L"SnowDesktop.layout.json");
+    wchar_t exeDir[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exeDir, static_cast<DWORD>(std::size(exeDir)));
+    PathRemoveFileSpecW(exeDir);
+
+    std::wstring layoutPath = std::wstring(exeDir) + L"\\SnowDesktop.layout.json";
+    std::wstring storagePath = std::wstring(exeDir) + L"\\SnowDesktop.storage.json";
 
     std::wstring backupPath = GetBackupDir() + L"\\" + filename;
+
+    // Derive storage backup filename: replace .json with .storage.json
+    std::wstring storageFilename = filename;
+    if (storageFilename.size() > 5 && storageFilename.substr(storageFilename.size() - 5) == L".json")
+        storageFilename = storageFilename.substr(0, storageFilename.size() - 5) + L".storage.json";
+    std::wstring storageBackupPath = GetBackupDir() + L"\\" + storageFilename;
 
     // First save current layout before restoring.
     SaveBackup(MakeBackupTimestampName() + L"（恢复前备份）");
 
-    return CopyFileW(backupPath.c_str(), layoutPath, FALSE) != FALSE;
+    bool ok = CopyFileW(backupPath.c_str(), layoutPath.c_str(), FALSE) != FALSE;
+    if (GetFileAttributesW(storageBackupPath.c_str()) != INVALID_FILE_ATTRIBUTES)
+        CopyFileW(storageBackupPath.c_str(), storagePath.c_str(), FALSE);
+    return ok;
 }
 
 /**
@@ -1303,6 +1379,14 @@ bool SettingsWindow::RestoreBackup(const std::wstring& filename)
 bool SettingsWindow::DeleteBackup(const std::wstring& filename)
 {
     std::wstring backupPath = GetBackupDir() + L"\\" + filename;
+
+    std::wstring storageFilename = filename;
+    if (storageFilename.size() > 5 && storageFilename.substr(storageFilename.size() - 5) == L".json")
+        storageFilename = storageFilename.substr(0, storageFilename.size() - 5) + L".storage.json";
+    std::wstring storageBackupPath = GetBackupDir() + L"\\" + storageFilename;
+    if (GetFileAttributesW(storageBackupPath.c_str()) != INVALID_FILE_ATTRIBUTES)
+        DeleteFileW(storageBackupPath.c_str());
+
     return DeleteFileW(backupPath.c_str()) != FALSE;
 }
 

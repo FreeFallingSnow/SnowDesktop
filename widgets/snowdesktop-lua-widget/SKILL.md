@@ -76,6 +76,10 @@ Valid permissions:
 - `ui.contextMenu`: enable `getContextMenu()` and `onMenu(id)`.
 - `desktop.read`: enable desktop queries and `draw.icon`.
 - `desktop.action`: enable open, reveal, and desktop refresh actions.
+- `system.read`: enable cached CPU, memory, battery, and network snapshots.
+- `media.read`: read the current Windows media session.
+- `media.action`: play/pause, skip next, and skip previous.
+- `network.http`: enable asynchronous HTTP requests to `networkDomains`.
 
 Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 
@@ -97,6 +101,15 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
   five times. Then open **调试 → Font Awesome 图标字符**; clicking an icon copies
   it to the clipboard.
 - Use `imguiRender()` for the host **详细设置** panel.
+- Prefer declarative manifest `settings` for simple text, bool, integer, float,
+  and select fields; keep `imguiRender()` for custom editors.
+- Use `widget.setTimer()` instead of frame-count timing. Stop unnecessary timers
+  in `onHidden()` and restart them in `onVisible()`.
+- Use `ui.button`, `ui.toggle`, `ui.progress`, `ui.scrollArea`, and
+  `ui.virtualList` when host-managed interaction or scrolling is sufficient.
+- Never call `http.request()` unconditionally from `render()`. Start requests
+  from lifecycle, timer, menu, or UI callbacks and consume them in
+  `onHttpResponse`. Redirect targets must also be declared in `networkDomains`.
 - Do not use `io`, `os`, `require`, `package`, `load`, or arbitrary filesystem/process APIs. They are not exposed.
 - Keep colors in `0xRRGGBB`; pass opacity separately where supported.
 - Log recoverable diagnostics with `widget.log("info"|"warn"|"error"|"debug", message)`.
@@ -118,5 +131,7 @@ Before finishing, verify:
 - JSON is valid UTF-8.
 - `defaultSize` falls within any declared `minSize` / `maxSize`.
 - Every used privileged API has its permission.
+- Every HTTP hostname is present in `networkDomains`.
+- Timers and HTTP requests are not started repeatedly from `render()`.
 - `render()` works at the manifest's default span and at a resized span.
 - No storage write occurs unconditionally on every frame.
