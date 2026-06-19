@@ -1942,8 +1942,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             GridSpan span = widgetDragOriginalSpan_;
             span.columns += dCol;
             span.rows += dRow;
-            span.columns = std::clamp(span.columns, 1, page->columns - cell.column);
-            span.rows = std::clamp(span.rows, 1, page->rows - cell.row);
+            span = ClampWidgetGridSpan(widget, span,
+                page->columns - cell.column, page->rows - cell.row);
 
             widgetPreviewCell_ = cell;
             widgetPreviewSpan_ = span;
@@ -3529,6 +3529,11 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
 // ── Rename ──────────────────────────────────────────────────
 
+inline bool DesktopApp::CanRenameWidget(const DesktopWidget& widget) const
+{
+    return widget.type != DesktopWidgetType::LuaScript || widget.showTitle;
+}
+
 /**
  * @brief 获取集合中可见项的边界矩形
  * @param itemIndex 桌面项索引
@@ -3897,6 +3902,8 @@ inline void DesktopApp::BeginRenameSelected()
     }
     if (selectedWidgetCount == 1 && selectedWidgetIndex < widgets_.size())
     {
+        if (!CanRenameWidget(widgets_[selectedWidgetIndex])) return;
+
         renamingWidget_ = true;
         renameIndex_ = selectedWidgetIndex;
 
@@ -5601,7 +5608,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     }
     else if (widget.type == DesktopWidgetType::LuaScript)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, L"编辑组件");
+        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, L"详细设置");
         if (widgetEngine_)
         {
             widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
@@ -5619,6 +5626,13 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
                 AppendMenuW(menu, flags,
                     kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
                     Utf8ToWide(item.label).c_str());
+                if (!item.icon.empty())
+                {
+                    std::wstring icon = Utf8ToWide(item.icon);
+                    SetMenuItemIcon(menu,
+                        kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
+                        icon.c_str());
+                }
             }
         }
     }
@@ -5638,8 +5652,11 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    if (CanRenameWidget(widget))
+    {
+        AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
 
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
@@ -5648,7 +5665,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
     SetMenuItemIcon(menu, kContextNewMenu, L"");
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
-    SetMenuItemIcon(menu, kContextWidgetEdit, L"");
+    SetMenuItemIcon(menu, kContextWidgetEdit, L"");
     SetMenuItemIcon(menu, kContextWidgetRename, L"");
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
     {
@@ -5743,8 +5760,11 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             MessageBeep(MB_ICONINFORMATION);
         break;
     case kContextWidgetRename:
-        SelectWidgetOnly(widgetIndex);
-        BeginRenameSelected();
+        if (CanRenameWidget(widgets_[widgetIndex]))
+        {
+            SelectWidgetOnly(widgetIndex);
+            BeginRenameSelected();
+        }
         break;
     case kContextWidgetEdit:
         ShowWidgetEditorHost(widgetIndex);

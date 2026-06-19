@@ -373,6 +373,8 @@ struct DesktopWidget
     std::wstring sourceFolderPath;
     GridCell gridCell;
     GridSpan gridSpan;
+    GridSpan minGridSpan{ 1, 1 };
+    GridSpan maxGridSpan{ 0, 0 }; // 0 means unrestricted (up to the current grid page)
     RECT bounds{};
     bool selected = false;
     bool autoCollect = false;

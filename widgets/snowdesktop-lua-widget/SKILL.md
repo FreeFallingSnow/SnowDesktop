@@ -44,7 +44,8 @@ end
 Use these optional top-level flags:
 
 - `useCustomStyle = true`: read `bg`, `border`, `alpha`, and `gradientEndA` from the script.
-- `showTitle = true`: show the host title.
+- `showTitle = true`: show the host title and enable host rename actions. When
+  false or omitted, the host hides **重命名** and ignores F2 for the widget.
 - `bottomBarHover = false`: keep the bottom bar from using the default hover-only behavior.
 - `bg`, `border`: `0xRRGGBB`.
 - `alpha`, `gradientEndA`: decimal values from `0.0` to `1.0`.
@@ -59,9 +60,15 @@ Create a matching manifest even when no permission is needed:
   "version": "1.0.0",
   "description": "一句话说明组件用途。",
   "defaultSize": { "columns": 1, "rows": 1 },
+  "minSize": { "columns": 1, "rows": 1 },
+  "maxSize": { "columns": 4, "rows": 3 },
   "permissions": []
 }
 ```
+
+`minSize` and `maxSize` are optional. When omitted, the widget has no declared
+size restriction beyond the desktop grid itself (effective minimum `1 x 1`).
+Each `maxSize` dimension may also be `0` to mean unrestricted.
 
 Valid permissions:
 
@@ -78,10 +85,18 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 - Use `storage.set` only when a value changes; it persists immediately to disk.
 - Use `draw.measureText` for centering or fitting text.
 - Use `maxWidth` with `singleLine = true` to get single-line ellipsis.
+- Treat the bottom 24px as a host-reserved move/resize area. Do not place clickable
+  controls there, even when the bottom bar is visually hidden or hover-only.
 - Pass image paths relative to the root `widgets` directory. Absolute paths are rejected.
 - Pass desktop item tables directly to `draw.icon`, `desktop.open`, or `desktop.reveal`.
 - Add `ui.input` before defining `imguiRender`; otherwise `imgui` is absent from the sandbox.
 - Add `ui.contextMenu` before defining custom menu callbacks; otherwise the host ignores them.
+- Context-menu items may set `icon` to a Font Awesome 6 Free Solid glyph, for
+  example `{ id = 1, label = "刷新", icon = "" }`. Leave it out for no icon.
+- To unlock the debug page, open **设置 → 关于** and click the version number
+  five times. Then open **调试 → Font Awesome 图标字符**; clicking an icon copies
+  it to the clipboard.
+- Use `imguiRender()` for the host **详细设置** panel.
 - Do not use `io`, `os`, `require`, `package`, `load`, or arbitrary filesystem/process APIs. They are not exposed.
 - Keep colors in `0xRRGGBB`; pass opacity separately where supported.
 - Log recoverable diagnostics with `widget.log("info"|"warn"|"error"|"debug", message)`.
@@ -101,6 +116,7 @@ Before finishing, verify:
 - Script and manifest stems match.
 - The script sits directly under `widgets`.
 - JSON is valid UTF-8.
+- `defaultSize` falls within any declared `minSize` / `maxSize`.
 - Every used privileged API has its permission.
 - `render()` works at the manifest's default span and at a resized span.
 - No storage write occurs unconditionally on every frame.

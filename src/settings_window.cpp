@@ -900,6 +900,57 @@ void SettingsWindow::DrawDebugPage()
     ImGui::Separator();
     ImGui::Spacing();
 
+    if (ImGui::CollapsingHeader("Font Awesome 图标字符", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::TextDisabled("点击图标复制字符，可直接粘贴到 Lua 菜单项的 icon 字段。");
+
+        if (faDebugFont_ && faDebugCodepoints_.empty())
+        {
+            for (unsigned int codepoint = 0xE000; codepoint <= 0xF8FF; ++codepoint)
+            {
+                if (faDebugFont_->IsGlyphInFont(static_cast<ImWchar>(codepoint)))
+                    faDebugCodepoints_.push_back(codepoint);
+            }
+        }
+
+        if (!faDebugFont_ || faDebugCodepoints_.empty())
+        {
+            ImGui::TextDisabled("未找到可用的 Font Awesome 字形。");
+        }
+        else
+        {
+            ImGui::Text("可用字符: %d", static_cast<int>(faDebugCodepoints_.size()));
+            const float buttonSize = 38.0f * dpiScale_;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const int columns = std::max(1, static_cast<int>(
+                ImGui::GetContentRegionAvail().x / (buttonSize + spacing)));
+
+            ImGui::BeginChild("##FontAwesomeGlyphs", ImVec2(0, 220.0f * dpiScale_), true);
+            for (size_t i = 0; i < faDebugCodepoints_.size(); ++i)
+            {
+                unsigned int codepoint = faDebugCodepoints_[i];
+                wchar_t wide[2] = { static_cast<wchar_t>(codepoint), L'\0' };
+                std::string glyph = WideToUtf8(wide);
+                std::string buttonLabel = glyph + "##fa" + std::to_string(codepoint);
+
+                ImGui::PushFont(faDebugFont_, 18.0f * dpiScale_);
+                bool clicked = ImGui::Button(buttonLabel.c_str(), ImVec2(buttonSize, buttonSize));
+                ImGui::PopFont();
+                if (clicked)
+                    ImGui::SetClipboardText(glyph.c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("U+%04X\n点击复制", codepoint);
+
+                if ((static_cast<int>(i) + 1) % columns != 0)
+                    ImGui::SameLine();
+            }
+            ImGui::EndChild();
+        }
+        ImGui::Spacing();
+    }
+
+    ImGui::Separator();
+
     std::vector<WidgetErrorEntry> errors;
     if (widgetEngine_)
         errors = widgetEngine_->GetWidgetErrors();
@@ -959,69 +1010,69 @@ void SettingsWindow::DrawDebugPage()
     if (diagnostics.empty())
     {
         ImGui::TextDisabled("当前没有已加载的 Lua 组件。");
-        ImGui::EndChild();
-        return;
     }
-
-    if (BlueButton("复制诊断信息"))
+    else
     {
-        std::string text;
-        for (const auto& d : diagnostics)
+        if (BlueButton("复制诊断信息"))
         {
-            text += "[" + WideToUtf8(d.widgetId) + "] " + d.name + "\n";
-            text += std::string("valid=") + (d.valid ? "true" : "false") +
-                ", manifest=" + (d.hasManifest ? "true" : "false") + "\n";
-            text += "permissions=";
-            for (size_t i = 0; i < d.permissions.size(); ++i)
+            std::string text;
+            for (const auto& d : diagnostics)
             {
-                if (i > 0) text += ",";
-                text += d.permissions[i];
-            }
-            text += "\n";
-            if (!d.lastError.empty())
-                text += "lastError=" + d.lastError + "\n";
-            for (const auto& log : d.logs)
-                text += log.level + ": " + log.message + "\n";
-            text += "\n";
-        }
-        ImGui::SetClipboardText(text.c_str());
-    }
-
-    ImGui::BeginChild("##WidgetDiagnostics", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-    for (auto& d : diagnostics)
-    {
-        std::string header = "[" + WideToUtf8(d.widgetId) + "] " + d.name;
-        if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::Text("脚本: %s", WideToUtf8(d.scriptPath).c_str());
-            ImGui::Text("状态: %s | Manifest: %s", d.valid ? "有效" : "无效",
-                d.hasManifest ? "是" : "否");
-            std::string perms;
-            for (size_t i = 0; i < d.permissions.size(); ++i)
-            {
-                if (i > 0) perms += ", ";
-                perms += d.permissions[i];
-            }
-            ImGui::Text("权限: %s", perms.empty() ? "(无)" : perms.c_str());
-            if (!d.lastError.empty())
-                ImGui::TextWrapped("最近错误: %s", d.lastError.c_str());
-            if (BlueButton(("重新加载##" + WideToUtf8(d.widgetId)).c_str(), ImVec2(96, 0)))
-            {
-                if (widgetEngine_)
-                    widgetEngine_->ReloadWidget(d.widgetId);
-                if (invalidateCallback_)
-                    invalidateCallback_();
-            }
-            if (!d.logs.empty())
-            {
-                ImGui::Text("最近日志");
+                text += "[" + WideToUtf8(d.widgetId) + "] " + d.name + "\n";
+                text += std::string("valid=") + (d.valid ? "true" : "false") +
+                    ", manifest=" + (d.hasManifest ? "true" : "false") + "\n";
+                text += "permissions=";
+                for (size_t i = 0; i < d.permissions.size(); ++i)
+                {
+                    if (i > 0) text += ",";
+                    text += d.permissions[i];
+                }
+                text += "\n";
+                if (!d.lastError.empty())
+                    text += "lastError=" + d.lastError + "\n";
                 for (const auto& log : d.logs)
-                    ImGui::TextWrapped("[%s] %s", log.level.c_str(), log.message.c_str());
+                    text += log.level + ": " + log.message + "\n";
+                text += "\n";
             }
+            ImGui::SetClipboardText(text.c_str());
         }
-        ImGui::Separator();
+
+        ImGui::BeginChild("##WidgetDiagnostics", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+        for (auto& d : diagnostics)
+        {
+            std::string header = "[" + WideToUtf8(d.widgetId) + "] " + d.name;
+            if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ImGui::Text("脚本: %s", WideToUtf8(d.scriptPath).c_str());
+                ImGui::Text("状态: %s | Manifest: %s", d.valid ? "有效" : "无效",
+                    d.hasManifest ? "是" : "否");
+                std::string perms;
+                for (size_t i = 0; i < d.permissions.size(); ++i)
+                {
+                    if (i > 0) perms += ", ";
+                    perms += d.permissions[i];
+                }
+                ImGui::Text("权限: %s", perms.empty() ? "(无)" : perms.c_str());
+                if (!d.lastError.empty())
+                    ImGui::TextWrapped("最近错误: %s", d.lastError.c_str());
+                if (BlueButton(("重新加载##" + WideToUtf8(d.widgetId)).c_str(), ImVec2(96, 0)))
+                {
+                    if (widgetEngine_)
+                        widgetEngine_->ReloadWidget(d.widgetId);
+                    if (invalidateCallback_)
+                        invalidateCallback_();
+                }
+                if (!d.logs.empty())
+                {
+                    ImGui::Text("最近日志");
+                    for (const auto& log : d.logs)
+                        ImGui::TextWrapped("[%s] %s", log.level.c_str(), log.message.c_str());
+                }
+            }
+            ImGui::Separator();
+        }
+        ImGui::EndChild();
     }
-    ImGui::EndChild();
 
     ImGui::EndChild();
 }
@@ -1337,6 +1388,24 @@ void SettingsWindow::SetupFonts()
         fclose(f);
         io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f * dpiScale_, nullptr,
             io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+    }
+    else
+    {
+        io.Fonts->AddFontDefault();
+    }
+
+    HRSRC resource = FindResourceW(instance_, MAKEINTRESOURCEW(IDR_FA_FONT), RT_RCDATA);
+    HGLOBAL resourceHandle = resource ? LoadResource(instance_, resource) : nullptr;
+    void* fontData = resourceHandle ? LockResource(resourceHandle) : nullptr;
+    DWORD fontSize = resource ? SizeofResource(instance_, resource) : 0;
+    if (fontData && fontSize > 0)
+    {
+        static const ImWchar iconRanges[] = { 0xE000, 0xF8FF, 0 };
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = false;
+        strcpy_s(config.Name, "Font Awesome 6 Free Solid");
+        faDebugFont_ = io.Fonts->AddFontFromMemoryTTF(fontData, static_cast<int>(fontSize),
+            18.0f * dpiScale_, &config, iconRanges);
     }
 }
 
