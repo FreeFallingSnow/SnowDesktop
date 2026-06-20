@@ -692,6 +692,10 @@ private:
      * @return 索引，未找到返回 -1
      */
     size_t FindItemIndexByKey(const std::wstring& key) const;
+    /** @brief 重建桌面项目布局键索引。 */
+    void RefreshDesktopItemIndexCache();
+    /** @brief 重建所有桌面型组件已收纳键缓存。 */
+    void RefreshCollectedKeysCache();
     /**
      * @brief 从所有部件中移除指定的桌面键值。
      * @param keys 需要移除的键值列表
@@ -791,6 +795,8 @@ private:
      */
     bool IsDropFileBacked(const DragSourceList& sourceList, DropTargetKind targetKind,
         DropAction action) const;
+    /** @brief 判断拖拽是否来自开启自动收集的桌面文件组件。 */
+    bool IsAutoCollectFileCategorySource(const DragSourceList& sourceList) const;
     /** @brief 在 D2D 上下文中绘制桌面放置预览列表。 @param ctx D2D 上下文 @param preview 放置预览列表 */
     void DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx, const DropPreviewList& preview);
 
@@ -1161,7 +1167,9 @@ private:
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
+    ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
+    std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
     HANDLE faFontHandle_ = nullptr;
     HFONT faMenuFont_ = nullptr;
     std::vector<HBITMAP> menuIconPool_;
@@ -1184,6 +1192,7 @@ private:
     /** @name 数据模型 */
     /** @{ */
     std::vector<DesktopItem> items_;
+    std::unordered_map<std::wstring, size_t> itemIndexByKeyCache_;
     std::vector<GridPage> gridPages_;
     std::vector<DesktopWidget> widgets_;
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
