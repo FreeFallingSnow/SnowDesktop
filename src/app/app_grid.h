@@ -1842,6 +1842,7 @@ inline void DesktopApp::UpdateLayoutWorkArea()
         page.workArea.right  = std::clamp<LONG>(page.workArea.right,  page.workArea.left, static_cast<LONG>(virtualWidth_));
         page.workArea.bottom = std::clamp<LONG>(page.workArea.bottom, page.workArea.top,  static_cast<LONG>(virtualHeight_));
         ConfigureGridPage(page);
+        ApplyGapScaleToPage(page);
     }
 
     ApplyPageMapping();
