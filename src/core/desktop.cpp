@@ -302,6 +302,16 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
         return L"释放：放置到桌面";
     }
 
+    if (!ctrlDown && !altDown)
+    {
+        auto* originWidget = dynamic_cast<WidgetContainer*>(origin);
+        DesktopWidget* originData = originWidget ? originWidget->GetWidgetData() : nullptr;
+        if (originData &&
+            originData->type == DesktopWidgetType::FileCategories &&
+            originData->autoCollect)
+            return L"自动收集已开启，请先关闭后再移到自由桌面";
+    }
+
     // Internal drag
     if (altDown)  return L"释放：创建快捷方式到此空位";
     if (ctrlDown) return L"释放：复制到此空位";

@@ -1529,6 +1529,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
             widgetEngine_->ReloadStorage();
     }
     LoadDesktopItems();
+    RefreshCollectedKeysCache();
     ApplyAutoCollectFileCategoryWidgets();
 
     // Mark widgets as used
@@ -1644,7 +1645,9 @@ inline void DesktopApp::LoadDesktopItems()
     };
 
     items_.clear();
+    itemIndexByKeyCache_.clear();
     d2dIconCache_.clear();
+    itemTextLayoutCache_.clear();
     L(L"LoadItems start");
 
     HRESULT hr = SHGetDesktopFolder(&desktopFolder_);
@@ -1803,6 +1806,7 @@ inline void DesktopApp::LoadDesktopItems()
 
     wsprintfW(buf, L"Loaded %d items", count);
     L(buf);
+    RefreshDesktopItemIndexCache();
 }
 
 /**
@@ -1853,8 +1857,11 @@ inline void DesktopApp::ConfigureGridPage(GridPage& page) const
     const float dpiScaleY = static_cast<float>(page.dpiY) / 96.0f;
     const int marginX = std::max(1, static_cast<int>(std::round(kGridMarginX * dpiScaleX)));
     const int marginY = std::max(1, static_cast<int>(std::round(kGridMarginY * dpiScaleY)));
-    const int cw = std::max(1, static_cast<int>(std::round(kCellWidth * gapScale_ * dpiScaleX)));
-    const int ch = std::max(1, static_cast<int>(std::round(kMinCellHeight * gapScale_ * dpiScaleY)));
+    // The monitor work area is already expressed in physical pixels for this
+    // per-monitor-DPI-aware process. Scaling the reference cell a second time
+    // makes high-DPI displays start with far fewer rows and columns.
+    const int cw = std::max(1, static_cast<int>(std::round(kCellWidth * gapScale_)));
+    const int ch = std::max(1, static_cast<int>(std::round(kMinCellHeight * gapScale_)));
     const int w  = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int h  = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
     const int uw = std::max(1, w - marginX * 2);
@@ -2438,9 +2445,32 @@ inline void DesktopApp::DropSelectedItemsOnTarget(int targetIndex)
 inline size_t DesktopApp::FindItemIndexByKey(const std::wstring& key) const
 {
     std::wstring normalized = ToUpperInvariant(key);
-    for (size_t i = 0; i < items_.size(); ++i)
-        if (ToUpperInvariant(items_[i].layoutKey) == normalized) return i;
+    auto it = itemIndexByKeyCache_.find(normalized);
+    if (it != itemIndexByKeyCache_.end() && it->second < items_.size())
+        return it->second;
     return static_cast<size_t>(-1);
+}
+
+inline void DesktopApp::RefreshDesktopItemIndexCache()
+{
+    itemIndexByKeyCache_.clear();
+    itemIndexByKeyCache_.reserve(items_.size());
+    for (size_t i = 0; i < items_.size(); ++i)
+    {
+        if (!items_[i].layoutKey.empty())
+            itemIndexByKeyCache_.emplace(ToUpperInvariant(items_[i].layoutKey), i);
+    }
+}
+
+inline void DesktopApp::RefreshCollectedKeysCache()
+{
+    collectedKeysCache_.clear();
+    for (const auto& widget : widgets_)
+    {
+        for (const auto& key : widget.itemKeys)
+            if (!key.empty())
+                collectedKeysCache_.insert(ToUpperInvariant(key));
+    }
 }
 
 /**
@@ -2469,6 +2499,7 @@ inline void DesktopApp::RemoveDesktopKeysFromWidgets(const std::vector<std::wstr
                 }),
             widget.itemKeys.end());
     }
+    RefreshCollectedKeysCache();
 }
 
 /**
@@ -2707,6 +2738,20 @@ inline bool DesktopApp::IsDropFileBacked(const DragSourceList& sourceList,
     return sourceList.hasExternalFiles || sourceList.hasFolderEntries;
 }
 
+inline bool DesktopApp::IsAutoCollectFileCategorySource(
+    const DragSourceList& sourceList) const
+{
+    if (!sourceList.hasOriginWidget ||
+        sourceList.originWidgetType != DesktopWidgetType::FileCategories)
+        return false;
+
+    auto it = std::find_if(widgets_.begin(), widgets_.end(),
+        [&](const DesktopWidget& widget) {
+            return widget.id == sourceList.originWidgetId;
+        });
+    return it != widgets_.end() && it->autoCollect;
+}
+
 /**
  * @brief 构建拖拽预览列表，计算放置目标、动作和落点。
  * @param sourceList 拖拽源列表。
@@ -2731,6 +2776,10 @@ inline DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& so
     if (!containers_.empty() && target == containers_.front().get())
     {
         preview.targetKind = DropTargetKind::Desktop;
+        if (preview.action == DropAction::Move &&
+            IsAutoCollectFileCategorySource(sourceList))
+            return preview;
+
         POINT adjusted = sourceList.origin ? GetDragTargetPoint(dropPoint) : dropPoint;
         GridCell targetCell = CellFromPoint(adjusted);
         bool internalMove = !IsDropFileBacked(sourceList, preview.targetKind, preview.action);
@@ -2827,6 +2876,10 @@ inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     const DropPreviewList& preview)
 {
     if (sourceList.Empty() || preview.Empty()) return false;
+    if (preview.targetKind == DropTargetKind::Desktop &&
+        preview.action == DropAction::Move &&
+        IsAutoCollectFileCategorySource(sourceList))
+        return false;
     return preview.fileBacked
         ? ExecuteFileBackedDropPlan(sourceList, preview)
         : ExecuteInternalDropPlan(sourceList, preview);
@@ -2933,6 +2986,7 @@ inline bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList
         if (originWidget) originWidget->InvalidateSlots();
         targetWidget->InvalidateSlots();
         if (GetDesktopGrid()) GetDesktopGrid()->InvalidateSlots();
+        RefreshCollectedKeysCache();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         return true;
@@ -3275,6 +3329,8 @@ inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceLi
         if (items_.size() == oldSize) return false;
 
         d2dIconCache_.clear();
+        itemTextLayoutCache_.clear();
+        RefreshDesktopItemIndexCache();
         if (GetDesktopGrid())
             GetDesktopGrid()->InvalidateSlots();
         return true;
@@ -3652,16 +3708,9 @@ inline void DesktopApp::RebuildContainersAndItems()
     containers_.clear();
     items_oo_.clear();
 
-    // Collect keys of items that belong to widgets
-    std::unordered_set<std::wstring> collectedKeys;
-    collectedKeysCache_.clear();
-    for (auto& w : widgets_)
-        for (auto& k : w.itemKeys)
-        {
-            auto upper = ToUpperInvariant(k);
-            collectedKeys.insert(upper);
-            collectedKeysCache_.insert(upper);
-        }
+    // Collect keys of items that belong to widgets.
+    RefreshCollectedKeysCache();
+    const auto& collectedKeys = collectedKeysCache_;
 
     // DesktopGrid
     auto grid = std::make_unique<DesktopGrid>(&gridPages_, &items_, this);
@@ -3798,6 +3847,7 @@ inline bool DesktopApp::CollectFileCategoryWidget(size_t widgetIndex, bool persi
     FileCategories collector(&widgets_[widgetIndex], this);
     bool changed = collector.CollectTopLevelDesktopItems();
     if (!changed) return false;
+    RefreshCollectedKeysCache();
 
     if (persist)
     {
@@ -3830,7 +3880,13 @@ inline void DesktopApp::ApplyAutoCollectFileCategoryWidgets()
     size_t active = static_cast<size_t>(-1);
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
-        if (widgets_[i].type == DesktopWidgetType::FileCategories && widgets_[i].autoCollect)
+        if (widgets_[i].type != DesktopWidgetType::FileCategories)
+            continue;
+
+        FileCategories collector(&widgets_[i], this);
+        collector.PruneUncollectableItems();
+
+        if (widgets_[i].autoCollect)
         {
             if (active == static_cast<size_t>(-1))
                 active = i;
@@ -3838,6 +3894,7 @@ inline void DesktopApp::ApplyAutoCollectFileCategoryWidgets()
                 widgets_[i].autoCollect = false;
         }
     }
+    RefreshCollectedKeysCache();
     if (active != static_cast<size_t>(-1))
         CollectFileCategoryWidget(active, false);
 }
