@@ -137,6 +137,16 @@ inline bool DesktopApp::InitGraphics()
         navTabTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
+    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"",
+        &fileCategoryTabTextFormat_);
+    if (fileCategoryTabTextFormat_)
+    {
+        fileCategoryTabTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        fileCategoryTabTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        fileCategoryTabTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
     faFontHandle_ = LoadFontAwesome();
     if (faFontHandle_)
     {
@@ -384,22 +394,43 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
-    ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(dwriteFactory_->CreateTextLayout(
-        text.c_str(), static_cast<UINT32>(text.size()),
-        itemTextFormat_.Get(), tw, th, &layout)) || !layout)
-        return;
-
     const float dpiScale = GetItemDpiScale(bounds);
-    const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
-    layout->SetFontSize(kItemFontSize * dpiScale, fullRange);
-    layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-        kItemLineHeight * dpiScale, kItemBaseline * dpiScale);
+    const int dpiKey = static_cast<int>(std::round(dpiScale * 1000.0f));
+    std::wstring layoutKey = text + L"\x1f" +
+        std::to_wstring(textRect.right - textRect.left) + L"x" +
+        std::to_wstring(textRect.bottom - textRect.top) + L"@" +
+        std::to_wstring(dpiKey);
+    auto layoutIt = itemTextLayoutCache_.find(layoutKey);
+    if (layoutIt == itemTextLayoutCache_.end())
+    {
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(dwriteFactory_->CreateTextLayout(
+            text.c_str(), static_cast<UINT32>(text.size()),
+            itemTextFormat_.Get(), tw, th, &layout)) || !layout)
+            return;
+        const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
+        layout->SetFontSize(kItemFontSize * dpiScale, fullRange);
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+            kItemLineHeight * dpiScale, kItemBaseline * dpiScale);
+        layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
+    }
 
-    ComPtr<ID2D1SolidColorBrush> shadowBrush;
-    ComPtr<ID2D1SolidColorBrush> textBrush;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f * opacity), &shadowBrush);
-    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity), &textBrush);
+    auto getBrush = [&](const D2D1_COLOR_F& color) -> ID2D1SolidColorBrush* {
+        const std::uint64_t key = D2DColorBrushKey(color);
+        auto it = brushCache_.find(key);
+        if (it == brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (FAILED(context->CreateSolidColorBrush(color, &brush)) || !brush)
+                return nullptr;
+            it = brushCache_.emplace(key, std::move(brush)).first;
+        }
+        return it->second.Get();
+    };
+    ID2D1SolidColorBrush* shadowBrush =
+        getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f * opacity));
+    ID2D1SolidColorBrush* textBrush =
+        getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
 
     const float tx = static_cast<float>(textRect.left);
     const float ty = static_cast<float>(textRect.top);
@@ -410,22 +441,27 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
             { tx, ty - 1.0f }, { tx, ty + 1.0f },
         };
         for (auto& pt : offsets)
-            context->DrawTextLayout(pt, layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            context->DrawTextLayout(pt, layoutIt->second.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     if (textBrush)
-        context->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        context->DrawTextLayout(D2D1::Point2F(tx, ty), layoutIt->second.Get(), textBrush,
+            D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 inline void DesktopApp::DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
     RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color)
 {
     if (!ctx || !format || text.empty() || IsRectEmptyRect(rect)) return;
-    ComPtr<ID2D1SolidColorBrush> brush;
-    if (SUCCEEDED(ctx->CreateSolidColorBrush(color, &brush)) && brush)
+    const std::uint64_t key = D2DColorBrushKey(color);
+    auto it = brushCache_.find(key);
+    if (it == brushCache_.end())
     {
-        ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
-            ToD2DRect(rect), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
+        it = brushCache_.emplace(key, std::move(brush)).first;
     }
+    ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
+        ToD2DRect(rect), it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 inline std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidget& widget) const
@@ -1156,6 +1192,7 @@ extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCel
 inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
 {
     // Desktop icons
+    const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
     for (auto& ooItem : items_oo_)
     {
         auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
@@ -1166,7 +1203,7 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
             dragSession_.IsMoveAction() && di->selected)
             continue;
 
-        const bool hovered = !IsPointOverWidgetChrome(lastMousePoint_) && PtInRect(&di->bounds, lastMousePoint_) != FALSE;
+        const bool hovered = !mouseOverWidget && PtInRect(&di->bounds, lastMousePoint_) != FALSE;
         const bool selected = di->selected;
         int state = selected ? 2 : (hovered ? 1 : 0);
         icon->Draw(ctx, di->bounds, state);

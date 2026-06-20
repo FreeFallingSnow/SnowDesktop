@@ -61,13 +61,14 @@ static std::wstring DesktopItemExtensionUpper(const DesktopItem& item)
 }
 
 /**
- * @brief 判断桌面项目是否为快捷方式（.lnk）。
+ * @brief 判断桌面项目是否为快捷方式文件（.lnk 或 .url）。
  * @param item 桌面项目。
- * @return true 如果扩展名为 .LNK；否则返回 false。
+ * @return true 如果扩展名为 .LNK 或 .URL；否则返回 false。
  */
 static bool IsShortcutItem(const DesktopItem& item)
 {
-    return DesktopItemExtensionUpper(item) == L".LNK";
+    const std::wstring ext = DesktopItemExtensionUpper(item);
+    return ext == L".LNK" || ext == L".URL";
 }
 
 /**
@@ -118,7 +119,7 @@ static std::wstring FileCategoryIdForItem(const DesktopItem& item)
 
 /**
  * @brief 判断桌面项目是否应收录到分类面板中。
- *        排除系统图标（此电脑、用户文件、网络、控制面板、回收站）和快捷方式。
+ *        排除系统图标（此电脑、用户文件、网络、控制面板、回收站）和快捷方式文件。
  * @param app DesktopApp 实例指针。
  * @param item 待判断的桌面项目。
  * @return true 如果项目应被收录；false 如果受保护或为快捷方式。
@@ -137,98 +138,71 @@ static bool IsCollectable(DesktopApp* app, const DesktopItem& item)
     return !protectedIcon && !IsShortcutItem(item) && !item.layoutKey.empty();
 }
 
-/**
- * @brief 根据 layoutKey 在桌面项目列表中查找对应的索引位置。
- * @param app DesktopApp 实例指针。
- * @param key 要查找的 layoutKey（不区分大小写）。
- * @return 项目索引，如果未找到则返回 (size_t)-1。
- */
-static size_t FindItemIndexByKeyPublic(DesktopApp* app, const std::wstring& key)
+void FileCategories::EnsureCategorySnapshot() const
 {
-    if (!app) return static_cast<size_t>(-1);
-    std::wstring normalized = ToUpperInvariant(key);
-    const auto& items = app->GetDesktopItems();
-    for (size_t i = 0; i < items.size(); ++i)
-        if (ToUpperInvariant(items[i].layoutKey) == normalized)
-            return i;
-    return static_cast<size_t>(-1);
-}
+    if (!data_ || !app_) return;
+    if (categorySnapshot_.valid &&
+        categorySnapshot_.desktopItemCount == app_->GetDesktopItems().size() &&
+        categorySnapshot_.sourceKeys == data_->itemKeys)
+        return;
 
-/**
- * @brief 获取指定分类下的所有项目 layoutKey 列表，去重并按原始顺序排列。
- * @param app DesktopApp 实例指针。
- * @param data 桌面组件数据，包含 itemKeys。
- * @param categoryId 分类 ID。为空字符串时按分类顺序遍历所有类别；
- *                   为 "all" 时返回所有可收录项目；否则返回指定分类的项目。
- * @return 符合条件的 layoutKey 字符串向量。
- */
-static std::vector<std::wstring> CategoryKeys(DesktopApp* app, const DesktopWidget* data,
-    const std::wstring& categoryId)
-{
-    std::vector<std::wstring> keys;
+    categorySnapshot_ = {};
+    categorySnapshot_.desktopItemCount = app_->GetDesktopItems().size();
+    categorySnapshot_.sourceKeys = data_->itemKeys;
+
     std::unordered_set<std::wstring> seen;
-    if (!app || !data) return keys;
-
-    auto appendKey = [&](const std::wstring& rawKey) {
-        size_t itemIdx = FindItemIndexByKeyPublic(app, rawKey);
-        if (itemIdx == static_cast<size_t>(-1)) return;
-        const DesktopItem& item = app->GetDesktopItems()[itemIdx];
-        if (!IsCollectable(app, item)) return;
+    auto& allKeys = categorySnapshot_.keysByCategory[L"all"];
+    for (const auto& rawKey : data_->itemKeys)
+    {
+        size_t itemIdx = app_->FindItemIndexByKey(rawKey);
+        if (itemIdx == static_cast<size_t>(-1)) continue;
+        const DesktopItem& item = app_->GetDesktopItems()[itemIdx];
+        if (!IsCollectable(app_, item)) continue;
         std::wstring key = ToUpperInvariant(item.layoutKey);
-        if (seen.insert(key).second) keys.push_back(key);
-    };
-
-    if (!categoryId.empty() && categoryId != L"all")
-    {
-        for (const auto& rawKey : data->itemKeys)
-        {
-            size_t itemIdx = FindItemIndexByKeyPublic(app, rawKey);
-            if (itemIdx == static_cast<size_t>(-1)) continue;
-            if (FileCategoryIdForItem(app->GetDesktopItems()[itemIdx]) == categoryId)
-                appendKey(rawKey);
-        }
-        return keys;
-    }
-
-    if (categoryId == L"all")
-    {
-        for (const auto& rawKey : data->itemKeys)
-            appendKey(rawKey);
-        return keys;
+        if (!seen.insert(key).second) continue;
+        allKeys.push_back(key);
+        categorySnapshot_.keysByCategory[FileCategoryIdForItem(item)].push_back(key);
     }
 
     for (const auto& id : FileCategoryOrder())
     {
-        if (id == L"all") continue;
-        for (const auto& rawKey : data->itemKeys)
-        {
-            size_t itemIdx = FindItemIndexByKeyPublic(app, rawKey);
-            if (itemIdx == static_cast<size_t>(-1)) continue;
-            if (FileCategoryIdForItem(app->GetDesktopItems()[itemIdx]) == id)
-                appendKey(rawKey);
-        }
+        auto it = categorySnapshot_.keysByCategory.find(id);
+        if (it != categorySnapshot_.keysByCategory.end() && !it->second.empty())
+            categorySnapshot_.visibleCategoryIds.push_back(id);
     }
-    return keys;
+    categorySnapshot_.valid = true;
 }
 
-/**
- * @brief 获取当前有项目的可见分类 ID 列表（按 FileCategoryOrder 顺序）。
- * @param app DesktopApp 实例指针。
- * @param data 桌面组件数据。
- * @return 至少含一个项目的分类 ID 列表。
- */
-static std::vector<std::wstring> VisibleCategoryIds(DesktopApp* app, const DesktopWidget* data)
+void FileCategories::InvalidateCategorySnapshot() const
 {
-    std::vector<std::wstring> ids;
-    for (const auto& id : FileCategoryOrder())
-    {
-        if (!CategoryKeys(app, data, id).empty())
-            ids.push_back(id);
-    }
-    return ids;
+    categorySnapshot_.valid = false;
 }
 
-static std::wstring ActiveCategoryId(DesktopApp* app, const DesktopWidget* data);
+const std::vector<std::wstring>& FileCategories::CachedCategoryKeys(
+    const std::wstring& categoryId) const
+{
+    static const std::vector<std::wstring> empty;
+    EnsureCategorySnapshot();
+    auto it = categorySnapshot_.keysByCategory.find(
+        categoryId.empty() ? L"all" : categoryId);
+    return it != categorySnapshot_.keysByCategory.end() ? it->second : empty;
+}
+
+const std::vector<std::wstring>& FileCategories::CachedVisibleCategoryIds() const
+{
+    EnsureCategorySnapshot();
+    return categorySnapshot_.visibleCategoryIds;
+}
+
+std::wstring FileCategories::CachedActiveCategoryId() const
+{
+    if (!data_) return L"";
+    const auto& visible = CachedVisibleCategoryIds();
+    if (!data_->activeCategoryId.empty() &&
+        std::find(visible.begin(), visible.end(), data_->activeCategoryId) != visible.end())
+        return data_->activeCategoryId;
+    return visible.empty() ? L"" : visible.front();
+}
 
 /**
  * @brief 收集顶级桌面项目中可收录的项到 widget 的 itemKeys 中。
@@ -263,28 +237,33 @@ bool FileCategories::CollectTopLevelDesktopItems()
     if (changed)
     {
         data_->scrollOffset = 0;
+        InvalidateCategorySnapshot();
         if (data_->activeCategoryId.empty())
-            data_->activeCategoryId = ActiveCategoryId(app_, data_);
+            data_->activeCategoryId = CachedActiveCategoryId();
         InvalidateSlots();
     }
     return changed;
 }
 
-/**
- * @brief 获取当前激活的分类 ID。
- *        优先保持之前激活的分类，如果该分类不再可见则返回第一个可见分类。
- * @param app DesktopApp 实例指针。
- * @param data 桌面组件数据。
- * @return 有效的分类 ID，如果没有可见分类则返回空字符串。
- */
-static std::wstring ActiveCategoryId(DesktopApp* app, const DesktopWidget* data)
+bool FileCategories::PruneUncollectableItems()
 {
-    if (!data) return L"";
-    auto visible = VisibleCategoryIds(app, data);
-    if (!data->activeCategoryId.empty() &&
-        std::find(visible.begin(), visible.end(), data->activeCategoryId) != visible.end())
-        return data->activeCategoryId;
-    return visible.empty() ? L"" : visible.front();
+    if (!data_ || !app_) return false;
+    const size_t oldSize = data_->itemKeys.size();
+    data_->itemKeys.erase(
+        std::remove_if(data_->itemKeys.begin(), data_->itemKeys.end(),
+            [&](const std::wstring& key) {
+                size_t itemIdx = app_->FindItemIndexByKey(key);
+                return itemIdx != static_cast<size_t>(-1) &&
+                    !IsCollectable(app_, app_->GetDesktopItems()[itemIdx]);
+            }),
+        data_->itemKeys.end());
+    if (data_->itemKeys.size() == oldSize) return false;
+
+    data_->scrollOffset = 0;
+    InvalidateCategorySnapshot();
+    data_->activeCategoryId = CachedActiveCategoryId();
+    InvalidateSlots();
+    return true;
 }
 
 /**
@@ -329,7 +308,7 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
 {
     if (!widget) return {};
     DesktopWidget* data = widget->GetWidgetData();
-    auto tabs = VisibleCategoryIds(widget->GetApp(), data);
+    const auto& tabs = widget->CachedVisibleCategoryIds();
     if (index >= tabs.size()) return {};
 
     RECT tabsRect = FileCategoryTabsRect(widget);
@@ -393,7 +372,7 @@ static int FileCategoryMaxScrollOffset(FileCategories* widget)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data) return 0;
-    auto keys = CategoryKeys(widget->GetApp(), data, ActiveCategoryId(widget->GetApp(), data));
+    const auto& keys = widget->CachedCategoryKeys(widget->CachedActiveCategoryId());
     RECT content = FileCategoryContentRect(widget);
     int contentHeight = std::max<int>(1, content.bottom - content.top);
     return std::max(0, FileCategoryContentHeight(widget, keys.size()) - contentHeight + kMinCellHeight / 2);
@@ -457,10 +436,12 @@ static RECT FileCategoryToggleRect(FileCategories* widget)
  * @param visibleIndex 在激活分类可见列表中的索引。
  * @return data->itemKeys 中对应的插入位置索引。
  */
-static size_t InsertIndexForVisibleSlot(DesktopApp* app, DesktopWidget* data, size_t visibleIndex)
+static size_t InsertIndexForVisibleSlot(FileCategories* widget, size_t visibleIndex)
 {
+    DesktopApp* app = widget ? widget->GetApp() : nullptr;
+    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!app || !data) return 0;
-    auto visibleKeys = CategoryKeys(app, data, ActiveCategoryId(app, data));
+    const auto& visibleKeys = widget->CachedCategoryKeys(widget->CachedActiveCategoryId());
     if (visibleIndex < visibleKeys.size())
     {
         std::wstring anchor = ToUpperInvariant(visibleKeys[visibleIndex]);
@@ -482,8 +463,35 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
     std::vector<std::unique_ptr<Slot>> slots;
     if (!data_ || !app_) return slots;
 
-    auto keys = CategoryKeys(app_, data_, ActiveCategoryId(app_, data_));
-    for (size_t idx = 0; idx < keys.size(); ++idx)
+    const auto& keys = CachedCategoryKeys(CachedActiveCategoryId());
+    if (keys.empty()) return slots;
+
+    RECT content = FileCategoryContentRect(this);
+    const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
+    const int scroll = std::clamp(data_->scrollOffset, 0, FileCategoryMaxScrollOffset(this));
+    size_t firstIndex = 0;
+    size_t lastIndex = keys.size();
+
+    if (data_->listMode)
+    {
+        constexpr int itemHeight = 38;
+        const int firstRow = std::max(0, scroll / itemHeight - 1);
+        const int lastRow = (scroll + visibleHeight + itemHeight - 1) / itemHeight + 1;
+        firstIndex = static_cast<size_t>(firstRow);
+        lastIndex = std::min(keys.size(), static_cast<size_t>(std::max(firstRow, lastRow)));
+    }
+    else
+    {
+        const int columns = std::max(1, data_->gridSpan.columns);
+        const int cellHeight = std::max(1, FileCategoryCellHeight(this));
+        const int firstRow = std::max(0, scroll / cellHeight - 1);
+        const int lastRow = (scroll + visibleHeight + cellHeight - 1) / cellHeight + 1;
+        firstIndex = std::min(keys.size(), static_cast<size_t>(firstRow * columns));
+        lastIndex = std::min(keys.size(), static_cast<size_t>(std::max(firstRow, lastRow) * columns));
+    }
+
+    slots.reserve(lastIndex - firstIndex);
+    for (size_t idx = firstIndex; idx < lastIndex; ++idx)
     {
         RECT cell = FileCategoryItemRect(this, idx);
         if (IsRectEmptyRect(cell)) continue;
@@ -505,7 +513,7 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 Item* FileCategories::GetSlotItem(size_t idx) const
 {
     if (!data_ || !app_) return nullptr;
-    auto keys = CategoryKeys(app_, data_, ActiveCategoryId(app_, data_));
+    const auto& keys = CachedCategoryKeys(CachedActiveCategoryId());
     if (idx >= keys.size()) return nullptr;
     size_t itemIdx = app_->FindItemIndexByKey(keys[idx]);
     if (itemIdx == static_cast<size_t>(-1)) return nullptr;
@@ -525,7 +533,7 @@ Item* FileCategories::GetSlotItem(size_t idx) const
 Item* FileCategories::GetMemberItem(size_t idx) const
 {
     if (!data_ || !app_) return nullptr;
-    auto keys = CategoryKeys(app_, data_, ActiveCategoryId(app_, data_));
+    const auto& keys = CachedCategoryKeys(CachedActiveCategoryId());
     if (idx >= keys.size()) return nullptr;
     size_t itemIdx = app_->FindItemIndexByKey(keys[idx]);
     if (itemIdx == static_cast<size_t>(-1)) return nullptr;
@@ -544,7 +552,7 @@ std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
 {
     std::vector<size_t> result;
     if (!data_ || !app_) return result;
-    auto keys = CategoryKeys(app_, data_, ActiveCategoryId(app_, data_));
+    const auto& keys = CachedCategoryKeys(CachedActiveCategoryId());
     for (size_t i = 0; i < keys.size(); ++i)
     {
         size_t itemIdx = app_->FindItemIndexByKey(keys[i]);
@@ -565,7 +573,7 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
     if (!data_ || !app_) return;
     (void)indices;
 
-    auto activeKeys = CategoryKeys(app_, data_, ActiveCategoryId(app_, data_));
+    const auto& activeKeys = CachedCategoryKeys(CachedActiveCategoryId());
     std::vector<std::wstring> selectedKeys;
     for (const auto& key : activeKeys)
     {
@@ -584,7 +592,7 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
             selectedSet.contains(ToUpperInvariant(activeKeys[anchorIdx])))
             ++anchorIdx;
         if (anchorIdx < activeKeys.size())
-            insertAt = InsertIndexForVisibleSlot(app_, data_, anchorIdx);
+            insertAt = InsertIndexForVisibleSlot(this, anchorIdx);
     }
 
     size_t before = 0;
@@ -600,6 +608,7 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
     insertAt = std::min(insertAt, data_->itemKeys.size());
     for (const auto& key : selectedKeys)
         data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt++), key);
+    InvalidateCategorySnapshot();
     InvalidateSlots();
 }
 
@@ -610,7 +619,7 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
 size_t FileCategories::GetSlotCount() const
 {
     if (!data_) return 0;
-    return CategoryKeys(app_, data_, ActiveCategoryId(app_, data_)).size();
+    return CachedCategoryKeys(CachedActiveCategoryId()).size();
 }
 
 /**
@@ -649,7 +658,7 @@ int FileCategories::GetMaxScrollOffset() const
  */
 int FileCategories::GetTotalContentHeight() const
 {
-    auto keys = CategoryKeys(app_, data_, ActiveCategoryId(app_, data_));
+    const auto& keys = CachedCategoryKeys(CachedActiveCategoryId());
     return FileCategoryContentHeight(const_cast<FileCategories*>(this), keys.size());
 }
 
@@ -692,7 +701,7 @@ size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) co
     size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
     if (targetSlot && region == HitRegion::SortAfter)
         ++visibleInsert;
-    return InsertIndexForVisibleSlot(app_, data_, visibleInsert);
+    return InsertIndexForVisibleSlot(const_cast<FileCategories*>(this), visibleInsert);
 }
 
 /**
@@ -702,7 +711,7 @@ size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) co
  */
 bool FileCategories::AllowsDesktopKey(const std::wstring& key) const
 {
-    size_t itemIdx = FindItemIndexByKeyPublic(app_, key);
+    size_t itemIdx = app_ ? app_->FindItemIndexByKey(key) : static_cast<size_t>(-1);
     return itemIdx != static_cast<size_t>(-1) &&
         IsCollectable(app_, app_->GetDesktopItems()[itemIdx]);
 }
@@ -717,30 +726,18 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (!data_ || !app_) return;
     (void)body;
 
-    std::vector<std::wstring> categoryIds = VisibleCategoryIds(app_, data_);
+    const auto& categoryIds = CachedVisibleCategoryIds();
     if (categoryIds.empty())
     {
         RECT empty = GetBodyRect();
         InflateRect(&empty, -12, -12);
-        ComPtr<IDWriteTextFormat> centered;
-        if (app_->dwriteFactory_)
-        {
-            app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &centered);
-            if (centered)
-            {
-                centered->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                centered->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                centered->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-            }
-        }
         app_->DrawD2DText(context, L"暂无散文件", empty,
-            centered ? centered.Get() : app_->listItemTextFormat_.Get(),
+            app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get(),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
         return;
     }
 
-    std::wstring activeCategory = ActiveCategoryId(app_, data_);
+    std::wstring activeCategory = CachedActiveCategoryId();
     RECT tabsRect = FileCategoryTabsRect(this);
     if (!IsRectEmptyRect(tabsRect))
     {
@@ -760,24 +757,13 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
 
             std::wstring label = FileCategoryLabel(categoryIds[i]) + L" " +
-                std::to_wstring(CategoryKeys(app_, data_, categoryIds[i]).size());
+                std::to_wstring(CachedCategoryKeys(categoryIds[i]).size());
             RECT textRect = MakeRect(tab.left + 4, tab.top, tab.right - 4, tab.bottom);
 
-            ComPtr<IDWriteTextFormat> tabFmt;
-            if (app_->dwriteFactory_)
-            {
-                app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
-                    DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL,
-                    DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &tabFmt);
-                if (tabFmt)
-                {
-                    tabFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                    tabFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    tabFmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-                }
-            }
             app_->DrawD2DText(context, label, textRect,
-                tabFmt ? tabFmt.Get() : app_->listItemTextFormat_.Get(),
+                app_->fileCategoryTabTextFormat_
+                    ? app_->fileCategoryTabTextFormat_.Get()
+                    : app_->listItemTextFormat_.Get(),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.98f : 0.78f));
         }
         context->PopAxisAlignedClip();
@@ -788,7 +774,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
     }
 
-    auto keys = CategoryKeys(app_, data_, activeCategory);
+    const auto& keys = CachedCategoryKeys(activeCategory);
     RECT content = FileCategoryContentRect(this);
     if (IsRectEmptyRect(content)) return;
 
@@ -871,7 +857,7 @@ WidgetHit FileCategories::HitTestWidget(POINT pt) const
  */
 std::wstring FileCategories::CategoryIdAtPoint(POINT pt) const
 {
-    auto categories = VisibleCategoryIds(app_, data_);
+    const auto& categories = CachedVisibleCategoryIds();
     for (size_t i = 0; i < categories.size(); ++i)
     {
         RECT tab = FileCategoryTabRect(const_cast<FileCategories*>(this), i);
@@ -904,7 +890,7 @@ bool FileCategories::TryScrollTabs(POINT pt, int delta)
     RECT tabs = FileCategoryTabsRect(this);
     if (IsRectEmptyRect(tabs) || !PtInRect(&tabs, pt)) return false;
 
-    auto categories = VisibleCategoryIds(app_, data_);
+    const auto& categories = CachedVisibleCategoryIds();
     int tabCount = static_cast<int>(categories.size());
     if (tabCount <= 0) return false;
 
@@ -931,18 +917,16 @@ std::vector<Item*> FileCategories::GetSelectedItems() const
     std::vector<Item*> result;
     if (!data_ || !app_) return result;
 
-    for (const auto& slot : const_cast<FileCategories*>(this)->GetSlots())
+    const auto& keys = CachedCategoryKeys(CachedActiveCategoryId());
+    for (size_t i = 0; i < keys.size(); ++i)
     {
-        if (!slot) continue;
-        Item* slotItem = slot->GetItem();
-        auto* slotIcon = dynamic_cast<DesktopIcon*>(slotItem);
-        DesktopItem* di = slotIcon ? slotIcon->GetDesktopItem() : nullptr;
-        if (!di || !di->selected) continue;
-
-        size_t idx = app_->FindItemIndexByKey(di->layoutKey);
+        size_t idx = app_->FindItemIndexByKey(keys[i]);
         if (idx == static_cast<size_t>(-1)) continue;
+        DesktopItem* di = &app_->GetDesktopItems()[idx];
+        if (!di->selected) continue;
+
         auto icon = std::make_unique<DesktopIcon>(&app_->GetDesktopItems()[idx], const_cast<FileCategories*>(this), app_);
-        icon->SetBounds(slot->GetBounds());
+        icon->SetBounds(FileCategoryItemRect(const_cast<FileCategories*>(this), i));
         result.push_back(icon.get());
         dragSourceCache_.push_back(std::move(icon));
     }

@@ -22,6 +22,7 @@
 #include "container.h"
 #include "slot.h"
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <memory>
 
@@ -264,6 +265,7 @@ class FileCategories : public ScrollingItemWidget
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     bool CollectTopLevelDesktopItems();
+    bool PruneUncollectableItems();
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
@@ -289,6 +291,25 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+
+    const std::vector<std::wstring>& CachedCategoryKeys(const std::wstring& categoryId) const;
+    const std::vector<std::wstring>& CachedVisibleCategoryIds() const;
+    std::wstring CachedActiveCategoryId() const;
+
+private:
+    struct CategorySnapshot
+    {
+        bool valid = false;
+        size_t desktopItemCount = 0;
+        std::vector<std::wstring> sourceKeys;
+        std::unordered_map<std::wstring, std::vector<std::wstring>> keysByCategory;
+        std::vector<std::wstring> visibleCategoryIds;
+    };
+
+    void EnsureCategorySnapshot() const;
+    void InvalidateCategorySnapshot() const;
+
+    mutable CategorySnapshot categorySnapshot_;
 };
 
 /**

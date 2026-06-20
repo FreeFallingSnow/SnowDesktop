@@ -62,15 +62,7 @@ inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
 {
     std::wstring key = ToUpperInvariant(item.layoutKey);
     if (key.empty()) return false;
-    for (const auto& widget : widgets_)
-    {
-        for (const auto& rawKey : widget.itemKeys)
-        {
-            if (ToUpperInvariant(rawKey) == key)
-                return true;
-        }
-    }
-    return false;
+    return collectedKeysCache_.contains(key);
 }
 
 /**
@@ -374,7 +366,8 @@ inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
     {
         auto* wc = dynamic_cast<WidgetContainer*>(c.get());
         if (!wc) continue;
-        if (wc->HitTestWidget(pt) != WidgetHit::None)
+        RECT frame = wc->GetFrameRect();
+        if (!IsRectEmptyRect(frame) && PtInRect(&frame, pt))
             return true;
     }
     return HitTestStandaloneWidgetIndex(pt) != static_cast<size_t>(-1);
