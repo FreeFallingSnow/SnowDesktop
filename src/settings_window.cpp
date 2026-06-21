@@ -25,6 +25,7 @@
 #include <shlwapi.h>
 #include <shobjidl.h>
 #include <shellapi.h>
+#include <winhttp.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -1136,6 +1137,144 @@ void SettingsWindow::DrawDebugPage()
  * 显示应用简介、作者信息、社交主页链接（Bilibili / GitHub / 抖音 / 小红书）。
  * 版本号支持彩蛋点击 —— 连续点击 5 次可解锁调试页面（debugUnlocked_）。
  */
+void SettingsWindow::PerformUpdateCheck()
+{
+    updateCheckStatus_ = "checking";
+
+    HINTERNET session = WinHttpOpen(L"SnowDesktop/" SNOWDESKTOP_VERSION,
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
+    if (!session)
+    {
+        updateCheckStatus_ = "网络连接失败（无法初始化 HTTP）";
+        return;
+    }
+    WinHttpSetTimeouts(session, 8000, 8000, 8000, 8000);
+
+    URL_COMPONENTS urlComp{};
+    urlComp.dwStructSize = sizeof(urlComp);
+    urlComp.dwSchemeLength   = (DWORD)-1;
+    urlComp.dwHostNameLength = (DWORD)-1;
+    urlComp.dwUrlPathLength  = (DWORD)-1;
+    std::wstring apiUrl = L"https://api.github.com/repos/FreeFallingSnow/SnowDesktop_Release/releases/latest";
+    if (!WinHttpCrackUrl(apiUrl.c_str(), 0, 0, &urlComp))
+    {
+        WinHttpCloseHandle(session);
+        updateCheckStatus_ = "URL 解析失败";
+        return;
+    }
+
+    HINTERNET connect = WinHttpConnect(session,
+        std::wstring(urlComp.lpszHostName, urlComp.dwHostNameLength).c_str(),
+        INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!connect)
+    {
+        WinHttpCloseHandle(session);
+        updateCheckStatus_ = "连接服务器失败";
+        return;
+    }
+
+    HINTERNET request = WinHttpOpenRequest(connect, L"GET",
+        std::wstring(urlComp.lpszUrlPath, urlComp.dwUrlPathLength).c_str(),
+        nullptr, nullptr, nullptr, WINHTTP_FLAG_SECURE);
+    if (!request)
+    {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        updateCheckStatus_ = "创建请求失败";
+        return;
+    }
+
+    const wchar_t* headers = L"Accept: application/vnd.github+json\r\nUser-Agent: SnowDesktop\r\n";
+    if (!WinHttpSendRequest(request, headers, (DWORD)wcslen(headers), nullptr, 0, 0, 0))
+    {
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        updateCheckStatus_ = "发送请求失败";
+        return;
+    }
+
+    if (!WinHttpReceiveResponse(request, nullptr))
+    {
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        updateCheckStatus_ = "接收响应失败";
+        return;
+    }
+
+    std::string body;
+    DWORD available = 0;
+    while (WinHttpQueryDataAvailable(request, &available) && available > 0)
+    {
+        std::vector<char> chunk(available + 1);
+        DWORD read = 0;
+        if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
+        body.append(chunk.data(), read);
+        if (body.size() > 128 * 1024) break;
+    }
+
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+
+    if (body.empty())
+    {
+        updateCheckStatus_ = "服务器未返回数据";
+        return;
+    }
+
+    auto extractJsonString = [](const std::string& json, const char* field) -> std::string {
+        std::string key = "\"" + std::string(field) + "\":\"";
+        size_t pos = json.find(key);
+        if (pos == std::string::npos) return {};
+        pos += key.size();
+        size_t end = json.find('"', pos);
+        if (end == std::string::npos) return {};
+        return json.substr(pos, end - pos);
+    };
+
+    std::string tag = extractJsonString(body, "tag_name");
+    if (tag.empty())
+    {
+        updateCheckStatus_ = "无法解析版本信息";
+        return;
+    }
+
+    if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V'))
+        tag = tag.substr(1);
+
+    std::string htmlUrl = extractJsonString(body, "html_url");
+
+    auto compareVersion = [](const std::string& a, const std::string& b) -> int {
+        std::istringstream sa(a), sb(b);
+        std::string pa, pb;
+        for (int i = 0; i < 4; ++i)
+        {
+            int va = 0, vb = 0;
+            if (std::getline(sa, pa, '.')) va = std::atoi(pa.c_str());
+            if (std::getline(sb, pb, '.')) vb = std::atoi(pb.c_str());
+            if (va != vb) return va < vb ? -1 : 1;
+        }
+        return 0;
+    };
+
+    latestVersion_ = tag;
+    downloadUrl_ = htmlUrl;
+
+    int cmp = compareVersion(SNOWDESKTOP_VERSION, tag);
+    if (cmp >= 0)
+    {
+        updateAvailable_ = false;
+        updateCheckStatus_ = "已是最新版本";
+    }
+    else
+    {
+        updateAvailable_ = true;
+        updateCheckStatus_ = "发现新版本 v" + tag;
+    }
+}
+
 void SettingsWindow::DrawAboutPage()
 {
     const float pad = 16.0f * dpiScale_;
@@ -1190,6 +1329,13 @@ void SettingsWindow::DrawAboutPage()
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
+    ImGui::Text("项目地址：");
+    ImGui::Spacing();
+    LinkButton("SnowDesktop_Release", "https://github.com/FreeFallingSnow/SnowDesktop_Release");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
     ImGui::TextDisabled("SnowDesktop v" SNOWDESKTOP_VERSION);
     if (ImGui::IsItemClicked())
     {
@@ -1201,6 +1347,52 @@ void SettingsWindow::DrawAboutPage()
                 debugUnlocked_ = true;
                 activePage_ = 3;
             }
+        }
+    }
+
+    ImGui::Spacing();
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    if (ImGui::Button("检查更新", ImVec2(120 * dpiScale_, 0)))
+    {
+        PerformUpdateCheck();
+    }
+    ImGui::PopStyleColor(4);
+
+    if (!updateCheckStatus_.empty())
+    {
+        ImGui::SameLine();
+        if (updateCheckStatus_ == "checking")
+        {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "检查中...");
+        }
+        else if (updateAvailable_)
+        {
+            ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
+            ImGui::Spacing();
+            ImGui::TextWrapped("请前往项目地址下载最新版本：");
+            ImGui::Spacing();
+            ImGui::Text("    ");
+            ImGui::SameLine();
+            std::string dlLabel = downloadUrl_.empty() ?
+                "https://github.com/FreeFallingSnow/SnowDesktop_Release/releases" : downloadUrl_;
+            ImGui::TextColored(ImVec4(0.30f, 0.60f, 0.95f, 1.00f), "%s", dlLabel.c_str());
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImGui::SetTooltip("%s", dlLabel.c_str());
+            }
+            if (ImGui::IsItemClicked())
+            {
+                ShellExecuteW(nullptr, L"open", Utf8ToWide(dlLabel).c_str(), nullptr, nullptr, SW_SHOW);
+            }
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
         }
     }
 
