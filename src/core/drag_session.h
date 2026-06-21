@@ -152,6 +152,27 @@ public:
     }
 
     /**
+     * @brief 在运行时对象重建前解除所有裸指针绑定
+     *
+     * 保留拖拽动作、坐标以及 DragSourceList 中可用于重建来源的稳定元数据，
+     * 但清除 Container / Item / Slot 等随对象树重建而失效的运行时指针。
+     */
+    void DetachRuntimeBindings()
+    {
+        if (!active_) return;
+
+        source_ = nullptr;
+        items_.clear();
+        sourceList_.origin = nullptr;
+        for (auto& entry : sourceList_.entries)
+            entry.item = nullptr;
+        targetContainer_ = nullptr;
+        targetSlot_ = nullptr;
+        targetRegion_ = HitRegion::None;
+        InvalidateStaticScene();
+    }
+
+    /**
      * @brief 使当前静态场景版本号失效（递增版本号）
      *
      * 版本号递增后若归零，则重置为 1，确保版本号始终为正数。

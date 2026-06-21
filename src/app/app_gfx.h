@@ -194,13 +194,7 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
-            auto L = [](const wchar_t* s) {
-                HANDLE f = CreateFileW(L"SnowDesktop_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-                    OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-                if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, s, static_cast<DWORD>(wcslen(s)*2), &w, nullptr);
-                    WriteFile(f, L"\r\n", 4, &w, nullptr); CloseHandle(f); }
-            };
-            L(buf);
+            WriteCrashLogEntry(buf);
             return hr;
         }
         hr = dcompVisual_->SetContent(surface.Get());
@@ -1270,8 +1264,35 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
 
             if (!item.name.empty())
             {
-                DrawD2DText(ctx, item.name, qnTextRect, itemTextFormat_.Get(),
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+                const float tw = static_cast<float>(qnTextRect.right - qnTextRect.left);
+                const float th = static_cast<float>(qnTextRect.bottom - qnTextRect.top);
+                ComPtr<IDWriteTextLayout> layout;
+                if (tw > 0 && th > 0 &&
+                    SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                        item.name.c_str(), static_cast<UINT32>(item.name.size()),
+                        itemTextFormat_.Get(), tw, th, &layout)) && layout)
+                {
+                    const DWRITE_TEXT_RANGE all = { 0, static_cast<UINT32>(item.name.size()) };
+                    layout->SetFontSize(itemFontSize_, all);
+                    layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                        itemFontSize_ * 7.0f / 6.0f, itemFontSize_ * 5.0f / 6.0f);
+                    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_EMERGENCY_BREAK);
+                    const D2D1_COLOR_F textColor(1.0f, 1.0f, 1.0f, 0.96f);
+                    const auto brushKey = D2DColorBrushKey(textColor);
+                    auto bit = brushCache_.find(brushKey);
+                    if (bit == brushCache_.end())
+                    {
+                        ComPtr<ID2D1SolidColorBrush> br;
+                        if (SUCCEEDED(ctx->CreateSolidColorBrush(textColor, &br)) && br)
+                            bit = brushCache_.emplace(brushKey, std::move(br)).first;
+                    }
+                    if (bit != brushCache_.end())
+                        ctx->DrawTextLayout(
+                            D2D1::Point2F(static_cast<float>(qnTextRect.left),
+                                static_cast<float>(qnTextRect.top)),
+                            layout.Get(), bit->second.Get(),
+                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
             }
         }
     }
@@ -1550,7 +1571,8 @@ inline void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
         }
     };
 
-    bool dragging = dragSession_.IsActive() && !dragSession_.Items().empty();
+    bool dragging = dragSession_.IsActive() &&
+        (!dragSession_.Items().empty() || externalDragActive_ || selfDragActive_);
     bool hoverPrev = (navHoverSide_ == -1);
     bool hoverNext = (navHoverSide_ == 1);
 
