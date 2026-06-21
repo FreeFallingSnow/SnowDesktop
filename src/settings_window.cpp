@@ -223,7 +223,7 @@ void SettingsWindow::Show()
         if (!Init(instance_, device_.Get()))
             return;
     }
-    ShowWindow(hwnd_, SW_SHOW);
+    ShowWindow(hwnd_, IsIconic(hwnd_) ? SW_RESTORE : SW_SHOW);
     BringWindowToTop(hwnd_);
     SetForegroundWindow(hwnd_);
     SetFocus(hwnd_);
@@ -311,7 +311,7 @@ void SettingsWindow::Render()
         ImGui::EndChild();
 
         ImGui::SameLine();
-        ImGui::BeginChild("##Content", ImVec2(0, 0), ImGuiChildFlags_None);
+        ImGui::BeginChild("##Content", ImVec2(0, 0), true);
         switch (activePage_)
         {
         case 0: DrawGeneralPage(); break;
@@ -903,41 +903,13 @@ void SettingsWindow::DrawDebugPage()
     ImGui::Separator();
     ImGui::Spacing();
 
-    if (BlueButton("安装/升级组件包"))
+    if (BlueButton("打开组件文件夹"))
     {
-        ComPtr<IFileOpenDialog> dialog;
-        if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&dialog))))
-        {
-            COMDLG_FILTERSPEC filters[] = {
-                { L"SnowDesktop 组件清单", L"*.widget.json" },
-                { L"JSON 文件", L"*.json" }
-            };
-            dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
-            dialog->SetTitle(L"选择要安装或升级的组件包清单");
-            if (SUCCEEDED(dialog->Show(hwnd_)))
-            {
-                ComPtr<IShellItem> item;
-                if (SUCCEEDED(dialog->GetResult(&item)))
-                {
-                    PWSTR path = nullptr;
-                    if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
-                    {
-                        std::wstring error;
-                        bool installed = WidgetEngine::InstallWidgetPackage(path, error);
-                        packageInstallStatus_ = installed
-                            ? "组件包安装成功；请在桌面菜单中添加或重新加载组件。"
-                            : WideToUtf8(error);
-                        CoTaskMemFree(path);
-                    }
-                }
-            }
-        }
-    }
-    if (!packageInstallStatus_.empty())
-    {
-        ImGui::SameLine();
-        ImGui::TextWrapped("%s", packageInstallStatus_.c_str());
+        wchar_t exePath[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+        PathRemoveFileSpecW(exePath);
+        PathAppendW(exePath, L"widgets");
+        ShellExecuteW(nullptr, L"open", exePath, nullptr, nullptr, SW_SHOW);
     }
     ImGui::Spacing();
 
@@ -954,7 +926,7 @@ void SettingsWindow::DrawDebugPage()
         ImGui::Spacing();
     }
 
-    if (ImGui::CollapsingHeader("Font Awesome 图标字符", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Font Awesome 图标字符"))
     {
         ImGui::TextDisabled("点击图标复制字符，可直接粘贴到 Lua 菜单项的 icon 字段。");
 
@@ -1091,7 +1063,7 @@ void SettingsWindow::DrawDebugPage()
             ImGui::SetClipboardText(text.c_str());
         }
 
-        ImGui::BeginChild("##WidgetDiagnostics", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::BeginChild("##WidgetDiagnostics", ImVec2(0, 180.0f * dpiScale_), true, ImGuiWindowFlags_HorizontalScrollbar);
         for (auto& d : diagnostics)
         {
             std::string header = "[" + WideToUtf8(d.widgetId) + "] " + d.name;
