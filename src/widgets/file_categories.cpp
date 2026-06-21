@@ -17,6 +17,8 @@
 #include <shlwapi.h>
 #include <unordered_set>
 
+static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex);
+
 /**
  * @brief 获取文件分类的有序列表。
  * @return 包含所有分类 ID 的字符串向量，顺序决定了标签页的排列顺序。
@@ -295,6 +297,37 @@ static RECT FileCategoryContentRect(FileCategories* widget)
     RECT tabs = FileCategoryTabsRect(widget);
     body.top = std::min<LONG>(body.bottom, tabs.bottom + 8);
     return body;
+}
+
+RECT FileCategories::GetContentViewportRect() const
+{
+    return FileCategoryContentRect(const_cast<FileCategories*>(this));
+}
+
+void FileCategories::ApplyMarqueeSelection(const RECT& contentRect)
+{
+    if (!data_ || !app_)
+        return;
+
+    for (const auto& key : data_->itemKeys)
+    {
+        size_t itemIndex = app_->FindItemIndexByKey(key);
+        if (itemIndex != static_cast<size_t>(-1))
+            app_->GetDesktopItems()[itemIndex].selected = false;
+    }
+
+    const auto& keys = CachedCategoryKeys(CachedActiveCategoryId());
+    const int scroll = GetScrollOffset();
+    for (size_t i = 0; i < keys.size(); ++i)
+    {
+        size_t itemIndex = app_->FindItemIndexByKey(keys[i]);
+        if (itemIndex == static_cast<size_t>(-1))
+            continue;
+        RECT itemRect = FileCategoryItemRect(this, i);
+        OffsetRect(&itemRect, 0, scroll);
+        app_->GetDesktopItems()[itemIndex].selected =
+            RectsIntersect(itemRect, contentRect);
+    }
 }
 
 /**

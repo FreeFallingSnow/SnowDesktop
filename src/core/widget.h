@@ -120,6 +120,11 @@ public:
     RECT GetMoveHandleRect() const;
     RECT GetResizeHandleRect() const;
     RECT GetTitleRect() const;
+    virtual RECT GetContentViewportRect() const { return GetBodyRect(); }
+    virtual void ApplyMarqueeSelection(const RECT& contentRect)
+    {
+        (void)contentRect;
+    }
 
     // ── Hit testing ──────────────────────────────────────
     virtual WidgetHit HitTestWidget(POINT pt) const;
@@ -291,6 +296,8 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetContentViewportRect() const override;
+    void ApplyMarqueeSelection(const RECT& contentRect) override;
 
     const std::vector<std::wstring>& CachedCategoryKeys(const std::wstring& categoryId) const;
     const std::vector<std::wstring>& CachedVisibleCategoryIds() const;
@@ -350,6 +357,8 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetContentViewportRect() const override;
+    void ApplyMarqueeSelection(const RECT& contentRect) override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
 };
 

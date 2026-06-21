@@ -511,6 +511,12 @@ private:
     void SelectWidgetOnly(size_t index);
     /** @brief 切换指定桌面项的选择状态。 @param index 桌面项索引 */
     void ToggleSelection(int index);
+    /** @brief 获取当前框选目标使用的滚动偏移。 */
+    int GetMarqueeScrollOffset() const;
+    /** @brief 获取当前框选目标的内容视口。 */
+    RECT GetMarqueeViewportRect() const;
+    /** @brief 按当前鼠标位置更新框选矩形及命中状态。 */
+    void UpdateMarqueeSelection(POINT current);
     /**
      * @brief 处理翻页导航按钮的点击事件。
      * @param point 点击坐标
@@ -1304,6 +1310,8 @@ private:
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
     size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    POINT marqueeAnchorPoint_{};
+    int marqueeInitialScrollOffset_ = 0;
     size_t pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     size_t pendingCtrlToggleWidgetIndex_ = static_cast<size_t>(-1);
     Item*  pendingCtrlToggleWidgetItem_ = nullptr;

@@ -1546,6 +1546,121 @@ inline void DesktopApp::ToggleSelection(int index)
         items_[index].selected = !items_[index].selected;
 }
 
+inline int DesktopApp::GetMarqueeScrollOffset() const
+{
+    if (marqueeWidgetIndex_ >= widgets_.size())
+        return 0;
+    if (popupWidgetIndex_ == marqueeWidgetIndex_)
+        return popupScrollOffset_;
+
+    for (const auto& container : containers_)
+    {
+        auto* widgetContainer = dynamic_cast<WidgetContainer*>(container.get());
+        if (widgetContainer &&
+            widgetContainer->GetWidgetData() == &widgets_[marqueeWidgetIndex_])
+        {
+            return widgetContainer->GetScrollOffset();
+        }
+    }
+    return 0;
+}
+
+inline RECT DesktopApp::GetMarqueeViewportRect() const
+{
+    if (marqueeWidgetIndex_ >= widgets_.size())
+    {
+        RECT client{};
+        if (hwnd_)
+            GetClientRect(hwnd_, &client);
+        return client;
+    }
+    if (popupWidgetIndex_ == marqueeWidgetIndex_)
+    {
+        return GetCollectionPopupContentRect(
+            GetCollectionPopupRect(widgets_[popupWidgetIndex_]));
+    }
+
+    for (const auto& container : containers_)
+    {
+        auto* widgetContainer = dynamic_cast<WidgetContainer*>(container.get());
+        if (widgetContainer &&
+            widgetContainer->GetWidgetData() == &widgets_[marqueeWidgetIndex_])
+        {
+            return widgetContainer->GetContentViewportRect();
+        }
+    }
+    return {};
+}
+
+inline void DesktopApp::UpdateMarqueeSelection(POINT current)
+{
+    if (marqueeWidgetIndex_ < widgets_.size())
+    {
+        const int currentScroll = GetMarqueeScrollOffset();
+        RECT viewport = GetMarqueeViewportRect();
+        POINT contentAnchor{
+            marqueeAnchorPoint_.x,
+            marqueeAnchorPoint_.y + marqueeInitialScrollOffset_
+        };
+        POINT contentCurrent{
+            std::clamp<LONG>(current.x, viewport.left, viewport.right),
+            std::clamp<LONG>(current.y, viewport.top, viewport.bottom) + currentScroll
+        };
+        RECT contentSelectionRect = NormalizeRect(contentAnchor, contentCurrent);
+
+        marqueeRect_ = contentSelectionRect;
+        OffsetRect(&marqueeRect_, 0, -currentScroll);
+
+        if (popupWidgetIndex_ == marqueeWidgetIndex_)
+        {
+            RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+            std::vector<std::wstring> popupKeys =
+                GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+            for (size_t i = 0; i < popupKeys.size(); ++i)
+            {
+                RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                OffsetRect(&itemRect, 0, currentScroll);
+                size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                if (itemIndex == static_cast<size_t>(-1))
+                    continue;
+                items_[itemIndex].selected =
+                    RectsIntersect(itemRect, contentSelectionRect);
+            }
+        }
+        else
+        {
+            for (auto& container : containers_)
+            {
+                auto* widgetContainer =
+                    dynamic_cast<WidgetContainer*>(container.get());
+                if (widgetContainer &&
+                    widgetContainer->GetWidgetData() ==
+                        &widgets_[marqueeWidgetIndex_])
+                {
+                    widgetContainer->ApplyMarqueeSelection(
+                        contentSelectionRect);
+                    break;
+                }
+            }
+        }
+    }
+    else
+    {
+        marqueeRect_ = NormalizeRect(marqueeAnchorPoint_, current);
+        for (auto& itemObject : items_oo_)
+        {
+            auto* icon = dynamic_cast<DesktopIcon*>(itemObject.get());
+            if (!icon)
+                continue;
+            DesktopItem* item = icon->GetDesktopItem();
+            if (!item || IsItemInAnyWidget(*item) || IsRectEmptyRect(item->bounds))
+                continue;
+            RECT selectionRect = GetItemSelectionRect(item->bounds, false);
+            item->selected = RectsIntersect(selectionRect, marqueeRect_);
+        }
+    }
+}
+
 /**
  * @brief 仅选中指定小部件（清除其他所有选中状态）
  * @param index 小部件索引
@@ -1577,6 +1692,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeAnchorPoint_ = pt;
+    marqueeInitialScrollOffset_ = 0;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
@@ -1648,6 +1765,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (!clickedPopupItem)
             mouseDownHit_ = nullptr;
         marqueeWidgetIndex_ = popupWidgetIndex_;
+        marqueeInitialScrollOffset_ = popupScrollOffset_;
         mouseDownWidgetIndex_ = popupWidgetIndex_;
         SetCapture(hwnd_);
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1809,6 +1927,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgets_[wi].selected = true;
             mouseDownWidgetIndex_ = wi;
             marqueeWidgetIndex_ = wi;
+            marqueeInitialScrollOffset_ = wc->GetScrollOffset();
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -2304,61 +2423,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
             marqueeActive_ = true;
-            marqueeRect_ = NormalizeRect(mouseDownPoint_, current);
-
-            if (marqueeWidgetIndex_ < widgets_.size())
-            {
-                if (popupWidgetIndex_ == marqueeWidgetIndex_)
-                {
-                    // Marquee inside collection popup
-                    RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-                    RECT content = GetCollectionPopupContentRect(popup);
-                    std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
-                    for (size_t i = 0; i < popupKeys.size(); ++i)
-                    {
-                        RECT itemRect = GetCollectionPopupItemRect(popup, i);
-                        if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
-                        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
-                        if (itemIndex == static_cast<size_t>(-1)) continue;
-                        items_[itemIndex].selected = RectsIntersect(itemRect, marqueeRect_);
-                    }
-                }
-                else
-                {
-                    // Marquee inside a widget — select member items
-                    WidgetContainer* wc = nullptr;
-                    for (auto& c : containers_)
-                    {
-                        wc = dynamic_cast<WidgetContainer*>(c.get());
-                        if (wc && wc->GetWidgetData() == &widgets_[marqueeWidgetIndex_]) break;
-                        wc = nullptr;
-                    }
-                    if (wc)
-                    {
-                        auto& slots = wc->GetSlots();
-                        for (auto& slot : slots)
-                        {
-                            if (!slot) continue;
-                            RECT bounds = slot->GetBounds();
-                            bool intersect = RectsIntersect(bounds, marqueeRect_);
-                            if (auto* item = slot->GetItem())
-                                item->SetSelected(intersect);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                for (auto& oo : items_oo_)
-                {
-                    auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
-                    if (!icon) continue;
-                    DesktopItem* di = icon->GetDesktopItem();
-                    if (!di || IsItemInAnyWidget(*di) || IsRectEmptyRect(di->bounds)) continue;
-                    RECT itemSelRect = GetItemSelectionRect(di->bounds, false);
-                    di->selected = RectsIntersect(itemSelRect, marqueeRect_);
-                }
-            }
+            UpdateMarqueeSelection(current);
         }
     }
 
@@ -3559,6 +3624,8 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
             popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
+            if (marqueeActive_ && marqueeWidgetIndex_ == popupWidgetIndex_)
+                UpdateMarqueeSelection(pt);
             refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
@@ -3594,6 +3661,11 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
         data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
         wc->InvalidateSlots();
+        if (marqueeActive_ && marqueeWidgetIndex_ < widgets_.size() &&
+            &widgets_[marqueeWidgetIndex_] == data)
+        {
+            UpdateMarqueeSelection(pt);
+        }
         if (mouseDownHit_ && mouseDownHit_->GetContainer() == wc)
             mouseDownHit_ = nullptr;
         refreshDragAfterScroll();
