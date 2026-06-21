@@ -719,6 +719,32 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, 
  */
 inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (msg == WM_MENUSELECT && gridAdjustmentParentMenu_ &&
+        reinterpret_cast<HMENU>(lp) == gridAdjustmentParentMenu_ &&
+        LOWORD(wp) == kContextGridAdjustmentMenu &&
+        !(HIWORD(wp) & MF_POPUP))
+    {
+        const int itemCount = GetMenuItemCount(gridAdjustmentParentMenu_);
+        for (int i = 0; i < itemCount; ++i)
+        {
+            MENUITEMINFOW itemInfo{ sizeof(itemInfo) };
+            itemInfo.fMask = MIIM_ID;
+            if (!GetMenuItemInfoW(gridAdjustmentParentMenu_,
+                    static_cast<UINT>(i), TRUE, &itemInfo) ||
+                itemInfo.wID != kContextGridAdjustmentMenu)
+                continue;
+
+            RECT itemRect{};
+            if (GetMenuItemRect(hwnd_, gridAdjustmentParentMenu_,
+                    static_cast<UINT>(i), &itemRect))
+            {
+                gridAdjustmentMenuAnchor_ = { itemRect.right, itemRect.top };
+                gridAdjustmentMenuAnchorValid_ = true;
+            }
+            break;
+        }
+    }
+
     if (newMenuContextMenu_ && (msg == WM_INITMENUPOPUP || msg == WM_DRAWITEM || msg == WM_MEASUREITEM))
     {
         if (SUCCEEDED(newMenuContextMenu_->HandleMenuMsg(msg, wp, lp)))

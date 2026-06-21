@@ -114,6 +114,68 @@ inline void DesktopApp::ClearMenuIcons()
 }
 
 /**
+ * @brief 连续显示行列调整菜单。
+ * @details 标准 Win32 菜单执行命令后会结束。这里在每次调整完成后立即按
+ *          最新行列数重建菜单，方便用户连续增加或减少行列。
+ */
+inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
+{
+    UINT command = initialCommand;
+    while (true)
+    {
+        const bool validCommand =
+            command == 0 ||
+            command == kContextGridAddRow ||
+            command == kContextGridRemoveRow ||
+            command == kContextGridAddColumn ||
+            command == kContextGridRemoveColumn;
+        if (!validCommand) break;
+
+        switch (command)
+        {
+        case kContextGridAddRow: AdjustGridRows(1); break;
+        case kContextGridRemoveRow: AdjustGridRows(-1); break;
+        case kContextGridAddColumn: AdjustGridColumns(1); break;
+        case kContextGridRemoveColumn: AdjustGridColumns(-1); break;
+        default: break;
+        }
+
+        HMENU menu = CreatePopupMenu();
+        if (!menu) break;
+
+        POINT clientPoint = lastContextMenuScreenPoint_;
+        ScreenToClient(hwnd_, &clientPoint);
+        const GridPage* page = GridPageFromPoint(clientPoint);
+        wchar_t status[64]{};
+        swprintf_s(status, L"当前：%d列 × %d行",
+            page ? page->columns : 0, page ? page->rows : 0);
+
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status);
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextGridAddRow, L"增加行");
+        AppendMenuW(menu, MF_STRING, kContextGridRemoveRow, L"减少行");
+        AppendMenuW(menu, MF_STRING, kContextGridAddColumn, L"增加列");
+        AppendMenuW(menu, MF_STRING, kContextGridRemoveColumn, L"减少列");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextGridAdjustmentDone, L"结束调整");
+
+        SetMenuItemIcon(menu, kContextGridAddRow, L"");
+        SetMenuItemIcon(menu, kContextGridRemoveRow, L"");
+        SetMenuItemIcon(menu, kContextGridAddColumn, L"");
+        SetMenuItemIcon(menu, kContextGridRemoveColumn, L"");
+        SetMenuItemIcon(menu, kContextGridAdjustmentDone, L"");
+
+        SetForegroundWindow(hwnd_);
+        command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint.x, screenPoint.y, hwnd_, nullptr);
+        DestroyMenu(menu);
+        ClearMenuIcons();
+        if (command == 0 || command == kContextGridAdjustmentDone) break;
+    }
+    RestoreDesktopWindowLayer();
+}
+
+/**
  * @brief 显示桌面背景右键菜单。
  *        在屏幕坐标处弹出菜单，包含粘贴、新建、刷新、排序方式、
  *        行列调整、添加组件、缩放等选项。菜单项均带图标。
@@ -141,22 +203,13 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
     }
 
-    HMENU gridMenu = CreatePopupMenu();
-    if (gridMenu)
-    {
-        POINT clientPoint = screenPoint;
-        ScreenToClient(hwnd_, &clientPoint);
-        const GridPage* page = GridPageFromPoint(clientPoint);
-        int cols = page ? page->columns : 0;
-        int rows = page ? page->rows : 0;
-        wchar_t gridLabel[64]{};
-        swprintf_s(gridLabel, L"行列调整（%d列 × %d行）", cols, rows);
-        AppendMenuW(gridMenu, MF_STRING, kContextGridAddRow, L"增加行");
-        AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveRow, L"减少行");
-        AppendMenuW(gridMenu, MF_STRING, kContextGridAddColumn, L"增加列");
-        AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveColumn, L"减少列");
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), gridLabel);
-    }
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
+    const GridPage* gridPage = GridPageFromPoint(clientPoint);
+    wchar_t gridLabel[64]{};
+    swprintf_s(gridLabel, L"行列调整（%d列 × %d行）",
+        gridPage ? gridPage->columns : 0, gridPage ? gridPage->rows : 0);
+    AppendMenuW(menu, MF_STRING, kContextGridAdjustmentMenu, gridLabel);
 
     std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
     HMENU widgetMenu = CreatePopupMenu();
@@ -214,14 +267,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(sortMenu, kContextSortByNameCommand, L"");
         SetMenuItemIcon(sortMenu, kContextSortByTypeCommand, L"");
     }
-    if (gridMenu)
-    {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(gridMenu), L"");
-        SetMenuItemIcon(gridMenu, kContextGridAddRow, L"");
-        SetMenuItemIcon(gridMenu, kContextGridRemoveRow, L"");
-        SetMenuItemIcon(gridMenu, kContextGridAddColumn, L"");
-        SetMenuItemIcon(gridMenu, kContextGridRemoveColumn, L"");
-    }
+    SetMenuItemIcon(menu, kContextGridAdjustmentMenu, L"");
     if (widgetMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu), L"");
@@ -238,11 +284,17 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     SetMenuItemIcon(menu, kContextThisDisplayFirstCommand, L"");
     SetMenuItemIcon(menu, kContextSettingsCommand, L"");
 
+    gridAdjustmentParentMenu_ = menu;
+    gridAdjustmentMenuAnchorValid_ = false;
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+
+    gridAdjustmentParentMenu_ = nullptr;
+    POINT adjustmentMenuPoint = gridAdjustmentMenuAnchorValid_
+        ? gridAdjustmentMenuAnchor_ : screenPoint;
+
     if (sortMenu) DestroyMenu(sortMenu);
-    if (gridMenu) DestroyMenu(gridMenu);
     if (widgetMenu) DestroyMenu(widgetMenu);
     if (zoomMenu) DestroyMenu(zoomMenu);
     DestroyMenu(menu);
@@ -265,10 +317,19 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextRefreshCommand: ReloadItems(); break;
     case kContextSortByNameCommand: SortIconsByName(); break;
     case kContextSortByTypeCommand: SortIconsByType(); break;
-    case kContextGridAddRow: AdjustGridRows(1); break;
-    case kContextGridRemoveRow: AdjustGridRows(-1); break;
-    case kContextGridAddColumn: AdjustGridColumns(1); break;
-    case kContextGridRemoveColumn: AdjustGridColumns(-1); break;
+    case kContextGridAdjustmentMenu:
+        ShowGridAdjustmentMenu(adjustmentMenuPoint, 0);
+        break;
+    case kContextGridAddRow:
+    case kContextGridRemoveRow:
+    case kContextGridAddColumn:
+    case kContextGridRemoveColumn:
+    {
+        POINT legacyAdjustmentMenuPoint{};
+        GetCursorPos(&legacyAdjustmentMenuPoint);
+        ShowGridAdjustmentMenu(legacyAdjustmentMenuPoint, command);
+        break;
+    }
     case kContextZoomIncrease: AdjustZoom(+0.1f); break;
     case kContextZoomDecrease: AdjustZoom(-0.1f); break;
     case kContextThisDisplayFirstCommand: SetFirstPageMonitorFromPoint(screenPoint); break;
