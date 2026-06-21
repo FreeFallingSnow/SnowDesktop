@@ -797,7 +797,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     HFONT tabFont = CreateFontW(-QuickNavScale(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    HFONT itemFont = CreateFontW(-QuickNavScale(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    HFONT itemFont = CreateFontW(-QuickNavScale(13), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
 
@@ -961,14 +961,14 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             const int cellW = itemRectApp.right - itemRectApp.left;
             const int cellH = itemRectApp.bottom - itemRectApp.top;
             const int maxIconW = std::max(QuickNavScale(16), cellW - QuickNavScale(8));
-            const int maxIconH = std::max(QuickNavScale(16), cellH - QuickNavScale(kTextHeight) - QuickNavScale(8));
+            const int maxIconH = std::max(QuickNavScale(16), cellH - QuickNavScale(kQuickNavigationTextHeight) - QuickNavScale(8));
             const int iconSz = std::min(maxIconW, maxIconH);
             const int iconX = itemRectApp.left + (cellW - iconSz) / 2;
             const int iconY = itemRectApp.top + QuickNavScale(2);
             RECT iconRect = MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
             const int textTop = iconRect.bottom + QuickNavScale(2);
             RECT textRect = MakeRect(itemRectApp.left + QuickNavScale(4), textTop,
-                itemRectApp.right - QuickNavScale(4), textTop + QuickNavScale(kTextCollapsedHeight));
+                itemRectApp.right - QuickNavScale(4), textTop + QuickNavScale(kQuickNavigationTextHeight));
             RECT selRect = textRect;
             selRect.top = std::max(itemRectApp.top, iconRect.top - QuickNavScale(2));
             selRect.left = itemRectApp.left + QuickNavScale(3);

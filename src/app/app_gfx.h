@@ -1172,8 +1172,45 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
             if (itemIndex == static_cast<size_t>(-1)) continue;
 
             bool hovered = PtInRect(&itemRect, lastMousePoint_) != FALSE;
-            DesktopIcon icon(&items_[itemIndex], nullptr, this);
-            icon.Draw(ctx, itemRect, hovered ? 1 : 0);
+            DesktopItem& item = items_[itemIndex];
+
+            if (hovered)
+            {
+                DrawD2DRoundedRectangle(ctx, itemRect, 6.0f,
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+            }
+
+            const int cellW = itemRect.right - itemRect.left;
+            const int cellH = itemRect.bottom - itemRect.top;
+            const int qnTextH = std::max(1, QuickNavScale(kQuickNavigationTextHeight));
+            const int inset = QuickNavScale(2);
+            const int minIcon = QuickNavScale(16);
+            const int maxIconW = std::max(minIcon, cellW - inset * 2);
+            const int maxIconH = std::max(minIcon, cellH - qnTextH - inset * 2);
+            const int iconSz = std::min(maxIconW, maxIconH);
+            const int iconX = itemRect.left + (cellW - iconSz) / 2;
+            const int iconY = itemRect.top + inset;
+            RECT qnIconRect = MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
+            RECT qnTextRect = MakeRect(itemRect.left + QuickNavScale(4),
+                iconY + iconSz + QuickNavScale(2),
+                itemRect.right - QuickNavScale(4),
+                iconY + iconSz + QuickNavScale(2) + qnTextH);
+
+            ID2D1Bitmap1* bmp = GetOrCreateD2DBitmap(item.iconBitmap);
+            if (bmp)
+            {
+                D2D1_RECT_F dst = D2D1::RectF(
+                    static_cast<float>(qnIconRect.left), static_cast<float>(qnIconRect.top),
+                    static_cast<float>(qnIconRect.right), static_cast<float>(qnIconRect.bottom));
+                ctx->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+            }
+
+            if (!item.name.empty())
+            {
+                DrawD2DText(ctx, item.name, qnTextRect, itemTextFormat_.Get(),
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+            }
         }
     }
     ctx->PopAxisAlignedClip();
