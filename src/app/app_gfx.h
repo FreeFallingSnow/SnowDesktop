@@ -249,7 +249,7 @@ inline std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& c)
         (static_cast<std::uint64_t>(a) << 48);
 }
 
-inline float DesktopApp::GetItemDpiScale(RECT bounds) const
+inline float DesktopApp::GetItemLayoutScale(RECT bounds) const
 {
     const POINT center = {
         bounds.left + (bounds.right - bounds.left) / 2,
@@ -258,34 +258,49 @@ inline float DesktopApp::GetItemDpiScale(RECT bounds) const
     for (const auto& page : gridPages_)
     {
         if (PtInRect(&page.bounds, center))
-            return std::max(0.5f, static_cast<float>(page.dpiY) / 96.0f);
+        {
+            // cellWidth/cellHeight exclude the inter-cell gap. Use the full
+            // grid pitch so content is not shrunk a second time after layout
+            // has already reserved spacing between cells.
+            const int pitchX = page.cellWidth +
+                (page.columns > 1 ? page.gapX : 0);
+            const int pitchY = page.cellHeight +
+                (page.rows > 1 ? page.gapY : 0);
+            return std::max(0.1f, std::min(
+                static_cast<float>(std::max(1, pitchX)) /
+                    static_cast<float>(kCellWidth),
+                static_cast<float>(std::max(1, pitchY)) /
+                    static_cast<float>(kMinCellHeight)));
+        }
     }
     return 1.0f;
 }
 
 inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
 {
-    const float dpiScale = GetItemDpiScale(bounds);
-    const int inset = std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
-    const int topInset = std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
-    const int textHeight = std::max(1, static_cast<int>(std::round(kTextHeight * dpiScale)));
+    const float layoutScale = GetItemLayoutScale(bounds);
+    const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    const int topInset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    const int textHeight = std::max(1, static_cast<int>(std::round(kTextHeight * layoutScale)));
     const int cellW = bounds.right - bounds.left;
     const int cellH = bounds.bottom - bounds.top;
-    if (cellH < static_cast<int>(std::round(50.0f * dpiScale)))
+    if (cellH < static_cast<int>(std::round(50.0f * layoutScale)))
     {
-        const int iconSz = std::max(1, std::min(
-            static_cast<int>(std::round(32.0f * dpiScale)),
-            cellH - inset));
+        const int iconSz = std::max(1, std::min({
+            static_cast<int>(std::round(32.0f * layoutScale)),
+            std::max(1, cellW - inset * 2),
+            std::max(1, cellH - inset * 2) }));
         return MakeRect(
             bounds.left + inset,
             bounds.top + (cellH - iconSz) / 2,
             bounds.left + inset + iconSz,
             bounds.top + (cellH + iconSz) / 2);
     }
-    const int minIcon = std::max(1, static_cast<int>(std::round(16.0f * dpiScale)));
-    const int maxIconW = std::max(minIcon, cellW - inset * 2);
-    const int maxIconH = std::max(minIcon, cellH - textHeight - inset * 2);
-    const int iconSz = std::min(maxIconW, maxIconH);
+    const int maxIconW = std::max(1, cellW - inset * 2);
+    const int maxIconH = std::max(1, cellH - textHeight - inset * 2);
+    // The title owns the bottom text band. Let the icon fill the remaining
+    // square area instead of capping it at the old fixed 64-pixel size.
+    const int iconSz = std::max(1, std::min(maxIconW, maxIconH));
     const int iconX = bounds.left + (cellW - iconSz) / 2;
     const int iconY = bounds.top + topInset;
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
@@ -293,24 +308,37 @@ inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
 
 inline RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
 {
-    const float dpiScale = GetItemDpiScale(bounds);
+    const float layoutScale = GetItemLayoutScale(bounds);
     RECT iconRect = GetItemIconRect(bounds);
-    const int inset = std::max(1, static_cast<int>(std::round(4.0f * dpiScale)));
+    const int inset = std::max(1, static_cast<int>(std::round(4.0f * layoutScale)));
     const int textTop = iconRect.bottom +
-        std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
-    const int baseHeight = expanded ? kTextExpandedHeight : kTextCollapsedHeight;
-    const int textH = std::max(1, static_cast<int>(std::round(baseHeight * dpiScale)));
-    return MakeRect(bounds.left + inset, textTop, bounds.right - inset, textTop + textH);
+        std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    const float lineHeight = kItemLineHeight * layoutScale;
+    const int textH = expanded
+        ? std::max(
+            static_cast<int>(std::round(kTextExpandedHeight * layoutScale)),
+            static_cast<int>(std::ceil(lineHeight * 3.0f)))
+        : std::max(1, static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
+
+    // The collapsed label is clipped just before a third line can begin.
+    // Selected labels intentionally extend below the cell to reveal the lines
+    // hidden in the normal two-line state.
+    return MakeRect(bounds.left + inset, textTop,
+        bounds.right - inset, textTop + textH);
 }
 
 inline RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
 {
+    const float layoutScale = GetItemLayoutScale(bounds);
     RECT textRect = GetItemTextRect(bounds, expanded);
     RECT selection = UnionCopy(GetItemIconRect(bounds), textRect);
-    selection.left = std::max(bounds.left + 3, selection.left - 4);
-    selection.top = std::max(bounds.top, selection.top - 2);
-    selection.right = std::min(bounds.right - 3, selection.right + 4);
-    selection.bottom = std::min(bounds.bottom - 2, textRect.bottom);
+    const int sideInset = std::max(1, static_cast<int>(std::round(3.0f * layoutScale)));
+    const int horizontalPad = std::max(1, static_cast<int>(std::round(4.0f * layoutScale)));
+    const int verticalPad = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    selection.left = std::max(bounds.left + sideInset, selection.left - horizontalPad);
+    selection.top = std::max(bounds.top, selection.top - verticalPad);
+    selection.right = std::min(bounds.right - sideInset, selection.right + horizontalPad);
+    selection.bottom = std::min(bounds.bottom - verticalPad, textRect.bottom);
     return selection;
 }
 
@@ -394,12 +422,12 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
-    const float dpiScale = GetItemDpiScale(bounds);
-    const int dpiKey = static_cast<int>(std::round(dpiScale * 1000.0f));
+    const float layoutScale = GetItemLayoutScale(bounds);
+    const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
     std::wstring layoutKey = text + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
-        std::to_wstring(dpiKey);
+        std::to_wstring(scaleKey);
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
@@ -409,9 +437,9 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
             itemTextFormat_.Get(), tw, th, &layout)) || !layout)
             return;
         const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
-        layout->SetFontSize(kItemFontSize * dpiScale, fullRange);
+        layout->SetFontSize(kItemFontSize * layoutScale, fullRange);
         layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            kItemLineHeight * dpiScale, kItemBaseline * dpiScale);
+            kItemLineHeight * layoutScale, kItemBaseline * layoutScale);
         layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
     }
 
@@ -436,9 +464,10 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
     const float ty = static_cast<float>(textRect.top);
     if (shadowBrush)
     {
+        const float shadowOffset = std::max(0.5f, layoutScale);
         const D2D1_POINT_2F offsets[] = {
-            { tx - 1.0f, ty }, { tx + 1.0f, ty },
-            { tx, ty - 1.0f }, { tx, ty + 1.0f },
+            { tx - shadowOffset, ty }, { tx + shadowOffset, ty },
+            { tx, ty - shadowOffset }, { tx, ty + shadowOffset },
         };
         for (auto& pt : offsets)
             context->DrawTextLayout(pt, layoutIt->second.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);

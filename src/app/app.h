@@ -340,8 +340,8 @@ private:
     void ConfigureGridPage(GridPage& page) const;
     /** @brief 将用户保存的网格尺寸应用到各页面上。 */
     void ApplySavedGridDimensions();
-    /** @brief 将缩放比例应用到网格页面的间距上。 @param page 网格页面引用 */
-    void ApplyGapScaleToPage(GridPage& page);
+    /** @brief 根据图标间距比例重新计算页面单元格与间距。 @param page 网格页面引用 */
+    void ApplyIconSpacingToPage(GridPage& page);
     /** @brief 执行网格布局，为每个桌面项计算槽位位置。 */
     void LayoutItems();
     /** @brief 重建容器（网格、部件）和面向对象项列表。 */
@@ -570,10 +570,10 @@ private:
     void AdjustGridColumns(int delta);
     /** @brief 从坐标点所在显示器设置首页监视器。 @param screenPoint 屏幕坐标 */
     void SetFirstPageMonitorFromPoint(POINT screenPoint);
-    /** @brief 设置网格缩放比例。 @param value 缩放值 */
-    void SetZoom(float value);
-    /** @brief 调整网格缩放比例。 @param delta 缩放增量 */
-    void AdjustZoom(float delta);
+    /** @brief 设置图标间距比例。 @param value 间距倍率 */
+    void SetIconSpacing(float value);
+    /** @brief 调整图标间距比例。 @param delta 间距增量 */
+    void AdjustIconSpacing(float delta);
     /** @brief 应用页面到显示器的映射关系。 */
     void ApplyPageMapping();
     /** @brief 获取最大页面偏移量。 @return 最大偏移页数 */
@@ -807,8 +807,8 @@ private:
     RECT GetItemIconRect(RECT bounds) const;
     /** @brief 从项边界矩形计算文本区域。 @param bounds 项边界 @param expanded 是否展开 @return 文本矩形 */
     RECT GetItemTextRect(RECT bounds, bool expanded) const;
-    /** @brief 获取项目所在显示器相对于 96 DPI 的缩放比例。 */
-    float GetItemDpiScale(RECT bounds) const;
+    /** @brief 获取项目所在网格单元相对于 92x116 基准尺寸的布局缩放比例。 */
+    float GetItemLayoutScale(RECT bounds) const;
     /** @brief 从项边界矩形计算选中框区域。 @param bounds 项边界 @param expanded 是否展开 @return 选中框矩形 */
     RECT GetItemSelectionRect(RECT bounds, bool expanded) const;
     /**
@@ -1203,7 +1203,7 @@ private:
     std::unordered_map<std::wstring, int> savedPageRows_;
     std::vector<std::wstring> savedPageIds_;
     RECT layoutWorkArea_{};
-    float gapScale_ = 1.0f;
+    float iconSpacingScale_ = 1.0f;
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;
     std::wstring lastMonitorPageId_;
