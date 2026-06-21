@@ -114,10 +114,72 @@ inline void DesktopApp::ClearMenuIcons()
 }
 
 /**
+ * @brief 连续显示行列调整菜单。
+ * @details 标准 Win32 菜单执行命令后会结束。这里在每次调整完成后立即按
+ *          最新行列数重建菜单，方便用户连续增加或减少行列。
+ */
+inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
+{
+    UINT command = initialCommand;
+    while (true)
+    {
+        const bool validCommand =
+            command == 0 ||
+            command == kContextGridAddRow ||
+            command == kContextGridRemoveRow ||
+            command == kContextGridAddColumn ||
+            command == kContextGridRemoveColumn;
+        if (!validCommand) break;
+
+        switch (command)
+        {
+        case kContextGridAddRow: AdjustGridRows(1); break;
+        case kContextGridRemoveRow: AdjustGridRows(-1); break;
+        case kContextGridAddColumn: AdjustGridColumns(1); break;
+        case kContextGridRemoveColumn: AdjustGridColumns(-1); break;
+        default: break;
+        }
+
+        HMENU menu = CreatePopupMenu();
+        if (!menu) break;
+
+        POINT clientPoint = lastContextMenuScreenPoint_;
+        ScreenToClient(hwnd_, &clientPoint);
+        const GridPage* page = GridPageFromPoint(clientPoint);
+        wchar_t status[64]{};
+        swprintf_s(status, L"当前：%d列 × %d行",
+            page ? page->columns : 0, page ? page->rows : 0);
+
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status);
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextGridAddRow, L"增加行");
+        AppendMenuW(menu, MF_STRING, kContextGridRemoveRow, L"减少行");
+        AppendMenuW(menu, MF_STRING, kContextGridAddColumn, L"增加列");
+        AppendMenuW(menu, MF_STRING, kContextGridRemoveColumn, L"减少列");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextGridAdjustmentDone, L"结束调整");
+
+        SetMenuItemIcon(menu, kContextGridAddRow, L"");
+        SetMenuItemIcon(menu, kContextGridRemoveRow, L"");
+        SetMenuItemIcon(menu, kContextGridAddColumn, L"");
+        SetMenuItemIcon(menu, kContextGridRemoveColumn, L"");
+        SetMenuItemIcon(menu, kContextGridAdjustmentDone, L"");
+
+        SetForegroundWindow(hwnd_);
+        command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint.x, screenPoint.y, hwnd_, nullptr);
+        DestroyMenu(menu);
+        ClearMenuIcons();
+        if (command == 0 || command == kContextGridAdjustmentDone) break;
+    }
+    RestoreDesktopWindowLayer();
+}
+
+/**
  * @brief 显示桌面背景右键菜单。
  *        在屏幕坐标处弹出菜单，包含粘贴、新建、刷新、排序方式、
- *        行列调整、添加组件、缩放等选项。菜单项均带图标。
- *        选中 Lua 组件或缩放预设时直接处理，其余通过命令 ID 分发。
+ *        行列调整、添加组件、图标间距等选项。菜单项均带图标。
+ *        选中 Lua 组件或间距预设时直接处理，其余通过命令 ID 分发。
  * @param screenPoint 菜单弹出的屏幕坐标。
  */
 inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
@@ -134,29 +196,33 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     HMENU sortMenu = CreatePopupMenu();
+    HMENU nameSortMenu = nullptr, typeSortMenu = nullptr;
     if (sortMenu)
     {
-        AppendMenuW(sortMenu, MF_STRING, kContextSortByNameCommand, L"名称");
-        AppendMenuW(sortMenu, MF_STRING, kContextSortByTypeCommand, L"类型");
+        nameSortMenu = CreatePopupMenu();
+        if (nameSortMenu)
+        {
+            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameCommand, L"正序");
+            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameDescCommand, L"反序");
+            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(nameSortMenu), L"名称");
+        }
+        typeSortMenu = CreatePopupMenu();
+        if (typeSortMenu)
+        {
+            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeCommand, L"正序");
+            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeDescCommand, L"反序");
+            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(typeSortMenu), L"类型");
+        }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
     }
 
-    HMENU gridMenu = CreatePopupMenu();
-    if (gridMenu)
-    {
-        POINT clientPoint = screenPoint;
-        ScreenToClient(hwnd_, &clientPoint);
-        const GridPage* page = GridPageFromPoint(clientPoint);
-        int cols = page ? page->columns : 0;
-        int rows = page ? page->rows : 0;
-        wchar_t gridLabel[64]{};
-        swprintf_s(gridLabel, L"行列调整（%d列 × %d行）", cols, rows);
-        AppendMenuW(gridMenu, MF_STRING, kContextGridAddRow, L"增加行");
-        AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveRow, L"减少行");
-        AppendMenuW(gridMenu, MF_STRING, kContextGridAddColumn, L"增加列");
-        AppendMenuW(gridMenu, MF_STRING, kContextGridRemoveColumn, L"减少列");
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(gridMenu), gridLabel);
-    }
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
+    const GridPage* gridPage = GridPageFromPoint(clientPoint);
+    wchar_t gridLabel[64]{};
+    swprintf_s(gridLabel, L"行列调整（%d列 × %d行）",
+        gridPage ? gridPage->columns : 0, gridPage ? gridPage->rows : 0);
+    AppendMenuW(menu, MF_STRING, kContextGridAdjustmentMenu, gridLabel);
 
     std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
     HMENU widgetMenu = CreatePopupMenu();
@@ -179,24 +245,46 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
     }
 
-    HMENU zoomMenu = CreatePopupMenu();
-    if (zoomMenu)
+    HMENU spacingMenu = CreatePopupMenu();
+    if (spacingMenu)
     {
         const int presets[] = { 50, 70, 80, 90, 100, 110, 120, 130, 150, 200 };
+        const int currentSpacingPercent = static_cast<int>(
+            std::round(iconSpacingScale_ * 100.0f));
         for (int pct : presets)
         {
             wchar_t label[16]{};
             swprintf_s(label, L"%d%%", pct);
             UINT flags = MF_STRING;
-            if (static_cast<int>(gapScale_ * 100) == pct) flags |= MF_CHECKED;
-            AppendMenuW(zoomMenu, flags, kContextZoomPresetFirst + static_cast<UINT>(pct), label);
+            if (currentSpacingPercent == pct) flags |= MF_CHECKED;
+            AppendMenuW(spacingMenu, flags,
+                kContextSpacingPresetFirst + static_cast<UINT>(pct), label);
         }
-        AppendMenuW(zoomMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(zoomMenu, MF_STRING, kContextZoomIncrease, L"放大 (+10%)");
-        AppendMenuW(zoomMenu, MF_STRING, kContextZoomDecrease, L"缩小 (-10%)");
-        wchar_t zoomLabel[32]{};
-        swprintf_s(zoomLabel, L"缩放：%d%%", static_cast<int>(gapScale_ * 100));
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(zoomMenu), zoomLabel);
+        AppendMenuW(spacingMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, L"增加间距 (+10%)");
+        AppendMenuW(spacingMenu, MF_STRING, kContextSpacingDecrease, L"减少间距 (-10%)");
+        wchar_t spacingLabel[32]{};
+        swprintf_s(spacingLabel, L"图标间距：%d%%", currentSpacingPercent);
+        AppendMenuW(menu, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel);
+    }
+
+    HMENU fontSizeMenu = CreatePopupMenu();
+    if (fontSizeMenu)
+    {
+        const int currentFontSize = static_cast<int>(std::round(itemFontSize_));
+        auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
+            UINT flags = MF_STRING;
+            if (currentFontSize == size) flags |= MF_CHECKED;
+            AppendMenuW(fontSizeMenu, flags, id, label);
+        };
+        addFontSizeItem(kContextFontSizeSmall, L"小 (12pt)", 12);
+        addFontSizeItem(kContextFontSizeMedium, L"中 (14pt)", 14);
+        addFontSizeItem(kContextFontSizeLarge, L"大 (16pt)", 16);
+        wchar_t fontSizeLabel[32]{};
+        swprintf_s(fontSizeLabel, L"标题字号：%dpt", currentFontSize);
+        AppendMenuW(menu, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel);
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -211,17 +299,20 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (sortMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
-        SetMenuItemIcon(sortMenu, kContextSortByNameCommand, L"");
-        SetMenuItemIcon(sortMenu, kContextSortByTypeCommand, L"");
+        if (nameSortMenu)
+        {
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(nameSortMenu), L"");
+            SetMenuItemIcon(nameSortMenu, kContextSortByNameCommand, L"");
+            SetMenuItemIcon(nameSortMenu, kContextSortByNameDescCommand, L"");
+        }
+        if (typeSortMenu)
+        {
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(typeSortMenu), L"");
+            SetMenuItemIcon(typeSortMenu, kContextSortByTypeCommand, L"");
+            SetMenuItemIcon(typeSortMenu, kContextSortByTypeDescCommand, L"");
+        }
     }
-    if (gridMenu)
-    {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(gridMenu), L"");
-        SetMenuItemIcon(gridMenu, kContextGridAddRow, L"");
-        SetMenuItemIcon(gridMenu, kContextGridRemoveRow, L"");
-        SetMenuItemIcon(gridMenu, kContextGridAddColumn, L"");
-        SetMenuItemIcon(gridMenu, kContextGridRemoveColumn, L"");
-    }
+    SetMenuItemIcon(menu, kContextGridAdjustmentMenu, L"");
     if (widgetMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu), L"");
@@ -229,22 +320,33 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, L"");
         SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, L"");
     }
-    if (zoomMenu)
+    if (spacingMenu)
     {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(zoomMenu), L"");
-        SetMenuItemIcon(zoomMenu, kContextZoomIncrease, L"");
-        SetMenuItemIcon(zoomMenu, kContextZoomDecrease, L"");
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(spacingMenu), L"");
+        SetMenuItemIcon(spacingMenu, kContextSpacingIncrease, L"");
+        SetMenuItemIcon(spacingMenu, kContextSpacingDecrease, L"");
+    }
+    if (fontSizeMenu)
+    {
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
     }
     SetMenuItemIcon(menu, kContextThisDisplayFirstCommand, L"");
     SetMenuItemIcon(menu, kContextSettingsCommand, L"");
 
+    gridAdjustmentParentMenu_ = menu;
+    gridAdjustmentMenuAnchorValid_ = false;
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+
+    gridAdjustmentParentMenu_ = nullptr;
+    POINT adjustmentMenuPoint = gridAdjustmentMenuAnchorValid_
+        ? gridAdjustmentMenuAnchor_ : screenPoint;
+
     if (sortMenu) DestroyMenu(sortMenu);
-    if (gridMenu) DestroyMenu(gridMenu);
     if (widgetMenu) DestroyMenu(widgetMenu);
-    if (zoomMenu) DestroyMenu(zoomMenu);
+    if (spacingMenu) DestroyMenu(spacingMenu);
+    if (fontSizeMenu) DestroyMenu(fontSizeMenu);
     DestroyMenu(menu);
     newMenuContextMenu_.Reset();
     ClearMenuIcons();
@@ -256,21 +358,34 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         size_t scriptIndex = static_cast<size_t>(command - kContextAddLuaWidgetFirst);
         AddLuaWidgetAt(screenPoint, luaWidgets[scriptIndex]);
     }
-    else if (command >= kContextZoomPresetFirst && command <= kContextZoomPresetFirst + 200)
+    else if (command >= kContextSpacingPresetFirst &&
+        command <= kContextSpacingPresetFirst + 200)
     {
-        SetZoom(static_cast<float>(command - kContextZoomPresetFirst) / 100.0f);
+        SetIconSpacing(
+            static_cast<float>(command - kContextSpacingPresetFirst) / 100.0f);
     }
     else switch (command)
     {
     case kContextRefreshCommand: ReloadItems(); break;
-    case kContextSortByNameCommand: SortIconsByName(); break;
-    case kContextSortByTypeCommand: SortIconsByType(); break;
-    case kContextGridAddRow: AdjustGridRows(1); break;
-    case kContextGridRemoveRow: AdjustGridRows(-1); break;
-    case kContextGridAddColumn: AdjustGridColumns(1); break;
-    case kContextGridRemoveColumn: AdjustGridColumns(-1); break;
-    case kContextZoomIncrease: AdjustZoom(+0.1f); break;
-    case kContextZoomDecrease: AdjustZoom(-0.1f); break;
+    case kContextSortByNameCommand: SortIconsByName(true); break;
+    case kContextSortByNameDescCommand: SortIconsByName(false); break;
+    case kContextSortByTypeCommand: SortIconsByType(true); break;
+    case kContextSortByTypeDescCommand: SortIconsByType(false); break;
+    case kContextGridAdjustmentMenu:
+        ShowGridAdjustmentMenu(adjustmentMenuPoint, 0);
+        break;
+    case kContextGridAddRow:
+    case kContextGridRemoveRow:
+    case kContextGridAddColumn:
+    case kContextGridRemoveColumn:
+    {
+        POINT legacyAdjustmentMenuPoint{};
+        GetCursorPos(&legacyAdjustmentMenuPoint);
+        ShowGridAdjustmentMenu(legacyAdjustmentMenuPoint, command);
+        break;
+    }
+    case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
+    case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
     case kContextThisDisplayFirstCommand: SetFirstPageMonitorFromPoint(screenPoint); break;
     case kContextAddCollectionWidget: AddCollectionWidgetAt(screenPoint); break;
     case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;
@@ -367,6 +482,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         ShowDesktopBackgroundContextMenu(screenPoint);
         break;
     case kContextSettingsCommand: ShowSettingsWindow(); break;
+    case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
+    case kContextFontSizeMedium: SetItemFontSize(14.0f); break;
+    case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
     default: break;
     }
 }

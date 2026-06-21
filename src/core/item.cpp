@@ -109,7 +109,8 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (hovered && !selected)
     {
-        app_->DrawD2DRoundedRectangle(context, rect, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, rect,
+            6.0f * app_->GetItemLayoutScale(rect),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * alpha),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * alpha));
     }
@@ -119,12 +120,17 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     if (selected && !dragged)
     {
         RECT sel = app_->GetItemSelectionRect(rect, true);
-        app_->DrawD2DRoundedRectangle(context, sel, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, sel,
+            6.0f * app_->GetItemLayoutScale(rect),
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * alpha),
             D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
 
-    if (item_->iconBitmap)
+    if (item_->iconState == IconState::Loading)
+    {
+        app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
+    }
+    else if (item_->iconBitmap)
     {
         ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(item_->iconBitmap);
         if (bmp)
@@ -135,6 +141,9 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             context->DrawBitmap(bmp, dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
         }
     }
+
+    if (item_->shortcutArrow && item_->iconState != IconState::Loading)
+        app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
     if (!dragged)
         app_->DrawItemText(context, rect, item_->name, selected, alpha);
@@ -233,7 +242,8 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (hovered && !selected)
     {
-        app_->DrawD2DRoundedRectangle(context, rect, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, rect,
+            6.0f * app_->GetItemLayoutScale(rect),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * opacity),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * opacity));
     }
@@ -242,13 +252,18 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (selected && !dragged)
     {
-        app_->DrawD2DFilledRectangle(context,
+        app_->DrawD2DRoundedRectangle(context,
             app_->GetItemSelectionRect(rect, true),
+            6.0f * app_->GetItemLayoutScale(rect),
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),
             D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
 
-    if (entry_->iconBitmap)
+    if (entry_->iconState == IconState::Loading)
+    {
+        app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
+    }
+    else if (entry_->iconBitmap)
     {
         ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(entry_->iconBitmap);
         if (bmp)
@@ -259,6 +274,9 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             context->DrawBitmap(bmp, dst, opacity, D2D1_INTERPOLATION_MODE_LINEAR);
         }
     }
+
+    if (entry_->shortcutArrow && entry_->iconState != IconState::Loading)
+        app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
 
     if (!dragged)
         app_->DrawItemText(context, rect, entry_->name, selected, opacity);

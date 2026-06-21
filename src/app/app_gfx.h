@@ -108,16 +108,7 @@ inline bool DesktopApp::InitGraphics()
     hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
         reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
     if (FAILED(hr)) return false;
-    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, kItemFontSize, L"", &itemTextFormat_);
-    if (itemTextFormat_)
-    {
-        itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-        itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-        itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            kItemLineHeight, kItemBaseline);
-    }
+    RecreateItemTextFormat();
 
     dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &listItemTextFormat_);
@@ -166,6 +157,25 @@ inline bool DesktopApp::InitGraphics()
     }
 
     return true;
+}
+
+inline void DesktopApp::RecreateItemTextFormat()
+{
+    if (!dwriteFactory_) return;
+    itemTextLayoutCache_.clear();
+    float fontSize = itemFontSize_;
+    float lineHeight = fontSize * 7.0f / 6.0f;
+    float baseline = fontSize * 5.0f / 6.0f;
+    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &itemTextFormat_);
+    if (itemTextFormat_)
+    {
+        itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+            lineHeight, baseline);
+    }
 }
 
 inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
@@ -249,7 +259,7 @@ inline std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& c)
         (static_cast<std::uint64_t>(a) << 48);
 }
 
-inline float DesktopApp::GetItemDpiScale(RECT bounds) const
+inline float DesktopApp::GetItemLayoutScale(RECT bounds) const
 {
     const POINT center = {
         bounds.left + (bounds.right - bounds.left) / 2,
@@ -258,34 +268,50 @@ inline float DesktopApp::GetItemDpiScale(RECT bounds) const
     for (const auto& page : gridPages_)
     {
         if (PtInRect(&page.bounds, center))
-            return std::max(0.5f, static_cast<float>(page.dpiY) / 96.0f);
+        {
+            // cellWidth/cellHeight exclude the inter-cell gap. Use the full
+            // grid pitch so content is not shrunk a second time after layout
+            // has already reserved spacing between cells.
+            const int pitchX = page.cellWidth +
+                (page.columns > 1 ? page.gapX : 0);
+            const int pitchY = page.cellHeight +
+                (page.rows > 1 ? page.gapY : 0);
+            return std::max(0.1f, std::min(
+                static_cast<float>(std::max(1, pitchX)) /
+                    static_cast<float>(kCellWidth),
+                static_cast<float>(std::max(1, pitchY)) /
+                    static_cast<float>(kMinCellHeight)));
+        }
     }
     return 1.0f;
 }
 
 inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
 {
-    const float dpiScale = GetItemDpiScale(bounds);
-    const int inset = std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
-    const int topInset = std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
-    const int textHeight = std::max(1, static_cast<int>(std::round(kTextHeight * dpiScale)));
+    const float layoutScale = GetItemLayoutScale(bounds);
+    const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    const int topInset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
+    const int textHeight = std::max(1, static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
     const int cellW = bounds.right - bounds.left;
     const int cellH = bounds.bottom - bounds.top;
-    if (cellH < static_cast<int>(std::round(50.0f * dpiScale)))
+    if (cellH < static_cast<int>(std::round(50.0f * layoutScale)))
     {
-        const int iconSz = std::max(1, std::min(
-            static_cast<int>(std::round(32.0f * dpiScale)),
-            cellH - inset));
+        const int iconSz = std::max(1, std::min({
+            static_cast<int>(std::round(32.0f * layoutScale)),
+            std::max(1, cellW - inset * 2),
+            std::max(1, cellH - inset * 2) }));
         return MakeRect(
             bounds.left + inset,
             bounds.top + (cellH - iconSz) / 2,
             bounds.left + inset + iconSz,
             bounds.top + (cellH + iconSz) / 2);
     }
-    const int minIcon = std::max(1, static_cast<int>(std::round(16.0f * dpiScale)));
-    const int maxIconW = std::max(minIcon, cellW - inset * 2);
-    const int maxIconH = std::max(minIcon, cellH - textHeight - inset * 2);
-    const int iconSz = std::min(maxIconW, maxIconH);
+    const int maxIconW = std::max(1, cellW - inset * 2);
+    const int maxIconH = std::max(1, cellH - textHeight - inset * 2);
+    // The title owns the bottom text band. Let the icon fill the remaining
+    // square area instead of capping it at the old fixed 64-pixel size.
+    const int iconSz = std::max(1, std::min(maxIconW, maxIconH));
     const int iconX = bounds.left + (cellW - iconSz) / 2;
     const int iconY = bounds.top + topInset;
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
@@ -293,24 +319,37 @@ inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
 
 inline RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
 {
-    const float dpiScale = GetItemDpiScale(bounds);
+    const float layoutScale = GetItemLayoutScale(bounds);
     RECT iconRect = GetItemIconRect(bounds);
-    const int inset = std::max(1, static_cast<int>(std::round(4.0f * dpiScale)));
+    const int inset = std::max(1, static_cast<int>(std::round(4.0f * layoutScale)));
     const int textTop = iconRect.bottom +
-        std::max(1, static_cast<int>(std::round(2.0f * dpiScale)));
-    const int baseHeight = expanded ? kTextExpandedHeight : kTextCollapsedHeight;
-    const int textH = std::max(1, static_cast<int>(std::round(baseHeight * dpiScale)));
-    return MakeRect(bounds.left + inset, textTop, bounds.right - inset, textTop + textH);
+        std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
+    const int textH = expanded
+        ? std::max(
+            static_cast<int>(std::round(kTextExpandedHeight * layoutScale)),
+            static_cast<int>(std::ceil(lineHeight * 3.0f)))
+        : std::max(1, static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
+
+    // The collapsed label is clipped just before a third line can begin.
+    // Selected labels intentionally extend below the cell to reveal the lines
+    // hidden in the normal two-line state.
+    return MakeRect(bounds.left + inset, textTop,
+        bounds.right - inset, textTop + textH);
 }
 
 inline RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
 {
+    const float layoutScale = GetItemLayoutScale(bounds);
     RECT textRect = GetItemTextRect(bounds, expanded);
     RECT selection = UnionCopy(GetItemIconRect(bounds), textRect);
-    selection.left = std::max(bounds.left + 3, selection.left - 4);
-    selection.top = std::max(bounds.top, selection.top - 2);
-    selection.right = std::min(bounds.right - 3, selection.right + 4);
-    selection.bottom = std::min(bounds.bottom - 2, textRect.bottom);
+    const int sideInset = std::max(1, static_cast<int>(std::round(3.0f * layoutScale)));
+    const int horizontalPad = std::max(1, static_cast<int>(std::round(4.0f * layoutScale)));
+    const int verticalPad = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    selection.left = std::max(bounds.left + sideInset, selection.left - horizontalPad);
+    selection.top = std::max(bounds.top, selection.top - verticalPad);
+    selection.right = std::min(bounds.right - sideInset, selection.right + horizontalPad);
+    selection.bottom = std::min(bounds.bottom - verticalPad, textRect.bottom);
     return selection;
 }
 
@@ -394,12 +433,12 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
-    const float dpiScale = GetItemDpiScale(bounds);
-    const int dpiKey = static_cast<int>(std::round(dpiScale * 1000.0f));
+    const float layoutScale = GetItemLayoutScale(bounds);
+    const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
     std::wstring layoutKey = text + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
-        std::to_wstring(dpiKey);
+        std::to_wstring(scaleKey);
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
@@ -409,9 +448,13 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
             itemTextFormat_.Get(), tw, th, &layout)) || !layout)
             return;
         const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
-        layout->SetFontSize(kItemFontSize * dpiScale, fullRange);
+        layout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
         layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            kItemLineHeight * dpiScale, kItemBaseline * dpiScale);
+            itemFontSize_ * 7.0f / 6.0f * layoutScale, itemFontSize_ * 5.0f / 6.0f * layoutScale);
+        DWRITE_TEXT_METRICS metrics{};
+        layout->GetMetrics(&metrics);
+        if (metrics.lineCount == 1)
+            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
     }
 
@@ -433,12 +476,21 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
         getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
 
     const float tx = static_cast<float>(textRect.left);
-    const float ty = static_cast<float>(textRect.top);
+    float ty = static_cast<float>(textRect.top);
+    DWRITE_TEXT_METRICS metrics{};
+    layoutIt->second->GetMetrics(&metrics);
+    if (metrics.lineCount == 1 && selected)
+    {
+        RECT cr = GetItemTextRect(bounds, false);
+        float collapsedH = static_cast<float>(cr.bottom - cr.top);
+        ty = cr.top + (collapsedH - th) * 0.5f;
+    }
     if (shadowBrush)
     {
+        const float shadowOffset = std::max(0.5f, layoutScale);
         const D2D1_POINT_2F offsets[] = {
-            { tx - 1.0f, ty }, { tx + 1.0f, ty },
-            { tx, ty - 1.0f }, { tx, ty + 1.0f },
+            { tx - shadowOffset, ty }, { tx + shadowOffset, ty },
+            { tx, ty - shadowOffset }, { tx, ty + shadowOffset },
         };
         for (auto& pt : offsets)
             context->DrawTextLayout(pt, layoutIt->second.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -970,14 +1022,14 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
         GetCollectionPopupMaxScrollOffset(widget, popupRect_));
 
     DrawD2DRoundedRectangle(ctx, popupRect_, 18.0f,
-        D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.92f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.38f), 1.4f);
+        D2D1::ColorF(0.08f, 0.10f, 0.13f, 1.0f),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f), 1.4f);
 
     RECT titleRect = MakeRect(popupRect_.left + 22, popupRect_.top + 18,
         popupRect_.right - 22, popupRect_.top + 44);
     std::wstring title = widget.title.empty() ? L"集合" : widget.title;
     DrawD2DText(ctx, title, titleRect, itemTextFormat_.Get(),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
     ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -1197,14 +1249,24 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
                 itemRect.right - QuickNavScale(4),
                 iconY + iconSz + QuickNavScale(2) + qnTextH);
 
-            ID2D1Bitmap1* bmp = GetOrCreateD2DBitmap(item.iconBitmap);
-            if (bmp)
+            if (item.iconState == IconState::Loading)
             {
-                D2D1_RECT_F dst = D2D1::RectF(
-                    static_cast<float>(qnIconRect.left), static_cast<float>(qnIconRect.top),
-                    static_cast<float>(qnIconRect.right), static_cast<float>(qnIconRect.bottom));
-                ctx->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+                DrawPlaceholderIcon(ctx, item.sysIconIndex, qnIconRect, 1.0f);
             }
+            else if (item.iconBitmap)
+            {
+                ID2D1Bitmap1* bmp = GetOrCreateD2DBitmap(item.iconBitmap);
+                if (bmp)
+                {
+                    D2D1_RECT_F dst = D2D1::RectF(
+                        static_cast<float>(qnIconRect.left), static_cast<float>(qnIconRect.top),
+                        static_cast<float>(qnIconRect.right), static_cast<float>(qnIconRect.bottom));
+                    ctx->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+                }
+            }
+
+            if (item.shortcutArrow && item.iconState != IconState::Loading)
+                DrawShortcutArrowOverlay(ctx, qnIconRect, 1.0f);
 
             if (!item.name.empty())
             {
@@ -1355,9 +1417,22 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
     if (marqueeActive_)
     {
-        DrawD2DFilledRectangle(ctx, marqueeRect_,
-            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
-            D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
+        if (marqueeWidgetIndex_ < widgets_.size())
+        {
+            RECT viewport = GetMarqueeViewportRect();
+            ctx->PushAxisAlignedClip(ToD2DRect(viewport),
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            DrawD2DFilledRectangle(ctx, marqueeRect_,
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
+                D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
+            ctx->PopAxisAlignedClip();
+        }
+        else
+        {
+            DrawD2DFilledRectangle(ctx, marqueeRect_,
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
+                D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
+        }
     }
 
     DrawPageNavButtons(ctx);
@@ -1481,4 +1556,148 @@ inline void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
 
     if (hasPrev) drawArrow(prevRect, L"\u25C0", dragging || hoverPrev, hoverPrev);
     if (hasNext) drawArrow(nextRect, L"\u25B6", dragging || hoverNext, hoverNext);
+}
+
+inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT iconRect, float alpha)
+{
+    if (!ctx) return;
+
+    if (!shortcutArrowBitmap_)
+    {
+        SHSTOCKICONINFO sii{};
+        sii.cbSize = sizeof(sii);
+        if (FAILED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &sii)) || !sii.hIcon)
+            return;
+
+        int w = GetSystemMetrics(SM_CXICON);
+        int h = GetSystemMetrics(SM_CYICON);
+        if (w <= 0) w = 32;
+        if (h <= 0) h = 32;
+
+        HDC screenDc = GetDC(nullptr);
+        HDC memDc = CreateCompatibleDC(screenDc);
+
+        BITMAPINFOHEADER bi{};
+        bi.biSize = sizeof(bi);
+        bi.biWidth = w;
+        bi.biHeight = -h;
+        bi.biPlanes = 1;
+        bi.biBitCount = 32;
+        bi.biCompression = BI_RGB;
+
+        HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS, nullptr, nullptr, 0);
+        if (!dib)
+        {
+            DeleteDC(memDc);
+            ReleaseDC(nullptr, screenDc);
+            DestroyIcon(sii.hIcon);
+            return;
+        }
+
+        HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDc, dib));
+        DrawIconEx(memDc, 0, 0, sii.hIcon, w, h, 0, nullptr, DI_NORMAL);
+        SelectObject(memDc, oldBmp);
+
+        D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+        DIBSECTION ds{};
+        GetObjectW(dib, sizeof(ds), &ds);
+        ComPtr<ID2D1Bitmap1> d2dBmp;
+        if (SUCCEEDED(ctx->CreateBitmap(D2D1::SizeU(w, h), nullptr, 0, &props, &d2dBmp)))
+        {
+            D2D1_RECT_U srcRect = D2D1::RectU(0, 0, static_cast<UINT32>(w), static_cast<UINT32>(h));
+            d2dBmp->CopyFromMemory(&srcRect, ds.dsBm.bmBits, ds.dsBm.bmWidthBytes);
+            shortcutArrowBitmap_ = std::move(d2dBmp);
+            shortcutArrowBitmapSize_ = { w, h };
+        }
+
+        DeleteObject(dib);
+        DeleteDC(memDc);
+        ReleaseDC(nullptr, screenDc);
+        DestroyIcon(sii.hIcon);
+    }
+
+    if (!shortcutArrowBitmap_) return;
+
+    float scale = static_cast<float>(iconRect.bottom - iconRect.top) / 64.0f;
+    int arrowSz = static_cast<int>(30.0f * scale + 0.5f);
+    if (arrowSz < 10) arrowSz = 10;
+    int arrowX = iconRect.left;
+    int arrowY = iconRect.bottom - arrowSz;
+
+    D2D1_RECT_F dst = D2D1::RectF(
+        static_cast<float>(arrowX),
+        static_cast<float>(arrowY),
+        static_cast<float>(arrowX + arrowSz),
+        static_cast<float>(arrowY + arrowSz));
+
+    ctx->DrawBitmap(shortcutArrowBitmap_.Get(), dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+}
+
+inline void DesktopApp::CacheSystemImageListSmall()
+{
+    if (systemIconStripBitmap_) return;
+    HIMAGELIST himl = nullptr;
+    if (FAILED(SHGetImageList(SHIL_SMALL, IID_IImageList, reinterpret_cast<void**>(&himl))) || !himl)
+        return;
+    systemImageListSmall_ = himl;
+    int cx = 0, cy = 0, count = 0;
+    IImageList* imgList = reinterpret_cast<IImageList*>(himl);
+    imgList->GetIconSize(&cx, &cy);
+    imgList->GetImageCount(&count);
+    if (cx <= 0 || cy <= 0 || count <= 0) return;
+    systemIconStripCount_ = count;
+    systemIconStripIconSize_ = { cx, cy };
+
+    HDC screenDc = GetDC(nullptr);
+    HDC memDc = CreateCompatibleDC(screenDc);
+    int totalWidth = cx * count;
+    BITMAPINFOHEADER bi{};
+    bi.biSize = sizeof(bi);
+    bi.biWidth = totalWidth;
+    bi.biHeight = -cy;
+    bi.biPlanes = 1;
+    bi.biBitCount = 32;
+    bi.biCompression = BI_RGB;
+    HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS, nullptr, nullptr, 0);
+    if (!dib) { DeleteDC(memDc); ReleaseDC(nullptr, screenDc); return; }
+
+    HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDc, dib));
+    for (int i = 0; i < count; ++i)
+        ImageList_Draw(himl, i, memDc, i * cx, 0, ILD_TRANSPARENT | ILD_PRESERVEALPHA);
+    SelectObject(memDc, oldBmp);
+    DeleteDC(memDc);
+    ReleaseDC(nullptr, screenDc);
+
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    DIBSECTION ds{};
+    GetObjectW(dib, sizeof(ds), &ds);
+    ComPtr<ID2D1Bitmap1> d2dBmp;
+    if (SUCCEEDED(d2dContext_->CreateBitmap(D2D1::SizeU(totalWidth, cy), nullptr, 0, &props, &d2dBmp)))
+    {
+        D2D1_RECT_U srcRect = D2D1::RectU(0, 0, static_cast<UINT32>(totalWidth), static_cast<UINT32>(cy));
+        d2dBmp->CopyFromMemory(&srcRect, ds.dsBm.bmBits, ds.dsBm.bmWidthBytes);
+        systemIconStripBitmap_ = std::move(d2dBmp);
+    }
+    DeleteObject(dib);
+}
+
+inline void DesktopApp::DrawPlaceholderIcon(ID2D1DeviceContext* ctx, int sysIconIndex, RECT iconRect, float alpha)
+{
+    if (!ctx || sysIconIndex < 0) return;
+    if (!systemIconStripBitmap_) CacheSystemImageListSmall();
+    if (!systemIconStripBitmap_ || sysIconIndex >= systemIconStripCount_) return;
+
+    int cx = systemIconStripIconSize_.cx;
+    int srcX = sysIconIndex * cx;
+
+    D2D1_RECT_F src = D2D1::RectF(static_cast<float>(srcX), 0.0f,
+        static_cast<float>(srcX + cx), static_cast<float>(systemIconStripIconSize_.cy));
+    D2D1_RECT_F dst = D2D1::RectF(
+        static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
+        static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
+    ctx->DrawBitmap(systemIconStripBitmap_.Get(), dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR, &src);
 }

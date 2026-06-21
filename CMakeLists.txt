@@ -89,7 +89,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
-    comctl32 d2d1 d3d11 dbghelp dcomp dwrite dxgi gdi32 msimg32
+    comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi gdi32 msimg32
     bcrypt iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowscodecs uuid winhttp
 )
 

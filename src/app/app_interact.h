@@ -12,6 +12,7 @@
 // This file is included by app.h after the class definition.
 
 #include "drop_model.h"
+#include <dwmapi.h>
 #include <wincodec.h>
 #include <urlmon.h>
 
@@ -493,7 +494,7 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
         reinterpret_cast<WPARAM>(quickNavigationSearchFont_ ? quickNavigationSearchFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(QuickNavScale(10), QuickNavScale(10)));
-    SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"搜索应用、桌面文件、映射文件夹..."));
+    SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"搜索应用、桌面文件、映射文件夹..."));
     SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
 }
@@ -541,10 +542,21 @@ inline void DesktopApp::PositionQuickNavigationWindow()
     quickNavigationRect_ = GetQuickNavigationRect();
     const int width = std::max<LONG>(1, quickNavigationRect_.right - quickNavigationRect_.left);
     const int height = std::max<LONG>(1, quickNavigationRect_.bottom - quickNavigationRect_.top);
-    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
-        QuickNavScale(36), QuickNavScale(36));
-    if (region)
-        SetWindowRgn(quickNavigationHwnd_, region, TRUE);
+
+    // Prefer compositor-provided corners. Unlike a window region, DWM corners
+    // retain partial-alpha edge pixels and therefore do not look stair-stepped.
+    SetWindowRgn(quickNavigationHwnd_, nullptr, FALSE);
+    const DWM_WINDOW_CORNER_PREFERENCE cornerPreference = DWMWCP_ROUND;
+    const HRESULT cornerResult = DwmSetWindowAttribute(quickNavigationHwnd_,
+        DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPreference, sizeof(cornerPreference));
+    if (FAILED(cornerResult))
+    {
+        // Older Windows versions do not expose DWM corner preferences.
+        HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
+            QuickNavScale(16), QuickNavScale(16));
+        if (region)
+            SetWindowRgn(quickNavigationHwnd_, region, TRUE);
+    }
 
     SetWindowPos(quickNavigationHwnd_, HWND_TOPMOST,
         quickNavigationRect_.left + virtualLeft_,
@@ -623,7 +635,15 @@ inline void DesktopApp::OpenQuickNavigation()
     ShowWindow(quickNavigationHwnd_, SW_SHOWNA);
     AnimateWindow(quickNavigationHwnd_, 160, AW_BLEND);
     SetForegroundWindow(quickNavigationHwnd_);
-    SetFocus(quickNavigationHwnd_);
+    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+    {
+        SetFocus(quickNavigationSearchEdit_);
+        SendMessageW(quickNavigationSearchEdit_, EM_SETSEL, 0, -1);
+    }
+    else
+    {
+        SetFocus(quickNavigationHwnd_);
+    }
     InvalidateQuickNavigationWindow();
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -744,11 +764,57 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     SetBkMode(memoryDc, TRANSPARENT);
     SetStretchBltMode(memoryDc, HALFTONE);
 
+    ComPtr<ID2D1DCRenderTarget> dcRenderTarget;
+    if (d2dFactory_)
+    {
+        const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+            0.0f, 0.0f,
+            D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE);
+        if (SUCCEEDED(d2dFactory_->CreateDCRenderTarget(&properties, &dcRenderTarget)))
+        {
+            if (FAILED(dcRenderTarget->BindDC(memoryDc, &client)))
+                dcRenderTarget.Reset();
+        }
+    }
+
     auto offsetRect = [&](RECT rect) {
         OffsetRect(&rect, -quickNavigationRect_.left, -quickNavigationRect_.top);
         return rect;
     };
     auto fillRound = [&](RECT rect, COLORREF fill, COLORREF stroke, int radius) {
+        if (dcRenderTarget)
+        {
+            ComPtr<ID2D1SolidColorBrush> fillBrush;
+            ComPtr<ID2D1SolidColorBrush> strokeBrush;
+            const D2D1_COLOR_F fillColor = D2D1::ColorF(
+                GetRValue(fill) / 255.0f, GetGValue(fill) / 255.0f, GetBValue(fill) / 255.0f);
+            const D2D1_COLOR_F strokeColor = D2D1::ColorF(
+                GetRValue(stroke) / 255.0f, GetGValue(stroke) / 255.0f, GetBValue(stroke) / 255.0f);
+            if (SUCCEEDED(dcRenderTarget->CreateSolidColorBrush(fillColor, &fillBrush)) &&
+                SUCCEEDED(dcRenderTarget->CreateSolidColorBrush(strokeColor, &strokeBrush)))
+            {
+                // GDI RoundRect receives the corner ellipse diameter; Direct2D
+                // receives the radius, hence the 0.5 conversion.
+                const float cornerRadius = std::max(0.5f, radius * 0.5f);
+                const D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(
+                    D2D1::RectF(
+                        static_cast<float>(rect.left) + 0.5f,
+                        static_cast<float>(rect.top) + 0.5f,
+                        static_cast<float>(rect.right) - 0.5f,
+                        static_cast<float>(rect.bottom) - 0.5f),
+                    cornerRadius, cornerRadius);
+                dcRenderTarget->BeginDraw();
+                dcRenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                dcRenderTarget->FillRoundedRectangle(rounded, fillBrush.Get());
+                dcRenderTarget->DrawRoundedRectangle(rounded, strokeBrush.Get(), 1.0f);
+                if (SUCCEEDED(dcRenderTarget->EndDraw()))
+                    return;
+                dcRenderTarget.Reset();
+            }
+        }
+
         HBRUSH brush = CreateSolidBrush(fill);
         HPEN pen = CreatePen(PS_SOLID, 1, stroke);
         HGDIOBJ oldBrush = SelectObject(memoryDc, brush);
@@ -770,11 +836,26 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         BITMAP bm{};
         if (GetObjectW(bitmap, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
             return;
+
+        const int boundsWidth = std::max<LONG>(1, dst.right - dst.left);
+        const int boundsHeight = std::max<LONG>(1, dst.bottom - dst.top);
+        const double scale = std::min(
+            static_cast<double>(boundsWidth) / bm.bmWidth,
+            static_cast<double>(boundsHeight) / bm.bmHeight);
+        const int drawWidth = std::clamp(
+            static_cast<int>(std::round(bm.bmWidth * scale)), 1, boundsWidth);
+        const int drawHeight = std::clamp(
+            static_cast<int>(std::round(bm.bmHeight * scale)), 1, boundsHeight);
+        const int drawX = dst.left + (boundsWidth - drawWidth) / 2;
+        const int drawY = dst.top + (boundsHeight - drawHeight) / 2;
+
         HDC srcDc = CreateCompatibleDC(memoryDc);
         HBITMAP oldSrc = static_cast<HBITMAP>(SelectObject(srcDc, bitmap));
+        const int oldStretchMode = SetStretchBltMode(memoryDc, COLORONCOLOR);
         BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-        AlphaBlend(memoryDc, dst.left, dst.top, dst.right - dst.left, dst.bottom - dst.top,
+        AlphaBlend(memoryDc, drawX, drawY, drawWidth, drawHeight,
             srcDc, 0, 0, bm.bmWidth, bm.bmHeight, blend);
+        SetStretchBltMode(memoryDc, oldStretchMode);
         SelectObject(srcDc, oldSrc);
         DeleteDC(srcDc);
     };
@@ -782,14 +863,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     HBRUSH background = CreateSolidBrush(RGB(18, 22, 30));
     FillRect(memoryDc, &client, background);
     DeleteObject(background);
-    HPEN border = CreatePen(PS_SOLID, 1, RGB(120, 130, 150));
-    HGDIOBJ oldPen = SelectObject(memoryDc, border);
-    HGDIOBJ oldBrush = SelectObject(memoryDc, GetStockObject(NULL_BRUSH));
-    RoundRect(memoryDc, client.left, client.top, client.right - 1, client.bottom - 1,
-        QuickNavScale(36), QuickNavScale(36));
-    SelectObject(memoryDc, oldBrush);
-    SelectObject(memoryDc, oldPen);
-    DeleteObject(border);
+    fillRound(MakeRect(client.left, client.top, client.right - 1, client.bottom - 1),
+        RGB(18, 22, 30), RGB(120, 130, 150), QuickNavScale(16));
 
     HFONT titleFont = CreateFontW(-QuickNavScale(18), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -1471,6 +1546,121 @@ inline void DesktopApp::ToggleSelection(int index)
         items_[index].selected = !items_[index].selected;
 }
 
+inline int DesktopApp::GetMarqueeScrollOffset() const
+{
+    if (marqueeWidgetIndex_ >= widgets_.size())
+        return 0;
+    if (popupWidgetIndex_ == marqueeWidgetIndex_)
+        return popupScrollOffset_;
+
+    for (const auto& container : containers_)
+    {
+        auto* widgetContainer = dynamic_cast<WidgetContainer*>(container.get());
+        if (widgetContainer &&
+            widgetContainer->GetWidgetData() == &widgets_[marqueeWidgetIndex_])
+        {
+            return widgetContainer->GetScrollOffset();
+        }
+    }
+    return 0;
+}
+
+inline RECT DesktopApp::GetMarqueeViewportRect() const
+{
+    if (marqueeWidgetIndex_ >= widgets_.size())
+    {
+        RECT client{};
+        if (hwnd_)
+            GetClientRect(hwnd_, &client);
+        return client;
+    }
+    if (popupWidgetIndex_ == marqueeWidgetIndex_)
+    {
+        return GetCollectionPopupContentRect(
+            GetCollectionPopupRect(widgets_[popupWidgetIndex_]));
+    }
+
+    for (const auto& container : containers_)
+    {
+        auto* widgetContainer = dynamic_cast<WidgetContainer*>(container.get());
+        if (widgetContainer &&
+            widgetContainer->GetWidgetData() == &widgets_[marqueeWidgetIndex_])
+        {
+            return widgetContainer->GetContentViewportRect();
+        }
+    }
+    return {};
+}
+
+inline void DesktopApp::UpdateMarqueeSelection(POINT current)
+{
+    if (marqueeWidgetIndex_ < widgets_.size())
+    {
+        const int currentScroll = GetMarqueeScrollOffset();
+        RECT viewport = GetMarqueeViewportRect();
+        POINT contentAnchor{
+            marqueeAnchorPoint_.x,
+            marqueeAnchorPoint_.y + marqueeInitialScrollOffset_
+        };
+        POINT contentCurrent{
+            std::clamp<LONG>(current.x, viewport.left, viewport.right),
+            std::clamp<LONG>(current.y, viewport.top, viewport.bottom) + currentScroll
+        };
+        RECT contentSelectionRect = NormalizeRect(contentAnchor, contentCurrent);
+
+        marqueeRect_ = contentSelectionRect;
+        OffsetRect(&marqueeRect_, 0, -currentScroll);
+
+        if (popupWidgetIndex_ == marqueeWidgetIndex_)
+        {
+            RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+            std::vector<std::wstring> popupKeys =
+                GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+            for (size_t i = 0; i < popupKeys.size(); ++i)
+            {
+                RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                OffsetRect(&itemRect, 0, currentScroll);
+                size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                if (itemIndex == static_cast<size_t>(-1))
+                    continue;
+                items_[itemIndex].selected =
+                    RectsIntersect(itemRect, contentSelectionRect);
+            }
+        }
+        else
+        {
+            for (auto& container : containers_)
+            {
+                auto* widgetContainer =
+                    dynamic_cast<WidgetContainer*>(container.get());
+                if (widgetContainer &&
+                    widgetContainer->GetWidgetData() ==
+                        &widgets_[marqueeWidgetIndex_])
+                {
+                    widgetContainer->ApplyMarqueeSelection(
+                        contentSelectionRect);
+                    break;
+                }
+            }
+        }
+    }
+    else
+    {
+        marqueeRect_ = NormalizeRect(marqueeAnchorPoint_, current);
+        for (auto& itemObject : items_oo_)
+        {
+            auto* icon = dynamic_cast<DesktopIcon*>(itemObject.get());
+            if (!icon)
+                continue;
+            DesktopItem* item = icon->GetDesktopItem();
+            if (!item || IsItemInAnyWidget(*item) || IsRectEmptyRect(item->bounds))
+                continue;
+            RECT selectionRect = GetItemSelectionRect(item->bounds, false);
+            item->selected = RectsIntersect(selectionRect, marqueeRect_);
+        }
+    }
+}
+
 /**
  * @brief 仅选中指定小部件（清除其他所有选中状态）
  * @param index 小部件索引
@@ -1502,6 +1692,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeAnchorPoint_ = pt;
+    marqueeInitialScrollOffset_ = 0;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
@@ -1573,6 +1765,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (!clickedPopupItem)
             mouseDownHit_ = nullptr;
         marqueeWidgetIndex_ = popupWidgetIndex_;
+        marqueeInitialScrollOffset_ = popupScrollOffset_;
         mouseDownWidgetIndex_ = popupWidgetIndex_;
         SetCapture(hwnd_);
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1734,6 +1927,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgets_[wi].selected = true;
             mouseDownWidgetIndex_ = wi;
             marqueeWidgetIndex_ = wi;
+            marqueeInitialScrollOffset_ = wc->GetScrollOffset();
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -2229,61 +2423,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
             marqueeActive_ = true;
-            marqueeRect_ = NormalizeRect(mouseDownPoint_, current);
-
-            if (marqueeWidgetIndex_ < widgets_.size())
-            {
-                if (popupWidgetIndex_ == marqueeWidgetIndex_)
-                {
-                    // Marquee inside collection popup
-                    RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-                    RECT content = GetCollectionPopupContentRect(popup);
-                    std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
-                    for (size_t i = 0; i < popupKeys.size(); ++i)
-                    {
-                        RECT itemRect = GetCollectionPopupItemRect(popup, i);
-                        if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
-                        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
-                        if (itemIndex == static_cast<size_t>(-1)) continue;
-                        items_[itemIndex].selected = RectsIntersect(itemRect, marqueeRect_);
-                    }
-                }
-                else
-                {
-                    // Marquee inside a widget — select member items
-                    WidgetContainer* wc = nullptr;
-                    for (auto& c : containers_)
-                    {
-                        wc = dynamic_cast<WidgetContainer*>(c.get());
-                        if (wc && wc->GetWidgetData() == &widgets_[marqueeWidgetIndex_]) break;
-                        wc = nullptr;
-                    }
-                    if (wc)
-                    {
-                        auto& slots = wc->GetSlots();
-                        for (auto& slot : slots)
-                        {
-                            if (!slot) continue;
-                            RECT bounds = slot->GetBounds();
-                            bool intersect = RectsIntersect(bounds, marqueeRect_);
-                            if (auto* item = slot->GetItem())
-                                item->SetSelected(intersect);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                for (auto& oo : items_oo_)
-                {
-                    auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
-                    if (!icon) continue;
-                    DesktopItem* di = icon->GetDesktopItem();
-                    if (!di || IsItemInAnyWidget(*di) || IsRectEmptyRect(di->bounds)) continue;
-                    RECT itemSelRect = GetItemSelectionRect(di->bounds, false);
-                    di->selected = RectsIntersect(itemSelRect, marqueeRect_);
-                }
-            }
+            UpdateMarqueeSelection(current);
         }
     }
 
@@ -3484,6 +3624,8 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
             popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
+            if (marqueeActive_ && marqueeWidgetIndex_ == popupWidgetIndex_)
+                UpdateMarqueeSelection(pt);
             refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
@@ -3519,6 +3661,11 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
         data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
         wc->InvalidateSlots();
+        if (marqueeActive_ && marqueeWidgetIndex_ < widgets_.size() &&
+            &widgets_[marqueeWidgetIndex_] == data)
+        {
+            UpdateMarqueeSelection(pt);
+        }
         if (mouseDownHit_ && mouseDownHit_->GetContainer() == wc)
             mouseDownHit_ = nullptr;
         refreshDragAfterScroll();
@@ -3681,14 +3828,16 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetItemDpiScale(rect);
-    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+    const float renameScale = GetItemLayoutScale(rect);
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(renameEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELPARAM(renameMargin, renameMargin));
     SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
     SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
@@ -3831,6 +3980,46 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
 }
 
 /**
+ * @brief 如果同名文件/文件夹已存在，自动添加递增序号生成唯一名称
+ *
+ * 例如 "test.txt" 已存在时返回 "test (2).txt"，依此类推。
+ * @param folderPath  父文件夹路径
+ * @param desiredName  期望的文件/文件夹名
+ * @return 在 folderPath 中不存在的唯一名称
+ */
+static std::wstring MakeUniqueFileName(const std::wstring& folderPath, const std::wstring& desiredName)
+{
+    wchar_t fullPath[MAX_PATH]{};
+    PathCombineW(fullPath, folderPath.c_str(), desiredName.c_str());
+    if (GetFileAttributesW(fullPath) == INVALID_FILE_ATTRIBUTES)
+        return desiredName;
+
+    DWORD attrs = GetFileAttributesW(fullPath);
+    bool isDir = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+
+    std::wstring stem = desiredName;
+    std::wstring ext;
+    if (!isDir)
+    {
+        wchar_t stemBuf[MAX_PATH]{};
+        wcscpy_s(stemBuf, stem.c_str());
+        PathRemoveExtensionW(stemBuf);
+        stem = stemBuf;
+        const wchar_t* extPtr = PathFindExtensionW(desiredName.c_str());
+        ext = extPtr ? extPtr : L"";
+    }
+
+    for (int i = 2; i < 1000; ++i)
+    {
+        std::wstring candidate = stem + L" (" + std::to_wstring(i) + L")" + ext;
+        PathCombineW(fullPath, folderPath.c_str(), candidate.c_str());
+        if (GetFileAttributesW(fullPath) == INVALID_FILE_ATTRIBUTES)
+            return candidate;
+    }
+    return stem + L" (1000)" + ext;
+}
+
+/**
  * @brief 提交或取消文件夹条目的重命名
  * @param newName 新名称
  * @param cancel 是否取消重命名
@@ -3865,8 +4054,12 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
         reinterpret_cast<void**>(&parentFolder), &child);
     if (SUCCEEDED(hr) && parentFolder)
     {
+        wchar_t dirBuf[MAX_PATH]{};
+        wcscpy_s(dirBuf, oldPath.c_str());
+        PathRemoveFileSpecW(dirBuf);
+        std::wstring uniqueName = MakeUniqueFileName(dirBuf, newName);
         PITEMID_CHILD newChild = nullptr;
-        hr = parentFolder->SetNameOf(hwnd_, child, newName.c_str(), SHGDN_NORMAL, &newChild);
+        hr = parentFolder->SetNameOf(hwnd_, child, uniqueName.c_str(), SHGDN_NORMAL, &newChild);
         if (newChild) ILFree(newChild);
         parentFolder->Release();
     }
@@ -3942,14 +4135,16 @@ inline void DesktopApp::BeginRenameSelected()
         }
 
         if (renameFont_) DeleteObject(renameFont_);
-        const float renameScale = GetItemDpiScale(frame);
-        renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+        const float renameScale = GetItemLayoutScale(frame);
+        renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         SendMessageW(renameEdit_, WM_SETFONT,
             reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-        SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+        const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+        SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+            MAKELPARAM(renameMargin, renameMargin));
         SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
             reinterpret_cast<DWORD_PTR>(this));
         SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
@@ -4009,14 +4204,16 @@ inline void DesktopApp::BeginRenameSelected()
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetItemDpiScale(itemBounds);
-    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+    const float renameScale = GetItemLayoutScale(itemBounds);
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(renameEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELPARAM(renameMargin, renameMargin));
     SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
     SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
@@ -4075,10 +4272,13 @@ inline void DesktopApp::CommitRename(bool cancel)
     if (!cancel && renameIndex_ < items_.size() && !newName.empty() && newName != items_[renameIndex_].name)
     {
         std::wstring oldLayoutKey = items_[renameIndex_].layoutKey;
+        wchar_t desktopPath[MAX_PATH]{};
+        SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
+        std::wstring uniqueName = MakeUniqueFileName(desktopPath, newName);
         PITEMID_CHILD newChild = nullptr;
         HRESULT hr = desktopFolder_->SetNameOf(hwnd_,
             reinterpret_cast<PCUITEMID_CHILD>(items_[renameIndex_].childPidl.get()),
-            newName.c_str(), SHGDN_NORMAL, &newChild);
+            uniqueName.c_str(), SHGDN_NORMAL, &newChild);
         if (SUCCEEDED(hr))
         {
             if (newChild)
@@ -5638,16 +5838,35 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         }
     }
 
+    HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr, wDateMenu = nullptr;
     if (widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
         widget.type == DesktopWidgetType::Collection)
     {
-        HMENU sortMenu = CreatePopupMenu();
+        sortMenu = CreatePopupMenu();
         if (sortMenu)
         {
-            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByName, L"名称");
-            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByType, L"类型");
-            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByDate, L"修改日期");
+            wNameMenu = CreatePopupMenu();
+            if (wNameMenu)
+            {
+                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByName, L"正序");
+                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByNameDesc, L"反序");
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wNameMenu), L"名称");
+            }
+            wTypeMenu = CreatePopupMenu();
+            if (wTypeMenu)
+            {
+                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByType, L"正序");
+                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByTypeDesc, L"反序");
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wTypeMenu), L"类型");
+            }
+            wDateMenu = CreatePopupMenu();
+            if (wDateMenu)
+            {
+                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDate, L"正序");
+                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, L"反序");
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), L"修改日期");
+            }
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
         }
     }
@@ -5669,38 +5888,26 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetEdit, L"");
     SetMenuItemIcon(menu, kContextWidgetRename, L"");
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
+    if (sortMenu)
     {
-        MENUITEMINFOW sortMii{ sizeof(sortMii) };
-        sortMii.fMask = MIIM_SUBMENU;
-        for (int i = 0; i < GetMenuItemCount(menu); ++i)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
+        if (wNameMenu)
         {
-            if (GetMenuItemInfoW(menu, i, TRUE, &sortMii) && sortMii.hSubMenu)
-            {
-                wchar_t label[64]{};
-                if (GetMenuStringW(menu, i, label, _countof(label), MF_BYPOSITION) && wcsstr(label, L"排序方式"))
-                {
-                    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMii.hSubMenu), L"");
-                    break;
-                }
-            }
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wNameMenu), L"");
+            SetMenuItemIcon(wNameMenu, kContextWidgetSortByName, L"");
+            SetMenuItemIcon(wNameMenu, kContextWidgetSortByNameDesc, L"");
         }
-    }
-    {
-        MENUITEMINFOW sortMii2{ sizeof(sortMii2) };
-        sortMii2.fMask = MIIM_SUBMENU;
-        for (int i = 0; i < GetMenuItemCount(menu); ++i)
+        if (wTypeMenu)
         {
-            if (GetMenuItemInfoW(menu, i, TRUE, &sortMii2) && sortMii2.hSubMenu)
-            {
-                wchar_t label[64]{};
-                if (GetMenuStringW(menu, i, label, _countof(label), MF_BYPOSITION) && wcsstr(label, L"排序方式"))
-                {
-                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByName, L"");
-                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByType, L"");
-                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByDate, L"");
-                    break;
-                }
-            }
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wTypeMenu), L"");
+            SetMenuItemIcon(wTypeMenu, kContextWidgetSortByType, L"");
+            SetMenuItemIcon(wTypeMenu, kContextWidgetSortByTypeDesc, L"");
+        }
+        if (wDateMenu)
+        {
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wDateMenu), L"");
+            SetMenuItemIcon(wDateMenu, kContextWidgetSortByDate, L"");
+            SetMenuItemIcon(wDateMenu, kContextWidgetSortByDateDesc, L"");
         }
     }
 
@@ -5802,13 +6009,22 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         }
         break;
     case kContextWidgetSortByName:
-        SortWidgetContents(widgetIndex, 0);
+        SortWidgetContents(widgetIndex, 0, true);
+        break;
+    case kContextWidgetSortByNameDesc:
+        SortWidgetContents(widgetIndex, 0, false);
         break;
     case kContextWidgetSortByType:
-        SortWidgetContents(widgetIndex, 1);
+        SortWidgetContents(widgetIndex, 1, true);
+        break;
+    case kContextWidgetSortByTypeDesc:
+        SortWidgetContents(widgetIndex, 1, false);
         break;
     case kContextWidgetSortByDate:
-        SortWidgetContents(widgetIndex, 2);
+        SortWidgetContents(widgetIndex, 2, true);
+        break;
+    case kContextWidgetSortByDateDesc:
+        SortWidgetContents(widgetIndex, 2, false);
         break;
     default:
         break;
@@ -5960,11 +6176,17 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    {
+        bool nativeActive = !customDesktopVisible_;
+        AppendMenuW(menu, MF_STRING | (nativeActive ? MF_CHECKED : 0),
+            kTraySwitchNativeCommand, L"切换原生桌面");
+        AppendMenuW(menu, MF_STRING | (nativeActive ? 0 : MF_CHECKED),
+            kTraySwitchCustomCommand, L"切换软件桌面");
+    }
+
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
     AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
-
-    SetMenuItemIcon(menu, kTraySettingsCommand, L"");
-    SetMenuItemIcon(menu, kTrayExitCommand, L"");
 
     SetForegroundWindow(controlHwnd_ ? controlHwnd_ : hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -5977,6 +6199,22 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     switch (command)
     {
+    case kTraySwitchNativeCommand:
+        customDesktopVisible_ = false;
+        KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
+        SaveLayoutSlots();
+        HideDragHintWindow();
+        RestoreExplorerIcons();
+        ShowWindow(hwnd_, SW_HIDE);
+        break;
+    case kTraySwitchCustomCommand:
+        customDesktopVisible_ = true;
+        HideExplorerIcons();
+        ShowWindow(hwnd_, SW_SHOW);
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        ReloadItems();
+        break;
     case kTraySettingsCommand:
         ShowSettingsWindow();
         break;

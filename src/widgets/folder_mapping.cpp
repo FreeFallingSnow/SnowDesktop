@@ -18,6 +18,8 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 
+static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex);
+
 /**
  * @brief 计算映射文件夹内容区域的矩形
  * @param widget FolderMapping 组件指针
@@ -29,6 +31,25 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -4, -8);
     return body;
+}
+
+RECT FolderMapping::GetContentViewportRect() const
+{
+    return FolderMappingContentRect(const_cast<FolderMapping*>(this));
+}
+
+void FolderMapping::ApplyMarqueeSelection(const RECT& contentRect)
+{
+    if (!data_)
+        return;
+
+    const int scroll = GetScrollOffset();
+    for (size_t i = 0; i < data_->folderEntries.size(); ++i)
+    {
+        RECT itemRect = FolderMappingItemRect(this, i);
+        OffsetRect(&itemRect, 0, scroll);
+        data_->folderEntries[i].selected = RectsIntersect(itemRect, contentRect);
+    }
 }
 
 /**
@@ -48,11 +69,44 @@ static int FolderMappingCellHeight(FolderMapping* widget)
 }
 
 /**
+ * @brief 计算映射文件夹图标模式下的自适应纵向间距
+ * @param widget FolderMapping 组件指针
+ * @return 间距像素值。根据可视高度与单元格高度的余数，
+ *         在可见行之间均分以消除底部不完整行。
+ *         间距过大或过小则返回 0 回退到默认紧凑布局。
+ */
+static int FolderMappingAdaptiveGapY(FolderMapping* widget)
+{
+    if (!widget) return 0;
+    DesktopWidget* data = widget->GetWidgetData();
+    if (!data || data->listMode) return 0;
+
+    RECT content = FolderMappingContentRect(widget);
+    int visibleHeight = content.bottom - content.top;
+    if (visibleHeight <= 0) return 0;
+
+    int cellH = FolderMappingCellHeight(widget);
+    if (cellH <= 0 || visibleHeight <= cellH) return 0;
+
+    int visibleRows = visibleHeight / cellH;
+    if (visibleRows <= 1) return 0;
+
+    int extraSpace = visibleHeight - visibleRows * cellH;
+    int gapY = extraSpace / (visibleRows - 1);
+    if (gapY < 0) return 0;
+
+    int maxGap = std::max(1, static_cast<int>(cellH * kGapPercentY));
+    if (gapY > maxGap) return 0;
+
+    return gapY;
+}
+
+/**
  * @brief 计算映射文件夹所有条目占用的总内容高度
  * @param widget    FolderMapping 组件指针
  * @param itemCount 条目数量
  * @return 总内容高度（像素）。列表模式下每行 38 像素；
- *         图标模式下按列数计算行数乘以单元格高度
+ *         图标模式下按列数计算行数乘以单元格高度并计入自适应间距
  */
 static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
 {
@@ -62,7 +116,10 @@ static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
         return static_cast<int>(itemCount) * 38;
     int columns = std::max(1, data->gridSpan.columns);
     int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-    return rows * FolderMappingCellHeight(widget);
+    if (rows <= 0) return 0;
+    int cellH = FolderMappingCellHeight(widget);
+    int gapY = FolderMappingAdaptiveGapY(widget);
+    return rows * cellH + (rows - 1) * gapY;
 }
 
 /**
@@ -107,11 +164,13 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
     int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
     int itemW = std::max<int>(1, (content.right - content.left) / columns);
     int cellH = FolderMappingCellHeight(widget);
+    int gapY = FolderMappingAdaptiveGapY(widget);
+    int rowStep = cellH + gapY;
     return MakeRect(
         content.left + col * itemW,
-        content.top + row * cellH - scroll,
+        content.top + row * rowStep - scroll,
         col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
-        content.top + (row + 1) * cellH - scroll);
+        content.top + row * rowStep + cellH - scroll);
 }
 
 /**

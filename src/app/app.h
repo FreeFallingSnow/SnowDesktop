@@ -57,6 +57,34 @@
 
 using Microsoft::WRL::ComPtr;
 
+enum class IconLoadPhase { Phase1, Phase2 };
+
+struct IconLoadTask {
+    uint64_t serial = 0;
+    std::wstring requestKey;
+    std::wstring layoutKey;
+    std::wstring widgetId;
+    Pidl absolutePidl;
+    int sysIconIndex = -1;
+    std::wstring parsingName;
+    bool isDesktopItem = true;
+    std::wstring folderPath;
+    IconLoadPhase phase = IconLoadPhase::Phase1;
+};
+
+struct IconLoadResult {
+    uint64_t serial = 0;
+    std::wstring requestKey;
+    std::wstring layoutKey;
+    std::wstring widgetId;
+    HBITMAP bitmap = nullptr;
+    SIZE bitmapSize{};
+    bool shortcutArrow = false;
+    IconLoadPhase phase = IconLoadPhase::Phase1;
+    bool isDesktopItem = true;
+    std::wstring folderPath;
+};
+
 /**
  * @brief 拖拽渲染缓存，用于缓存拖拽操作期间的静态场景位图。
  *
@@ -308,6 +336,8 @@ private:
     // ── Graphics ────────────────────────────────────────────
     /** @brief 初始化 Direct2D、Direct3D 和 DirectComposition 图形管线。 @return 成功返回 true */
     bool InitGraphics();
+    /** @brief 重建图标标题文本格式（字号变更时调用）。 */
+    void RecreateItemTextFormat();
     /** @brief 创建或调整 DirectComposition 表面的大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
     HRESULT CreateOrResizeCompositionSurface();
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
@@ -340,8 +370,8 @@ private:
     void ConfigureGridPage(GridPage& page) const;
     /** @brief 将用户保存的网格尺寸应用到各页面上。 */
     void ApplySavedGridDimensions();
-    /** @brief 将缩放比例应用到网格页面的间距上。 @param page 网格页面引用 */
-    void ApplyGapScaleToPage(GridPage& page);
+    /** @brief 根据图标间距比例重新计算页面单元格与间距。 @param page 网格页面引用 */
+    void ApplyIconSpacingToPage(GridPage& page);
     /** @brief 执行网格布局，为每个桌面项计算槽位位置。 */
     void LayoutItems();
     /** @brief 重建容器（网格、部件）和面向对象项列表。 */
@@ -481,22 +511,29 @@ private:
     void SelectWidgetOnly(size_t index);
     /** @brief 切换指定桌面项的选择状态。 @param index 桌面项索引 */
     void ToggleSelection(int index);
+    /** @brief 获取当前框选目标使用的滚动偏移。 */
+    int GetMarqueeScrollOffset() const;
+    /** @brief 获取当前框选目标的内容视口。 */
+    RECT GetMarqueeViewportRect() const;
+    /** @brief 按当前鼠标位置更新框选矩形及命中状态。 */
+    void UpdateMarqueeSelection(POINT current);
     /**
      * @brief 处理翻页导航按钮的点击事件。
      * @param point 点击坐标
      * @return 是否已处理
      */
     bool HandlePageNavClick(POINT point);
-    /** @brief 按名称对桌面图标排序。 */
-    void SortIconsByName();
-    /** @brief 按类型对桌面图标排序。 */
-    void SortIconsByType();
+    /** @brief 按名称对桌面图标排序。 @param ascending 是否升序 */
+    void SortIconsByName(bool ascending = true);
+    /** @brief 按类型对桌面图标排序。 @param ascending 是否升序 */
+    void SortIconsByType(bool ascending = true);
     /**
      * @brief 对指定部件的内容进行排序。
      * @param widgetIndex 部件索引
      * @param mode 排序模式
+     * @param ascending 是否升序
      */
-    void SortWidgetContents(size_t widgetIndex, int mode);
+    void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true);
     /** @brief 更新剪切状态高亮显示。 */
     void UpdateCutState();
 
@@ -515,6 +552,8 @@ private:
     // ── Context menus ───────────────────────────────────────
     /** @brief 显示桌面背景上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowBackgroundContextMenu(POINT screenPoint);
+    /** @brief 连续显示行列调整菜单，直到用户取消。 */
+    void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex);
     /** @brief 显示文件夹条目上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
@@ -568,10 +607,12 @@ private:
     void AdjustGridColumns(int delta);
     /** @brief 从坐标点所在显示器设置首页监视器。 @param screenPoint 屏幕坐标 */
     void SetFirstPageMonitorFromPoint(POINT screenPoint);
-    /** @brief 设置网格缩放比例。 @param value 缩放值 */
-    void SetZoom(float value);
-    /** @brief 调整网格缩放比例。 @param delta 缩放增量 */
-    void AdjustZoom(float delta);
+    /** @brief 设置图标间距比例。 @param value 间距倍率 */
+    void SetIconSpacing(float value);
+    /** @brief 调整图标间距比例。 @param delta 间距增量 */
+    void AdjustIconSpacing(float delta);
+    /** @brief 设置图标标题字号（12/14/16）。 @param value 字号 */
+    void SetItemFontSize(float value);
     /** @brief 应用页面到显示器的映射关系。 */
     void ApplyPageMapping();
     /** @brief 获取最大页面偏移量。 @return 最大偏移页数 */
@@ -805,8 +846,8 @@ private:
     RECT GetItemIconRect(RECT bounds) const;
     /** @brief 从项边界矩形计算文本区域。 @param bounds 项边界 @param expanded 是否展开 @return 文本矩形 */
     RECT GetItemTextRect(RECT bounds, bool expanded) const;
-    /** @brief 获取项目所在显示器相对于 96 DPI 的缩放比例。 */
-    float GetItemDpiScale(RECT bounds) const;
+    /** @brief 获取项目所在网格单元相对于 92x116 基准尺寸的布局缩放比例。 */
+    float GetItemLayoutScale(RECT bounds) const;
     /** @brief 从项边界矩形计算选中框区域。 @param bounds 项边界 @param expanded 是否展开 @return 选中框矩形 */
     RECT GetItemSelectionRect(RECT bounds, bool expanded) const;
     /**
@@ -864,6 +905,23 @@ private:
      */
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
 
+    /**
+     * @brief 在指定矩形上绘制快捷方式箭头叠加层。
+     * @param ctx D2D 上下文
+     * @param iconRect 图标区域矩形（逻辑像素）
+     * @param alpha 整体透明度
+     */
+    void DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT iconRect, float alpha);
+
+    // ── Async Icon Loading ──────────────────────────────────
+    void StartIconLoader();
+    void StopIconLoader();
+    void BeginIconLoadGeneration();
+    void EnqueueIconLoad(IconLoadTask task);
+    void OnIconLoaded(WPARAM wParam, LPARAM lParam);
+    void CacheSystemImageListSmall();
+    void DrawPlaceholderIcon(ID2D1DeviceContext* ctx, int sysIconIndex, RECT iconRect, float alpha);
+
     // ── Filtering ───────────────────────────────────────────
     /**
      * @brief 获取桌面项的稳定布局键值，用于跨外壳刷新保持定位。
@@ -904,6 +962,14 @@ private:
      * @return 成功返回 true
      */
     bool ReadJsonBoolField(const std::string& objectText, const char* fieldName, bool& value) const;
+    /**
+     * @brief 从 JSON 对象字符串中读取浮点字段。
+     * @param objectText JSON 对象文本
+     * @param fieldName 字段名
+     * @param[out] value 读取的值
+     * @return 成功返回 true
+     */
+    bool ReadJsonFloatField(const std::string& objectText, const char* fieldName, float& value) const;
     /**
      * @brief 从 JSON 对象字符串中读取字符串数组字段。
      * @param objectText JSON 对象文本
@@ -1201,7 +1267,8 @@ private:
     std::unordered_map<std::wstring, int> savedPageRows_;
     std::vector<std::wstring> savedPageIds_;
     RECT layoutWorkArea_{};
-    float gapScale_ = 1.0f;
+    float iconSpacingScale_ = 1.0f;
+    float itemFontSize_ = kItemFontSize;
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;
     std::wstring lastMonitorPageId_;
@@ -1210,6 +1277,9 @@ private:
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
     POINT lastContextMenuScreenPoint_{};
+    POINT gridAdjustmentMenuAnchor_{};
+    HMENU gridAdjustmentParentMenu_ = nullptr;
+    bool gridAdjustmentMenuAnchorValid_ = false;
     /** @} */
 
     /** @name 控制窗口（托盘图标所有权 + 桌面宿主监听） */
@@ -1222,6 +1292,7 @@ private:
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     UINT taskbarRestartMsg_ = 0;
     bool exitRequested_ = false;
+    bool customDesktopVisible_ = true;
     /** @} */
 
     /** @name 托盘图标 */
@@ -1240,6 +1311,8 @@ private:
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
     size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    POINT marqueeAnchorPoint_{};
+    int marqueeInitialScrollOffset_ = 0;
     size_t pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     size_t pendingCtrlToggleWidgetIndex_ = static_cast<size_t>(-1);
     Item*  pendingCtrlToggleWidgetItem_ = nullptr;
@@ -1412,6 +1485,26 @@ private:
 
     /** @brief D2D 位图缓存 */
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
+
+    /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
+    ComPtr<ID2D1Bitmap1> shortcutArrowBitmap_;
+    SIZE shortcutArrowBitmapSize_{};
+
+    /** @name 异步图标加载 */
+    /** @{ */
+    std::thread iconLoaderThread_;
+    std::mutex iconLoaderMutex_;
+    std::condition_variable iconLoaderCv_;
+    std::deque<IconLoadTask> iconLoaderQueue_;
+    std::unordered_set<std::wstring> iconLoaderPendingKeys_;
+    std::atomic<bool> iconLoaderRunning_{false};
+    uint64_t iconLoadSerial_ = 0;
+
+    HIMAGELIST systemImageListSmall_ = nullptr;
+    ComPtr<ID2D1Bitmap1> systemIconStripBitmap_;
+    int systemIconStripCount_ = 0;
+    SIZE systemIconStripIconSize_{};
+    /** @} */
 
     /** @name 新建菜单 COM 上下文 */
     /** @{ */
