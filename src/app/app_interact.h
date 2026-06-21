@@ -5972,9 +5972,6 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
     AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
-    SetMenuItemIcon(menu, kTraySettingsCommand, L"");
-    SetMenuItemIcon(menu, kTrayExitCommand, L"");
-
     SetForegroundWindow(controlHwnd_ ? controlHwnd_ : hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, controlHwnd_ ? controlHwnd_ : hwnd_, nullptr);
