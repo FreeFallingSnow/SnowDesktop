@@ -244,6 +244,11 @@ private:
      */
     void DrawAboutPage();
 
+    /**
+     * @brief 执行在线更新检查（调用 GitHub API）
+     */
+    void PerformUpdateCheck();
+
     /** @} */
 
     /** @name 布局备份辅助方法
@@ -359,6 +364,15 @@ private:
 
     /// 版本号点击计数（用于激活调试页面的彩蛋逻辑）
     int versionClickCount_ = 0;
+
+    /// 更新检查状态：空字符串=空闲，"checking"=检查中，其余为结果信息
+    std::string updateCheckStatus_;
+    /// 更新检查返回的最新版本号
+    std::string latestVersion_;
+    /// 更新检查返回的下载页面 URL
+    std::string downloadUrl_;
+    /// 是否有可用更新
+    bool updateAvailable_ = false;
 
     /// 调试页使用的 Font Awesome 字体
     ImFont* faDebugFont_ = nullptr;
