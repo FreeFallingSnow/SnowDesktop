@@ -3682,7 +3682,7 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
 
     if (renameFont_) DeleteObject(renameFont_);
     const float renameScale = GetItemLayoutScale(rect);
-    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -3945,7 +3945,7 @@ inline void DesktopApp::BeginRenameSelected()
 
         if (renameFont_) DeleteObject(renameFont_);
         const float renameScale = GetItemLayoutScale(frame);
-        renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+        renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -4014,7 +4014,7 @@ inline void DesktopApp::BeginRenameSelected()
 
     if (renameFont_) DeleteObject(renameFont_);
     const float renameScale = GetItemLayoutScale(itemBounds);
-    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");

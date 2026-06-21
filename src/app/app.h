@@ -308,6 +308,8 @@ private:
     // ── Graphics ────────────────────────────────────────────
     /** @brief 初始化 Direct2D、Direct3D 和 DirectComposition 图形管线。 @return 成功返回 true */
     bool InitGraphics();
+    /** @brief 重建图标标题文本格式（字号变更时调用）。 */
+    void RecreateItemTextFormat();
     /** @brief 创建或调整 DirectComposition 表面的大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
     HRESULT CreateOrResizeCompositionSurface();
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
@@ -574,6 +576,8 @@ private:
     void SetIconSpacing(float value);
     /** @brief 调整图标间距比例。 @param delta 间距增量 */
     void AdjustIconSpacing(float delta);
+    /** @brief 设置图标标题字号（12/14/16）。 @param value 字号 */
+    void SetItemFontSize(float value);
     /** @brief 应用页面到显示器的映射关系。 */
     void ApplyPageMapping();
     /** @brief 获取最大页面偏移量。 @return 最大偏移页数 */
@@ -907,6 +911,14 @@ private:
      */
     bool ReadJsonBoolField(const std::string& objectText, const char* fieldName, bool& value) const;
     /**
+     * @brief 从 JSON 对象字符串中读取浮点字段。
+     * @param objectText JSON 对象文本
+     * @param fieldName 字段名
+     * @param[out] value 读取的值
+     * @return 成功返回 true
+     */
+    bool ReadJsonFloatField(const std::string& objectText, const char* fieldName, float& value) const;
+    /**
      * @brief 从 JSON 对象字符串中读取字符串数组字段。
      * @param objectText JSON 对象文本
      * @param fieldName 字段名
@@ -1204,6 +1216,7 @@ private:
     std::vector<std::wstring> savedPageIds_;
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
+    float itemFontSize_ = kItemFontSize;
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;
     std::wstring lastMonitorPageId_;

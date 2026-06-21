@@ -256,6 +256,24 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel);
     }
 
+    HMENU fontSizeMenu = CreatePopupMenu();
+    if (fontSizeMenu)
+    {
+        const int currentFontSize = static_cast<int>(std::round(itemFontSize_));
+        auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
+            UINT flags = MF_STRING;
+            if (currentFontSize == size) flags |= MF_CHECKED;
+            AppendMenuW(fontSizeMenu, flags, id, label);
+        };
+        addFontSizeItem(kContextFontSizeSmall, L"小 (12pt)", 12);
+        addFontSizeItem(kContextFontSizeMedium, L"中 (14pt)", 14);
+        addFontSizeItem(kContextFontSizeLarge, L"大 (16pt)", 16);
+        wchar_t fontSizeLabel[32]{};
+        swprintf_s(fontSizeLabel, L"标题字号：%dpt", currentFontSize);
+        AppendMenuW(menu, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel);
+    }
+
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -285,6 +303,10 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(spacingMenu, kContextSpacingIncrease, L"");
         SetMenuItemIcon(spacingMenu, kContextSpacingDecrease, L"");
     }
+    if (fontSizeMenu)
+    {
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
+    }
     SetMenuItemIcon(menu, kContextThisDisplayFirstCommand, L"");
     SetMenuItemIcon(menu, kContextSettingsCommand, L"");
 
@@ -301,6 +323,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (sortMenu) DestroyMenu(sortMenu);
     if (widgetMenu) DestroyMenu(widgetMenu);
     if (spacingMenu) DestroyMenu(spacingMenu);
+    if (fontSizeMenu) DestroyMenu(fontSizeMenu);
     DestroyMenu(menu);
     newMenuContextMenu_.Reset();
     ClearMenuIcons();
@@ -434,6 +457,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         ShowDesktopBackgroundContextMenu(screenPoint);
         break;
     case kContextSettingsCommand: ShowSettingsWindow(); break;
+    case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
+    case kContextFontSizeMedium: SetItemFontSize(14.0f); break;
+    case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
     default: break;
     }
 }
