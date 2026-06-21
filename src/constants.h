@@ -104,6 +104,8 @@ constexpr UINT kContextWidgetSortByDate = 41031;
 constexpr UINT kContextZoomPresetFirst = 41150;
 constexpr UINT kContextNewMenu = 41400;
 constexpr UINT kContextSettingsCommand = 41401;
+constexpr UINT kContextGridAdjustmentMenu = 41402;
+constexpr UINT kContextGridAdjustmentDone = 41403;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;

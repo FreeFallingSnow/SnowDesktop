@@ -515,6 +515,8 @@ private:
     // ── Context menus ───────────────────────────────────────
     /** @brief 显示桌面背景上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowBackgroundContextMenu(POINT screenPoint);
+    /** @brief 连续显示行列调整菜单，直到用户取消。 */
+    void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex);
     /** @brief 显示文件夹条目上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
@@ -1210,6 +1212,9 @@ private:
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
     POINT lastContextMenuScreenPoint_{};
+    POINT gridAdjustmentMenuAnchor_{};
+    HMENU gridAdjustmentParentMenu_ = nullptr;
+    bool gridAdjustmentMenuAnchorValid_ = false;
     /** @} */
 
     /** @name 控制窗口（托盘图标所有权 + 桌面宿主监听） */
