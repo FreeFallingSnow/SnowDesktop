@@ -180,7 +180,7 @@ RECT WidgetContainer::GetBodyRect() const
     RECT frame = GetFrameRect();
     if (data_->type == DesktopWidgetType::Collection && data_->gridSpan.rows <= 1)
         return frame;
-    frame.bottom = std::max<LONG>(frame.top + 24, frame.bottom - 24);
+    frame.bottom = std::max<LONG>(frame.top + 22, frame.bottom - 22);
     return frame;
 }
 

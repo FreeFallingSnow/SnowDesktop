@@ -245,8 +245,9 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (selected && !dragged)
     {
-        app_->DrawD2DFilledRectangle(context,
+        app_->DrawD2DRoundedRectangle(context,
             app_->GetItemSelectionRect(rect, true),
+            6.0f * app_->GetItemLayoutScale(rect),
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),
             D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
