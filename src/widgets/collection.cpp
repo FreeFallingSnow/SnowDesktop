@@ -506,7 +506,7 @@ RECT Collection::GetAllButtonRect() const
 WidgetHit Collection::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
-    if (base == WidgetHit::None || base == WidgetHit::ResizeHandle) return base;
+    if (base == WidgetHit::None || base == WidgetHit::ResizeHandle || base == WidgetHit::MoveHandle) return base;
     if (!data_ || !app_ || data_->type != DesktopWidgetType::Collection) return base;
 
     RECT frame = GetFrameRect();
