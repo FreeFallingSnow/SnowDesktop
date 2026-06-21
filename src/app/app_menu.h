@@ -196,10 +196,23 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     HMENU sortMenu = CreatePopupMenu();
+    HMENU nameSortMenu = nullptr, typeSortMenu = nullptr;
     if (sortMenu)
     {
-        AppendMenuW(sortMenu, MF_STRING, kContextSortByNameCommand, L"名称");
-        AppendMenuW(sortMenu, MF_STRING, kContextSortByTypeCommand, L"类型");
+        nameSortMenu = CreatePopupMenu();
+        if (nameSortMenu)
+        {
+            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameCommand, L"正序");
+            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameDescCommand, L"反序");
+            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(nameSortMenu), L"名称");
+        }
+        typeSortMenu = CreatePopupMenu();
+        if (typeSortMenu)
+        {
+            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeCommand, L"正序");
+            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeDescCommand, L"反序");
+            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(typeSortMenu), L"类型");
+        }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
     }
 
@@ -286,8 +299,18 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (sortMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
-        SetMenuItemIcon(sortMenu, kContextSortByNameCommand, L"");
-        SetMenuItemIcon(sortMenu, kContextSortByTypeCommand, L"");
+        if (nameSortMenu)
+        {
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(nameSortMenu), L"");
+            SetMenuItemIcon(nameSortMenu, kContextSortByNameCommand, L"");
+            SetMenuItemIcon(nameSortMenu, kContextSortByNameDescCommand, L"");
+        }
+        if (typeSortMenu)
+        {
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(typeSortMenu), L"");
+            SetMenuItemIcon(typeSortMenu, kContextSortByTypeCommand, L"");
+            SetMenuItemIcon(typeSortMenu, kContextSortByTypeDescCommand, L"");
+        }
     }
     SetMenuItemIcon(menu, kContextGridAdjustmentMenu, L"");
     if (widgetMenu)
@@ -344,8 +367,10 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     else switch (command)
     {
     case kContextRefreshCommand: ReloadItems(); break;
-    case kContextSortByNameCommand: SortIconsByName(); break;
-    case kContextSortByTypeCommand: SortIconsByType(); break;
+    case kContextSortByNameCommand: SortIconsByName(true); break;
+    case kContextSortByNameDescCommand: SortIconsByName(false); break;
+    case kContextSortByTypeCommand: SortIconsByType(true); break;
+    case kContextSortByTypeDescCommand: SortIconsByType(false); break;
     case kContextGridAdjustmentMenu:
         ShowGridAdjustmentMenu(adjustmentMenuPoint, 0);
         break;

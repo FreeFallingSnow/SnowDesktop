@@ -496,7 +496,7 @@ inline void DesktopApp::RelayoutDisplacedItems()
 /**
  * @brief 按名称对桌面图标排序（在每个页面内）。
  */
-inline void DesktopApp::SortIconsByName()
+inline void DesktopApp::SortIconsByName(bool ascending)
 {
     auto sortForPage = [&](const GridPage& page) {
         std::vector<size_t> order;
@@ -509,8 +509,9 @@ inline void DesktopApp::SortIconsByName()
                 order.push_back(i);
         }
 
-        std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
-            return ToUpperInvariant(items_[a].name) < ToUpperInvariant(items_[b].name);
+        std::sort(order.begin(), order.end(), [this, ascending](size_t a, size_t b) {
+            int cmp = ToUpperInvariant(items_[a].name).compare(ToUpperInvariant(items_[b].name));
+            return ascending ? (cmp < 0) : (cmp > 0);
         });
 
         std::unordered_set<std::wstring> usedSlots;
@@ -551,7 +552,7 @@ inline void DesktopApp::SortIconsByName()
 /**
  * @brief 按类型名称对桌面图标排序，相同类型内按名称排序。
  */
-inline void DesktopApp::SortIconsByType()
+inline void DesktopApp::SortIconsByType(bool ascending)
 {
     auto sortForPage = [&](const GridPage& page) {
         std::vector<size_t> order;
@@ -564,10 +565,11 @@ inline void DesktopApp::SortIconsByType()
                 order.push_back(i);
         }
 
-        std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
+        std::sort(order.begin(), order.end(), [this, ascending](size_t a, size_t b) {
             int cmp = ToUpperInvariant(items_[a].typeName).compare(ToUpperInvariant(items_[b].typeName));
-            if (cmp != 0) return cmp < 0;
-            return ToUpperInvariant(items_[a].name) < ToUpperInvariant(items_[b].name);
+            if (cmp != 0) return ascending ? (cmp < 0) : (cmp > 0);
+            cmp = ToUpperInvariant(items_[a].name).compare(ToUpperInvariant(items_[b].name));
+            return ascending ? (cmp < 0) : (cmp > 0);
         });
 
         std::unordered_set<std::wstring> usedSlots;
@@ -610,7 +612,7 @@ inline void DesktopApp::SortIconsByType()
  * @param widgetIndex 组件索引。
  * @param mode 排序模式：0 按名称，1 按类型，2 按修改时间。
  */
-inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
+inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending)
 {
     if (widgetIndex >= widgets_.size()) return;
     DesktopWidget& w = widgets_[widgetIndex];
@@ -618,7 +620,7 @@ inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
     if (w.type == DesktopWidgetType::FolderMapping)
     {
         std::sort(w.folderEntries.begin(), w.folderEntries.end(),
-            [mode](const FolderEntry& a, const FolderEntry& b) {
+            [mode, ascending](const FolderEntry& a, const FolderEntry& b) {
                 if (a.isDirectory != b.isDirectory) return a.isDirectory;
                 int cmp = 0;
                 if (mode == 0) cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
@@ -636,11 +638,12 @@ inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
                         GetFileAttributesExW(b.fullPath.c_str(), GetFileExInfoStandard, &db))
                     {
                         int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
-                        if (timeCmp != 0) return timeCmp < 0;
+                        if (timeCmp != 0) cmp = timeCmp;
+                        else cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
                     }
-                    cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+                    else cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
                 }
-                return cmp < 0;
+                return ascending ? (cmp < 0) : (cmp > 0);
             });
         w.itemKeys.clear();
         w.itemKeys.reserve(w.folderEntries.size());
@@ -663,7 +666,7 @@ inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
         }
 
         std::sort(keys.begin(), keys.end(),
-            [this, mode](const std::wstring& ka, const std::wstring& kb) {
+            [this, mode, ascending](const std::wstring& ka, const std::wstring& kb) {
                 size_t ia = FindItemIndexByKey(ka);
                 size_t ib = FindItemIndexByKey(kb);
                 if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
@@ -681,11 +684,12 @@ inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
                         GetFileAttributesExW(items_[ib].parsingName.c_str(), GetFileExInfoStandard, &db))
                     {
                         int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
-                        if (timeCmp != 0) return timeCmp < 0;
+                        if (timeCmp != 0) cmp = timeCmp;
+                        else cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
                     }
-                    cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                    else cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
                 }
-                return cmp < 0;
+                return ascending ? (cmp < 0) : (cmp > 0);
             });
 
         w.itemKeys = std::move(keys);
@@ -706,7 +710,7 @@ inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
         }
 
         std::sort(keys.begin(), keys.end(),
-            [this, mode](const std::wstring& ka, const std::wstring& kb) {
+            [this, mode, ascending](const std::wstring& ka, const std::wstring& kb) {
                 size_t ia = FindItemIndexByKey(ka);
                 size_t ib = FindItemIndexByKey(kb);
                 if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
@@ -724,11 +728,12 @@ inline void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode)
                         GetFileAttributesExW(items_[ib].parsingName.c_str(), GetFileExInfoStandard, &db))
                     {
                         int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
-                        if (timeCmp != 0) return timeCmp < 0;
+                        if (timeCmp != 0) cmp = timeCmp;
+                        else cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
                     }
-                    cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
+                    else cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
                 }
-                return cmp < 0;
+                return ascending ? (cmp < 0) : (cmp > 0);
             });
 
         w.itemKeys = std::move(keys);

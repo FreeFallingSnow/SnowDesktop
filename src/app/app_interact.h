@@ -5791,16 +5791,35 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         }
     }
 
+    HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr, wDateMenu = nullptr;
     if (widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
         widget.type == DesktopWidgetType::Collection)
     {
-        HMENU sortMenu = CreatePopupMenu();
+        sortMenu = CreatePopupMenu();
         if (sortMenu)
         {
-            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByName, L"名称");
-            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByType, L"类型");
-            AppendMenuW(sortMenu, MF_STRING, kContextWidgetSortByDate, L"修改日期");
+            wNameMenu = CreatePopupMenu();
+            if (wNameMenu)
+            {
+                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByName, L"正序");
+                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByNameDesc, L"反序");
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wNameMenu), L"名称");
+            }
+            wTypeMenu = CreatePopupMenu();
+            if (wTypeMenu)
+            {
+                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByType, L"正序");
+                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByTypeDesc, L"反序");
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wTypeMenu), L"类型");
+            }
+            wDateMenu = CreatePopupMenu();
+            if (wDateMenu)
+            {
+                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDate, L"正序");
+                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, L"反序");
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), L"修改日期");
+            }
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
         }
     }
@@ -5822,38 +5841,26 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetEdit, L"");
     SetMenuItemIcon(menu, kContextWidgetRename, L"");
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
+    if (sortMenu)
     {
-        MENUITEMINFOW sortMii{ sizeof(sortMii) };
-        sortMii.fMask = MIIM_SUBMENU;
-        for (int i = 0; i < GetMenuItemCount(menu); ++i)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
+        if (wNameMenu)
         {
-            if (GetMenuItemInfoW(menu, i, TRUE, &sortMii) && sortMii.hSubMenu)
-            {
-                wchar_t label[64]{};
-                if (GetMenuStringW(menu, i, label, _countof(label), MF_BYPOSITION) && wcsstr(label, L"排序方式"))
-                {
-                    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMii.hSubMenu), L"");
-                    break;
-                }
-            }
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wNameMenu), L"");
+            SetMenuItemIcon(wNameMenu, kContextWidgetSortByName, L"");
+            SetMenuItemIcon(wNameMenu, kContextWidgetSortByNameDesc, L"");
         }
-    }
-    {
-        MENUITEMINFOW sortMii2{ sizeof(sortMii2) };
-        sortMii2.fMask = MIIM_SUBMENU;
-        for (int i = 0; i < GetMenuItemCount(menu); ++i)
+        if (wTypeMenu)
         {
-            if (GetMenuItemInfoW(menu, i, TRUE, &sortMii2) && sortMii2.hSubMenu)
-            {
-                wchar_t label[64]{};
-                if (GetMenuStringW(menu, i, label, _countof(label), MF_BYPOSITION) && wcsstr(label, L"排序方式"))
-                {
-                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByName, L"");
-                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByType, L"");
-                    SetMenuItemIcon(sortMii2.hSubMenu, kContextWidgetSortByDate, L"");
-                    break;
-                }
-            }
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wTypeMenu), L"");
+            SetMenuItemIcon(wTypeMenu, kContextWidgetSortByType, L"");
+            SetMenuItemIcon(wTypeMenu, kContextWidgetSortByTypeDesc, L"");
+        }
+        if (wDateMenu)
+        {
+            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wDateMenu), L"");
+            SetMenuItemIcon(wDateMenu, kContextWidgetSortByDate, L"");
+            SetMenuItemIcon(wDateMenu, kContextWidgetSortByDateDesc, L"");
         }
     }
 
@@ -5955,13 +5962,22 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         }
         break;
     case kContextWidgetSortByName:
-        SortWidgetContents(widgetIndex, 0);
+        SortWidgetContents(widgetIndex, 0, true);
+        break;
+    case kContextWidgetSortByNameDesc:
+        SortWidgetContents(widgetIndex, 0, false);
         break;
     case kContextWidgetSortByType:
-        SortWidgetContents(widgetIndex, 1);
+        SortWidgetContents(widgetIndex, 1, true);
+        break;
+    case kContextWidgetSortByTypeDesc:
+        SortWidgetContents(widgetIndex, 1, false);
         break;
     case kContextWidgetSortByDate:
-        SortWidgetContents(widgetIndex, 2);
+        SortWidgetContents(widgetIndex, 2, true);
+        break;
+    case kContextWidgetSortByDateDesc:
+        SortWidgetContents(widgetIndex, 2, false);
         break;
     default:
         break;

@@ -523,16 +523,17 @@ private:
      * @return 是否已处理
      */
     bool HandlePageNavClick(POINT point);
-    /** @brief 按名称对桌面图标排序。 */
-    void SortIconsByName();
-    /** @brief 按类型对桌面图标排序。 */
-    void SortIconsByType();
+    /** @brief 按名称对桌面图标排序。 @param ascending 是否升序 */
+    void SortIconsByName(bool ascending = true);
+    /** @brief 按类型对桌面图标排序。 @param ascending 是否升序 */
+    void SortIconsByType(bool ascending = true);
     /**
      * @brief 对指定部件的内容进行排序。
      * @param widgetIndex 部件索引
      * @param mode 排序模式
+     * @param ascending 是否升序
      */
-    void SortWidgetContents(size_t widgetIndex, int mode);
+    void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true);
     /** @brief 更新剪切状态高亮显示。 */
     void UpdateCutState();
 
