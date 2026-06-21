@@ -108,16 +108,7 @@ inline bool DesktopApp::InitGraphics()
     hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
         reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
     if (FAILED(hr)) return false;
-    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, kItemFontSize, L"", &itemTextFormat_);
-    if (itemTextFormat_)
-    {
-        itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-        itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-        itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            kItemLineHeight, kItemBaseline);
-    }
+    RecreateItemTextFormat();
 
     dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &listItemTextFormat_);
@@ -166,6 +157,25 @@ inline bool DesktopApp::InitGraphics()
     }
 
     return true;
+}
+
+inline void DesktopApp::RecreateItemTextFormat()
+{
+    if (!dwriteFactory_) return;
+    itemTextLayoutCache_.clear();
+    float fontSize = itemFontSize_;
+    float lineHeight = fontSize * 7.0f / 6.0f;
+    float baseline = fontSize * 5.0f / 6.0f;
+    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &itemTextFormat_);
+    if (itemTextFormat_)
+    {
+        itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+            lineHeight, baseline);
+    }
 }
 
 inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
@@ -281,7 +291,8 @@ inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
     const float layoutScale = GetItemLayoutScale(bounds);
     const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
     const int topInset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
-    const int textHeight = std::max(1, static_cast<int>(std::round(kTextHeight * layoutScale)));
+    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
+    const int textHeight = std::max(1, static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
     const int cellW = bounds.right - bounds.left;
     const int cellH = bounds.bottom - bounds.top;
     if (cellH < static_cast<int>(std::round(50.0f * layoutScale)))
@@ -313,7 +324,7 @@ inline RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
     const int inset = std::max(1, static_cast<int>(std::round(4.0f * layoutScale)));
     const int textTop = iconRect.bottom +
         std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
-    const float lineHeight = kItemLineHeight * layoutScale;
+    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
     const int textH = expanded
         ? std::max(
             static_cast<int>(std::round(kTextExpandedHeight * layoutScale)),
@@ -437,9 +448,13 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
             itemTextFormat_.Get(), tw, th, &layout)) || !layout)
             return;
         const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
-        layout->SetFontSize(kItemFontSize * layoutScale, fullRange);
+        layout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
         layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            kItemLineHeight * layoutScale, kItemBaseline * layoutScale);
+            itemFontSize_ * 7.0f / 6.0f * layoutScale, itemFontSize_ * 5.0f / 6.0f * layoutScale);
+        DWRITE_TEXT_METRICS metrics{};
+        layout->GetMetrics(&metrics);
+        if (metrics.lineCount == 1)
+            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
     }
 
@@ -461,7 +476,15 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
         getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
 
     const float tx = static_cast<float>(textRect.left);
-    const float ty = static_cast<float>(textRect.top);
+    float ty = static_cast<float>(textRect.top);
+    DWRITE_TEXT_METRICS metrics{};
+    layoutIt->second->GetMetrics(&metrics);
+    if (metrics.lineCount == 1 && selected)
+    {
+        RECT cr = GetItemTextRect(bounds, false);
+        float collapsedH = static_cast<float>(cr.bottom - cr.top);
+        ty = cr.top + (collapsedH - th) * 0.5f;
+    }
     if (shadowBrush)
     {
         const float shadowOffset = std::max(0.5f, layoutScale);

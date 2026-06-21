@@ -157,6 +157,19 @@ inline void DesktopApp::AdjustIconSpacing(float delta)
 }
 
 /**
+ * @brief 设置图标标题字号（12/14/16），重新创建文本格式并刷新。
+ * @param value 新的字号。
+ */
+inline void DesktopApp::SetItemFontSize(float value)
+{
+    if (value == itemFontSize_) return;
+    itemFontSize_ = value;
+    RecreateItemTextFormat();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+/**
  * @brief 获取首个监控器页面在页面列表中的索引。
  * @return 页面索引，默认返回 0。
  */
@@ -965,6 +978,11 @@ inline void DesktopApp::LoadLayoutSlots()
     if (ReadJsonStringField(text, "firstPageMonitor", firstPageMonitorUtf8))
         firstPageMonitorId_ = Utf8ToWide(firstPageMonitorUtf8);
 
+    float loadedFontSize = 0;
+    if (ReadJsonFloatField(text, "itemFontSize", loadedFontSize) &&
+        loadedFontSize >= 10.0f && loadedFontSize <= 24.0f)
+        itemFontSize_ = loadedFontSize;
+
     LoadSavedPagesFromJson(text);
 
     size_t pos = 0;
@@ -1181,7 +1199,7 @@ inline void DesktopApp::SaveLayoutSlots()
     std::ofstream file(GetLayoutPath(), std::ios::binary | std::ios::trunc);
     if (!file) return;
 
-    file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_) << "\",\n  \"pages\": [\n";
+    file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_) << "\",\n  \"itemFontSize\": " << itemFontSize_ << ",\n  \"pages\": [\n";
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
         const GridPage* page = FindGridPage(gridPages_, pagesToWrite[i]);
@@ -1317,6 +1335,25 @@ inline bool DesktopApp::ReadJsonBoolField(const std::string& objectText, const c
     if (objectText.compare(valueStart, 4, "true") == 0) { value = true; return true; }
     if (objectText.compare(valueStart, 5, "false") == 0) { value = false; return true; }
     return false;
+}
+
+/**
+ * @brief 从 JSON 对象文本中读取浮点字段值。
+ * @param objectText JSON 对象文本。
+ * @param fieldName 字段名。
+ * @param value 输出参数，浮点值。
+ * @return 读取成功返回 true。
+ */
+inline bool DesktopApp::ReadJsonFloatField(const std::string& objectText, const char* fieldName, float& value) const
+{
+    std::string marker = std::string("\"") + fieldName + "\"";
+    size_t name = objectText.find(marker);
+    if (name == std::string::npos) return false;
+    size_t colon = objectText.find(':', name + marker.size());
+    size_t numberStart = objectText.find_first_of("-.0123456789", colon == std::string::npos ? name + marker.size() : colon + 1);
+    if (numberStart == std::string::npos) return false;
+    try { value = std::stof(objectText.substr(numberStart)); return true; }
+    catch (...) { return false; }
 }
 
 /**
