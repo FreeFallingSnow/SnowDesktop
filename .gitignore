@@ -10,3 +10,4 @@ build/
 .build_debug/
 release/
 docs/
+SnowDesktop_crash.log
