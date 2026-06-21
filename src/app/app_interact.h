@@ -1056,7 +1056,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             drawBitmap(entry.iconBitmap, offsetRect(iconRect));
 
             drawText(entry.name, offsetRect(textRect), itemFont, RGB(245, 248, 252),
-                DT_CENTER | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+                DT_CENTER | DT_TOP | DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS);
         }
     }
     RestoreDC(memoryDc, -1);
