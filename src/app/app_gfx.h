@@ -194,13 +194,7 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
-            auto L = [](const wchar_t* s) {
-                HANDLE f = CreateFileW(L"SnowDesktop_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-                    OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-                if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, s, static_cast<DWORD>(wcslen(s)*2), &w, nullptr);
-                    WriteFile(f, L"\r\n", 4, &w, nullptr); CloseHandle(f); }
-            };
-            L(buf);
+            WriteCrashLogEntry(buf);
             return hr;
         }
         hr = dcompVisual_->SetContent(surface.Get());
@@ -1577,7 +1571,8 @@ inline void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
         }
     };
 
-    bool dragging = dragSession_.IsActive() && !dragSession_.Items().empty();
+    bool dragging = dragSession_.IsActive() &&
+        (!dragSession_.Items().empty() || externalDragActive_ || selfDragActive_);
     bool hoverPrev = (navHoverSide_ == -1);
     bool hoverNext = (navHoverSide_ == 1);
 

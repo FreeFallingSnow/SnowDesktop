@@ -336,3 +336,5 @@ std::string JsonEscapeUtf8(const std::wstring& value);
  * @return 成功解析返回 true，格式错误返回 false
  */
 bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value, size_t& end);
+
+void WriteCrashLogEntry(const wchar_t* message);

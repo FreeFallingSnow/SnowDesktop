@@ -1421,10 +1421,14 @@ inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
  */
 inline void DesktopApp::RebindDragSourceAfterRebuild()
 {
-    if (!dragSession_.IsActive() || dragSession_.Items().empty()) return;
+    if (!dragSession_.IsActive()) return;
 
     Container* source = nullptr;
     const DragSourceList& oldSourceList = dragSession_.SourceList();
+    // External OLE drags do not have an internal source. Keep the session active
+    // with empty source bindings; the next DragOver will rebuild its target.
+    if (oldSourceList.Empty()) return;
+
     if (oldSourceList.hasOriginWidget)
     {
         for (auto& c : containers_)
@@ -1457,6 +1461,75 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
     }
     DragSourceList reboundList = BuildDragSourceList(reboundItems, source);
     dragSession_.RebindSource(source, std::move(reboundItems), std::move(reboundList));
+}
+
+/**
+ * @brief 更新拖拽翻页按钮的悬停和自动翻页状态
+ * @param clientPoint 当前鼠标客户端坐标
+ * @return 拖拽会话仍可继续时返回 true
+ */
+inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
+{
+    lastMousePoint_ = clientPoint;
+    if (!dragSession_.IsActive())
+    {
+        navHoverSide_ = 0;
+        navAutoFlipDir_ = 0;
+        navAutoFlipTick_ = 0;
+        return false;
+    }
+
+    RECT prevRect, nextRect;
+    GetNavButtonRects(prevRect, nextRect);
+
+    int navSide = 0;
+    const bool hasPrev = pageOffset_ > 0;
+    const bool hasNext = pageOffset_ < MaxPageOffset();
+    if (hasPrev && PtInRect(&prevRect, clientPoint)) navSide = -1;
+    else if (hasNext && PtInRect(&nextRect, clientPoint)) navSide = 1;
+    navHoverSide_ = navSide;
+
+    if (navSide == 0)
+    {
+        navAutoFlipDir_ = 0;
+        navAutoFlipTick_ = 0;
+        return true;
+    }
+
+    const DWORD now = GetTickCount();
+    if (navAutoFlipDir_ != navSide)
+    {
+        navAutoFlipDir_ = navSide;
+        navAutoFlipTick_ = now;
+        return true;
+    }
+    if (now - navAutoFlipTick_ <= 500)
+        return true;
+
+    const int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
+    if (newOffset == pageOffset_)
+        return true;
+
+    const bool hasInternalItems = !dragSession_.Items().empty();
+    pageOffset_ = newOffset;
+    ApplyPageMapping();
+    if (hasInternalItems)
+        MigrateSelectedItemsToLastMonitorPage();
+    LayoutItems();
+
+    navAutoFlipTick_ = now;
+    if (!dragSession_.IsActive() || (hasInternalItems && dragSession_.Items().empty()))
+    {
+        mouseDownHit_ = nullptr;
+        mouseDown_ = false;
+        return false;
+    }
+
+    InvalidateDragStaticScene();
+    if (hasInternalItems)
+        UpdateDragGroupOrigin();
+    SaveLayoutSlots();
+    return true;
 }
 
 /**
@@ -2057,7 +2130,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         }
     }
 
-    if (mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected() && !dragSession_.IsActive())
+    if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected())
     {
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
@@ -2071,6 +2144,9 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
+            // From this point the drag session owns the logical interaction.
+            // Do not retain the original wrapper pointer across object rebuilds.
+            mouseDownHit_ = nullptr;
             pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
             pendingCtrlToggleWidgetItem_ = nullptr;
             marqueeActive_ = false;
@@ -2194,6 +2270,9 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 ReleaseCapture();
                 mouseDown_ = false;
                 mouseDownHit_ = nullptr;
+                navHoverSide_ = 0;
+                navAutoFlipDir_ = 0;
+                navAutoFlipTick_ = 0;
 
                 selfDragActive_ = true;
                 selfDragReturned_ = false;
@@ -2262,46 +2341,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
         }
 
-        {
-            RECT prevRect, nextRect;
-            GetNavButtonRects(prevRect, nextRect);
-            int navSide = 0;
-            const bool hasPrev = pageOffset_ > 0;
-            const bool hasNext = pageOffset_ < MaxPageOffset();
-            if (hasPrev && PtInRect(&prevRect, current)) navSide = -1;
-            else if (hasNext && PtInRect(&nextRect, current)) navSide = 1;
-            navHoverSide_ = navSide;
-
-            if (navSide != 0)
-            {
-                DWORD now = GetTickCount();
-                if (navAutoFlipDir_ != navSide)
-                {
-                    navAutoFlipDir_ = navSide;
-                    navAutoFlipTick_ = now;
-                }
-                else if (now - navAutoFlipTick_ > 500)
-                {
-                    int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
-                    if (newOffset != pageOffset_)
-                    {
-                        pageOffset_ = newOffset;
-                        ApplyPageMapping();
-                        MigrateSelectedItemsToLastMonitorPage();
-                        LayoutItems();
-                        InvalidateDragStaticScene();
-                        UpdateDragGroupOrigin();
-                        SaveLayoutSlots();
-                        navAutoFlipTick_ = now;
-                    }
-                }
-            }
-            else
-            {
-                navAutoFlipDir_ = 0;
-                navAutoFlipTick_ = 0;
-            }
-        }
+        if (!UpdateDragPageNavigation(current))
+            return;
 
         // OO hit testing: iterate all containers in reverse (topmost first)
         Container* targetContainer = nullptr;
@@ -2598,6 +2639,7 @@ cleanup:
     KillTimer(hwnd_, kCollectionPopupDwellTimerId);
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
+    navAutoFlipTick_ = 0;
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
@@ -3183,6 +3225,12 @@ inline bool DesktopApp::HandlePageNavClick(POINT point)
     ApplyPageMapping();
     if (wasDragging) MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
+    if (wasDragging && !dragSession_.IsActive())
+    {
+        mouseDownHit_ = nullptr;
+        mouseDown_ = false;
+    }
+    wasDragging = wasDragging && dragSession_.IsActive();
     if (wasDragging) InvalidateDragStaticScene();
     if (wasDragging) UpdateDragGroupOrigin();
     SaveLayoutSlots();
@@ -4564,6 +4612,12 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
             dragSession_.UpdatePoint(client);
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
+        if (!UpdateDragPageNavigation(client))
+        {
+            *effect = DROPEFFECT_NONE;
+            OnPaint();
+            return S_OK;
+        }
 
         // OO hit-test
         Container* targetContainer = nullptr;
@@ -4604,6 +4658,12 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         dragSession_.Begin(nullptr, {}, {}, client, client);
     else
         dragSession_.UpdatePoint(client);
+    if (!UpdateDragPageNavigation(client))
+    {
+        *effect = DROPEFFECT_NONE;
+        OnPaint();
+        return S_OK;
+    }
 
     // OO hit-test for external drop
     Container* targetContainer = nullptr;
@@ -4673,6 +4733,12 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
             dragSession_.UpdatePoint(client);
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
+        if (!UpdateDragPageNavigation(client))
+        {
+            *effect = DROPEFFECT_NONE;
+            OnPaint();
+            return S_OK;
+        }
 
         // OO hit-test
         Container* targetContainer = nullptr;
@@ -4713,6 +4779,12 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         dragSession_.Begin(nullptr, {}, {}, client, client);
     else
         dragSession_.UpdatePoint(client);
+    if (!UpdateDragPageNavigation(client))
+    {
+        *effect = DROPEFFECT_NONE;
+        OnPaint();
+        return S_OK;
+    }
 
     // OO hit-test for external drop
     Container* targetContainer = nullptr;
@@ -4753,6 +4825,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
  */
 inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
 {
+    navHoverSide_ = 0;
+    navAutoFlipDir_ = 0;
+    navAutoFlipTick_ = 0;
     if (selfDragActive_)
     {
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
@@ -4781,6 +4856,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 {
     if (!effect) return E_POINTER;
     HideDragHintWindow();
+    navHoverSide_ = 0;
+    navAutoFlipDir_ = 0;
+    navAutoFlipTick_ = 0;
 
     POINT clientPoint = ScreenPointToClient(point);
 

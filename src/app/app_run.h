@@ -519,14 +519,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
 
-    auto L = [](const wchar_t* s) {
-        HANDLE f = CreateFileW(L"SnowDesktop_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, s, static_cast<DWORD>(wcslen(s)*2), &w, nullptr);
-            WriteFile(f, L"\r\n", 4, &w, nullptr); CloseHandle(f); }
-    };
-
-    L(L"Run start");
+    WriteCrashLogEntry(L"Run start");
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -534,7 +527,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     InitCommonControlsEx(&icc);
 
     HRESULT hr = OleInitialize(nullptr);
-    L(SUCCEEDED(hr) ? L"OleInit ok" : L"OleInit FAILED");
+    WriteCrashLogEntry(SUCCEEDED(hr) ? L"OleInit ok" : L"OleInit FAILED");
 
     instance_ = instance;
 
@@ -545,13 +538,13 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         wsprintfW(buf, L"Desktop: progman=%p defView=%p listView=%p host=%p",
             desktopWindows_.progman, desktopWindows_.defView,
             desktopWindows_.listView, desktopWindows_.host);
-        L(buf);
+        WriteCrashLogEntry(buf);
     }
     HideExplorerIcons();
     if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
-        L(L"Explorer icon layer hidden");
+        WriteCrashLogEntry(L"Explorer icon layer hidden");
     else
-        L(L"Explorer icon layer not found or already hidden");
+        WriteCrashLogEntry(L"Explorer icon layer not found or already hidden");
 
     // Create desktop overlay window as child of desktop host
     virtualLeft_ = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -603,7 +596,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         parent, nullptr, instance, this);
     if (!hwnd_)
     {
-        L(L"Child failed, fallback popup");
+        WriteCrashLogEntry(L"Child failed, fallback popup");
         hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"SnowDesktop",
             WS_POPUP | WS_VISIBLE, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
             nullptr, nullptr, instance, this);
@@ -618,18 +611,18 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
         }
     }
-    if (!hwnd_) { L(L"CreateWindow FAILED"); return __LINE__; }
+    if (!hwnd_) { WriteCrashLogEntry(L"CreateWindow FAILED"); return __LINE__; }
     SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
-    L(L"Window created");
+    WriteCrashLogEntry(L"Window created");
     {
         wchar_t buf[256];
         wsprintfW(buf, L"Parent=%p origin=(%d,%d) size=%dx%d",
             parent, origin.x, origin.y, virtualWidth_, virtualHeight_);
-        L(buf);
+        WriteCrashLogEntry(buf);
     }
 
-    if (!InitGraphics()) { L(L"InitGraphics FAILED"); return __LINE__; }
-    L(L"InitGraphics ok");
+    if (!InitGraphics()) { WriteCrashLogEntry(L"InitGraphics FAILED"); return __LINE__; }
+    WriteCrashLogEntry(L"InitGraphics ok");
 
     // Create control window for tray icon ownership
     {
@@ -647,38 +640,22 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     // Create DComp target and initial surface
     if (FAILED(dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_)))
-        { L(L"CreateTargetForHwnd FAILED"); return __LINE__; }
+        { WriteCrashLogEntry(L"CreateTargetForHwnd FAILED"); return __LINE__; }
     if (FAILED(dcompDevice_->CreateVisual(&dcompVisual_)))
-        { L(L"CreateVisual FAILED"); return __LINE__; }
+        { WriteCrashLogEntry(L"CreateVisual FAILED"); return __LINE__; }
     dcompTarget_->SetRoot(dcompVisual_.Get());
     if (FAILED(CreateOrResizeCompositionSurface()))
-        { L(L"CreateCompositionSurface FAILED"); return __LINE__; }
-    L(L"Composition target ready");
+        { WriteCrashLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
+    WriteCrashLogEntry(L"Composition target ready");
 
-    LoadDesktopItems();
+    // Use the same placement pipeline as runtime refreshes so a desktop that
+    // already contains more items than the visible grids can create virtual
+    // overflow pages during the initial load.
+    ReloadItems(false);
     StartIconLoader();
-    L(L"LoadDesktopItems ok");
-
-    // Auto-assign grid cells for items without layout
-    {
-        int idx = 0;
-        for (auto& item : items_)
-        {
-            if (item.gridCell.pageId.empty() && !gridPages_.empty())
-            {
-                item.gridCell.pageId = gridPages_.front().id;
-                item.gridCell.column = idx / std::max(1, gridPages_.front().rows);
-                item.gridCell.row    = idx % std::max(1, gridPages_.front().rows);
-                item.gridSpan = {1, 1};
-            }
-            ++idx;
-        }
-    }
-
-    LayoutItems();
-    L(L"Layout done");
-    RebuildContainersAndItems();
-    L(L"RebuildContainersAndItems ok");
+    WriteCrashLogEntry(L"LoadDesktopItems ok");
+    WriteCrashLogEntry(L"Layout done");
+    WriteCrashLogEntry(L"RebuildContainersAndItems ok");
 
     // App icon
     if (HICON appIcon = LoadAppIcon())
@@ -765,7 +742,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     InvalidateRect(hwnd_, nullptr, FALSE);
     UpdateWindow(hwnd_);
-    L(L"Window shown, entering loop");
+    WriteCrashLogEntry(L"Window shown, entering loop");
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0)
@@ -808,15 +785,9 @@ inline LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
     // Log first few messages
     if (msg == WM_NCCREATE || msg == WM_CREATE || msg == WM_SIZE || msg == WM_PAINT || msg == WM_SHOWWINDOW)
     {
-        auto L = [](const wchar_t* s) {
-            HANDLE f = CreateFileW(L"SnowDesktop_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, s, static_cast<DWORD>(wcslen(s)*2), &w, nullptr);
-                WriteFile(f, L"\r\n", 4, &w, nullptr); CloseHandle(f); }
-        };
         wchar_t buf[128];
         wsprintfW(buf, L"WndProc msg=0x%04X app=%p", msg, app);
-        L(buf);
+        WriteCrashLogEntry(buf);
     }
 
     if (app) return app->HandleMessage(hwnd, msg, wp, lp);
@@ -932,11 +903,17 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 1;
     case WM_SIZE:
     {
+        bool wasDragging = dragSession_.IsActive();
         virtualWidth_ = LOWORD(lp);
         virtualHeight_ = HIWORD(lp);
         dcompSurface_.Reset();
         UpdateLayoutWorkArea();
         LayoutItems();
+        if (wasDragging && !dragSession_.IsActive())
+        {
+            mouseDownHit_ = nullptr;
+            mouseDown_ = false;
+        }
         InvalidateRect(hwnd_, nullptr, TRUE);
         return 0;
     }

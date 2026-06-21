@@ -358,6 +358,12 @@ private:
     void EndDragSession();
     /** @brief 在控件重建后重新绑定拖拽源。 */
     void RebindDragSourceAfterRebuild();
+    /**
+     * @brief 更新拖拽期间的翻页按钮悬停状态，并在停留超时后翻页。
+     * @param clientPoint 当前鼠标客户端坐标
+     * @return 拖拽会话仍可继续时返回 true
+     */
+    bool UpdateDragPageNavigation(POINT clientPoint);
 
     // ── Data ────────────────────────────────────────────────
     /** @brief 从 Explorer 加载桌面项数据（IShellFolder 枚举）。 */

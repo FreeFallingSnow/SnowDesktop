@@ -1215,3 +1215,55 @@ bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value
 
     return false;
 }
+
+// ============================================================================
+// 日志写入（自动裁剪至最新 500 条）
+// ============================================================================
+
+void WriteCrashLogEntry(const wchar_t* message)
+{
+    const wchar_t* filename = L"SnowDesktop_crash.log";
+
+    HANDLE f = CreateFileW(filename, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f != INVALID_HANDLE_VALUE)
+    {
+        DWORD w;
+        WriteFile(f, message, static_cast<DWORD>(wcslen(message) * sizeof(wchar_t)), &w, nullptr);
+        WriteFile(f, L"\r\n", 2 * sizeof(wchar_t), &w, nullptr);
+        CloseHandle(f);
+    }
+
+    f = CreateFileW(filename, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+
+    DWORD size = GetFileSize(f, nullptr);
+    if (size == INVALID_FILE_SIZE || size < sizeof(wchar_t)) { CloseHandle(f); return; }
+
+    std::vector<wchar_t> content(size / sizeof(wchar_t) + 1);
+    DWORD read;
+    SetFilePointer(f, 0, nullptr, FILE_BEGIN);
+    if (!ReadFile(f, content.data(), size, &read, nullptr)) { CloseHandle(f); return; }
+    DWORD numChars = read / sizeof(wchar_t);
+
+    int totalLines = 0;
+    for (DWORD i = 0; i < numChars; i++)
+        if (content[i] == L'\n') totalLines++;
+
+    if (totalLines <= 500) { CloseHandle(f); return; }
+
+    int linesToSkip = totalLines - 500;
+    DWORD startIdx = 0;
+    while (startIdx < numChars && linesToSkip > 0)
+    {
+        if (content[startIdx] == L'\n') linesToSkip--;
+        startIdx++;
+    }
+
+    DWORD tailBytes = (numChars - startIdx) * sizeof(wchar_t);
+    SetFilePointer(f, 0, nullptr, FILE_BEGIN);
+    WriteFile(f, content.data() + startIdx, tailBytes, &read, nullptr);
+    SetEndOfFile(f);
+    CloseHandle(f);
+}

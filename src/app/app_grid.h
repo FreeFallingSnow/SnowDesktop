@@ -400,35 +400,81 @@ inline void DesktopApp::RelayoutDisplacedItems()
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     std::unordered_set<std::wstring> usedSlots;
+    // Track newly created virtual pages and their next free slot index
+    std::unordered_map<std::wstring, int> newPageSlots;
+
+    auto tryPlaceOnPage = [&](const std::wstring& pageId, int columns, int rows,
+                               int& nextSlot, GridSpan span, GridCell& found) -> bool {
+        const int capacity = std::max(1, columns * rows);
+        for (int slot = nextSlot; slot < capacity; ++slot)
+        {
+            GridCell candidate;
+            candidate.pageId = pageId;
+            candidate.column = slot / std::max(1, rows);
+            candidate.row    = slot % std::max(1, rows);
+            if (candidate.column + span.columns <= columns &&
+                candidate.row + span.rows <= rows &&
+                !AreGridSlotsMarked(usedSlots, candidate, span))
+            {
+                found = candidate;
+                nextSlot = slot + 1;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Build a quick-lookup set of page IDs currently visible in gridPages_
+    std::unordered_set<std::wstring> visiblePageIds;
+    for (const auto& gp : gridPages_)
+        visiblePageIds.insert(gp.id);
+
     auto findFreeCellOrGrow = [&](GridSpan span, GridCell& result, const std::wstring& preferredPageId) -> bool {
         if (TryFindFreeCell(span, usedSlots, result, preferredPageId))
             return true;
 
-        GridPage* targetPage = nullptr;
-        for (auto& page : gridPages_)
+        // Search all saved pages that aren't currently visible (virtual pages at other offsets)
+        for (const auto& pageId : savedPageIds_)
         {
-            if (page.id == preferredPageId)
-            {
-                targetPage = &page;
-                break;
-            }
-        }
-        if (!targetPage && !gridPages_.empty())
-            targetPage = &gridPages_.front();
-        if (!targetPage)
-            return false;
-
-        constexpr int kMaxRows = 50;
-        while (targetPage->rows < kMaxRows)
-        {
-            ++targetPage->rows;
-            ApplyIconSpacingToPage(*targetPage);
-            savedPageColumns_[targetPage->id] = targetPage->columns;
-            savedPageRows_[targetPage->id] = targetPage->rows;
-            if (TryFindFreeCell(span, usedSlots, result, targetPage->id))
+            if (visiblePageIds.count(pageId)) continue;   // already tried via TryFindFreeCell
+            if (!savedPageColumns_.count(pageId) || !savedPageRows_.count(pageId)) continue;
+            int cols = savedPageColumns_[pageId];
+            int rows = savedPageRows_[pageId];
+            int dummySlot = 0;
+            if (tryPlaceOnPage(pageId, cols, rows, dummySlot, span, result))
                 return true;
         }
-        return false;
+
+        // Try previously-created new pages in this batch before creating another
+        for (auto& [pageId, nextSlot] : newPageSlots)
+        {
+            int cols = savedPageColumns_.count(pageId) ? savedPageColumns_[pageId] : 1;
+            int rows = savedPageRows_.count(pageId) ? savedPageRows_[pageId] : 1;
+            if (tryPlaceOnPage(pageId, cols, rows, nextSlot, span, result))
+                return true;
+        }
+
+        // No space anywhere — create a new virtual page on the last monitor
+        std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+        if (monitorOrder.empty()) return false;
+
+        GridPage& lastPage = gridPages_[monitorOrder.back()];
+
+        int counter = 1;
+        std::wstring newPageId;
+        do {
+            newPageId = L"__extra:" + lastPage.monitorId + L":" + std::to_wstring(counter++);
+        } while (std::find(savedPageIds_.begin(), savedPageIds_.end(), newPageId) != savedPageIds_.end());
+
+        RememberSavedPageId(newPageId);
+        savedPageColumns_[newPageId] = lastPage.columns;
+        savedPageRows_[newPageId]    = lastPage.rows;
+
+        result.pageId = newPageId;
+        result.column = 0;
+        result.row    = 0;
+        newPageSlots[newPageId] = 1; // slot 0 taken
+        return true;
     };
 
     std::vector<size_t> displacedWidgets;
@@ -480,6 +526,25 @@ inline void DesktopApp::RelayoutDisplacedItems()
             {
                 MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
                 continue;
+            }
+        }
+        else if (!item.gridCell.pageId.empty())
+        {
+            // Item is on a saved page not in current gridPages_ (different pageOffset).
+            // Mark its slot so searching those pages won't see it as free.
+            const std::wstring& pid = item.gridCell.pageId;
+            if (savedPageColumns_.count(pid) && savedPageRows_.count(pid))
+            {
+                int cols = savedPageColumns_[pid];
+                int rows = savedPageRows_[pid];
+                if (item.gridCell.column >= 0 && item.gridCell.row >= 0 &&
+                    item.gridCell.column + item.gridSpan.columns <= cols &&
+                    item.gridCell.row + item.gridSpan.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, item.gridCell, item.gridSpan))
+                {
+                    MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+                    continue;
+                }
             }
         }
 
@@ -1619,7 +1684,22 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
         if (page == nullptr)
         {
-            // Item belongs to a page not currently visible — preserve its grid slot
+            // Item belongs to a page not currently visible — mark its slots as used
+            const std::wstring& pid = item.gridCell.pageId;
+            if (!pid.empty() && savedPageColumns_.count(pid) && savedPageRows_.count(pid))
+            {
+                int cols = savedPageColumns_[pid];
+                int rows = savedPageRows_[pid];
+                if (item.gridCell.column >= 0 && item.gridCell.row >= 0 &&
+                    item.gridCell.column + item.gridSpan.columns <= cols &&
+                    item.gridCell.row + item.gridSpan.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, item.gridCell, item.gridSpan) &&
+                    !placedKeys.contains(item.layoutKey))
+                {
+                    MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+                    placedKeys.insert(item.layoutKey);
+                }
+            }
             continue;
         }
 
@@ -1656,6 +1736,13 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         return ToUpperInvariant(a->name) < ToUpperInvariant(b->name);
     });
 
+    // Track newly created virtual pages for overflow items
+    std::unordered_map<std::wstring, int> overflowSlots;
+    // Build quick-lookup of page IDs currently visible in gridPages_
+    std::unordered_set<std::wstring> visiblePageIds2;
+    for (const auto& gp : gridPages_)
+        visiblePageIds2.insert(gp.id);
+
     for (auto* item : unslotted)
     {
         GridCell freeCell;
@@ -1663,13 +1750,94 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         {
             item->gridCell = freeCell;
             MarkGridArea(usedSlots, freeCell, item->gridSpan);
+            continue;
         }
-        else if (!gridPages_.empty())
+
+        // Search all saved pages that aren't currently visible
+        bool placedInSavedPage = false;
+        for (const auto& pageId : savedPageIds_)
         {
-            item->gridCell.pageId = gridPages_.front().id;
+            if (visiblePageIds2.count(pageId)) continue;
+            if (!savedPageColumns_.count(pageId) || !savedPageRows_.count(pageId)) continue;
+            int cols = savedPageColumns_[pageId];
+            int rows = savedPageRows_[pageId];
+            int capacity = std::max(1, cols * rows);
+            for (int slot = 0; slot < capacity; ++slot)
+            {
+                GridCell candidate;
+                candidate.pageId = pageId;
+                candidate.column = slot / std::max(1, rows);
+                candidate.row    = slot % std::max(1, rows);
+                if (candidate.column + item->gridSpan.columns <= cols &&
+                    candidate.row + item->gridSpan.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, candidate, item->gridSpan))
+                {
+                    item->gridCell = candidate;
+                    MarkGridArea(usedSlots, candidate, item->gridSpan);
+                    placedInSavedPage = true;
+                    break;
+                }
+            }
+            if (placedInSavedPage) break;
+        }
+        if (placedInSavedPage) continue;
+
+        // Try previously-created overflow pages
+        bool placedInNewPage = false;
+        for (auto& [pageId, nextSlot] : overflowSlots)
+        {
+            int cols = savedPageColumns_.count(pageId) ? savedPageColumns_[pageId] : 1;
+            int rows = savedPageRows_.count(pageId) ? savedPageRows_[pageId] : 1;
+            int capacity = std::max(1, cols * rows);
+            for (int slot = nextSlot; slot < capacity; ++slot)
+            {
+                GridCell candidate;
+                candidate.pageId = pageId;
+                candidate.column = slot / std::max(1, rows);
+                candidate.row    = slot % std::max(1, rows);
+                if (candidate.column + item->gridSpan.columns <= cols &&
+                    candidate.row + item->gridSpan.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, candidate, item->gridSpan))
+                {
+                    item->gridCell = candidate;
+                    MarkGridArea(usedSlots, candidate, item->gridSpan);
+                    nextSlot = slot + 1;
+                    placedInNewPage = true;
+                    break;
+                }
+            }
+            if (placedInNewPage) break;
+        }
+        if (placedInNewPage) continue;
+
+        // No space anywhere — create a new virtual page on the last monitor
+        if (!gridPages_.empty())
+        {
+            std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+            GridPage& lastPage = gridPages_[monitorOrder.back()];
+
+            int counter = 1;
+            std::wstring newPageId;
+            do {
+                newPageId = L"__extra:" + lastPage.monitorId + L":" + std::to_wstring(counter++);
+            } while (std::find(savedPageIds_.begin(), savedPageIds_.end(), newPageId) != savedPageIds_.end());
+
+            RememberSavedPageId(newPageId);
+            savedPageColumns_[newPageId] = lastPage.columns;
+            savedPageRows_[newPageId]    = lastPage.rows;
+
+            item->gridCell.pageId = newPageId;
+            item->gridCell.column = 0;
+            item->gridCell.row    = 0;
+            MarkGridArea(usedSlots, item->gridCell, item->gridSpan);
+            overflowSlots[newPageId] = 1;
         }
     }
 
+    // Loading new files may add virtual overflow pages, while deleting files
+    // may remove the last usable offset. Refresh the runtime page mapping in
+    // this same reload pass instead of waiting for the next manual refresh.
+    ApplyPageMapping();
     LayoutItems();
     ApplyPendingPlacement();
     UpdateCutState();
@@ -1832,12 +2000,6 @@ inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
 inline void DesktopApp::LoadDesktopItems()
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
-    auto L = [](const wchar_t* s) {
-        HANDLE f = CreateFileW(L"SnowDesktop_crash.log", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, s, static_cast<DWORD>(wcslen(s)*2), &w, nullptr);
-            WriteFile(f, L"\r\n", 4, &w, nullptr); CloseHandle(f); }
-    };
 
     struct OldIcon {
         HBITMAP bitmap = nullptr;
@@ -1862,17 +2024,17 @@ inline void DesktopApp::LoadDesktopItems()
 items_.clear();
     itemIndexByKeyCache_.clear();
     itemTextLayoutCache_.clear();
-    L(L"LoadItems start");
+    WriteCrashLogEntry(L"LoadItems start");
 
     HRESULT hr = SHGetDesktopFolder(&desktopFolder_);
-    if (FAILED(hr) || !desktopFolder_) { L(L"SHGetDesktopFolder FAILED"); return; }
-    L(L"DesktopFolder ok");
+    if (FAILED(hr) || !desktopFolder_) { WriteCrashLogEntry(L"SHGetDesktopFolder FAILED"); return; }
+    WriteCrashLogEntry(L"DesktopFolder ok");
 
     LPITEMIDLIST raw = nullptr;
     hr = SHGetSpecialFolderLocation(nullptr, CSIDL_DESKTOP, &raw);
-    if (FAILED(hr) || !raw) { L(L"SHGetSpecialFolderLocation FAILED"); return; }
+    if (FAILED(hr) || !raw) { WriteCrashLogEntry(L"SHGetSpecialFolderLocation FAILED"); return; }
     desktopPidl_.reset(raw);
-    L(L"DesktopPidl ok");
+    WriteCrashLogEntry(L"DesktopPidl ok");
 
     wchar_t userDesktopPath[MAX_PATH]{};
     wchar_t commonDesktopPath[MAX_PATH]{};
@@ -1885,8 +2047,8 @@ items_.clear();
 
     ComPtr<IEnumIDList> enumerator;
     hr = desktopFolder_->EnumObjects(hwnd_, SHCONTF_FOLDERS | SHCONTF_NONFOLDERS, &enumerator);
-    if (FAILED(hr) || !enumerator) { L(L"EnumObjects FAILED"); return; }
-    L(L"EnumObjects ok");
+    if (FAILED(hr) || !enumerator) { WriteCrashLogEntry(L"EnumObjects FAILED"); return; }
+    WriteCrashLogEntry(L"EnumObjects ok");
 
     PITEMID_CHILD child = nullptr;
     ULONG fetched = 0;
@@ -2029,7 +2191,7 @@ auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
     }
 
     wsprintfW(buf, L"Loaded %d items", count);
-    L(buf);
+    WriteCrashLogEntry(buf);
     RefreshDesktopItemIndexCache();
 }
 
@@ -3079,7 +3241,13 @@ inline DropPreviewList DesktopApp::BuildExternalDesktopPreviewList(GridCell targ
 inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     const DropPreviewList& preview)
 {
-    if (sourceList.Empty() || preview.Empty()) return false;
+    if (sourceList.Empty()) return false;
+    // A completely full desktop produces no visible landing preview. File
+    // drops must still be materialized; ReloadItems will allocate virtual
+    // overflow pages for the newly created desktop entries.
+    if (preview.Empty() &&
+        !(preview.fileBacked && preview.targetKind == DropTargetKind::Desktop))
+        return false;
     if (preview.targetKind == DropTargetKind::Desktop &&
         preview.action == DropAction::Move &&
         IsAutoCollectFileCategorySource(sourceList))
@@ -3909,6 +4077,17 @@ inline void DesktopApp::LayoutItems()
  */
 inline void DesktopApp::RebuildContainersAndItems()
 {
+    const bool wasDragging = dragSession_.IsActive();
+    if (wasDragging)
+        dragSession_.DetachRuntimeBindings();
+
+    // All of these point into the runtime object tree that is about to be
+    // destroyed. Clear them before releasing containers and item wrappers.
+    mouseDownHit_ = nullptr;
+    pendingCtrlToggleWidgetItem_ = nullptr;
+    popupDragTargetSlot_.reset();
+    popupMouseDownItem_.reset();
+
     containers_.clear();
     items_oo_.clear();
 
@@ -3946,6 +4125,13 @@ inline void DesktopApp::RebuildContainersAndItems()
         }
     }
     RebindDragSourceAfterRebuild();
+    if (wasDragging && !dragSession_.IsActive())
+    {
+        mouseDown_ = false;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        HideDragHintWindow();
+        ReleaseCapture();
+    }
     InvalidateDragStaticScene();
 }
 
@@ -4499,9 +4685,6 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
     if (isMove)
     {
         // For move: displaced items go to the widget's old position area
-        // Free the old area in usedSlots so items can be placed there
-        // (it's already excluded since we skipped widgetIndex)
-        // Sort displaced by grid order
         auto byGrid = [this](size_t a, size_t b) {
             if (items_[a].gridCell.pageId != items_[b].gridCell.pageId)
                 return items_[a].gridCell.pageId < items_[b].gridCell.pageId;
@@ -4511,11 +4694,14 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
         };
         std::sort(displaced.begin(), displaced.end(), byGrid);
 
-        // Apply widget placement
         widgets_[widgetIndex].gridCell = targetCell;
         widgets_[widgetIndex].gridSpan = targetSpan;
 
-        // Place displaced items into the old widget area first, then elsewhere
+        // Quick-lookup of visible page IDs
+        std::unordered_set<std::wstring> visiblePageIds;
+        for (const auto& gp : gridPages_)
+            visiblePageIds.insert(gp.id);
+
         int oldAreaSlot = SlotFromCell(gridPages_, oldCell);
         for (size_t idx : displaced)
         {
@@ -4532,12 +4718,42 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
                 items_[idx].slot = SlotFromCell(gridPages_, freeCell);
                 MarkGridArea(usedSlots, freeCell, items_[idx].gridSpan);
             }
+            else
+            {
+                // No visible cell — search all saved pages at other offsets
+                bool foundAny = false;
+                for (const auto& pageId : savedPageIds_)
+                {
+                    if (visiblePageIds.count(pageId)) continue;
+                    if (!savedPageColumns_.count(pageId) || !savedPageRows_.count(pageId)) continue;
+                    int cols = savedPageColumns_[pageId];
+                    int rows = savedPageRows_[pageId];
+                    int capacity = std::max(1, cols * rows);
+                    for (int slot = 0; slot < capacity; ++slot)
+                    {
+                        GridCell candidate;
+                        candidate.pageId = pageId;
+                        candidate.column = slot / std::max(1, rows);
+                        candidate.row    = slot % std::max(1, rows);
+                        if (candidate.column + items_[idx].gridSpan.columns <= cols &&
+                            candidate.row + items_[idx].gridSpan.rows <= rows &&
+                            !AreGridSlotsMarked(usedSlots, candidate, items_[idx].gridSpan))
+                        {
+                            items_[idx].gridCell = candidate;
+                            items_[idx].slot = SlotFromCell(gridPages_, candidate);
+                            MarkGridArea(usedSlots, candidate, items_[idx].gridSpan);
+                            foundAny = true;
+                            break;
+                        }
+                    }
+                    if (foundAny) break;
+                }
+            }
         }
     }
     else
     {
-        // For resize: push displaced items to new free cells (original behavior)
-        // Sort displaced by grid order for deterministic placement
+        // For resize: push displaced items to new free cells
         auto byGrid = [this](size_t a, size_t b) {
             if (items_[a].gridCell.pageId != items_[b].gridCell.pageId)
                 return items_[a].gridCell.pageId < items_[b].gridCell.pageId;
@@ -4547,11 +4763,14 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
         };
         std::sort(displaced.begin(), displaced.end(), byGrid);
 
-        // Apply widget placement
         widgets_[widgetIndex].gridCell = targetCell;
         widgets_[widgetIndex].gridSpan = targetSpan;
 
-        // Re-home displaced items starting after target
+        // Quick-lookup of visible page IDs
+        std::unordered_set<std::wstring> visiblePageIds;
+        for (const auto& gp : gridPages_)
+            visiblePageIds.insert(gp.id);
+
         int searchStart = SlotFromCell(gridPages_, targetCell) + std::max(1, targetSpan.rows);
         for (size_t idx : displaced)
         {
@@ -4561,6 +4780,37 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
                 items_[idx].gridCell = freeCell;
                 items_[idx].slot = SlotFromCell(gridPages_, freeCell);
                 MarkGridArea(usedSlots, freeCell, items_[idx].gridSpan);
+            }
+            else
+            {
+                // No visible cell — search all saved pages at other offsets
+                bool foundAny = false;
+                for (const auto& pageId : savedPageIds_)
+                {
+                    if (visiblePageIds.count(pageId)) continue;
+                    if (!savedPageColumns_.count(pageId) || !savedPageRows_.count(pageId)) continue;
+                    int cols = savedPageColumns_[pageId];
+                    int rows = savedPageRows_[pageId];
+                    int capacity = std::max(1, cols * rows);
+                    for (int slot = 0; slot < capacity; ++slot)
+                    {
+                        GridCell candidate;
+                        candidate.pageId = pageId;
+                        candidate.column = slot / std::max(1, rows);
+                        candidate.row    = slot % std::max(1, rows);
+                        if (candidate.column + items_[idx].gridSpan.columns <= cols &&
+                            candidate.row + items_[idx].gridSpan.rows <= rows &&
+                            !AreGridSlotsMarked(usedSlots, candidate, items_[idx].gridSpan))
+                        {
+                            items_[idx].gridCell = candidate;
+                            items_[idx].slot = SlotFromCell(gridPages_, candidate);
+                            MarkGridArea(usedSlots, candidate, items_[idx].gridSpan);
+                            foundAny = true;
+                            break;
+                        }
+                    }
+                    if (foundAny) break;
+                }
             }
         }
     }
