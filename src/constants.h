@@ -112,6 +112,7 @@ constexpr UINT kContextFontSizeLarge = 41406;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
+constexpr UINT kIconLoadedMessage = WM_APP + 3;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 

@@ -885,8 +885,11 @@ inline void DesktopApp::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSi
         return;
     HDC hdc = CreateCompatibleDC(nullptr);
     HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(hdc, bitmap));
-    const int arrowSz = 30;
-    DrawIconEx(hdc, 5, bitmapSize.cy - arrowSz, sii.hIcon, arrowSz, arrowSz, 0, nullptr, DI_NORMAL);
+    int arrowSz = static_cast<int>(bitmapSize.cy * 30.0 / 64.0 + 0.5);
+    if (arrowSz < 10) arrowSz = 10;
+    int arrowX = static_cast<int>(bitmapSize.cx * 5.0 / 64.0 + 0.5);
+    int arrowY = bitmapSize.cy - arrowSz;
+    DrawIconEx(hdc, arrowX, arrowY, sii.hIcon, arrowSz, arrowSz, 0, nullptr, DI_NORMAL);
     SelectObject(hdc, oldBmp);
     DeleteDC(hdc);
     DestroyIcon(sii.hIcon);
@@ -962,6 +965,34 @@ inline void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
 inline void DesktopApp::LoadLayoutSlots()
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
+    struct PreservedFolderEntries
+    {
+        std::wstring sourceFolderPath;
+        std::vector<FolderEntry> entries;
+    };
+    std::unordered_map<std::wstring, PreservedFolderEntries> preservedFolderEntries;
+    for (auto& widget : widgets_)
+    {
+        if (widget.type != DesktopWidgetType::FolderMapping || widget.id.empty())
+            continue;
+        PreservedFolderEntries preserved;
+        preserved.sourceFolderPath = widget.sourceFolderPath;
+        preserved.entries = std::move(widget.folderEntries);
+        preservedFolderEntries.emplace(ToUpperInvariant(widget.id), std::move(preserved));
+    }
+    auto releasePreservedEntries = [this, &preservedFolderEntries]()
+    {
+        for (auto& [id, preserved] : preservedFolderEntries)
+        {
+            for (auto& entry : preserved.entries)
+            {
+                if (entry.iconBitmap)
+                    d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(entry.iconBitmap));
+            }
+        }
+        preservedFolderEntries.clear();
+    };
+
     layoutRecords_.clear();
     widgets_.clear();
     savedPageIds_.clear();
@@ -969,7 +1000,11 @@ inline void DesktopApp::LoadLayoutSlots()
     savedPageRows_.clear();
 
     std::ifstream file(GetLayoutPath(), std::ios::binary);
-    if (!file) return;
+    if (!file)
+    {
+        releasePreservedEntries();
+        return;
+    }
     std::stringstream buf;
     buf << file.rdbuf();
     std::string text = buf.str();
@@ -1119,6 +1154,16 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         if (widgets_.back().type == DesktopWidgetType::FolderMapping &&
                             !widgets_.back().sourceFolderPath.empty())
                         {
+                            auto preservedIt = preservedFolderEntries.find(
+                                ToUpperInvariant(widgets_.back().id));
+                            if (preservedIt != preservedFolderEntries.end() &&
+                                _wcsicmp(preservedIt->second.sourceFolderPath.c_str(),
+                                    widgets_.back().sourceFolderPath.c_str()) == 0)
+                            {
+                                widgets_.back().folderEntries =
+                                    std::move(preservedIt->second.entries);
+                                preservedFolderEntries.erase(preservedIt);
+                            }
                             EnumerateFolderMappingEntries(widgets_.back());
                         }
                         wp = objectEnd + 1;
@@ -1153,6 +1198,7 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
         navTabOrder_ = std::move(savedOrder);
     }
     EnsureNavTabOrder();
+    releasePreservedEntries();
 }
 
 /**
@@ -1521,33 +1567,6 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// ── 位图缓存 ────────────────────────────────────────────
-
-/**
- * @brief 将半透明暗色像素（alpha < 250 且 RGB 和 < 150）的 alpha 钳制为 0。
- * @param bitmap 32 位 DIB 位图句柄。
- * @param key 颜色键（未使用，保留参数）。
- */
-inline void ClampAlphaToColorKey(HBITMAP bitmap, COLORREF key)
-{
-    if (!bitmap) return;
-    BITMAP bm{};
-    if (GetObjectW(bitmap, sizeof(bm), &bm) == 0 || bm.bmBitsPixel != 32 || !bm.bmBits) return;
-    int w = bm.bmWidth, absH = std::abs(bm.bmHeight);
-    auto* pixels = static_cast<std::uint32_t*>(bm.bmBits);
-    size_t count = static_cast<size_t>(w) * static_cast<size_t>(absH);
-    for (size_t i = 0; i < count; ++i)
-    {
-        uint8_t a = (pixels[i] >> 24) & 0xff;
-        uint8_t r = (pixels[i] >> 16) & 0xff;
-        uint8_t g = (pixels[i] >> 8)  & 0xff;
-        uint8_t b = pixels[i] & 0xff;
-        if (a < 250 && (int(r) + int(g) + int(b)) < 150)
-            pixels[i] = 0;
-    }
-    (void)key;
-}
-
 /**
  * @brief 重新加载桌面项，可选择是否重新从磁盘读取布局。
  * @param reloadLayoutFromDisk 是否重新加载布局文件。
@@ -1557,6 +1576,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     if (reloading_) return;
     reloading_ = true;
+    BeginIconLoadGeneration();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     if (reloadLayoutFromDisk)
     {
@@ -1564,6 +1584,14 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         ApplyPageMapping();
         if (widgetEngine_)
             widgetEngine_->ReloadStorage();
+    }
+    else
+    {
+        for (auto& widget : widgets_)
+        {
+            if (widget.type == DesktopWidgetType::FolderMapping)
+                EnumerateFolderMappingEntries(widget);
+        }
     }
     LoadDesktopItems();
     RefreshCollectedKeysCache();
@@ -1666,6 +1694,131 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+inline void DesktopApp::EnqueueIconLoad(IconLoadTask task)
+{
+    if (task.requestKey.empty())
+    {
+        const std::wstring& identity = task.isDesktopItem ? task.layoutKey : task.folderPath;
+        task.requestKey = std::to_wstring(task.serial) + L"\n" +
+            (task.isDesktopItem ? L"D\n" : L"F\n") + task.widgetId + L"\n" +
+            ToUpperInvariant(identity) + L"\n" +
+            (task.phase == IconLoadPhase::Phase1 ? L"1" : L"2");
+    }
+    {
+        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+        if (!iconLoaderPendingKeys_.insert(task.requestKey).second)
+            return;
+        iconLoaderQueue_.push_back(std::move(task));
+    }
+    iconLoaderCv_.notify_one();
+}
+
+inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
+{
+    auto* result = reinterpret_cast<IconLoadResult*>(lParam);
+    if (!result) return;
+
+    std::unique_ptr<IconLoadResult> resultGuard(result);
+    {
+        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+        iconLoaderPendingKeys_.erase(result->requestKey);
+    }
+    if (result->serial != iconLoadSerial_)
+    {
+        if (result->bitmap) DeleteObject(result->bitmap);
+        result->bitmap = nullptr;
+        return;
+    }
+    bool matched = false;
+
+    if (result->isDesktopItem)
+    {
+        for (auto& item : items_)
+        {
+            if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey))
+            {
+                if (result->bitmap)
+                {
+                    if (item.iconBitmap) { d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(item.iconBitmap)); DeleteObject(item.iconBitmap); }
+                    item.iconBitmap = result->bitmap;
+                    item.iconBitmapSize = result->bitmapSize;
+                    result->bitmap = nullptr;
+                }
+                matched = true;
+                if (result->phase == IconLoadPhase::Phase1)
+                {
+                    item.iconState = IconState::IconReady;
+                    item.shortcutArrow = result->shortcutArrow;
+                    IconLoadTask phase2;
+                    phase2.serial = result->serial;
+                    phase2.layoutKey = item.layoutKey;
+                    phase2.absolutePidl.reset(ILClone(item.absolutePidl.get()));
+                    phase2.sysIconIndex = item.sysIconIndex;
+                    phase2.parsingName = item.parsingName;
+                    phase2.isDesktopItem = true;
+                    phase2.phase = IconLoadPhase::Phase2;
+                    EnqueueIconLoad(std::move(phase2));
+                }
+                else
+                {
+                    item.iconState = IconState::FullQuality;
+                }
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                break;
+            }
+        }
+    }
+    else
+    {
+        for (auto& widget : widgets_)
+        {
+            if (widget.id != result->widgetId || widget.sourceFolderPath.empty()) continue;
+            for (auto& entry : widget.folderEntries)
+            {
+                if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath))
+                {
+                    if (result->bitmap)
+                    {
+                        if (entry.iconBitmap) { d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(entry.iconBitmap)); DeleteObject(entry.iconBitmap); }
+                        entry.iconBitmap = result->bitmap;
+                        entry.iconBitmapSize = result->bitmapSize;
+                        result->bitmap = nullptr;
+                    }
+                    matched = true;
+                    if (result->phase == IconLoadPhase::Phase1)
+                    {
+                        entry.iconState = IconState::IconReady;
+                        entry.shortcutArrow = result->shortcutArrow;
+                        IconLoadTask phase2;
+                        phase2.serial = result->serial;
+                        phase2.widgetId = widget.id;
+                        phase2.folderPath = entry.fullPath;
+                        phase2.sysIconIndex = entry.sysIconIndex;
+                        phase2.isDesktopItem = false;
+                        phase2.phase = IconLoadPhase::Phase2;
+                        PIDLIST_ABSOLUTE pidl = nullptr;
+                        if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
+                        {
+                            phase2.absolutePidl.reset(pidl);
+                            EnqueueIconLoad(std::move(phase2));
+                        }
+                    }
+                    else
+                    {
+                        entry.iconState = IconState::FullQuality;
+                    }
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+    if (!matched && result->bitmap)
+        DeleteObject(result->bitmap);
+}
+
 /**
  * @brief 枚举桌面文件夹中的所有项，构建 DesktopItem 列表，包含图标、布局键和网格位置。
  *
@@ -1681,9 +1834,28 @@ inline void DesktopApp::LoadDesktopItems()
             WriteFile(f, L"\r\n", 4, &w, nullptr); CloseHandle(f); }
     };
 
-    items_.clear();
+    struct OldIcon {
+        HBITMAP bitmap = nullptr;
+        SIZE size{};
+        int sysIconIndex = -1;
+        bool shortcutArrow = false;
+        IconState iconState = IconState::Loading;
+    };
+    std::unordered_map<std::wstring, OldIcon> oldIconCache;
+    for (auto& item : items_) {
+        if (!item.layoutKey.empty() && item.iconBitmap) {
+            OldIcon old;
+            old.bitmap = item.iconBitmap;
+            old.size = item.iconBitmapSize;
+            old.sysIconIndex = item.sysIconIndex;
+            old.shortcutArrow = item.shortcutArrow;
+            old.iconState = item.iconState;
+            oldIconCache.emplace(ToUpperInvariant(item.layoutKey), std::move(old));
+            item.iconBitmap = nullptr;
+        }
+    }
+items_.clear();
     itemIndexByKeyCache_.clear();
-    d2dIconCache_.clear();
     itemTextLayoutCache_.clear();
     L(L"LoadItems start");
 
@@ -1777,46 +1949,49 @@ inline void DesktopApp::LoadDesktopItems()
             : StrRetToString(desktopFolder_.Get(), reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()), SHGDN_NORMAL);
         item.typeName = info.szTypeName;
         item.sysIconIndex = info.iIcon;
-        item.iconBitmap = GetHighResolutionShellIconBitmap(item.absolutePidl.get(), info.iIcon, item.iconBitmapSize);
-        ClampAlphaToColorKey(item.iconBitmap, kTransparentKey);
-
-        // .lnk shortcut arrow detection
-        item.shortcutArrow = false;
-        {
-            std::wstring upper = item.parsingName;
-            for (auto& c : upper) c = static_cast<wchar_t>(towupper(c));
-            if (upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0)
-            {
-                wchar_t lnkPath[MAX_PATH]{};
-                if (SHGetPathFromIDListW(item.absolutePidl.get(), lnkPath))
-                {
-                    ComPtr<IShellLinkW> shellLink;
-                    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                        IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
-                    {
-                        ComPtr<IPersistFile> persistFile;
-                        if (SUCCEEDED(shellLink.As(&persistFile)) &&
-                            SUCCEEDED(persistFile->Load(lnkPath, STGM_READ)))
-                        {
-                            wchar_t target[MAX_PATH]{};
-                            if (SUCCEEDED(shellLink->GetPath(target, MAX_PATH, nullptr, 0)))
-                            {
-                                std::wstring t(target);
-                                for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
-                                if (t.size() < 4 || t.compare(t.size() - 4, 4, L".EXE") != 0)
-                                    item.shortcutArrow = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (item.shortcutArrow && item.iconBitmap)
-        {
-            ApplyShortcutArrowToBitmap(item.iconBitmap, item.iconBitmapSize);
-        }
-
         item.layoutKey = GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid);
+
+auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
+        if (oldIt != oldIconCache.end() && oldIt->second.sysIconIndex == item.sysIconIndex) {
+            item.iconBitmap = oldIt->second.bitmap;
+            item.iconBitmapSize = oldIt->second.size;
+            item.shortcutArrow = oldIt->second.shortcutArrow;
+            item.iconState = oldIt->second.iconState;
+            oldIt->second.bitmap = nullptr;
+            oldIconCache.erase(oldIt);
+            if (item.iconState == IconState::IconReady)
+            {
+                IconLoadTask phase2;
+                phase2.serial = iconLoadSerial_;
+                phase2.layoutKey = item.layoutKey;
+                phase2.absolutePidl.reset(ILClone(item.absolutePidl.get()));
+                phase2.sysIconIndex = item.sysIconIndex;
+                phase2.parsingName = item.parsingName;
+                phase2.isDesktopItem = true;
+                phase2.phase = IconLoadPhase::Phase2;
+                EnqueueIconLoad(std::move(phase2));
+            }
+        } else {
+            if (oldIt != oldIconCache.end()) {
+                if (oldIt->second.bitmap) {
+                    d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(oldIt->second.bitmap));
+                    DeleteObject(oldIt->second.bitmap);
+                }
+                oldIconCache.erase(oldIt);
+            }
+            item.iconBitmap = nullptr;
+            item.iconState = IconState::Loading;
+
+            IconLoadTask task;
+            task.serial = iconLoadSerial_;
+            task.layoutKey = item.layoutKey;
+            task.absolutePidl.reset(ILClone(item.absolutePidl.get()));
+            task.sysIconIndex = item.sysIconIndex;
+            task.parsingName = item.parsingName;
+            task.isDesktopItem = true;
+            task.phase = IconLoadPhase::Phase1;
+            EnqueueIconLoad(std::move(task));
+        }
 
         if (seenKeys.contains(item.layoutKey))
         { ILFree(absolute); ILFree(child); continue; }
@@ -1840,6 +2015,13 @@ inline void DesktopApp::LoadDesktopItems()
         ++count;
     }
     // child PIDL ownership transferred to last DesktopItem — do NOT ILFree
+
+    for (auto& [key, old] : oldIconCache) {
+        if (old.bitmap) {
+            d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(old.bitmap));
+            DeleteObject(old.bitmap);
+        }
+    }
 
     wsprintfW(buf, L"Loaded %d items", count);
     L(buf);
@@ -3768,14 +3950,53 @@ inline void DesktopApp::RebuildContainersAndItems()
  */
 inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
 {
-    for (auto& entry : widget.folderEntries)
-        if (entry.iconBitmap) DeleteObject(entry.iconBitmap);
+    struct OldFolderIcon {
+        HBITMAP bitmap = nullptr;
+        SIZE size{};
+        int sysIconIndex = -1;
+        bool shortcutArrow = false;
+        IconState iconState = IconState::Loading;
+    };
+    std::unordered_map<std::wstring, OldFolderIcon> oldFolderIconCache;
+
+    // Preserve the current entry state and bitmap across directory enumeration.
+    for (auto& entry : widget.folderEntries) {
+        if (!entry.fullPath.empty()) {
+            OldFolderIcon old;
+            old.bitmap = entry.iconBitmap;
+            old.size = entry.iconBitmapSize;
+            old.sysIconIndex = entry.sysIconIndex;
+            old.shortcutArrow = entry.shortcutArrow;
+            old.iconState = entry.iconState;
+            oldFolderIconCache.emplace(ToUpperInvariant(entry.fullPath), std::move(old));
+            entry.iconBitmap = nullptr;
+        } else if (entry.iconBitmap) {
+            DeleteObject(entry.iconBitmap);
+        }
+    }
+
     widget.folderEntries.clear();
-    if (widget.sourceFolderPath.empty()) return;
+    if (widget.sourceFolderPath.empty()) {
+        for (auto& [key, old] : oldFolderIconCache) {
+            if (old.bitmap) {
+                d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(old.bitmap));
+                DeleteObject(old.bitmap);
+            }
+        }
+        return;
+    }
     std::wstring search = widget.sourceFolderPath + L"\\*";
     WIN32_FIND_DATAW fd{};
     HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE) return;
+    if (hFind == INVALID_HANDLE_VALUE) {
+        for (auto& [key, old] : oldFolderIconCache) {
+            if (old.bitmap) {
+                d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(old.bitmap));
+                DeleteObject(old.bitmap);
+            }
+        }
+        return;
+    }
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
         FolderEntry entry;
@@ -3786,22 +4007,83 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
         SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info), SHGFI_SYSICONINDEX);
         entry.sysIconIndex = info.iIcon;
 
-        PIDLIST_ABSOLUTE pidl = nullptr;
-        if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
-        {
-            entry.iconBitmap = GetHighResolutionShellIconBitmap(pidl, info.iIcon, entry.iconBitmapSize);
-            ILFree(pidl);
-        }
-        if (entry.iconBitmap)
-        {
-            ClampAlphaToColorKey(entry.iconBitmap, kTransparentKey);
-            std::wstring upper = ToUpperInvariant(entry.name);
-            if (upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0)
-                ApplyShortcutArrowToBitmap(entry.iconBitmap, entry.iconBitmapSize);
+        auto oldIt = oldFolderIconCache.find(ToUpperInvariant(entry.fullPath));
+        if (oldIt != oldFolderIconCache.end() && oldIt->second.sysIconIndex == entry.sysIconIndex) {
+            entry.iconBitmap = oldIt->second.bitmap;
+            entry.iconBitmapSize = oldIt->second.size;
+            entry.shortcutArrow = oldIt->second.shortcutArrow;
+            entry.iconState = oldIt->second.iconState;
+            oldIt->second.bitmap = nullptr;
+            oldFolderIconCache.erase(oldIt);
+            if (entry.iconState == IconState::IconReady)
+            {
+                IconLoadTask phase2;
+                phase2.serial = iconLoadSerial_;
+                phase2.widgetId = widget.id;
+                PIDLIST_ABSOLUTE pidl = nullptr;
+                if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
+                {
+                    phase2.absolutePidl.reset(pidl);
+                    phase2.folderPath = entry.fullPath;
+                    phase2.sysIconIndex = entry.sysIconIndex;
+                    phase2.isDesktopItem = false;
+                    phase2.phase = IconLoadPhase::Phase2;
+                    EnqueueIconLoad(std::move(phase2));
+                }
+            }
+            else if (entry.iconState == IconState::Loading)
+            {
+                IconLoadTask phase1;
+                phase1.serial = iconLoadSerial_;
+                phase1.widgetId = widget.id;
+                phase1.folderPath = entry.fullPath;
+                phase1.sysIconIndex = entry.sysIconIndex;
+                phase1.parsingName = entry.name;
+                phase1.isDesktopItem = false;
+                phase1.phase = IconLoadPhase::Phase1;
+                PIDLIST_ABSOLUTE pidl = nullptr;
+                if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
+                {
+                    phase1.absolutePidl.reset(pidl);
+                    EnqueueIconLoad(std::move(phase1));
+                }
+            }
+        } else {
+            if (oldIt != oldFolderIconCache.end()) {
+                if (oldIt->second.bitmap) {
+                    d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(oldIt->second.bitmap));
+                    DeleteObject(oldIt->second.bitmap);
+                }
+                oldFolderIconCache.erase(oldIt);
+            }
+            entry.iconBitmap = nullptr;
+            entry.iconState = IconState::Loading;
+
+            IconLoadTask task;
+            task.serial = iconLoadSerial_;
+            task.widgetId = widget.id;
+            task.layoutKey = ToUpperInvariant(entry.fullPath);
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
+            {
+                task.absolutePidl.reset(pidl);
+                task.sysIconIndex = entry.sysIconIndex;
+                task.parsingName = entry.name;
+                task.isDesktopItem = false;
+                task.folderPath = entry.fullPath;
+                task.phase = IconLoadPhase::Phase1;
+                EnqueueIconLoad(std::move(task));
+            }
         }
         widget.folderEntries.push_back(std::move(entry));
     } while (FindNextFileW(hFind, &fd));
     FindClose(hFind);
+    for (auto& [key, old] : oldFolderIconCache) {
+        if (old.bitmap) {
+            d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(old.bitmap));
+            DeleteObject(old.bitmap);
+        }
+    }
     std::sort(widget.folderEntries.begin(), widget.folderEntries.end(),
         [](const FolderEntry& a, const FolderEntry& b) {
             if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
@@ -3837,9 +4119,6 @@ inline void DesktopApp::RefreshFolderMappingWidget(size_t widgetIndex)
 {
     if (widgetIndex >= widgets_.size()) return;
     auto& w = widgets_[widgetIndex];
-    for (auto& e : w.folderEntries)
-        if (e.iconBitmap) DeleteObject(e.iconBitmap);
-    w.folderEntries.clear();
     EnumerateFolderMappingEntries(w);
     for (auto& c : containers_)
     {

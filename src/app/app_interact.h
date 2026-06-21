@@ -12,6 +12,7 @@
 // This file is included by app.h after the class definition.
 
 #include "drop_model.h"
+#include <dwmapi.h>
 #include <wincodec.h>
 #include <urlmon.h>
 
@@ -493,7 +494,7 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
         reinterpret_cast<WPARAM>(quickNavigationSearchFont_ ? quickNavigationSearchFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(QuickNavScale(10), QuickNavScale(10)));
-    SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"搜索应用、桌面文件、映射文件夹..."));
+    SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"搜索应用、桌面文件、映射文件夹..."));
     SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
 }
@@ -541,10 +542,21 @@ inline void DesktopApp::PositionQuickNavigationWindow()
     quickNavigationRect_ = GetQuickNavigationRect();
     const int width = std::max<LONG>(1, quickNavigationRect_.right - quickNavigationRect_.left);
     const int height = std::max<LONG>(1, quickNavigationRect_.bottom - quickNavigationRect_.top);
-    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
-        QuickNavScale(36), QuickNavScale(36));
-    if (region)
-        SetWindowRgn(quickNavigationHwnd_, region, TRUE);
+
+    // Prefer compositor-provided corners. Unlike a window region, DWM corners
+    // retain partial-alpha edge pixels and therefore do not look stair-stepped.
+    SetWindowRgn(quickNavigationHwnd_, nullptr, FALSE);
+    const DWM_WINDOW_CORNER_PREFERENCE cornerPreference = DWMWCP_ROUND;
+    const HRESULT cornerResult = DwmSetWindowAttribute(quickNavigationHwnd_,
+        DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPreference, sizeof(cornerPreference));
+    if (FAILED(cornerResult))
+    {
+        // Older Windows versions do not expose DWM corner preferences.
+        HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
+            QuickNavScale(16), QuickNavScale(16));
+        if (region)
+            SetWindowRgn(quickNavigationHwnd_, region, TRUE);
+    }
 
     SetWindowPos(quickNavigationHwnd_, HWND_TOPMOST,
         quickNavigationRect_.left + virtualLeft_,
@@ -623,7 +635,15 @@ inline void DesktopApp::OpenQuickNavigation()
     ShowWindow(quickNavigationHwnd_, SW_SHOWNA);
     AnimateWindow(quickNavigationHwnd_, 160, AW_BLEND);
     SetForegroundWindow(quickNavigationHwnd_);
-    SetFocus(quickNavigationHwnd_);
+    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+    {
+        SetFocus(quickNavigationSearchEdit_);
+        SendMessageW(quickNavigationSearchEdit_, EM_SETSEL, 0, -1);
+    }
+    else
+    {
+        SetFocus(quickNavigationHwnd_);
+    }
     InvalidateQuickNavigationWindow();
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -744,11 +764,57 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     SetBkMode(memoryDc, TRANSPARENT);
     SetStretchBltMode(memoryDc, HALFTONE);
 
+    ComPtr<ID2D1DCRenderTarget> dcRenderTarget;
+    if (d2dFactory_)
+    {
+        const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+            0.0f, 0.0f,
+            D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE);
+        if (SUCCEEDED(d2dFactory_->CreateDCRenderTarget(&properties, &dcRenderTarget)))
+        {
+            if (FAILED(dcRenderTarget->BindDC(memoryDc, &client)))
+                dcRenderTarget.Reset();
+        }
+    }
+
     auto offsetRect = [&](RECT rect) {
         OffsetRect(&rect, -quickNavigationRect_.left, -quickNavigationRect_.top);
         return rect;
     };
     auto fillRound = [&](RECT rect, COLORREF fill, COLORREF stroke, int radius) {
+        if (dcRenderTarget)
+        {
+            ComPtr<ID2D1SolidColorBrush> fillBrush;
+            ComPtr<ID2D1SolidColorBrush> strokeBrush;
+            const D2D1_COLOR_F fillColor = D2D1::ColorF(
+                GetRValue(fill) / 255.0f, GetGValue(fill) / 255.0f, GetBValue(fill) / 255.0f);
+            const D2D1_COLOR_F strokeColor = D2D1::ColorF(
+                GetRValue(stroke) / 255.0f, GetGValue(stroke) / 255.0f, GetBValue(stroke) / 255.0f);
+            if (SUCCEEDED(dcRenderTarget->CreateSolidColorBrush(fillColor, &fillBrush)) &&
+                SUCCEEDED(dcRenderTarget->CreateSolidColorBrush(strokeColor, &strokeBrush)))
+            {
+                // GDI RoundRect receives the corner ellipse diameter; Direct2D
+                // receives the radius, hence the 0.5 conversion.
+                const float cornerRadius = std::max(0.5f, radius * 0.5f);
+                const D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(
+                    D2D1::RectF(
+                        static_cast<float>(rect.left) + 0.5f,
+                        static_cast<float>(rect.top) + 0.5f,
+                        static_cast<float>(rect.right) - 0.5f,
+                        static_cast<float>(rect.bottom) - 0.5f),
+                    cornerRadius, cornerRadius);
+                dcRenderTarget->BeginDraw();
+                dcRenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                dcRenderTarget->FillRoundedRectangle(rounded, fillBrush.Get());
+                dcRenderTarget->DrawRoundedRectangle(rounded, strokeBrush.Get(), 1.0f);
+                if (SUCCEEDED(dcRenderTarget->EndDraw()))
+                    return;
+                dcRenderTarget.Reset();
+            }
+        }
+
         HBRUSH brush = CreateSolidBrush(fill);
         HPEN pen = CreatePen(PS_SOLID, 1, stroke);
         HGDIOBJ oldBrush = SelectObject(memoryDc, brush);
@@ -770,11 +836,26 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         BITMAP bm{};
         if (GetObjectW(bitmap, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
             return;
+
+        const int boundsWidth = std::max<LONG>(1, dst.right - dst.left);
+        const int boundsHeight = std::max<LONG>(1, dst.bottom - dst.top);
+        const double scale = std::min(
+            static_cast<double>(boundsWidth) / bm.bmWidth,
+            static_cast<double>(boundsHeight) / bm.bmHeight);
+        const int drawWidth = std::clamp(
+            static_cast<int>(std::round(bm.bmWidth * scale)), 1, boundsWidth);
+        const int drawHeight = std::clamp(
+            static_cast<int>(std::round(bm.bmHeight * scale)), 1, boundsHeight);
+        const int drawX = dst.left + (boundsWidth - drawWidth) / 2;
+        const int drawY = dst.top + (boundsHeight - drawHeight) / 2;
+
         HDC srcDc = CreateCompatibleDC(memoryDc);
         HBITMAP oldSrc = static_cast<HBITMAP>(SelectObject(srcDc, bitmap));
+        const int oldStretchMode = SetStretchBltMode(memoryDc, COLORONCOLOR);
         BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-        AlphaBlend(memoryDc, dst.left, dst.top, dst.right - dst.left, dst.bottom - dst.top,
+        AlphaBlend(memoryDc, drawX, drawY, drawWidth, drawHeight,
             srcDc, 0, 0, bm.bmWidth, bm.bmHeight, blend);
+        SetStretchBltMode(memoryDc, oldStretchMode);
         SelectObject(srcDc, oldSrc);
         DeleteDC(srcDc);
     };
@@ -782,14 +863,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     HBRUSH background = CreateSolidBrush(RGB(18, 22, 30));
     FillRect(memoryDc, &client, background);
     DeleteObject(background);
-    HPEN border = CreatePen(PS_SOLID, 1, RGB(120, 130, 150));
-    HGDIOBJ oldPen = SelectObject(memoryDc, border);
-    HGDIOBJ oldBrush = SelectObject(memoryDc, GetStockObject(NULL_BRUSH));
-    RoundRect(memoryDc, client.left, client.top, client.right - 1, client.bottom - 1,
-        QuickNavScale(36), QuickNavScale(36));
-    SelectObject(memoryDc, oldBrush);
-    SelectObject(memoryDc, oldPen);
-    DeleteObject(border);
+    fillRound(MakeRect(client.left, client.top, client.right - 1, client.bottom - 1),
+        RGB(18, 22, 30), RGB(120, 130, 150), QuickNavScale(16));
 
     HFONT titleFont = CreateFontW(-QuickNavScale(18), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
