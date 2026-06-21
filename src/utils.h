@@ -241,7 +241,7 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
  * @param bitmapSize [out] 返回位图的实际尺寸
  * @return 成功返回 DIB 位图句柄，失败返回 nullptr
  */
-HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackIndex, SIZE& bitmapSize);
+HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackIndex, SIZE& bitmapSize, bool fullQuality = false);
 
 /**
  * @brief 从坐标值创建 RECT 结构

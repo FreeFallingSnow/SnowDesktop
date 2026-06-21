@@ -13,6 +13,8 @@
 // Inline implementations for DesktopApp — destructor, Run, WndProc, HandleMessage.
 // This file is included by app_oo.h after the class definition.
 
+#include <commoncontrols.h>
+
 // ── Inline implementations ──────────────────────────────────
 
 /**
@@ -23,6 +25,7 @@
  */
 inline DesktopApp::~DesktopApp()
 {
+    StopIconLoader();
     widgetEngine_.reset();
     settingsWindow_.reset();
     items_oo_.clear();
@@ -332,6 +335,7 @@ inline void DesktopApp::RequestExit()
     if (exitRequested_)
         return;
     exitRequested_ = true;
+    StopIconLoader();
     RestoreExplorerIcons();
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -361,6 +365,156 @@ inline void DesktopApp::RequestExit()
  * 创建 SettingsWindow 与 WidgetEngine，最后进入 GetMessage 消息循环
  * 直至收到 WM_QUIT。
  */
+inline void ClampAlphaToColorKey(HBITMAP bitmap, COLORREF key)
+{
+    if (!bitmap) return;
+    BITMAP bm{};
+    if (GetObjectW(bitmap, sizeof(bm), &bm) == 0 || bm.bmBitsPixel != 32 || !bm.bmBits) return;
+    int w = bm.bmWidth, absH = std::abs(bm.bmHeight);
+    auto* pixels = static_cast<std::uint32_t*>(bm.bmBits);
+    size_t count = static_cast<size_t>(w) * static_cast<size_t>(absH);
+    for (size_t i = 0; i < count; ++i)
+    {
+        uint8_t a = (pixels[i] >> 24) & 0xff;
+        uint8_t r = (pixels[i] >> 16) & 0xff;
+        uint8_t g = (pixels[i] >> 8)  & 0xff;
+        uint8_t b = pixels[i] & 0xff;
+        if (a < 250 && (int(r) + int(g) + int(b)) < 150)
+            pixels[i] = 0;
+    }
+    (void)key;
+}
+
+inline void DesktopApp::StartIconLoader()
+{
+    iconLoaderRunning_ = true;
+    iconLoaderThread_ = std::thread([this]() {
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        MSG msg;
+        PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE);
+        while (true) {
+            IconLoadTask task;
+            {
+                std::unique_lock<std::mutex> lock(iconLoaderMutex_);
+                iconLoaderCv_.wait(lock, [this] { return !iconLoaderQueue_.empty() || !iconLoaderRunning_; });
+                if (!iconLoaderRunning_) break;
+                if (iconLoaderQueue_.empty()) continue;
+                task = std::move(iconLoaderQueue_.front());
+                iconLoaderQueue_.pop_front();
+            }
+            if (task.absolutePidl.get() == nullptr)
+            {
+                std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+                iconLoaderPendingKeys_.erase(task.requestKey);
+                continue;
+            }
+
+            SIZE bitmapSize{};
+            HBITMAP bitmap = GetHighResolutionShellIconBitmap(
+                task.absolutePidl.get(), task.sysIconIndex, bitmapSize,
+                task.phase == IconLoadPhase::Phase2);
+            if (task.phase == IconLoadPhase::Phase1 && bitmap)
+                ClampAlphaToColorKey(bitmap, kTransparentKey);
+
+            bool shortcutArrow = false;
+            if (task.phase == IconLoadPhase::Phase1)
+            {
+                std::wstring upper = task.parsingName;
+                for (auto& c : upper) c = static_cast<wchar_t>(towupper(c));
+                if (upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0)
+                {
+                    wchar_t lnkPath[MAX_PATH]{};
+                    if (SHGetPathFromIDListW(task.absolutePidl.get(), lnkPath))
+                    {
+                        ComPtr<IShellLinkW> shellLink;
+                        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                            IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
+                        {
+                            ComPtr<IPersistFile> persistFile;
+                            if (SUCCEEDED(shellLink.As(&persistFile)) &&
+                                SUCCEEDED(persistFile->Load(lnkPath, STGM_READ)))
+                            {
+                                wchar_t target[MAX_PATH]{};
+                                if (SUCCEEDED(shellLink->GetPath(target, MAX_PATH, nullptr, 0)))
+                                {
+                                    std::wstring t(target);
+                                    for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
+                                    if (t.size() < 4 || t.compare(t.size() - 4, 4, L".EXE") != 0)
+                                        shortcutArrow = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (bitmap || task.phase == IconLoadPhase::Phase2)
+            {
+                auto* result = new IconLoadResult();
+                result->serial = task.serial;
+                result->requestKey = std::move(task.requestKey);
+                result->layoutKey = std::move(task.layoutKey);
+                result->widgetId = std::move(task.widgetId);
+                result->bitmap = bitmap;
+                result->bitmapSize = bitmapSize;
+                result->shortcutArrow = shortcutArrow;
+                result->phase = task.phase;
+                result->isDesktopItem = task.isDesktopItem;
+                result->folderPath = std::move(task.folderPath);
+                if (!PostMessageW(hwnd_, kIconLoadedMessage, 0, reinterpret_cast<LPARAM>(result)))
+                {
+                    {
+                        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+                        iconLoaderPendingKeys_.erase(result->requestKey);
+                    }
+                    if (result->bitmap) DeleteObject(result->bitmap);
+                    delete result;
+                }
+            }
+            else
+            {
+                std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+                iconLoaderPendingKeys_.erase(task.requestKey);
+            }
+        }
+        CoUninitialize();
+    });
+}
+
+inline void DesktopApp::StopIconLoader()
+{
+    {
+        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+        iconLoaderRunning_ = false;
+        iconLoaderQueue_.clear();
+        iconLoaderPendingKeys_.clear();
+    }
+    iconLoaderCv_.notify_all();
+    if (iconLoaderThread_.joinable())
+        iconLoaderThread_.join();
+    if (hwnd_)
+    {
+        MSG msg{};
+        while (PeekMessageW(&msg, hwnd_, kIconLoadedMessage, kIconLoadedMessage, PM_REMOVE))
+        {
+            auto* result = reinterpret_cast<IconLoadResult*>(msg.lParam);
+            if (result)
+            {
+                if (result->bitmap) DeleteObject(result->bitmap);
+                delete result;
+            }
+        }
+    }
+}
+
+inline void DesktopApp::BeginIconLoadGeneration()
+{
+    std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+    ++iconLoadSerial_;
+    iconLoaderQueue_.clear();
+    iconLoaderPendingKeys_.clear();
+}
+
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
@@ -404,6 +558,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     virtualTop_ = GetSystemMetrics(SM_YVIRTUALSCREEN);
     virtualWidth_ = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     virtualHeight_ = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    BeginIconLoadGeneration();
     LoadLayoutSlots();
     UpdateLayoutWorkArea();
 
@@ -501,6 +656,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     L(L"Composition target ready");
 
     LoadDesktopItems();
+    StartIconLoader();
     L(L"LoadDesktopItems ok");
 
     // Auto-assign grid cells for items without layout
@@ -917,6 +1073,9 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case kShellChangeMessage:
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+        return 0;
+    case kIconLoadedMessage:
+        OnIconLoaded(wp, lp);
         return 0;
     case WM_TIMER:
         OnTimer(wp);

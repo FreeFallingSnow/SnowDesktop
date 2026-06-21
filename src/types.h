@@ -12,6 +12,18 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <atomic>
+#include <deque>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+
+enum class IconState : uint8_t {
+    Loading,
+    IconReady,
+    FullQuality
+};
 
 // ── Grid Layout Types ──────────────────────
 
@@ -168,6 +180,7 @@ struct DesktopItem
     bool selected = false;
     bool shortcutArrow = false;
     bool isCut = false;
+    IconState iconState = IconState::Loading;
 
     DesktopItem() = default;
 
@@ -188,7 +201,8 @@ struct DesktopItem
           gridSpan(other.gridSpan),
           selected(other.selected),
           shortcutArrow(other.shortcutArrow),
-          isCut(other.isCut)
+          isCut(other.isCut),
+          iconState(other.iconState)
     {
         other.iconBitmap = nullptr;
         other.iconBitmapSize = {};
@@ -218,6 +232,9 @@ struct DesktopItem
             gridCell = std::move(other.gridCell);
             gridSpan = other.gridSpan;
             selected = other.selected;
+            shortcutArrow = other.shortcutArrow;
+            isCut = other.isCut;
+            iconState = other.iconState;
             other.iconBitmap = nullptr;
             other.iconBitmapSize = {};
         }
@@ -249,6 +266,8 @@ struct FolderEntry
     SIZE iconBitmapSize{};
     bool selected = false;
     bool isCut = false;
+    bool shortcutArrow = false;
+    IconState iconState = IconState::Loading;
 
     FolderEntry() = default;
 
@@ -260,7 +279,9 @@ struct FolderEntry
           iconBitmap(nullptr),
           iconBitmapSize(other.iconBitmapSize),
           selected(other.selected),
-          isCut(other.isCut)
+          isCut(other.isCut),
+          shortcutArrow(other.shortcutArrow),
+          iconState(other.iconState)
     {
         if (other.iconBitmap != nullptr)
         {
@@ -285,6 +306,8 @@ struct FolderEntry
             iconBitmapSize = other.iconBitmapSize;
             selected = other.selected;
             isCut = other.isCut;
+            shortcutArrow = other.shortcutArrow;
+            iconState = other.iconState;
             if (other.iconBitmap != nullptr)
             {
                 iconBitmap = CopyFolderEntryBitmap(other.iconBitmap, iconBitmapSize);
@@ -332,7 +355,10 @@ public:
           sysIconIndex(other.sysIconIndex),
           iconBitmap(other.iconBitmap),
           iconBitmapSize(other.iconBitmapSize),
-          selected(other.selected)
+          selected(other.selected),
+          isCut(other.isCut),
+          shortcutArrow(other.shortcutArrow),
+          iconState(other.iconState)
     {
         other.iconBitmap = nullptr;
         other.iconBitmapSize = {};
@@ -353,6 +379,9 @@ public:
             iconBitmap = other.iconBitmap;
             iconBitmapSize = other.iconBitmapSize;
             selected = other.selected;
+            isCut = other.isCut;
+            shortcutArrow = other.shortcutArrow;
+            iconState = other.iconState;
             other.iconBitmap = nullptr;
             other.iconBitmapSize = {};
         }

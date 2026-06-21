@@ -57,6 +57,34 @@
 
 using Microsoft::WRL::ComPtr;
 
+enum class IconLoadPhase { Phase1, Phase2 };
+
+struct IconLoadTask {
+    uint64_t serial = 0;
+    std::wstring requestKey;
+    std::wstring layoutKey;
+    std::wstring widgetId;
+    Pidl absolutePidl;
+    int sysIconIndex = -1;
+    std::wstring parsingName;
+    bool isDesktopItem = true;
+    std::wstring folderPath;
+    IconLoadPhase phase = IconLoadPhase::Phase1;
+};
+
+struct IconLoadResult {
+    uint64_t serial = 0;
+    std::wstring requestKey;
+    std::wstring layoutKey;
+    std::wstring widgetId;
+    HBITMAP bitmap = nullptr;
+    SIZE bitmapSize{};
+    bool shortcutArrow = false;
+    IconLoadPhase phase = IconLoadPhase::Phase1;
+    bool isDesktopItem = true;
+    std::wstring folderPath;
+};
+
 /**
  * @brief 拖拽渲染缓存，用于缓存拖拽操作期间的静态场景位图。
  *
@@ -870,6 +898,23 @@ private:
      */
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
 
+    /**
+     * @brief 在指定矩形上绘制快捷方式箭头叠加层。
+     * @param ctx D2D 上下文
+     * @param iconRect 图标区域矩形（逻辑像素）
+     * @param alpha 整体透明度
+     */
+    void DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT iconRect, float alpha);
+
+    // ── Async Icon Loading ──────────────────────────────────
+    void StartIconLoader();
+    void StopIconLoader();
+    void BeginIconLoadGeneration();
+    void EnqueueIconLoad(IconLoadTask task);
+    void OnIconLoaded(WPARAM wParam, LPARAM lParam);
+    void CacheSystemImageListSmall();
+    void DrawPlaceholderIcon(ID2D1DeviceContext* ctx, int sysIconIndex, RECT iconRect, float alpha);
+
     // ── Filtering ───────────────────────────────────────────
     /**
      * @brief 获取桌面项的稳定布局键值，用于跨外壳刷新保持定位。
@@ -1431,6 +1476,26 @@ private:
 
     /** @brief D2D 位图缓存 */
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
+
+    /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
+    ComPtr<ID2D1Bitmap1> shortcutArrowBitmap_;
+    SIZE shortcutArrowBitmapSize_{};
+
+    /** @name 异步图标加载 */
+    /** @{ */
+    std::thread iconLoaderThread_;
+    std::mutex iconLoaderMutex_;
+    std::condition_variable iconLoaderCv_;
+    std::deque<IconLoadTask> iconLoaderQueue_;
+    std::unordered_set<std::wstring> iconLoaderPendingKeys_;
+    std::atomic<bool> iconLoaderRunning_{false};
+    uint64_t iconLoadSerial_ = 0;
+
+    HIMAGELIST systemImageListSmall_ = nullptr;
+    ComPtr<ID2D1Bitmap1> systemIconStripBitmap_;
+    int systemIconStripCount_ = 0;
+    SIZE systemIconStripIconSize_{};
+    /** @} */
 
     /** @name 新建菜单 COM 上下文 */
     /** @{ */

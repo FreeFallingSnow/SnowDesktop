@@ -899,7 +899,7 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
 /**
  * @brief 获取 Shell 项的高分辨率图标位图。
  *
- * 优先通过 IShellItemImageFactory 获取高分辨率图标，
+ * 优先通过 IShellItemImageFactory 获取高分辨率缩略图或图标，
  * 失败时依次尝试 JUMBO/EXTRALARGE/LARGE 图像列表，
  * 最后回退到 SHGetFileInfo 获取图标。
  *
@@ -908,7 +908,7 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
  * @param bitmapSize [out] 输出位图的尺寸。
  * @return 成功时返回带有 Alpha 通道的 HBITMAP，失败时返回 nullptr。
  */
-HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackIndex, SIZE& bitmapSize)
+HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackIndex, SIZE& bitmapSize, bool fullQuality)
 {
     bitmapSize = {};
     ComPtr<IShellItemImageFactory> imageFactory;
@@ -916,7 +916,8 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackInd
     {
         SIZE size{ kIconBitmapSize, kIconBitmapSize };
         HBITMAP bitmap = nullptr;
-        if (SUCCEEDED(imageFactory->GetImage(size, SIIGBF_ICONONLY, &bitmap)) && bitmap != nullptr)
+        UINT flags = fullQuality ? SIIGBF_RESIZETOFIT : SIIGBF_ICONONLY;
+        if (SUCCEEDED(imageFactory->GetImage(size, flags, &bitmap)) && bitmap != nullptr)
         {
             HBITMAP alphaBitmap = CopyBitmapToAlphaDib(bitmap, bitmapSize);
             DeleteObject(bitmap);
