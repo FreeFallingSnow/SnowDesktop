@@ -3980,6 +3980,46 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
 }
 
 /**
+ * @brief 如果同名文件/文件夹已存在，自动添加递增序号生成唯一名称
+ *
+ * 例如 "test.txt" 已存在时返回 "test (2).txt"，依此类推。
+ * @param folderPath  父文件夹路径
+ * @param desiredName  期望的文件/文件夹名
+ * @return 在 folderPath 中不存在的唯一名称
+ */
+static std::wstring MakeUniqueFileName(const std::wstring& folderPath, const std::wstring& desiredName)
+{
+    wchar_t fullPath[MAX_PATH]{};
+    PathCombineW(fullPath, folderPath.c_str(), desiredName.c_str());
+    if (GetFileAttributesW(fullPath) == INVALID_FILE_ATTRIBUTES)
+        return desiredName;
+
+    DWORD attrs = GetFileAttributesW(fullPath);
+    bool isDir = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+
+    std::wstring stem = desiredName;
+    std::wstring ext;
+    if (!isDir)
+    {
+        wchar_t stemBuf[MAX_PATH]{};
+        wcscpy_s(stemBuf, stem.c_str());
+        PathRemoveExtensionW(stemBuf);
+        stem = stemBuf;
+        const wchar_t* extPtr = PathFindExtensionW(desiredName.c_str());
+        ext = extPtr ? extPtr : L"";
+    }
+
+    for (int i = 2; i < 1000; ++i)
+    {
+        std::wstring candidate = stem + L" (" + std::to_wstring(i) + L")" + ext;
+        PathCombineW(fullPath, folderPath.c_str(), candidate.c_str());
+        if (GetFileAttributesW(fullPath) == INVALID_FILE_ATTRIBUTES)
+            return candidate;
+    }
+    return stem + L" (1000)" + ext;
+}
+
+/**
  * @brief 提交或取消文件夹条目的重命名
  * @param newName 新名称
  * @param cancel 是否取消重命名
@@ -4014,8 +4054,12 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
         reinterpret_cast<void**>(&parentFolder), &child);
     if (SUCCEEDED(hr) && parentFolder)
     {
+        wchar_t dirBuf[MAX_PATH]{};
+        wcscpy_s(dirBuf, oldPath.c_str());
+        PathRemoveFileSpecW(dirBuf);
+        std::wstring uniqueName = MakeUniqueFileName(dirBuf, newName);
         PITEMID_CHILD newChild = nullptr;
-        hr = parentFolder->SetNameOf(hwnd_, child, newName.c_str(), SHGDN_NORMAL, &newChild);
+        hr = parentFolder->SetNameOf(hwnd_, child, uniqueName.c_str(), SHGDN_NORMAL, &newChild);
         if (newChild) ILFree(newChild);
         parentFolder->Release();
     }
@@ -4228,10 +4272,13 @@ inline void DesktopApp::CommitRename(bool cancel)
     if (!cancel && renameIndex_ < items_.size() && !newName.empty() && newName != items_[renameIndex_].name)
     {
         std::wstring oldLayoutKey = items_[renameIndex_].layoutKey;
+        wchar_t desktopPath[MAX_PATH]{};
+        SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
+        std::wstring uniqueName = MakeUniqueFileName(desktopPath, newName);
         PITEMID_CHILD newChild = nullptr;
         HRESULT hr = desktopFolder_->SetNameOf(hwnd_,
             reinterpret_cast<PCUITEMID_CHILD>(items_[renameIndex_].childPidl.get()),
-            newName.c_str(), SHGDN_NORMAL, &newChild);
+            uniqueName.c_str(), SHGDN_NORMAL, &newChild);
         if (SUCCEEDED(hr))
         {
             if (newChild)
