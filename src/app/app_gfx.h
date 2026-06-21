@@ -1417,9 +1417,22 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
     if (marqueeActive_)
     {
-        DrawD2DFilledRectangle(ctx, marqueeRect_,
-            D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
-            D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
+        if (marqueeWidgetIndex_ < widgets_.size())
+        {
+            RECT viewport = GetMarqueeViewportRect();
+            ctx->PushAxisAlignedClip(ToD2DRect(viewport),
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            DrawD2DFilledRectangle(ctx, marqueeRect_,
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
+                D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
+            ctx->PopAxisAlignedClip();
+        }
+        else
+        {
+            DrawD2DFilledRectangle(ctx, marqueeRect_,
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
+                D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
+        }
     }
 
     DrawPageNavButtons(ctx);

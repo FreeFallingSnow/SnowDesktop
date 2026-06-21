@@ -18,6 +18,8 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 
+static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex);
+
 /**
  * @brief 计算映射文件夹内容区域的矩形
  * @param widget FolderMapping 组件指针
@@ -29,6 +31,25 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -4, -8);
     return body;
+}
+
+RECT FolderMapping::GetContentViewportRect() const
+{
+    return FolderMappingContentRect(const_cast<FolderMapping*>(this));
+}
+
+void FolderMapping::ApplyMarqueeSelection(const RECT& contentRect)
+{
+    if (!data_)
+        return;
+
+    const int scroll = GetScrollOffset();
+    for (size_t i = 0; i < data_->folderEntries.size(); ++i)
+    {
+        RECT itemRect = FolderMappingItemRect(this, i);
+        OffsetRect(&itemRect, 0, scroll);
+        data_->folderEntries[i].selected = RectsIntersect(itemRect, contentRect);
+    }
 }
 
 /**
