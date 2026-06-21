@@ -178,8 +178,8 @@ inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCo
 /**
  * @brief 显示桌面背景右键菜单。
  *        在屏幕坐标处弹出菜单，包含粘贴、新建、刷新、排序方式、
- *        行列调整、添加组件、缩放等选项。菜单项均带图标。
- *        选中 Lua 组件或缩放预设时直接处理，其余通过命令 ID 分发。
+ *        行列调整、添加组件、图标间距等选项。菜单项均带图标。
+ *        选中 Lua 组件或间距预设时直接处理，其余通过命令 ID 分发。
  * @param screenPoint 菜单弹出的屏幕坐标。
  */
 inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
@@ -232,24 +232,28 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
     }
 
-    HMENU zoomMenu = CreatePopupMenu();
-    if (zoomMenu)
+    HMENU spacingMenu = CreatePopupMenu();
+    if (spacingMenu)
     {
         const int presets[] = { 50, 70, 80, 90, 100, 110, 120, 130, 150, 200 };
+        const int currentSpacingPercent = static_cast<int>(
+            std::round(iconSpacingScale_ * 100.0f));
         for (int pct : presets)
         {
             wchar_t label[16]{};
             swprintf_s(label, L"%d%%", pct);
             UINT flags = MF_STRING;
-            if (static_cast<int>(gapScale_ * 100) == pct) flags |= MF_CHECKED;
-            AppendMenuW(zoomMenu, flags, kContextZoomPresetFirst + static_cast<UINT>(pct), label);
+            if (currentSpacingPercent == pct) flags |= MF_CHECKED;
+            AppendMenuW(spacingMenu, flags,
+                kContextSpacingPresetFirst + static_cast<UINT>(pct), label);
         }
-        AppendMenuW(zoomMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(zoomMenu, MF_STRING, kContextZoomIncrease, L"放大 (+10%)");
-        AppendMenuW(zoomMenu, MF_STRING, kContextZoomDecrease, L"缩小 (-10%)");
-        wchar_t zoomLabel[32]{};
-        swprintf_s(zoomLabel, L"缩放：%d%%", static_cast<int>(gapScale_ * 100));
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(zoomMenu), zoomLabel);
+        AppendMenuW(spacingMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, L"增加间距 (+10%)");
+        AppendMenuW(spacingMenu, MF_STRING, kContextSpacingDecrease, L"减少间距 (-10%)");
+        wchar_t spacingLabel[32]{};
+        swprintf_s(spacingLabel, L"图标间距：%d%%", currentSpacingPercent);
+        AppendMenuW(menu, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel);
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -275,11 +279,11 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, L"");
         SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, L"");
     }
-    if (zoomMenu)
+    if (spacingMenu)
     {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(zoomMenu), L"");
-        SetMenuItemIcon(zoomMenu, kContextZoomIncrease, L"");
-        SetMenuItemIcon(zoomMenu, kContextZoomDecrease, L"");
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(spacingMenu), L"");
+        SetMenuItemIcon(spacingMenu, kContextSpacingIncrease, L"");
+        SetMenuItemIcon(spacingMenu, kContextSpacingDecrease, L"");
     }
     SetMenuItemIcon(menu, kContextThisDisplayFirstCommand, L"");
     SetMenuItemIcon(menu, kContextSettingsCommand, L"");
@@ -296,7 +300,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
     if (sortMenu) DestroyMenu(sortMenu);
     if (widgetMenu) DestroyMenu(widgetMenu);
-    if (zoomMenu) DestroyMenu(zoomMenu);
+    if (spacingMenu) DestroyMenu(spacingMenu);
     DestroyMenu(menu);
     newMenuContextMenu_.Reset();
     ClearMenuIcons();
@@ -308,9 +312,11 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         size_t scriptIndex = static_cast<size_t>(command - kContextAddLuaWidgetFirst);
         AddLuaWidgetAt(screenPoint, luaWidgets[scriptIndex]);
     }
-    else if (command >= kContextZoomPresetFirst && command <= kContextZoomPresetFirst + 200)
+    else if (command >= kContextSpacingPresetFirst &&
+        command <= kContextSpacingPresetFirst + 200)
     {
-        SetZoom(static_cast<float>(command - kContextZoomPresetFirst) / 100.0f);
+        SetIconSpacing(
+            static_cast<float>(command - kContextSpacingPresetFirst) / 100.0f);
     }
     else switch (command)
     {
@@ -330,8 +336,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         ShowGridAdjustmentMenu(legacyAdjustmentMenuPoint, command);
         break;
     }
-    case kContextZoomIncrease: AdjustZoom(+0.1f); break;
-    case kContextZoomDecrease: AdjustZoom(-0.1f); break;
+    case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
+    case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
     case kContextThisDisplayFirstCommand: SetFirstPageMonitorFromPoint(screenPoint); break;
     case kContextAddCollectionWidget: AddCollectionWidgetAt(screenPoint); break;
     case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;

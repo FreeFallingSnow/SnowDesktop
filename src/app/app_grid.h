@@ -65,7 +65,7 @@ inline void DesktopApp::AdjustGridRows(int delta)
     if (newRows == targetPage->rows) return;
 
     targetPage->rows = newRows;
-    ApplyGapScaleToPage(*targetPage);
+    ApplyIconSpacingToPage(*targetPage);
     savedPageColumns_[targetPage->id] = targetPage->columns;
     savedPageRows_[targetPage->id] = targetPage->rows;
     RelayoutDisplacedItems();
@@ -96,7 +96,7 @@ inline void DesktopApp::AdjustGridColumns(int delta)
     if (newColumns == targetPage->columns) return;
 
     targetPage->columns = newColumns;
-    ApplyGapScaleToPage(*targetPage);
+    ApplyIconSpacingToPage(*targetPage);
     savedPageColumns_[targetPage->id] = targetPage->columns;
     savedPageRows_[targetPage->id] = targetPage->rows;
     RelayoutDisplacedItems();
@@ -125,32 +125,32 @@ inline void DesktopApp::SetFirstPageMonitorFromPoint(POINT screenPoint)
 }
 
 /**
- * @brief 设置网格缩放比例（0.5 ~ 2.0），并重新布局。
- * @param value 新的缩放值。
+ * @brief 设置图标间距比例（0.5 ~ 2.0），并重新布局。
+ * @param value 新的间距倍率。
  */
-inline void DesktopApp::SetZoom(float value)
+inline void DesktopApp::SetIconSpacing(float value)
 {
     float clamped = std::clamp(value, 0.5f, 2.0f);
-    if (clamped == gapScale_) return;
-    gapScale_ = clamped;
+    if (clamped == iconSpacingScale_) return;
+    iconSpacingScale_ = clamped;
     for (auto& page : gridPages_)
-        ApplyGapScaleToPage(page);
+        ApplyIconSpacingToPage(page);
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 /**
- * @brief 以增量方式调整网格缩放比例。
- * @param delta 缩放变化量。
+ * @brief 以增量方式调整图标间距比例。
+ * @param delta 间距变化量。
  */
-inline void DesktopApp::AdjustZoom(float delta)
+inline void DesktopApp::AdjustIconSpacing(float delta)
 {
-    float newVal = std::clamp(gapScale_ + delta, 0.5f, 2.0f);
-    if (newVal == gapScale_) return;
-    gapScale_ = newVal;
+    float newVal = std::clamp(iconSpacingScale_ + delta, 0.5f, 2.0f);
+    if (newVal == iconSpacingScale_) return;
+    iconSpacingScale_ = newVal;
     for (auto& page : gridPages_)
-        ApplyGapScaleToPage(page);
+        ApplyIconSpacingToPage(page);
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -409,7 +409,7 @@ inline void DesktopApp::RelayoutDisplacedItems()
         while (targetPage->rows < kMaxRows)
         {
             ++targetPage->rows;
-            ApplyGapScaleToPage(*targetPage);
+            ApplyIconSpacingToPage(*targetPage);
             savedPageColumns_[targetPage->id] = targetPage->columns;
             savedPageRows_[targetPage->id] = targetPage->rows;
             if (TryFindFreeCell(span, usedSlots, result, targetPage->id))
@@ -1196,8 +1196,8 @@ inline void DesktopApp::SaveLayoutSlots()
             if (colIt != savedPageColumns_.end()) columns = colIt->second;
             if (rowIt != savedPageRows_.end()) rows = rowIt->second;
         }
-        file << "\", \"columns\": " << std::max(2, columns) <<
-            ", \"rows\": " << std::max(2, rows) << " }";
+        file << "\", \"columns\": " << std::max(1, columns) <<
+            ", \"rows\": " << std::max(1, rows) << " }";
         file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"items\": [\n";
@@ -1815,6 +1815,15 @@ inline void DesktopApp::LoadDesktopItems()
 inline void DesktopApp::UpdateLayoutWorkArea()
 {
     layoutWorkArea_ = MakeRect(0, 0, virtualWidth_, virtualHeight_);
+    // Preserve the active page dimensions before rebuilding monitor geometry.
+    // DPI, resolution and work-area changes may resize cells, but must not
+    // replace an already established row/column count.
+    for (const auto& page : gridPages_)
+    {
+        if (page.id.empty()) continue;
+        savedPageColumns_[page.id] = std::max(1, page.columns);
+        savedPageRows_[page.id] = std::max(1, page.rows);
+    }
     gridPages_.clear();
 
     MonitorEnumContext ctx{};
@@ -1842,53 +1851,31 @@ inline void DesktopApp::UpdateLayoutWorkArea()
         page.workArea.right  = std::clamp<LONG>(page.workArea.right,  page.workArea.left, static_cast<LONG>(virtualWidth_));
         page.workArea.bottom = std::clamp<LONG>(page.workArea.bottom, page.workArea.top,  static_cast<LONG>(virtualHeight_));
         ConfigureGridPage(page);
-        ApplyGapScaleToPage(page);
+        ApplyIconSpacingToPage(page);
     }
 
     ApplyPageMapping();
 }
 
 /**
- * @brief 根据工作区尺寸和缩放比例配置网格页面的列数、行数、单元格尺寸和间距。
+ * @brief 根据工作区尺寸配置网格页面的默认列数与行数。
  * @param page 待配置的网格页面。
  */
 inline void DesktopApp::ConfigureGridPage(GridPage& page) const
 {
-    const float dpiScaleX = static_cast<float>(page.dpiX) / 96.0f;
-    const float dpiScaleY = static_cast<float>(page.dpiY) / 96.0f;
-    const int marginX = std::max(1, static_cast<int>(std::round(kGridMarginX * dpiScaleX)));
-    const int marginY = std::max(1, static_cast<int>(std::round(kGridMarginY * dpiScaleY)));
-    // The monitor work area is already expressed in physical pixels for this
-    // per-monitor-DPI-aware process. Scaling the reference cell a second time
-    // makes high-DPI displays start with far fewer rows and columns.
-    const int cw = std::max(1, static_cast<int>(std::round(kCellWidth * gapScale_)));
-    const int ch = std::max(1, static_cast<int>(std::round(kMinCellHeight * gapScale_)));
+    const int marginX = kGridMarginX;
+    const int marginY = kGridMarginY;
+    // The work area is already in physical pixels. Default rows and columns are
+    // derived from the physical screen area only, so changing Windows DPI does
+    // not change the page grid.
+    const int cw = kCellWidth;
+    const int ch = kMinCellHeight;
     const int w  = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int h  = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
     const int uw = std::max(1, w - marginX * 2);
     const int uh = std::max(1, h - marginY * 2);
     page.columns   = std::max(4, uw / cw);
     page.rows      = std::max(3, uh / ch);
-    page.cellWidth  = cw;
-    page.cellHeight = ch;
-    page.gapX = page.columns > 1
-        ? std::max(0, (uw - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
-        : 0;
-    page.gapY = page.rows > 1
-        ? std::max(0, (uh - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
-        : 0;
-    // Absorb half-gap into margins so widget frames have enough edge room
-    page.marginX = marginX + std::max(2, page.gapX / 2);
-    page.marginY = marginY + std::max(2, page.gapY / 2);
-    // Recompute gaps with the enlarged margins to keep values consistent
-    const int uw2 = std::max(1, w - page.marginX * 2);
-    const int uh2 = std::max(1, h - page.marginY * 2);
-    page.gapX = page.columns > 1
-        ? std::max(0, (uw2 - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
-        : 0;
-    page.gapY = page.rows > 1
-        ? std::max(0, (uh2 - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
-        : 0;
 }
 
 /**
@@ -1901,81 +1888,73 @@ inline void DesktopApp::ApplySavedGridDimensions()
         auto colIt = savedPageColumns_.find(page.id);
         auto rowIt = savedPageRows_.find(page.id);
         if (colIt != savedPageColumns_.end() && rowIt != savedPageRows_.end() &&
-            colIt->second >= 2 && rowIt->second >= 2)
+            colIt->second >= 1 && rowIt->second >= 1)
         {
             page.columns = colIt->second;
             page.rows = rowIt->second;
-            ApplyGapScaleToPage(page);
+            ApplyIconSpacingToPage(page);
         }
     }
 }
 
 /**
- * @brief 根据缩放比例重新计算页面的单元格尺寸和间距。
+ * @brief 根据固定行列数与图标间距比例重新计算页面布局。
  * @param page 目标网格页面。
  */
-inline void DesktopApp::ApplyGapScaleToPage(GridPage& page)
+inline void DesktopApp::ApplyIconSpacingToPage(GridPage& page)
 {
-    const float dpiScaleX = static_cast<float>(page.dpiX) / 96.0f;
-    const float dpiScaleY = static_cast<float>(page.dpiY) / 96.0f;
-    const int marginX = std::max(1, static_cast<int>(std::round(kGridMarginX * dpiScaleX)));
-    const int marginY = std::max(1, static_cast<int>(std::round(kGridMarginY * dpiScaleY)));
+    page.columns = std::max(1, page.columns);
+    page.rows = std::max(1, page.rows);
+
     const int pageW = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int pageH = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-    const int usableW = std::max(1, pageW - marginX * 2);
-    const int usableH = std::max(1, pageH - marginY * 2);
-    const float cellRefW = static_cast<float>(usableW) / static_cast<float>(std::max(1, page.columns));
-    const float cellRefH = static_cast<float>(usableH) / static_cast<float>(std::max(1, page.rows));
-    const int targetGapX = std::max(0, static_cast<int>(cellRefW * kGapPercentX / gapScale_));
-    const int targetGapY = std::max(0, static_cast<int>(cellRefH * kGapPercentY / gapScale_));
 
-    const int minIconWidth = std::max(1, static_cast<int>(std::round(kIconSize * dpiScaleX)));
-    const int minCellHeight = std::max(1, static_cast<int>(std::round((kMinCellHeight / 2.0f) * dpiScaleY)));
-    page.cellWidth = page.columns > 1
-        ? std::max(minIconWidth, (usableW - (page.columns - 1) * targetGapX) / page.columns)
-        : usableW;
-    page.cellHeight = page.rows > 1
-        ? std::max(minCellHeight, (usableH - (page.rows - 1) * targetGapY) / page.rows)
-        : usableH;
-    // Prevent overflow when saved columns/rows exceed usable area
-    if (page.columns > 1)
+    const float pageCellScale = std::max(0.1f, std::min(
+        static_cast<float>(pageW) /
+            static_cast<float>(page.columns * kCellWidth),
+        static_cast<float>(pageH) /
+            static_cast<float>(page.rows * kMinCellHeight)));
+    const int baseMarginX = std::max(1, static_cast<int>(
+        std::round(kGridMarginX * pageCellScale)));
+    const int baseMarginY = std::max(1, static_cast<int>(
+        std::round(kGridMarginY * pageCellScale)));
+
+    auto calculateAxis = [this](int extent, int count, int baseMargin,
+        float gapPercent, int& margin, int& cellSize, int& gap)
     {
-        if (page.columns * page.cellWidth > usableW)
+        const int innerExtent = std::max(count, extent - baseMargin * 2);
+        if (count <= 1)
         {
-            int maxFit = std::max(1, usableW / minIconWidth);
-            if (maxFit < page.columns)
-                page.columns = std::max(4, maxFit);
-            page.cellWidth = std::max(minIconWidth, usableW / page.columns);
+            margin = baseMargin;
+            cellSize = std::max(1, innerExtent);
+            gap = 0;
+            return;
         }
-    }
-    if (page.rows > 1)
-    {
-        if (page.rows * page.cellHeight > usableH)
-        {
-            int maxFit = std::max(1, usableH / minCellHeight);
-            if (maxFit < page.rows)
-                page.rows = std::max(3, maxFit);
-            page.cellHeight = std::max(minCellHeight, usableH / page.rows);
-        }
-    }
-    page.gapX = page.columns > 1
-        ? std::max(0, (usableW - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
-        : 0;
-    page.gapY = page.rows > 1
-        ? std::max(0, (usableH - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
-        : 0;
-    // Absorb half-gap into margins so widget frames have enough edge room
-    page.marginX = marginX + std::max(2, page.gapX / 2);
-    page.marginY = marginY + std::max(2, page.gapY / 2);
-    // Recompute gaps with the enlarged margins to keep values consistent
-    const int usableW2 = std::max(1, pageW - page.marginX * 2);
-    const int usableH2 = std::max(1, pageH - page.marginY * 2);
-    page.gapX = page.columns > 1
-        ? std::max(0, (usableW2 - page.columns * page.cellWidth + (page.columns - 1) / 2) / (page.columns - 1))
-        : 0;
-    page.gapY = page.rows > 1
-        ? std::max(0, (usableH2 - page.rows * page.cellHeight + (page.rows - 1) / 2) / (page.rows - 1))
-        : 0;
+
+        const float pitch = static_cast<float>(innerExtent) /
+            static_cast<float>(count);
+        const int maxGap = std::max(0,
+            (innerExtent - count) / count);
+        const int targetGap = std::clamp(
+            static_cast<int>(std::round(
+                pitch * gapPercent * iconSpacingScale_)),
+            0, maxGap);
+
+        // Half an internal gap is retained at each page edge. The remaining
+        // area is divided without ever changing the requested row/column count.
+        margin = baseMargin + targetGap / 2;
+        const int usableExtent = std::max(count, extent - margin * 2);
+        cellSize = std::max(1,
+            (usableExtent - targetGap * (count - 1)) / count);
+        const int remainingGapSpace = std::max(0,
+            usableExtent - count * cellSize);
+        gap = (remainingGapSpace + (count - 1) / 2) / (count - 1);
+    };
+
+    calculateAxis(pageW, page.columns, baseMarginX, kGapPercentX,
+        page.marginX, page.cellWidth, page.gapX);
+    calculateAxis(pageH, page.rows, baseMarginY, kGapPercentY,
+        page.marginY, page.cellHeight, page.gapY);
 }
 
 // ── 拖拽辅助函数 ──────────────────────────────────────────────

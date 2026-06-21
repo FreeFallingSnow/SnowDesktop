@@ -3681,14 +3681,16 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetItemDpiScale(rect);
+    const float renameScale = GetItemLayoutScale(rect);
     renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(renameEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELPARAM(renameMargin, renameMargin));
     SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
     SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
@@ -3942,14 +3944,16 @@ inline void DesktopApp::BeginRenameSelected()
         }
 
         if (renameFont_) DeleteObject(renameFont_);
-        const float renameScale = GetItemDpiScale(frame);
+        const float renameScale = GetItemLayoutScale(frame);
         renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         SendMessageW(renameEdit_, WM_SETFONT,
             reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-        SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+        const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+        SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+            MAKELPARAM(renameMargin, renameMargin));
         SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
             reinterpret_cast<DWORD_PTR>(this));
         SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
@@ -4009,14 +4013,16 @@ inline void DesktopApp::BeginRenameSelected()
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetItemDpiScale(itemBounds);
+    const float renameScale = GetItemLayoutScale(itemBounds);
     renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(kItemFontSize * renameScale))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(renameEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELPARAM(renameMargin, renameMargin));
     SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
     SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,

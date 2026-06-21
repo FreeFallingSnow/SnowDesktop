@@ -109,7 +109,8 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (hovered && !selected)
     {
-        app_->DrawD2DRoundedRectangle(context, rect, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, rect,
+            6.0f * app_->GetItemLayoutScale(rect),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * alpha),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * alpha));
     }
@@ -119,7 +120,8 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     if (selected && !dragged)
     {
         RECT sel = app_->GetItemSelectionRect(rect, true);
-        app_->DrawD2DRoundedRectangle(context, sel, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, sel,
+            6.0f * app_->GetItemLayoutScale(rect),
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * alpha),
             D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
@@ -233,7 +235,8 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (hovered && !selected)
     {
-        app_->DrawD2DRoundedRectangle(context, rect, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, rect,
+            6.0f * app_->GetItemLayoutScale(rect),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * opacity),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * opacity));
     }
