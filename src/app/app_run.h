@@ -285,6 +285,9 @@ inline void DesktopApp::WatchDesktopHost()
     if (exitRequested_)
         return;
 
+    if (!customDesktopVisible_)
+        return;
+
     if (!hwnd_ || !IsWindow(hwnd_))
     {
         RecoverDesktopHostAfterExplorerRestart();

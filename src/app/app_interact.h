@@ -5960,6 +5960,15 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    {
+        bool nativeActive = !customDesktopVisible_;
+        AppendMenuW(menu, MF_STRING | (nativeActive ? MF_CHECKED : 0),
+            kTraySwitchNativeCommand, L"切换原生桌面");
+        AppendMenuW(menu, MF_STRING | (nativeActive ? 0 : MF_CHECKED),
+            kTraySwitchCustomCommand, L"切换软件桌面");
+    }
+
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
     AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
@@ -5977,6 +5986,22 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     switch (command)
     {
+    case kTraySwitchNativeCommand:
+        customDesktopVisible_ = false;
+        KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
+        SaveLayoutSlots();
+        HideDragHintWindow();
+        RestoreExplorerIcons();
+        ShowWindow(hwnd_, SW_HIDE);
+        break;
+    case kTraySwitchCustomCommand:
+        customDesktopVisible_ = true;
+        HideExplorerIcons();
+        ShowWindow(hwnd_, SW_SHOW);
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        ReloadItems();
+        break;
     case kTraySettingsCommand:
         ShowSettingsWindow();
         break;

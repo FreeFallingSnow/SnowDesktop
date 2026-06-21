@@ -1222,6 +1222,7 @@ private:
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     UINT taskbarRestartMsg_ = 0;
     bool exitRequested_ = false;
+    bool customDesktopVisible_ = true;
     /** @} */
 
     /** @name 托盘图标 */
