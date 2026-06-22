@@ -25,6 +25,7 @@ set(SNOWDESKTOP_SOURCES
     src/widgets/file_categories.cpp
     src/widgets/folder_mapping.cpp
     src/widgets/lua_script.cpp
+    src/widgets/guide_widget.cpp
 )
 
 set(IMGUI_SOURCES

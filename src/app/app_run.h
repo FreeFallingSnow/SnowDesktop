@@ -117,6 +117,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        KillTimer(hwnd_, kPageNotifyTimerId);
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }

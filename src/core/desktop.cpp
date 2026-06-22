@@ -354,21 +354,16 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
     const bool hasItemDrag = app_->dragSession_.IsActive() && !app_->dragSession_.Items().empty();
     POINT dragPoint = app_->dragSession_.CurrentPoint();
 
+    int mods = 0;
     if (hasItemDrag)
-    {
-        int mods = DropActionToMods(app_->dragSession_.Action());
-        DropPreviewList preview = app_->BuildDropPreviewList(app_->dragSession_.SourceList(),
-            this, slot, region, mods, dragPoint);
-        app_->DrawDesktopDropPreviewList(ctx, preview);
-    }
-    else
-    {
-        GridCell targetCell = app_->CellFromPoint(dragPoint);
-        if (targetCell.pageId.empty()) return;
-        DropPreviewList preview = app_->BuildExternalDesktopPreviewList(targetCell,
-            static_cast<size_t>(std::max(1, app_->externalDropFileCount_)));
-        app_->DrawDesktopDropPreviewList(ctx, preview);
-    }
+        mods = DropActionToMods(app_->dragSession_.Action());
+
+    // 使用缓存避免每帧重建 BuildDropPreviewList（位置/动作/目标不变时复用）
+    const DropPreviewList& preview = app_->GetCachedDesktopDropPreview(
+        hasItemDrag,
+        hasItemDrag ? app_->dragSession_.SourceList() : DragSourceList{},
+        this, slot, region, mods, dragPoint);
+    app_->DrawDesktopDropPreviewList(ctx, preview);
 }
 
 /**

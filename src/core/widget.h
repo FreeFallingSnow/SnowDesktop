@@ -169,7 +169,7 @@ public:
     virtual int  GetMaxScrollOffset() const { return 0; }
     virtual int  GetTotalContentHeight() const { return 0; }
     virtual int  GetVisibleContentHeight() const { return 0; }
-    void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const;
+    virtual void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const;
 
 protected:
     mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
@@ -360,6 +360,35 @@ public:
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
+};
+
+/**
+ * @class GuideWidget
+ * @brief 分页系统使用指南组件
+ *
+ * GuideWidget 继承 WidgetContainer，以可滚动 DWrite 文本展示
+ * 多屏幕多分页系统的介绍和操作说明。无子项、不接受拖放，
+ * 仅作为信息展示和页面占位用途。
+ */
+class GuideWidget : public WidgetContainer
+{
+public:
+    using WidgetContainer::WidgetContainer;
+
+    size_t GetSlotCount() const override { return 0; }
+    std::vector<std::unique_ptr<Slot>> BuildSlots() override { return {}; }
+    void DrawContent(ID2D1DeviceContext* context, RECT body) override;
+    void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const override;
+    int GetMaxScrollOffset() const override { return std::max(0, static_cast<int>(totalTextHeight_ - lastBodyHeight_)); }
+    HitRegion HitTestDrag(POINT /*pt*/, Slot*& outSlot) override { outSlot = nullptr; return HitRegion::None; }
+    std::wstring GetDragHint(Slot*, HitRegion, const std::vector<Item*>&, Container*, int) const override { return L""; }
+    void OnItemsDropped(const std::vector<Item*>&, Container*, Slot*, HitRegion, int) override {}
+    std::vector<Item*> GetSelectedItems() const override { return {}; }
+
+private:
+    static std::wstring BuildGuideText(const DesktopApp* app);
+    mutable float totalTextHeight_ = 0;
+    mutable LONG lastBodyHeight_ = 0;
 };
 
 /**

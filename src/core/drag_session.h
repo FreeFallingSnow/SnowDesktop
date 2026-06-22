@@ -103,6 +103,16 @@ public:
     }
 
     /**
+     * @brief 平移鼠标按下基准点（用于跨页迁移后保持视觉连续性）。
+     * @param delta 基准点平移量。
+     */
+    void AdjustMouseDownPoint(POINT delta)
+    {
+        mouseDownPoint_.x += delta.x;
+        mouseDownPoint_.y += delta.y;
+    }
+
+    /**
      * @brief 根据修饰键状态更新拖拽动作
      * @param mods           修饰键掩码
      * @param defaultAction  默认动作，默认为 Move

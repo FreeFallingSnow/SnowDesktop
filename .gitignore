@@ -11,3 +11,6 @@ build/
 release/
 docs/
 SnowDesktop_crash.log
+.claude/
+AGENTS.md
+imgui.ini

@@ -76,7 +76,6 @@ constexpr UINT kContextRefreshCommand = 41007;
 constexpr UINT kContextSortByNameCommand = 41008;
 constexpr UINT kContextSortByTypeCommand = 41009;
 constexpr UINT kContextMoreCommand = 41010;
-constexpr UINT kContextThisDisplayFirstCommand = 41011;
 constexpr UINT kContextGridAddRow = 41012;
 constexpr UINT kContextGridRemoveRow = 41013;
 constexpr UINT kContextGridAddColumn = 41014;
@@ -114,6 +113,13 @@ constexpr UINT kContextGridAdjustmentDone = 41403;
 constexpr UINT kContextFontSizeSmall = 41404;
 constexpr UINT kContextFontSizeMedium = 41405;
 constexpr UINT kContextFontSizeLarge = 41406;
+constexpr UINT kContextPagePrev = 41407;
+constexpr UINT kContextPageNext = 41408;
+constexpr UINT kContextPageAdd = 41409;
+constexpr UINT kContextPinFirstPage = 41410;
+constexpr UINT kContextPinLastPage = 41411;
+constexpr UINT kContextPageJumpFirst = 41500;
+constexpr UINT kContextPageJumpLast  = 41550;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
@@ -131,6 +137,10 @@ constexpr UINT kWidgetRefreshIntervalMs = 1000;
 constexpr UINT_PTR kCollectionPopupDwellTimerId = 6;
 constexpr UINT kCollectionPopupDwellIntervalMs = 50;
 constexpr DWORD kCollectionPopupDwellDelayMs = 600;
+constexpr UINT_PTR kPageNotifyTimerId = 7;
+constexpr UINT kPageNotifyTimerIntervalMs = 30;
+constexpr DWORD kPageNotifyVisibleMs = 1800;
+constexpr DWORD kPageNotifyFadeMs = 500;
 
 // ── 快捷导航 ──────────────────────────────────
 constexpr int kQuickNavigationHotkeyId = 101;

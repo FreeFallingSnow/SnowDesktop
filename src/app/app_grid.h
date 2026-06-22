@@ -106,22 +106,61 @@ inline void DesktopApp::AdjustGridColumns(int delta)
 }
 
 /**
- * @brief 将指定物理坐标的页面设为首个监控器页面。
+ * @brief 从坐标点所在显示器切换首屏锁定（持久化，与末屏锁互斥平移）。
  * @param screenPoint 屏幕坐标点。
  */
-inline void DesktopApp::SetFirstPageMonitorFromPoint(POINT screenPoint)
+inline void DesktopApp::ToggleFirstPagePin(POINT screenPoint)
 {
     POINT clientPoint = screenPoint;
     ScreenToClient(hwnd_, &clientPoint);
     const GridPage* page = GridPageFromPoint(clientPoint);
     if (!page || page->monitorId.empty()) return;
 
-    firstPageMonitorId_ = page->monitorId;
+    if (firstPageMonitorId_ == page->monitorId)
+    {
+        firstPageMonitorId_.clear();          // toggle off → 取消锁定
+    }
+    else
+    {
+        firstPageMonitorId_ = page->monitorId;
+        if (lastPageMonitorId_ == page->monitorId)  // 互斥平移
+            lastPageMonitorId_.clear();
+    }
     pageOffset_ = 0;
     ApplyPageMapping();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
+    RestoreDesktopWindowLayer();
+}
+
+/**
+ * @brief 从坐标点所在显示器切换末屏锁定（持久化，与首屏锁互斥平移）。
+ * @param screenPoint 屏幕坐标点。
+ */
+inline void DesktopApp::ToggleLastPagePin(POINT screenPoint)
+{
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
+    const GridPage* page = GridPageFromPoint(clientPoint);
+    if (!page || page->monitorId.empty()) return;
+
+    if (lastPageMonitorId_ == page->monitorId)
+    {
+        lastPageMonitorId_.clear();           // toggle off → 取消锁定
+    }
+    else
+    {
+        lastPageMonitorId_ = page->monitorId;
+        if (firstPageMonitorId_ == page->monitorId)  // 互斥平移
+            firstPageMonitorId_.clear();
+    }
+    pageOffset_ = 0;
+    ApplyPageMapping();
+    LayoutItems();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    RestoreDesktopWindowLayer();
 }
 
 /**
@@ -170,33 +209,112 @@ inline void DesktopApp::SetItemFontSize(float value)
 }
 
 /**
- * @brief 获取首个监控器页面在页面列表中的索引。
- * @return 页面索引，默认返回 0。
+ * @brief 获取系统主显示器在 gridPages_ 中的索引（回退到 0）。
+ * @return 页面索引。
  */
 inline size_t DesktopApp::FirstMonitorOrderIndex() const
 {
     if (gridPages_.empty()) return 0;
     for (size_t i = 0; i < gridPages_.size(); ++i)
-        if (!firstPageMonitorId_.empty() && gridPages_[i].monitorId == firstPageMonitorId_)
-            return i;
-    for (size_t i = 0; i < gridPages_.size(); ++i)
         if (!primaryMonitorId_.empty() && gridPages_[i].monitorId == primaryMonitorId_)
             return i;
+    for (size_t i = 0; i < gridPages_.size(); ++i)
+        if (gridPages_[i].isPrimary) return i;
     return 0;
 }
 
 /**
- * @brief 构建监控器渲染顺序（以首个显示器页面为起点）。
- * @return 页面索引的顺序列表。
+ * @brief 构建监控器渲染顺序（双锚点线性：首屏锁 → 中间按 left 升序 → 末屏锁）。
+ *
+ * 双锚点解析：先看持久化的 firstPageMonitorId_/lastPageMonitorId_ 是否在线；
+ * 离线/无效时回退——首屏首选主屏，末屏首选最右屏；被对方占用时向左找最近替代。
+ * 单屏时该屏同时担首屏与末屏。离线不清锁，重连自动恢复。
+ * @return gridPages_ 索引的顺序列表。
  */
 inline std::vector<size_t> DesktopApp::BuildMonitorRenderOrder() const
 {
     std::vector<size_t> order;
     if (gridPages_.empty()) return order;
-    order.reserve(gridPages_.size());
-    const size_t first = FirstMonitorOrderIndex();
-    for (size_t offset = 0; offset < gridPages_.size(); ++offset)
-        order.push_back((first + offset) % gridPages_.size());
+    const size_t N = gridPages_.size();
+    order.reserve(N);
+
+    // 按 bounds.left 升序的 gridPages_ 索引列表
+    std::vector<size_t> sorted;
+    sorted.reserve(N);
+    for (size_t i = 0; i < N; ++i) sorted.push_back(i);
+    std::sort(sorted.begin(), sorted.end(),
+        [&](size_t a, size_t b) { return gridPages_[a].bounds.left < gridPages_[b].bounds.left; });
+
+    auto findById = [&](const std::wstring& id) -> int {
+        if (id.empty()) return -1;
+        for (size_t k = 0; k < sorted.size(); ++k)
+            if (gridPages_[sorted[k]].monitorId == id) return static_cast<int>(k);
+        return -1;
+    };
+
+    int firstIdx = findById(firstPageMonitorId_);
+    int lastIdx  = findById(lastPageMonitorId_);
+
+    // 防御：两锁指向同一屏（旧/坏配置），令末屏锁休眠
+    if (firstIdx >= 0 && lastIdx >= 0 && firstIdx == lastIdx) lastIdx = -1;
+
+    const int primaryPos = static_cast<int>(FirstMonitorOrderIndex());
+    const int rightmostPos = static_cast<int>(sorted.size()) - 1;
+
+    // 从 prefer 开始，如果被 avoidIdx 占用则向左找最近的替代（符合"向左找"语义）
+    auto resolveFallback = [&](int prefer, int avoidIdx) -> int {
+        if (prefer != avoidIdx) return prefer;
+        for (int d = 1; d < static_cast<int>(sorted.size()); ++d)
+        {
+            int left = prefer - d;
+            int right = prefer + d;
+            if (left >= 0 && left != avoidIdx) return left;
+            if (right < static_cast<int>(sorted.size()) && right != avoidIdx) return right;
+        }
+        return avoidIdx;   // N>=2 时不会走到，仅兜底
+    };
+
+    if (N == 1)
+    {
+        order.push_back(sorted[0]);
+        return order;
+    }
+
+    if (firstIdx >= 0 && lastIdx >= 0)
+    {
+        // case A：两锁均在线且不同屏
+    }
+    else if (firstIdx >= 0)
+    {
+        // case B：首屏锁在线，末屏回退到最右屏（被首屏锁占用则向左找替代）
+        lastIdx = resolveFallback(rightmostPos, firstIdx);
+    }
+    else if (lastIdx >= 0)
+    {
+        // case C：末屏锁在线，首屏回退到主屏（被末屏锁占用则向左找替代）
+        firstIdx = resolveFallback(primaryPos, lastIdx);
+    }
+    else
+    {
+        // case D：两锁均离线/空，首屏=主屏，末屏=最右屏
+        firstIdx = resolveFallback(primaryPos, -1);
+        lastIdx  = resolveFallback(rightmostPos, firstIdx);
+    }
+
+    order.push_back(sorted[firstIdx]);
+    if (firstIdx != lastIdx)
+    {
+        for (size_t k = 0; k < sorted.size(); ++k)
+            if (static_cast<int>(k) != firstIdx && static_cast<int>(k) != lastIdx)
+                order.push_back(sorted[k]);
+        order.push_back(sorted[lastIdx]);
+    }
+    else
+    {
+        // 合并分支（N>=2 时理论上不会走到，仅作兜底）
+        for (size_t k = 0; k < sorted.size(); ++k)
+            if (static_cast<int>(k) != firstIdx) order.push_back(sorted[k]);
+    }
     return order;
 }
 
@@ -256,19 +374,280 @@ inline int DesktopApp::MaxPageOffset() const
     return result;
 }
 
+inline std::wstring DesktopApp::GetPageDisplayName(int index) const
+{
+    return L"第" + std::to_wstring(index + 1) + L"页";
+}
+
+inline void DesktopApp::NavigatePageOffset(int delta)
+{
+    if (delta < 0 && pageOffset_ <= 0) return;
+    if (delta > 0 && pageOffset_ >= MaxPageOffset()) return;
+    pageOffset_ = NextNonEmptyOffset(pageOffset_, delta);
+    ApplyPageMapping();
+    LayoutItems();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+    RestoreDesktopWindowLayer();
+}
+
+inline void DesktopApp::JumpToPageOffset(int targetOffset)
+{
+    pageOffset_ = std::clamp(targetOffset, 0, MaxPageOffset());
+    ApplyPageMapping();
+    LayoutItems();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+    RestoreDesktopWindowLayer();
+}
+
+inline void DesktopApp::AddNewPage()
+{
+    if (gridPages_.empty()) return;
+    const size_t N = gridPages_.size();
+
+    // 1. 从前到后遍历，找第一个"空且当前正显示在某个显示器上"的页，直接放 Guide 占位。
+    //    槽位页(index < N) 总是显示在前 N 个显示器上；末屏显示 savedPageIds_[N-1+pageOffset_]。
+    const size_t lastDisplayedIdx = (N >= 1)
+        ? (N - 1 + static_cast<size_t>(std::max(0, pageOffset_)))
+        : 0;
+    for (size_t i = 0; i < savedPageIds_.size(); ++i)
+    {
+        const bool isDisplayed = (i < N) || (i == lastDisplayedIdx);
+        if (isDisplayed && !PageHasContent(savedPageIds_[i]))
+        {
+            PlaceGuideWidgetOnPage(savedPageIds_[i]);   // PlaceGuideWidgetOnPage 内部已 SaveLayoutSlots
+            ApplyPageMapping();
+            LayoutItems();
+            ShowPageNotify(GetPageDisplayName(static_cast<int>(i)));
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+            return;
+        }
+    }
+
+    // 2. 没有空显示页，在末尾新建溢出页
+    auto monitorOrder = BuildMonitorRenderOrder();
+    const GridPage& lastPage = gridPages_[monitorOrder.back()];
+
+    std::wstring newPageId = GeneratePageId();
+    savedPageIds_.push_back(newPageId);
+    savedPageColumns_[newPageId] = lastPage.columns;
+    savedPageRows_[newPageId] = lastPage.rows;
+    RememberSavedPageId(newPageId);
+
+    PlaceGuideWidgetOnPage(newPageId);   // Guide 占位 → 非空 → 不被清理
+
+    pageOffset_ = MaxPageOffset();       // 跳到新页
+    ApplyPageMapping();
+    LayoutItems();
+
+    // 显式触发换页通知（ApplyPageMapping 内的变化检测可能因 lastMonitorPageId_ 被清空而失效）
+    auto it = std::ranges::find(savedPageIds_, newPageId);
+    if (it != savedPageIds_.end())
+        ShowPageNotify(GetPageDisplayName(static_cast<int>(it - savedPageIds_.begin())));
+
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::PlaceGuideWidgetOnPage(const std::wstring& pageId)
+{
+    extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
+
+    DesktopWidget w;
+    w.id = MakeNewWidgetId();
+    w.type = DesktopWidgetType::Guide;
+    w.title = L"分页使用指南";
+    w.showTitle = true;
+    w.bottomBarHover = true;
+    w.gridSpan = { 4, 3 };
+
+    const auto* page = FindGridPage(gridPages_, pageId);
+    int cols = page ? page->columns : (savedPageColumns_.count(pageId) ? savedPageColumns_[pageId] : 4);
+    int rows = page ? page->rows : (savedPageRows_.count(pageId) ? savedPageRows_[pageId] : 4);
+
+    std::unordered_set<std::wstring> used;
+    for (auto& item : items_)
+        if (!item.name.empty() && item.gridCell.pageId == pageId)
+            MarkGridArea(used, item.gridCell, item.gridSpan);
+    for (auto& ow : widgets_)
+        if (ow.gridCell.pageId == pageId)
+            MarkGridArea(used, ow.gridCell, ow.gridSpan);
+
+    w.gridCell.pageId = pageId;
+    for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < cols; ++c)
+        {
+            GridCell cell{ pageId, c, r };
+            if (!AreGridSlotsMarked(used, cell, w.gridSpan))
+            {
+                w.gridCell = cell;
+                goto placed;
+            }
+        }
+    w.gridCell = { pageId, 0, 0 };
+placed:
+    widgets_.push_back(std::move(w));
+    ConfigureWidgetGridLimits(widgets_.back());
+    RebuildContainersAndItems();
+    SaveLayoutSlots();
+}
+
 /**
  * @brief 将已保存的页面 ID 映射到当前网格页面，并应用保存的列/行数。
  */
-inline void DesktopApp::ApplyPageMapping()
+inline std::wstring DesktopApp::GeneratePageId() const
 {
+    int maxNum = 0;
+    for (auto& pid : savedPageIds_)
+        if (pid.starts_with(L"__page:"))
+            maxNum = (std::max)(maxNum, std::stoi(pid.substr(7)));
+    return L"__page:" + std::to_wstring(maxNum + 1);
+}
+
+/**
+ * @brief 每次加载后按 pages 列表顺序重新规整为 __page:1, __page:2, ...
+ */
+inline void DesktopApp::NormalizePageIds()
+{
+    if (savedPageIds_.empty()) return;
+    if (savedPageIds_.size() > 9999) return;   // 防御：编号爆炸
+
+    // 按 pages 列表顺序严格分配 __page:1, __page:2, ...
+    std::unordered_map<std::wstring, std::wstring> idMap;
+    for (size_t i = 0; i < savedPageIds_.size(); ++i)
+    {
+        std::wstring newId = L"__page:" + std::to_wstring(i + 1);
+        if (savedPageIds_[i] != newId)
+            idMap[savedPageIds_[i]] = newId;
+    }
+    if (idMap.empty()) return;
+
+    // savedPageIds_
+    for (auto& pid : savedPageIds_)
+        if (idMap.contains(pid)) pid = idMap[pid];
+
+    // layoutRecords_: keys and cell.pageId（用 try_emplace 防止 key 冲突覆盖）
+    std::unordered_map<std::wstring, LayoutRecord> newRecords;
+    for (auto& [key, rec] : layoutRecords_)
+    {
+        if (idMap.contains(rec.cell.pageId)) rec.cell.pageId = idMap[rec.cell.pageId];
+        std::wstring newKey = idMap.contains(key) ? idMap[key] : key;
+        newRecords.try_emplace(newKey, std::move(rec));
+    }
+    layoutRecords_ = std::move(newRecords);
+
+    // widgets_
+    for (auto& w : widgets_)
+        if (idMap.contains(w.gridCell.pageId)) w.gridCell.pageId = idMap[w.gridCell.pageId];
+
+    // items_
+    for (auto& item : items_)
+        if (idMap.contains(item.gridCell.pageId)) item.gridCell.pageId = idMap[item.gridCell.pageId];
+
+    // savedPageColumns_ / savedPageRows_
+    std::unordered_map<std::wstring, int> newCols, newRows;
+    for (auto& [k, v] : savedPageColumns_)
+        newCols.try_emplace(idMap.contains(k) ? idMap[k] : k, v);
+    for (auto& [k, v] : savedPageRows_)
+        newRows.try_emplace(idMap.contains(k) ? idMap[k] : k, v);
+    savedPageColumns_ = std::move(newCols);
+    savedPageRows_ = std::move(newRows);
+}
+
+/**
+ * @brief 清理空页，按三类分别处理：
+ *
+ *   1. 槽位页（index < N-1）：前 N-1 个显示器各占一个，永远保留（即便空）。
+ *   2. 末屏默认页（index == N-1）：末屏 pageOffset=0 时显示的页。
+ *      - 非空 → 保留
+ *      - 空 + 后面有非空页 → 清理，让后面递补上来
+ *      - 空 + 后面无非空页 → 保留作末屏占位（避免末屏空网格）
+ *   3. 溢出区其余页（index > N-1）：末屏翻页区。
+ *      - 非空 → 保留
+ *      - 空 → 一律清理（pageOffset 钳制使末屏回退到前面非空页）
+ */
+inline void DesktopApp::PruneEmptyOverflowPages()
+{
+    const size_t N = gridPages_.size();
+    if (N == 0 || savedPageIds_.empty()) return;
+
+    // 预计算：每个 index 之后是否存在非空页
+    const size_t total = savedPageIds_.size();
+    std::vector<bool> hasNonEmptyAfter(total, false);
+    {
+        bool seen = false;
+        for (size_t i = total; i-- > 0; )
+        {
+            hasNonEmptyAfter[i] = seen;
+            if (PageHasContent(savedPageIds_[i]))
+                seen = true;
+        }
+    }
+
+    std::vector<std::wstring> keep;
+    for (size_t i = 0; i < total; ++i)
+    {
+        const bool isSlotPage = (N >= 2) && (i < N - 1);        // 前 N-1 槽位页
+        const bool isLastDefault = (i == N - 1);                // 末屏默认页（pageOffset=0 时显示）
+        const bool isEmpty = !PageHasContent(savedPageIds_[i]);
+
+        if (isSlotPage)
+            keep.push_back(savedPageIds_[i]);                   // 槽位页永远保留
+        else if (!isEmpty)
+            keep.push_back(savedPageIds_[i]);                   // 非空保留
+        else if (isLastDefault && !hasNonEmptyAfter[i])
+            keep.push_back(savedPageIds_[i]);                   // 末屏默认页空 + 后面无非空 → 保留作占位
+        else
+        {
+            // 末屏默认页空 + 后面有非空 → 清理递补
+            // 溢出区其余页空 → 清理
+            savedPageColumns_.erase(savedPageIds_[i]);
+            savedPageRows_.erase(savedPageIds_[i]);
+        }
+    }
+    savedPageIds_ = std::move(keep);
+}
+
+/**
+ * @brief 按显示器数量补齐前 N 个槽位页（每个显示器都有一个占位页）。
+ */
+inline void DesktopApp::PadPagesToMonitorCount()
+{
+    const size_t N = gridPages_.size();
+    if (N == 0) return;
+    const size_t target = N;   // 补齐到 N 个：每个显示器一个槽位页
+    while (savedPageIds_.size() < target)
+    {
+        std::wstring newId = GeneratePageId();
+        const size_t refIdx = savedPageIds_.size();
+        const GridPage& refPage = (refIdx < gridPages_.size()) ? gridPages_[refIdx] : gridPages_.front();
+        savedPageIds_.push_back(newId);
+        savedPageColumns_[newId] = std::max(1, refPage.columns);
+        savedPageRows_[newId] = std::max(1, refPage.rows);
+    }
+}
+
+/**
+ * @brief 若页面编号不连续则重排为 __page:1,2,3...（封装 NormalizePageIds 的早退判断）。
+ */
+inline void DesktopApp::CompactPageIds()
+{
+    if (savedPageIds_.empty()) return;
+    bool needCompact = false;
+    for (size_t i = 0; i < savedPageIds_.size(); ++i)
+    {
+        if (savedPageIds_[i] != L"__page:" + std::to_wstring(i + 1))
+        { needCompact = true; break; }
+    }
+    if (needCompact) NormalizePageIds();
+}
+
+/**
+ * @brief 将 savedPageIds_ 映射到各显示器：前 N-1 显示器固定，末屏翻页 + pageOffset 钳制。
+ */
+inline void DesktopApp::MapPagesToMonitors()
+{
+    const std::wstring oldLastPageId = lastMonitorPageId_;
     lastMonitorPageId_.clear();
     if (gridPages_.empty()) return;
-
-    if (savedPageIds_.empty())
-    {
-        for (const auto& page : gridPages_)
-            RememberSavedPageId(page.monitorId);
-    }
 
     pageOffset_ = std::clamp(pageOffset_, 0, MaxPageOffset());
     std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
@@ -281,13 +660,48 @@ inline void DesktopApp::ApplyPageMapping()
         if (pageIdx < savedPageIds_.size())
             page.id = savedPageIds_[pageIdx];
         else
-            page.id = L"__extra:" + page.monitorId;
+            page.id = L"";   // 越界：末屏渲染空网格
         if (isLast)
             lastMonitorPageId_ = page.id;
     }
+    // 仅当存在溢出页时保留 lastMonitorPageId_，否则清空（gfx 据此决定末屏箭头）
     if (!lastMonitorPageId_.empty() && savedPageIds_.size() <= gridPages_.size())
         lastMonitorPageId_.clear();
 
+    // 末屏显示页变化时触发换页通知（类似电视台换台角标）
+    // 仅当 oldLastPageId 非空时才触发——避免启动/初始化时误弹通知
+    if (!oldLastPageId.empty() && !lastMonitorPageId_.empty() && lastMonitorPageId_ != oldLastPageId)
+    {
+        auto it = std::ranges::find(savedPageIds_, lastMonitorPageId_);
+        if (it != savedPageIds_.end())
+        {
+            const int pageIdx = static_cast<int>(it - savedPageIds_.begin());
+            ShowPageNotify(GetPageDisplayName(pageIdx));
+        }
+    }
+}
+
+/**
+ * @brief 应用页面到显示器的映射（编排：清理 → 补齐 → 重排 → 映射 → 应用保存的网格尺寸）。
+ */
+inline void DesktopApp::ApplyPageMapping()
+{
+    if (gridPages_.empty()) { lastMonitorPageId_.clear(); return; }
+
+    // 首屏兜底：若 savedPageIds_ 为空，确保至少有一个首屏页
+    if (savedPageIds_.empty())
+    {
+        std::wstring firstId = GeneratePageId();
+        savedPageIds_.push_back(firstId);
+        const GridPage& ref = gridPages_.front();
+        savedPageColumns_[firstId] = std::max(1, ref.columns);
+        savedPageRows_[firstId] = std::max(1, ref.rows);
+    }
+
+    PruneEmptyOverflowPages();
+    PadPagesToMonitorCount();
+    CompactPageIds();
+    MapPagesToMonitors();
     ApplySavedGridDimensions();
 }
 
@@ -460,12 +874,7 @@ inline void DesktopApp::RelayoutDisplacedItems()
 
         GridPage& lastPage = gridPages_[monitorOrder.back()];
 
-        int counter = 1;
-        std::wstring newPageId;
-        do {
-            newPageId = L"__extra:" + lastPage.monitorId + L":" + std::to_wstring(counter++);
-        } while (std::find(savedPageIds_.begin(), savedPageIds_.end(), newPageId) != savedPageIds_.end());
-
+        std::wstring newPageId = GeneratePageId();
         RememberSavedPageId(newPageId);
         savedPageColumns_[newPageId] = lastPage.columns;
         savedPageRows_[newPageId]    = lastPage.rows;
@@ -484,6 +893,23 @@ inline void DesktopApp::RelayoutDisplacedItems()
         const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (!page)
         {
+            // Widget is on a saved page not in current gridPages_ (different pageOffset).
+            // If its position is still valid per saved dimensions, keep it in place.
+            const std::wstring& pid = widget.gridCell.pageId;
+            if (!pid.empty() && savedPageColumns_.count(pid) && savedPageRows_.count(pid))
+            {
+                int cols = savedPageColumns_[pid];
+                int rows = savedPageRows_[pid];
+                widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan, cols, rows);
+                if (widget.gridCell.column >= 0 && widget.gridCell.row >= 0 &&
+                    widget.gridCell.column + widget.gridSpan.columns <= cols &&
+                    widget.gridCell.row + widget.gridSpan.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, widget.gridCell, widget.gridSpan))
+                {
+                    MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
+                    continue;
+                }
+            }
             displacedWidgets.push_back(i);
             continue;
         }
@@ -1083,6 +1509,10 @@ inline void DesktopApp::LoadLayoutSlots()
     if (ReadJsonStringField(text, "firstPageMonitor", firstPageMonitorUtf8))
         firstPageMonitorId_ = Utf8ToWide(firstPageMonitorUtf8);
 
+    std::string lastPageMonitorUtf8;
+    if (ReadJsonStringField(text, "lastPageMonitor", lastPageMonitorUtf8))
+        lastPageMonitorId_ = Utf8ToWide(lastPageMonitorUtf8);
+
     float loadedFontSize = 0;
     if (ReadJsonFloatField(text, "itemFontSize", loadedFontSize) &&
         loadedFontSize >= 10.0f && loadedFontSize <= 24.0f)
@@ -1182,6 +1612,10 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                                 widget.title = WidgetEngine::GetWidgetDisplayName(widget.scriptPath);
                                 if (widget.title.empty()) widget.title = widget.scriptPath;
                             }
+                            else if (widget.type == DesktopWidgetType::Guide)
+                            {
+                                widget.title = L"分页使用指南";
+                            }
                             else
                             {
                                 widget.title = widget.type == DesktopWidgetType::FileCategories ? L"桌面文件"
@@ -1202,7 +1636,8 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         widget.listMode = listMode;
                         widget.showTitle = widget.type != DesktopWidgetType::LuaScript;
                         widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
-                            widget.type == DesktopWidgetType::LuaScript);
+                            widget.type == DesktopWidgetType::LuaScript ||
+                            widget.type == DesktopWidgetType::Guide);
                         widget.scrollOffset = std::max(0, scrollOffset);
 widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
@@ -1268,6 +1703,7 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
         navTabOrder_ = std::move(savedOrder);
     }
     EnsureNavTabOrder();
+    NormalizePageIds();
     releasePreservedEntries();
 }
 
@@ -1315,7 +1751,9 @@ inline void DesktopApp::SaveLayoutSlots()
     std::ofstream file(GetLayoutPath(), std::ios::binary | std::ios::trunc);
     if (!file) return;
 
-    file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_) << "\",\n  \"itemFontSize\": " << itemFontSize_ << ",\n  \"pages\": [\n";
+    file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
+         << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
+         << "\",\n  \"itemFontSize\": " << itemFontSize_ << ",\n  \"pages\": [\n";
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
         const GridPage* page = FindGridPage(gridPages_, pagesToWrite[i]);
@@ -1553,6 +1991,7 @@ inline DesktopWidgetType DesktopApp::WidgetTypeFromJson(const std::wstring& type
     if (n == L"FILECATEGORIES" || n == L"FILE_CATEGORIES") return DesktopWidgetType::FileCategories;
     if (n == L"FOLDERMAPPING" || n == L"FOLDER_MAPPING") return DesktopWidgetType::FolderMapping;
     if (n == L"LUA" || n == L"LUASCRIPT" || n == L"LUA_SCRIPT") return DesktopWidgetType::LuaScript;
+    if (n == L"GUIDE") return DesktopWidgetType::Guide;
     if (n == L"COLLECTION") return DesktopWidgetType::Collection;
     return DesktopWidgetType::Collection;
 }
@@ -1569,6 +2008,7 @@ inline std::wstring DesktopApp::WidgetTypeToJson(DesktopWidgetType type) const
     case DesktopWidgetType::FileCategories: return L"fileCategories";
     case DesktopWidgetType::FolderMapping:  return L"folderMapping";
     case DesktopWidgetType::LuaScript:      return L"lua";
+    case DesktopWidgetType::Guide:          return L"guide";
     case DesktopWidgetType::Collection:
     default:                                return L"collection";
     }
@@ -1816,12 +2256,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
             std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
             GridPage& lastPage = gridPages_[monitorOrder.back()];
 
-            int counter = 1;
-            std::wstring newPageId;
-            do {
-                newPageId = L"__extra:" + lastPage.monitorId + L":" + std::to_wstring(counter++);
-            } while (std::find(savedPageIds_.begin(), savedPageIds_.end(), newPageId) != savedPageIds_.end());
-
+            std::wstring newPageId = GeneratePageId();
             RememberSavedPageId(newPageId);
             savedPageColumns_[newPageId] = lastPage.columns;
             savedPageRows_[newPageId]    = lastPage.rows;
@@ -2226,6 +2661,13 @@ inline void DesktopApp::UpdateLayoutWorkArea()
         gridPages_.push_back(fb);
     }
 
+    // 从枚举结果提取系统主屏 monitorId（供双锚点回退解析使用）
+    primaryMonitorId_.clear();
+    for (const auto& p : gridPages_)
+        if (p.isPrimary) { primaryMonitorId_ = p.monitorId; break; }
+    if (primaryMonitorId_.empty() && !gridPages_.empty())
+        primaryMonitorId_ = gridPages_.front().monitorId;
+
     std::sort(gridPages_.begin(), gridPages_.end(), [](const GridPage& a, const GridPage& b) {
         return a.bounds.left < b.bounds.left;
     });
@@ -2387,6 +2829,39 @@ inline GridCell DesktopApp::CellFromPoint(POINT point) const
     cell.pageId = page->id;
     cell.column = GetGridAxisIndexFromPoint(*page, point.x, true);
     cell.row = GetGridAxisIndexFromPoint(*page, point.y, false);
+    return cell;
+}
+
+/**
+ * @brief 拖拽放置用的网格命中：按左上角边界包含而非中心距离，
+ *        使图标左上角越过单元格边界即命中该格，消除半格偏移。
+ */
+inline GridCell DesktopApp::CellFromPointForDrag(POINT point) const
+{
+    const GridPage* page = GridPageFromPoint(point);
+    GridCell cell;
+    if (!page) return cell;
+    cell.pageId = page->id;
+
+    auto axisIndexForDrag = [&](bool horizontal) -> int {
+        const int count = horizontal ? page->columns : page->rows;
+        const int coordinate = horizontal ? point.x : point.y;
+        const int margin = horizontal ? page->marginX : page->marginY;
+        const int cellSize = horizontal ? page->cellWidth : page->cellHeight;
+        const int origin = (horizontal ? page->workArea.left : page->workArea.top) + margin;
+
+        for (int i = 0; i < count; ++i)
+        {
+            const int cellLeft = origin + GetGridAxisOffset(*page, i, horizontal);
+            const int cellRight = cellLeft + cellSize;
+            if (coordinate < cellRight)
+                return i;
+        }
+        return count - 1;
+    };
+
+    cell.column = axisIndexForDrag(true);
+    cell.row = axisIndexForDrag(false);
     return cell;
 }
 
@@ -2938,12 +3413,27 @@ inline std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
         return landings;
     }
 
+    // 起始列：拖放目标列，换行时从该列另起一行而非从 0 开始
+    const int startCol = std::clamp(targetCell.column, 0, std::max(0, page->columns - 1));
+
     auto advanceCell = [&](GridCell cell, GridSpan span) {
-        cell.column += std::max(1, span.columns);
-        if (cell.column >= page->columns)
+        // 查找 cell 所在页的维度（支持跨页后 cursor 切到新页）
+        int cols = page->columns, rows = page->rows;
+        if (cell.pageId != page->id)
         {
-            cell.column = 0;
+            auto colIt = savedPageColumns_.find(cell.pageId);
+            auto rowIt = savedPageRows_.find(cell.pageId);
+            if (colIt != savedPageColumns_.end()) cols = colIt->second;
+            if (rowIt != savedPageRows_.end()) rows = rowIt->second;
+        }
+        cell.column += std::max(1, span.columns);
+        if (cell.column + span.columns > cols)
+        {
+            cell.column = startCol;
             cell.row += std::max(1, span.rows);
+            // 到底后绕回起始行上方（搜索阶段会跳过已占位置）
+            if (cell.row + span.rows > rows)
+                cell.row = 0;
         }
         return cell;
     };
@@ -2964,8 +3454,83 @@ inline std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
         MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
     }
 
-    int searchSlot = SlotFromCell(gridPages_, targetCell);
     GridCell cursor = targetCell;
+
+    // 阶段式搜索：1) 从 cursor 向右 + 下方行从 startCol 开始
+    //             1b) 上方行从 startCol 开始（绕回页面顶部填间隙）
+    //             1c) 下方/上方行从列 0..startCol-1 补扫（覆盖左侧空位）
+    //             2) 全页行优先搜索（兜底）
+    //             3) TryFindFreeCell 跨页搜索
+    auto tryPlaceRightward = [&](GridSpan span, GridCell fromCell, GridCell& outCell) -> bool {
+        // 获取 fromCell 所在页的维度（支持跨页后 cursor 切到新页）
+        int pageCols = page->columns, pageRows = page->rows;
+        if (fromCell.pageId != page->id)
+        {
+            auto colIt = savedPageColumns_.find(fromCell.pageId);
+            auto rowIt = savedPageRows_.find(fromCell.pageId);
+            if (colIt != savedPageColumns_.end()) pageCols = colIt->second;
+            if (rowIt != savedPageRows_.end()) pageRows = rowIt->second;
+        }
+
+        // 当前行从 fromCell.column 向右找
+        for (int c = fromCell.column; c + span.columns <= pageCols; ++c)
+        {
+            GridCell candidate{ fromCell.pageId, c, fromCell.row };
+            if (!AreGridSlotsMarked(usedSlots, candidate, span))
+            {
+                outCell = candidate;
+                return true;
+            }
+        }
+
+        // 下方行：先从 startCol 向右，再从 0..startCol-1 补扫
+        for (int r = fromCell.row + 1; r + span.rows <= pageRows; ++r)
+        {
+            for (int c = startCol; c + span.columns <= pageCols; ++c)
+            {
+                GridCell candidate{ fromCell.pageId, c, r };
+                if (!AreGridSlotsMarked(usedSlots, candidate, span))
+                {
+                    outCell = candidate;
+                    return true;
+                }
+            }
+            for (int c = 0; c < startCol && c + span.columns <= pageCols; ++c)
+            {
+                GridCell candidate{ fromCell.pageId, c, r };
+                if (!AreGridSlotsMarked(usedSlots, candidate, span))
+                {
+                    outCell = candidate;
+                    return true;
+                }
+            }
+        }
+
+        // 上方行：先从 startCol 向右，再从 0..startCol-1 补扫
+        for (int r = 0; r < fromCell.row && r + span.rows <= pageRows; ++r)
+        {
+            for (int c = startCol; c + span.columns <= pageCols; ++c)
+            {
+                GridCell candidate{ fromCell.pageId, c, r };
+                if (!AreGridSlotsMarked(usedSlots, candidate, span))
+                {
+                    outCell = candidate;
+                    return true;
+                }
+            }
+            for (int c = 0; c < startCol && c + span.columns <= pageCols; ++c)
+            {
+                GridCell candidate{ fromCell.pageId, c, r };
+                if (!AreGridSlotsMarked(usedSlots, candidate, span))
+                {
+                    outCell = candidate;
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
     for (const auto& entry : sourceList.entries)
     {
         GridSpan span = entry.originalSpan;
@@ -2974,15 +3539,67 @@ inline std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
 
         GridCell cell{};
         bool found = false;
-        if (IsGridAreaValid(cursor, span) && !AreGridSlotsMarked(usedSlots, cursor, span))
+
+        // 获取 cursor 所在页的维度（支持跨页后 cursor 切到新页）
+        auto getPageSize = [&](const std::wstring& pid) -> std::pair<int,int> {
+            if (pid == page->id) return { page->columns, page->rows };
+            auto colIt = savedPageColumns_.find(pid);
+            auto rowIt = savedPageRows_.find(pid);
+            int c = (colIt != savedPageColumns_.end()) ? colIt->second : page->columns;
+            int r = (rowIt != savedPageRows_.end()) ? rowIt->second : page->rows;
+            return { c, r };
+        };
+
+        // 阶段 1：从 cursor 向右 + 下方行从 startCol
+        auto [curCols, curRows] = getPageSize(cursor.pageId);
+        if (IsGridAreaValid(cursor, span) && cursor.column + span.columns <= curCols &&
+            cursor.row + span.rows <= curRows &&
+            !AreGridSlotsMarked(usedSlots, cursor, span))
         {
             cell = cursor;
             found = true;
         }
         else
         {
-            found = TryFindFreeCell(span, usedSlots, cell, cursor.pageId, searchSlot);
+            found = tryPlaceRightward(span, cursor, cell);
         }
+
+        // 阶段 2：全页行优先搜索（兜底，优先本页）
+        if (!found)
+        {
+            for (int r = 0; r + span.rows <= curRows && !found; ++r)
+            {
+                for (int c = 0; c + span.columns <= curCols && !found; ++c)
+                {
+                    GridCell candidate{ cursor.pageId, c, r };
+                    if (!AreGridSlotsMarked(usedSlots, candidate, span))
+                    {
+                        cell = candidate;
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        // 阶段 3：跨页搜索（TryFindFreeCell 内部遍历其他显示页）
+        if (!found)
+        {
+            found = TryFindFreeCell(span, usedSlots, cell, cursor.pageId, 0);
+        }
+
+        // 阶段 4：所有现有页都满了 → 预分配新溢出页
+        if (!found)
+        {
+            std::wstring newPageId = GeneratePageId();
+            // GeneratePageId 保证唯一，savedPageColumns_ 不会有该页
+            if (!savedPageColumns_.count(newPageId))
+            {
+                cell = { newPageId, 0, 0 };
+                found = true;
+                // 新页维度由 ApplyPendingPlacement 创建时参考末屏设置
+            }
+        }
+
         if (!found) continue;
 
         DropLanding landing;
@@ -2992,7 +3609,6 @@ inline std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
         landings.push_back(landing);
 
         MarkGridArea(usedSlots, cell, span);
-        searchSlot = SlotFromCell(gridPages_, cell) + 1;
         cursor = advanceCell(cell, span);
     }
     return landings;
@@ -3147,7 +3763,7 @@ inline DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& so
             return preview;
 
         POINT adjusted = sourceList.origin ? GetDragTargetPoint(dropPoint) : dropPoint;
-        GridCell targetCell = CellFromPoint(adjusted);
+        GridCell targetCell = CellFromPointForDrag(adjusted);
         bool internalMove = !IsDropFileBacked(sourceList, preview.targetKind, preview.action);
         if (internalMove)
             targetCell = FindBestDropCell(targetCell);
@@ -3819,6 +4435,55 @@ inline void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
 }
 
 /**
+ * @brief 获取或重建缓存的桌面放置预览。
+ *
+ * 拖拽渲染每帧调用 DrawDropPreview → BuildDropPreviewList → BuildDesktopLandings，
+ * 后者遍历全部 items/widgets 搜索空位。当鼠标位置/动作/目标不变时复用缓存，
+ * 避免每帧重建导致卡顿（尤其阶段2-4全页/跨页/新建页搜索）。
+ */
+inline const DropPreviewList& DesktopApp::GetCachedDesktopDropPreview(
+    bool hasItemDrag, const DragSourceList& sourceList,
+    Container* target, Slot* slot, HitRegion region, int mods, POINT dragPoint)
+{
+    const size_t sourceCount = sourceList.entries.size();
+    // 判断缓存是否有效：位置、动作、目标、源数量均未变
+    const bool cacheValid = !cachedDropPreview_.landings.empty() &&
+        cachedDropPreviewHasItems_ == hasItemDrag &&
+        cachedDropPreviewPoint_.x == dragPoint.x &&
+        cachedDropPreviewPoint_.y == dragPoint.y &&
+        cachedDropPreviewMods_ == mods &&
+        cachedDropPreviewTarget_ == target &&
+        cachedDropPreviewSlot_ == slot &&
+        cachedDropPreviewRegion_ == region &&
+        cachedDropPreviewSourceCount_ == sourceCount;
+
+    if (!cacheValid)
+    {
+        if (hasItemDrag)
+        {
+            cachedDropPreview_ = BuildDropPreviewList(sourceList, target, slot, region, mods, dragPoint);
+        }
+        else
+        {
+            GridCell targetCell = CellFromPoint(dragPoint);
+            if (targetCell.pageId.empty())
+                cachedDropPreview_ = {};
+            else
+                cachedDropPreview_ = BuildExternalDesktopPreviewList(targetCell,
+                    static_cast<size_t>(std::max(1, externalDropFileCount_)));
+        }
+        cachedDropPreviewPoint_ = dragPoint;
+        cachedDropPreviewMods_ = mods;
+        cachedDropPreviewTarget_ = target;
+        cachedDropPreviewSlot_ = slot;
+        cachedDropPreviewRegion_ = region;
+        cachedDropPreviewHasItems_ = hasItemDrag;
+        cachedDropPreviewSourceCount_ = sourceCount;
+    }
+    return cachedDropPreview_;
+}
+
+/**
  * @brief 应用缓存的放置结果，将新创建的文件分配到正确的网格位置或组件中。
  */
 inline void DesktopApp::ApplyPendingPlacement()
@@ -3912,6 +4577,20 @@ inline void DesktopApp::ApplyPendingPlacement()
                 span.rows = std::max(1, span.rows);
 
                 GridCell cell = landing.cell;
+
+                // 预分配的新溢出页：若 pageId 不在 savedPageIds_ 里，先创建
+                if (!cell.pageId.empty() &&
+                    std::find(savedPageIds_.begin(), savedPageIds_.end(), cell.pageId) == savedPageIds_.end())
+                {
+                    RememberSavedPageId(cell.pageId);
+                    // 参考末屏显示器的网格维度
+                    auto monitorOrder = BuildMonitorRenderOrder();
+                    const GridPage& refPage = !monitorOrder.empty()
+                        ? gridPages_[monitorOrder.back()] : gridPages_.front();
+                    savedPageColumns_[cell.pageId] = std::max(1, refPage.columns);
+                    savedPageRows_[cell.pageId] = std::max(1, refPage.rows);
+                }
+
                 bool found = false;
                 if (IsGridAreaValid(cell, span) && !AreGridSlotsMarked(usedSlots, cell, span))
                 {

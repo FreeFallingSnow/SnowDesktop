@@ -220,6 +220,7 @@ public:
     friend class FolderMapping;
     friend class ScrollingItemWidget;
     friend class LuaScript;
+    friend class GuideWidget;
 
     /**
      * @brief 快速导航面板中的条目结构体。
@@ -350,6 +351,10 @@ private:
     void DrawDynamicOverlays(ID2D1DeviceContext* ctx);
     /** @brief 绘制翻页导航按钮（左右箭头）。 @param ctx D2D 设备上下文 */
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
+    /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
+    void DrawPageNotify(ID2D1DeviceContext* ctx);
+    /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
+    void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
     void GetNavButtonRects(RECT& outPrev, RECT& outNext) const;
     /** @brief 使拖拽静态场景缓存失效，下次拖拽时重建缓存。 */
@@ -493,6 +498,15 @@ private:
      * @return 是否已打开弹出面板
      */
     bool TryOpenDwellCollectionPopup(DWORD now);
+    /**
+     * @brief 拖拽时优先检查集合弹窗命中（弹窗遮挡的容器不应被穿透命中）。
+     * @param client 客户端坐标
+     * @param[out] targetContainer 命中的容器
+     * @param[out] targetSlot 命中的槽位
+     * @param[out] targetRegion 命中的区域
+     * @return 命中弹窗返回 true，否则 false
+     */
+    bool HitTestPopupForDrag(POINT client, Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion);
     /** @brief 清除所有选中项。 */
     void ClearSelection();
     /**
@@ -611,16 +625,26 @@ private:
     void AdjustGridRows(int delta);
     /** @brief 调整网格列数。 @param delta 列数增量 */
     void AdjustGridColumns(int delta);
-    /** @brief 从坐标点所在显示器设置首页监视器。 @param screenPoint 屏幕坐标 */
-    void SetFirstPageMonitorFromPoint(POINT screenPoint);
+    /** @brief 从坐标点所在显示器切换首屏锁定（持久化、与末屏锁互斥）。 @param screenPoint 屏幕坐标 */
+    void ToggleFirstPagePin(POINT screenPoint);
+    /** @brief 从坐标点所在显示器切换末屏锁定（持久化、与首屏锁互斥）。 @param screenPoint 屏幕坐标 */
+    void ToggleLastPagePin(POINT screenPoint);
     /** @brief 设置图标间距比例。 @param value 间距倍率 */
     void SetIconSpacing(float value);
     /** @brief 调整图标间距比例。 @param delta 间距增量 */
     void AdjustIconSpacing(float delta);
     /** @brief 设置图标标题字号（12/14/16）。 @param value 字号 */
     void SetItemFontSize(float value);
-    /** @brief 应用页面到显示器的映射关系。 */
+    /** @brief 应用页面到显示器的映射关系（编排清理/补齐/重排/映射）。 */
     void ApplyPageMapping();
+    /** @brief 清理溢出区空页（保留前 N-1 槽位页与末屏当前显示的空页）。 */
+    void PruneEmptyOverflowPages();
+    /** @brief 按显示器数量补齐前 N-1 个槽位页。 */
+    void PadPagesToMonitorCount();
+    /** @brief 将页面 ID 重排为连续的 __page:1,2,3...（封装 NormalizePageIds 的有变动才执行）。 */
+    void CompactPageIds();
+    /** @brief 将 savedPageIds_ 映射到各显示器（末屏翻页 + pageOffset 钳制）。 */
+    void MapPagesToMonitors();
     /** @brief 获取最大页面偏移量。 @return 最大偏移页数 */
     int MaxPageOffset() const;
     /**
@@ -636,7 +660,20 @@ private:
      * @return 找到的偏移量
      */
     int NextNonEmptyOffset(int fromOffset, int direction) const;
-    /** @brief 获取主显示器的排序索引。 @return 显示器索引 */
+    /** @brief 按 delta 翻页，自动对齐到有内容的页面。 @param delta 方向（1 或 -1） */
+    void NavigatePageOffset(int delta);
+    /** @brief 跳转到指定的页面偏移量。 @param targetOffset 目标偏移 */
+    void JumpToPageOffset(int targetOffset);
+    /** @brief 新增空白分页，放置指南组件并自动跳转。 */
+    void AddNewPage();
+    /** @brief 在指定页面上放置分页指南组件。 @param pageId 页面标识 */
+    void PlaceGuideWidgetOnPage(const std::wstring& pageId);
+    /** @brief 生成唯一的 __page:N 格式页面 ID。 */
+    std::wstring GeneratePageId() const;
+    /** @brief 每次加载布局时将页面 ID 重新规整为 __page:1, __page:2... 顺序。 */
+    void NormalizePageIds();
+    /** @brief 获取保存页面的显示名称（首屏/分页1/分页2...）。 @param index 在 savedPageIds_ 中的索引 */
+    std::wstring GetPageDisplayName(int index) const;
     size_t FirstMonitorOrderIndex() const;
     /** @brief 构建显示器渲染顺序列表。 @return 显示器索引列表 */
     std::vector<size_t> BuildMonitorRenderOrder() const;
@@ -667,6 +704,12 @@ private:
      * @return 网格单元格
      */
     GridCell CellFromPoint(POINT point) const;
+    /**
+     * @brief 从坐标点计算对应的网格单元格（拖拽放置用，按左上角边界命中而非中心距离）。
+     * @param point 客户端坐标
+     * @return 网格单元格
+     */
+    GridCell CellFromPointForDrag(POINT point) const;
     /**
      * @brief 根据坐标和轴向获取网格轴索引。
      * @param page 网格页面
@@ -846,6 +889,9 @@ private:
     bool IsAutoCollectFileCategorySource(const DragSourceList& sourceList) const;
     /** @brief 在 D2D 上下文中绘制桌面放置预览列表。 @param ctx D2D 上下文 @param preview 放置预览列表 */
     void DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx, const DropPreviewList& preview);
+    /** @brief 获取或重建缓存的桌面放置预览（位置/动作不变时复用缓存，避免每帧重建）。 */
+    const DropPreviewList& GetCachedDesktopDropPreview(bool hasItemDrag, const DragSourceList& sourceList,
+        Container* target, Slot* slot, HitRegion region, int mods, POINT dragPoint);
 
     // ── Rendering helpers ───────────────────────────────────
     /** @brief 从项边界矩形计算图标区域。 @param bounds 项边界 @return 图标矩形 */
@@ -1276,12 +1322,17 @@ private:
     float iconSpacingScale_ = 1.0f;
     float itemFontSize_ = kItemFontSize;
     std::wstring primaryMonitorId_;
-    std::wstring firstPageMonitorId_;
-    std::wstring lastMonitorPageId_;
+    std::wstring firstPageMonitorId_;   // 持久化：锁定显示首屏的显示器
+    std::wstring lastPageMonitorId_;    // 持久化：锁定显示末屏/翻页区的显示器
+    std::wstring lastMonitorPageId_;    // 运行时：末屏当前显示的 pageId（savedPageIds_[N-1+pageOffset_]）
     int pageOffset_ = 0;
     int navHoverSide_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
+    // ── 换页通知覆盖层（电视台换台式角标） ──
+    std::wstring pageNotifyText_;
+    DWORD pageNotifyStartTick_ = 0;
+    bool pageNotifyActive_ = false;
     POINT lastContextMenuScreenPoint_{};
     POINT gridAdjustmentMenuAnchor_{};
     HMENU gridAdjustmentParentMenu_ = nullptr;
@@ -1330,6 +1381,15 @@ private:
     DragRenderCache dragRenderCache_;
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
+    // ── 拖放预览缓存（避免每帧重建 BuildDropPreviewList） ──
+    DropPreviewList cachedDropPreview_;
+    POINT cachedDropPreviewPoint_{ -1, -1 };
+    int cachedDropPreviewMods_ = -1;
+    Container* cachedDropPreviewTarget_ = nullptr;
+    Slot* cachedDropPreviewSlot_ = nullptr;
+    HitRegion cachedDropPreviewRegion_ = HitRegion::None;
+    bool cachedDropPreviewHasItems_ = false;
+    size_t cachedDropPreviewSourceCount_ = static_cast<size_t>(-1);
     /** @} */
 
     /** @name 部件拖拽/缩放状态 */

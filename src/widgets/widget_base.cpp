@@ -630,7 +630,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     const bool persistentBottomBar = tinyCollection ||
         data_->type == DesktopWidgetType::FileCategories ||
-        data_->type == DesktopWidgetType::FolderMapping;
+        data_->type == DesktopWidgetType::FolderMapping ||
+        data_->type == DesktopWidgetType::Guide;
 
     // ── 3. Gradient bottom bar (over content, clipped to frame) ──
     bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;
@@ -779,6 +780,8 @@ std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app)
         return std::make_unique<FolderMapping>(data, app);
     case DesktopWidgetType::LuaScript:
         return std::make_unique<LuaScript>(data, app);
+    case DesktopWidgetType::Guide:
+        return std::make_unique<GuideWidget>(data, app);
     }
     return nullptr;
 }

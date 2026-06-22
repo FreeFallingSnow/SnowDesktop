@@ -391,6 +391,11 @@ inline void DesktopApp::EndDragSession()
 {
     dragSession_.End();
     dragRenderCache_.Reset();
+    // 清除拖放预览缓存
+    cachedDropPreview_ = {};
+    cachedDropPreviewPoint_ = { -1, -1 };
+    cachedDropPreviewTarget_ = nullptr;
+    cachedDropPreviewSlot_ = nullptr;
 }
 
 /**
@@ -1464,6 +1469,93 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
 }
 
 /**
+ * @brief 拖拽时优先检查集合弹窗命中（弹窗遮挡的容器不应被穿透命中）。
+ * @param client 客户端坐标
+ * @param[out] targetContainer 命中的容器
+ * @param[out] targetSlot 命中的槽位
+ * @param[out] targetRegion 命中的区域
+ * @return 命中弹窗返回 true，否则 false
+ */
+inline bool DesktopApp::HitTestPopupForDrag(POINT client,
+    Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion)
+{
+    if (popupWidgetIndex_ >= widgets_.size()) return false;
+
+    RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+    if (!PtInRect(&popup, client)) return false;
+
+    WidgetContainer* popupContainer = nullptr;
+    for (auto& c : containers_)
+    {
+        popupContainer = dynamic_cast<WidgetContainer*>(c.get());
+        if (popupContainer && popupContainer->GetWidgetData() == &widgets_[popupWidgetIndex_])
+            break;
+        popupContainer = nullptr;
+    }
+    if (!popupContainer) return false;
+
+    std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+    RECT content = GetCollectionPopupContentRect(popup);
+    size_t slotIndex = 0;
+    RECT slotBounds = content;
+    HitRegion region = HitRegion::Empty;
+    Item* handoffItem = nullptr;
+
+    if (!popupKeys.empty())
+    {
+        bool foundItem = false;
+        for (size_t i = 0; i < popupKeys.size(); ++i)
+        {
+            RECT itemRect = GetCollectionPopupItemRect(popup, i);
+            RECT clipped = itemRect;
+            clipped.top = std::max(clipped.top, content.top);
+            clipped.bottom = std::min(clipped.bottom, content.bottom);
+            if (clipped.bottom <= clipped.top || !PtInRect(&clipped, client))
+                continue;
+
+            size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+            if (itemIndex != static_cast<size_t>(-1) && !items_[itemIndex].selected)
+            {
+                RECT iconRect = GetItemIconRect(itemRect);
+                RECT hf = { iconRect.left - 4, iconRect.top - 2,
+                            iconRect.right + 4, iconRect.bottom + 4 };
+                if (PtInRect(&hf, client))
+                {
+                    region = HitRegion::Handoff;
+                    slotBounds = itemRect;
+                    handoffItem = popupContainer->GetMemberItem(i);
+                }
+            }
+
+            if (region != HitRegion::Handoff)
+            {
+                slotIndex = i;
+                slotBounds = itemRect;
+                region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
+                    ? HitRegion::SortBefore : HitRegion::SortAfter;
+            }
+            foundItem = true;
+            break;
+        }
+
+        if (!foundItem)
+        {
+            slotIndex = popupKeys.size() - 1;
+            slotBounds = GetCollectionPopupItemRect(popup, slotIndex);
+            region = HitRegion::SortAfter;
+        }
+    }
+
+    popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
+    if (handoffItem)
+        popupDragTargetSlot_->SetItem(handoffItem);
+    targetContainer = popupContainer;
+    targetSlot = popupDragTargetSlot_.get();
+    targetRegion = region;
+    return true;
+}
+
+/**
  * @brief 更新拖拽翻页按钮的悬停和自动翻页状态
  * @param clientPoint 当前鼠标客户端坐标
  * @return 拖拽会话仍可继续时返回 true
@@ -1485,11 +1577,14 @@ inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     int navSide = 0;
     const bool hasPrev = pageOffset_ > 0;
     const bool hasNext = pageOffset_ < MaxPageOffset();
-    if (hasPrev && PtInRect(&prevRect, clientPoint)) navSide = -1;
-    else if (hasNext && PtInRect(&nextRect, clientPoint)) navSide = 1;
+    // 悬停检测不限制 hasPrev/hasNext，让置灰按钮也有 hover 视觉反馈
+    if (PtInRect(&prevRect, clientPoint)) navSide = -1;
+    else if (PtInRect(&nextRect, clientPoint)) navSide = 1;
     navHoverSide_ = navSide;
 
-    if (navSide == 0)
+    // 自动翻页仅在可操作方向触发
+    const bool navEnabled = (navSide == -1 && hasPrev) || (navSide == 1 && hasNext);
+    if (navSide == 0 || !navEnabled)
     {
         navAutoFlipDir_ = 0;
         navAutoFlipTick_ = 0;
@@ -1511,6 +1606,21 @@ inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         return true;
 
     const bool hasInternalItems = !dragSession_.Items().empty();
+    // 保存迁移前第一个选中项的实际 bounds（含页面渲染尺寸差异）
+    RECT oldFirstBounds{};
+    bool hasOldBounds = false;
+    if (hasInternalItems && !dragSession_.Items().empty())
+    {
+        for (const auto& item : items_)
+        {
+            if (item.selected && !item.name.empty())
+            {
+                oldFirstBounds = item.bounds;
+                hasOldBounds = !IsRectEmptyRect(oldFirstBounds);
+                break;
+            }
+        }
+    }
     pageOffset_ = newOffset;
     ApplyPageMapping();
     if (hasInternalItems)
@@ -1527,7 +1637,31 @@ inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
 
     InvalidateDragStaticScene();
     if (hasInternalItems)
+    {
         UpdateDragGroupOrigin();
+        // 用实际 bounds 差值补偿 mouseDown，消除跨页渲染尺寸差异导致的视觉跳动
+        if (hasOldBounds)
+        {
+            for (const auto& item : items_)
+            {
+                if (item.selected && !item.name.empty())
+                {
+                    dragSession_.AdjustMouseDownPoint({
+                        item.bounds.left - oldFirstBounds.left,
+                        item.bounds.top  - oldFirstBounds.top
+                    });
+                    break;
+                }
+            }
+        }
+        else
+        {
+            UpdateDragGroupOrigin();
+        }
+    }
+    // 页面迁移后 usedSlots 变化，预览缓存失效
+    cachedDropPreview_ = {};
+    cachedDropPreviewPoint_ = { -1, -1 };
     SaveLayoutSlots();
     return true;
 }
@@ -2224,11 +2358,72 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     {
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
+
+        // ── 跨页翻页：检测导航按钮悬停 + 自动翻页 ──
+        if (MaxPageOffset() > 0)
+        {
+            RECT prevRect, nextRect;
+            GetNavButtonRects(prevRect, nextRect);
+
+            int navSide = 0;
+            if (PtInRect(&prevRect, current)) navSide = -1;
+            else if (PtInRect(&nextRect, current)) navSide = 1;
+            navHoverSide_ = navSide;
+
+            const bool hasPrev = pageOffset_ > 0;
+            const bool hasNext = pageOffset_ < MaxPageOffset();
+            const bool navEnabled = (navSide == -1 && hasPrev) || (navSide == 1 && hasNext);
+
+            if (navSide != 0 && navEnabled)
+            {
+                const DWORD now = GetTickCount();
+                if (navAutoFlipDir_ != navSide)
+                {
+                    navAutoFlipDir_ = navSide;
+                    navAutoFlipTick_ = now;
+                }
+                else if (now - navAutoFlipTick_ > 500)
+                {
+                    // 触发翻页
+                    int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
+                    if (newOffset != pageOffset_)
+                    {
+                        // 保存迁移前组件实际 bounds（含页面渲染尺寸差异）
+                        RECT oldWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
+                        pageOffset_ = newOffset;
+                        ApplyPageMapping();
+                        LayoutItems();
+                        // 用实际 bounds 差值补偿 group origin + mouseDown，保持视觉连续性
+                        RECT newWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
+                        const int dx = newWidgetBounds.left - oldWidgetBounds.left;
+                        const int dy = newWidgetBounds.top  - oldWidgetBounds.top;
+                        dragGroupOriginX_ += dx;
+                        dragGroupOriginY_ += dy;
+                        mouseDownPoint_.x += dx;
+                        mouseDownPoint_.y += dy;
+                        InvalidateRect(hwnd_, nullptr, TRUE);
+                    }
+                    navAutoFlipTick_ = now;
+                }
+            }
+            else
+            {
+                navAutoFlipDir_ = 0;
+                navAutoFlipTick_ = 0;
+            }
+        }
+        else
+        {
+            navHoverSide_ = 0;
+            navAutoFlipDir_ = 0;
+            navAutoFlipTick_ = 0;
+        }
+
         POINT adjusted = {
             dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
             dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
         };
-        GridCell cell = CellFromPoint(adjusted);
+        GridCell cell = CellFromPointForDrag(adjusted);
         if (!cell.pageId.empty())
         {
             const GridPage* page = FindGridPage(gridPages_, cell.pageId);
@@ -2350,87 +2545,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         HitRegion targetRegion = HitRegion::None;
         popupDragTargetSlot_.reset();
 
-        if (popupWidgetIndex_ < widgets_.size())
-        {
-            RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-            if (PtInRect(&popup, current))
-            {
-                WidgetContainer* popupContainer = nullptr;
-                for (auto& c : containers_)
-                {
-                    popupContainer = dynamic_cast<WidgetContainer*>(c.get());
-                    if (popupContainer && popupContainer->GetWidgetData() == &widgets_[popupWidgetIndex_])
-                        break;
-                    popupContainer = nullptr;
-                }
-
-                if (popupContainer)
-                {
-                    std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
-                    RECT content = GetCollectionPopupContentRect(popup);
-                    size_t slotIndex = 0;
-                    RECT slotBounds = content;
-                    HitRegion region = HitRegion::Empty;
-                    Item* handoffItem = nullptr;
-
-                    if (!popupKeys.empty())
-                    {
-                        bool foundItem = false;
-                        for (size_t i = 0; i < popupKeys.size(); ++i)
-                        {
-                            RECT itemRect = GetCollectionPopupItemRect(popup, i);
-                            RECT clipped = itemRect;
-                            clipped.top = std::max(clipped.top, content.top);
-                            clipped.bottom = std::min(clipped.bottom, content.bottom);
-                            if (clipped.bottom <= clipped.top || !PtInRect(&clipped, current))
-                                continue;
-
-                            // Check Handoff: mouse on icon area of unselected item
-                            size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
-                            if (itemIndex != static_cast<size_t>(-1) && !items_[itemIndex].selected)
-                            {
-                                RECT iconRect = GetItemIconRect(itemRect);
-                                RECT hf = { iconRect.left - 4, iconRect.top - 2,
-                                            iconRect.right + 4, iconRect.bottom + 4 };
-                                if (PtInRect(&hf, current))
-                                {
-                                    region = HitRegion::Handoff;
-                                    slotBounds = itemRect;
-                                    handoffItem = popupContainer->GetMemberItem(i);
-                                }
-                            }
-
-                            if (region != HitRegion::Handoff)
-                            {
-                                slotIndex = i;
-                                slotBounds = itemRect;
-                                region = current.x < itemRect.left + (itemRect.right - itemRect.left) / 2
-                                    ? HitRegion::SortBefore
-                                    : HitRegion::SortAfter;
-                            }
-                            foundItem = true;
-                            break;
-                        }
-
-                        if (!foundItem)
-                        {
-                            slotIndex = popupKeys.size() - 1;
-                            slotBounds = GetCollectionPopupItemRect(popup, slotIndex);
-                            region = HitRegion::SortAfter;
-                        }
-                    }
-
-                    popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
-                    if (handoffItem)
-                        popupDragTargetSlot_->SetItem(handoffItem);
-                    targetContainer = popupContainer;
-                    targetSlot = popupDragTargetSlot_.get();
-                    targetRegion = region;
-                }
-            }
-        }
-
-        if (!targetContainer)
+        if (!HitTestPopupForDrag(current, targetContainer, targetSlot, targetRegion))
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
@@ -2622,11 +2737,20 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         SaveLayoutSlots();
         ClearSelection();
         EndDragSession();
-        RebuildContainersAndItems();
         if (needsReload)
+        {
+            RebuildContainersAndItems();
             ReloadItems();
+        }
         else
+        {
+            // 内容变更可能使某些溢出页变空（后面有非空页时应立即清理顺延）
+            // 先 ApplyPageMapping（可能重排 pageId），再 RebuildContainersAndItems + LayoutItems
+            ApplyPageMapping();
+            RebuildContainersAndItems();
+            LayoutItems();
             InvalidateRect(hwnd_, nullptr, FALSE);
+        }
     }
 
 cleanup:
@@ -3205,22 +3329,42 @@ inline void DesktopApp::MoveKeyboardSelection(WPARAM arrowKey)
 inline bool DesktopApp::HandlePageNavClick(POINT point)
 {
     if (gridPages_.empty()) return false;
+    if (MaxPageOffset() <= 0) return false;   // 无溢出页时不处理
+
     const bool hasPrev = pageOffset_ > 0;
     const bool hasNext = pageOffset_ < MaxPageOffset();
-    if (!hasPrev && !hasNext) return false;
 
     RECT prevRect, nextRect;
     GetNavButtonRects(prevRect, nextRect);
 
     int delta = 0;
-    if (hasPrev && PtInRect(&prevRect, point)) delta = -1;
-    else if (hasNext && PtInRect(&nextRect, point)) delta = 1;
+    if (PtInRect(&prevRect, point)) delta = -1;
+    else if (PtInRect(&nextRect, point)) delta = 1;
+
+    // 点击落在导航按钮区域内但方向不可用 → 拦截点击（不穿透到下方图标）
+    if (delta != 0 && !((delta == -1 && hasPrev) || (delta == 1 && hasNext)))
+        return true;
     if (delta == 0) return false;
 
     int newOffset = NextNonEmptyOffset(pageOffset_, delta);
     if (newOffset == pageOffset_) return false;
 
     bool wasDragging = dragSession_.IsActive();
+    // 保存迁移前第一个选中项的实际 bounds（含页面渲染尺寸差异）
+    RECT oldFirstBounds{};
+    bool hasOldBounds = false;
+    if (wasDragging)
+    {
+        for (const auto& item : items_)
+        {
+            if (item.selected && !item.name.empty())
+            {
+                oldFirstBounds = item.bounds;
+                hasOldBounds = !IsRectEmptyRect(oldFirstBounds);
+                break;
+            }
+        }
+    }
     pageOffset_ = newOffset;
     ApplyPageMapping();
     if (wasDragging) MigrateSelectedItemsToLastMonitorPage();
@@ -3232,7 +3376,28 @@ inline bool DesktopApp::HandlePageNavClick(POINT point)
     }
     wasDragging = wasDragging && dragSession_.IsActive();
     if (wasDragging) InvalidateDragStaticScene();
-    if (wasDragging) UpdateDragGroupOrigin();
+    if (wasDragging)
+    {
+        UpdateDragGroupOrigin();
+        // 用实际 bounds 差值补偿 mouseDown，消除跨页渲染尺寸差异导致的视觉跳动
+        if (hasOldBounds)
+        {
+            for (const auto& item : items_)
+            {
+                if (item.selected && !item.name.empty())
+                {
+                    dragSession_.AdjustMouseDownPoint({
+                        item.bounds.left - oldFirstBounds.left,
+                        item.bounds.top  - oldFirstBounds.top
+                    });
+                    break;
+                }
+            }
+        }
+    }
+    // 页面迁移后预览缓存失效
+    cachedDropPreview_ = {};
+    cachedDropPreviewPoint_ = { -1, -1 };
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
@@ -3476,6 +3641,25 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         {
             KillTimer(hwnd_, kCollectionPopupDwellTimerId);
             OnMouseMove(0, MAKELPARAM(lastMousePoint_.x, lastMousePoint_.y));
+        }
+    }
+    else if (timerId == kPageNotifyTimerId)
+    {
+        // 换页通知覆盖层：定期触发重绘以驱动淡入淡出动画
+        if (pageNotifyActive_)
+        {
+            const DWORD elapsed = GetTickCount() - pageNotifyStartTick_;
+            if (elapsed >= kPageNotifyVisibleMs)
+            {
+                pageNotifyActive_ = false;
+                pageNotifyText_.clear();
+                KillTimer(hwnd_, kPageNotifyTimerId);
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        else
+        {
+            KillTimer(hwnd_, kPageNotifyTimerId);
         }
     }
 }
@@ -4619,20 +4803,23 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
             return S_OK;
         }
 
-        // OO hit-test
+        // OO hit-test：优先检查集合弹窗（弹窗遮挡的容器不应被穿透命中）
         Container* targetContainer = nullptr;
         Slot* targetSlot = nullptr;
         HitRegion targetRegion = HitRegion::None;
-        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        if (!HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion))
         {
-            Slot* slot = nullptr;
-            HitRegion region = (*it)->HitTestDrag(client, slot);
-            if (region != HitRegion::None)
+            for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
-                targetContainer = it->get();
-                targetSlot = slot;
-                targetRegion = region;
-                break;
+                Slot* slot = nullptr;
+                HitRegion region = (*it)->HitTestDrag(client, slot);
+                if (region != HitRegion::None)
+                {
+                    targetContainer = it->get();
+                    targetSlot = slot;
+                    targetRegion = region;
+                    break;
+                }
             }
         }
         dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
@@ -4665,20 +4852,23 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         return S_OK;
     }
 
-    // OO hit-test for external drop
+    // OO hit-test for external drop：优先检查集合弹窗
     Container* targetContainer = nullptr;
     Slot* targetSlot = nullptr;
     HitRegion targetRegion = HitRegion::None;
-    for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+    if (!HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion))
     {
-        Slot* slot = nullptr;
-        HitRegion region = (*it)->HitTestDrag(client, slot);
-        if (region != HitRegion::None)
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
-            targetContainer = it->get();
-            targetSlot = slot;
-            targetRegion = region;
-            break;
+            Slot* slot = nullptr;
+            HitRegion region = (*it)->HitTestDrag(client, slot);
+            if (region != HitRegion::None)
+            {
+                targetContainer = it->get();
+                targetSlot = slot;
+                targetRegion = region;
+                break;
+            }
         }
     }
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
@@ -4740,20 +4930,23 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
             return S_OK;
         }
 
-        // OO hit-test
+        // OO hit-test：优先检查集合弹窗（弹窗遮挡的容器不应被穿透命中）
         Container* targetContainer = nullptr;
         Slot* targetSlot = nullptr;
         HitRegion targetRegion = HitRegion::None;
-        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        if (!HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion))
         {
-            Slot* slot = nullptr;
-            HitRegion region = (*it)->HitTestDrag(client, slot);
-            if (region != HitRegion::None)
+            for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
-                targetContainer = it->get();
-                targetSlot = slot;
-                targetRegion = region;
-                break;
+                Slot* slot = nullptr;
+                HitRegion region = (*it)->HitTestDrag(client, slot);
+                if (region != HitRegion::None)
+                {
+                    targetContainer = it->get();
+                    targetSlot = slot;
+                    targetRegion = region;
+                    break;
+                }
             }
         }
         dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
@@ -4786,20 +4979,23 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         return S_OK;
     }
 
-    // OO hit-test for external drop
+    // OO hit-test for external drop：优先检查集合弹窗
     Container* targetContainer = nullptr;
     Slot* targetSlot = nullptr;
     HitRegion targetRegion = HitRegion::None;
-    for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+    if (!HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion))
     {
-        Slot* slot = nullptr;
-        HitRegion region = (*it)->HitTestDrag(client, slot);
-        if (region != HitRegion::None)
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
-            targetContainer = it->get();
-            targetSlot = slot;
-            targetRegion = region;
-            break;
+            Slot* slot = nullptr;
+            HitRegion region = (*it)->HitTestDrag(client, slot);
+            if (region != HitRegion::None)
+            {
+                targetContainer = it->get();
+                targetSlot = slot;
+                targetRegion = region;
+                break;
+            }
         }
     }
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
@@ -4929,11 +5125,18 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             SaveLayoutSlots();
             ClearSelection();
             EndDragSession();
-            RebuildContainersAndItems();
             if (needsReload)
+            {
+                RebuildContainersAndItems();
                 ReloadItems();
+            }
             else
+            {
+                ApplyPageMapping();
+                RebuildContainersAndItems();
+                LayoutItems();
                 InvalidateRect(hwnd_, nullptr, FALSE);
+            }
         }
         *effect = DROPEFFECT_MOVE;
         return S_OK;
@@ -6062,6 +6265,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         // Move widget's itemKeys back to desktop by just removing the widget
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
         EnsureNavTabOrder();
+        // 删除组件可能使页面变空（溢出区空页后面有非空页时应立即清理顺延）
+        ApplyPageMapping();
         LayoutItems();
         RebuildContainersAndItems();
         SaveLayoutSlots();

@@ -288,7 +288,85 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kContextThisDisplayFirstCommand, L"当前显示器显示首屏");
+
+    // ── 条件：分页导航 ──
+    const GridPage* clickedPage = GridPageFromPoint(clientPoint);
+    std::wstring clickedPageId = clickedPage ? clickedPage->id : L"";
+    std::wstring clickedMonitorId = clickedPage ? clickedPage->monitorId : L"";
+    std::wstring firstPageId = savedPageIds_.empty() ? L"" : savedPageIds_[0];
+    bool isFirstPage = !clickedPageId.empty() && clickedPageId == firstPageId;
+    int maxOff = MaxPageOffset();
+    const size_t monitorCount = gridPages_.size();
+
+    // ── 首屏/末屏锁定开关（持久化、互斥，仅多屏时显示） ──
+    if (monitorCount >= 2)
+    {
+        UINT fFlags = MF_STRING;
+        if (!firstPageMonitorId_.empty() && firstPageMonitorId_ == clickedMonitorId)
+            fFlags |= MF_CHECKED;
+        AppendMenuW(menu, fFlags, kContextPinFirstPage, L"固定此显示器显示首屏");
+
+        UINT lFlags = MF_STRING;
+        if (!lastPageMonitorId_.empty() && lastPageMonitorId_ == clickedMonitorId)
+            lFlags |= MF_CHECKED;
+        AppendMenuW(menu, lFlags, kContextPinLastPage, L"固定此显示器显示末屏");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
+
+    HMENU jumpMenu = nullptr;
+    if (!isFirstPage)
+    {
+        // 当前右键点击的显示器显示的页索引
+        int clickedPageIdx = 0;
+        {
+            auto it = std::ranges::find(savedPageIds_, clickedPageId);
+            if (it != savedPageIds_.end())
+                clickedPageIdx = static_cast<int>(it - savedPageIds_.begin());
+        }
+
+        AppendMenuW(menu, MF_STRING, kContextPagePrev, L"上一页");
+        AppendMenuW(menu, MF_STRING, kContextPageNext, L"下一页");
+
+        jumpMenu = CreatePopupMenu();
+        if (jumpMenu)
+        {
+            // 计算当前所有显示器上显示的页面索引
+            std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+            std::unordered_set<int> pagesOnMonitors;
+            for (size_t mi = 0; mi < monitorOrder.size(); ++mi)
+            {
+                int displayIdx = static_cast<int>(mi);
+                if (mi == monitorOrder.size() - 1)
+                    displayIdx += pageOffset_;
+                if (displayIdx < static_cast<int>(savedPageIds_.size()))
+                    pagesOnMonitors.insert(displayIdx);
+            }
+
+
+            for (int i = 0; static_cast<size_t>(i) < savedPageIds_.size(); ++i)
+            {
+                if (!PageHasContent(savedPageIds_[i]) && !pagesOnMonitors.contains(i)) continue;
+                std::wstring label = GetPageDisplayName(i);
+                UINT flags = MF_STRING;
+                if (pagesOnMonitors.contains(i))
+                    flags |= MF_GRAYED;
+                if (i == clickedPageIdx)
+                    flags |= MF_CHECKED;
+                AppendMenuW(jumpMenu, flags,
+                    kContextPageJumpFirst + static_cast<UINT>(i), label.c_str());
+            }
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(jumpMenu), L"跳转到");
+        }
+
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
+
+    if (pageOffset_ >= maxOff)
+        EnableMenuItem(menu, kContextPageNext, MF_BYCOMMAND | MF_GRAYED);
+    if (pageOffset_ <= 0)
+        EnableMenuItem(menu, kContextPagePrev, MF_BYCOMMAND | MF_GRAYED);
+
+    AppendMenuW(menu, MF_STRING, kContextPageAdd, L"新增页");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextSettingsCommand, L"设置");
 
@@ -330,8 +408,12 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
     }
-    SetMenuItemIcon(menu, kContextThisDisplayFirstCommand, L"");
     SetMenuItemIcon(menu, kContextSettingsCommand, L"");
+    SetMenuItemIcon(menu, kContextPagePrev, L"");
+    SetMenuItemIcon(menu, kContextPageNext, L"");
+    SetMenuItemIcon(menu, kContextPageAdd, L"");
+    if (jumpMenu)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
 
     gridAdjustmentParentMenu_ = menu;
     gridAdjustmentMenuAnchorValid_ = false;
@@ -347,6 +429,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (widgetMenu) DestroyMenu(widgetMenu);
     if (spacingMenu) DestroyMenu(spacingMenu);
     if (fontSizeMenu) DestroyMenu(fontSizeMenu);
+    if (jumpMenu) DestroyMenu(jumpMenu);
     DestroyMenu(menu);
     newMenuContextMenu_.Reset();
     ClearMenuIcons();
@@ -363,6 +446,16 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     {
         SetIconSpacing(
             static_cast<float>(command - kContextSpacingPresetFirst) / 100.0f);
+    }
+    else if (command >= kContextPageJumpFirst && command <= kContextPageJumpLast)
+    {
+        int pageIdx = static_cast<int>(command - kContextPageJumpFirst);
+        if (pageIdx >= 0 && static_cast<size_t>(pageIdx) < savedPageIds_.size())
+        {
+            int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
+            int targetOffset = pageIdx - (visiblePageCount - 1);
+            JumpToPageOffset(targetOffset);
+        }
     }
     else switch (command)
     {
@@ -386,7 +479,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
     case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
     case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
-    case kContextThisDisplayFirstCommand: SetFirstPageMonitorFromPoint(screenPoint); break;
+    case kContextPinFirstPage: ToggleFirstPagePin(screenPoint); break;
+    case kContextPinLastPage:  ToggleLastPagePin(screenPoint);  break;
     case kContextAddCollectionWidget: AddCollectionWidgetAt(screenPoint); break;
     case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;
     case kContextAddFolderMappingWidget: AddFolderMappingWidgetAt(screenPoint); break;
@@ -485,6 +579,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
     case kContextFontSizeMedium: SetItemFontSize(14.0f); break;
     case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
+    case kContextPagePrev: NavigatePageOffset(-1); break;
+    case kContextPageNext: NavigatePageOffset(1); break;
+    case kContextPageAdd: AddNewPage(); break;
     default: break;
     }
 }

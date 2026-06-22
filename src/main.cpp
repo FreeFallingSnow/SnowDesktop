@@ -16,13 +16,68 @@
 
 #include <tlhelp32.h>
 
+/*
+ * 崩溃计数器：记录最近崩溃的时间戳（tick），存储在注册表中。
+ * 若 60 秒内崩溃超过 3 次，则禁止自动重启，防止无限重启风暴。
+ */
+static constexpr DWORD kCrashWindowSeconds = 60;
+static constexpr int kMaxCrashesInWindow = 3;
+static constexpr wchar_t kRegSubKey[] = L"Software\\SnowDesktop";
+static constexpr wchar_t kRegValueName[] = L"CrashTicks";
+
+static bool ShouldPreventAutoRestart()
+{
+    std::vector<DWORD> ticks;
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegSubKey, 0, KEY_READ | KEY_WRITE, &key) != ERROR_SUCCESS)
+    {
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, kRegSubKey, 0, nullptr, 0,
+                KEY_READ | KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+            return false;
+    }
+
+    DWORD type = REG_BINARY;
+    DWORD dataSize = 0;
+    if (RegQueryValueExW(key, kRegValueName, nullptr, &type, nullptr, &dataSize) == ERROR_SUCCESS &&
+        type == REG_BINARY && dataSize >= sizeof(DWORD))
+    {
+        ticks.resize(dataSize / sizeof(DWORD));
+        RegQueryValueExW(key, kRegValueName, nullptr, nullptr,
+            reinterpret_cast<BYTE*>(ticks.data()), &dataSize);
+    }
+
+    DWORD now = GetTickCount();
+    std::vector<DWORD> recent;
+    for (DWORD t : ticks)
+    {
+        if (now - t <= kCrashWindowSeconds * 1000)
+            recent.push_back(t);
+    }
+
+    if (static_cast<int>(recent.size()) >= kMaxCrashesInWindow)
+    {
+        RegCloseKey(key);
+        return true;
+    }
+
+    recent.push_back(now);
+    RegSetValueExW(key, kRegValueName, 0, REG_BINARY,
+        reinterpret_cast<const BYTE*>(recent.data()),
+        static_cast<DWORD>(recent.size() * sizeof(DWORD)));
+    RegCloseKey(key);
+    return false;
+}
+
 LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
 {
     CrashHandler(info); // write stack trace to log
 
-    wchar_t selfPath[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, selfPath, MAX_PATH);
-    ShellExecuteW(nullptr, L"open", selfPath, nullptr, nullptr, SW_SHOWNORMAL);
+    if (!ShouldPreventAutoRestart())
+    {
+        wchar_t selfPath[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, selfPath, MAX_PATH);
+        ShellExecuteW(nullptr, L"open", selfPath, nullptr, nullptr, SW_SHOWNORMAL);
+    }
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -98,10 +153,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     SetUnhandledExceptionFilter(UnhandledFilter);
     InstallCrashHandler();
 
-    /* 注册应用程序自动重启，遇到某些崩溃后可自动重启 */
-    RegisterApplicationRestart(nullptr, RESTART_NO_CRASH | RESTART_NO_HANG);
+    /* 注册应用程序崩溃后自动重启（不含 HANG，避免无响应时系统反复拉起） */
+    RegisterApplicationRestart(nullptr, RESTART_NO_CRASH);
 
     /* 创建主应用实例并进入消息循环 */
     DesktopApp app;
-    return app.Run(instance, showCommand);
+    int result = app.Run(instance, showCommand);
+
+    /* 正常退出时清除崩溃计数器，避免残留记录影响后续启动 */
+    if (result == 0)
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, kRegSubKey, kRegValueName);
+
+    return result;
 }

@@ -110,6 +110,7 @@ enum class DesktopWidgetType
     FileCategories,  /**< 文件分类组件 */
     FolderMapping,   /**< 文件夹映射组件 */
     LuaScript,       /**< Lua 脚本组件 */
+    Guide,           /**< 分页指南组件 */
 };
 
 // ── PIDL Wrapper ───────────────────────────
