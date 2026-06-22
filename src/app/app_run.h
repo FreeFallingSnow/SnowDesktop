@@ -986,11 +986,13 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         {
             auto* wc = dynamic_cast<WidgetContainer*>(it->get());
             if (!wc) continue;
+            RECT bodyRect = wc->GetBodyRect();
             for (auto& slot : wc->GetSlots())
             {
                 if (!slot) continue;
                 RECT slotBounds = slot->GetBounds();
                 if (!PtInRect(&slotBounds, pt)) continue;
+                if (!PtInRect(&bodyRect, pt)) continue;
                 if (auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem()))
                 {
                     DesktopItem* item = icon->GetDesktopItem();
