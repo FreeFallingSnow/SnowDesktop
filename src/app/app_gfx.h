@@ -73,14 +73,23 @@ inline bool DesktopApp::InitGraphics()
 {
     // D3D11
     D3D_FEATURE_LEVEL fl{};
+    bool usingWarp = false;
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
         D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
         &d3dDevice_, &fl, nullptr);
     if (FAILED(hr))
     {
+        usingWarp = true;
         hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
             D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
             &d3dDevice_, &fl, nullptr);
+    }
+    {
+        wchar_t buf[128];
+        wsprintfW(buf, L"D3D11 driver=%s hr=0x%08X feature=0x%04X",
+            usingWarp ? L"WARP" : L"HARDWARE",
+            static_cast<unsigned>(hr), static_cast<unsigned>(fl));
+        WriteCrashLogEntry(buf);
     }
     if (FAILED(hr)) return false;
 
@@ -94,6 +103,18 @@ inline bool DesktopApp::InitGraphics()
     ComPtr<IDXGIDevice> dxgiDevice;
     hr = d3dDevice_.As(&dxgiDevice);
     if (FAILED(hr)) return false;
+    {
+        ComPtr<IDXGIAdapter> adapter;
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) && adapter &&
+            SUCCEEDED(adapter->GetDesc(&desc)))
+        {
+            wchar_t buf[256];
+            wsprintfW(buf, L"D3D adapter=%s vendor=0x%04X device=0x%04X",
+                desc.Description, desc.VendorId, desc.DeviceId);
+            WriteCrashLogEntry(buf);
+        }
+    }
     hr = d2dFactory_->CreateDevice(dxgiDevice.Get(), &d2dDevice_);
     if (FAILED(hr)) return false;
     hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext_);
@@ -198,8 +219,22 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
             return hr;
         }
         hr = dcompVisual_->SetContent(surface.Get());
-        if (FAILED(hr)) return hr;
-        dcompDevice_->Commit();
+        if (FAILED(hr))
+        {
+            wchar_t buf[128];
+            wsprintfW(buf, L"SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
+            WriteCrashLogEntry(buf);
+            return hr;
+        }
+        hr = dcompDevice_->Commit();
+        if (FAILED(hr))
+        {
+            wchar_t buf[128];
+            wsprintfW(buf, L"CreateSurface Commit FAILED hr=0x%08X",
+                static_cast<unsigned>(hr));
+            WriteCrashLogEntry(buf);
+            return hr;
+        }
 
         dcompSurface_ = surface;
         compositionWidth_ = width;
@@ -215,7 +250,13 @@ inline void DesktopApp::OnPaint()
         POINT updateOffset{};
         HRESULT hr = dcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(&rawContext), &updateOffset);
-        if (FAILED(hr)) return;
+        if (FAILED(hr))
+        {
+            wchar_t buf[128];
+            wsprintfW(buf, L"BeginDraw FAILED hr=0x%08X", static_cast<unsigned>(hr));
+            WriteCrashLogEntry(buf);
+            return;
+        }
 
         ComPtr<ID2D1DeviceContext> context;
         context.Attach(rawContext);
@@ -231,7 +272,21 @@ inline void DesktopApp::OnPaint()
         context.Reset();
 
         hr = dcompSurface_->EndDraw();
-        if (SUCCEEDED(hr)) dcompDevice_->Commit();
+        if (FAILED(hr))
+        {
+            wchar_t buf[128];
+            wsprintfW(buf, L"EndDraw FAILED hr=0x%08X", static_cast<unsigned>(hr));
+            WriteCrashLogEntry(buf);
+            return;
+        }
+
+        hr = dcompDevice_->Commit();
+        if (FAILED(hr))
+        {
+            wchar_t buf[128];
+            wsprintfW(buf, L"Paint Commit FAILED hr=0x%08X", static_cast<unsigned>(hr));
+            WriteCrashLogEntry(buf);
+        }
     }
 
 inline D2D1_RECT_F DesktopApp::ToD2DRect(const RECT& r)

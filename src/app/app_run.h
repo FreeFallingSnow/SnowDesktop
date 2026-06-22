@@ -193,12 +193,14 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     POINT origin{ virtualLeft_, virtualTop_ };
     ScreenToClient(parent, &origin);
 
-    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, L"SnowDesktopWindow", L"SnowDesktop",
+    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
+        L"SnowDesktopWindow", L"SnowDesktop",
         WS_CHILD | WS_VISIBLE, origin.x, origin.y, virtualWidth_, virtualHeight_,
         parent, nullptr, instance_, this);
     if (!hwnd_)
     {
-        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, L"SnowDesktopWindow", L"SnowDesktop",
+        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
+            L"SnowDesktopWindow", L"SnowDesktop",
             WS_POPUP | WS_VISIBLE, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
             nullptr, nullptr, instance_, this);
         if (hwnd_ && parent && parent != GetDesktopWindow())
@@ -592,13 +594,15 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         RegisterClassExW(&nav);
     }
 
-    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"SnowDesktop",
+    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
+        wc.lpszClassName, L"SnowDesktop",
         WS_CHILD | WS_VISIBLE, origin.x, origin.y, virtualWidth_, virtualHeight_,
         parent, nullptr, instance, this);
     if (!hwnd_)
     {
         WriteCrashLogEntry(L"Child failed, fallback popup");
-        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"SnowDesktop",
+        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
+            wc.lpszClassName, L"SnowDesktop",
             WS_POPUP | WS_VISIBLE, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
             nullptr, nullptr, instance, this);
         if (hwnd_ && parent && parent != GetDesktopWindow())
@@ -617,8 +621,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     WriteCrashLogEntry(L"Window created");
     {
         wchar_t buf[256];
-        wsprintfW(buf, L"Parent=%p origin=(%d,%d) size=%dx%d",
-            parent, origin.x, origin.y, virtualWidth_, virtualHeight_);
+        wsprintfW(buf, L"Parent=%p origin=(%d,%d) size=%dx%d exStyle=0x%08X",
+            parent, origin.x, origin.y, virtualWidth_, virtualHeight_,
+            static_cast<unsigned>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)));
         WriteCrashLogEntry(buf);
     }
 
