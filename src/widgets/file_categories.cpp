@@ -277,10 +277,10 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
 {
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
-    InflateRect(&body, -10, -8);
+    InflateRect(&body, -widget->Cu(10.0f), -widget->Cu(8.0f));
     if (IsRectEmptyRect(body)) return {};
     return MakeRect(body.left, body.top, body.right,
-        std::min<LONG>(body.bottom, body.top + 30));
+        std::min<LONG>(body.bottom, body.top + widget->Cu(30.0f)));
 }
 
 /**
@@ -292,10 +292,10 @@ static RECT FileCategoryContentRect(FileCategories* widget)
 {
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
-    InflateRect(&body, -4, -8);
+    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FileCategoryTabsRect(widget);
-    body.top = std::min<LONG>(body.bottom, tabs.bottom + 8);
+    body.top = std::min<LONG>(body.bottom, tabs.bottom + widget->Cu(8.0f));
     return body;
 }
 
@@ -346,7 +346,7 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
 
     RECT tabsRect = FileCategoryTabsRect(widget);
     if (IsRectEmptyRect(tabsRect)) return {};
-    constexpr int minTabWidth = 64;
+    const int minTabWidth = widget->Cu(64.0f);
     int tabCount = static_cast<int>(tabs.size());
     int equalWidth = std::max<int>(1, (tabsRect.right - tabsRect.left) / std::max(1, tabCount));
     int tabWidth = std::max(minTabWidth, equalWidth);
@@ -359,7 +359,7 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
         tabsRect.top,
         index + 1 == tabs.size() ? startX + totalWidth : startX + static_cast<LONG>((index + 1) * tabWidth),
         tabsRect.bottom);
-    InflateRect(&rect, -2, -2);
+    InflateRect(&rect, -widget->Cu(2.0f), -widget->Cu(2.0f));
     return rect;
 }
 
@@ -390,7 +390,7 @@ static int FileCategoryContentHeight(FileCategories* widget, size_t itemCount)
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data) return 0;
     if (data->listMode)
-        return static_cast<int>(itemCount) * 38;
+        return static_cast<int>(itemCount) * widget->Cu(38.0f);
     int columns = std::max(1, data->gridSpan.columns);
     int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
     return rows * FileCategoryCellHeight(widget);
@@ -408,7 +408,8 @@ static int FileCategoryMaxScrollOffset(FileCategories* widget)
     const auto& keys = widget->CachedCategoryKeys(widget->CachedActiveCategoryId());
     RECT content = FileCategoryContentRect(widget);
     int contentHeight = std::max<int>(1, content.bottom - content.top);
-    return std::max(0, FileCategoryContentHeight(widget, keys.size()) - contentHeight + kMinCellHeight / 2);
+    return std::max(0, FileCategoryContentHeight(widget, keys.size()) -
+        contentHeight + widget->Cu(kMinCellHeight / 2.0f));
 }
 
 /**
@@ -426,11 +427,12 @@ static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex)
     int scroll = std::clamp(data->scrollOffset, 0, FileCategoryMaxScrollOffset(widget));
     if (data->listMode)
     {
+        const int itemHeight = widget->Cu(38.0f);
         RECT rect = MakeRect(content.left,
-            content.top + static_cast<LONG>(linearIndex * 38) - scroll,
+            content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
             content.right,
-            content.top + static_cast<LONG>((linearIndex + 1) * 38) - scroll);
-        InflateRect(&rect, -4, -2);
+            content.top + static_cast<LONG>((linearIndex + 1) * itemHeight) - scroll);
+        InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
         return rect;
     }
 
@@ -455,11 +457,12 @@ static RECT FileCategoryToggleRect(FileCategories* widget)
 {
     if (!widget) return {};
     RECT handle = widget->GetMoveHandleRect();
-    constexpr int btnSize = 14;
-    constexpr int gap = 4;
-    constexpr int resizeReserve = 20;
-    return MakeRect(handle.right - resizeReserve - gap - btnSize, handle.top + 5,
-        handle.right - resizeReserve - gap, handle.bottom - 3);
+    const int btnSize = widget->Cu(14.0f);
+    const int gap = widget->Cu(4.0f);
+    const int resizeReserve = widget->Cu(20.0f);
+    return MakeRect(handle.right - resizeReserve - gap - btnSize,
+        handle.top + widget->Cu(5.0f),
+        handle.right - resizeReserve - gap, handle.bottom - widget->Cu(3.0f));
 }
 
 /**
@@ -507,7 +510,7 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 
     if (data_->listMode)
     {
-        constexpr int itemHeight = 38;
+        const int itemHeight = Cu(38.0f);
         const int firstRow = std::max(0, scroll / itemHeight - 1);
         const int lastRow = (scroll + visibleHeight + itemHeight - 1) / itemHeight + 1;
         firstIndex = static_cast<size_t>(firstRow);
@@ -661,8 +664,10 @@ size_t FileCategories::GetSlotCount() const
  */
 int FileCategories::GetItemHeight() const
 {
-    if (!data_) return 38;
-    return data_->listMode ? 38 : FileCategoryCellHeight(const_cast<FileCategories*>(this));
+    if (!data_) return Cu(38.0f);
+    return data_->listMode
+        ? Cu(38.0f)
+        : FileCategoryCellHeight(const_cast<FileCategories*>(this));
 }
 
 /**
@@ -760,12 +765,15 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     (void)body;
 
     const auto& categoryIds = CachedVisibleCategoryIds();
+    IDWriteTextFormat* normalFormat = GetCuTextFormat(13.0f, false, true);
+    IDWriteTextFormat* boldFormat = GetCuTextFormat(13.0f, true, true);
     if (categoryIds.empty())
     {
         RECT empty = GetBodyRect();
-        InflateRect(&empty, -12, -12);
+        InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
         app_->DrawD2DText(context, L"暂无散文件", empty,
-            app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get(),
+            normalFormat ? normalFormat :
+                (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get()),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
         return;
     }
@@ -782,7 +790,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             bool active = categoryIds[i] == activeCategory;
             bool hovered = PtInRect(&tab, app_->lastMousePoint_) != FALSE;
-            app_->DrawD2DRoundedRectangle(context, tab, 7.0f,
+            app_->DrawD2DRoundedRectangle(context, tab, static_cast<float>(Cu(7.0f)),
                 active ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f)
                        : (hovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.13f)
                                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f)),
@@ -791,17 +799,20 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             std::wstring label = FileCategoryLabel(categoryIds[i]) + L" " +
                 std::to_wstring(CachedCategoryKeys(categoryIds[i]).size());
-            RECT textRect = MakeRect(tab.left + 4, tab.top, tab.right - 4, tab.bottom);
+            RECT textRect = MakeRect(tab.left + Cu(4.0f), tab.top,
+                tab.right - Cu(4.0f), tab.bottom);
 
             app_->DrawD2DText(context, label, textRect,
-                app_->fileCategoryTabTextFormat_
-                    ? app_->fileCategoryTabTextFormat_.Get()
-                    : app_->listItemTextFormat_.Get(),
+                boldFormat ? boldFormat :
+                    (app_->fileCategoryTabTextFormat_
+                        ? app_->fileCategoryTabTextFormat_.Get()
+                        : app_->listItemTextFormat_.Get()),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.98f : 0.78f));
         }
         context->PopAxisAlignedClip();
 
-        RECT line = MakeRect(tabsRect.left, tabsRect.bottom + 2, tabsRect.right, tabsRect.bottom + 3);
+        RECT line = MakeRect(tabsRect.left, tabsRect.bottom + Cu(2.0f),
+            tabsRect.right, tabsRect.bottom + Cu(3.0f));
         app_->DrawD2DFilledRectangle(context, line,
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
@@ -851,11 +862,13 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     if (!data_ || !app_) return;
     RECT toggle = FileCategoryToggleRect(this);
     bool hot = PtInRect(&toggle, app_->lastMousePoint_) != FALSE;
-    app_->DrawD2DRoundedRectangle(context, toggle, 4.0f,
+    app_->DrawD2DRoundedRectangle(context, toggle, static_cast<float>(Cu(4.0f)),
         hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
+    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f);
     app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggle,
-        app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get(),
+        faFormat ? faFormat :
+            (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
     (void)handleRect;
     (void)hovered;
@@ -927,7 +940,7 @@ bool FileCategories::TryScrollTabs(POINT pt, int delta)
     int tabCount = static_cast<int>(categories.size());
     if (tabCount <= 0) return false;
 
-    constexpr int minTabWidth = 64;
+    const int minTabWidth = Cu(64.0f);
     int tabsWidth = tabs.right - tabs.left;
     int equalWidth = std::max(1, tabsWidth / tabCount);
     int tabWidth = std::max(minTabWidth, equalWidth);

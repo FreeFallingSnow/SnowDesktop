@@ -611,6 +611,7 @@ public:
     void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
     int RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const;
     bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y, int delta, bool wheel);
+    std::vector<LuaWidget::HostControl> GetScrollControls(const std::wstring& widgetId) const;
 
 private:
     /**

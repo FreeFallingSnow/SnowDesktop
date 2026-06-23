@@ -82,10 +82,17 @@ public:
 
     DesktopWidget* GetWidgetData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
+    float GetCellScale() const;
+    int Cu(float value) const;
+    float FontCu(float value) const;
+    IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;
+    IDWriteTextFormat* GetCuFaTextFormat(float value) const;
 
 protected:
     DesktopWidget* data_;
     DesktopApp* app_;
+    mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuTextFormatCache_;
+    mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuFaTextFormatCache_;
 };
 
 /**
@@ -238,8 +245,8 @@ public:
     BarStyle GetInsertionStyle() const override { return BarStyle::VBar; }
 
     size_t GetSlotCount() const override;
-    int  GetItemHeight() const override { return 136; }
-    int  GetItemWidth()  const override { return 92; }
+    int  GetItemHeight() const override { return Cu(136.0f); }
+    int  GetItemWidth()  const override { return Cu(92.0f); }
     Item* GetSlotItem(size_t idx) const override;
 
     // Returns the rect of the "all" mosaic button (empty if none).
@@ -448,4 +455,4 @@ std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app);
  * @param hovered       鼠标是否悬停在滚动条区域
  */
 void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
-    int visibleHeight, int scrollOffset, bool hovered);
+    int visibleHeight, int scrollOffset, bool hovered, float cellScale = 1.0f);

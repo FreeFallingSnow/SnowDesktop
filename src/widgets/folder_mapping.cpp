@@ -29,7 +29,7 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
 {
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
-    InflateRect(&body, -4, -8);
+    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
     return body;
 }
 
@@ -113,7 +113,7 @@ static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data) return 0;
     if (data->listMode)
-        return static_cast<int>(itemCount) * 38;
+        return static_cast<int>(itemCount) * widget->Cu(38.0f);
     int columns = std::max(1, data->gridSpan.columns);
     int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
     if (rows <= 0) return 0;
@@ -133,7 +133,8 @@ static int FolderMappingMaxScrollOffset(FolderMapping* widget)
     if (!data) return 0;
     RECT content = FolderMappingContentRect(widget);
     int contentHeight = std::max<int>(1, content.bottom - content.top);
-    return std::max(0, FolderMappingContentHeight(widget, data->folderEntries.size()) - contentHeight + kMinCellHeight / 2);
+    return std::max(0, FolderMappingContentHeight(widget, data->folderEntries.size()) -
+        contentHeight + widget->Cu(kMinCellHeight / 2.0f));
 }
 
 /**
@@ -151,11 +152,12 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
     int scroll = std::clamp(data->scrollOffset, 0, FolderMappingMaxScrollOffset(widget));
     if (data->listMode)
     {
+        const int itemHeight = widget->Cu(38.0f);
         RECT rect = MakeRect(content.left,
-            content.top + static_cast<LONG>(linearIndex * 38) - scroll,
+            content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
             content.right,
-            content.top + static_cast<LONG>((linearIndex + 1) * 38) - scroll);
-        InflateRect(&rect, -4, -2);
+            content.top + static_cast<LONG>((linearIndex + 1) * itemHeight) - scroll);
+        InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
         return rect;
     }
 
@@ -299,7 +301,9 @@ size_t FolderMapping::GetSlotCount() const
  */
 int FolderMapping::GetItemHeight() const
 {
-    return (data_ && data_->listMode) ? 38 : FolderMappingCellHeight(const_cast<FolderMapping*>(this));
+    return (data_ && data_->listMode)
+        ? Cu(38.0f)
+        : FolderMappingCellHeight(const_cast<FolderMapping*>(this));
 }
 
 /**
@@ -381,21 +385,10 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (data_->folderEntries.empty())
     {
         RECT empty = GetBodyRect();
-        InflateRect(&empty, -12, -12);
-        ComPtr<IDWriteTextFormat> centered;
-        if (app_->dwriteFactory_)
-        {
-            app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &centered);
-            if (centered)
-            {
-                centered->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                centered->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                centered->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-            }
-        }
+        InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
+        IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
         app_->DrawD2DText(context, L"空文件夹", empty,
-            centered ? centered.Get() : app_->listItemTextFormat_.Get(),
+            centered ? centered : app_->listItemTextFormat_.Get(),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
         return;
     }
@@ -440,30 +433,35 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
 {
     if (!data_ || !app_) return;
 
-    constexpr int btnSize = 14;
-    constexpr int gap = 4;
-    constexpr int gapBetween = 7;
-    constexpr int resizeReserve = 20;
+    const int btnSize = Cu(14.0f);
+    const int gap = Cu(4.0f);
+    const int gapBetween = Cu(7.0f);
+    const int resizeReserve = Cu(20.0f);
+    const int topInset = Cu(5.0f);
+    const int bottomInset = Cu(3.0f);
     RECT toggleBtn = {
         handleRect.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
-        handleRect.top + 5,
+        handleRect.top + topInset,
         handleRect.right - resizeReserve - gap - btnSize - gapBetween,
-        handleRect.bottom - 3
+        handleRect.bottom - bottomInset
     };
     RECT openBtn = {
         handleRect.right - resizeReserve - gap - btnSize,
-        handleRect.top + 5,
+        handleRect.top + topInset,
         handleRect.right - resizeReserve - gap,
-        handleRect.bottom - 3
+        handleRect.bottom - bottomInset
     };
+
+    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f);
 
     auto drawFaButton = [&](RECT rect, const std::wstring& glyph) {
         bool hot = PtInRect(&rect, app_->lastMousePoint_) != FALSE;
-        app_->DrawD2DRoundedRectangle(context, rect, 4.0f,
+        app_->DrawD2DRoundedRectangle(context, rect, static_cast<float>(Cu(4.0f)),
             hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
         app_->DrawD2DText(context, glyph, rect,
-            app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get(),
+            faFormat ? faFormat :
+                (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
     };
 
@@ -484,21 +482,21 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     if (base != WidgetHit::MoveHandle || !data_) return base;
 
     RECT handle = GetMoveHandleRect();
-    constexpr int btnSize = 14;
-    constexpr int gap = 4;
-    constexpr int gapBetween = 7;
-    constexpr int resizeReserve = 20;
+    const int btnSize = Cu(14.0f);
+    const int gap = Cu(4.0f);
+    const int gapBetween = Cu(7.0f);
+    const int resizeReserve = Cu(20.0f);
     RECT toggleBtn = {
         handle.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
-        handle.top + 5,
+        handle.top + Cu(5.0f),
         handle.right - resizeReserve - gap - btnSize - gapBetween,
-        handle.bottom - 3
+        handle.bottom - Cu(3.0f)
     };
     RECT openBtn = {
         handle.right - resizeReserve - gap - btnSize,
-        handle.top + 5,
+        handle.top + Cu(5.0f),
         handle.right - resizeReserve - gap,
-        handle.bottom - 3
+        handle.bottom - Cu(3.0f)
     };
     if (PtInRect(&toggleBtn, pt)) return WidgetHit::ListToggleBtn;
     if (PtInRect(&openBtn, pt)) return WidgetHit::OpenFolderBtn;

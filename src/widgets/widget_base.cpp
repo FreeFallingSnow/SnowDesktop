@@ -19,6 +19,7 @@
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <cmath>
 
 using Microsoft::WRL::ComPtr;
 
@@ -95,6 +96,96 @@ ComPtr<IDataObject> Widget::CreateDataObject()
     return nullptr;
 }
 
+float Widget::GetCellScale() const
+{
+    if (!app_ || !data_)
+        return 1.0f;
+
+    const POINT center = {
+        (data_->bounds.left + data_->bounds.right) / 2,
+        (data_->bounds.top + data_->bounds.bottom) / 2
+    };
+    const GridPage* page = nullptr;
+    for (const auto& candidate : app_->gridPages_)
+    {
+        if (PtInRect(&candidate.bounds, center))
+        {
+            page = &candidate;
+            break;
+        }
+    }
+    if (!page)
+    {
+        for (const auto& candidate : app_->gridPages_)
+        {
+            if (candidate.id == data_->gridCell.pageId)
+            {
+                page = &candidate;
+                break;
+            }
+        }
+    }
+    if (!page)
+        return 1.0f;
+
+    return CalculateWidgetCellScale(page->cellWidth, page->cellHeight);
+}
+
+int Widget::Cu(float value) const
+{
+    return ScaleWidgetCu(value, GetCellScale());
+}
+
+float Widget::FontCu(float value) const
+{
+    return ScaleWidgetFontCu(value, GetCellScale());
+}
+
+IDWriteTextFormat* Widget::GetCuTextFormat(float value, bool bold, bool centered) const
+{
+    if (!app_ || !app_->dwriteFactory_)
+        return nullptr;
+    const float size = FontCu(value);
+    const int key = static_cast<int>(std::round(size * 100.0f)) |
+        (bold ? 1 << 20 : 0) | (centered ? 1 << 21 : 0);
+    auto found = cuTextFormatCache_.find(key);
+    if (found != cuTextFormatCache_.end())
+        return found->second.Get();
+
+    ComPtr<IDWriteTextFormat> format;
+    app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+        bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+    if (!format)
+        return nullptr;
+    format->SetTextAlignment(centered
+        ? DWRITE_TEXT_ALIGNMENT_CENTER
+        : DWRITE_TEXT_ALIGNMENT_LEADING);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    return cuTextFormatCache_.emplace(key, std::move(format)).first->second.Get();
+}
+
+IDWriteTextFormat* Widget::GetCuFaTextFormat(float value) const
+{
+    if (!app_ || !app_->dwriteFactory_)
+        return nullptr;
+    const float size = FontCu(value);
+    const int key = static_cast<int>(std::round(size * 100.0f));
+    auto found = cuFaTextFormatCache_.find(key);
+    if (found != cuFaTextFormatCache_.end())
+        return found->second.Get();
+
+    ComPtr<IDWriteTextFormat> format;
+    format.Attach(CreateFaTextFormat(app_->dwriteFactory_.Get(), size));
+    if (!format)
+        return nullptr;
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    return cuFaTextFormatCache_.emplace(key, std::move(format)).first->second.Get();
+}
+
 // ── WidgetContainer geometry ──────────────────────────────────
 
 /**
@@ -155,8 +246,8 @@ RECT WidgetContainer::GetFrameRect() const
         {
             if (p.id == cell.pageId)
             {
-                int halfGapX = std::max(2, p.gapX / 2);
-                int halfGapY = std::max(2, p.gapY / 2);
+                int halfGapX = std::max(Cu(2.0f), p.gapX / 2);
+                int halfGapY = std::max(Cu(2.0f), p.gapY / 2);
                 rect.left   -= halfGapX;
                 rect.top    -= halfGapY;
                 rect.right  += halfGapX;
@@ -166,8 +257,9 @@ RECT WidgetContainer::GetFrameRect() const
         }
     }
 
-    if (rect.right - rect.left > 16 && rect.bottom - rect.top > 16)
-        InflateRect(&rect, -4, -4);
+    const int inset = Cu(4.0f);
+    if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
+        InflateRect(&rect, -inset, -inset);
     return rect;
 }
 
@@ -180,7 +272,8 @@ RECT WidgetContainer::GetBodyRect() const
     RECT frame = GetFrameRect();
     if (data_->type == DesktopWidgetType::Collection && data_->gridSpan.rows <= 1)
         return frame;
-    frame.bottom = std::max<LONG>(frame.top + 22, frame.bottom - 22);
+    const int barReserve = Cu(22.0f);
+    frame.bottom = std::max<LONG>(frame.top + barReserve, frame.bottom - barReserve);
     return frame;
 }
 
@@ -191,12 +284,12 @@ RECT WidgetContainer::GetBodyRect() const
 RECT WidgetContainer::GetMoveHandleRect() const
 {
     RECT frame = GetFrameRect();
-    constexpr int handleHeight = 24;
+    const int handleHeight = Cu(24.0f);
     return {
-        frame.left + 4,
-        std::max<LONG>(frame.top, frame.bottom - handleHeight - 2),
-        frame.right - 4,
-        frame.bottom - 2
+        frame.left + Cu(4.0f),
+        std::max<LONG>(frame.top, frame.bottom - handleHeight - Cu(2.0f)),
+        frame.right - Cu(4.0f),
+        frame.bottom - Cu(2.0f)
     };
 }
 
@@ -207,7 +300,7 @@ RECT WidgetContainer::GetMoveHandleRect() const
 RECT WidgetContainer::GetResizeHandleRect() const
 {
     RECT handle = GetMoveHandleRect();
-    constexpr int handleWidth = 24;
+    const int handleWidth = Cu(24.0f);
     return {
         std::max<LONG>(handle.left, handle.right - handleWidth),
         handle.top,
@@ -223,10 +316,10 @@ RECT WidgetContainer::GetResizeHandleRect() const
 RECT WidgetContainer::GetTitleRect() const
 {
     RECT handle = GetMoveHandleRect();
-    LONG left = handle.left + 4;
-    const int reserved = data_->type == DesktopWidgetType::FolderMapping ? 60 : 26;
+    LONG left = handle.left + Cu(4.0f);
+    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? 60.0f : 26.0f);
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
-    return { left, handle.top + 2, right, handle.bottom - 2 };
+    return { left, handle.top + Cu(2.0f), right, handle.bottom - Cu(2.0f) };
 }
 
 // ── Hit testing ───────────────────────────────────────────────
@@ -433,18 +526,19 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
 
     bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
     if (hovered && !selected)
-        app_->DrawD2DRoundedRectangle(context, cell, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
     if (selected)
-        app_->DrawD2DRoundedRectangle(context, cell, 6.0f,
+        app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.30f),
             D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.48f));
 
     int itemH = std::max<int>(1, cell.bottom - cell.top);
-    int iconSz = std::min(32, itemH - 4);
-    RECT iconRect = MakeRect(cell.left + 4, cell.top + (itemH - iconSz) / 2,
-        cell.left + 4 + iconSz, cell.top + (itemH + iconSz) / 2);
+    int iconSz = std::max(1, std::min(Cu(32.0f),
+        std::max(1, itemH - Cu(4.0f))));
+    RECT iconRect = MakeRect(cell.left + Cu(4.0f), cell.top + (itemH - iconSz) / 2,
+        cell.left + Cu(4.0f) + iconSz, cell.top + (itemH + iconSz) / 2);
 
     if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(iconBitmap))
     {
@@ -452,15 +546,17 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             D2D1_INTERPOLATION_MODE_LINEAR);
     }
 
-    RECT textRect = MakeRect(iconRect.right + 6, cell.top + 2,
-        cell.right - 6, cell.bottom - 2);
+    RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
+        cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
     if (textRect.right > textRect.left && !name.empty())
     {
+        IDWriteTextFormat* textFormat = GetCuTextFormat(13.0f, false, false);
         ComPtr<IDWriteTextLayout> layout;
         float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
         float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
         if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(name.c_str(),
-            static_cast<UINT32>(name.size()), app_->listItemTextFormat_.Get(),
+            static_cast<UINT32>(name.size()),
+            textFormat ? textFormat : app_->listItemTextFormat_.Get(),
             tw, th, &layout)) && layout)
         {
             ComPtr<ID2D1SolidColorBrush> shadowBrush;
@@ -469,11 +565,14 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &textBrush);
             float tx = static_cast<float>(textRect.left);
             float ty = static_cast<float>(textRect.top);
+            const float shadowOffset = static_cast<float>(Cu(1.0f));
             if (shadowBrush)
             {
                 const D2D1_POINT_2F offsets[] = {
-                    D2D1::Point2F(tx - 1.0f, ty), D2D1::Point2F(tx + 1.0f, ty),
-                    D2D1::Point2F(tx, ty - 1.0f), D2D1::Point2F(tx, ty + 1.0f),
+                    D2D1::Point2F(tx - shadowOffset, ty),
+                    D2D1::Point2F(tx + shadowOffset, ty),
+                    D2D1::Point2F(tx, ty - shadowOffset),
+                    D2D1::Point2F(tx, ty + shadowOffset),
                 };
                 for (const auto& offset : offsets)
                     context->DrawTextLayout(offset, layout.Get(), shadowBrush.Get(),
@@ -498,7 +597,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
  * @param hovered 鼠标是否悬停在滚动区域
  */
 void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
-    int visibleHeight, int scrollOffset, bool hovered)
+    int visibleHeight, int scrollOffset, bool hovered, float cellScale)
 {
     if (contentHeight <= visibleHeight || visibleHeight <= 0) return;
     if (!hovered) return;
@@ -506,11 +605,11 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     int maxScroll = std::max(0, contentHeight - visibleHeight);
     if (maxScroll <= 0) return;
 
-    constexpr int trackWidth = 5;
-    constexpr int trackMargin = 2;
+    const int trackWidth = std::max(2, static_cast<int>(std::round(5.0f * cellScale)));
+    const int trackMargin = std::max(1, static_cast<int>(std::round(2.0f * cellScale)));
     int trackLeft = body.right - trackWidth - trackMargin;
-    int trackTop = body.top + 4;
-    int trackBottom = body.bottom - 4;
+    int trackTop = body.top + std::max(1, static_cast<int>(std::round(4.0f * cellScale)));
+    int trackBottom = body.bottom - std::max(1, static_cast<int>(std::round(4.0f * cellScale)));
     int trackHeight = std::max(1, trackBottom - trackTop);
 
     // Track background
@@ -529,7 +628,9 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     // Thumb
     float ratio = std::clamp((float)visibleHeight / (float)contentHeight, 0.08f, 1.0f);
     float scrollRatio = std::clamp((float)scrollOffset / (float)maxScroll, 0.0f, 1.0f);
-    int thumbHeight = std::max(20, (int)(trackHeight * ratio));
+    int thumbHeight = std::max(
+        std::max(8, static_cast<int>(std::round(20.0f * cellScale))),
+        (int)(trackHeight * ratio));
     int thumbTravel = trackHeight - thumbHeight;
     int thumbTop = trackTop + (int)(thumbTravel * scrollRatio);
     RECT thumbRect = MakeRect(trackLeft, thumbTop, trackLeft + trackWidth, thumbTop + thumbHeight);
@@ -555,7 +656,7 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
 {
     RECT body = GetBodyRect();
     DrawScrollbarAt(context, body, GetTotalContentHeight(),
-        GetVisibleContentHeight(), GetScrollOffset(), hovered);
+        GetVisibleContentHeight(), GetScrollOffset(), hovered, GetCellScale());
 }
 
 // ── DrawChrome ────────────────────────────────────────────────
@@ -587,7 +688,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         gradientEndA = p.gradientEndA;
     }
 
-    float radius = 12.0f;
+    float radius = static_cast<float>(Cu(12.0f));
     float strokeW = selected ? 1.6f : 1.0f;
     D2D1::ColorF selBorder(0.39f, 0.66f, 1.0f, 0.90f);
 
@@ -637,7 +738,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;
     if (showGradient)
     {
-        RECT gradRect = { frame.left, std::max<LONG>(body.top, frame.bottom - 36),
+        RECT gradRect = { frame.left, std::max<LONG>(body.top, frame.bottom - Cu(36.0f)),
                           frame.right, frame.bottom };
         if (gradRect.bottom > gradRect.top && !IsRectEmptyRect(gradRect))
         {
@@ -692,18 +793,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             if (tw > 0 && th > 0 && app_ && app_->GetDWriteFactory())
             {
                 auto* dwrite = app_->GetDWriteFactory();
-                ComPtr<IDWriteTextFormat> fmt;
-                dwrite->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-                    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                    13.0f, L"", &fmt);
+                IDWriteTextFormat* fmt = GetCuTextFormat(13.0f, false, false);
                 if (fmt)
                 {
-                    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
                     ComPtr<IDWriteTextLayout> layout;
                     dwrite->CreateTextLayout(data_->title.c_str(),
-                        static_cast<UINT32>(data_->title.size()), fmt.Get(),
+                        static_cast<UINT32>(data_->title.size()), fmt,
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {
@@ -712,7 +807,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                         context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
                         if (shadowBrush)
                             context->DrawTextLayout(
-                                D2D1::Point2F((float)titleRect.left + 1.0f, (float)titleRect.top + 1.0f),
+                                D2D1::Point2F((float)titleRect.left + Cu(1.0f), (float)titleRect.top + Cu(1.0f)),
                                 layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 
                         ComPtr<ID2D1SolidColorBrush> textBrush;
@@ -729,13 +824,13 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Resize handle dot
         {
             RECT rh = GetResizeHandleRect();
-            const int dot = 8;
+            const int dot = Cu(8.0f);
             int cx = rh.left + (rh.right - rh.left) / 2;
             int cy = rh.top + (rh.bottom - rh.top) / 2;
             D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(
                 D2D1::RectF((float)(cx - dot/2), (float)(cy - dot/2),
                              (float)(cx + dot/2), (float)(cy + dot/2)),
-                4.0f, 4.0f);
+                static_cast<float>(Cu(4.0f)), static_cast<float>(Cu(4.0f)));
             D2D1::ColorF dotFill = selected
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f);

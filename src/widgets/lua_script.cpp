@@ -140,7 +140,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         }
     }
 
-    app_->DrawD2DRoundedRectangle(context, frame, 12.0f, fillColor,
+    app_->DrawD2DRoundedRectangle(context, frame, static_cast<float>(Cu(12.0f)), fillColor,
         selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f) : borderColor,
         selected ? 1.6f : 1.0f);
 
@@ -163,13 +163,14 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             {
                 data_->gridCell.pageId = realPage->id;
                 RECT correctBounds = GetGridRect(app_->gridPages_, data_->gridCell, data_->gridSpan);
-                int hgx = std::max(2, realPage->gapX / 2);
-                int hgy = std::max(2, realPage->gapY / 2);
+                int hgx = std::max(Cu(2.0f), realPage->gapX / 2);
+                int hgy = std::max(Cu(2.0f), realPage->gapY / 2);
                 frame = correctBounds;
                 frame.left   -= hgx; frame.top    -= hgy;
                 frame.right  += hgx; frame.bottom += hgy;
-                if (frame.right - frame.left > 16 && frame.bottom - frame.top > 16)
-                    InflateRect(&frame, -4, -4);
+                const int inset = Cu(4.0f);
+                if (frame.right - frame.left > inset * 4 && frame.bottom - frame.top > inset * 4)
+                    InflateRect(&frame, -inset, -inset);
             }
         }
         SafeRenderWidget(data_->id, data_->scriptPath, context, frame,
@@ -180,11 +181,32 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     if (app_->widgetEngine_ && widgetOk)
         SafeReadFlags(data_->scriptPath, data_->showTitle, data_->bottomBarHover);
 
+    if (app_->widgetEngine_ && widgetOk)
+    {
+        auto scrollControls = app_->widgetEngine_->GetScrollControls(data_->id);
+        for (const auto& ctrl : scrollControls)
+        {
+            if (ctrl.contentHeight <= ctrl.viewportHeight)
+                continue;
+            const LONG sbWidth = Cu(6.0f);
+            RECT sbRect = {
+                frame.right - sbWidth - Cu(2.0f),
+                frame.top + ctrl.rect.top,
+                frame.right - Cu(2.0f),
+                frame.top + ctrl.rect.bottom
+            };
+            int scrollOff = app_->widgetEngine_->RuntimeGetScrollOffset(data_->id, ctrl.id);
+            bool showScrollbar = hovered || !data_->bottomBarHover;
+            DrawScrollbarAt(context, sbRect, ctrl.contentHeight, ctrl.viewportHeight,
+                scrollOff, showScrollbar, GetCellScale());
+        }
+    }
+
     bool showHandle = data_->bottomBarHover ? hovered : true;
     if (!showHandle) return;
 
     RECT handle = app_->GetStandaloneWidgetMoveHandleRect(*data_);
-    RECT gradientRect = { frame.left, std::max<LONG>(frame.top, frame.bottom - 36),
+    RECT gradientRect = { frame.left, std::max<LONG>(frame.top, frame.bottom - Cu(36.0f)),
                           frame.right, frame.bottom };
     if (!customStyle && gradientRect.bottom > gradientRect.top)
     {
@@ -210,7 +232,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                     D2D1::RoundedRect(
                         D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
                             static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
-                        12.0f, 12.0f), &clipGeo)) && clipGeo)
+                        static_cast<float>(Cu(12.0f)), static_cast<float>(Cu(12.0f))), &clipGeo)) && clipGeo)
                 {
                     context->PushLayer(D2D1::LayerParameters(
                         D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
@@ -228,21 +250,23 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     if (data_->showTitle && !data_->title.empty())
     {
         RECT titleRect = {
-            handle.left + 4,
-            handle.top + 2,
-            std::max<LONG>(handle.left + 5, handle.right - 28),
-            handle.bottom - 2
+            handle.left + Cu(4.0f),
+            handle.top + Cu(2.0f),
+            std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(28.0f)),
+            handle.bottom - Cu(2.0f)
         };
+        IDWriteTextFormat* titleFormat = GetCuTextFormat(13.0f, false, false);
         app_->DrawD2DText(context, data_->title, titleRect,
-            app_->listItemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+            titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
     }
 
     RECT resize = app_->GetStandaloneWidgetResizeHandleRect(*data_);
-    const int dot = 8;
+    const int dot = Cu(8.0f);
     int cx = resize.left + (resize.right - resize.left) / 2;
     int cy = resize.top + (resize.bottom - resize.top) / 2;
     RECT dotRect = { cx - dot / 2, cy - dot / 2, cx + dot / 2, cy + dot / 2 };
-    app_->DrawD2DRoundedRectangle(context, dotRect, 4.0f,
+    app_->DrawD2DRoundedRectangle(context, dotRect, static_cast<float>(Cu(4.0f)),
         selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
                  : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f));

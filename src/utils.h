@@ -191,6 +191,18 @@ bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& va
 bool IsVisibleByDesktopIconSettings(const std::wstring& desktopIconClsid, const std::unordered_map<std::wstring, bool>& settingsIconVisibility);
 
 /**
+ * @brief 判断 Windows 资源管理器是否启用了“隐藏的项目”。
+ * @details 读取当前用户 Explorer\Advanced 下的 Hidden 设置；
+ *          值为 1 时显示隐藏项，读取失败时按系统默认行为隐藏。
+ * @return 启用“隐藏的项目”返回 true，否则返回 false。
+ */
+bool AreExplorerHiddenItemsVisible();
+
+float CalculateWidgetCellScale(int cellWidth, int cellHeight);
+int ScaleWidgetCu(float value, float cellScale);
+float ScaleWidgetFontCu(float value, float cellScale);
+
+/**
  * @brief 创建自顶向下的 32 位 DIB 位图
  * @details 创建 32 位深、自顶向下（非倒置）的 DIB（设备无关位图），
  *          适合用于 Alpha 混合处理。位图像素数据可通过 bits 指针直接访问。

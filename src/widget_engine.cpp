@@ -262,7 +262,7 @@ struct D2DState
     int gridColumns = 1;
     int gridRows = 1;
     int gridCellW = 92;
-    int gridCellH = 136;
+    int gridCellH = 116;
     int gridGapY = 8;
     int widgetClipDepth = 0;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
@@ -832,10 +832,12 @@ static void DrawHostText(D2DState* state, const std::wstring& text,
     float x, float y, float width, float height, float size, int color)
 {
     if (!state || !state->ctx || !state->dwrite) return;
+    const float scale = CalculateWidgetCellScale(state->gridCellW, state->gridCellH);
+    const float scaledSize = std::max(9.0f, size * scale);
     ComPtr<IDWriteTextFormat> format;
     if (FAILED(state->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
         DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return;
+        DWRITE_FONT_STRETCH_NORMAL, scaledSize, L"", &format))) return;
     format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     ComPtr<ID2D1SolidColorBrush> brush;
@@ -1795,9 +1797,11 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 if (d2dState_->dwrite)
                 {
                     ComPtr<IDWriteTextFormat> format;
+                    const float errFontSize = std::max(9.0f, 14.0f * CalculateWidgetCellScale(
+                        d2dState_->gridCellW, d2dState_->gridCellH));
                     d2dState_->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
                         DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                        14.0f, L"", &format);
+                        errFontSize, L"", &format);
                     if (format)
                     {
                         std::wstring wmsg = L"WIDGET ERROR: ";
@@ -2415,6 +2419,19 @@ int WidgetEngine::RuntimeGetScrollOffset(const std::wstring& widgetId, const std
     if (index < 0) return 0;
     auto it = widgets_[index].scrollOffsets.find(id);
     return it == widgets_[index].scrollOffsets.end() ? 0 : it->second;
+}
+
+std::vector<LuaWidget::HostControl> WidgetEngine::GetScrollControls(const std::wstring& widgetId) const
+{
+    int index = FindWidget(widgetId);
+    if (index < 0) return {};
+    std::vector<LuaWidget::HostControl> results;
+    for (const auto& ctrl : widgets_[index].hostControls)
+    {
+        if (ctrl.type == LuaWidget::HostControl::Type::Scroll)
+            results.push_back(ctrl);
+    }
+    return results;
 }
 
 bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
@@ -3180,7 +3197,36 @@ static int lua_LayoutCellWidth(lua_State* L)
 static int lua_LayoutCellHeight(lua_State* L)
 {
     auto* s = GetD2D(L);
-    lua_pushinteger(L, s ? std::max(4, s->gridCellH) : 136);
+    lua_pushinteger(L, s ? std::max(4, s->gridCellH) : 116);
+    return 1;
+}
+
+static int lua_LayoutCellScale(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
+    const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
+    lua_pushnumber(L, CalculateWidgetCellScale(cellWidth, cellHeight));
+    return 1;
+}
+
+static int lua_LayoutCu(lua_State* L)
+{
+    const float value = static_cast<float>(luaL_checknumber(L, 1));
+    auto* s = GetD2D(L);
+    const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
+    const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
+    lua_pushinteger(L, static_cast<lua_Integer>(std::round(value * CalculateWidgetCellScale(cellWidth, cellHeight))));
+    return 1;
+}
+
+static int lua_LayoutFontCu(lua_State* L)
+{
+    const float value = static_cast<float>(luaL_checknumber(L, 1));
+    auto* s = GetD2D(L);
+    const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
+    const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
+    lua_pushnumber(L, std::max(9.0f, value * CalculateWidgetCellScale(cellWidth, cellHeight)));
     return 1;
 }
 
@@ -3266,6 +3312,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_LayoutSizeClass); lua_setfield(L, -2, "sizeClass");
     lua_pushcfunction(L, lua_LayoutCellWidth); lua_setfield(L, -2, "cellWidth");
     lua_pushcfunction(L, lua_LayoutCellHeight); lua_setfield(L, -2, "cellHeight");
+    lua_pushcfunction(L, lua_LayoutCellScale); lua_setfield(L, -2, "cellScale");
+    lua_pushcfunction(L, lua_LayoutCu); lua_setfield(L, -2, "cu");
+    lua_pushcfunction(L, lua_LayoutFontCu); lua_setfield(L, -2, "fontCu");
     lua_pushcfunction(L, lua_LayoutCellGap);    lua_setfield(L, -2, "cellGap");
     lua_setglobal(L, "layout");
 

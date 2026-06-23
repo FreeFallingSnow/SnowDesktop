@@ -120,6 +120,36 @@ inline void DesktopApp::ClearMenuIcons()
  */
 inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
 {
+    struct MonitorSizeRange
+    {
+        const wchar_t* label;
+        float representativeInches;
+    };
+    static constexpr MonitorSizeRange kMonitorSizeRanges[] = {
+        { L"13–16 英寸", 15.0f },
+        { L"17–21 英寸", 19.0f },
+        { L"22–25 英寸", 24.0f },
+        { L"26–30 英寸", 27.0f },
+        { L"31 英寸以上", 34.0f },
+    };
+
+    auto isRecommendedCommand = [](UINT value) {
+        return (value >= kContextGridRecommended169First &&
+                value <= kContextGridRecommended169Last) ||
+            (value >= kContextGridRecommended1610First &&
+                value <= kContextGridRecommended1610Last);
+    };
+    auto recommendedDimensions = [&](UINT value) {
+        const bool isSixteenTen = value >= kContextGridRecommended1610First;
+        const UINT first = isSixteenTen
+            ? kContextGridRecommended1610First
+            : kContextGridRecommended169First;
+        const size_t rangeIndex = static_cast<size_t>(value - first);
+        return CalculateRecommendedGridDimensions(
+            16, isSixteenTen ? 10 : 9,
+            kMonitorSizeRanges[rangeIndex].representativeInches);
+    };
+
     UINT command = initialCommand;
     while (true)
     {
@@ -128,9 +158,15 @@ inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCo
             command == kContextGridAddRow ||
             command == kContextGridRemoveRow ||
             command == kContextGridAddColumn ||
-            command == kContextGridRemoveColumn;
+            command == kContextGridRemoveColumn ||
+            isRecommendedCommand(command);
         if (!validCommand) break;
 
+        if (isRecommendedCommand(command))
+        {
+            const GridSpan recommended = recommendedDimensions(command);
+            SetGridDimensions(recommended.columns, recommended.rows);
+        }
         switch (command)
         {
         case kContextGridAddRow: AdjustGridRows(1); break;
@@ -156,6 +192,41 @@ inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCo
         AppendMenuW(menu, MF_STRING, kContextGridRemoveRow, L"减少行");
         AppendMenuW(menu, MF_STRING, kContextGridAddColumn, L"增加列");
         AppendMenuW(menu, MF_STRING, kContextGridRemoveColumn, L"减少列");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
+        auto appendRecommendedMenu = [&](HMENU submenu, int aspectHeight, UINT firstCommand) {
+            if (!submenu) return;
+            for (size_t i = 0; i < std::size(kMonitorSizeRanges); ++i)
+            {
+                const GridSpan recommended = CalculateRecommendedGridDimensions(
+                    16, aspectHeight, kMonitorSizeRanges[i].representativeInches);
+                wchar_t label[64]{};
+                swprintf_s(label, L"%s → %d列 × %d行",
+                    kMonitorSizeRanges[i].label,
+                    recommended.columns, recommended.rows);
+                UINT flags = MF_STRING;
+                if (page &&
+                    page->columns == recommended.columns &&
+                    page->rows == recommended.rows)
+                    flags |= MF_CHECKED;
+                AppendMenuW(submenu, flags,
+                    firstCommand + static_cast<UINT>(i), label);
+                SetMenuItemIcon(submenu,
+                    firstCommand + static_cast<UINT>(i), L"");
+            }
+        };
+
+        HMENU recommended169Menu = CreatePopupMenu();
+        HMENU recommended1610Menu = CreatePopupMenu();
+        appendRecommendedMenu(recommended169Menu, 9, kContextGridRecommended169First);
+        appendRecommendedMenu(recommended1610Menu, 10, kContextGridRecommended1610First);
+        if (recommended169Menu)
+            AppendMenuW(menu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(recommended169Menu), L"推荐：16:9 显示器");
+        if (recommended1610Menu)
+            AppendMenuW(menu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(recommended1610Menu), L"推荐：16:10 显示器");
+
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextGridAdjustmentDone, L"结束调整");
 

@@ -114,6 +114,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
     {
         UnregisterNavigationHotkey();
         KillTimer(hwnd_, kShellChangeTimerId);
+        KillTimer(hwnd_, kDisplayTopologyRefreshTimerId);
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -364,6 +365,12 @@ inline void DesktopApp::WatchDesktopHost()
 {
     if (exitRequested_)
         return;
+
+    // Low-cost fallback for display-driver paths that do not broadcast the
+    // usual display messages. The signature is only a handful of monitor
+    // records and layout work is still deferred and conditional.
+    if (CaptureDisplayTopologySignature() != displayTopologySignature_)
+        ScheduleDisplayTopologyRefresh();
 
     if (!customDesktopVisible_)
         return;
@@ -634,6 +641,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     BeginIconLoadGeneration();
     LoadLayoutSlots();
     UpdateLayoutWorkArea();
+    displayTopologySignature_ = CaptureDisplayTopologySignature();
 
     HWND parent = desktopWindows_.host ? desktopWindows_.host : GetDesktopWindow();
     POINT origin{ virtualLeft_, virtualTop_ };
@@ -1057,6 +1065,12 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 1;
     case WM_SIZE:
     {
+        if (updatingDisplayTopology_)
+        {
+            virtualWidth_ = LOWORD(lp);
+            virtualHeight_ = HIWORD(lp);
+            return 0;
+        }
         bool wasDragging = dragSession_.IsActive();
         virtualWidth_ = LOWORD(lp);
         virtualHeight_ = HIWORD(lp);
@@ -1193,16 +1207,13 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         RefreshDragHintFromKeyboard();
         return 0;
     case WM_DISPLAYCHANGE:
+        ScheduleDisplayTopologyRefresh();
+        return 0;
     case WM_SETTINGCHANGE:
-        virtualLeft_ = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        virtualTop_ = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        virtualWidth_ = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        virtualHeight_ = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        if (dcompVisual_)
-            CreateOrResizeCompositionSurface();
-        UpdateLayoutWorkArea();
-        LayoutItems();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        ScheduleDisplayTopologyRefresh();
+        // Explorer broadcasts this message when view options such as
+        // "Hidden items" change. Re-enumerate both desktop and mapped folders.
+        ReloadItems(false);
         return 0;
     case kShellChangeMessage:
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);

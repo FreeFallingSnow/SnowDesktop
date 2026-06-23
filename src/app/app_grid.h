@@ -106,6 +106,84 @@ inline void DesktopApp::AdjustGridColumns(int delta)
 }
 
 /**
+ * @brief 将右键所在页面一次性设置为指定列数和行数。
+ * @param columns 目标列数。
+ * @param rows 目标行数。
+ */
+inline void DesktopApp::SetGridDimensions(int columns, int rows)
+{
+    if (gridPages_.empty()) return;
+
+    POINT clientPoint = lastContextMenuScreenPoint_;
+    ScreenToClient(hwnd_, &clientPoint);
+    const GridPage* found = GridPageFromPoint(clientPoint);
+    if (!found) return;
+
+    GridPage* targetPage = nullptr;
+    for (auto& page : gridPages_)
+    {
+        if (page.id == found->id)
+        {
+            targetPage = &page;
+            break;
+        }
+    }
+    if (!targetPage) return;
+
+    constexpr int kMinGridSize = 1;
+    constexpr int kMaxGridSize = 50;
+    const int newColumns = std::clamp(columns, kMinGridSize, kMaxGridSize);
+    const int newRows = std::clamp(rows, kMinGridSize, kMaxGridSize);
+    if (targetPage->columns == newColumns && targetPage->rows == newRows)
+        return;
+
+    targetPage->columns = newColumns;
+    targetPage->rows = newRows;
+    ApplyIconSpacingToPage(*targetPage);
+    savedPageColumns_[targetPage->id] = targetPage->columns;
+    savedPageRows_[targetPage->id] = targetPage->rows;
+    RelayoutDisplacedItems();
+    SaveLayoutSlots();
+    LayoutItems();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+/**
+ * @brief 根据显示器物理尺寸估算舒适的桌面网格行列数。
+ *
+ * 以 27 英寸为舒适密度基准，并对物理尺寸采用平方根弱缩放。
+ * 因此小屏只适度减少行列，不会因对角线较小而把图标放得过大；
+ * 27 英寸 16:9 显示器仍得到约 27 列 × 11 行。
+ */
+inline GridSpan DesktopApp::CalculateRecommendedGridDimensions(
+    int aspectWidth, int aspectHeight, float diagonalInches) const
+{
+    if (aspectWidth <= 0 || aspectHeight <= 0 || diagonalInches <= 0.0f)
+        return {1, 1};
+
+    constexpr float kReferenceDiagonalInches = 27.0f;
+    constexpr float kComfortableCellWidthInches = 0.87f;
+    constexpr float kComfortableCellHeightInches = 1.20f;
+    const float effectiveDiagonal = kReferenceDiagonalInches * std::sqrt(
+        diagonalInches / kReferenceDiagonalInches);
+    const float aspectDiagonal = std::sqrt(
+        static_cast<float>(aspectWidth * aspectWidth + aspectHeight * aspectHeight));
+    const float physicalWidth =
+        effectiveDiagonal * static_cast<float>(aspectWidth) / aspectDiagonal;
+    const float physicalHeight =
+        effectiveDiagonal * static_cast<float>(aspectHeight) / aspectDiagonal;
+
+    GridSpan result;
+    result.columns = std::clamp(
+        static_cast<int>(std::round(physicalWidth / kComfortableCellWidthInches)),
+        4, 50);
+    result.rows = std::clamp(
+        static_cast<int>(std::round(physicalHeight / kComfortableCellHeightInches)),
+        3, 50);
+    return result;
+}
+
+/**
  * @brief 从坐标点所在显示器切换首屏锁定（持久化，与末屏锁互斥平移）。
  * @param screenPoint 屏幕坐标点。
  */
@@ -2058,6 +2136,22 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
     }
     switch (msg)
     {
+    case WM_DISPLAYCHANGE:
+        ScheduleDisplayTopologyRefresh();
+        return 0;
+    case WM_DEVICECHANGE:
+        switch (wp)
+        {
+        case DBT_DEVNODES_CHANGED:
+        case DBT_CONFIGCHANGED:
+        case DBT_DEVICEARRIVAL:
+        case DBT_DEVICEREMOVECOMPLETE:
+            ScheduleDisplayTopologyRefresh();
+            break;
+        default:
+            break;
+        }
+        return TRUE;
     case kTrayCallbackMessage:
         OnTrayCallback(lp);
         return 0;
@@ -2077,6 +2171,7 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
         RequestExit();
         return 0;
     case WM_DESTROY:
+        KillTimer(hwnd, kDisplayTopologyRefreshTimerId);
         controlHwnd_ = nullptr;
         PostQuitMessage(0);
         return 0;
@@ -2437,7 +2532,8 @@ inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
 /**
  * @brief 枚举桌面文件夹中的所有项，构建 DesktopItem 列表，包含图标、布局键和网格位置。
  *
- * 会过滤隐藏项和非桌面路径项，并为 .lnk 文件检测快捷方式箭头。
+ * 会依据 Windows“隐藏的项目”设置过滤隐藏项，同时过滤非桌面路径项，
+ * 并为 .lnk 文件检测快捷方式箭头。
  */
 inline void DesktopApp::LoadDesktopItems()
 {
@@ -2487,8 +2583,13 @@ items_.clear();
     size_t userDesktopLen = wcslen(userDesktopPath);
     size_t commonDesktopLen = wcslen(commonDesktopPath);
 
+    const bool showHiddenItems = AreExplorerHiddenItemsVisible();
+    SHCONTF enumFlags = SHCONTF_FOLDERS | SHCONTF_NONFOLDERS;
+    if (showHiddenItems)
+        enumFlags = static_cast<SHCONTF>(enumFlags | SHCONTF_INCLUDEHIDDEN);
+
     ComPtr<IEnumIDList> enumerator;
-    hr = desktopFolder_->EnumObjects(hwnd_, SHCONTF_FOLDERS | SHCONTF_NONFOLDERS, &enumerator);
+    hr = desktopFolder_->EnumObjects(hwnd_, enumFlags, &enumerator);
     if (FAILED(hr) || !enumerator) { WriteCrashLogEntry(L"EnumObjects FAILED"); return; }
     WriteCrashLogEntry(L"EnumObjects ok");
 
@@ -2515,14 +2616,16 @@ items_.clear();
         std::wstring clsid = ResolveDesktopIconClsid(parsingName, itemPathStr, userProfilePath);
         bool isDesktopIcon = !clsid.empty();
 
-        // Non-desktop-icon: check hidden
+        // Non-desktop-icon: always skip non-enumerated shell items, and follow
+        // Explorer's "Hidden items" setting for ordinary hidden entries.
         if (!isDesktopIcon)
         {
             SFGAOF attrs = SFGAO_HIDDEN | SFGAO_NONENUMERATED;
             LPCITEMIDLIST childConst = child;
             if (SUCCEEDED(desktopFolder_->GetAttributesOf(1, &childConst, &attrs)))
             {
-                if ((attrs & SFGAO_HIDDEN) || (attrs & SFGAO_NONENUMERATED))
+                if ((attrs & SFGAO_NONENUMERATED) ||
+                    (!showHiddenItems && (attrs & SFGAO_HIDDEN)))
                 { ILFree(absolute); ILFree(child); continue; }
             }
         }
@@ -2635,6 +2738,153 @@ auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
     wsprintfW(buf, L"Loaded %d items", count);
     WriteCrashLogEntry(buf);
     RefreshDesktopItemIndexCache();
+}
+
+/**
+ * @brief 捕获当前活动显示器拓扑的稳定签名。
+ *
+ * 签名包含虚拟桌面范围，以及每台活动显示器的设备名、屏幕范围、
+ * 工作区、主屏标记和有效 DPI。排序后再拼接，避免枚举顺序变化导致误判。
+ */
+inline std::wstring DesktopApp::CaptureDisplayTopologySignature() const
+{
+    struct DisplayRecord
+    {
+        std::wstring deviceName;
+        RECT monitor{};
+        RECT work{};
+        DWORD flags = 0;
+        UINT dpiX = 0;
+        UINT dpiY = 0;
+    };
+
+    std::vector<DisplayRecord> records;
+    auto callback = [](HMONITOR monitor, HDC, LPRECT, LPARAM param) -> BOOL {
+        auto* output = reinterpret_cast<std::vector<DisplayRecord>*>(param);
+        if (!output)
+            return FALSE;
+
+        MONITORINFOEXW info{};
+        info.cbSize = sizeof(info);
+        if (!GetMonitorInfoW(monitor, &info))
+            return TRUE;
+
+        DisplayRecord record;
+        record.deviceName = info.szDevice;
+        record.monitor = info.rcMonitor;
+        record.work = info.rcWork;
+        record.flags = info.dwFlags;
+        GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &record.dpiX, &record.dpiY);
+        output->push_back(std::move(record));
+        return TRUE;
+    };
+    EnumDisplayMonitors(nullptr, nullptr, callback, reinterpret_cast<LPARAM>(&records));
+
+    std::sort(records.begin(), records.end(), [](const DisplayRecord& a, const DisplayRecord& b) {
+        const int nameOrder = _wcsicmp(a.deviceName.c_str(), b.deviceName.c_str());
+        if (nameOrder != 0) return nameOrder < 0;
+        if (a.monitor.left != b.monitor.left) return a.monitor.left < b.monitor.left;
+        if (a.monitor.top != b.monitor.top) return a.monitor.top < b.monitor.top;
+        if (a.monitor.right != b.monitor.right) return a.monitor.right < b.monitor.right;
+        return a.monitor.bottom < b.monitor.bottom;
+    });
+
+    std::wstring signature =
+        std::to_wstring(GetSystemMetrics(SM_XVIRTUALSCREEN)) + L"," +
+        std::to_wstring(GetSystemMetrics(SM_YVIRTUALSCREEN)) + L"," +
+        std::to_wstring(GetSystemMetrics(SM_CXVIRTUALSCREEN)) + L"," +
+        std::to_wstring(GetSystemMetrics(SM_CYVIRTUALSCREEN));
+
+    for (const auto& record : records)
+    {
+        signature += L"|";
+        signature += record.deviceName;
+        signature += L":" + std::to_wstring(record.monitor.left);
+        signature += L"," + std::to_wstring(record.monitor.top);
+        signature += L"," + std::to_wstring(record.monitor.right);
+        signature += L"," + std::to_wstring(record.monitor.bottom);
+        signature += L":" + std::to_wstring(record.work.left);
+        signature += L"," + std::to_wstring(record.work.top);
+        signature += L"," + std::to_wstring(record.work.right);
+        signature += L"," + std::to_wstring(record.work.bottom);
+        signature += L":" + std::to_wstring(record.flags);
+        signature += L":" + std::to_wstring(record.dpiX);
+        signature += L"," + std::to_wstring(record.dpiY);
+    }
+    return signature;
+}
+
+/**
+ * @brief 防抖调度显示器拓扑复查。
+ *
+ * 重复设备通知只会重置同一个一次性定时器，不会重复枚举或重建布局。
+ */
+inline void DesktopApp::ScheduleDisplayTopologyRefresh()
+{
+    HWND timerWindow = controlHwnd_ && IsWindow(controlHwnd_)
+        ? controlHwnd_
+        : (hwnd_ && IsWindow(hwnd_) ? hwnd_ : nullptr);
+    if (timerWindow)
+        SetTimer(timerWindow, kDisplayTopologyRefreshTimerId,
+            kDisplayTopologyRefreshDebounceMs, nullptr);
+}
+
+/**
+ * @brief 在显示器拓扑实际变化后调整桌面覆盖层并重建布局。
+ */
+inline void DesktopApp::RefreshDisplayTopologyIfChanged()
+{
+    if (exitRequested_)
+        return;
+
+    const std::wstring currentSignature = CaptureDisplayTopologySignature();
+    if (currentSignature == displayTopologySignature_)
+        return;
+
+    if (reloading_)
+    {
+        ScheduleDisplayTopologyRefresh();
+        return;
+    }
+
+    const int newVirtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int newVirtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int newVirtualWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    const int newVirtualHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (newVirtualWidth <= 0 || newVirtualHeight <= 0)
+    {
+        ScheduleDisplayTopologyRefresh();
+        return;
+    }
+
+    virtualLeft_ = newVirtualLeft;
+    virtualTop_ = newVirtualTop;
+    virtualWidth_ = newVirtualWidth;
+    virtualHeight_ = newVirtualHeight;
+
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        HWND parent = GetParent(hwnd_);
+        POINT origin{ virtualLeft_, virtualTop_ };
+        if (parent && IsWindow(parent))
+            ScreenToClient(parent, &origin);
+
+        updatingDisplayTopology_ = true;
+        SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y,
+            virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+        updatingDisplayTopology_ = false;
+
+        dcompSurface_.Reset();
+        compositionWidth_ = 0;
+        compositionHeight_ = 0;
+    }
+
+    UpdateLayoutWorkArea();
+    LayoutItems();
+    displayTopologySignature_ = currentSignature;
+
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 /**
@@ -4827,6 +5077,8 @@ inline void DesktopApp::RebuildContainersAndItems()
  */
 inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
 {
+    const bool showHiddenItems = AreExplorerHiddenItemsVisible();
+
     struct OldFolderIcon {
         HBITMAP bitmap = nullptr;
         SIZE size{};
@@ -4876,6 +5128,7 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
     }
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        if (!showHiddenItems && (fd.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)) continue;
         FolderEntry entry;
         entry.name = fd.cFileName;
         entry.fullPath = widget.sourceFolderPath + L"\\" + fd.cFileName;

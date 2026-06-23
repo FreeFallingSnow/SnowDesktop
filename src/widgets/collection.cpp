@@ -67,16 +67,18 @@ static size_t GetCollectionAllButtonSlot(const DesktopWidget& widget)
  * @param app     桌面应用指针，用于获取网格页面配置
  * @return 槽位的矩形区域，若无效则返回空矩形
  */
-static RECT GetCollectionSlotRect(const DesktopWidget& widget, size_t slot,
-    RECT body, DesktopApp* app)
+static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, RECT body)
 {
-    if (IsRectEmptyRect(body)) return {};
+    if (!collection || IsRectEmptyRect(body)) return {};
+    DesktopWidget* data = collection->GetWidgetData();
+    DesktopApp* app = collection->GetApp();
+    if (!data || !app) return {};
 
-    bool compact = widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
+    bool compact = data->gridSpan.columns <= 1 && data->gridSpan.rows <= 1;
     if (compact)
     {
         // 2×2 grid centered in the body
-        InflateRect(&body, -6, -6);
+        InflateRect(&body, -collection->Cu(6.0f), -collection->Cu(6.0f));
         int columns = 2;
         int bodyW = std::max<int>(1, (int)(body.right - body.left));
         int bodyH = std::max<int>(1, (int)(body.bottom - body.top));
@@ -84,35 +86,35 @@ static RECT GetCollectionSlotRect(const DesktopWidget& widget, size_t slot,
         const auto& pages = app->GetDesktopGrid()->GetPages();
         const GridPage* page = nullptr;
         for (const auto& p : pages)
-            if (p.id == widget.gridCell.pageId) { page = &p; break; }
+            if (p.id == data->gridCell.pageId) { page = &p; break; }
         int gapY = page ? page->gapY : 0;
-        int gridTop = body.top + gapY / 2 - 10;
+        int gridTop = body.top + gapY / 2 - collection->Cu(10.0f);
         int slotSz = std::max<int>(1, gridSize / 2);
         int col = (int)(slot % (size_t)columns);
         int row = (int)(slot / (size_t)columns);
         RECT rect = { body.left + col * slotSz, gridTop + row * slotSz,
                       col + 1 == columns ? body.right : body.left + (col + 1) * slotSz,
                       row + 1 == 2 ? gridTop + gridSize : gridTop + (row + 1) * slotSz };
-        InflateRect(&rect, -1, -1);
+        InflateRect(&rect, -collection->Cu(1.0f), -collection->Cu(1.0f));
         return rect;
     }
 
     // Non-compact: grid-aligned slots matching desktop cell size
-    InflateRect(&body, -4, -4);
+    InflateRect(&body, -collection->Cu(4.0f), -collection->Cu(4.0f));
     const auto& pages = app->GetDesktopGrid()->GetPages();
     const GridPage* page = nullptr;
     for (const auto& p : pages)
-        if (p.id == widget.gridCell.pageId) { page = &p; break; }
+        if (p.id == data->gridCell.pageId) { page = &p; break; }
     int cellH = page ? page->cellHeight : 96;
     int gapY = page ? page->gapY : 0;
-    int columns = std::max(1, widget.gridSpan.columns);
-    int rows = std::max(1, widget.gridSpan.rows);
+    int columns = std::max(1, data->gridSpan.columns);
+    int rows = std::max(1, data->gridSpan.rows);
     int col = (int)(slot % (size_t)columns);
     int rowIdx = (int)(slot / (size_t)columns);
     if (rowIdx >= rows) return {};
 
     int width = std::max<int>(1, (int)(body.right - body.left) / columns);
-    int startY = body.top + gapY / 2 - 8;
+    int startY = body.top + gapY / 2 - collection->Cu(8.0f);
     int rowStep = cellH + gapY;
     return { body.left + col * width, startY + rowIdx * rowStep,
              col + 1 == columns ? body.right : body.left + (col + 1) * width,
@@ -144,14 +146,18 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
 
     if (selected)
     {
-        app_->DrawD2DRoundedRectangle(context, rect, 7.0f,
+        app_->DrawD2DRoundedRectangle(context, rect, static_cast<float>(Cu(7.0f)),
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.24f),
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f));
     }
 
     const int width = rect.right - rect.left;
     const int height = rect.bottom - rect.top;
-    const int iconSize = std::max(16, std::min(width - 6, height - 4));
+    const int available = std::max(1,
+        std::min(width - Cu(6.0f), height - Cu(4.0f)));
+    const int iconSize = std::min(
+        std::max(Cu(16.0f), available),
+        std::max(1, std::min(width, height)));
     const int iconX = rect.left + (width - iconSize) / 2;
     const int iconY = rect.top + (height - iconSize) / 2;
 
@@ -223,7 +229,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     size_t allSlot = GetCollectionAllButtonSlot(*data_);
     if (allSlot != static_cast<size_t>(-1) && !compact)
     {
-        RECT allRect = GetCollectionSlotRect(*data_, allSlot, body, app_);
+        RECT allRect = GetCollectionSlotRect(this, allSlot, body);
         if (!IsRectEmptyRect(allRect))
         {
             bool hasRemainingIcon = false;
@@ -242,8 +248,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             // Draw 2×2 thumbnail grid
             RECT inner = allRect;
-            InflateRect(&inner, -8, -8);
-            OffsetRect(&inner, 0, -4);
+            InflateRect(&inner, -Cu(8.0f), -Cu(8.0f));
+            OffsetRect(&inner, 0, -Cu(4.0f));
             int tileW = std::max<int>(1, (int)(inner.right - inner.left) / 2);
             int tileH = std::max<int>(1, (int)(inner.bottom - inner.top) / 2);
 
@@ -254,7 +260,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 RECT tile = { inner.left + col * tileW, inner.top + row * tileH,
                               col + 1 == 2 ? inner.right : inner.left + (col + 1) * tileW,
                               row + 1 == 2 ? inner.bottom : inner.top + (row + 1) * tileH };
-                InflateRect(&tile, -2, -2);
+                InflateRect(&tile, -Cu(2.0f), -Cu(2.0f));
 
                 size_t keyIdx = inlineCapacity + (size_t)j;
                 if (keyIdx < data_->itemKeys.size())
@@ -263,7 +269,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     if (itemIdx != static_cast<size_t>(-1))
                     {
                         const DesktopItem& di = items[itemIdx];
-                        InflateRect(&tile, -4, -4);
+                        InflateRect(&tile, -Cu(4.0f), -Cu(4.0f));
                         DrawThumbnail(context, di, tile, di.selected);
                     }
                 }
@@ -271,8 +277,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 {
                     if (!hasRemainingIcon)
                     {
-                        InflateRect(&tile, -2, -2);
-                        app_->DrawD2DRoundedRectangle(context, tile, 3.0f,
+                        InflateRect(&tile, -Cu(2.0f), -Cu(2.0f));
+                        app_->DrawD2DRoundedRectangle(context, tile, static_cast<float>(Cu(3.0f)),
                             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
                             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f));
                     }
@@ -309,7 +315,7 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     RECT body = GetBodyRect();
     for (size_t idx = 0; idx < visible; ++idx)
     {
-        RECT cell = GetCollectionSlotRect(*data_, idx, body, app_);
+        RECT cell = GetCollectionSlotRect(this, idx, body);
         if (IsRectEmptyRect(cell)) continue;
         auto slot = std::make_unique<Slot>(this, cell, idx);
         Item* item = GetSlotItem(idx);
@@ -486,12 +492,12 @@ RECT Collection::GetAllButtonRect() const
     bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     if (compact)
     {
-        InflateRect(&body, -6, -6);
+        InflateRect(&body, -Cu(6.0f), -Cu(6.0f));
         return body;
     }
     size_t allSlot = GetCollectionAllButtonSlot(*data_);
     if (allSlot == static_cast<size_t>(-1)) return {};
-    return GetCollectionSlotRect(*data_, allSlot, body, app_);
+    return GetCollectionSlotRect(this, allSlot, body);
 }
 
 /**
@@ -519,7 +525,7 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
     size_t allSlot = GetCollectionAllButtonSlot(*data_);
     if (allSlot != static_cast<size_t>(-1))
     {
-        RECT allRect = GetCollectionSlotRect(*data_, allSlot, GetBodyRect(), app_);
+        RECT allRect = GetCollectionSlotRect(this, allSlot, GetBodyRect());
         if (PtInRect(&allRect, pt)) return WidgetHit::CollectionOpenBtn;
     }
     return base;

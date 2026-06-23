@@ -71,22 +71,55 @@ inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
  * @param widget 桌面小部件引用
  * @return 框架矩形
  */
+inline float DesktopApp::GetWidgetCellScale(const DesktopWidget& widget) const
+{
+    const GridPage* page = nullptr;
+    const POINT center = {
+        (widget.bounds.left + widget.bounds.right) / 2,
+        (widget.bounds.top + widget.bounds.bottom) / 2
+    };
+    for (const auto& candidate : gridPages_)
+    {
+        if (PtInRect(&candidate.bounds, center))
+        {
+            page = &candidate;
+            break;
+        }
+    }
+    if (!page)
+    {
+        for (const auto& candidate : gridPages_)
+        {
+            if (candidate.id == widget.gridCell.pageId)
+            {
+                page = &candidate;
+                break;
+            }
+        }
+    }
+    return page
+        ? CalculateWidgetCellScale(page->cellWidth, page->cellHeight)
+        : 1.0f;
+}
+
 inline RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
 {
     RECT rect = widget.bounds;
+    const float cellScale = GetWidgetCellScale(widget);
     for (const auto& page : gridPages_)
     {
         if (page.id != widget.gridCell.pageId) continue;
-        int halfGapX = std::max(2, page.gapX / 2);
-        int halfGapY = std::max(2, page.gapY / 2);
+        int halfGapX = std::max(ScaleWidgetCu(2.0f, cellScale), page.gapX / 2);
+        int halfGapY = std::max(ScaleWidgetCu(2.0f, cellScale), page.gapY / 2);
         rect.left   -= halfGapX;
         rect.top    -= halfGapY;
         rect.right  += halfGapX;
         rect.bottom += halfGapY;
         break;
     }
-    if (rect.right - rect.left > 16 && rect.bottom - rect.top > 16)
-        InflateRect(&rect, -4, -4);
+    const int inset = ScaleWidgetCu(4.0f, cellScale);
+    if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
+        InflateRect(&rect, -inset, -inset);
     return rect;
 }
 
@@ -98,12 +131,14 @@ inline RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget
 inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) const
 {
     RECT frame = GetStandaloneWidgetFrameRect(widget);
-    constexpr int handleHeight = 24;
+    const float cellScale = GetWidgetCellScale(widget);
+    const int handleHeight = ScaleWidgetCu(24.0f, cellScale);
     return {
-        frame.left + 4,
-        std::max<LONG>(frame.top, frame.bottom - handleHeight - 2),
-        frame.right - 4,
-        frame.bottom - 2
+        frame.left + ScaleWidgetCu(4.0f, cellScale),
+        std::max<LONG>(frame.top,
+            frame.bottom - handleHeight - ScaleWidgetCu(2.0f, cellScale)),
+        frame.right - ScaleWidgetCu(4.0f, cellScale),
+        frame.bottom - ScaleWidgetCu(2.0f, cellScale)
     };
 }
 
@@ -115,7 +150,7 @@ inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& w
 inline RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget) const
 {
     RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
-    constexpr int handleWidth = 24;
+    const int handleWidth = ScaleWidgetCu(24.0f, GetWidgetCellScale(widget));
     return {
         std::max<LONG>(handle.left, handle.right - handleWidth),
         handle.top,
@@ -3599,7 +3634,15 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
  */
 inline void DesktopApp::OnTimer(WPARAM timerId)
 {
-    if (timerId == kShellChangeTimerId)
+    if (timerId == kDisplayTopologyRefreshTimerId)
+    {
+        if (controlHwnd_ && IsWindow(controlHwnd_))
+            KillTimer(controlHwnd_, kDisplayTopologyRefreshTimerId);
+        if (hwnd_ && IsWindow(hwnd_))
+            KillTimer(hwnd_, kDisplayTopologyRefreshTimerId);
+        RefreshDisplayTopologyIfChanged();
+    }
+    else if (timerId == kShellChangeTimerId)
     {
         KillTimer(hwnd_, kShellChangeTimerId);
         if (!mouseDown_ && !reloading_)

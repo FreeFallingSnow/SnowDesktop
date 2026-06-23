@@ -110,17 +110,21 @@ void GuideWidget::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     const std::wstring wtext = BuildGuideText(app_);
 
-    // 标题字号 18，正文 16
+    const float bodyFontSize = FontCu(16.0f);
+    const float titleFontSize = FontCu(20.0f);
+    const float padX = static_cast<float>(Cu(14.0f));
+    const float padY = static_cast<float>(Cu(12.0f));
+
     ComPtr<IDWriteTextFormat> fmt;
     if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 16.0f, L"", &fmt)) || !fmt)
+        DWRITE_FONT_STRETCH_NORMAL, bodyFontSize, L"", &fmt)) || !fmt)
         return;
 
     fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
 
-    const float maxWidth = static_cast<float>(bodyWidth) - 28.0f;
+    const float maxWidth = static_cast<float>(bodyWidth) - padX * 2.0f;
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(dwrite->CreateTextLayout(wtext.c_str(), static_cast<UINT32>(wtext.size()),
         fmt.Get(), maxWidth, 10000.0f, &layout)) || !layout)
@@ -130,14 +134,14 @@ void GuideWidget::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (wtext.find(L'\n') != std::wstring::npos)
     {
         DWRITE_TEXT_RANGE titleRange{ 0, static_cast<UINT32>(wtext.find(L'\n')) };
-        layout->SetFontSize(20.0f, titleRange);
+        layout->SetFontSize(titleFontSize, titleRange);
         layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, titleRange);
     }
     // 分隔线行（━━━ 开头）用稍小灰色：保持默认即可
 
     DWRITE_TEXT_METRICS metrics{};
     layout->GetMetrics(&metrics);
-    totalTextHeight_ = metrics.height + 24.0f;
+    totalTextHeight_ = metrics.height + padY * 2.0f;
     lastBodyHeight_ = bodyHeight;
 
     int maxScroll = (std::max)(0, static_cast<int>(totalTextHeight_ - static_cast<float>(bodyHeight)));
@@ -146,8 +150,6 @@ void GuideWidget::DrawContent(ID2D1DeviceContext* context, RECT body)
     else
         data_->scrollOffset = 0;
 
-    const float padX = 14.0f;
-    const float padY = 12.0f;
     float textX = static_cast<float>(body.left) + padX;
     float textY = static_cast<float>(body.top) + padY - static_cast<float>(data_->scrollOffset);
 
@@ -177,16 +179,17 @@ void GuideWidget::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const
     int contentHeight = (std::max)(static_cast<int>(bodyHeight), static_cast<int>(totalTextHeight_));
     int scrollOffset = GetMaxScrollOffset() > 0 ? data_->scrollOffset : 0;
 
-    const LONG sbWidth = 6;
+    const LONG sbWidth = Cu(6.0f);
     RECT sbRect = {
-        frame.right - sbWidth - 2,
+        frame.right - sbWidth - Cu(2.0f),
         body.top,
-        frame.right - 2,
+        frame.right - Cu(2.0f),
         body.bottom
     };
 
     if (sbRect.right <= sbRect.left || contentHeight <= static_cast<int>(bodyHeight))
         return;
 
-    DrawScrollbarAt(context, sbRect, contentHeight, static_cast<int>(bodyHeight), scrollOffset, hovered);
+    DrawScrollbarAt(context, sbRect, contentHeight, static_cast<int>(bodyHeight),
+        scrollOffset, hovered, GetCellScale());
 }

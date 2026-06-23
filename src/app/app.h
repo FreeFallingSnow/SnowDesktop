@@ -32,6 +32,7 @@
 #include "resource.h"
 
 #include <windowsx.h>
+#include <dbt.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -339,6 +340,12 @@ private:
     void RecoverDesktopHostAfterExplorerRestart();
     /** @brief 监听桌面宿主窗口状态，检测 Explorer 重启事件。 */
     void WatchDesktopHost();
+    /** @brief 捕获当前活动显示器拓扑的稳定签名。 */
+    std::wstring CaptureDisplayTopologySignature() const;
+    /** @brief 防抖调度一次显示器拓扑复查。 */
+    void ScheduleDisplayTopologyRefresh();
+    /** @brief 仅在显示器拓扑确实变化时调整覆盖窗口并重建布局。 */
+    void RefreshDisplayTopologyIfChanged();
 
     // ── Graphics ────────────────────────────────────────────
     /** @brief 初始化 Direct2D、Direct3D 和 DirectComposition 图形管线。 @return 成功返回 true */
@@ -631,6 +638,11 @@ private:
     void AdjustGridRows(int delta);
     /** @brief 调整网格列数。 @param delta 列数增量 */
     void AdjustGridColumns(int delta);
+    /** @brief 将右键所在页面设置为指定行列预设。 */
+    void SetGridDimensions(int columns, int rows);
+    /** @brief 根据显示器宽高比和对角线英寸计算舒适的推荐网格。 */
+    GridSpan CalculateRecommendedGridDimensions(
+        int aspectWidth, int aspectHeight, float diagonalInches) const;
     /** @brief 从坐标点所在显示器切换首屏锁定（持久化、与末屏锁互斥）。 @param screenPoint 屏幕坐标 */
     void ToggleFirstPagePin(POINT screenPoint);
     /** @brief 从坐标点所在显示器切换末屏锁定（持久化、与首屏锁互斥）。 @param screenPoint 屏幕坐标 */
@@ -1194,8 +1206,9 @@ private:
      * @brief 获取独立模式部件的框架矩形。
      * @param widget 部件引用
      * @return 框架矩形
-     */
+    */
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
+    float GetWidgetCellScale(const DesktopWidget& widget) const;
     /**
      * @brief 获取独立模式部件的移动手柄矩形。
      * @param widget 部件引用
@@ -1360,6 +1373,8 @@ private:
     UINT taskbarRestartMsg_ = 0;
     bool exitRequested_ = false;
     bool customDesktopVisible_ = true;
+    bool updatingDisplayTopology_ = false;
+    std::wstring displayTopologySignature_;
     /** @} */
 
     /** @name 托盘图标 */

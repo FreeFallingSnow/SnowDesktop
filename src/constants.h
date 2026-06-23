@@ -119,6 +119,10 @@ constexpr UINT kContextPageNext = 41408;
 constexpr UINT kContextPageAdd = 41409;
 constexpr UINT kContextPinFirstPage = 41410;
 constexpr UINT kContextPinLastPage = 41411;
+constexpr UINT kContextGridRecommended169First = 41414;
+constexpr UINT kContextGridRecommended169Last = 41418;
+constexpr UINT kContextGridRecommended1610First = 41419;
+constexpr UINT kContextGridRecommended1610Last = 41423;
 constexpr UINT kContextPageJumpFirst = 41500;
 constexpr UINT kContextPageJumpLast  = 41550;
 
@@ -142,6 +146,8 @@ constexpr UINT_PTR kPageNotifyTimerId = 7;
 constexpr UINT kPageNotifyTimerIntervalMs = 30;
 constexpr DWORD kPageNotifyVisibleMs = 1800;
 constexpr DWORD kPageNotifyFadeMs = 500;
+constexpr UINT_PTR kDisplayTopologyRefreshTimerId = 8;
+constexpr UINT kDisplayTopologyRefreshDebounceMs = 750;
 
 // ── 快捷导航 ──────────────────────────────────
 constexpr int kQuickNavigationHotkeyId = 101;

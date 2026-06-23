@@ -2,8 +2,6 @@
 // Inline implementations for DesktopApp — Graphics & Rendering.
 // This file is included by app_oo.h after the class definition.
 
-#include <cstring>
-
 // ── Graphics ─────────────────────────────────────────────────
 
 inline void DragRenderCache::Reset()
@@ -297,15 +295,14 @@ inline D2D1_RECT_F DesktopApp::ToD2DRect(const RECT& r)
 
 inline std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& c)
 {
-    std::uint32_t r = 0, g = 0, b = 0, a = 0;
-    std::memcpy(&r, &c.r, sizeof(r));
-    std::memcpy(&g, &c.g, sizeof(g));
-    std::memcpy(&b, &c.b, sizeof(b));
-    std::memcpy(&a, &c.a, sizeof(a));
-    return static_cast<std::uint64_t>(r) ^
-        (static_cast<std::uint64_t>(g) << 16) ^
-        (static_cast<std::uint64_t>(b) << 32) ^
-        (static_cast<std::uint64_t>(a) << 48);
+    const auto quantize = [](float value) -> std::uint64_t {
+        return static_cast<std::uint64_t>(std::lround(
+            std::clamp(value, 0.0f, 1.0f) * 65535.0f));
+    };
+    return quantize(c.r) |
+        (quantize(c.g) << 16) |
+        (quantize(c.b) << 32) |
+        (quantize(c.a) << 48);
 }
 
 inline float DesktopApp::GetItemLayoutScale(RECT bounds) const
@@ -425,7 +422,7 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT re
     }
     if (stroke.a > 0.0f)
     {
-        std::uint64_t k = D2DColorBrushKey(stroke) ^ 0x8000000080000000ULL;
+        std::uint64_t k = D2DColorBrushKey(stroke);
         auto it = brushCache_.find(k);
         if (it == brushCache_.end())
         {
@@ -460,7 +457,7 @@ inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rec
     }
     if (stroke.a > 0.0f)
     {
-        std::uint64_t k = D2DColorBrushKey(stroke) ^ 0x8000000080000000ULL;
+        std::uint64_t k = D2DColorBrushKey(stroke);
         auto it = brushCache_.find(k);
         if (it == brushCache_.end())
         {

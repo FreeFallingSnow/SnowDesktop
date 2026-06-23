@@ -18,6 +18,7 @@
 #include <dwrite_3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <unordered_set>
 #include <vector>
@@ -546,6 +547,54 @@ void WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible)
     TryWriteDesktopIconRegistryValue(HKEY_CURRENT_USER,
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel",
         clsid, value);
+}
+
+/**
+ * @brief 判断资源管理器是否显示隐藏项目。
+ *
+ * Explorer 的 Advanced\Hidden 值为 1 表示显示隐藏项目，
+ * 值为 2（以及读取失败）表示隐藏。
+ *
+ * @return 当前用户启用“隐藏的项目”时返回 true。
+ */
+bool AreExplorerHiddenItemsVisible()
+{
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+    {
+        return false;
+    }
+
+    DWORD value = 0;
+    DWORD type = 0;
+    DWORD valueSize = sizeof(value);
+    const LONG status = RegQueryValueExW(key, L"Hidden", nullptr, &type,
+        reinterpret_cast<BYTE*>(&value), &valueSize);
+    RegCloseKey(key);
+
+    return status == ERROR_SUCCESS &&
+        type == REG_DWORD &&
+        valueSize == sizeof(value) &&
+        value == 1;
+}
+
+float CalculateWidgetCellScale(int cellWidth, int cellHeight)
+{
+    return std::max(0.1f, std::min(
+        static_cast<float>(std::max(1, cellWidth)) / static_cast<float>(kCellWidth),
+        static_cast<float>(std::max(1, cellHeight)) / static_cast<float>(kMinCellHeight)));
+}
+
+int ScaleWidgetCu(float value, float cellScale)
+{
+    return std::max(1, static_cast<int>(std::round(value * cellScale)));
+}
+
+float ScaleWidgetFontCu(float value, float cellScale)
+{
+    return std::max(9.0f, value * cellScale);
 }
 
 /**
