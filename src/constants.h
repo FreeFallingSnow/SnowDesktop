@@ -149,6 +149,13 @@ constexpr DWORD kPageNotifyFadeMs = 500;
 constexpr UINT_PTR kDisplayTopologyRefreshTimerId = 8;
 constexpr UINT kDisplayTopologyRefreshDebounceMs = 750;
 
+// ── 组件独立刷新定时器 ────────────────────────
+// 由 manifest 的 refreshIntervalMs 声明驱动的 per-widget Win32 定时器 ID 基址，
+// 宿主从此值起递增分配，与上面固定定时器 ID 区分。
+constexpr UINT_PTR kWidgetTimerIdBase = 1000;
+constexpr UINT kWidgetRefreshMinIntervalMs = 16;      // 单组件声明刷新间隔下限
+constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
+
 // ── 快捷导航 ──────────────────────────────────
 constexpr int kQuickNavigationHotkeyId = 101;
 

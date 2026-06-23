@@ -1293,8 +1293,9 @@ private:
     IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
-    /** @brief 每帧画笔缓存（每帧渲染开始时清空），颜色值到画刷的映射 */
+    /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
+    ID2D1DeviceContext* brushCacheContext_ = nullptr;
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
@@ -1387,6 +1388,9 @@ private:
     /** @name 鼠标/交互状态 */
     /** @{ */
     POINT lastMousePoint_{};
+    // per-widget 独立刷新定时器：timerId -> widgetId（manifest refreshIntervalMs 驱动）
+    std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
+    UINT_PTR nextWidgetTimerId_ = kWidgetTimerIdBase;
     bool mouseDown_ = false;
     POINT mouseDownPoint_{};
     Item* mouseDownHit_ = nullptr;

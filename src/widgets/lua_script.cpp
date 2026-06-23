@@ -12,6 +12,31 @@
 #include "types.h"
 #include "app.h"
 
+ID2D1RoundedRectangleGeometry* LuaScript::GetCachedClipGeometry(
+    ID2D1Factory1* factory, const RECT& frame, float radius)
+{
+    if (!factory) return nullptr;
+    if (cachedClipGeometry_ &&
+        cachedClipFrame_.left == frame.left &&
+        cachedClipFrame_.top == frame.top &&
+        cachedClipFrame_.right == frame.right &&
+        cachedClipFrame_.bottom == frame.bottom &&
+        cachedClipRadius_ == radius)
+        return cachedClipGeometry_.Get();
+
+    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> geo;
+    if (FAILED(factory->CreateRoundedRectangleGeometry(
+            D2D1::RoundedRect(
+                D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+                    static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
+                radius, radius), &geo)) || !geo)
+        return nullptr;
+    cachedClipGeometry_ = std::move(geo);
+    cachedClipFrame_ = frame;
+    cachedClipRadius_ = radius;
+    return cachedClipGeometry_.Get();
+}
+
 LuaScript::WidgetLoadResult LuaScript::SafeLoadWidget(const std::wstring& id, const std::wstring& scriptPath)
 {
     WidgetLoadResult result;
@@ -226,18 +251,15 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 stops.Get(), &brush)) && brush)
             {
                 auto* factory = app_->GetD2DFactory();
-                Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+                const float radius = static_cast<float>(Cu(12.0f));
+                ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
                 bool pushed = false;
-                if (factory && SUCCEEDED(factory->CreateRoundedRectangleGeometry(
-                    D2D1::RoundedRect(
-                        D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
-                            static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
-                        static_cast<float>(Cu(12.0f)), static_cast<float>(Cu(12.0f))), &clipGeo)) && clipGeo)
+                if (clipGeo)
                 {
                     context->PushLayer(D2D1::LayerParameters(
                         D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
                             static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
-                        clipGeo.Get()), nullptr);
+                        clipGeo), nullptr);
                     pushed = true;
                 }
                 context->FillRectangle(app_->ToD2DRect(gradientRect), brush.Get());

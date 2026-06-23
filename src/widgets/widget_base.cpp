@@ -98,37 +98,7 @@ ComPtr<IDataObject> Widget::CreateDataObject()
 
 float Widget::GetCellScale() const
 {
-    if (!app_ || !data_)
-        return 1.0f;
-
-    const POINT center = {
-        (data_->bounds.left + data_->bounds.right) / 2,
-        (data_->bounds.top + data_->bounds.bottom) / 2
-    };
-    const GridPage* page = nullptr;
-    for (const auto& candidate : app_->gridPages_)
-    {
-        if (PtInRect(&candidate.bounds, center))
-        {
-            page = &candidate;
-            break;
-        }
-    }
-    if (!page)
-    {
-        for (const auto& candidate : app_->gridPages_)
-        {
-            if (candidate.id == data_->gridCell.pageId)
-            {
-                page = &candidate;
-                break;
-            }
-        }
-    }
-    if (!page)
-        return 1.0f;
-
-    return CalculateWidgetCellScale(page->cellWidth, page->cellHeight);
+    return data_ ? data_->cellScale : 1.0f;
 }
 
 int Widget::Cu(float value) const
@@ -659,6 +629,33 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
         GetVisibleContentHeight(), GetScrollOffset(), hovered, GetCellScale());
 }
 
+// ── Cached clip geometry ─────────────────────────────────────
+
+ID2D1RoundedRectangleGeometry* WidgetContainer::GetCachedClipGeometry(
+    ID2D1Factory1* factory, const RECT& frame, float radius)
+{
+    if (!factory) return nullptr;
+    if (cachedClipGeometry_ &&
+        cachedClipFrame_.left == frame.left &&
+        cachedClipFrame_.top == frame.top &&
+        cachedClipFrame_.right == frame.right &&
+        cachedClipFrame_.bottom == frame.bottom &&
+        cachedClipRadius_ == radius)
+        return cachedClipGeometry_.Get();
+
+    ComPtr<ID2D1RoundedRectangleGeometry> geo;
+    if (FAILED(factory->CreateRoundedRectangleGeometry(
+            D2D1::RoundedRect(
+                D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+                    static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
+                radius, radius), &geo)) || !geo)
+        return nullptr;
+    cachedClipGeometry_ = std::move(geo);
+    cachedClipFrame_ = frame;
+    cachedClipRadius_ = radius;
+    return cachedClipGeometry_.Get();
+}
+
 // ── DrawChrome ────────────────────────────────────────────────
 
 /**
@@ -668,7 +665,7 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
  */
 void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
-    if (!data_ || !context) return;
+    if (!data_ || !context || !app_) return;
 
     RECT frame = GetFrameRect();
     RECT body = GetBodyRect();
@@ -680,7 +677,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
-    if (app_ && app_->settingsWindow_)
+    if (app_->settingsWindow_)
     {
         const auto& p = app_->settingsWindow_->GetPersonalization();
         fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
@@ -692,35 +689,37 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     float strokeW = selected ? 1.6f : 1.0f;
     D2D1::ColorF selBorder(0.39f, 0.66f, 1.0f, 0.90f);
 
+    auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
+        const auto key = D2DColorBrushKey(c);
+        auto it = app_->brushCache_.find(key);
+        if (it == app_->brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> b;
+            if (FAILED(context->CreateSolidColorBrush(c, &b)) || !b) return nullptr;
+            it = app_->brushCache_.emplace(key, std::move(b)).first;
+        }
+        return it->second.Get();
+    };
+
     // ── 1. Background + border ────────────────────────────────
     {
-        ComPtr<ID2D1SolidColorBrush> fillBrush;
-        context->CreateSolidColorBrush(fillColor, &fillBrush);
         D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
             D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
             radius, radius);
-        if (fillBrush)
-            context->FillRoundedRectangle(rr, fillBrush.Get());
-
-        ComPtr<ID2D1SolidColorBrush> strokeBrush;
-        context->CreateSolidColorBrush(selected ? selBorder : borderColor, &strokeBrush);
-        if (strokeBrush)
-            context->DrawRoundedRectangle(rr, strokeBrush.Get(), strokeW);
+        if (auto* fillBrush = getBrush(fillColor))
+            context->FillRoundedRectangle(rr, fillBrush);
+        if (auto* strokeBrush = getBrush(selected ? selBorder : borderColor))
+            context->DrawRoundedRectangle(rr, strokeBrush, strokeW);
     }
 
-    // ── 2. Content (clipped to rounded frame, renders UNDER gradient) ──
+    // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {
         auto* factory = app_->GetD2DFactory();
-        ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
-        if (factory)
-            factory->CreateRoundedRectangleGeometry(
-                D2D1::RoundedRect(
-                    D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
-                    radius, radius), &clipGeo);
+        ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
         if (clipGeo)
             context->PushLayer(D2D1::LayerParameters(
                 D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
-                clipGeo.Get()), nullptr);
+                clipGeo), nullptr);
 
         DrawContent(context, body);
 
@@ -734,7 +733,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         data_->type == DesktopWidgetType::FolderMapping ||
         data_->type == DesktopWidgetType::Guide;
 
-    // ── 3. Gradient bottom bar (over content, clipped to frame) ──
+    // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
     bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;
     if (showGradient)
     {
@@ -757,16 +756,13 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                     stops.Get(), &brush)) && brush)
                 {
                     auto* factory = app_->GetD2DFactory();
-                    ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+                    ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
                     bool pushed = false;
-                    if (factory && SUCCEEDED(factory->CreateRoundedRectangleGeometry(
-                        D2D1::RoundedRect(
-                            D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
-                            radius, radius), &clipGeo)) && clipGeo)
+                    if (clipGeo)
                     {
                         context->PushLayer(D2D1::LayerParameters(
                             D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
-                            clipGeo.Get()), nullptr);
+                            clipGeo), nullptr);
                         pushed = true;
                     }
                     context->FillRectangle(
@@ -790,7 +786,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
             LONG th = titleRect.bottom - titleRect.top;
-            if (tw > 0 && th > 0 && app_ && app_->GetDWriteFactory())
+            if (tw > 0 && th > 0 && app_->GetDWriteFactory())
             {
                 auto* dwrite = app_->GetDWriteFactory();
                 IDWriteTextFormat* fmt = GetCuTextFormat(13.0f, false, false);
@@ -802,20 +798,15 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {
-                        // Shadow
-                        ComPtr<ID2D1SolidColorBrush> shadowBrush;
-                        context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
-                        if (shadowBrush)
+                        if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
                             context->DrawTextLayout(
                                 D2D1::Point2F((float)titleRect.left + Cu(1.0f), (float)titleRect.top + Cu(1.0f)),
-                                layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                                layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 
-                        ComPtr<ID2D1SolidColorBrush> textBrush;
-                        context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f), &textBrush);
-                        if (textBrush)
+                        if (auto* textBrush = getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f)))
                             context->DrawTextLayout(
                                 D2D1::Point2F((float)titleRect.left, (float)titleRect.top),
-                                layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                                layout.Get(), textBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
                     }
                 }
             }
@@ -836,11 +827,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f);
             D2D1::ColorF dotStroke(1.0f, 1.0f, 1.0f, 0.50f);
 
-            ComPtr<ID2D1SolidColorBrush> b;
-            if (SUCCEEDED(context->CreateSolidColorBrush(dotFill, &b)) && b)
-                context->FillRoundedRectangle(pill, b.Get());
-            if (SUCCEEDED(context->CreateSolidColorBrush(dotStroke, &b)) && b)
-                context->DrawRoundedRectangle(pill, b.Get(), 1.0f);
+            if (auto* b = getBrush(dotFill))
+                context->FillRoundedRectangle(pill, b);
+            if (auto* b = getBrush(dotStroke))
+                context->DrawRoundedRectangle(pill, b, 1.0f);
         }
 
         // Subclass buttons

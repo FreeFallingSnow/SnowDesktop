@@ -13,6 +13,7 @@
 
 #include "widget_engine.h"
 #include "system_snapshot.h"
+#include "constants.h"
 #include "utils.h"
 
 #include <imgui.h>
@@ -26,6 +27,7 @@
 #include <bcrypt.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <deque>
 #include <fstream>
 #include <sstream>
@@ -266,7 +268,77 @@ struct D2DState
     int gridGapY = 8;
     int widgetClipDepth = 0;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
+    ID2D1DeviceContext* brushContext = nullptr;
+    std::unordered_map<std::uint32_t, ComPtr<ID2D1SolidColorBrush>> brushCache;
+    std::unordered_map<std::uint64_t, ComPtr<IDWriteTextFormat>> textFormatCache;
 };
+
+static ID2D1SolidColorBrush* GetCachedBrush(D2DState* state, int color, float alpha = 1.0f)
+{
+    if (!state || !state->ctx) return nullptr;
+    if (state->brushContext != state->ctx)
+    {
+        state->brushCache.clear();
+        state->brushContext = state->ctx;
+    }
+
+    const auto alphaByte = static_cast<std::uint32_t>(std::clamp(
+        static_cast<int>(std::lround(alpha * 255.0f)), 0, 255));
+    const std::uint32_t key =
+        (static_cast<std::uint32_t>(color) & 0x00FFFFFFu) | (alphaByte << 24);
+    if (auto found = state->brushCache.find(key); found != state->brushCache.end())
+        return found->second.Get();
+
+    if (state->brushCache.size() >= 512)
+        state->brushCache.clear();
+
+    ComPtr<ID2D1SolidColorBrush> brush;
+    const float r = ((color >> 16) & 0xFF) / 255.0f;
+    const float g = ((color >> 8) & 0xFF) / 255.0f;
+    const float b = (color & 0xFF) / 255.0f;
+    if (FAILED(state->ctx->CreateSolidColorBrush(
+        D2D1::ColorF(r, g, b, alphaByte / 255.0f), &brush)) || !brush)
+        return nullptr;
+    return state->brushCache.emplace(key, std::move(brush)).first->second.Get();
+}
+
+static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
+    DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL,
+    bool centered = false,
+    DWRITE_WORD_WRAPPING wrapping = DWRITE_WORD_WRAPPING_WRAP,
+    bool fontAwesome = false)
+{
+    if (!state || !state->dwrite) return nullptr;
+    const auto sizeKey = static_cast<std::uint64_t>(std::clamp(
+        static_cast<int>(std::lround(size * 100.0f)), 1, 0xFFFFFF));
+    const std::uint64_t key = sizeKey |
+        (static_cast<std::uint64_t>(weight) << 24) |
+        (static_cast<std::uint64_t>(centered) << 36) |
+        (static_cast<std::uint64_t>(wrapping) << 37) |
+        (static_cast<std::uint64_t>(fontAwesome) << 40);
+    if (auto found = state->textFormatCache.find(key); found != state->textFormatCache.end())
+        return found->second.Get();
+
+    ComPtr<IDWriteTextFormat> format;
+    if (fontAwesome)
+    {
+        format.Attach(CreateFaTextFormat(state->dwrite, size));
+    }
+    else
+    {
+        state->dwrite->CreateTextFormat(L"Segoe UI", nullptr, weight,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+    }
+    if (!format) return nullptr;
+    format->SetTextAlignment(centered
+        ? DWRITE_TEXT_ALIGNMENT_CENTER
+        : DWRITE_TEXT_ALIGNMENT_LEADING);
+    format->SetParagraphAlignment(centered
+        ? DWRITE_PARAGRAPH_ALIGNMENT_CENTER
+        : DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    format->SetWordWrapping(wrapping);
+    return state->textFormatCache.emplace(key, std::move(format)).first->second.Get();
+}
 
 static D2DState* GetD2D(lua_State* L)
 {
@@ -306,23 +378,18 @@ static int lua_DrawText(lua_State* L)
     auto* s = GetD2D(L);
     if (!s || !s->ctx || !s->dwrite) return 0;
 
-    ComPtr<IDWriteTextFormat> format;
-    s->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+    IDWriteTextFormat* format = GetCachedTextFormat(s, size,
         bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+        false, maxWidth > 0 && singleLine
+            ? DWRITE_WORD_WRAPPING_NO_WRAP
+            : DWRITE_WORD_WRAPPING_WRAP);
     if (!format) return 0;
 
     int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
     std::wstring wtext(wlen, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext.data(), wlen);
 
-    float r = ((color >> 16) & 0xFF) / 255.0f;
-    float g = ((color >> 8) & 0xFF) / 255.0f;
-    float b = (color & 0xFF) / 255.0f;
-
-    ComPtr<ID2D1SolidColorBrush> brush;
-    s->ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b), &brush);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(s, color);
     if (!brush) return 0;
 
     float bx = x + s->widgetRect.left;
@@ -330,18 +397,16 @@ static int lua_DrawText(lua_State* L)
 
     if (maxWidth > 0)
     {
-        format->SetWordWrapping(singleLine ? DWRITE_WORD_WRAPPING_NO_WRAP : DWRITE_WORD_WRAPPING_WRAP);
-
         ComPtr<IDWriteTextLayout> layout;
         const float maxHeight = requestedHeight > 0
             ? requestedHeight
             : (singleLine ? std::max(size * 1.35f, size + 4.0f) : 5000.0f);
         s->dwrite->CreateTextLayout(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
-            format.Get(), maxWidth, maxHeight, &layout);
+            format, maxWidth, maxHeight, &layout);
         if (layout && (singleLine || requestedHeight > 0))
         {
             ComPtr<IDWriteInlineObject> ellipsis;
-            if (SUCCEEDED(s->dwrite->CreateEllipsisTrimmingSign(format.Get(), &ellipsis)) && ellipsis)
+            if (SUCCEEDED(s->dwrite->CreateEllipsisTrimmingSign(format, &ellipsis)) && ellipsis)
             {
                 DWRITE_TRIMMING trimming{};
                 trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
@@ -349,13 +414,13 @@ static int lua_DrawText(lua_State* L)
             }
         }
         if (layout)
-            s->ctx->DrawTextLayout(D2D1::Point2F(bx, by), layout.Get(), brush.Get());
+            s->ctx->DrawTextLayout(D2D1::Point2F(bx, by), layout.Get(), brush);
     }
     else
     {
         D2D1_RECT_F rect = { bx, by, bx + 800, by + 200 };
         s->ctx->DrawTextW(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
-            format.Get(), &rect, brush.Get());
+            format, &rect, brush);
     }
     return 0;
 }
@@ -380,11 +445,9 @@ static int lua_MeasureText(lua_State* L)
     if (!s || !s->dwrite)
         return pushSize(0.0f, 0.0f);
 
-    ComPtr<IDWriteTextFormat> format;
-    s->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+    IDWriteTextFormat* format = GetCachedTextFormat(s, size,
         bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+        false, DWRITE_WORD_WRAPPING_WRAP);
     if (!format)
         return pushSize(0.0f, 0.0f);
 
@@ -395,7 +458,7 @@ static int lua_MeasureText(lua_State* L)
     ComPtr<IDWriteTextLayout> layout;
     const float layoutWidth = maxWidth > 0.0f ? maxWidth : 4096.0f;
     if (FAILED(s->dwrite->CreateTextLayout(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
-        format.Get(), layoutWidth, 4096.0f, &layout)) || !layout)
+        format, layoutWidth, 4096.0f, &layout)) || !layout)
         return pushSize(0.0f, size);
 
     DWRITE_TEXT_METRICS metrics{};
@@ -416,12 +479,7 @@ static int lua_DrawRect(lua_State* L)
     auto* s = GetD2D(L);
     if (!s || !s->ctx) return 0;
 
-    float r = ((color >> 16) & 0xFF) / 255.0f;
-    float g = ((color >> 8) & 0xFF) / 255.0f;
-    float b = (color & 0xFF) / 255.0f;
-
-    ComPtr<ID2D1SolidColorBrush> brush;
-    s->ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b, alpha), &brush);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(s, color, alpha);
     if (!brush) return 0;
 
     D2D1_RECT_F rect = { x + s->widgetRect.left, y + s->widgetRect.top,
@@ -429,11 +487,11 @@ static int lua_DrawRect(lua_State* L)
     if (radius > 0)
     {
         D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(rect, radius, radius);
-        s->ctx->FillRoundedRectangle(rounded, brush.Get());
+        s->ctx->FillRoundedRectangle(rounded, brush);
     }
     else
     {
-        s->ctx->FillRectangle(rect, brush.Get());
+        s->ctx->FillRectangle(rect, brush);
     }
     return 0;
 }
@@ -626,7 +684,8 @@ static int lua_SystemCpu(lua_State* L)
 {
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
-    CpuSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetCpuSnapshot() : CpuSnapshot{};
+    CpuSnapshot snapshot = s && s->engine
+        ? s->engine->RuntimeGetCpuSnapshot(s->currentWidgetId) : CpuSnapshot{};
     lua_createtable(L, 0, 4);
     SetBooleanField(L, "available", snapshot.available);
     SetNumberField(L, "usagePercent", snapshot.usagePercent);
@@ -639,7 +698,8 @@ static int lua_SystemMemory(lua_State* L)
 {
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
-    MemorySnapshot snapshot = s && s->engine ? s->engine->RuntimeGetMemorySnapshot() : MemorySnapshot{};
+    MemorySnapshot snapshot = s && s->engine
+        ? s->engine->RuntimeGetMemorySnapshot(s->currentWidgetId) : MemorySnapshot{};
     lua_createtable(L, 0, 5);
     SetBooleanField(L, "available", snapshot.available);
     SetNumberField(L, "totalBytes", static_cast<lua_Number>(snapshot.totalBytes));
@@ -653,7 +713,8 @@ static int lua_SystemBattery(lua_State* L)
 {
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
-    BatterySnapshot snapshot = s && s->engine ? s->engine->RuntimeGetBatterySnapshot() : BatterySnapshot{};
+    BatterySnapshot snapshot = s && s->engine
+        ? s->engine->RuntimeGetBatterySnapshot(s->currentWidgetId) : BatterySnapshot{};
     lua_createtable(L, 0, 5);
     SetBooleanField(L, "available", snapshot.available);
     SetNumberField(L, "percent", snapshot.percent);
@@ -667,7 +728,8 @@ static int lua_SystemNetwork(lua_State* L)
 {
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
-    NetworkSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetNetworkSnapshot() : NetworkSnapshot{};
+    NetworkSnapshot snapshot = s && s->engine
+        ? s->engine->RuntimeGetNetworkSnapshot(s->currentWidgetId) : NetworkSnapshot{};
     lua_createtable(L, 0, 7);
     SetBooleanField(L, "available", snapshot.available);
     SetBooleanField(L, "connected", snapshot.connected);
@@ -682,7 +744,8 @@ static int lua_SystemGpu(lua_State* L)
 {
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
-    GpuSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetGpuSnapshot() : GpuSnapshot{};
+    GpuSnapshot snapshot = s && s->engine
+        ? s->engine->RuntimeGetGpuSnapshot(s->currentWidgetId) : GpuSnapshot{};
     lua_createtable(L, 0, 5);
     SetBooleanField(L, "available", snapshot.available);
     lua_pushstring(L, snapshot.name.c_str()); lua_setfield(L, -2, "name");
@@ -696,7 +759,8 @@ static int lua_MediaCurrent(lua_State* L)
 {
     if (!RequirePermission(L, "media.read")) return 0;
     auto* s = GetD2D(L);
-    MediaSnapshot snapshot = s && s->engine ? s->engine->RuntimeGetMediaSnapshot() : MediaSnapshot{};
+    MediaSnapshot snapshot = s && s->engine
+        ? s->engine->RuntimeGetMediaSnapshot(s->currentWidgetId) : MediaSnapshot{};
     lua_createtable(L, 0, 10);
     SetBooleanField(L, "available", snapshot.available);
     lua_pushstring(L, WidgetWideToUtf8(snapshot.title).c_str()); lua_setfield(L, -2, "title");
@@ -814,18 +878,15 @@ static void DrawHostRect(D2DState* state, float x, float y, float width, float h
     int color, float radius, float alpha)
 {
     if (!state || !state->ctx) return;
-    ComPtr<ID2D1SolidColorBrush> brush;
-    state->ctx->CreateSolidColorBrush(D2D1::ColorF(
-        ((color >> 16) & 0xFF) / 255.0f,
-        ((color >> 8) & 0xFF) / 255.0f,
-        (color & 0xFF) / 255.0f, alpha), &brush);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(state, color, alpha);
+    if (!brush) return;
     D2D1_RECT_F rect = D2D1::RectF(
         state->widgetRect.left + x, state->widgetRect.top + y,
         state->widgetRect.left + x + width, state->widgetRect.top + y + height);
     if (radius > 0)
-        state->ctx->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
+        state->ctx->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush);
     else
-        state->ctx->FillRectangle(rect, brush.Get());
+        state->ctx->FillRectangle(rect, brush);
 }
 
 static void DrawHostText(D2DState* state, const std::wstring& text,
@@ -834,21 +895,14 @@ static void DrawHostText(D2DState* state, const std::wstring& text,
     if (!state || !state->ctx || !state->dwrite) return;
     const float scale = CalculateWidgetCellScale(state->gridCellW, state->gridCellH);
     const float scaledSize = std::max(9.0f, size * scale);
-    ComPtr<IDWriteTextFormat> format;
-    if (FAILED(state->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, scaledSize, L"", &format))) return;
-    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    ComPtr<ID2D1SolidColorBrush> brush;
-    state->ctx->CreateSolidColorBrush(D2D1::ColorF(
-        ((color >> 16) & 0xFF) / 255.0f,
-        ((color >> 8) & 0xFF) / 255.0f,
-        (color & 0xFF) / 255.0f, 1.0f), &brush);
-    state->ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format.Get(),
+    IDWriteTextFormat* format = GetCachedTextFormat(state, scaledSize,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD, true, DWRITE_WORD_WRAPPING_NO_WRAP);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(state, color);
+    if (!format || !brush) return;
+    state->ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
         D2D1::RectF(state->widgetRect.left + x, state->widgetRect.top + y,
             state->widgetRect.left + x + width, state->widgetRect.top + y + height),
-        brush.Get());
+        brush);
 }
 
 static int lua_UiButton(lua_State* L)
@@ -1044,7 +1098,7 @@ static int lua_WidgetInvalidate(lua_State* L)
 {
     auto* s = GetD2D(L);
     if (s && s->engine)
-        s->engine->RuntimeInvalidateHost();
+        s->engine->RuntimeInvalidateHost(s->currentWidgetId);
     return 0;
 }
 
@@ -1195,18 +1249,14 @@ static int lua_DrawStrokeRect(lua_State* L)
     float alpha = static_cast<float>(luaL_optnumber(L, 8, 1.0));
     auto* s = GetD2D(L);
     if (!s || !s->ctx) return 0;
-    float r = ((color >> 16) & 0xFF) / 255.0f;
-    float g = ((color >> 8) & 0xFF) / 255.0f;
-    float b = (color & 0xFF) / 255.0f;
-    ComPtr<ID2D1SolidColorBrush> brush;
-    s->ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b, alpha), &brush);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(s, color, alpha);
     if (!brush) return 0;
     D2D1_RECT_F rect = { x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + w, y + s->widgetRect.top + h };
     if (radius > 0)
-        s->ctx->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), thickness);
+        s->ctx->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush, thickness);
     else
-        s->ctx->DrawRectangle(rect, brush.Get(), thickness);
+        s->ctx->DrawRectangle(rect, brush, thickness);
     return 0;
 }
 
@@ -1341,7 +1391,6 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     g_storagePath = exePath;
     LoadStorageFile();
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
-    systemSnapshotService_->Start([this]() { RuntimeInvalidateHost(); });
     httpService_ = std::make_unique<AsyncHttpService>();
     return true;
 }
@@ -1352,11 +1401,14 @@ void WidgetEngine::Shutdown()
     {
         if (widget.valid && widget.hostVisible)
             InvokeSimpleCallback(widget, "onHidden");
+        if (widget.refreshTimerId && widgetTimerKillCallback_)
+            widgetTimerKillCallback_(widget.refreshTimerId);
     }
     if (systemSnapshotService_)
     {
         systemSnapshotService_->Stop();
         systemSnapshotService_.reset();
+        systemSnapshotServiceStarted_ = false;
     }
     if (httpService_)
     {
@@ -1374,6 +1426,8 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     if (idx < 0) return;
     if (widgets_[idx].hostVisible)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
+    if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
     if (httpService_) httpService_->CancelWidget(widgetId);
     luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
     widgets_.erase(widgets_.begin() + idx);
@@ -1576,6 +1630,17 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
     widgets_.push_back(w);
+
+    if (w.manifest.refreshIntervalMs > 0 && widgetTimerRequestCallback_)
+    {
+        UINT_PTR tid = widgetTimerRequestCallback_(widgetId,
+            static_cast<UINT>(w.manifest.refreshIntervalMs));
+        if (tid && !widgets_.empty())
+        {
+            auto& stored = widgets_.back();
+            stored.refreshTimerId = tid;
+        }
+    }
     return true;
 }
 
@@ -1664,7 +1729,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
             {
                 g_storage[fullKey] = next;
                 SaveStorageFile();
-                RuntimeInvalidateHost();
+                RuntimeInvalidateHost(widgetId);
             }
         }
         ImGui::Spacing();
@@ -1842,6 +1907,24 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
 
 void WidgetEngine::TickRuntime()
 {
+    const bool systemChanged = systemSnapshotChanged_.exchange(false);
+    const bool mediaChanged = mediaSnapshotChanged_.exchange(false);
+    if (systemChanged || mediaChanged)
+    {
+        std::unordered_set<std::wstring> dirtyWidgets;
+        for (const auto& widget : widgets_)
+        {
+            if (!widget.valid) continue;
+            if ((systemChanged && widget.usesSystemSnapshot) ||
+                (mediaChanged && widget.usesMediaSnapshot))
+            {
+                dirtyWidgets.insert(widget.widgetId);
+            }
+        }
+        for (const auto& widgetId : dirtyWidgets)
+            RuntimeInvalidateHost(widgetId);
+    }
+
     if (httpService_)
     {
         for (auto& response : httpService_->Drain())
@@ -1871,7 +1954,7 @@ void WidgetEngine::TickRuntime()
                         RuntimeRecordError(widget.widgetId, error ? error : "(onHttpResponse error)");
                         lua_pop(L_, 1);
                     }
-                    RuntimeInvalidateHost();
+                    RuntimeInvalidateHost(widget.widgetId);
                 }
                 else
                     lua_pop(L_, 1);
@@ -1900,7 +1983,12 @@ void WidgetEngine::TickRuntime()
             if (it == widget.timers.end()) continue;
             const auto timer = it->second;
             if (timer.repeat)
-                it->second.due = now + std::chrono::milliseconds(timer.intervalMs);
+            {
+                auto nextDue = timer.due + std::chrono::milliseconds(timer.intervalMs);
+                while (nextDue <= now)
+                    nextDue += std::chrono::milliseconds(timer.intervalMs);
+                it->second.due = nextDue;
+            }
             else
                 widget.timers.erase(it);
 
@@ -1918,7 +2006,7 @@ void WidgetEngine::TickRuntime()
                         RuntimeRecordError(widget.widgetId, error ? error : "(onTimer error)");
                         lua_pop(L_, 1);
                     }
-                    RuntimeInvalidateHost();
+                    RuntimeInvalidateHost(widget.widgetId);
                 }
                 else
                     lua_pop(L_, 1);
@@ -1926,6 +2014,33 @@ void WidgetEngine::TickRuntime()
             lua_pop(L_, 1);
         }
     }
+}
+
+void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId)
+{
+    int idx = FindWidget(widgetId);
+    if (idx < 0) return;
+    auto& widget = widgets_[idx];
+    SetWidgetExecutionContext(d2dState_, widget.widgetId);
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+    if (lua_istable(L_, -1))
+    {
+        lua_getfield(L_, -1, "onTimer");
+        if (lua_isfunction(L_, -1))
+        {
+            lua_pushstring(L_, "refresh");
+            if (lua_pcall(L_, 1, 0, 0) != LUA_OK)
+            {
+                const char* error = lua_tostring(L_, -1);
+                RuntimeRecordError(widget.widgetId, error ? error : "(onTimer refresh error)");
+                lua_pop(L_, 1);
+            }
+        }
+        else
+            lua_pop(L_, 1);
+    }
+    lua_pop(L_, 1);
+    RuntimeInvalidateHost(widget.widgetId);
 }
 
 // ── Check if widget uses custom style ────────────────────────────
@@ -2208,6 +2323,8 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     std::wstring path = widgets_[idx].filePath;
     if (widgets_[idx].hostVisible)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
+    if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
     if (httpService_) httpService_->CancelWidget(widgetId);
     luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
     widgets_.erase(widgets_.begin() + idx);
@@ -2279,10 +2396,10 @@ void WidgetEngine::RuntimeSetWidgetTitle(const std::wstring& widgetId, const std
         setWidgetTitleCallback_(widgetId, title);
 }
 
-void WidgetEngine::RuntimeInvalidateHost()
+void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId)
 {
     if (invalidateCallback_)
-        invalidateCallback_();
+        invalidateCallback_(widgetId);
 }
 
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
@@ -2316,48 +2433,81 @@ void WidgetEngine::RuntimeNotify(const std::wstring& title, const std::wstring& 
         notifyCallback_(title, message);
 }
 
-CpuSnapshot WidgetEngine::RuntimeGetCpuSnapshot() const
+void WidgetEngine::EnsureSystemSnapshotServiceStarted()
 {
+    if (!systemSnapshotService_ || systemSnapshotServiceStarted_) return;
+    systemSnapshotChanged_.store(false);
+    mediaSnapshotChanged_.store(false);
+    systemSnapshotService_->Start([this](bool systemChanged, bool mediaChanged) {
+        if (systemChanged) systemSnapshotChanged_.store(true);
+        if (mediaChanged) mediaSnapshotChanged_.store(true);
+    });
+    systemSnapshotServiceStarted_ = true;
+}
+
+CpuSnapshot WidgetEngine::RuntimeGetCpuSnapshot(const std::wstring& widgetId)
+{
+    EnsureSystemSnapshotServiceStarted();
+    if (int index = FindWidget(widgetId); index >= 0)
+        widgets_[index].usesSystemSnapshot = true;
     return systemSnapshotService_ ? systemSnapshotService_->GetCpu() : CpuSnapshot{};
 }
 
-MemorySnapshot WidgetEngine::RuntimeGetMemorySnapshot() const
+MemorySnapshot WidgetEngine::RuntimeGetMemorySnapshot(const std::wstring& widgetId)
 {
+    EnsureSystemSnapshotServiceStarted();
+    if (int index = FindWidget(widgetId); index >= 0)
+        widgets_[index].usesSystemSnapshot = true;
     return systemSnapshotService_ ? systemSnapshotService_->GetMemory() : MemorySnapshot{};
 }
 
-BatterySnapshot WidgetEngine::RuntimeGetBatterySnapshot() const
+BatterySnapshot WidgetEngine::RuntimeGetBatterySnapshot(const std::wstring& widgetId)
 {
+    EnsureSystemSnapshotServiceStarted();
+    if (int index = FindWidget(widgetId); index >= 0)
+        widgets_[index].usesSystemSnapshot = true;
     return systemSnapshotService_ ? systemSnapshotService_->GetBattery() : BatterySnapshot{};
 }
 
-NetworkSnapshot WidgetEngine::RuntimeGetNetworkSnapshot() const
+NetworkSnapshot WidgetEngine::RuntimeGetNetworkSnapshot(const std::wstring& widgetId)
 {
+    EnsureSystemSnapshotServiceStarted();
+    if (int index = FindWidget(widgetId); index >= 0)
+        widgets_[index].usesSystemSnapshot = true;
     return systemSnapshotService_ ? systemSnapshotService_->GetNetwork() : NetworkSnapshot{};
 }
 
-GpuSnapshot WidgetEngine::RuntimeGetGpuSnapshot() const
+GpuSnapshot WidgetEngine::RuntimeGetGpuSnapshot(const std::wstring& widgetId)
 {
+    EnsureSystemSnapshotServiceStarted();
+    if (int index = FindWidget(widgetId); index >= 0)
+        widgets_[index].usesSystemSnapshot = true;
     return systemSnapshotService_ ? systemSnapshotService_->GetGpu() : GpuSnapshot{};
 }
 
-MediaSnapshot WidgetEngine::RuntimeGetMediaSnapshot() const
+MediaSnapshot WidgetEngine::RuntimeGetMediaSnapshot(const std::wstring& widgetId)
 {
+    EnsureSystemSnapshotServiceStarted();
+    if (int index = FindWidget(widgetId); index >= 0)
+        widgets_[index].usesMediaSnapshot = true;
     return systemSnapshotService_ ? systemSnapshotService_->GetMedia() : MediaSnapshot{};
 }
 
 bool WidgetEngine::RuntimeMediaPlayPause()
 {
+    EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaPlayPause();
 }
 
 bool WidgetEngine::RuntimeMediaNext()
 {
+    EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaNext();
 }
 
 bool WidgetEngine::RuntimeMediaPrevious()
 {
+    EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaPrevious();
 }
 
@@ -2449,7 +2599,7 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             int maximum = std::max(0, it->contentHeight - it->viewportHeight);
             int& offset = widget.scrollOffsets[it->id];
             offset = std::clamp(offset - delta / WHEEL_DELTA * 48, 0, maximum);
-            RuntimeInvalidateHost();
+            RuntimeInvalidateHost(widgetId);
             return true;
         }
         if (wheel) continue;
@@ -2476,7 +2626,7 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
                     lua_pop(L_, 1);
             }
             lua_pop(L_, 1);
-            RuntimeInvalidateHost();
+            RuntimeInvalidateHost(widgetId);
             return true;
         }
     }
@@ -2594,6 +2744,11 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     JsonReadString(text, "signature", manifest.signature);
     manifest.permissions = JsonReadStringArray(text, "permissions");
     manifest.networkDomains = JsonReadStringArray(text, "networkDomains");
+    int refreshMs = 0;
+    if (JsonReadInt(text, "refreshIntervalMs", refreshMs) && refreshMs > 0)
+        manifest.refreshIntervalMs = std::clamp(refreshMs,
+            static_cast<int>(kWidgetRefreshMinIntervalMs),
+            static_cast<int>(kWidgetRefreshMaxIntervalMs));
     for (const auto& object : JsonReadObjectArray(text, "settings"))
     {
         LuaWidgetManifest::Setting setting;
@@ -2820,18 +2975,13 @@ static int lua_DrawLine(lua_State* L)
     auto* s = GetD2D(L);
     if (!s || !s->ctx) return 0;
 
-    float r = ((color >> 16) & 0xFF) / 255.0f;
-    float g = ((color >> 8) & 0xFF) / 255.0f;
-    float b = (color & 0xFF) / 255.0f;
-
-    ComPtr<ID2D1SolidColorBrush> brush;
-    s->ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b, alpha), &brush);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(s, color, alpha);
     if (!brush) return 0;
 
     s->ctx->DrawLine(
         D2D1::Point2F(x1 + s->widgetRect.left, y1 + s->widgetRect.top),
         D2D1::Point2F(x2 + s->widgetRect.left, y2 + s->widgetRect.top),
-        brush.Get(), thick);
+        brush, thick);
     return 0;
 }
 
@@ -2846,17 +2996,12 @@ static int lua_DrawCircle(lua_State* L)
     auto* s = GetD2D(L);
     if (!s || !s->ctx) return 0;
 
-    float colR = ((color >> 16) & 0xFF) / 255.0f;
-    float colG = ((color >> 8) & 0xFF) / 255.0f;
-    float colB = (color & 0xFF) / 255.0f;
-
-    ComPtr<ID2D1SolidColorBrush> brush;
-    s->ctx->CreateSolidColorBrush(D2D1::ColorF(colR, colG, colB, alpha), &brush);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(s, color, alpha);
     if (!brush) return 0;
 
     s->ctx->FillEllipse(
         D2D1::Ellipse(D2D1::Point2F(cx + s->widgetRect.left, cy + s->widgetRect.top), r, r),
-        brush.Get());
+        brush);
     return 0;
 }
 
@@ -2876,22 +3021,47 @@ static int lua_DrawFa(lua_State* L)
     std::wstring wtext(wlen, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, glyph, -1, wtext.data(), wlen);
 
-    ComPtr<IDWriteTextFormat> format(CreateFaTextFormat(s->dwrite, size));
+    IDWriteTextFormat* format = GetCachedTextFormat(s, size,
+        DWRITE_FONT_WEIGHT_NORMAL, true, DWRITE_WORD_WRAPPING_NO_WRAP, true);
     if (!format) return 0;
 
-    float r = ((color >> 16) & 0xFF) / 255.0f;
-    float g = ((color >> 8) & 0xFF) / 255.0f;
-    float b = (color & 0xFF) / 255.0f;
-
-    ComPtr<ID2D1SolidColorBrush> brush;
-    s->ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b), &brush);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(s, color);
     if (!brush) return 0;
 
     float bx = x + s->widgetRect.left;
     float by = y + s->widgetRect.top;
-    D2D1_RECT_F rect = { bx, by, bx + size, by + size };
-    s->ctx->DrawTextW(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
-        format.Get(), &rect, brush.Get());
+
+    // Use a layout box much larger than size so DirectWrite centering has room
+    // to work even when the glyph's advance width equals the font size (1em).
+    // The box is centered on the target rect's center.
+    const float box = size * 4.0f;
+    const float boxX = bx + size * 0.5f - box * 0.5f;
+    const float boxY = by + size * 0.5f - box * 0.5f;
+
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(s->dwrite->CreateTextLayout(wtext.c_str(),
+            static_cast<UINT32>(wtext.size() - 1), format, box, box, &layout)) || !layout)
+    {
+        D2D1_RECT_F rect = { bx, by, bx + size, by + size };
+        s->ctx->DrawTextW(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
+            format, &rect, brush);
+        return 0;
+    }
+
+    // GetOverhangMetrics returns how far the drawn pixels extend beyond each
+    // edge of the layout box. Positive = overhang, negative = gap (inside).
+    // Visual center offset from box center = (overhang.right - overhang.left) / 2.
+    // Shift the drawing origin to align the visual center with the target center.
+    DWRITE_OVERHANG_METRICS overhang{};
+    float drawX = boxX;
+    float drawY = boxY;
+    if (SUCCEEDED(layout->GetOverhangMetrics(&overhang)))
+    {
+        drawX -= (overhang.right - overhang.left) * 0.5f;
+        drawY -= (overhang.bottom - overhang.top) * 0.5f;
+    }
+
+    s->ctx->DrawTextLayout(D2D1::Point2F(drawX, drawY), layout.Get(), brush);
     return 0;
 }
 

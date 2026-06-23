@@ -203,6 +203,12 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
  */
 void SettingsWindow::Shutdown()
 {
+    if (personalizationDirty_)
+    {
+        SavePersonalization(GetPersonalizationPath().c_str(), personalization_);
+        personalizationDirty_ = false;
+        personalizationSaveRequested_ = false;
+    }
     g_settingsWindow = nullptr;
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -252,6 +258,8 @@ void SettingsWindow::RequestClose()
     showExitConfirm_ = false;
     if (editingWidgetIndex_ != static_cast<size_t>(-1))
         editingWidgetIndex_ = static_cast<size_t>(-1);
+    if (personalizationDirty_)
+        personalizationSaveRequested_ = true;
     pendingClose_ = true;
 }
 
@@ -330,10 +338,18 @@ void SettingsWindow::Render()
 
     ImGui::End();
 
-    if (personalizationDirty_)
+    if (personalizationPreviewDirty_)
+    {
+        personalizationPreviewDirty_ = false;
+        if (invalidateCallback_)
+            invalidateCallback_();
+    }
+
+    if (personalizationSaveRequested_ && personalizationDirty_)
     {
         SavePersonalization(GetPersonalizationPath().c_str(), personalization_);
         personalizationDirty_ = false;
+        personalizationSaveRequested_ = false;
     }
 
     if (navigationSettingsDirty_)
@@ -343,9 +359,6 @@ void SettingsWindow::Render()
         if (navigationSettingsChangedCallback_)
             navigationSettingsChangedCallback_();
     }
-
-    if (invalidateCallback_)
-        invalidateCallback_();
 
     // Exit confirmation modal
     if (showExitConfirm_)
@@ -713,7 +726,7 @@ void SettingsWindow::DrawGeneralPage()
  * - 组件背景色与边框颜色选取
  * - 整体不透明度滑条
  * - 底部渐变开关与渐变结束透明度控制
- * - 所有修改标记 personalizationDirty_，在 Render() 末尾持久化
+ * - 修改立即通知桌面预览；连续拖动结束后再持久化
  */
 void SettingsWindow::DrawPersonalizationPage()
 {
@@ -746,6 +759,12 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::Separator();
         ImGui::Spacing();
     };
+    auto markChanged = [&](bool saveImmediately) {
+        personalizationDirty_ = true;
+        personalizationPreviewDirty_ = true;
+        if (saveImmediately)
+            personalizationSaveRequested_ = true;
+    };
 
     const bool modifiedFromDefault = !sameSettings(personalization_, PersonalizationSettings::DarkPreset());
 
@@ -762,13 +781,13 @@ void SettingsWindow::DrawPersonalizationPage()
     if (BlueButton("恢复默认", ImVec2(96, 0)))
     {
         personalization_ = PersonalizationSettings::DarkPreset();
-        personalizationDirty_ = true;
+        markChanged(true);
     }
     ImGui::SameLine();
     if (BlueButton("浅色预设", ImVec2(96, 0)))
     {
         personalization_ = PersonalizationSettings::LightPreset();
-        personalizationDirty_ = true;
+        markChanged(true);
     }
 
     drawSectionTitle("组件颜色");
@@ -783,8 +802,10 @@ void SettingsWindow::DrawPersonalizationPage()
     {
         personalization_.widgetBgR = bgColor[0]; personalization_.widgetBgG = bgColor[1];
         personalization_.widgetBgB = bgColor[2];
-        personalizationDirty_ = true;
+        markChanged(false);
     }
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
 
     ImGui::Text("组件边框");
     float borderColor[3] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB };
@@ -794,8 +815,10 @@ void SettingsWindow::DrawPersonalizationPage()
     {
         personalization_.widgetBorderR = borderColor[0]; personalization_.widgetBorderG = borderColor[1];
         personalization_.widgetBorderB = borderColor[2];
-        personalizationDirty_ = true;
+        markChanged(false);
     }
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
 
     drawSectionTitle("透明度与渐变");
     const float sliderW = 260.0f * dpiScale_;
@@ -804,7 +827,9 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::SameLine(labelW);
     ImGui::SetNextItemWidth(sliderW);
     if (ImGui::SliderFloat("##WidgetAlpha", &personalization_.widgetAlpha, 0.0f, 1.0f, ""))
-        personalizationDirty_ = true;
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
     ImGui::SameLine();
     ImGui::TextDisabled("%s", percentText(personalization_.widgetAlpha).c_str());
 
@@ -813,7 +838,7 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::Checkbox("启用底部渐变", &gradientToggle))
     {
         personalization_.gradientEndA = gradientToggle ? PersonalizationSettings::DarkPreset().gradientEndA : 0.0f;
-        personalizationDirty_ = true;
+        markChanged(true);
         gradientEnabled = gradientToggle;
     }
 
@@ -822,7 +847,9 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::BeginDisabled(!gradientEnabled);
     ImGui::SetNextItemWidth(sliderW);
     if (ImGui::SliderFloat("##GradientEndAlpha", &personalization_.gradientEndA, 0.0f, 1.0f, ""))
-        personalizationDirty_ = true;
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("%s", percentText(personalization_.gradientEndA).c_str());

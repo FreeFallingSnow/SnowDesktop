@@ -39,6 +39,7 @@ extern "C" {
 #include <vector>
 #include <functional>
 #include <chrono>
+#include <atomic>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -76,6 +77,7 @@ struct LuaWidgetManifest
     int minRows = 1;                   ///< 最少占据行数
     int maxColumns = 0;                ///< 最多占据列数，0 表示不限制
     int maxRows = 0;                   ///< 最多占据行数，0 表示不限制
+    int refreshIntervalMs = 0;          ///< manifest 声明的自动刷新间隔（ms），0 = 不自动刷新
     std::vector<std::string> networkDomains; ///< network.http 允许访问的域名
     std::vector<Setting> settings;        ///< 宿主生成的声明式设置
     std::string publisher;
@@ -222,7 +224,10 @@ struct LuaWidget
     int lastColumns = 1;
     int lastRows = 1;
     bool hostVisible = false;
+    bool usesSystemSnapshot = false;
+    bool usesMediaSnapshot = false;
     std::chrono::steady_clock::time_point lastRenderTime{};
+    UINT_PTR refreshTimerId = 0;        ///< 宿主分配的独立 Win32 定时器 ID（0 = 未开）
     struct Timer
     {
         std::string name;
@@ -275,11 +280,13 @@ public:
 
     using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
     using WidgetTitleCallback = std::function<void(const std::wstring&, const std::wstring&)>;
-    using InvalidateCallback = std::function<void()>;
+    using InvalidateCallback = std::function<void(const std::wstring&)>;
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
     using DesktopRefreshCallback = std::function<void()>;
     using InlineTextEditCallback = std::function<void(const LuaInlineTextEditRequest&)>;
     using NotifyCallback = std::function<void(const std::wstring&, const std::wstring&)>;
+    using WidgetTimerRequestCallback = std::function<UINT_PTR(const std::wstring& widgetId, UINT intervalMs)>;
+    using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
 
     /** @brief 设置桌面快照提供者回调 */
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
@@ -301,6 +308,10 @@ public:
     void SetOpenWidgetSettingsCallback(WidgetTitleCallback callback) { openWidgetSettingsCallback_ = std::move(callback); }
     /** @brief 设置系统通知回调 */
     void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
+    /** @brief 设置组件独立刷新定时器请求回调（宿主为该 widget 开 Win32 timer，返回 timerId） */
+    void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
+    /** @brief 设置组件独立刷新定时器关闭回调 */
+    void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
 
     /**
      * @brief 确保小部件已加载到沙箱中
@@ -339,6 +350,15 @@ public:
     void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
     void TickRuntime();
+    /**
+     * @brief 处理宿主转发的组件独立刷新定时器到期
+     * @param widgetId 触发刷新的小部件实例 ID
+     *
+     * 由 manifest 的 refreshIntervalMs 声明驱动：宿主为该 widget 单独开 Win32 timer，
+     * 到期时调用本方法，触发该 widget 的 onTimer("refresh") 回调（若定义）并 invalidate 自身。
+     * 与全局 TickRuntime 解耦，高刷新组件不影响其他组件。
+     */
+    void OnWidgetTimer(const std::wstring& widgetId);
 
     /**
      * @brief 查询指定小部件是否启用了自定义主题样式
@@ -542,7 +562,7 @@ public:
     /**
      * @brief 请求宿主重绘画布
      */
-    void RuntimeInvalidateHost();
+    void RuntimeInvalidateHost(const std::wstring& widgetId = {});
 
     void ReloadStorage();
 
@@ -595,12 +615,12 @@ public:
      * @param message 通知内容
      */
     void RuntimeNotify(const std::wstring& title, const std::wstring& message);
-    CpuSnapshot RuntimeGetCpuSnapshot() const;
-    MemorySnapshot RuntimeGetMemorySnapshot() const;
-    BatterySnapshot RuntimeGetBatterySnapshot() const;
-    NetworkSnapshot RuntimeGetNetworkSnapshot() const;
-    GpuSnapshot RuntimeGetGpuSnapshot() const;
-    MediaSnapshot RuntimeGetMediaSnapshot() const;
+    CpuSnapshot RuntimeGetCpuSnapshot(const std::wstring& widgetId);
+    MemorySnapshot RuntimeGetMemorySnapshot(const std::wstring& widgetId);
+    BatterySnapshot RuntimeGetBatterySnapshot(const std::wstring& widgetId);
+    NetworkSnapshot RuntimeGetNetworkSnapshot(const std::wstring& widgetId);
+    GpuSnapshot RuntimeGetGpuSnapshot(const std::wstring& widgetId);
+    MediaSnapshot RuntimeGetMediaSnapshot(const std::wstring& widgetId);
     bool RuntimeMediaPlayPause();
     bool RuntimeMediaNext();
     bool RuntimeMediaPrevious();
@@ -642,6 +662,7 @@ private:
      */
     int FindWidget(const std::wstring& widgetId) const;
     void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
+    void EnsureSystemSnapshotServiceStarted();
 
     lua_State* L_ = nullptr;                           ///< 全局 Lua 状态机指针
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
@@ -658,6 +679,11 @@ private:
     DesktopRefreshCallback desktopRefreshCallback_;    ///< 刷新桌面的回调
     InlineTextEditCallback inlineTextEditCallback_;    ///< 内联文本编辑请求的回调
     NotifyCallback notifyCallback_;                     ///< 系统通知回调
+    WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
+    WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
+    bool systemSnapshotServiceStarted_ = false;
+    std::atomic<bool> systemSnapshotChanged_{ false };
+    std::atomic<bool> mediaSnapshotChanged_{ false };
     std::unique_ptr<AsyncHttpService> httpService_;
 };

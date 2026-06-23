@@ -73,33 +73,7 @@ inline bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
  */
 inline float DesktopApp::GetWidgetCellScale(const DesktopWidget& widget) const
 {
-    const GridPage* page = nullptr;
-    const POINT center = {
-        (widget.bounds.left + widget.bounds.right) / 2,
-        (widget.bounds.top + widget.bounds.bottom) / 2
-    };
-    for (const auto& candidate : gridPages_)
-    {
-        if (PtInRect(&candidate.bounds, center))
-        {
-            page = &candidate;
-            break;
-        }
-    }
-    if (!page)
-    {
-        for (const auto& candidate : gridPages_)
-        {
-            if (candidate.id == widget.gridCell.pageId)
-            {
-                page = &candidate;
-                break;
-            }
-        }
-    }
-    return page
-        ? CalculateWidgetCellScale(page->cellWidth, page->cellHeight)
-        : 1.0f;
+    return widget.cellScale;
 }
 
 inline RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
@@ -414,7 +388,6 @@ inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
  */
 inline void DesktopApp::InvalidateDragStaticScene()
 {
-    if (!dragSession_.IsActive()) return;
     dragSession_.InvalidateStaticScene();
     dragRenderCache_.Reset();
 }
@@ -2645,7 +2618,128 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     }
 
     if (oldMouse.x != current.x || oldMouse.y != current.y)
-        InvalidateRect(hwnd_, nullptr, FALSE);
+    {
+        struct MouseHoverVisual
+        {
+            const void* owner = nullptr;
+            const void* target = nullptr;
+            int kind = 0;
+            size_t index = 0;
+            bool continuous = false;
+        };
+        auto sameHoverVisual = [](const MouseHoverVisual& a,
+            const MouseHoverVisual& b) {
+            return a.owner == b.owner &&
+                a.target == b.target &&
+                a.kind == b.kind &&
+                a.index == b.index;
+        };
+        auto findHoverVisual = [&](POINT point) -> MouseHoverVisual {
+            if (popupWidgetIndex_ < widgets_.size() &&
+                !IsRectEmptyRect(popupRect_) && PtInRect(&popupRect_, point))
+            {
+                const DesktopWidget* popupWidget = &widgets_[popupWidgetIndex_];
+                RECT content = GetCollectionPopupContentRect(popupRect_);
+                if (PtInRect(&content, point))
+                {
+                    const std::vector<std::wstring> popupKeys = GetPopupItemKeys(*popupWidget);
+                    for (size_t i = 0; i < popupKeys.size(); ++i)
+                    {
+                        RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
+                        if (itemRect.bottom <= content.top || itemRect.top >= content.bottom)
+                            continue;
+                        if (PtInRect(&itemRect, point))
+                            return { popupWidget, popupWidget, 1, i, false };
+                    }
+                }
+                return { popupWidget, popupWidget, 2, 0, true };
+            }
+
+            for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+            {
+                auto* widget = dynamic_cast<WidgetContainer*>(it->get());
+                if (!widget)
+                    continue;
+                RECT frame = widget->GetFrameRect();
+                if (IsRectEmptyRect(frame) || !PtInRect(&frame, point))
+                    continue;
+
+                DesktopWidget* widgetData = widget->GetWidgetData();
+                const WidgetHit hit = widget->HitTestWidget(point);
+                if (hit == WidgetHit::Content)
+                {
+                    RECT content = widget->GetContentViewportRect();
+                    if (!IsRectEmptyRect(content) && PtInRect(&content, point))
+                    {
+                        const auto& slots = widget->GetSlots();
+                        for (const auto& slot : slots)
+                        {
+                            if (!slot)
+                                continue;
+                            RECT slotRect = slot->GetBounds();
+                            if (IsRectEmptyRect(slotRect) || !PtInRect(&slotRect, point))
+                                continue;
+                            RECT visible{};
+                            if (!IntersectRect(&visible, &slotRect, &content))
+                                continue;
+                            Item* item = slot->GetItem();
+                            if (item && !item->IsSelected())
+                                return { widgetData, slot.get(), 3, slot->GetIndex(), false };
+                            break;
+                        }
+                    }
+                    return { widgetData, widgetData, 4, 0, false };
+                }
+
+                return {
+                    widgetData,
+                    widgetData,
+                    5,
+                    static_cast<size_t>(hit),
+                    hit != WidgetHit::None
+                };
+            }
+
+            const size_t standalone = HitTestStandaloneWidgetIndex(point);
+            if (standalone < widgets_.size())
+            {
+                const WidgetHit hit = HitTestStandaloneWidget(standalone, point);
+                return {
+                    &widgets_[standalone],
+                    &widgets_[standalone],
+                    6,
+                    static_cast<size_t>(hit),
+                    hit != WidgetHit::Content && hit != WidgetHit::None
+                };
+            }
+
+            for (int i = static_cast<int>(items_oo_.size()) - 1; i >= 0; --i)
+            {
+                auto* icon = dynamic_cast<DesktopIcon*>(items_oo_[i].get());
+                if (!icon)
+                    continue;
+                DesktopItem* item = icon->GetDesktopItem();
+                if (!item || item->selected || IsRectEmptyRect(item->bounds))
+                    continue;
+                if (!item->layoutKey.empty() &&
+                    collectedKeysCache_.count(ToUpperInvariant(item->layoutKey)))
+                    continue;
+                if (PtInRect(&item->bounds, point))
+                    return { item, item, 7, 0, false };
+            }
+
+            return {};
+        };
+
+        const MouseHoverVisual oldVisual = findHoverVisual(oldMouse);
+        const MouseHoverVisual newVisual = findHoverVisual(current);
+        const bool hoverChanged = !sameHoverVisual(oldVisual, newVisual);
+        const bool needsContinuousHoverPaint =
+            (oldVisual.owner && oldVisual.continuous) ||
+            (newVisual.owner && newVisual.continuous);
+        if (marqueeActive_ || hoverChanged || needsContinuousHoverPaint)
+            InvalidateRect(hwnd_, nullptr, FALSE);
+    }
 }
 
 /**
@@ -3634,6 +3728,17 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
  */
 inline void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId >= kWidgetTimerIdBase)
+    {
+        auto it = widgetTimerIds_.find(static_cast<UINT_PTR>(timerId));
+        if (it != widgetTimerIds_.end())
+        {
+            if (widgetEngine_)
+                widgetEngine_->OnWidgetTimer(it->second);
+            return;
+        }
+    }
+
     if (timerId == kDisplayTopologyRefreshTimerId)
     {
         if (controlHwnd_ && IsWindow(controlHwnd_))
@@ -3670,17 +3775,6 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     {
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
-        bool hasLuaWidget = false;
-        for (const auto& widget : widgets_)
-        {
-            if (widget.type == DesktopWidgetType::LuaScript)
-            {
-                hasLuaWidget = true;
-                break;
-            }
-        }
-        if (hasLuaWidget)
-            InvalidateRect(hwnd_, nullptr, FALSE);
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {

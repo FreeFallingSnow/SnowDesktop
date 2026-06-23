@@ -405,8 +405,14 @@ private:
     /// 当前个性化设置（背景、字体等）
     PersonalizationSettings personalization_;
 
-    /// 个性化设置是否已修改（需要保存）
+    /// 个性化设置是否包含尚未持久化的修改
     bool personalizationDirty_ = false;
+
+    /// 当前帧是否需要将个性化修改实时预览到桌面
+    bool personalizationPreviewDirty_ = false;
+
+    /// 是否应在当前帧持久化个性化设置（连续拖动结束后置位）
+    bool personalizationSaveRequested_ = false;
 
     /// 当前导航设置
     NavigationSettings navigationSettings_;

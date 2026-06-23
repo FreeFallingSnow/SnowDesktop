@@ -119,9 +119,13 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
+        for (const auto& [timerId, _] : widgetTimerIds_)
+            KillTimer(hwnd_, timerId);
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }
+    widgetTimerIds_.clear();
+    nextWidgetTimerId_ = kWidgetTimerIdBase;
     dropTargetRegistered_ = false;
 
     if (shellChangeRegId_ != 0)
@@ -136,6 +140,8 @@ inline void DesktopApp::ResetDesktopWindowResources()
         DestroyWindow(inputHwnd_);
     inputHwnd_ = nullptr;
     dragRenderCache_.Reset();
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
     dcompSurface_.Reset();
     dcompVisual_.Reset();
     dcompTarget_.Reset();
@@ -785,7 +791,11 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
         settingsWindow_->SetInvalidateCallback([this]() {
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            if (hwnd_)
+            {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                UpdateWindow(hwnd_);
+            }
         });
         settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
             LoadNavigationSettingsAndApply();
@@ -808,8 +818,23 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetWidgetTitleCallback([this](const std::wstring& widgetId, const std::wstring& title) {
             LuaSetWidgetTitle(widgetId, title);
         });
-        widgetEngine_->SetInvalidateCallback([this]() {
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        widgetEngine_->SetInvalidateCallback([this](const std::wstring& widgetId) {
+            if (!hwnd_) return;
+            if (widgetId.empty())
+            {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            for (const auto& widget : widgets_)
+            {
+                if (widget.id != widgetId || widget.type != DesktopWidgetType::LuaScript)
+                    continue;
+                RECT dirty = GetStandaloneWidgetFrameRect(widget);
+                InflateRect(&dirty, 3, 3);
+                InvalidateRect(hwnd_, &dirty, FALSE);
+                return;
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
         });
         widgetEngine_->SetDesktopOpenCallback([this](const std::wstring& path) {
             return LuaOpenPath(path);
@@ -825,6 +850,19 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
             ShowBalloonNotification(title, message);
+        });
+        widgetEngine_->SetWidgetTimerRequestCallback([this](const std::wstring& widgetId, UINT intervalMs) -> UINT_PTR {
+            if (!hwnd_) return 0;
+            UINT_PTR tid = nextWidgetTimerId_++;
+            if (SetTimer(hwnd_, tid, intervalMs, nullptr) == 0)
+                return 0;
+            widgetTimerIds_[tid] = widgetId;
+            return tid;
+        });
+        widgetEngine_->SetWidgetTimerKillCallback([this](UINT_PTR timerId) {
+            if (!hwnd_ || !timerId) return;
+            KillTimer(hwnd_, timerId);
+            widgetTimerIds_.erase(timerId);
         });
         widgetEngine_->SetOpenWidgetSettingsCallback([this](const std::wstring& widgetId, const std::wstring&) {
             for (size_t i = 0; i < widgets_.size(); ++i)

@@ -406,6 +406,7 @@ struct DesktopWidget
     GridSpan minGridSpan{ 1, 1 };
     GridSpan maxGridSpan{ 0, 0 }; // 0 means unrestricted (up to the current grid page)
     RECT bounds{};
+    float cellScale = 1.0f; // Runtime layout cache; recalculated by LayoutItems().
     bool selected = false;
     bool autoCollect = false;
     bool listMode = false;

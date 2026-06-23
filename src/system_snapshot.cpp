@@ -32,6 +32,42 @@ bool MediaEqual(const MediaSnapshot& a, const MediaSnapshot& b)
         a.playbackStatus == b.playbackStatus && a.canPlayPause == b.canPlayPause &&
         a.canNext == b.canNext && a.canPrevious == b.canPrevious;
 }
+
+bool CpuEqual(const CpuSnapshot& a, const CpuSnapshot& b)
+{
+    return a.available == b.available && a.usagePercent == b.usagePercent &&
+        a.logicalProcessors == b.logicalProcessors && a.name == b.name;
+}
+
+bool MemoryEqual(const MemorySnapshot& a, const MemorySnapshot& b)
+{
+    return a.available == b.available && a.totalBytes == b.totalBytes &&
+        a.usedBytes == b.usedBytes && a.freeBytes == b.freeBytes &&
+        a.usagePercent == b.usagePercent;
+}
+
+bool GpuEqual(const GpuSnapshot& a, const GpuSnapshot& b)
+{
+    return a.available == b.available && a.name == b.name &&
+        a.usagePercent == b.usagePercent &&
+        a.vramTotalBytes == b.vramTotalBytes &&
+        a.vramUsedBytes == b.vramUsedBytes;
+}
+
+bool BatteryEqual(const BatterySnapshot& a, const BatterySnapshot& b)
+{
+    return a.available == b.available && a.percent == b.percent &&
+        a.charging == b.charging && a.pluggedIn == b.pluggedIn &&
+        a.saver == b.saver;
+}
+
+bool NetworkEqual(const NetworkSnapshot& a, const NetworkSnapshot& b)
+{
+    return a.available == b.available && a.connected == b.connected &&
+        a.downloadBytesPerSec == b.downloadBytesPerSec &&
+        a.uploadBytesPerSec == b.uploadBytesPerSec &&
+        a.receivedBytes == b.receivedBytes && a.sentBytes == b.sentBytes;
+}
 }
 
 SystemSnapshotService::~SystemSnapshotService()
@@ -228,15 +264,16 @@ void SystemSnapshotService::WorkerMain(std::stop_token stopToken)
 
     while (!stopToken.stop_requested())
     {
-        SampleSystem();
-        SampleMedia();
-        if (changedCallback_) changedCallback_();
+        const bool systemChanged = SampleSystem();
+        const bool mediaChanged = SampleMedia();
+        if ((systemChanged || mediaChanged) && changedCallback_)
+            changedCallback_(systemChanged, mediaChanged);
         for (int i = 0; i < 10 && !stopToken.stop_requested(); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 }
 
-void SystemSnapshotService::SampleSystem()
+bool SystemSnapshotService::SampleSystem()
 {
     std::string errors;
     auto addError = [&errors](const char* message) {
@@ -410,8 +447,12 @@ void SystemSnapshotService::SampleSystem()
                 gpu.vramUsedBytes = memBytes;
         }
 
+    bool changed = false;
     {
         std::scoped_lock lock(mutex_);
+        changed = !CpuEqual(cpu_, cpu) || !MemoryEqual(memory_, memory) ||
+            !GpuEqual(gpu_, gpu) || !BatteryEqual(battery_, battery) ||
+            !NetworkEqual(network_, network);
         cpu_ = cpu;
         memory_ = memory;
         gpu_ = gpu;
@@ -419,9 +460,10 @@ void SystemSnapshotService::SampleSystem()
         network_ = network;
     }
     SetSystemError(errors);
+    return changed;
 }
 
-void SystemSnapshotService::SampleMedia()
+bool SystemSnapshotService::SampleMedia()
 {
     using namespace winrt::Windows::Media::Control;
     MediaSnapshot next;
@@ -486,5 +528,5 @@ void SystemSnapshotService::SampleMedia()
         changed = !MediaEqual(media_, next);
         media_ = std::move(next);
     }
-    if (changed && changedCallback_) changedCallback_();
+    return changed;
 }

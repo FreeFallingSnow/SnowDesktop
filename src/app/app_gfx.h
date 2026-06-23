@@ -1514,8 +1514,14 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
 inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
 {
-    brushCache_.clear();
-    if (dragSession_.IsActive())
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
+    const bool widgetPreviewActive =
+        widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize;
+    if (dragSession_.IsActive() || widgetPreviewActive)
     {
         RECT client{};
         GetClientRect(hwnd_, &client);
@@ -1526,6 +1532,7 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
             dragSession_.StaticSceneRevision(),
             [&](ID2D1DeviceContext* cacheCtx) { DrawStaticBackground(cacheCtx); });
         brushCache_.clear();
+        brushCacheContext_ = ctx;
         if (cacheReady)
             dragRenderCache_.Draw(ctx);
         else

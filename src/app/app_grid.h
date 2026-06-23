@@ -4998,7 +4998,10 @@ inline void DesktopApp::LayoutItems()
                 page->columns, page->rows);
             widget.gridCell.column  = std::clamp(widget.gridCell.column,  0, std::max(0, page->columns - widget.gridSpan.columns));
             widget.gridCell.row     = std::clamp(widget.gridCell.row,     0, std::max(0, page->rows    - widget.gridSpan.rows));
+            widget.cellScale = CalculateWidgetCellScale(page->cellWidth, page->cellHeight);
         }
+        else
+            widget.cellScale = 1.0f;
         widget.bounds = GetGridRect(gridPages_, widget.gridCell, widget.gridSpan);
     }
 

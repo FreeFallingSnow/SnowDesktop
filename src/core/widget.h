@@ -21,6 +21,8 @@
 #include "item.h"
 #include "container.h"
 #include "slot.h"
+#include <d2d1_1.h>
+#include <wrl/client.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -181,6 +183,15 @@ public:
 protected:
     mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
     mutable std::vector<std::unique_ptr<Item>> slotItemCache_;
+
+    // ── Cached D2D resources (recreated only when frame/radius changes) ──
+    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> cachedClipGeometry_;
+    RECT cachedClipFrame_{ -1, -1, -1, -1 };
+    float cachedClipRadius_ = 0.0f;
+
+    /** @brief 获取或创建圆角矩形裁剪几何体，frame/radius 不变时跨帧复用。 */
+    ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
+        const RECT& frame, float radius);
 };
 
 /**
@@ -423,6 +434,14 @@ private:
     bool SafeRenderWidget(const std::wstring& id, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT frame, int columns, int rows);
     bool SafeReadFlags(const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover);
+
+    ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
+        const RECT& frame, float radius);
+
+    // Cached clip geometry (recreated only when frame/radius changes)
+    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> cachedClipGeometry_;
+    RECT cachedClipFrame_{ -1, -1, -1, -1 };
+    float cachedClipRadius_ = 0.0f;
 };
 
 /**

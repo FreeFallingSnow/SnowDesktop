@@ -69,7 +69,7 @@ struct MediaSnapshot
 class SystemSnapshotService
 {
 public:
-    using ChangedCallback = std::function<void()>;
+    using ChangedCallback = std::function<void(bool systemChanged, bool mediaChanged)>;
 
     SystemSnapshotService() = default;
     ~SystemSnapshotService();
@@ -93,8 +93,8 @@ private:
     enum class MediaAction { None, PlayPause, Next, Previous };
 
     void WorkerMain(std::stop_token stopToken);
-    void SampleSystem();
-    void SampleMedia();
+    bool SampleSystem();
+    bool SampleMedia();
     void SetSystemError(const std::string& message);
     void SetMediaError(const std::string& message);
 
