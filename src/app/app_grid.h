@@ -2064,6 +2064,13 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
     case WM_TIMER:
         OnTimer(wp);
         return 0;
+    case WM_HOTKEY:
+        if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
+        {
+            ToggleQuickNavigation();
+            return 0;
+        }
+        break;
     case WM_COMMAND:
         return 0;
     case WM_CLOSE:

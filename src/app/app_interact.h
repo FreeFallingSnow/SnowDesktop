@@ -425,11 +425,12 @@ inline void DesktopApp::LoadNavigationSettingsAndApply()
  */
 inline void DesktopApp::UnregisterNavigationHotkey()
 {
-    if (navigationHotkeyRegistered_ && hwnd_)
+    if (navigationHotkeyRegistered_ && navigationHotkeyHwnd_)
     {
-        UnregisterHotKey(hwnd_, kQuickNavigationHotkeyId);
+        UnregisterHotKey(navigationHotkeyHwnd_, kQuickNavigationHotkeyId);
         navigationHotkeyRegistered_ = false;
     }
+    navigationHotkeyHwnd_ = nullptr;
 }
 
 /**
@@ -587,12 +588,21 @@ inline void DesktopApp::InvalidateQuickNavigationWindow()
 inline void DesktopApp::ApplyNavigationHotkey()
 {
     UnregisterNavigationHotkey();
-    if (!hwnd_ || !navigationSettings_.enabled || navigationSettings_.virtualKey == 0)
+    if (!navigationSettings_.enabled || navigationSettings_.virtualKey == 0)
+        return;
+
+    HWND hotkeyWindow = inputHwnd_ && IsWindow(inputHwnd_)
+        ? inputHwnd_
+        : (controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_);
+    if (!hotkeyWindow)
         return;
 
     UINT modifiers = navigationSettings_.modifiers | MOD_NOREPEAT;
     navigationHotkeyRegistered_ =
-        RegisterHotKey(hwnd_, kQuickNavigationHotkeyId, modifiers, navigationSettings_.virtualKey) != FALSE;
+        RegisterHotKey(hotkeyWindow, kQuickNavigationHotkeyId,
+            modifiers, navigationSettings_.virtualKey) != FALSE;
+    if (navigationHotkeyRegistered_)
+        navigationHotkeyHwnd_ = hotkeyWindow;
 }
 
 /**
@@ -671,6 +681,8 @@ inline void DesktopApp::CloseQuickNavigation()
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         AnimateWindow(quickNavigationHwnd_, 120, AW_BLEND | AW_HIDE);
     DestroyQuickNavigationWindow();
+    if (customDesktopVisible_)
+        FocusDesktopInputWindow();
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -1893,7 +1905,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (renameEdit_ != nullptr) return;
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
-    SetFocus(hwnd_);
+    FocusDesktopInputWindow();
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     mouseDown_ = true;
     mouseDownPoint_ = pt;
@@ -4164,6 +4176,7 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -4669,6 +4682,7 @@ inline bool DesktopApp::IsKnownDesktopSurfaceWindow(HWND window) const
     if (luaInlineEdit_ && (IsSameWindowTree(luaInlineEdit_, window) || root == luaInlineEdit_)) return true;
     if (hintHwnd_ && (IsSameWindowTree(hintHwnd_, window) || root == hintHwnd_)) return true;
     if (controlHwnd_ && (IsSameWindowTree(controlHwnd_, window) || root == controlHwnd_)) return true;
+    if (inputHwnd_ && (IsSameWindowTree(inputHwnd_, window) || root == inputHwnd_)) return true;
 
     auto isSurface = [&](HWND candidate) {
         return candidate && (window == candidate || root == candidate || IsChild(candidate, window));
@@ -6195,6 +6209,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
 
@@ -6489,11 +6504,15 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
         HideDragHintWindow();
         RestoreExplorerIcons();
         ShowWindow(hwnd_, SW_HIDE);
+        if (inputHwnd_ && IsWindow(inputHwnd_))
+            ShowWindow(inputHwnd_, SW_HIDE);
         break;
     case kTraySwitchCustomCommand:
         customDesktopVisible_ = true;
         HideExplorerIcons();
         ShowWindow(hwnd_, SW_SHOW);
+        if (inputHwnd_ && IsWindow(inputHwnd_))
+            ShowWindow(inputHwnd_, SW_SHOWNA);
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
         InvalidateRect(hwnd_, nullptr, TRUE);
         ReloadItems();

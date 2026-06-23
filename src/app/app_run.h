@@ -131,6 +131,9 @@ inline void DesktopApp::ResetDesktopWindowResources()
 
     DestroyDragHintWindow();
     DestroyQuickNavigationWindow();
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        DestroyWindow(inputHwnd_);
+    inputHwnd_ = nullptr;
     dragRenderCache_.Reset();
     dcompSurface_.Reset();
     dcompVisual_.Reset();
@@ -166,6 +169,75 @@ inline void DesktopApp::AttachWindowToDesktopHost(HWND host)
     SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
         SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        AttachInputWindowToDesktopHost(host);
+    else
+        CreateDesktopInputWindow(host);
+}
+
+/**
+ * @brief 创建独立的键盘输入窗口。
+ *
+ * 输入窗口与渲染窗口属于同一个桌面宿主，但仅占 1x1 像素并放置在
+ * 宿主客户区之外。它不参与 DirectComposition 渲染，只负责键盘焦点
+ * 和全局热键，避免 WS_EX_LAYERED 渲染窗口的输入兼容问题。
+ */
+inline bool DesktopApp::CreateDesktopInputWindow(HWND host)
+{
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+    {
+        AttachInputWindowToDesktopHost(host);
+        return true;
+    }
+
+    inputHwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW,
+        kInputWindowClassName, L"SnowDesktopInput",
+        WS_CHILD | WS_VISIBLE,
+        -32000, -32000, 1, 1,
+        host, nullptr, instance_, this);
+    if (!inputHwnd_)
+        return false;
+
+    AttachInputWindowToDesktopHost(host);
+    {
+        wchar_t buf[192];
+        wsprintfW(buf, L"Input window=%p parent=%p style=0x%08X exStyle=0x%08X",
+            inputHwnd_, GetParent(inputHwnd_),
+            static_cast<unsigned>(GetWindowLongPtrW(inputHwnd_, GWL_STYLE)),
+            static_cast<unsigned>(GetWindowLongPtrW(inputHwnd_, GWL_EXSTYLE)));
+        WriteCrashLogEntry(buf);
+    }
+    return true;
+}
+
+/**
+ * @brief 将独立输入窗口重新挂载到当前桌面宿主。
+ */
+inline void DesktopApp::AttachInputWindowToDesktopHost(HWND host)
+{
+    if (!inputHwnd_ || !IsWindow(inputHwnd_) || !host || !IsWindow(host))
+        return;
+
+    if (GetParent(inputHwnd_) != host)
+        SetParent(inputHwnd_, host);
+
+    LONG_PTR style = GetWindowLongPtrW(inputHwnd_, GWL_STYLE);
+    style &= ~WS_POPUP;
+    style |= WS_CHILD | WS_VISIBLE;
+    SetWindowLongPtrW(inputHwnd_, GWL_STYLE, style);
+    SetWindowPos(inputHwnd_, HWND_TOP, -32000, -32000, 1, 1,
+        SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+}
+
+/**
+ * @brief 将键盘焦点从分层渲染窗口转移到普通输入窗口。
+ */
+inline void DesktopApp::FocusDesktopInputWindow()
+{
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        SetFocus(inputHwnd_);
+    else if (hwnd_ && IsWindow(hwnd_))
+        SetFocus(hwnd_);
 }
 
 /**
@@ -211,6 +283,8 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
 
     SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
         SWP_NOACTIVATE);
+    if (!CreateDesktopInputWindow(parent))
+        return fail();
 
     if (FAILED(dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_)))
         return fail();
@@ -311,9 +385,12 @@ inline void DesktopApp::WatchDesktopHost()
         currentHost != desktopWindows_.host;
     const bool parentDetached = currentHost && IsWindow(currentHost) &&
         parent != currentHost;
+    const bool inputMissing = !inputHwnd_ || !IsWindow(inputHwnd_);
+    const bool inputDetached = currentHost && IsWindow(currentHost) &&
+        inputHwnd_ && IsWindow(inputHwnd_) && GetParent(inputHwnd_) != currentHost;
 
     if (parentMissing || knownHostMissing || knownListViewMissing ||
-        hostChanged || parentDetached)
+        hostChanged || parentDetached || inputMissing || inputDetached)
     {
         RecoverDesktopHostAfterExplorerRestart();
         return;
@@ -573,6 +650,15 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     RegisterClassExW(&wc);
 
     {
+        WNDCLASSEXW input{};
+        input.cbSize = sizeof(input);
+        input.lpfnWndProc = InputWndProc;
+        input.hInstance = instance;
+        input.hbrBackground = nullptr;
+        input.lpszClassName = kInputWindowClassName;
+        RegisterClassExW(&input);
+    }
+    {
         WNDCLASSEXW hint{};
         hint.cbSize = sizeof(hint);
         hint.lpfnWndProc = DefWindowProcW;
@@ -618,6 +704,11 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     if (!hwnd_) { WriteCrashLogEntry(L"CreateWindow FAILED"); return __LINE__; }
     SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+    if (!CreateDesktopInputWindow(parent))
+    {
+        WriteCrashLogEntry(L"CreateInputWindow FAILED");
+        return __LINE__;
+    }
     WriteCrashLogEntry(L"Window created");
     {
         wchar_t buf[256];
@@ -828,6 +919,63 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, 
 
     if (app)
         return app->HandleQuickNavigationMessage(hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/**
+ * @brief 独立键盘输入窗口的静态窗口过程。
+ */
+inline LRESULT CALLBACK DesktopApp::InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    DesktopApp* app = nullptr;
+    if (msg == WM_NCCREATE)
+    {
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+        app = static_cast<DesktopApp*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+    }
+    else
+    {
+        app = reinterpret_cast<DesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+
+    if (app)
+        return app->HandleInputMessage(hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/**
+ * @brief 处理独立输入窗口的键盘与热键消息。
+ */
+inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg)
+    {
+    case WM_GETDLGCODE:
+        return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
+    case WM_KEYDOWN:
+        OnKeyDown(wp);
+        return 0;
+    case WM_KEYUP:
+        RefreshDragHintFromKeyboard();
+        return 0;
+    case WM_HOTKEY:
+        if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
+        {
+            ToggleQuickNavigation();
+            return 0;
+        }
+        break;
+    case WM_DESTROY:
+        if (navigationHotkeyHwnd_ == hwnd)
+        {
+            navigationHotkeyHwnd_ = nullptr;
+            navigationHotkeyRegistered_ = false;
+        }
+        if (inputHwnd_ == hwnd)
+            inputHwnd_ = nullptr;
+        return 0;
+    }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 

@@ -316,6 +316,12 @@ private:
     void ResetDesktopWindowResources();
     /** @brief 将覆盖窗口附加到指定的桌面宿主窗口。 @param host 桌面宿主窗口句柄 */
     void AttachWindowToDesktopHost(HWND host);
+    /** @brief 创建独立键盘输入窗口。 @param host 桌面宿主窗口句柄 @return 成功返回 true */
+    bool CreateDesktopInputWindow(HWND host);
+    /** @brief 将键盘输入窗口附加到桌面宿主并放置到不可见区域。 @param host 桌面宿主窗口句柄 */
+    void AttachInputWindowToDesktopHost(HWND host);
+    /** @brief 将键盘焦点交给独立输入窗口。 */
+    void FocusDesktopInputWindow();
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
     /** @brief 隐藏 Explorer 原生桌面图标。 */
@@ -1342,11 +1348,15 @@ private:
     /** @name 控制窗口（托盘图标所有权 + 桌面宿主监听） */
     /** @{ */
     HWND controlHwnd_ = nullptr;
+    HWND inputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
     HWND quickNavigationSearchEdit_ = nullptr;
     HFONT quickNavigationSearchFont_ = nullptr;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    LRESULT HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    HWND navigationHotkeyHwnd_ = nullptr;
     UINT taskbarRestartMsg_ = 0;
     bool exitRequested_ = false;
     bool customDesktopVisible_ = true;

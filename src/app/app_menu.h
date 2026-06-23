@@ -168,6 +168,7 @@ inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCo
         SetForegroundWindow(hwnd_);
         command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
             screenPoint.x, screenPoint.y, hwnd_, nullptr);
+        FocusDesktopInputWindow();
         DestroyMenu(menu);
         ClearMenuIcons();
         if (command == 0 || command == kContextGridAdjustmentDone) break;
@@ -297,6 +298,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     bool isFirstPage = !clickedPageId.empty() && clickedPageId == firstPageId;
     int maxOff = MaxPageOffset();
     const size_t monitorCount = gridPages_.size();
+    // 单物理屏同时承担首屏和末屏，也应提供末屏的分页导航菜单。
+    const bool showPageNavigation = !isFirstPage || monitorCount == 1;
 
     // ── 首屏/末屏锁定开关（持久化、互斥，仅多屏时显示） ──
     if (monitorCount >= 2)
@@ -314,7 +317,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
 
     HMENU jumpMenu = nullptr;
-    if (!isFirstPage)
+    if (showPageNavigation)
     {
         // 当前右键点击的显示器显示的页索引
         int clickedPageIdx = 0;
@@ -420,6 +423,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
 
     gridAdjustmentParentMenu_ = nullptr;
     POINT adjustmentMenuPoint = gridAdjustmentMenuAnchorValid_
@@ -630,6 +634,7 @@ inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
@@ -769,6 +774,7 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
     SetForegroundWindow(hwnd_);
     UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -829,6 +835,7 @@ inline void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstri
     SetForegroundWindow(hwnd_);
     UINT cmd = TrackPopupMenuEx(newSub, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
     newMenuContextMenu_.Reset();
 
     if (cmd != 0 && cmd >= 1)
@@ -879,6 +886,7 @@ inline void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     SetForegroundWindow(hwnd_);
     UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -993,6 +1001,7 @@ inline void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPa
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();

@@ -11,6 +11,7 @@
 // ── 窗口类名 ──────────────────────────────────
 constexpr wchar_t kWindowClassName[] = L"SnowDesktopNativeProofWindow";
 constexpr wchar_t kControlWindowClassName[] = L"SnowDesktopControlWindow";
+constexpr wchar_t kInputWindowClassName[] = L"SnowDesktopInputWindow";
 constexpr wchar_t kHintWindowClassName[] = L"SnowDesktopDragHintWindow";
 constexpr wchar_t kQuickNavigationWindowClassName[] = L"SnowDesktopQuickNavigationWindow";
 constexpr wchar_t kHiddenBySnowDesktopProp[] = L"SnowDesktop.HiddenExplorerIconLayer";
