@@ -2787,6 +2787,16 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             (newVisual.owner && newVisual.continuous);
         if (marqueeActive_ || hoverChanged || needsContinuousHoverPaint)
             InvalidateRect(hwnd_, nullptr, FALSE);
+
+        for (auto& w : widgets_)
+        {
+            if (!w.showOnHoverOnly) continue;
+            if (PtInRect(&w.bounds, oldMouse) != PtInRect(&w.bounds, current))
+            {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                break;
+            }
+        }
     }
 }
 
@@ -3977,6 +3987,7 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
 inline void DesktopApp::CloseCollectionPopup()
 {
     if (popupWidgetIndex_ == static_cast<size_t>(-1)) return;
+    ClearSelection();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     popupScrollOffset_ = 0;
     popupHasAnchor_ = false;
@@ -6366,6 +6377,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
+    AppendMenuW(menu, MF_STRING | (widget.showOnHoverOnly ? MF_CHECKED : 0),
+        kContextWidgetShowOnHover, L"悬停时显示");
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
 
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
@@ -6517,6 +6530,11 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     case kContextWidgetSortByDateDesc:
         SortWidgetContents(widgetIndex, 2, false);
+        break;
+    case kContextWidgetShowOnHover:
+        widgets_[widgetIndex].showOnHoverOnly = !widgets_[widgetIndex].showOnHoverOnly;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     default:
         break;

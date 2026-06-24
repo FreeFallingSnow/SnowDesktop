@@ -1539,6 +1539,11 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
                 continue;
         }
 
+        if (widgetData.showOnHoverOnly && !dragSession_.IsActive() && !externalDragActive_
+            && !(popupWidgetIndex_ < widgets_.size() && &widgetData == &widgets_[popupWidgetIndex_])
+            && !PtInRect(&widgetData.bounds, lastMousePoint_))
+            continue;
+
         bool drawn = false;
         for (auto& c : containers_)
         {

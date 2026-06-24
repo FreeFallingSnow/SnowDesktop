@@ -1657,7 +1657,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
                         std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
                         int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0, tabScrollOffset = 0;
-                        bool autoCollect = false, listMode = false;
+                        bool autoCollect = false, listMode = false, showOnHoverOnly = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
                             !ReadJsonStringField(obj, "page", pageUtf8) ||
                             !ReadJsonIntField(obj, "x", x) ||
@@ -1677,6 +1677,7 @@ inline void DesktopApp::LoadLayoutSlots()
 ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         ReadJsonBoolField(obj, "autoCollect", autoCollect);
                         ReadJsonBoolField(obj, "listMode", listMode);
+                        ReadJsonBoolField(obj, "showOnHoverOnly", showOnHoverOnly);
 
                         DesktopWidget widget;
                         widget.id = Utf8ToWide(idUtf8);
@@ -1712,6 +1713,7 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         widget.gridSpan.rows = std::max(1, h);
                         widget.autoCollect = autoCollect;
                         widget.listMode = listMode;
+                        widget.showOnHoverOnly = showOnHoverOnly;
                         widget.showTitle = widget.type != DesktopWidgetType::LuaScript;
                         widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
                             widget.type == DesktopWidgetType::LuaScript ||
@@ -1892,6 +1894,7 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
              << ", \"tabScrollOffset\": " << std::max(0, w.tabScrollOffset)
              << ", \"items\": [";

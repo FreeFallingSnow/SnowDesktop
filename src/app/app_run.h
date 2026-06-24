@@ -1185,6 +1185,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     {
                         ShellExecuteW(nullptr, L"open", items_[itemIndex].parsingName.c_str(),
                             nullptr, nullptr, SW_SHOWNORMAL);
+                        CloseCollectionPopup();
                         return 0;
                     }
                 }

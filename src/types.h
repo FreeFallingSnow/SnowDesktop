@@ -416,6 +416,7 @@ struct DesktopWidget
     int tabScrollOffset = 0;
     std::wstring activeCategoryId;
     std::wstring scriptPath;
+    bool showOnHoverOnly = false;
     std::vector<std::wstring> itemKeys;
     std::vector<FolderEntry> folderEntries;
 };

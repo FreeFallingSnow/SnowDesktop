@@ -106,6 +106,7 @@ constexpr UINT kContextSortByTypeDescCommand = 41034;
 constexpr UINT kContextWidgetSortByNameDesc = 41035;
 constexpr UINT kContextWidgetSortByTypeDesc = 41036;
 constexpr UINT kContextWidgetSortByDateDesc = 41037;
+constexpr UINT kContextWidgetShowOnHover = 41038;
 constexpr UINT kContextSpacingPresetFirst = 41150;
 constexpr UINT kContextNewMenu = 41400;
 constexpr UINT kContextSettingsCommand = 41401;
