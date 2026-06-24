@@ -180,6 +180,7 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 
     LoadPersonalization(GetPersonalizationPath().c_str(), personalization_);
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
+    LoadGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
 
     g_settingsWindow = this;
 
@@ -358,6 +359,14 @@ void SettingsWindow::Render()
         navigationSettingsDirty_ = false;
         if (navigationSettingsChangedCallback_)
             navigationSettingsChangedCallback_();
+    }
+
+    if (generalSettingsDirty_)
+    {
+        SaveGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
+        generalSettingsDirty_ = false;
+        if (generalSettingsChangedCallback_)
+            generalSettingsChangedCallback_();
     }
 
     // Exit confirmation modal
@@ -714,6 +723,17 @@ void SettingsWindow::DrawGeneralPage()
     std::wstring hotkeyText = FormatNavigationHotkey(navigationSettings_);
     ImGui::TextDisabled("当前快捷键: %s", WideToUtf8(hotkeyText).c_str());
     ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("桌面交互");
+    ImGui::Spacing();
+
+    if (ImGui::Checkbox("双击空白处隐藏桌面", &generalSettings_.doubleClickHideDesktop))
+        generalSettingsDirty_ = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(双击桌面空白区域隐藏图标，露出壁纸)");
 
     ImGui::EndChild();
 }

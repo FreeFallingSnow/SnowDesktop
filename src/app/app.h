@@ -25,6 +25,7 @@
 #include "drag_session.h"
 #include "settings_window.h"
 #include "navigation_settings.h"
+#include "general_settings.h"
 #include "utils.h"
 #include "widget_engine.h"
 #include "types.h"
@@ -366,6 +367,8 @@ private:
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
     void DrawPageNotify(ID2D1DeviceContext* ctx);
+    /** @brief 绘制隐藏状态提示（双击取消隐藏）。 */
+    void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
@@ -404,6 +407,14 @@ private:
     void ShowSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */
     void LoadNavigationSettingsAndApply();
+    /** @brief 加载通用设置。 */
+    void LoadGeneralSettingsAndApply();
+    /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
+    void ToggleDesktopIconsVisibility();
+    /** @brief 显示隐藏状态提示文字。 */
+    void ShowHiddenHint();
+    /** @brief 清除隐藏状态提示。 */
+    void ClearHiddenHint();
     /** @brief 注册快速导航热键。 */
     void ApplyNavigationHotkey();
     /** @brief 注销快速导航热键。 */
@@ -1314,6 +1325,10 @@ private:
     std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     NavigationSettings navigationSettings_;
+    GeneralSettings generalSettings_;
+    bool desktopIconsHidden_ = false;
+    bool showHiddenHint_ = false;
+    DWORD hiddenHintStartTick_ = 0;
     bool navigationHotkeyRegistered_ = false;
     /** @} */
 

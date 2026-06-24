@@ -428,6 +428,54 @@ inline void DesktopApp::LoadNavigationSettingsAndApply()
     ApplyNavigationHotkey();
 }
 
+inline void DesktopApp::LoadGeneralSettingsAndApply()
+{
+    GeneralSettings settings;
+    LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
+    generalSettings_ = settings;
+}
+
+inline void DesktopApp::ToggleDesktopIconsVisibility()
+{
+    desktopIconsHidden_ = !desktopIconsHidden_;
+
+    if (desktopIconsHidden_)
+    {
+        ClearHiddenHint();
+        if (controlHwnd_ && IsWindow(controlHwnd_))
+            KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
+    }
+    else
+    {
+        ClearHiddenHint();
+        if (controlHwnd_ && IsWindow(controlHwnd_))
+            SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+    }
+
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::ShowHiddenHint()
+{
+    if (!generalSettings_.doubleClickHideDesktop) return;
+    showHiddenHint_ = true;
+    hiddenHintStartTick_ = GetTickCount();
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(hwnd_, kHiddenHintTimerId, 100, nullptr);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+}
+
+inline void DesktopApp::ClearHiddenHint()
+{
+    showHiddenHint_ = false;
+    hiddenHintStartTick_ = 0;
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kHiddenHintTimerId);
+}
+
 /**
  * @brief 注销快捷导航热键
  */
@@ -3811,6 +3859,15 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
             KillTimer(hwnd_, kPageNotifyTimerId);
         }
     }
+    else if (timerId == kHiddenHintTimerId)
+    {
+        const DWORD elapsed = GetTickCount() - hiddenHintStartTick_;
+        if (elapsed >= kHiddenHintVisibleMs)
+        {
+            ClearHiddenHint();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+    }
 }
 
 /**
@@ -6646,6 +6703,7 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
         break;
     case kTraySwitchCustomCommand:
         customDesktopVisible_ = true;
+        desktopIconsHidden_ = false;
         HideExplorerIcons();
         ShowWindow(hwnd_, SW_SHOW);
         if (inputHwnd_ && IsWindow(inputHwnd_))

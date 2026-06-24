@@ -15,6 +15,7 @@
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
+#include "general_settings.h"
 #include "personalization.h"
 #include "navigation_settings.h"
 
@@ -136,6 +137,8 @@ public:
      * @param callback 无参回调，在导航设置被修改后触发
      */
     void SetNavigationSettingsChangedCallback(std::function<void()> callback) { navigationSettingsChangedCallback_ = std::move(callback); }
+
+    void SetGeneralSettingsChangedCallback(std::function<void()> callback) { generalSettingsChangedCallback_ = std::move(callback); }
 
     /** @} */
     /** @name 公共功能
@@ -397,6 +400,9 @@ private:
     /// 导航设置变更回调
     std::function<void()> navigationSettingsChangedCallback_;
 
+    /// 通用设置变更回调
+    std::function<void()> generalSettingsChangedCallback_;
+
     /** @} */
 
     /** @name 设置数据
@@ -419,6 +425,12 @@ private:
 
     /// 导航设置是否已修改（需要保存）
     bool navigationSettingsDirty_ = false;
+
+    /// 当前通用设置
+    GeneralSettings generalSettings_;
+
+    /// 通用设置是否已修改（需要保存）
+    bool generalSettingsDirty_ = false;
 
     /** @} */
 

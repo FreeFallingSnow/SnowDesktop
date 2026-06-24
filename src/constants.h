@@ -148,6 +148,8 @@ constexpr DWORD kPageNotifyVisibleMs = 1800;
 constexpr DWORD kPageNotifyFadeMs = 500;
 constexpr UINT_PTR kDisplayTopologyRefreshTimerId = 8;
 constexpr UINT kDisplayTopologyRefreshDebounceMs = 750;
+constexpr UINT_PTR kHiddenHintTimerId = 9;
+constexpr UINT kHiddenHintVisibleMs = 2000;
 
 // ── 组件独立刷新定时器 ────────────────────────
 // 由 manifest 的 refreshIntervalMs 声明驱动的 per-widget Win32 定时器 ID 基址，

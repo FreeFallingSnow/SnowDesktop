@@ -17,6 +17,7 @@ set(SNOWDESKTOP_SOURCES
     src/settings_window.cpp
     src/personalization.cpp
     src/navigation_settings.cpp
+    src/general_settings.cpp
     src/widget_engine.cpp
     src/system_snapshot.cpp
     src/http_runtime.cpp

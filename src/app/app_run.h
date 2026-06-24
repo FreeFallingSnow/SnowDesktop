@@ -381,6 +381,9 @@ inline void DesktopApp::WatchDesktopHost()
     if (!customDesktopVisible_)
         return;
 
+    if (desktopIconsHidden_)
+        return;
+
     if (!hwnd_ || !IsWindow(hwnd_))
     {
         RecoverDesktopHostAfterExplorerRestart();
@@ -779,6 +782,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     RegisterShellChangeNotifications();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
+    LoadGeneralSettingsAndApply();
 
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
@@ -799,6 +803,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
             LoadNavigationSettingsAndApply();
+        });
+        settingsWindow_->SetGeneralSettingsChangedCallback([this]() {
+            LoadGeneralSettingsAndApply();
         });
     }
     else
@@ -1124,23 +1131,35 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     }
     case WM_LBUTTONDOWN:
+        if (desktopIconsHidden_) { ShowHiddenHint(); return 0; }
         OnLeftButtonDown(wp, lp);
         return 0;
     case WM_MOUSEMOVE:
+        if (desktopIconsHidden_) return 0;
         OnMouseMove(wp, lp);
         return 0;
     case WM_LBUTTONUP:
+        if (desktopIconsHidden_) return 0;
         OnLeftButtonUp(wp, lp);
         return 0;
     case WM_MOUSEWHEEL:
+        if (desktopIconsHidden_) return 0;
         OnMouseWheel(wp, lp);
         return 0;
     case WM_RBUTTONUP:
+        if (desktopIconsHidden_) { ShowHiddenHint(); return 0; }
         OnRightButtonUp(lp);
         return 0;
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+
+        if (desktopIconsHidden_)
+        {
+            ToggleDesktopIconsVisibility();
+            return 0;
+        }
+
         if (quickNavigationOpen_)
         {
             HandleQuickNavigationClick(pt);
@@ -1226,7 +1245,31 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         {
             ShellExecuteW(nullptr, L"open", items_[hit].parsingName.c_str(),
                 nullptr, nullptr, SW_SHOWNORMAL);
+            return 0;
         }
+
+        // Double-click on empty desktop area (exclude widget areas): toggle visibility
+        bool overWidgetArea = (HitTestStandaloneWidgetIndex(pt) != static_cast<size_t>(-1));
+        if (!overWidgetArea)
+        {
+            for (auto& c : containers_)
+            {
+                auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+                if (!wc) continue;
+                RECT bodyRect = wc->GetBodyRect();
+                if (PtInRect(&bodyRect, pt))
+                {
+                    overWidgetArea = true;
+                    break;
+                }
+            }
+        }
+        if (!overWidgetArea)
+            overWidgetArea = IsPointOverWidgetChrome(pt);
+
+        if (!overWidgetArea && generalSettings_.doubleClickHideDesktop)
+            ToggleDesktopIconsVisibility();
+
         return 0;
     }
     case WM_GETDLGCODE:
