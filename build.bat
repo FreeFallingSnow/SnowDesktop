@@ -22,4 +22,7 @@ echo.
 echo === Build complete ===
 echo SnowDesktop.exe: .build\Release\SnowDesktop.exe
 echo.
+echo For a version release, run release.bat after the release branch has been
+echo completed. It includes the guarded local squash and tag workflow.
+echo.
 pause
