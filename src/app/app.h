@@ -370,6 +370,8 @@ private:
     void DrawPageNotify(ID2D1DeviceContext* ctx);
     /** @brief 绘制隐藏状态提示（双击取消隐藏）。 */
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
+    /** @brief 绘制添加组件操作提示。 */
+    void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
@@ -416,6 +418,10 @@ private:
     void ShowHiddenHint();
     /** @brief 清除隐藏状态提示。 */
     void ClearHiddenHint();
+    /** @brief 显示添加组件操作提示。 */
+    void ShowWidgetAddedHint();
+    /** @brief 清除添加组件操作提示。 */
+    void ClearWidgetAddedHint();
     /** @brief 注册快速导航热键。 */
     void ApplyNavigationHotkey();
     /** @brief 注销快速导航热键。 */
@@ -1347,6 +1353,8 @@ private:
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
+    bool showWidgetAddedHint_ = false;
+    DWORD widgetAddedHintStartTick_ = 0;
     bool navigationHotkeyRegistered_ = false;
     /** @} */
 

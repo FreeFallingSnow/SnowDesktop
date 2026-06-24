@@ -291,10 +291,66 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     POINT clientPoint = screenPoint;
     ScreenToClient(hwnd_, &clientPoint);
     const GridPage* gridPage = GridPageFromPoint(clientPoint);
-    wchar_t gridLabel[64]{};
-    swprintf_s(gridLabel, L"行列调整（%d列 × %d行）",
-        gridPage ? gridPage->columns : 0, gridPage ? gridPage->rows : 0);
-    AppendMenuW(menu, MF_STRING, kContextGridAdjustmentMenu, gridLabel);
+
+    HMENU displaySettingsMenu = CreatePopupMenu();
+    if (displaySettingsMenu)
+    {
+        wchar_t gridLabel[64]{};
+        swprintf_s(gridLabel, L"行列调整（%d列 × %d行）",
+            gridPage ? gridPage->columns : 0, gridPage ? gridPage->rows : 0);
+        AppendMenuW(displaySettingsMenu, MF_STRING, kContextGridAdjustmentMenu, gridLabel);
+
+        HMENU spacingMenu = CreatePopupMenu();
+        if (spacingMenu)
+        {
+            const int presets[] = { 50, 70, 80, 90, 100, 110, 120, 130, 150, 200 };
+            const int currentSpacingPercent = static_cast<int>(
+                std::round(iconSpacingScale_ * 100.0f));
+            for (int pct : presets)
+            {
+                wchar_t label[16]{};
+                swprintf_s(label, L"%d%%", pct);
+                UINT flags = MF_STRING;
+                if (currentSpacingPercent == pct) flags |= MF_CHECKED;
+                AppendMenuW(spacingMenu, flags,
+                    kContextSpacingPresetFirst + static_cast<UINT>(pct), label);
+            }
+            AppendMenuW(spacingMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, L"增加间距 (+10%)");
+            AppendMenuW(spacingMenu, MF_STRING, kContextSpacingDecrease, L"减少间距 (-10%)");
+            wchar_t spacingLabel[32]{};
+            swprintf_s(spacingLabel, L"图标间距：%d%%", currentSpacingPercent);
+            AppendMenuW(displaySettingsMenu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel);
+            SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(spacingMenu), L"");
+            SetMenuItemIcon(spacingMenu, kContextSpacingIncrease, L"");
+            SetMenuItemIcon(spacingMenu, kContextSpacingDecrease, L"");
+        }
+
+        HMENU fontSizeMenu = CreatePopupMenu();
+        if (fontSizeMenu)
+        {
+            const int currentFontSize = static_cast<int>(std::round(itemFontSize_));
+            auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
+                UINT flags = MF_STRING;
+                if (currentFontSize == size) flags |= MF_CHECKED;
+                AppendMenuW(fontSizeMenu, flags, id, label);
+            };
+            addFontSizeItem(kContextFontSizeSmall, L"小 (12pt)", 12);
+            addFontSizeItem(kContextFontSizeMedium, L"中 (14pt)", 14);
+            addFontSizeItem(kContextFontSizeLarge, L"大 (16pt)", 16);
+            wchar_t fontSizeLabel[32]{};
+            swprintf_s(fontSizeLabel, L"标题字号：%dpt", currentFontSize);
+            AppendMenuW(displaySettingsMenu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel);
+            SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
+        }
+
+        AppendMenuW(menu, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"显示设置");
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"");
+        SetMenuItemIcon(displaySettingsMenu, kContextGridAdjustmentMenu, L"");
+    }
 
     std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
     HMENU widgetMenu = CreatePopupMenu();
@@ -317,48 +373,6 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
     }
 
-    HMENU spacingMenu = CreatePopupMenu();
-    if (spacingMenu)
-    {
-        const int presets[] = { 50, 70, 80, 90, 100, 110, 120, 130, 150, 200 };
-        const int currentSpacingPercent = static_cast<int>(
-            std::round(iconSpacingScale_ * 100.0f));
-        for (int pct : presets)
-        {
-            wchar_t label[16]{};
-            swprintf_s(label, L"%d%%", pct);
-            UINT flags = MF_STRING;
-            if (currentSpacingPercent == pct) flags |= MF_CHECKED;
-            AppendMenuW(spacingMenu, flags,
-                kContextSpacingPresetFirst + static_cast<UINT>(pct), label);
-        }
-        AppendMenuW(spacingMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, L"增加间距 (+10%)");
-        AppendMenuW(spacingMenu, MF_STRING, kContextSpacingDecrease, L"减少间距 (-10%)");
-        wchar_t spacingLabel[32]{};
-        swprintf_s(spacingLabel, L"图标间距：%d%%", currentSpacingPercent);
-        AppendMenuW(menu, MF_POPUP,
-            reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel);
-    }
-
-    HMENU fontSizeMenu = CreatePopupMenu();
-    if (fontSizeMenu)
-    {
-        const int currentFontSize = static_cast<int>(std::round(itemFontSize_));
-        auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
-            UINT flags = MF_STRING;
-            if (currentFontSize == size) flags |= MF_CHECKED;
-            AppendMenuW(fontSizeMenu, flags, id, label);
-        };
-        addFontSizeItem(kContextFontSizeSmall, L"小 (12pt)", 12);
-        addFontSizeItem(kContextFontSizeMedium, L"中 (14pt)", 14);
-        addFontSizeItem(kContextFontSizeLarge, L"大 (16pt)", 16);
-        wchar_t fontSizeLabel[32]{};
-        swprintf_s(fontSizeLabel, L"标题字号：%dpt", currentFontSize);
-        AppendMenuW(menu, MF_POPUP,
-            reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel);
-    }
-
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     // ── 条件：分页导航 ──
@@ -373,17 +387,25 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     const bool showPageNavigation = !isFirstPage || monitorCount == 1;
 
     // ── 首屏/末屏锁定开关（持久化、互斥，仅多屏时显示） ──
+    HMENU pinPageMenu = nullptr;
     if (monitorCount >= 2)
     {
-        UINT fFlags = MF_STRING;
-        if (!firstPageMonitorId_.empty() && firstPageMonitorId_ == clickedMonitorId)
-            fFlags |= MF_CHECKED;
-        AppendMenuW(menu, fFlags, kContextPinFirstPage, L"固定此显示器显示首屏");
+        pinPageMenu = CreatePopupMenu();
+        if (pinPageMenu)
+        {
+            UINT fFlags = MF_STRING;
+            if (!firstPageMonitorId_.empty() && firstPageMonitorId_ == clickedMonitorId)
+                fFlags |= MF_CHECKED;
+            AppendMenuW(pinPageMenu, fFlags, kContextPinFirstPage, L"固定此显示器显示首屏");
 
-        UINT lFlags = MF_STRING;
-        if (!lastPageMonitorId_.empty() && lastPageMonitorId_ == clickedMonitorId)
-            lFlags |= MF_CHECKED;
-        AppendMenuW(menu, lFlags, kContextPinLastPage, L"固定此显示器显示末屏");
+            UINT lFlags = MF_STRING;
+            if (!lastPageMonitorId_.empty() && lastPageMonitorId_ == clickedMonitorId)
+                lFlags |= MF_CHECKED;
+            AppendMenuW(pinPageMenu, lFlags, kContextPinLastPage, L"固定此显示器显示末屏");
+
+            AppendMenuW(menu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(pinPageMenu), L"固定显示首页末页");
+        }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
 
@@ -464,7 +486,6 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             SetMenuItemIcon(typeSortMenu, kContextSortByTypeDescCommand, L"");
         }
     }
-    SetMenuItemIcon(menu, kContextGridAdjustmentMenu, L"");
     if (widgetMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu), L"");
@@ -472,15 +493,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, L"");
         SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, L"");
     }
-    if (spacingMenu)
+    if (pinPageMenu)
     {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(spacingMenu), L"");
-        SetMenuItemIcon(spacingMenu, kContextSpacingIncrease, L"");
-        SetMenuItemIcon(spacingMenu, kContextSpacingDecrease, L"");
-    }
-    if (fontSizeMenu)
-    {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pinPageMenu), L"");
     }
     SetMenuItemIcon(menu, kContextSettingsCommand, L"");
     SetMenuItemIcon(menu, kContextPagePrev, L"");
@@ -489,7 +504,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
 
-    gridAdjustmentParentMenu_ = menu;
+    gridAdjustmentParentMenu_ = displaySettingsMenu;
     gridAdjustmentMenuAnchorValid_ = false;
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -502,8 +517,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
     if (sortMenu) DestroyMenu(sortMenu);
     if (widgetMenu) DestroyMenu(widgetMenu);
-    if (spacingMenu) DestroyMenu(spacingMenu);
-    if (fontSizeMenu) DestroyMenu(fontSizeMenu);
+    if (displaySettingsMenu) DestroyMenu(displaySettingsMenu);
+    if (pinPageMenu) DestroyMenu(pinPageMenu);
     if (jumpMenu) DestroyMenu(jumpMenu);
     DestroyMenu(menu);
     newMenuContextMenu_.Reset();

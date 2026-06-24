@@ -270,6 +270,9 @@ inline void DesktopApp::OnPaint()
         else if (showHiddenHint_)
             DrawHiddenHintOverlay(context.Get());
 
+        if (showWidgetAddedHint_)
+            DrawWidgetAddedHintOverlay(context.Get());
+
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
 
@@ -2142,6 +2145,64 @@ inline void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
     fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
     // Measure text width using a temporary layout
+    ComPtr<IDWriteTextLayout> measureLayout;
+    if (SUCCEEDED(dwrite->CreateTextLayout(hintText.c_str(),
+        static_cast<UINT32>(hintText.size()), fmt.Get(), 2000.0f, 40.0f, &measureLayout)) && measureLayout)
+    {
+        DWRITE_TEXT_METRICS metrics{};
+        measureLayout->GetMetrics(&metrics);
+
+        constexpr float hintPadding = 24.0f;
+        constexpr float hintHeight = 36.0f;
+        constexpr float marginTop = 60.0f;
+
+        const float textW = metrics.width + hintPadding * 2.0f;
+        const int areaW = workArea.right - workArea.left;
+
+        RECT hintRect = MakeRect(
+            static_cast<int>(workArea.left + (areaW - textW) / 2.0f),
+            static_cast<int>(workArea.top + marginTop),
+            static_cast<int>(workArea.left + (areaW + textW) / 2.0f),
+            static_cast<int>(workArea.top + marginTop + hintHeight));
+
+        DrawD2DRoundedRectangle(ctx, hintRect, 10.0f,
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.65f),
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), 0.0f);
+
+        DrawD2DText(ctx, hintText, hintRect, fmt.Get(),
+            D2D1::ColorF(0.95f, 0.96f, 1.0f, 0.90f));
+    }
+}
+
+inline void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
+{
+    if (!ctx || !showWidgetAddedHint_) return;
+
+    auto* dwrite = GetDWriteFactory();
+    if (!dwrite) return;
+
+    RECT workArea{};
+    if (!gridPages_.empty())
+        workArea = gridPages_[0].workArea;
+    if (IsRectEmptyRect(workArea))
+    {
+        workArea.left = 0;
+        workArea.top = 0;
+        workArea.right = GetSystemMetrics(SM_CXSCREEN);
+        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+
+    const std::wstring hintText = L"拖动组件底部可移动组件位置，拖动组件右下角圆点可调整组件大小";
+
+    ComPtr<IDWriteTextFormat> fmt;
+    if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &fmt)) || !fmt)
+        return;
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
     ComPtr<IDWriteTextLayout> measureLayout;
     if (SUCCEEDED(dwrite->CreateTextLayout(hintText.c_str(),
         static_cast<UINT32>(hintText.size()), fmt.Get(), 2000.0f, 40.0f, &measureLayout)) && measureLayout)

@@ -476,6 +476,25 @@ inline void DesktopApp::ClearHiddenHint()
         KillTimer(hwnd_, kHiddenHintTimerId);
 }
 
+inline void DesktopApp::ShowWidgetAddedHint()
+{
+    showWidgetAddedHint_ = true;
+    widgetAddedHintStartTick_ = GetTickCount();
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(hwnd_, kWidgetAddedHintTimerId, 100, nullptr);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+}
+
+inline void DesktopApp::ClearWidgetAddedHint()
+{
+    showWidgetAddedHint_ = false;
+    widgetAddedHintStartTick_ = 0;
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kWidgetAddedHintTimerId);
+}
+
 /**
  * @brief 注销快捷导航热键
  */
@@ -3876,6 +3895,15 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         if (elapsed >= kHiddenHintVisibleMs)
         {
             ClearHiddenHint();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+    }
+    else if (timerId == kWidgetAddedHintTimerId)
+    {
+        const DWORD elapsed = GetTickCount() - widgetAddedHintStartTick_;
+        if (elapsed >= kWidgetAddedHintVisibleMs)
+        {
+            ClearWidgetAddedHint();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }

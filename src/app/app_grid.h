@@ -5403,7 +5403,8 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     GridCell cell = CellFromPoint(clientPoint);
     if (cell.pageId.empty())
     {
-        for (const auto& p : gridPages_) { cell = { p.id, 0, 0 }; break; }
+        if (!gridPages_.empty())
+            cell = { gridPages_[0].id, 0, 0 };
         if (cell.pageId.empty()) return;
     }
 
@@ -5466,6 +5467,7 @@ inline void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
     w.showTitle = true;
     w.bottomBarHover = true;
     AddWidgetToGrid(std::move(w), { 1, 1 });
+    ShowWidgetAddedHint();
 }
 
 /**
@@ -5481,6 +5483,7 @@ inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
     w.title = L"桌面文件";
     w.showTitle = true;
     AddWidgetToGrid(std::move(w), { 2, 2 });
+    ShowWidgetAddedHint();
 }
 
 /**
@@ -5520,6 +5523,7 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
     size_t idx = widgets_.size() - 1;
     EnumerateFolderMappingEntries(widgets_[idx]);
     RebuildContainersAndItems();
+    ShowWidgetAddedHint();
 }
 
 /**
@@ -5554,6 +5558,7 @@ inline void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& sc
     int defaultRows = 1;
     WidgetEngine::GetWidgetDefaultSpan(scriptFilename, defaultColumns, defaultRows);
     AddWidgetToGrid(std::move(w), { defaultColumns, defaultRows });
+    ShowWidgetAddedHint();
 }
 
 /**
