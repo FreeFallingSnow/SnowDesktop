@@ -238,14 +238,15 @@ public:
  * - 拖放插入样式为 VBar（竖线指示器）
  * - 无需外壳刷新（NeedsShellReloadAfterDrop = false）
  */
-class Collection : public WidgetContainer
+class Collection : public ScrollingItemWidget
 {
 public:
-    using WidgetContainer::WidgetContainer;
+    using ScrollingItemWidget::ScrollingItemWidget;
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
+    void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
     std::wstring CategoryIdAtPoint(POINT pt) const;
     std::vector<Item*> GetSelectedItems() const override;
@@ -254,14 +255,19 @@ public:
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
     size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
-    BarStyle GetInsertionStyle() const override { return BarStyle::VBar; }
 
     size_t GetSlotCount() const override;
-    int  GetItemHeight() const override { return Cu(136.0f); }
-    int  GetItemWidth()  const override { return Cu(92.0f); }
+    int  GetItemHeight() const override;
+    int  GetItemWidth()  const override;
     Item* GetSlotItem(size_t idx) const override;
 
-    // Returns the rect of the "all" mosaic button (empty if none).
+    int  GetMaxScrollOffset() const override;
+    int  GetTotalContentHeight() const override;
+    int  GetVisibleContentHeight() const override;
+    bool SingleColumn() const override;
+    RECT GetContentViewportRect() const override;
+    void ApplyMarqueeSelection(const RECT& contentRect) override;
+
     RECT GetAllButtonRect() const;
 
 private:

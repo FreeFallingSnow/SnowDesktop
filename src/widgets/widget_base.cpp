@@ -358,6 +358,29 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
             return region;
         }
     }
+
+    // List mode: check gaps between items
+    if (SingleColumn() && slots.size() >= 2)
+    {
+        int pad = Cu(2.0f);
+        for (size_t i = 0; i + 1 < slots.size(); ++i)
+        {
+            RECT upper = slots[i]->GetBounds();
+            RECT lower = slots[i + 1]->GetBounds();
+            if (pt.y > upper.bottom && pt.y < lower.top)
+            {
+                int mid = upper.bottom + pad;
+                if (pt.y < mid)
+                {
+                    outSlot = slots[i].get();
+                    return HitRegion::SortAfter;
+                }
+                outSlot = slots[i + 1].get();
+                return HitRegion::SortBefore;
+            }
+        }
+    }
+
     // Mouse in frame but not on any slot — sort at end
     return HitRegion::SortAfter;
 }
@@ -435,7 +458,8 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
 void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
     if (!slot || !ctx) return;
-    slot->DrawDropIndicator(ctx, region);
+    float itemPad = SingleColumn() ? static_cast<float>(Cu(2.0f)) : 0.0f;
+    slot->DrawDropIndicator(ctx, region, itemPad);
 }
 
 /**
@@ -743,7 +767,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const bool persistentBottomBar = tinyCollection ||
         data_->type == DesktopWidgetType::FileCategories ||
         data_->type == DesktopWidgetType::FolderMapping ||
-        data_->type == DesktopWidgetType::Guide;
+        data_->type == DesktopWidgetType::Guide ||
+        (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
     bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;

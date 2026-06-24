@@ -2221,7 +2221,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::ListToggleBtn)
         {
             if (widgets_[wi].type == DesktopWidgetType::FolderMapping ||
-                widgets_[wi].type == DesktopWidgetType::FileCategories)
+                widgets_[wi].type == DesktopWidgetType::FileCategories ||
+                widgets_[wi].type == DesktopWidgetType::Collection)
             {
                 widgets_[wi].listMode = !widgets_[wi].listMode;
                 wc->InvalidateSlots();
@@ -6289,10 +6290,26 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
 
     const auto& widget = widgets_[widgetIndex];
     std::vector<LuaWidgetMenuItem> luaMenuItems;
+    HMENU displayModeMenu = nullptr;
+    HMENU hoverMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, L"打开全部");
+        displayModeMenu = CreatePopupMenu();
+        if (displayModeMenu)
+        {
+            AppendMenuW(displayModeMenu, MF_STRING | (!widget.scrollContainerMode ? MF_CHECKED : 0),
+                kContextWidgetCollModeLargeFolder, L"大文件夹");
+            AppendMenuW(displayModeMenu, MF_STRING | (widget.scrollContainerMode ? MF_CHECKED : 0),
+                kContextWidgetCollModeScrollContainer, L"滚动容器");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(displayModeMenu), L"显示模式");
+        }
+        if (widget.scrollContainerMode)
+        {
+            AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
+                widget.listMode ? L"图标显示" : L"列表显示");
+        }
     }
     else if (widget.type == DesktopWidgetType::FileCategories)
     {
@@ -6377,8 +6394,15 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
-    AppendMenuW(menu, MF_STRING | (widget.showOnHoverOnly ? MF_CHECKED : 0),
-        kContextWidgetShowOnHover, L"悬停时显示");
+    hoverMenu = CreatePopupMenu();
+    if (hoverMenu)
+    {
+        AppendMenuW(hoverMenu, MF_STRING | (widget.showOnHoverOnly ? MF_CHECKED : 0),
+            kContextWidgetShowOnHoverOn, L"开");
+        AppendMenuW(hoverMenu, MF_STRING | (!widget.showOnHoverOnly ? MF_CHECKED : 0),
+            kContextWidgetShowOnHoverOff, L"关");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), L"仅在悬停时显示");
+    }
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
 
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
@@ -6390,6 +6414,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetEdit, L"");
     SetMenuItemIcon(menu, kContextWidgetRename, L"");
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
+    if (hoverMenu)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(hoverMenu), L"");
     if (sortMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
@@ -6411,6 +6437,12 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             SetMenuItemIcon(wDateMenu, kContextWidgetSortByDate, L"");
             SetMenuItemIcon(wDateMenu, kContextWidgetSortByDateDesc, L"");
         }
+    }
+    if (displayModeMenu)
+    {
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displayModeMenu), L"");
+        SetMenuItemIcon(displayModeMenu, kContextWidgetCollModeLargeFolder, L"");
+        SetMenuItemIcon(displayModeMenu, kContextWidgetCollModeScrollContainer, L"");
     }
 
     SetForegroundWindow(hwnd_);
@@ -6531,8 +6563,36 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     case kContextWidgetSortByDateDesc:
         SortWidgetContents(widgetIndex, 2, false);
         break;
-    case kContextWidgetShowOnHover:
-        widgets_[widgetIndex].showOnHoverOnly = !widgets_[widgetIndex].showOnHoverOnly;
+    case kContextWidgetShowOnHoverOn:
+        widgets_[widgetIndex].showOnHoverOnly = true;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetShowOnHoverOff:
+        widgets_[widgetIndex].showOnHoverOnly = false;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetCollModeLargeFolder:
+        widgets_[widgetIndex].scrollContainerMode = false;
+        widgets_[widgetIndex].scrollOffset = 0;
+        for (auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
+            { wc->InvalidateSlots(); break; }
+        }
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetCollModeScrollContainer:
+        widgets_[widgetIndex].scrollContainerMode = true;
+        for (auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
+            { wc->InvalidateSlots(); break; }
+        }
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;

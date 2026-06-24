@@ -20,6 +20,121 @@
 #include <shlwapi.h>
 #include <unordered_set>
 
+static RECT CollectionItemRect(Collection* widget, size_t linearIndex);
+
+// ── Scroll container helpers (shared with draw/slot code) ─────
+
+/**
+ * @brief 获取滚动容器内容区域（同 FolderMapping 的 padding）
+ */
+static RECT CollectionScrollContentRect(Collection* widget)
+{
+    if (!widget) return {};
+    RECT body = widget->GetBodyRect();
+    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    return body;
+}
+
+/**
+ * @brief 获取集合所在的网格页面 cellHeight
+ */
+static int CollectionCellHeight(Collection* widget)
+{
+    if (!widget || !widget->GetApp() || !widget->GetApp()->GetDesktopGrid())
+        return kMinCellHeight;
+    DesktopWidget* data = widget->GetWidgetData();
+    for (const auto& page : widget->GetApp()->GetDesktopGrid()->GetPages())
+        if (data && page.id == data->gridCell.pageId)
+            return page.cellHeight;
+    return kMinCellHeight;
+}
+
+/**
+ * @brief 计算滚动容器图标模式的纵向间距
+ */
+static int CollectionAdaptiveGapY(Collection* widget)
+{
+    if (!widget) return 0;
+    DesktopWidget* data = widget->GetWidgetData();
+    if (!data || data->listMode) return 0;
+    RECT content = CollectionScrollContentRect(widget);
+    int visibleHeight = content.bottom - content.top;
+    if (visibleHeight <= 0) return 0;
+    int cellH = CollectionCellHeight(widget);
+    if (cellH <= 0 || visibleHeight <= cellH) return 0;
+    int visibleRows = visibleHeight / cellH;
+    if (visibleRows <= 1) return 0;
+    int extraSpace = visibleHeight - visibleRows * cellH;
+    int gapY = extraSpace / (visibleRows - 1);
+    if (gapY < 0) return 0;
+    int maxGap = std::max(1, static_cast<int>(cellH * kGapPercentY));
+    if (gapY > maxGap) return 0;
+    return gapY;
+}
+
+/**
+ * @brief 计算滚动容器内容总高度
+ */
+static int CollectionScrollContentHeight(Collection* widget, size_t itemCount)
+{
+    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+    if (!data || !data->scrollContainerMode) return 0;
+    if (data->listMode)
+        return static_cast<int>(itemCount) * widget->Cu(38.0f);
+    int columns = std::max(1, data->gridSpan.columns);
+    int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
+    if (rows <= 0) return 0;
+    int cellH = CollectionCellHeight(widget);
+    int gapY = CollectionAdaptiveGapY(widget);
+    return rows * cellH + (rows - 1) * gapY;
+}
+
+/**
+ * @brief 计算滚动容器最大滚动偏移
+ */
+static int CollectionScrollMaxOffset(Collection* widget)
+{
+    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+    if (!data || !data->scrollContainerMode) return 0;
+    RECT content = CollectionScrollContentRect(widget);
+    int visibleHeight = std::max<int>(1, content.bottom - content.top);
+    return std::max(0, CollectionScrollContentHeight(widget, data->itemKeys.size()) -
+        visibleHeight + widget->Cu(kMinCellHeight / 2.0f));
+}
+
+/**
+ * @brief 计算滚动容器中条目的绘制矩形
+ */
+static RECT CollectionItemRect(Collection* widget, size_t linearIndex)
+{
+    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+    if (!data || !data->scrollContainerMode) return {};
+    RECT content = CollectionScrollContentRect(widget);
+    int scroll = std::clamp(data->scrollOffset, 0, CollectionScrollMaxOffset(widget));
+    if (data->listMode)
+    {
+        const int itemHeight = widget->Cu(38.0f);
+        RECT rect = MakeRect(content.left,
+            content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
+            content.right,
+            content.top + static_cast<LONG>((linearIndex + 1) * itemHeight) - scroll);
+        InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
+        return rect;
+    }
+    int columns = std::max(1, data->gridSpan.columns);
+    int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
+    int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
+    int itemW = std::max<int>(1, (content.right - content.left) / columns);
+    int cellH = CollectionCellHeight(widget);
+    int gapY = CollectionAdaptiveGapY(widget);
+    int rowStep = cellH + gapY;
+    return MakeRect(
+        content.left + col * itemW,
+        content.top + row * rowStep - scroll,
+        col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
+        content.top + row * rowStep + cellH - scroll);
+}
+
 // ═══════════════════════════════════════════════════════════════
 /// @name 静态辅助函数
 /// 集合控件布局计算相关工具函数，非类成员。
@@ -204,6 +319,38 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (!data_ || !app_) return;
     if (data_->itemKeys.empty()) return;
 
+    // ── Scroll container mode (like FolderMapping) ───────────
+    if (data_->scrollContainerMode)
+    {
+        RECT content = GetContentViewportRect();
+        context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+        const auto& items = app_->GetDesktopItems();
+        for (size_t i = 0; i < data_->itemKeys.size(); ++i)
+        {
+            RECT cell = CollectionItemRect(this, i);
+            if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
+
+            size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[i]);
+            if (itemIdx == static_cast<size_t>(-1)) continue;
+            const DesktopItem& di = items[itemIdx];
+
+            if (!data_->listMode)
+            {
+                bool hovered = !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
+                DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
+                icon.Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0));
+            }
+            else
+            {
+                DrawListItem(context, cell, di.iconBitmap, di.sysIconIndex, di.name, di.selected);
+            }
+        }
+        context->PopAxisAlignedClip();
+        return;
+    }
+
+    // ── Original: large folder / compact grid mode ────────────
     bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     const auto& items = app_->GetDesktopItems();
     auto& slots = GetSlots();
@@ -251,7 +398,6 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             if (!hasRemainingIcon && !PtInRect(&allRect, app_->lastMousePoint_))
                 return;
 
-            // Draw 2×2 thumbnail grid
             RECT inner = allRect;
             InflateRect(&inner, -Cu(8.0f), -Cu(8.0f));
             OffsetRect(&inner, 0, -Cu(4.0f));
@@ -315,6 +461,23 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     std::vector<std::unique_ptr<Slot>> slots;
     if (!data_ || !app_) return slots;
 
+    // ── Scroll container mode: build all slots ──────────────
+    if (data_->scrollContainerMode)
+    {
+        for (size_t idx = 0; idx < data_->itemKeys.size(); ++idx)
+        {
+            RECT cell = CollectionItemRect(this, idx);
+            if (IsRectEmptyRect(cell)) continue;
+            auto slot = std::make_unique<Slot>(this, cell, idx);
+            Item* item = GetSlotItem(idx);
+            if (item) item->SetBounds(cell);
+            slot->SetItem(item);
+            slots.push_back(std::move(slot));
+        }
+        return slots;
+    }
+
+    // ── Original: large folder mode ─────────────────────────
     size_t inlineCap = GetCollectionInlineCapacity(*data_);
     size_t visible = std::min(inlineCap, data_->itemKeys.size());
     RECT body = GetBodyRect();
@@ -343,6 +506,9 @@ size_t Collection::GetSlotCount() const
     if (!data_) return 0;
     if (data_->itemKeys.empty()) return 0;
 
+    if (data_->scrollContainerMode)
+        return data_->itemKeys.size();
+
     size_t inlineCap = GetCollectionInlineCapacity(*data_);
     size_t visible = std::min(inlineCap, data_->itemKeys.size());
 
@@ -360,7 +526,7 @@ size_t Collection::GetSlotCount() const
 Item* Collection::GetSlotItem(size_t idx) const
 {
     if (!data_ || idx >= data_->itemKeys.size() || !app_) return nullptr;
-    if (idx >= GetCollectionInlineCapacity(*data_)) return nullptr;
+    if (!data_->scrollContainerMode && idx >= GetCollectionInlineCapacity(*data_)) return nullptr;
     size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[idx]);
     if (itemIdx == static_cast<size_t>(-1)) return nullptr;
     auto icon = std::make_unique<DesktopIcon>(&app_->GetDesktopItems()[itemIdx],
@@ -493,6 +659,7 @@ std::vector<Item*> Collection::GetSelectedItems() const
 RECT Collection::GetAllButtonRect() const
 {
     if (!data_ || !app_) return {};
+    if (data_->scrollContainerMode) return {};
     RECT body = GetBodyRect();
     bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     if (compact)
@@ -517,11 +684,32 @@ RECT Collection::GetAllButtonRect() const
 WidgetHit Collection::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
-    if (base == WidgetHit::None || base == WidgetHit::ResizeHandle || base == WidgetHit::MoveHandle) return base;
+    if (base == WidgetHit::None || base == WidgetHit::ResizeHandle) return base;
     if (!data_ || !app_ || data_->type != DesktopWidgetType::Collection) return base;
 
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt)) return WidgetHit::None;
+
+    if (data_->scrollContainerMode)
+    {
+        if (base == WidgetHit::MoveHandle)
+        {
+            RECT handle = GetMoveHandleRect();
+            const int btnSize = Cu(14.0f);
+            const int gap = Cu(4.0f);
+            const int resizeReserve = Cu(20.0f);
+            RECT toggleBtn = {
+                handle.right - resizeReserve - gap - btnSize,
+                handle.top + Cu(5.0f),
+                handle.right - resizeReserve - gap,
+                handle.bottom - Cu(3.0f)
+            };
+            if (PtInRect(&toggleBtn, pt)) return WidgetHit::ListToggleBtn;
+        }
+        return base;
+    }
+
+    if (base == WidgetHit::MoveHandle) return base;
 
     const bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     if (compact)
@@ -571,6 +759,103 @@ size_t Collection::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
     if (targetSlot && region == HitRegion::SortAfter)
         ++insertAt;
     return data_ ? std::min(insertAt, data_->itemKeys.size()) : insertAt;
+}
+
+// ═══════════════════════════════════════════════════════════════
+/// @name 滚动容器方法
+/// Collection 在 scrollContainerMode 下的滚动、尺寸、布局方法。
+/// @{
+// ═══════════════════════════════════════════════════════════════
+
+int Collection::GetMaxScrollOffset() const
+{
+    return CollectionScrollMaxOffset(const_cast<Collection*>(this));
+}
+
+int Collection::GetTotalContentHeight() const
+{
+    if (!data_ || !data_->scrollContainerMode) return 0;
+    return CollectionScrollContentHeight(const_cast<Collection*>(this), data_->itemKeys.size());
+}
+
+int Collection::GetVisibleContentHeight() const
+{
+    RECT content = CollectionScrollContentRect(const_cast<Collection*>(this));
+    return std::max(1, (int)(content.bottom - content.top));
+}
+
+bool Collection::SingleColumn() const
+{
+    if (!data_ || !data_->scrollContainerMode) return false;
+    return data_->listMode;
+}
+
+int Collection::GetItemHeight() const
+{
+    if (!data_ || !data_->scrollContainerMode) return Cu(136.0f);
+    return data_->listMode ? Cu(38.0f) : CollectionCellHeight(const_cast<Collection*>(this));
+}
+
+int Collection::GetItemWidth() const
+{
+    if (!data_ || !data_->scrollContainerMode) return Cu(92.0f);
+    RECT content = CollectionScrollContentRect(const_cast<Collection*>(this));
+    if (data_->listMode)
+    {
+        int w = (int)(content.right - content.left);
+        return std::max(1, w - Cu(8.0f));
+    }
+    int columns = std::max(1, data_->gridSpan.columns);
+    return std::max<int>(1, (content.right - content.left) / columns);
+}
+
+void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
+{
+    if (!data_ || !app_ || !data_->scrollContainerMode) return;
+
+    const int btnSize = Cu(14.0f);
+    const int gap = Cu(4.0f);
+    const int resizeReserve = Cu(20.0f);
+    const int topInset = Cu(5.0f);
+    const int bottomInset = Cu(3.0f);
+    RECT toggleBtn = {
+        handleRect.right - resizeReserve - gap - btnSize,
+        handleRect.top + topInset,
+        handleRect.right - resizeReserve - gap,
+        handleRect.bottom - bottomInset
+    };
+
+    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f);
+
+    bool hot = PtInRect(&toggleBtn, app_->lastMousePoint_) != FALSE;
+    app_->DrawD2DRoundedRectangle(context, toggleBtn, static_cast<float>(Cu(4.0f)),
+        hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
+    app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggleBtn,
+        faFormat ? faFormat :
+            (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
+    (void)hovered;
+}
+
+RECT Collection::GetContentViewportRect() const
+{
+    return CollectionScrollContentRect(const_cast<Collection*>(this));
+}
+
+void Collection::ApplyMarqueeSelection(const RECT& contentRect)
+{
+    if (!data_ || !app_) return;
+    if (!data_->scrollContainerMode) return;
+    const int scroll = GetScrollOffset();
+    for (size_t i = 0; i < data_->itemKeys.size(); ++i)
+    {
+        RECT itemRect = CollectionItemRect(const_cast<Collection*>(this), i);
+        OffsetRect(&itemRect, 0, scroll);
+        size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[i]);
+        if (itemIdx != static_cast<size_t>(-1))
+            app_->GetDesktopItems()[itemIdx].selected = RectsIntersect(itemRect, contentRect);
+    }
 }
 
 /// @}

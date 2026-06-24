@@ -1607,6 +1607,34 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     if ((dragSession_.IsActive() || externalDragActive_) && targetContainer
         && targetRegion != HitRegion::None)
     {
+        RECT clipViewport{};
+        auto* wc = dynamic_cast<WidgetContainer*>(targetContainer);
+        if (wc)
+        {
+            RECT bodyRect = wc->GetBodyRect();
+            if (popupWidgetIndex_ < widgets_.size() &&
+                wc->GetWidgetData() == &widgets_[popupWidgetIndex_])
+            {
+                RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+                RECT popupContent = GetCollectionPopupContentRect(popup);
+                RECT widgetVp = wc->GetContentViewportRect();
+                IntersectRect(&clipViewport, &popupContent, &widgetVp);
+                clipViewport.left = popup.left;
+                clipViewport.right = popup.right;
+            }
+            else
+            {
+                clipViewport = wc->GetContentViewportRect();
+                clipViewport.left = bodyRect.left;
+                clipViewport.right = bodyRect.right;
+            }
+        }
+        bool clipped = false;
+        if (!IsRectEmptyRect(clipViewport))
+        {
+            ctx->PushAxisAlignedClip(ToD2DRect(clipViewport), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            clipped = true;
+        }
         if (targetRegion == HitRegion::Handoff && targetSlot)
         {
             RECT bounds = targetSlot->GetBounds();
@@ -1618,6 +1646,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         {
             targetContainer->DrawDropPreview(ctx, targetSlot, targetRegion);
         }
+        if (clipped) ctx->PopAxisAlignedClip();
     }
 
     // Dragged items at offset

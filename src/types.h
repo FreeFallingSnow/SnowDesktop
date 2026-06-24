@@ -417,6 +417,7 @@ struct DesktopWidget
     std::wstring activeCategoryId;
     std::wstring scriptPath;
     bool showOnHoverOnly = false;
+    bool scrollContainerMode = false;
     std::vector<std::wstring> itemKeys;
     std::vector<FolderEntry> folderEntries;
 };
