@@ -217,7 +217,8 @@ public:
     int GetVisibleContentHeight() const override = 0;
 
     void DrawListItem(ID2D1DeviceContext* context, RECT cell,
-        HBITMAP iconBitmap, const std::wstring& name, bool selected) const;
+        HBITMAP iconBitmap, int sysIconIndex,
+        const std::wstring& name, bool selected) const;
 
     BarStyle GetInsertionStyle() const override;
 };

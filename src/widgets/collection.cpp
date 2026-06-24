@@ -166,7 +166,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         RECT placeholderRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
         app_->DrawPlaceholderIcon(context, item.sysIconIndex, placeholderRect, 1.0f);
     }
-    else if (item.iconBitmap)
+    else
     {
         ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(item.iconBitmap);
         if (bmp)

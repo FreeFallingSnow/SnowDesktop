@@ -846,7 +846,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             continue;
         }
 
-        DrawListItem(context, itemRect, di.iconBitmap, di.name, di.selected);
+        DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
+            di.name, di.selected);
     }
     context->PopAxisAlignedClip();
 }

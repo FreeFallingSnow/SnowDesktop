@@ -1299,7 +1299,7 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
             {
                 DrawPlaceholderIcon(ctx, item.sysIconIndex, qnIconRect, 1.0f);
             }
-            else if (item.iconBitmap)
+            else
             {
                 ID2D1Bitmap1* bmp = GetOrCreateD2DBitmap(item.iconBitmap);
                 if (bmp)

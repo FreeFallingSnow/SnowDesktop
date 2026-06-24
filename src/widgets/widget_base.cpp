@@ -486,11 +486,13 @@ BarStyle ScrollingItemWidget::GetInsertionStyle() const
  * @param context D2D 设备上下文
  * @param cell 项目单元格区域
  * @param iconBitmap 图标位图
+ * @param sysIconIndex 系统图标索引，用于位图不可用时的回退绘制
  * @param name 项目名称
  * @param selected 是否选中
  */
 void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
-    HBITMAP iconBitmap, const std::wstring& name, bool selected) const
+    HBITMAP iconBitmap, int sysIconIndex,
+    const std::wstring& name, bool selected) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
@@ -514,6 +516,10 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     {
         context->DrawBitmap(bmp, app_->ToD2DRect(iconRect), 1.0f,
             D2D1_INTERPOLATION_MODE_LINEAR);
+    }
+    else
+    {
+        app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, 1.0f);
     }
 
     RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),

@@ -130,7 +130,7 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
     }
-    else if (item_->iconBitmap)
+    else
     {
         ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(item_->iconBitmap);
         if (bmp)
@@ -267,7 +267,7 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     {
         app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
     }
-    else if (entry_->iconBitmap)
+    else
     {
         ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(entry_->iconBitmap);
         if (bmp)
