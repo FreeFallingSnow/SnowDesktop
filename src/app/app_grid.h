@@ -2562,6 +2562,7 @@ inline void DesktopApp::LoadDesktopItems()
 items_.clear();
     itemIndexByKeyCache_.clear();
     itemTextLayoutCache_.clear();
+    itemTextShadowCache_.clear();
     WriteCrashLogEntry(L"LoadItems start");
 
     HRESULT hr = SHGetDesktopFolder(&desktopFolder_);
@@ -4575,6 +4576,7 @@ inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceLi
 
         d2dIconCache_.clear();
         itemTextLayoutCache_.clear();
+        itemTextShadowCache_.clear();
         RefreshDesktopItemIndexCache();
         if (GetDesktopGrid())
             GetDesktopGrid()->InvalidateSlots();

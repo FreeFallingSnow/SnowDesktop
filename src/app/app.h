@@ -39,6 +39,7 @@
 #include <shlwapi.h>
 #include <shellscalingapi.h>
 #include <d2d1_1.h>
+#include <d2d1effects.h>
 #include <d3d11.h>
 #include <dcomp.h>
 #include <dwrite.h>
@@ -962,6 +963,20 @@ private:
     void DrawItemText(ID2D1DeviceContext* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f);
     /**
+     * @brief 使用桌面图标标题样式绘制已排版的文字。
+     * @param ctx D2D 上下文
+     * @param layout DirectWrite 文本布局
+     * @param shadowKey 阴影缓存键
+     * @param origin 文本左上角
+     * @param layoutSize 文本布局尺寸
+     * @param layoutScale 布局缩放
+     * @param opacity 整体透明度
+     */
+    void DrawStyledItemTextLayout(ID2D1DeviceContext* ctx,
+        IDWriteTextLayout* layout, const std::wstring& shadowKey,
+        D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
+        float layoutScale, float opacity = 1.0f);
+    /**
      * @brief 使用指定格式绘制 D2D 文字。
      * @param ctx D2D 上下文
      * @param text 文字内容
@@ -1304,6 +1319,8 @@ private:
     IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
+    /** @brief 用于录制标题阴影蒙版的独立 D2D 上下文。 */
+    ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
     ID2D1DeviceContext* brushCacheContext_ = nullptr;
@@ -1319,6 +1336,7 @@ private:
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
+    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
     HANDLE faFontHandle_ = nullptr;
     HFONT faMenuFont_ = nullptr;
     std::vector<HBITMAP> menuIconPool_;

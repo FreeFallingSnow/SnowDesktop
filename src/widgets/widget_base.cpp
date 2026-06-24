@@ -526,38 +526,44 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
     if (textRect.right > textRect.left && !name.empty())
     {
-        IDWriteTextFormat* textFormat = GetCuTextFormat(13.0f, false, false);
-        ComPtr<IDWriteTextLayout> layout;
         float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
         float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
-        if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(name.c_str(),
-            static_cast<UINT32>(name.size()),
-            textFormat ? textFormat : app_->listItemTextFormat_.Get(),
-            tw, th, &layout)) && layout)
+        const float layoutScale = app_->GetItemLayoutScale(cell);
+        const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
+        std::wstring layoutKey = L"list\x1f" + name + L"\x1f" +
+            std::to_wstring(textRect.right - textRect.left) + L"x" +
+            std::to_wstring(textRect.bottom - textRect.top) + L"@" +
+            std::to_wstring(scaleKey);
+        auto layoutIt = app_->itemTextLayoutCache_.find(layoutKey);
+        if (layoutIt == app_->itemTextLayoutCache_.end())
         {
-            ComPtr<ID2D1SolidColorBrush> shadowBrush;
-            ComPtr<ID2D1SolidColorBrush> textBrush;
-            context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
-            context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &textBrush);
-            float tx = static_cast<float>(textRect.left);
-            float ty = static_cast<float>(textRect.top);
-            const float shadowOffset = static_cast<float>(Cu(1.0f));
-            if (shadowBrush)
+            ComPtr<IDWriteTextLayout> layout;
+            if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
+                name.c_str(), static_cast<UINT32>(name.size()),
+                app_->itemTextFormat_.Get(), tw, th, &layout)) && layout)
             {
-                const D2D1_POINT_2F offsets[] = {
-                    D2D1::Point2F(tx - shadowOffset, ty),
-                    D2D1::Point2F(tx + shadowOffset, ty),
-                    D2D1::Point2F(tx, ty - shadowOffset),
-                    D2D1::Point2F(tx, ty + shadowOffset),
+                const DWRITE_TEXT_RANGE fullRange{
+                    0, static_cast<UINT32>(name.size())
                 };
-                for (const auto& offset : offsets)
-                    context->DrawTextLayout(offset, layout.Get(), shadowBrush.Get(),
-                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                layout->SetFontSize(app_->itemFontSize_ * layoutScale, fullRange);
+                layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                layout->SetLineSpacing(
+                    DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                    app_->itemFontSize_ * 7.0f / 6.0f * layoutScale,
+                    app_->itemFontSize_ * 5.0f / 6.0f * layoutScale);
+                layoutIt = app_->itemTextLayoutCache_.emplace(
+                    std::move(layoutKey), std::move(layout)).first;
             }
-            if (textBrush)
-                context->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(),
-                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
+        if (layoutIt != app_->itemTextLayoutCache_.end())
+            app_->DrawStyledItemTextLayout(
+                context, layoutIt->second.Get(), layoutIt->first,
+                D2D1::Point2F(
+                    static_cast<float>(textRect.left),
+                    static_cast<float>(textRect.top)),
+                D2D1::SizeF(tw, th), layoutScale, 1.0f);
     }
 }
 
