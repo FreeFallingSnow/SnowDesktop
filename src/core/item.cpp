@@ -140,6 +140,10 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
             context->DrawBitmap(bmp, dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
         }
+        else
+        {
+            app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
+        }
     }
 
     if (item_->shortcutArrow && item_->iconState != IconState::Loading)
@@ -272,6 +276,10 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
                 static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
             context->DrawBitmap(bmp, dst, opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+        }
+        else
+        {
+            app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
         }
     }
 
