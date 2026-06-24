@@ -193,7 +193,7 @@ void Slot::ExecuteDrop(HitRegion region, const std::vector<Item*>& sourceItems, 
  * @param ctx    Direct2D 设备上下文指针
  * @param region 命中区域类型
  */
-void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region) const
+void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region, float itemPad) const
 {
     if (!ctx || !parent_ || region == HitRegion::None || region == HitRegion::Handoff)
         return;
@@ -208,7 +208,6 @@ void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region) const
 
     if (region == HitRegion::Empty)
     {
-        // Placeholder rectangle with semi-transparent fill and blue border
         RECT r = bounds_;
         InflateRect(&r, -4, -4);
         D2D1_RECT_F rf = D2D1::RectF(
@@ -225,9 +224,9 @@ void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region) const
     {
         float x;
         if (region == HitRegion::SortBefore)
-            x = static_cast<float>(bounds_.left) + 2.0f;
+            x = static_cast<float>(bounds_.left) - itemPad - lineWidth / 2.0f;
         else
-            x = static_cast<float>(bounds_.right) - 2.0f - lineWidth;
+            x = static_cast<float>(bounds_.right) + itemPad - lineWidth / 2.0f;
 
         D2D1_RECT_F rf = D2D1::RectF(
             x, static_cast<float>(bounds_.top) + 2.0f,
@@ -238,9 +237,9 @@ void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region) const
     {
         float y;
         if (region == HitRegion::SortBefore)
-            y = static_cast<float>(bounds_.top) + 1.0f;
+            y = static_cast<float>(bounds_.top) - itemPad - lineWidth / 2.0f;
         else
-            y = static_cast<float>(bounds_.bottom) - 1.0f - lineWidth;
+            y = static_cast<float>(bounds_.bottom) + itemPad - lineWidth / 2.0f;
 
         D2D1_RECT_F rf = D2D1::RectF(
             static_cast<float>(bounds_.left) + 4.0f, y,

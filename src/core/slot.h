@@ -142,7 +142,7 @@ public:
      * 在 SortBefore / SortAfter 时绘制插入分隔线，
      * 在 Handoff 时绘制高亮边框等视觉反馈。
      */
-    void DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region) const;
+    void DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region, float itemPad = 0.0f) const;
 
 private:
     Container* parent_; ///< 所属父容器指针

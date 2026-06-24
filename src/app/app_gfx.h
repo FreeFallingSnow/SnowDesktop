@@ -182,10 +182,11 @@ inline void DesktopApp::RecreateItemTextFormat()
 {
     if (!dwriteFactory_) return;
     itemTextLayoutCache_.clear();
+    itemTextShadowCache_.clear();
     float fontSize = itemFontSize_;
     float lineHeight = fontSize * 7.0f / 6.0f;
     float baseline = fontSize * 5.0f / 6.0f;
-    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
+    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &itemTextFormat_);
     if (itemTextFormat_)
     {
@@ -264,7 +265,13 @@ inline void DesktopApp::OnPaint()
             static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)));
         context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
-        RenderFrame(context.Get());
+        if (!desktopIconsHidden_)
+            RenderFrame(context.Get());
+        else if (showHiddenHint_)
+            DrawHiddenHintOverlay(context.Get());
+
+        if (showWidgetAddedHint_)
+            DrawWidgetAddedHintOverlay(context.Get());
 
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
@@ -470,6 +477,171 @@ inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rec
     }
 }
 
+inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
+    IDWriteTextLayout* layout, const std::wstring& shadowKey,
+    D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
+    float layoutScale, float opacity)
+{
+    if (!context || !layout || shadowKey.empty()) return;
+
+    auto getBrush = [&](const D2D1_COLOR_F& color) -> ID2D1SolidColorBrush* {
+        const std::uint64_t key = D2DColorBrushKey(color);
+        auto it = brushCache_.find(key);
+        if (it == brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (FAILED(context->CreateSolidColorBrush(color, &brush)) || !brush)
+                return nullptr;
+            it = brushCache_.emplace(key, std::move(brush)).first;
+        }
+        return it->second.Get();
+    };
+    ID2D1SolidColorBrush* textBrush =
+        getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
+
+    const float tw = std::max(1.0f, layoutSize.width);
+    const float th = std::max(1.0f, layoutSize.height);
+    const float shadowScale = std::max(0.5f, layoutScale);
+    if (!itemTextEffectContext_ && d2dDevice_)
+    {
+        d2dDevice_->CreateDeviceContext(
+            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &itemTextEffectContext_);
+        if (itemTextEffectContext_)
+        {
+            itemTextEffectContext_->SetDpi(96.0f, 96.0f);
+            itemTextEffectContext_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        }
+    }
+
+    // Render both shadow layers through Direct2D's continuous Gaussian shadow
+    // effect. Cache the result per layout so normal desktop repaints only need
+    // one bitmap draw per label.
+    if (itemTextEffectContext_)
+    {
+        auto shadowIt = itemTextShadowCache_.find(shadowKey);
+        if (shadowIt == itemTextShadowCache_.end())
+        {
+            const UINT shadowPadding =
+                static_cast<UINT>(std::max(1.0f, std::ceil(6.0f * shadowScale)));
+            const UINT shadowWidth = static_cast<UINT>(
+                std::ceil(tw + shadowPadding * 2.0f + shadowScale));
+            const UINT shadowHeight = static_cast<UINT>(
+                std::ceil(th + shadowPadding * 2.0f + shadowScale));
+
+            ComPtr<ID2D1CommandList> shadowMask;
+            ComPtr<ID2D1Bitmap1> shadowBitmap;
+            D2D1_BITMAP_PROPERTIES1 shadowBitmapProperties = D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_TARGET,
+                D2D1::PixelFormat(
+                    DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+            if (SUCCEEDED(itemTextEffectContext_->CreateCommandList(&shadowMask)) &&
+                shadowMask &&
+                SUCCEEDED(itemTextEffectContext_->CreateBitmap(
+                    D2D1::SizeU(shadowWidth, shadowHeight), nullptr, 0,
+                    &shadowBitmapProperties, &shadowBitmap)) &&
+                shadowBitmap)
+            {
+                itemTextEffectContext_->SetTarget(shadowMask.Get());
+                itemTextEffectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
+                itemTextEffectContext_->BeginDraw();
+
+                ComPtr<ID2D1SolidColorBrush> maskBrush;
+                if (SUCCEEDED(itemTextEffectContext_->CreateSolidColorBrush(
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &maskBrush)) && maskBrush)
+                {
+                    itemTextEffectContext_->DrawTextLayout(
+                        D2D1::Point2F(
+                            static_cast<float>(shadowPadding),
+                            static_cast<float>(shadowPadding)),
+                        layout, maskBrush.Get(),
+                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
+
+                HRESULT maskHr = itemTextEffectContext_->EndDraw();
+                itemTextEffectContext_->SetTarget(nullptr);
+                if (SUCCEEDED(maskHr) && SUCCEEDED(shadowMask->Close()))
+                {
+                    ComPtr<ID2D1Effect> softShadow;
+                    ComPtr<ID2D1Effect> offsetShadow;
+                    ComPtr<ID2D1Effect> offsetTransform;
+                    if (SUCCEEDED(itemTextEffectContext_->CreateEffect(
+                        CLSID_D2D1Shadow, &softShadow)) && softShadow &&
+                        SUCCEEDED(itemTextEffectContext_->CreateEffect(
+                            CLSID_D2D1Shadow, &offsetShadow)) && offsetShadow &&
+                        SUCCEEDED(itemTextEffectContext_->CreateEffect(
+                            CLSID_D2D12DAffineTransform, &offsetTransform)) &&
+                        offsetTransform)
+                    {
+                        softShadow->SetInput(0, shadowMask.Get());
+                        softShadow->SetValue(
+                            D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
+                            1.5f * shadowScale);
+                        softShadow->SetValue(
+                            D2D1_SHADOW_PROP_COLOR,
+                            D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f, 0.95f });
+                        softShadow->SetValue(
+                            D2D1_SHADOW_PROP_OPTIMIZATION,
+                            D2D1_SHADOW_OPTIMIZATION_QUALITY);
+
+                        offsetShadow->SetInput(0, shadowMask.Get());
+                        offsetShadow->SetValue(
+                            D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
+                            0.5f * shadowScale);
+                        offsetShadow->SetValue(
+                            D2D1_SHADOW_PROP_COLOR,
+                            D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f, 1.0f });
+                        offsetShadow->SetValue(
+                            D2D1_SHADOW_PROP_OPTIMIZATION,
+                            D2D1_SHADOW_OPTIMIZATION_QUALITY);
+
+                        offsetTransform->SetInputEffect(0, offsetShadow.Get());
+                        offsetTransform->SetValue(
+                            D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX,
+                            D2D1::Matrix3x2F::Translation(shadowScale, shadowScale));
+                        offsetTransform->SetValue(
+                            D2D1_2DAFFINETRANSFORM_PROP_INTERPOLATION_MODE,
+                            D2D1_2DAFFINETRANSFORM_INTERPOLATION_MODE_LINEAR);
+
+                        itemTextEffectContext_->SetTarget(shadowBitmap.Get());
+                        itemTextEffectContext_->BeginDraw();
+                        itemTextEffectContext_->Clear(
+                            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+                        itemTextEffectContext_->DrawImage(softShadow.Get());
+                        itemTextEffectContext_->DrawImage(softShadow.Get());
+                        itemTextEffectContext_->DrawImage(offsetTransform.Get());
+                        HRESULT shadowHr = itemTextEffectContext_->EndDraw();
+                        itemTextEffectContext_->SetTarget(nullptr);
+                        if (SUCCEEDED(shadowHr))
+                        {
+                            shadowIt = itemTextShadowCache_.emplace(
+                                shadowKey, std::move(shadowBitmap)).first;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (shadowIt != itemTextShadowCache_.end() && shadowIt->second)
+        {
+            const float shadowPadding =
+                std::max(1.0f, std::ceil(6.0f * shadowScale));
+            const D2D1_SIZE_F shadowSize = shadowIt->second->GetSize();
+            context->DrawBitmap(
+                shadowIt->second.Get(),
+                D2D1::RectF(
+                    origin.x - shadowPadding,
+                    origin.y - shadowPadding,
+                    origin.x - shadowPadding + shadowSize.width,
+                    origin.y - shadowPadding + shadowSize.height),
+                opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+        }
+    }
+
+    if (textBrush)
+        context->DrawTextLayout(origin, layout, textBrush,
+            D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
 inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
     const std::wstring& text, bool selected, float opacity)
 {
@@ -481,7 +653,7 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
 
     const float layoutScale = GetItemLayoutScale(bounds);
     const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
-    std::wstring layoutKey = text + L"\x1f" +
+    std::wstring layoutKey = L"grid\x1f" + text + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
         std::to_wstring(scaleKey);
@@ -496,7 +668,8 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
         const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
         layout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
         layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            itemFontSize_ * 7.0f / 6.0f * layoutScale, itemFontSize_ * 5.0f / 6.0f * layoutScale);
+            itemFontSize_ * 7.0f / 6.0f * layoutScale,
+            itemFontSize_ * 5.0f / 6.0f * layoutScale);
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);
         if (metrics.lineCount == 1)
@@ -504,24 +677,6 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
         layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
     }
 
-    auto getBrush = [&](const D2D1_COLOR_F& color) -> ID2D1SolidColorBrush* {
-        const std::uint64_t key = D2DColorBrushKey(color);
-        auto it = brushCache_.find(key);
-        if (it == brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> brush;
-            if (FAILED(context->CreateSolidColorBrush(color, &brush)) || !brush)
-                return nullptr;
-            it = brushCache_.emplace(key, std::move(brush)).first;
-        }
-        return it->second.Get();
-    };
-    ID2D1SolidColorBrush* shadowBrush =
-        getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f * opacity));
-    ID2D1SolidColorBrush* textBrush =
-        getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
-
-    const float tx = static_cast<float>(textRect.left);
     float ty = static_cast<float>(textRect.top);
     DWRITE_TEXT_METRICS metrics{};
     layoutIt->second->GetMetrics(&metrics);
@@ -531,19 +686,11 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
         float collapsedH = static_cast<float>(cr.bottom - cr.top);
         ty = cr.top + (collapsedH - th) * 0.5f;
     }
-    if (shadowBrush)
-    {
-        const float shadowOffset = std::max(0.5f, layoutScale);
-        const D2D1_POINT_2F offsets[] = {
-            { tx - shadowOffset, ty }, { tx + shadowOffset, ty },
-            { tx, ty - shadowOffset }, { tx, ty + shadowOffset },
-        };
-        for (auto& pt : offsets)
-            context->DrawTextLayout(pt, layoutIt->second.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    }
-    if (textBrush)
-        context->DrawTextLayout(D2D1::Point2F(tx, ty), layoutIt->second.Get(), textBrush,
-            D2D1_DRAW_TEXT_OPTIONS_CLIP);
+
+    DrawStyledItemTextLayout(
+        context, layoutIt->second.Get(), layoutIt->first,
+        D2D1::Point2F(static_cast<float>(textRect.left), ty),
+        D2D1::SizeF(tw, th), layoutScale, opacity);
 }
 
 inline void DesktopApp::DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
@@ -1299,7 +1446,7 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
             {
                 DrawPlaceholderIcon(ctx, item.sysIconIndex, qnIconRect, 1.0f);
             }
-            else if (item.iconBitmap)
+            else
             {
                 ID2D1Bitmap1* bmp = GetOrCreateD2DBitmap(item.iconBitmap);
                 if (bmp)
@@ -1308,6 +1455,10 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
                         static_cast<float>(qnIconRect.left), static_cast<float>(qnIconRect.top),
                         static_cast<float>(qnIconRect.right), static_cast<float>(qnIconRect.bottom));
                     ctx->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+                }
+                else
+                {
+                    DrawPlaceholderIcon(ctx, item.sysIconIndex, qnIconRect, 1.0f);
                 }
             }
 
@@ -1391,6 +1542,11 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
                 continue;
         }
 
+        if (widgetData.showOnHoverOnly && !dragSession_.IsActive() && !externalDragActive_
+            && !(popupWidgetIndex_ < widgets_.size() && &widgetData == &widgets_[popupWidgetIndex_])
+            && !PtInRect(&widgetData.bounds, lastMousePoint_))
+            continue;
+
         bool drawn = false;
         for (auto& c : containers_)
         {
@@ -1454,6 +1610,34 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     if ((dragSession_.IsActive() || externalDragActive_) && targetContainer
         && targetRegion != HitRegion::None)
     {
+        RECT clipViewport{};
+        auto* wc = dynamic_cast<WidgetContainer*>(targetContainer);
+        if (wc)
+        {
+            RECT bodyRect = wc->GetBodyRect();
+            if (popupWidgetIndex_ < widgets_.size() &&
+                wc->GetWidgetData() == &widgets_[popupWidgetIndex_])
+            {
+                RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+                RECT popupContent = GetCollectionPopupContentRect(popup);
+                RECT widgetVp = wc->GetContentViewportRect();
+                IntersectRect(&clipViewport, &popupContent, &widgetVp);
+                clipViewport.left = popup.left;
+                clipViewport.right = popup.right;
+            }
+            else
+            {
+                clipViewport = wc->GetContentViewportRect();
+                clipViewport.left = bodyRect.left;
+                clipViewport.right = bodyRect.right;
+            }
+        }
+        bool clipped = false;
+        if (!IsRectEmptyRect(clipViewport))
+        {
+            ctx->PushAxisAlignedClip(ToD2DRect(clipViewport), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            clipped = true;
+        }
         if (targetRegion == HitRegion::Handoff && targetSlot)
         {
             RECT bounds = targetSlot->GetBounds();
@@ -1465,6 +1649,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         {
             targetContainer->DrawDropPreview(ctx, targetSlot, targetRegion);
         }
+        if (clipped) ctx->PopAxisAlignedClip();
     }
 
     // Dragged items at offset
@@ -1928,4 +2113,121 @@ inline void DesktopApp::DrawPageNotify(ID2D1DeviceContext* ctx)
     if (textBrush)
         ctx->DrawTextLayout(D2D1::Point2F(textX, textY),
             layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+inline void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
+{
+    if (!ctx || !showHiddenHint_) return;
+
+    auto* dwrite = GetDWriteFactory();
+    if (!dwrite) return;
+
+    RECT workArea{};
+    if (!gridPages_.empty())
+        workArea = gridPages_[0].workArea;
+    if (IsRectEmptyRect(workArea))
+    {
+        workArea.left = 0;
+        workArea.top = 0;
+        workArea.right = GetSystemMetrics(SM_CXSCREEN);
+        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+
+    const std::wstring hintText = L"双击取消隐藏桌面，可在设置中关闭此功能";
+
+    ComPtr<IDWriteTextFormat> fmt;
+    if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &fmt)) || !fmt)
+        return;
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+    // Measure text width using a temporary layout
+    ComPtr<IDWriteTextLayout> measureLayout;
+    if (SUCCEEDED(dwrite->CreateTextLayout(hintText.c_str(),
+        static_cast<UINT32>(hintText.size()), fmt.Get(), 2000.0f, 40.0f, &measureLayout)) && measureLayout)
+    {
+        DWRITE_TEXT_METRICS metrics{};
+        measureLayout->GetMetrics(&metrics);
+
+        constexpr float hintPadding = 24.0f;
+        constexpr float hintHeight = 36.0f;
+        constexpr float marginTop = 60.0f;
+
+        const float textW = metrics.width + hintPadding * 2.0f;
+        const int areaW = workArea.right - workArea.left;
+
+        RECT hintRect = MakeRect(
+            static_cast<int>(workArea.left + (areaW - textW) / 2.0f),
+            static_cast<int>(workArea.top + marginTop),
+            static_cast<int>(workArea.left + (areaW + textW) / 2.0f),
+            static_cast<int>(workArea.top + marginTop + hintHeight));
+
+        DrawD2DRoundedRectangle(ctx, hintRect, 10.0f,
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.65f),
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), 0.0f);
+
+        DrawD2DText(ctx, hintText, hintRect, fmt.Get(),
+            D2D1::ColorF(0.95f, 0.96f, 1.0f, 0.90f));
+    }
+}
+
+inline void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
+{
+    if (!ctx || !showWidgetAddedHint_) return;
+
+    auto* dwrite = GetDWriteFactory();
+    if (!dwrite) return;
+
+    RECT workArea{};
+    if (!gridPages_.empty())
+        workArea = gridPages_[0].workArea;
+    if (IsRectEmptyRect(workArea))
+    {
+        workArea.left = 0;
+        workArea.top = 0;
+        workArea.right = GetSystemMetrics(SM_CXSCREEN);
+        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+
+    const std::wstring hintText = L"拖动组件底部可移动组件位置，拖动组件右下角圆点可调整组件大小";
+
+    ComPtr<IDWriteTextFormat> fmt;
+    if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &fmt)) || !fmt)
+        return;
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+    ComPtr<IDWriteTextLayout> measureLayout;
+    if (SUCCEEDED(dwrite->CreateTextLayout(hintText.c_str(),
+        static_cast<UINT32>(hintText.size()), fmt.Get(), 2000.0f, 40.0f, &measureLayout)) && measureLayout)
+    {
+        DWRITE_TEXT_METRICS metrics{};
+        measureLayout->GetMetrics(&metrics);
+
+        constexpr float hintPadding = 24.0f;
+        constexpr float hintHeight = 36.0f;
+        constexpr float marginTop = 60.0f;
+
+        const float textW = metrics.width + hintPadding * 2.0f;
+        const int areaW = workArea.right - workArea.left;
+
+        RECT hintRect = MakeRect(
+            static_cast<int>(workArea.left + (areaW - textW) / 2.0f),
+            static_cast<int>(workArea.top + marginTop),
+            static_cast<int>(workArea.left + (areaW + textW) / 2.0f),
+            static_cast<int>(workArea.top + marginTop + hintHeight));
+
+        DrawD2DRoundedRectangle(ctx, hintRect, 10.0f,
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.65f),
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), 0.0f);
+
+        DrawD2DText(ctx, hintText, hintRect, fmt.Get(),
+            D2D1::ColorF(0.95f, 0.96f, 1.0f, 0.90f));
+    }
 }

@@ -413,7 +413,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             continue;
         }
 
-        DrawListItem(context, cell, entry.iconBitmap, entry.name, entry.selected);
+        DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
+            entry.name, entry.selected);
     }
     context->PopAxisAlignedClip();
 }

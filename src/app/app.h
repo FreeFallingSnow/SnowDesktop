@@ -25,6 +25,7 @@
 #include "drag_session.h"
 #include "settings_window.h"
 #include "navigation_settings.h"
+#include "general_settings.h"
 #include "utils.h"
 #include "widget_engine.h"
 #include "types.h"
@@ -38,6 +39,7 @@
 #include <shlwapi.h>
 #include <shellscalingapi.h>
 #include <d2d1_1.h>
+#include <d2d1effects.h>
 #include <d3d11.h>
 #include <dcomp.h>
 #include <dwrite.h>
@@ -366,6 +368,10 @@ private:
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
     void DrawPageNotify(ID2D1DeviceContext* ctx);
+    /** @brief 绘制隐藏状态提示（双击取消隐藏）。 */
+    void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
+    /** @brief 绘制添加组件操作提示。 */
+    void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
@@ -404,6 +410,18 @@ private:
     void ShowSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */
     void LoadNavigationSettingsAndApply();
+    /** @brief 加载通用设置。 */
+    void LoadGeneralSettingsAndApply();
+    /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
+    void ToggleDesktopIconsVisibility();
+    /** @brief 显示隐藏状态提示文字。 */
+    void ShowHiddenHint();
+    /** @brief 清除隐藏状态提示。 */
+    void ClearHiddenHint();
+    /** @brief 显示添加组件操作提示。 */
+    void ShowWidgetAddedHint();
+    /** @brief 清除添加组件操作提示。 */
+    void ClearWidgetAddedHint();
     /** @brief 注册快速导航热键。 */
     void ApplyNavigationHotkey();
     /** @brief 注销快速导航热键。 */
@@ -951,6 +969,20 @@ private:
     void DrawItemText(ID2D1DeviceContext* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f);
     /**
+     * @brief 使用桌面图标标题样式绘制已排版的文字。
+     * @param ctx D2D 上下文
+     * @param layout DirectWrite 文本布局
+     * @param shadowKey 阴影缓存键
+     * @param origin 文本左上角
+     * @param layoutSize 文本布局尺寸
+     * @param layoutScale 布局缩放
+     * @param opacity 整体透明度
+     */
+    void DrawStyledItemTextLayout(ID2D1DeviceContext* ctx,
+        IDWriteTextLayout* layout, const std::wstring& shadowKey,
+        D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
+        float layoutScale, float opacity = 1.0f);
+    /**
      * @brief 使用指定格式绘制 D2D 文字。
      * @param ctx D2D 上下文
      * @param text 文字内容
@@ -1293,6 +1325,8 @@ private:
     IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
+    /** @brief 用于录制标题阴影蒙版的独立 D2D 上下文。 */
+    ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
     ID2D1DeviceContext* brushCacheContext_ = nullptr;
@@ -1308,12 +1342,19 @@ private:
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
+    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
     HANDLE faFontHandle_ = nullptr;
     HFONT faMenuFont_ = nullptr;
     std::vector<HBITMAP> menuIconPool_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     NavigationSettings navigationSettings_;
+    GeneralSettings generalSettings_;
+    bool desktopIconsHidden_ = false;
+    bool showHiddenHint_ = false;
+    DWORD hiddenHintStartTick_ = 0;
+    bool showWidgetAddedHint_ = false;
+    DWORD widgetAddedHintStartTick_ = 0;
     bool navigationHotkeyRegistered_ = false;
     /** @} */
 

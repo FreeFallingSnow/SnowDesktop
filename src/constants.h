@@ -106,6 +106,11 @@ constexpr UINT kContextSortByTypeDescCommand = 41034;
 constexpr UINT kContextWidgetSortByNameDesc = 41035;
 constexpr UINT kContextWidgetSortByTypeDesc = 41036;
 constexpr UINT kContextWidgetSortByDateDesc = 41037;
+constexpr UINT kContextWidgetShowOnHover = 41038;
+constexpr UINT kContextWidgetShowOnHoverOn = 41038;
+constexpr UINT kContextWidgetShowOnHoverOff = 41041;
+constexpr UINT kContextWidgetCollModeLargeFolder = 41039;
+constexpr UINT kContextWidgetCollModeScrollContainer = 41040;
 constexpr UINT kContextSpacingPresetFirst = 41150;
 constexpr UINT kContextNewMenu = 41400;
 constexpr UINT kContextSettingsCommand = 41401;
@@ -148,6 +153,10 @@ constexpr DWORD kPageNotifyVisibleMs = 1800;
 constexpr DWORD kPageNotifyFadeMs = 500;
 constexpr UINT_PTR kDisplayTopologyRefreshTimerId = 8;
 constexpr UINT kDisplayTopologyRefreshDebounceMs = 750;
+constexpr UINT_PTR kHiddenHintTimerId = 9;
+constexpr UINT kHiddenHintVisibleMs = 2000;
+constexpr UINT_PTR kWidgetAddedHintTimerId = 10;
+constexpr UINT kWidgetAddedHintVisibleMs = 2000;
 
 // ── 组件独立刷新定时器 ────────────────────────
 // 由 manifest 的 refreshIntervalMs 声明驱动的 per-widget Win32 定时器 ID 基址，

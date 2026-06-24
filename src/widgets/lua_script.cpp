@@ -136,6 +136,13 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
         if (customStyle && widgetOk)
         {
+            std::string fp = app_->widgetEngine_->RuntimeGetStorageValue(data_->id, "followPersonalization");
+            if (fp == "1")
+                customStyle = false;
+        }
+
+        if (customStyle && widgetOk)
+        {
             float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
             float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, luaGradientEndA = gradientEndA;
             if (app_->widgetEngine_->ReadCustomColors(data_->id,

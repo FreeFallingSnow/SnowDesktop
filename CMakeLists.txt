@@ -17,6 +17,7 @@ set(SNOWDESKTOP_SOURCES
     src/settings_window.cpp
     src/personalization.cpp
     src/navigation_settings.cpp
+    src/general_settings.cpp
     src/widget_engine.cpp
     src/system_snapshot.cpp
     src/http_runtime.cpp
@@ -90,7 +91,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
-    comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi gdi32 msimg32
+    comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
     bcrypt iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowscodecs uuid winhttp
 )
 

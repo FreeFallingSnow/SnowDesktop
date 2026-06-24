@@ -1657,7 +1657,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
                         std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
                         int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0, tabScrollOffset = 0;
-                        bool autoCollect = false, listMode = false;
+                        bool autoCollect = false, listMode = false, showOnHoverOnly = false, scrollContainerMode = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
                             !ReadJsonStringField(obj, "page", pageUtf8) ||
                             !ReadJsonIntField(obj, "x", x) ||
@@ -1677,6 +1677,8 @@ inline void DesktopApp::LoadLayoutSlots()
 ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         ReadJsonBoolField(obj, "autoCollect", autoCollect);
                         ReadJsonBoolField(obj, "listMode", listMode);
+                        ReadJsonBoolField(obj, "showOnHoverOnly", showOnHoverOnly);
+                        ReadJsonBoolField(obj, "scrollContainerMode", scrollContainerMode);
 
                         DesktopWidget widget;
                         widget.id = Utf8ToWide(idUtf8);
@@ -1712,6 +1714,8 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         widget.gridSpan.rows = std::max(1, h);
                         widget.autoCollect = autoCollect;
                         widget.listMode = listMode;
+                        widget.showOnHoverOnly = showOnHoverOnly;
+                        widget.scrollContainerMode = scrollContainerMode;
                         widget.showTitle = widget.type != DesktopWidgetType::LuaScript;
                         widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
                             widget.type == DesktopWidgetType::LuaScript ||
@@ -1892,6 +1896,8 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
+             << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
              << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
              << ", \"tabScrollOffset\": " << std::max(0, w.tabScrollOffset)
              << ", \"items\": [";
@@ -2562,6 +2568,7 @@ inline void DesktopApp::LoadDesktopItems()
 items_.clear();
     itemIndexByKeyCache_.clear();
     itemTextLayoutCache_.clear();
+    itemTextShadowCache_.clear();
     WriteCrashLogEntry(L"LoadItems start");
 
     HRESULT hr = SHGetDesktopFolder(&desktopFolder_);
@@ -4575,6 +4582,7 @@ inline bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceLi
 
         d2dIconCache_.clear();
         itemTextLayoutCache_.clear();
+        itemTextShadowCache_.clear();
         RefreshDesktopItemIndexCache();
         if (GetDesktopGrid())
             GetDesktopGrid()->InvalidateSlots();
@@ -5395,7 +5403,8 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     GridCell cell = CellFromPoint(clientPoint);
     if (cell.pageId.empty())
     {
-        for (const auto& p : gridPages_) { cell = { p.id, 0, 0 }; break; }
+        if (!gridPages_.empty())
+            cell = { gridPages_[0].id, 0, 0 };
         if (cell.pageId.empty()) return;
     }
 
@@ -5458,6 +5467,7 @@ inline void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
     w.showTitle = true;
     w.bottomBarHover = true;
     AddWidgetToGrid(std::move(w), { 1, 1 });
+    ShowWidgetAddedHint();
 }
 
 /**
@@ -5473,6 +5483,7 @@ inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
     w.title = L"桌面文件";
     w.showTitle = true;
     AddWidgetToGrid(std::move(w), { 2, 2 });
+    ShowWidgetAddedHint();
 }
 
 /**
@@ -5512,6 +5523,7 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
     size_t idx = widgets_.size() - 1;
     EnumerateFolderMappingEntries(widgets_[idx]);
     RebuildContainersAndItems();
+    ShowWidgetAddedHint();
 }
 
 /**
@@ -5546,6 +5558,7 @@ inline void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& sc
     int defaultRows = 1;
     WidgetEngine::GetWidgetDefaultSpan(scriptFilename, defaultColumns, defaultRows);
     AddWidgetToGrid(std::move(w), { defaultColumns, defaultRows });
+    ShowWidgetAddedHint();
 }
 
 /**
@@ -5755,6 +5768,14 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
                 }
             }
         }
+    }
+
+    if (widgets_[widgetIndex].type == DesktopWidgetType::Collection &&
+        widgets_[widgetIndex].scrollContainerMode &&
+        (targetSpan.columns < 2 || targetSpan.rows < 2))
+    {
+        widgets_[widgetIndex].scrollContainerMode = false;
+        widgets_[widgetIndex].scrollOffset = 0;
     }
 
     LayoutItems();

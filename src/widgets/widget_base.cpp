@@ -358,6 +358,29 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
             return region;
         }
     }
+
+    // List mode: check gaps between items
+    if (SingleColumn() && slots.size() >= 2)
+    {
+        int pad = Cu(2.0f);
+        for (size_t i = 0; i + 1 < slots.size(); ++i)
+        {
+            RECT upper = slots[i]->GetBounds();
+            RECT lower = slots[i + 1]->GetBounds();
+            if (pt.y > upper.bottom && pt.y < lower.top)
+            {
+                int mid = upper.bottom + pad;
+                if (pt.y < mid)
+                {
+                    outSlot = slots[i].get();
+                    return HitRegion::SortAfter;
+                }
+                outSlot = slots[i + 1].get();
+                return HitRegion::SortBefore;
+            }
+        }
+    }
+
     // Mouse in frame but not on any slot — sort at end
     return HitRegion::SortAfter;
 }
@@ -435,7 +458,8 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
 void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
     if (!slot || !ctx) return;
-    slot->DrawDropIndicator(ctx, region);
+    float itemPad = SingleColumn() ? static_cast<float>(Cu(2.0f)) : 0.0f;
+    slot->DrawDropIndicator(ctx, region, itemPad);
 }
 
 /**
@@ -486,11 +510,13 @@ BarStyle ScrollingItemWidget::GetInsertionStyle() const
  * @param context D2D 设备上下文
  * @param cell 项目单元格区域
  * @param iconBitmap 图标位图
+ * @param sysIconIndex 系统图标索引，用于位图不可用时的回退绘制
  * @param name 项目名称
  * @param selected 是否选中
  */
 void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
-    HBITMAP iconBitmap, const std::wstring& name, bool selected) const
+    HBITMAP iconBitmap, int sysIconIndex,
+    const std::wstring& name, bool selected) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
@@ -515,43 +541,53 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         context->DrawBitmap(bmp, app_->ToD2DRect(iconRect), 1.0f,
             D2D1_INTERPOLATION_MODE_LINEAR);
     }
+    else
+    {
+        app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, 1.0f);
+    }
 
     RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
         cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
     if (textRect.right > textRect.left && !name.empty())
     {
-        IDWriteTextFormat* textFormat = GetCuTextFormat(13.0f, false, false);
-        ComPtr<IDWriteTextLayout> layout;
         float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
         float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
-        if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(name.c_str(),
-            static_cast<UINT32>(name.size()),
-            textFormat ? textFormat : app_->listItemTextFormat_.Get(),
-            tw, th, &layout)) && layout)
+        const float layoutScale = app_->GetItemLayoutScale(cell);
+        const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
+        std::wstring layoutKey = L"list\x1f" + name + L"\x1f" +
+            std::to_wstring(textRect.right - textRect.left) + L"x" +
+            std::to_wstring(textRect.bottom - textRect.top) + L"@" +
+            std::to_wstring(scaleKey);
+        auto layoutIt = app_->itemTextLayoutCache_.find(layoutKey);
+        if (layoutIt == app_->itemTextLayoutCache_.end())
         {
-            ComPtr<ID2D1SolidColorBrush> shadowBrush;
-            ComPtr<ID2D1SolidColorBrush> textBrush;
-            context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f), &shadowBrush);
-            context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &textBrush);
-            float tx = static_cast<float>(textRect.left);
-            float ty = static_cast<float>(textRect.top);
-            const float shadowOffset = static_cast<float>(Cu(1.0f));
-            if (shadowBrush)
+            ComPtr<IDWriteTextLayout> layout;
+            if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
+                name.c_str(), static_cast<UINT32>(name.size()),
+                app_->itemTextFormat_.Get(), tw, th, &layout)) && layout)
             {
-                const D2D1_POINT_2F offsets[] = {
-                    D2D1::Point2F(tx - shadowOffset, ty),
-                    D2D1::Point2F(tx + shadowOffset, ty),
-                    D2D1::Point2F(tx, ty - shadowOffset),
-                    D2D1::Point2F(tx, ty + shadowOffset),
+                const DWRITE_TEXT_RANGE fullRange{
+                    0, static_cast<UINT32>(name.size())
                 };
-                for (const auto& offset : offsets)
-                    context->DrawTextLayout(offset, layout.Get(), shadowBrush.Get(),
-                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                layout->SetFontSize(app_->itemFontSize_ * layoutScale, fullRange);
+                layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                layout->SetLineSpacing(
+                    DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                    app_->itemFontSize_ * 7.0f / 6.0f * layoutScale,
+                    app_->itemFontSize_ * 5.0f / 6.0f * layoutScale);
+                layoutIt = app_->itemTextLayoutCache_.emplace(
+                    std::move(layoutKey), std::move(layout)).first;
             }
-            if (textBrush)
-                context->DrawTextLayout(D2D1::Point2F(tx, ty), layout.Get(), textBrush.Get(),
-                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
+        if (layoutIt != app_->itemTextLayoutCache_.end())
+            app_->DrawStyledItemTextLayout(
+                context, layoutIt->second.Get(), layoutIt->first,
+                D2D1::Point2F(
+                    static_cast<float>(textRect.left),
+                    static_cast<float>(textRect.top)),
+                D2D1::SizeF(tw, th), layoutScale, 1.0f);
     }
 }
 
@@ -731,7 +767,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const bool persistentBottomBar = tinyCollection ||
         data_->type == DesktopWidgetType::FileCategories ||
         data_->type == DesktopWidgetType::FolderMapping ||
-        data_->type == DesktopWidgetType::Guide;
+        data_->type == DesktopWidgetType::Guide ||
+        (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
     bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;
