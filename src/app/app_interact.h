@@ -2069,6 +2069,35 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     // ── Widget hit-test ─────────────────────────────────────
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     widgetAction_ = WidgetAction::None;
+
+    // Defocus search box when clicking outside all search boxes
+    {
+        bool clickedSearchBox = false;
+        for (auto& c : containers_)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(c.get());
+            if (!fc) continue;
+            RECT sr = fc->GetSearchBoxRect();
+            if (!IsRectEmptyRect(sr) && PtInRect(&sr, pt))
+            {
+                clickedSearchBox = true;
+                break;
+            }
+        }
+        if (!clickedSearchBox)
+        {
+            for (auto& c : containers_)
+            {
+                auto* fc = dynamic_cast<FileCategories*>(c.get());
+                if (fc && fc->IsSearchFocused())
+                {
+                    fc->SetSearchFocused(false);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+            }
+        }
+    }
+
     for (size_t n = widgets_.size(); n > 0; --n)
     {
         size_t wi = n - 1;
@@ -2279,11 +2308,37 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             return;
         }
+        else if (wh == WidgetHit::SearchBox)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(wc);
+            for (auto& c : containers_)
+            {
+                auto* other = dynamic_cast<FileCategories*>(c.get());
+                if (other) other->SetSearchFocused(false);
+            }
+            if (fc) fc->SetSearchFocused(true);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
     }
 
     // ── Desktop icon hit-test ───────────────────────────────
     DesktopIcon* hit = HitTestIcon(pt);
     mouseDownHit_ = hit;
+
+    // Defocus search when clicking on desktop area
+    if (hit || mouseDownWidgetIndex_ == static_cast<size_t>(-1))
+    {
+        for (auto& c : containers_)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(c.get());
+            if (fc && fc->IsSearchFocused())
+            {
+                fc->SetSearchFocused(false);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
+    }
 
     // Clear widget selection when clicking desktop area
     if (!hit && mouseDownWidgetIndex_ == static_cast<size_t>(-1) && !ctrl)
@@ -3222,6 +3277,30 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     }
 
     if (renameEdit_ != nullptr) return;
+
+    // Handle FileCategories search box keyboard input
+    {
+        for (auto& c : containers_)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(c.get());
+            if (fc && fc->IsSearchFocused())
+            {
+                if (key == VK_ESCAPE)
+                {
+                    fc->ClearSearchText();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_BACK)
+                {
+                    fc->BackspaceSearchText();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                break;
+            }
+        }
+    }
 
     if (quickNavigationOpen_)
     {

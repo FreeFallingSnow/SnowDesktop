@@ -46,6 +46,7 @@ enum class WidgetHit {
     ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
     OpenFolderBtn,      ///< FolderMapping：打开源文件夹按钮
     CategoryTab,        ///< FileCategories：分类标签页
+    SearchBox,          ///< FileCategories：搜索框
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
 };
 
@@ -265,6 +266,7 @@ public:
     int  GetTotalContentHeight() const override;
     int  GetVisibleContentHeight() const override;
     bool SingleColumn() const override;
+    BarStyle GetInsertionStyle() const override;
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
@@ -328,6 +330,17 @@ public:
     const std::vector<std::wstring>& CachedVisibleCategoryIds() const;
     std::wstring CachedActiveCategoryId() const;
 
+    const std::wstring& GetSearchText() const { return searchText_; }
+    void SetSearchText(const std::wstring& text) { searchText_ = text; InvalidateSlots(); }
+    void AppendSearchChar(wchar_t ch) { searchText_ += ch; InvalidateSlots(); }
+    void BackspaceSearchText() { if (!searchText_.empty()) { searchText_.pop_back(); InvalidateSlots(); } }
+    void ClearSearchText() { searchText_.clear(); searchFocused_ = false; InvalidateSlots(); }
+    bool IsSearchFocused() const { return searchFocused_; }
+    void SetSearchFocused(bool focused) { searchFocused_ = focused; }
+    RECT GetSearchBoxRect() const;
+    bool IsSearchActive() const { return !searchText_.empty(); }
+    const std::vector<std::wstring>& GetSearchResultKeys() const;
+
 private:
     struct CategorySnapshot
     {
@@ -342,6 +355,9 @@ private:
     void InvalidateCategorySnapshot() const;
 
     mutable CategorySnapshot categorySnapshot_;
+    std::wstring searchText_;
+    bool searchFocused_ = false;
+    mutable std::vector<std::wstring> searchResultCache_;
 };
 
 /**

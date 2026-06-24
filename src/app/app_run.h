@@ -1009,6 +1009,24 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
     case WM_KEYDOWN:
         OnKeyDown(wp);
         return 0;
+    case WM_CHAR:
+    {
+        wchar_t ch = static_cast<wchar_t>(wp);
+        if (ch >= 0x20 && ch != 0x7F)
+        {
+            for (auto& c : containers_)
+            {
+                auto* fc = dynamic_cast<FileCategories*>(c.get());
+                if (fc && fc->IsSearchFocused())
+                {
+                    fc->AppendSearchChar(ch);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    break;
+                }
+            }
+        }
+        return 0;
+    }
     case WM_KEYUP:
         RefreshDragHintFromKeyboard();
         return 0;

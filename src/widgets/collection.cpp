@@ -790,6 +790,12 @@ bool Collection::SingleColumn() const
     return data_->listMode;
 }
 
+BarStyle Collection::GetInsertionStyle() const
+{
+    if (!data_ || !data_->scrollContainerMode) return BarStyle::VBar;
+    return data_->listMode ? BarStyle::HBar : BarStyle::VBar;
+}
+
 int Collection::GetItemHeight() const
 {
     if (!data_ || !data_->scrollContainerMode) return Cu(136.0f);
