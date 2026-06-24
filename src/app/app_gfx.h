@@ -1309,6 +1309,10 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
                         static_cast<float>(qnIconRect.right), static_cast<float>(qnIconRect.bottom));
                     ctx->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
                 }
+                else
+                {
+                    DrawPlaceholderIcon(ctx, item.sysIconIndex, qnIconRect, 1.0f);
+                }
             }
 
             if (item.shortcutArrow && item.iconState != IconState::Loading)

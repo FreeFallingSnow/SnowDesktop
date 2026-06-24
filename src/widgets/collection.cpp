@@ -175,6 +175,11 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
                 static_cast<float>(iconX + iconSize), static_cast<float>(iconY + iconSize));
             context->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
         }
+        else
+        {
+            RECT placeholderRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
+            app_->DrawPlaceholderIcon(context, item.sysIconIndex, placeholderRect, 1.0f);
+        }
     }
 
     if (item.shortcutArrow && item.iconState != IconState::Loading)
