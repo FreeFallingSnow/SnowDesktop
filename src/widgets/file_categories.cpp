@@ -294,7 +294,7 @@ RECT FileCategories::GetSearchBoxRect() const
 {
     if (!data_ || !app_) return {};
     RECT body = GetBodyRect();
-    InflateRect(&body, -Cu(10.0f), -Cu(8.0f));
+    InflateRect(&body, -Cu(10.0f), -Cu(12.0f));
     if (IsRectEmptyRect(body)) return {};
     InflateRect(&body, -Cu(2.0f), 0);
     if (IsRectEmptyRect(body)) return {};
