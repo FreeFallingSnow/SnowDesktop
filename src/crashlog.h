@@ -6,9 +6,12 @@
 
 #pragma once
 #include <windows.h>
+#include <shobjidl.h>
 #include <dbghelp.h>
 #include <psapi.h>
+#include <algorithm>
 #include <string>
+#include <vector>
 
 #pragma comment(lib, "dbghelp.lib")
 
@@ -29,6 +32,71 @@ inline void InstallCrashHandler()
 }
 
 /**
+ * @brief 写入 Windows minidump 文件
+ * @details 在崩溃时生成 .dmp 文件，配合 PDB 可在 Visual Studio / WinDbg 中
+ *          精确还原崩溃现场（调用栈、局部变量、寄存器、线程状态）。
+ *          文件命名为 SnowDesktop_<pid>_<tick>.dmp，写入可执行文件所在目录下的
+ *          crashdumps 子目录（首次崩溃时自动创建）。自动清理旧 dump，仅保留最近
+ *          5 个，避免磁盘无限增长。
+ * @param info 异常指针，传给 MiniDumpWriteDump 用于记录异常上下文
+ * @param exeDir 可执行文件所在目录
+ */
+inline void WriteMiniDump(EXCEPTION_POINTERS* info, const std::wstring& exeDir)
+{
+    CreateDirectoryW(exeDir.c_str(), nullptr);
+
+    wchar_t name[96];
+    wsprintfW(name, L"SnowDesktop_%lu_%lu.dmp",
+        GetCurrentProcessId(), GetTickCount());
+    std::wstring path = exeDir + L"\\" + name;
+
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+        nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+
+    MINIDUMP_EXCEPTION_INFORMATION mei{};
+    mei.ThreadId = GetCurrentThreadId();
+    mei.ExceptionPointers = info;
+    mei.ClientPointers = FALSE;
+
+    MINIDUMP_TYPE dumpType = static_cast<MINIDUMP_TYPE>(
+        MiniDumpNormal | MiniDumpWithDataSegs |
+        MiniDumpWithThreadInfo | MiniDumpWithProcessThreadData);
+
+    BOOL ok = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(),
+        f, dumpType, &mei, nullptr, nullptr);
+    CloseHandle(f);
+
+    if (!ok)
+    {
+        DeleteFileW(path.c_str());
+        return;
+    }
+
+    // --- 清理旧 dump，仅保留最近 5 个 ---
+    std::vector<std::pair<std::wstring, FILETIME>> dumps;
+    WIN32_FIND_DATAW fd{};
+    HANDLE h = FindFirstFileW((exeDir + L"\\SnowDesktop_*.dmp").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do
+    {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            dumps.emplace_back(fd.cFileName, fd.ftLastWriteTime);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+
+    constexpr size_t kMaxDumps = 5;
+    if (dumps.size() <= kMaxDumps) return;
+
+    std::sort(dumps.begin(), dumps.end(),
+        [](const auto& a, const auto& b) {
+            return CompareFileTime(&a.second, &b.second) < 0;
+        });
+    for (size_t i = 0; i + kMaxDumps < dumps.size(); ++i)
+        DeleteFileW((exeDir + L"\\" + dumps[i].first).c_str());
+}
+
+/**
  * @brief 顶层未处理异常处理函数
  * @details 通过 SetUnhandledExceptionFilter 注册，异常发生时生成包含调用栈的崩溃日志，
  *          日志写入可执行文件所在目录的 crash.log 文件
@@ -44,8 +112,10 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     std::wstring dir(exePath);
     dir = dir.substr(0, dir.find_last_of(L"\\/") + 1);
+    std::wstring dumpDir = dir + L"\\crashdumps";
+    CreateDirectoryW(dumpDir.c_str(), nullptr);
 
-    HANDLE f = CreateFileW((dir + L"crash.log").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
+    HANDLE f = CreateFileW((dumpDir + L"\\crash.log").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
         nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) return EXCEPTION_CONTINUE_SEARCH;
 
@@ -149,5 +219,42 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
     wsprintfW(buf, L"=== END ===\r\n");
     write(buf);
     CloseHandle(f);
+
+    // --- 写入 minidump，便于后续用 PDB 精确还原崩溃现场 ---
+    WriteMiniDump(info, dumpDir);
+
     return EXCEPTION_EXECUTE_HANDLER;
+}
+
+/**
+ * @brief 手动触发一次访问违规崩溃，用于测试崩溃日志与 minidump 写入流程
+ * @details 通过对空指针解引用写入的方式产生 0xC0000005 访问违规，
+ *          会进入已注册的 UnhandledFilter / CrashHandler，从而生成
+ *          crash.log 条目与 crashdumps\*.dmp 文件。
+ *          仅供调试页"崩溃测试"按钮调用，正式发布构建也应保留以便
+ *          在用户现场验证崩溃捕获是否正常。
+ */
+inline void TriggerCrashForTesting()
+{
+    volatile int* nullPtr = nullptr;
+    *nullPtr = 0xDEAD;
+}
+
+/**
+ * @brief 安全调用 IContextMenu::InvokeCommand，使用 SEH 捕获第三方 Shell 扩展
+ *        可能抛出的访问违规等异常，防止导致 SnowDesktop 崩溃。
+ * @param ctxMenu  目标 IContextMenu 接口指针
+ * @param pici     指向 CMINVOKECOMMANDINFO 或 CMINVOKECOMMANDINFOEX 的指针
+ * @return 调用成功返回 TRUE，异常或失败返回 FALSE
+ */
+inline BOOL SafeInvokeCommand(IContextMenu* ctxMenu, LPCMINVOKECOMMANDINFO pici)
+{
+    __try
+    {
+        return SUCCEEDED(ctxMenu->InvokeCommand(pici));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return FALSE;
+    }
 }

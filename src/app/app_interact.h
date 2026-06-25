@@ -8,6 +8,7 @@
  */
 
 #pragma once
+#include "../crashlog.h"
 // Inline implementations for DesktopApp — Interaction & Tray.
 // This file is included by app.h after the class definition.
 
@@ -3483,7 +3484,7 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
                 info.hwnd = hwnd_;
                 info.lpVerb = "paste";
                 info.nShow = SW_SHOWNORMAL;
-                bgMenu->InvokeCommand(&info);
+                SafeInvokeCommand(bgMenu.Get(), &info);
                 cutPaths_.clear();
                 ReloadItems();
             }
@@ -3577,7 +3578,7 @@ inline void DesktopApp::InvokeSelectedShellVerb(const char* verb)
     info.hwnd = hwnd_;
     info.lpVerb = verb;
     info.nShow = SW_SHOWNORMAL;
-    if (SUCCEEDED(contextMenu->InvokeCommand(&info)))
+    if (SafeInvokeCommand(contextMenu.Get(), &info))
         ReloadItems();
 }
 
@@ -4524,7 +4525,7 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
         invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         RefreshFolderMappingWidget(widgetIndex);
         RebuildContainersAndItems();
         SaveLayoutSlots();

@@ -17,6 +17,7 @@
 #include "settings_window.h"
 #include "widget_engine.h"
 #include "resource.h"
+#include "crashlog.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -949,6 +950,16 @@ void SettingsWindow::DrawDebugPage()
     ImGui::Text("调试页");
     ImGui::Separator();
     ImGui::Spacing();
+
+    if (ImGui::CollapsingHeader("崩溃测试"))
+    {
+        ImGui::TextDisabled("点击下方按钮会立即触发一次访问违规崩溃，用于验证");
+        ImGui::TextDisabled("crash.log 与 crashdumps\\*.dmp 是否正常生成。");
+        ImGui::Spacing();
+        if (BlueButton("触发崩溃 (访问违规)"))
+            TriggerCrashForTesting();
+        ImGui::Spacing();
+    }
 
     if (BlueButton("打开组件文件夹"))
     {

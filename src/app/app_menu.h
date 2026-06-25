@@ -7,6 +7,7 @@
  * 所有菜单均使用 TrackPopupMenuEx 以右键菜单方式弹出，并支持图标渲染。
  */
 #pragma once
+#include "../crashlog.h"
 
 /**
  * @brief 根据文本创建菜单图标位图（使用 DIB 段）。
@@ -674,7 +675,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 info.hwnd = hwnd_;
                 info.lpVerb = "paste";
                 info.nShow = SW_SHOWNORMAL;
-                bgMenu->InvokeCommand(&info);
+                SafeInvokeCommand(bgMenu.Get(), &info);
                 ReloadItems();
             }
         }
@@ -896,7 +897,7 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - kFirstCmd);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        ctxMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         ReloadItems();
     }
     DestroyMenu(menu);
@@ -954,7 +955,7 @@ inline void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstri
         invoke.lpVerb = MAKEINTRESOURCEA(cmd - 1);
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - 1);
         invoke.nShow = SW_SHOWNORMAL;
-        ctxMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
     }
 
     for (int i = GetMenuItemCount(tmpMenu) - 1; i >= 0; --i)
@@ -1008,7 +1009,7 @@ inline void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - kFirstCmd);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         ReloadItems();
     }
     DestroyMenu(menu);
@@ -1123,7 +1124,7 @@ inline void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPa
         invoke.lpVerbW = MAKEINTRESOURCEW(command - kFirstCmd);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         ReloadItems();
     }
 
