@@ -186,7 +186,7 @@ inline void DesktopApp::RecreateItemTextFormat()
     float fontSize = itemFontSize_;
     float lineHeight = fontSize * 7.0f / 6.0f;
     float baseline = fontSize * 5.0f / 6.0f;
-    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, itemFontWeight_,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &itemTextFormat_);
     if (itemTextFormat_)
     {

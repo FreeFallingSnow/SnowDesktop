@@ -671,6 +671,8 @@ private:
     void AdjustIconSpacing(float delta);
     /** @brief 设置图标标题字号（12/14/16）。 @param value 字号 */
     void SetItemFontSize(float value);
+    /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
+    void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
     /** @brief 应用页面到显示器的映射关系（编排清理/补齐/重排/映射）。 */
     void ApplyPageMapping();
     /** @brief 清理溢出区空页（保留前 N-1 槽位页与末屏当前显示的空页）。 */
@@ -1382,6 +1384,7 @@ private:
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     float itemFontSize_ = kItemFontSize;
+    DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;   // 持久化：锁定显示首屏的显示器
     std::wstring lastPageMonitorId_;    // 持久化：锁定显示末屏/翻页区的显示器

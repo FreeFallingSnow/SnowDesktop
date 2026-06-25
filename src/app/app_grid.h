@@ -286,6 +286,15 @@ inline void DesktopApp::SetItemFontSize(float value)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+inline void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
+{
+    if (weight == itemFontWeight_) return;
+    itemFontWeight_ = weight;
+    RecreateItemTextFormat();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
 /**
  * @brief 获取系统主显示器在 gridPages_ 中的索引（回退到 0）。
  * @return 页面索引。
@@ -1596,6 +1605,11 @@ inline void DesktopApp::LoadLayoutSlots()
         loadedFontSize >= 10.0f && loadedFontSize <= 24.0f)
         itemFontSize_ = loadedFontSize;
 
+    float loadedFontWeight = 0;
+    if (ReadJsonFloatField(text, "itemFontWeight", loadedFontWeight) &&
+        loadedFontWeight >= 100 && loadedFontWeight <= 950)
+        itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(loadedFontWeight));
+
     LoadSavedPagesFromJson(text);
 
     size_t pos = 0;
@@ -1835,7 +1849,9 @@ inline void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
-         << "\",\n  \"itemFontSize\": " << itemFontSize_ << ",\n  \"pages\": [\n";
+         << "\",\n  \"itemFontSize\": " << itemFontSize_
+         << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
+         << ",\n  \"pages\": [\n";
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
         const GridPage* page = FindGridPage(gridPages_, pagesToWrite[i]);

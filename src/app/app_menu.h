@@ -346,6 +346,25 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
         }
 
+        HMENU fontWeightMenu = CreatePopupMenu();
+        if (fontWeightMenu)
+        {
+            auto addWeightItem = [&](UINT id, const wchar_t* label, DWRITE_FONT_WEIGHT weight) {
+                UINT flags = MF_STRING;
+                if (itemFontWeight_ == weight) flags |= MF_CHECKED;
+                AppendMenuW(fontWeightMenu, flags, id, label);
+            };
+            addWeightItem(kContextFontWeightBold, L"粗", DWRITE_FONT_WEIGHT_BOLD);
+            addWeightItem(kContextFontWeightMedium, L"中", DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            addWeightItem(kContextFontWeightFine, L"细", DWRITE_FONT_WEIGHT_NORMAL);
+            const wchar_t* weightLabel = L"标题粗细：中";
+            if (itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD) weightLabel = L"标题粗细：粗";
+            else if (itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL) weightLabel = L"标题粗细：细";
+            AppendMenuW(displaySettingsMenu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(fontWeightMenu), weightLabel);
+            SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontWeightMenu), L"");
+        }
+
         AppendMenuW(menu, MF_POPUP,
             reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"显示设置");
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"");
@@ -668,6 +687,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
     case kContextFontSizeMedium: SetItemFontSize(14.0f); break;
     case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
+    case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
+    case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
+    case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
     case kContextPagePrev: NavigatePageOffset(-1); break;
     case kContextPageNext: NavigatePageOffset(1); break;
     case kContextPageAdd: AddNewPage(); break;
