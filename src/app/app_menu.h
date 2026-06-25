@@ -420,8 +420,10 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 clickedPageIdx = static_cast<int>(it - savedPageIds_.begin());
         }
 
-        AppendMenuW(menu, MF_STRING, kContextPagePrev, L"上一页");
-        AppendMenuW(menu, MF_STRING, kContextPageNext, L"下一页");
+        if (pageOffset_ > 0)
+            AppendMenuW(menu, MF_STRING, kContextPagePrev, L"上一页");
+        if (pageOffset_ < maxOff)
+            AppendMenuW(menu, MF_STRING, kContextPageNext, L"下一页");
 
         jumpMenu = CreatePopupMenu();
         if (jumpMenu)
@@ -456,11 +458,6 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
-
-    if (pageOffset_ >= maxOff)
-        EnableMenuItem(menu, kContextPageNext, MF_BYCOMMAND | MF_GRAYED);
-    if (pageOffset_ <= 0)
-        EnableMenuItem(menu, kContextPagePrev, MF_BYCOMMAND | MF_GRAYED);
 
     AppendMenuW(menu, MF_STRING, kContextPageAdd, L"新增页");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -498,8 +495,10 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pinPageMenu), L"");
     }
     SetMenuItemIcon(menu, kContextSettingsCommand, L"");
-    SetMenuItemIcon(menu, kContextPagePrev, L"");
-    SetMenuItemIcon(menu, kContextPageNext, L"");
+    if (pageOffset_ > 0)
+        SetMenuItemIcon(menu, kContextPagePrev, L"");
+    if (pageOffset_ < maxOff)
+        SetMenuItemIcon(menu, kContextPageNext, L"");
     SetMenuItemIcon(menu, kContextPageAdd, L"");
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");

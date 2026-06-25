@@ -168,10 +168,10 @@ inline bool DesktopApp::InitGraphics()
             faTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         }
 
-        const int menuHeight = -std::max(9, GetSystemMetrics(SM_CYMENUCHECK) * 7 / 10);
+        const int menuHeight = -std::max(12, GetSystemMetrics(SM_CYMENUCHECK) * 8 / 10);
         faMenuFont_ = CreateFontW(menuHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+            CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
             L"Font Awesome 6 Free Solid");
     }
 
