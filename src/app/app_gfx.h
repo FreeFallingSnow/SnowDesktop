@@ -1627,9 +1627,16 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
             }
             else
             {
-                clipViewport = wc->GetContentViewportRect();
-                clipViewport.left = bodyRect.left;
-                clipViewport.right = bodyRect.right;
+                DesktopWidget* wd = wc->GetWidgetData();
+                if (wd && wd->type == DesktopWidgetType::Collection && !wd->scrollContainerMode)
+                {
+                }
+                else
+                {
+                    clipViewport = wc->GetContentViewportRect();
+                    clipViewport.left = bodyRect.left;
+                    clipViewport.right = bodyRect.right;
+                }
             }
         }
         bool clipped = false;

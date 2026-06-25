@@ -846,6 +846,8 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
 
 RECT Collection::GetContentViewportRect() const
 {
+    if (!data_ || !data_->scrollContainerMode)
+        return GetBodyRect();
     return CollectionScrollContentRect(const_cast<Collection*>(this));
 }
 
