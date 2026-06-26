@@ -2312,14 +2312,23 @@ inline void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
     if (!dwrite) return;
 
     RECT workArea{};
-    if (!gridPages_.empty())
-        workArea = gridPages_[0].workArea;
+    POINT cursor{};
+    if (GetCursorPos(&cursor))
+    {
+        const GridPage* page = GridPageFromScreenPoint(cursor);
+        if (page) workArea = page->workArea;
+    }
     if (IsRectEmptyRect(workArea))
     {
-        workArea.left = 0;
-        workArea.top = 0;
-        workArea.right = GetSystemMetrics(SM_CXSCREEN);
-        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+        if (!gridPages_.empty())
+            workArea = gridPages_[0].workArea;
+        if (IsRectEmptyRect(workArea))
+        {
+            workArea.left = 0;
+            workArea.top = 0;
+            workArea.right = GetSystemMetrics(SM_CXSCREEN);
+            workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+        }
     }
 
     const std::wstring hintText = L"双击取消隐藏桌面，可在设置中关闭此功能";
@@ -2371,14 +2380,23 @@ inline void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
     if (!dwrite) return;
 
     RECT workArea{};
-    if (!gridPages_.empty())
-        workArea = gridPages_[0].workArea;
+    POINT cursor{};
+    if (GetCursorPos(&cursor))
+    {
+        const GridPage* page = GridPageFromScreenPoint(cursor);
+        if (page) workArea = page->workArea;
+    }
     if (IsRectEmptyRect(workArea))
     {
-        workArea.left = 0;
-        workArea.top = 0;
-        workArea.right = GetSystemMetrics(SM_CXSCREEN);
-        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+        if (!gridPages_.empty())
+            workArea = gridPages_[0].workArea;
+        if (IsRectEmptyRect(workArea))
+        {
+            workArea.left = 0;
+            workArea.top = 0;
+            workArea.right = GetSystemMetrics(SM_CXSCREEN);
+            workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+        }
     }
 
     const std::wstring hintText = L"拖动组件底部可移动组件位置，拖动组件右下角圆点可调整组件大小";

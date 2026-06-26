@@ -44,6 +44,31 @@ inline const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
 }
 
 /**
+ * @brief 根据屏幕坐标通过 MonitorFromPoint 查找所在的网格页面。
+ * @param screenPoint 屏幕坐标（非客户区坐标）。
+ * @return 指向对应 GridPage 的指针，未找到时返回第一个页面或 nullptr。
+ */
+inline const GridPage* DesktopApp::GridPageFromScreenPoint(POINT screenPoint) const
+{
+    HMONITOR hMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+    if (!hMonitor)
+        return gridPages_.empty() ? nullptr : &gridPages_.front();
+    MONITORINFOEXW monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(hMonitor, &monitorInfo))
+        return gridPages_.empty() ? nullptr : &gridPages_.front();
+    std::wstring monitorId = monitorInfo.szDevice[0] != L'\0'
+        ? monitorInfo.szDevice
+        : L"";
+    for (const auto& page : gridPages_)
+    {
+        if (page.monitorId == monitorId)
+            return &page;
+    }
+    return gridPages_.empty() ? nullptr : &gridPages_.front();
+}
+
+/**
  * @brief 在右键菜单所在页面调整行数（增/减）。
  * @param delta 行数变化量（正数增加，负数减少）。
  */
@@ -5426,9 +5451,16 @@ inline GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, Gri
 inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 {
     ConfigureWidgetGridLimits(widget);
-    POINT clientPoint = lastContextMenuScreenPoint_;
-    ScreenToClient(hwnd_, &clientPoint);
-    GridCell cell = CellFromPoint(clientPoint);
+    const GridPage* page = GridPageFromScreenPoint(lastContextMenuScreenPoint_);
+    GridCell cell;
+    if (page)
+    {
+        cell.pageId = page->id;
+        POINT clientPoint = lastContextMenuScreenPoint_;
+        ScreenToClient(hwnd_, &clientPoint);
+        cell.column = GetGridAxisIndexFromPoint(*page, clientPoint.x, true);
+        cell.row = GetGridAxisIndexFromPoint(*page, clientPoint.y, false);
+    }
     if (cell.pageId.empty())
     {
         if (!gridPages_.empty())
@@ -5460,9 +5492,9 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     if (needSearch)
     {
         int startSlot = 0;
-        const GridPage* page = FindGridPage(gridPages_, cell.pageId);
-        if (page)
-            startSlot = cell.column * std::max(1, page->rows) + cell.row;
+        const GridPage* searchPage = FindGridPage(gridPages_, cell.pageId);
+        if (searchPage)
+            startSlot = cell.column * std::max(1, searchPage->rows) + cell.row;
         if (!TryFindFreeCell(span, usedSlots, freeCell, cell.pageId, startSlot))
         {
             if (!TryFindFreeCell(span, usedSlots, freeCell, cell.pageId, 0))

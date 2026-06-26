@@ -666,6 +666,8 @@ private:
      * @return 网格页面指针，未找到返回 nullptr
      */
     const GridPage* GridPageFromPoint(POINT point) const;
+    /** @brief 根据屏幕坐标定位网格页面（通过 MonitorFromPoint 匹配）。 */
+    const GridPage* GridPageFromScreenPoint(POINT screenPoint) const;
     /** @brief 调整网格行数。 @param delta 行数增量 */
     void AdjustGridRows(int delta);
     /** @brief 调整网格列数。 @param delta 列数增量 */
