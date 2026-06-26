@@ -1671,7 +1671,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
                         std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
                         int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0, tabScrollOffset = 0;
-                        bool autoCollect = false, listMode = false, showOnHoverOnly = false, scrollContainerMode = false;
+                        bool autoCollect = false, listMode = false, showOnHoverOnly = false, scrollContainerMode = false, showTitle = false, bottomBarHover = false, userRenamed = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
                             !ReadJsonStringField(obj, "page", pageUtf8) ||
                             !ReadJsonIntField(obj, "x", x) ||
@@ -1730,10 +1730,16 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         widget.listMode = listMode;
                         widget.showOnHoverOnly = showOnHoverOnly;
                         widget.scrollContainerMode = scrollContainerMode;
-                        widget.showTitle = widget.type != DesktopWidgetType::LuaScript;
-                        widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
+                        showTitle = widget.type != DesktopWidgetType::LuaScript;
+                        bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
                             widget.type == DesktopWidgetType::LuaScript ||
                             widget.type == DesktopWidgetType::Guide);
+                        ReadJsonBoolField(obj, "showTitle", showTitle);
+                        ReadJsonBoolField(obj, "bottomBarHover", bottomBarHover);
+                        ReadJsonBoolField(obj, "userRenamed", userRenamed);
+                        widget.showTitle = showTitle;
+                        widget.bottomBarHover = bottomBarHover;
+                        widget.userRenamed = userRenamed;
                         widget.scrollOffset = std::max(0, scrollOffset);
 widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
@@ -1914,6 +1920,9 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
+             << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
+             << ", \"bottomBarHover\": " << (w.bottomBarHover ? "true" : "false")
+             << ", \"userRenamed\": " << (w.userRenamed ? "true" : "false")
              << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
              << ", \"tabScrollOffset\": " << std::max(0, w.tabScrollOffset)
              << ", \"items\": [";

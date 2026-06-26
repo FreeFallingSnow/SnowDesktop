@@ -278,6 +278,7 @@ inline void DesktopApp::LuaSetWidgetTitle(const std::wstring& widgetId, const st
     for (auto& widget : widgets_)
     {
         if (widget.id != widgetId) continue;
+        if (widget.userRenamed) return;
         if (widget.title == title) return;
         widget.title = title;
         SaveLayoutSlots();
@@ -5411,6 +5412,7 @@ inline void DesktopApp::BeginRenameSelected()
 
         RECT frame = widgets_[selectedWidgetIndex].bounds;
         RECT handle = frame;
+        bool foundContainer = false;
         for (const auto& c : containers_)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());
@@ -5418,8 +5420,14 @@ inline void DesktopApp::BeginRenameSelected()
             {
                 frame = wc->GetFrameRect();
                 handle = wc->GetMoveHandleRect();
+                foundContainer = true;
                 break;
             }
+        }
+        if (!foundContainer && widgets_[selectedWidgetIndex].type == DesktopWidgetType::LuaScript)
+        {
+            frame = GetStandaloneWidgetFrameRect(widgets_[selectedWidgetIndex]);
+            handle = GetStandaloneWidgetMoveHandleRect(widgets_[selectedWidgetIndex]);
         }
         const int editHeight = std::max(40, static_cast<int>(handle.bottom - handle.top) * 2);
         RECT rect = MakeRect(frame.left + 4, handle.top, frame.right - 4, handle.top + editHeight);
@@ -5565,10 +5573,19 @@ inline void DesktopApp::CommitRename(bool cancel)
 
     if (renamingWidget_)
     {
-        if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
+        if (!cancel && renameIndex_ < widgets_.size())
         {
-            widgets_[renameIndex_].title = newName;
-            SaveLayoutSlots();
+            if (!newName.empty())
+            {
+                widgets_[renameIndex_].title = newName;
+                widgets_[renameIndex_].userRenamed = true;
+                SaveLayoutSlots();
+            }
+            else if (widgets_[renameIndex_].userRenamed)
+            {
+                widgets_[renameIndex_].userRenamed = false;
+                SaveLayoutSlots();
+            }
         }
         renamingWidget_ = false;
         renameIndex_ = static_cast<size_t>(-1);
