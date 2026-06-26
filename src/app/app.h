@@ -517,8 +517,22 @@ private:
      * @return 操作是否成功
      */
     bool PasteClipboardToFolderMapping(size_t widgetIndex);
-    /** @brief 根据方向键移动键盘选择的桌面项。 @param arrowKey 方向键的虚拟键码 */
-    void MoveKeyboardSelection(WPARAM arrowKey);
+    /** @brief 根据方向键在桌面网格上进行 2D 空间导航。 @param arrowKey 方向键的虚拟键码 */
+    void NavigateDesktopGrid(WPARAM arrowKey);
+    /** @brief 在组件内部导航成员项。 @param arrowKey 方向键的虚拟键码 */
+    void NavigateWidgetMembers(WPARAM arrowKey);
+    /** @brief 进入当前选中的组件以进行内部导航。 */
+    void EnterWidget();
+    /** @brief 退出组件内部导航，返回桌面网格。 */
+    void ExitWidget();
+    /** @brief 打开当前选中的桌面项（模拟双击）。 */
+    void OpenSelectedDesktopItem();
+    /** @brief 打开组件内指定索引的成员项。 @param widgetIndex 组件索引 @param memberIndex 成员索引 */
+    void OpenWidgetMember(size_t widgetIndex, int memberIndex);
+    /** @brief 根据当前选中状态同步键盘导航上下文（桌面/组件内模式）。 */
+    void SyncKeyboardNavFromSelection();
+    /** @brief 滚动组件确保指定成员项在视口内可见。 @param widgetIndex 组件索引 @param memberIndex 成员索引 */
+    void ScrollWidgetToMember(size_t widgetIndex, int memberIndex);
     /** @brief 处理定时器事件。 @param timerId 定时器标识 */
     void OnTimer(WPARAM timerId);
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */
@@ -1390,6 +1404,10 @@ private:
     std::wstring lastPageMonitorId_;    // 持久化：锁定显示末屏/翻页区的显示器
     std::wstring lastMonitorPageId_;    // 运行时：末屏当前显示的 pageId（savedPageIds_[N-1+pageOffset_]）
     int pageOffset_ = 0;
+    // ── 键盘导航状态 ──
+    bool keyboardNavInsideWidget_ = false;
+    size_t keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+    int keyboardNavMemberIndex_ = -1;
     int navHoverSide_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
