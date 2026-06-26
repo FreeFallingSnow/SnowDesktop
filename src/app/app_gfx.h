@@ -845,6 +845,11 @@ inline bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
 
 inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
 {
+    auto isTabWidget = [](DesktopWidgetType t) {
+        return t == DesktopWidgetType::Collection ||
+               t == DesktopWidgetType::FileCategories ||
+               t == DesktopWidgetType::FolderMapping;
+    };
     std::vector<size_t> result;
     std::unordered_set<size_t> seen;
 
@@ -852,7 +857,7 @@ inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() con
     {
         for (size_t i = 0; i < widgets_.size(); ++i)
         {
-            if (widgets_[i].type == DesktopWidgetType::Collection &&
+            if (isTabWidget(widgets_[i].type) &&
                 widgets_[i].id == id && !seen.count(i))
             {
                 result.push_back(i);
@@ -863,7 +868,7 @@ inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() con
     }
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
-        if (widgets_[i].type == DesktopWidgetType::Collection && !seen.count(i))
+        if (isTabWidget(widgets_[i].type) && !seen.count(i))
         {
             result.push_back(i);
             seen.insert(i);
@@ -886,19 +891,58 @@ inline std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         result.push_back(key);
     };
 
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+    {
+        std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
+        for (size_t ci : collectionIndices)
+        {
+            if (widgets_[ci].type == DesktopWidgetType::FolderMapping) continue;
+            for (const auto& key : widgets_[ci].itemKeys)
+                appendKey(key);
+        }
+        return result;
+    }
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+    {
+        std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
+        for (size_t ci : collectionIndices)
+        {
+            if (widgets_[ci].type != DesktopWidgetType::FolderMapping) continue;
+            for (const auto& fe : widgets_[ci].folderEntries)
+                appendKey(fe.fullPath);
+        }
+        return result;
+    }
+
     if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::Collection)
+        (widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::Collection ||
+         widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FileCategories))
     {
         for (const auto& key : widgets_[quickNavigationActiveWidgetIndex_].itemKeys)
             appendKey(key);
+        return result;
+    }
+    if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
+        widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
+    {
+        for (const auto& fe : widgets_[quickNavigationActiveWidgetIndex_].folderEntries)
+            appendKey(fe.fullPath);
         return result;
     }
 
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     for (size_t ci : collectionIndices)
     {
-        for (const auto& key : widgets_[ci].itemKeys)
-            appendKey(key);
+        if (widgets_[ci].type == DesktopWidgetType::FolderMapping)
+        {
+            for (const auto& fe : widgets_[ci].folderEntries)
+                appendKey(fe.fullPath);
+        }
+        else
+        {
+            for (const auto& key : widgets_[ci].itemKeys)
+                appendKey(key);
+        }
     }
     return result;
 }
@@ -935,19 +979,106 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
 
     if (query.empty())
     {
+        if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+        {
+            for (const auto& key : GetQuickNavigationItemKeys())
+                appendDesktop(FindItemIndexByKey(key), L"集合");
+
+            std::unordered_set<std::wstring> desktopKeys;
+            for (const auto& widget : widgets_)
+            {
+                if (widget.type != DesktopWidgetType::Collection &&
+                    widget.type != DesktopWidgetType::FileCategories) continue;
+                for (const auto& key : widget.itemKeys)
+                    desktopKeys.insert(ToUpperInvariant(key));
+            }
+
+            auto isLnkOrUrl = [](const std::wstring& path) -> bool {
+                if (path.size() < 4) return false;
+                std::wstring ext = path.substr(path.size() - 4);
+                for (auto& c : ext) c = static_cast<wchar_t>(towupper(c));
+                return ext == L".LNK" || ext == L".URL";
+            };
+
+            for (size_t i = 0; i < items_.size(); ++i)
+            {
+                const DesktopItem& item = items_[i];
+                if (desktopKeys.contains(ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey))) continue;
+                if (!isLnkOrUrl(item.parsingName)) continue;
+                appendDesktop(i, L"自由桌面");
+            }
+            return result;
+        }
+
+        if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+        {
+            for (size_t wi = 0; wi < widgets_.size(); ++wi)
+            {
+                if (widgets_[wi].type != DesktopWidgetType::FolderMapping) continue;
+                std::wstring source = widgets_[wi].title.empty() ? L"文件夹映射" : widgets_[wi].title;
+                for (size_t ei = 0; ei < widgets_[wi].folderEntries.size(); ++ei)
+                {
+                    const FolderEntry& entryData = widgets_[wi].folderEntries[ei];
+                    QuickNavigationEntry entry;
+                    entry.kind = QuickNavigationEntry::Kind::FolderEntry;
+                    entry.widgetIndex = wi;
+                    entry.folderEntryIndex = ei;
+                    entry.name = entryData.name;
+                    entry.path = entryData.fullPath;
+                    entry.source = source;
+                    entry.iconBitmap = entryData.iconBitmap;
+                    result.push_back(std::move(entry));
+                }
+            }
+            return result;
+        }
+
+        if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
+            widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
+        {
+            const DesktopWidget& widget = widgets_[quickNavigationActiveWidgetIndex_];
+            std::wstring source = widget.title.empty() ? L"文件夹映射" : widget.title;
+            for (size_t ei = 0; ei < widget.folderEntries.size(); ++ei)
+            {
+                const FolderEntry& entryData = widget.folderEntries[ei];
+                QuickNavigationEntry entry;
+                entry.kind = QuickNavigationEntry::Kind::FolderEntry;
+                entry.widgetIndex = quickNavigationActiveWidgetIndex_;
+                entry.folderEntryIndex = ei;
+                entry.name = entryData.name;
+                entry.path = entryData.fullPath;
+                entry.source = source;
+                entry.iconBitmap = entryData.iconBitmap;
+                result.push_back(std::move(entry));
+            }
+            return result;
+        }
+
         for (const auto& key : GetQuickNavigationItemKeys())
             appendDesktop(FindItemIndexByKey(key), L"集合");
 
-        bool isAllTab = quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
-            widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection;
-        if (isAllTab)
+        bool isDesktopAll = quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
+            (widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection &&
+             widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FileCategories &&
+             widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FolderMapping);
+        if (isDesktopAll)
         {
             std::unordered_set<std::wstring> collectionKeys;
             for (const auto& widget : widgets_)
             {
-                if (widget.type != DesktopWidgetType::Collection) continue;
-                for (const auto& key : widget.itemKeys)
-                    collectionKeys.insert(ToUpperInvariant(key));
+                if (widget.type != DesktopWidgetType::Collection &&
+                    widget.type != DesktopWidgetType::FileCategories &&
+                    widget.type != DesktopWidgetType::FolderMapping) continue;
+                if (widget.type == DesktopWidgetType::FolderMapping)
+                {
+                    for (const auto& fe : widget.folderEntries)
+                        collectionKeys.insert(ToUpperInvariant(fe.fullPath));
+                }
+                else
+                {
+                    for (const auto& key : widget.itemKeys)
+                        collectionKeys.insert(ToUpperInvariant(key));
+                }
             }
 
             auto isLnkOrUrl = [](const std::wstring& path) -> bool {
@@ -976,6 +1107,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
     for (size_t ci : GetQuickNavigationCollectionIndices())
     {
         const DesktopWidget& widget = widgets_[ci];
+        if (widget.type == DesktopWidgetType::FolderMapping) continue;
         std::wstring source = widget.title.empty() ? L"集合" : widget.title;
         for (const auto& key : widget.itemKeys)
             appendDesktop(FindItemIndexByKey(key), source);
@@ -1081,14 +1213,14 @@ inline int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& overla
 {
     RECT tabs = GetQuickNavigationTabsRect(overlay);
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    const size_t tabCount = collectionIndices.size() + 1;
-    if (tabCount == 0) return 0;
+    const size_t widgetTabCount = collectionIndices.size();
+    if (widgetTabCount == 0) return 0;
 
     const int gap = QuickNavScale(8);
     const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
-    int tabWidth = std::clamp((available - gap * static_cast<int>(tabCount - 1)) / static_cast<int>(tabCount),
+    int tabWidth = std::clamp((available - gap * static_cast<int>(widgetTabCount - 1)) / static_cast<int>(widgetTabCount),
         QuickNavScale(72), QuickNavScale(150));
-    return static_cast<int>(tabCount) * tabWidth + static_cast<int>(tabCount - 1) * gap;
+    return static_cast<int>(widgetTabCount) * tabWidth + static_cast<int>(widgetTabCount - 1) * gap;
 }
 
 inline int DesktopApp::GetQuickNavigationMaxTabScrollOffset(const RECT& overlay) const
@@ -1103,7 +1235,7 @@ inline int DesktopApp::GetQuickNavigationTabWidth() const
     RECT overlay = quickNavigationRect_;
     RECT tabs = GetQuickNavigationTabsRect(overlay);
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    const size_t tabCount = collectionIndices.size() + 1;
+    const size_t tabCount = collectionIndices.size() + 2;
     if (tabCount == 0) return QuickNavScale(92);
     const int gap = QuickNavScale(8);
     const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
@@ -1113,10 +1245,15 @@ inline int DesktopApp::GetQuickNavigationTabWidth() const
 
 inline void DesktopApp::EnsureNavTabOrder()
 {
+    auto isTabWidget = [](DesktopWidgetType t) {
+        return t == DesktopWidgetType::Collection ||
+               t == DesktopWidgetType::FileCategories ||
+               t == DesktopWidgetType::FolderMapping;
+    };
     std::unordered_set<std::wstring> orderSet(navTabOrder_.begin(), navTabOrder_.end());
     for (const auto& w : widgets_)
     {
-        if (w.type == DesktopWidgetType::Collection && !orderSet.count(w.id))
+        if (isTabWidget(w.type) && !orderSet.count(w.id))
         {
             navTabOrder_.push_back(w.id);
             orderSet.insert(w.id);
@@ -1124,9 +1261,9 @@ inline void DesktopApp::EnsureNavTabOrder()
     }
     navTabOrder_.erase(
         std::remove_if(navTabOrder_.begin(), navTabOrder_.end(),
-            [this](const std::wstring& id) {
+            [this, &isTabWidget](const std::wstring& id) {
                 for (const auto& w : widgets_)
-                    if (w.type == DesktopWidgetType::Collection && w.id == id) return false;
+                    if (isTabWidget(w.type) && w.id == id) return false;
                 return true;
             }),
         navTabOrder_.end());
@@ -1136,14 +1273,21 @@ inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t ta
 {
     RECT tabs = GetQuickNavigationTabsRect(overlay);
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    const size_t tabCount = collectionIndices.size() + 1;
+    const size_t tabCount = collectionIndices.size() + 2;
     const int gap = QuickNavScale(8);
     const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
     int tabWidth = QuickNavScale(92);
     if (tabCount > 0)
         tabWidth = std::clamp((available - gap * static_cast<int>(tabCount - 1)) / static_cast<int>(tabCount),
             QuickNavScale(72), QuickNavScale(150));
-    const int left = tabs.left + static_cast<int>(tabIndex) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
+    const int fixedWidth = 2 * tabWidth + gap;
+    const int sepGap = QuickNavScale(6);
+    int left;
+    if (tabIndex <= 1)
+        left = tabs.left + static_cast<int>(tabIndex) * (tabWidth + gap);
+    else
+        left = tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap
+            + static_cast<int>(tabIndex - 2) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
     return MakeRect(left, tabs.top, left + tabWidth, tabs.bottom);
 }
 
@@ -1262,7 +1406,9 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
 
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection)
+        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection &&
+        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FileCategories &&
+        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FolderMapping)
     {
         quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
     }
@@ -1290,12 +1436,17 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
     ctx->PushAxisAlignedClip(ToD2DRect(tabs), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
     {
-        const size_t tabCount = collectionIndices.size() + 1;
+        const size_t tabCount = collectionIndices.size() + 2;
         const int tabWidth = GetQuickNavigationTabWidth();
         const int gap = QuickNavScale(8);
 
+        const int fixedWidth = 2 * tabWidth + gap;
+        const int sepGap = QuickNavScale(6);
         auto calcTabPosX = [&](size_t tabIdx) -> int {
-            return tabs.left + static_cast<int>(tabIdx) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
+            if (tabIdx <= 1)
+                return tabs.left + static_cast<int>(tabIdx) * (tabWidth + gap);
+            return tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap
+                + static_cast<int>(tabIdx - 2) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
         };
 
         int dragTargetTab = -1;
@@ -1303,18 +1454,27 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
         {
             int unit = tabWidth + gap;
             dragTargetTab = static_cast<int>(quickNavTabDragIndex_) + quickNavTabDragDeltaX_ / unit;
-            if (dragTargetTab < 1) dragTargetTab = 1;
-            if (dragTargetTab > static_cast<int>(collectionIndices.size())) dragTargetTab = static_cast<int>(collectionIndices.size());
+            if (dragTargetTab < 2) dragTargetTab = 2;
+            if (dragTargetTab > static_cast<int>(collectionIndices.size()) + 1) dragTargetTab = static_cast<int>(collectionIndices.size()) + 1;
         }
 
         auto drawTab = [&](size_t tab, int offsetX) {
             int posX = calcTabPosX(tab) + offsetX;
             RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
-            if (tabRect.right <= tabs.left || tabRect.left >= tabs.right) return;
+            if (tab >= 2)
+            {
+                if (tabRect.right <= tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap || tabRect.left >= tabs.right) return;
+                tabRect.left = std::max(tabRect.left, tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap);
+            }
+            else if (tab <= 1)
+            {
+                if (tabRect.right <= tabs.left || tabRect.left >= tabs.left + fixedWidth + sepGap) return;
+                tabRect.right = std::min(tabRect.right, tabs.left + fixedWidth + sepGap);
+            }
 
-            bool active = tab == 0
-                ? quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1)
-                : quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 1];
+            bool active = (tab == 0 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+                || (tab == 1 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+                || (tab > 1 && quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 2]);
             bool hovered = false;
             if (!quickNavTabDragging_)
                 hovered = PtInRect(&tabRect, lastMousePoint_) != FALSE;
@@ -1336,11 +1496,22 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
             }
             DrawD2DRoundedRectangle(ctx, tabRect, static_cast<float>(QuickNavScale(7)), fill, stroke, 1.0f);
 
-            std::wstring label = L"全部";
-            if (tab > 0)
+            std::wstring label;
+            if (tab == 0)
+                label = L"桌面";
+            else if (tab == 1)
+                label = L"映射";
+            else
             {
-                const DesktopWidget& widget = widgets_[collectionIndices[tab - 1]];
-                label = widget.title.empty() ? L"集合" + std::to_wstring(tab) : widget.title;
+                const DesktopWidget& widget = widgets_[collectionIndices[tab - 2]];
+                if (!widget.title.empty())
+                    label = widget.title;
+                else if (widget.type == DesktopWidgetType::FileCategories)
+                    label = L"桌面文件";
+                else if (widget.type == DesktopWidgetType::FolderMapping)
+                    label = L"文件夹映射";
+                else
+                    label = L"集合" + std::to_wstring(tab - 1);
             }
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
@@ -1349,6 +1520,13 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
                 navTabTextFormat_ ? navTabTextFormat_.Get() : itemTextFormat_.Get(),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 1.0f : 0.88f));
         };
+
+        // 分隔线：固定在 "映射" 标签右侧
+        int sepX = tabs.left + fixedWidth + sepGap;
+        RECT sepRect = MakeRect(sepX, tabs.top + QuickNavScale(6), sepX + QuickNavScale(1), tabs.bottom - QuickNavScale(6));
+        DrawD2DFilledRectangle(ctx, sepRect,
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
 
         for (size_t tab = 0; tab < tabCount; ++tab)
         {
@@ -1370,11 +1548,15 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
             int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
             RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
 
-            std::wstring label = L"全部";
-            if (quickNavTabDragIndex_ > 0)
+            std::wstring label;
+            if (quickNavTabDragIndex_ == 0)
+                label = L"桌面";
+            else if (quickNavTabDragIndex_ == 1)
+                label = L"映射";
+            else if (quickNavTabDragIndex_ >= 2 && quickNavTabDragIndex_ - 2 < collectionIndices.size())
             {
-                const DesktopWidget& widget = widgets_[collectionIndices[quickNavTabDragIndex_ - 1]];
-                label = widget.title.empty() ? L"集合" + std::to_wstring(quickNavTabDragIndex_) : widget.title;
+                const DesktopWidget& widget = widgets_[collectionIndices[quickNavTabDragIndex_ - 2]];
+                label = widget.title.empty() ? L"集合" + std::to_wstring(quickNavTabDragIndex_ - 1) : widget.title;
             }
             DrawD2DRoundedRectangle(ctx, tabRect, static_cast<float>(QuickNavScale(7)),
                 D2D1::ColorF(0.24f, 0.31f, 0.43f, 0.96f),
@@ -1386,7 +1568,7 @@ inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
                 navTabTextFormat_ ? navTabTextFormat_.Get() : itemTextFormat_.Get(),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
 
-            if (dragTargetTab >= 1 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size())
+            if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size() + 1)
             {
                 int insertX = calcTabPosX(static_cast<size_t>(dragTargetTab)) - gap / 2;
                 RECT indicatorRect = MakeRect(insertX - 1, tabs.top + QuickNavScale(4), insertX + 1, tabs.bottom - QuickNavScale(4));
