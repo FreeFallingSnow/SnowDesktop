@@ -835,20 +835,50 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         if (searching || searchFocused_)
         {
-            std::wstring displayText = searchText_;
-            if (searchFocused_)
-            {
-                static auto frameCount = 0;
-                frameCount++;
-                if ((frameCount / 30) % 2 == 0)
-                    displayText += L"|";
-            }
-            app_->DrawD2DText(context, displayText, searchTextRect,
+            app_->DrawD2DText(context, searchText_, searchTextRect,
                 searchFormat ? searchFormat :
                     (app_->fileCategoryTabTextFormat_
                         ? app_->fileCategoryTabTextFormat_.Get()
                         : app_->listItemTextFormat_.Get()),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f));
+
+            if (searchFocused_)
+            {
+                float cursorX = static_cast<float>(searchTextRect.left) + Cu(2.0f);
+                if (searchCursorPos_ > 0)
+                {
+                    std::wstring textBefore = searchText_.substr(0, searchCursorPos_);
+                    Microsoft::WRL::ComPtr<IDWriteTextLayout> measureLayout;
+                    IDWriteFactory* dwrite = app_->GetDWriteFactory();
+                    if (dwrite && searchFormat)
+                    {
+                        float maxW = static_cast<float>(searchTextRect.right - searchTextRect.left);
+                        float maxH = static_cast<float>(searchTextRect.bottom - searchTextRect.top);
+                        if (SUCCEEDED(dwrite->CreateTextLayout(
+                            textBefore.c_str(), static_cast<UINT32>(textBefore.size()),
+                            searchFormat, maxW, maxH, &measureLayout)) && measureLayout)
+                        {
+                            DWRITE_TEXT_METRICS metrics{};
+                            measureLayout->GetMetrics(&metrics);
+                            cursorX = static_cast<float>(searchTextRect.left) + metrics.width + Cu(1.0f);
+                        }
+                    }
+                }
+
+                float cursorHeight = static_cast<float>(Cu(14.0f));
+                float cursorTop = static_cast<float>(searchRect.top) +
+                    (static_cast<float>(searchRect.bottom - searchRect.top) - cursorHeight) * 0.5f;
+                float cursorWidth = static_cast<float>(Cu(1.5f));
+                RECT cursorRect = {
+                    static_cast<LONG>(cursorX),
+                    static_cast<LONG>(cursorTop),
+                    static_cast<LONG>(cursorX + cursorWidth),
+                    static_cast<LONG>(cursorTop + cursorHeight)
+                };
+                app_->DrawD2DFilledRectangle(context, cursorRect,
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f),
+                    D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+            }
         }
         else
         {

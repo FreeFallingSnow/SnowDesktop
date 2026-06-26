@@ -3298,6 +3298,36 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return;
                 }
+                if (key == VK_DELETE)
+                {
+                    fc->DeleteSearchText();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_LEFT)
+                {
+                    fc->MoveCursorLeft();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_RIGHT)
+                {
+                    fc->MoveCursorRight();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_HOME)
+                {
+                    fc->MoveCursorHome();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_END)
+                {
+                    fc->MoveCursorEnd();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
                 break;
             }
         }

@@ -331,12 +331,17 @@ public:
     std::wstring CachedActiveCategoryId() const;
 
     const std::wstring& GetSearchText() const { return searchText_; }
-    void SetSearchText(const std::wstring& text) { searchText_ = text; InvalidateSlots(); }
-    void AppendSearchChar(wchar_t ch) { searchText_ += ch; InvalidateSlots(); }
-    void BackspaceSearchText() { if (!searchText_.empty()) { searchText_.pop_back(); InvalidateSlots(); } }
-    void ClearSearchText() { searchText_.clear(); searchFocused_ = false; InvalidateSlots(); }
+    void SetSearchText(const std::wstring& text) { searchText_ = text; searchCursorPos_ = searchText_.size(); InvalidateSlots(); }
+    void AppendSearchChar(wchar_t ch) { searchText_.insert(searchCursorPos_, 1, ch); ++searchCursorPos_; InvalidateSlots(); }
+    void BackspaceSearchText() { if (searchCursorPos_ > 0) { searchText_.erase(searchCursorPos_ - 1, 1); --searchCursorPos_; InvalidateSlots(); } }
+    void DeleteSearchText() { if (searchCursorPos_ < searchText_.size()) { searchText_.erase(searchCursorPos_, 1); InvalidateSlots(); } }
+    void ClearSearchText() { searchText_.clear(); searchCursorPos_ = 0; searchFocused_ = false; InvalidateSlots(); }
     bool IsSearchFocused() const { return searchFocused_; }
-    void SetSearchFocused(bool focused) { searchFocused_ = focused; }
+    void SetSearchFocused(bool focused) { searchFocused_ = focused; if (focused) searchCursorPos_ = searchText_.size(); }
+    void MoveCursorLeft() { if (searchCursorPos_ > 0) --searchCursorPos_; }
+    void MoveCursorRight() { if (searchCursorPos_ < searchText_.size()) ++searchCursorPos_; }
+    void MoveCursorHome() { searchCursorPos_ = 0; }
+    void MoveCursorEnd() { searchCursorPos_ = searchText_.size(); }
     RECT GetSearchBoxRect() const;
     bool IsSearchActive() const { return !searchText_.empty(); }
     const std::vector<std::wstring>& GetSearchResultKeys() const;
@@ -356,6 +361,7 @@ private:
 
     mutable CategorySnapshot categorySnapshot_;
     std::wstring searchText_;
+    size_t searchCursorPos_ = 0;
     bool searchFocused_ = false;
     mutable std::vector<std::wstring> searchResultCache_;
 };
