@@ -421,6 +421,10 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
             return L"桌面文件不支持收纳快捷方式";
         if (action == DropAction::Link)
             return L"桌面文件不支持创建快捷方式";
+
+        if (data_->dateHeaders &&
+            origin == this && (region == HitRegion::SortBefore || region == HitRegion::SortAfter))
+            return L"请先关闭日期表头再进行排序";
     }
 
     auto actionText = [&]() -> std::wstring {

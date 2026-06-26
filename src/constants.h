@@ -108,6 +108,7 @@ constexpr UINT kContextWidgetSortByTypeDesc = 41036;
 constexpr UINT kContextWidgetSortByDateDesc = 41037;
 constexpr UINT kContextWidgetShowOnHover = 41038;
 constexpr UINT kContextWidgetShowOnHoverOn = 41038;
+constexpr UINT kContextWidgetToggleDateGroup = 41042;
 constexpr UINT kContextWidgetShowOnHoverOff = 41041;
 constexpr UINT kContextWidgetCollModeLargeFolder = 41039;
 constexpr UINT kContextWidgetCollModeScrollContainer = 41040;

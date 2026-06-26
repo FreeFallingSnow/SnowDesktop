@@ -1671,7 +1671,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
                         std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
                         int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0, tabScrollOffset = 0;
-                        bool autoCollect = false, listMode = false, showOnHoverOnly = false, scrollContainerMode = false, showTitle = false, bottomBarHover = false, userRenamed = false;
+                        bool autoCollect = false, listMode = false, dateHeaders = false, showOnHoverOnly = false, scrollContainerMode = false, showTitle = false, bottomBarHover = false, userRenamed = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
                             !ReadJsonStringField(obj, "page", pageUtf8) ||
                             !ReadJsonIntField(obj, "x", x) ||
@@ -1691,6 +1691,7 @@ inline void DesktopApp::LoadLayoutSlots()
 ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         ReadJsonBoolField(obj, "autoCollect", autoCollect);
                         ReadJsonBoolField(obj, "listMode", listMode);
+                        ReadJsonBoolField(obj, "dateHeaders", dateHeaders);
                         ReadJsonBoolField(obj, "showOnHoverOnly", showOnHoverOnly);
                         ReadJsonBoolField(obj, "scrollContainerMode", scrollContainerMode);
 
@@ -1728,6 +1729,7 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         widget.gridSpan.rows = std::max(1, h);
                         widget.autoCollect = autoCollect;
                         widget.listMode = listMode;
+                        widget.dateHeaders = dateHeaders;
                         widget.showOnHoverOnly = showOnHoverOnly;
                         widget.scrollContainerMode = scrollContainerMode;
                         showTitle = widget.type != DesktopWidgetType::LuaScript;
@@ -1918,6 +1920,7 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"dateHeaders\": " << (w.dateHeaders ? "true" : "false")
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
              << ", \"showTitle\": " << (w.showTitle ? "true" : "false")

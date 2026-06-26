@@ -419,6 +419,7 @@ struct DesktopWidget
     bool showOnHoverOnly = false;
     bool scrollContainerMode = false;
     bool userRenamed = false;
+    bool dateHeaders = false;
     std::vector<std::wstring> itemKeys;
     std::vector<FolderEntry> folderEntries;
 };

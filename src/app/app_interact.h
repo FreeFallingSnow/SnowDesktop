@@ -2325,6 +2325,17 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             return;
         }
+        else if (wh == WidgetHit::DateHeaderToggleBtn)
+        {
+            if (widgets_[wi].type == DesktopWidgetType::FileCategories)
+            {
+                widgets_[wi].dateHeaders = !widgets_[wi].dateHeaders;
+                RebuildContainersAndItems();
+                SaveLayoutSlots();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            return;
+        }
         else if (wh == WidgetHit::OpenFolderBtn)
         {
             // FolderMapping: open source folder
@@ -3973,13 +3984,18 @@ inline void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex
 
     // 按行比例计算目标滚动位置（适配含 gapY 的 FolderMapping/Collection）
     int columns = std::max(1, widget.gridSpan.columns);
-    bool listMode = (widget.type == DesktopWidgetType::FileCategories && widget.listMode) ||
+    bool listMode = (widget.type == DesktopWidgetType::FileCategories && (widget.listMode || widget.dateHeaders)) ||
                     (widget.type == DesktopWidgetType::FolderMapping && widget.listMode) ||
                     (widget.type == DesktopWidgetType::Collection && widget.listMode);
 
     size_t memberCount = (widget.type == DesktopWidgetType::FolderMapping)
         ? widget.folderEntries.size()
         : widget.itemKeys.size();
+    if (widget.type == DesktopWidgetType::FileCategories)
+    {
+        auto* fc = dynamic_cast<FileCategories*>(wc);
+        if (fc) memberCount = fc->GetSlotCount();
+    }
     if (memberCount <= 1) return;
 
     int totalRows = listMode
@@ -4020,7 +4036,7 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     case DesktopWidgetType::FileCategories:
         memberCount = widget.itemKeys.size();
         columns = std::max(1, widget.gridSpan.columns);
-        if (widget.listMode)
+        if (widget.listMode || widget.dateHeaders)
         {
             columns = 1;
             isListMode = true;
@@ -4051,8 +4067,49 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 
     if (memberCount == 0) return;
 
+    // FileCategories：获取当前可见项目键列表（受搜索/分类标签页过滤）
+    std::vector<std::wstring> visibleKeys;
+    if (widget.type == DesktopWidgetType::FileCategories)
+    {
+        for (auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (wc && wc->GetWidgetData() == &widget)
+            {
+                auto* fc = dynamic_cast<FileCategories*>(wc);
+                if (fc)
+                {
+                    const auto& rk = fc->GetSearchResultKeys();
+                    visibleKeys.assign(rk.begin(), rk.end());
+                }
+                break;
+            }
+        }
+        memberCount = visibleKeys.size();
+        if (memberCount == 0) return;
+    }
+
     int currentIdx = keyboardNavMemberIndex_;
     if (currentIdx < 0) currentIdx = 0;
+
+    // FileCategories：基于当前可见选中项确定导航起点
+    if (!visibleKeys.empty())
+    {
+        int foundIdx = -1;
+        for (size_t i = 0; i < visibleKeys.size(); ++i)
+        {
+            size_t itemIdx = FindItemIndexByKey(visibleKeys[i]);
+            if (itemIdx != static_cast<size_t>(-1) && items_[itemIdx].selected)
+            {
+                foundIdx = static_cast<int>(i);
+                break;
+            }
+        }
+        if (foundIdx >= 0)
+            currentIdx = foundIdx;
+        else
+            currentIdx = 0;
+    }
 
     int currentCol = currentIdx % columns;
     int currentRow = currentIdx / columns;
@@ -4134,6 +4191,16 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             if (static_cast<size_t>(currentIdx) < widget.folderEntries.size())
                 widget.folderEntries[static_cast<size_t>(currentIdx)].selected = false;
         }
+        else if (!visibleKeys.empty())
+        {
+            // 清除所有可见项选中状态，防止多选残留
+            for (const auto& key : visibleKeys)
+            {
+                size_t itemIdx = FindItemIndexByKey(key);
+                if (itemIdx != static_cast<size_t>(-1))
+                    items_[itemIdx].selected = false;
+            }
+        }
         else
         {
             const auto& keys = widget.itemKeys;
@@ -4150,6 +4217,12 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     if (widget.type == DesktopWidgetType::FolderMapping)
     {
         widget.folderEntries[static_cast<size_t>(nextIdx)].selected = true;
+    }
+    else if (!visibleKeys.empty())
+    {
+        size_t itemIdx = FindItemIndexByKey(visibleKeys[static_cast<size_t>(nextIdx)]);
+        if (itemIdx != static_cast<size_t>(-1))
+            items_[itemIdx].selected = true;
     }
     else
     {
@@ -7190,6 +7263,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
         AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
+            widget.dateHeaders ? L"隐藏日期表头" : L"显示日期表头");
     }
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
@@ -7230,9 +7305,9 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     }
 
     HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr, wDateMenu = nullptr;
-    if (widget.type == DesktopWidgetType::FileCategories ||
+    if ((widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
-        widget.type == DesktopWidgetType::Collection)
+        widget.type == DesktopWidgetType::Collection) && !widget.dateHeaders)
     {
         sortMenu = CreatePopupMenu();
         if (sortMenu)
@@ -7282,6 +7357,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
     SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
     SetMenuItemIcon(menu, kContextWidgetToggleListMode, widget.listMode ? L"" : L"");
+    SetMenuItemIcon(menu, kContextWidgetToggleDateGroup, L"");
     SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
     SetMenuItemIcon(menu, kContextNewMenu, L"");
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
@@ -7368,6 +7444,12 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             EnforceSingleAutoCollectFileCategory(widgetIndex);
             CollectFileCategoryWidget(widgetIndex, false);
         }
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetToggleDateGroup:
+        widgets_[widgetIndex].dateHeaders = !widgets_[widgetIndex].dateHeaders;
         RebuildContainersAndItems();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);

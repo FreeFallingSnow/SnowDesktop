@@ -44,6 +44,7 @@ enum class WidgetHit {
     MoveHandle,         ///< 底栏（除右下角缩放角外）—— 拖拽移动组件
     ResizeHandle,       ///< 右下角 24px 缩放角 —— 拖拽调整组件大小
     ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
+    DateHeaderToggleBtn, ///< FileCategories：日期表头开关按钮
     OpenFolderBtn,      ///< FolderMapping：打开源文件夹按钮
     CategoryTab,        ///< FileCategories：分类标签页
     SearchBox,          ///< FileCategories：搜索框
@@ -315,6 +316,19 @@ public:
     size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
     bool AllowsDesktopKey(const std::wstring& key) const override;
 
+    struct LayoutSegment
+    {
+        bool isHeader = false;
+        std::wstring label;          // valid when isHeader
+        size_t firstItemIndex = 0;   // valid when !isHeader: first index into active keys
+        size_t itemCount = 0;        // valid when !isHeader: number of items in this segment
+        LONG y = 0;                  // top offset relative to content.top
+        LONG height = 0;             // segment height in pixels
+    };
+
+    void EnsureLayout() const;
+    const std::vector<LayoutSegment>& GetLayoutCache() const { return layoutCache_; }
+
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth() const override;
@@ -360,6 +374,9 @@ private:
     void InvalidateCategorySnapshot() const;
 
     mutable CategorySnapshot categorySnapshot_;
+    mutable std::vector<LayoutSegment> layoutCache_;
+    mutable std::wstring layoutCacheCategory_;
+    mutable bool layoutCacheListMode_ = false;
     std::wstring searchText_;
     size_t searchCursorPos_ = 0;
     bool searchFocused_ = false;
