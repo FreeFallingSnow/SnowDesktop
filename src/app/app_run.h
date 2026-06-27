@@ -807,6 +807,13 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetGeneralSettingsChangedCallback([this]() {
             LoadGeneralSettingsAndApply();
         });
+        settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
+            SetIconSpacing(settingsWindow_->GetIconSpacingScale());
+            SetItemFontSize(settingsWindow_->GetItemFontSizeD());
+            SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
+        });
+
+        settingsWindow_->SyncDisplaySettings(iconSpacingScale_, itemFontSize_, static_cast<float>(itemFontWeight_));
     }
     else
     {

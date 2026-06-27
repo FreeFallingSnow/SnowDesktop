@@ -107,7 +107,8 @@ inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& w
 {
     RECT frame = GetStandaloneWidgetFrameRect(widget);
     const float cellScale = GetWidgetCellScale(widget);
-    const int handleHeight = ScaleWidgetCu(24.0f, cellScale);
+    const float barHeight = settingsWindow_ ? settingsWindow_->GetPersonalization().barHeight : 24.0f;
+    const int handleHeight = ScaleWidgetCu(barHeight, cellScale);
     return {
         frame.left + ScaleWidgetCu(4.0f, cellScale),
         std::max<LONG>(frame.top,
@@ -125,7 +126,8 @@ inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& w
 inline RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget) const
 {
     RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
-    const int handleWidth = ScaleWidgetCu(24.0f, GetWidgetCellScale(widget));
+    const float barHeight = settingsWindow_ ? settingsWindow_->GetPersonalization().barHeight : 24.0f;
+    const int handleWidth = ScaleWidgetCu(barHeight, GetWidgetCellScale(widget));
     return {
         std::max<LONG>(handle.left, handle.right - handleWidth),
         handle.top,

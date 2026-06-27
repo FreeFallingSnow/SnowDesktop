@@ -51,6 +51,8 @@ struct PersonalizationSettings
      */
     float gradientEndA = 0.65f;
 
+    float barHeight = 24.0f;
+
     /**
      * @brief 获取暗色预设
      * @return 暗色主题的 PersonalizationSettings 实例

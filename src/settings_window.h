@@ -140,6 +140,16 @@ public:
 
     void SetGeneralSettingsChangedCallback(std::function<void()> callback) { generalSettingsChangedCallback_ = std::move(callback); }
 
+    void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
+
+    void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight)
+    {
+        iconSpacingScale_ = spacingScale;
+        itemFontSize_ = fontSize;
+        itemFontWeight_ = fontWeight;
+        displaySpacingPct_ = static_cast<int>(std::round(spacingScale * 100.0f));
+    }
+
     /** @} */
     /** @name 公共功能
      *  @{ */
@@ -170,6 +180,10 @@ public:
      * @return 指向 PersonalizationSettings 的常引用
      */
     const PersonalizationSettings& GetPersonalization() const { return personalization_; }
+
+    float GetIconSpacingScale() const { return iconSpacingScale_; }
+    float GetItemFontSizeD() const { return itemFontSize_; }
+    float GetItemFontWeightD() const { return itemFontWeight_; }
 
     /** @} */
 
@@ -231,6 +245,8 @@ private:
      * @brief 绘制个性化设置页面（背景、字体等外观选项）
      */
     void DrawPersonalizationPage();
+
+    void DrawDisplayPage();
 
     /**
      * @brief 绘制小组件编辑器页面（脚本编辑与保存）
@@ -403,6 +419,9 @@ private:
     /// 通用设置变更回调
     std::function<void()> generalSettingsChangedCallback_;
 
+    /// 显示设置变更回调
+    std::function<void()> displaySettingsChangedCallback_;
+
     /** @} */
 
     /** @name 设置数据
@@ -431,6 +450,17 @@ private:
 
     /// 通用设置是否已修改（需要保存）
     bool generalSettingsDirty_ = false;
+
+    /// 当前图标间距缩放
+    float iconSpacingScale_ = 1.0f;
+
+    /// 当前桌面项目字号
+    float itemFontSize_ = 14.0f;
+
+    /// 当前桌面项目字体粗细 (DWRITE_FONT_WEIGHT)
+    float itemFontWeight_ = 600.0f;
+
+    int displaySpacingPct_ = 100;
 
     /** @} */
 

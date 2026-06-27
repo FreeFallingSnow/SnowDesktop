@@ -773,12 +773,13 @@ static RECT FileCategoryToggleRect(FileCategories* widget)
 {
     if (!widget) return {};
     RECT handle = widget->GetMoveHandleRect();
-    const int btnSize = widget->Cu(14.0f);
-    const int gap = widget->Cu(4.0f);
-    const int resizeReserve = widget->Cu(20.0f);
+    const float bs = widget->GetBarScale();
+    const int btnSize = widget->Cu(14.0f * bs);
+    const int gap = widget->Cu(4.0f * bs);
+    const int resizeReserve = widget->Cu(20.0f * bs);
     return MakeRect(handle.right - resizeReserve - gap - btnSize,
-        handle.top + widget->Cu(5.0f),
-        handle.right - resizeReserve - gap, handle.bottom - widget->Cu(3.0f));
+        handle.top + (handle.bottom - handle.top - btnSize) / 2,
+        handle.right - resizeReserve - gap, handle.top + (handle.bottom - handle.top + btnSize) / 2);
 }
 
 /**
@@ -790,14 +791,16 @@ static RECT FileCategoryDateToggleRect(FileCategories* widget)
 {
     if (!widget) return {};
     RECT handle = widget->GetMoveHandleRect();
-    const int btnSize = widget->Cu(14.0f);
-    const int gap = widget->Cu(4.0f);
-    const int gapBetween = widget->Cu(7.0f);
-    const int resizeReserve = widget->Cu(20.0f);
+    const float bs = widget->GetBarScale();
+    const int btnSize = widget->Cu(14.0f * bs);
+    const int gap = widget->Cu(4.0f * bs);
+    const int gapBetween = widget->Cu(7.0f * bs);
+    const int resizeReserve = widget->Cu(20.0f * bs);
     const int right = handle.right - resizeReserve - gap - btnSize - gapBetween;
+    const int h = handle.bottom - handle.top;
     return MakeRect(right - btnSize,
-        handle.top + widget->Cu(5.0f),
-        right, handle.bottom - widget->Cu(3.0f));
+        handle.top + (h - btnSize) / 2,
+        right, handle.top + (h + btnSize) / 2);
 }
 
 /**
@@ -1420,24 +1423,21 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
 
     RECT dateToggle = FileCategoryDateToggleRect(this);
     bool dateHot = PtInRect(&dateToggle, app_->lastMousePoint_) != FALSE;
-    app_->DrawD2DRoundedRectangle(context, dateToggle, static_cast<float>(Cu(4.0f)),
-        dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
-    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f);
+    const float bs = GetBarScale();
+    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f * bs);
     app_->DrawD2DText(context, L"", dateToggle,
         faFormat ? faFormat :
             (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-        data_->dateHeaders ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f));
+        data_->dateHeaders
+            ? (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f))
+            : (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f)));
 
     RECT toggle = FileCategoryToggleRect(this);
     bool hot = PtInRect(&toggle, app_->lastMousePoint_) != FALSE;
-    app_->DrawD2DRoundedRectangle(context, toggle, static_cast<float>(Cu(4.0f)),
-        hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
     app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggle,
         faFormat ? faFormat :
             (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
+        hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f));
     (void)handleRect;
     (void)hovered;
 }

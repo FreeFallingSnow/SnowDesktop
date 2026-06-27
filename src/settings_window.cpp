@@ -326,9 +326,10 @@ void SettingsWindow::Render()
         {
         case 0: DrawGeneralPage(); break;
         case 1: DrawPersonalizationPage(); break;
-        case 2: DrawBackupPage(); break;
+        case 2: DrawDisplayPage(); break;
+        case 3: DrawBackupPage(); break;
         case 4: DrawAboutPage(); break;
-        case 3:
+        case 5:
             if (debugUnlocked_)
                 DrawDebugPage();
             else
@@ -449,11 +450,12 @@ void SettingsWindow::DrawSidebar()
     };
 
     SideButton(0, "通用");
-    SideButton(1, "个性化");
-    SideButton(2, "布局备份");
+    SideButton(1, "组件显示");
+    SideButton(2, "图标显示");
+    SideButton(3, "布局备份");
     SideButton(4, "关于");
     if (debugUnlocked_)
-        SideButton(3, "调试");
+        SideButton(5, "调试");
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
@@ -641,6 +643,7 @@ void SettingsWindow::DrawBackupPage()
         }
         ImGui::EndChild();
     }
+
     ImGui::EndChild();
 }
 
@@ -740,7 +743,136 @@ void SettingsWindow::DrawGeneralPage()
 }
 
 /**
- * @brief 绘制"个性化设置"页面。
+ * @brief 绘制"图标显示设置"页面。
+ */
+void SettingsWindow::DrawDisplayPage()
+{
+    const float pad = 16.0f * dpiScale_;
+    ImGui::SetCursorPos(ImVec2(pad, pad));
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x - pad);
+    pageSize.y = std::max(1.0f, pageSize.y - pad);
+    ImGui::BeginChild("##DisplayPageInner", pageSize, ImGuiChildFlags_None);
+
+    const float labelW = 110.0f * dpiScale_;
+    const float sliderW = 200.0f * dpiScale_;
+
+    ImGui::Text("图标显示设置");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    auto markChanged = [&]() {
+        if (displaySettingsChangedCallback_)
+            displaySettingsChangedCallback_();
+    };
+
+    // ── 图标间距 ──
+    ImGui::Text("图标间距");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderInt("##IconSpacing", &displaySpacingPct_, 50, 200, "%d%%", ImGuiSliderFlags_None))
+    {
+        iconSpacingScale_ = displaySpacingPct_ / 100.0f;
+        markChanged();
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit())
+    {
+        iconSpacingScale_ = displaySpacingPct_ / 100.0f;
+        markChanged();
+    }
+
+    ImGui::Spacing();
+
+    // ── 标题字号 ──
+    const int fontSizes[] = { 12, 14, 16 };
+    const char* fontSizeNames[] = { "12pt 小", "14pt 中", "16pt 大" };
+    int fontSizeIdx = 1;
+    for (int i = 0; i < 3; ++i)
+        if (static_cast<int>(std::round(itemFontSize_)) == fontSizes[i])
+            fontSizeIdx = i;
+
+    ImGui::Text("标题字号");
+    ImGui::SameLine(labelW);
+    for (int i = 0; i < 3; ++i)
+    {
+        if (i > 0) ImGui::SameLine();
+        bool selected = (fontSizeIdx == i);
+        if (selected)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.50f, 0.70f, 0.60f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.50f, 0.70f, 0.80f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+        if (ImGui::Button(fontSizeNames[i], ImVec2(72, 0)))
+        {
+            itemFontSize_ = static_cast<float>(fontSizes[i]);
+            markChanged();
+        }
+        if (selected)
+            ImGui::PopStyleColor(3);
+        else
+            ImGui::PopStyleColor();
+    }
+
+    // ── 标题粗细 ──
+    const float weights[] = { 400.0f, 600.0f, 700.0f };
+    const char* weightNames[] = { "细", "中", "粗" };
+    int weightIdx = 1;
+    for (int i = 0; i < 3; ++i)
+        if (itemFontWeight_ == weights[i])
+            weightIdx = i;
+
+    ImGui::Spacing();
+    ImGui::Text("标题粗细");
+    ImGui::SameLine(labelW);
+    for (int i = 0; i < 3; ++i)
+    {
+        if (i > 0) ImGui::SameLine();
+        bool selected = (weightIdx == i);
+        if (selected)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.50f, 0.70f, 0.60f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.50f, 0.70f, 0.80f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+        if (ImGui::Button(weightNames[i], ImVec2(56, 0)))
+        {
+            itemFontWeight_ = weights[i];
+            markChanged();
+        }
+        if (selected)
+            ImGui::PopStyleColor(3);
+        else
+            ImGui::PopStyleColor();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    if (ImGui::Button("恢复默认", ImVec2(80, 0)))
+    {
+        iconSpacingScale_ = 1.0f;
+        displaySpacingPct_ = 100;
+        itemFontSize_ = 14.0f;
+        itemFontWeight_ = 600.0f;
+        markChanged();
+    }
+    ImGui::PopStyleColor();
+
+    ImGui::EndChild();
+}
+
+/**
+ * @brief 绘制"组件显示设置"页面。
  *
  * 提供以下定制能力：
  * - 预设快速切换（恢复默认暗色 / 浅色预设）
@@ -769,16 +901,11 @@ void SettingsWindow::DrawPersonalizationPage()
             nearlyEqual(a.widgetBorderG, b.widgetBorderG) &&
             nearlyEqual(a.widgetBorderB, b.widgetBorderB) &&
             nearlyEqual(a.widgetAlpha, b.widgetAlpha) &&
-            nearlyEqual(a.gradientEndA, b.gradientEndA);
+            nearlyEqual(a.gradientEndA, b.gradientEndA) &&
+            nearlyEqual(a.barHeight, b.barHeight);
     };
     auto percentText = [](float value) {
         return std::to_string(static_cast<int>(std::round(std::clamp(value, 0.0f, 1.0f) * 100.0f))) + "%";
-    };
-    auto drawSectionTitle = [](const char* title) {
-        ImGui::Spacing();
-        ImGui::Text("%s", title);
-        ImGui::Separator();
-        ImGui::Spacing();
     };
     auto markChanged = [&](bool saveImmediately) {
         personalizationDirty_ = true;
@@ -787,9 +914,12 @@ void SettingsWindow::DrawPersonalizationPage()
             personalizationSaveRequested_ = true;
     };
 
+    const float labelW = 110.0f * dpiScale_;
+    const float colorW = 210.0f * dpiScale_;
+    const float sliderW = 260.0f * dpiScale_;
     const bool modifiedFromDefault = !sameSettings(personalization_, PersonalizationSettings::DarkPreset());
 
-    ImGui::Text("个性化设置");
+    ImGui::Text("组件显示设置");
     if (modifiedFromDefault)
     {
         ImGui::SameLine();
@@ -797,23 +927,6 @@ void SettingsWindow::DrawPersonalizationPage()
     }
     ImGui::Separator();
     ImGui::Spacing();
-
-    drawSectionTitle("预设");
-    if (BlueButton("恢复默认", ImVec2(96, 0)))
-    {
-        personalization_ = PersonalizationSettings::DarkPreset();
-        markChanged(true);
-    }
-    ImGui::SameLine();
-    if (BlueButton("浅色预设", ImVec2(96, 0)))
-    {
-        personalization_ = PersonalizationSettings::LightPreset();
-        markChanged(true);
-    }
-
-    drawSectionTitle("组件颜色");
-    const float labelW = 110.0f * dpiScale_;
-    const float colorW = 210.0f * dpiScale_;
 
     ImGui::Text("组件背景");
     ImGui::SameLine(labelW);
@@ -841,8 +954,7 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
 
-    drawSectionTitle("透明度与渐变");
-    const float sliderW = 260.0f * dpiScale_;
+    ImGui::Spacing();
 
     ImGui::Text("整体不透明度");
     ImGui::SameLine(labelW);
@@ -856,7 +968,9 @@ void SettingsWindow::DrawPersonalizationPage()
 
     bool gradientEnabled = personalization_.gradientEndA > 0.001f;
     bool gradientToggle = gradientEnabled;
-    if (ImGui::Checkbox("启用底部渐变", &gradientToggle))
+    ImGui::Text("启用底部渐变");
+    ImGui::SameLine(labelW);
+    if (ImGui::Checkbox("##GradientToggle", &gradientToggle))
     {
         personalization_.gradientEndA = gradientToggle ? PersonalizationSettings::DarkPreset().gradientEndA : 0.0f;
         markChanged(true);
@@ -874,6 +988,32 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("%s", percentText(personalization_.gradientEndA).c_str());
+
+    ImGui::Spacing();
+
+    ImGui::Text("底栏高度");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##BarHeight", &personalization_.barHeight, 16.0f, 48.0f, "%.0f cu"))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (BlueButton("恢复默认", ImVec2(80, 0)))
+    {
+        personalization_ = PersonalizationSettings::DarkPreset();
+        markChanged(true);
+    }
+    ImGui::SameLine();
+    if (BlueButton("浅色预设", ImVec2(80, 0)))
+    {
+        personalization_ = PersonalizationSettings::LightPreset();
+        markChanged(true);
+    }
 
     ImGui::EndChild();
 }
@@ -1375,7 +1515,7 @@ void SettingsWindow::DrawAboutPage()
             if (versionClickCount_ >= 5)
             {
                 debugUnlocked_ = true;
-                activePage_ = 3;
+                activePage_ = 5;
             }
         }
     }

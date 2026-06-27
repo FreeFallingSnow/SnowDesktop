@@ -91,6 +91,8 @@ public:
     float FontCu(float value) const;
     IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;
     IDWriteTextFormat* GetCuFaTextFormat(float value) const;
+    float GetBarHeight() const;
+    float GetBarScale() const;
 
 protected:
     DesktopWidget* data_;

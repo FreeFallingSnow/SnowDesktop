@@ -718,14 +718,15 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
         if (base == WidgetHit::MoveHandle)
         {
             RECT handle = GetMoveHandleRect();
-            const int btnSize = Cu(14.0f);
-            const int gap = Cu(4.0f);
-            const int resizeReserve = Cu(20.0f);
+            const float bs = GetBarScale();
+            const int btnSize = Cu(14.0f * bs);
+            const int gap = Cu(4.0f * bs);
+            const int resizeReserve = Cu(20.0f * bs);
             RECT toggleBtn = {
                 handle.right - resizeReserve - gap - btnSize,
-                handle.top + Cu(5.0f),
+                handle.top + (handle.bottom - handle.top - btnSize) / 2,
                 handle.right - resizeReserve - gap,
-                handle.bottom - Cu(3.0f)
+                handle.top + (handle.bottom - handle.top + btnSize) / 2
             };
             if (PtInRect(&toggleBtn, pt)) return WidgetHit::ListToggleBtn;
         }
@@ -842,28 +843,24 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
 {
     if (!data_ || !app_ || !data_->scrollContainerMode) return;
 
-    const int btnSize = Cu(14.0f);
-    const int gap = Cu(4.0f);
-    const int resizeReserve = Cu(20.0f);
-    const int topInset = Cu(5.0f);
-    const int bottomInset = Cu(3.0f);
+    const float bs = GetBarScale();
+    const int btnSize = Cu(14.0f * bs);
+    const int gap = Cu(4.0f * bs);
+    const int resizeReserve = Cu(20.0f * bs);
     RECT toggleBtn = {
         handleRect.right - resizeReserve - gap - btnSize,
-        handleRect.top + topInset,
+        handleRect.top + (handleRect.bottom - handleRect.top - btnSize) / 2,
         handleRect.right - resizeReserve - gap,
-        handleRect.bottom - bottomInset
+        handleRect.top + (handleRect.bottom - handleRect.top + btnSize) / 2
     };
 
-    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f);
+    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f * bs);
 
     bool hot = PtInRect(&toggleBtn, app_->lastMousePoint_) != FALSE;
-    app_->DrawD2DRoundedRectangle(context, toggleBtn, static_cast<float>(Cu(4.0f)),
-        hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
     app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggleBtn,
         faFormat ? faFormat :
             (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
+        hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f));
     (void)hovered;
 }
 
