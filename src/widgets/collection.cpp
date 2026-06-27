@@ -319,6 +319,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (!data_ || !app_) return;
     if (data_->itemKeys.empty()) return;
 
+    bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
+
     // ── Scroll container mode (like FolderMapping) ───────────
     if (data_->scrollContainerMode)
     {
@@ -337,13 +339,21 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             if (!data_->listMode)
             {
-                bool hovered = !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
-                DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
-                icon.Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0));
+                if (privacyActive)
+                    DrawPrivacyPlaceholder(context, cell, di.name, false);
+                else
+                {
+                    bool hovered = !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
+                    DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
+                    icon.Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0));
+                }
             }
             else
             {
-                DrawListItem(context, cell, di.iconBitmap, di.sysIconIndex, di.name, di.selected);
+                if (privacyActive)
+                    DrawPrivacyPlaceholder(context, cell, di.name, false);
+                else
+                    DrawListItem(context, cell, di.iconBitmap, di.sysIconIndex, di.name, di.selected);
             }
         }
         context->PopAxisAlignedClip();
@@ -367,13 +377,23 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (IsRectEmptyRect(slotRect)) continue;
 
         if (compact)
-            DrawThumbnail(context, di, slotRect, di.selected);
+        {
+            if (privacyActive)
+                DrawPrivacyPlaceholder(context, slotRect, di.name, false);
+            else
+                DrawThumbnail(context, di, slotRect, di.selected);
+        }
         else
         {
-            RECT bodyRect = GetBodyRect();
-            bool hovered = PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
-            DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
-            icon.Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0));
+            if (privacyActive)
+                DrawPrivacyPlaceholder(context, slotRect, di.name, false);
+            else
+            {
+                RECT bodyRect = GetBodyRect();
+                bool hovered = PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
+                DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
+                icon.Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0));
+            }
         }
     }
 
@@ -421,7 +441,10 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     {
                         const DesktopItem& di = items[itemIdx];
                         InflateRect(&tile, -Cu(4.0f), -Cu(4.0f));
-                        DrawThumbnail(context, di, tile, di.selected);
+                        if (privacyActive)
+                            DrawPrivacyPlaceholder(context, tile, di.name, false);
+                        else
+                            DrawThumbnail(context, di, tile, di.selected);
                     }
                 }
                 else

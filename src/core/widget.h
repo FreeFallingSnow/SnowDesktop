@@ -222,6 +222,9 @@ public:
         HBITMAP iconBitmap, int sysIconIndex,
         const std::wstring& name, bool selected) const;
 
+    void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
+        const std::wstring& name, bool isDir) const;
+
     BarStyle GetInsertionStyle() const override;
 };
 

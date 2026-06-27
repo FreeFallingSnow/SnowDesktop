@@ -417,6 +417,7 @@ struct DesktopWidget
     std::wstring activeCategoryId;
     std::wstring scriptPath;
     bool showOnHoverOnly = false;
+    bool privacyMode = false;
     bool scrollContainerMode = false;
     bool userRenamed = false;
     bool dateHeaders = false;

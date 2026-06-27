@@ -595,6 +595,74 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     }
 }
 
+void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
+    const std::wstring& name, bool isDir) const
+{
+    if (!app_ || !context || IsRectEmptyRect(rect)) return;
+    (void)name;
+
+    const std::wstring glyph = isDir ? L"" : L"";
+    const std::wstring label = isDir ? L"文件夹" : L"文件";
+
+    int w = rect.right - rect.left;
+    int h = rect.bottom - rect.top;
+    int iconSz = std::min(w, h) - Cu(2.0f);
+
+    if (w > h * 2)
+    {
+        // List-like: icon on left, text on right
+        int listIconSz = h - Cu(2.0f);
+        RECT iconRect = {
+            rect.left + Cu(4.0f),
+            rect.top + (h - listIconSz) / 2,
+            rect.left + Cu(4.0f) + listIconSz,
+            rect.top + (h + listIconSz) / 2
+        };
+
+        IDWriteTextFormat* faFormat = GetCuFaTextFormat(static_cast<float>(listIconSz) * 0.88f);
+        app_->DrawD2DText(context, glyph, iconRect,
+            faFormat ? faFormat : (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f));
+
+        RECT nameRect = { iconRect.right + Cu(6.0f), rect.top + Cu(2.0f), rect.right - Cu(6.0f), rect.bottom - Cu(2.0f) };
+        if (nameRect.right > nameRect.left)
+        {
+            IDWriteTextFormat* textFormat = GetCuTextFormat(12.0f, false, false);
+            app_->DrawD2DText(context, label, nameRect,
+                textFormat ? textFormat : app_->listItemTextFormat_.Get(),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f));
+        }
+    }
+    else
+    {
+        // Grid-like: icon centered at top, text below
+        int iconH = iconSz;
+        if (iconH > h - Cu(16.0f)) iconH = h - Cu(16.0f);
+        if (iconH < Cu(4.0f)) iconH = Cu(4.0f);
+
+        RECT iconRect = {
+            rect.left + (w - iconH) / 2,
+            rect.top + std::max(0, (h - iconH - Cu(14.0f)) / 2),
+            rect.left + (w + iconH) / 2,
+            rect.top + std::max(0, (h + iconH - Cu(14.0f)) / 2)
+        };
+
+        IDWriteTextFormat* faFormat = GetCuFaTextFormat(static_cast<float>(iconH) * 0.88f);
+        app_->DrawD2DText(context, glyph, iconRect,
+            faFormat ? faFormat : (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f));
+
+        RECT nameRect = { rect.left + Cu(4.0f), iconRect.bottom + Cu(2.0f), rect.right - Cu(4.0f), rect.bottom - Cu(2.0f) };
+        if (nameRect.right > nameRect.left)
+        {
+            IDWriteTextFormat* textFormat = GetCuTextFormat(12.0f, false, true);
+            app_->DrawD2DText(context, label, nameRect,
+                textFormat ? textFormat : app_->listItemTextFormat_.Get(),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f));
+        }
+    }
+}
+
 // ── Scrollbar helper (free function, shared by WidgetContainer and popup) ─
 
 /**

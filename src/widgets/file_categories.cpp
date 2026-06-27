@@ -1154,6 +1154,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     (void)body;
+    bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
 
     const auto& categoryIds = CachedVisibleCategoryIds();
     IDWriteTextFormat* normalFormat = GetCuTextFormat(13.0f, false, true);
@@ -1269,14 +1270,22 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             if (!data_->listMode)
             {
-                RECT bodyRect = GetBodyRect();
-                bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
-                DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
-                icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0));
+                if (privacyActive)
+                    DrawPrivacyPlaceholder(context, itemRect, di.name, false);
+                else
+                {
+                    RECT bodyRect = GetBodyRect();
+                    bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                    DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
+                    icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0));
+                }
                 continue;
             }
-            DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
-                di.name, di.selected);
+            if (privacyActive)
+                DrawPrivacyPlaceholder(context, itemRect, di.name, false);
+            else
+                DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
+                    di.name, di.selected);
         }
         context->PopAxisAlignedClip();
         return;
@@ -1378,15 +1387,23 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         if (!data_->listMode)
         {
-            RECT bodyRect = GetBodyRect();
-            bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
-            DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
-            icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0));
+            if (privacyActive)
+                DrawPrivacyPlaceholder(context, itemRect, di.name, false);
+            else
+            {
+                RECT bodyRect = GetBodyRect();
+                bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
+                icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0));
+            }
             continue;
         }
 
-        DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
-            di.name, di.selected);
+        if (privacyActive)
+            DrawPrivacyPlaceholder(context, itemRect, di.name, false);
+        else
+            DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
+                di.name, di.selected);
     }
     context->PopAxisAlignedClip();
 }

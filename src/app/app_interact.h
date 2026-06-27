@@ -7287,6 +7287,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     HMENU displayModeMenu = nullptr;
     HMENU hoverMenu = nullptr;
+    HMENU privacyMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
     {
@@ -7400,6 +7401,20 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             kContextWidgetShowOnHoverOff, L"关");
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), L"仅在悬停时显示");
     }
+    if (widget.type == DesktopWidgetType::Collection ||
+        widget.type == DesktopWidgetType::FileCategories ||
+        widget.type == DesktopWidgetType::FolderMapping)
+    {
+        privacyMenu = CreatePopupMenu();
+        if (privacyMenu)
+        {
+            AppendMenuW(privacyMenu, MF_STRING | (widget.privacyMode ? MF_CHECKED : 0),
+                kContextWidgetPrivacyModeOn, L"开");
+            AppendMenuW(privacyMenu, MF_STRING | (!widget.privacyMode ? MF_CHECKED : 0),
+                kContextWidgetPrivacyModeOff, L"关");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(privacyMenu), L"隐私模式");
+        }
+    }
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
 
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
@@ -7414,6 +7429,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
     if (hoverMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(hoverMenu), L"");
+    if (privacyMenu)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(privacyMenu), widget.privacyMode ? L"" : L"");
     if (sortMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
@@ -7574,6 +7591,16 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     case kContextWidgetShowOnHoverOff:
         widgets_[widgetIndex].showOnHoverOnly = false;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetPrivacyModeOn:
+        widgets_[widgetIndex].privacyMode = true;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetPrivacyModeOff:
+        widgets_[widgetIndex].privacyMode = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;

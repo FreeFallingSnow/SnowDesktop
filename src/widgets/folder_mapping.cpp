@@ -381,6 +381,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     (void)body;
+    bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
 
     if (data_->folderEntries.empty())
     {
@@ -406,15 +407,23 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         if (!listMode)
         {
-            RECT bodyRect = GetBodyRect();
-            bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
-            FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
-            icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0));
+            if (privacyActive)
+                DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
+            else
+            {
+                RECT bodyRect = GetBodyRect();
+                bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
+                icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0));
+            }
             continue;
         }
 
-        DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
-            entry.name, entry.selected);
+        if (privacyActive)
+            DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
+        else
+            DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
+                entry.name, entry.selected);
     }
     context->PopAxisAlignedClip();
 }
