@@ -278,24 +278,25 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     if (data_->showTitle && !data_->title.empty())
     {
+        const float bh = GetBarHeight();
         RECT titleRect = {
             handle.left + Cu(4.0f),
-            handle.top + Cu(2.0f),
-            std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(28.0f)),
-            handle.bottom - Cu(2.0f)
+            handle.top + Cu(bh * 0.083f),
+            std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(bh * 1.17f)),
+            handle.bottom - Cu(bh * 0.083f)
         };
-        IDWriteTextFormat* titleFormat = GetCuTextFormat(13.0f, false, false);
+        IDWriteTextFormat* titleFormat = GetCuTextFormat(bh * 0.542f, false, false);
         app_->DrawD2DText(context, data_->title, titleRect,
             titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
     }
 
     RECT resize = app_->GetStandaloneWidgetResizeHandleRect(*data_);
-    const int dot = Cu(8.0f);
+    const int dot = Cu(GetBarHeight() * 0.333f);
     int cx = resize.left + (resize.right - resize.left) / 2;
     int cy = resize.top + (resize.bottom - resize.top) / 2;
     RECT dotRect = { cx - dot / 2, cy - dot / 2, cx + dot / 2, cy + dot / 2 };
-    app_->DrawD2DRoundedRectangle(context, dotRect, static_cast<float>(Cu(4.0f)),
+    app_->DrawD2DRoundedRectangle(context, dotRect, static_cast<float>(Cu(4.0f * GetBarScale())),
         selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
                  : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f));

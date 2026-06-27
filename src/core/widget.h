@@ -44,8 +44,10 @@ enum class WidgetHit {
     MoveHandle,         ///< 底栏（除右下角缩放角外）—— 拖拽移动组件
     ResizeHandle,       ///< 右下角 24px 缩放角 —— 拖拽调整组件大小
     ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
+    DateHeaderToggleBtn, ///< FileCategories：日期表头开关按钮
     OpenFolderBtn,      ///< FolderMapping：打开源文件夹按钮
     CategoryTab,        ///< FileCategories：分类标签页
+    SearchBox,          ///< FileCategories：搜索框
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
 };
 
@@ -89,6 +91,8 @@ public:
     float FontCu(float value) const;
     IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;
     IDWriteTextFormat* GetCuFaTextFormat(float value) const;
+    float GetBarHeight() const;
+    float GetBarScale() const;
 
 protected:
     DesktopWidget* data_;
@@ -220,6 +224,9 @@ public:
         HBITMAP iconBitmap, int sysIconIndex,
         const std::wstring& name, bool selected) const;
 
+    void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
+        const std::wstring& name, bool isDir) const;
+
     BarStyle GetInsertionStyle() const override;
 };
 
@@ -265,6 +272,7 @@ public:
     int  GetTotalContentHeight() const override;
     int  GetVisibleContentHeight() const override;
     bool SingleColumn() const override;
+    BarStyle GetInsertionStyle() const override;
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
@@ -313,6 +321,19 @@ public:
     size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
     bool AllowsDesktopKey(const std::wstring& key) const override;
 
+    struct LayoutSegment
+    {
+        bool isHeader = false;
+        std::wstring label;          // valid when isHeader
+        size_t firstItemIndex = 0;   // valid when !isHeader: first index into active keys
+        size_t itemCount = 0;        // valid when !isHeader: number of items in this segment
+        LONG y = 0;                  // top offset relative to content.top
+        LONG height = 0;             // segment height in pixels
+    };
+
+    void EnsureLayout() const;
+    const std::vector<LayoutSegment>& GetLayoutCache() const { return layoutCache_; }
+
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth() const override;
@@ -328,6 +349,22 @@ public:
     const std::vector<std::wstring>& CachedVisibleCategoryIds() const;
     std::wstring CachedActiveCategoryId() const;
 
+    const std::wstring& GetSearchText() const { return searchText_; }
+    void SetSearchText(const std::wstring& text) { searchText_ = text; searchCursorPos_ = searchText_.size(); InvalidateSlots(); }
+    void AppendSearchChar(wchar_t ch) { searchText_.insert(searchCursorPos_, 1, ch); ++searchCursorPos_; InvalidateSlots(); }
+    void BackspaceSearchText() { if (searchCursorPos_ > 0) { searchText_.erase(searchCursorPos_ - 1, 1); --searchCursorPos_; InvalidateSlots(); } }
+    void DeleteSearchText() { if (searchCursorPos_ < searchText_.size()) { searchText_.erase(searchCursorPos_, 1); InvalidateSlots(); } }
+    void ClearSearchText() { searchText_.clear(); searchCursorPos_ = 0; searchFocused_ = false; InvalidateSlots(); }
+    bool IsSearchFocused() const { return searchFocused_; }
+    void SetSearchFocused(bool focused) { searchFocused_ = focused; if (focused) searchCursorPos_ = searchText_.size(); }
+    void MoveCursorLeft() { if (searchCursorPos_ > 0) --searchCursorPos_; }
+    void MoveCursorRight() { if (searchCursorPos_ < searchText_.size()) ++searchCursorPos_; }
+    void MoveCursorHome() { searchCursorPos_ = 0; }
+    void MoveCursorEnd() { searchCursorPos_ = searchText_.size(); }
+    RECT GetSearchBoxRect() const;
+    bool IsSearchActive() const { return !searchText_.empty(); }
+    const std::vector<std::wstring>& GetSearchResultKeys() const;
+
 private:
     struct CategorySnapshot
     {
@@ -342,6 +379,13 @@ private:
     void InvalidateCategorySnapshot() const;
 
     mutable CategorySnapshot categorySnapshot_;
+    mutable std::vector<LayoutSegment> layoutCache_;
+    mutable std::wstring layoutCacheCategory_;
+    mutable bool layoutCacheListMode_ = false;
+    std::wstring searchText_;
+    size_t searchCursorPos_ = 0;
+    bool searchFocused_ = false;
+    mutable std::vector<std::wstring> searchResultCache_;
 };
 
 /**

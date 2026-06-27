@@ -7,6 +7,7 @@
  * 所有菜单均使用 TrackPopupMenuEx 以右键菜单方式弹出，并支持图标渲染。
  */
 #pragma once
+#include "../crashlog.h"
 
 /**
  * @brief 根据文本创建菜单图标位图（使用 DIB 段）。
@@ -346,6 +347,25 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
         }
 
+        HMENU fontWeightMenu = CreatePopupMenu();
+        if (fontWeightMenu)
+        {
+            auto addWeightItem = [&](UINT id, const wchar_t* label, DWRITE_FONT_WEIGHT weight) {
+                UINT flags = MF_STRING;
+                if (itemFontWeight_ == weight) flags |= MF_CHECKED;
+                AppendMenuW(fontWeightMenu, flags, id, label);
+            };
+            addWeightItem(kContextFontWeightBold, L"粗", DWRITE_FONT_WEIGHT_BOLD);
+            addWeightItem(kContextFontWeightMedium, L"中", DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            addWeightItem(kContextFontWeightFine, L"细", DWRITE_FONT_WEIGHT_NORMAL);
+            const wchar_t* weightLabel = L"标题粗细：中";
+            if (itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD) weightLabel = L"标题粗细：粗";
+            else if (itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL) weightLabel = L"标题粗细：细";
+            AppendMenuW(displaySettingsMenu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(fontWeightMenu), weightLabel);
+            SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontWeightMenu), L"");
+        }
+
         AppendMenuW(menu, MF_POPUP,
             reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"显示设置");
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"");
@@ -420,8 +440,10 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 clickedPageIdx = static_cast<int>(it - savedPageIds_.begin());
         }
 
-        AppendMenuW(menu, MF_STRING, kContextPagePrev, L"上一页");
-        AppendMenuW(menu, MF_STRING, kContextPageNext, L"下一页");
+        if (pageOffset_ > 0)
+            AppendMenuW(menu, MF_STRING, kContextPagePrev, L"上一页");
+        if (pageOffset_ < maxOff)
+            AppendMenuW(menu, MF_STRING, kContextPageNext, L"下一页");
 
         jumpMenu = CreatePopupMenu();
         if (jumpMenu)
@@ -456,11 +478,6 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
-
-    if (pageOffset_ >= maxOff)
-        EnableMenuItem(menu, kContextPageNext, MF_BYCOMMAND | MF_GRAYED);
-    if (pageOffset_ <= 0)
-        EnableMenuItem(menu, kContextPagePrev, MF_BYCOMMAND | MF_GRAYED);
 
     AppendMenuW(menu, MF_STRING, kContextPageAdd, L"新增页");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -498,8 +515,10 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pinPageMenu), L"");
     }
     SetMenuItemIcon(menu, kContextSettingsCommand, L"");
-    SetMenuItemIcon(menu, kContextPagePrev, L"");
-    SetMenuItemIcon(menu, kContextPageNext, L"");
+    if (pageOffset_ > 0)
+        SetMenuItemIcon(menu, kContextPagePrev, L"");
+    if (pageOffset_ < maxOff)
+        SetMenuItemIcon(menu, kContextPageNext, L"");
     SetMenuItemIcon(menu, kContextPageAdd, L"");
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
@@ -656,7 +675,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 info.hwnd = hwnd_;
                 info.lpVerb = "paste";
                 info.nShow = SW_SHOWNORMAL;
-                bgMenu->InvokeCommand(&info);
+                SafeInvokeCommand(bgMenu.Get(), &info);
                 ReloadItems();
             }
         }
@@ -669,6 +688,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
     case kContextFontSizeMedium: SetItemFontSize(14.0f); break;
     case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
+    case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
+    case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
+    case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
     case kContextPagePrev: NavigatePageOffset(-1); break;
     case kContextPageNext: NavigatePageOffset(1); break;
     case kContextPageAdd: AddNewPage(); break;
@@ -875,7 +897,7 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - kFirstCmd);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        ctxMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         ReloadItems();
     }
     DestroyMenu(menu);
@@ -933,7 +955,7 @@ inline void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstri
         invoke.lpVerb = MAKEINTRESOURCEA(cmd - 1);
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - 1);
         invoke.nShow = SW_SHOWNORMAL;
-        ctxMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
     }
 
     for (int i = GetMenuItemCount(tmpMenu) - 1; i >= 0; --i)
@@ -987,7 +1009,7 @@ inline void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - kFirstCmd);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         ReloadItems();
     }
     DestroyMenu(menu);
@@ -1102,7 +1124,7 @@ inline void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPa
         invoke.lpVerbW = MAKEINTRESOURCEW(command - kFirstCmd);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         ReloadItems();
     }
 

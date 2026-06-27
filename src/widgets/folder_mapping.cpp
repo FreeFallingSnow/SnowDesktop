@@ -381,6 +381,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     (void)body;
+    bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
 
     if (data_->folderEntries.empty())
     {
@@ -406,15 +407,23 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         if (!listMode)
         {
-            RECT bodyRect = GetBodyRect();
-            bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
-            FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
-            icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0));
+            if (privacyActive)
+                DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
+            else
+            {
+                RECT bodyRect = GetBodyRect();
+                bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
+                icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0));
+            }
             continue;
         }
 
-        DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
-            entry.name, entry.selected);
+        if (privacyActive)
+            DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
+        else
+            DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
+                entry.name, entry.selected);
     }
     context->PopAxisAlignedClip();
 }
@@ -434,36 +443,33 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
 {
     if (!data_ || !app_) return;
 
-    const int btnSize = Cu(14.0f);
-    const int gap = Cu(4.0f);
-    const int gapBetween = Cu(7.0f);
-    const int resizeReserve = Cu(20.0f);
-    const int topInset = Cu(5.0f);
-    const int bottomInset = Cu(3.0f);
+    const float bs = GetBarScale();
+    const int btnSize = Cu(14.0f * bs);
+    const int gap = Cu(4.0f * bs);
+    const int gapBetween = Cu(7.0f * bs);
+    const int resizeReserve = Cu(20.0f * bs);
+    const int h = handleRect.bottom - handleRect.top;
     RECT toggleBtn = {
         handleRect.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
-        handleRect.top + topInset,
+        handleRect.top + (h - btnSize) / 2,
         handleRect.right - resizeReserve - gap - btnSize - gapBetween,
-        handleRect.bottom - bottomInset
+        handleRect.top + (h + btnSize) / 2
     };
     RECT openBtn = {
         handleRect.right - resizeReserve - gap - btnSize,
-        handleRect.top + topInset,
+        handleRect.top + (h - btnSize) / 2,
         handleRect.right - resizeReserve - gap,
-        handleRect.bottom - bottomInset
+        handleRect.top + (h + btnSize) / 2
     };
 
-    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f);
+    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f * bs);
 
     auto drawFaButton = [&](RECT rect, const std::wstring& glyph) {
         bool hot = PtInRect(&rect, app_->lastMousePoint_) != FALSE;
-        app_->DrawD2DRoundedRectangle(context, rect, static_cast<float>(Cu(4.0f)),
-            hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
         app_->DrawD2DText(context, glyph, rect,
             faFormat ? faFormat :
                 (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f));
+            hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f));
     };
 
     drawFaButton(toggleBtn, data_->listMode ? L"" : L"");
@@ -483,21 +489,23 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     if (base != WidgetHit::MoveHandle || !data_) return base;
 
     RECT handle = GetMoveHandleRect();
-    const int btnSize = Cu(14.0f);
-    const int gap = Cu(4.0f);
-    const int gapBetween = Cu(7.0f);
-    const int resizeReserve = Cu(20.0f);
+    const float bs = GetBarScale();
+    const int btnSize = Cu(14.0f * bs);
+    const int gap = Cu(4.0f * bs);
+    const int gapBetween = Cu(7.0f * bs);
+    const int resizeReserve = Cu(20.0f * bs);
+    const int h = handle.bottom - handle.top;
     RECT toggleBtn = {
         handle.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
-        handle.top + Cu(5.0f),
+        handle.top + (h - btnSize) / 2,
         handle.right - resizeReserve - gap - btnSize - gapBetween,
-        handle.bottom - Cu(3.0f)
+        handle.top + (h + btnSize) / 2
     };
     RECT openBtn = {
         handle.right - resizeReserve - gap - btnSize,
-        handle.top + Cu(5.0f),
+        handle.top + (h - btnSize) / 2,
         handle.right - resizeReserve - gap,
-        handle.bottom - Cu(3.0f)
+        handle.top + (h + btnSize) / 2
     };
     if (PtInRect(&toggleBtn, pt)) return WidgetHit::ListToggleBtn;
     if (PtInRect(&openBtn, pt)) return WidgetHit::OpenFolderBtn;

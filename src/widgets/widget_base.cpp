@@ -106,6 +106,18 @@ int Widget::Cu(float value) const
     return ScaleWidgetCu(value, GetCellScale());
 }
 
+float Widget::GetBarHeight() const
+{
+    if (app_ && app_->settingsWindow_)
+        return app_->settingsWindow_->GetPersonalization().barHeight;
+    return 24.0f;
+}
+
+float Widget::GetBarScale() const
+{
+    return GetBarHeight() / 24.0f;
+}
+
 float Widget::FontCu(float value) const
 {
     return ScaleWidgetFontCu(value, GetCellScale());
@@ -242,7 +254,7 @@ RECT WidgetContainer::GetBodyRect() const
     RECT frame = GetFrameRect();
     if (data_->type == DesktopWidgetType::Collection && data_->gridSpan.rows <= 1)
         return frame;
-    const int barReserve = Cu(22.0f);
+    const int barReserve = Cu(GetBarHeight() - 2.0f);
     frame.bottom = std::max<LONG>(frame.top + barReserve, frame.bottom - barReserve);
     return frame;
 }
@@ -254,7 +266,7 @@ RECT WidgetContainer::GetBodyRect() const
 RECT WidgetContainer::GetMoveHandleRect() const
 {
     RECT frame = GetFrameRect();
-    const int handleHeight = Cu(24.0f);
+    const int handleHeight = Cu(GetBarHeight());
     return {
         frame.left + Cu(4.0f),
         std::max<LONG>(frame.top, frame.bottom - handleHeight - Cu(2.0f)),
@@ -265,12 +277,12 @@ RECT WidgetContainer::GetMoveHandleRect() const
 
 /**
  * @brief 获取右下角缩放手柄区域
- * @return 缩放手柄边界矩形（24x24 区域）
+ * @return 缩放手柄边界矩形
  */
 RECT WidgetContainer::GetResizeHandleRect() const
 {
     RECT handle = GetMoveHandleRect();
-    const int handleWidth = Cu(24.0f);
+    const int handleWidth = Cu(GetBarHeight());
     return {
         std::max<LONG>(handle.left, handle.right - handleWidth),
         handle.top,
@@ -287,9 +299,10 @@ RECT WidgetContainer::GetTitleRect() const
 {
     RECT handle = GetMoveHandleRect();
     LONG left = handle.left + Cu(4.0f);
-    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? 60.0f : 26.0f);
+    const float bh = GetBarHeight();
+    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? bh * 2.5f : bh * 1.08f);
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
-    return { left, handle.top + Cu(2.0f), right, handle.bottom - Cu(2.0f) };
+    return { left, handle.top + Cu(bh * 0.083f), right, handle.bottom - Cu(bh * 0.083f) };
 }
 
 // ── Hit testing ───────────────────────────────────────────────
@@ -421,6 +434,10 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
             return L"桌面文件不支持收纳快捷方式";
         if (action == DropAction::Link)
             return L"桌面文件不支持创建快捷方式";
+
+        if (data_->dateHeaders &&
+            origin == this && (region == HitRegion::SortBefore || region == HitRegion::SortAfter))
+            return L"请先关闭日期表头再进行排序";
     }
 
     auto actionText = [&]() -> std::wstring {
@@ -588,6 +605,74 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
                     static_cast<float>(textRect.left),
                     static_cast<float>(textRect.top)),
                 D2D1::SizeF(tw, th), layoutScale, 1.0f);
+    }
+}
+
+void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
+    const std::wstring& name, bool isDir) const
+{
+    if (!app_ || !context || IsRectEmptyRect(rect)) return;
+    (void)name;
+
+    const std::wstring glyph = isDir ? L"" : L"";
+    const std::wstring label = isDir ? L"文件夹" : L"文件";
+
+    int w = rect.right - rect.left;
+    int h = rect.bottom - rect.top;
+    int iconSz = std::min(w, h) - Cu(2.0f);
+
+    if (w > h * 2)
+    {
+        // List-like: icon on left, text on right
+        int listIconSz = h - Cu(2.0f);
+        RECT iconRect = {
+            rect.left + Cu(4.0f),
+            rect.top + (h - listIconSz) / 2,
+            rect.left + Cu(4.0f) + listIconSz,
+            rect.top + (h + listIconSz) / 2
+        };
+
+        IDWriteTextFormat* faFormat = GetCuFaTextFormat(static_cast<float>(listIconSz) * 0.88f);
+        app_->DrawD2DText(context, glyph, iconRect,
+            faFormat ? faFormat : (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f));
+
+        RECT nameRect = { iconRect.right + Cu(6.0f), rect.top + Cu(2.0f), rect.right - Cu(6.0f), rect.bottom - Cu(2.0f) };
+        if (nameRect.right > nameRect.left)
+        {
+            IDWriteTextFormat* textFormat = GetCuTextFormat(12.0f, false, false);
+            app_->DrawD2DText(context, label, nameRect,
+                textFormat ? textFormat : app_->listItemTextFormat_.Get(),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f));
+        }
+    }
+    else
+    {
+        // Grid-like: icon centered at top, text below
+        int iconH = iconSz;
+        if (iconH > h - Cu(16.0f)) iconH = h - Cu(16.0f);
+        if (iconH < Cu(4.0f)) iconH = Cu(4.0f);
+
+        RECT iconRect = {
+            rect.left + (w - iconH) / 2,
+            rect.top + std::max(0, (h - iconH - Cu(14.0f)) / 2),
+            rect.left + (w + iconH) / 2,
+            rect.top + std::max(0, (h + iconH - Cu(14.0f)) / 2)
+        };
+
+        IDWriteTextFormat* faFormat = GetCuFaTextFormat(static_cast<float>(iconH) * 0.88f);
+        app_->DrawD2DText(context, glyph, iconRect,
+            faFormat ? faFormat : (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f));
+
+        RECT nameRect = { rect.left + Cu(4.0f), iconRect.bottom + Cu(2.0f), rect.right - Cu(4.0f), rect.bottom - Cu(2.0f) };
+        if (nameRect.right > nameRect.left)
+        {
+            IDWriteTextFormat* textFormat = GetCuTextFormat(12.0f, false, true);
+            app_->DrawD2DText(context, label, nameRect,
+                textFormat ? textFormat : app_->listItemTextFormat_.Get(),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f));
+        }
     }
 }
 
@@ -774,7 +859,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;
     if (showGradient)
     {
-        RECT gradRect = { frame.left, std::max<LONG>(body.top, frame.bottom - Cu(36.0f)),
+        RECT gradRect = { frame.left, std::max<LONG>(body.top, frame.bottom - Cu(GetBarHeight() * 1.5f)),
                           frame.right, frame.bottom };
         if (gradRect.bottom > gradRect.top && !IsRectEmptyRect(gradRect))
         {
@@ -826,7 +911,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             if (tw > 0 && th > 0 && app_->GetDWriteFactory())
             {
                 auto* dwrite = app_->GetDWriteFactory();
-                IDWriteTextFormat* fmt = GetCuTextFormat(13.0f, false, false);
+                IDWriteTextFormat* fmt = GetCuTextFormat(GetBarHeight() * 0.542f, false, false);
                 if (fmt)
                 {
                     ComPtr<IDWriteTextLayout> layout;
@@ -852,13 +937,13 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Resize handle dot
         {
             RECT rh = GetResizeHandleRect();
-            const int dot = Cu(8.0f);
+            const int dot = Cu(GetBarHeight() * 0.333f);
             int cx = rh.left + (rh.right - rh.left) / 2;
             int cy = rh.top + (rh.bottom - rh.top) / 2;
             D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(
                 D2D1::RectF((float)(cx - dot/2), (float)(cy - dot/2),
                              (float)(cx + dot/2), (float)(cy + dot/2)),
-                static_cast<float>(Cu(4.0f)), static_cast<float>(Cu(4.0f)));
+                static_cast<float>(Cu(4.0f * GetBarScale())), static_cast<float>(Cu(4.0f * GetBarScale())));
             D2D1::ColorF dotFill = selected
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f);

@@ -44,6 +44,31 @@ inline const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
 }
 
 /**
+ * @brief 根据屏幕坐标通过 MonitorFromPoint 查找所在的网格页面。
+ * @param screenPoint 屏幕坐标（非客户区坐标）。
+ * @return 指向对应 GridPage 的指针，未找到时返回第一个页面或 nullptr。
+ */
+inline const GridPage* DesktopApp::GridPageFromScreenPoint(POINT screenPoint) const
+{
+    HMONITOR hMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+    if (!hMonitor)
+        return gridPages_.empty() ? nullptr : &gridPages_.front();
+    MONITORINFOEXW monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(hMonitor, &monitorInfo))
+        return gridPages_.empty() ? nullptr : &gridPages_.front();
+    std::wstring monitorId = monitorInfo.szDevice[0] != L'\0'
+        ? monitorInfo.szDevice
+        : L"";
+    for (const auto& page : gridPages_)
+    {
+        if (page.monitorId == monitorId)
+            return &page;
+    }
+    return gridPages_.empty() ? nullptr : &gridPages_.front();
+}
+
+/**
  * @brief 在右键菜单所在页面调整行数（增/减）。
  * @param delta 行数变化量（正数增加，负数减少）。
  */
@@ -281,6 +306,15 @@ inline void DesktopApp::SetItemFontSize(float value)
 {
     if (value == itemFontSize_) return;
     itemFontSize_ = value;
+    RecreateItemTextFormat();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
+{
+    if (weight == itemFontWeight_) return;
+    itemFontWeight_ = weight;
     RecreateItemTextFormat();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -1596,6 +1630,11 @@ inline void DesktopApp::LoadLayoutSlots()
         loadedFontSize >= 10.0f && loadedFontSize <= 24.0f)
         itemFontSize_ = loadedFontSize;
 
+    float loadedFontWeight = 0;
+    if (ReadJsonFloatField(text, "itemFontWeight", loadedFontWeight) &&
+        loadedFontWeight >= 100 && loadedFontWeight <= 950)
+        itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(loadedFontWeight));
+
     LoadSavedPagesFromJson(text);
 
     size_t pos = 0;
@@ -1657,7 +1696,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
                         std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
                         int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0, tabScrollOffset = 0;
-                        bool autoCollect = false, listMode = false, showOnHoverOnly = false, scrollContainerMode = false;
+                        bool autoCollect = false, listMode = false, dateHeaders = false, showOnHoverOnly = false, privacyMode = false, scrollContainerMode = false, showTitle = false, bottomBarHover = false, userRenamed = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
                             !ReadJsonStringField(obj, "page", pageUtf8) ||
                             !ReadJsonIntField(obj, "x", x) ||
@@ -1677,7 +1716,9 @@ inline void DesktopApp::LoadLayoutSlots()
 ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         ReadJsonBoolField(obj, "autoCollect", autoCollect);
                         ReadJsonBoolField(obj, "listMode", listMode);
+                        ReadJsonBoolField(obj, "dateHeaders", dateHeaders);
                         ReadJsonBoolField(obj, "showOnHoverOnly", showOnHoverOnly);
+                        ReadJsonBoolField(obj, "privacyMode", privacyMode);
                         ReadJsonBoolField(obj, "scrollContainerMode", scrollContainerMode);
 
                         DesktopWidget widget;
@@ -1714,12 +1755,20 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         widget.gridSpan.rows = std::max(1, h);
                         widget.autoCollect = autoCollect;
                         widget.listMode = listMode;
+                        widget.dateHeaders = dateHeaders;
                         widget.showOnHoverOnly = showOnHoverOnly;
+                        widget.privacyMode = privacyMode;
                         widget.scrollContainerMode = scrollContainerMode;
-                        widget.showTitle = widget.type != DesktopWidgetType::LuaScript;
-                        widget.bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
+                        showTitle = widget.type != DesktopWidgetType::LuaScript;
+                        bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
                             widget.type == DesktopWidgetType::LuaScript ||
                             widget.type == DesktopWidgetType::Guide);
+                        ReadJsonBoolField(obj, "showTitle", showTitle);
+                        ReadJsonBoolField(obj, "bottomBarHover", bottomBarHover);
+                        ReadJsonBoolField(obj, "userRenamed", userRenamed);
+                        widget.showTitle = showTitle;
+                        widget.bottomBarHover = bottomBarHover;
+                        widget.userRenamed = userRenamed;
                         widget.scrollOffset = std::max(0, scrollOffset);
 widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
@@ -1835,7 +1884,9 @@ inline void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
-         << "\",\n  \"itemFontSize\": " << itemFontSize_ << ",\n  \"pages\": [\n";
+         << "\",\n  \"itemFontSize\": " << itemFontSize_
+         << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
+         << ",\n  \"pages\": [\n";
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
         const GridPage* page = FindGridPage(gridPages_, pagesToWrite[i]);
@@ -1896,8 +1947,13 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"dateHeaders\": " << (w.dateHeaders ? "true" : "false")
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
+             << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
+             << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
+             << ", \"bottomBarHover\": " << (w.bottomBarHover ? "true" : "false")
+             << ", \"userRenamed\": " << (w.userRenamed ? "true" : "false")
              << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
              << ", \"tabScrollOffset\": " << std::max(0, w.tabScrollOffset)
              << ", \"items\": [";
@@ -5398,9 +5454,16 @@ inline GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, Gri
 inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 {
     ConfigureWidgetGridLimits(widget);
-    POINT clientPoint = lastContextMenuScreenPoint_;
-    ScreenToClient(hwnd_, &clientPoint);
-    GridCell cell = CellFromPoint(clientPoint);
+    const GridPage* page = GridPageFromScreenPoint(lastContextMenuScreenPoint_);
+    GridCell cell;
+    if (page)
+    {
+        cell.pageId = page->id;
+        POINT clientPoint = lastContextMenuScreenPoint_;
+        ScreenToClient(hwnd_, &clientPoint);
+        cell.column = GetGridAxisIndexFromPoint(*page, clientPoint.x, true);
+        cell.row = GetGridAxisIndexFromPoint(*page, clientPoint.y, false);
+    }
     if (cell.pageId.empty())
     {
         if (!gridPages_.empty())
@@ -5432,9 +5495,9 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     if (needSearch)
     {
         int startSlot = 0;
-        const GridPage* page = FindGridPage(gridPages_, cell.pageId);
-        if (page)
-            startSlot = cell.column * std::max(1, page->rows) + cell.row;
+        const GridPage* searchPage = FindGridPage(gridPages_, cell.pageId);
+        if (searchPage)
+            startSlot = cell.column * std::max(1, searchPage->rows) + cell.row;
         if (!TryFindFreeCell(span, usedSlots, freeCell, cell.pageId, startSlot))
         {
             if (!TryFindFreeCell(span, usedSlots, freeCell, cell.pageId, 0))

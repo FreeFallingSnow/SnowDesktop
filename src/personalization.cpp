@@ -49,7 +49,7 @@ PersonalizationSettings PersonalizationSettings::DarkPreset()
     PersonalizationSettings s;
     s.widgetBgR = 0.08f; s.widgetBgG = 0.10f; s.widgetBgB = 0.13f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.36f; s.gradientEndA = 0.65f;
+    s.widgetAlpha = 0.36f; s.gradientEndA = 0.65f; s.barHeight = 24.0f;
     return s;
 }
 
@@ -65,7 +65,7 @@ PersonalizationSettings PersonalizationSettings::LightPreset()
     PersonalizationSettings s;
     s.widgetBgR = 0.95f; s.widgetBgG = 0.96f; s.widgetBgB = 0.97f;
     s.widgetBorderR = 0.5f; s.widgetBorderG = 0.5f; s.widgetBorderB = 0.55f;
-    s.widgetAlpha = 0.15f; s.gradientEndA = 0.15f;
+    s.widgetAlpha = 0.15f; s.gradientEndA = 0.15f; s.barHeight = 24.0f;
     return s;
 }
 
@@ -114,6 +114,7 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     if (ReadDoubleField(text, "widgetBorderB", v)) s.widgetBorderB = (float)v;
     if (ReadDoubleField(text, "widgetAlpha", v)) s.widgetAlpha = (float)v;
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
+    if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
     return true;
 }
 
@@ -140,7 +141,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"widgetBorderG\": " << s.widgetBorderG << ",\n";
     file << "  \"widgetBorderB\": " << s.widgetBorderB << ",\n";
     file << "  \"widgetAlpha\": " << s.widgetAlpha << ",\n";
-    file << "  \"gradientEndA\": " << s.gradientEndA << "\n";
+    file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
+    file << "  \"barHeight\": " << s.barHeight << "\n";
     file << "}\n";
     return true;
 }

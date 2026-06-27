@@ -8,6 +8,7 @@
  */
 
 #pragma once
+#include "../crashlog.h"
 // Inline implementations for DesktopApp — Interaction & Tray.
 // This file is included by app.h after the class definition.
 
@@ -106,7 +107,8 @@ inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& w
 {
     RECT frame = GetStandaloneWidgetFrameRect(widget);
     const float cellScale = GetWidgetCellScale(widget);
-    const int handleHeight = ScaleWidgetCu(24.0f, cellScale);
+    const float barHeight = settingsWindow_ ? settingsWindow_->GetPersonalization().barHeight : 24.0f;
+    const int handleHeight = ScaleWidgetCu(barHeight, cellScale);
     return {
         frame.left + ScaleWidgetCu(4.0f, cellScale),
         std::max<LONG>(frame.top,
@@ -124,7 +126,8 @@ inline RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& w
 inline RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget) const
 {
     RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
-    const int handleWidth = ScaleWidgetCu(24.0f, GetWidgetCellScale(widget));
+    const float barHeight = settingsWindow_ ? settingsWindow_->GetPersonalization().barHeight : 24.0f;
+    const int handleWidth = ScaleWidgetCu(barHeight, GetWidgetCellScale(widget));
     return {
         std::max<LONG>(handle.left, handle.right - handleWidth),
         handle.top,
@@ -277,6 +280,7 @@ inline void DesktopApp::LuaSetWidgetTitle(const std::wstring& widgetId, const st
     for (auto& widget : widgets_)
     {
         if (widget.id != widgetId) continue;
+        if (widget.userRenamed) return;
         if (widget.title == title) return;
         widget.title = title;
         SaveLayoutSlots();
@@ -705,8 +709,14 @@ inline void DesktopApp::OpenQuickNavigation()
     }
     quickNavigationOpen_ = true;
     EnsureNavTabOrder();
-    if (quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
-        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection)
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+    {
+        // keep "映射文件夹全部" tab selection
+    }
+    else if (quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
+        (widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection &&
+         widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FileCategories &&
+         widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FolderMapping))
     {
         quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
     }
@@ -797,6 +807,15 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
         if (PtInRect(&tab0Rect, point))
         {
             quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
+            quickNavigationScrollOffset_ = 0;
+            InvalidateDragStaticScene();
+            InvalidateQuickNavigationWindow();
+            return true;
+        }
+        RECT tab1Rect = GetQuickNavigationTabRect(overlay, 1);
+        if (PtInRect(&tab1Rect, point))
+        {
+            quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-2);
             quickNavigationScrollOffset_ = 0;
             InvalidateDragStaticScene();
             InvalidateQuickNavigationWindow();
@@ -992,34 +1011,47 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         SaveDC(memoryDc);
         IntersectClipRect(memoryDc, tabs.left, tabs.top, tabs.right, tabs.bottom);
 
-        const size_t tabCount = collectionIndices.size() + 1;
+        const size_t tabCount = collectionIndices.size() + 2;
         const int tabWidth = GetQuickNavigationTabWidth();
         const int gap = QuickNavScale(8);
 
+        const int fixedWidth = 2 * tabWidth + gap;
+        const int sepGap = QuickNavScale(6);
         auto calcTabPosX = [&](size_t tabIdx) -> int {
-            return tabs.left + static_cast<int>(tabIdx) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
+            if (tabIdx <= 1)
+                return tabs.left + static_cast<int>(tabIdx) * (tabWidth + gap);
+            return tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap
+                + static_cast<int>(tabIdx - 2) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
         };
 
         int dragTargetTab = -1;
         if (quickNavTabDragging_ && quickNavTabDragIndex_ != static_cast<size_t>(-1))
         {
             int unit = tabWidth + gap;
-            dragTargetTab = static_cast<int>(quickNavTabDragIndex_) +
-                quickNavTabDragDeltaX_ / unit;
-            if (dragTargetTab < 1) dragTargetTab = 1;
-            if (dragTargetTab > static_cast<int>(collectionIndices.size())) dragTargetTab = static_cast<int>(collectionIndices.size());
+            dragTargetTab = static_cast<int>(quickNavTabDragIndex_) + quickNavTabDragDeltaX_ / unit;
+            if (dragTargetTab < 2) dragTargetTab = 2;
+            if (dragTargetTab > static_cast<int>(collectionIndices.size()) + 1) dragTargetTab = static_cast<int>(collectionIndices.size()) + 1;
         }
 
         auto drawTab = [&](size_t tab, int offsetX) {
             int posX = calcTabPosX(tab) + offsetX;
             RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
-            if (tabRect.right <= tabs.left || tabRect.left >= tabs.right) return;
+            if (tab >= 2)
+            {
+                if (tabRect.right <= tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap || tabRect.left >= tabs.right) return;
+                tabRect.left = std::max(tabRect.left, tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap);
+            }
+            else if (tab <= 1)
+            {
+                if (tabRect.right <= tabs.left || tabRect.left >= tabs.left + fixedWidth + sepGap) return;
+                tabRect.right = std::min(tabRect.right, tabs.left + fixedWidth + sepGap);
+            }
             tabRect.left = std::max(tabRect.left, tabs.left);
             tabRect.right = std::min(tabRect.right, tabs.right);
 
-            const bool active = tab == 0
-                ? quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1)
-                : quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 1];
+            const bool active = (tab == 0 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+                || (tab == 1 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+                || (tab > 1 && quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 2]);
             bool hovered = false;
             RECT tabRectApp = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
             if (!quickNavTabDragging_)
@@ -1038,11 +1070,22 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             }
             fillRound(tabRect, fill, stroke, QuickNavScale(14));
 
-            std::wstring label = L"全部";
-            if (tab > 0)
+            std::wstring label;
+            if (tab == 0)
+                label = L"桌面";
+            else if (tab == 1)
+                label = L"映射";
+            else
             {
-                const DesktopWidget& widget = widgets_[collectionIndices[tab - 1]];
-                label = widget.title.empty() ? L"集合" + std::to_wstring(tab) : widget.title;
+                const DesktopWidget& widget = widgets_[collectionIndices[tab - 2]];
+                if (!widget.title.empty())
+                    label = widget.title;
+                else if (widget.type == DesktopWidgetType::FileCategories)
+                    label = L"桌面文件";
+                else if (widget.type == DesktopWidgetType::FolderMapping)
+                    label = L"文件夹映射";
+                else
+                    label = L"集合" + std::to_wstring(tab - 1);
             }
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
@@ -1050,6 +1093,11 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             drawText(label, textRect, tabFont, RGB(245, 248, 252),
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         };
+
+        // 分隔线：固定在 "映射" 标签右侧
+        int sepX = tabs.left + fixedWidth + sepGap;
+        RECT sepRect = MakeRect(sepX, tabs.top + QuickNavScale(8), sepX + QuickNavScale(1), tabs.bottom - QuickNavScale(8));
+        fillRound(sepRect, RGB(90, 96, 110), RGB(90, 96, 110), 0);
 
         for (size_t tab = 0; tab < tabCount; ++tab)
         {
@@ -1075,11 +1123,15 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             tabRect.right = std::min(tabRect.right, tabs.right);
             fillRound(tabRect, RGB(60, 80, 110), RGB(100, 130, 200), QuickNavScale(14));
 
-            std::wstring label = L"全部";
-            if (quickNavTabDragIndex_ > 0)
+            std::wstring label;
+            if (quickNavTabDragIndex_ == 0)
+                label = L"桌面";
+            else if (quickNavTabDragIndex_ == 1)
+                label = L"映射";
+            else if (quickNavTabDragIndex_ >= 2 && quickNavTabDragIndex_ - 2 < collectionIndices.size())
             {
-                const DesktopWidget& widget = widgets_[collectionIndices[quickNavTabDragIndex_ - 1]];
-                label = widget.title.empty() ? L"集合" + std::to_wstring(quickNavTabDragIndex_) : widget.title;
+                const DesktopWidget& widget = widgets_[collectionIndices[quickNavTabDragIndex_ - 2]];
+                label = widget.title.empty() ? L"集合" + std::to_wstring(quickNavTabDragIndex_ - 1) : widget.title;
             }
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
@@ -1087,7 +1139,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             drawText(label, textRect, tabFont, RGB(245, 248, 252),
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-            if (dragTargetTab >= 1 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size())
+            if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size() + 1)
             {
                 int insertX = calcTabPosX(static_cast<size_t>(dragTargetTab));
                 HPEN indicatorPen = CreatePen(PS_SOLID, QuickNavScale(2), RGB(82, 140, 235));
@@ -1208,7 +1260,7 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
         {
             RECT overlay = quickNavigationRect_;
             std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
-            for (size_t tab = 1; tab <= ci.size(); ++tab)
+            for (size_t tab = 2; tab < ci.size() + 2; ++tab)
             {
                 RECT tabRect = GetQuickNavigationTabRect(overlay, tab);
                 if (PtInRect(&tabRect, appPoint))
@@ -1257,17 +1309,17 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
             if (quickNavTabDragging_)
             {
                 std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
-                size_t tabCount = ci.size();
+                size_t tabCount = ci.size() + 1;
                 int tabWidth = GetQuickNavigationTabWidth();
                 int gap = QuickNavScale(8);
                 int unit = tabWidth + gap;
                 int targetTab = static_cast<int>(dragTab) + quickNavTabDragDeltaX_ / unit;
-                targetTab = std::clamp(targetTab, 1, static_cast<int>(tabCount));
+                targetTab = std::clamp(targetTab, 2, static_cast<int>(tabCount));
 
-                if (targetTab != static_cast<int>(dragTab) && targetTab >= 1 && static_cast<size_t>(targetTab) <= tabCount)
+                if (targetTab != static_cast<int>(dragTab) && targetTab >= 2 && static_cast<size_t>(targetTab) <= tabCount)
                 {
-                    size_t srcIdx = dragTab - 1;
-                    size_t dstIdx = static_cast<size_t>(targetTab) - 1;
+                    size_t srcIdx = dragTab - 2;
+                    size_t dstIdx = static_cast<size_t>(targetTab) - 2;
                     EnsureNavTabOrder();
 
                     if (srcIdx < navTabOrder_.size() && dstIdx < navTabOrder_.size())
@@ -1275,7 +1327,7 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
                         std::wstring id = navTabOrder_[srcIdx];
                         navTabOrder_.erase(navTabOrder_.begin() + srcIdx);
                         navTabOrder_.insert(navTabOrder_.begin() + dstIdx, id);
-                        quickNavigationActiveWidgetIndex_ = ci[dstIdx];
+                        quickNavigationActiveWidgetIndex_ = ci[srcIdx];
                         quickNavigationScrollOffset_ = 0;
                         SaveLayoutSlots();
                     }
@@ -1284,9 +1336,9 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
             else
             {
                 std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
-                if (dragTab - 1 < ci.size())
+                if (dragTab >= 2 && dragTab - 2 < ci.size())
                 {
-                    quickNavigationActiveWidgetIndex_ = ci[dragTab - 1];
+                    quickNavigationActiveWidgetIndex_ = ci[dragTab - 2];
                     quickNavigationScrollOffset_ = 0;
                 }
             }
@@ -1766,6 +1818,48 @@ inline void DesktopApp::ClearSelection()
         for (auto& entry : widget.folderEntries)
             entry.selected = false;
     }
+    keyboardNavInsideWidget_ = false;
+    keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+    keyboardNavMemberIndex_ = -1;
+}
+
+/**
+ * @brief 根据当前选中状态同步键盘导航上下文
+ *
+ * 扫描所有组件成员项的选中状态，
+ * 若有成员项被选中则将导航上下文切换到该组件内部，
+ * 否则重置为桌面网格导航模式。
+ */
+inline void DesktopApp::SyncKeyboardNavFromSelection()
+{
+    for (size_t wi = 0; wi < widgets_.size(); ++wi)
+    {
+        const auto& w = widgets_[wi];
+        for (size_t k = 0; k < w.itemKeys.size(); ++k)
+        {
+            size_t idx = FindItemIndexByKey(w.itemKeys[k]);
+            if (idx != static_cast<size_t>(-1) && items_[idx].selected)
+            {
+                keyboardNavInsideWidget_ = true;
+                keyboardNavWidgetIndex_ = wi;
+                keyboardNavMemberIndex_ = static_cast<int>(k);
+                return;
+            }
+        }
+        for (size_t k = 0; k < w.folderEntries.size(); ++k)
+        {
+            if (w.folderEntries[k].selected)
+            {
+                keyboardNavInsideWidget_ = true;
+                keyboardNavWidgetIndex_ = wi;
+                keyboardNavMemberIndex_ = static_cast<int>(k);
+                return;
+            }
+        }
+    }
+    keyboardNavInsideWidget_ = false;
+    keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+    keyboardNavMemberIndex_ = -1;
 }
 
 /**
@@ -2063,12 +2157,42 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         mouseDownWidgetIndex_ = popupWidgetIndex_;
         SetCapture(hwnd_);
         InvalidateRect(hwnd_, nullptr, FALSE);
+        SyncKeyboardNavFromSelection();
         return;
     }
 
     // ── Widget hit-test ─────────────────────────────────────
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     widgetAction_ = WidgetAction::None;
+
+    // Defocus search box when clicking outside all search boxes
+    {
+        bool clickedSearchBox = false;
+        for (auto& c : containers_)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(c.get());
+            if (!fc) continue;
+            RECT sr = fc->GetSearchBoxRect();
+            if (!IsRectEmptyRect(sr) && PtInRect(&sr, pt))
+            {
+                clickedSearchBox = true;
+                break;
+            }
+        }
+        if (!clickedSearchBox)
+        {
+            for (auto& c : containers_)
+            {
+                auto* fc = dynamic_cast<FileCategories*>(c.get());
+                if (fc && fc->IsSearchFocused())
+                {
+                    fc->SetSearchFocused(false);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+            }
+        }
+    }
+
     for (size_t n = widgets_.size(); n > 0; --n)
     {
         size_t wi = n - 1;
@@ -2213,6 +2337,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = memberItem;
                 SetCapture(hwnd_);
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                SyncKeyboardNavFromSelection();
                 return;
             }
 
@@ -2250,6 +2375,17 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             return;
         }
+        else if (wh == WidgetHit::DateHeaderToggleBtn)
+        {
+            if (widgets_[wi].type == DesktopWidgetType::FileCategories)
+            {
+                widgets_[wi].dateHeaders = !widgets_[wi].dateHeaders;
+                RebuildContainersAndItems();
+                SaveLayoutSlots();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            return;
+        }
         else if (wh == WidgetHit::OpenFolderBtn)
         {
             // FolderMapping: open source folder
@@ -2279,11 +2415,37 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             return;
         }
+        else if (wh == WidgetHit::SearchBox)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(wc);
+            for (auto& c : containers_)
+            {
+                auto* other = dynamic_cast<FileCategories*>(c.get());
+                if (other) other->SetSearchFocused(false);
+            }
+            if (fc) fc->SetSearchFocused(true);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
     }
 
     // ── Desktop icon hit-test ───────────────────────────────
     DesktopIcon* hit = HitTestIcon(pt);
     mouseDownHit_ = hit;
+
+    // Defocus search when clicking on desktop area
+    if (hit || mouseDownWidgetIndex_ == static_cast<size_t>(-1))
+    {
+        for (auto& c : containers_)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(c.get());
+            if (fc && fc->IsSearchFocused())
+            {
+                fc->SetSearchFocused(false);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
+    }
 
     // Clear widget selection when clicking desktop area
     if (!hit && mouseDownWidgetIndex_ == static_cast<size_t>(-1) && !ctrl)
@@ -2320,6 +2482,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     SetCapture(hwnd_);
     InvalidateRect(hwnd_, nullptr, FALSE);
+    SyncKeyboardNavFromSelection();
 }
 
 /**
@@ -3223,6 +3386,60 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
 
     if (renameEdit_ != nullptr) return;
 
+    // Handle FileCategories search box keyboard input
+    {
+        for (auto& c : containers_)
+        {
+            auto* fc = dynamic_cast<FileCategories*>(c.get());
+            if (fc && fc->IsSearchFocused())
+            {
+                if (key == VK_ESCAPE)
+                {
+                    fc->ClearSearchText();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_BACK)
+                {
+                    fc->BackspaceSearchText();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_DELETE)
+                {
+                    fc->DeleteSearchText();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_LEFT)
+                {
+                    fc->MoveCursorLeft();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_RIGHT)
+                {
+                    fc->MoveCursorRight();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_HOME)
+                {
+                    fc->MoveCursorHome();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (key == VK_END)
+                {
+                    fc->MoveCursorEnd();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                break;
+            }
+        }
+    }
+
     if (quickNavigationOpen_)
     {
         if (key == VK_ESCAPE)
@@ -3404,7 +3621,7 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
                 info.hwnd = hwnd_;
                 info.lpVerb = "paste";
                 info.nShow = SW_SHOWNORMAL;
-                bgMenu->InvokeCommand(&info);
+                SafeInvokeCommand(bgMenu.Get(), &info);
                 cutPaths_.clear();
                 ReloadItems();
             }
@@ -3426,11 +3643,32 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
     break;
+    case VK_RETURN:
+        if (keyboardNavInsideWidget_)
+            OpenWidgetMember(keyboardNavWidgetIndex_, keyboardNavMemberIndex_);
+        else if (std::any_of(widgets_.begin(), widgets_.end(),
+            [](const DesktopWidget& w) { return w.selected; }))
+            EnterWidget();
+        else
+            OpenSelectedDesktopItem();
+        break;
+    case VK_ESCAPE:
+        if (keyboardNavInsideWidget_)
+            ExitWidget();
+        else
+        {
+            ClearSelection();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        break;
     case VK_UP:
     case VK_DOWN:
     case VK_LEFT:
     case VK_RIGHT:
-        MoveKeyboardSelection(key);
+        if (keyboardNavInsideWidget_)
+            NavigateWidgetMembers(key);
+        else
+            NavigateDesktopGrid(key);
         break;
     default:
         break;
@@ -3498,46 +3736,761 @@ inline void DesktopApp::InvokeSelectedShellVerb(const char* verb)
     info.hwnd = hwnd_;
     info.lpVerb = verb;
     info.nShow = SW_SHOWNORMAL;
-    if (SUCCEEDED(contextMenu->InvokeCommand(&info)))
+    if (SafeInvokeCommand(contextMenu.Get(), &info))
         ReloadItems();
 }
 
 /**
- * @brief 使用键盘方向键移动选中项
+ * @brief 在桌面网格上按 2D 空间导航选中项
  * @param arrowKey 方向键虚拟键码
+ *
+ * 收集当前可见页面上所有可导航目标（桌面图标 + 组件），
+ * 按 gridCell 的 column/row 进行上下左右空间移动。
+ * 没有任何选中时，从首列首行开始纵向搜索第一个目标。
  */
-inline void DesktopApp::MoveKeyboardSelection(WPARAM arrowKey)
+inline void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
 {
-    if (items_.empty()) return;
+    if (items_.empty() && widgets_.empty()) return;
 
-    std::vector<size_t> visible;
+    // 构建当前可见页面 ID 集合
+    std::unordered_set<std::wstring> visiblePageIds;
+    for (const auto& gp : gridPages_)
+        if (!gp.id.empty())
+            visiblePageIds.insert(gp.id);
+    const bool hasVisiblePages = !visiblePageIds.empty();
+
+    struct Target { bool isWidget; size_t index; int column; int row; int colSpan; int rowSpan; std::wstring pageId; };
+    std::vector<Target> targets;
+
+    // 收集未收纳的桌面项（有名称、有边界、在可见页面上）
     for (size_t i = 0; i < items_.size(); ++i)
     {
-        if (items_[i].name.empty()) continue;
-        if (items_[i].selected || !IsRectEmptyRect(items_[i].bounds))
-            visible.push_back(i);
+        const auto& item = items_[i];
+        if (item.name.empty()) continue;
+        if (IsRectEmptyRect(item.bounds)) continue;
+        if (collectedKeysCache_.contains(ToUpperInvariant(item.layoutKey))) continue;
+        if (hasVisiblePages && !visiblePageIds.contains(item.gridCell.pageId)) continue;
+        targets.push_back({ false, i,
+            item.gridCell.column, item.gridCell.row,
+            item.gridSpan.columns, item.gridSpan.rows,
+            item.gridCell.pageId });
     }
-    if (visible.empty()) return;
 
-    int current = -1;
-    for (size_t i = 0; i < visible.size(); ++i)
+    // 收集当前可见页面上的组件
+    for (size_t i = 0; i < widgets_.size(); ++i)
     {
-        if (items_[visible[i]].selected) { current = static_cast<int>(i); break; }
+        const auto& w = widgets_[i];
+        if (hasVisiblePages && !visiblePageIds.contains(w.gridCell.pageId)) continue;
+        targets.push_back({ true, i,
+            w.gridCell.column, w.gridCell.row,
+            w.gridSpan.columns, w.gridSpan.rows,
+            w.gridCell.pageId });
     }
-    int delta = 0;
+
+    if (targets.empty()) return;
+
+    // 按列、行排序（纵向搜索：逐列从上到下）
+    std::sort(targets.begin(), targets.end(), [](const Target& a, const Target& b) {
+        if (a.column != b.column) return a.column < b.column;
+        return a.row < b.row;
+    });
+
+    // 查找当前选中目标
+    int currentIndex = -1;
+    for (size_t i = 0; i < targets.size(); ++i)
+    {
+        const auto& t = targets[i];
+        if (t.isWidget ? widgets_[t.index].selected : items_[t.index].selected)
+        {
+            currentIndex = static_cast<int>(i);
+            break;
+        }
+    }
+
+    if (currentIndex < 0)
+    {
+        // 无选中：选中鼠标所在页的第一个目标，不执行方向移动
+        ClearSelection();
+        // 确定鼠标所在的可见页面
+        std::wstring mousePageId;
+        {
+            POINT screenPt{};
+            GetCursorPos(&screenPt);
+            for (const auto& gp : gridPages_)
+            {
+                if (!gp.id.empty() && PtInRect(&gp.workArea, screenPt))
+                {
+                    mousePageId = gp.id;
+                    break;
+                }
+            }
+        }
+        // 在目标列表中找该页的第一个
+        size_t firstIdx = 0;
+        if (!mousePageId.empty())
+        {
+            bool foundOnPage = false;
+            for (size_t i = 0; i < targets.size(); ++i)
+            {
+                if (targets[i].pageId == mousePageId)
+                {
+                    firstIdx = i;
+                    foundOnPage = true;
+                    break;
+                }
+            }
+            if (!foundOnPage)
+                firstIdx = 0;   // 该页无目标，回退到首个
+        }
+        const auto& first = targets[firstIdx];
+        if (first.isWidget)
+            widgets_[first.index].selected = true;
+        else
+            items_[first.index].selected = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    const Target& current = targets[static_cast<size_t>(currentIndex)];
+    int nextIndex = -1;
+
+    // 辅助：两个区间 [a, a+lenA) 与 [b, b+lenB) 是否相交
+    auto spansOverlap = [](int a, int lenA, int b, int lenB) {
+        return a < b + lenB && b < a + lenA;
+    };
+
     switch (arrowKey)
     {
-    case VK_LEFT:  delta = -1; break;
-    case VK_RIGHT: delta =  1; break;
-    case VK_UP:    delta = -1; break;
-    case VK_DOWN:  delta =  1; break;
+    case VK_UP:
+    {
+        int bestRow = -1;
+        int bestIdx = -1;
+        for (size_t i = 0; i < targets.size(); ++i)
+        {
+            if (static_cast<int>(i) == currentIndex) continue;
+            const auto& t = targets[i];
+            if (t.pageId == current.pageId &&
+                spansOverlap(current.column, current.colSpan, t.column, t.colSpan) &&
+                t.row < current.row && t.row > bestRow)
+            {
+                bestRow = t.row;
+                bestIdx = static_cast<int>(i);
+            }
+        }
+        nextIndex = bestIdx;
+        break;
     }
-    if (delta == 0) return;
+    case VK_DOWN:
+    {
+        int bestRow = -1;
+        int bestIdx = -1;
+        for (size_t i = 0; i < targets.size(); ++i)
+        {
+            if (static_cast<int>(i) == currentIndex) continue;
+            const auto& t = targets[i];
+            if (t.pageId == current.pageId &&
+                spansOverlap(current.column, current.colSpan, t.column, t.colSpan) &&
+                t.row > current.row)
+            {
+                if (bestRow < 0 || t.row < bestRow)
+                {
+                    bestRow = t.row;
+                    bestIdx = static_cast<int>(i);
+                }
+            }
+        }
+        nextIndex = bestIdx;
+        break;
+    }
+    case VK_LEFT:
+    {
+        int bestCol = -1;
+        int bestIdx = -1;
+        for (size_t i = 0; i < targets.size(); ++i)
+        {
+            if (static_cast<int>(i) == currentIndex) continue;
+            const auto& t = targets[i];
+            if (t.pageId == current.pageId &&
+                spansOverlap(current.row, current.rowSpan, t.row, t.rowSpan) &&
+                t.column < current.column && t.column > bestCol)
+            {
+                bestCol = t.column;
+                bestIdx = static_cast<int>(i);
+            }
+        }
+        if (bestIdx < 0)
+        {
+            int bestRow = -1;
+            for (size_t i = 0; i < targets.size(); ++i)
+            {
+                const auto& t = targets[i];
+                if (t.pageId == current.pageId && t.row < current.row && t.row > bestRow)
+                    bestRow = t.row;
+            }
+            if (bestRow >= 0)
+            {
+                bestCol = -1;
+                for (size_t i = 0; i < targets.size(); ++i)
+                {
+                    const auto& t = targets[i];
+                    if (t.pageId == current.pageId && t.row == bestRow &&
+                        (bestCol < 0 || t.column > bestCol))
+                    {
+                        bestCol = t.column;
+                        bestIdx = static_cast<int>(i);
+                    }
+                }
+            }
+        }
+        nextIndex = bestIdx;
+        break;
+    }
+    case VK_RIGHT:
+    {
+        int bestCol = -1;
+        int bestIdx = -1;
+        for (size_t i = 0; i < targets.size(); ++i)
+        {
+            if (static_cast<int>(i) == currentIndex) continue;
+            const auto& t = targets[i];
+            if (t.pageId == current.pageId &&
+                spansOverlap(current.row, current.rowSpan, t.row, t.rowSpan) &&
+                t.column > current.column)
+            {
+                if (bestCol < 0 || t.column < bestCol)
+                {
+                    bestCol = t.column;
+                    bestIdx = static_cast<int>(i);
+                }
+            }
+        }
+        if (bestIdx < 0)
+        {
+            int bestRow = -1;
+            for (size_t i = 0; i < targets.size(); ++i)
+            {
+                const auto& t = targets[i];
+                if (t.pageId == current.pageId &&
+                    t.row > current.row && (bestRow < 0 || t.row < bestRow))
+                    bestRow = t.row;
+            }
+            if (bestRow >= 0)
+            {
+                bestCol = -1;
+                for (size_t i = 0; i < targets.size(); ++i)
+                {
+                    const auto& t = targets[i];
+                    if (t.pageId == current.pageId && t.row == bestRow &&
+                        (bestCol < 0 || t.column < bestCol))
+                    {
+                        bestCol = t.column;
+                        bestIdx = static_cast<int>(i);
+                    }
+                }
+            }
+        }
+        nextIndex = bestIdx;
+        break;
+    }
+    default:
+        return;
+    }
 
-    int next = current < 0 ? 0 : current + delta;
-    next = std::clamp(next, 0, static_cast<int>(visible.size()) - 1);
-    SelectOnly(static_cast<int>(visible[static_cast<size_t>(next)]));
+    if (nextIndex < 0) return;   // 该方向无有效目标
+
+    ClearSelection();
+    const auto& next = targets[static_cast<size_t>(nextIndex)];
+    if (next.isWidget)
+        widgets_[next.index].selected = true;
+    else
+        items_[next.index].selected = true;
+
     InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+/**
+ * @brief 滚动组件以确保指定索引的成员项可见
+ * @param widgetIndex 组件索引
+ * @param memberIndex 成员索引
+ *
+ * 计算目标成员在组件内容区域中的近似纵向位置，
+ * 如果超出当前滚动视口则调整 scrollOffset。
+ */
+inline void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
+{
+    if (widgetIndex >= widgets_.size() || memberIndex < 0) return;
+    auto& widget = widgets_[widgetIndex];
+
+    WidgetContainer* wc = nullptr;
+    for (auto& c : containers_)
+    {
+        auto* w = dynamic_cast<WidgetContainer*>(c.get());
+        if (w && w->GetWidgetData() == &widget) { wc = w; break; }
+    }
+    if (!wc) return;
+
+    int maxScroll = wc->GetMaxScrollOffset();
+    if (maxScroll <= 0) return;
+
+    // 按行比例计算目标滚动位置（适配含 gapY 的 FolderMapping/Collection）
+    int columns = std::max(1, widget.gridSpan.columns);
+    bool listMode = (widget.type == DesktopWidgetType::FileCategories && (widget.listMode || widget.dateHeaders)) ||
+                    (widget.type == DesktopWidgetType::FolderMapping && widget.listMode) ||
+                    (widget.type == DesktopWidgetType::Collection && widget.listMode);
+
+    size_t memberCount = (widget.type == DesktopWidgetType::FolderMapping)
+        ? widget.folderEntries.size()
+        : widget.itemKeys.size();
+    if (widget.type == DesktopWidgetType::FileCategories)
+    {
+        auto* fc = dynamic_cast<FileCategories*>(wc);
+        if (fc) memberCount = fc->GetSlotCount();
+    }
+    if (memberCount <= 1) return;
+
+    int totalRows = listMode
+        ? static_cast<int>(memberCount)
+        : (static_cast<int>(memberCount) + columns - 1) / columns;
+    int row = listMode ? memberIndex : memberIndex / columns;
+
+    int scroll = (totalRows <= 1) ? 0
+        : static_cast<int>((static_cast<int64_t>(row) * maxScroll) / (totalRows - 1));
+
+    scroll = std::clamp(scroll, 0, maxScroll);
+    if (scroll != widget.scrollOffset)
+    {
+        widget.scrollOffset = scroll;
+        wc->InvalidateSlots();
+    }
+}
+
+/**
+ * @brief 在组件内部导航成员项
+ * @param arrowKey 方向键虚拟键码
+ *
+ * 根据组件类型（Collection、FileCategories、FolderMapping）的列数布局，
+ * 在组件成员项之间进行上下左右 2D 导航。list 模式的 FileCategories 使用线性上下移动。
+ */
+inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
+{
+    if (keyboardNavWidgetIndex_ >= widgets_.size()) return;
+    auto& widget = widgets_[keyboardNavWidgetIndex_];
+
+    size_t memberCount = 0;
+    int columns = 1;
+    bool isListMode = false;
+
+    switch (widget.type)
+    {
+    case DesktopWidgetType::Collection:
+    case DesktopWidgetType::FileCategories:
+        memberCount = widget.itemKeys.size();
+        columns = std::max(1, widget.gridSpan.columns);
+        if (widget.listMode || widget.dateHeaders)
+        {
+            columns = 1;
+            isListMode = true;
+        }
+        break;
+    case DesktopWidgetType::FolderMapping:
+        memberCount = widget.folderEntries.size();
+        columns = std::max(1, widget.gridSpan.columns);
+        if (widget.listMode)
+        {
+            columns = 1;
+            isListMode = true;
+        }
+        break;
+    default:
+        return;   // LuaScript、Guide 无内部导航
+    }
+
+    // Collection 弹窗打开时，按弹窗实际列数进行 2D 导航
+    if (widget.type == DesktopWidgetType::Collection &&
+        popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
+        popupWidgetIndex_ < widgets_.size())
+    {
+        int popupCols = GetCollectionPopupColumnCount(popupRect_);
+        if (popupCols > 0 && !isListMode)
+            columns = popupCols;
+    }
+
+    if (memberCount == 0) return;
+
+    // FileCategories：获取当前可见项目键列表（受搜索/分类标签页过滤）
+    std::vector<std::wstring> visibleKeys;
+    if (widget.type == DesktopWidgetType::FileCategories)
+    {
+        for (auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (wc && wc->GetWidgetData() == &widget)
+            {
+                auto* fc = dynamic_cast<FileCategories*>(wc);
+                if (fc)
+                {
+                    const auto& rk = fc->GetSearchResultKeys();
+                    visibleKeys.assign(rk.begin(), rk.end());
+                }
+                break;
+            }
+        }
+        memberCount = visibleKeys.size();
+        if (memberCount == 0) return;
+    }
+
+    int currentIdx = keyboardNavMemberIndex_;
+    if (currentIdx < 0) currentIdx = 0;
+
+    // FileCategories：基于当前可见选中项确定导航起点
+    if (!visibleKeys.empty())
+    {
+        int foundIdx = -1;
+        for (size_t i = 0; i < visibleKeys.size(); ++i)
+        {
+            size_t itemIdx = FindItemIndexByKey(visibleKeys[i]);
+            if (itemIdx != static_cast<size_t>(-1) && items_[itemIdx].selected)
+            {
+                foundIdx = static_cast<int>(i);
+                break;
+            }
+        }
+        if (foundIdx >= 0)
+            currentIdx = foundIdx;
+        else
+            currentIdx = 0;
+    }
+
+    int currentCol = currentIdx % columns;
+    int currentRow = currentIdx / columns;
+    int totalRows = static_cast<int>((memberCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
+
+    int nextRow = currentRow;
+    int nextCol = currentCol;
+
+    switch (arrowKey)
+    {
+    case VK_UP:
+        nextRow = currentRow - 1;
+        if (nextRow < 0) return;
+        break;
+    case VK_DOWN:
+        nextRow = currentRow + 1;
+        if (nextRow >= totalRows) return;
+        break;
+    case VK_LEFT:
+        if (isListMode)
+        {
+            if (currentIdx <= 0) return;
+        }
+        else
+        {
+            nextCol = currentCol - 1;
+            if (nextCol < 0)
+            {
+                // 换行：跳到上一行最后一列
+                nextRow = currentRow - 1;
+                if (nextRow < 0) return;
+                nextCol = columns - 1;
+            }
+        }
+        break;
+    case VK_RIGHT:
+        if (isListMode)
+        {
+            if (static_cast<size_t>(currentIdx) + 1 >= memberCount) return;
+        }
+        else
+        {
+            nextCol = currentCol + 1;
+            if (nextCol >= columns)
+            {
+                // 换行：跳到下一行第一列
+                nextRow = currentRow + 1;
+                if (nextRow >= totalRows) return;
+                nextCol = 0;
+            }
+        }
+        break;
+    default:
+        return;
+    }
+
+    int nextIdx;
+    if (isListMode)
+    {
+        if (arrowKey == VK_UP || arrowKey == VK_LEFT)
+            nextIdx = currentIdx - 1;
+        else
+            nextIdx = currentIdx + 1;
+        if (nextIdx < 0 || static_cast<size_t>(nextIdx) >= memberCount) return;
+    }
+    else
+    {
+        nextIdx = nextRow * columns + nextCol;
+        if (nextIdx < 0 || static_cast<size_t>(nextIdx) >= static_cast<int>(memberCount)) return;
+    }
+
+    if (nextIdx == currentIdx) return;
+
+    // 取消旧成员选中
+    if (currentIdx >= 0)
+    {
+        if (widget.type == DesktopWidgetType::FolderMapping)
+        {
+            if (static_cast<size_t>(currentIdx) < widget.folderEntries.size())
+                widget.folderEntries[static_cast<size_t>(currentIdx)].selected = false;
+        }
+        else if (!visibleKeys.empty())
+        {
+            // 清除所有可见项选中状态，防止多选残留
+            for (const auto& key : visibleKeys)
+            {
+                size_t itemIdx = FindItemIndexByKey(key);
+                if (itemIdx != static_cast<size_t>(-1))
+                    items_[itemIdx].selected = false;
+            }
+        }
+        else
+        {
+            const auto& keys = widget.itemKeys;
+            if (static_cast<size_t>(currentIdx) < keys.size())
+            {
+                size_t itemIdx = FindItemIndexByKey(keys[static_cast<size_t>(currentIdx)]);
+                if (itemIdx != static_cast<size_t>(-1))
+                    items_[itemIdx].selected = false;
+            }
+        }
+    }
+
+    // 选中新成员
+    if (widget.type == DesktopWidgetType::FolderMapping)
+    {
+        widget.folderEntries[static_cast<size_t>(nextIdx)].selected = true;
+    }
+    else if (!visibleKeys.empty())
+    {
+        size_t itemIdx = FindItemIndexByKey(visibleKeys[static_cast<size_t>(nextIdx)]);
+        if (itemIdx != static_cast<size_t>(-1))
+            items_[itemIdx].selected = true;
+    }
+    else
+    {
+        const auto& keys = widget.itemKeys;
+        size_t itemIdx = FindItemIndexByKey(keys[static_cast<size_t>(nextIdx)]);
+        if (itemIdx != static_cast<size_t>(-1))
+            items_[itemIdx].selected = true;
+    }
+
+    keyboardNavMemberIndex_ = nextIdx;
+
+    // 确保选中的成员项可见
+    ScrollWidgetToMember(keyboardNavWidgetIndex_, nextIdx);
+
+    // Collection 大文件夹模式：超界自动弹窗 / 退回内联区域自动关闭
+    if (widget.type == DesktopWidgetType::Collection && !widget.scrollContainerMode)
+    {
+        int cols = std::max(1, widget.gridSpan.columns);
+        int rows = std::max(1, widget.gridSpan.rows);
+        size_t inlineCap = (cols <= 1 && rows <= 1) ? 4
+                           : static_cast<size_t>(cols * rows - 1);
+        if (static_cast<size_t>(nextIdx) >= inlineCap)
+        {
+            if (popupWidgetIndex_ != keyboardNavWidgetIndex_)
+                OpenCollectionPopupAt(keyboardNavWidgetIndex_,
+                    POINT{ widget.bounds.left, widget.bounds.top });
+        }
+        else if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
+            (cols > 1 || rows > 1))   // 紧凑模式保持弹窗常开
+        {
+            // 退回内联区域：关闭弹窗（不调用 CloseCollectionPopup，
+            // 因为它会 ClearSelection 清除刚导航选中的成员项）
+            popupWidgetIndex_ = static_cast<size_t>(-1);
+            popupScrollOffset_ = 0;
+            popupHasAnchor_ = false;
+            popupAnchorPoint_ = {};
+            popupPageId_.clear();
+            popupCategoryId_.clear();
+            popupRect_ = {};
+        }
+    }
+
+    // 弹窗滚动跟随（若弹窗仍打开）
+    if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
+        popupWidgetIndex_ < widgets_.size())
+    {
+        RECT rPopup = popupRect_;
+        int popupCols = GetCollectionPopupColumnCount(rPopup);
+        int popupRow = nextIdx / std::max(1, popupCols);
+        int cellH = kMinCellHeight;
+        for (const auto& page : gridPages_)
+            if (page.id == popupPageId_) { cellH = page.cellHeight; break; }
+        RECT content = GetCollectionPopupContentRect(rPopup);
+        int viewH = std::max(1, static_cast<int>(content.bottom - content.top));
+        int targetY = popupRow * cellH;
+        int maxPopupScroll = GetCollectionPopupMaxScrollOffset(
+            widgets_[keyboardNavWidgetIndex_], rPopup);
+        if (targetY < popupScrollOffset_)
+            popupScrollOffset_ = targetY;
+        else if (targetY + cellH > popupScrollOffset_ + viewH)
+            popupScrollOffset_ = targetY + cellH - viewH;
+        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, maxPopupScroll);
+    }
+
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+/**
+ * @brief 进入当前选中的组件内部进行导航
+ *
+ * 清除桌面层面选中，将导航上下文切换到组件内部，
+ * 并选中组件的第一个成员项。
+ */
+inline void DesktopApp::EnterWidget()
+{
+    int foundIdx = -1;
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (widgets_[i].selected) { foundIdx = static_cast<int>(i); break; }
+    }
+    if (foundIdx < 0) return;
+
+    const auto& widget = widgets_[static_cast<size_t>(foundIdx)];
+    if (widget.type == DesktopWidgetType::LuaScript ||
+        widget.type == DesktopWidgetType::Guide)
+        return;   // 此类组件无内部成员导航
+
+    ClearSelection();
+
+    keyboardNavInsideWidget_ = true;
+    keyboardNavWidgetIndex_ = static_cast<size_t>(foundIdx);
+    keyboardNavMemberIndex_ = 0;
+
+    if (widget.type == DesktopWidgetType::FolderMapping)
+    {
+        if (!widget.folderEntries.empty())
+            widgets_[static_cast<size_t>(foundIdx)].folderEntries[0].selected = true;
+    }
+    else
+    {
+        if (!widget.itemKeys.empty())
+        {
+            size_t itemIdx = FindItemIndexByKey(widget.itemKeys[0]);
+            if (itemIdx != static_cast<size_t>(-1))
+                items_[itemIdx].selected = true;
+        }
+    }
+
+    // 1 格集合（紧凑模式）：进入时直接打开弹窗
+    if (widget.type == DesktopWidgetType::Collection && !widget.scrollContainerMode)
+    {
+        int cols = std::max(1, widget.gridSpan.columns);
+        int rows = std::max(1, widget.gridSpan.rows);
+        if (cols <= 1 && rows <= 1)
+            OpenCollectionPopupAt(static_cast<size_t>(foundIdx),
+                POINT{ widget.bounds.left, widget.bounds.top });
+    }
+
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+/**
+ * @brief 退出组件内部导航，返回桌面网格
+ *
+ * 清除组件内成员选中，恢复父组件的选中状态，
+ * 并将导航上下文切换回桌面网格。
+ */
+inline void DesktopApp::ExitWidget()
+{
+    if (!keyboardNavInsideWidget_) return;
+
+    size_t wi = keyboardNavWidgetIndex_;
+
+    if (wi < widgets_.size())
+    {
+        auto& widget = widgets_[wi];
+        if (widget.type == DesktopWidgetType::FolderMapping)
+        {
+            for (auto& e : widget.folderEntries)
+                e.selected = false;
+        }
+        else
+        {
+            for (const auto& key : widget.itemKeys)
+            {
+                size_t itemIdx = FindItemIndexByKey(key);
+                if (itemIdx != static_cast<size_t>(-1))
+                    items_[itemIdx].selected = false;
+            }
+        }
+    }
+
+    keyboardNavInsideWidget_ = false;
+    keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+    keyboardNavMemberIndex_ = -1;
+
+    // 退出组件时关闭其弹窗
+    if (popupWidgetIndex_ == wi)
+        CloseCollectionPopup();
+
+    if (wi < widgets_.size())
+        widgets_[wi].selected = true;
+
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+/**
+ * @brief 打开当前选中的桌面项
+ *
+ * 遍历 items_ 查找选中的项，通过 ShellExecuteW 以 "open" 动词启动。
+ */
+inline void DesktopApp::OpenSelectedDesktopItem()
+{
+    for (const auto& item : items_)
+    {
+        if (item.selected && !item.name.empty() && !item.parsingName.empty())
+        {
+            ShellExecuteW(nullptr, L"open", item.parsingName.c_str(),
+                nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        }
+    }
+}
+
+/**
+ * @brief 打开组件内指定索引的成员项
+ * @param widgetIndex 组件索引
+ * @param memberIndex 成员索引（-1 表示无成员选中）
+ *
+ * 根据组件类型，通过 ShellExecuteW 打开对应的文件或桌面项。
+ */
+inline void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
+{
+    if (widgetIndex >= widgets_.size() || memberIndex < 0) return;
+    const auto& widget = widgets_[widgetIndex];
+
+    if (widget.type == DesktopWidgetType::FolderMapping)
+    {
+        if (static_cast<size_t>(memberIndex) < widget.folderEntries.size())
+        {
+            const auto& entry = widget.folderEntries[static_cast<size_t>(memberIndex)];
+            if (!entry.fullPath.empty())
+                ShellExecuteW(nullptr, L"open", entry.fullPath.c_str(),
+                    nullptr, nullptr, SW_SHOWNORMAL);
+        }
+    }
+    else if (!widget.itemKeys.empty() &&
+        static_cast<size_t>(memberIndex) < widget.itemKeys.size())
+    {
+        size_t itemIdx = FindItemIndexByKey(
+            widget.itemKeys[static_cast<size_t>(memberIndex)]);
+        if (itemIdx != static_cast<size_t>(-1) &&
+            !items_[itemIdx].parsingName.empty())
+        {
+            ShellExecuteW(nullptr, L"open", items_[itemIdx].parsingName.c_str(),
+                nullptr, nullptr, SW_SHOWNORMAL);
+        }
+    }
 }
 
 /**
@@ -4445,7 +5398,7 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
         invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        contextMenu->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         RefreshFolderMappingWidget(widgetIndex);
         RebuildContainersAndItems();
         SaveLayoutSlots();
@@ -4582,6 +5535,7 @@ inline void DesktopApp::BeginRenameSelected()
 
         RECT frame = widgets_[selectedWidgetIndex].bounds;
         RECT handle = frame;
+        bool foundContainer = false;
         for (const auto& c : containers_)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());
@@ -4589,8 +5543,14 @@ inline void DesktopApp::BeginRenameSelected()
             {
                 frame = wc->GetFrameRect();
                 handle = wc->GetMoveHandleRect();
+                foundContainer = true;
                 break;
             }
+        }
+        if (!foundContainer && widgets_[selectedWidgetIndex].type == DesktopWidgetType::LuaScript)
+        {
+            frame = GetStandaloneWidgetFrameRect(widgets_[selectedWidgetIndex]);
+            handle = GetStandaloneWidgetMoveHandleRect(widgets_[selectedWidgetIndex]);
         }
         const int editHeight = std::max(40, static_cast<int>(handle.bottom - handle.top) * 2);
         RECT rect = MakeRect(frame.left + 4, handle.top, frame.right - 4, handle.top + editHeight);
@@ -4736,10 +5696,19 @@ inline void DesktopApp::CommitRename(bool cancel)
 
     if (renamingWidget_)
     {
-        if (!cancel && renameIndex_ < widgets_.size() && !newName.empty())
+        if (!cancel && renameIndex_ < widgets_.size())
         {
-            widgets_[renameIndex_].title = newName;
-            SaveLayoutSlots();
+            if (!newName.empty())
+            {
+                widgets_[renameIndex_].title = newName;
+                widgets_[renameIndex_].userRenamed = true;
+                SaveLayoutSlots();
+            }
+            else if (widgets_[renameIndex_].userRenamed)
+            {
+                widgets_[renameIndex_].userRenamed = false;
+                SaveLayoutSlots();
+            }
         }
         renamingWidget_ = false;
         renameIndex_ = static_cast<size_t>(-1);
@@ -6320,6 +7289,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     HMENU displayModeMenu = nullptr;
     HMENU hoverMenu = nullptr;
+    HMENU privacyMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
     {
@@ -6344,6 +7314,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
         AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
+            widget.dateHeaders ? L"隐藏日期表头" : L"显示日期表头");
     }
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
@@ -6384,9 +7356,9 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     }
 
     HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr, wDateMenu = nullptr;
-    if (widget.type == DesktopWidgetType::FileCategories ||
+    if ((widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
-        widget.type == DesktopWidgetType::Collection)
+        widget.type == DesktopWidgetType::Collection) && !widget.dateHeaders)
     {
         sortMenu = CreatePopupMenu();
         if (sortMenu)
@@ -6431,11 +7403,26 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             kContextWidgetShowOnHoverOff, L"关");
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), L"仅在悬停时显示");
     }
+    if (widget.type == DesktopWidgetType::Collection ||
+        widget.type == DesktopWidgetType::FileCategories ||
+        widget.type == DesktopWidgetType::FolderMapping)
+    {
+        privacyMenu = CreatePopupMenu();
+        if (privacyMenu)
+        {
+            AppendMenuW(privacyMenu, MF_STRING | (widget.privacyMode ? MF_CHECKED : 0),
+                kContextWidgetPrivacyModeOn, L"开");
+            AppendMenuW(privacyMenu, MF_STRING | (!widget.privacyMode ? MF_CHECKED : 0),
+                kContextWidgetPrivacyModeOff, L"关");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(privacyMenu), L"隐私模式");
+        }
+    }
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
 
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
     SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
     SetMenuItemIcon(menu, kContextWidgetToggleListMode, widget.listMode ? L"" : L"");
+    SetMenuItemIcon(menu, kContextWidgetToggleDateGroup, L"");
     SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
     SetMenuItemIcon(menu, kContextNewMenu, L"");
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
@@ -6444,6 +7431,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
     if (hoverMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(hoverMenu), L"");
+    if (privacyMenu)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(privacyMenu), widget.privacyMode ? L"" : L"");
     if (sortMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
@@ -6526,6 +7515,12 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
+    case kContextWidgetToggleDateGroup:
+        widgets_[widgetIndex].dateHeaders = !widgets_[widgetIndex].dateHeaders;
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
     case kContextWidgetManualCollect:
         if (!CollectFileCategoryWidget(widgetIndex, true))
             MessageBeep(MB_ICONINFORMATION);
@@ -6598,6 +7593,16 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     case kContextWidgetShowOnHoverOff:
         widgets_[widgetIndex].showOnHoverOnly = false;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetPrivacyModeOn:
+        widgets_[widgetIndex].privacyMode = true;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetPrivacyModeOff:
+        widgets_[widgetIndex].privacyMode = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;

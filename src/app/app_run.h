@@ -807,6 +807,13 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetGeneralSettingsChangedCallback([this]() {
             LoadGeneralSettingsAndApply();
         });
+        settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
+            SetIconSpacing(settingsWindow_->GetIconSpacingScale());
+            SetItemFontSize(settingsWindow_->GetItemFontSizeD());
+            SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
+        });
+
+        settingsWindow_->SyncDisplaySettings(iconSpacingScale_, itemFontSize_, static_cast<float>(itemFontWeight_));
     }
     else
     {
@@ -1009,6 +1016,24 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
     case WM_KEYDOWN:
         OnKeyDown(wp);
         return 0;
+    case WM_CHAR:
+    {
+        wchar_t ch = static_cast<wchar_t>(wp);
+        if (ch >= 0x20 && ch != 0x7F)
+        {
+            for (auto& c : containers_)
+            {
+                auto* fc = dynamic_cast<FileCategories*>(c.get());
+                if (fc && fc->IsSearchFocused())
+                {
+                    fc->AppendSearchChar(ch);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    break;
+                }
+            }
+        }
+        return 0;
+    }
     case WM_KEYUP:
         RefreshDragHintFromKeyboard();
         return 0;
