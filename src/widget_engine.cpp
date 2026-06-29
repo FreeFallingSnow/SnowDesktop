@@ -266,6 +266,7 @@ struct D2DState
     int gridCellW = 92;
     int gridCellH = 116;
     int gridGapY = 8;
+    int barHeight = 24;
     int widgetClipDepth = 0;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
     ID2D1DeviceContext* brushContext = nullptr;
@@ -2661,6 +2662,12 @@ void WidgetEngine::SetGridCellGap(int gapY)
         d2dState_->gridGapY = std::max(0, gapY);
 }
 
+void WidgetEngine::SetBarHeight(int barHeight)
+{
+    if (d2dState_)
+        d2dState_->barHeight = barHeight;
+}
+
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
 {
     if (openWidgetSettingsCallback_)
@@ -3407,6 +3414,13 @@ static int lua_LayoutCellGap(lua_State* L)
     return 1;
 }
 
+static int lua_LayoutBarHeight(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushinteger(L, s ? std::max(16, s->barHeight) : 24);
+    return 1;
+}
+
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
     lua_newtable(L);
@@ -3486,6 +3500,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_LayoutCu); lua_setfield(L, -2, "cu");
     lua_pushcfunction(L, lua_LayoutFontCu); lua_setfield(L, -2, "fontCu");
     lua_pushcfunction(L, lua_LayoutCellGap);    lua_setfield(L, -2, "cellGap");
+    lua_pushcfunction(L, lua_LayoutBarHeight);  lua_setfield(L, -2, "barHeight");
     lua_setglobal(L, "layout");
 
     lua_newtable(L);

@@ -227,6 +227,7 @@ local sizeClass = layout.sizeClass() -- small, medium, large
 local cellW = layout.cellWidth()     -- grid cell width (DPI-aware, px)
 local cellH = layout.cellHeight()    -- grid cell height (DPI-aware, px)
 local gapY = layout.cellGap()        -- grid vertical gap (DPI-aware, px)
+local barH = layout.barHeight()      -- bottom bar height in cu (default 24, range 16-48)
 local scale = layout.cellScale()     -- min(cellW / 92, cellH / 116)
 local fontSize = layout.cu(14)       -- 14 design units converted to px
 ```
@@ -234,6 +235,9 @@ local fontSize = layout.cu(14)       -- 14 design units converted to px
 `cellWidth` and `cellHeight` return the current monitor's DPI-scaled grid cell
 dimensions — the same values used to size desktop icons and collection items.
 `cellGap` returns the vertical grid gap in DPI-scaled pixels.
+`barHeight` returns the bottom bar height in design units (cu), configurable
+between 16 and 48 in settings. Use `layout.cu(layout.barHeight())` to get the
+pixel height for layout calculations.
 `cellScale` returns the component scale relative to the standard `92 x 116`
 grid cell. `cu(value)` converts a design value to current pixels. Existing
 `draw.text` sizes remain pixel values, so use `draw.text(..., layout.cu(14))`

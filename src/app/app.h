@@ -258,6 +258,8 @@ std::wstring source;         /**< 来源标识 */
     // ── OO 系统访问器（Object-Oriented System Accessors）────
     /** @brief 获取所有容器的引用（网格、部件等）。 @return 容器指针的 vector 引用 */
     std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
+    /** @brief 失效所有槽位缓存，下次GetSlots触发重建（底栏高度变化等场景） */
+    void InvalidateAllWidgetSlots();
     /** @brief 获取所有面向对象项的常量引用。 @return Item 唯一指针 vector 的 const 引用 */
     const std::vector<std::unique_ptr<Item>>& GetItemsOO() const { return items_oo_; }
     /** @brief 获取所有面向对象项的可变引用。 @return Item 唯一指针 vector 的引用 */

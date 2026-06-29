@@ -191,6 +191,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         {
             app_->widgetEngine_->SetGridCellSize(realPage->cellWidth, realPage->cellHeight);
             app_->widgetEngine_->SetGridCellGap(realPage->gapY);
+            app_->widgetEngine_->SetBarHeight(static_cast<int>(GetBarHeight()));
             if (data_->gridCell.pageId != realPage->id)
             {
                 data_->gridCell.pageId = realPage->id;

@@ -426,6 +426,12 @@ inline void DesktopApp::WatchDesktopHost()
  * 或直接执行清理流程（保存布局槽位、移除托盘图标、重置资源）
  * 并发送 PostQuitMessage 退出消息循环。
  */
+inline void DesktopApp::InvalidateAllWidgetSlots()
+{
+    for (auto& c : containers_)
+        c->InvalidateSlots();
+}
+
 inline void DesktopApp::RequestExit()
 {
     if (exitRequested_)
@@ -797,6 +803,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetInvalidateCallback([this]() {
             if (hwnd_)
             {
+                InvalidateAllWidgetSlots();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 UpdateWindow(hwnd_);
             }

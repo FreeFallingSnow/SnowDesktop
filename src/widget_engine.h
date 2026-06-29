@@ -607,6 +607,7 @@ public:
      */
     void SetGridCellSize(int cellWidth, int cellHeight);
     void SetGridCellGap(int gapY);
+    void SetBarHeight(int barHeight);
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
 
     /**
