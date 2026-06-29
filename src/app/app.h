@@ -26,6 +26,7 @@
 #include "settings_window.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "everything_search.h"
 #include "utils.h"
 #include "widget_engine.h"
 #include "types.h"
@@ -47,6 +48,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <cstring>
 #include <cstdint>
 #include <functional>
 #include <fstream>
@@ -245,14 +247,22 @@ public:
             FolderEntry,
         };
 
-Kind kind = Kind::DesktopItem;            /**< 条目来源类型 */
+        Kind kind = Kind::DesktopItem;            /**< 条目来源类型 */
         size_t itemIndex = static_cast<size_t>(-1);   /**< 在桌面项列表中的索引（DesktopItem 类型时有效） */
         size_t widgetIndex = static_cast<size_t>(-1); /**< 所在部件的索引 */
         size_t folderEntryIndex = static_cast<size_t>(-1); /**< 在文件夹条目列表中的索引（FolderEntry 类型时有效） */
         std::wstring name;           /**< 显示名称 */
         std::wstring path;           /**< 完整路径 */
-std::wstring source;         /**< 来源标识 */
+        std::wstring source;         /**< 来源标识 */
         HBITMAP iconBitmap = nullptr; /**< 图标位图句柄 */
+    };
+
+    struct QuickNavigationEverythingEntry
+    {
+        std::wstring name;
+        std::wstring path;
+        bool isDirectory = false;
+        int systemIconIndex = -1;
     };
 
     // ── OO 系统访问器（Object-Oriented System Accessors）────
@@ -450,6 +460,9 @@ private:
     void UpdateQuickNavigationSearchEditRect();
     /** @brief 刷新快速导航搜索文本内容。 */
     void RefreshQuickNavigationSearchText();
+    void RefreshQuickNavigationEverythingResults();
+    void ClearQuickNavigationEverythingResults();
+    int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
     /** @brief 计算快捷导航标签页的宽度。 */
     int GetQuickNavigationTabWidth() const;
     /** @brief 确保 navTabOrder_ 包含所有集合组件 ID。 */
@@ -1014,8 +1027,6 @@ private:
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color);
     /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
     void DrawCollectionPopup(ID2D1DeviceContext* ctx);
-    /** @brief 绘制快速导航叠加层。 @param ctx D2D 上下文 */
-    void DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
@@ -1232,10 +1243,15 @@ private:
     int GetQuickNavigationGap(const RECT& overlay) const;
     /** @brief 获取快速导航面板中内容的最大滚动偏移。 @param overlay 面板矩形 @return 最大滚动偏移 */
     int GetQuickNavigationMaxScrollOffset(const RECT& overlay) const;
-    bool GetQuickNavigationScrollbarGeometry(const RECT& overlay, int entryCount,
+    int GetQuickNavigationContentHeight(const RECT& overlay) const;
+    bool GetQuickNavigationScrollbarGeometry(const RECT& overlay,
         RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const;
     /** @brief 处理快速导航面板的点击事件。 @param point 点击坐标 @return 是否已处理 */
     bool HandleQuickNavigationClick(POINT point);
+    bool HandleQuickNavigationRightClick(POINT point, POINT screenPoint);
+    bool TryGetQuickNavigationEverythingEntryAtPoint(POINT point, QuickNavigationEverythingEntry& outEntry) const;
+    void ShowQuickNavigationEverythingContextMenu(const QuickNavigationEverythingEntry& entry, POINT screenPoint);
+    bool CopyTextToClipboard(const std::wstring& text);
     /** @brief 获取集合弹出面板的矩形。 @param widget 部件引用 @return 面板矩形 */
     RECT GetCollectionPopupRect(const DesktopWidget& widget) const;
     /** @brief 获取集合弹出面板中内容区域的矩形。 @param popup 面板矩形 @return 内容矩形 */
@@ -1296,6 +1312,8 @@ private:
      * @return Lua 桌面项信息列表
      */
     std::vector<LuaDesktopItemInfo> BuildLuaDesktopSnapshot(bool selectedOnly) const;
+    std::vector<LuaDesktopItemInfo> BuildLuaEverythingSearch(const std::string& query, int maxResults) const;
+    std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
     /** @brief 通过 Lua 脚本打开指定路径。 @param path 要打开的路径 @return 操作是否成功 */
     bool LuaOpenPath(const std::wstring& path);
     /** @brief 通过 Lua 脚本在资源管理器中显示指定路径。 @param path 路径 @return 操作是否成功 */
@@ -1437,6 +1455,7 @@ private:
     HFONT quickNavigationTitleFont_ = nullptr;
     HFONT quickNavigationTabFont_ = nullptr;
     HFONT quickNavigationItemFont_ = nullptr;
+    HFONT quickNavigationPathFont_ = nullptr;
     HDC quickNavMemoryDc_ = nullptr;
     HBITMAP quickNavMemoryBitmap_ = nullptr;
     int quickNavMemWidth_ = 0;
@@ -1636,6 +1655,7 @@ private:
     POINT quickNavigationOpenPoint_{};
     RECT quickNavigationRect_{};
     std::wstring quickNavigationSearchText_;
+    std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
     float quickNavDpiScale_ = 1.0f;
     std::vector<std::wstring> navTabOrder_;
     size_t quickNavTabDragIndex_ = static_cast<size_t>(-1);
@@ -1647,6 +1667,13 @@ private:
     int quickNavScrollbarDragThumbTop_ = 0;
     int quickNavScrollbarDragStartOffset_ = 0;
     bool quickNavScrollbarHovered_ = false;
+    HIMAGELIST quickNavigationSystemImageListSmall_ = nullptr;
+    std::unordered_map<std::wstring, int> quickNavigationEverythingIconCache_;
+    mutable EverythingSearchClient everythingSearch_;
+    mutable std::wstring everythingSearchCacheQuery_;
+    mutable DWORD everythingSearchCacheMaxResults_ = 0;
+    mutable DWORD everythingSearchCacheTick_ = 0;
+    mutable std::vector<EverythingSearchResult> everythingSearchCacheResults_;
 
     int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
     /** @} */
@@ -1693,6 +1720,7 @@ private:
 // ── Inline implementations (split into sub-headers) ─────────
 #include "app_run.h"
 #include "app_gfx.h"
+#include "app_quick_navigation.h"
 #include "app_interact.h"
 #include "app_menu.h"
 #include "app_grid.h"

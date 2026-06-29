@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(SnowDesktop LANGUAGES CXX)
+project(SnowDesktop LANGUAGES C CXX)
 
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
 string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
@@ -18,6 +18,7 @@ set(SNOWDESKTOP_SOURCES
     src/personalization.cpp
     src/navigation_settings.cpp
     src/general_settings.cpp
+    src/everything_search.cpp
     src/widget_engine.cpp
     src/system_snapshot.cpp
     src/http_runtime.cpp
@@ -27,6 +28,10 @@ set(SNOWDESKTOP_SOURCES
     src/widgets/folder_mapping.cpp
     src/widgets/lua_script.cpp
     src/widgets/guide_widget.cpp
+)
+
+set(EVERYTHING_SOURCES
+    third_party/everything/src/Everything.c
 )
 
 set(IMGUI_SOURCES
@@ -59,6 +64,7 @@ set(THIRD_PARTY_SOURCES
 
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
+    ${EVERYTHING_SOURCES}
     ${THIRD_PARTY_SOURCES}
     src/resource.rc
 )
@@ -72,6 +78,7 @@ target_include_directories(SnowDesktop PRIVATE
     third_party/imgui
     third_party/imgui/backends
     third_party/lua
+    third_party/everything/include
 )
 
 if (MSVC)
@@ -110,8 +117,14 @@ set_source_files_properties(
     ${LUA_SOURCES}
     PROPERTIES LANGUAGE C
 )
+set_source_files_properties(
+    ${EVERYTHING_SOURCES}
+    PROPERTIES LANGUAGE C
+)
 
 if (MSVC)
     set_source_files_properties(${LUA_SOURCES} PROPERTIES
         COMPILE_OPTIONS "/wd4244;/wd4310;/wd4324;/wd4701;/wd4702")
+    set_source_files_properties(${EVERYTHING_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "/wd4100;/wd4996")
 endif()

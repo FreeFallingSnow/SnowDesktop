@@ -26,6 +26,7 @@
 inline DesktopApp::~DesktopApp()
 {
     StopIconLoader();
+    ClearQuickNavigationEverythingResults();
     widgetEngine_.reset();
     settingsWindow_.reset();
     items_oo_.clear();
@@ -835,6 +836,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         widgetEngine_->SetSelectionProvider([this]() {
             return BuildLuaDesktopSnapshot(true);
+        });
+        widgetEngine_->SetEverythingSearchProvider([this](const std::string& query, int maxResults) {
+            return BuildLuaEverythingSearch(query, maxResults);
         });
         widgetEngine_->SetWidgetTitleCallback([this](const std::wstring& widgetId, const std::wstring& title) {
             LuaSetWidgetTitle(widgetId, title);

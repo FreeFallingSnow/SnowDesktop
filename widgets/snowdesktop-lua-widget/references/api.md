@@ -8,6 +8,7 @@
 - [Widget and system](#widget-and-system)
 - [Storage](#storage)
 - [Desktop integration](#desktop-integration)
+- [Everything search](#everything-search)
 - [Settings UI](#settings-ui)
 - [Manifest and permissions](#manifest-and-permissions)
 - [Troubleshooting](#troubleshooting)
@@ -18,8 +19,8 @@ Scripts run in a sandbox containing:
 
 - Base functions: `assert`, `error`, `ipairs`, `next`, `pairs`, `pcall`, `select`, `tonumber`, `tostring`, `type`, `xpcall`.
 - Libraries: `string`, `table`, `math`, `utf8`.
-- Host APIs: `draw`, `sys`, `layout`, `storage`, `widget`, `desktop`, `media`,
-  `http`, and `ui`.
+- Host APIs: `draw`, `sys`, `layout`, `storage`, `widget`, `desktop`,
+  `everything`, `media`, `http`, and `ui`.
 - `imgui` only when the manifest declares `ui.input`.
 - `widgetId`, a unique string for the current component instance.
 
@@ -378,6 +379,19 @@ desktop.refresh()
 
 `desktop.open` and `desktop.reveal` return booleans.
 
+## Everything search
+
+Everything search is separate from `desktop.find` and requires
+`everything.search`:
+
+```lua
+local results = everything.search("query", 40)
+```
+
+The optional second argument is the maximum number of results, clamped by the
+host. Returned items use the same shape as desktop items; `source` is
+`"Everything"`, and `path` contains the full filesystem path.
+
 ## Settings UI
 
 Declare `ui.input`, then define `imguiRender()`.
@@ -446,6 +460,7 @@ restoring saved layouts, and reacting to grid changes.
 | `ui.contextMenu` | `getContextMenu()`, `onMenu(id)` |
 | `desktop.read` | `desktop.items`, `selection`, `find`, `draw.icon`, desktop-change callback |
 | `desktop.action` | `desktop.open`, `reveal`, `refresh` |
+| `everything.search` | `everything.search(query, maxResults)` |
 | `system.read` | `sys.cpu`, `memory`, `battery`, `network`, `gpu` |
 | `media.read` | `media.current` |
 | `media.action` | Media playback controls |
