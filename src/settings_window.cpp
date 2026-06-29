@@ -321,7 +321,10 @@ void SettingsWindow::Render()
         ImGui::EndChild();
 
         ImGui::SameLine();
+        const float contentPadX = 16.0f * dpiScale_;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(contentPadX, 0.0f));
         ImGui::BeginChild("##Content", ImVec2(0, 0), true);
+        ImGui::PopStyleVar();
         switch (activePage_)
         {
         case 0: DrawGeneralPage(); break;
@@ -574,11 +577,12 @@ static int NavigationHotkeyOptionIndex(UINT virtualKey)
 void SettingsWindow::DrawBackupPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##BackupPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
+    ImGui::BeginChild("##BackupPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
     ImGui::Text("布局备份与恢复");
     ImGui::Separator();
     ImGui::Spacing();
@@ -658,11 +662,12 @@ void SettingsWindow::DrawBackupPage()
 void SettingsWindow::DrawGeneralPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##GeneralPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
+    ImGui::BeginChild("##GeneralPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     ImGui::Text("通用设置");
     ImGui::Separator();
@@ -748,11 +753,12 @@ void SettingsWindow::DrawGeneralPage()
 void SettingsWindow::DrawDisplayPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##DisplayPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
+    ImGui::BeginChild("##DisplayPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     const float labelW = 110.0f * dpiScale_;
     const float sliderW = 200.0f * dpiScale_;
@@ -884,11 +890,12 @@ void SettingsWindow::DrawDisplayPage()
 void SettingsWindow::DrawPersonalizationPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##PersonalizationPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
+    ImGui::BeginChild("##PersonalizationPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     auto nearlyEqual = [](float a, float b) {
         return std::fabs(a - b) < 0.001f;
@@ -1081,11 +1088,12 @@ void SettingsWindow::DrawWidgetEditorPage()
 void SettingsWindow::DrawDebugPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##DebugPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
+    ImGui::BeginChild("##DebugPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     ImGui::Text("调试页");
     ImGui::Separator();
@@ -1448,11 +1456,12 @@ void SettingsWindow::PerformUpdateCheck()
 void SettingsWindow::DrawAboutPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##AboutPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
+    ImGui::BeginChild("##AboutPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     ImGui::Text("关于 SnowDesktop");
     ImGui::Separator();
@@ -1565,6 +1574,32 @@ void SettingsWindow::DrawAboutPage()
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
         }
     }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("第三方开源库：");
+    ImGui::Spacing();
+
+    ImGui::Text("    Everything SDK");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (C) 2016 David Carpenter");
+
+    ImGui::Text("    Dear ImGui");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (c) 2014-2025 Omar Cornut");
+
+    ImGui::Text("    Lua");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (C) 1994-2024 Lua.org, PUC-Rio");
+
+    ImGui::Text("    spdlog");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (c) 2016-present, Gabi Melman");
 
     ImGui::EndChild();
 }

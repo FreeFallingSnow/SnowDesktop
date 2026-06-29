@@ -1674,6 +1674,7 @@ private:
     mutable DWORD everythingSearchCacheMaxResults_ = 0;
     mutable DWORD everythingSearchCacheTick_ = 0;
     mutable std::vector<EverythingSearchResult> everythingSearchCacheResults_;
+    mutable bool everythingSearchAvailable_ = true;
 
     int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
     /** @} */

@@ -61,6 +61,7 @@ inline std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
     everythingSearchCacheMaxResults_ = maxResults;
     everythingSearchCacheTick_ = now;
     everythingSearchCacheResults_ = everythingSearch_.Search(query, maxResults);
+    everythingSearchAvailable_ = (everythingSearch_.LastError() != 2); // 2 = EVERYTHING_ERROR_IPC, Everything not running
     const std::wstring normalizedQuery = ToUpperInvariant(query);
     std::stable_sort(everythingSearchCacheResults_.begin(), everythingSearchCacheResults_.end(),
         [&](const EverythingSearchResult& a, const EverythingSearchResult& b) {
@@ -1140,6 +1141,41 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (!PtInRect(&content, point))
         return true;
 
+    if (!everythingSearchAvailable_ && !quickNavigationSearchText_.empty())
+    {
+        std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
+        bool onNotice = false;
+        if (entries.empty() && quickNavigationEverythingResults_.empty())
+        {
+            onNotice = true;
+        }
+        else
+        {
+            const int columns = GetQuickNavigationColumnCount(overlay);
+            const int desktopRows = entries.empty() ? 0 :
+                (static_cast<int>(entries.size()) + columns - 1) / columns;
+            const int headerH = QuickNavScale(28);
+            const int gap = QuickNavScale(8);
+            const int listHeaderTop = content.top + headerH
+                + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+                + gap - quickNavigationScrollOffset_;
+            RECT noticeHeader = MakeRect(
+                content.left + QuickNavScale(8),
+                listHeaderTop,
+                content.right - QuickNavScale(12),
+                listHeaderTop + headerH);
+            onNotice = PtInRect(&noticeHeader, point);
+        }
+        if (onNotice)
+        {
+            CloseQuickNavigation();
+            ShellExecuteW(nullptr, L"open",
+                L"https://www.voidtools.com/zh-cn/downloads/",
+                nullptr, nullptr, SW_SHOWNORMAL);
+            return true;
+        }
+    }
+
     QuickNavigationEverythingEntry everythingEntry;
     if (TryGetQuickNavigationEverythingEntryAtPoint(point, everythingEntry) &&
         !everythingEntry.path.empty())
@@ -1620,10 +1656,14 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     {
         RECT emptyRect = content;
         emptyRect.top += QuickNavScale(28);
-        drawText(quickNavigationSearchText_.empty()
-                ? (collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目")
-                : L"没有匹配结果",
-            emptyRect, quickNavigationItemFont_, RGB(160, 168, 182), DT_CENTER | DT_TOP | DT_SINGLELINE);
+        if (!quickNavigationSearchText_.empty() && !everythingSearchAvailable_)
+            drawText(L"Everything 未运行，请安装并启动",
+                emptyRect, quickNavigationItemFont_, RGB(160, 168, 182), DT_CENTER | DT_TOP | DT_SINGLELINE);
+        else
+            drawText(quickNavigationSearchText_.empty()
+                    ? (collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目")
+                    : L"没有匹配结果",
+                emptyRect, quickNavigationItemFont_, RGB(160, 168, 182), DT_CENTER | DT_TOP | DT_SINGLELINE);
     }
     else
     {
@@ -1686,66 +1726,78 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
                 + gap - quickNavigationScrollOffset_;
 
-            RECT everythingHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
-                listHeaderTop,
-                contentApp.right - QuickNavScale(12),
-                listHeaderTop + headerH));
-            std::wstring everythingLabel = L"Everything  " +
-                std::to_wstring(quickNavigationEverythingResults_.size()) + L" 项";
-            drawText(everythingLabel, everythingHeader, quickNavigationTabFont_, RGB(182, 194, 212),
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-
-            HPEN separatorPen = CreatePen(PS_SOLID, 1, RGB(48, 56, 70));
-            HGDIOBJ oldPen = SelectObject(memoryDc, separatorPen);
-            const int sepY = everythingHeader.bottom - QuickNavScale(1);
-            MoveToEx(memoryDc, everythingHeader.left, sepY, nullptr);
-            LineTo(memoryDc, everythingHeader.right, sepY);
-            SelectObject(memoryDc, oldPen);
-            DeleteObject(separatorPen);
-
-            for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
+            if (!everythingSearchAvailable_)
             {
-                const int rowTop = contentApp.top + headerH
-                    + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
-                    + gap + headerH
-                    + static_cast<int>(i) * rowH - quickNavigationScrollOffset_;
-                RECT rowRectApp = MakeRect(contentApp.left + QuickNavScale(8), rowTop,
-                    contentApp.right - QuickNavScale(12), rowTop + rowH);
-                if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
-                    continue;
-
-                RECT rowLocal = offsetRect(rowRectApp);
-                if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE)
-                    fillRound(rowLocal, RGB(46, 56, 72), RGB(68, 82, 106), QuickNavScale(10));
-
-                const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];
-                const int iconSz = QuickNavScale(18);
-                RECT iconRect = MakeRect(rowRectApp.left + QuickNavScale(12),
-                    rowRectApp.top + (rowH - iconSz) / 2,
-                    rowRectApp.left + QuickNavScale(12) + iconSz,
-                    rowRectApp.top + (rowH + iconSz) / 2);
-                drawSystemIcon(entry.systemIconIndex, offsetRect(iconRect));
-
-                const int textLeft = iconRect.right + QuickNavScale(10);
-                RECT nameRect = rowRectApp;
-                nameRect.left = textLeft;
-                nameRect.right -= QuickNavScale(12);
-                nameRect.top += QuickNavScale(5);
-                nameRect.bottom = nameRect.top + QuickNavScale(18);
-
-                RECT pathRect = rowRectApp;
-                pathRect.left = textLeft;
-                pathRect.right -= QuickNavScale(12);
-                pathRect.top += QuickNavScale(24);
-                pathRect.bottom -= QuickNavScale(5);
-
-                drawText(entry.name.empty() ? FileNameFromPath(entry.path) : entry.name,
-                    offsetRect(nameRect), quickNavigationItemFont_, RGB(245, 248, 252),
+                RECT noticeHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
+                    listHeaderTop,
+                    contentApp.right - QuickNavScale(12),
+                    listHeaderTop + headerH));
+                drawText(L"Everything 未运行", noticeHeader, quickNavigationTabFont_, RGB(182, 194, 212),
                     DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-                drawText(entry.path, offsetRect(pathRect),
-                    quickNavigationPathFont_ ? quickNavigationPathFont_ : quickNavigationTabFont_,
-                    RGB(146, 156, 174),
+            }
+            else
+            {
+                RECT everythingHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
+                    listHeaderTop,
+                    contentApp.right - QuickNavScale(12),
+                    listHeaderTop + headerH));
+                std::wstring everythingLabel = L"Everything  " +
+                    std::to_wstring(quickNavigationEverythingResults_.size()) + L" 项";
+                drawText(everythingLabel, everythingHeader, quickNavigationTabFont_, RGB(182, 194, 212),
                     DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+                HPEN separatorPen = CreatePen(PS_SOLID, 1, RGB(48, 56, 70));
+                HGDIOBJ oldPen = SelectObject(memoryDc, separatorPen);
+                const int sepY = everythingHeader.bottom - QuickNavScale(1);
+                MoveToEx(memoryDc, everythingHeader.left, sepY, nullptr);
+                LineTo(memoryDc, everythingHeader.right, sepY);
+                SelectObject(memoryDc, oldPen);
+                DeleteObject(separatorPen);
+
+                for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
+                {
+                    const int rowTop = contentApp.top + headerH
+                        + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+                        + gap + headerH
+                        + static_cast<int>(i) * rowH - quickNavigationScrollOffset_;
+                    RECT rowRectApp = MakeRect(contentApp.left + QuickNavScale(8), rowTop,
+                        contentApp.right - QuickNavScale(12), rowTop + rowH);
+                    if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
+                        continue;
+
+                    RECT rowLocal = offsetRect(rowRectApp);
+                    if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE)
+                        fillRound(rowLocal, RGB(46, 56, 72), RGB(68, 82, 106), QuickNavScale(10));
+
+                    const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];
+                    const int iconSz = QuickNavScale(18);
+                    RECT iconRect = MakeRect(rowRectApp.left + QuickNavScale(12),
+                        rowRectApp.top + (rowH - iconSz) / 2,
+                        rowRectApp.left + QuickNavScale(12) + iconSz,
+                        rowRectApp.top + (rowH + iconSz) / 2);
+                    drawSystemIcon(entry.systemIconIndex, offsetRect(iconRect));
+
+                    const int textLeft = iconRect.right + QuickNavScale(10);
+                    RECT nameRect = rowRectApp;
+                    nameRect.left = textLeft;
+                    nameRect.right -= QuickNavScale(12);
+                    nameRect.top += QuickNavScale(5);
+                    nameRect.bottom = nameRect.top + QuickNavScale(18);
+
+                    RECT pathRect = rowRectApp;
+                    pathRect.left = textLeft;
+                    pathRect.right -= QuickNavScale(12);
+                    pathRect.top += QuickNavScale(24);
+                    pathRect.bottom -= QuickNavScale(5);
+
+                    drawText(entry.name.empty() ? FileNameFromPath(entry.path) : entry.name,
+                        offsetRect(nameRect), quickNavigationItemFont_, RGB(245, 248, 252),
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    drawText(entry.path, offsetRect(pathRect),
+                        quickNavigationPathFont_ ? quickNavigationPathFont_ : quickNavigationTabFont_,
+                        RGB(146, 156, 174),
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                }
             }
         }
     }
