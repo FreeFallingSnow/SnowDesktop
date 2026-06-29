@@ -1347,6 +1347,33 @@ inline int DesktopApp::GetQuickNavigationMaxScrollOffset(const RECT& overlay) co
     return std::max(0, contentHeight - visibleHeight);
 }
 
+inline bool DesktopApp::GetQuickNavigationScrollbarGeometry(
+    const RECT& overlay, int entryCount,
+    RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const
+{
+    RECT content = GetQuickNavigationContentRect(overlay);
+    const int columns = GetQuickNavigationColumnCount(overlay);
+    const int rows = entryCount == 0 ? 1 : (entryCount + columns - 1) / columns;
+    outContentHeight = rows * QuickNavScale(kQuickNavigationCellHeight);
+    const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
+    if (outContentHeight <= visibleHeight)
+    {
+        ZeroMemory(&outTrack, sizeof(outTrack));
+        ZeroMemory(&outThumb, sizeof(outThumb));
+        outMaxScroll = 0;
+        return false;
+    }
+    const int trackW = QuickNavScale(5);
+    outTrack = MakeRect(content.right - trackW - QuickNavScale(2), content.top + QuickNavScale(4),
+        content.right - QuickNavScale(2), content.bottom - QuickNavScale(4));
+    const int trackH = std::max<LONG>(1, outTrack.bottom - outTrack.top);
+    const int thumbH = std::clamp(visibleHeight * trackH / outContentHeight, QuickNavScale(20), trackH);
+    outMaxScroll = std::max(1, outContentHeight - visibleHeight);
+    const int thumbTop = outTrack.top + quickNavigationScrollOffset_ * (trackH - thumbH) / outMaxScroll;
+    outThumb = MakeRect(outTrack.left, thumbTop, outTrack.right, thumbTop + thumbH);
+    return true;
+}
+
 inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
 {
     if (!ctx || popupWidgetIndex_ >= widgets_.size()) return;

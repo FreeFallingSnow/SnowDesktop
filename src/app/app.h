@@ -1232,6 +1232,8 @@ private:
     int GetQuickNavigationGap(const RECT& overlay) const;
     /** @brief 获取快速导航面板中内容的最大滚动偏移。 @param overlay 面板矩形 @return 最大滚动偏移 */
     int GetQuickNavigationMaxScrollOffset(const RECT& overlay) const;
+    bool GetQuickNavigationScrollbarGeometry(const RECT& overlay, int entryCount,
+        RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const;
     /** @brief 处理快速导航面板的点击事件。 @param point 点击坐标 @return 是否已处理 */
     bool HandleQuickNavigationClick(POINT point);
     /** @brief 获取集合弹出面板的矩形。 @param widget 部件引用 @return 面板矩形 */
@@ -1432,6 +1434,14 @@ private:
     HWND quickNavigationHwnd_ = nullptr;
     HWND quickNavigationSearchEdit_ = nullptr;
     HFONT quickNavigationSearchFont_ = nullptr;
+    HFONT quickNavigationTitleFont_ = nullptr;
+    HFONT quickNavigationTabFont_ = nullptr;
+    HFONT quickNavigationItemFont_ = nullptr;
+    HDC quickNavMemoryDc_ = nullptr;
+    HBITMAP quickNavMemoryBitmap_ = nullptr;
+    int quickNavMemWidth_ = 0;
+    int quickNavMemHeight_ = 0;
+    ComPtr<ID2D1DCRenderTarget> quickNavD2DTarget_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -1632,6 +1642,11 @@ private:
     int quickNavTabDragDeltaX_ = 0;
     POINT quickNavTabDragStartPoint_{};
     bool quickNavTabDragging_ = false;
+    bool quickNavScrollbarDragging_ = false;
+    int quickNavScrollbarDragStartY_ = 0;
+    int quickNavScrollbarDragThumbTop_ = 0;
+    int quickNavScrollbarDragStartOffset_ = 0;
+    bool quickNavScrollbarHovered_ = false;
 
     int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
     /** @} */

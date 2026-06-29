@@ -550,6 +550,26 @@ inline void DesktopApp::DestroyQuickNavigationWindow()
         DeleteObject(quickNavigationSearchFont_);
         quickNavigationSearchFont_ = nullptr;
     }
+    if (quickNavigationTitleFont_)
+    {
+        DeleteObject(quickNavigationTitleFont_);
+        quickNavigationTitleFont_ = nullptr;
+    }
+    if (quickNavigationTabFont_)
+    {
+        DeleteObject(quickNavigationTabFont_);
+        quickNavigationTabFont_ = nullptr;
+    }
+    if (quickNavigationItemFont_)
+    {
+        DeleteObject(quickNavigationItemFont_);
+        quickNavigationItemFont_ = nullptr;
+    }
+    quickNavD2DTarget_.Reset();
+    if (quickNavMemoryBitmap_) { DeleteObject(quickNavMemoryBitmap_); quickNavMemoryBitmap_ = nullptr; }
+    if (quickNavMemoryDc_)    { DeleteDC(quickNavMemoryDc_);       quickNavMemoryDc_    = nullptr; }
+    quickNavMemWidth_ = 0;
+    quickNavMemHeight_ = 0;
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         DestroyWindow(quickNavigationHwnd_);
     quickNavigationHwnd_ = nullptr;
@@ -707,6 +727,19 @@ inline void DesktopApp::OpenQuickNavigation()
     {
         quickNavigationOpenPoint_ = lastMousePoint_;
     }
+
+    if (quickNavigationTitleFont_) { DeleteObject(quickNavigationTitleFont_); quickNavigationTitleFont_ = nullptr; }
+    if (quickNavigationTabFont_)   { DeleteObject(quickNavigationTabFont_);   quickNavigationTabFont_   = nullptr; }
+    if (quickNavigationItemFont_)  { DeleteObject(quickNavigationItemFont_);  quickNavigationItemFont_  = nullptr; }
+    quickNavigationTitleFont_ = CreateFontW(-QuickNavScale(18), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    quickNavigationTabFont_ = CreateFontW(-QuickNavScale(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    quickNavigationItemFont_ = CreateFontW(-QuickNavScale(13), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     quickNavigationOpen_ = true;
     EnsureNavTabOrder();
     if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
@@ -867,35 +900,48 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
     RECT client{};
     GetClientRect(hwnd, &client);
-    HDC memoryDc = CreateCompatibleDC(hdc);
-    HBITMAP memoryBitmap = CreateCompatibleBitmap(hdc,
-        std::max<LONG>(1, client.right - client.left),
-        std::max<LONG>(1, client.bottom - client.top));
-    HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(memoryDc, memoryBitmap));
-    SetBkMode(memoryDc, TRANSPARENT);
-    SetStretchBltMode(memoryDc, HALFTONE);
+    const int w = std::max<LONG>(1, client.right - client.left);
+    const int h = std::max<LONG>(1, client.bottom - client.top);
 
-    ComPtr<ID2D1DCRenderTarget> dcRenderTarget;
-    if (d2dFactory_)
+    if (!quickNavMemoryDc_ || w != quickNavMemWidth_ || h != quickNavMemHeight_)
     {
-        const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
-            D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
-            0.0f, 0.0f,
-            D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE);
-        if (SUCCEEDED(d2dFactory_->CreateDCRenderTarget(&properties, &dcRenderTarget)))
+        quickNavD2DTarget_.Reset();
+        if (quickNavMemoryBitmap_) { DeleteObject(quickNavMemoryBitmap_); quickNavMemoryBitmap_ = nullptr; }
+        if (quickNavMemoryDc_)    { DeleteDC(quickNavMemoryDc_);       quickNavMemoryDc_    = nullptr; }
+
+        quickNavMemoryDc_ = CreateCompatibleDC(hdc);
+        quickNavMemoryBitmap_ = CreateCompatibleBitmap(hdc, w, h);
+        SelectObject(quickNavMemoryDc_, quickNavMemoryBitmap_);
+        SetBkMode(quickNavMemoryDc_, TRANSPARENT);
+        SetStretchBltMode(quickNavMemoryDc_, HALFTONE);
+
+        if (d2dFactory_)
         {
-            if (FAILED(dcRenderTarget->BindDC(memoryDc, &client)))
-                dcRenderTarget.Reset();
+            const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
+                D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+                0.0f, 0.0f,
+                D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE);
+            d2dFactory_->CreateDCRenderTarget(&properties, &quickNavD2DTarget_);
         }
+
+        quickNavMemWidth_ = w;
+        quickNavMemHeight_ = h;
     }
+
+    HDC memoryDc = quickNavMemoryDc_;
+    ID2D1DCRenderTarget* dcRenderTarget = quickNavD2DTarget_.Get();
+    if (dcRenderTarget)
+        dcRenderTarget->BindDC(memoryDc, &client);
+
+    bool d2dOk = dcRenderTarget != nullptr;
 
     auto offsetRect = [&](RECT rect) {
         OffsetRect(&rect, -quickNavigationRect_.left, -quickNavigationRect_.top);
         return rect;
     };
     auto fillRound = [&](RECT rect, COLORREF fill, COLORREF stroke, int radius) {
-        if (dcRenderTarget)
+        if (d2dOk && dcRenderTarget)
         {
             ComPtr<ID2D1SolidColorBrush> fillBrush;
             ComPtr<ID2D1SolidColorBrush> strokeBrush;
@@ -906,8 +952,6 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             if (SUCCEEDED(dcRenderTarget->CreateSolidColorBrush(fillColor, &fillBrush)) &&
                 SUCCEEDED(dcRenderTarget->CreateSolidColorBrush(strokeColor, &strokeBrush)))
             {
-                // GDI RoundRect receives the corner ellipse diameter; Direct2D
-                // receives the radius, hence the 0.5 conversion.
                 const float cornerRadius = std::max(0.5f, radius * 0.5f);
                 const D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(
                     D2D1::RectF(
@@ -922,7 +966,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 dcRenderTarget->DrawRoundedRectangle(rounded, strokeBrush.Get(), 1.0f);
                 if (SUCCEEDED(dcRenderTarget->EndDraw()))
                     return;
-                dcRenderTarget.Reset();
+                d2dOk = false;
             }
         }
 
@@ -977,16 +1021,6 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     fillRound(MakeRect(client.left, client.top, client.right - 1, client.bottom - 1),
         RGB(18, 22, 30), RGB(120, 130, 150), QuickNavScale(16));
 
-    HFONT titleFont = CreateFontW(-QuickNavScale(18), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    HFONT tabFont = CreateFontW(-QuickNavScale(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    HFONT itemFont = CreateFontW(-QuickNavScale(13), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
     quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
@@ -999,7 +1033,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     std::wstring title = L"快捷导航";
     if (!entries.empty())
         title += L"  " + std::to_wstring(entries.size()) + L" 项";
-    drawText(title, titleRect, titleFont, RGB(245, 248, 252),
+    drawText(title, titleRect, quickNavigationTitleFont_, RGB(245, 248, 252),
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     RECT searchRect = offsetRect(GetQuickNavigationSearchRect(quickNavigationRect_));
@@ -1090,7 +1124,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);
-            drawText(label, textRect, tabFont, RGB(245, 248, 252),
+            drawText(label, textRect, quickNavigationTabFont_, RGB(245, 248, 252),
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         };
 
@@ -1136,7 +1170,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);
-            drawText(label, textRect, tabFont, RGB(245, 248, 252),
+            drawText(label, textRect, quickNavigationTabFont_, RGB(245, 248, 252),
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
             if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size() + 1)
@@ -1164,7 +1198,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         drawText(quickNavigationSearchText_.empty()
                 ? (collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目")
                 : L"没有匹配结果",
-            emptyRect, itemFont, RGB(160, 168, 182), DT_CENTER | DT_TOP | DT_SINGLELINE);
+            emptyRect, quickNavigationItemFont_, RGB(160, 168, 182), DT_CENTER | DT_TOP | DT_SINGLELINE);
     }
     else
     {
@@ -1199,38 +1233,28 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
             drawBitmap(entry.iconBitmap, offsetRect(iconRect));
 
-            drawText(entry.name, offsetRect(textRect), itemFont, RGB(245, 248, 252),
+            drawText(entry.name, offsetRect(textRect), quickNavigationItemFont_, RGB(245, 248, 252),
                 DT_CENTER | DT_TOP | DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS);
         }
     }
     RestoreDC(memoryDc, -1);
 
-    const int columns = GetQuickNavigationColumnCount(quickNavigationRect_);
-    const int rows = entries.empty() ? 1 : (static_cast<int>(entries.size()) + columns - 1) / columns;
-    const int contentHeight = rows * QuickNavScale(kQuickNavigationCellHeight);
-    const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
-    if (contentHeight > visibleHeight)
+    RECT track{}, thumb{};
+    int maxScroll = 0, contentHeight = 0;
+    if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_, static_cast<int>(entries.size()),
+        track, thumb, maxScroll, contentHeight))
     {
         const int trackW = QuickNavScale(5);
-        RECT track = MakeRect(content.right - trackW - QuickNavScale(2), content.top + QuickNavScale(4),
-            content.right - QuickNavScale(2), content.bottom - QuickNavScale(4));
-        fillRound(track, RGB(55, 62, 76), RGB(55, 62, 76), trackW);
-        const int trackH = std::max<LONG>(1, track.bottom - track.top);
-        const int thumbH = std::clamp(visibleHeight * trackH / contentHeight, QuickNavScale(20), trackH);
-        const int maxScroll = std::max(1, contentHeight - visibleHeight);
-        const int thumbTop = track.top + quickNavigationScrollOffset_ * (trackH - thumbH) / maxScroll;
-        RECT thumb = MakeRect(track.left, thumbTop, track.right, thumbTop + thumbH);
-        fillRound(thumb, RGB(136, 146, 166), RGB(136, 146, 166), trackW);
+        RECT localTrack = offsetRect(track);
+        RECT localThumb = offsetRect(thumb);
+        fillRound(localTrack, RGB(55, 62, 76), RGB(55, 62, 76), trackW);
+        const COLORREF thumbColor = (quickNavScrollbarDragging_ || quickNavScrollbarHovered_)
+            ? RGB(167, 178, 199) : RGB(136, 146, 166);
+        fillRound(localThumb, thumbColor, thumbColor, trackW);
     }
 
-    BitBlt(hdc, 0, 0, client.right - client.left, client.bottom - client.top, memoryDc, 0, 0, SRCCOPY);
+    BitBlt(hdc, 0, 0, w, h, memoryDc, 0, 0, SRCCOPY);
 
-    DeleteObject(itemFont);
-    DeleteObject(tabFont);
-    DeleteObject(titleFont);
-    SelectObject(memoryDc, oldBitmap);
-    DeleteObject(memoryBitmap);
-    DeleteDC(memoryDc);
     EndPaint(hwnd, &ps);
 }
 
@@ -1255,6 +1279,48 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT appPoint{ pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
+
+        {
+            RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
+            const int trackW = QuickNavScale(5);
+            RECT scrollCol = MakeRect(content.right - trackW - QuickNavScale(4), content.top,
+                content.right, content.bottom);
+            if (PtInRect(&scrollCol, appPoint))
+            {
+                int entryCount = static_cast<int>(GetQuickNavigationEntries().size());
+                RECT track{}, thumb{};
+                int maxScroll = 0, contentHeight = 0;
+                if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+                    entryCount, track, thumb, maxScroll, contentHeight))
+                {
+                    if (PtInRect(&thumb, appPoint))
+                    {
+                        quickNavScrollbarDragging_ = true;
+                        quickNavScrollbarDragStartY_ = appPoint.y;
+                        quickNavScrollbarDragThumbTop_ = static_cast<int>(thumb.top);
+                        quickNavScrollbarDragStartOffset_ = quickNavigationScrollOffset_;
+                        SetCapture(hwnd);
+                        return 0;
+                    }
+                    if (PtInRect(&track, appPoint))
+                    {
+                        int pageSize = (std::max(1, static_cast<int>(content.bottom - content.top))
+                            / QuickNavScale(kQuickNavigationCellHeight))
+                            * QuickNavScale(kQuickNavigationCellHeight);
+                        if (appPoint.y < thumb.top)
+                            quickNavigationScrollOffset_ = std::max(0,
+                                quickNavigationScrollOffset_ - pageSize);
+                        else
+                            quickNavigationScrollOffset_ = std::min(maxScroll,
+                                quickNavigationScrollOffset_ + pageSize);
+                        InvalidateQuickNavigationWindow();
+                        InvalidateDragStaticScene();
+                        return 0;
+                    }
+                }
+                return 0;
+            }
+        }
 
         if (quickNavigationSearchText_.empty())
         {
@@ -1284,6 +1350,30 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
         POINT appPoint{ pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
         lastMousePoint_ = appPoint;
 
+        if (quickNavScrollbarDragging_)
+        {
+            RECT track{}, thumb{};
+            int maxScroll = 0, contentHeight = 0;
+            if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+                static_cast<int>(GetQuickNavigationEntries().size()),
+                track, thumb, maxScroll, contentHeight))
+            {
+                const int trackH = std::max<LONG>(1, track.bottom - track.top);
+                const int thumbH = std::max<LONG>(1, thumb.bottom - thumb.top);
+                int newThumbTop = appPoint.y - (quickNavScrollbarDragStartY_ -
+                    quickNavScrollbarDragThumbTop_);
+                newThumbTop = std::clamp(newThumbTop, static_cast<int>(track.top),
+                    static_cast<int>(track.bottom - thumbH));
+                const int rangeH = std::max(1, trackH - thumbH);
+                quickNavigationScrollOffset_ = (newThumbTop - static_cast<int>(track.top))
+                    * maxScroll / rangeH;
+                quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0, maxScroll);
+                InvalidateQuickNavigationWindow();
+                InvalidateDragStaticScene();
+            }
+            return 0;
+        }
+
         if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
         {
             int dx = appPoint.x - quickNavTabDragStartPoint_.x;
@@ -1293,14 +1383,45 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
                 quickNavTabDragDeltaX_ = dx;
             InvalidateQuickNavigationWindow();
             InvalidateDragStaticScene();
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
-        InvalidateQuickNavigationWindow();
+
+        bool wasHovered = quickNavScrollbarHovered_;
+        quickNavScrollbarHovered_ = false;
+        {
+            RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
+            const int trackW = QuickNavScale(5);
+            RECT scrollCol = MakeRect(content.right - trackW - QuickNavScale(4), content.top,
+                content.right, content.bottom);
+            if (PtInRect(&scrollCol, appPoint))
+            {
+                int entryCount = static_cast<int>(GetQuickNavigationEntries().size());
+                if (entryCount > 0)
+                {
+                    RECT track{}, thumb{};
+                    int ms = 0, ch = 0;
+                    if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+                        entryCount, track, thumb, ms, ch) && PtInRect(&thumb, appPoint))
+                    {
+                        quickNavScrollbarHovered_ = true;
+                    }
+                }
+            }
+        }
+        if (wasHovered != quickNavScrollbarHovered_)
+            InvalidateQuickNavigationWindow();
         return 0;
     }
     case WM_LBUTTONUP:
     {
+        if (quickNavScrollbarDragging_)
+        {
+            ReleaseCapture();
+            quickNavScrollbarDragging_ = false;
+            InvalidateQuickNavigationWindow();
+            return 0;
+        }
+
         if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
         {
             ReleaseCapture();
@@ -1348,7 +1469,6 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
             quickNavTabDragging_ = false;
             InvalidateQuickNavigationWindow();
             InvalidateDragStaticScene();
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
         break;
@@ -1368,6 +1488,15 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE)
         {
+            if (quickNavScrollbarDragging_)
+            {
+                ReleaseCapture();
+                quickNavScrollbarDragging_ = false;
+                quickNavigationScrollOffset_ = quickNavScrollbarDragStartOffset_;
+                InvalidateQuickNavigationWindow();
+                InvalidateDragStaticScene();
+                return 0;
+            }
             if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
             {
                 ReleaseCapture();
@@ -1376,7 +1505,6 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
                 quickNavTabDragging_ = false;
                 InvalidateQuickNavigationWindow();
                 InvalidateDragStaticScene();
-                InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
             CloseQuickNavigation();
@@ -5017,7 +5145,6 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             }
             InvalidateDragStaticScene();
             InvalidateQuickNavigationWindow();
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     }
