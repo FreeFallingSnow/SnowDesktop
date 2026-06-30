@@ -771,7 +771,7 @@ inline RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t l
     const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
     const int gap = GetQuickNavigationGap(overlay);
     int halfPad = gap / 2;
-    const int top = content.top + (quickNavigationSearchText_.empty() ? 0 : QuickNavScale(28));
+    const int top = content.top + (quickNavigationSearchText_.empty() ? 0 : QuickNavScale(28) + QuickNavScale(8));
     return MakeRect(
         content.left + halfPad + col * (cellW + gap),
         top + row * cellH - quickNavigationScrollOffset_,
@@ -799,9 +799,9 @@ inline bool DesktopApp::TryGetQuickNavigationAppEntryAtPoint(
     const int headerH = QuickNavScale(28);
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
-    const int firstRowTop = content.top + headerH
+    const int firstRowTop = content.top + headerH + gap
         + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
-        + gap + headerH - quickNavigationScrollOffset_;
+        + gap + headerH + gap - quickNavigationScrollOffset_;
     const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
 
     for (size_t i = 0; i < visibleAppCount; ++i)
@@ -854,9 +854,9 @@ inline bool DesktopApp::TryExpandQuickNavigationAppsAtPoint(POINT point)
     const int headerH = QuickNavScale(28);
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
-    const int buttonTop = content.top + headerH
+    const int buttonTop = content.top + headerH + gap
         + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
-        + gap + headerH
+        + gap + headerH + gap
         + static_cast<int>(GetQuickNavigationVisibleAppResultCount()) * rowH
         - quickNavigationScrollOffset_;
     RECT buttonRect = MakeRect(content.left + QuickNavScale(8), buttonTop,
@@ -894,11 +894,11 @@ inline bool DesktopApp::TryGetQuickNavigationEverythingEntryAtPoint(
     const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
     const int appSectionHeight = quickNavigationAppResultIndices_.empty()
         ? 0
-        : headerH + static_cast<int>(visibleAppCount) * rowH +
+        : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
             (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
-    const int firstRowTop = content.top + headerH
+    const int firstRowTop = content.top + headerH + gap
         + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
-        + gap + appSectionHeight + headerH - quickNavigationScrollOffset_;
+        + gap + appSectionHeight + headerH + gap - quickNavigationScrollOffset_;
 
     for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
     {
@@ -932,16 +932,16 @@ inline int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) cons
     const int headerH = QuickNavScale(28);
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
-    int height = headerH + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+    int height = headerH + gap + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
         + gap;
     if (!quickNavigationAppResultIndices_.empty())
     {
-        height += headerH
+        height += headerH + gap
             + static_cast<int>(GetQuickNavigationVisibleAppResultCount()) * rowH
             + (HasQuickNavigationAppExpandButton() ? rowH : 0)
             + gap;
     }
-    height += headerH
+    height += headerH + gap
         + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH
         + QuickNavScale(8);
     return std::max(height, std::max(1, static_cast<int>(content.bottom - content.top)));
@@ -2280,6 +2280,14 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             std::wstring desktopLabel = L"桌面结果  " + std::to_wstring(entries.size()) + L" 项";
             drawText(desktopLabel, desktopHeader, quickNavigationTabFont_, t.headerText,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+            HPEN desktopSep = CreatePen(PS_SOLID, 1, t.headerSeparator);
+            HGDIOBJ oldPen = SelectObject(memoryDc, desktopSep);
+            const int sepY = desktopHeader.bottom - QuickNavScale(1);
+            MoveToEx(memoryDc, desktopHeader.left, sepY, nullptr);
+            LineTo(memoryDc, desktopHeader.right, sepY);
+            SelectObject(memoryDc, oldPen);
+            DeleteObject(desktopSep);
         }
 
         auto drawNavigationEntryFallback = [&](const QuickNavigationEntry& entry, const RECT& itemRectApp) {
@@ -2326,8 +2334,17 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 drawSystemIcon(systemIconIndex, offsetRect(iconRect));
             }
 
-            drawText(entry.name, offsetRect(textRect), quickNavigationItemFont_, t.itemText,
-                DT_CENTER | DT_TOP | DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS);
+            RECT textRectLocal = offsetRect(textRect);
+            RECT measure = textRectLocal;
+            DrawTextW(memoryDc, entry.name.c_str(), static_cast<int>(entry.name.size()), &measure,
+                DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            bool fitsOneLine = measure.right <= textRectLocal.right;
+            UINT textFlags = DT_CENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
+            if (fitsOneLine)
+                textFlags |= DT_VCENTER | DT_SINGLELINE;
+            else
+                textFlags |= DT_TOP | DT_WORDBREAK | DT_EDITCONTROL;
+            drawText(entry.name, textRectLocal, quickNavigationItemFont_, t.itemText, textFlags);
         };
 
         bool desktopEntriesDrawnWithD2D = false;
@@ -2398,7 +2415,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             const int headerH = QuickNavScale(28);
             const int gap = QuickNavScale(8);
             const int rowH = QuickNavScale(46);
-            const int appHeaderTop = contentApp.top + headerH
+            const int appHeaderTop = contentApp.top + headerH + gap
                 + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
                 + gap - quickNavigationScrollOffset_;
             int everythingHeaderTop = appHeaderTop;
@@ -2429,7 +2446,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     if (appIndex >= quickNavigationAppEntries_.size())
                         continue;
 
-                    const int rowTop = appHeaderTop + headerH + static_cast<int>(i) * rowH;
+                    const int rowTop = appHeaderTop + headerH + gap + static_cast<int>(i) * rowH;
                     RECT rowRectApp = MakeRect(contentApp.left + QuickNavScale(8), rowTop,
                         contentApp.right - QuickNavScale(12), rowTop + rowH);
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
@@ -2471,7 +2488,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 int appRowsHeight = static_cast<int>(visibleAppCount) * rowH;
                 if (HasQuickNavigationAppExpandButton())
                 {
-                    const int buttonTop = appHeaderTop + headerH + appRowsHeight;
+                    const int buttonTop = appHeaderTop + headerH + gap + appRowsHeight;
                     RECT buttonRectApp = MakeRect(contentApp.left + QuickNavScale(8), buttonTop,
                         contentApp.right - QuickNavScale(12), buttonTop + rowH);
                     if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
@@ -2487,7 +2504,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     appRowsHeight += rowH;
                 }
 
-                everythingHeaderTop = appHeaderTop + headerH
+                everythingHeaderTop = appHeaderTop + headerH + gap
                     + appRowsHeight
                     + gap;
             }
@@ -2522,7 +2539,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
                 for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
                 {
-                    const int rowTop = everythingHeaderTop + headerH
+                    const int rowTop = everythingHeaderTop + headerH + gap
                         + static_cast<int>(i) * rowH;
                     RECT rowRectApp = MakeRect(contentApp.left + QuickNavScale(8), rowTop,
                         contentApp.right - QuickNavScale(12), rowTop + rowH);
