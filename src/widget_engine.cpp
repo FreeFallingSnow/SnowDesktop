@@ -15,6 +15,7 @@
 #include "system_snapshot.h"
 #include "constants.h"
 #include "utils.h"
+#include "search_match.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -1191,24 +1192,12 @@ static int lua_DesktopFind(lua_State* L)
 {
     if (!RequirePermission(L, "desktop.read")) return 0;
     const char* queryRaw = luaL_optstring(L, 1, "");
-    std::string query = queryRaw ? queryRaw : "";
-    std::transform(query.begin(), query.end(), query.begin(),
-        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    std::wstring query = Utf8ToWideLocal(queryRaw ? queryRaw : "");
 
     auto* s = GetD2D(L);
     std::vector<LuaDesktopItemInfo> items = s->engine->RuntimeDesktopItems();
     auto rankItem = [&](const LuaDesktopItemInfo& item) {
-        if (query.empty()) return 0;
-        std::string title = item.title;
-        std::transform(title.begin(), title.end(), title.begin(),
-            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (title == query) return 0;
-        size_t dot = title.find_last_of('.');
-        if (dot != std::string::npos && dot > 0 && title.substr(0, dot) == query)
-            return 0;
-        if (title.rfind(query, 0) == 0)
-            return 1;
-        return title.find(query) != std::string::npos ? 2 : 3;
+        return NameSearchMatchRank(Utf8ToWideLocal(item.title), query);
     };
     if (!query.empty())
     {
@@ -1221,10 +1210,7 @@ static int lua_DesktopFind(lua_State* L)
     int i = 1;
     for (const auto& item : items)
     {
-        std::string hay = item.title;
-        std::transform(hay.begin(), hay.end(), hay.begin(),
-            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (query.empty() || hay.find(query) != std::string::npos)
+        if (query.empty() || NameMatchesQuery(Utf8ToWideLocal(item.title), query))
         {
             PushDesktopItem(L, item);
             lua_rawseti(L, -2, i++);

@@ -1612,6 +1612,11 @@ void SettingsWindow::DrawAboutPage()
     ImGui::TextDisabled("(MIT)");
     ImGui::TextDisabled("        Copyright (c) 2016-present, Gabi Melman");
 
+    ImGui::Text("    pinyin-data");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (c) 2016 mozillazg");
+
     ImGui::EndChild();
 }
 

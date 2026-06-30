@@ -8,7 +8,8 @@
 #pragma once
 
 #include <dwmapi.h>
-#include "pinyin_table.h"
+#include <imm.h>
+#include "search_match.h"
 
 // ── Quick Navigation ───────────────────────────────────────
 
@@ -16,69 +17,27 @@ inline constexpr DWORD kQuickNavigationEverythingResultLimit = 200;
 inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
 
-// ── Pinyin Initial Matching ──────────────────────────────────
-
-inline std::string GetPinyinInitials(const std::wstring& name)
+namespace
 {
-    std::string result;
-    result.reserve(name.size());
-    for (wchar_t ch : name)
+inline std::wstring QuickNavigationReadImeCompositionString(HWND hwnd)
+{
+    HIMC context = ImmGetContext(hwnd);
+    if (!context)
+        return {};
+
+    std::wstring result;
+    const LONG bytes = ImmGetCompositionStringW(context, GCS_COMPSTR, nullptr, 0);
+    if (bytes > 0)
     {
-        if (ch >= 0x4E00 && ch <= 0x9FFF)
-        {
-            unsigned char c = kPinyinInit[static_cast<size_t>(ch) - 0x4E00];
-            if (c) result += static_cast<char>(c);
-        }
-        else if ((ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z') ||
-                 (ch >= L'0' && ch <= L'9'))
-        {
-            result += static_cast<char>(ch >= L'a' ? ch - L'a' + L'A' : ch);
-        }
+        result.resize(static_cast<size_t>(bytes) / sizeof(wchar_t));
+        ImmGetCompositionStringW(context, GCS_COMPSTR, result.data(), bytes);
+        while (!result.empty() && result.back() == L'\0')
+            result.pop_back();
     }
+
+    ImmReleaseContext(hwnd, context);
     return result;
 }
-
-// ── Quick Navigation Name Matching ───────────────────────────
-
-inline int QuickNavigationNameMatchRank(
-    const std::wstring& name, const std::wstring& normalizedQuery)
-{
-    if (normalizedQuery.empty())
-        return 0;
-
-    std::wstring normalizedName = ToUpperInvariant(name);
-    if (normalizedName == normalizedQuery)
-        return 0;
-
-    const wchar_t* ext = PathFindExtensionW(name.c_str());
-    if (ext && *ext && ext > name.c_str())
-    {
-        std::wstring stem(name.c_str(), static_cast<size_t>(ext - name.c_str()));
-        if (ToUpperInvariant(stem) == normalizedQuery)
-            return 0;
-    }
-
-    std::string pinyin = GetPinyinInitials(name);
-    if (!pinyin.empty())
-    {
-        std::string narrowQuery(normalizedQuery.begin(), normalizedQuery.end());
-        if (pinyin == narrowQuery)
-            return 1;
-        if (pinyin.find(narrowQuery) == 0)
-            return 2;
-    }
-
-    if (normalizedName.rfind(normalizedQuery, 0) == 0)
-        return 3;
-
-    if (!pinyin.empty())
-    {
-        std::string narrowQuery(normalizedQuery.begin(), normalizedQuery.end());
-        if (pinyin.find(narrowQuery) != std::string::npos)
-            return 4;
-    }
-
-    return normalizedName.find(normalizedQuery) != std::wstring::npos ? 5 : 6;
 }
 
 inline std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
@@ -111,8 +70,8 @@ inline std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
         [&](const EverythingSearchResult& a, const EverythingSearchResult& b) {
             const std::wstring aName = a.name.empty() ? FileNameFromPath(a.path) : a.name;
             const std::wstring bName = b.name.empty() ? FileNameFromPath(b.path) : b.name;
-            return QuickNavigationNameMatchRank(aName, normalizedQuery) <
-                QuickNavigationNameMatchRank(bName, normalizedQuery);
+            return NameSearchMatchRank(aName, normalizedQuery) <
+                NameSearchMatchRank(bName, normalizedQuery);
         });
     return everythingSearchCacheResults_;
 }
@@ -283,7 +242,7 @@ inline void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM l
     quickNavigationAppsIndexed_ = true;
     quickNavigationAppsExpanded_ = false;
 
-    if (!quickNavigationSearchText_.empty())
+    if (!GetQuickNavigationEffectiveSearchText().empty())
     {
         RefreshQuickNavigationAppResults();
         quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
@@ -296,31 +255,26 @@ inline void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM l
 inline void DesktopApp::RefreshQuickNavigationAppResults()
 {
     quickNavigationAppResultIndices_.clear();
-    if (quickNavigationSearchText_.empty())
+    const std::wstring query = GetQuickNavigationEffectiveSearchText();
+    if (query.empty())
         return;
 
     StartQuickNavigationAppIndexing();
     if (!quickNavigationAppsIndexed_)
         return;
 
-    const std::wstring normalizedQuery = ToUpperInvariant(quickNavigationSearchText_);
-    const std::string narrowQuery(normalizedQuery.begin(), normalizedQuery.end());
     for (size_t i = 0; i < quickNavigationAppEntries_.size(); ++i)
     {
         const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[i];
-        if (ToUpperInvariant(entry.name).find(normalizedQuery) == std::wstring::npos)
-        {
-            std::string py = GetPinyinInitials(entry.name);
-            if (py.empty() || py.find(narrowQuery) == std::string::npos)
-                continue;
-        }
+        if (!NameMatchesQuery(entry.name, query))
+            continue;
         quickNavigationAppResultIndices_.push_back(i);
     }
 
     std::stable_sort(quickNavigationAppResultIndices_.begin(), quickNavigationAppResultIndices_.end(),
         [&](size_t a, size_t b) {
-            return QuickNavigationNameMatchRank(quickNavigationAppEntries_[a].name, normalizedQuery) <
-                QuickNavigationNameMatchRank(quickNavigationAppEntries_[b].name, normalizedQuery);
+            return NameSearchMatchRank(quickNavigationAppEntries_[a].name, query) <
+                NameSearchMatchRank(quickNavigationAppEntries_[b].name, query);
         });
 
     if (quickNavigationAppResultIndices_.size() > kQuickNavigationAppResultLimit)
@@ -435,17 +389,9 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
 {
     std::vector<QuickNavigationEntry> result;
     std::unordered_set<std::wstring> seenDesktop;
-    std::wstring query = ToUpperInvariant(quickNavigationSearchText_);
-    std::string narrowQuery(query.begin(), query.end());
-
+    const std::wstring query = GetQuickNavigationEffectiveSearchText();
     auto matches = [&](const std::wstring& name) {
-        if (query.empty()) return true;
-        if (ToUpperInvariant(name).find(query) != std::wstring::npos)
-            return true;
-        std::string py = GetPinyinInitials(name);
-        if (!py.empty() && py.find(narrowQuery) != std::string::npos)
-            return true;
-        return false;
+        return query.empty() || NameMatchesQuery(name, query);
     };
     auto appendDesktop = [&](size_t itemIndex, const std::wstring& source) {
         if (itemIndex >= items_.size()) return;
@@ -623,8 +569,8 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
 
     std::stable_sort(result.begin(), result.end(),
         [&](const QuickNavigationEntry& a, const QuickNavigationEntry& b) {
-            return QuickNavigationNameMatchRank(a.name, query) <
-                QuickNavigationNameMatchRank(b.name, query);
+            return NameSearchMatchRank(a.name, query) <
+                NameSearchMatchRank(b.name, query);
         });
     return result;
 }
@@ -698,7 +644,7 @@ inline RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
 
 inline RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
 {
-    if (!quickNavigationSearchText_.empty())
+    if (!GetQuickNavigationEffectiveSearchText().empty())
         return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(66),
             overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
     return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(100),
@@ -832,7 +778,9 @@ inline RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t l
     const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
     const int gap = GetQuickNavigationGap(overlay);
     int halfPad = gap / 2;
-    const int top = content.top + (quickNavigationSearchText_.empty() ? 0 : QuickNavScale(28) + QuickNavScale(8));
+    const int top = content.top + (GetQuickNavigationEffectiveSearchText().empty()
+        ? 0
+        : QuickNavScale(28) + QuickNavScale(8));
     return MakeRect(
         content.left + halfPad + col * (cellW + gap),
         top + row * cellH - quickNavigationScrollOffset_,
@@ -844,7 +792,7 @@ inline bool DesktopApp::TryGetQuickNavigationAppEntryAtPoint(
     POINT point, const QuickNavigationAppEntry*& outEntry) const
 {
     outEntry = nullptr;
-    if (!quickNavigationOpen_ || quickNavigationSearchText_.empty())
+    if (!quickNavigationOpen_ || GetQuickNavigationEffectiveSearchText().empty())
         return false;
     if (quickNavigationAppResultIndices_.empty())
         return false;
@@ -900,7 +848,7 @@ inline bool DesktopApp::HasQuickNavigationAppExpandButton() const
 
 inline bool DesktopApp::TryExpandQuickNavigationAppsAtPoint(POINT point)
 {
-    if (!quickNavigationOpen_ || quickNavigationSearchText_.empty() ||
+    if (!quickNavigationOpen_ || GetQuickNavigationEffectiveSearchText().empty() ||
         !HasQuickNavigationAppExpandButton())
         return false;
 
@@ -938,7 +886,7 @@ inline bool DesktopApp::TryExpandQuickNavigationAppsAtPoint(POINT point)
 inline bool DesktopApp::TryGetQuickNavigationEverythingEntryAtPoint(
     POINT point, QuickNavigationEverythingEntry& outEntry) const
 {
-    if (!quickNavigationOpen_ || quickNavigationSearchText_.empty())
+    if (!quickNavigationOpen_ || GetQuickNavigationEffectiveSearchText().empty())
         return false;
 
     RECT overlay = quickNavigationRect_;
@@ -984,7 +932,7 @@ inline int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) cons
     const int columns = GetQuickNavigationColumnCount(overlay);
     const int desktopCount = static_cast<int>(GetQuickNavigationEntries().size());
     const int desktopRows = desktopCount == 0 ? 0 : (desktopCount + columns - 1) / columns;
-    if (quickNavigationSearchText_.empty())
+    if (GetQuickNavigationEffectiveSearchText().empty())
     {
         const int rows = desktopCount == 0 ? 1 : desktopRows;
         return rows * QuickNavScale(kQuickNavigationCellHeight);
@@ -1167,30 +1115,71 @@ inline void DesktopApp::UpdateQuickNavigationSearchEditRect()
         SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+inline std::wstring DesktopApp::GetQuickNavigationEffectiveSearchText() const
+{
+    if (quickNavigationSearchCompositionText_.empty())
+        return quickNavigationSearchText_;
+
+    std::wstring result = quickNavigationSearchText_;
+    result += quickNavigationSearchCompositionText_;
+    return result;
+}
+
+inline void DesktopApp::RefreshQuickNavigationSearchCompositionText(HWND editHwnd, LPARAM compositionFlags)
+{
+    if ((compositionFlags & GCS_COMPSTR) == 0)
+        return;
+
+    const std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
+    quickNavigationSearchCompositionText_ = QuickNavigationReadImeCompositionString(editHwnd);
+    if (GetQuickNavigationEffectiveSearchText() != previousQuery)
+    {
+        RefreshQuickNavigationEverythingResults();
+        quickNavigationScrollOffset_ = 0;
+        InvalidateQuickNavigationWindow();
+    }
+}
+
+inline void DesktopApp::ClearQuickNavigationSearchCompositionText()
+{
+    if (quickNavigationSearchCompositionText_.empty())
+        return;
+
+    const std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
+    quickNavigationSearchCompositionText_.clear();
+    if (GetQuickNavigationEffectiveSearchText() != previousQuery)
+    {
+        RefreshQuickNavigationEverythingResults();
+        quickNavigationScrollOffset_ = 0;
+        InvalidateQuickNavigationWindow();
+    }
+}
+
 /**
  * @brief 刷新快捷导航搜索文本内容（从编辑框读取）
  */
 inline void DesktopApp::RefreshQuickNavigationSearchText()
 {
-    std::wstring previous = quickNavigationSearchText_;
+    std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
     quickNavigationSearchText_.clear();
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
     {
-        if (!previous.empty())
+        if (!previousQuery.empty())
             ClearQuickNavigationEverythingResults();
         return;
     }
     int len = GetWindowTextLengthW(quickNavigationSearchEdit_);
     if (len <= 0)
     {
-        ClearQuickNavigationEverythingResults();
+        if (GetQuickNavigationEffectiveSearchText() != previousQuery)
+            RefreshQuickNavigationEverythingResults();
         return;
     }
     std::wstring buffer(static_cast<size_t>(len) + 1, L'\0');
     GetWindowTextW(quickNavigationSearchEdit_, buffer.data(), len + 1);
     buffer.resize(static_cast<size_t>(len));
     quickNavigationSearchText_ = std::move(buffer);
-    if (quickNavigationSearchText_ != previous)
+    if (GetQuickNavigationEffectiveSearchText() != previousQuery)
         RefreshQuickNavigationEverythingResults();
 }
 
@@ -1270,14 +1259,15 @@ inline int DesktopApp::GetQuickNavigationEverythingIconIndex(
 inline void DesktopApp::RefreshQuickNavigationEverythingResults()
 {
     ClearQuickNavigationEverythingResults();
-    if (quickNavigationSearchText_.empty())
+    const std::wstring query = GetQuickNavigationEffectiveSearchText();
+    if (query.empty())
         return;
 
     RefreshQuickNavigationAppResults();
 
     std::unordered_set<std::wstring> seenPaths;
     for (const auto& result : SearchEverythingCached(
-        quickNavigationSearchText_, kQuickNavigationEverythingResultLimit))
+        query, kQuickNavigationEverythingResultLimit))
     {
         if (result.path.empty())
             continue;
@@ -1488,6 +1478,7 @@ inline void DesktopApp::OpenQuickNavigation()
     quickNavigationScrollOffset_ = 0;
     quickNavigationTabScrollOffset_ = 0;
     quickNavigationSearchText_.clear();
+    quickNavigationSearchCompositionText_.clear();
     ClearQuickNavigationEverythingResults();
     StartQuickNavigationAppIndexing();
     if (!CreateQuickNavigationWindow())
@@ -1528,6 +1519,7 @@ inline void DesktopApp::CloseQuickNavigation()
     quickNavigationScrollOffset_ = 0;
     quickNavigationTabScrollOffset_ = 0;
     quickNavigationSearchText_.clear();
+    quickNavigationSearchCompositionText_.clear();
     ClearQuickNavigationEverythingResults();
     quickNavigationRect_ = {};
     quickNavTabDragIndex_ = static_cast<size_t>(-1);
@@ -1575,7 +1567,8 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     }
 
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    if (quickNavigationSearchText_.empty())
+    const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
+    if (!searching)
     {
         RECT tab0Rect = GetQuickNavigationTabRect(overlay, 0);
         if (PtInRect(&tab0Rect, point))
@@ -1599,7 +1592,7 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (!PtInRect(&content, point))
         return true;
 
-    if (!everythingSearchAvailable_ && !quickNavigationSearchText_.empty())
+    if (!everythingSearchAvailable_ && searching)
     {
         std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
         bool onNotice = false;
@@ -2173,6 +2166,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     fillRound(MakeRect(client.left, client.top, client.right - 1, client.bottom - 1),
         t.windowBg, t.windowBorder, QuickNavScale(16));
 
+    const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
     quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
@@ -2183,7 +2177,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     RECT searchRect = offsetRect(GetQuickNavigationSearchRect(quickNavigationRect_));
     fillRound(searchRect, t.searchBg, t.searchBorder, QuickNavScale(12));
 
-    if (quickNavigationSearchText_.empty())
+    if (!searching)
     {
         RECT tabs = offsetRect(GetQuickNavigationTabsRect(quickNavigationRect_));
         SaveDC(memoryDc);
@@ -2338,22 +2332,22 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     SaveDC(memoryDc);
     IntersectClipRect(memoryDc, content.left, content.top, content.right, content.bottom);
     if (entries.empty() && quickNavigationAppResultIndices_.empty() &&
-        (quickNavigationSearchText_.empty() || quickNavigationEverythingResults_.empty()))
+        (!searching || quickNavigationEverythingResults_.empty()))
     {
         RECT emptyRect = content;
         emptyRect.top += QuickNavScale(28);
-        if (!quickNavigationSearchText_.empty() && !everythingSearchAvailable_)
+        if (searching && !everythingSearchAvailable_)
             drawText(L"Everything 未运行，请安装并启动",
                 emptyRect, quickNavigationItemFont_, t.emptyText, DT_CENTER | DT_TOP | DT_SINGLELINE);
         else
-            drawText(quickNavigationSearchText_.empty()
+            drawText(!searching
                     ? (collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目")
                     : L"没有匹配结果",
                 emptyRect, quickNavigationItemFont_, t.emptyText, DT_CENTER | DT_TOP | DT_SINGLELINE);
     }
     else
     {
-        if (!quickNavigationSearchText_.empty())
+        if (searching)
         {
             const int headerH = QuickNavScale(28);
             RECT desktopHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
@@ -2490,7 +2484,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             }
         }
 
-        if (!quickNavigationSearchText_.empty())
+        if (searching)
         {
             const int columns = GetQuickNavigationColumnCount(quickNavigationRect_);
             const int desktopRows = entries.empty() ? 0 :
@@ -2756,7 +2750,7 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
             }
         }
 
-        if (quickNavigationSearchText_.empty())
+        if (GetQuickNavigationEffectiveSearchText().empty())
         {
             RECT overlay = quickNavigationRect_;
             std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
@@ -3036,6 +3030,18 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     {
         app->OnMouseWheel(wParam, lParam);
         return 0;
+    }
+    if (message == WM_IME_STARTCOMPOSITION)
+    {
+        app->ClearQuickNavigationSearchCompositionText();
+    }
+    if (message == WM_IME_COMPOSITION)
+    {
+        app->RefreshQuickNavigationSearchCompositionText(hwnd, lParam);
+    }
+    if (message == WM_IME_ENDCOMPOSITION)
+    {
+        app->ClearQuickNavigationSearchCompositionText();
     }
 
     return DefSubclassProc(hwnd, message, wParam, lParam);

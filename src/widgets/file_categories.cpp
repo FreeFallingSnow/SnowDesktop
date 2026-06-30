@@ -12,6 +12,7 @@
 #include "types.h"
 #include "app.h"
 #include "drop_model.h"
+#include "search_match.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -436,13 +437,12 @@ const std::vector<std::wstring>& FileCategories::GetSearchResultKeys() const
         return CachedCategoryKeys(CachedActiveCategoryId());
     EnsureCategorySnapshot();
     const auto& allKeys = CachedCategoryKeys(L"all");
-    std::wstring query = ToUpperInvariant(searchText_);
     searchResultCache_.clear();
     for (const auto& key : allKeys)
     {
         size_t itemIdx = app_->FindItemIndexByKey(key);
         if (itemIdx == static_cast<size_t>(-1)) continue;
-        if (ToUpperInvariant(app_->GetDesktopItems()[itemIdx].name).find(query) != std::wstring::npos)
+        if (NameMatchesQuery(app_->GetDesktopItems()[itemIdx].name, searchText_))
             searchResultCache_.push_back(key);
     }
     return searchResultCache_;

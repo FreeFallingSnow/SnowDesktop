@@ -4103,7 +4103,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             RECT tabs = GetQuickNavigationTabsRect(overlay);
-            if (quickNavigationSearchText_.empty() && PtInRect(&tabs, pt))
+            if (GetQuickNavigationEffectiveSearchText().empty() && PtInRect(&tabs, pt))
             {
                 int maxTabScroll = GetQuickNavigationMaxTabScrollOffset(overlay);
                 quickNavigationTabScrollOffset_ =

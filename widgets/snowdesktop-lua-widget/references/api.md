@@ -356,6 +356,10 @@ local selected = desktop.selection()
 local matches = desktop.find("query")
 ```
 
+`desktop.find` matches item titles by normal text, pinyin initials, and compact
+full pinyin for Chinese titles. For example, `"wx"` and `"weixin"` can match
+`"微信"`.
+
 Each item contains:
 
 ```lua

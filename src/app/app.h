@@ -474,6 +474,9 @@ private:
     void UpdateQuickNavigationSearchEditRect();
     /** @brief 刷新快速导航搜索文本内容。 */
     void RefreshQuickNavigationSearchText();
+    std::wstring GetQuickNavigationEffectiveSearchText() const;
+    void RefreshQuickNavigationSearchCompositionText(HWND editHwnd, LPARAM compositionFlags);
+    void ClearQuickNavigationSearchCompositionText();
     void RefreshQuickNavigationEverythingResults();
     void ClearQuickNavigationEverythingResults();
     int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
@@ -1700,6 +1703,7 @@ private:
     POINT quickNavigationOpenPoint_{};
     RECT quickNavigationRect_{};
     std::wstring quickNavigationSearchText_;
+    std::wstring quickNavigationSearchCompositionText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
     std::vector<size_t> quickNavigationAppResultIndices_;
     std::vector<QuickNavigationAppEntry> quickNavigationAppEntries_;

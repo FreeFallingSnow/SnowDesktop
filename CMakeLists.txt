@@ -18,6 +18,7 @@ set(SNOWDESKTOP_SOURCES
     src/personalization.cpp
     src/navigation_settings.cpp
     src/general_settings.cpp
+    src/search_match.cpp
     src/everything_search.cpp
     src/widget_engine.cpp
     src/system_snapshot.cpp
@@ -32,6 +33,10 @@ set(SNOWDESKTOP_SOURCES
 
 set(EVERYTHING_SOURCES
     third_party/everything/src/Everything.c
+)
+
+set(PINYIN_DATA_SOURCES
+    third_party/pinyin-data/pinyin_full_table.cpp
 )
 
 set(IMGUI_SOURCES
@@ -65,6 +70,7 @@ set(THIRD_PARTY_SOURCES
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
     ${EVERYTHING_SOURCES}
+    ${PINYIN_DATA_SOURCES}
     ${THIRD_PARTY_SOURCES}
     src/resource.rc
 )
@@ -79,6 +85,7 @@ target_include_directories(SnowDesktop PRIVATE
     third_party/imgui/backends
     third_party/lua
     third_party/everything/include
+    third_party/pinyin-data
 )
 
 if (MSVC)
@@ -99,7 +106,7 @@ endif()
 
 target_link_libraries(SnowDesktop PRIVATE
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    bcrypt iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowscodecs uuid winhttp
+    bcrypt imm32 iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowscodecs uuid winhttp
 )
 
 add_custom_command(TARGET SnowDesktop PRE_BUILD
