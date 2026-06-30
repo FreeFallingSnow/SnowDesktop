@@ -12,6 +12,8 @@
 // ── Quick Navigation ───────────────────────────────────────
 
 inline constexpr DWORD kQuickNavigationEverythingResultLimit = 200;
+inline constexpr size_t kQuickNavigationAppResultLimit = 80;
+inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
 
 inline int QuickNavigationNameMatchRank(
     const std::wstring& name, const std::wstring& normalizedQuery)
@@ -71,6 +73,211 @@ inline std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
                 QuickNavigationNameMatchRank(bName, normalizedQuery);
         });
     return everythingSearchCacheResults_;
+}
+
+inline std::vector<DesktopApp::QuickNavigationAppEntry>
+DesktopApp::BuildQuickNavigationAppIndex(HWND ownerHwnd, HIMAGELIST& systemImageListSmall)
+{
+    std::vector<QuickNavigationAppEntry> entries;
+    systemImageListSmall = nullptr;
+
+    PIDLIST_ABSOLUTE rawAppsPidl = nullptr;
+    if (FAILED(SHParseDisplayName(L"shell:AppsFolder", nullptr, &rawAppsPidl, 0, nullptr)) ||
+        rawAppsPidl == nullptr)
+    {
+        return entries;
+    }
+    Pidl appsPidl;
+    appsPidl.reset(rawAppsPidl);
+
+    ComPtr<IShellFolder> appsFolder;
+    if (FAILED(SHBindToObject(nullptr, appsPidl.get(), nullptr,
+        IID_IShellFolder, reinterpret_cast<void**>(appsFolder.GetAddressOf()))) ||
+        !appsFolder)
+    {
+        return entries;
+    }
+
+    ComPtr<IEnumIDList> enumerator;
+    HWND enumOwner = IsWindow(ownerHwnd) ? ownerHwnd : nullptr;
+    if (FAILED(appsFolder->EnumObjects(enumOwner, SHCONTF_NONFOLDERS, &enumerator)) || !enumerator)
+        return entries;
+
+    std::unordered_set<std::wstring> seen;
+    PITEMID_CHILD child = nullptr;
+    ULONG fetched = 0;
+    while (enumerator->Next(1, &child, &fetched) == S_OK)
+    {
+        PIDLIST_ABSOLUTE absolute = ILCombine(appsPidl.get(), child);
+        if (!absolute)
+        {
+            ILFree(child);
+            continue;
+        }
+
+        SHFILEINFOW info{};
+        DWORD_PTR imageList = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0,
+            &info, sizeof(info), SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_DISPLAYNAME);
+        if (imageList)
+            systemImageListSmall = reinterpret_cast<HIMAGELIST>(imageList);
+
+        std::wstring name = info.szDisplayName[0]
+            ? info.szDisplayName
+            : StrRetToString(appsFolder.Get(), child, SHGDN_NORMAL);
+        std::wstring parsingName = StrRetToString(appsFolder.Get(), child, SHGDN_FORPARSING);
+        std::wstring key = ToUpperInvariant(parsingName.empty() ? name : parsingName);
+        if (name.empty() || key.empty() || seen.contains(key))
+        {
+            ILFree(absolute);
+            ILFree(child);
+            continue;
+        }
+        seen.insert(std::move(key));
+
+        QuickNavigationAppEntry entry;
+        entry.name = std::move(name);
+        entry.parsingName = std::move(parsingName);
+        entry.absolutePidl.reset(absolute);
+        entry.systemIconIndex = imageList ? info.iIcon : -1;
+        entries.push_back(std::move(entry));
+
+        ILFree(child);
+    }
+
+    std::stable_sort(entries.begin(), entries.end(),
+        [](const QuickNavigationAppEntry& a, const QuickNavigationAppEntry& b) {
+            return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+        });
+    return entries;
+}
+
+inline void DesktopApp::StartQuickNavigationAppIndexing()
+{
+    if (quickNavigationAppsIndexed_)
+        return;
+
+    bool expected = false;
+    if (!quickNavigationAppIndexing_.compare_exchange_strong(expected, true))
+        return;
+
+    if (quickNavigationAppIndexThread_.joinable())
+        quickNavigationAppIndexThread_.join();
+
+    HWND targetHwnd = hwnd_;
+    if (!targetHwnd || !IsWindow(targetHwnd))
+    {
+        quickNavigationAppIndexing_ = false;
+        return;
+    }
+
+    const uint64_t serial = ++quickNavigationAppIndexSerial_;
+    try
+    {
+        quickNavigationAppIndexThread_ = std::thread([this, targetHwnd, serial]() {
+            auto* result = new QuickNavigationAppIndexResult();
+            result->serial = serial;
+
+            HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            const bool coInitialized = SUCCEEDED(coHr);
+            if (coInitialized)
+            {
+                result->entries = BuildQuickNavigationAppIndex(targetHwnd, result->systemImageListSmall);
+                CoUninitialize();
+            }
+
+            if (!PostMessageW(targetHwnd, kQuickNavigationAppsIndexedMessage,
+                0, reinterpret_cast<LPARAM>(result)))
+            {
+                delete result;
+                quickNavigationAppIndexing_ = false;
+            }
+        });
+    }
+    catch (...)
+    {
+        quickNavigationAppIndexing_ = false;
+    }
+}
+
+inline void DesktopApp::StopQuickNavigationAppIndexing()
+{
+    ++quickNavigationAppIndexSerial_;
+    if (quickNavigationAppIndexThread_.joinable() &&
+        quickNavigationAppIndexThread_.get_id() != std::this_thread::get_id())
+    {
+        quickNavigationAppIndexThread_.join();
+    }
+    quickNavigationAppIndexing_ = false;
+
+    if (!hwnd_)
+        return;
+
+    MSG msg{};
+    while (PeekMessageW(&msg, hwnd_, kQuickNavigationAppsIndexedMessage,
+        kQuickNavigationAppsIndexedMessage, PM_REMOVE))
+    {
+        delete reinterpret_cast<QuickNavigationAppIndexResult*>(msg.lParam);
+    }
+}
+
+inline void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
+{
+    std::unique_ptr<QuickNavigationAppIndexResult> result(
+        reinterpret_cast<QuickNavigationAppIndexResult*>(lParam));
+
+    if (quickNavigationAppIndexThread_.joinable() &&
+        quickNavigationAppIndexThread_.get_id() != std::this_thread::get_id())
+    {
+        quickNavigationAppIndexThread_.join();
+    }
+    quickNavigationAppIndexing_ = false;
+
+    if (!result || result->serial != quickNavigationAppIndexSerial_)
+        return;
+
+    quickNavigationAppEntries_ = std::move(result->entries);
+    if (result->systemImageListSmall)
+        quickNavigationSystemImageListSmall_ = result->systemImageListSmall;
+    quickNavigationAppsIndexed_ = true;
+    quickNavigationAppsExpanded_ = false;
+
+    if (!quickNavigationSearchText_.empty())
+    {
+        RefreshQuickNavigationAppResults();
+        quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
+            GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
+        if (quickNavigationOpen_)
+            InvalidateQuickNavigationWindow();
+    }
+}
+
+inline void DesktopApp::RefreshQuickNavigationAppResults()
+{
+    quickNavigationAppResultIndices_.clear();
+    if (quickNavigationSearchText_.empty())
+        return;
+
+    StartQuickNavigationAppIndexing();
+    if (!quickNavigationAppsIndexed_)
+        return;
+
+    const std::wstring normalizedQuery = ToUpperInvariant(quickNavigationSearchText_);
+    for (size_t i = 0; i < quickNavigationAppEntries_.size(); ++i)
+    {
+        const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[i];
+        if (ToUpperInvariant(entry.name).find(normalizedQuery) == std::wstring::npos)
+            continue;
+        quickNavigationAppResultIndices_.push_back(i);
+    }
+
+    std::stable_sort(quickNavigationAppResultIndices_.begin(), quickNavigationAppResultIndices_.end(),
+        [&](size_t a, size_t b) {
+            return QuickNavigationNameMatchRank(quickNavigationAppEntries_[a].name, normalizedQuery) <
+                QuickNavigationNameMatchRank(quickNavigationAppEntries_[b].name, normalizedQuery);
+        });
+
+    if (quickNavigationAppResultIndices_.size() > kQuickNavigationAppResultLimit)
+        quickNavigationAppResultIndices_.resize(kQuickNavigationAppResultLimit);
 }
 
 inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
@@ -570,6 +777,101 @@ inline RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t l
         top + (row + 1) * cellH - quickNavigationScrollOffset_);
 }
 
+inline bool DesktopApp::TryGetQuickNavigationAppEntryAtPoint(
+    POINT point, const QuickNavigationAppEntry*& outEntry) const
+{
+    outEntry = nullptr;
+    if (!quickNavigationOpen_ || quickNavigationSearchText_.empty())
+        return false;
+    if (quickNavigationAppResultIndices_.empty())
+        return false;
+
+    RECT overlay = quickNavigationRect_;
+    RECT content = GetQuickNavigationContentRect(overlay);
+    if (!PtInRect(&content, point))
+        return false;
+
+    const int columns = GetQuickNavigationColumnCount(overlay);
+    const int desktopCount = static_cast<int>(GetQuickNavigationEntries().size());
+    const int desktopRows = desktopCount == 0 ? 0 : (desktopCount + columns - 1) / columns;
+    const int headerH = QuickNavScale(28);
+    const int gap = QuickNavScale(8);
+    const int rowH = QuickNavScale(46);
+    const int firstRowTop = content.top + headerH
+        + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+        + gap + headerH - quickNavigationScrollOffset_;
+    const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
+
+    for (size_t i = 0; i < visibleAppCount; ++i)
+    {
+        const int rowTop = firstRowTop + static_cast<int>(i) * rowH;
+        RECT itemRect = MakeRect(content.left + QuickNavScale(8), rowTop,
+            content.right - QuickNavScale(12), rowTop + rowH);
+        RECT clipped = itemRect;
+        clipped.top = std::max(clipped.top, content.top);
+        clipped.bottom = std::min(clipped.bottom, content.bottom);
+        if (clipped.bottom <= clipped.top || !PtInRect(&clipped, point))
+            continue;
+        size_t entryIndex = quickNavigationAppResultIndices_[i];
+        if (entryIndex >= quickNavigationAppEntries_.size())
+            return false;
+        outEntry = &quickNavigationAppEntries_[entryIndex];
+        return true;
+    }
+
+    return false;
+}
+
+inline size_t DesktopApp::GetQuickNavigationVisibleAppResultCount() const
+{
+    if (quickNavigationAppsExpanded_)
+        return quickNavigationAppResultIndices_.size();
+    return std::min(quickNavigationAppResultIndices_.size(), kQuickNavigationAppCollapsedResultCount);
+}
+
+inline bool DesktopApp::HasQuickNavigationAppExpandButton() const
+{
+    return !quickNavigationAppsExpanded_ &&
+        quickNavigationAppResultIndices_.size() > kQuickNavigationAppCollapsedResultCount;
+}
+
+inline bool DesktopApp::TryExpandQuickNavigationAppsAtPoint(POINT point)
+{
+    if (!quickNavigationOpen_ || quickNavigationSearchText_.empty() ||
+        !HasQuickNavigationAppExpandButton())
+        return false;
+
+    RECT overlay = quickNavigationRect_;
+    RECT content = GetQuickNavigationContentRect(overlay);
+    if (!PtInRect(&content, point))
+        return false;
+
+    const int columns = GetQuickNavigationColumnCount(overlay);
+    const int desktopCount = static_cast<int>(GetQuickNavigationEntries().size());
+    const int desktopRows = desktopCount == 0 ? 0 : (desktopCount + columns - 1) / columns;
+    const int headerH = QuickNavScale(28);
+    const int gap = QuickNavScale(8);
+    const int rowH = QuickNavScale(46);
+    const int buttonTop = content.top + headerH
+        + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+        + gap + headerH
+        + static_cast<int>(GetQuickNavigationVisibleAppResultCount()) * rowH
+        - quickNavigationScrollOffset_;
+    RECT buttonRect = MakeRect(content.left + QuickNavScale(8), buttonTop,
+        content.right - QuickNavScale(12), buttonTop + rowH);
+    RECT clipped = buttonRect;
+    clipped.top = std::max(clipped.top, content.top);
+    clipped.bottom = std::min(clipped.bottom, content.bottom);
+    if (clipped.bottom <= clipped.top || !PtInRect(&clipped, point))
+        return false;
+
+    quickNavigationAppsExpanded_ = true;
+    quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
+        GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
+    InvalidateQuickNavigationWindow();
+    return true;
+}
+
 inline bool DesktopApp::TryGetQuickNavigationEverythingEntryAtPoint(
     POINT point, QuickNavigationEverythingEntry& outEntry) const
 {
@@ -587,9 +889,14 @@ inline bool DesktopApp::TryGetQuickNavigationEverythingEntryAtPoint(
     const int headerH = QuickNavScale(28);
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
+    const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
+    const int appSectionHeight = quickNavigationAppResultIndices_.empty()
+        ? 0
+        : headerH + static_cast<int>(visibleAppCount) * rowH +
+            (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
     const int firstRowTop = content.top + headerH
         + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
-        + gap + headerH - quickNavigationScrollOffset_;
+        + gap + appSectionHeight + headerH - quickNavigationScrollOffset_;
 
     for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
     {
@@ -624,7 +931,15 @@ inline int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) cons
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
     int height = headerH + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
-        + gap + headerH
+        + gap;
+    if (!quickNavigationAppResultIndices_.empty())
+    {
+        height += headerH
+            + static_cast<int>(GetQuickNavigationVisibleAppResultCount()) * rowH
+            + (HasQuickNavigationAppExpandButton() ? rowH : 0)
+            + gap;
+    }
+    height += headerH
         + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH
         + QuickNavScale(8);
     return std::max(height, std::max(1, static_cast<int>(content.bottom - content.top)));
@@ -768,7 +1083,8 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
         reinterpret_cast<WPARAM>(quickNavigationSearchFont_ ? quickNavigationSearchFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(QuickNavScale(10), QuickNavScale(10)));
-    SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"搜索桌面项目、映射文件夹和 Everything..."));
+    SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
+        reinterpret_cast<LPARAM>(L"搜索桌面项目、映射文件夹、应用和 Everything..."));
     SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
 }
@@ -818,6 +1134,8 @@ inline void DesktopApp::RefreshQuickNavigationSearchText()
 
 inline void DesktopApp::ClearQuickNavigationEverythingResults()
 {
+    quickNavigationAppResultIndices_.clear();
+    quickNavigationAppsExpanded_ = false;
     quickNavigationEverythingResults_.clear();
 }
 
@@ -892,6 +1210,8 @@ inline void DesktopApp::RefreshQuickNavigationEverythingResults()
     ClearQuickNavigationEverythingResults();
     if (quickNavigationSearchText_.empty())
         return;
+
+    RefreshQuickNavigationAppResults();
 
     std::unordered_set<std::wstring> seenPaths;
     for (const auto& result : SearchEverythingCached(
@@ -1038,6 +1358,7 @@ inline void DesktopApp::OpenQuickNavigation()
     quickNavigationTabScrollOffset_ = 0;
     quickNavigationSearchText_.clear();
     ClearQuickNavigationEverythingResults();
+    StartQuickNavigationAppIndexing();
     if (!CreateQuickNavigationWindow())
     {
         quickNavigationOpen_ = false;
@@ -1156,9 +1477,15 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
                 (static_cast<int>(entries.size()) + columns - 1) / columns;
             const int headerH = QuickNavScale(28);
             const int gap = QuickNavScale(8);
+            const int rowH = QuickNavScale(46);
+            const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
+            const int appSectionHeight = quickNavigationAppResultIndices_.empty()
+                ? 0
+                : headerH + static_cast<int>(visibleAppCount) * rowH +
+                    (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
             const int listHeaderTop = content.top + headerH
                 + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
-                + gap - quickNavigationScrollOffset_;
+                + gap + appSectionHeight - quickNavigationScrollOffset_;
             RECT noticeHeader = MakeRect(
                 content.left + QuickNavScale(8),
                 listHeaderTop,
@@ -1174,6 +1501,28 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
                 nullptr, nullptr, SW_SHOWNORMAL);
             return true;
         }
+    }
+
+    if (TryExpandQuickNavigationAppsAtPoint(point))
+        return true;
+
+    const QuickNavigationAppEntry* appEntry = nullptr;
+    if (TryGetQuickNavigationAppEntryAtPoint(point, appEntry) &&
+        appEntry && appEntry->absolutePidl.get())
+    {
+        Pidl launchPidl;
+        launchPidl.reset(ILClone(appEntry->absolutePidl.get()));
+        CloseQuickNavigation();
+        if (launchPidl.get())
+        {
+            SHELLEXECUTEINFOW sei{};
+            sei.cbSize = sizeof(sei);
+            sei.fMask = SEE_MASK_IDLIST;
+            sei.lpIDList = launchPidl.get();
+            sei.nShow = SW_SHOWNORMAL;
+            ShellExecuteExW(&sei);
+        }
+        return true;
     }
 
     QuickNavigationEverythingEntry everythingEntry;
@@ -1217,6 +1566,13 @@ inline bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT scree
 {
     if (!quickNavigationOpen_)
         return false;
+
+    const QuickNavigationAppEntry* appEntry = nullptr;
+    if (TryGetQuickNavigationAppEntryAtPoint(point, appEntry) && appEntry)
+    {
+        ShowQuickNavigationAppContextMenu(*appEntry, screenPoint);
+        return true;
+    }
 
     QuickNavigationEverythingEntry entry;
     if (!TryGetQuickNavigationEverythingEntryAtPoint(point, entry))
@@ -1268,6 +1624,220 @@ inline bool DesktopApp::CopyTextToClipboard(const std::wstring& text)
     return true;
 }
 
+inline std::wstring DesktopApp::SanitizeShortcutFileStem(const std::wstring& name)
+{
+    std::wstring stem = name;
+    for (auto& ch : stem)
+    {
+        if (ch < 32 || wcschr(L"<>:\"/\\|?*", ch))
+            ch = L'_';
+    }
+    while (!stem.empty() && (stem.back() == L'.' || stem.back() == L' '))
+        stem.pop_back();
+    while (!stem.empty() && stem.front() == L' ')
+        stem.erase(stem.begin());
+    if (stem.empty())
+        stem = L"快捷方式";
+    if (stem.size() > 80)
+        stem.resize(80);
+    return stem;
+}
+
+inline bool DesktopApp::IsApplicationsShellLinkTarget(IShellLinkW* shellLink)
+{
+    if (!shellLink)
+        return false;
+
+    PIDLIST_ABSOLUTE rawPidl = nullptr;
+    if (FAILED(shellLink->GetIDList(&rawPidl)) || !rawPidl)
+        return false;
+
+    Pidl targetPidl;
+    targetPidl.reset(rawPidl);
+
+    bool result = false;
+    const std::wstring appsClsid = ToUpperInvariant(kDesktopIconClsidApplications);
+    const SIGDN names[] = {
+        SIGDN_DESKTOPABSOLUTEPARSING,
+        SIGDN_PARENTRELATIVEPARSING,
+        SIGDN_NORMALDISPLAY,
+    };
+    for (SIGDN nameKind : names)
+    {
+        PWSTR parsingName = nullptr;
+        if (SUCCEEDED(SHGetNameFromIDList(targetPidl.get(), nameKind, &parsingName)) &&
+            parsingName)
+        {
+            std::wstring normalized = ToUpperInvariant(parsingName);
+            result = normalized.find(L"SHELL:APPSFOLDER") != std::wstring::npos ||
+                normalized.find(L"APPSFOLDER") != std::wstring::npos ||
+                normalized.find(appsClsid) != std::wstring::npos;
+        }
+        if (parsingName)
+            CoTaskMemFree(parsingName);
+        if (result)
+            return true;
+    }
+
+    SHFILEINFOW info{};
+    if (SHGetFileInfoW(reinterpret_cast<LPCWSTR>(targetPidl.get()), 0, &info, sizeof(info),
+        SHGFI_PIDL | SHGFI_TYPENAME) && info.szTypeName[0])
+    {
+        std::wstring typeName = ToUpperInvariant(info.szTypeName);
+        result = typeName == L"APPLICATION" || typeName == L"APPLICATIONS" ||
+            typeName == L"应用" || typeName == L"应用程序";
+    }
+    return result;
+}
+
+inline bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayName,
+    PIDLIST_ABSOLUTE targetPidl, const std::wstring& targetPath, const std::wstring& workingDirectory)
+{
+    if (!targetPidl && targetPath.empty())
+        return false;
+
+    wchar_t desktopPath[MAX_PATH]{};
+    if (!SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
+        return false;
+
+    std::wstring stem = SanitizeShortcutFileStem(displayName);
+    if (stem.empty() && !targetPath.empty())
+    {
+        wchar_t nameBuf[MAX_PATH]{};
+        wcscpy_s(nameBuf, PathFindFileNameW(targetPath.c_str()));
+        PathRemoveExtensionW(nameBuf);
+        stem = SanitizeShortcutFileStem(nameBuf);
+    }
+
+    std::wstring shortcutPath;
+    for (int i = 1; i < 1000; ++i)
+    {
+        std::wstring fileName = i == 1
+            ? stem + L".lnk"
+            : stem + L" (" + std::to_wstring(i) + L").lnk";
+        wchar_t candidate[MAX_PATH]{};
+        PathCombineW(candidate, desktopPath, fileName.c_str());
+        if (GetFileAttributesW(candidate) == INVALID_FILE_ATTRIBUTES)
+        {
+            shortcutPath = candidate;
+            break;
+        }
+    }
+    if (shortcutPath.empty())
+    {
+        wchar_t fallback[MAX_PATH]{};
+        PathCombineW(fallback, desktopPath, (stem + L" (1000).lnk").c_str());
+        shortcutPath = fallback;
+    }
+
+    ComPtr<IShellLinkW> shellLink;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+        IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))) || !shellLink)
+        return false;
+
+    HRESULT setTargetHr = targetPidl
+        ? shellLink->SetIDList(targetPidl)
+        : shellLink->SetPath(targetPath.c_str());
+    if (FAILED(setTargetHr))
+        return false;
+
+    if (!workingDirectory.empty())
+        shellLink->SetWorkingDirectory(workingDirectory.c_str());
+
+    ComPtr<IPersistFile> persistFile;
+    if (FAILED(shellLink.As(&persistFile)) ||
+        FAILED(persistFile->Save(shortcutPath.c_str(), TRUE)))
+        return false;
+
+    ReloadItems();
+    return true;
+}
+
+inline bool DesktopApp::CreateDesktopShortcutForApp(const QuickNavigationAppEntry& entry)
+{
+    if (!entry.absolutePidl.get())
+        return false;
+    return CreateDesktopShortcutForShellLink(entry.name, entry.absolutePidl.get(), L"", L"");
+}
+
+inline bool DesktopApp::CreateDesktopShortcutForPath(
+    const std::wstring& path, bool isDirectory, const std::wstring& displayName)
+{
+    if (path.empty())
+        return false;
+
+    std::wstring workingDirectory;
+    if (isDirectory)
+    {
+        workingDirectory = path;
+    }
+    else
+    {
+        wchar_t dir[MAX_PATH]{};
+        wcscpy_s(dir, path.c_str());
+        if (PathRemoveFileSpecW(dir))
+            workingDirectory = dir;
+    }
+
+    std::wstring stem = displayName;
+    if (stem.empty())
+    {
+        wchar_t nameBuf[MAX_PATH]{};
+        wcscpy_s(nameBuf, PathFindFileNameW(path.c_str()));
+        PathRemoveExtensionW(nameBuf);
+        stem = nameBuf;
+    }
+    return CreateDesktopShortcutForShellLink(stem, nullptr, path, workingDirectory);
+}
+
+inline void DesktopApp::ShowQuickNavigationAppContextMenu(
+    const QuickNavigationAppEntry& entry, POINT screenPoint)
+{
+    if (!entry.absolutePidl.get())
+        return;
+
+    enum : UINT
+    {
+        kAppOpen = 1,
+        kAppCreateShortcut = 2,
+    };
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+
+    AppendMenuW(menu, MF_STRING, kAppOpen, L"打开");
+    AppendMenuW(menu, MF_STRING, kAppCreateShortcut, L"发送快捷方式到桌面");
+
+    HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_
+        : hwnd_;
+    SetForegroundWindow(owner);
+    const UINT command = TrackPopupMenuEx(menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN,
+        screenPoint.x, screenPoint.y, owner, nullptr);
+    DestroyMenu(menu);
+
+    switch (command)
+    {
+    case kAppOpen:
+    {
+        SHELLEXECUTEINFOW sei{};
+        sei.cbSize = sizeof(sei);
+        sei.fMask = SEE_MASK_IDLIST;
+        sei.lpIDList = entry.absolutePidl.get();
+        sei.nShow = SW_SHOWNORMAL;
+        ShellExecuteExW(&sei);
+        break;
+    }
+    case kAppCreateShortcut:
+        CreateDesktopShortcutForApp(entry);
+        break;
+    default:
+        break;
+    }
+}
+
 inline void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     const QuickNavigationEverythingEntry& entry, POINT screenPoint)
 {
@@ -1279,6 +1849,7 @@ inline void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         kEverythingOpen = 1,
         kEverythingReveal = 2,
         kEverythingCopyPath = 3,
+        kEverythingCreateShortcut = 4,
     };
 
     HMENU menu = CreatePopupMenu();
@@ -1287,6 +1858,7 @@ inline void DesktopApp::ShowQuickNavigationEverythingContextMenu(
 
     AppendMenuW(menu, MF_STRING, kEverythingOpen, L"打开");
     AppendMenuW(menu, MF_STRING, kEverythingReveal, L"在资源管理器中显示");
+    AppendMenuW(menu, MF_STRING, kEverythingCreateShortcut, L"发送快捷方式到桌面");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kEverythingCopyPath, L"复制路径");
 
@@ -1312,6 +1884,10 @@ inline void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     }
     case kEverythingCopyPath:
         CopyTextToClipboard(entry.path);
+        break;
+    case kEverythingCreateShortcut:
+        CreateDesktopShortcutForPath(entry.path, entry.isDirectory,
+            entry.name.empty() ? FileNameFromPath(entry.path) : entry.name);
         break;
     default:
         break;
@@ -1490,7 +2066,9 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     RECT titleRect = offsetRect(MakeRect(quickNavigationRect_.left + QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(18),
         quickNavigationRect_.right - QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(46)));
     std::wstring title = L"快捷导航";
-    const size_t totalResultCount = entries.size() + quickNavigationEverythingResults_.size();
+    const size_t totalResultCount = entries.size()
+        + quickNavigationAppResultIndices_.size()
+        + quickNavigationEverythingResults_.size();
     if (totalResultCount > 0)
         title += L"  " + std::to_wstring(totalResultCount) + L" 项";
     drawText(title, titleRect, quickNavigationTitleFont_, RGB(245, 248, 252),
@@ -1652,7 +2230,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     RECT content = offsetRect(contentApp);
     SaveDC(memoryDc);
     IntersectClipRect(memoryDc, content.left, content.top, content.right, content.bottom);
-    if (entries.empty() && (quickNavigationSearchText_.empty() || quickNavigationEverythingResults_.empty()))
+    if (entries.empty() && quickNavigationAppResultIndices_.empty() &&
+        (quickNavigationSearchText_.empty() || quickNavigationEverythingResults_.empty()))
     {
         RECT emptyRect = content;
         emptyRect.top += QuickNavScale(28);
@@ -1722,25 +2301,115 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             const int headerH = QuickNavScale(28);
             const int gap = QuickNavScale(8);
             const int rowH = QuickNavScale(46);
-            const int listHeaderTop = contentApp.top + headerH
+            const int appHeaderTop = contentApp.top + headerH
                 + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
                 + gap - quickNavigationScrollOffset_;
+            int everythingHeaderTop = appHeaderTop;
+
+            if (!quickNavigationAppResultIndices_.empty())
+            {
+                const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
+                RECT appHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
+                    appHeaderTop,
+                    contentApp.right - QuickNavScale(12),
+                    appHeaderTop + headerH));
+                std::wstring appLabel = L"应用  " +
+                    std::to_wstring(quickNavigationAppResultIndices_.size()) + L" 项";
+                drawText(appLabel, appHeader, quickNavigationTabFont_, RGB(182, 194, 212),
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+                HPEN separatorPen = CreatePen(PS_SOLID, 1, RGB(48, 56, 70));
+                HGDIOBJ oldPen = SelectObject(memoryDc, separatorPen);
+                const int sepY = appHeader.bottom - QuickNavScale(1);
+                MoveToEx(memoryDc, appHeader.left, sepY, nullptr);
+                LineTo(memoryDc, appHeader.right, sepY);
+                SelectObject(memoryDc, oldPen);
+                DeleteObject(separatorPen);
+
+                for (size_t i = 0; i < visibleAppCount; ++i)
+                {
+                    size_t appIndex = quickNavigationAppResultIndices_[i];
+                    if (appIndex >= quickNavigationAppEntries_.size())
+                        continue;
+
+                    const int rowTop = appHeaderTop + headerH + static_cast<int>(i) * rowH;
+                    RECT rowRectApp = MakeRect(contentApp.left + QuickNavScale(8), rowTop,
+                        contentApp.right - QuickNavScale(12), rowTop + rowH);
+                    if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
+                        continue;
+
+                    RECT rowLocal = offsetRect(rowRectApp);
+                    if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE)
+                        fillRound(rowLocal, RGB(46, 56, 72), RGB(68, 82, 106), QuickNavScale(10));
+
+                    const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[appIndex];
+                    const int iconSz = QuickNavScale(18);
+                    RECT iconRect = MakeRect(rowRectApp.left + QuickNavScale(12),
+                        rowRectApp.top + (rowH - iconSz) / 2,
+                        rowRectApp.left + QuickNavScale(12) + iconSz,
+                        rowRectApp.top + (rowH + iconSz) / 2);
+                    drawSystemIcon(entry.systemIconIndex, offsetRect(iconRect));
+
+                    const int textLeft = iconRect.right + QuickNavScale(10);
+                    RECT nameRect = rowRectApp;
+                    nameRect.left = textLeft;
+                    nameRect.right -= QuickNavScale(12);
+                    nameRect.top += QuickNavScale(5);
+                    nameRect.bottom = nameRect.top + QuickNavScale(18);
+
+                    RECT typeRect = rowRectApp;
+                    typeRect.left = textLeft;
+                    typeRect.right -= QuickNavScale(12);
+                    typeRect.top += QuickNavScale(24);
+                    typeRect.bottom -= QuickNavScale(5);
+
+                    drawText(entry.name, offsetRect(nameRect), quickNavigationItemFont_, RGB(245, 248, 252),
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    drawText(L"应用", offsetRect(typeRect),
+                        quickNavigationPathFont_ ? quickNavigationPathFont_ : quickNavigationTabFont_,
+                        RGB(146, 156, 174),
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                }
+
+                int appRowsHeight = static_cast<int>(visibleAppCount) * rowH;
+                if (HasQuickNavigationAppExpandButton())
+                {
+                    const int buttonTop = appHeaderTop + headerH + appRowsHeight;
+                    RECT buttonRectApp = MakeRect(contentApp.left + QuickNavScale(8), buttonTop,
+                        contentApp.right - QuickNavScale(12), buttonTop + rowH);
+                    if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
+                    {
+                        RECT buttonLocal = offsetRect(buttonRectApp);
+                        const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE;
+                        std::wstring expandLabel = L"展开全部应用结果（" +
+                            std::to_wstring(quickNavigationAppResultIndices_.size()) + L" 项）";
+                        drawText(expandLabel, buttonLocal, quickNavigationTabFont_,
+                            hovered ? RGB(226, 236, 252) : RGB(170, 184, 208),
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    }
+                    appRowsHeight += rowH;
+                }
+
+                everythingHeaderTop = appHeaderTop + headerH
+                    + appRowsHeight
+                    + gap;
+            }
 
             if (!everythingSearchAvailable_)
             {
                 RECT noticeHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
-                    listHeaderTop,
+                    everythingHeaderTop,
                     contentApp.right - QuickNavScale(12),
-                    listHeaderTop + headerH));
+                    everythingHeaderTop + headerH));
                 drawText(L"Everything 未运行", noticeHeader, quickNavigationTabFont_, RGB(182, 194, 212),
                     DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
             }
             else
             {
                 RECT everythingHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
-                    listHeaderTop,
+                    everythingHeaderTop,
                     contentApp.right - QuickNavScale(12),
-                    listHeaderTop + headerH));
+                    everythingHeaderTop + headerH));
                 std::wstring everythingLabel = L"Everything  " +
                     std::to_wstring(quickNavigationEverythingResults_.size()) + L" 项";
                 drawText(everythingLabel, everythingHeader, quickNavigationTabFont_, RGB(182, 194, 212),
@@ -1756,10 +2425,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
                 for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
                 {
-                    const int rowTop = contentApp.top + headerH
-                        + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
-                        + gap + headerH
-                        + static_cast<int>(i) * rowH - quickNavigationScrollOffset_;
+                    const int rowTop = everythingHeaderTop + headerH
+                        + static_cast<int>(i) * rowH;
                     RECT rowRectApp = MakeRect(contentApp.left + QuickNavScale(8), rowTop,
                         contentApp.right - QuickNavScale(12), rowTop + rowH);
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)

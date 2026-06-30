@@ -265,6 +265,21 @@ public:
         int systemIconIndex = -1;
     };
 
+    struct QuickNavigationAppEntry
+    {
+        std::wstring name;
+        std::wstring parsingName;
+        Pidl absolutePidl;
+        int systemIconIndex = -1;
+    };
+
+    struct QuickNavigationAppIndexResult
+    {
+        uint64_t serial = 0;
+        std::vector<QuickNavigationAppEntry> entries;
+        HIMAGELIST systemImageListSmall = nullptr;
+    };
+
     // ── OO 系统访问器（Object-Oriented System Accessors）────
     /** @brief 获取所有容器的引用（网格、部件等）。 @return 容器指针的 vector 引用 */
     std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
@@ -463,6 +478,23 @@ private:
     void RefreshQuickNavigationEverythingResults();
     void ClearQuickNavigationEverythingResults();
     int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
+    void StartQuickNavigationAppIndexing();
+    void StopQuickNavigationAppIndexing();
+    void OnQuickNavigationAppsIndexed(WPARAM wParam, LPARAM lParam);
+    static std::vector<QuickNavigationAppEntry> BuildQuickNavigationAppIndex(
+        HWND ownerHwnd, HIMAGELIST& systemImageListSmall);
+    void RefreshQuickNavigationAppResults();
+    size_t GetQuickNavigationVisibleAppResultCount() const;
+    bool HasQuickNavigationAppExpandButton() const;
+    bool TryExpandQuickNavigationAppsAtPoint(POINT point);
+    bool TryGetQuickNavigationAppEntryAtPoint(POINT point, const QuickNavigationAppEntry*& outEntry) const;
+    void ShowQuickNavigationAppContextMenu(const QuickNavigationAppEntry& entry, POINT screenPoint);
+    bool CreateDesktopShortcutForApp(const QuickNavigationAppEntry& entry);
+    bool CreateDesktopShortcutForPath(const std::wstring& path, bool isDirectory, const std::wstring& displayName = L"");
+    bool CreateDesktopShortcutForShellLink(const std::wstring& displayName,
+        PIDLIST_ABSOLUTE targetPidl, const std::wstring& targetPath, const std::wstring& workingDirectory);
+    static std::wstring SanitizeShortcutFileStem(const std::wstring& name);
+    static bool IsApplicationsShellLinkTarget(IShellLinkW* shellLink);
     /** @brief 计算快捷导航标签页的宽度。 */
     int GetQuickNavigationTabWidth() const;
     /** @brief 确保 navTabOrder_ 包含所有集合组件 ID。 */
@@ -1656,6 +1688,13 @@ private:
     RECT quickNavigationRect_{};
     std::wstring quickNavigationSearchText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
+    std::vector<size_t> quickNavigationAppResultIndices_;
+    std::vector<QuickNavigationAppEntry> quickNavigationAppEntries_;
+    bool quickNavigationAppsIndexed_ = false;
+    std::atomic<bool> quickNavigationAppIndexing_{false};
+    std::thread quickNavigationAppIndexThread_;
+    uint64_t quickNavigationAppIndexSerial_ = 0;
+    bool quickNavigationAppsExpanded_ = false;
     float quickNavDpiScale_ = 1.0f;
     std::vector<std::wstring> navTabOrder_;
     size_t quickNavTabDragIndex_ = static_cast<size_t>(-1);

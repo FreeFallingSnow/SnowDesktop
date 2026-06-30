@@ -25,6 +25,7 @@
  */
 inline DesktopApp::~DesktopApp()
 {
+    StopQuickNavigationAppIndexing();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
     widgetEngine_.reset();
@@ -438,6 +439,7 @@ inline void DesktopApp::RequestExit()
     if (exitRequested_)
         return;
     exitRequested_ = true;
+    StopQuickNavigationAppIndexing();
     StopIconLoader();
     RestoreExplorerIcons();
     if (hwnd_ && IsWindow(hwnd_))
@@ -537,13 +539,17 @@ inline void DesktopApp::StartIconLoader()
                             if (SUCCEEDED(shellLink.As(&persistFile)) &&
                                 SUCCEEDED(persistFile->Load(lnkPath, STGM_READ)))
                             {
-                                wchar_t target[MAX_PATH]{};
-                                if (SUCCEEDED(shellLink->GetPath(target, MAX_PATH, nullptr, 0)))
+                                if (!IsApplicationsShellLinkTarget(shellLink.Get()))
                                 {
-                                    std::wstring t(target);
-                                    for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
-                                    if (t.size() < 4 || t.compare(t.size() - 4, 4, L".EXE") != 0)
-                                        shortcutArrow = true;
+                                    wchar_t target[MAX_PATH]{};
+                                    if (SUCCEEDED(shellLink->GetPath(target, MAX_PATH, nullptr, 0)) &&
+                                        target[0] != L'\0')
+                                    {
+                                        std::wstring t(target);
+                                        for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
+                                        if (t.size() < 4 || t.compare(t.size() - 4, 4, L".EXE") != 0)
+                                            shortcutArrow = true;
+                                    }
                                 }
                             }
                         }
@@ -1338,6 +1344,9 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case kIconLoadedMessage:
         OnIconLoaded(wp, lp);
+        return 0;
+    case kQuickNavigationAppsIndexedMessage:
+        OnQuickNavigationAppsIndexed(wp, lp);
         return 0;
     case WM_TIMER:
         OnTimer(wp);
