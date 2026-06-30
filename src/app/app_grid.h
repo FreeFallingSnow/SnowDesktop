@@ -1635,6 +1635,11 @@ inline void DesktopApp::LoadLayoutSlots()
         loadedFontWeight >= 100 && loadedFontWeight <= 950)
         itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(loadedFontWeight));
 
+    float loadedIconSpacing = 0;
+    if (ReadJsonFloatField(text, "iconSpacing", loadedIconSpacing) &&
+        loadedIconSpacing >= 0.5f && loadedIconSpacing <= 2.0f)
+        iconSpacingScale_ = loadedIconSpacing;
+
     LoadSavedPagesFromJson(text);
 
     size_t pos = 0;
@@ -1886,6 +1891,7 @@ inline void DesktopApp::SaveLayoutSlots()
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"itemFontSize\": " << itemFontSize_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
+         << ",\n  \"iconSpacing\": " << iconSpacingScale_
          << ",\n  \"pages\": [\n";
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
