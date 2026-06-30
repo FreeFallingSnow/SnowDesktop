@@ -2413,9 +2413,11 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
             RECT textRectLocal = offsetRect(textRect);
             RECT measure = textRectLocal;
+            HGDIOBJ oldMeasureFont = SelectObject(memoryDc, quickNavigationItemFont_);
             DrawTextW(memoryDc, entry.name.c_str(), static_cast<int>(entry.name.size()), &measure,
                 DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-            bool fitsOneLine = measure.right <= textRectLocal.right;
+            SelectObject(memoryDc, oldMeasureFont);
+            bool fitsOneLine = measure.right <= textRectLocal.right + QuickNavScale(2);
             UINT textFlags = DT_CENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
             if (fitsOneLine)
                 textFlags |= DT_VCENTER | DT_SINGLELINE;

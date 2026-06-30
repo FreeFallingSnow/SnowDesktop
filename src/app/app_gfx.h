@@ -868,7 +868,21 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             itemFontSize_ * 5.0f / 6.0f * layoutScale);
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);
-        if (metrics.lineCount == 1)
+        bool isSingleLine = (metrics.lineCount == 1);
+        if (!isSingleLine)
+        {
+            ComPtr<IDWriteTextLayout> measureLayout;
+            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                text.c_str(), static_cast<UINT32>(text.size()),
+                itemTextFormat_.Get(), 10000.0f, 10000.0f, &measureLayout)) && measureLayout)
+            {
+                measureLayout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+                DWRITE_TEXT_METRICS m{};
+                measureLayout->GetMetrics(&m);
+                isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
+            }
+        }
+        if (isSingleLine)
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
     }
@@ -876,7 +890,23 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     float ty = static_cast<float>(textRect.top);
     DWRITE_TEXT_METRICS metrics{};
     layoutIt->second->GetMetrics(&metrics);
-    if (metrics.lineCount == 1 && selected)
+    bool isSingleLine = (metrics.lineCount == 1);
+    if (!isSingleLine)
+    {
+        ComPtr<IDWriteTextLayout> measureLayout;
+        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+            text.c_str(), static_cast<UINT32>(text.size()),
+            itemTextFormat_.Get(), 10000.0f, 10000.0f, &measureLayout)) && measureLayout)
+        {
+            const DWRITE_TEXT_RANGE fullRange{
+                0, static_cast<UINT32>(text.size()) };
+            measureLayout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+            DWRITE_TEXT_METRICS m{};
+            measureLayout->GetMetrics(&m);
+            isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
+        }
+    }
+    if (isSingleLine && selected)
     {
         RECT cr = GetItemTextRect(bounds, false);
         float collapsedH = static_cast<float>(cr.bottom - cr.top);
