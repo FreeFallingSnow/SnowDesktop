@@ -26,6 +26,19 @@ namespace
         if (text.compare(p, 5, "false") == 0) { out = false; return true; }
         return false;
     }
+
+    bool ReadIntField(const std::string& text, const char* field, int& out)
+    {
+        std::string marker = "\"" + std::string(field) + "\"";
+        size_t p = text.find(marker);
+        if (p == std::string::npos) return false;
+        p = text.find(':', p);
+        if (p == std::string::npos) return false;
+        p = text.find_first_not_of(" \t\r\n", p + 1);
+        if (p == std::string::npos) return false;
+        try { out = std::stoi(text.substr(p)); return true; }
+        catch (...) { return false; }
+    }
 }
 
 std::wstring GetGeneralSettingsPath()
@@ -49,6 +62,9 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     bool val = false;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
         settings.doubleClickHideDesktop = val;
+    int theme = 0;
+    if (ReadIntField(text, "quickNavTheme", theme))
+        settings.quickNavTheme = theme;
     return true;
 }
 
@@ -57,7 +73,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file << "{\n";
-    file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << "\n";
+    file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << ",\n";
+    file << "  \"quickNavTheme\": " << settings.quickNavTheme << "\n";
     file << "}\n";
     return true;
 }

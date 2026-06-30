@@ -15,6 +15,7 @@
 #include "system_snapshot.h"
 #include "constants.h"
 #include "utils.h"
+#include "search_match.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -266,6 +267,7 @@ struct D2DState
     int gridCellW = 92;
     int gridCellH = 116;
     int gridGapY = 8;
+    int barHeight = 24;
     int widgetClipDepth = 0;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
     ID2D1DeviceContext* brushContext = nullptr;
@@ -1190,24 +1192,51 @@ static int lua_DesktopFind(lua_State* L)
 {
     if (!RequirePermission(L, "desktop.read")) return 0;
     const char* queryRaw = luaL_optstring(L, 1, "");
-    std::string query = queryRaw ? queryRaw : "";
-    std::transform(query.begin(), query.end(), query.begin(),
-        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    std::wstring query = Utf8ToWideLocal(queryRaw ? queryRaw : "");
 
     auto* s = GetD2D(L);
     std::vector<LuaDesktopItemInfo> items = s->engine->RuntimeDesktopItems();
+    auto rankItem = [&](const LuaDesktopItemInfo& item) {
+        return NameSearchMatchRank(Utf8ToWideLocal(item.title), query);
+    };
+    if (!query.empty())
+    {
+        std::stable_sort(items.begin(), items.end(),
+            [&](const LuaDesktopItemInfo& a, const LuaDesktopItemInfo& b) {
+                return rankItem(a) < rankItem(b);
+            });
+    }
     lua_newtable(L);
     int i = 1;
     for (const auto& item : items)
     {
-        std::string hay = item.title + " " + item.path;
-        std::transform(hay.begin(), hay.end(), hay.begin(),
-            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (query.empty() || hay.find(query) != std::string::npos)
+        if (query.empty() || NameMatchesQuery(Utf8ToWideLocal(item.title), query))
         {
             PushDesktopItem(L, item);
             lua_rawseti(L, -2, i++);
         }
+    }
+    return 1;
+}
+
+static int lua_EverythingSearch(lua_State* L)
+{
+    if (!RequirePermission(L, "everything.search")) return 0;
+    const char* queryRaw = luaL_optstring(L, 1, "");
+    std::string query = queryRaw ? queryRaw : "";
+    int maxResults = static_cast<int>(luaL_optinteger(L, 2, 40));
+    maxResults = std::clamp(maxResults, 1, 200);
+
+    auto* s = GetD2D(L);
+    std::vector<LuaDesktopItemInfo> items = s && s->engine
+        ? s->engine->RuntimeEverythingSearch(query, maxResults)
+        : std::vector<LuaDesktopItemInfo>{};
+    lua_createtable(L, static_cast<int>(items.size()), 0);
+    int i = 1;
+    for (const auto& item : items)
+    {
+        PushDesktopItem(L, item);
+        lua_rawseti(L, -2, i++);
     }
     return 1;
 }
@@ -2372,6 +2401,13 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopSelection() const
     return selectionProvider_ ? selectionProvider_() : std::vector<LuaDesktopItemInfo>{};
 }
 
+std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeEverythingSearch(const std::string& query, int maxResults) const
+{
+    return everythingSearchProvider_
+        ? everythingSearchProvider_(query, maxResults)
+        : std::vector<LuaDesktopItemInfo>{};
+}
+
 bool WidgetEngine::RuntimeOpenDesktopPath(const std::wstring& path)
 {
     if (path.empty()) return false;
@@ -2659,6 +2695,12 @@ void WidgetEngine::SetGridCellGap(int gapY)
 {
     if (d2dState_)
         d2dState_->gridGapY = std::max(0, gapY);
+}
+
+void WidgetEngine::SetBarHeight(int barHeight)
+{
+    if (d2dState_)
+        d2dState_->barHeight = barHeight;
 }
 
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
@@ -3407,6 +3449,13 @@ static int lua_LayoutCellGap(lua_State* L)
     return 1;
 }
 
+static int lua_LayoutBarHeight(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    lua_pushinteger(L, s ? std::max(16, s->barHeight) : 24);
+    return 1;
+}
+
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
     lua_newtable(L);
@@ -3475,6 +3524,10 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_setglobal(L, "desktop");
 
     lua_newtable(L);
+    lua_pushcfunction(L, lua_EverythingSearch); lua_setfield(L, -2, "search");
+    lua_setglobal(L, "everything");
+
+    lua_newtable(L);
     lua_pushcfunction(L, lua_LayoutWidth);  lua_setfield(L, -2, "width");
     lua_pushcfunction(L, lua_LayoutHeight); lua_setfield(L, -2, "height");
     lua_pushcfunction(L, lua_LayoutColumns); lua_setfield(L, -2, "columns");
@@ -3486,6 +3539,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_LayoutCu); lua_setfield(L, -2, "cu");
     lua_pushcfunction(L, lua_LayoutFontCu); lua_setfield(L, -2, "fontCu");
     lua_pushcfunction(L, lua_LayoutCellGap);    lua_setfield(L, -2, "cellGap");
+    lua_pushcfunction(L, lua_LayoutBarHeight);  lua_setfield(L, -2, "barHeight");
     lua_setglobal(L, "layout");
 
     lua_newtable(L);

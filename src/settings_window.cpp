@@ -52,6 +52,7 @@ static void SetupLightTheme()
     s.FrameRounding = 4.0f;
     s.WindowRounding = 0.0f;
     s.ChildRounding = 6.0f;
+    s.ScrollbarSize = 10.0f;
     s.ScrollbarRounding = 4.0f;
     s.GrabRounding = 4.0f;
     s.TabRounding = 4.0f;
@@ -87,7 +88,7 @@ static void SetupLightTheme()
     c[ImGuiCol_TableBorderStrong]    = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
     c[ImGuiCol_TableBorderLight]     = ImVec4(0.88f, 0.88f, 0.91f, 1.00f);
     c[ImGuiCol_Separator]            = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(1.00f, 1.00f, 1.00f, 0.00f);
     c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.80f, 0.80f, 0.84f, 1.00f);
     c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.70f, 0.70f, 0.75f, 1.00f);
     c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.60f, 0.60f, 0.65f, 1.00f);
@@ -316,12 +317,20 @@ void SettingsWindow::Render()
     {
         // Sidebar + Content layout
         const float sidebarW = 160.0f;
-        ImGui::BeginChild("##Sidebar", ImVec2(sidebarW, 0), true);
+        const float sidebarPad = 8.0f * dpiScale_;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sidebarPad, sidebarPad));
+        ImGui::BeginChild("##Sidebar", ImVec2(sidebarW, 0),
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
         DrawSidebar();
         ImGui::EndChild();
 
         ImGui::SameLine();
-        ImGui::BeginChild("##Content", ImVec2(0, 0), true);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::BeginChild("##Content", ImVec2(0, 0), ImGuiChildFlags_None,
+            ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar();
         switch (activePage_)
         {
         case 0: DrawGeneralPage(); break;
@@ -574,11 +583,13 @@ static int NavigationHotkeyOptionIndex(UINT virtualKey)
 void SettingsWindow::DrawBackupPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##BackupPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##BackupPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
     ImGui::Text("布局备份与恢复");
     ImGui::Separator();
     ImGui::Spacing();
@@ -658,11 +669,13 @@ void SettingsWindow::DrawBackupPage()
 void SettingsWindow::DrawGeneralPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##GeneralPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##GeneralPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     ImGui::Text("通用设置");
     ImGui::Separator();
@@ -726,6 +739,17 @@ void SettingsWindow::DrawGeneralPage()
 
     std::wstring hotkeyText = FormatNavigationHotkey(navigationSettings_);
     ImGui::TextDisabled("当前快捷键: %s", WideToUtf8(hotkeyText).c_str());
+
+    ImGui::Spacing();
+    const char* themeItems[] = { "暗色", "浅色" };
+    int themeIdx = generalSettings_.quickNavTheme;
+    ImGui::SetNextItemWidth(160.0f * dpiScale_);
+    if (ImGui::Combo("主题", &themeIdx, themeItems, IM_ARRAYSIZE(themeItems)))
+    {
+        generalSettings_.quickNavTheme = themeIdx;
+        generalSettingsDirty_ = true;
+    }
+
     ImGui::EndDisabled();
 
     ImGui::Spacing();
@@ -748,11 +772,13 @@ void SettingsWindow::DrawGeneralPage()
 void SettingsWindow::DrawDisplayPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##DisplayPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##DisplayPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     const float labelW = 110.0f * dpiScale_;
     const float sliderW = 200.0f * dpiScale_;
@@ -884,11 +910,13 @@ void SettingsWindow::DrawDisplayPage()
 void SettingsWindow::DrawPersonalizationPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##PersonalizationPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##PersonalizationPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     auto nearlyEqual = [](float a, float b) {
         return std::fabs(a - b) < 0.001f;
@@ -1081,11 +1109,13 @@ void SettingsWindow::DrawWidgetEditorPage()
 void SettingsWindow::DrawDebugPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##DebugPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##DebugPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     ImGui::Text("调试页");
     ImGui::Separator();
@@ -1448,11 +1478,13 @@ void SettingsWindow::PerformUpdateCheck()
 void SettingsWindow::DrawAboutPage()
 {
     const float pad = 16.0f * dpiScale_;
-    ImGui::SetCursorPos(ImVec2(pad, pad));
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
-    pageSize.x = std::max(1.0f, pageSize.x - pad);
-    pageSize.y = std::max(1.0f, pageSize.y - pad);
-    ImGui::BeginChild("##AboutPageInner", pageSize, ImGuiChildFlags_None);
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##AboutPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     ImGui::Text("关于 SnowDesktop");
     ImGui::Separator();
@@ -1565,6 +1597,37 @@ void SettingsWindow::DrawAboutPage()
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
         }
     }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("第三方开源库：");
+    ImGui::Spacing();
+
+    ImGui::Text("    Everything SDK");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (C) 2016 David Carpenter");
+
+    ImGui::Text("    Dear ImGui");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (c) 2014-2025 Omar Cornut");
+
+    ImGui::Text("    Lua");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (C) 1994-2024 Lua.org, PUC-Rio");
+
+    ImGui::Text("    spdlog");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (c) 2016-present, Gabi Melman");
+
+    ImGui::Text("    pinyin-data");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MIT)");
+    ImGui::TextDisabled("        Copyright (c) 2016 mozillazg");
 
     ImGui::EndChild();
 }

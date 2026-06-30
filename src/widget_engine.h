@@ -279,6 +279,7 @@ public:
     void Shutdown();
 
     using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
+    using EverythingSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
     using WidgetTitleCallback = std::function<void(const std::wstring&, const std::wstring&)>;
     using InvalidateCallback = std::function<void(const std::wstring&)>;
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
@@ -292,6 +293,7 @@ public:
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
     /** @brief 设置选中项提供者回调 */
     void SetSelectionProvider(DesktopSnapshotProvider provider) { selectionProvider_ = std::move(provider); }
+    void SetEverythingSearchProvider(EverythingSearchProvider provider) { everythingSearchProvider_ = std::move(provider); }
     /** @brief 设置小部件标题变更回调 */
     void SetWidgetTitleCallback(WidgetTitleCallback callback) { setWidgetTitleCallback_ = std::move(callback); }
     /** @brief 设置失效回调（请求宿主重绘） */
@@ -532,6 +534,7 @@ public:
      * @return 选中项信息列表
      */
     std::vector<LuaDesktopItemInfo> RuntimeDesktopSelection() const;
+    std::vector<LuaDesktopItemInfo> RuntimeEverythingSearch(const std::string& query, int maxResults) const;
 
     /**
      * @brief 通过宿主打开指定路径
@@ -607,6 +610,7 @@ public:
      */
     void SetGridCellSize(int cellWidth, int cellHeight);
     void SetGridCellGap(int gapY);
+    void SetBarHeight(int barHeight);
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
 
     /**
@@ -671,6 +675,7 @@ private:
     std::vector<LuaWidget> widgets_;                   ///< 已加载的小部件实例列表
     DesktopSnapshotProvider desktopSnapshotProvider_;  ///< 桌面快照提供者回调
     DesktopSnapshotProvider selectionProvider_;        ///< 当前选中项提供者回调
+    EverythingSearchProvider everythingSearchProvider_; ///< Everything 搜索提供者回调
     WidgetTitleCallback setWidgetTitleCallback_;       ///< 设置小部件标题的回调
     WidgetTitleCallback openWidgetSettingsCallback_;   ///< 打开小部件设置面板的回调
     InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调

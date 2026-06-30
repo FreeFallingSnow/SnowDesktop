@@ -192,25 +192,29 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
     bool compact = data->gridSpan.columns <= 1 && data->gridSpan.rows <= 1;
     if (compact)
     {
-        // 2×2 grid centered in the body
-        InflateRect(&body, -collection->Cu(6.0f), -collection->Cu(6.0f));
-        int columns = 2;
+        // 2×2 grid centered in body; gap = 1/3 of remaining space
+        const int columns = 2;
+        int padding = collection->Cu(6.0f);
+        InflateRect(&body, -padding, -padding);
         int bodyW = std::max<int>(1, (int)(body.right - body.left));
         int bodyH = std::max<int>(1, (int)(body.bottom - body.top));
-        int gridSize = std::min(bodyW, bodyH);
-        const auto& pages = app->GetDesktopGrid()->GetPages();
-        const GridPage* page = nullptr;
-        for (const auto& p : pages)
-            if (p.id == data->gridCell.pageId) { page = &p; break; }
-        int gapY = page ? page->gapY : 0;
-        int gridTop = body.top + gapY / 2 - collection->Cu(10.0f);
-        int slotSz = std::max<int>(1, gridSize / 2);
+        int itemSz = std::max<int>(1, std::min(bodyW, bodyH) / columns);
+        int extraX = std::max(0, bodyW - itemSz * columns);
+        int extraY = std::max(0, bodyH - itemSz * columns);
+        int gapX = extraX >= 3 ? extraX / 3 : (extraX > 0 ? 1 : 0);
+        int gapY = extraY >= 3 ? extraY / 3 : (extraY > 0 ? 1 : 0);
+        int gridW = itemSz * columns + gapX;
+        int gridH = itemSz * columns + gapY;
+        int gridLeft = body.left + (bodyW - gridW) / 2;
+        int gridTop  = body.top  + (bodyH - gridH) / 2;
         int col = (int)(slot % (size_t)columns);
         int row = (int)(slot / (size_t)columns);
-        RECT rect = { body.left + col * slotSz, gridTop + row * slotSz,
-                      col + 1 == columns ? body.right : body.left + (col + 1) * slotSz,
-                      row + 1 == 2 ? gridTop + gridSize : gridTop + (row + 1) * slotSz };
-        InflateRect(&rect, -collection->Cu(1.0f), -collection->Cu(1.0f));
+        RECT rect = {
+            gridLeft + col * (itemSz + gapX),
+            gridTop  + row * (itemSz + gapY),
+            col + 1 == columns ? gridLeft + gridW : gridLeft + (col + 1) * itemSz + col * gapX,
+            row + 1 == columns ? gridTop  + gridH : gridTop  + (row + 1) * itemSz + row * gapY
+        };
         return rect;
     }
 
@@ -328,9 +332,10 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         const auto& items = app_->GetDesktopItems();
-        for (size_t i = 0; i < data_->itemKeys.size(); ++i)
+        auto& slots = GetSlots();
+        for (size_t i = 0; i < slots.size() && i < data_->itemKeys.size(); ++i)
         {
-            RECT cell = CollectionItemRect(this, i);
+            RECT cell = slots[i]->GetBounds();
             if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
 
             size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[i]);

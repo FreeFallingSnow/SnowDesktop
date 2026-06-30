@@ -26,6 +26,7 @@
 #include "settings_window.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "everything_search.h"
 #include "utils.h"
 #include "widget_engine.h"
 #include "types.h"
@@ -47,6 +48,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <cstring>
 #include <cstdint>
 #include <functional>
 #include <fstream>
@@ -245,19 +247,43 @@ public:
             FolderEntry,
         };
 
-Kind kind = Kind::DesktopItem;            /**< 条目来源类型 */
+        Kind kind = Kind::DesktopItem;            /**< 条目来源类型 */
         size_t itemIndex = static_cast<size_t>(-1);   /**< 在桌面项列表中的索引（DesktopItem 类型时有效） */
         size_t widgetIndex = static_cast<size_t>(-1); /**< 所在部件的索引 */
         size_t folderEntryIndex = static_cast<size_t>(-1); /**< 在文件夹条目列表中的索引（FolderEntry 类型时有效） */
         std::wstring name;           /**< 显示名称 */
         std::wstring path;           /**< 完整路径 */
-std::wstring source;         /**< 来源标识 */
-        HBITMAP iconBitmap = nullptr; /**< 图标位图句柄 */
+        std::wstring source;         /**< 来源标识 */
+    };
+
+    struct QuickNavigationEverythingEntry
+    {
+        std::wstring name;
+        std::wstring path;
+        bool isDirectory = false;
+        int systemIconIndex = -1;
+    };
+
+    struct QuickNavigationAppEntry
+    {
+        std::wstring name;
+        std::wstring parsingName;
+        Pidl absolutePidl;
+        int systemIconIndex = -1;
+    };
+
+    struct QuickNavigationAppIndexResult
+    {
+        uint64_t serial = 0;
+        std::vector<QuickNavigationAppEntry> entries;
+        HIMAGELIST systemImageListSmall = nullptr;
     };
 
     // ── OO 系统访问器（Object-Oriented System Accessors）────
     /** @brief 获取所有容器的引用（网格、部件等）。 @return 容器指针的 vector 引用 */
     std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
+    /** @brief 失效所有槽位缓存，下次GetSlots触发重建（底栏高度变化等场景） */
+    void InvalidateAllWidgetSlots();
     /** @brief 获取所有面向对象项的常量引用。 @return Item 唯一指针 vector 的 const 引用 */
     const std::vector<std::unique_ptr<Item>>& GetItemsOO() const { return items_oo_; }
     /** @brief 获取所有面向对象项的可变引用。 @return Item 唯一指针 vector 的引用 */
@@ -356,6 +382,10 @@ private:
     void RecreateItemTextFormat();
     /** @brief 创建或调整 DirectComposition 表面的大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
     HRESULT CreateOrResizeCompositionSurface();
+    /** @brief 清理绑定到当前 D2D/DComp 目标的缓存资源。 */
+    void ResetCompositionRenderCaches();
+    /** @brief 在 DComp 渲染失败后重置 surface 并安排一次恢复重绘。 */
+    void RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr);
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
     void OnPaint();
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */
@@ -448,8 +478,37 @@ private:
     void UpdateQuickNavigationSearchEditRect();
     /** @brief 刷新快速导航搜索文本内容。 */
     void RefreshQuickNavigationSearchText();
+    std::wstring GetQuickNavigationEffectiveSearchText() const;
+    void RefreshQuickNavigationSearchCompositionText(HWND editHwnd, LPARAM compositionFlags);
+    void ClearQuickNavigationSearchCompositionText();
+    void RefreshQuickNavigationEverythingResults();
+    void ClearQuickNavigationEverythingResults();
+    int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
+    void StartQuickNavigationAppIndexing();
+    void StopQuickNavigationAppIndexing();
+    void OnQuickNavigationAppsIndexed(WPARAM wParam, LPARAM lParam);
+    static std::vector<QuickNavigationAppEntry> BuildQuickNavigationAppIndex(
+        HWND ownerHwnd, HIMAGELIST& systemImageListSmall);
+    void RefreshQuickNavigationAppResults();
+    size_t GetQuickNavigationVisibleAppResultCount() const;
+    bool HasQuickNavigationAppExpandButton() const;
+    bool TryExpandQuickNavigationAppsAtPoint(POINT point);
+    bool TryGetQuickNavigationAppEntryAtPoint(POINT point, const QuickNavigationAppEntry*& outEntry) const;
+    void ShowQuickNavigationAppContextMenu(const QuickNavigationAppEntry& entry, POINT screenPoint);
+    bool CreateDesktopShortcutForApp(const QuickNavigationAppEntry& entry);
+    bool CreateDesktopShortcutForPath(const std::wstring& path, bool isDirectory, const std::wstring& displayName = L"");
+    bool CreateDesktopShortcutForShellLink(const std::wstring& displayName,
+        PIDLIST_ABSOLUTE targetPidl, const std::wstring& targetPath, const std::wstring& workingDirectory);
+    static std::wstring SanitizeShortcutFileStem(const std::wstring& name);
+    static bool IsApplicationsShellLinkTarget(IShellLinkW* shellLink);
     /** @brief 计算快捷导航标签页的宽度。 */
     int GetQuickNavigationTabWidth() const;
+    /** @brief 获取指定标签页的显示名称。 */
+    std::wstring GetQuickNavTabLabel(size_t tab) const;
+    /** @brief 根据文字测量更新标签宽度缓存。 */
+    void UpdateQuickNavTabWidths();
+    /** @brief 根据拖拽位移计算目标标签索引（≥2）。 */
+    int GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const;
     /** @brief 确保 navTabOrder_ 包含所有集合组件 ID。 */
     void EnsureNavTabOrder();
 
@@ -965,7 +1024,7 @@ private:
      * @param stroke 边框色
      * @param strokeWidth 边框宽度
      */
-    void DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT rect, float radius,
+    void DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth = 1.0f);
     /**
      * @brief 绘制填充矩形。
@@ -974,7 +1033,7 @@ private:
      * @param fill 填充色
      * @param stroke 边框色
      */
-    void DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rect,
+    void DrawD2DFilledRectangle(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke);
     /**
      * @brief 绘制项的文字标签。
@@ -984,8 +1043,9 @@ private:
      * @param selected 是否选中
      * @param opacity 透明度
      */
-    void DrawItemText(ID2D1DeviceContext* ctx, RECT bounds,
-        const std::wstring& text, bool selected, float opacity = 1.0f);
+    void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
+        const std::wstring& text, bool selected, float opacity = 1.0f,
+        bool lightTheme = false);
     /**
      * @brief 使用桌面图标标题样式绘制已排版的文字。
      * @param ctx D2D 上下文
@@ -996,10 +1056,11 @@ private:
      * @param layoutScale 布局缩放
      * @param opacity 整体透明度
      */
-    void DrawStyledItemTextLayout(ID2D1DeviceContext* ctx,
+    void DrawStyledItemTextLayout(ID2D1RenderTarget* ctx,
         IDWriteTextLayout* layout, const std::wstring& shadowKey,
         D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
-        float layoutScale, float opacity = 1.0f);
+        float layoutScale, float opacity = 1.0f,
+        bool lightTheme = false);
     /**
      * @brief 使用指定格式绘制 D2D 文字。
      * @param ctx D2D 上下文
@@ -1008,12 +1069,10 @@ private:
      * @param format 文字格式
      * @param color 文字颜色
      */
-    void DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
+    void DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color);
     /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
     void DrawCollectionPopup(ID2D1DeviceContext* ctx);
-    /** @brief 绘制快速导航叠加层。 @param ctx D2D 上下文 */
-    void DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
@@ -1024,6 +1083,7 @@ private:
      * @return D2D 位图指针，失败返回 nullptr
      */
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
+    ID2D1Bitmap* GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm);
 
     /**
      * @brief 在指定矩形上绘制快捷方式箭头叠加层。
@@ -1031,7 +1091,7 @@ private:
      * @param iconRect 图标区域矩形（逻辑像素）
      * @param alpha 整体透明度
      */
-    void DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT iconRect, float alpha);
+    void DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect, float alpha);
 
     // ── Async Icon Loading ──────────────────────────────────
     void StartIconLoader();
@@ -1039,8 +1099,7 @@ private:
     void BeginIconLoadGeneration();
     void EnqueueIconLoad(IconLoadTask task);
     void OnIconLoaded(WPARAM wParam, LPARAM lParam);
-    void CacheSystemImageListSmall();
-    void DrawPlaceholderIcon(ID2D1DeviceContext* ctx, int sysIconIndex, RECT iconRect, float alpha);
+    void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect, float alpha);
 
     // ── Filtering ───────────────────────────────────────────
     /**
@@ -1230,8 +1289,15 @@ private:
     int GetQuickNavigationGap(const RECT& overlay) const;
     /** @brief 获取快速导航面板中内容的最大滚动偏移。 @param overlay 面板矩形 @return 最大滚动偏移 */
     int GetQuickNavigationMaxScrollOffset(const RECT& overlay) const;
+    int GetQuickNavigationContentHeight(const RECT& overlay) const;
+    bool GetQuickNavigationScrollbarGeometry(const RECT& overlay,
+        RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const;
     /** @brief 处理快速导航面板的点击事件。 @param point 点击坐标 @return 是否已处理 */
     bool HandleQuickNavigationClick(POINT point);
+    bool HandleQuickNavigationRightClick(POINT point, POINT screenPoint);
+    bool TryGetQuickNavigationEverythingEntryAtPoint(POINT point, QuickNavigationEverythingEntry& outEntry) const;
+    void ShowQuickNavigationEverythingContextMenu(const QuickNavigationEverythingEntry& entry, POINT screenPoint);
+    bool CopyTextToClipboard(const std::wstring& text);
     /** @brief 获取集合弹出面板的矩形。 @param widget 部件引用 @return 面板矩形 */
     RECT GetCollectionPopupRect(const DesktopWidget& widget) const;
     /** @brief 获取集合弹出面板中内容区域的矩形。 @param popup 面板矩形 @return 内容矩形 */
@@ -1292,6 +1358,8 @@ private:
      * @return Lua 桌面项信息列表
      */
     std::vector<LuaDesktopItemInfo> BuildLuaDesktopSnapshot(bool selectedOnly) const;
+    std::vector<LuaDesktopItemInfo> BuildLuaEverythingSearch(const std::string& query, int maxResults) const;
+    std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
     /** @brief 通过 Lua 脚本打开指定路径。 @param path 要打开的路径 @return 操作是否成功 */
     bool LuaOpenPath(const std::wstring& path);
     /** @brief 通过 Lua 脚本在资源管理器中显示指定路径。 @param path 路径 @return 操作是否成功 */
@@ -1347,12 +1415,13 @@ private:
     ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
-    ID2D1DeviceContext* brushCacheContext_ = nullptr;
+    ID2D1RenderTarget* brushCacheContext_ = nullptr;
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
     ComPtr<IDCompositionSurface> dcompSurface_;
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
+    bool compositionRenderRecoveryPending_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
@@ -1368,6 +1437,7 @@ private:
     std::unique_ptr<WidgetEngine> widgetEngine_;
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
+    bool quickNavLightTheme_ = false;
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
@@ -1430,6 +1500,20 @@ private:
     HWND quickNavigationHwnd_ = nullptr;
     HWND quickNavigationSearchEdit_ = nullptr;
     HFONT quickNavigationSearchFont_ = nullptr;
+
+    HFONT quickNavigationTabFont_ = nullptr;
+    HFONT quickNavigationItemFont_ = nullptr;
+    HFONT quickNavigationPathFont_ = nullptr;
+    HDC quickNavMemoryDc_ = nullptr;
+    HBITMAP quickNavMemoryBitmap_ = nullptr;
+    int quickNavMemWidth_ = 0;
+    int quickNavMemHeight_ = 0;
+    ComPtr<ID2D1DCRenderTarget> quickNavD2DTarget_;
+    std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap>> quickNavD2DIconCache_;
+    ComPtr<ID2D1Bitmap> quickNavShortcutArrowBitmap_;
+    SIZE quickNavShortcutArrowBitmapSize_{};
+    std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavPlaceholderIconCache_;
+    std::vector<int> quickNavTabWidths_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -1624,12 +1708,34 @@ private:
     POINT quickNavigationOpenPoint_{};
     RECT quickNavigationRect_{};
     std::wstring quickNavigationSearchText_;
+    std::wstring quickNavigationSearchCompositionText_;
+    std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
+    std::vector<size_t> quickNavigationAppResultIndices_;
+    std::vector<QuickNavigationAppEntry> quickNavigationAppEntries_;
+    bool quickNavigationAppsIndexed_ = false;
+    std::atomic<bool> quickNavigationAppIndexing_{false};
+    std::thread quickNavigationAppIndexThread_;
+    uint64_t quickNavigationAppIndexSerial_ = 0;
+    bool quickNavigationAppsExpanded_ = false;
     float quickNavDpiScale_ = 1.0f;
     std::vector<std::wstring> navTabOrder_;
     size_t quickNavTabDragIndex_ = static_cast<size_t>(-1);
     int quickNavTabDragDeltaX_ = 0;
     POINT quickNavTabDragStartPoint_{};
     bool quickNavTabDragging_ = false;
+    bool quickNavScrollbarDragging_ = false;
+    int quickNavScrollbarDragStartY_ = 0;
+    int quickNavScrollbarDragThumbTop_ = 0;
+    int quickNavScrollbarDragStartOffset_ = 0;
+    bool quickNavScrollbarHovered_ = false;
+    HIMAGELIST quickNavigationSystemImageListSmall_ = nullptr;
+    std::unordered_map<std::wstring, int> quickNavigationEverythingIconCache_;
+    mutable EverythingSearchClient everythingSearch_;
+    mutable std::wstring everythingSearchCacheQuery_;
+    mutable DWORD everythingSearchCacheMaxResults_ = 0;
+    mutable DWORD everythingSearchCacheTick_ = 0;
+    mutable std::vector<EverythingSearchResult> everythingSearchCacheResults_;
+    mutable bool everythingSearchAvailable_ = true;
 
     int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
     /** @} */
@@ -1646,7 +1752,7 @@ private:
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
 
     /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
-    ComPtr<ID2D1Bitmap1> shortcutArrowBitmap_;
+    ComPtr<ID2D1Bitmap> shortcutArrowBitmap_;
     SIZE shortcutArrowBitmapSize_{};
 
     /** @name 异步图标加载 */
@@ -1659,10 +1765,7 @@ private:
     std::atomic<bool> iconLoaderRunning_{false};
     uint64_t iconLoadSerial_ = 0;
 
-    HIMAGELIST systemImageListSmall_ = nullptr;
-    ComPtr<ID2D1Bitmap1> systemIconStripBitmap_;
-    int systemIconStripCount_ = 0;
-    SIZE systemIconStripIconSize_{};
+    std::unordered_map<int, ComPtr<ID2D1Bitmap>> placeholderIconCache_;
     /** @} */
 
     /** @name 新建菜单 COM 上下文 */
@@ -1676,6 +1779,7 @@ private:
 // ── Inline implementations (split into sub-headers) ─────────
 #include "app_run.h"
 #include "app_gfx.h"
+#include "app_quick_navigation.h"
 #include "app_interact.h"
 #include "app_menu.h"
 #include "app_grid.h"

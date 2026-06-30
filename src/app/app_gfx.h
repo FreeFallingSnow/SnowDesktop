@@ -2,6 +2,132 @@
 // Inline implementations for DesktopApp — Graphics & Rendering.
 // This file is included by app_oo.h after the class definition.
 
+// ── Quick Navigation Theme Colors ───────────────────────────
+
+struct QuickNavTheme {
+    COLORREF windowBg, windowBorder;
+    COLORREF searchBg, searchBorder, searchEditBg;
+    COLORREF tabActiveFill, tabActiveStroke;
+    COLORREF tabHoverFill, tabHoverStroke;
+    COLORREF tabDefaultFill, tabDefaultStroke;
+    COLORREF tabText, tabSeparator;
+    COLORREF tabDragFill, tabDragStroke;
+    COLORREF tabDragFloatFill, tabDragFloatStroke, tabDragFloatText;
+    COLORREF tabDragIndicator;
+    COLORREF itemHoverFill, itemHoverStroke;
+    COLORREF itemText;
+    COLORREF headerText, headerSeparator;
+    COLORREF appRowHoverFill, appRowHoverStroke;
+    COLORREF appNameText, appTypeText;
+    COLORREF expandHoverText, expandDefaultText;
+    COLORREF emptyText, emptyHeaderText;
+    COLORREF scrollTrack, scrollThumbDefault, scrollThumbHover;
+
+    D2D1_COLOR_F popupBg, popupBorder, popupTitle;
+    D2D1_COLOR_F iconHoverBgFill, iconHoverBgStroke;
+    D2D1_COLOR_F iconSelectBgFill, iconSelectBgStroke;
+    D2D1_COLOR_F iconTextColor;
+    D2D1_COLOR_F iconShadowFallback;
+};
+
+inline const QuickNavTheme kQuickNavDark = {
+    // GDI
+    RGB(18, 22, 30),    // windowBg
+    RGB(120, 130, 150),  // windowBorder
+    RGB(255, 255, 255),  // searchBg
+    RGB(92, 105, 128),   // searchBorder
+    RGB(18, 22, 30),     // searchEditBg
+    RGB(48, 112, 215),   // tabActiveFill
+    RGB(82, 140, 235),   // tabActiveStroke
+    RGB(66, 72, 84),     // tabHoverFill
+    RGB(68, 76, 92),     // tabHoverStroke
+    RGB(42, 47, 58),     // tabDefaultFill
+    RGB(68, 76, 92),     // tabDefaultStroke
+    RGB(245, 248, 252),  // tabText
+    RGB(90, 96, 110),    // tabSeparator
+    RGB(80, 92, 112),    // tabDragFill
+    RGB(120, 140, 180),  // tabDragStroke
+    RGB(60, 80, 110),    // tabDragFloatFill
+    RGB(100, 130, 200),  // tabDragFloatStroke
+    RGB(245, 248, 252),  // tabDragFloatText
+    RGB(82, 140, 235),   // tabDragIndicator
+    RGB(58, 68, 86),     // itemHoverFill
+    RGB(78, 92, 118),    // itemHoverStroke
+    RGB(245, 248, 252),  // itemText
+    RGB(182, 194, 212),  // headerText
+    RGB(48, 56, 70),     // headerSeparator
+    RGB(46, 56, 72),     // appRowHoverFill
+    RGB(68, 82, 106),    // appRowHoverStroke
+    RGB(245, 248, 252),  // appNameText
+    RGB(146, 156, 174),  // appTypeText
+    RGB(226, 236, 252),  // expandHoverText
+    RGB(170, 184, 208),  // expandDefaultText
+    RGB(160, 168, 182),  // emptyText
+    RGB(182, 194, 212),  // emptyHeaderText
+    RGB(55, 62, 76),     // scrollTrack
+    RGB(136, 146, 166),  // scrollThumbDefault
+    RGB(167, 178, 199),  // scrollThumbHover
+    // D2D
+    {0.08f, 0.10f, 0.13f, 1.0f},     // popupBg
+    {1.0f, 1.0f, 1.0f, 0.50f},       // popupBorder
+    {1.0f, 1.0f, 1.0f, 1.0f},        // popupTitle
+    {1.0f, 1.0f, 1.0f, 0.08f},       // iconHoverBgFill
+    {1.0f, 1.0f, 1.0f, 0.20f},       // iconHoverBgStroke
+    {0.55f, 0.55f, 0.55f, 0.34f},    // iconSelectBgFill
+    {0.78f, 0.78f, 0.78f, 0.55f},    // iconSelectBgStroke
+    {1.0f, 1.0f, 1.0f, 1.0f},        // iconTextColor
+    {0.0f, 0.0f, 0.0f, 0.80f},       // iconShadowFallback
+};
+
+inline const QuickNavTheme kQuickNavLight = {
+    // GDI
+    RGB(246, 248, 252),  // windowBg
+    RGB(180, 190, 200),  // windowBorder
+    RGB(255, 255, 255),  // searchBg
+    RGB(170, 182, 198),  // searchBorder
+    RGB(255, 255, 255),  // searchEditBg
+    RGB(48, 112, 215),   // tabActiveFill
+    RGB(82, 140, 235),   // tabActiveStroke
+    RGB(215, 222, 236),  // tabHoverFill
+    RGB(190, 200, 215),  // tabHoverStroke
+    RGB(230, 234, 242),  // tabDefaultFill
+    RGB(190, 200, 215),  // tabDefaultStroke
+    RGB(28, 34, 44),     // tabText
+    RGB(200, 208, 220),  // tabSeparator
+    RGB(195, 205, 220),  // tabDragFill
+    RGB(140, 160, 190),  // tabDragStroke
+    RGB(180, 195, 215),  // tabDragFloatFill
+    RGB(120, 150, 200),  // tabDragFloatStroke
+    RGB(28, 34, 44),     // tabDragFloatText
+    RGB(82, 140, 235),   // tabDragIndicator
+    RGB(220, 228, 240),  // itemHoverFill
+    RGB(190, 200, 218),  // itemHoverStroke
+    RGB(28, 34, 44),     // itemText
+    RGB(110, 120, 138),  // headerText
+    RGB(210, 218, 228),  // headerSeparator
+    RGB(222, 228, 242),  // appRowHoverFill
+    RGB(190, 200, 218),  // appRowHoverStroke
+    RGB(28, 34, 44),     // appNameText
+    RGB(125, 135, 152),  // appTypeText
+    RGB(48, 112, 215),   // expandHoverText
+    RGB(100, 112, 135),  // expandDefaultText
+    RGB(135, 145, 162),  // emptyText
+    RGB(110, 120, 138),  // emptyHeaderText
+    RGB(215, 222, 232),  // scrollTrack
+    RGB(168, 178, 198),  // scrollThumbDefault
+    RGB(140, 155, 175),  // scrollThumbHover
+    // D2D
+    {0.96f, 0.97f, 0.98f, 1.0f},     // popupBg
+    {0.50f, 0.55f, 0.60f, 0.50f},    // popupBorder
+    {0.10f, 0.12f, 0.16f, 1.0f},     // popupTitle
+    {0.0f, 0.0f, 0.0f, 0.06f},       // iconHoverBgFill
+    {0.0f, 0.0f, 0.0f, 0.12f},       // iconHoverBgStroke
+    {0.20f, 0.40f, 0.70f, 0.18f},    // iconSelectBgFill
+    {0.25f, 0.50f, 0.80f, 0.40f},    // iconSelectBgStroke
+    {0.10f, 0.12f, 0.16f, 1.0f},     // iconTextColor
+    {0.0f, 0.0f, 0.0f, 0.12f},       // iconShadowFallback
+};
+
 // ── Graphics ─────────────────────────────────────────────────
 
 inline void DragRenderCache::Reset()
@@ -198,6 +324,38 @@ inline void DesktopApp::RecreateItemTextFormat()
     }
 }
 
+inline void DesktopApp::ResetCompositionRenderCaches()
+{
+    dragRenderCache_.Reset();
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+    d2dIconCache_.clear();
+    placeholderIconCache_.clear();
+    shortcutArrowBitmap_.Reset();
+    shortcutArrowBitmapSize_ = {};
+    itemTextShadowCache_.clear();
+    itemTextEffectContext_.Reset();
+}
+
+inline void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
+{
+    wchar_t buf[192];
+    wsprintfW(buf, L"%s FAILED hr=0x%08X; resetting composition surface",
+        stage ? stage : L"Render", static_cast<unsigned>(hr));
+    WriteCrashLogEntry(buf);
+
+    ResetCompositionRenderCaches();
+    dcompSurface_.Reset();
+    compositionWidth_ = 0;
+    compositionHeight_ = 0;
+
+    if (!compositionRenderRecoveryPending_ && hwnd_ && IsWindow(hwnd_))
+    {
+        compositionRenderRecoveryPending_ = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+}
+
 inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
     {
         RECT client{};
@@ -243,17 +401,20 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
 
 inline void DesktopApp::OnPaint()
     {
-        if (FAILED(CreateOrResizeCompositionSurface())) return;
+        HRESULT hr = CreateOrResizeCompositionSurface();
+        if (FAILED(hr))
+        {
+            RecoverCompositionRenderFailure(L"CreateOrResizeCompositionSurface", hr);
+            return;
+        }
 
         ID2D1DeviceContext* rawContext = nullptr;
         POINT updateOffset{};
-        HRESULT hr = dcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+        hr = dcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(&rawContext), &updateOffset);
         if (FAILED(hr))
         {
-            wchar_t buf[128];
-            wsprintfW(buf, L"BeginDraw FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            RecoverCompositionRenderFailure(L"BeginDraw", hr);
             return;
         }
 
@@ -279,19 +440,17 @@ inline void DesktopApp::OnPaint()
         hr = dcompSurface_->EndDraw();
         if (FAILED(hr))
         {
-            wchar_t buf[128];
-            wsprintfW(buf, L"EndDraw FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            RecoverCompositionRenderFailure(L"EndDraw", hr);
             return;
         }
 
         hr = dcompDevice_->Commit();
         if (FAILED(hr))
         {
-            wchar_t buf[128];
-            wsprintfW(buf, L"Paint Commit FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            RecoverCompositionRenderFailure(L"Paint Commit", hr);
+            return;
         }
+        compositionRenderRecoveryPending_ = false;
     }
 
 inline D2D1_RECT_F DesktopApp::ToD2DRect(const RECT& r)
@@ -406,10 +565,15 @@ inline RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
     return selection;
 }
 
-inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT rect, float radius,
+inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, float radius,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
 
     D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(ToD2DRect(rect), radius, radius);
     if (fill.a > 0.0f)
@@ -444,10 +608,15 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT re
     }
 }
 
-inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rect,
+inline void DesktopApp::DrawD2DFilledRectangle(ID2D1RenderTarget* ctx, RECT rect,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
 
     if (fill.a > 0.0f)
     {
@@ -477,12 +646,17 @@ inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rec
     }
 }
 
-inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
+inline void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     IDWriteTextLayout* layout, const std::wstring& shadowKey,
     D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
-    float layoutScale, float opacity)
+    float layoutScale, float opacity, bool lightTheme)
 {
     if (!context || !layout || shadowKey.empty()) return;
+    if (context != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = context;
+    }
 
     auto getBrush = [&](const D2D1_COLOR_F& color) -> ID2D1SolidColorBrush* {
         const std::uint64_t key = D2DColorBrushKey(color);
@@ -497,12 +671,18 @@ inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
         return it->second.Get();
     };
     ID2D1SolidColorBrush* textBrush =
-        getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
+        getBrush(lightTheme
+            ? D2D1::ColorF(0.10f, 0.12f, 0.16f, opacity)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
 
     const float tw = std::max(1.0f, layoutSize.width);
     const float th = std::max(1.0f, layoutSize.height);
     const float shadowScale = std::max(0.5f, layoutScale);
-    if (!itemTextEffectContext_ && d2dDevice_)
+    ComPtr<ID2D1DeviceContext> deviceContext;
+    const bool supportsEffects =
+        SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext;
+
+    if (supportsEffects && !itemTextEffectContext_ && d2dDevice_)
     {
         d2dDevice_->CreateDeviceContext(
             D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &itemTextEffectContext_);
@@ -516,7 +696,7 @@ inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
     // Render both shadow layers through Direct2D's continuous Gaussian shadow
     // effect. Cache the result per layout so normal desktop repaints only need
     // one bitmap draw per label.
-    if (itemTextEffectContext_)
+    if (supportsEffects && itemTextEffectContext_ && !lightTheme)
     {
         auto shadowIt = itemTextShadowCache_.find(shadowKey);
         if (shadowIt == itemTextShadowCache_.end())
@@ -633,7 +813,23 @@ inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
                     origin.y - shadowPadding,
                     origin.x - shadowPadding + shadowSize.width,
                     origin.y - shadowPadding + shadowSize.height),
-                opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+                opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        }
+    }
+    else
+    {
+        ID2D1SolidColorBrush* shadowBrush =
+            getBrush(lightTheme
+                ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f * opacity)
+                : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.80f * opacity));
+        if (shadowBrush)
+        {
+            context->DrawTextLayout(
+                D2D1::Point2F(origin.x + layoutScale, origin.y + layoutScale),
+                layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            context->DrawTextLayout(
+                D2D1::Point2F(origin.x, origin.y + layoutScale),
+                layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
 
@@ -642,8 +838,8 @@ inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
-inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
-    const std::wstring& text, bool selected, float opacity)
+inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
+    const std::wstring& text, bool selected, float opacity, bool lightTheme)
 {
     if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
 
@@ -672,7 +868,21 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
             itemFontSize_ * 5.0f / 6.0f * layoutScale);
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);
-        if (metrics.lineCount == 1)
+        bool isSingleLine = (metrics.lineCount == 1);
+        if (!isSingleLine)
+        {
+            ComPtr<IDWriteTextLayout> measureLayout;
+            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                text.c_str(), static_cast<UINT32>(text.size()),
+                itemTextFormat_.Get(), 10000.0f, 10000.0f, &measureLayout)) && measureLayout)
+            {
+                measureLayout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+                DWRITE_TEXT_METRICS m{};
+                measureLayout->GetMetrics(&m);
+                isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
+            }
+        }
+        if (isSingleLine)
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
     }
@@ -680,7 +890,23 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
     float ty = static_cast<float>(textRect.top);
     DWRITE_TEXT_METRICS metrics{};
     layoutIt->second->GetMetrics(&metrics);
-    if (metrics.lineCount == 1 && selected)
+    bool isSingleLine = (metrics.lineCount == 1);
+    if (!isSingleLine)
+    {
+        ComPtr<IDWriteTextLayout> measureLayout;
+        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+            text.c_str(), static_cast<UINT32>(text.size()),
+            itemTextFormat_.Get(), 10000.0f, 10000.0f, &measureLayout)) && measureLayout)
+        {
+            const DWRITE_TEXT_RANGE fullRange{
+                0, static_cast<UINT32>(text.size()) };
+            measureLayout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+            DWRITE_TEXT_METRICS m{};
+            measureLayout->GetMetrics(&m);
+            isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
+        }
+    }
+    if (isSingleLine && selected)
     {
         RECT cr = GetItemTextRect(bounds, false);
         float collapsedH = static_cast<float>(cr.bottom - cr.top);
@@ -690,13 +916,18 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
     DrawStyledItemTextLayout(
         context, layoutIt->second.Get(), layoutIt->first,
         D2D1::Point2F(static_cast<float>(textRect.left), ty),
-        D2D1::SizeF(tw, th), layoutScale, opacity);
+        D2D1::SizeF(tw, th), layoutScale, opacity, lightTheme);
 }
 
-inline void DesktopApp::DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
+inline void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
     RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color)
 {
     if (!ctx || !format || text.empty() || IsRectEmptyRect(rect)) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
     const std::uint64_t key = D2DColorBrushKey(color);
     auto it = brushCache_.find(key);
     if (it == brushCache_.end())
@@ -843,510 +1074,6 @@ inline bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
     return PtInRect(&popup, point) != FALSE;
 }
 
-inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
-{
-    auto isTabWidget = [](DesktopWidgetType t) {
-        return t == DesktopWidgetType::Collection ||
-               t == DesktopWidgetType::FileCategories ||
-               t == DesktopWidgetType::FolderMapping;
-    };
-    std::vector<size_t> result;
-    std::unordered_set<size_t> seen;
-
-    for (const auto& id : navTabOrder_)
-    {
-        for (size_t i = 0; i < widgets_.size(); ++i)
-        {
-            if (isTabWidget(widgets_[i].type) &&
-                widgets_[i].id == id && !seen.count(i))
-            {
-                result.push_back(i);
-                seen.insert(i);
-                break;
-            }
-        }
-    }
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        if (isTabWidget(widgets_[i].type) && !seen.count(i))
-        {
-            result.push_back(i);
-            seen.insert(i);
-        }
-    }
-    return result;
-}
-
-inline std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
-{
-    std::vector<std::wstring> result;
-    std::unordered_set<std::wstring> seen;
-    auto appendKey = [&](const std::wstring& key) {
-        if (FindItemIndexByKey(key) == static_cast<size_t>(-1))
-            return;
-        std::wstring normalized = ToUpperInvariant(key);
-        if (normalized.empty() || seen.contains(normalized))
-            return;
-        seen.insert(std::move(normalized));
-        result.push_back(key);
-    };
-
-    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
-    {
-        std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-        for (size_t ci : collectionIndices)
-        {
-            if (widgets_[ci].type == DesktopWidgetType::FolderMapping) continue;
-            for (const auto& key : widgets_[ci].itemKeys)
-                appendKey(key);
-        }
-        return result;
-    }
-    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
-    {
-        std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-        for (size_t ci : collectionIndices)
-        {
-            if (widgets_[ci].type != DesktopWidgetType::FolderMapping) continue;
-            for (const auto& fe : widgets_[ci].folderEntries)
-                appendKey(fe.fullPath);
-        }
-        return result;
-    }
-
-    if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        (widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::Collection ||
-         widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FileCategories))
-    {
-        for (const auto& key : widgets_[quickNavigationActiveWidgetIndex_].itemKeys)
-            appendKey(key);
-        return result;
-    }
-    if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
-    {
-        for (const auto& fe : widgets_[quickNavigationActiveWidgetIndex_].folderEntries)
-            appendKey(fe.fullPath);
-        return result;
-    }
-
-    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    for (size_t ci : collectionIndices)
-    {
-        if (widgets_[ci].type == DesktopWidgetType::FolderMapping)
-        {
-            for (const auto& fe : widgets_[ci].folderEntries)
-                appendKey(fe.fullPath);
-        }
-        else
-        {
-            for (const auto& key : widgets_[ci].itemKeys)
-                appendKey(key);
-        }
-    }
-    return result;
-}
-
-inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigationEntries() const
-{
-    std::vector<QuickNavigationEntry> result;
-    std::unordered_set<std::wstring> seenDesktop;
-    std::wstring query = ToUpperInvariant(quickNavigationSearchText_);
-
-    auto matches = [&](const std::wstring& name, const std::wstring& path, const std::wstring& source) {
-        if (query.empty()) return true;
-        return ToUpperInvariant(name).find(query) != std::wstring::npos ||
-            ToUpperInvariant(path).find(query) != std::wstring::npos ||
-            ToUpperInvariant(source).find(query) != std::wstring::npos;
-    };
-    auto appendDesktop = [&](size_t itemIndex, const std::wstring& source) {
-        if (itemIndex >= items_.size()) return;
-        const DesktopItem& item = items_[itemIndex];
-        std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
-        if (key.empty() || seenDesktop.contains(key)) return;
-        if (!matches(item.name, item.parsingName, source)) return;
-        seenDesktop.insert(std::move(key));
-
-        QuickNavigationEntry entry;
-        entry.kind = QuickNavigationEntry::Kind::DesktopItem;
-        entry.itemIndex = itemIndex;
-        entry.name = item.name;
-        entry.path = item.parsingName;
-        entry.source = source;
-        entry.iconBitmap = item.iconBitmap;
-        result.push_back(std::move(entry));
-    };
-
-    if (query.empty())
-    {
-        if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
-        {
-            for (const auto& key : GetQuickNavigationItemKeys())
-                appendDesktop(FindItemIndexByKey(key), L"集合");
-
-            std::unordered_set<std::wstring> desktopKeys;
-            for (const auto& widget : widgets_)
-            {
-                if (widget.type != DesktopWidgetType::Collection &&
-                    widget.type != DesktopWidgetType::FileCategories) continue;
-                for (const auto& key : widget.itemKeys)
-                    desktopKeys.insert(ToUpperInvariant(key));
-            }
-
-            auto isLnkOrUrl = [](const std::wstring& path) -> bool {
-                if (path.size() < 4) return false;
-                std::wstring ext = path.substr(path.size() - 4);
-                for (auto& c : ext) c = static_cast<wchar_t>(towupper(c));
-                return ext == L".LNK" || ext == L".URL";
-            };
-
-            for (size_t i = 0; i < items_.size(); ++i)
-            {
-                const DesktopItem& item = items_[i];
-                if (desktopKeys.contains(ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey))) continue;
-                if (!isLnkOrUrl(item.parsingName)) continue;
-                appendDesktop(i, L"自由桌面");
-            }
-            return result;
-        }
-
-        if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
-        {
-            for (size_t wi = 0; wi < widgets_.size(); ++wi)
-            {
-                if (widgets_[wi].type != DesktopWidgetType::FolderMapping) continue;
-                std::wstring source = widgets_[wi].title.empty() ? L"文件夹映射" : widgets_[wi].title;
-                for (size_t ei = 0; ei < widgets_[wi].folderEntries.size(); ++ei)
-                {
-                    const FolderEntry& entryData = widgets_[wi].folderEntries[ei];
-                    QuickNavigationEntry entry;
-                    entry.kind = QuickNavigationEntry::Kind::FolderEntry;
-                    entry.widgetIndex = wi;
-                    entry.folderEntryIndex = ei;
-                    entry.name = entryData.name;
-                    entry.path = entryData.fullPath;
-                    entry.source = source;
-                    entry.iconBitmap = entryData.iconBitmap;
-                    result.push_back(std::move(entry));
-                }
-            }
-            return result;
-        }
-
-        if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-            widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
-        {
-            const DesktopWidget& widget = widgets_[quickNavigationActiveWidgetIndex_];
-            std::wstring source = widget.title.empty() ? L"文件夹映射" : widget.title;
-            for (size_t ei = 0; ei < widget.folderEntries.size(); ++ei)
-            {
-                const FolderEntry& entryData = widget.folderEntries[ei];
-                QuickNavigationEntry entry;
-                entry.kind = QuickNavigationEntry::Kind::FolderEntry;
-                entry.widgetIndex = quickNavigationActiveWidgetIndex_;
-                entry.folderEntryIndex = ei;
-                entry.name = entryData.name;
-                entry.path = entryData.fullPath;
-                entry.source = source;
-                entry.iconBitmap = entryData.iconBitmap;
-                result.push_back(std::move(entry));
-            }
-            return result;
-        }
-
-        for (const auto& key : GetQuickNavigationItemKeys())
-            appendDesktop(FindItemIndexByKey(key), L"集合");
-
-        bool isDesktopAll = quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
-            (widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection &&
-             widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FileCategories &&
-             widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FolderMapping);
-        if (isDesktopAll)
-        {
-            std::unordered_set<std::wstring> collectionKeys;
-            for (const auto& widget : widgets_)
-            {
-                if (widget.type != DesktopWidgetType::Collection &&
-                    widget.type != DesktopWidgetType::FileCategories &&
-                    widget.type != DesktopWidgetType::FolderMapping) continue;
-                if (widget.type == DesktopWidgetType::FolderMapping)
-                {
-                    for (const auto& fe : widget.folderEntries)
-                        collectionKeys.insert(ToUpperInvariant(fe.fullPath));
-                }
-                else
-                {
-                    for (const auto& key : widget.itemKeys)
-                        collectionKeys.insert(ToUpperInvariant(key));
-                }
-            }
-
-            auto isLnkOrUrl = [](const std::wstring& path) -> bool {
-                if (path.size() < 4) return false;
-                std::wstring ext = path.substr(path.size() - 4);
-                for (auto& c : ext) c = static_cast<wchar_t>(towupper(c));
-                return ext == L".LNK" || ext == L".URL";
-            };
-
-            for (size_t i = 0; i < items_.size(); ++i)
-            {
-                const DesktopItem& item = items_[i];
-                std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
-                if (collectionKeys.contains(key)) continue;
-                if (!isLnkOrUrl(item.parsingName)) continue;
-                appendDesktop(i, L"自由桌面");
-            }
-        }
-
-        return result;
-    }
-
-    for (size_t i = 0; i < items_.size(); ++i)
-        appendDesktop(i, L"桌面");
-
-    for (size_t ci : GetQuickNavigationCollectionIndices())
-    {
-        const DesktopWidget& widget = widgets_[ci];
-        if (widget.type == DesktopWidgetType::FolderMapping) continue;
-        std::wstring source = widget.title.empty() ? L"集合" : widget.title;
-        for (const auto& key : widget.itemKeys)
-            appendDesktop(FindItemIndexByKey(key), source);
-    }
-
-    for (size_t wi = 0; wi < widgets_.size(); ++wi)
-    {
-        const DesktopWidget& widget = widgets_[wi];
-        if (widget.type != DesktopWidgetType::FolderMapping)
-            continue;
-        std::wstring source = widget.title.empty() ? L"文件夹映射" : widget.title;
-        for (size_t ei = 0; ei < widget.folderEntries.size(); ++ei)
-        {
-            const FolderEntry& entryData = widget.folderEntries[ei];
-            if (!matches(entryData.name, entryData.fullPath, source))
-                continue;
-
-            QuickNavigationEntry entry;
-            entry.kind = QuickNavigationEntry::Kind::FolderEntry;
-            entry.widgetIndex = wi;
-            entry.folderEntryIndex = ei;
-            entry.name = entryData.name;
-            entry.path = entryData.fullPath;
-            entry.source = source;
-            entry.iconBitmap = entryData.iconBitmap;
-            result.push_back(std::move(entry));
-        }
-    }
-
-    return result;
-}
-
-inline RECT DesktopApp::GetQuickNavigationRect() const
-{
-    RECT work{};
-    bool foundWorkArea = false;
-    POINT anchor = quickNavigationOpenPoint_;
-    for (const auto& page : gridPages_)
-    {
-        if (PtInRect(&page.bounds, anchor) || PtInRect(&page.workArea, anchor))
-        {
-            work = page.workArea;
-            foundWorkArea = true;
-            break;
-        }
-    }
-
-    if (!foundWorkArea)
-    {
-        POINT screenAnchor{ anchor.x + virtualLeft_, anchor.y + virtualTop_ };
-        HMONITOR monitor = MonitorFromPoint(screenAnchor, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO monitorInfo{};
-        monitorInfo.cbSize = sizeof(monitorInfo);
-        if (monitor && GetMonitorInfoW(monitor, &monitorInfo))
-        {
-            work = MakeRect(
-                monitorInfo.rcWork.left - virtualLeft_,
-                monitorInfo.rcWork.top - virtualTop_,
-                monitorInfo.rcWork.right - virtualLeft_,
-                monitorInfo.rcWork.bottom - virtualTop_);
-            foundWorkArea = true;
-        }
-    }
-
-    if (!foundWorkArea)
-        work = layoutWorkArea_;
-    if (IsRectEmptyRect(work))
-        work = MakeRect(0, 0, virtualWidth_, virtualHeight_);
-
-    const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
-    const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
-    const int widthLimit = std::max(QuickNavScale(320), workWidth - QuickNavScale(48));
-    const int heightLimit = std::max(QuickNavScale(280), workHeight - QuickNavScale(48));
-    const int width = std::min(widthLimit, std::max(QuickNavScale(520), std::min(QuickNavScale(860), workWidth - QuickNavScale(120))));
-    const int height = std::min(heightLimit, std::max(QuickNavScale(360), std::min(QuickNavScale(620), workHeight - QuickNavScale(120))));
-    const int left = work.left + (workWidth - width) / 2;
-    const int top = work.top + (workHeight - height) / 2;
-    return MakeRect(left, top, left + width, top + height);
-}
-
-inline RECT DesktopApp::GetQuickNavigationSearchRect(const RECT& overlay) const
-{
-    return MakeRect(overlay.left + QuickNavScale(16), overlay.top + QuickNavScale(54),
-        overlay.right - QuickNavScale(16), overlay.top + QuickNavScale(86));
-}
-
-inline RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
-{
-    return MakeRect(overlay.left + QuickNavScale(22), overlay.top + QuickNavScale(100),
-        overlay.right - QuickNavScale(22), overlay.top + QuickNavScale(134));
-}
-
-inline RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
-{
-    if (!quickNavigationSearchText_.empty())
-        return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(102),
-            overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
-    return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(148),
-        overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
-}
-
-inline int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& overlay) const
-{
-    RECT tabs = GetQuickNavigationTabsRect(overlay);
-    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    const size_t widgetTabCount = collectionIndices.size();
-    if (widgetTabCount == 0) return 0;
-
-    const int gap = QuickNavScale(8);
-    const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
-    int tabWidth = std::clamp((available - gap * static_cast<int>(widgetTabCount - 1)) / static_cast<int>(widgetTabCount),
-        QuickNavScale(72), QuickNavScale(150));
-    return static_cast<int>(widgetTabCount) * tabWidth + static_cast<int>(widgetTabCount - 1) * gap;
-}
-
-inline int DesktopApp::GetQuickNavigationMaxTabScrollOffset(const RECT& overlay) const
-{
-    RECT tabs = GetQuickNavigationTabsRect(overlay);
-    const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
-    return std::max(0, GetQuickNavigationTabStripContentWidth(overlay) - available);
-}
-
-inline int DesktopApp::GetQuickNavigationTabWidth() const
-{
-    RECT overlay = quickNavigationRect_;
-    RECT tabs = GetQuickNavigationTabsRect(overlay);
-    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    const size_t tabCount = collectionIndices.size() + 2;
-    if (tabCount == 0) return QuickNavScale(92);
-    const int gap = QuickNavScale(8);
-    const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
-    return std::clamp((available - gap * static_cast<int>(tabCount - 1)) / static_cast<int>(tabCount),
-        QuickNavScale(72), QuickNavScale(150));
-}
-
-inline void DesktopApp::EnsureNavTabOrder()
-{
-    auto isTabWidget = [](DesktopWidgetType t) {
-        return t == DesktopWidgetType::Collection ||
-               t == DesktopWidgetType::FileCategories ||
-               t == DesktopWidgetType::FolderMapping;
-    };
-    std::unordered_set<std::wstring> orderSet(navTabOrder_.begin(), navTabOrder_.end());
-    for (const auto& w : widgets_)
-    {
-        if (isTabWidget(w.type) && !orderSet.count(w.id))
-        {
-            navTabOrder_.push_back(w.id);
-            orderSet.insert(w.id);
-        }
-    }
-    navTabOrder_.erase(
-        std::remove_if(navTabOrder_.begin(), navTabOrder_.end(),
-            [this, &isTabWidget](const std::wstring& id) {
-                for (const auto& w : widgets_)
-                    if (isTabWidget(w.type) && w.id == id) return false;
-                return true;
-            }),
-        navTabOrder_.end());
-}
-
-inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex) const
-{
-    RECT tabs = GetQuickNavigationTabsRect(overlay);
-    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    const size_t tabCount = collectionIndices.size() + 2;
-    const int gap = QuickNavScale(8);
-    const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
-    int tabWidth = QuickNavScale(92);
-    if (tabCount > 0)
-        tabWidth = std::clamp((available - gap * static_cast<int>(tabCount - 1)) / static_cast<int>(tabCount),
-            QuickNavScale(72), QuickNavScale(150));
-    const int fixedWidth = 2 * tabWidth + gap;
-    const int sepGap = QuickNavScale(6);
-    int left;
-    if (tabIndex <= 1)
-        left = tabs.left + static_cast<int>(tabIndex) * (tabWidth + gap);
-    else
-        left = tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap
-            + static_cast<int>(tabIndex - 2) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
-    return MakeRect(left, tabs.top, left + tabWidth, tabs.bottom);
-}
-
-inline int DesktopApp::GetQuickNavigationColumnCount(const RECT& overlay) const
-{
-    RECT content = GetQuickNavigationContentRect(overlay);
-    const int cellW = QuickNavScale(kCellWidth);
-    const int contentWidth = std::max(1, static_cast<int>(content.right - content.left));
-    if (contentWidth < cellW) return 1;
-    int columns = contentWidth / cellW;
-    if (columns <= 1) return 1;
-    int gap = (contentWidth - columns * cellW) / (columns - 1);
-    while (columns > 1 && gap < QuickNavScale(8))
-    {
-        --columns;
-        gap = (contentWidth - columns * cellW) / (columns - 1);
-    }
-    return std::max(1, columns);
-}
-
-inline int DesktopApp::GetQuickNavigationGap(const RECT& overlay) const
-{
-    RECT content = GetQuickNavigationContentRect(overlay);
-    const int cellW = QuickNavScale(kCellWidth);
-    const int columns = GetQuickNavigationColumnCount(overlay);
-    if (columns <= 0) return 0;
-    const int contentWidth = std::max(1, static_cast<int>(content.right - content.left));
-    int totalGaps = contentWidth - columns * cellW;
-    return totalGaps / columns;
-}
-
-inline RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t linearIndex) const
-{
-    RECT content = GetQuickNavigationContentRect(overlay);
-    const int cellW = QuickNavScale(kCellWidth);
-    const int cellH = QuickNavScale(kQuickNavigationCellHeight);
-    const int columns = GetQuickNavigationColumnCount(overlay);
-    const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
-    const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
-    const int gap = GetQuickNavigationGap(overlay);
-    int halfPad = gap / 2;
-    return MakeRect(
-        content.left + halfPad + col * (cellW + gap),
-        content.top + row * cellH - quickNavigationScrollOffset_,
-        content.left + halfPad + col * (cellW + gap) + cellW,
-        content.top + (row + 1) * cellH - quickNavigationScrollOffset_);
-}
-
-inline int DesktopApp::GetQuickNavigationMaxScrollOffset(const RECT& overlay) const
-{
-    RECT content = GetQuickNavigationContentRect(overlay);
-    const int columns = GetQuickNavigationColumnCount(overlay);
-    const int itemCount = static_cast<int>(GetQuickNavigationEntries().size());
-    const int rows = itemCount == 0 ? 1 : (itemCount + columns - 1) / columns;
-    const int contentHeight = rows * QuickNavScale(kQuickNavigationCellHeight);
-    const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
-    return std::max(0, contentHeight - visibleHeight);
-}
-
 inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
 {
     if (!ctx || popupWidgetIndex_ >= widgets_.size()) return;
@@ -1396,299 +1123,6 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
     int visibleHeight = std::max(1, (int)(content.bottom - content.top));
     bool popupHovered = PtInRect(&popupRect_, lastMousePoint_);
     DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered);
-}
-
-inline void DesktopApp::DrawQuickNavigationOverlay(ID2D1DeviceContext* ctx)
-{
-    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
-        return;
-    if (!ctx || !quickNavigationOpen_) return;
-
-    std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection &&
-        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FileCategories &&
-        widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FolderMapping)
-    {
-        quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
-    }
-
-    std::vector<std::wstring> keys = GetQuickNavigationItemKeys();
-    quickNavigationRect_ = GetQuickNavigationRect();
-    quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
-        GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
-    quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
-        GetQuickNavigationMaxTabScrollOffset(quickNavigationRect_));
-
-    DrawD2DRoundedRectangle(ctx, quickNavigationRect_, static_cast<float>(QuickNavScale(18)),
-        D2D1::ColorF(0.08f, 0.10f, 0.13f, 0.94f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.38f), 1.4f);
-
-    RECT titleRect = MakeRect(quickNavigationRect_.left + QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(18),
-        quickNavigationRect_.right - QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(46));
-    std::wstring title = L"快捷导航";
-    if (!keys.empty())
-        title += L"  " + std::to_wstring(keys.size()) + L" 项";
-    DrawD2DText(ctx, title, titleRect, itemTextFormat_.Get(),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
-
-    RECT tabs = GetQuickNavigationTabsRect(quickNavigationRect_);
-    ctx->PushAxisAlignedClip(ToD2DRect(tabs), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
-    {
-        const size_t tabCount = collectionIndices.size() + 2;
-        const int tabWidth = GetQuickNavigationTabWidth();
-        const int gap = QuickNavScale(8);
-
-        const int fixedWidth = 2 * tabWidth + gap;
-        const int sepGap = QuickNavScale(6);
-        auto calcTabPosX = [&](size_t tabIdx) -> int {
-            if (tabIdx <= 1)
-                return tabs.left + static_cast<int>(tabIdx) * (tabWidth + gap);
-            return tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap
-                + static_cast<int>(tabIdx - 2) * (tabWidth + gap) - quickNavigationTabScrollOffset_;
-        };
-
-        int dragTargetTab = -1;
-        if (quickNavTabDragging_ && quickNavTabDragIndex_ != static_cast<size_t>(-1))
-        {
-            int unit = tabWidth + gap;
-            dragTargetTab = static_cast<int>(quickNavTabDragIndex_) + quickNavTabDragDeltaX_ / unit;
-            if (dragTargetTab < 2) dragTargetTab = 2;
-            if (dragTargetTab > static_cast<int>(collectionIndices.size()) + 1) dragTargetTab = static_cast<int>(collectionIndices.size()) + 1;
-        }
-
-        auto drawTab = [&](size_t tab, int offsetX) {
-            int posX = calcTabPosX(tab) + offsetX;
-            RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
-            if (tab >= 2)
-            {
-                if (tabRect.right <= tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap || tabRect.left >= tabs.right) return;
-                tabRect.left = std::max(tabRect.left, tabs.left + fixedWidth + sepGap + QuickNavScale(2) + sepGap);
-            }
-            else if (tab <= 1)
-            {
-                if (tabRect.right <= tabs.left || tabRect.left >= tabs.left + fixedWidth + sepGap) return;
-                tabRect.right = std::min(tabRect.right, tabs.left + fixedWidth + sepGap);
-            }
-
-            bool active = (tab == 0 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
-                || (tab == 1 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
-                || (tab > 1 && quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 2]);
-            bool hovered = false;
-            if (!quickNavTabDragging_)
-                hovered = PtInRect(&tabRect, lastMousePoint_) != FALSE;
-
-            D2D1_COLOR_F fill, stroke;
-            if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
-            {
-                fill = D2D1::ColorF(0.30f, 0.36f, 0.44f, 0.96f);
-                stroke = D2D1::ColorF(0.47f, 0.55f, 0.71f, 0.9f);
-            }
-            else
-            {
-                fill = active
-                    ? D2D1::ColorF(0.20f, 0.48f, 0.90f, 0.96f)
-                    : hovered
-                        ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f)
-                        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
-                stroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.28f : 0.14f);
-            }
-            DrawD2DRoundedRectangle(ctx, tabRect, static_cast<float>(QuickNavScale(7)), fill, stroke, 1.0f);
-
-            std::wstring label;
-            if (tab == 0)
-                label = L"桌面";
-            else if (tab == 1)
-                label = L"映射";
-            else
-            {
-                const DesktopWidget& widget = widgets_[collectionIndices[tab - 2]];
-                if (!widget.title.empty())
-                    label = widget.title;
-                else if (widget.type == DesktopWidgetType::FileCategories)
-                    label = L"桌面文件";
-                else if (widget.type == DesktopWidgetType::FolderMapping)
-                    label = L"文件夹映射";
-                else
-                    label = L"集合" + std::to_wstring(tab - 1);
-            }
-            RECT textRect = tabRect;
-            textRect.left += QuickNavScale(8);
-            textRect.right -= QuickNavScale(8);
-            DrawD2DText(ctx, label, textRect,
-                navTabTextFormat_ ? navTabTextFormat_.Get() : itemTextFormat_.Get(),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 1.0f : 0.88f));
-        };
-
-        // 分隔线：固定在 "映射" 标签右侧
-        int sepX = tabs.left + fixedWidth + sepGap;
-        RECT sepRect = MakeRect(sepX, tabs.top + QuickNavScale(6), sepX + QuickNavScale(1), tabs.bottom - QuickNavScale(6));
-        DrawD2DFilledRectangle(ctx, sepRect,
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
-
-        for (size_t tab = 0; tab < tabCount; ++tab)
-        {
-            if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
-                continue;
-            int offsetX = 0;
-            if (quickNavTabDragging_ && dragTargetTab >= 1)
-            {
-                int src = static_cast<int>(quickNavTabDragIndex_);
-                int cur = static_cast<int>(tab);
-                if (cur > src && cur <= dragTargetTab) offsetX = -(tabWidth + gap);
-                else if (cur < src && cur >= dragTargetTab) offsetX = tabWidth + gap;
-            }
-            drawTab(tab, offsetX);
-        }
-
-        if (quickNavTabDragging_ && quickNavTabDragIndex_ != static_cast<size_t>(-1))
-        {
-            int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
-            RECT tabRect = MakeRect(posX, tabs.top, posX + tabWidth, tabs.bottom);
-
-            std::wstring label;
-            if (quickNavTabDragIndex_ == 0)
-                label = L"桌面";
-            else if (quickNavTabDragIndex_ == 1)
-                label = L"映射";
-            else if (quickNavTabDragIndex_ >= 2 && quickNavTabDragIndex_ - 2 < collectionIndices.size())
-            {
-                const DesktopWidget& widget = widgets_[collectionIndices[quickNavTabDragIndex_ - 2]];
-                label = widget.title.empty() ? L"集合" + std::to_wstring(quickNavTabDragIndex_ - 1) : widget.title;
-            }
-            DrawD2DRoundedRectangle(ctx, tabRect, static_cast<float>(QuickNavScale(7)),
-                D2D1::ColorF(0.24f, 0.31f, 0.43f, 0.96f),
-                D2D1::ColorF(0.39f, 0.51f, 0.78f, 0.9f), 1.0f);
-            RECT textRect = tabRect;
-            textRect.left += QuickNavScale(8);
-            textRect.right -= QuickNavScale(8);
-            DrawD2DText(ctx, label, textRect,
-                navTabTextFormat_ ? navTabTextFormat_.Get() : itemTextFormat_.Get(),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
-
-            if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size() + 1)
-            {
-                int insertX = calcTabPosX(static_cast<size_t>(dragTargetTab)) - gap / 2;
-                RECT indicatorRect = MakeRect(insertX - 1, tabs.top + QuickNavScale(4), insertX + 1, tabs.bottom - QuickNavScale(4));
-                DrawD2DFilledRectangle(ctx, indicatorRect, D2D1::ColorF(0.32f, 0.55f, 0.92f, 0.9f), D2D1::ColorF(0.32f, 0.55f, 0.92f, 0.9f));
-            }
-        }
-    }
-
-    ctx->PopAxisAlignedClip();
-
-    RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
-    ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (keys.empty())
-    {
-        RECT emptyRect = content;
-        emptyRect.top += QuickNavScale(28);
-        DrawD2DText(ctx, collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目",
-            emptyRect, itemTextFormat_.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.58f));
-    }
-    else
-    {
-        for (size_t i = 0; i < keys.size(); ++i)
-        {
-            RECT itemRect = GetQuickNavigationItemRect(quickNavigationRect_, i);
-            if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
-
-            size_t itemIndex = FindItemIndexByKey(keys[i]);
-            if (itemIndex == static_cast<size_t>(-1)) continue;
-
-            bool hovered = PtInRect(&itemRect, lastMousePoint_) != FALSE;
-            DesktopItem& item = items_[itemIndex];
-
-            if (hovered)
-            {
-                DrawD2DRoundedRectangle(ctx, itemRect, 6.0f,
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
-            }
-
-            const int cellW = itemRect.right - itemRect.left;
-            const int cellH = itemRect.bottom - itemRect.top;
-            const int qnTextH = std::max(1, QuickNavScale(kQuickNavigationTextHeight));
-            const int inset = QuickNavScale(2);
-            const int minIcon = QuickNavScale(16);
-            const int maxIconW = std::max(minIcon, cellW - inset * 2);
-            const int maxIconH = std::max(minIcon, cellH - qnTextH - inset * 2);
-            const int iconSz = std::min(maxIconW, maxIconH);
-            const int iconX = itemRect.left + (cellW - iconSz) / 2;
-            const int iconY = itemRect.top + inset;
-            RECT qnIconRect = MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
-            RECT qnTextRect = MakeRect(itemRect.left + QuickNavScale(4),
-                iconY + iconSz + QuickNavScale(2),
-                itemRect.right - QuickNavScale(4),
-                iconY + iconSz + QuickNavScale(2) + qnTextH);
-
-            if (item.iconState == IconState::Loading)
-            {
-                DrawPlaceholderIcon(ctx, item.sysIconIndex, qnIconRect, 1.0f);
-            }
-            else
-            {
-                ID2D1Bitmap1* bmp = GetOrCreateD2DBitmap(item.iconBitmap);
-                if (bmp)
-                {
-                    D2D1_RECT_F dst = D2D1::RectF(
-                        static_cast<float>(qnIconRect.left), static_cast<float>(qnIconRect.top),
-                        static_cast<float>(qnIconRect.right), static_cast<float>(qnIconRect.bottom));
-                    ctx->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
-                }
-                else
-                {
-                    DrawPlaceholderIcon(ctx, item.sysIconIndex, qnIconRect, 1.0f);
-                }
-            }
-
-            if (item.shortcutArrow && item.iconState != IconState::Loading)
-                DrawShortcutArrowOverlay(ctx, qnIconRect, 1.0f);
-
-            if (!item.name.empty())
-            {
-                const float tw = static_cast<float>(qnTextRect.right - qnTextRect.left);
-                const float th = static_cast<float>(qnTextRect.bottom - qnTextRect.top);
-                ComPtr<IDWriteTextLayout> layout;
-                if (tw > 0 && th > 0 &&
-                    SUCCEEDED(dwriteFactory_->CreateTextLayout(
-                        item.name.c_str(), static_cast<UINT32>(item.name.size()),
-                        itemTextFormat_.Get(), tw, th, &layout)) && layout)
-                {
-                    const DWRITE_TEXT_RANGE all = { 0, static_cast<UINT32>(item.name.size()) };
-                    layout->SetFontSize(itemFontSize_, all);
-                    layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                        itemFontSize_ * 7.0f / 6.0f, itemFontSize_ * 5.0f / 6.0f);
-                    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_EMERGENCY_BREAK);
-                    const D2D1_COLOR_F textColor(1.0f, 1.0f, 1.0f, 0.96f);
-                    const auto brushKey = D2DColorBrushKey(textColor);
-                    auto bit = brushCache_.find(brushKey);
-                    if (bit == brushCache_.end())
-                    {
-                        ComPtr<ID2D1SolidColorBrush> br;
-                        if (SUCCEEDED(ctx->CreateSolidColorBrush(textColor, &br)) && br)
-                            bit = brushCache_.emplace(brushKey, std::move(br)).first;
-                    }
-                    if (bit != brushCache_.end())
-                        ctx->DrawTextLayout(
-                            D2D1::Point2F(static_cast<float>(qnTextRect.left),
-                                static_cast<float>(qnTextRect.top)),
-                            layout.Get(), bit->second.Get(),
-                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                }
-            }
-        }
-    }
-    ctx->PopAxisAlignedClip();
-
-    const int columns = GetQuickNavigationColumnCount(quickNavigationRect_);
-    const int rows = keys.empty() ? 1 : (static_cast<int>(keys.size()) + columns - 1) / columns;
-    const int contentHeight = rows * QuickNavScale(kQuickNavigationCellHeight);
-    const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
-    const bool hovered = PtInRect(&quickNavigationRect_, lastMousePoint_) != FALSE;
-    DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, quickNavigationScrollOffset_, hovered);
 }
 
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
@@ -1797,15 +1231,13 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         if (wc)
         {
             RECT bodyRect = wc->GetBodyRect();
-            if (popupWidgetIndex_ < widgets_.size() &&
-                wc->GetWidgetData() == &widgets_[popupWidgetIndex_])
+            const bool popupTarget = popupWidgetIndex_ < widgets_.size() &&
+                wc->GetWidgetData() == &widgets_[popupWidgetIndex_] &&
+                targetSlot == popupDragTargetSlot_.get();
+            if (popupTarget)
             {
                 RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-                RECT popupContent = GetCollectionPopupContentRect(popup);
-                RECT widgetVp = wc->GetContentViewportRect();
-                IntersectRect(&clipViewport, &popupContent, &widgetVp);
-                clipViewport.left = popup.left;
-                clipViewport.right = popup.right;
+                clipViewport = GetCollectionPopupContentRect(popup);
             }
             else
             {
@@ -2033,16 +1465,18 @@ inline void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
     drawArrow(nextRect, L"\u25B6", hasNext, dragging || hoverNext);
 }
 
-inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT iconRect, float alpha)
+inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect, float alpha)
 {
     if (!ctx) return;
 
-    if (!shortcutArrowBitmap_)
-    {
+    auto createArrowBitmap = [&](ComPtr<ID2D1Bitmap>& outBitmap, SIZE& outSize) -> bool {
+        if (outBitmap)
+            return true;
+
         SHSTOCKICONINFO sii{};
         sii.cbSize = sizeof(sii);
         if (FAILED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &sii)) || !sii.hIcon)
-            return;
+            return false;
 
         int w = GetSystemMetrics(SM_CXICON);
         int h = GetSystemMetrics(SM_CYICON);
@@ -2060,41 +1494,63 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT i
         bi.biBitCount = 32;
         bi.biCompression = BI_RGB;
 
-        HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS, nullptr, nullptr, 0);
+        HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi),
+            DIB_RGB_COLORS, nullptr, nullptr, 0);
         if (!dib)
         {
             DeleteDC(memDc);
             ReleaseDC(nullptr, screenDc);
             DestroyIcon(sii.hIcon);
-            return;
+            return false;
         }
 
         HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDc, dib));
         DrawIconEx(memDc, 0, 0, sii.hIcon, w, h, 0, nullptr, DI_NORMAL);
         SelectObject(memDc, oldBmp);
 
-        D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-            D2D1_BITMAP_OPTIONS_NONE,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-
         DIBSECTION ds{};
         GetObjectW(dib, sizeof(ds), &ds);
-        ComPtr<ID2D1Bitmap1> d2dBmp;
-        if (SUCCEEDED(ctx->CreateBitmap(D2D1::SizeU(w, h), nullptr, 0, &props, &d2dBmp)))
-        {
-            D2D1_RECT_U srcRect = D2D1::RectU(0, 0, static_cast<UINT32>(w), static_cast<UINT32>(h));
-            d2dBmp->CopyFromMemory(&srcRect, ds.dsBm.bmBits, ds.dsBm.bmWidthBytes);
-            shortcutArrowBitmap_ = std::move(d2dBmp);
-            shortcutArrowBitmapSize_ = { w, h };
-        }
+
+        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+        ComPtr<ID2D1Bitmap> bitmap;
+        HRESULT hr = ctx->CreateBitmap(D2D1::SizeU(w, h), ds.dsBm.bmBits,
+            static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
 
         DeleteObject(dib);
         DeleteDC(memDc);
         ReleaseDC(nullptr, screenDc);
         DestroyIcon(sii.hIcon);
+
+        if (FAILED(hr) || !bitmap)
+            return false;
+
+        outBitmap = std::move(bitmap);
+        outSize = { w, h };
+        return true;
+    };
+
+    ID2D1Bitmap* arrowBitmap = nullptr;
+    SIZE arrowBitmapSize{};
+
+    ComPtr<ID2D1DeviceContext> deviceContext;
+    if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext)
+    {
+        if (!createArrowBitmap(shortcutArrowBitmap_, shortcutArrowBitmapSize_))
+            return;
+        arrowBitmap = shortcutArrowBitmap_.Get();
+        arrowBitmapSize = shortcutArrowBitmapSize_;
+    }
+    else
+    {
+        if (!createArrowBitmap(quickNavShortcutArrowBitmap_, quickNavShortcutArrowBitmapSize_))
+            return;
+        arrowBitmap = quickNavShortcutArrowBitmap_.Get();
+        arrowBitmapSize = quickNavShortcutArrowBitmapSize_;
     }
 
-    if (!shortcutArrowBitmap_) return;
+    if (!arrowBitmap) return;
 
     float scale = static_cast<float>(iconRect.bottom - iconRect.top) / 64.0f;
     int arrowSz = static_cast<int>(30.0f * scale + 0.5f);
@@ -2108,73 +1564,80 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT i
         static_cast<float>(arrowX + arrowSz),
         static_cast<float>(arrowY + arrowSz));
 
-    ctx->DrawBitmap(shortcutArrowBitmap_.Get(), dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+    ctx->DrawBitmap(arrowBitmap, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
-inline void DesktopApp::CacheSystemImageListSmall()
-{
-    if (systemIconStripBitmap_) return;
-    HIMAGELIST himl = nullptr;
-    if (FAILED(SHGetImageList(SHIL_SMALL, IID_IImageList, reinterpret_cast<void**>(&himl))) || !himl)
-        return;
-    systemImageListSmall_ = himl;
-    int cx = 0, cy = 0, count = 0;
-    IImageList* imgList = reinterpret_cast<IImageList*>(himl);
-    imgList->GetIconSize(&cx, &cy);
-    imgList->GetImageCount(&count);
-    if (cx <= 0 || cy <= 0 || count <= 0) return;
-    systemIconStripCount_ = count;
-    systemIconStripIconSize_ = { cx, cy };
-
-    HDC screenDc = GetDC(nullptr);
-    HDC memDc = CreateCompatibleDC(screenDc);
-    int totalWidth = cx * count;
-    BITMAPINFOHEADER bi{};
-    bi.biSize = sizeof(bi);
-    bi.biWidth = totalWidth;
-    bi.biHeight = -cy;
-    bi.biPlanes = 1;
-    bi.biBitCount = 32;
-    bi.biCompression = BI_RGB;
-    HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS, nullptr, nullptr, 0);
-    if (!dib) { DeleteDC(memDc); ReleaseDC(nullptr, screenDc); return; }
-
-    HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDc, dib));
-    for (int i = 0; i < count; ++i)
-        ImageList_Draw(himl, i, memDc, i * cx, 0, ILD_TRANSPARENT | ILD_PRESERVEALPHA);
-    SelectObject(memDc, oldBmp);
-    DeleteDC(memDc);
-    ReleaseDC(nullptr, screenDc);
-
-    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_NONE, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-    DIBSECTION ds{};
-    GetObjectW(dib, sizeof(ds), &ds);
-    ComPtr<ID2D1Bitmap1> d2dBmp;
-    if (SUCCEEDED(d2dContext_->CreateBitmap(D2D1::SizeU(totalWidth, cy), nullptr, 0, &props, &d2dBmp)))
-    {
-        D2D1_RECT_U srcRect = D2D1::RectU(0, 0, static_cast<UINT32>(totalWidth), static_cast<UINT32>(cy));
-        d2dBmp->CopyFromMemory(&srcRect, ds.dsBm.bmBits, ds.dsBm.bmWidthBytes);
-        systemIconStripBitmap_ = std::move(d2dBmp);
-    }
-    DeleteObject(dib);
-}
-
-inline void DesktopApp::DrawPlaceholderIcon(ID2D1DeviceContext* ctx, int sysIconIndex, RECT iconRect, float alpha)
+inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect, float alpha)
 {
     if (!ctx || sysIconIndex < 0) return;
-    if (!systemIconStripBitmap_) CacheSystemImageListSmall();
-    if (!systemIconStripBitmap_ || sysIconIndex >= systemIconStripCount_) return;
 
-    int cx = systemIconStripIconSize_.cx;
-    int srcX = sysIconIndex * cx;
+    ComPtr<ID2D1DeviceContext> deviceContext;
+    const bool isDeviceContext =
+        SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext;
+    ID2D1RenderTarget* creationTarget = isDeviceContext && d2dContext_
+        ? static_cast<ID2D1RenderTarget*>(d2dContext_.Get())
+        : ctx;
+    auto& cache = isDeviceContext ? placeholderIconCache_ : quickNavPlaceholderIconCache_;
 
-    D2D1_RECT_F src = D2D1::RectF(static_cast<float>(srcX), 0.0f,
-        static_cast<float>(srcX + cx), static_cast<float>(systemIconStripIconSize_.cy));
+    auto cached = cache.find(sysIconIndex);
+    if (cached == cache.end())
+    {
+        ComPtr<IImageList> imageList;
+        HRESULT hr = SHGetImageList(SHIL_JUMBO, IID_IImageList,
+            reinterpret_cast<void**>(imageList.GetAddressOf()));
+        if (FAILED(hr) || !imageList)
+        {
+            imageList.Reset();
+            hr = SHGetImageList(SHIL_EXTRALARGE, IID_IImageList,
+                reinterpret_cast<void**>(imageList.GetAddressOf()));
+        }
+        if (FAILED(hr) || !imageList)
+        {
+            imageList.Reset();
+            hr = SHGetImageList(SHIL_LARGE, IID_IImageList,
+                reinterpret_cast<void**>(imageList.GetAddressOf()));
+        }
+        if (FAILED(hr) || !imageList)
+            return;
+
+        HICON icon = nullptr;
+        if (FAILED(imageList->GetIcon(sysIconIndex,
+                ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) || !icon)
+            return;
+
+        SIZE bitmapSize{};
+        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
+            icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
+        DestroyIcon(icon);
+        if (!alphaBitmap)
+            return;
+
+        DIBSECTION ds{};
+        if (GetObjectW(alphaBitmap, sizeof(ds), &ds) == 0 ||
+            !ds.dsBm.bmBits || ds.dsBm.bmWidth <= 0 || ds.dsBm.bmHeight == 0)
+        {
+            DeleteObject(alphaBitmap);
+            return;
+        }
+
+        const UINT width = static_cast<UINT>(ds.dsBm.bmWidth);
+        const UINT height = static_cast<UINT>(std::abs(ds.dsBm.bmHeight));
+        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        ComPtr<ID2D1Bitmap> bitmap;
+        HRESULT createHr = creationTarget->CreateBitmap(D2D1::SizeU(width, height),
+            ds.dsBm.bmBits, static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
+        DeleteObject(alphaBitmap);
+        if (FAILED(createHr) || !bitmap)
+            return;
+
+        cached = cache.emplace(sysIconIndex, std::move(bitmap)).first;
+    }
+
     D2D1_RECT_F dst = D2D1::RectF(
         static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
         static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-    ctx->DrawBitmap(systemIconStripBitmap_.Get(), dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR, &src);
+    ctx->DrawBitmap(cached->second.Get(), dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 /**

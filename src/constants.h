@@ -65,6 +65,7 @@ constexpr wchar_t kDesktopIconClsidUserFiles[] = L"{59031A47-3F72-44A7-89C5-5595
 constexpr wchar_t kDesktopIconClsidNetwork[] = L"{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}";
 constexpr wchar_t kDesktopIconClsidControlPanel[] = L"{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}";
 constexpr wchar_t kDesktopIconClsidRecycleBin[] = L"{645FF040-5081-101B-9F08-00AA002F954E}";
+constexpr wchar_t kDesktopIconClsidApplications[] = L"{4234D49B-0245-4DF3-B780-3893943456E1}";
 
 // ── 右键菜单命令ID ────────────────────────────
 constexpr UINT kContextOpenCommand = 41001;
@@ -141,6 +142,7 @@ constexpr UINT kContextPageJumpLast  = 41550;
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT kIconLoadedMessage = WM_APP + 3;
+constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 

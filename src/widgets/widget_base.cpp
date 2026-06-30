@@ -252,8 +252,6 @@ RECT WidgetContainer::GetFrameRect() const
 RECT WidgetContainer::GetBodyRect() const
 {
     RECT frame = GetFrameRect();
-    if (data_->type == DesktopWidgetType::Collection && data_->gridSpan.rows <= 1)
-        return frame;
     const int barReserve = Cu(GetBarHeight() - 2.0f);
     frame.bottom = std::max<LONG>(frame.top + barReserve, frame.bottom - barReserve);
     return frame;
