@@ -2427,6 +2427,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         bool desktopEntriesDrawnWithD2D = false;
         if (d2dOk && dcRenderTarget && !entries.empty())
         {
+            brushCache_.clear();
+            brushCacheContext_ = nullptr;
             dcRenderTarget->BeginDraw();
             dcRenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             dcRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
@@ -2465,10 +2467,20 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
             dcRenderTarget->PopAxisAlignedClip();
             dcRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
-            if (SUCCEEDED(dcRenderTarget->EndDraw()))
+            HRESULT endDrawHr = dcRenderTarget->EndDraw();
+            brushCache_.clear();
+            brushCacheContext_ = nullptr;
+            if (SUCCEEDED(endDrawHr))
                 desktopEntriesDrawnWithD2D = true;
             else
+            {
                 d2dOk = false;
+                quickNavD2DTarget_.Reset();
+                quickNavD2DIconCache_.clear();
+                quickNavShortcutArrowBitmap_.Reset();
+                quickNavShortcutArrowBitmapSize_ = {};
+                quickNavPlaceholderIconCache_.clear();
+            }
         }
 
         if (!desktopEntriesDrawnWithD2D)

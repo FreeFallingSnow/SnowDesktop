@@ -382,6 +382,10 @@ private:
     void RecreateItemTextFormat();
     /** @brief 创建或调整 DirectComposition 表面的大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
     HRESULT CreateOrResizeCompositionSurface();
+    /** @brief 清理绑定到当前 D2D/DComp 目标的缓存资源。 */
+    void ResetCompositionRenderCaches();
+    /** @brief 在 DComp 渲染失败后重置 surface 并安排一次恢复重绘。 */
+    void RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr);
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
     void OnPaint();
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */
@@ -1417,6 +1421,7 @@ private:
     ComPtr<IDCompositionVisual2> dcompVisual_;
     ComPtr<IDCompositionSurface> dcompSurface_;
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
+    bool compositionRenderRecoveryPending_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;

@@ -324,6 +324,38 @@ inline void DesktopApp::RecreateItemTextFormat()
     }
 }
 
+inline void DesktopApp::ResetCompositionRenderCaches()
+{
+    dragRenderCache_.Reset();
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+    d2dIconCache_.clear();
+    placeholderIconCache_.clear();
+    shortcutArrowBitmap_.Reset();
+    shortcutArrowBitmapSize_ = {};
+    itemTextShadowCache_.clear();
+    itemTextEffectContext_.Reset();
+}
+
+inline void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
+{
+    wchar_t buf[192];
+    wsprintfW(buf, L"%s FAILED hr=0x%08X; resetting composition surface",
+        stage ? stage : L"Render", static_cast<unsigned>(hr));
+    WriteCrashLogEntry(buf);
+
+    ResetCompositionRenderCaches();
+    dcompSurface_.Reset();
+    compositionWidth_ = 0;
+    compositionHeight_ = 0;
+
+    if (!compositionRenderRecoveryPending_ && hwnd_ && IsWindow(hwnd_))
+    {
+        compositionRenderRecoveryPending_ = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+}
+
 inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
     {
         RECT client{};
@@ -369,17 +401,20 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
 
 inline void DesktopApp::OnPaint()
     {
-        if (FAILED(CreateOrResizeCompositionSurface())) return;
+        HRESULT hr = CreateOrResizeCompositionSurface();
+        if (FAILED(hr))
+        {
+            RecoverCompositionRenderFailure(L"CreateOrResizeCompositionSurface", hr);
+            return;
+        }
 
         ID2D1DeviceContext* rawContext = nullptr;
         POINT updateOffset{};
-        HRESULT hr = dcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+        hr = dcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(&rawContext), &updateOffset);
         if (FAILED(hr))
         {
-            wchar_t buf[128];
-            wsprintfW(buf, L"BeginDraw FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            RecoverCompositionRenderFailure(L"BeginDraw", hr);
             return;
         }
 
@@ -405,19 +440,17 @@ inline void DesktopApp::OnPaint()
         hr = dcompSurface_->EndDraw();
         if (FAILED(hr))
         {
-            wchar_t buf[128];
-            wsprintfW(buf, L"EndDraw FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            RecoverCompositionRenderFailure(L"EndDraw", hr);
             return;
         }
 
         hr = dcompDevice_->Commit();
         if (FAILED(hr))
         {
-            wchar_t buf[128];
-            wsprintfW(buf, L"Paint Commit FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            RecoverCompositionRenderFailure(L"Paint Commit", hr);
+            return;
         }
+        compositionRenderRecoveryPending_ = false;
     }
 
 inline D2D1_RECT_F DesktopApp::ToD2DRect(const RECT& r)
