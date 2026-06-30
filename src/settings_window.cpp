@@ -52,6 +52,7 @@ static void SetupLightTheme()
     s.FrameRounding = 4.0f;
     s.WindowRounding = 0.0f;
     s.ChildRounding = 6.0f;
+    s.ScrollbarSize = 10.0f;
     s.ScrollbarRounding = 4.0f;
     s.GrabRounding = 4.0f;
     s.TabRounding = 4.0f;
@@ -87,7 +88,7 @@ static void SetupLightTheme()
     c[ImGuiCol_TableBorderStrong]    = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
     c[ImGuiCol_TableBorderLight]     = ImVec4(0.88f, 0.88f, 0.91f, 1.00f);
     c[ImGuiCol_Separator]            = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(1.00f, 1.00f, 1.00f, 0.00f);
     c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.80f, 0.80f, 0.84f, 1.00f);
     c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.70f, 0.70f, 0.75f, 1.00f);
     c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.60f, 0.60f, 0.65f, 1.00f);
@@ -316,14 +317,19 @@ void SettingsWindow::Render()
     {
         // Sidebar + Content layout
         const float sidebarW = 160.0f;
-        ImGui::BeginChild("##Sidebar", ImVec2(sidebarW, 0), true);
+        const float sidebarPad = 8.0f * dpiScale_;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sidebarPad, sidebarPad));
+        ImGui::BeginChild("##Sidebar", ImVec2(sidebarW, 0),
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
         DrawSidebar();
         ImGui::EndChild();
 
         ImGui::SameLine();
-        const float contentPadX = 16.0f * dpiScale_;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(contentPadX, 0.0f));
-        ImGui::BeginChild("##Content", ImVec2(0, 0), true);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::BeginChild("##Content", ImVec2(0, 0), ImGuiChildFlags_None,
+            ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PopStyleVar();
         switch (activePage_)
         {
@@ -580,8 +586,9 @@ void SettingsWindow::DrawBackupPage()
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
     pageSize.x = std::max(1.0f, pageSize.x);
     pageSize.y = std::max(1.0f, pageSize.y);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
-    ImGui::BeginChild("##BackupPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##BackupPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
     ImGui::Text("布局备份与恢复");
     ImGui::Separator();
@@ -665,8 +672,9 @@ void SettingsWindow::DrawGeneralPage()
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
     pageSize.x = std::max(1.0f, pageSize.x);
     pageSize.y = std::max(1.0f, pageSize.y);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
-    ImGui::BeginChild("##GeneralPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##GeneralPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
 
     ImGui::Text("通用设置");
@@ -767,8 +775,9 @@ void SettingsWindow::DrawDisplayPage()
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
     pageSize.x = std::max(1.0f, pageSize.x);
     pageSize.y = std::max(1.0f, pageSize.y);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
-    ImGui::BeginChild("##DisplayPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##DisplayPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
 
     const float labelW = 110.0f * dpiScale_;
@@ -904,8 +913,9 @@ void SettingsWindow::DrawPersonalizationPage()
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
     pageSize.x = std::max(1.0f, pageSize.x);
     pageSize.y = std::max(1.0f, pageSize.y);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
-    ImGui::BeginChild("##PersonalizationPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##PersonalizationPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
 
     auto nearlyEqual = [](float a, float b) {
@@ -1102,8 +1112,9 @@ void SettingsWindow::DrawDebugPage()
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
     pageSize.x = std::max(1.0f, pageSize.x);
     pageSize.y = std::max(1.0f, pageSize.y);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
-    ImGui::BeginChild("##DebugPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##DebugPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
 
     ImGui::Text("调试页");
@@ -1470,8 +1481,9 @@ void SettingsWindow::DrawAboutPage()
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
     pageSize.x = std::max(1.0f, pageSize.x);
     pageSize.y = std::max(1.0f, pageSize.y);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, pad));
-    ImGui::BeginChild("##AboutPageInner", pageSize, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##AboutPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
 
     ImGui::Text("关于 SnowDesktop");
