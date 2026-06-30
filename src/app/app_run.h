@@ -144,6 +144,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
     dragRenderCache_.Reset();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
+    placeholderIconCache_.clear();
     dcompSurface_.Reset();
     dcompVisual_.Reset();
     dcompTarget_.Reset();

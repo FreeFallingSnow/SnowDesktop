@@ -408,7 +408,6 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
         entry.name = item.name;
         entry.path = item.parsingName;
         entry.source = source;
-        entry.iconBitmap = item.iconBitmap;
         result.push_back(std::move(entry));
     };
 
@@ -461,7 +460,6 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
                     entry.name = entryData.name;
                     entry.path = entryData.fullPath;
                     entry.source = source;
-                    entry.iconBitmap = entryData.iconBitmap;
                     result.push_back(std::move(entry));
                 }
             }
@@ -483,7 +481,6 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
                 entry.name = entryData.name;
                 entry.path = entryData.fullPath;
                 entry.source = source;
-                entry.iconBitmap = entryData.iconBitmap;
                 result.push_back(std::move(entry));
             }
             return result;
@@ -567,7 +564,6 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
             entry.name = entryData.name;
             entry.path = entryData.fullPath;
             entry.source = source;
-            entry.iconBitmap = entryData.iconBitmap;
             result.push_back(std::move(entry));
         }
     }
@@ -1050,6 +1046,10 @@ inline void DesktopApp::DestroyQuickNavigationWindow()
         quickNavigationPathFont_ = nullptr;
     }
     quickNavD2DTarget_.Reset();
+    quickNavD2DIconCache_.clear();
+    quickNavShortcutArrowBitmap_.Reset();
+    quickNavShortcutArrowBitmapSize_ = {};
+    quickNavPlaceholderIconCache_.clear();
     if (quickNavMemoryBitmap_) { DeleteObject(quickNavMemoryBitmap_); quickNavMemoryBitmap_ = nullptr; }
     if (quickNavMemoryDc_)    { DeleteDC(quickNavMemoryDc_);       quickNavMemoryDc_    = nullptr; }
     quickNavMemWidth_ = 0;
@@ -1913,6 +1913,10 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     if (!quickNavMemoryDc_ || w != quickNavMemWidth_ || h != quickNavMemHeight_)
     {
         quickNavD2DTarget_.Reset();
+        quickNavD2DIconCache_.clear();
+        quickNavShortcutArrowBitmap_.Reset();
+        quickNavShortcutArrowBitmapSize_ = {};
+        quickNavPlaceholderIconCache_.clear();
         if (quickNavMemoryBitmap_) { DeleteObject(quickNavMemoryBitmap_); quickNavMemoryBitmap_ = nullptr; }
         if (quickNavMemoryDc_)    { DeleteDC(quickNavMemoryDc_);       quickNavMemoryDc_    = nullptr; }
 
@@ -1993,11 +1997,11 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         DrawTextW(memoryDc, text.c_str(), static_cast<int>(text.size()), &rect, flags);
         SelectObject(memoryDc, oldFont);
     };
-    auto drawBitmap = [&](HBITMAP bitmap, RECT dst) {
-        if (!bitmap) return;
+    auto drawBitmap = [&](HBITMAP bitmap, RECT dst) -> bool {
+        if (!bitmap) return false;
         BITMAP bm{};
         if (GetObjectW(bitmap, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
-            return;
+            return false;
 
         const int boundsWidth = std::max<LONG>(1, dst.right - dst.left);
         const int boundsHeight = std::max<LONG>(1, dst.bottom - dst.top);
@@ -2020,6 +2024,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         SetStretchBltMode(memoryDc, oldStretchMode);
         SelectObject(srcDc, oldSrc);
         DeleteDC(srcDc);
+        return true;
     };
     auto drawSystemIcon = [&](int iconIndex, RECT dst) {
         if (iconIndex < 0)
@@ -2258,15 +2263,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         }
 
-        for (size_t i = 0; i < entries.size(); ++i)
-        {
-            RECT itemRectApp = GetQuickNavigationItemRect(quickNavigationRect_, i);
-            if (itemRectApp.bottom <= contentApp.top ||
-                itemRectApp.top >= contentApp.bottom)
-                continue;
-
-            const QuickNavigationEntry& entry = entries[i];
-
+        auto drawNavigationEntryFallback = [&](const QuickNavigationEntry& entry, const RECT& itemRectApp) {
             const int cellW = itemRectApp.right - itemRectApp.left;
             const int cellH = itemRectApp.bottom - itemRectApp.top;
             const int maxIconW = std::max(QuickNavScale(16), cellW - QuickNavScale(8));
@@ -2287,10 +2284,89 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             if (PtInRect(&itemRectApp, lastMousePoint_) != FALSE)
                 fillRound(offsetRect(selRect), RGB(58, 68, 86), RGB(78, 92, 118), QuickNavScale(12));
 
-            drawBitmap(entry.iconBitmap, offsetRect(iconRect));
+            HBITMAP bitmap = nullptr;
+            int systemIconIndex = -1;
+            if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
+                entry.itemIndex < items_.size())
+            {
+                bitmap = items_[entry.itemIndex].iconBitmap;
+                systemIconIndex = items_[entry.itemIndex].sysIconIndex;
+            }
+            else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
+                entry.widgetIndex < widgets_.size() &&
+                entry.folderEntryIndex < widgets_[entry.widgetIndex].folderEntries.size())
+            {
+                const FolderEntry& folderEntry =
+                    widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
+                bitmap = folderEntry.iconBitmap;
+                systemIconIndex = folderEntry.sysIconIndex;
+            }
+
+            if (!drawBitmap(bitmap, offsetRect(iconRect)))
+            {
+                drawSystemIcon(systemIconIndex, offsetRect(iconRect));
+            }
 
             drawText(entry.name, offsetRect(textRect), quickNavigationItemFont_, RGB(245, 248, 252),
                 DT_CENTER | DT_TOP | DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS);
+        };
+
+        bool desktopEntriesDrawnWithD2D = false;
+        if (d2dOk && dcRenderTarget && !entries.empty())
+        {
+            dcRenderTarget->BeginDraw();
+            dcRenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            dcRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+            dcRenderTarget->SetTransform(D2D1::Matrix3x2F::Translation(
+                static_cast<float>(-quickNavigationRect_.left),
+                static_cast<float>(-quickNavigationRect_.top)));
+            dcRenderTarget->PushAxisAlignedClip(ToD2DRect(contentApp),
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+            for (size_t i = 0; i < entries.size(); ++i)
+            {
+                RECT itemRectApp = GetQuickNavigationItemRect(quickNavigationRect_, i);
+                if (itemRectApp.bottom <= contentApp.top ||
+                    itemRectApp.top >= contentApp.bottom)
+                    continue;
+
+                const QuickNavigationEntry& entry = entries[i];
+                const int state = PtInRect(&itemRectApp, lastMousePoint_) != FALSE ? 1 : 0;
+                if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
+                    entry.itemIndex < items_.size())
+                {
+                    DesktopIcon icon(&items_[entry.itemIndex], nullptr, this);
+                    icon.Draw(static_cast<ID2D1RenderTarget*>(dcRenderTarget), itemRectApp, state);
+                }
+                else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
+                    entry.widgetIndex < widgets_.size() &&
+                    entry.folderEntryIndex < widgets_[entry.widgetIndex].folderEntries.size())
+                {
+                    FolderEntryIcon icon(&widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex],
+                        nullptr, this);
+                    icon.Draw(static_cast<ID2D1RenderTarget*>(dcRenderTarget), itemRectApp, state);
+                }
+            }
+
+            dcRenderTarget->PopAxisAlignedClip();
+            dcRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
+            if (SUCCEEDED(dcRenderTarget->EndDraw()))
+                desktopEntriesDrawnWithD2D = true;
+            else
+                d2dOk = false;
+        }
+
+        if (!desktopEntriesDrawnWithD2D)
+        {
+            for (size_t i = 0; i < entries.size(); ++i)
+            {
+                RECT itemRectApp = GetQuickNavigationItemRect(quickNavigationRect_, i);
+                if (itemRectApp.bottom <= contentApp.top ||
+                    itemRectApp.top >= contentApp.bottom)
+                    continue;
+
+                drawNavigationEntryFallback(entries[i], itemRectApp);
+            }
         }
 
         if (!quickNavigationSearchText_.empty())

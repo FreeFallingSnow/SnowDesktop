@@ -254,7 +254,6 @@ public:
         std::wstring name;           /**< 显示名称 */
         std::wstring path;           /**< 完整路径 */
         std::wstring source;         /**< 来源标识 */
-        HBITMAP iconBitmap = nullptr; /**< 图标位图句柄 */
     };
 
     struct QuickNavigationEverythingEntry
@@ -1012,7 +1011,7 @@ private:
      * @param stroke 边框色
      * @param strokeWidth 边框宽度
      */
-    void DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT rect, float radius,
+    void DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth = 1.0f);
     /**
      * @brief 绘制填充矩形。
@@ -1021,7 +1020,7 @@ private:
      * @param fill 填充色
      * @param stroke 边框色
      */
-    void DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rect,
+    void DrawD2DFilledRectangle(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke);
     /**
      * @brief 绘制项的文字标签。
@@ -1031,7 +1030,7 @@ private:
      * @param selected 是否选中
      * @param opacity 透明度
      */
-    void DrawItemText(ID2D1DeviceContext* ctx, RECT bounds,
+    void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f);
     /**
      * @brief 使用桌面图标标题样式绘制已排版的文字。
@@ -1043,7 +1042,7 @@ private:
      * @param layoutScale 布局缩放
      * @param opacity 整体透明度
      */
-    void DrawStyledItemTextLayout(ID2D1DeviceContext* ctx,
+    void DrawStyledItemTextLayout(ID2D1RenderTarget* ctx,
         IDWriteTextLayout* layout, const std::wstring& shadowKey,
         D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
         float layoutScale, float opacity = 1.0f);
@@ -1055,7 +1054,7 @@ private:
      * @param format 文字格式
      * @param color 文字颜色
      */
-    void DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
+    void DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color);
     /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
     void DrawCollectionPopup(ID2D1DeviceContext* ctx);
@@ -1069,6 +1068,7 @@ private:
      * @return D2D 位图指针，失败返回 nullptr
      */
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
+    ID2D1Bitmap* GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm);
 
     /**
      * @brief 在指定矩形上绘制快捷方式箭头叠加层。
@@ -1076,7 +1076,7 @@ private:
      * @param iconRect 图标区域矩形（逻辑像素）
      * @param alpha 整体透明度
      */
-    void DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT iconRect, float alpha);
+    void DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect, float alpha);
 
     // ── Async Icon Loading ──────────────────────────────────
     void StartIconLoader();
@@ -1084,8 +1084,7 @@ private:
     void BeginIconLoadGeneration();
     void EnqueueIconLoad(IconLoadTask task);
     void OnIconLoaded(WPARAM wParam, LPARAM lParam);
-    void CacheSystemImageListSmall();
-    void DrawPlaceholderIcon(ID2D1DeviceContext* ctx, int sysIconIndex, RECT iconRect, float alpha);
+    void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect, float alpha);
 
     // ── Filtering ───────────────────────────────────────────
     /**
@@ -1401,7 +1400,7 @@ private:
     ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
-    ID2D1DeviceContext* brushCacheContext_ = nullptr;
+    ID2D1RenderTarget* brushCacheContext_ = nullptr;
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
@@ -1493,6 +1492,10 @@ private:
     int quickNavMemWidth_ = 0;
     int quickNavMemHeight_ = 0;
     ComPtr<ID2D1DCRenderTarget> quickNavD2DTarget_;
+    std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap>> quickNavD2DIconCache_;
+    ComPtr<ID2D1Bitmap> quickNavShortcutArrowBitmap_;
+    SIZE quickNavShortcutArrowBitmapSize_{};
+    std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavPlaceholderIconCache_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -1730,7 +1733,7 @@ private:
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
 
     /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
-    ComPtr<ID2D1Bitmap1> shortcutArrowBitmap_;
+    ComPtr<ID2D1Bitmap> shortcutArrowBitmap_;
     SIZE shortcutArrowBitmapSize_{};
 
     /** @name 异步图标加载 */
@@ -1743,10 +1746,7 @@ private:
     std::atomic<bool> iconLoaderRunning_{false};
     uint64_t iconLoadSerial_ = 0;
 
-    HIMAGELIST systemImageListSmall_ = nullptr;
-    ComPtr<ID2D1Bitmap1> systemIconStripBitmap_;
-    int systemIconStripCount_ = 0;
-    SIZE systemIconStripIconSize_{};
+    std::unordered_map<int, ComPtr<ID2D1Bitmap>> placeholderIconCache_;
     /** @} */
 
     /** @name 新建菜单 COM 上下文 */

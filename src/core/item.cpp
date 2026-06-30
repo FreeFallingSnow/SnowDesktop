@@ -97,6 +97,11 @@ Container* DesktopIcon::GetContainer() const { return container_; }
  */
 void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
+    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state);
+}
+
+void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
+{
     if (!app_ || !item_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
 
@@ -132,13 +137,13 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     }
     else
     {
-        ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(item_->iconBitmap);
+        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(context, item_->iconBitmap);
         if (bmp)
         {
             D2D1_RECT_F dst = D2D1::RectF(
                 static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
                 static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+            context->DrawBitmap(bmp, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         }
         else
         {
@@ -236,6 +241,11 @@ Container* FolderEntryIcon::GetContainer() const { return container_; }
  */
 void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
+    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state);
+}
+
+void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
+{
     if (!app_ || !entry_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
 
@@ -269,13 +279,13 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     }
     else
     {
-        ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(entry_->iconBitmap);
+        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(context, entry_->iconBitmap);
         if (bmp)
         {
             D2D1_RECT_F dst = D2D1::RectF(
                 static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
                 static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+            context->DrawBitmap(bmp, dst, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         }
         else
         {

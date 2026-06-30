@@ -406,10 +406,15 @@ inline RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
     return selection;
 }
 
-inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT rect, float radius,
+inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, float radius,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
 
     D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(ToD2DRect(rect), radius, radius);
     if (fill.a > 0.0f)
@@ -444,10 +449,15 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1DeviceContext* ctx, RECT re
     }
 }
 
-inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rect,
+inline void DesktopApp::DrawD2DFilledRectangle(ID2D1RenderTarget* ctx, RECT rect,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
 
     if (fill.a > 0.0f)
     {
@@ -477,12 +487,17 @@ inline void DesktopApp::DrawD2DFilledRectangle(ID2D1DeviceContext* ctx, RECT rec
     }
 }
 
-inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
+inline void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     IDWriteTextLayout* layout, const std::wstring& shadowKey,
     D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
     float layoutScale, float opacity)
 {
     if (!context || !layout || shadowKey.empty()) return;
+    if (context != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = context;
+    }
 
     auto getBrush = [&](const D2D1_COLOR_F& color) -> ID2D1SolidColorBrush* {
         const std::uint64_t key = D2DColorBrushKey(color);
@@ -502,7 +517,11 @@ inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
     const float tw = std::max(1.0f, layoutSize.width);
     const float th = std::max(1.0f, layoutSize.height);
     const float shadowScale = std::max(0.5f, layoutScale);
-    if (!itemTextEffectContext_ && d2dDevice_)
+    ComPtr<ID2D1DeviceContext> deviceContext;
+    const bool supportsEffects =
+        SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext;
+
+    if (supportsEffects && !itemTextEffectContext_ && d2dDevice_)
     {
         d2dDevice_->CreateDeviceContext(
             D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &itemTextEffectContext_);
@@ -516,7 +535,7 @@ inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
     // Render both shadow layers through Direct2D's continuous Gaussian shadow
     // effect. Cache the result per layout so normal desktop repaints only need
     // one bitmap draw per label.
-    if (itemTextEffectContext_)
+    if (supportsEffects && itemTextEffectContext_)
     {
         auto shadowIt = itemTextShadowCache_.find(shadowKey);
         if (shadowIt == itemTextShadowCache_.end())
@@ -633,7 +652,21 @@ inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
                     origin.y - shadowPadding,
                     origin.x - shadowPadding + shadowSize.width,
                     origin.y - shadowPadding + shadowSize.height),
-                opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+                opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        }
+    }
+    else
+    {
+        ID2D1SolidColorBrush* shadowBrush =
+            getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.80f * opacity));
+        if (shadowBrush)
+        {
+            context->DrawTextLayout(
+                D2D1::Point2F(origin.x + layoutScale, origin.y + layoutScale),
+                layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            context->DrawTextLayout(
+                D2D1::Point2F(origin.x, origin.y + layoutScale),
+                layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
 
@@ -642,7 +675,7 @@ inline void DesktopApp::DrawStyledItemTextLayout(ID2D1DeviceContext* context,
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
-inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
+inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     const std::wstring& text, bool selected, float opacity)
 {
     if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
@@ -693,10 +726,15 @@ inline void DesktopApp::DrawItemText(ID2D1DeviceContext* context, RECT bounds,
         D2D1::SizeF(tw, th), layoutScale, opacity);
 }
 
-inline void DesktopApp::DrawD2DText(ID2D1DeviceContext* ctx, const std::wstring& text,
+inline void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
     RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color)
 {
     if (!ctx || !format || text.empty() || IsRectEmptyRect(rect)) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
     const std::uint64_t key = D2DColorBrushKey(color);
     auto it = brushCache_.find(key);
     if (it == brushCache_.end())
@@ -1234,16 +1272,18 @@ inline void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
     drawArrow(nextRect, L"\u25B6", hasNext, dragging || hoverNext);
 }
 
-inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT iconRect, float alpha)
+inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect, float alpha)
 {
     if (!ctx) return;
 
-    if (!shortcutArrowBitmap_)
-    {
+    auto createArrowBitmap = [&](ComPtr<ID2D1Bitmap>& outBitmap, SIZE& outSize) -> bool {
+        if (outBitmap)
+            return true;
+
         SHSTOCKICONINFO sii{};
         sii.cbSize = sizeof(sii);
         if (FAILED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &sii)) || !sii.hIcon)
-            return;
+            return false;
 
         int w = GetSystemMetrics(SM_CXICON);
         int h = GetSystemMetrics(SM_CYICON);
@@ -1261,41 +1301,63 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT i
         bi.biBitCount = 32;
         bi.biCompression = BI_RGB;
 
-        HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS, nullptr, nullptr, 0);
+        HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi),
+            DIB_RGB_COLORS, nullptr, nullptr, 0);
         if (!dib)
         {
             DeleteDC(memDc);
             ReleaseDC(nullptr, screenDc);
             DestroyIcon(sii.hIcon);
-            return;
+            return false;
         }
 
         HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDc, dib));
         DrawIconEx(memDc, 0, 0, sii.hIcon, w, h, 0, nullptr, DI_NORMAL);
         SelectObject(memDc, oldBmp);
 
-        D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-            D2D1_BITMAP_OPTIONS_NONE,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-
         DIBSECTION ds{};
         GetObjectW(dib, sizeof(ds), &ds);
-        ComPtr<ID2D1Bitmap1> d2dBmp;
-        if (SUCCEEDED(ctx->CreateBitmap(D2D1::SizeU(w, h), nullptr, 0, &props, &d2dBmp)))
-        {
-            D2D1_RECT_U srcRect = D2D1::RectU(0, 0, static_cast<UINT32>(w), static_cast<UINT32>(h));
-            d2dBmp->CopyFromMemory(&srcRect, ds.dsBm.bmBits, ds.dsBm.bmWidthBytes);
-            shortcutArrowBitmap_ = std::move(d2dBmp);
-            shortcutArrowBitmapSize_ = { w, h };
-        }
+
+        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+        ComPtr<ID2D1Bitmap> bitmap;
+        HRESULT hr = ctx->CreateBitmap(D2D1::SizeU(w, h), ds.dsBm.bmBits,
+            static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
 
         DeleteObject(dib);
         DeleteDC(memDc);
         ReleaseDC(nullptr, screenDc);
         DestroyIcon(sii.hIcon);
+
+        if (FAILED(hr) || !bitmap)
+            return false;
+
+        outBitmap = std::move(bitmap);
+        outSize = { w, h };
+        return true;
+    };
+
+    ID2D1Bitmap* arrowBitmap = nullptr;
+    SIZE arrowBitmapSize{};
+
+    ComPtr<ID2D1DeviceContext> deviceContext;
+    if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext)
+    {
+        if (!createArrowBitmap(shortcutArrowBitmap_, shortcutArrowBitmapSize_))
+            return;
+        arrowBitmap = shortcutArrowBitmap_.Get();
+        arrowBitmapSize = shortcutArrowBitmapSize_;
+    }
+    else
+    {
+        if (!createArrowBitmap(quickNavShortcutArrowBitmap_, quickNavShortcutArrowBitmapSize_))
+            return;
+        arrowBitmap = quickNavShortcutArrowBitmap_.Get();
+        arrowBitmapSize = quickNavShortcutArrowBitmapSize_;
     }
 
-    if (!shortcutArrowBitmap_) return;
+    if (!arrowBitmap) return;
 
     float scale = static_cast<float>(iconRect.bottom - iconRect.top) / 64.0f;
     int arrowSz = static_cast<int>(30.0f * scale + 0.5f);
@@ -1309,73 +1371,80 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1DeviceContext* ctx, RECT i
         static_cast<float>(arrowX + arrowSz),
         static_cast<float>(arrowY + arrowSz));
 
-    ctx->DrawBitmap(shortcutArrowBitmap_.Get(), dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+    ctx->DrawBitmap(arrowBitmap, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
-inline void DesktopApp::CacheSystemImageListSmall()
-{
-    if (systemIconStripBitmap_) return;
-    HIMAGELIST himl = nullptr;
-    if (FAILED(SHGetImageList(SHIL_SMALL, IID_IImageList, reinterpret_cast<void**>(&himl))) || !himl)
-        return;
-    systemImageListSmall_ = himl;
-    int cx = 0, cy = 0, count = 0;
-    IImageList* imgList = reinterpret_cast<IImageList*>(himl);
-    imgList->GetIconSize(&cx, &cy);
-    imgList->GetImageCount(&count);
-    if (cx <= 0 || cy <= 0 || count <= 0) return;
-    systemIconStripCount_ = count;
-    systemIconStripIconSize_ = { cx, cy };
-
-    HDC screenDc = GetDC(nullptr);
-    HDC memDc = CreateCompatibleDC(screenDc);
-    int totalWidth = cx * count;
-    BITMAPINFOHEADER bi{};
-    bi.biSize = sizeof(bi);
-    bi.biWidth = totalWidth;
-    bi.biHeight = -cy;
-    bi.biPlanes = 1;
-    bi.biBitCount = 32;
-    bi.biCompression = BI_RGB;
-    HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS, nullptr, nullptr, 0);
-    if (!dib) { DeleteDC(memDc); ReleaseDC(nullptr, screenDc); return; }
-
-    HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDc, dib));
-    for (int i = 0; i < count; ++i)
-        ImageList_Draw(himl, i, memDc, i * cx, 0, ILD_TRANSPARENT | ILD_PRESERVEALPHA);
-    SelectObject(memDc, oldBmp);
-    DeleteDC(memDc);
-    ReleaseDC(nullptr, screenDc);
-
-    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_NONE, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-    DIBSECTION ds{};
-    GetObjectW(dib, sizeof(ds), &ds);
-    ComPtr<ID2D1Bitmap1> d2dBmp;
-    if (SUCCEEDED(d2dContext_->CreateBitmap(D2D1::SizeU(totalWidth, cy), nullptr, 0, &props, &d2dBmp)))
-    {
-        D2D1_RECT_U srcRect = D2D1::RectU(0, 0, static_cast<UINT32>(totalWidth), static_cast<UINT32>(cy));
-        d2dBmp->CopyFromMemory(&srcRect, ds.dsBm.bmBits, ds.dsBm.bmWidthBytes);
-        systemIconStripBitmap_ = std::move(d2dBmp);
-    }
-    DeleteObject(dib);
-}
-
-inline void DesktopApp::DrawPlaceholderIcon(ID2D1DeviceContext* ctx, int sysIconIndex, RECT iconRect, float alpha)
+inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect, float alpha)
 {
     if (!ctx || sysIconIndex < 0) return;
-    if (!systemIconStripBitmap_) CacheSystemImageListSmall();
-    if (!systemIconStripBitmap_ || sysIconIndex >= systemIconStripCount_) return;
 
-    int cx = systemIconStripIconSize_.cx;
-    int srcX = sysIconIndex * cx;
+    ComPtr<ID2D1DeviceContext> deviceContext;
+    const bool isDeviceContext =
+        SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext;
+    ID2D1RenderTarget* creationTarget = isDeviceContext && d2dContext_
+        ? static_cast<ID2D1RenderTarget*>(d2dContext_.Get())
+        : ctx;
+    auto& cache = isDeviceContext ? placeholderIconCache_ : quickNavPlaceholderIconCache_;
 
-    D2D1_RECT_F src = D2D1::RectF(static_cast<float>(srcX), 0.0f,
-        static_cast<float>(srcX + cx), static_cast<float>(systemIconStripIconSize_.cy));
+    auto cached = cache.find(sysIconIndex);
+    if (cached == cache.end())
+    {
+        ComPtr<IImageList> imageList;
+        HRESULT hr = SHGetImageList(SHIL_JUMBO, IID_IImageList,
+            reinterpret_cast<void**>(imageList.GetAddressOf()));
+        if (FAILED(hr) || !imageList)
+        {
+            imageList.Reset();
+            hr = SHGetImageList(SHIL_EXTRALARGE, IID_IImageList,
+                reinterpret_cast<void**>(imageList.GetAddressOf()));
+        }
+        if (FAILED(hr) || !imageList)
+        {
+            imageList.Reset();
+            hr = SHGetImageList(SHIL_LARGE, IID_IImageList,
+                reinterpret_cast<void**>(imageList.GetAddressOf()));
+        }
+        if (FAILED(hr) || !imageList)
+            return;
+
+        HICON icon = nullptr;
+        if (FAILED(imageList->GetIcon(sysIconIndex,
+                ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) || !icon)
+            return;
+
+        SIZE bitmapSize{};
+        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
+            icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
+        DestroyIcon(icon);
+        if (!alphaBitmap)
+            return;
+
+        DIBSECTION ds{};
+        if (GetObjectW(alphaBitmap, sizeof(ds), &ds) == 0 ||
+            !ds.dsBm.bmBits || ds.dsBm.bmWidth <= 0 || ds.dsBm.bmHeight == 0)
+        {
+            DeleteObject(alphaBitmap);
+            return;
+        }
+
+        const UINT width = static_cast<UINT>(ds.dsBm.bmWidth);
+        const UINT height = static_cast<UINT>(std::abs(ds.dsBm.bmHeight));
+        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        ComPtr<ID2D1Bitmap> bitmap;
+        HRESULT createHr = creationTarget->CreateBitmap(D2D1::SizeU(width, height),
+            ds.dsBm.bmBits, static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
+        DeleteObject(alphaBitmap);
+        if (FAILED(createHr) || !bitmap)
+            return;
+
+        cached = cache.emplace(sysIconIndex, std::move(bitmap)).first;
+    }
+
     D2D1_RECT_F dst = D2D1::RectF(
         static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
         static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-    ctx->DrawBitmap(systemIconStripBitmap_.Get(), dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR, &src);
+    ctx->DrawBitmap(cached->second.Get(), dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 /**
