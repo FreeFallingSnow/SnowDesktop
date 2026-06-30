@@ -821,6 +821,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetGeneralSettingsChangedCallback([this]() {
             LoadGeneralSettingsAndApply();
+            if (quickNavigationOpen_)
+                InvalidateQuickNavigationWindow();
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());

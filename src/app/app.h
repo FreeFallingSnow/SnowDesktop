@@ -496,6 +496,12 @@ private:
     static bool IsApplicationsShellLinkTarget(IShellLinkW* shellLink);
     /** @brief 计算快捷导航标签页的宽度。 */
     int GetQuickNavigationTabWidth() const;
+    /** @brief 获取指定标签页的显示名称。 */
+    std::wstring GetQuickNavTabLabel(size_t tab) const;
+    /** @brief 根据文字测量更新标签宽度缓存。 */
+    void UpdateQuickNavTabWidths();
+    /** @brief 根据拖拽位移计算目标标签索引（≥2）。 */
+    int GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const;
     /** @brief 确保 navTabOrder_ 包含所有集合组件 ID。 */
     void EnsureNavTabOrder();
 
@@ -1031,7 +1037,8 @@ private:
      * @param opacity 透明度
      */
     void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
-        const std::wstring& text, bool selected, float opacity = 1.0f);
+        const std::wstring& text, bool selected, float opacity = 1.0f,
+        bool lightTheme = false);
     /**
      * @brief 使用桌面图标标题样式绘制已排版的文字。
      * @param ctx D2D 上下文
@@ -1045,7 +1052,8 @@ private:
     void DrawStyledItemTextLayout(ID2D1RenderTarget* ctx,
         IDWriteTextLayout* layout, const std::wstring& shadowKey,
         D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
-        float layoutScale, float opacity = 1.0f);
+        float layoutScale, float opacity = 1.0f,
+        bool lightTheme = false);
     /**
      * @brief 使用指定格式绘制 D2D 文字。
      * @param ctx D2D 上下文
@@ -1421,6 +1429,7 @@ private:
     std::unique_ptr<WidgetEngine> widgetEngine_;
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
+    bool quickNavLightTheme_ = false;
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
@@ -1496,6 +1505,7 @@ private:
     ComPtr<ID2D1Bitmap> quickNavShortcutArrowBitmap_;
     SIZE quickNavShortcutArrowBitmapSize_{};
     std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavPlaceholderIconCache_;
+    std::vector<int> quickNavTabWidths_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);

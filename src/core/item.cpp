@@ -97,10 +97,10 @@ Container* DesktopIcon::GetContainer() const { return container_; }
  */
 void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
-    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state);
+    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false);
 }
 
-void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
+void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme)
 {
     if (!app_ || !item_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
@@ -116,8 +116,10 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
     {
         app_->DrawD2DRoundedRectangle(context, rect,
             6.0f * app_->GetItemLayoutScale(rect),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * alpha),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * alpha));
+            lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f * alpha)
+                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * alpha),
+            lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f * alpha)
+                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * alpha));
     }
 
     RECT iconRect = app_->GetItemIconRect(rect);
@@ -127,8 +129,10 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
         RECT sel = app_->GetItemSelectionRect(rect, true);
         app_->DrawD2DRoundedRectangle(context, sel,
             6.0f * app_->GetItemLayoutScale(rect),
-            D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * alpha),
-            D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
+            lightTheme ? D2D1::ColorF(0.20f, 0.40f, 0.70f, 0.18f * alpha)
+                       : D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * alpha),
+            lightTheme ? D2D1::ColorF(0.25f, 0.50f, 0.80f, 0.40f * alpha)
+                       : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
 
     if (item_->iconState == IconState::Loading)
@@ -155,7 +159,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
         app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
     if (!dragged)
-        app_->DrawItemText(context, rect, item_->name, selected, alpha);
+        app_->DrawItemText(context, rect, item_->name, selected, alpha, lightTheme);
 }
 
 /**
@@ -241,10 +245,10 @@ Container* FolderEntryIcon::GetContainer() const { return container_; }
  */
 void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
-    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state);
+    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false);
 }
 
-void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
+void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme)
 {
     if (!app_ || !entry_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
@@ -258,8 +262,10 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
     {
         app_->DrawD2DRoundedRectangle(context, rect,
             6.0f * app_->GetItemLayoutScale(rect),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * opacity),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * opacity));
+            lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f * opacity)
+                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * opacity),
+            lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f * opacity)
+                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * opacity));
     }
 
     RECT iconRect = app_->GetItemIconRect(rect);
@@ -269,8 +275,10 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
         app_->DrawD2DRoundedRectangle(context,
             app_->GetItemSelectionRect(rect, true),
             6.0f * app_->GetItemLayoutScale(rect),
-            D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),
-            D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
+            lightTheme ? D2D1::ColorF(0.20f, 0.40f, 0.70f, 0.18f * opacity)
+                       : D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),
+            lightTheme ? D2D1::ColorF(0.25f, 0.50f, 0.80f, 0.40f * opacity)
+                       : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
 
     if (entry_->iconState == IconState::Loading)
@@ -297,7 +305,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state)
         app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
 
     if (!dragged)
-        app_->DrawItemText(context, rect, entry_->name, selected, opacity);
+        app_->DrawItemText(context, rect, entry_->name, selected, opacity, lightTheme);
 }
 
 /**

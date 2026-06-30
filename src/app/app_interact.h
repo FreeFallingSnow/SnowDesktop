@@ -475,6 +475,7 @@ inline void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    quickNavLightTheme_ = (generalSettings_.quickNavTheme == 1);
 }
 
 inline void DesktopApp::ToggleDesktopIconsVisibility()

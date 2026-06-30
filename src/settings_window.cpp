@@ -731,6 +731,17 @@ void SettingsWindow::DrawGeneralPage()
 
     std::wstring hotkeyText = FormatNavigationHotkey(navigationSettings_);
     ImGui::TextDisabled("当前快捷键: %s", WideToUtf8(hotkeyText).c_str());
+
+    ImGui::Spacing();
+    const char* themeItems[] = { "暗色", "浅色" };
+    int themeIdx = generalSettings_.quickNavTheme;
+    ImGui::SetNextItemWidth(160.0f * dpiScale_);
+    if (ImGui::Combo("主题", &themeIdx, themeItems, IM_ARRAYSIZE(themeItems)))
+    {
+        generalSettings_.quickNavTheme = themeIdx;
+        generalSettingsDirty_ = true;
+    }
+
     ImGui::EndDisabled();
 
     ImGui::Spacing();
