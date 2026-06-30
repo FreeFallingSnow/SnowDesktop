@@ -1783,8 +1783,8 @@ inline void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
     }
     if (IsRectEmptyRect(workArea))
     {
-        if (!gridPages_.empty())
-            workArea = gridPages_[0].workArea;
+        if (const GridPage* firstPage = GetFirstPageGridPage())
+            workArea = firstPage->workArea;
         if (IsRectEmptyRect(workArea))
         {
             workArea.left = 0;
@@ -1851,8 +1851,8 @@ inline void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
     }
     if (IsRectEmptyRect(workArea))
     {
-        if (!gridPages_.empty())
-            workArea = gridPages_[0].workArea;
+        if (const GridPage* firstPage = GetFirstPageGridPage())
+            workArea = firstPage->workArea;
         if (IsRectEmptyRect(workArea))
         {
             workArea.left = 0;

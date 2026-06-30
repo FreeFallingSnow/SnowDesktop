@@ -34,7 +34,7 @@ inline bool GridAreaFitsPage(const GridPage& page, const GridCell& cell, GridSpa
  */
 inline const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
 {
-    const GridPage* fallback = gridPages_.empty() ? nullptr : &gridPages_.front();
+    const GridPage* fallback = GetFirstPageGridPage();
     for (const auto& page : gridPages_)
     {
         if (PtInRect(&page.bounds, point) || PtInRect(&page.workArea, point))
@@ -52,11 +52,11 @@ inline const GridPage* DesktopApp::GridPageFromScreenPoint(POINT screenPoint) co
 {
     HMONITOR hMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
     if (!hMonitor)
-        return gridPages_.empty() ? nullptr : &gridPages_.front();
+        return GetFirstPageGridPage();
     MONITORINFOEXW monitorInfo{};
     monitorInfo.cbSize = sizeof(monitorInfo);
     if (!GetMonitorInfoW(hMonitor, &monitorInfo))
-        return gridPages_.empty() ? nullptr : &gridPages_.front();
+        return GetFirstPageGridPage();
     std::wstring monitorId = monitorInfo.szDevice[0] != L'\0'
         ? monitorInfo.szDevice
         : L"";
@@ -65,7 +65,7 @@ inline const GridPage* DesktopApp::GridPageFromScreenPoint(POINT screenPoint) co
         if (page.monitorId == monitorId)
             return &page;
     }
-    return gridPages_.empty() ? nullptr : &gridPages_.front();
+    return GetFirstPageGridPage();
 }
 
 /**
@@ -430,6 +430,25 @@ inline std::vector<size_t> DesktopApp::BuildMonitorRenderOrder() const
     return order;
 }
 
+inline const GridPage* DesktopApp::GetFirstPageGridPage() const
+{
+    if (gridPages_.empty()) return nullptr;
+
+    if (!savedPageIds_.empty())
+    {
+        const std::wstring& firstPageId = savedPageIds_.front();
+        for (const auto& page : gridPages_)
+            if (page.id == firstPageId)
+                return &page;
+    }
+
+    std::vector<size_t> order = BuildMonitorRenderOrder();
+    if (!order.empty() && order.front() < gridPages_.size())
+        return &gridPages_[order.front()];
+
+    return &gridPages_.front();
+}
+
 /**
  * @brief 检查指定页面是否包含任何内容（项目或组件）。
  * @param pageId 页面 ID。
@@ -726,14 +745,18 @@ inline void DesktopApp::PadPagesToMonitorCount()
     const size_t N = gridPages_.size();
     if (N == 0) return;
     const size_t target = N;   // 补齐到 N 个：每个显示器一个槽位页
+    std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
     while (savedPageIds_.size() < target)
     {
         std::wstring newId = GeneratePageId();
         const size_t refIdx = savedPageIds_.size();
-        const GridPage& refPage = (refIdx < gridPages_.size()) ? gridPages_[refIdx] : gridPages_.front();
+        const GridPage* refPage = (refIdx < monitorOrder.size() && monitorOrder[refIdx] < gridPages_.size())
+            ? &gridPages_[monitorOrder[refIdx]]
+            : GetFirstPageGridPage();
+        if (!refPage) return;
         savedPageIds_.push_back(newId);
-        savedPageColumns_[newId] = std::max(1, refPage.columns);
-        savedPageRows_[newId] = std::max(1, refPage.rows);
+        savedPageColumns_[newId] = std::max(1, refPage->columns);
+        savedPageRows_[newId] = std::max(1, refPage->rows);
     }
 }
 
@@ -805,9 +828,10 @@ inline void DesktopApp::ApplyPageMapping()
     {
         std::wstring firstId = GeneratePageId();
         savedPageIds_.push_back(firstId);
-        const GridPage& ref = gridPages_.front();
-        savedPageColumns_[firstId] = std::max(1, ref.columns);
-        savedPageRows_[firstId] = std::max(1, ref.rows);
+        const GridPage* ref = GetFirstPageGridPage();
+        if (!ref) return;
+        savedPageColumns_[firstId] = std::max(1, ref->columns);
+        savedPageRows_[firstId] = std::max(1, ref->rows);
     }
 
     PruneEmptyOverflowPages();
@@ -872,6 +896,16 @@ inline bool DesktopApp::TryFindFreeCell(
     GridSpan span, std::unordered_set<std::wstring>& usedSlots, GridCell& result,
     const std::wstring& preferredPageId, int preferredStartSlot) const
 {
+    // Automatic placement follows the configured first-page monitor order,
+    // not the physical left-to-right monitor order.
+    std::vector<size_t> pageOrder = BuildMonitorRenderOrder();
+    if (pageOrder.empty())
+    {
+        pageOrder.reserve(gridPages_.size());
+        for (size_t i = 0; i < gridPages_.size(); ++i)
+            pageOrder.push_back(i);
+    }
+
     auto tryPage = [&](const GridPage& page, int startSlot, GridCell& found) -> bool {
         const int capacity = std::max(1, page.columns * page.rows);
         for (int slot = std::clamp(startSlot, 0, capacity - 1); slot < capacity; ++slot)
@@ -898,8 +932,10 @@ inline bool DesktopApp::TryFindFreeCell(
         }
     }
 
-    for (const auto& page : gridPages_)
+    for (size_t pageIndex : pageOrder)
     {
+        if (pageIndex >= gridPages_.size()) continue;
+        const auto& page = gridPages_[pageIndex];
         if (!preferredPageId.empty() && page.id == preferredPageId) continue;
         if (tryPage(page, 0, result))
             return true;
@@ -1102,12 +1138,13 @@ inline void DesktopApp::RelayoutDisplacedItems()
 inline void DesktopApp::SortIconsByName(bool ascending)
 {
     auto sortForPage = [&](const GridPage& page) {
+        const GridPage* firstPage = GetFirstPageGridPage();
         std::vector<size_t> order;
         for (size_t i = 0; i < items_.size(); ++i)
         {
             if (items_[i].name.empty() || IsItemInAnyWidget(items_[i])) continue;
             if (items_[i].gridCell.pageId.empty())
-                items_[i].gridCell.pageId = gridPages_.empty() ? L"" : gridPages_.front().id;
+                items_[i].gridCell.pageId = firstPage ? firstPage->id : L"";
             if (items_[i].gridCell.pageId == page.id)
                 order.push_back(i);
         }
@@ -1158,12 +1195,13 @@ inline void DesktopApp::SortIconsByName(bool ascending)
 inline void DesktopApp::SortIconsByType(bool ascending)
 {
     auto sortForPage = [&](const GridPage& page) {
+        const GridPage* firstPage = GetFirstPageGridPage();
         std::vector<size_t> order;
         for (size_t i = 0; i < items_.size(); ++i)
         {
             if (items_[i].name.empty() || IsItemInAnyWidget(items_[i])) continue;
             if (items_[i].gridCell.pageId.empty())
-                items_[i].gridCell.pageId = gridPages_.empty() ? L"" : gridPages_.front().id;
+                items_[i].gridCell.pageId = firstPage ? firstPage->id : L"";
             if (items_[i].gridCell.pageId == page.id)
                 order.push_back(i);
         }
@@ -1882,7 +1920,10 @@ inline void DesktopApp::SaveLayoutSlots()
 
     std::vector<std::wstring> pagesToWrite = savedPageIds_;
     if (pagesToWrite.empty() && !gridPages_.empty())
-        pagesToWrite.push_back(gridPages_.front().id);
+    {
+        const GridPage* firstPage = GetFirstPageGridPage();
+        if (firstPage) pagesToWrite.push_back(firstPage->id);
+    }
 
     std::ofstream file(GetLayoutPath(), std::ios::binary | std::ios::trunc);
     if (!file) return;
@@ -2288,10 +2329,10 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     {
         if (item.name.empty()) continue;
         if (IsItemInAnyWidget(item)) continue;
-        if (!gridPages_.empty() && item.gridCell.pageId.empty())
-            item.gridCell.pageId = gridPages_.front().id;
 
-        auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
+        auto* page = item.gridCell.pageId.empty()
+            ? nullptr
+            : FindGridPage(gridPages_, item.gridCell.pageId);
         if (page == nullptr)
         {
             // Item belongs to a page not currently visible — mark its slots as used
@@ -3405,8 +3446,9 @@ inline void DesktopApp::UpdateDragGroupOrigin()
         }
     }
     GridCell groupOrigin;
+    const GridPage* firstPage = GetFirstPageGridPage();
     groupOrigin.pageId = anchorPageId.empty()
-        ? (gridPages_.empty() ? L"" : gridPages_.front().id)
+        ? (firstPage ? firstPage->id : L"")
         : anchorPageId;
     groupOrigin.column = minCol != INT_MAX ? minCol : 0;
     groupOrigin.row = minRow != INT_MAX ? minRow : 0;
@@ -3719,8 +3761,11 @@ inline std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
     std::vector<DropLanding> landings;
     if (sourceList.Empty()) return landings;
 
-    if (targetCell.pageId.empty() && !gridPages_.empty())
-        targetCell.pageId = gridPages_.front().id;
+    if (targetCell.pageId.empty())
+    {
+        const GridPage* firstPage = GetFirstPageGridPage();
+        if (firstPage) targetCell.pageId = firstPage->id;
+    }
     const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
     if (!page) return landings;
 
@@ -4918,10 +4963,11 @@ inline void DesktopApp::ApplyPendingPlacement()
                     RememberSavedPageId(cell.pageId);
                     // 参考末屏显示器的网格维度
                     auto monitorOrder = BuildMonitorRenderOrder();
-                    const GridPage& refPage = !monitorOrder.empty()
-                        ? gridPages_[monitorOrder.back()] : gridPages_.front();
-                    savedPageColumns_[cell.pageId] = std::max(1, refPage.columns);
-                    savedPageRows_[cell.pageId] = std::max(1, refPage.rows);
+                    const GridPage* refPage = !monitorOrder.empty()
+                        ? &gridPages_[monitorOrder.back()] : GetFirstPageGridPage();
+                    if (!refPage) break;
+                    savedPageColumns_[cell.pageId] = std::max(1, refPage->columns);
+                    savedPageRows_[cell.pageId] = std::max(1, refPage->rows);
                 }
 
                 bool found = false;
@@ -5049,7 +5095,10 @@ inline void DesktopApp::LayoutItems()
     {
         if (item.name.empty()) { item.bounds = {}; continue; }
         if (!gridPages_.empty() && item.gridCell.pageId.empty())
-            item.gridCell.pageId = gridPages_.front().id;
+        {
+            const GridPage* firstPage = GetFirstPageGridPage();
+            if (firstPage) item.gridCell.pageId = firstPage->id;
+        }
         auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
         if (page)
         {
@@ -5066,7 +5115,10 @@ inline void DesktopApp::LayoutItems()
     for (auto& widget : widgets_)
     {
         if (!gridPages_.empty() && widget.gridCell.pageId.empty())
-            widget.gridCell.pageId = gridPages_.front().id;
+        {
+            const GridPage* firstPage = GetFirstPageGridPage();
+            if (firstPage) widget.gridCell.pageId = firstPage->id;
+        }
         const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (page)
         {
@@ -5478,8 +5530,8 @@ inline void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     }
     if (cell.pageId.empty())
     {
-        if (!gridPages_.empty())
-            cell = { gridPages_[0].id, 0, 0 };
+        if (const GridPage* firstPage = GetFirstPageGridPage())
+            cell = { firstPage->id, 0, 0 };
         if (cell.pageId.empty()) return;
     }
 

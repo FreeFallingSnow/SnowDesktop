@@ -790,6 +790,8 @@ private:
     size_t FirstMonitorOrderIndex() const;
     /** @brief 构建显示器渲染顺序列表。 @return 显示器索引列表 */
     std::vector<size_t> BuildMonitorRenderOrder() const;
+    /** @brief 获取当前显示首屏页的网格页面。 */
+    const GridPage* GetFirstPageGridPage() const;
     /**
      * @brief 尝试在网格中查找空闲单元格。
      * @param span 网格跨度
