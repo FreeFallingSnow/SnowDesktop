@@ -671,7 +671,14 @@ inline RECT DesktopApp::GetQuickNavigationRect() const
     const int widthLimit = std::max(QuickNavScale(320), workWidth - QuickNavScale(48));
     const int heightLimit = std::max(QuickNavScale(280), workHeight - QuickNavScale(48));
     const int width = std::min(widthLimit, std::max(QuickNavScale(520), std::min(QuickNavScale(860), workWidth - QuickNavScale(120))));
-    const int height = std::min(heightLimit, std::max(QuickNavScale(360), std::min(QuickNavScale(620), workHeight - QuickNavScale(120))));
+    const int contentTop = QuickNavScale(100);
+    const int cellH = QuickNavScale(kQuickNavigationCellHeight);
+    const int contentPad = QuickNavScale(12);
+    const int idealH = contentTop + cellH + contentPad;
+    const int availH = workHeight - QuickNavScale(120);
+    int rows = std::clamp((availH - contentTop - contentPad) / cellH, 1, 6);
+    const int height = std::min(heightLimit,
+        std::max(idealH, contentTop + rows * cellH + contentPad));
     const int left = work.left + (workWidth - width) / 2;
     const int top = work.top + (workHeight - height) / 2;
     return MakeRect(left, top, left + width, top + height);
@@ -685,8 +692,8 @@ inline RECT DesktopApp::GetQuickNavigationSearchRect(const RECT& overlay) const
 
 inline RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
 {
-    return MakeRect(overlay.left + QuickNavScale(22), overlay.top + QuickNavScale(64),
-        overlay.right - QuickNavScale(22), overlay.top + QuickNavScale(98));
+    return MakeRect(overlay.left + QuickNavScale(16), overlay.top + QuickNavScale(58),
+        overlay.right - QuickNavScale(16), overlay.top + QuickNavScale(88));
 }
 
 inline RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
@@ -694,7 +701,7 @@ inline RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
     if (!quickNavigationSearchText_.empty())
         return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(66),
             overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
-    return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(112),
+    return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(100),
         overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
 }
 
@@ -754,6 +761,7 @@ inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t ta
     RECT tabs = GetQuickNavigationTabsRect(overlay);
     const int gap = QuickNavScale(8);
     const int sepGap = QuickNavScale(6);
+    const int scrollPad = sepGap + QuickNavScale(1) + gap; // separator + gap after
 
     const size_t n = quickNavTabWidths_.size();
     if (n == 0)
@@ -777,7 +785,7 @@ inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t ta
     {
         left = tabs.left;
         if (n > 1)
-            left = tabs.left + quickNavTabWidths_[0] + gap + quickNavTabWidths_[1] + gap + sepGap + QuickNavScale(2) + sepGap;
+            left = tabs.left + quickNavTabWidths_[0] + gap + quickNavTabWidths_[1] + scrollPad;
         for (size_t i = 2; i < tabIndex && i < n; ++i)
             left += quickNavTabWidths_[i] + gap;
         left -= quickNavigationTabScrollOffset_;
@@ -2186,12 +2194,12 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         const auto& tabWidths = quickNavTabWidths_;
         const int gap = QuickNavScale(8);
         const int sepGap = QuickNavScale(6);
-
         const int fixedWidth = (tabWidths.size() >= 2 ? tabWidths[0] + gap + tabWidths[1] : 0);
+        const int scrollPad = sepGap + QuickNavScale(1) + gap; // separator + gap after
         auto calcTabPosX = [&](size_t tabIdx) -> int {
             if (tabIdx == 0) return tabs.left;
             if (tabIdx == 1) return tabs.left + tabWidths[0] + gap;
-            int x = tabs.left + fixedWidth + gap + sepGap + QuickNavScale(2) + sepGap;
+            int x = tabs.left + fixedWidth + scrollPad;
             for (size_t i = 2; i < tabIdx && i < tabWidths.size(); ++i)
                 x += tabWidths[i] + gap;
             return x - quickNavigationTabScrollOffset_;
@@ -2209,9 +2217,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             RECT tabRect = MakeRect(posX, tabs.top, posX + tw, tabs.bottom);
             if (tab >= 2)
             {
-                int scrollStart = tabs.left + fixedWidth + gap + sepGap + QuickNavScale(2) + sepGap;
+                int scrollStart = tabs.left + fixedWidth + scrollPad;
                 if (tabRect.right <= scrollStart || tabRect.left >= tabs.right) return;
-                tabRect.left = std::max<LONG>(tabRect.left, scrollStart);
             }
             else if (tab <= 1)
             {
@@ -2253,7 +2260,30 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         RECT sepRect = MakeRect(sepX, tabs.top + QuickNavScale(8), sepX + QuickNavScale(1), tabs.bottom - QuickNavScale(8));
         fillRound(sepRect, t.tabSeparator, t.tabSeparator, 0);
 
-        for (size_t tab = 0; tab < tabCount; ++tab)
+        // Draw fixed tabs (0, 1) and dragged tab displacement
+        for (size_t tab = 0; tab < tabCount && tab < 2; ++tab)
+        {
+            if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
+                continue;
+            int offsetX = 0;
+            if (quickNavTabDragging_ && dragTargetTab >= 1)
+            {
+                size_t src = quickNavTabDragIndex_;
+                int dst = dragTargetTab;
+                int cur = static_cast<int>(tab);
+                int shift = (quickNavTabDragIndex_ < tabWidths.size()
+                    ? tabWidths[quickNavTabDragIndex_] + gap : tabWidths[0] + gap);
+                if (cur > src && cur <= dst) offsetX = -shift;
+                else if (cur < src && cur >= dst) offsetX = shift;
+            }
+            drawTab(tab, offsetX);
+        }
+
+        // Clip to scrollable area for remaining tabs
+        int scrollLeft = tabs.left + fixedWidth + scrollPad;
+        IntersectClipRect(memoryDc, scrollLeft, tabs.top, tabs.right, tabs.bottom);
+
+        for (size_t tab = 2; tab < tabCount; ++tab)
         {
             if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
                 continue;
