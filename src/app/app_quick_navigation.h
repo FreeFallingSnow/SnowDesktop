@@ -8,12 +8,37 @@
 #pragma once
 
 #include <dwmapi.h>
+#include "pinyin_table.h"
 
 // ── Quick Navigation ───────────────────────────────────────
 
 inline constexpr DWORD kQuickNavigationEverythingResultLimit = 200;
 inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
+
+// ── Pinyin Initial Matching ──────────────────────────────────
+
+inline std::string GetPinyinInitials(const std::wstring& name)
+{
+    std::string result;
+    result.reserve(name.size());
+    for (wchar_t ch : name)
+    {
+        if (ch >= 0x4E00 && ch <= 0x9FFF)
+        {
+            unsigned char c = kPinyinInit[static_cast<size_t>(ch) - 0x4E00];
+            if (c) result += static_cast<char>(c);
+        }
+        else if ((ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z') ||
+                 (ch >= L'0' && ch <= L'9'))
+        {
+            result += static_cast<char>(ch >= L'a' ? ch - L'a' + L'A' : ch);
+        }
+    }
+    return result;
+}
+
+// ── Quick Navigation Name Matching ───────────────────────────
 
 inline int QuickNavigationNameMatchRank(
     const std::wstring& name, const std::wstring& normalizedQuery)
@@ -33,10 +58,27 @@ inline int QuickNavigationNameMatchRank(
             return 0;
     }
 
-    if (normalizedName.rfind(normalizedQuery, 0) == 0)
-        return 1;
+    std::string pinyin = GetPinyinInitials(name);
+    if (!pinyin.empty())
+    {
+        std::string narrowQuery(normalizedQuery.begin(), normalizedQuery.end());
+        if (pinyin == narrowQuery)
+            return 1;
+        if (pinyin.find(narrowQuery) == 0)
+            return 2;
+    }
 
-    return normalizedName.find(normalizedQuery) != std::wstring::npos ? 2 : 3;
+    if (normalizedName.rfind(normalizedQuery, 0) == 0)
+        return 3;
+
+    if (!pinyin.empty())
+    {
+        std::string narrowQuery(normalizedQuery.begin(), normalizedQuery.end());
+        if (pinyin.find(narrowQuery) != std::string::npos)
+            return 4;
+    }
+
+    return normalizedName.find(normalizedQuery) != std::wstring::npos ? 5 : 6;
 }
 
 inline std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
@@ -262,11 +304,16 @@ inline void DesktopApp::RefreshQuickNavigationAppResults()
         return;
 
     const std::wstring normalizedQuery = ToUpperInvariant(quickNavigationSearchText_);
+    const std::string narrowQuery(normalizedQuery.begin(), normalizedQuery.end());
     for (size_t i = 0; i < quickNavigationAppEntries_.size(); ++i)
     {
         const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[i];
         if (ToUpperInvariant(entry.name).find(normalizedQuery) == std::wstring::npos)
-            continue;
+        {
+            std::string py = GetPinyinInitials(entry.name);
+            if (py.empty() || py.find(narrowQuery) == std::string::npos)
+                continue;
+        }
         quickNavigationAppResultIndices_.push_back(i);
     }
 
@@ -389,10 +436,16 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
     std::vector<QuickNavigationEntry> result;
     std::unordered_set<std::wstring> seenDesktop;
     std::wstring query = ToUpperInvariant(quickNavigationSearchText_);
+    std::string narrowQuery(query.begin(), query.end());
 
     auto matches = [&](const std::wstring& name) {
         if (query.empty()) return true;
-        return ToUpperInvariant(name).find(query) != std::wstring::npos;
+        if (ToUpperInvariant(name).find(query) != std::wstring::npos)
+            return true;
+        std::string py = GetPinyinInitials(name);
+        if (!py.empty() && py.find(narrowQuery) != std::string::npos)
+            return true;
+        return false;
     };
     auto appendDesktop = [&](size_t itemIndex, const std::wstring& source) {
         if (itemIndex >= items_.size()) return;
