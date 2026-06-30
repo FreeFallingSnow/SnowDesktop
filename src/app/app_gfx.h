@@ -1000,15 +1000,13 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         if (wc)
         {
             RECT bodyRect = wc->GetBodyRect();
-            if (popupWidgetIndex_ < widgets_.size() &&
-                wc->GetWidgetData() == &widgets_[popupWidgetIndex_])
+            const bool popupTarget = popupWidgetIndex_ < widgets_.size() &&
+                wc->GetWidgetData() == &widgets_[popupWidgetIndex_] &&
+                targetSlot == popupDragTargetSlot_.get();
+            if (popupTarget)
             {
                 RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-                RECT popupContent = GetCollectionPopupContentRect(popup);
-                RECT widgetVp = wc->GetContentViewportRect();
-                IntersectRect(&clipViewport, &popupContent, &widgetVp);
-                clipViewport.left = popup.left;
-                clipViewport.right = popup.right;
+                clipViewport = GetCollectionPopupContentRect(popup);
             }
             else
             {
