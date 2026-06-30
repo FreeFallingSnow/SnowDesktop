@@ -1483,7 +1483,7 @@ private:
     HWND quickNavigationHwnd_ = nullptr;
     HWND quickNavigationSearchEdit_ = nullptr;
     HFONT quickNavigationSearchFont_ = nullptr;
-    HFONT quickNavigationTitleFont_ = nullptr;
+
     HFONT quickNavigationTabFont_ = nullptr;
     HFONT quickNavigationItemFont_ = nullptr;
     HFONT quickNavigationPathFont_ = nullptr;

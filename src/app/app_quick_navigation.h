@@ -626,22 +626,22 @@ inline RECT DesktopApp::GetQuickNavigationRect() const
 
 inline RECT DesktopApp::GetQuickNavigationSearchRect(const RECT& overlay) const
 {
-    return MakeRect(overlay.left + QuickNavScale(16), overlay.top + QuickNavScale(54),
-        overlay.right - QuickNavScale(16), overlay.top + QuickNavScale(86));
+    return MakeRect(overlay.left + QuickNavScale(16), overlay.top + QuickNavScale(18),
+        overlay.right - QuickNavScale(16), overlay.top + QuickNavScale(50));
 }
 
 inline RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
 {
-    return MakeRect(overlay.left + QuickNavScale(22), overlay.top + QuickNavScale(100),
-        overlay.right - QuickNavScale(22), overlay.top + QuickNavScale(134));
+    return MakeRect(overlay.left + QuickNavScale(22), overlay.top + QuickNavScale(64),
+        overlay.right - QuickNavScale(22), overlay.top + QuickNavScale(98));
 }
 
 inline RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
 {
     if (!quickNavigationSearchText_.empty())
-        return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(102),
+        return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(66),
             overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
-    return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(148),
+    return MakeRect(overlay.left + QuickNavScale(12), overlay.top + QuickNavScale(112),
         overlay.right - QuickNavScale(12), overlay.bottom - QuickNavScale(12));
 }
 
@@ -1025,11 +1025,6 @@ inline void DesktopApp::DestroyQuickNavigationWindow()
         DeleteObject(quickNavigationSearchFont_);
         quickNavigationSearchFont_ = nullptr;
     }
-    if (quickNavigationTitleFont_)
-    {
-        DeleteObject(quickNavigationTitleFont_);
-        quickNavigationTitleFont_ = nullptr;
-    }
     if (quickNavigationTabFont_)
     {
         DeleteObject(quickNavigationTabFont_);
@@ -1070,7 +1065,7 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
         return;
 
     quickNavigationSearchEdit_ = CreateWindowExW(0, L"EDIT", L"",
-        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        WS_CHILD | ES_AUTOHSCROLL,
         0, 0, 1, 1, quickNavigationHwnd_, reinterpret_cast<HMENU>(1002),
         instance_, nullptr);
     if (!quickNavigationSearchEdit_)
@@ -1084,7 +1079,7 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
     SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(QuickNavScale(10), QuickNavScale(10)));
     SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
-        reinterpret_cast<LPARAM>(L"搜索桌面项目、映射文件夹、应用和 Everything..."));
+        reinterpret_cast<LPARAM>(L"在桌面、应用、Everything中搜索"));
     SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
 }
@@ -1102,7 +1097,7 @@ inline void DesktopApp::UpdateQuickNavigationSearchEditRect()
         search.left + QuickNavScale(4), search.top + QuickNavScale(6),
         std::max<LONG>(1, search.right - search.left - QuickNavScale(8)),
         std::max<LONG>(1, search.bottom - search.top - QuickNavScale(10)),
-        SWP_SHOWWINDOW);
+        SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 /**
@@ -1325,13 +1320,9 @@ inline void DesktopApp::OpenQuickNavigation()
         quickNavigationOpenPoint_ = lastMousePoint_;
     }
 
-    if (quickNavigationTitleFont_) { DeleteObject(quickNavigationTitleFont_); quickNavigationTitleFont_ = nullptr; }
     if (quickNavigationTabFont_)   { DeleteObject(quickNavigationTabFont_);   quickNavigationTabFont_   = nullptr; }
     if (quickNavigationItemFont_)  { DeleteObject(quickNavigationItemFont_);  quickNavigationItemFont_  = nullptr; }
     if (quickNavigationPathFont_)  { DeleteObject(quickNavigationPathFont_);  quickNavigationPathFont_  = nullptr; }
-    quickNavigationTitleFont_ = CreateFontW(-QuickNavScale(18), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     quickNavigationTabFont_ = CreateFontW(-QuickNavScale(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
@@ -1370,6 +1361,8 @@ inline void DesktopApp::OpenQuickNavigation()
         SetWindowTextW(quickNavigationSearchEdit_, L"");
     ShowWindow(quickNavigationHwnd_, SW_SHOWNA);
     AnimateWindow(quickNavigationHwnd_, 160, AW_BLEND);
+    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+        ShowWindow(quickNavigationSearchEdit_, SW_SHOW);
     SetForegroundWindow(quickNavigationHwnd_);
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
     {
@@ -1401,7 +1394,11 @@ inline void DesktopApp::CloseQuickNavigation()
     quickNavTabDragDeltaX_ = 0;
     quickNavTabDragging_ = false;
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+    {
+        if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+            ShowWindow(quickNavigationSearchEdit_, SW_HIDE);
         AnimateWindow(quickNavigationHwnd_, 120, AW_BLEND | AW_HIDE);
+    }
     DestroyQuickNavigationWindow();
     if (customDesktopVisible_)
         FocusDesktopInputWindow();
@@ -1952,35 +1949,6 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         return rect;
     };
     auto fillRound = [&](RECT rect, COLORREF fill, COLORREF stroke, int radius) {
-        if (d2dOk && dcRenderTarget)
-        {
-            ComPtr<ID2D1SolidColorBrush> fillBrush;
-            ComPtr<ID2D1SolidColorBrush> strokeBrush;
-            const D2D1_COLOR_F fillColor = D2D1::ColorF(
-                GetRValue(fill) / 255.0f, GetGValue(fill) / 255.0f, GetBValue(fill) / 255.0f);
-            const D2D1_COLOR_F strokeColor = D2D1::ColorF(
-                GetRValue(stroke) / 255.0f, GetGValue(stroke) / 255.0f, GetBValue(stroke) / 255.0f);
-            if (SUCCEEDED(dcRenderTarget->CreateSolidColorBrush(fillColor, &fillBrush)) &&
-                SUCCEEDED(dcRenderTarget->CreateSolidColorBrush(strokeColor, &strokeBrush)))
-            {
-                const float cornerRadius = std::max(0.5f, radius * 0.5f);
-                const D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(
-                    D2D1::RectF(
-                        static_cast<float>(rect.left) + 0.5f,
-                        static_cast<float>(rect.top) + 0.5f,
-                        static_cast<float>(rect.right) - 0.5f,
-                        static_cast<float>(rect.bottom) - 0.5f),
-                    cornerRadius, cornerRadius);
-                dcRenderTarget->BeginDraw();
-                dcRenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                dcRenderTarget->FillRoundedRectangle(rounded, fillBrush.Get());
-                dcRenderTarget->DrawRoundedRectangle(rounded, strokeBrush.Get(), 1.0f);
-                if (SUCCEEDED(dcRenderTarget->EndDraw()))
-                    return;
-                d2dOk = false;
-            }
-        }
-
         HBRUSH brush = CreateSolidBrush(fill);
         HPEN pen = CreatePen(PS_SOLID, 1, stroke);
         HGDIOBJ oldBrush = SelectObject(memoryDc, brush);
@@ -2068,17 +2036,6 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
         GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
 
-    RECT titleRect = offsetRect(MakeRect(quickNavigationRect_.left + QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(18),
-        quickNavigationRect_.right - QuickNavScale(24), quickNavigationRect_.top + QuickNavScale(46)));
-    std::wstring title = L"快捷导航";
-    const size_t totalResultCount = entries.size()
-        + quickNavigationAppResultIndices_.size()
-        + quickNavigationEverythingResults_.size();
-    if (totalResultCount > 0)
-        title += L"  " + std::to_wstring(totalResultCount) + L" 项";
-    drawText(title, titleRect, quickNavigationTitleFont_, RGB(245, 248, 252),
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
     RECT searchRect = offsetRect(GetQuickNavigationSearchRect(quickNavigationRect_));
     fillRound(searchRect, RGB(255, 255, 255), RGB(92, 105, 128), QuickNavScale(12));
 
@@ -2123,9 +2080,6 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 if (tabRect.right <= tabs.left || tabRect.left >= tabs.left + fixedWidth + sepGap) return;
                 tabRect.right = std::min(tabRect.right, tabs.left + fixedWidth + sepGap);
             }
-            tabRect.left = std::max(tabRect.left, tabs.left);
-            tabRect.right = std::min(tabRect.right, tabs.right);
-
             const bool active = (tab == 0 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
                 || (tab == 1 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
                 || (tab > 1 && quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 2]);
