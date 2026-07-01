@@ -354,6 +354,8 @@ private:
     void FocusDesktopInputWindow();
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
+    /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
+    void RequestRestart();
     /** @brief 隐藏 Explorer 原生桌面图标。 */
     void HideExplorerIcons();
     /** @brief 恢复 Explorer 原生桌面图标。 */

@@ -58,6 +58,7 @@ constexpr UINT kTrayDesktopIconUserFiles = 40008;
 constexpr UINT kTrayDesktopIconNetwork = 40009;
 constexpr UINT kTrayDesktopIconControlPanel = 40010;
 constexpr UINT kTrayDesktopIconRecycleBin = 40011;
+constexpr UINT kTrayRestartCommand = 40013;
 
 // ── 桌面特殊图标CLSID ─────────────────────────
 constexpr wchar_t kDesktopIconClsidThisPC[] = L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}";

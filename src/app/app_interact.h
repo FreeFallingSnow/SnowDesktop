@@ -6886,6 +6886,7 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
+    AppendMenuW(menu, MF_STRING, kTrayRestartCommand, L"重启软件");
     AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
     SetForegroundWindow(controlHwnd_ ? controlHwnd_ : hwnd_);
@@ -6922,6 +6923,9 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
         break;
     case kTraySettingsCommand:
         ShowSettingsWindow();
+        break;
+    case kTrayRestartCommand:
+        RequestRestart();
         break;
     case kTrayExitCommand:
         if (settingsWindow_)

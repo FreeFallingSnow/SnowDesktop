@@ -458,6 +458,62 @@ inline void DesktopApp::RequestExit()
         PostQuitMessage(0);
 }
 
+inline void DesktopApp::RequestRestart()
+{
+    wchar_t exePath[MAX_PATH * 4]{};
+    const DWORD pathLen = GetModuleFileNameW(
+        nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+    if (pathLen == 0 || pathLen >= std::size(exePath))
+    {
+        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+            L"无法获取 SnowDesktop 的程序路径。", L"重启失败",
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    std::wstring commandLine = L"\"";
+    commandLine.append(exePath, pathLen);
+    commandLine.push_back(L'"');
+    std::vector<wchar_t> commandLineBuffer(commandLine.begin(), commandLine.end());
+    commandLineBuffer.push_back(L'\0');
+
+    std::wstring workingDir(exePath, pathLen);
+    const size_t slash = workingDir.find_last_of(L"\\/");
+    if (slash != std::wstring::npos)
+        workingDir.resize(slash);
+    else
+        workingDir.clear();
+
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    PROCESS_INFORMATION processInfo{};
+    const BOOL created = CreateProcessW(
+        exePath,
+        commandLineBuffer.data(),
+        nullptr,
+        nullptr,
+        FALSE,
+        0,
+        nullptr,
+        workingDir.empty() ? nullptr : workingDir.c_str(),
+        &startupInfo,
+        &processInfo);
+
+    if (!created)
+    {
+        const DWORD error = GetLastError();
+        std::wstring message = L"无法启动新的 SnowDesktop 实例。\n错误码：";
+        message += std::to_wstring(error);
+        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
+            L"重启失败", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+    RequestExit();
+}
+
 /**
  * @brief 应用程序主入口 —— 初始化与消息循环
  *
