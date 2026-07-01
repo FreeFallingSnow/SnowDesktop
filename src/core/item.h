@@ -117,7 +117,7 @@ public:
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     void Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme = false,
-        bool drawText = true);
+        bool drawText = true, bool quickNavLayout = false);
     ComPtr<IDataObject> CreateDataObject() override;
     DesktopItem* GetDesktopItem() const { return item_; }
     DesktopApp* GetApp() const { return app_; }
@@ -156,7 +156,7 @@ public:
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     void Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme = false,
-        bool drawText = true);
+        bool drawText = true, bool quickNavLayout = false);
     ComPtr<IDataObject> CreateDataObject() override;
     FolderEntry* GetFolderEntry() const { return entry_; }
     DesktopApp* GetApp() const { return app_; }

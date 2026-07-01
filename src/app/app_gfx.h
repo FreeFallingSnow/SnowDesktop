@@ -561,6 +561,25 @@ inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
 }
 
+inline RECT DesktopApp::GetQuickNavItemIconRect(RECT bounds) const
+{
+    const int cellW = std::max<LONG>(1, bounds.right - bounds.left);
+    const int cellH = std::max<LONG>(1, bounds.bottom - bounds.top);
+    const int inset = std::max(1, QuickNavScale(2));
+    const int titleBandH = std::max(1, QuickNavScale(kQuickNavigationTextHeight));
+    const int titleGap = std::max(1, QuickNavScale(2));
+    const int maxIconW = std::max(1, cellW - inset * 2);
+    const int maxIconH = std::max(1, cellH - titleBandH - titleGap - inset);
+    const int iconSz = std::max(1, std::min({
+        QuickNavScale(48),
+        maxIconW,
+        maxIconH
+    }));
+    const int iconX = bounds.left + (cellW - iconSz) / 2;
+    const int iconY = bounds.top + inset;
+    return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
+}
+
 inline RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
 {
     const float layoutScale = GetItemLayoutScale(bounds);
@@ -961,17 +980,15 @@ inline void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds
     const float lineSpacing = std::max(1.0f, std::floor(fontSize * 1.08f));
     const float baseline = std::max(1.0f, std::floor(fontSize * 0.84f));
     const int textHeight = std::max(1, static_cast<int>(std::ceil(lineSpacing * 2.0f)));
-    RECT iconRect = GetItemIconRect(bounds);
+    RECT iconRect = GetQuickNavItemIconRect(bounds);
     const int horizontalPad = QuickNavScale(4);
-    const int topGap = QuickNavScale(1);
-    const int textTop = std::max<LONG>(
-        bounds.top,
-        std::min<LONG>(iconRect.bottom + topGap, bounds.bottom - textHeight));
+    const int topGap = std::max(1, QuickNavScale(2));
+    const int textTop = std::max<LONG>(bounds.top, iconRect.bottom + topGap);
     RECT textRect = MakeRect(
         bounds.left + horizontalPad,
         textTop,
         bounds.right - horizontalPad,
-        bounds.bottom);
+        std::min<LONG>(bounds.bottom, textTop + textHeight));
     if (IsRectEmptyRect(textRect))
         return;
 
@@ -987,6 +1004,11 @@ inline void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds
     layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, lineSpacing, baseline);
+    DWRITE_TRIMMING trimming{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
+    ComPtr<IDWriteInlineObject> trimmingSign;
+    if (SUCCEEDED(dwriteFactory_->CreateEllipsisTrimmingSign(
+        quickNavItemTextFormat_.Get(), &trimmingSign)) && trimmingSign)
+        layout->SetTrimming(&trimming, trimmingSign.Get());
 
     DWRITE_TEXT_METRICS metrics{};
     if (SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.lineCount == 1)

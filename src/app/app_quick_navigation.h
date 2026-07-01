@@ -2535,7 +2535,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 entry.itemIndex < items_.size())
             {
                 DesktopIcon icon(&items_[entry.itemIndex], nullptr, this);
-                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false);
+                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false, true);
                 DrawQuickNavItemText(ctx.Get(), itemRectApp, items_[entry.itemIndex].name,
                     false, quickNavLightTheme_);
             }
@@ -2546,7 +2546,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 FolderEntry& folderEntry =
                     widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
                 FolderEntryIcon icon(&folderEntry, nullptr, this);
-                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false);
+                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false, true);
                 DrawQuickNavItemText(ctx.Get(), itemRectApp, folderEntry.name,
                     false, quickNavLightTheme_);
             }
