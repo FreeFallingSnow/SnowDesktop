@@ -2129,6 +2129,21 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         DeleteDC(srcDc);
         return true;
     };
+    auto drawShortcutArrowGdi = [&](RECT iconRect) {
+        SHSTOCKICONINFO sii{};
+        sii.cbSize = sizeof(sii);
+        if (FAILED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &sii)) || !sii.hIcon)
+            return;
+
+        float scale = static_cast<float>(iconRect.bottom - iconRect.top) / 64.0f;
+        int arrowSz = static_cast<int>(36.0f * scale + 0.5f);
+        if (arrowSz < 12) arrowSz = 12;
+        int arrowX = iconRect.left - std::max(1, static_cast<int>(5.0f * scale + 0.5f));
+        int arrowY = iconRect.bottom - arrowSz;
+        DrawIconEx(memoryDc, arrowX, arrowY, sii.hIcon, arrowSz, arrowSz,
+            0, nullptr, DI_NORMAL);
+        DestroyIcon(sii.hIcon);
+    };
     auto drawSystemIcon = [&](int iconIndex, RECT dst) {
         if (iconIndex < 0)
             return;
@@ -2390,11 +2405,14 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
             HBITMAP bitmap = nullptr;
             int systemIconIndex = -1;
+            bool shortcutArrow = false;
             if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
                 entry.itemIndex < items_.size())
             {
-                bitmap = items_[entry.itemIndex].iconBitmap;
-                systemIconIndex = items_[entry.itemIndex].sysIconIndex;
+                const DesktopItem& item = items_[entry.itemIndex];
+                bitmap = item.iconBitmap;
+                systemIconIndex = item.sysIconIndex;
+                shortcutArrow = item.shortcutArrow;
             }
             else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
                 entry.widgetIndex < widgets_.size() &&
@@ -2404,12 +2422,15 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
                 bitmap = folderEntry.iconBitmap;
                 systemIconIndex = folderEntry.sysIconIndex;
+                shortcutArrow = folderEntry.shortcutArrow;
             }
 
             if (!drawBitmap(bitmap, offsetRect(iconRect)))
             {
                 drawSystemIcon(systemIconIndex, offsetRect(iconRect));
             }
+            if (shortcutArrow)
+                drawShortcutArrowGdi(offsetRect(iconRect));
 
             RECT textRectLocal = offsetRect(textRect);
             RECT measure = textRectLocal;

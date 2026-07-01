@@ -1483,30 +1483,13 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT ic
         if (w <= 0) w = 32;
         if (h <= 0) h = 32;
 
-        HDC screenDc = GetDC(nullptr);
-        HDC memDc = CreateCompatibleDC(screenDc);
-
-        BITMAPINFOHEADER bi{};
-        bi.biSize = sizeof(bi);
-        bi.biWidth = w;
-        bi.biHeight = -h;
-        bi.biPlanes = 1;
-        bi.biBitCount = 32;
-        bi.biCompression = BI_RGB;
-
-        HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi),
-            DIB_RGB_COLORS, nullptr, nullptr, 0);
+        SIZE bitmapSize{};
+        HBITMAP dib = CreateAlphaBitmapFromIcon(sii.hIcon, w, h, bitmapSize);
         if (!dib)
         {
-            DeleteDC(memDc);
-            ReleaseDC(nullptr, screenDc);
             DestroyIcon(sii.hIcon);
             return false;
         }
-
-        HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDc, dib));
-        DrawIconEx(memDc, 0, 0, sii.hIcon, w, h, 0, nullptr, DI_NORMAL);
-        SelectObject(memDc, oldBmp);
 
         DIBSECTION ds{};
         GetObjectW(dib, sizeof(ds), &ds);
@@ -1519,20 +1502,17 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT ic
             static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
 
         DeleteObject(dib);
-        DeleteDC(memDc);
-        ReleaseDC(nullptr, screenDc);
         DestroyIcon(sii.hIcon);
 
         if (FAILED(hr) || !bitmap)
             return false;
 
         outBitmap = std::move(bitmap);
-        outSize = { w, h };
+        outSize = bitmapSize;
         return true;
     };
 
     ID2D1Bitmap* arrowBitmap = nullptr;
-    SIZE arrowBitmapSize{};
 
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext)
@@ -1540,22 +1520,23 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT ic
         if (!createArrowBitmap(shortcutArrowBitmap_, shortcutArrowBitmapSize_))
             return;
         arrowBitmap = shortcutArrowBitmap_.Get();
-        arrowBitmapSize = shortcutArrowBitmapSize_;
     }
     else
     {
         if (!createArrowBitmap(quickNavShortcutArrowBitmap_, quickNavShortcutArrowBitmapSize_))
             return;
         arrowBitmap = quickNavShortcutArrowBitmap_.Get();
-        arrowBitmapSize = quickNavShortcutArrowBitmapSize_;
     }
 
     if (!arrowBitmap) return;
 
     float scale = static_cast<float>(iconRect.bottom - iconRect.top) / 64.0f;
-    int arrowSz = static_cast<int>(30.0f * scale + 0.5f);
-    if (arrowSz < 10) arrowSz = 10;
-    int arrowX = iconRect.left;
+    const bool quickNavigationTarget = !deviceContext;
+    int arrowSz = static_cast<int>((quickNavigationTarget ? 36.0f : 30.0f) * scale + 0.5f);
+    if (arrowSz < (quickNavigationTarget ? 12 : 10))
+        arrowSz = quickNavigationTarget ? 12 : 10;
+    int arrowX = iconRect.left -
+        (quickNavigationTarget ? std::max(1, static_cast<int>(5.0f * scale + 0.5f)) : 0);
     int arrowY = iconRect.bottom - arrowSz;
 
     D2D1_RECT_F dst = D2D1::RectF(
