@@ -97,10 +97,11 @@ Container* DesktopIcon::GetContainer() const { return container_; }
  */
 void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
-    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false);
+    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false, true);
 }
 
-void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme)
+void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,
+    bool drawText)
 {
     if (!app_ || !item_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
@@ -158,7 +159,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     if (item_->shortcutArrow && item_->iconState != IconState::Loading)
         app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
-    if (!dragged)
+    if (!dragged && drawText)
         app_->DrawItemText(context, rect, item_->name, selected, alpha, lightTheme);
 }
 
@@ -245,10 +246,11 @@ Container* FolderEntryIcon::GetContainer() const { return container_; }
  */
 void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
-    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false);
+    Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false, true);
 }
 
-void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme)
+void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,
+    bool drawText)
 {
     if (!app_ || !entry_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
@@ -304,7 +306,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
     if (entry_->shortcutArrow && entry_->iconState != IconState::Loading)
         app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
 
-    if (!dragged)
+    if (!dragged && drawText)
         app_->DrawItemText(context, rect, entry_->name, selected, opacity, lightTheme);
 }
 

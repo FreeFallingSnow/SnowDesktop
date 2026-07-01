@@ -38,6 +38,13 @@ inline std::wstring QuickNavigationReadImeCompositionString(HWND hwnd)
     ImmReleaseContext(hwnd, context);
     return result;
 }
+
+inline int QuickNavigationRowsHeight(int rows, int cellHeight, int rowGap)
+{
+    if (rows <= 0)
+        return 0;
+    return rows * cellHeight + (rows - 1) * rowGap;
+}
 }
 
 inline std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
@@ -279,6 +286,56 @@ inline void DesktopApp::RefreshQuickNavigationAppResults()
 
     if (quickNavigationAppResultIndices_.size() > kQuickNavigationAppResultLimit)
         quickNavigationAppResultIndices_.resize(kQuickNavigationAppResultLimit);
+}
+
+inline const DesktopApp::QuickNavigationAppEntry*
+DesktopApp::FindQuickNavigationEverythingAppEntry() const
+{
+    if (!quickNavigationAppsIndexed_)
+        return nullptr;
+
+    const QuickNavigationAppEntry* bestEntry = nullptr;
+    int bestRank = kNameSearchNoMatchRank;
+    for (const auto& entry : quickNavigationAppEntries_)
+    {
+        const int rank = NameSearchMatchRank(entry.name, L"Everything");
+        if (rank < bestRank)
+        {
+            bestRank = rank;
+            bestEntry = &entry;
+            if (rank == 0)
+                break;
+        }
+    }
+    return bestEntry;
+}
+
+inline std::wstring DesktopApp::GetQuickNavigationEverythingNoticeText() const
+{
+    if (!quickNavigationAppsIndexed_)
+        return L"Everything 未运行，正在查找应用...";
+    return FindQuickNavigationEverythingAppEntry()
+        ? L"Everything 未启动，点击启动"
+        : L"未安装 Everything，点击下载";
+}
+
+inline bool DesktopApp::TryLaunchQuickNavigationEverythingApp() const
+{
+    const QuickNavigationAppEntry* entry = FindQuickNavigationEverythingAppEntry();
+    if (!entry || !entry->absolutePidl.get())
+        return false;
+
+    Pidl launchPidl;
+    launchPidl.reset(ILClone(entry->absolutePidl.get()));
+    if (!launchPidl.get())
+        return false;
+
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_IDLIST;
+    sei.lpIDList = launchPidl.get();
+    sei.nShow = SW_SHOWNORMAL;
+    return ShellExecuteExW(&sei) != FALSE;
 }
 
 inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
@@ -619,12 +676,15 @@ inline RECT DesktopApp::GetQuickNavigationRect() const
     const int width = std::min(widthLimit, std::max(QuickNavScale(520), std::min(QuickNavScale(860), workWidth - QuickNavScale(120))));
     const int contentTop = QuickNavScale(100);
     const int cellH = QuickNavScale(kQuickNavigationCellHeight);
+    const int rowGap = QuickNavScale(kQuickNavigationItemRowGap);
     const int contentPad = QuickNavScale(12);
-    const int idealH = contentTop + cellH + contentPad;
+    const int idealH = contentTop + QuickNavigationRowsHeight(1, cellH, rowGap) + contentPad;
     const int availH = workHeight - QuickNavScale(120);
-    int rows = std::clamp((availH - contentTop - contentPad) / cellH, 1, 6);
+    int rows = std::clamp(
+        (availH - contentTop - contentPad + rowGap) / (cellH + rowGap),
+        1, 6);
     const int height = std::min(heightLimit,
-        std::max(idealH, contentTop + rows * cellH + contentPad));
+        std::max(idealH, contentTop + QuickNavigationRowsHeight(rows, cellH, rowGap) + contentPad));
     const int left = work.left + (workWidth - width) / 2;
     const int top = work.top + (workHeight - height) / 2;
     return MakeRect(left, top, left + width, top + height);
@@ -665,7 +725,14 @@ inline int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& /*over
 inline int DesktopApp::GetQuickNavigationMaxTabScrollOffset(const RECT& overlay) const
 {
     RECT tabs = GetQuickNavigationTabsRect(overlay);
-    const int available = std::max(1, static_cast<int>(tabs.right - tabs.left));
+    const auto& tw = quickNavTabWidths_;
+    const int gap = QuickNavScale(8);
+    const int sepGap = QuickNavScale(6);
+    // 可滚动区起始于固定标签（0:桌面, 1:映射）+ 分隔线之后。
+    const int fixedWidth = (tw.size() >= 2) ? (tw[0] + gap + tw[1]) : 0;
+    const int scrollPad = sepGap + QuickNavScale(1) + gap;
+    const int scrollLeft = tabs.left + fixedWidth + scrollPad;
+    const int available = std::max(1, static_cast<int>(tabs.right - scrollLeft));
     return std::max(0, GetQuickNavigationTabStripContentWidth(overlay) - available);
 }
 
@@ -773,6 +840,8 @@ inline RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t l
     RECT content = GetQuickNavigationContentRect(overlay);
     const int cellW = QuickNavScale(kCellWidth);
     const int cellH = QuickNavScale(kQuickNavigationCellHeight);
+    const int rowGap = QuickNavScale(kQuickNavigationItemRowGap);
+    const int rowPitch = cellH + rowGap;
     const int columns = GetQuickNavigationColumnCount(overlay);
     const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
     const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
@@ -783,9 +852,9 @@ inline RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t l
         : QuickNavScale(28) + QuickNavScale(8));
     return MakeRect(
         content.left + halfPad + col * (cellW + gap),
-        top + row * cellH - quickNavigationScrollOffset_,
+        top + row * rowPitch - quickNavigationScrollOffset_,
         content.left + halfPad + col * (cellW + gap) + cellW,
-        top + (row + 1) * cellH - quickNavigationScrollOffset_);
+        top + row * rowPitch + cellH - quickNavigationScrollOffset_);
 }
 
 inline bool DesktopApp::TryGetQuickNavigationAppEntryAtPoint(
@@ -808,8 +877,10 @@ inline bool DesktopApp::TryGetQuickNavigationAppEntryAtPoint(
     const int headerH = QuickNavScale(28);
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
+    const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
+        QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
     const int firstRowTop = content.top + headerH + gap
-        + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+        + desktopGridH
         + gap + headerH + gap - quickNavigationScrollOffset_;
     const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
 
@@ -863,8 +934,10 @@ inline bool DesktopApp::TryExpandQuickNavigationAppsAtPoint(POINT point)
     const int headerH = QuickNavScale(28);
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
+    const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
+        QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
     const int buttonTop = content.top + headerH + gap
-        + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+        + desktopGridH
         + gap + headerH + gap
         + static_cast<int>(GetQuickNavigationVisibleAppResultCount()) * rowH
         - quickNavigationScrollOffset_;
@@ -901,12 +974,14 @@ inline bool DesktopApp::TryGetQuickNavigationEverythingEntryAtPoint(
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
     const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
+    const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
+        QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
     const int appSectionHeight = quickNavigationAppResultIndices_.empty()
         ? 0
         : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
             (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
     const int firstRowTop = content.top + headerH + gap
-        + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+        + desktopGridH
         + gap + appSectionHeight + headerH + gap - quickNavigationScrollOffset_;
 
     for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
@@ -935,13 +1010,16 @@ inline int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) cons
     if (GetQuickNavigationEffectiveSearchText().empty())
     {
         const int rows = desktopCount == 0 ? 1 : desktopRows;
-        return rows * QuickNavScale(kQuickNavigationCellHeight);
+        return QuickNavigationRowsHeight(rows, QuickNavScale(kQuickNavigationCellHeight),
+            QuickNavScale(kQuickNavigationItemRowGap));
     }
 
     const int headerH = QuickNavScale(28);
     const int gap = QuickNavScale(8);
     const int rowH = QuickNavScale(46);
-    int height = headerH + gap + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+    const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
+        QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
+    int height = headerH + gap + desktopGridH
         + gap;
     if (!quickNavigationAppResultIndices_.empty())
     {
@@ -1040,30 +1118,14 @@ inline void DesktopApp::DestroyQuickNavigationWindow()
         DeleteObject(quickNavigationSearchFont_);
         quickNavigationSearchFont_ = nullptr;
     }
-    if (quickNavigationTabFont_)
-    {
-        DeleteObject(quickNavigationTabFont_);
-        quickNavigationTabFont_ = nullptr;
-    }
-    if (quickNavigationItemFont_)
-    {
-        DeleteObject(quickNavigationItemFont_);
-        quickNavigationItemFont_ = nullptr;
-    }
-    if (quickNavigationPathFont_)
-    {
-        DeleteObject(quickNavigationPathFont_);
-        quickNavigationPathFont_ = nullptr;
-    }
-    quickNavD2DTarget_.Reset();
-    quickNavD2DIconCache_.clear();
-    quickNavShortcutArrowBitmap_.Reset();
-    quickNavShortcutArrowBitmapSize_ = {};
-    quickNavPlaceholderIconCache_.clear();
-    if (quickNavMemoryBitmap_) { DeleteObject(quickNavMemoryBitmap_); quickNavMemoryBitmap_ = nullptr; }
-    if (quickNavMemoryDc_)    { DeleteDC(quickNavMemoryDc_);       quickNavMemoryDc_    = nullptr; }
-    quickNavMemWidth_ = 0;
-    quickNavMemHeight_ = 0;
+    ResetQuickNavCompositionResources();
+    if (quickNavDcompVisual_)
+        quickNavDcompVisual_ = nullptr;
+    if (quickNavDcompTarget_)
+        quickNavDcompTarget_ = nullptr;
+    quickNavTabTextFormat_.Reset();
+    quickNavItemTextFormat_.Reset();
+    quickNavPathTextFormat_.Reset();
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         DestroyWindow(quickNavigationHwnd_);
     quickNavigationHwnd_ = nullptr;
@@ -1373,7 +1435,7 @@ inline std::wstring DesktopApp::GetQuickNavTabLabel(size_t tab) const
 }
 
 /**
- * @brief 根据标签文字测量宽度，更新 quickNavTabWidths_
+ * @brief 根据文字测量宽度，更新 quickNavTabWidths_
  */
 inline void DesktopApp::UpdateQuickNavTabWidths()
 {
@@ -1381,23 +1443,23 @@ inline void DesktopApp::UpdateQuickNavTabWidths()
     const size_t tabCount = ci.size() + 2;
     quickNavTabWidths_.resize(tabCount, QuickNavScale(72));
 
-    if (!quickNavigationTabFont_)
+    if (!dwriteFactory_ || !quickNavTabTextFormat_)
         return;
 
-    HDC screenDc = GetDC(nullptr);
-    HGDIOBJ oldFont = SelectObject(screenDc, quickNavigationTabFont_);
     for (size_t i = 0; i < tabCount; ++i)
     {
         std::wstring label = GetQuickNavTabLabel(i);
-        SIZE sz{};
-        GetTextExtentPoint32W(screenDc, label.c_str(),
-            static_cast<int>(label.size()), &sz);
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(dwriteFactory_->CreateTextLayout(label.c_str(),
+            static_cast<UINT32>(label.size()), quickNavTabTextFormat_.Get(),
+            10000.0f, 10000.0f, &layout)) || !layout)
+            continue;
+        DWRITE_TEXT_METRICS metrics{};
+        layout->GetMetrics(&metrics);
         quickNavTabWidths_[i] = static_cast<int>(std::clamp(
-            static_cast<LONG>(sz.cx + QuickNavScale(20)),
+            static_cast<LONG>(static_cast<long>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(20)),
             static_cast<LONG>(QuickNavScale(72)), static_cast<LONG>(QuickNavScale(200))));
     }
-    SelectObject(screenDc, oldFont);
-    ReleaseDC(nullptr, screenDc);
 }
 
 /**
@@ -1448,19 +1510,7 @@ inline void DesktopApp::OpenQuickNavigation()
         quickNavigationOpenPoint_ = lastMousePoint_;
     }
 
-    if (quickNavigationTabFont_)   { DeleteObject(quickNavigationTabFont_);   quickNavigationTabFont_   = nullptr; }
-    if (quickNavigationItemFont_)  { DeleteObject(quickNavigationItemFont_);  quickNavigationItemFont_  = nullptr; }
-    if (quickNavigationPathFont_)  { DeleteObject(quickNavigationPathFont_);  quickNavigationPathFont_  = nullptr; }
-    quickNavigationTabFont_ = CreateFontW(-QuickNavScale(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    const int itemFontWeight = quickNavLightTheme_ ? 550 : FW_SEMIBOLD;
-    quickNavigationItemFont_ = CreateFontW(-QuickNavScale(13), 0, 0, 0, itemFontWeight, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    quickNavigationPathFont_ = CreateFontW(-QuickNavScale(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    EnsureQuickNavTextFormats();
     UpdateQuickNavTabWidths();
     quickNavigationOpen_ = true;
     EnsureNavTabOrder();
@@ -1609,12 +1659,14 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
             const int gap = QuickNavScale(8);
             const int rowH = QuickNavScale(46);
             const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
+            const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
+                QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
             const int appSectionHeight = quickNavigationAppResultIndices_.empty()
                 ? 0
-                : headerH + static_cast<int>(visibleAppCount) * rowH +
+                : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
                     (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
             const int listHeaderTop = content.top + headerH
-                + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+                + desktopGridH
                 + gap + appSectionHeight - quickNavigationScrollOffset_;
             RECT noticeHeader = MakeRect(
                 content.left + QuickNavScale(8),
@@ -1625,10 +1677,26 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
         }
         if (onNotice)
         {
-            CloseQuickNavigation();
-            ShellExecuteW(nullptr, L"open",
-                L"https://www.voidtools.com/zh-cn/downloads/",
-                nullptr, nullptr, SW_SHOWNORMAL);
+            if (!quickNavigationAppsIndexed_)
+            {
+                StartQuickNavigationAppIndexing();
+                InvalidateQuickNavigationWindow();
+                return true;
+            }
+
+            const bool hasEverythingApp = FindQuickNavigationEverythingAppEntry() != nullptr;
+            if (hasEverythingApp)
+            {
+                TryLaunchQuickNavigationEverythingApp();
+                CloseQuickNavigation();
+            }
+            else
+            {
+                CloseQuickNavigation();
+                ShellExecuteW(nullptr, L"open",
+                    L"https://www.voidtools.com/zh-cn/downloads/",
+                    nullptr, nullptr, SW_SHOWNORMAL);
+            }
             return true;
         }
     }
@@ -2025,6 +2093,163 @@ inline void DesktopApp::ShowQuickNavigationEverythingContextMenu(
 }
 
 /**
+ * @brief 创建/重建快捷导航 DirectWrite 文本格式（DPI 变化时调用）。
+ */
+inline void DesktopApp::EnsureQuickNavTextFormats()
+{
+    if (!dwriteFactory_)
+        return;
+
+    const float tabSize = static_cast<float>(QuickNavScale(14));
+    const float itemSize = static_cast<float>(QuickNavScale(13));
+    const float pathSize = static_cast<float>(QuickNavScale(11));
+    // 深色用极细字重：Segoe UI Variable 支持连续字重轴，100=Thin 才能真正比 Light(300) 更细。
+    const float itemWeightValue = quickNavLightTheme_ ? 550.0f : 100.0f;
+    const DWRITE_FONT_WEIGHT itemWeight =
+        static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(itemWeightValue));
+
+    auto createOrRecreate = [&](ComPtr<IDWriteTextFormat>& fmt, const wchar_t* family,
+        float size, DWRITE_FONT_WEIGHT weight, DWRITE_TEXT_ALIGNMENT hAlign) {
+        const bool stale = !fmt ||
+            std::abs(fmt->GetFontSize() - size) > 0.01f ||
+            fmt->GetFontWeight() != weight;
+        if (stale)
+        {
+            fmt.Reset();
+            dwriteFactory_->CreateTextFormat(family, nullptr, weight,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &fmt);
+            if (fmt)
+            {
+                fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                fmt->SetTextAlignment(hAlign);
+            }
+        }
+    };
+
+    createOrRecreate(quickNavTabTextFormat_, L"Segoe UI", tabSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+    createOrRecreate(quickNavItemTextFormat_, L"Segoe UI Variable", itemSize, itemWeight, DWRITE_TEXT_ALIGNMENT_LEADING);
+    createOrRecreate(quickNavPathTextFormat_, L"Segoe UI", pathSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
+
+    ComPtr<IDWriteTextFormat3> itemFormat3;
+    if (quickNavItemTextFormat_ && SUCCEEDED(quickNavItemTextFormat_.As(&itemFormat3)) && itemFormat3)
+    {
+        DWRITE_FONT_AXIS_VALUE axes[] = {
+            { DWRITE_FONT_AXIS_TAG_WEIGHT, itemWeightValue }
+        };
+        itemFormat3->SetFontAxisValues(axes, ARRAYSIZE(axes));
+    }
+}
+
+/**
+ * @brief 重置快捷导航 DComp 表面与渲染缓存（设备丢失或窗口销毁时调用）。
+ */
+inline void DesktopApp::ResetQuickNavCompositionResources()
+{
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+    quickNavSysIconCache_.clear();
+    if (quickNavDcompVisual_)
+        quickNavDcompVisual_->SetContent(nullptr);
+    quickNavDcompSurface_.Reset();
+    quickNavCompWidth_ = 0;
+    quickNavCompHeight_ = 0;
+}
+
+/**
+ * @brief 快捷导航 DComp 渲染失败后重置表面并安排一次恢复重绘。
+ */
+inline void DesktopApp::RecoverQuickNavCompositionFailure(const wchar_t* stage, HRESULT hr)
+{
+    wchar_t buf[192];
+    wsprintfW(buf, L"QuickNav %s FAILED hr=0x%08X; resetting composition surface",
+        stage ? stage : L"Render", static_cast<unsigned>(hr));
+    WriteCrashLogEntry(buf);
+
+    ResetQuickNavCompositionResources();
+
+    if (!quickNavCompositionRenderRecoveryPending_ && quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+    {
+        quickNavCompositionRenderRecoveryPending_ = true;
+        InvalidateRect(quickNavigationHwnd_, nullptr, FALSE);
+    }
+}
+
+/**
+ * @brief 创建或调整快捷导航 DComp 表面大小。
+ * @return S_OK 成功，否则为 HRESULT 错误码
+ */
+inline HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
+{
+    if (!dcompDevice_ || !quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
+        return E_UNEXPECTED;
+
+    RECT client{};
+    GetClientRect(quickNavigationHwnd_, &client);
+    const UINT width = static_cast<UINT>(std::max<LONG>(1, client.right - client.left));
+    const UINT height = static_cast<UINT>(std::max<LONG>(1, client.bottom - client.top));
+
+    if (!quickNavDcompTarget_)
+    {
+        HRESULT hr = dcompDevice_->CreateTargetForHwnd(quickNavigationHwnd_, FALSE, &quickNavDcompTarget_);
+        if (FAILED(hr))
+        {
+            wchar_t buf[128];
+            wsprintfW(buf, L"QuickNav CreateTargetForHwnd FAILED hr=0x%08X", static_cast<unsigned>(hr));
+            WriteCrashLogEntry(buf);
+            return hr;
+        }
+    }
+    if (!quickNavDcompVisual_)
+    {
+        HRESULT hr = dcompDevice_->CreateVisual(&quickNavDcompVisual_);
+        if (FAILED(hr) || !quickNavDcompVisual_)
+        {
+            wchar_t buf[128];
+            wsprintfW(buf, L"QuickNav CreateVisual FAILED hr=0x%08X", static_cast<unsigned>(hr));
+            WriteCrashLogEntry(buf);
+            return hr;
+        }
+        quickNavDcompTarget_->SetRoot(quickNavDcompVisual_.Get());
+    }
+
+    if (quickNavDcompSurface_ && quickNavCompWidth_ == width && quickNavCompHeight_ == height)
+        return S_OK;
+
+    ComPtr<IDCompositionSurface> surface;
+    HRESULT hr = dcompDevice_->CreateSurface(width, height,
+        DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);
+    if (FAILED(hr))
+    {
+        wchar_t buf[128];
+        wsprintfW(buf, L"QuickNav CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
+        WriteCrashLogEntry(buf);
+        return hr;
+    }
+    hr = quickNavDcompVisual_->SetContent(surface.Get());
+    if (FAILED(hr))
+    {
+        wchar_t buf[128];
+        wsprintfW(buf, L"QuickNav SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
+        WriteCrashLogEntry(buf);
+        return hr;
+    }
+    hr = dcompDevice_->Commit();
+    if (FAILED(hr))
+    {
+        wchar_t buf[128];
+        wsprintfW(buf, L"QuickNav CreateSurface Commit FAILED hr=0x%08X", static_cast<unsigned>(hr));
+        WriteCrashLogEntry(buf);
+        return hr;
+    }
+
+    quickNavDcompSurface_ = surface;
+    quickNavCompWidth_ = width;
+    quickNavCompHeight_ = height;
+    return S_OK;
+}
+
+/**
  * @brief 绘制快捷导航窗口（含搜索栏、标签页、列表、滚动条）
  * @param hwnd 窗口句柄
  */
@@ -2034,169 +2259,76 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     HDC hdc = BeginPaint(hwnd, &ps);
     if (!hdc)
         return;
+    // hdc 仅用于验证绘制区域；实际绘制走 DComp surface。
+    (void)hdc;
 
     const QuickNavTheme& t = quickNavLightTheme_ ? kQuickNavLight : kQuickNavDark;
 
-    RECT client{};
-    GetClientRect(hwnd, &client);
-    const int w = std::max<LONG>(1, client.right - client.left);
-    const int h = std::max<LONG>(1, client.bottom - client.top);
-
-    if (!quickNavMemoryDc_ || w != quickNavMemWidth_ || h != quickNavMemHeight_)
+    HRESULT hr = CreateOrResizeQuickNavCompositionSurface();
+    if (FAILED(hr))
     {
-        quickNavD2DTarget_.Reset();
-        quickNavD2DIconCache_.clear();
-        quickNavShortcutArrowBitmap_.Reset();
-        quickNavShortcutArrowBitmapSize_ = {};
-        quickNavPlaceholderIconCache_.clear();
-        if (quickNavMemoryBitmap_) { DeleteObject(quickNavMemoryBitmap_); quickNavMemoryBitmap_ = nullptr; }
-        if (quickNavMemoryDc_)    { DeleteDC(quickNavMemoryDc_);       quickNavMemoryDc_    = nullptr; }
-
-        quickNavMemoryDc_ = CreateCompatibleDC(hdc);
-        quickNavMemoryBitmap_ = CreateCompatibleBitmap(hdc, w, h);
-        SelectObject(quickNavMemoryDc_, quickNavMemoryBitmap_);
-        SetBkMode(quickNavMemoryDc_, TRANSPARENT);
-        SetStretchBltMode(quickNavMemoryDc_, HALFTONE);
-
-        if (d2dFactory_)
-        {
-            const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
-                D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
-                0.0f, 0.0f,
-                D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE);
-            d2dFactory_->CreateDCRenderTarget(&properties, &quickNavD2DTarget_);
-        }
-
-        quickNavMemWidth_ = w;
-        quickNavMemHeight_ = h;
+        RecoverQuickNavCompositionFailure(L"CreateOrResizeQuickNavCompositionSurface", hr);
+        EndPaint(hwnd, &ps);
+        return;
     }
 
-    HDC memoryDc = quickNavMemoryDc_;
-    ID2D1DCRenderTarget* dcRenderTarget = quickNavD2DTarget_.Get();
-    if (dcRenderTarget)
-        dcRenderTarget->BindDC(memoryDc, &client);
+    ID2D1DeviceContext* rawContext = nullptr;
+    POINT updateOffset{};
+    hr = quickNavDcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+        reinterpret_cast<void**>(&rawContext), &updateOffset);
+    if (FAILED(hr) || !rawContext)
+    {
+        RecoverQuickNavCompositionFailure(L"BeginDraw", hr);
+        EndPaint(hwnd, &ps);
+        return;
+    }
 
-    bool d2dOk = dcRenderTarget != nullptr;
+    ComPtr<ID2D1DeviceContext> ctx;
+    ctx.Attach(rawContext);
+    ctx->SetDpi(96.0f, 96.0f);
+    ctx->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    // 将 app 坐标（quickNavigationRect_ 基准）映射到 surface 局部坐标。
+    ctx->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(updateOffset.x - quickNavigationRect_.left),
+        static_cast<float>(updateOffset.y - quickNavigationRect_.top)));
+    ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    // 文本抗锯齿沿用 DComp 默认（与桌面一致），避免在 alpha 表面上强制 ClearType 产生彩色毛边。
+    ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
-    auto offsetRect = [&](RECT rect) {
-        OffsetRect(&rect, -quickNavigationRect_.left, -quickNavigationRect_.top);
-        return rect;
-    };
-    auto fillRound = [&](RECT rect, COLORREF fill, COLORREF stroke, int radius) {
-        HBRUSH brush = CreateSolidBrush(fill);
-        HPEN pen = CreatePen(PS_SOLID, 1, stroke);
-        HGDIOBJ oldBrush = SelectObject(memoryDc, brush);
-        HGDIOBJ oldPen = SelectObject(memoryDc, pen);
-        RoundRect(memoryDc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-        SelectObject(memoryDc, oldPen);
-        SelectObject(memoryDc, oldBrush);
-        DeleteObject(pen);
-        DeleteObject(brush);
-    };
-    auto drawText = [&](const std::wstring& text, RECT rect, HFONT font, COLORREF color, UINT flags) {
-        HGDIOBJ oldFont = SelectObject(memoryDc, font);
-        SetTextColor(memoryDc, color);
-        DrawTextW(memoryDc, text.c_str(), static_cast<int>(text.size()), &rect, flags);
-        SelectObject(memoryDc, oldFont);
-    };
-    auto drawBitmap = [&](HBITMAP bitmap, RECT dst) -> bool {
-        if (!bitmap) return false;
-        BITMAP bm{};
-        if (GetObjectW(bitmap, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
-            return false;
+    brushCache_.clear();
+    brushCacheContext_ = ctx.Get();
 
-        const int boundsWidth = std::max<LONG>(1, dst.right - dst.left);
-        const int boundsHeight = std::max<LONG>(1, dst.bottom - dst.top);
-        const double scale = std::min(
-            static_cast<double>(boundsWidth) / bm.bmWidth,
-            static_cast<double>(boundsHeight) / bm.bmHeight);
-        const int drawWidth = std::clamp(
-            static_cast<int>(std::round(bm.bmWidth * scale)), 1, boundsWidth);
-        const int drawHeight = std::clamp(
-            static_cast<int>(std::round(bm.bmHeight * scale)), 1, boundsHeight);
-        const int drawX = dst.left + (boundsWidth - drawWidth) / 2;
-        const int drawY = dst.top + (boundsHeight - drawHeight) / 2;
-
-        HDC srcDc = CreateCompatibleDC(memoryDc);
-        HBITMAP oldSrc = static_cast<HBITMAP>(SelectObject(srcDc, bitmap));
-        const int oldStretchMode = SetStretchBltMode(memoryDc, COLORONCOLOR);
-        BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-        AlphaBlend(memoryDc, drawX, drawY, drawWidth, drawHeight,
-            srcDc, 0, 0, bm.bmWidth, bm.bmHeight, blend);
-        SetStretchBltMode(memoryDc, oldStretchMode);
-        SelectObject(srcDc, oldSrc);
-        DeleteDC(srcDc);
-        return true;
-    };
-    auto drawShortcutArrowGdi = [&](RECT iconRect) {
-        SHSTOCKICONINFO sii{};
-        sii.cbSize = sizeof(sii);
-        if (FAILED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &sii)) || !sii.hIcon)
-            return;
-
-        float scale = static_cast<float>(iconRect.bottom - iconRect.top) / 64.0f;
-        int arrowSz = static_cast<int>(36.0f * scale + 0.5f);
-        if (arrowSz < 12) arrowSz = 12;
-        int arrowX = iconRect.left - std::max(1, static_cast<int>(5.0f * scale + 0.5f));
-        int arrowY = iconRect.bottom - arrowSz;
-        DrawIconEx(memoryDc, arrowX, arrowY, sii.hIcon, arrowSz, arrowSz,
-            0, nullptr, DI_NORMAL);
-        DestroyIcon(sii.hIcon);
-    };
-    auto drawSystemIcon = [&](int iconIndex, RECT dst) {
-        if (iconIndex < 0)
-            return;
-        HIMAGELIST imageList = quickNavigationSystemImageListSmall_;
-        if (!imageList)
-        {
-            SHFILEINFOW info{};
-            DWORD_PTR list = SHGetFileInfoW(L".txt", FILE_ATTRIBUTE_NORMAL, &info,
-                sizeof(info), SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
-            imageList = reinterpret_cast<HIMAGELIST>(list);
-            quickNavigationSystemImageListSmall_ = imageList;
-        }
-        if (!imageList)
-            return;
-
-        int iconW = 0, iconH = 0;
-        if (!ImageList_GetIconSize(imageList, &iconW, &iconH) || iconW <= 0 || iconH <= 0)
-            return;
-
-        const int boundsW = std::max<LONG>(1, dst.right - dst.left);
-        const int boundsH = std::max<LONG>(1, dst.bottom - dst.top);
-        const int drawW = std::min(boundsW, iconW);
-        const int drawH = std::min(boundsH, iconH);
-        const int drawX = dst.left + (boundsW - drawW) / 2;
-        const int drawY = dst.top + (boundsH - drawH) / 2;
-        COLORREF oldBk = SetBkColor(memoryDc, t.windowBg);
-        ImageList_DrawEx(imageList, iconIndex, memoryDc, drawX, drawY, drawW, drawH,
-            t.windowBg, CLR_NONE, ILD_TRANSPARENT);
-        SetBkColor(memoryDc, oldBk);
-    };
-
-    HBRUSH background = CreateSolidBrush(t.windowBg);
-    FillRect(memoryDc, &client, background);
-    DeleteObject(background);
-    fillRound(MakeRect(client.left, client.top, client.right - 1, client.bottom - 1),
-        t.windowBg, t.windowBorder, QuickNavScale(16));
+    const RECT& overlay = quickNavigationRect_;
+    // 窗口背景（不透明满铺）+ 圆角边框。圆角透明由 DWM 角偏好/窗口区域裁剪。
+    DrawD2DFilledRectangle(ctx.Get(), overlay, ToD2DColor(t.windowBg), D2D1::ColorF(0, 0, 0, 0));
+    DrawD2DRoundedRectangle(ctx.Get(),
+        MakeRect(overlay.left, overlay.top, overlay.right - 1, overlay.bottom - 1),
+        static_cast<float>(QuickNavScale(16)) / 2.0f,
+        D2D1::ColorF(0, 0, 0, 0), ToD2DColor(t.windowBorder));
 
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
     quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
-        GetQuickNavigationMaxTabScrollOffset(quickNavigationRect_));
+        GetQuickNavigationMaxTabScrollOffset(overlay));
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
-        GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
+        GetQuickNavigationMaxScrollOffset(overlay));
 
-    RECT searchRect = offsetRect(GetQuickNavigationSearchRect(quickNavigationRect_));
-    fillRound(searchRect, t.searchBg, t.searchBorder, QuickNavScale(12));
+    const RECT searchRect = GetQuickNavigationSearchRect(overlay);
+    DrawD2DRoundedRectangle(ctx.Get(),
+        searchRect,
+        static_cast<float>(QuickNavScale(12)) / 2.0f,
+        ToD2DColor(t.searchBg), ToD2DColor(t.searchBorder));
 
     if (!searching)
     {
-        RECT tabs = offsetRect(GetQuickNavigationTabsRect(quickNavigationRect_));
-        SaveDC(memoryDc);
-        IntersectClipRect(memoryDc, tabs.left, tabs.top, tabs.right, tabs.bottom);
+        RECT tabs = GetQuickNavigationTabsRect(overlay);
+        const int tabClipRight = searchRect.right;
+        // 左侧外扩一圈避免固定标签圆角 AA 被截断；右侧与搜索框右边界对齐。
+        const int clipPad = QuickNavScale(8);
+        ctx->PushAxisAlignedClip(
+            ToD2DRect(MakeRect(tabs.left - clipPad, tabs.top, tabClipRight, tabs.bottom)),
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         const size_t tabCount = collectionIndices.size() + 2;
         UpdateQuickNavTabWidths();
@@ -2219,15 +2351,17 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             dragTargetTab = GetQuickNavTabDragTarget(
                 quickNavTabDragIndex_, quickNavTabDragDeltaX_);
 
+        const int tabInsetY = QuickNavScale(3);
         auto drawTab = [&](size_t tab, int offsetX) {
             if (tab >= tabWidths.size()) return;
             int posX = calcTabPosX(tab) + offsetX;
             int tw = tabWidths[tab];
-            RECT tabRect = MakeRect(posX, tabs.top, posX + tw, tabs.bottom);
+            // 按钮上下内缩，避免 AA 圆角被 tabs 裁剪边界截断，同时降低视觉高度。
+            RECT tabRect = MakeRect(posX, tabs.top + tabInsetY, posX + tw, tabs.bottom - tabInsetY);
             if (tab >= 2)
             {
                 int scrollStart = tabs.left + fixedWidth + scrollPad;
-                if (tabRect.right <= scrollStart || tabRect.left >= tabs.right) return;
+                if (tabRect.right <= scrollStart || tabRect.left >= tabClipRight) return;
             }
             else if (tab <= 1)
             {
@@ -2238,36 +2372,38 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 || (tab == 1 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
                 || (tab > 1 && quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 2]);
             bool hovered = false;
-            RECT tabRectApp = MakeRect(posX, tabs.top, posX + tw, tabs.bottom);
             if (!quickNavTabDragging_)
-                hovered = PtInRect(&tabRectApp, lastMousePoint_) != FALSE;
+                hovered = PtInRect(&tabRect, lastMousePoint_) != FALSE;
 
-            COLORREF fill, stroke;
+            D2D1_COLOR_F fill, stroke;
             if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
             {
-                fill = t.tabDragFill;
-                stroke = t.tabDragStroke;
+                fill = ToD2DColor(t.tabDragFill);
+                stroke = ToD2DColor(t.tabDragStroke);
             }
             else
             {
-                fill = active ? t.tabActiveFill : hovered ? t.tabHoverFill : t.tabDefaultFill;
-                stroke = active ? t.tabActiveStroke : t.tabDefaultStroke;
+                fill = active ? ToD2DColor(t.tabActiveFill)
+                    : (hovered ? ToD2DColor(t.tabHoverFill) : ToD2DColor(t.tabDefaultFill));
+                stroke = active ? ToD2DColor(t.tabActiveStroke) : ToD2DColor(t.tabDefaultStroke);
             }
-            fillRound(tabRect, fill, stroke, QuickNavScale(14));
+            DrawD2DRoundedRectangle(ctx.Get(), tabRect,
+                static_cast<float>(QuickNavScale(14)) / 2.0f, fill, stroke);
 
             std::wstring label = GetQuickNavTabLabel(tab);
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);
-            drawText(label, textRect, quickNavigationTabFont_,
-                active ? RGB(245, 248, 252) : t.tabText,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawD2DTextEllipsis(ctx.Get(), label, textRect, quickNavTabTextFormat_.Get(),
+                active ? ToD2DColor(RGB(245, 248, 252)) : ToD2DColor(t.tabText),
+                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         };
 
         // 分隔线：固定在 "映射" 标签右侧
         int sepX = tabs.left + fixedWidth + sepGap;
-        RECT sepRect = MakeRect(sepX, tabs.top + QuickNavScale(8), sepX + QuickNavScale(1), tabs.bottom - QuickNavScale(8));
-        fillRound(sepRect, t.tabSeparator, t.tabSeparator, 0);
+        RECT sepRect = MakeRect(sepX, tabs.top + QuickNavScale(8),
+            sepX + QuickNavScale(1), tabs.bottom - QuickNavScale(8));
+        DrawD2DSeparator(ctx.Get(), sepRect, ToD2DColor(t.tabSeparator));
 
         // Draw fixed tabs (0, 1) and dragged tab displacement
         for (size_t tab = 0; tab < tabCount && tab < 2; ++tab)
@@ -2290,7 +2426,10 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
         // Clip to scrollable area for remaining tabs
         int scrollLeft = tabs.left + fixedWidth + scrollPad;
-        IntersectClipRect(memoryDc, scrollLeft, tabs.top, tabs.right, tabs.bottom);
+        ctx->PopAxisAlignedClip();
+        ctx->PushAxisAlignedClip(
+            ToD2DRect(MakeRect(scrollLeft - clipPad, tabs.top, tabClipRight, tabs.bottom)),
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         for (size_t tab = 2; tab < tabCount; ++tab)
         {
@@ -2315,242 +2454,135 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         {
             int dragTw = tabWidths[quickNavTabDragIndex_];
             int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
-            RECT tabRect = MakeRect(posX, tabs.top, posX + dragTw, tabs.bottom);
+            RECT tabRect = MakeRect(posX, tabs.top + tabInsetY, posX + dragTw, tabs.bottom - tabInsetY);
             tabRect.left = std::max(tabRect.left, tabs.left);
-            tabRect.right = std::min(tabRect.right, tabs.right);
-            fillRound(tabRect, t.tabDragFloatFill, t.tabDragFloatStroke, QuickNavScale(14));
+            tabRect.right = std::min<LONG>(tabRect.right, static_cast<LONG>(tabClipRight));
+            DrawD2DRoundedRectangle(ctx.Get(), tabRect,
+                static_cast<float>(QuickNavScale(14)) / 2.0f,
+                ToD2DColor(t.tabDragFloatFill), ToD2DColor(t.tabDragFloatStroke));
 
             std::wstring label = GetQuickNavTabLabel(quickNavTabDragIndex_);
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);
-            drawText(label, textRect, quickNavigationTabFont_, t.tabDragFloatText,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawD2DTextEllipsis(ctx.Get(), label, textRect, quickNavTabTextFormat_.Get(),
+                ToD2DColor(t.tabDragFloatText),
+                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
             if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size() + 1)
             {
                 int insertX = calcTabPosX(static_cast<size_t>(dragTargetTab));
-                HPEN indicatorPen = CreatePen(PS_SOLID, QuickNavScale(2), t.tabDragIndicator);
-                HGDIOBJ savedPen = SelectObject(memoryDc, indicatorPen);
-                MoveToEx(memoryDc, insertX - gap / 2, tabs.top + QuickNavScale(4), nullptr);
-                LineTo(memoryDc, insertX - gap / 2, tabs.bottom - QuickNavScale(4));
-                SelectObject(memoryDc, savedPen);
-                DeleteObject(indicatorPen);
+                RECT ind = MakeRect(insertX - gap / 2, tabs.top + QuickNavScale(4),
+                    insertX - gap / 2 + QuickNavScale(2), tabs.bottom - QuickNavScale(4));
+                DrawD2DSeparator(ctx.Get(), ind, ToD2DColor(t.tabDragIndicator));
             }
         }
 
-        RestoreDC(memoryDc, -1);
+        ctx->PopAxisAlignedClip();
     }
 
-    RECT contentApp = GetQuickNavigationContentRect(quickNavigationRect_);
-    RECT content = offsetRect(contentApp);
-    SaveDC(memoryDc);
-    IntersectClipRect(memoryDc, content.left, content.top, content.right, content.bottom);
+    RECT contentApp = GetQuickNavigationContentRect(overlay);
+    ctx->PushAxisAlignedClip(ToD2DRect(contentApp), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (entries.empty() && quickNavigationAppResultIndices_.empty() &&
         (!searching || quickNavigationEverythingResults_.empty()))
     {
-        RECT emptyRect = content;
+        RECT emptyRect = contentApp;
         emptyRect.top += QuickNavScale(28);
         if (searching && !everythingSearchAvailable_)
-            drawText(L"Everything 未运行，请安装并启动",
-                emptyRect, quickNavigationItemFont_, t.emptyText, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            DrawD2DTextEllipsis(ctx.Get(), GetQuickNavigationEverythingNoticeText(),
+                emptyRect, quickNavItemTextFormat_.Get(), ToD2DColor(t.emptyText),
+                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, false);
         else
-            drawText(!searching
+            DrawD2DTextEllipsis(ctx.Get(),
+                !searching
                     ? (collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目")
                     : L"没有匹配结果",
-                emptyRect, quickNavigationItemFont_, t.emptyText, DT_CENTER | DT_TOP | DT_SINGLELINE);
+                emptyRect, quickNavItemTextFormat_.Get(), ToD2DColor(t.emptyText),
+                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, false);
     }
     else
     {
         if (searching)
         {
             const int headerH = QuickNavScale(28);
-            RECT desktopHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
+            RECT desktopHeader = MakeRect(contentApp.left + QuickNavScale(8),
                 contentApp.top - quickNavigationScrollOffset_,
                 contentApp.right - QuickNavScale(12),
-                contentApp.top + headerH - quickNavigationScrollOffset_));
+                contentApp.top + headerH - quickNavigationScrollOffset_);
             std::wstring desktopLabel = L"桌面结果  " + std::to_wstring(entries.size()) + L" 项";
-            drawText(desktopLabel, desktopHeader, quickNavigationTabFont_, t.headerText,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            DrawD2DTextEllipsis(ctx.Get(), desktopLabel, desktopHeader,
+                quickNavTabTextFormat_.Get(), ToD2DColor(t.headerText),
+                DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-            HPEN desktopSep = CreatePen(PS_SOLID, 1, t.headerSeparator);
-            HGDIOBJ oldPen = SelectObject(memoryDc, desktopSep);
-            const int sepY = desktopHeader.bottom - QuickNavScale(1);
-            MoveToEx(memoryDc, desktopHeader.left, sepY, nullptr);
-            LineTo(memoryDc, desktopHeader.right, sepY);
-            SelectObject(memoryDc, oldPen);
-            DeleteObject(desktopSep);
+            RECT desktopSep = MakeRect(desktopHeader.left,
+                desktopHeader.bottom - QuickNavScale(1),
+                desktopHeader.right, desktopHeader.bottom);
+            DrawD2DSeparator(ctx.Get(), desktopSep, ToD2DColor(t.headerSeparator));
         }
 
-        auto drawNavigationEntryFallback = [&](const QuickNavigationEntry& entry, const RECT& itemRectApp) {
-            const int cellW = itemRectApp.right - itemRectApp.left;
-            const int cellH = itemRectApp.bottom - itemRectApp.top;
-            const int maxIconW = std::max(QuickNavScale(16), cellW - QuickNavScale(8));
-            const int maxIconH = std::max(QuickNavScale(16), cellH - QuickNavScale(kQuickNavigationTextHeight) - QuickNavScale(8));
-            const int iconSz = std::min(maxIconW, maxIconH);
-            const int iconX = itemRectApp.left + (cellW - iconSz) / 2;
-            const int iconY = itemRectApp.top + QuickNavScale(2);
-            RECT iconRect = MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
-            const int textTop = iconRect.bottom + QuickNavScale(2);
-            RECT textRect = MakeRect(itemRectApp.left + QuickNavScale(4), textTop,
-                itemRectApp.right - QuickNavScale(4), textTop + QuickNavScale(kQuickNavigationTextHeight));
-            RECT selRect = textRect;
-            selRect.top = std::max(itemRectApp.top, iconRect.top - QuickNavScale(2));
-            selRect.left = itemRectApp.left + QuickNavScale(3);
-            selRect.right = itemRectApp.right - QuickNavScale(3);
-            selRect.bottom = std::min(itemRectApp.bottom - QuickNavScale(2), textRect.bottom);
+        // 桌面项直接走 D2D（ctx 为 ID2D1DeviceContext，与桌面共享 d2dDevice_ 缓存）
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            RECT itemRectApp = GetQuickNavigationItemRect(overlay, i);
+            if (itemRectApp.bottom <= contentApp.top ||
+                itemRectApp.top >= contentApp.bottom)
+                continue;
 
-            if (PtInRect(&itemRectApp, lastMousePoint_) != FALSE)
-                fillRound(offsetRect(selRect), t.itemHoverFill, t.itemHoverStroke, QuickNavScale(12));
-
-            HBITMAP bitmap = nullptr;
-            int systemIconIndex = -1;
-            bool shortcutArrow = false;
+            const QuickNavigationEntry& entry = entries[i];
+            const int state = PtInRect(&itemRectApp, lastMousePoint_) != FALSE ? 1 : 0;
+            // 图标本体复用桌面绘制，标题由快捷导航自绘，避免桌面标题布局和字重互相影响。
             if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
                 entry.itemIndex < items_.size())
             {
-                const DesktopItem& item = items_[entry.itemIndex];
-                bitmap = item.iconBitmap;
-                systemIconIndex = item.sysIconIndex;
-                shortcutArrow = item.shortcutArrow;
+                DesktopIcon icon(&items_[entry.itemIndex], nullptr, this);
+                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false);
+                DrawQuickNavItemText(ctx.Get(), itemRectApp, items_[entry.itemIndex].name,
+                    false, quickNavLightTheme_);
             }
             else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
                 entry.widgetIndex < widgets_.size() &&
                 entry.folderEntryIndex < widgets_[entry.widgetIndex].folderEntries.size())
             {
-                const FolderEntry& folderEntry =
+                FolderEntry& folderEntry =
                     widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
-                bitmap = folderEntry.iconBitmap;
-                systemIconIndex = folderEntry.sysIconIndex;
-                shortcutArrow = folderEntry.shortcutArrow;
-            }
-
-            if (!drawBitmap(bitmap, offsetRect(iconRect)))
-            {
-                drawSystemIcon(systemIconIndex, offsetRect(iconRect));
-            }
-            if (shortcutArrow)
-                drawShortcutArrowGdi(offsetRect(iconRect));
-
-            RECT textRectLocal = offsetRect(textRect);
-            RECT measure = textRectLocal;
-            HGDIOBJ oldMeasureFont = SelectObject(memoryDc, quickNavigationItemFont_);
-            DrawTextW(memoryDc, entry.name.c_str(), static_cast<int>(entry.name.size()), &measure,
-                DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-            SelectObject(memoryDc, oldMeasureFont);
-            bool fitsOneLine = measure.right <= textRectLocal.right + QuickNavScale(2);
-            UINT textFlags = DT_CENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
-            if (fitsOneLine)
-                textFlags |= DT_VCENTER | DT_SINGLELINE;
-            else
-                textFlags |= DT_TOP | DT_WORDBREAK | DT_EDITCONTROL;
-            drawText(entry.name, textRectLocal, quickNavigationItemFont_, t.itemText, textFlags);
-        };
-
-        bool desktopEntriesDrawnWithD2D = false;
-        if (d2dOk && dcRenderTarget && !entries.empty())
-        {
-            brushCache_.clear();
-            brushCacheContext_ = nullptr;
-            dcRenderTarget->BeginDraw();
-            dcRenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            dcRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
-            dcRenderTarget->SetTransform(D2D1::Matrix3x2F::Translation(
-                static_cast<float>(-quickNavigationRect_.left),
-                static_cast<float>(-quickNavigationRect_.top)));
-            dcRenderTarget->PushAxisAlignedClip(ToD2DRect(contentApp),
-                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
-            for (size_t i = 0; i < entries.size(); ++i)
-            {
-                RECT itemRectApp = GetQuickNavigationItemRect(quickNavigationRect_, i);
-                if (itemRectApp.bottom <= contentApp.top ||
-                    itemRectApp.top >= contentApp.bottom)
-                    continue;
-
-                const QuickNavigationEntry& entry = entries[i];
-                const int state = PtInRect(&itemRectApp, lastMousePoint_) != FALSE ? 1 : 0;
-                if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
-                    entry.itemIndex < items_.size())
-                {
-                    DesktopIcon icon(&items_[entry.itemIndex], nullptr, this);
-                    icon.Draw(static_cast<ID2D1RenderTarget*>(dcRenderTarget), itemRectApp, state,
-                        quickNavLightTheme_);
-                }
-                else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
-                    entry.widgetIndex < widgets_.size() &&
-                    entry.folderEntryIndex < widgets_[entry.widgetIndex].folderEntries.size())
-                {
-                    FolderEntryIcon icon(&widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex],
-                        nullptr, this);
-                    icon.Draw(static_cast<ID2D1RenderTarget*>(dcRenderTarget), itemRectApp, state,
-                        quickNavLightTheme_);
-                }
-            }
-
-            dcRenderTarget->PopAxisAlignedClip();
-            dcRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
-            HRESULT endDrawHr = dcRenderTarget->EndDraw();
-            brushCache_.clear();
-            brushCacheContext_ = nullptr;
-            if (SUCCEEDED(endDrawHr))
-                desktopEntriesDrawnWithD2D = true;
-            else
-            {
-                d2dOk = false;
-                quickNavD2DTarget_.Reset();
-                quickNavD2DIconCache_.clear();
-                quickNavShortcutArrowBitmap_.Reset();
-                quickNavShortcutArrowBitmapSize_ = {};
-                quickNavPlaceholderIconCache_.clear();
-            }
-        }
-
-        if (!desktopEntriesDrawnWithD2D)
-        {
-            for (size_t i = 0; i < entries.size(); ++i)
-            {
-                RECT itemRectApp = GetQuickNavigationItemRect(quickNavigationRect_, i);
-                if (itemRectApp.bottom <= contentApp.top ||
-                    itemRectApp.top >= contentApp.bottom)
-                    continue;
-
-                drawNavigationEntryFallback(entries[i], itemRectApp);
+                FolderEntryIcon icon(&folderEntry, nullptr, this);
+                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false);
+                DrawQuickNavItemText(ctx.Get(), itemRectApp, folderEntry.name,
+                    false, quickNavLightTheme_);
             }
         }
 
         if (searching)
         {
-            const int columns = GetQuickNavigationColumnCount(quickNavigationRect_);
+            const int columns = GetQuickNavigationColumnCount(overlay);
             const int desktopRows = entries.empty() ? 0 :
                 (static_cast<int>(entries.size()) + columns - 1) / columns;
             const int headerH = QuickNavScale(28);
             const int gap = QuickNavScale(8);
             const int rowH = QuickNavScale(46);
+            const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
+                QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
             const int appHeaderTop = contentApp.top + headerH + gap
-                + desktopRows * QuickNavScale(kQuickNavigationCellHeight)
+                + desktopGridH
                 + gap - quickNavigationScrollOffset_;
             int everythingHeaderTop = appHeaderTop;
 
             if (!quickNavigationAppResultIndices_.empty())
             {
                 const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
-                RECT appHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
+                RECT appHeader = MakeRect(contentApp.left + QuickNavScale(8),
                     appHeaderTop,
                     contentApp.right - QuickNavScale(12),
-                    appHeaderTop + headerH));
+                    appHeaderTop + headerH);
                 std::wstring appLabel = L"应用  " +
                     std::to_wstring(quickNavigationAppResultIndices_.size()) + L" 项";
-                drawText(appLabel, appHeader, quickNavigationTabFont_, t.headerText,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                DrawD2DTextEllipsis(ctx.Get(), appLabel, appHeader,
+                    quickNavTabTextFormat_.Get(), ToD2DColor(t.headerText),
+                    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-                HPEN separatorPen = CreatePen(PS_SOLID, 1, t.headerSeparator);
-                HGDIOBJ oldPen = SelectObject(memoryDc, separatorPen);
-                const int sepY = appHeader.bottom - QuickNavScale(1);
-                MoveToEx(memoryDc, appHeader.left, sepY, nullptr);
-                LineTo(memoryDc, appHeader.right, sepY);
-                SelectObject(memoryDc, oldPen);
-                DeleteObject(separatorPen);
+                RECT appSep = MakeRect(appHeader.left, appHeader.bottom - QuickNavScale(1),
+                    appHeader.right, appHeader.bottom);
+                DrawD2DSeparator(ctx.Get(), appSep, ToD2DColor(t.headerSeparator));
 
                 for (size_t i = 0; i < visibleAppCount; ++i)
                 {
@@ -2564,17 +2596,18 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
                         continue;
 
-                    RECT rowLocal = offsetRect(rowRectApp);
                     if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE)
-                        fillRound(rowLocal, t.appRowHoverFill, t.appRowHoverStroke, QuickNavScale(10));
+                        DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
+                            static_cast<float>(QuickNavScale(10)) / 2.0f,
+                            ToD2DColor(t.appRowHoverFill), ToD2DColor(t.appRowHoverStroke));
 
                     const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[appIndex];
-                    const int iconSz = QuickNavScale(18);
+                    const int iconSz = QuickNavScale(28);
                     RECT iconRect = MakeRect(rowRectApp.left + QuickNavScale(12),
                         rowRectApp.top + (rowH - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         rowRectApp.top + (rowH + iconSz) / 2);
-                    drawSystemIcon(entry.systemIconIndex, offsetRect(iconRect));
+                    DrawQuickNavSysIcon(ctx.Get(), entry.systemIconIndex, iconRect);
 
                     const int textLeft = iconRect.right + QuickNavScale(10);
                     RECT nameRect = rowRectApp;
@@ -2589,12 +2622,12 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     typeRect.top += QuickNavScale(24);
                     typeRect.bottom -= QuickNavScale(5);
 
-                    drawText(entry.name, offsetRect(nameRect), quickNavigationItemFont_, t.appNameText,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-                    drawText(L"应用", offsetRect(typeRect),
-                        quickNavigationPathFont_ ? quickNavigationPathFont_ : quickNavigationTabFont_,
-                        t.appTypeText,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    DrawD2DTextEllipsis(ctx.Get(), entry.name, nameRect,
+                        quickNavItemTextFormat_.Get(), ToD2DColor(t.appNameText),
+                        DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    DrawD2DTextEllipsis(ctx.Get(), L"应用", typeRect,
+                        quickNavPathTextFormat_.Get(), ToD2DColor(t.appTypeText),
+                        DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 }
 
                 int appRowsHeight = static_cast<int>(visibleAppCount) * rowH;
@@ -2605,13 +2638,13 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         contentApp.right - QuickNavScale(12), buttonTop + rowH);
                     if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
                     {
-                        RECT buttonLocal = offsetRect(buttonRectApp);
                         const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE;
                         std::wstring expandLabel = L"展开全部应用结果（" +
                             std::to_wstring(quickNavigationAppResultIndices_.size()) + L" 项）";
-                        drawText(expandLabel, buttonLocal, quickNavigationTabFont_,
-                            hovered ? t.expandHoverText : t.expandDefaultText,
-                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                        DrawD2DTextEllipsis(ctx.Get(), expandLabel, buttonRectApp,
+                            quickNavTabTextFormat_.Get(),
+                            hovered ? ToD2DColor(t.expandHoverText) : ToD2DColor(t.expandDefaultText),
+                            DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     }
                     appRowsHeight += rowH;
                 }
@@ -2623,31 +2656,30 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
             if (!everythingSearchAvailable_)
             {
-                RECT noticeHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
+                RECT noticeHeader = MakeRect(contentApp.left + QuickNavScale(8),
                     everythingHeaderTop,
                     contentApp.right - QuickNavScale(12),
-                    everythingHeaderTop + headerH));
-                drawText(L"Everything 未运行", noticeHeader, quickNavigationTabFont_, t.emptyHeaderText,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    everythingHeaderTop + headerH);
+                DrawD2DTextEllipsis(ctx.Get(), GetQuickNavigationEverythingNoticeText(), noticeHeader,
+                    quickNavTabTextFormat_.Get(), ToD2DColor(t.emptyHeaderText),
+                    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
             else
             {
-                RECT everythingHeader = offsetRect(MakeRect(contentApp.left + QuickNavScale(8),
+                RECT everythingHeader = MakeRect(contentApp.left + QuickNavScale(8),
                     everythingHeaderTop,
                     contentApp.right - QuickNavScale(12),
-                    everythingHeaderTop + headerH));
+                    everythingHeaderTop + headerH);
                 std::wstring everythingLabel = L"Everything  " +
                     std::to_wstring(quickNavigationEverythingResults_.size()) + L" 项";
-                drawText(everythingLabel, everythingHeader, quickNavigationTabFont_, t.headerText,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                DrawD2DTextEllipsis(ctx.Get(), everythingLabel, everythingHeader,
+                    quickNavTabTextFormat_.Get(), ToD2DColor(t.headerText),
+                    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-                HPEN separatorPen = CreatePen(PS_SOLID, 1, t.headerSeparator);
-                HGDIOBJ oldPen = SelectObject(memoryDc, separatorPen);
-                const int sepY = everythingHeader.bottom - QuickNavScale(1);
-                MoveToEx(memoryDc, everythingHeader.left, sepY, nullptr);
-                LineTo(memoryDc, everythingHeader.right, sepY);
-                SelectObject(memoryDc, oldPen);
-                DeleteObject(separatorPen);
+                RECT evSep = MakeRect(everythingHeader.left,
+                    everythingHeader.bottom - QuickNavScale(1),
+                    everythingHeader.right, everythingHeader.bottom);
+                DrawD2DSeparator(ctx.Get(), evSep, ToD2DColor(t.headerSeparator));
 
                 for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
                 {
@@ -2658,17 +2690,18 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
                         continue;
 
-                    RECT rowLocal = offsetRect(rowRectApp);
                     if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE)
-                        fillRound(rowLocal, t.appRowHoverFill, t.appRowHoverStroke, QuickNavScale(10));
+                        DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
+                            static_cast<float>(QuickNavScale(10)) / 2.0f,
+                            ToD2DColor(t.appRowHoverFill), ToD2DColor(t.appRowHoverStroke));
 
                     const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];
-                    const int iconSz = QuickNavScale(18);
+                    const int iconSz = QuickNavScale(28);
                     RECT iconRect = MakeRect(rowRectApp.left + QuickNavScale(12),
                         rowRectApp.top + (rowH - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         rowRectApp.top + (rowH + iconSz) / 2);
-                    drawSystemIcon(entry.systemIconIndex, offsetRect(iconRect));
+                    DrawQuickNavSysIcon(ctx.Get(), entry.systemIconIndex, iconRect);
 
                     const int textLeft = iconRect.right + QuickNavScale(10);
                     RECT nameRect = rowRectApp;
@@ -2683,34 +2716,53 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     pathRect.top += QuickNavScale(24);
                     pathRect.bottom -= QuickNavScale(5);
 
-                    drawText(entry.name.empty() ? FileNameFromPath(entry.path) : entry.name,
-                        offsetRect(nameRect), quickNavigationItemFont_, t.appNameText,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-                    drawText(entry.path, offsetRect(pathRect),
-                        quickNavigationPathFont_ ? quickNavigationPathFont_ : quickNavigationTabFont_,
-                        t.appTypeText,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    DrawD2DTextEllipsis(ctx.Get(),
+                        entry.name.empty() ? FileNameFromPath(entry.path) : entry.name,
+                        nameRect, quickNavItemTextFormat_.Get(), ToD2DColor(t.appNameText),
+                        DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    DrawD2DTextEllipsis(ctx.Get(), entry.path, pathRect,
+                        quickNavPathTextFormat_.Get(), ToD2DColor(t.appTypeText),
+                        DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 }
             }
         }
     }
-    RestoreDC(memoryDc, -1);
+    ctx->PopAxisAlignedClip();
 
     RECT track{}, thumb{};
     int maxScroll = 0, contentHeight = 0;
-    if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+    if (GetQuickNavigationScrollbarGeometry(overlay,
         track, thumb, maxScroll, contentHeight))
     {
         const int trackW = QuickNavScale(5);
-        RECT localTrack = offsetRect(track);
-        RECT localThumb = offsetRect(thumb);
-        fillRound(localTrack, t.scrollTrack, t.scrollTrack, trackW);
+        DrawD2DRoundedRectangle(ctx.Get(), track, static_cast<float>(trackW) / 2.0f,
+            ToD2DColor(t.scrollTrack), ToD2DColor(t.scrollTrack));
         const COLORREF thumbColor = (quickNavScrollbarDragging_ || quickNavScrollbarHovered_)
             ? t.scrollThumbHover : t.scrollThumbDefault;
-        fillRound(localThumb, thumbColor, thumbColor, trackW);
+        DrawD2DRoundedRectangle(ctx.Get(), thumb, static_cast<float>(trackW) / 2.0f,
+            ToD2DColor(thumbColor), ToD2DColor(thumbColor));
     }
 
-    BitBlt(hdc, 0, 0, w, h, memoryDc, 0, 0, SRCCOPY);
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    ctx.Reset();
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+
+    hr = quickNavDcompSurface_->EndDraw();
+    if (FAILED(hr))
+    {
+        RecoverQuickNavCompositionFailure(L"EndDraw", hr);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    hr = dcompDevice_->Commit();
+    if (FAILED(hr))
+    {
+        RecoverQuickNavCompositionFailure(L"Paint Commit", hr);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    quickNavCompositionRenderRecoveryPending_ = false;
 
     EndPaint(hwnd, &ps);
 }
@@ -2769,7 +2821,8 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
                     }
                     if (PtInRect(&track, appPoint))
                     {
-                        int pageSize = std::max(QuickNavScale(kQuickNavigationCellHeight),
+                        int pageSize = std::max(
+                            QuickNavScale(kQuickNavigationCellHeight + kQuickNavigationItemRowGap),
                             static_cast<int>(content.bottom - content.top) - QuickNavScale(28));
                         if (appPoint.y < thumb.top)
                             quickNavigationScrollOffset_ = std::max(0,

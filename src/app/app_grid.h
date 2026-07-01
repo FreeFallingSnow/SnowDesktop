@@ -2558,7 +2558,6 @@ inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
             {
                 if (result->bitmap)
                 {
-                    quickNavD2DIconCache_.clear();
                     if (item.iconBitmap) { d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(item.iconBitmap)); DeleteObject(item.iconBitmap); }
                     item.iconBitmap = result->bitmap;
                     item.iconBitmapSize = result->bitmapSize;
@@ -2601,7 +2600,6 @@ inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 {
                     if (result->bitmap)
                     {
-                        quickNavD2DIconCache_.clear();
                         if (entry.iconBitmap) { d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(entry.iconBitmap)); DeleteObject(entry.iconBitmap); }
                         entry.iconBitmap = result->bitmap;
                         entry.iconBitmapSize = result->bitmapSize;
@@ -5945,32 +5943,10 @@ inline ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(ID2D1RenderTarget* target, 
 {
     if (!target || !hbm) return nullptr;
 
+    // 快捷导航改走 DComp 后，target 必为 ID2D1DeviceContext（与桌面同源 d2dDevice_），
+    // 统一走 d2dIconCache_；非 device-context 路径已废弃。
     ComPtr<ID2D1DeviceContext> deviceContext;
-    if (SUCCEEDED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext)
-        return GetOrCreateD2DBitmap(hbm);
-
-    auto key = reinterpret_cast<std::uintptr_t>(hbm);
-    auto it = quickNavD2DIconCache_.find(key);
-    if (it != quickNavD2DIconCache_.end())
-        return it->second.Get();
-
-    BITMAP bm{};
-    if (!GetObjectW(hbm, sizeof(bm), &bm) || bm.bmWidth <= 0 || bm.bmHeight == 0 || !bm.bmBits)
+    if (FAILED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext)
         return nullptr;
-
-    const UINT width = static_cast<UINT>(bm.bmWidth);
-    const UINT height = static_cast<UINT>(std::abs(bm.bmHeight));
-    D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-
-    ComPtr<ID2D1Bitmap> bitmap;
-    if (FAILED(target->CreateBitmap(D2D1::SizeU(width, height), bm.bmBits,
-        static_cast<UINT32>(bm.bmWidthBytes), props, &bitmap)) || !bitmap)
-    {
-        return nullptr;
-    }
-
-    auto* result = bitmap.Get();
-    quickNavD2DIconCache_[key] = std::move(bitmap);
-    return result;
+    return GetOrCreateD2DBitmap(hbm);
 }

@@ -185,4 +185,5 @@ constexpr int kCollectionPopupBottomPadding = 18;
 // ── 快捷导航单元格尺寸 ────────────────────────
 constexpr int kQuickNavigationCellWidth = 72;
 constexpr int kQuickNavigationCellHeight = 88;
+constexpr int kQuickNavigationItemRowGap = 6;
 constexpr int kQuickNavigationTextHeight = 36;
