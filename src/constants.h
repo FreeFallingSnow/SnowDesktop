@@ -144,6 +144,7 @@ constexpr UINT kContextPageJumpLast  = 41550;
 constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT kIconLoadedMessage = WM_APP + 3;
 constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
+constexpr UINT kCommitRenameMessage = WM_APP + 5;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 

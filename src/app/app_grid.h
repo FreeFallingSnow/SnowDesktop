@@ -4464,7 +4464,7 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
         std::wstring from = doubleNull(fromPath);
         std::wstring to = doubleNull(toPath);
         SHFILEOPSTRUCTW op{};
-        op.hwnd = hwnd_;
+        op.hwnd = ShellDialogOwnerHwnd();
         op.wFunc = func;
         op.pFrom = from.c_str();
         op.pTo = to.c_str();
@@ -4484,7 +4484,7 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
         std::wstring to = desktopPath;
         to.push_back(L'\0');
         SHFILEOPSTRUCTW op{};
-        op.hwnd = hwnd_;
+        op.hwnd = ShellDialogOwnerHwnd();
         op.wFunc = func;
         op.pFrom = from.c_str();
         op.pTo = to.c_str();
@@ -4598,7 +4598,7 @@ inline bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceLis
     std::wstring to = folder;
     to += L'\0';
     SHFILEOPSTRUCTW op{};
-    op.hwnd = hwnd_;
+    op.hwnd = ShellDialogOwnerHwnd();
     op.wFunc = action == DropAction::Move ? FO_MOVE : FO_COPY;
     op.pFrom = from.c_str();
     op.pTo = to.c_str();

@@ -352,6 +352,8 @@ private:
     void AttachInputWindowToDesktopHost(HWND host);
     /** @brief 将键盘焦点交给独立输入窗口。 */
     void FocusDesktopInputWindow();
+    /** @brief 获取 Shell 弹窗/命令使用的顶层 owner，避免使用挂在 Explorer 下的子窗口。 */
+    HWND ShellDialogOwnerHwnd() const;
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
     /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
@@ -1670,6 +1672,7 @@ private:
     HWND renameEdit_ = nullptr;
     HFONT renameFont_ = nullptr;
     size_t renameIndex_ = static_cast<size_t>(-1);
+    bool renameCommitPending_ = false;
     bool renamingWidget_ = false;
     bool renamingFolderEntry_ = false;
     size_t renameFolderWidgetIndex_ = static_cast<size_t>(-1);

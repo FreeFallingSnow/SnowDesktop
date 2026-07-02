@@ -2372,7 +2372,7 @@ inline bool DesktopApp::DeleteSelectedFolderEntries()
     from.push_back(L'\0');
 
     SHFILEOPSTRUCTW op{};
-    op.hwnd = hwnd_;
+    op.hwnd = ShellDialogOwnerHwnd();
     op.wFunc = FO_DELETE;
     op.pFrom = from.c_str();
     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI;
@@ -2717,7 +2717,7 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
             {
                 CMINVOKECOMMANDINFO info{};
                 info.cbSize = sizeof(info);
-                info.hwnd = hwnd_;
+                info.hwnd = ShellDialogOwnerHwnd();
                 info.lpVerb = "paste";
                 info.nShow = SW_SHOWNORMAL;
                 SafeInvokeCommand(bgMenu.Get(), &info);
@@ -2832,7 +2832,7 @@ inline void DesktopApp::InvokeSelectedShellVerb(const char* verb)
 
     CMINVOKECOMMANDINFO info{};
     info.cbSize = sizeof(info);
-    info.hwnd = hwnd_;
+    info.hwnd = ShellDialogOwnerHwnd();
     info.lpVerb = verb;
     info.nShow = SW_SHOWNORMAL;
     if (SafeInvokeCommand(contextMenu.Get(), &info))
@@ -4308,6 +4308,18 @@ inline RECT DesktopApp::GetFolderEntryRenameRect(size_t widgetIndex, size_t memb
     return {};
 }
 
+static int GetRenameInitialSelectionEnd(const std::wstring& name, bool isDirectory)
+{
+    if (isDirectory || name.empty())
+        return -1;
+
+    const size_t dot = name.find_last_of(L'.');
+    if (dot == std::wstring::npos || dot == 0 || dot + 1 >= name.size())
+        return -1;
+
+    return static_cast<int>(dot);
+}
+
 /**
  * @brief 开始对文件夹条目进行重命名（创建弹出式编辑框）
  * @param widgetIndex 部件索引
@@ -4323,6 +4335,7 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
 
     ClearSelection();
     widgets_[widgetIndex].folderEntries[memberIndex].selected = true;
+    renameCommitPending_ = false;
     renamingFolderEntry_ = true;
     renameFolderWidgetIndex_ = widgetIndex;
     renameFolderEntryIndex_ = memberIndex;
@@ -4370,7 +4383,10 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
         reinterpret_cast<DWORD_PTR>(this));
     SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
-    SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
+    SendMessageW(renameEdit_, EM_SETSEL, 0,
+        GetRenameInitialSelectionEnd(
+            widgets_[widgetIndex].folderEntries[memberIndex].name,
+            widgets_[widgetIndex].folderEntries[memberIndex].isDirectory));
     SetFocus(renameEdit_);
 }
 
@@ -4490,7 +4506,7 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
-        invoke.hwnd = hwnd_;
+        invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(commandOffset);
         invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
         invoke.nShow = SW_SHOWNORMAL;
@@ -4588,7 +4604,7 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
         PathRemoveFileSpecW(dirBuf);
         std::wstring uniqueName = MakeUniqueFileName(dirBuf, newName);
         PITEMID_CHILD newChild = nullptr;
-        hr = parentFolder->SetNameOf(hwnd_, child, uniqueName.c_str(), SHGDN_NORMAL, &newChild);
+        hr = parentFolder->SetNameOf(ShellDialogOwnerHwnd(), child, uniqueName.c_str(), SHGDN_NORMAL, &newChild);
         if (newChild) ILFree(newChild);
         parentFolder->Release();
     }
@@ -4612,6 +4628,7 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
 inline void DesktopApp::BeginRenameSelected()
 {
     if (renameEdit_ != nullptr) return;
+    renameCommitPending_ = false;
 
     int selectedWidgetCount = 0;
     size_t selectedWidgetIndex = static_cast<size_t>(-1);
@@ -4713,6 +4730,9 @@ inline void DesktopApp::BeginRenameSelected()
 
     wchar_t path[MAX_PATH]{};
     if (!SHGetPathFromIDListW(items_[selectedIndex].absolutePidl.get(), path)) return;
+    DWORD fileAttributes = GetFileAttributesW(path);
+    bool isDirectory = fileAttributes != INVALID_FILE_ATTRIBUTES &&
+        (fileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
     renameIndex_ = static_cast<size_t>(selectedIndex);
     RECT itemBounds = GetVisibleCollectionItemBounds(renameIndex_);
@@ -4754,7 +4774,8 @@ inline void DesktopApp::BeginRenameSelected()
         reinterpret_cast<DWORD_PTR>(this));
     SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
-    SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
+    SendMessageW(renameEdit_, EM_SETSEL, 0,
+        GetRenameInitialSelectionEnd(items_[selectedIndex].name, isDirectory));
     SetFocus(renameEdit_);
 }
 
@@ -4764,6 +4785,7 @@ inline void DesktopApp::BeginRenameSelected()
  */
 inline void DesktopApp::CommitRename(bool cancel)
 {
+    renameCommitPending_ = false;
     if (renameEdit_ == nullptr) return;
 
     HWND edit = renameEdit_;
@@ -4821,7 +4843,7 @@ inline void DesktopApp::CommitRename(bool cancel)
         SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
         std::wstring uniqueName = MakeUniqueFileName(desktopPath, newName);
         PITEMID_CHILD newChild = nullptr;
-        HRESULT hr = desktopFolder_->SetNameOf(hwnd_,
+        HRESULT hr = desktopFolder_->SetNameOf(ShellDialogOwnerHwnd(),
             reinterpret_cast<PCUITEMID_CHILD>(items_[renameIndex_].childPidl.get()),
             uniqueName.c_str(), SHGDN_NORMAL, &newChild);
         if (SUCCEEDED(hr))
@@ -4881,7 +4903,15 @@ inline LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
         if (wParam == VK_ESCAPE) { app->CommitRename(true); return 0; }
         break;
     case WM_KILLFOCUS:
-        app->CommitRename(false);
+        if (!app->renameCommitPending_)
+        {
+            app->renameCommitPending_ = true;
+            if (!PostMessageW(app->hwnd_, kCommitRenameMessage, FALSE, 0))
+            {
+                app->renameCommitPending_ = false;
+                app->CommitRename(false);
+            }
+        }
         return 0;
     }
     return DefSubclassProc(hwnd, message, wParam, lParam);

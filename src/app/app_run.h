@@ -250,6 +250,13 @@ inline void DesktopApp::FocusDesktopInputWindow()
         SetFocus(hwnd_);
 }
 
+inline HWND DesktopApp::ShellDialogOwnerHwnd() const
+{
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        return controlHwnd_;
+    return hwnd_;
+}
+
 /**
  * @brief 创建桌面覆盖层窗口
  *
@@ -1406,6 +1413,10 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case kQuickNavigationAppsIndexedMessage:
         OnQuickNavigationAppsIndexed(wp, lp);
+        return 0;
+    case kCommitRenameMessage:
+        renameCommitPending_ = false;
+        CommitRename(wp != 0);
         return 0;
     case WM_TIMER:
         OnTimer(wp);
