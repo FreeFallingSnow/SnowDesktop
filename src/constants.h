@@ -178,6 +178,7 @@ constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
 
 // ── 快捷导航 ──────────────────────────────────
 constexpr int kQuickNavigationHotkeyId = 101;
+constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;
 
 // ── 集合弹出面板布局 ──────────────────────────
 constexpr int kCollectionPopupPaddingX = 18;

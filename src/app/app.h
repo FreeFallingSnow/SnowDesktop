@@ -261,6 +261,8 @@ public:
     {
         std::wstring name;
         std::wstring path;
+        FILETIME dateModified{};
+        std::wstring modifiedText;
         bool isDirectory = false;
         int systemIconIndex = -1;
     };
@@ -514,6 +516,8 @@ private:
     size_t GetQuickNavigationVisibleAppResultCount() const;
     bool HasQuickNavigationAppExpandButton() const;
     bool TryExpandQuickNavigationAppsAtPoint(POINT point);
+    bool HasQuickNavigationEverythingLoadMoreButton() const;
+    bool TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point);
     bool TryGetQuickNavigationAppEntryAtPoint(POINT point, const QuickNavigationAppEntry*& outEntry) const;
     void ShowQuickNavigationAppContextMenu(const QuickNavigationAppEntry& entry, POINT screenPoint);
     bool CreateDesktopShortcutForApp(const QuickNavigationAppEntry& entry);
@@ -1763,6 +1767,8 @@ private:
     std::wstring quickNavigationSearchText_;
     std::wstring quickNavigationSearchCompositionText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
+    DWORD quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
+    bool quickNavigationEverythingHasMore_ = false;
     std::vector<size_t> quickNavigationAppResultIndices_;
     std::vector<QuickNavigationAppEntry> quickNavigationAppEntries_;
     bool quickNavigationAppsIndexed_ = false;

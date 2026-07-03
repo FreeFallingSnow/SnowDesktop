@@ -7,13 +7,15 @@
 
 #pragma once
 
+#include <cwchar>
+#include <limits>
+
 #include <dwmapi.h>
 #include <imm.h>
 #include "search_match.h"
 
 // ── Quick Navigation ───────────────────────────────────────
 
-inline constexpr DWORD kQuickNavigationEverythingResultLimit = 200;
 inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
 
@@ -44,6 +46,32 @@ inline int QuickNavigationRowsHeight(int rows, int cellHeight, int rowGap)
     if (rows <= 0)
         return 0;
     return rows * cellHeight + (rows - 1) * rowGap;
+}
+
+inline bool QuickNavigationHasFileTime(const FILETIME& value)
+{
+    return value.dwLowDateTime != 0 || value.dwHighDateTime != 0;
+}
+
+inline std::wstring QuickNavigationFormatModifiedTime(const FILETIME& value)
+{
+    if (!QuickNavigationHasFileTime(value))
+        return {};
+
+    FILETIME localTime{};
+    SYSTEMTIME systemTime{};
+    if (!FileTimeToLocalFileTime(&value, &localTime) ||
+        !FileTimeToSystemTime(&localTime, &systemTime))
+        return {};
+
+    wchar_t buffer[32]{};
+    swprintf_s(buffer, ARRAYSIZE(buffer), L"修改 %04u-%02u-%02u %02u:%02u",
+        static_cast<unsigned>(systemTime.wYear),
+        static_cast<unsigned>(systemTime.wMonth),
+        static_cast<unsigned>(systemTime.wDay),
+        static_cast<unsigned>(systemTime.wHour),
+        static_cast<unsigned>(systemTime.wMinute));
+    return buffer;
 }
 }
 
@@ -77,8 +105,21 @@ inline std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
         [&](const EverythingSearchResult& a, const EverythingSearchResult& b) {
             const std::wstring aName = a.name.empty() ? FileNameFromPath(a.path) : a.name;
             const std::wstring bName = b.name.empty() ? FileNameFromPath(b.path) : b.name;
-            return NameSearchMatchRank(aName, normalizedQuery) <
-                NameSearchMatchRank(bName, normalizedQuery);
+            const int aRank = NameSearchMatchRank(aName, normalizedQuery);
+            const int bRank = NameSearchMatchRank(bName, normalizedQuery);
+            if (aRank != bRank)
+                return aRank < bRank;
+
+            const std::wstring aNameKey = ToUpperInvariant(aName);
+            const std::wstring bNameKey = ToUpperInvariant(bName);
+            if (aNameKey != bNameKey)
+                return aNameKey < bNameKey;
+
+            const int timeCmp = CompareFileTime(&a.dateModified, &b.dateModified);
+            if (timeCmp != 0)
+                return timeCmp > 0;
+
+            return ToUpperInvariant(a.path) < ToUpperInvariant(b.path);
         });
     return everythingSearchCacheResults_;
 }
@@ -956,6 +997,88 @@ inline bool DesktopApp::TryExpandQuickNavigationAppsAtPoint(POINT point)
     return true;
 }
 
+inline bool DesktopApp::HasQuickNavigationEverythingLoadMoreButton() const
+{
+    return everythingSearchAvailable_ &&
+        quickNavigationEverythingHasMore_ &&
+        !quickNavigationEverythingResults_.empty() &&
+        !GetQuickNavigationEffectiveSearchText().empty();
+}
+
+inline bool DesktopApp::TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point)
+{
+    if (!quickNavigationOpen_ || !HasQuickNavigationEverythingLoadMoreButton())
+        return false;
+
+    RECT overlay = quickNavigationRect_;
+    RECT content = GetQuickNavigationContentRect(overlay);
+    if (!PtInRect(&content, point))
+        return false;
+
+    const int columns = GetQuickNavigationColumnCount(overlay);
+    const int desktopCount = static_cast<int>(GetQuickNavigationEntries().size());
+    const int desktopRows = desktopCount == 0 ? 0 : (desktopCount + columns - 1) / columns;
+    const int headerH = QuickNavScale(28);
+    const int gap = QuickNavScale(8);
+    const int rowH = QuickNavScale(46);
+    const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
+    const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
+        QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
+    const int appSectionHeight = quickNavigationAppResultIndices_.empty()
+        ? 0
+        : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
+            (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
+    const int buttonTop = content.top + headerH + gap
+        + desktopGridH
+        + gap + appSectionHeight + headerH + gap
+        + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH
+        - quickNavigationScrollOffset_;
+    RECT buttonRect = MakeRect(content.left + QuickNavScale(8), buttonTop,
+        content.right - QuickNavScale(12), buttonTop + rowH);
+    RECT clipped = buttonRect;
+    clipped.top = std::max(clipped.top, content.top);
+    clipped.bottom = std::min(clipped.bottom, content.bottom);
+    if (clipped.bottom <= clipped.top || !PtInRect(&clipped, point))
+        return false;
+
+    const int oldResultCount = static_cast<int>(quickNavigationEverythingResults_.size());
+    const int buttonTopBefore = buttonRect.top;
+    const DWORD maxLimit = std::numeric_limits<DWORD>::max();
+    if (quickNavigationEverythingResultLimit_ > maxLimit - kQuickNavigationEverythingResultBatchSize)
+        quickNavigationEverythingResultLimit_ = maxLimit;
+    else
+        quickNavigationEverythingResultLimit_ += kQuickNavigationEverythingResultBatchSize;
+
+    const bool appsExpanded = quickNavigationAppsExpanded_;
+    RefreshQuickNavigationEverythingResults();
+    quickNavigationAppsExpanded_ = appsExpanded;
+    const int maxScroll = GetQuickNavigationMaxScrollOffset(quickNavigationRect_);
+    if (static_cast<int>(quickNavigationEverythingResults_.size()) > oldResultCount)
+    {
+        const int newDesktopCount = static_cast<int>(GetQuickNavigationEntries().size());
+        const int newDesktopRows = newDesktopCount == 0 ? 0 :
+            (newDesktopCount + columns - 1) / columns;
+        const size_t newVisibleAppCount = GetQuickNavigationVisibleAppResultCount();
+        const int newDesktopGridH = QuickNavigationRowsHeight(newDesktopRows,
+            QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
+        const int newAppSectionHeight = quickNavigationAppResultIndices_.empty()
+            ? 0
+            : headerH + gap + static_cast<int>(newVisibleAppCount) * rowH +
+                (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
+        const int firstNewRowTop = content.top + headerH + gap
+            + newDesktopGridH
+            + gap + newAppSectionHeight + headerH + gap
+            + oldResultCount * rowH;
+        quickNavigationScrollOffset_ = std::clamp(firstNewRowTop - buttonTopBefore, 0, maxScroll);
+    }
+    else
+    {
+        quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0, maxScroll);
+    }
+    InvalidateQuickNavigationWindow();
+    return true;
+}
+
 inline bool DesktopApp::TryGetQuickNavigationEverythingEntryAtPoint(
     POINT point, QuickNavigationEverythingEntry& outEntry) const
 {
@@ -1030,6 +1153,7 @@ inline int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) cons
     }
     height += headerH + gap
         + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH
+        + (HasQuickNavigationEverythingLoadMoreButton() ? rowH : 0)
         + QuickNavScale(8);
     return std::max(height, std::max(1, static_cast<int>(content.bottom - content.top)));
 }
@@ -1196,6 +1320,7 @@ inline void DesktopApp::RefreshQuickNavigationSearchCompositionText(HWND editHwn
     quickNavigationSearchCompositionText_ = QuickNavigationReadImeCompositionString(editHwnd);
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
     {
+        quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
         quickNavigationScrollOffset_ = 0;
         InvalidateQuickNavigationWindow();
@@ -1211,6 +1336,7 @@ inline void DesktopApp::ClearQuickNavigationSearchCompositionText()
     quickNavigationSearchCompositionText_.clear();
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
     {
+        quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
         quickNavigationScrollOffset_ = 0;
         InvalidateQuickNavigationWindow();
@@ -1234,7 +1360,10 @@ inline void DesktopApp::RefreshQuickNavigationSearchText()
     if (len <= 0)
     {
         if (GetQuickNavigationEffectiveSearchText() != previousQuery)
+        {
+            quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
             RefreshQuickNavigationEverythingResults();
+        }
         return;
     }
     std::wstring buffer(static_cast<size_t>(len) + 1, L'\0');
@@ -1242,7 +1371,10 @@ inline void DesktopApp::RefreshQuickNavigationSearchText()
     buffer.resize(static_cast<size_t>(len));
     quickNavigationSearchText_ = std::move(buffer);
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
+    {
+        quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
+    }
 }
 
 inline void DesktopApp::ClearQuickNavigationEverythingResults()
@@ -1250,6 +1382,8 @@ inline void DesktopApp::ClearQuickNavigationEverythingResults()
     quickNavigationAppResultIndices_.clear();
     quickNavigationAppsExpanded_ = false;
     quickNavigationEverythingResults_.clear();
+    quickNavigationEverythingHasMore_ = false;
+    quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
 }
 
 inline int DesktopApp::GetQuickNavigationEverythingIconIndex(
@@ -1320,31 +1454,73 @@ inline int DesktopApp::GetQuickNavigationEverythingIconIndex(
 
 inline void DesktopApp::RefreshQuickNavigationEverythingResults()
 {
-    ClearQuickNavigationEverythingResults();
+    const bool preserveLoadedOrder =
+        quickNavigationEverythingResultLimit_ > kQuickNavigationEverythingResultBatchSize &&
+        !quickNavigationEverythingResults_.empty();
+    std::vector<QuickNavigationEverythingEntry> previousResults;
+    if (preserveLoadedOrder)
+        previousResults = quickNavigationEverythingResults_;
+
+    quickNavigationAppResultIndices_.clear();
+    quickNavigationAppsExpanded_ = false;
+    quickNavigationEverythingResults_.clear();
+    quickNavigationEverythingHasMore_ = false;
     const std::wstring query = GetQuickNavigationEffectiveSearchText();
     if (query.empty())
         return;
 
     RefreshQuickNavigationAppResults();
 
+    const DWORD requestLimit = std::max<DWORD>(
+        quickNavigationEverythingResultLimit_,
+        kQuickNavigationEverythingResultBatchSize);
+    quickNavigationEverythingResultLimit_ = requestLimit;
+    std::vector<EverythingSearchResult> searchResults =
+        SearchEverythingCached(query, requestLimit);
+    quickNavigationEverythingHasMore_ =
+        searchResults.size() >= static_cast<size_t>(requestLimit);
+
     std::unordered_set<std::wstring> seenPaths;
-    for (const auto& result : SearchEverythingCached(
-        query, kQuickNavigationEverythingResultLimit))
-    {
+    auto appendResult = [&](const EverythingSearchResult& result) {
         if (result.path.empty())
-            continue;
+            return;
         std::wstring normalizedPath = ToUpperInvariant(result.path);
         if (seenPaths.contains(normalizedPath))
-            continue;
+            return;
         seenPaths.insert(std::move(normalizedPath));
 
         QuickNavigationEverythingEntry entry;
         entry.name = result.name.empty() ? FileNameFromPath(result.path) : result.name;
         entry.path = result.path;
+        entry.dateModified = result.dateModified;
+        entry.modifiedText = QuickNavigationFormatModifiedTime(result.dateModified);
         entry.isDirectory = result.isDirectory;
         entry.systemIconIndex = GetQuickNavigationEverythingIconIndex(entry.path, entry.isDirectory);
         quickNavigationEverythingResults_.push_back(std::move(entry));
+    };
+
+    if (preserveLoadedOrder)
+    {
+        std::unordered_map<std::wstring, size_t> resultIndicesByPath;
+        resultIndicesByPath.reserve(searchResults.size());
+        for (size_t i = 0; i < searchResults.size(); ++i)
+        {
+            if (searchResults[i].path.empty())
+                continue;
+            resultIndicesByPath.emplace(ToUpperInvariant(searchResults[i].path), i);
+        }
+
+        for (const auto& previous : previousResults)
+        {
+            auto found = resultIndicesByPath.find(ToUpperInvariant(previous.path));
+            if (found == resultIndicesByPath.end())
+                continue;
+            appendResult(searchResults[found->second]);
+        }
     }
+
+    for (const auto& result : searchResults)
+        appendResult(result);
 }
 
 /**
@@ -1702,6 +1878,9 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     }
 
     if (TryExpandQuickNavigationAppsAtPoint(point))
+        return true;
+
+    if (TryLoadMoreQuickNavigationEverythingResultsAtPoint(point))
         return true;
 
     const QuickNavigationAppEntry* appEntry = nullptr;
@@ -2671,7 +2850,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     contentApp.right - QuickNavScale(12),
                     everythingHeaderTop + headerH);
                 std::wstring everythingLabel = L"Everything  " +
-                    std::to_wstring(quickNavigationEverythingResults_.size()) + L" 项";
+                    std::to_wstring(quickNavigationEverythingResults_.size()) +
+                    (quickNavigationEverythingHasMore_ ? L"+ 项" : L" 项");
                 DrawD2DTextEllipsis(ctx.Get(), everythingLabel, everythingHeader,
                     quickNavTabTextFormat_.Get(), ToD2DColor(t.headerText),
                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -2720,9 +2900,49 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         entry.name.empty() ? FileNameFromPath(entry.path) : entry.name,
                         nameRect, quickNavItemTextFormat_.Get(), ToD2DColor(t.appNameText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+                    const std::wstring modifiedText = entry.modifiedText.empty()
+                        ? QuickNavigationFormatModifiedTime(entry.dateModified)
+                        : entry.modifiedText;
+                    if (!modifiedText.empty())
+                    {
+                        const int textGap = QuickNavScale(8);
+                        const int available = std::max<LONG>(1, pathRect.right - pathRect.left);
+                        const int maxDateWidth = std::min(QuickNavScale(156), available);
+                        const int minDateWidth = std::min(QuickNavScale(118), maxDateWidth);
+                        const int dateWidth = std::clamp(
+                            available / 3,
+                            minDateWidth,
+                            maxDateWidth);
+                        RECT modifiedRect = pathRect;
+                        modifiedRect.left = std::max<LONG>(modifiedRect.left,
+                            modifiedRect.right - dateWidth);
+                        pathRect.right = std::max<LONG>(pathRect.left,
+                            modifiedRect.left - textGap);
+
+                        DrawD2DTextEllipsis(ctx.Get(), modifiedText, modifiedRect,
+                            quickNavPathTextFormat_.Get(), ToD2DColor(t.appTypeText),
+                            DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    }
                     DrawD2DTextEllipsis(ctx.Get(), entry.path, pathRect,
                         quickNavPathTextFormat_.Get(), ToD2DColor(t.appTypeText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                }
+
+                if (HasQuickNavigationEverythingLoadMoreButton())
+                {
+                    const int buttonTop = everythingHeaderTop + headerH + gap
+                        + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH;
+                    RECT buttonRectApp = MakeRect(contentApp.left + QuickNavScale(8), buttonTop,
+                        contentApp.right - QuickNavScale(12), buttonTop + rowH);
+                    if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
+                    {
+                        const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE;
+                        DrawD2DTextEllipsis(ctx.Get(), L"加载更多 Everything 结果", buttonRectApp,
+                            quickNavTabTextFormat_.Get(),
+                            hovered ? ToD2DColor(t.expandHoverText) : ToD2DColor(t.expandDefaultText),
+                            DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    }
                 }
             }
         }
