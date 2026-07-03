@@ -672,7 +672,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             {
                 CMINVOKECOMMANDINFO info{};
                 info.cbSize = sizeof(info);
-                info.hwnd = hwnd_;
+                info.hwnd = ShellDialogOwnerHwnd();
                 info.lpVerb = "paste";
                 info.nShow = SW_SHOWNORMAL;
                 SafeInvokeCommand(bgMenu.Get(), &info);
@@ -889,12 +889,30 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
 
     if (cmd != 0)
     {
+        UINT commandOffset = cmd - kFirstCmd;
+        wchar_t menuText[128]{};
+        bool renameCommand = IsShellRenameCommand(ctxMenu.Get(), commandOffset);
+        if (!renameCommand &&
+            GetMenuStringW(menu, cmd, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
+        {
+            renameCommand = StrStrIW(menuText, L"重命名") != nullptr ||
+                StrStrIW(menuText, L"Rename") != nullptr;
+        }
+
+        if (renameCommand)
+        {
+            DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
+            BeginRenameSelected();
+            return;
+        }
+
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
-        invoke.hwnd = hwnd_;
-        invoke.lpVerb = MAKEINTRESOURCEA(cmd - kFirstCmd);
-        invoke.lpVerbW = MAKEINTRESOURCEW(cmd - kFirstCmd);
+        invoke.hwnd = ShellDialogOwnerHwnd();
+        invoke.lpVerb = MAKEINTRESOURCEA(commandOffset);
+        invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
@@ -951,7 +969,7 @@ inline void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstri
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE;
-        invoke.hwnd = hwnd_;
+        invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(cmd - 1);
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - 1);
         invoke.nShow = SW_SHOWNORMAL;
@@ -1004,7 +1022,7 @@ inline void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
-        invoke.hwnd = hwnd_;
+        invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(cmd - kFirstCmd);
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - kFirstCmd);
         invoke.nShow = SW_SHOWNORMAL;
@@ -1119,7 +1137,7 @@ inline void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPa
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
-        invoke.hwnd = hwnd_;
+        invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(command - kFirstCmd);
         invoke.lpVerbW = MAKEINTRESOURCEW(command - kFirstCmd);
         invoke.nShow = SW_SHOWNORMAL;

@@ -58,6 +58,7 @@ constexpr UINT kTrayDesktopIconUserFiles = 40008;
 constexpr UINT kTrayDesktopIconNetwork = 40009;
 constexpr UINT kTrayDesktopIconControlPanel = 40010;
 constexpr UINT kTrayDesktopIconRecycleBin = 40011;
+constexpr UINT kTrayRestartCommand = 40013;
 
 // ── 桌面特殊图标CLSID ─────────────────────────
 constexpr wchar_t kDesktopIconClsidThisPC[] = L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
@@ -143,6 +144,7 @@ constexpr UINT kContextPageJumpLast  = 41550;
 constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT kIconLoadedMessage = WM_APP + 3;
 constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
+constexpr UINT kCommitRenameMessage = WM_APP + 5;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 
@@ -176,6 +178,7 @@ constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
 
 // ── 快捷导航 ──────────────────────────────────
 constexpr int kQuickNavigationHotkeyId = 101;
+constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;
 
 // ── 集合弹出面板布局 ──────────────────────────
 constexpr int kCollectionPopupPaddingX = 18;
@@ -185,4 +188,5 @@ constexpr int kCollectionPopupBottomPadding = 18;
 // ── 快捷导航单元格尺寸 ────────────────────────
 constexpr int kQuickNavigationCellWidth = 72;
 constexpr int kQuickNavigationCellHeight = 88;
+constexpr int kQuickNavigationItemRowGap = 6;
 constexpr int kQuickNavigationTextHeight = 36;

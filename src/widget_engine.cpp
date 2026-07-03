@@ -342,6 +342,199 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
     return state->textFormatCache.emplace(key, std::move(format)).first->second.Get();
 }
 
+static bool IsHostStructureSettingKey(const std::string& key);
+static bool IsHostAppearanceSettingKey(const std::string& key);
+
+static std::string LuaValueToStorageString(lua_State* L, int index)
+{
+    index = lua_absindex(L, index);
+    if (lua_isboolean(L, index))
+        return lua_toboolean(L, index) ? "1" : "0";
+    if (lua_isinteger(L, index))
+        return std::to_string(static_cast<long long>(lua_tointeger(L, index)));
+    if (lua_isnumber(L, index))
+    {
+        std::ostringstream ss;
+        ss << lua_tonumber(L, index);
+        return ss.str();
+    }
+    if (lua_isstring(L, index))
+        return lua_tostring(L, index);
+    return {};
+}
+
+static std::string LuaReadStorageField(lua_State* L, int tableIndex, const char* key)
+{
+    tableIndex = lua_absindex(L, tableIndex);
+    lua_getfield(L, tableIndex, key);
+    std::string value = LuaValueToStorageString(L, -1);
+    lua_pop(L, 1);
+    return value;
+}
+
+static bool LuaReadBoolField(lua_State* L, int tableIndex, const char* key, bool defaultValue = false)
+{
+    tableIndex = lua_absindex(L, tableIndex);
+    lua_getfield(L, tableIndex, key);
+    bool value = lua_isnil(L, -1) ? defaultValue : (lua_toboolean(L, -1) != 0);
+    lua_pop(L, 1);
+    return value;
+}
+
+static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableIndex)
+{
+    tableIndex = lua_absindex(L, tableIndex);
+    LuaWidgetManifest::Setting setting;
+    setting.key = LuaReadStorageField(L, tableIndex, "key");
+    setting.label = LuaReadStorageField(L, tableIndex, "label");
+    setting.type = LuaReadStorageField(L, tableIndex, "type");
+    setting.defaultValue = LuaReadStorageField(L, tableIndex, "default");
+
+    lua_getfield(L, tableIndex, "min");
+    if (lua_isnumber(L, -1)) setting.minValue = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, tableIndex, "max");
+    if (lua_isnumber(L, -1)) setting.maxValue = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, tableIndex, "options");
+    if (lua_istable(L, -1))
+    {
+        int optionsIndex = lua_absindex(L, -1);
+        for (int i = 1;; ++i)
+        {
+            lua_rawgeti(L, optionsIndex, i);
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+            std::string option = LuaValueToStorageString(L, -1);
+            if (!option.empty()) setting.options.push_back(option);
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+
+    if (setting.label.empty()) setting.label = setting.key;
+    if (setting.type.empty()) setting.type = "text";
+    return setting;
+}
+
+static void ReadLuaSettingsArray(lua_State* L, int arrayIndex,
+    std::vector<LuaWidgetManifest::Setting>& out)
+{
+    arrayIndex = lua_absindex(L, arrayIndex);
+    for (int i = 1;; ++i)
+    {
+        lua_rawgeti(L, arrayIndex, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (lua_istable(L, -1))
+        {
+            LuaWidgetManifest::Setting setting = ReadLuaSettingTable(L, -1);
+            if (!setting.key.empty() &&
+                !IsHostStructureSettingKey(setting.key) &&
+                !IsHostAppearanceSettingKey(setting.key))
+                out.push_back(std::move(setting));
+        }
+        lua_pop(L, 1);
+    }
+}
+
+static std::unordered_map<std::string, std::string> ReadLuaValueMap(lua_State* L, int tableIndex)
+{
+    std::unordered_map<std::string, std::string> values;
+    tableIndex = lua_absindex(L, tableIndex);
+    lua_pushnil(L);
+    while (lua_next(L, tableIndex) != 0)
+    {
+        if (lua_isstring(L, -2))
+        {
+            std::string key = lua_tostring(L, -2);
+            if (!IsHostStructureSettingKey(key))
+            {
+                std::string value = LuaValueToStorageString(L, -1);
+                if (!value.empty()) values[key] = value;
+            }
+        }
+        lua_pop(L, 1);
+    }
+    return values;
+}
+
+static LuaWidgetManifest::SettingPreset ReadLuaPresetTable(lua_State* L, int tableIndex)
+{
+    tableIndex = lua_absindex(L, tableIndex);
+    LuaWidgetManifest::SettingPreset preset;
+    preset.id = LuaReadStorageField(L, tableIndex, "id");
+    preset.label = LuaReadStorageField(L, tableIndex, "label");
+    if (preset.label.empty())
+        preset.label = LuaReadStorageField(L, tableIndex, "name");
+    preset.isDefault = LuaReadBoolField(L, tableIndex, "default") ||
+        LuaReadBoolField(L, tableIndex, "isDefault");
+
+    lua_getfield(L, tableIndex, "values");
+    if (lua_istable(L, -1))
+        preset.values = ReadLuaValueMap(L, -1);
+    lua_pop(L, 1);
+
+    if (preset.id.empty()) preset.id = preset.label;
+    if (preset.label.empty()) preset.label = preset.id;
+    return preset;
+}
+
+static void ReadLuaPresetsArray(lua_State* L, int arrayIndex,
+    std::vector<LuaWidgetManifest::SettingPreset>& out)
+{
+    arrayIndex = lua_absindex(L, arrayIndex);
+    for (int i = 1;; ++i)
+    {
+        lua_rawgeti(L, arrayIndex, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (lua_istable(L, -1))
+        {
+            LuaWidgetManifest::SettingPreset preset = ReadLuaPresetTable(L, -1);
+            if (!preset.id.empty() && !preset.label.empty() && !preset.values.empty())
+                out.push_back(std::move(preset));
+        }
+        lua_pop(L, 1);
+    }
+}
+
+static void ReadLuaDeclaredSettings(lua_State* L, int widgetTableIndex,
+    std::vector<LuaWidgetManifest::Setting>& settings,
+    std::vector<LuaWidgetManifest::SettingPreset>& presets)
+{
+    widgetTableIndex = lua_absindex(L, widgetTableIndex);
+    lua_getfield(L, widgetTableIndex, "settings");
+    if (lua_istable(L, -1))
+    {
+        int settingsTable = lua_absindex(L, -1);
+        lua_getfield(L, settingsTable, "fields");
+        if (lua_istable(L, -1))
+        {
+            ReadLuaSettingsArray(L, -1, settings);
+            lua_pop(L, 1);
+        }
+        else
+        {
+            lua_pop(L, 1);
+            lua_rawgeti(L, settingsTable, 1);
+            bool directArray = lua_istable(L, -1);
+            lua_pop(L, 1);
+            if (directArray)
+                ReadLuaSettingsArray(L, settingsTable, settings);
+        }
+
+        lua_getfield(L, settingsTable, "presets");
+        if (lua_istable(L, -1))
+            ReadLuaPresetsArray(L, -1, presets);
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
+    lua_getfield(L, widgetTableIndex, "presets");
+    if (lua_istable(L, -1))
+        ReadLuaPresetsArray(L, -1, presets);
+    lua_pop(L, 1);
+}
+
 static D2DState* GetD2D(lua_State* L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "__d2d_ptr");
@@ -666,6 +859,139 @@ static std::vector<std::string> JsonReadObjectArray(const std::string& text, con
         }
     }
     return result;
+}
+
+static bool JsonReadBool(const std::string& text, const char* field, bool& out)
+{
+    std::string marker = std::string("\"") + field + "\"";
+    size_t p = text.find(marker);
+    if (p == std::string::npos) return false;
+    p = text.find(':', p + marker.size());
+    if (p == std::string::npos) return false;
+    ++p;
+    while (p < text.size() && std::isspace(static_cast<unsigned char>(text[p]))) ++p;
+    if (text.compare(p, 4, "true") == 0) { out = true; return true; }
+    if (text.compare(p, 5, "false") == 0) { out = false; return true; }
+    return false;
+}
+
+static std::string JsonReadObjectField(const std::string& text, const char* field)
+{
+    std::string marker = std::string("\"") + field + "\"";
+    size_t p = text.find(marker);
+    if (p == std::string::npos) return {};
+    size_t open = text.find('{', p + marker.size());
+    if (open == std::string::npos) return {};
+
+    bool inString = false;
+    bool escaped = false;
+    int depth = 0;
+    for (size_t i = open; i < text.size(); ++i)
+    {
+        char ch = text[i];
+        if (inString)
+        {
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') inString = false;
+            continue;
+        }
+        if (ch == '"') { inString = true; continue; }
+        if (ch == '{') ++depth;
+        else if (ch == '}' && --depth == 0)
+            return text.substr(open, i - open + 1);
+    }
+    return {};
+}
+
+static std::unordered_map<std::string, std::string> JsonReadValueMap(
+    const std::string& text, const char* field)
+{
+    std::unordered_map<std::string, std::string> result;
+    std::string object = JsonReadObjectField(text, field);
+    if (object.empty()) return result;
+
+    size_t p = 0;
+    while (true)
+    {
+        p = object.find('"', p);
+        if (p == std::string::npos) break;
+        size_t keyEnd = object.find('"', p + 1);
+        if (keyEnd == std::string::npos) break;
+        std::string key = object.substr(p + 1, keyEnd - p - 1);
+        p = object.find(':', keyEnd + 1);
+        if (p == std::string::npos) break;
+        ++p;
+        while (p < object.size() && std::isspace(static_cast<unsigned char>(object[p]))) ++p;
+
+        std::string value;
+        if (p < object.size() && object[p] == '"')
+        {
+            for (++p; p < object.size(); ++p)
+            {
+                if (object[p] == '"') { ++p; break; }
+                if (object[p] == '\\' && p + 1 < object.size())
+                    value.push_back(object[++p]);
+                else
+                    value.push_back(object[p]);
+            }
+        }
+        else
+        {
+            size_t start = p;
+            while (p < object.size() && object[p] != ',' && object[p] != '}') ++p;
+            value = object.substr(start, p - start);
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+                value.pop_back();
+            if (value == "true") value = "1";
+            else if (value == "false") value = "0";
+        }
+        if (!key.empty()) result[key] = value;
+    }
+    return result;
+}
+
+static bool IsHostStructureSettingKey(const std::string& key)
+{
+    return key == "cornerRadius" || key == "barHeight";
+}
+
+static bool IsHostAppearanceSettingKey(const std::string& key)
+{
+    return key == "bg" || key == "border" || key == "alpha" ||
+        key == "borderAlpha" || key == "gradientEndA" ||
+        key == "shadowAlpha" || key == "shadowBlur" ||
+        key == "shadowOffsetY" || key == "highlightAlpha" ||
+        key == "noiseAlpha" || key == "followPersonalization";
+}
+
+static std::string FindDeclaredDefaultValue(const LuaWidget& widget, const std::string& key)
+{
+    auto readPresetValue = [&key](const std::vector<LuaWidgetManifest::SettingPreset>& presets) {
+        for (const auto& preset : presets)
+        {
+            if (!preset.isDefault && preset.id != "default")
+                continue;
+            auto it = preset.values.find(key);
+            if (it != preset.values.end())
+                return it->second;
+        }
+        return std::string{};
+    };
+    std::string value = readPresetValue(widget.manifest.presets);
+    if (!value.empty()) return value;
+    value = readPresetValue(widget.scriptPresets);
+    if (!value.empty()) return value;
+
+    auto readSettingValue = [&key](const std::vector<LuaWidgetManifest::Setting>& settings) {
+        for (const auto& setting : settings)
+            if (setting.key == key)
+                return setting.defaultValue;
+        return std::string{};
+    };
+    value = readSettingValue(widget.manifest.settings);
+    if (!value.empty()) return value;
+    return readSettingValue(widget.scriptSettings);
 }
 
 static bool RequirePermission(lua_State* L, const char* permission);
@@ -1120,11 +1446,18 @@ static int lua_WidgetTheme(lua_State* L)
     LuaWidgetTheme theme;
     if (s && s->engine)
         theme = s->engine->RuntimeGetWidgetTheme(s->currentWidgetId);
-    lua_createtable(L, 0, 4);
+    lua_createtable(L, 0, 11);
     lua_pushinteger(L, theme.bg); lua_setfield(L, -2, "bg");
     lua_pushinteger(L, theme.border); lua_setfield(L, -2, "border");
     lua_pushnumber(L, theme.alpha); lua_setfield(L, -2, "alpha");
+    lua_pushnumber(L, theme.borderAlpha); lua_setfield(L, -2, "borderAlpha");
     lua_pushnumber(L, theme.gradientEndA); lua_setfield(L, -2, "gradientEndA");
+    lua_pushnumber(L, theme.cornerRadius); lua_setfield(L, -2, "cornerRadius");
+    lua_pushnumber(L, theme.shadowAlpha); lua_setfield(L, -2, "shadowAlpha");
+    lua_pushnumber(L, theme.shadowBlur); lua_setfield(L, -2, "shadowBlur");
+    lua_pushnumber(L, theme.shadowOffsetY); lua_setfield(L, -2, "shadowOffsetY");
+    lua_pushnumber(L, theme.highlightAlpha); lua_setfield(L, -2, "highlightAlpha");
+    lua_pushnumber(L, theme.noiseAlpha); lua_setfield(L, -2, "noiseAlpha");
     return 1;
 }
 
@@ -1644,6 +1977,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
         customStyle = lua_toboolean(L_, -1) != 0;
     lua_pop(L_, 1);
 
+    std::vector<LuaWidgetManifest::Setting> scriptSettings;
+    std::vector<LuaWidgetManifest::SettingPreset> scriptPresets;
+    ReadLuaDeclaredSettings(L_, -1, scriptSettings, scriptPresets);
+
     lua_pop(L_, 1);  // pop table
 
     LuaWidget w;
@@ -1655,6 +1992,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     w.ref = ref;
     w.valid = true;
     w.customStyle = customStyle;
+    w.scriptSettings = std::move(scriptSettings);
+    w.scriptPresets = std::move(scriptPresets);
     WIN32_FILE_ATTRIBUTE_DATA attr{};
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
@@ -1687,82 +2026,257 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
     int ref = (idx >= 0) ? widgets_[idx].ref : LUA_NOREF;
     if (ref == LUA_NOREF) return true;
 
-    if (idx >= 0 && !widgets_[idx].manifest.settings.empty())
-    {
-        ImGui::Text("基础设置");
-        ImGui::Separator();
-        const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
-        for (const auto& setting : widgets_[idx].manifest.settings)
+    const LuaWidget& widget = widgets_[idx];
+    std::vector<LuaWidgetManifest::Setting> settings = widget.manifest.settings;
+    settings.insert(settings.end(), widget.scriptSettings.begin(), widget.scriptSettings.end());
+    std::vector<LuaWidgetManifest::SettingPreset> presets = widget.manifest.presets;
+    presets.insert(presets.end(), widget.scriptPresets.begin(), widget.scriptPresets.end());
+
+    const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
+    bool storageChanged = false;
+    auto getStorage = [&](const std::string& key, const std::string& fallback = std::string{}) {
+        auto it = g_storage.find(prefix + key);
+        if (it != g_storage.end())
+            return it->second;
+        std::string defaultValue = RuntimeGetStorageValue(widgetId, key);
+        return !defaultValue.empty() ? defaultValue : fallback;
+    };
+    auto setStorage = [&](const std::string& key, const std::string& value) {
+        if (key.empty() || IsHostStructureSettingKey(key)) return;
+        std::string fullKey = prefix + key;
+        auto it = g_storage.find(fullKey);
+        if (it != g_storage.end() && it->second == value) return;
+        g_storage[fullKey] = value;
+        storageChanged = true;
+    };
+    auto applyValues = [&](const std::unordered_map<std::string, std::string>& values) {
+        for (const auto& kv : values)
+            setStorage(kv.first, kv.second);
+    };
+    auto flushStorageChanges = [&]() {
+        if (!storageChanged) return;
+        SaveStorageFile();
+        RuntimeInvalidateHost(widgetId);
+        storageChanged = false;
+    };
+    auto whiteTextButton = [](const char* label) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        bool clicked = ImGui::Button(label);
+        ImGui::PopStyleColor();
+        return clicked;
+    };
+    auto colorToInt = [](float r, float g, float b) {
+        auto toByte = [](float v) {
+            return std::clamp(static_cast<int>(std::round(v * 255.0f)), 0, 255);
+        };
+        return (toByte(r) << 16) | (toByte(g) << 8) | toByte(b);
+    };
+    auto parseColor = [](const std::string& value, int fallback) {
+        if (value.empty()) return fallback;
+        char* end = nullptr;
+        long parsed = std::strtol(value.c_str(), &end, 0);
+        return end != value.c_str() ? static_cast<int>(parsed) : fallback;
+    };
+    auto renderSetting = [&](const LuaWidgetManifest::Setting& setting) {
+        if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
+            IsHostAppearanceSettingKey(setting.key))
+            return;
+        std::string current = getStorage(setting.key, setting.defaultValue);
+        std::string next = current;
+        bool changed = false;
+        ImGui::PushID(setting.key.c_str());
+        if (setting.type == "bool")
         {
-            std::string fullKey = prefix + setting.key;
-            std::string current = g_storage.contains(fullKey)
-                ? g_storage[fullKey] : setting.defaultValue;
-            bool changed = false;
-            std::string next = current;
-            ImGui::PushID(setting.key.c_str());
-            if (setting.type == "bool")
+            bool value = current == "1" || current == "true";
+            if (ImGui::Checkbox(setting.label.c_str(), &value))
             {
-                bool value = current == "1" || current == "true";
-                if (ImGui::Checkbox(setting.label.c_str(), &value))
-                {
-                    next = value ? "1" : "0";
-                    changed = true;
-                }
+                next = value ? "1" : "0";
+                changed = true;
             }
-            else if (setting.type == "int")
+        }
+        else if (setting.type == "int")
+        {
+            int value = std::atoi(current.c_str());
+            if (ImGui::SliderInt(setting.label.c_str(), &value,
+                static_cast<int>(setting.minValue), static_cast<int>(setting.maxValue)))
             {
-                int value = std::atoi(current.c_str());
-                if (ImGui::SliderInt(setting.label.c_str(), &value,
-                    static_cast<int>(setting.minValue), static_cast<int>(setting.maxValue)))
-                {
-                    next = std::to_string(value);
-                    changed = true;
-                }
+                next = std::to_string(value);
+                changed = true;
             }
-            else if (setting.type == "float")
+        }
+        else if (setting.type == "float")
+        {
+            float value = static_cast<float>(std::atof(current.c_str()));
+            if (ImGui::SliderFloat(setting.label.c_str(), &value,
+                static_cast<float>(setting.minValue), static_cast<float>(setting.maxValue)))
             {
-                float value = static_cast<float>(std::atof(current.c_str()));
-                if (ImGui::SliderFloat(setting.label.c_str(), &value,
-                    static_cast<float>(setting.minValue), static_cast<float>(setting.maxValue)))
-                {
-                    next = std::to_string(value);
-                    changed = true;
-                }
+                std::ostringstream ss;
+                ss << value;
+                next = ss.str();
+                changed = true;
             }
-            else if (setting.type == "select" && !setting.options.empty())
+        }
+        else if (setting.type == "color")
+        {
+            int color = parseColor(current, parseColor(setting.defaultValue, 0xFFFFFF));
+            float rgb[3] = {
+                ((color >> 16) & 0xFF) / 255.0f,
+                ((color >> 8) & 0xFF) / 255.0f,
+                (color & 0xFF) / 255.0f
+            };
+            if (ImGui::ColorEdit3(setting.label.c_str(), rgb, ImGuiColorEditFlags_NoInputs))
             {
-                int selected = 0;
-                for (size_t i = 0; i < setting.options.size(); ++i)
-                    if (setting.options[i] == current) selected = static_cast<int>(i);
-                std::vector<const char*> labels;
-                for (const auto& option : setting.options) labels.push_back(option.c_str());
-                if (ImGui::Combo(setting.label.c_str(), &selected, labels.data(),
-                    static_cast<int>(labels.size())))
-                {
-                    next = setting.options[selected];
-                    changed = true;
-                }
+                next = std::to_string(colorToInt(rgb[0], rgb[1], rgb[2]));
+                changed = true;
             }
-            else
+        }
+        else if (setting.type == "select" && !setting.options.empty())
+        {
+            int selected = 0;
+            for (size_t i = 0; i < setting.options.size(); ++i)
+                if (setting.options[i] == current) selected = static_cast<int>(i);
+            std::vector<const char*> labels;
+            for (const auto& option : setting.options) labels.push_back(option.c_str());
+            if (ImGui::Combo(setting.label.c_str(), &selected, labels.data(),
+                static_cast<int>(labels.size())))
             {
-                char buffer[512]{};
-                strncpy_s(buffer, current.c_str(), _TRUNCATE);
-                if (ImGui::InputText(setting.label.c_str(), buffer, sizeof(buffer)))
-                {
-                    next = buffer;
-                    changed = true;
-                }
+                next = setting.options[selected];
+                changed = true;
             }
-            ImGui::PopID();
-            if (changed)
+        }
+        else
+        {
+            char buffer[512]{};
+            strncpy_s(buffer, current.c_str(), _TRUNCATE);
+            if (ImGui::InputText(setting.label.c_str(), buffer, sizeof(buffer)))
             {
-                g_storage[fullKey] = next;
-                SaveStorageFile();
-                RuntimeInvalidateHost(widgetId);
+                next = buffer;
+                changed = true;
+            }
+        }
+        ImGui::PopID();
+        if (changed) setStorage(setting.key, next);
+    };
+
+    int defaultPresetIndex = -1;
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].isDefault || presets[i].id == "default")
+        {
+            defaultPresetIndex = static_cast<int>(i);
+            break;
+        }
+    }
+
+    if (widget.customStyle)
+    {
+        ImGui::Text("外观");
+        ImGui::Separator();
+
+        bool followPersonalization =
+            getStorage("followPersonalization", "0") == "1" ||
+            getStorage("followPersonalization", "0") == "true";
+        if (ImGui::Checkbox("跟随个性化设置", &followPersonalization))
+            setStorage("followPersonalization", followPersonalization ? "1" : "0");
+
+        ImGui::BeginDisabled(followPersonalization);
+
+        if (!presets.empty())
+        {
+            std::string currentPreset = getStorage("__preset", defaultPresetIndex >= 0
+                ? presets[static_cast<size_t>(defaultPresetIndex)].id : presets[0].id);
+            int selectedPreset = 0;
+            for (size_t i = 0; i < presets.size(); ++i)
+                if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
+            std::vector<const char*> presetLabels;
+            for (const auto& preset : presets) presetLabels.push_back(preset.label.c_str());
+            if (ImGui::Combo("组件预设", &selectedPreset, presetLabels.data(),
+                static_cast<int>(presetLabels.size())))
+            {
+                applyValues(presets[static_cast<size_t>(selectedPreset)].values);
+                setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
+            }
+        }
+
+        float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.36f;
+        float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f, borderAlpha = 0.40f;
+        float gradientEndA = 0.0f, shadowAlpha = 0.0f, shadowBlur = 12.0f;
+        float shadowOffsetY = 4.0f, highlightAlpha = 0.0f, noiseAlpha = 0.0f;
+        ReadCustomColors(widgetId, bgR, bgG, bgB, alpha, borderR, borderG, borderB,
+            borderAlpha, gradientEndA, shadowAlpha, shadowBlur, shadowOffsetY,
+            highlightAlpha, noiseAlpha);
+
+        float bgColor[3] = { bgR, bgG, bgB };
+        if (ImGui::ColorEdit3("背景颜色", bgColor, ImGuiColorEditFlags_NoInputs))
+            setStorage("bg", std::to_string(colorToInt(bgColor[0], bgColor[1], bgColor[2])));
+        if (ImGui::SliderFloat("背景不透明度", &alpha, 0.0f, 1.0f))
+            setStorage("alpha", std::to_string(alpha));
+        float borderColor[3] = { borderR, borderG, borderB };
+        if (ImGui::ColorEdit3("边框颜色", borderColor, ImGuiColorEditFlags_NoInputs))
+            setStorage("border", std::to_string(colorToInt(borderColor[0], borderColor[1], borderColor[2])));
+        if (ImGui::SliderFloat("边框不透明度", &borderAlpha, 0.0f, 1.0f))
+            setStorage("borderAlpha", std::to_string(borderAlpha));
+        if (ImGui::SliderFloat("渐变结束透明度", &gradientEndA, 0.0f, 1.0f))
+            setStorage("gradientEndA", std::to_string(gradientEndA));
+        if (ImGui::SliderFloat("阴影强度", &shadowAlpha, 0.0f, 0.8f))
+            setStorage("shadowAlpha", std::to_string(shadowAlpha));
+        if (ImGui::SliderFloat("阴影柔化半径", &shadowBlur, 0.0f, 32.0f))
+            setStorage("shadowBlur", std::to_string(shadowBlur));
+        if (ImGui::SliderFloat("阴影偏移", &shadowOffsetY, 0.0f, 16.0f))
+            setStorage("shadowOffsetY", std::to_string(shadowOffsetY));
+        if (ImGui::SliderFloat("顶部高光", &highlightAlpha, 0.0f, 0.8f))
+            setStorage("highlightAlpha", std::to_string(highlightAlpha));
+        if (ImGui::SliderFloat("磨砂颗粒", &noiseAlpha, 0.0f, 0.18f))
+            setStorage("noiseAlpha", std::to_string(noiseAlpha));
+
+        ImGui::EndDisabled();
+
+        if (defaultPresetIndex >= 0)
+        {
+            if (whiteTextButton("恢复组件默认"))
+            {
+                applyValues(presets[static_cast<size_t>(defaultPresetIndex)].values);
+                setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
             }
         }
         ImGui::Spacing();
     }
+
+    if (!widget.customStyle && !presets.empty())
+    {
+        ImGui::Text("组件预设");
+        ImGui::Separator();
+        std::string currentPreset = getStorage("__preset", defaultPresetIndex >= 0
+            ? presets[static_cast<size_t>(defaultPresetIndex)].id : presets[0].id);
+        int selectedPreset = 0;
+        for (size_t i = 0; i < presets.size(); ++i)
+            if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
+        std::vector<const char*> presetLabels;
+        for (const auto& preset : presets) presetLabels.push_back(preset.label.c_str());
+        if (ImGui::Combo("组件预设", &selectedPreset, presetLabels.data(),
+            static_cast<int>(presetLabels.size())))
+        {
+            applyValues(presets[static_cast<size_t>(selectedPreset)].values);
+            setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
+        }
+        if (defaultPresetIndex >= 0 && whiteTextButton("恢复组件默认"))
+        {
+            applyValues(presets[static_cast<size_t>(defaultPresetIndex)].values);
+            setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
+        }
+        ImGui::Spacing();
+    }
+
+    if (!settings.empty())
+    {
+        ImGui::Text("基础设置");
+        ImGui::Separator();
+        for (const auto& setting : settings)
+            renderSetting(setting);
+        ImGui::Spacing();
+    }
+
+    flushStorageChanges();
 
     lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
     if (lua_istable(L_, -1))
@@ -2280,7 +2794,10 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag
 
 bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& bgR, float& bgG, float& bgB, float& alpha,
-    float& borderR, float& borderG, float& borderB, float& gradientEndA) const
+    float& borderR, float& borderG, float& borderB, float& borderAlpha,
+    float& gradientEndA, float& shadowAlpha,
+    float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
+    float& noiseAlpha) const
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
@@ -2307,7 +2824,37 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readHex("bg", bgR, bgG, bgB, 0x151A21);
             readHex("border", borderR, borderG, borderB, 0xFFFFFF);
             readFloat("alpha", alpha, 0.36f);
+            readFloat("borderAlpha", borderAlpha, alpha);
             readFloat("gradientEndA", gradientEndA, 0.0f);
+            readFloat("shadowAlpha", shadowAlpha, 0.0f);
+            readFloat("shadowBlur", shadowBlur, 12.0f);
+            readFloat("shadowOffsetY", shadowOffsetY, 4.0f);
+            readFloat("highlightAlpha", highlightAlpha, 0.0f);
+            readFloat("noiseAlpha", noiseAlpha, 0.0f);
+
+            const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
+            auto readStoredColor = [&](const char* key, float& r, float& g, float& b) {
+                auto it = g_storage.find(prefix + key);
+                if (it == g_storage.end()) return;
+                int val = std::atoi(it->second.c_str());
+                r = ((val >> 16) & 0xFF) / 255.0f;
+                g = ((val >> 8) & 0xFF) / 255.0f;
+                b = (val & 0xFF) / 255.0f;
+            };
+            auto readStoredFloat = [&](const char* key, float& out) {
+                auto it = g_storage.find(prefix + key);
+                if (it != g_storage.end()) out = static_cast<float>(std::atof(it->second.c_str()));
+            };
+            readStoredColor("bg", bgR, bgG, bgB);
+            readStoredColor("border", borderR, borderG, borderB);
+            readStoredFloat("alpha", alpha);
+            readStoredFloat("borderAlpha", borderAlpha);
+            readStoredFloat("gradientEndA", gradientEndA);
+            readStoredFloat("shadowAlpha", shadowAlpha);
+            readStoredFloat("shadowBlur", shadowBlur);
+            readStoredFloat("shadowOffsetY", shadowOffsetY);
+            readStoredFloat("highlightAlpha", highlightAlpha);
+            readStoredFloat("noiseAlpha", noiseAlpha);
 
             lua_pop(L_, 1);
             return true;
@@ -2442,7 +2989,11 @@ std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, c
 {
     std::string fullKey = WidgetWideToUtf8(widgetId) + "." + key;
     auto it = g_storage.find(fullKey);
-    return it != g_storage.end() ? it->second : std::string{};
+    if (it != g_storage.end())
+        return it->second;
+
+    int idx = FindWidget(widgetId);
+    return idx >= 0 ? FindDeclaredDefaultValue(widgets_[idx], key) : std::string{};
 }
 
 void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const std::string& key, const std::string& value)
@@ -2804,7 +3355,30 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         if (!setting.key.empty() && !setting.label.empty())
         {
             if (setting.type.empty()) setting.type = "text";
-            manifest.settings.push_back(std::move(setting));
+            if (!IsHostStructureSettingKey(setting.key) &&
+                !IsHostAppearanceSettingKey(setting.key))
+                manifest.settings.push_back(std::move(setting));
+        }
+    }
+    for (const auto& object : JsonReadObjectArray(text, "presets"))
+    {
+        LuaWidgetManifest::SettingPreset preset;
+        JsonReadString(object, "id", preset.id);
+        JsonReadString(object, "label", preset.label);
+        if (preset.label.empty())
+            JsonReadString(object, "name", preset.label);
+        JsonReadBool(object, "default", preset.isDefault);
+        preset.values = JsonReadValueMap(object, "values");
+        for (auto it = preset.values.begin(); it != preset.values.end();)
+        {
+            if (IsHostStructureSettingKey(it->first))
+                it = preset.values.erase(it);
+            else
+                ++it;
+        }
+        if (!preset.id.empty() && !preset.label.empty() && !preset.values.empty())
+        {
+            manifest.presets.push_back(std::move(preset));
         }
     }
     auto sizeObject = [&text](const char* field) {
@@ -3116,6 +3690,14 @@ static int lua_StorageGet(lua_State* L)
     auto it = g_storage.find(fullKey);
     if (it != g_storage.end())
         lua_pushstring(L, it->second.c_str());
+    else if (s->engine)
+    {
+        std::string defaultValue = s->engine->RuntimeGetStorageValue(s->currentWidgetId, key);
+        if (!defaultValue.empty())
+            lua_pushstring(L, defaultValue.c_str());
+        else
+            lua_pushnil(L);
+    }
     else
         lua_pushnil(L);
     return 1;

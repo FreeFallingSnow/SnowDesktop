@@ -901,9 +901,9 @@ void SettingsWindow::DrawDisplayPage()
  * @brief 绘制"组件显示设置"页面。
  *
  * 提供以下定制能力：
- * - 预设快速切换（恢复默认暗色 / 浅色预设）
+ * - 背景预设快速切换与恢复默认
  * - 组件背景色与边框颜色选取
- * - 整体不透明度滑条
+ * - 背景、边框和面板效果透明度滑条
  * - 底部渐变开关与渐变结束透明度控制
  * - 修改立即通知桌面预览；连续拖动结束后再持久化
  */
@@ -929,8 +929,16 @@ void SettingsWindow::DrawPersonalizationPage()
             nearlyEqual(a.widgetBorderG, b.widgetBorderG) &&
             nearlyEqual(a.widgetBorderB, b.widgetBorderB) &&
             nearlyEqual(a.widgetAlpha, b.widgetAlpha) &&
+            nearlyEqual(a.widgetBorderAlpha, b.widgetBorderAlpha) &&
             nearlyEqual(a.gradientEndA, b.gradientEndA) &&
-            nearlyEqual(a.barHeight, b.barHeight);
+            nearlyEqual(a.barHeight, b.barHeight) &&
+            a.backgroundPreset == b.backgroundPreset &&
+            nearlyEqual(a.cornerRadius, b.cornerRadius) &&
+            nearlyEqual(a.shadowAlpha, b.shadowAlpha) &&
+            nearlyEqual(a.shadowBlur, b.shadowBlur) &&
+            nearlyEqual(a.shadowOffsetY, b.shadowOffsetY) &&
+            nearlyEqual(a.highlightAlpha, b.highlightAlpha) &&
+            nearlyEqual(a.noiseAlpha, b.noiseAlpha);
     };
     auto percentText = [](float value) {
         return std::to_string(static_cast<int>(std::round(std::clamp(value, 0.0f, 1.0f) * 100.0f))) + "%";
@@ -954,6 +962,39 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::TextDisabled("已修改");
     }
     ImGui::Separator();
+    ImGui::Spacing();
+
+    auto presetForIndex = [](int index) {
+        switch (index)
+        {
+        case 1: return PersonalizationSettings::LightPreset();
+        case 2: return PersonalizationSettings::GlassDarkPreset();
+        case 3: return PersonalizationSettings::GlassLightPreset();
+        case 4: return PersonalizationSettings::FrostedPreset();
+        case 5: return PersonalizationSettings::HighContrastPreset();
+        default: return PersonalizationSettings::DarkPreset();
+        }
+    };
+
+    const char* presetNames[] = {
+        "经典深色",
+        "浅色柔和",
+        "深色玻璃",
+        "亮色玻璃",
+        "磨砂柔光",
+        "高对比"
+    };
+    int presetIndex = std::clamp(personalization_.backgroundPreset, 0, 5);
+    ImGui::Text("背景预设");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::Combo("##WidgetBackgroundPreset", &presetIndex,
+        presetNames, static_cast<int>(sizeof(presetNames) / sizeof(presetNames[0]))))
+    {
+        personalization_ = presetForIndex(presetIndex);
+        markChanged(true);
+    }
+
     ImGui::Spacing();
 
     ImGui::Text("组件背景");
@@ -984,7 +1025,7 @@ void SettingsWindow::DrawPersonalizationPage()
 
     ImGui::Spacing();
 
-    ImGui::Text("整体不透明度");
+    ImGui::Text("背景不透明度");
     ImGui::SameLine(labelW);
     ImGui::SetNextItemWidth(sliderW);
     if (ImGui::SliderFloat("##WidgetAlpha", &personalization_.widgetAlpha, 0.0f, 1.0f, ""))
@@ -993,6 +1034,16 @@ void SettingsWindow::DrawPersonalizationPage()
         personalizationSaveRequested_ = true;
     ImGui::SameLine();
     ImGui::TextDisabled("%s", percentText(personalization_.widgetAlpha).c_str());
+
+    ImGui::Text("边框不透明度");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetBorderAlpha", &personalization_.widgetBorderAlpha, 0.0f, 1.0f, ""))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", percentText(personalization_.widgetBorderAlpha).c_str());
 
     bool gradientEnabled = personalization_.gradientEndA > 0.001f;
     bool gradientToggle = gradientEnabled;
@@ -1019,6 +1070,62 @@ void SettingsWindow::DrawPersonalizationPage()
 
     ImGui::Spacing();
 
+    ImGui::Text("圆角半径");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetCornerRadius", &personalization_.cornerRadius, 4.0f, 28.0f, "%.0f cu"))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+
+    ImGui::Text("阴影柔化半径");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetShadowBlur", &personalization_.shadowBlur, 0.0f, 32.0f, "%.0f cu"))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+
+    ImGui::Text("阴影强度");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetShadowAlpha", &personalization_.shadowAlpha, 0.0f, 0.8f, ""))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", percentText(personalization_.shadowAlpha).c_str());
+
+    ImGui::Text("阴影偏移");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetShadowOffsetY", &personalization_.shadowOffsetY, 0.0f, 16.0f, "%.0f cu"))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+
+    ImGui::Text("顶部高光");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetHighlightAlpha", &personalization_.highlightAlpha, 0.0f, 0.8f, ""))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", percentText(personalization_.highlightAlpha).c_str());
+
+    ImGui::Text("磨砂颗粒");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetNoiseAlpha", &personalization_.noiseAlpha, 0.0f, 0.18f, ""))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", percentText(personalization_.noiseAlpha).c_str());
+
+    ImGui::Spacing();
+
     ImGui::Text("底栏高度");
     ImGui::SameLine(labelW);
     ImGui::SetNextItemWidth(sliderW);
@@ -1034,12 +1141,6 @@ void SettingsWindow::DrawPersonalizationPage()
     if (BlueButton("恢复默认", ImVec2(80, 0)))
     {
         personalization_ = PersonalizationSettings::DarkPreset();
-        markChanged(true);
-    }
-    ImGui::SameLine();
-    if (BlueButton("浅色预设", ImVec2(80, 0)))
-    {
-        personalization_ = PersonalizationSettings::LightPreset();
         markChanged(true);
     }
 

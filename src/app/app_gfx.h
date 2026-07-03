@@ -335,6 +335,7 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();
     itemTextEffectContext_.Reset();
+    widgetPanelEffectContext_.Reset();
 }
 
 inline void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
@@ -471,6 +472,38 @@ inline std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& c)
         (quantize(c.a) << 48);
 }
 
+/** @brief 将 GDI COLORREF（0x00BBGGRR）转换为 D2D1_COLOR_F，可选 alpha。 */
+inline D2D1_COLOR_F ToD2DColor(COLORREF c, float a = 1.0f)
+{
+    // COLORREF 是 0x00BBGGRR；D2D1::ColorF(UINT32) 期望 0xRRGGBB，故显式按通道构造。
+    return D2D1::ColorF(
+        GetRValue(c) / 255.0f,
+        GetGValue(c) / 255.0f,
+        GetBValue(c) / 255.0f,
+        a);
+}
+
+/** @brief 用 D2D 绘制一条 1 像素粗的水平/垂直分隔线。 */
+inline void DesktopApp::DrawD2DSeparator(ID2D1RenderTarget* ctx, RECT rect, const D2D1_COLOR_F& color)
+{
+    if (!ctx || IsRectEmptyRect(rect)) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
+    const std::uint64_t key = D2DColorBrushKey(color);
+    auto it = brushCache_.find(key);
+    if (it == brushCache_.end())
+    {
+        ComPtr<ID2D1SolidColorBrush> b;
+        if (FAILED(ctx->CreateSolidColorBrush(color, &b)) || !b) return;
+        it = brushCache_.emplace(key, std::move(b)).first;
+    }
+    if (it != brushCache_.end() && it->second)
+        ctx->FillRectangle(ToD2DRect(rect), it->second.Get());
+}
+
 inline float DesktopApp::GetItemLayoutScale(RECT bounds) const
 {
     const POINT center = {
@@ -526,6 +559,25 @@ inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
     const int iconSz = std::max(1, std::min(maxIconW, maxIconH));
     const int iconX = bounds.left + (cellW - iconSz) / 2;
     const int iconY = bounds.top + topInset;
+    return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
+}
+
+inline RECT DesktopApp::GetQuickNavItemIconRect(RECT bounds) const
+{
+    const int cellW = std::max<LONG>(1, bounds.right - bounds.left);
+    const int cellH = std::max<LONG>(1, bounds.bottom - bounds.top);
+    const int inset = std::max(1, QuickNavScale(2));
+    const int titleBandH = std::max(1, QuickNavScale(kQuickNavigationTextHeight));
+    const int titleGap = std::max(1, QuickNavScale(2));
+    const int maxIconW = std::max(1, cellW - inset * 2);
+    const int maxIconH = std::max(1, cellH - titleBandH - titleGap - inset);
+    const int iconSz = std::max(1, std::min({
+        QuickNavScale(48),
+        maxIconW,
+        maxIconH
+    }));
+    const int iconX = bounds.left + (cellW - iconSz) / 2;
+    const int iconY = bounds.top + inset;
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
 }
 
@@ -605,6 +657,224 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rec
         }
         if (it != brushCache_.end() && it->second)
             ctx->DrawRoundedRectangle(rounded, it->second.Get(), strokeWidth, nullptr);
+    }
+}
+
+inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
+    float effectScale, D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
+    const PersonalizationSettings* effectSettings)
+{
+    if (!ctx || IsRectEmptyRect(frame)) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
+
+    PersonalizationSettings p = effectSettings
+        ? *effectSettings
+        : (settingsWindow_
+            ? settingsWindow_->GetPersonalization()
+            : PersonalizationSettings::DarkPreset());
+    effectScale = std::max(0.25f, effectScale);
+    radius = std::max(0.0f, radius);
+
+    auto clamp01 = [](float value) {
+        return std::clamp(value, 0.0f, 1.0f);
+    };
+    auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
+        const auto key = D2DColorBrushKey(c);
+        auto it = brushCache_.find(key);
+        if (it == brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> b;
+            if (FAILED(ctx->CreateSolidColorBrush(c, &b)) || !b) return nullptr;
+            it = brushCache_.emplace(key, std::move(b)).first;
+        }
+        return it->second.Get();
+    };
+
+    const float shadowAlpha = clamp01(p.shadowAlpha);
+    const float shadowBlur = std::max(0.0f, p.shadowBlur * effectScale);
+    const float shadowOffsetY = p.shadowOffsetY * effectScale;
+    const LONG width = frame.right - frame.left;
+    const LONG height = frame.bottom - frame.top;
+
+    if (shadowAlpha > 0.001f && width > 0 && height > 0 && d2dDevice_)
+    {
+        if (!widgetPanelEffectContext_)
+        {
+            d2dDevice_->CreateDeviceContext(
+                D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &widgetPanelEffectContext_);
+            if (widgetPanelEffectContext_)
+            {
+                widgetPanelEffectContext_->SetDpi(96.0f, 96.0f);
+                widgetPanelEffectContext_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+            }
+        }
+
+        if (widgetPanelEffectContext_)
+        {
+            const float padF = std::ceil(std::max(4.0f, shadowBlur * 3.0f + std::abs(shadowOffsetY) + 4.0f));
+            const UINT pad = static_cast<UINT>(std::min<float>(256.0f, padF));
+            const UINT bitmapW = static_cast<UINT>(std::max<LONG>(1, width)) + pad * 2;
+            const UINT bitmapH = static_cast<UINT>(std::max<LONG>(1, height)) + pad * 2;
+
+            ComPtr<ID2D1CommandList> mask;
+            ComPtr<ID2D1Effect> shadow;
+            ComPtr<ID2D1Bitmap1> shadowBitmap;
+            D2D1_BITMAP_PROPERTIES1 bitmapProps = D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_TARGET,
+                D2D1::PixelFormat(
+                    DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+            if (SUCCEEDED(widgetPanelEffectContext_->CreateCommandList(&mask)) && mask &&
+                SUCCEEDED(widgetPanelEffectContext_->CreateBitmap(
+                    D2D1::SizeU(bitmapW, bitmapH), nullptr, 0,
+                    &bitmapProps, &shadowBitmap)) && shadowBitmap &&
+                SUCCEEDED(widgetPanelEffectContext_->CreateEffect(CLSID_D2D1Shadow, &shadow)) && shadow)
+            {
+                widgetPanelEffectContext_->SetTarget(mask.Get());
+                widgetPanelEffectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
+                widgetPanelEffectContext_->BeginDraw();
+
+                ComPtr<ID2D1SolidColorBrush> maskBrush;
+                if (SUCCEEDED(widgetPanelEffectContext_->CreateSolidColorBrush(
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &maskBrush)) && maskBrush)
+                {
+                    D2D1_ROUNDED_RECT maskRect = D2D1::RoundedRect(
+                        D2D1::RectF(static_cast<float>(pad), static_cast<float>(pad),
+                            static_cast<float>(pad + width), static_cast<float>(pad + height)),
+                        radius, radius);
+                    widgetPanelEffectContext_->FillRoundedRectangle(maskRect, maskBrush.Get());
+                }
+
+                HRESULT maskHr = widgetPanelEffectContext_->EndDraw();
+                widgetPanelEffectContext_->SetTarget(nullptr);
+                if (SUCCEEDED(maskHr) && SUCCEEDED(mask->Close()))
+                {
+                    shadow->SetInput(0, mask.Get());
+                    shadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, shadowBlur);
+                    shadow->SetValue(D2D1_SHADOW_PROP_COLOR,
+                        D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f, shadowAlpha });
+                    shadow->SetValue(D2D1_SHADOW_PROP_OPTIMIZATION,
+                        D2D1_SHADOW_OPTIMIZATION_QUALITY);
+
+                    widgetPanelEffectContext_->SetTarget(shadowBitmap.Get());
+                    widgetPanelEffectContext_->BeginDraw();
+                    widgetPanelEffectContext_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+                    widgetPanelEffectContext_->DrawImage(shadow.Get());
+                    HRESULT shadowHr = widgetPanelEffectContext_->EndDraw();
+                    widgetPanelEffectContext_->SetTarget(nullptr);
+
+                    if (SUCCEEDED(shadowHr))
+                    {
+                        D2D1_RECT_F dest = D2D1::RectF(
+                            static_cast<float>(frame.left) - pad,
+                            static_cast<float>(frame.top) - pad + shadowOffsetY,
+                            static_cast<float>(frame.left) - pad + bitmapW,
+                            static_cast<float>(frame.top) - pad + shadowOffsetY + bitmapH);
+                        ctx->DrawBitmap(shadowBitmap.Get(), dest, 1.0f,
+                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                    }
+                }
+            }
+        }
+    }
+
+    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
+    if (fill.a > 0.0f)
+    {
+        if (auto* fillBrush = getBrush(fill))
+            ctx->FillRoundedRectangle(rr, fillBrush);
+    }
+
+    ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+    if ((p.highlightAlpha > 0.001f || p.noiseAlpha > 0.001f) && d2dFactory_)
+    {
+        d2dFactory_->CreateRoundedRectangleGeometry(rr, &clipGeo);
+    }
+
+    const float highlightAlpha = clamp01(p.highlightAlpha);
+    if (highlightAlpha > 0.001f)
+    {
+        bool clipped = false;
+        if (clipGeo)
+        {
+            ctx->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
+            clipped = true;
+        }
+
+        ComPtr<ID2D1GradientStopCollection> stops;
+        D2D1_GRADIENT_STOP sd[] = {
+            { 0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, highlightAlpha) },
+            { 1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f) },
+        };
+        if (SUCCEEDED(ctx->CreateGradientStopCollection(sd, 2,
+            D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
+        {
+            ComPtr<ID2D1LinearGradientBrush> brush;
+            const float midY = static_cast<float>(frame.top) +
+                std::max(1.0f, (frame.bottom - frame.top) * 0.45f);
+            if (SUCCEEDED(ctx->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(0.0f, static_cast<float>(frame.top)),
+                    D2D1::Point2F(0.0f, midY)),
+                stops.Get(), &brush)) && brush)
+            {
+                ctx->FillRectangle(
+                    D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+                        static_cast<float>(frame.right), midY),
+                    brush.Get());
+            }
+        }
+
+        if (clipped) ctx->PopLayer();
+    }
+
+    const float noiseAlpha = clamp01(p.noiseAlpha);
+    if (noiseAlpha > 0.001f)
+    {
+        bool clipped = false;
+        if (clipGeo)
+        {
+            ctx->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
+            clipped = true;
+        }
+
+        ID2D1SolidColorBrush* whiteNoise = getBrush(
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, noiseAlpha));
+        ID2D1SolidColorBrush* darkNoise = getBrush(
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, noiseAlpha * 0.45f));
+        const int area = std::max<LONG>(1, width * height);
+        const int count = std::clamp(area / 520, 12, 900);
+        std::uint32_t seed = static_cast<std::uint32_t>(
+            (frame.left * 73856093) ^ (frame.top * 19349663) ^
+            (frame.right * 83492791) ^ (frame.bottom * 2654435761u));
+        for (int i = 0; i < count; ++i)
+        {
+            seed = seed * 1664525u + 1013904223u;
+            LONG x = frame.left + static_cast<LONG>(seed % std::max<LONG>(1, width));
+            seed = seed * 1664525u + 1013904223u;
+            LONG y = frame.top + static_cast<LONG>(seed % std::max<LONG>(1, height));
+            ID2D1SolidColorBrush* brush = (seed & 1u) ? whiteNoise : darkNoise;
+            if (!brush) continue;
+            ctx->FillRectangle(
+                D2D1::RectF(static_cast<float>(x), static_cast<float>(y),
+                    static_cast<float>(x + 1), static_cast<float>(y + 1)),
+                brush);
+        }
+
+        if (clipped) ctx->PopLayer();
+    }
+
+    D2D1_COLOR_F stroke = selected
+        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f)
+        : border;
+    if (stroke.a > 0.0f)
+    {
+        if (auto* strokeBrush = getBrush(stroke))
+            ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
     }
 }
 
@@ -919,6 +1189,89 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         D2D1::SizeF(tw, th), layoutScale, opacity, lightTheme);
 }
 
+inline void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
+    const std::wstring& text, bool /*selected*/, bool lightTheme)
+{
+    if (!ctx || !dwriteFactory_ || !quickNavItemTextFormat_ || text.empty())
+        return;
+
+    const float fontSize = quickNavItemTextFormat_->GetFontSize();
+    const float lineSpacing = std::max(1.0f, std::floor(fontSize * 1.08f));
+    const float baseline = std::max(1.0f, std::floor(fontSize * 0.84f));
+    const int textHeight = std::max(1, static_cast<int>(std::ceil(lineSpacing * 2.0f)));
+    RECT iconRect = GetQuickNavItemIconRect(bounds);
+    const int horizontalPad = QuickNavScale(4);
+    const int topGap = std::max(1, QuickNavScale(2));
+    const int textTop = std::max<LONG>(bounds.top, iconRect.bottom + topGap);
+    RECT textRect = MakeRect(
+        bounds.left + horizontalPad,
+        textTop,
+        bounds.right - horizontalPad,
+        std::min<LONG>(bounds.bottom, textTop + textHeight));
+    if (IsRectEmptyRect(textRect))
+        return;
+
+    const float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
+    const float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwriteFactory_->CreateTextLayout(text.c_str(),
+        static_cast<UINT32>(text.size()), quickNavItemTextFormat_.Get(),
+        tw, th, &layout)) || !layout)
+        return;
+
+    layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, lineSpacing, baseline);
+    DWRITE_TRIMMING trimming{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
+    ComPtr<IDWriteInlineObject> trimmingSign;
+    if (SUCCEEDED(dwriteFactory_->CreateEllipsisTrimmingSign(
+        quickNavItemTextFormat_.Get(), &trimmingSign)) && trimmingSign)
+        layout->SetTrimming(&trimming, trimmingSign.Get());
+
+    DWRITE_TEXT_METRICS metrics{};
+    if (SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.lineCount == 1)
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
+    auto getBrush = [&](const D2D1_COLOR_F& color) -> ID2D1SolidColorBrush* {
+        const std::uint64_t key = D2DColorBrushKey(color);
+        auto it = brushCache_.find(key);
+        if (it == brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush)
+                return nullptr;
+            it = brushCache_.emplace(key, std::move(brush)).first;
+        }
+        return it->second.Get();
+    };
+
+    const QuickNavTheme& theme = lightTheme ? kQuickNavLight : kQuickNavDark;
+    ID2D1SolidColorBrush* textBrush = getBrush(ToD2DColor(theme.itemText));
+    if (!textBrush)
+        return;
+
+    const D2D1_POINT_2F origin = D2D1::Point2F(
+        static_cast<float>(textRect.left),
+        static_cast<float>(textRect.top));
+    if (!lightTheme)
+    {
+        if (ID2D1SolidColorBrush* shadowBrush =
+            getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.38f)))
+        {
+            ctx->DrawTextLayout(
+                D2D1::Point2F(origin.x + 1.0f, origin.y + 1.0f),
+                layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+    }
+    ctx->DrawTextLayout(origin, layout.Get(), textBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
 inline void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
     RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color)
 {
@@ -938,6 +1291,46 @@ inline void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& 
     }
     ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
         ToD2DRect(rect), it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+inline void DesktopApp::DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
+    RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
+    DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis)
+{
+    if (!ctx || !format || text.empty() || IsRectEmptyRect(rect) || !dwriteFactory_) return;
+    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
+    {
+        brushCache_.clear();
+        brushCacheContext_ = ctx;
+    }
+    const std::uint64_t key = D2DColorBrushKey(color);
+    auto it = brushCache_.find(key);
+    if (it == brushCache_.end())
+    {
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
+        it = brushCache_.emplace(key, std::move(brush)).first;
+    }
+    if (it == brushCache_.end() || !it->second) return;
+
+    const float w = static_cast<float>(std::max<LONG>(1, rect.right - rect.left));
+    const float h = static_cast<float>(std::max<LONG>(1, rect.bottom - rect.top));
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwriteFactory_->CreateTextLayout(text.c_str(),
+        static_cast<UINT32>(text.size()), format, w, h, &layout)) || !layout)
+        return;
+    layout->SetTextAlignment(hAlign);
+    layout->SetParagraphAlignment(vAlign);
+    if (ellipsis)
+    {
+        DWRITE_TRIMMING trimming{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
+        ComPtr<IDWriteInlineObject> sign;
+        if (SUCCEEDED(dwriteFactory_->CreateEllipsisTrimmingSign(format, &sign)) && sign)
+            layout->SetTrimming(&trimming, sign.Get());
+    }
+    ctx->DrawTextLayout(
+        D2D1::Point2F(static_cast<float>(rect.left), static_cast<float>(rect.top)),
+        layout.Get(), it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 inline std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidget& widget) const
@@ -1483,30 +1876,13 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT ic
         if (w <= 0) w = 32;
         if (h <= 0) h = 32;
 
-        HDC screenDc = GetDC(nullptr);
-        HDC memDc = CreateCompatibleDC(screenDc);
-
-        BITMAPINFOHEADER bi{};
-        bi.biSize = sizeof(bi);
-        bi.biWidth = w;
-        bi.biHeight = -h;
-        bi.biPlanes = 1;
-        bi.biBitCount = 32;
-        bi.biCompression = BI_RGB;
-
-        HBITMAP dib = CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO*>(&bi),
-            DIB_RGB_COLORS, nullptr, nullptr, 0);
+        SIZE bitmapSize{};
+        HBITMAP dib = CreateAlphaBitmapFromIcon(sii.hIcon, w, h, bitmapSize);
         if (!dib)
         {
-            DeleteDC(memDc);
-            ReleaseDC(nullptr, screenDc);
             DestroyIcon(sii.hIcon);
             return false;
         }
-
-        HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDc, dib));
-        DrawIconEx(memDc, 0, 0, sii.hIcon, w, h, 0, nullptr, DI_NORMAL);
-        SelectObject(memDc, oldBmp);
 
         DIBSECTION ds{};
         GetObjectW(dib, sizeof(ds), &ds);
@@ -1519,20 +1895,17 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT ic
             static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
 
         DeleteObject(dib);
-        DeleteDC(memDc);
-        ReleaseDC(nullptr, screenDc);
         DestroyIcon(sii.hIcon);
 
         if (FAILED(hr) || !bitmap)
             return false;
 
         outBitmap = std::move(bitmap);
-        outSize = { w, h };
+        outSize = bitmapSize;
         return true;
     };
 
     ID2D1Bitmap* arrowBitmap = nullptr;
-    SIZE arrowBitmapSize{};
 
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext)
@@ -1540,21 +1913,19 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT ic
         if (!createArrowBitmap(shortcutArrowBitmap_, shortcutArrowBitmapSize_))
             return;
         arrowBitmap = shortcutArrowBitmap_.Get();
-        arrowBitmapSize = shortcutArrowBitmapSize_;
     }
     else
     {
-        if (!createArrowBitmap(quickNavShortcutArrowBitmap_, quickNavShortcutArrowBitmapSize_))
-            return;
-        arrowBitmap = quickNavShortcutArrowBitmap_.Get();
-        arrowBitmapSize = quickNavShortcutArrowBitmapSize_;
+        // 非 device-context 渲染目标已不再使用；快捷导航走 DComp 后 ctx 必为 device context。
+        return;
     }
 
     if (!arrowBitmap) return;
 
     float scale = static_cast<float>(iconRect.bottom - iconRect.top) / 64.0f;
     int arrowSz = static_cast<int>(30.0f * scale + 0.5f);
-    if (arrowSz < 10) arrowSz = 10;
+    if (arrowSz < 10)
+        arrowSz = 10;
     int arrowX = iconRect.left;
     int arrowY = iconRect.bottom - arrowSz;
 
@@ -1571,13 +1942,13 @@ inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconI
 {
     if (!ctx || sysIconIndex < 0) return;
 
+    // 快捷导航改走 DComp 后，ctx 必为 ID2D1DeviceContext（与桌面同源 d2dDevice_）。
+    // 非 device-context 路径已废弃，直接返回以避免在错误设备上创建位图。
     ComPtr<ID2D1DeviceContext> deviceContext;
-    const bool isDeviceContext =
-        SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext;
-    ID2D1RenderTarget* creationTarget = isDeviceContext && d2dContext_
-        ? static_cast<ID2D1RenderTarget*>(d2dContext_.Get())
-        : ctx;
-    auto& cache = isDeviceContext ? placeholderIconCache_ : quickNavPlaceholderIconCache_;
+    if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext || !d2dContext_)
+        return;
+    ID2D1RenderTarget* creationTarget = static_cast<ID2D1RenderTarget*>(d2dContext_.Get());
+    auto& cache = placeholderIconCache_;
 
     auto cached = cache.find(sysIconIndex);
     if (cached == cache.end())
@@ -1638,6 +2009,66 @@ inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconI
         static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
         static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
     ctx->DrawBitmap(cached->second.Get(), dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+}
+
+inline void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)
+{
+    if (!ctx || sysIconIndex < 0) return;
+    // 仅 ID2D1DeviceContext（与桌面同源 d2dDevice_）才支持 CreateBitmap/共享。
+    ComPtr<ID2D1DeviceContext> dc;
+    if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&dc))) || !dc) return;
+
+    auto cached = quickNavSysIconCache_.find(sysIconIndex);
+    if (cached == quickNavSysIconCache_.end())
+    {
+        // 用 EXTRALARGE(48px) 源：内容填满画布，避免 JUMBO 部分图标的透明留白导致缩放后偏小/偏角。
+        ComPtr<IImageList> imageList;
+        HRESULT hr = SHGetImageList(SHIL_EXTRALARGE, IID_IImageList,
+            reinterpret_cast<void**>(imageList.GetAddressOf()));
+        if (FAILED(hr) || !imageList)
+        {
+            imageList.Reset();
+            hr = SHGetImageList(SHIL_LARGE, IID_IImageList,
+                reinterpret_cast<void**>(imageList.GetAddressOf()));
+        }
+        if (FAILED(hr) || !imageList) return;
+
+        HICON icon = nullptr;
+        if (FAILED(imageList->GetIcon(sysIconIndex,
+                ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) || !icon)
+            return;
+
+        const int srcSize = 48;
+        SIZE bitmapSize{};
+        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(icon, srcSize, srcSize, bitmapSize);
+        DestroyIcon(icon);
+        if (!alphaBitmap) return;
+
+        DIBSECTION ds{};
+        if (GetObjectW(alphaBitmap, sizeof(ds), &ds) == 0 ||
+            !ds.dsBm.bmBits || ds.dsBm.bmWidth <= 0 || ds.dsBm.bmHeight == 0)
+        {
+            DeleteObject(alphaBitmap);
+            return;
+        }
+
+        const UINT w = static_cast<UINT>(ds.dsBm.bmWidth);
+        const UINT h = static_cast<UINT>(std::abs(ds.dsBm.bmHeight));
+        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        ComPtr<ID2D1Bitmap> bitmap;
+        HRESULT createHr = ctx->CreateBitmap(D2D1::SizeU(w, h),
+            ds.dsBm.bmBits, static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
+        DeleteObject(alphaBitmap);
+        if (FAILED(createHr) || !bitmap) return;
+
+        cached = quickNavSysIconCache_.emplace(sysIconIndex, std::move(bitmap)).first;
+    }
+
+    D2D1_RECT_F dst = D2D1::RectF(
+        static_cast<float>(dstRect.left), static_cast<float>(dstRect.top),
+        static_cast<float>(dstRect.right), static_cast<float>(dstRect.bottom));
+    ctx->DrawBitmap(cached->second.Get(), dst, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 /**
@@ -1783,8 +2214,8 @@ inline void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
     }
     if (IsRectEmptyRect(workArea))
     {
-        if (!gridPages_.empty())
-            workArea = gridPages_[0].workArea;
+        if (const GridPage* firstPage = GetFirstPageGridPage())
+            workArea = firstPage->workArea;
         if (IsRectEmptyRect(workArea))
         {
             workArea.left = 0;
@@ -1851,8 +2282,8 @@ inline void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
     }
     if (IsRectEmptyRect(workArea))
     {
-        if (!gridPages_.empty())
-            workArea = gridPages_[0].workArea;
+        if (const GridPage* firstPage = GetFirstPageGridPage())
+            workArea = firstPage->workArea;
         if (IsRectEmptyRect(workArea))
         {
             workArea.left = 0;

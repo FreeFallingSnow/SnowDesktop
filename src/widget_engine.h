@@ -67,6 +67,13 @@ struct LuaWidgetManifest
         double maxValue = 100.0;
         std::vector<std::string> options;
     };
+    struct SettingPreset
+    {
+        std::string id;
+        std::string label;
+        std::unordered_map<std::string, std::string> values;
+        bool isDefault = false;
+    };
     bool hasManifest = false;          ///< 是否存在清单文件
     std::string name;                  ///< 小部件显示名称
     std::string version;               ///< 版本号字符串
@@ -80,6 +87,7 @@ struct LuaWidgetManifest
     int refreshIntervalMs = 0;          ///< manifest 声明的自动刷新间隔（ms），0 = 不自动刷新
     std::vector<std::string> networkDomains; ///< network.http 允许访问的域名
     std::vector<Setting> settings;        ///< 宿主生成的声明式设置
+    std::vector<SettingPreset> presets;   ///< 宿主生成的声明式预设
     std::string publisher;
     std::string minHostVersion;
     std::string preview;
@@ -183,8 +191,15 @@ struct LuaWidgetTheme
 {
     int bg = 0x151A21;          ///< 背景色（ARGB 格式，默认深灰蓝）
     int border = 0xFFFFFF;      ///< 边框色（ARGB 格式，默认白色）
-    float alpha = 0.36f;        ///< 整体透明度（0~1，默认 0.36）
+    float alpha = 0.36f;        ///< 背景透明度（0~1，默认 0.36）
+    float borderAlpha = 0.40f;  ///< 边框透明度（0~1，默认 0.40）
     float gradientEndA = 0.65f; ///< 渐变末端透明度（0~1，默认 0.65）
+    float cornerRadius = 12.0f; ///< 圆角半径（cu）
+    float shadowAlpha = 0.0f;   ///< 阴影强度（0~1）
+    float shadowBlur = 12.0f;   ///< 阴影柔化半径（cu）
+    float shadowOffsetY = 4.0f; ///< 阴影垂直偏移（cu）
+    float highlightAlpha = 0.0f; ///< 顶部高光强度（0~1）
+    float noiseAlpha = 0.0f;    ///< 磨砂颗粒强度（0~1）
 };
 
 /**
@@ -219,6 +234,8 @@ struct LuaWidget
     bool valid = false;                  ///< 是否已成功加载且可执行
     bool customStyle = false;            ///< 是否启用了自定义主题样式
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
+    std::vector<LuaWidgetManifest::Setting> scriptSettings; ///< Lua 顶层声明式设置
+    std::vector<LuaWidgetManifest::SettingPreset> scriptPresets; ///< Lua 顶层声明式预设
     FILETIME lastModified = {};          ///< 脚本文件最后修改时间，用于变更检测
     RECT lastBounds{};                   ///< 最后一次渲染时的边界矩形
     int lastColumns = 1;
@@ -434,12 +451,21 @@ public:
      * @param borderR 输出：边框色红色分量
      * @param borderG 输出：边框色绿色分量
      * @param borderB 输出：边框色蓝色分量
+     * @param borderAlpha 输出：边框透明度
      * @param gradientEndA 输出：渐变末端透明度
+     * @param shadowAlpha 输出：阴影强度
+     * @param shadowBlur 输出：阴影柔化半径
+     * @param shadowOffsetY 输出：阴影垂直偏移
+     * @param highlightAlpha 输出：顶部高光强度
+     * @param noiseAlpha 输出：磨砂颗粒强度
      * @return 成功读取返回 true
      */
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
-        float& borderR, float& borderG, float& borderB, float& gradientEndA) const;
+        float& borderR, float& borderG, float& borderB, float& borderAlpha,
+        float& gradientEndA, float& shadowAlpha,
+        float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
+        float& noiseAlpha) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表

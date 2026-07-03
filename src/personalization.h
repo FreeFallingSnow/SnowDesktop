@@ -38,11 +38,17 @@ struct PersonalizationSettings
     //@}
 
     /**
-     * @brief 统一透明度
-     * @details 同时控制背景填充、边框以及渐变起始端的 Alpha 通道值，
+     * @brief 组件背景透明度
+     * @details 控制背景填充以及渐变起始端的 Alpha 通道值，
      *          取值范围 [0.0f, 1.0f]，0.0 完全透明，1.0 完全不透明。
      */
     float widgetAlpha = 0.36f;
+
+    /**
+     * @brief 组件边框透明度
+     * @details 独立控制边框描边的 Alpha 通道值。
+     */
+    float widgetBorderAlpha = 0.40f;
 
     /**
      * @brief 渐变底部末端 Alpha
@@ -52,6 +58,14 @@ struct PersonalizationSettings
     float gradientEndA = 0.65f;
 
     float barHeight = 24.0f;
+
+    int backgroundPreset = 0;
+    float cornerRadius = 12.0f;
+    float shadowAlpha = 0.0f;
+    float shadowBlur = 12.0f;
+    float shadowOffsetY = 4.0f;
+    float highlightAlpha = 0.0f;
+    float noiseAlpha = 0.0f;
 
     /**
      * @brief 获取暗色预设
@@ -64,6 +78,10 @@ struct PersonalizationSettings
      * @return 亮色主题的 PersonalizationSettings 实例
      */
     static PersonalizationSettings LightPreset();
+    static PersonalizationSettings GlassDarkPreset();
+    static PersonalizationSettings GlassLightPreset();
+    static PersonalizationSettings FrostedPreset();
+    static PersonalizationSettings HighContrastPreset();
 };
 
 /**

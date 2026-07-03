@@ -36,8 +36,10 @@ std::vector<EverythingSearchResult> EverythingSearchClient::Search(
     Everything_SetRegex(FALSE);
     Everything_SetOffset(0);
     Everything_SetMax(maxResults);
-    Everything_SetSort(EVERYTHING_SORT_DATE_RECENTLY_CHANGED_DESCENDING);
-    Everything_SetRequestFlags(EVERYTHING_REQUEST_FILE_NAME | EVERYTHING_REQUEST_FULL_PATH_AND_FILE_NAME);
+    Everything_SetSort(EVERYTHING_SORT_DATE_MODIFIED_DESCENDING);
+    Everything_SetRequestFlags(EVERYTHING_REQUEST_FILE_NAME |
+        EVERYTHING_REQUEST_FULL_PATH_AND_FILE_NAME |
+        EVERYTHING_REQUEST_DATE_MODIFIED);
 
     if (!Everything_QueryW(TRUE))
     {
@@ -60,6 +62,7 @@ std::vector<EverythingSearchResult> EverythingSearchClient::Search(
         const wchar_t* name = Everything_GetResultFileNameW(i);
         result.name = (name && *name) ? std::wstring(name) : FileNameFromPath(path);
         result.path = std::move(path);
+        Everything_GetResultDateModified(i, &result.dateModified);
         result.isDirectory = Everything_IsFolderResult(i) != FALSE;
         results.push_back(std::move(result));
     }

@@ -44,6 +44,7 @@
 #include <d3d11.h>
 #include <dcomp.h>
 #include <dwrite.h>
+#include <dwrite_3.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
@@ -260,6 +261,8 @@ public:
     {
         std::wstring name;
         std::wstring path;
+        FILETIME dateModified{};
+        std::wstring modifiedText;
         bool isDirectory = false;
         int systemIconIndex = -1;
     };
@@ -351,8 +354,12 @@ private:
     void AttachInputWindowToDesktopHost(HWND host);
     /** @brief 将键盘焦点交给独立输入窗口。 */
     void FocusDesktopInputWindow();
+    /** @brief 获取 Shell 弹窗/命令使用的顶层 owner，避免使用挂在 Explorer 下的子窗口。 */
+    HWND ShellDialogOwnerHwnd() const;
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
+    /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
+    void RequestRestart();
     /** @brief 隐藏 Explorer 原生桌面图标。 */
     void HideExplorerIcons();
     /** @brief 恢复 Explorer 原生桌面图标。 */
@@ -402,6 +409,11 @@ private:
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 绘制添加组件操作提示。 */
     void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
+    /** @brief 绘制组件面板背景效果（玻璃填充、柔化阴影、高光、颗粒、描边）。 */
+    void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
+        float effectScale, D2D1_COLOR_F fill, D2D1_COLOR_F border,
+        bool selected, float strokeWidth,
+        const PersonalizationSettings* effectSettings = nullptr);
     /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
@@ -470,7 +482,15 @@ private:
     void PositionQuickNavigationWindow();
     /** @brief 使快速导航窗口失效并触发重绘。 */
     void InvalidateQuickNavigationWindow();
-    /** @brief 绘制快速导航窗口内容。 @param hwnd 窗口句柄 */
+    /** @brief 创建或调整快捷导航 DComp 表面大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
+    HRESULT CreateOrResizeQuickNavCompositionSurface();
+    /** @brief 重置快捷导航 DComp 表面与缓存（设备丢失或尺寸变化时调用）。 */
+    void ResetQuickNavCompositionResources();
+    /** @brief 快捷导航 DComp 渲染失败后重置表面并安排一次恢复重绘。 */
+    void RecoverQuickNavCompositionFailure(const wchar_t* stage, HRESULT hr);
+    /** @brief 创建/重建快捷导航 DirectWrite 文本格式（DPI 变化时调用）。 */
+    void EnsureQuickNavTextFormats();
+    /** @brief 绘制快捷导航窗口内容。 @param hwnd 窗口句柄 */
     void PaintQuickNavigationWindow(HWND hwnd);
     /** @brief 确保快速导航搜索编辑框已创建。 */
     void EnsureQuickNavigationSearchEdit();
@@ -484,6 +504,9 @@ private:
     void RefreshQuickNavigationEverythingResults();
     void ClearQuickNavigationEverythingResults();
     int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
+    const QuickNavigationAppEntry* FindQuickNavigationEverythingAppEntry() const;
+    std::wstring GetQuickNavigationEverythingNoticeText() const;
+    bool TryLaunchQuickNavigationEverythingApp() const;
     void StartQuickNavigationAppIndexing();
     void StopQuickNavigationAppIndexing();
     void OnQuickNavigationAppsIndexed(WPARAM wParam, LPARAM lParam);
@@ -493,6 +516,8 @@ private:
     size_t GetQuickNavigationVisibleAppResultCount() const;
     bool HasQuickNavigationAppExpandButton() const;
     bool TryExpandQuickNavigationAppsAtPoint(POINT point);
+    bool HasQuickNavigationEverythingLoadMoreButton() const;
+    bool TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point);
     bool TryGetQuickNavigationAppEntryAtPoint(POINT point, const QuickNavigationAppEntry*& outEntry) const;
     void ShowQuickNavigationAppContextMenu(const QuickNavigationAppEntry& entry, POINT screenPoint);
     bool CreateDesktopShortcutForApp(const QuickNavigationAppEntry& entry);
@@ -790,6 +815,8 @@ private:
     size_t FirstMonitorOrderIndex() const;
     /** @brief 构建显示器渲染顺序列表。 @return 显示器索引列表 */
     std::vector<size_t> BuildMonitorRenderOrder() const;
+    /** @brief 获取当前显示首屏页的网格页面。 */
+    const GridPage* GetFirstPageGridPage() const;
     /**
      * @brief 尝试在网格中查找空闲单元格。
      * @param span 网格跨度
@@ -1009,6 +1036,8 @@ private:
     // ── Rendering helpers ───────────────────────────────────
     /** @brief 从项边界矩形计算图标区域。 @param bounds 项边界 @return 图标矩形 */
     RECT GetItemIconRect(RECT bounds) const;
+    /** @brief 从快捷导航项边界计算图标区域（独立于桌面网格缩放）。 @param bounds 项边界 @return 图标矩形 */
+    RECT GetQuickNavItemIconRect(RECT bounds) const;
     /** @brief 从项边界矩形计算文本区域。 @param bounds 项边界 @param expanded 是否展开 @return 文本矩形 */
     RECT GetItemTextRect(RECT bounds, bool expanded) const;
     /** @brief 获取项目所在网格单元相对于 92x116 基准尺寸的布局缩放比例。 */
@@ -1035,6 +1064,8 @@ private:
      */
     void DrawD2DFilledRectangle(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke);
+    /** @brief 绘制 1 像素分隔线（水平或垂直细矩形）。 @param ctx D2D 上下文 @param rect 分隔线矩形 @param color 颜色 */
+    void DrawD2DSeparator(ID2D1RenderTarget* ctx, RECT rect, const D2D1_COLOR_F& color);
     /**
      * @brief 绘制项的文字标签。
      * @param ctx D2D 上下文
@@ -1046,6 +1077,12 @@ private:
     void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f,
         bool lightTheme = false);
+    /**
+     * @brief 快捷导航大图标下标签的自绘文本（不依赖桌面 DrawItemText）。
+     * 使用 quickNavItemTextFormat_（变量字体 + 细字重），居中、可换行。
+     */
+    void DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
+        const std::wstring& text, bool selected, bool lightTheme);
     /**
      * @brief 使用桌面图标标题样式绘制已排版的文字。
      * @param ctx D2D 上下文
@@ -1071,6 +1108,20 @@ private:
      */
     void DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color);
+    /**
+     * @brief 绘制带省略号（可选）的单行文本，覆盖对齐方式。
+     * @param ctx D2D 上下文
+     * @param text 文本
+     * @param rect 矩形
+     * @param format 基础文本格式（字号/字重）
+     * @param color 颜色
+     * @param hAlign 水平对齐
+     * @param vAlign 垂直对齐
+     * @param ellipsis 是否启用末尾省略号
+     */
+    void DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
+        RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
+        DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis = true);
     /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
     void DrawCollectionPopup(ID2D1DeviceContext* ctx);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
@@ -1100,6 +1151,8 @@ private:
     void EnqueueIconLoad(IconLoadTask task);
     void OnIconLoaded(WPARAM wParam, LPARAM lParam);
     void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect, float alpha);
+    /** @brief 绘制快捷导航行内系统图标（EXTRALARGE 源，缩放填满 dstRect）。 */
+    void DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect);
 
     // ── Filtering ───────────────────────────────────────────
     /**
@@ -1413,6 +1466,8 @@ private:
     ComPtr<ID2D1DeviceContext> d2dContext_;
     /** @brief 用于录制标题阴影蒙版的独立 D2D 上下文。 */
     ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
+    /** @brief 用于录制组件背景柔化阴影的独立 D2D 上下文。 */
+    ComPtr<ID2D1DeviceContext> widgetPanelEffectContext_;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
     ID2D1RenderTarget* brushCacheContext_ = nullptr;
@@ -1501,18 +1556,19 @@ private:
     HWND quickNavigationSearchEdit_ = nullptr;
     HFONT quickNavigationSearchFont_ = nullptr;
 
-    HFONT quickNavigationTabFont_ = nullptr;
-    HFONT quickNavigationItemFont_ = nullptr;
-    HFONT quickNavigationPathFont_ = nullptr;
-    HDC quickNavMemoryDc_ = nullptr;
-    HBITMAP quickNavMemoryBitmap_ = nullptr;
-    int quickNavMemWidth_ = 0;
-    int quickNavMemHeight_ = 0;
-    ComPtr<ID2D1DCRenderTarget> quickNavD2DTarget_;
-    std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap>> quickNavD2DIconCache_;
-    ComPtr<ID2D1Bitmap> quickNavShortcutArrowBitmap_;
-    SIZE quickNavShortcutArrowBitmapSize_{};
-    std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavPlaceholderIconCache_;
+    // 快捷导航 DComp 渲染资源（与桌面共享 d2dDevice_ / dcompDevice_）
+    ComPtr<IDCompositionTarget> quickNavDcompTarget_;
+    ComPtr<IDCompositionVisual2> quickNavDcompVisual_;
+    ComPtr<IDCompositionSurface> quickNavDcompSurface_;
+    UINT quickNavCompWidth_ = 0;
+    UINT quickNavCompHeight_ = 0;
+    bool quickNavCompositionRenderRecoveryPending_ = false;
+    // 快捷导航 DirectWrite 文本格式（替代 GDI HFONT）
+    ComPtr<IDWriteTextFormat> quickNavTabTextFormat_;
+    ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
+    ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
+    /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按 sysIconIndex）。 */
+    std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
     std::vector<int> quickNavTabWidths_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -1627,6 +1683,7 @@ private:
     HWND renameEdit_ = nullptr;
     HFONT renameFont_ = nullptr;
     size_t renameIndex_ = static_cast<size_t>(-1);
+    bool renameCommitPending_ = false;
     bool renamingWidget_ = false;
     bool renamingFolderEntry_ = false;
     size_t renameFolderWidgetIndex_ = static_cast<size_t>(-1);
@@ -1710,6 +1767,8 @@ private:
     std::wstring quickNavigationSearchText_;
     std::wstring quickNavigationSearchCompositionText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
+    DWORD quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
+    bool quickNavigationEverythingHasMore_ = false;
     std::vector<size_t> quickNavigationAppResultIndices_;
     std::vector<QuickNavigationAppEntry> quickNavigationAppEntries_;
     bool quickNavigationAppsIndexed_ = false;

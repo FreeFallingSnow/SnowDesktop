@@ -9,6 +9,7 @@ struct EverythingSearchResult
 {
     std::wstring name;
     std::wstring path;
+    FILETIME dateModified{};
     bool isDirectory = false;
 };
 
