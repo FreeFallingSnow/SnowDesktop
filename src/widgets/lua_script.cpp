@@ -118,12 +118,17 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
+    float cornerRadiusCu = 12.0f;
+    PersonalizationSettings effectSettings = PersonalizationSettings::DarkPreset();
     if (app_->settingsWindow_)
     {
-        const auto& p = app_->settingsWindow_->GetPersonalization();
-        fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
-        borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetAlpha);
-        gradientEndA = p.gradientEndA;
+        effectSettings = app_->settingsWindow_->GetPersonalization();
+        fillColor = D2D1::ColorF(effectSettings.widgetBgR, effectSettings.widgetBgG,
+            effectSettings.widgetBgB, effectSettings.widgetAlpha);
+        borderColor = D2D1::ColorF(effectSettings.widgetBorderR, effectSettings.widgetBorderG,
+            effectSettings.widgetBorderB, effectSettings.widgetBorderAlpha);
+        gradientEndA = effectSettings.gradientEndA;
+        cornerRadiusCu = effectSettings.cornerRadius;
     }
 
     bool customStyle = false;
@@ -143,14 +148,26 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
         if (customStyle && widgetOk)
         {
+            effectSettings = PersonalizationSettings::DarkPreset();
             float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
-            float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, luaGradientEndA = gradientEndA;
+            float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, borderAlpha = 0.0f;
+            float luaGradientEndA = gradientEndA;
+            float luaShadowAlpha = 0.0f, luaShadowBlur = 12.0f, luaShadowOffsetY = 4.0f;
+            float luaHighlightAlpha = 0.0f, luaNoiseAlpha = 0.0f;
             if (app_->widgetEngine_->ReadCustomColors(data_->id,
-                bgR, bgG, bgB, alpha, borderR, borderG, borderB, luaGradientEndA))
+                bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
+                luaGradientEndA, luaShadowAlpha, luaShadowBlur,
+                luaShadowOffsetY, luaHighlightAlpha, luaNoiseAlpha))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
-                borderColor = D2D1::ColorF(borderR, borderG, borderB, alpha);
+                borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
                 gradientEndA = luaGradientEndA;
+                effectSettings = PersonalizationSettings::DarkPreset();
+                effectSettings.shadowAlpha = luaShadowAlpha;
+                effectSettings.shadowBlur = luaShadowBlur;
+                effectSettings.shadowOffsetY = luaShadowOffsetY;
+                effectSettings.highlightAlpha = luaHighlightAlpha;
+                effectSettings.noiseAlpha = luaNoiseAlpha;
             }
         }
 
@@ -167,14 +184,21 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             theme.bg = colorToRgb(fillColor);
             theme.border = colorToRgb(borderColor);
             theme.alpha = fillColor.a;
+            theme.borderAlpha = borderColor.a;
             theme.gradientEndA = gradientEndA;
+            theme.cornerRadius = cornerRadiusCu;
+            theme.shadowAlpha = effectSettings.shadowAlpha;
+            theme.shadowBlur = effectSettings.shadowBlur;
+            theme.shadowOffsetY = effectSettings.shadowOffsetY;
+            theme.highlightAlpha = effectSettings.highlightAlpha;
+            theme.noiseAlpha = effectSettings.noiseAlpha;
             app_->widgetEngine_->SetWidgetTheme(data_->id, theme);
         }
     }
 
-    app_->DrawD2DRoundedRectangle(context, frame, static_cast<float>(Cu(12.0f)), fillColor,
-        selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f) : borderColor,
-        selected ? 1.6f : 1.0f);
+    app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
+        std::max(0.5f, static_cast<float>(Cu(1.0f))), fillColor, borderColor,
+        selected, selected ? 1.6f : 1.0f, customStyle ? &effectSettings : nullptr);
 
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (app_->widgetEngine_ && widgetOk)

@@ -796,17 +796,19 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
+    float cornerRadiusCu = 12.0f;
     if (app_->settingsWindow_)
     {
         const auto& p = app_->settingsWindow_->GetPersonalization();
         fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
-        borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetAlpha);
+        borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetBorderAlpha);
         gradientEndA = p.gradientEndA;
+        cornerRadiusCu = p.cornerRadius;
     }
 
-    float radius = static_cast<float>(Cu(12.0f));
+    float radius = static_cast<float>(Cu(cornerRadiusCu));
     float strokeW = selected ? 1.6f : 1.0f;
-    D2D1::ColorF selBorder(0.39f, 0.66f, 1.0f, 0.90f);
+    float effectScale = std::max(0.5f, static_cast<float>(Cu(1.0f)));
 
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
         const auto key = D2DColorBrushKey(c);
@@ -821,15 +823,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     };
 
     // ── 1. Background + border ────────────────────────────────
-    {
-        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
-            D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
-            radius, radius);
-        if (auto* fillBrush = getBrush(fillColor))
-            context->FillRoundedRectangle(rr, fillBrush);
-        if (auto* strokeBrush = getBrush(selected ? selBorder : borderColor))
-            context->DrawRoundedRectangle(rr, strokeBrush, strokeW);
-    }
+    app_->DrawWidgetPanelBackground(context, frame, radius, effectScale,
+        fillColor, borderColor, selected, strokeW);
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {

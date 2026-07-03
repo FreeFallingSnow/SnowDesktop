@@ -407,6 +407,11 @@ private:
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 绘制添加组件操作提示。 */
     void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
+    /** @brief 绘制组件面板背景效果（玻璃填充、柔化阴影、高光、颗粒、描边）。 */
+    void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
+        float effectScale, D2D1_COLOR_F fill, D2D1_COLOR_F border,
+        bool selected, float strokeWidth,
+        const PersonalizationSettings* effectSettings = nullptr);
     /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
@@ -1457,6 +1462,8 @@ private:
     ComPtr<ID2D1DeviceContext> d2dContext_;
     /** @brief 用于录制标题阴影蒙版的独立 D2D 上下文。 */
     ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
+    /** @brief 用于录制组件背景柔化阴影的独立 D2D 上下文。 */
+    ComPtr<ID2D1DeviceContext> widgetPanelEffectContext_;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
     ID2D1RenderTarget* brushCacheContext_ = nullptr;
