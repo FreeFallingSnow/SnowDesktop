@@ -33,7 +33,6 @@ namespace
             { L"documents", L"文档", "documents", L".TXT .MD .DOC .DOCX .PDF .XLS .XLSX .PPT .PPTX .CSV" },
             { L"archives", L"压缩包", "archives", L".ZIP .RAR .7Z .TAR .GZ .BZ2 .XZ" },
             { L"audio", L"音频", "audio", L".MP3 .WAV .FLAC .AAC .M4A .OGG" },
-            { L"programs", L"程序", "programs", L".EXE .MSI .BAT .CMD .LNK" },
         };
         count = sizeof(rules) / sizeof(rules[0]);
         return rules;
@@ -219,6 +218,12 @@ namespace
         return L"category-" + std::to_wstring(index + 1);
     }
 
+    bool IsRetiredBuiltinRule(const CategoryRule& rule)
+    {
+        return rule.id == L"programs" &&
+            rule.extensions == L".EXE .MSI .BAT .CMD .LNK";
+    }
+
     void NormalizeRules(CategorySettings& settings)
     {
         std::vector<CategoryRule> normalized;
@@ -233,12 +238,15 @@ namespace
             if (rule.id.empty() || rule.id == L"all" || rule.id == L"folders" || rule.id == L"others")
                 rule.id = MakeRuleId(i);
 
+            rule.extensions = NormalizeCategoryExtensionText(rule.extensions);
+            if (IsRetiredBuiltinRule(rule))
+                continue;
+
             std::wstring baseId = rule.id;
             int suffix = 2;
             while (!seenIds.insert(rule.id).second)
                 rule.id = baseId + L"-" + std::to_wstring(suffix++);
 
-            rule.extensions = NormalizeCategoryExtensionText(rule.extensions);
             normalized.push_back(std::move(rule));
         }
 

@@ -2,7 +2,7 @@
  * @file file_categories.cpp
  * @brief 实现 FileCategories 组件——一个带分类标签页的可滚动文件分类面板。
  *
- * 该组件将桌面项目按类型（文件夹、视频、图片、文档、压缩包、音频、程序等）
+ * 该组件将桌面项目按类型（文件夹、视频、图片、文档、压缩包、音频等）
  * 分类展示，支持标签页切换、列表/网格模式切换、拖拽排序、滚动等功能。
  * 所有桌面级散文件会自动收集到"全部"分类下，并按扩展名归入对应类别。
  */
@@ -64,7 +64,7 @@ static bool IsFilesystemFolder(const DesktopItem& item)
  * @brief 根据扩展名或属性确定桌面项目所属的分类 ID。
  * @param item 桌面项目。
  * @return 分类 ID 字符串，可能为 "folders"、"videos"、"images"、"documents"、
- *         "archives"、"audio"、"programs" 或 "others"。
+ *         "archives"、"audio"、自定义分类 ID 或 "others"。
  */
 static std::wstring FileCategoryIdForItem(const DesktopItem& item, const CategorySettings& settings)
 {
