@@ -26,6 +26,7 @@
 #include "settings_window.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "category_settings.h"
 #include "everything_search.h"
 #include "utils.h"
 #include "widget_engine.h"
@@ -454,6 +455,10 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    /** @brief 加载分类设置并刷新分类组件。 */
+    void LoadCategorySettingsAndApply();
+    /** @brief 获取当前分类设置。 */
+    const CategorySettings& GetCategorySettings() const { return categorySettings_; }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility();
     /** @brief 显示隐藏状态提示文字。 */
@@ -593,8 +598,8 @@ private:
      * @return 操作是否成功
      */
     bool CopyCutSelectedFolderEntries(bool cut);
-    /** @brief 删除选中的文件夹条目。 @return 操作是否成功 */
-    bool DeleteSelectedFolderEntries();
+    /** @brief 删除选中的文件夹条目。 @param permanentDelete true 时永久删除并显示确认。 @return 操作是否成功 */
+    bool DeleteSelectedFolderEntries(bool permanentDelete = false);
     /**
      * @brief 将剪贴板中的内容粘贴到指定的文件夹映射部件中。
      * @param widgetIndex 目标部件索引
@@ -1492,6 +1497,7 @@ private:
     std::unique_ptr<WidgetEngine> widgetEngine_;
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
+    CategorySettings categorySettings_ = CategorySettings::Defaults();
     bool quickNavLightTheme_ = false;
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;

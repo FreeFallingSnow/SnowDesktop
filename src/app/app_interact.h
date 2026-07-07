@@ -478,6 +478,21 @@ inline void DesktopApp::LoadGeneralSettingsAndApply()
     quickNavLightTheme_ = (generalSettings_.quickNavTheme == 1);
 }
 
+inline void DesktopApp::LoadCategorySettingsAndApply()
+{
+    CategorySettings settings = CategorySettings::Defaults();
+    LoadCategorySettings(GetCategorySettingsPath().c_str(), settings);
+    categorySettings_ = settings;
+
+    for (auto& c : containers_)
+    {
+        if (auto* fc = dynamic_cast<FileCategories*>(c.get()))
+            fc->InvalidateCategoryCache();
+    }
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 inline void DesktopApp::ToggleDesktopIconsVisibility()
 {
     desktopIconsHidden_ = !desktopIconsHidden_;
@@ -2354,10 +2369,11 @@ inline bool DesktopApp::CopyCutSelectedFolderEntries(bool cut)
 }
 
 /**
- * @brief 删除选中的文件夹条目（移至回收站）
+ * @brief 删除选中的文件夹条目
+ * @param permanentDelete true 时永久删除并显示 Shell 确认对话框
  * @return 是否执行了删除操作
  */
-inline bool DesktopApp::DeleteSelectedFolderEntries()
+inline bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
 {
     std::vector<std::wstring> paths = GetSelectedFolderEntryPaths();
     if (paths.empty()) return false;
@@ -2375,7 +2391,9 @@ inline bool DesktopApp::DeleteSelectedFolderEntries()
     op.hwnd = ShellDialogOwnerHwnd();
     op.wFunc = FO_DELETE;
     op.pFrom = from.c_str();
-    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI;
+    op.fFlags = static_cast<FILEOP_FLAGS>(permanentDelete
+        ? FOF_WANTNUKEWARNING
+        : (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI));
     if (SHFileOperationW(&op) != 0 || op.fAnyOperationsAborted)
         return true;
 
@@ -2549,6 +2567,7 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     }
 
     bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
 
     switch (key)
     {
@@ -2563,27 +2582,42 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
         break;
     case VK_DELETE:
     {
-        if (DeleteSelectedFolderEntries())
+        if (DeleteSelectedFolderEntries(shift))
             break;
 
         cutPaths_.clear();
+        std::vector<std::wstring> paths;
         for (const auto& item : items_)
         {
             if (!item.selected || !item.desktopIconClsid.empty()) continue;
             wchar_t path[MAX_PATH]{};
             if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
             {
-                SHFILEOPSTRUCTW op{};
-                op.wFunc = FO_DELETE;
-                op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION;
-                wchar_t from[MAX_PATH + 2]{};
-                wcscpy_s(from, path);
-                from[wcslen(path) + 1] = L'\0';
-                op.pFrom = from;
-                SHFileOperationW(&op);
+                cutPaths_.erase(path);
+                paths.push_back(path);
             }
         }
-        ReloadItems();
+
+        if (!paths.empty())
+        {
+            std::wstring from;
+            for (const auto& path : paths)
+            {
+                from += path;
+                from.push_back(L'\0');
+            }
+            from.push_back(L'\0');
+
+            SHFILEOPSTRUCTW op{};
+            op.hwnd = ShellDialogOwnerHwnd();
+            op.wFunc = FO_DELETE;
+            op.pFrom = from.c_str();
+            op.fFlags = static_cast<FILEOP_FLAGS>(shift
+                ? FOF_WANTNUKEWARNING
+                : (FOF_ALLOWUNDO | FOF_NOCONFIRMATION));
+            if (SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted)
+                ReloadItems();
+        }
         break;
     }
     case 'C':

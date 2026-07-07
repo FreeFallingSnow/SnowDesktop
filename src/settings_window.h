@@ -18,6 +18,7 @@
 #include "general_settings.h"
 #include "personalization.h"
 #include "navigation_settings.h"
+#include "category_settings.h"
 
 #include <functional>
 #include <memory>
@@ -142,6 +143,8 @@ public:
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 
+    void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
+
     void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight)
     {
         iconSpacingScale_ = spacingScale;
@@ -180,6 +183,7 @@ public:
      * @return 指向 PersonalizationSettings 的常引用
      */
     const PersonalizationSettings& GetPersonalization() const { return personalization_; }
+    const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
     float GetItemFontSizeD() const { return itemFontSize_; }
@@ -247,6 +251,8 @@ private:
     void DrawPersonalizationPage();
 
     void DrawDisplayPage();
+
+    void DrawCategorySettingsPage();
 
     /**
      * @brief 绘制小组件编辑器页面（脚本编辑与保存）
@@ -329,6 +335,9 @@ private:
      */
     void SetAutoStart(bool enable) const;
 
+    void SyncCategoryRuleBuffersFromSettings();
+    void NormalizeCategoryRuleBuffers();
+
     /** @} */
 
     /** @name 窗口与 D3D11 资源
@@ -366,7 +375,7 @@ private:
     /// 系统 DPI 缩放比例，用于字体和界面缩放适配
     float dpiScale_ = 1.0f;
 
-    /// 当前活动页面索引（0 = 通用, 1 = 个性化, 2 = 备份, 3 = 小组件编辑器, 4 = 调试, 5 = 关于）
+    /// 当前活动页面索引（0 = 通用, 1 = 组件显示, 2 = 图标显示, 3 = 分类设置, 4 = 布局备份, 5 = 关于, 6 = 调试）
     int activePage_ = 0;
 
     /// 备份名称输入缓冲区
@@ -422,6 +431,9 @@ private:
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
 
+    /// 分类设置变更回调
+    std::function<void()> categorySettingsChangedCallback_;
+
     /** @} */
 
     /** @name 设置数据
@@ -451,6 +463,15 @@ private:
     /// 通用设置是否已修改（需要保存）
     bool generalSettingsDirty_ = false;
 
+    /// 当前分类设置
+    CategorySettings categorySettings_ = CategorySettings::Defaults();
+
+    /// 分类设置是否已修改（需要保存）
+    bool categorySettingsDirty_ = false;
+
+    /// 是否应在当前帧持久化分类设置
+    bool categorySettingsSaveRequested_ = false;
+
     /// 当前图标间距缩放
     float iconSpacingScale_ = 1.0f;
 
@@ -462,6 +483,18 @@ private:
 
     int displaySpacingPct_ = 100;
 
+    struct CategoryRuleEditBuffer
+    {
+        std::wstring id;
+        char label[128] = {};
+        char extensions[1024] = {};
+    };
+
+    std::vector<CategoryRuleEditBuffer> categoryRuleBuffers_;
+    char newCategoryLabelBuf_[128] = {};
+    char newCategoryExtensionsBuf_[1024] = {};
+    DWORD categorySettingsSavedTick_ = 0;
+
     /** @} */
 
     /** @name 小组件编辑器状态
@@ -472,6 +505,9 @@ private:
 
     /// 正在编辑的小组件在引擎中的索引
     size_t editingWidgetIndex_ = static_cast<size_t>(-1);
+
+    /// 返回主页面请求延迟到当前 ImGui frame 收尾后执行
+    bool widgetEditorBackPending_ = false;
 
     /// 正在编辑的小组件唯一标识符
     std::wstring editingWidgetId_;

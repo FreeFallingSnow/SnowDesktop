@@ -29,6 +29,8 @@
 #include <winhttp.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <cwctype>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -70,6 +72,7 @@ static void SetupLightTheme()
     c[ImGuiCol_Text]                 = ImVec4(0.10f, 0.10f, 0.14f, 1.00f);
     c[ImGuiCol_TextDisabled]         = ImVec4(0.55f, 0.55f, 0.60f, 1.00f);
     c[ImGuiCol_TextSelectedBg]       = ImVec4(0.25f, 0.55f, 0.90f, 0.35f);
+    c[ImGuiCol_InputTextCursor]      = ImVec4(0.08f, 0.08f, 0.12f, 1.00f);
     c[ImGuiCol_Header]               = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
     c[ImGuiCol_HeaderHovered]        = ImVec4(0.84f, 0.84f, 0.88f, 1.00f);
     c[ImGuiCol_HeaderActive]         = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
@@ -183,6 +186,9 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     LoadPersonalization(GetPersonalizationPath().c_str(), personalization_);
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
+    categorySettings_ = CategorySettings::Defaults();
+    LoadCategorySettings(GetCategorySettingsPath().c_str(), categorySettings_);
+    SyncCategoryRuleBuffersFromSettings();
 
     g_settingsWindow = this;
 
@@ -211,6 +217,16 @@ void SettingsWindow::Shutdown()
         SavePersonalization(GetPersonalizationPath().c_str(), personalization_);
         personalizationDirty_ = false;
         personalizationSaveRequested_ = false;
+    }
+    if (categorySettingsDirty_)
+    {
+        NormalizeCategoryRuleBuffers();
+        SaveCategorySettings(GetCategorySettingsPath().c_str(), categorySettings_);
+        categorySettingsDirty_ = false;
+        categorySettingsSaveRequested_ = false;
+        categorySettingsSavedTick_ = GetTickCount();
+        if (categorySettingsChangedCallback_)
+            categorySettingsChangedCallback_();
     }
     g_settingsWindow = nullptr;
     ImGui_ImplDX11_Shutdown();
@@ -263,6 +279,8 @@ void SettingsWindow::RequestClose()
         editingWidgetIndex_ = static_cast<size_t>(-1);
     if (personalizationDirty_)
         personalizationSaveRequested_ = true;
+    if (categorySettingsDirty_)
+        categorySettingsSaveRequested_ = true;
     pendingClose_ = true;
 }
 
@@ -336,9 +354,10 @@ void SettingsWindow::Render()
         case 0: DrawGeneralPage(); break;
         case 1: DrawPersonalizationPage(); break;
         case 2: DrawDisplayPage(); break;
-        case 3: DrawBackupPage(); break;
-        case 4: DrawAboutPage(); break;
-        case 5:
+        case 3: DrawCategorySettingsPage(); break;
+        case 4: DrawBackupPage(); break;
+        case 5: DrawAboutPage(); break;
+        case 6:
             if (debugUnlocked_)
                 DrawDebugPage();
             else
@@ -349,6 +368,12 @@ void SettingsWindow::Render()
     }
 
     ImGui::End();
+
+    if (widgetEditorBackPending_)
+    {
+        widgetEditorBackPending_ = false;
+        editingWidgetIndex_ = static_cast<size_t>(-1);
+    }
 
     if (personalizationPreviewDirty_)
     {
@@ -378,6 +403,17 @@ void SettingsWindow::Render()
         generalSettingsDirty_ = false;
         if (generalSettingsChangedCallback_)
             generalSettingsChangedCallback_();
+    }
+
+    if (categorySettingsSaveRequested_ && categorySettingsDirty_)
+    {
+        NormalizeCategoryRuleBuffers();
+        SaveCategorySettings(GetCategorySettingsPath().c_str(), categorySettings_);
+        categorySettingsDirty_ = false;
+        categorySettingsSaveRequested_ = false;
+        categorySettingsSavedTick_ = GetTickCount();
+        if (categorySettingsChangedCallback_)
+            categorySettingsChangedCallback_();
     }
 
     // Exit confirmation modal
@@ -461,10 +497,11 @@ void SettingsWindow::DrawSidebar()
     SideButton(0, "通用");
     SideButton(1, "组件显示");
     SideButton(2, "图标显示");
-    SideButton(3, "布局备份");
-    SideButton(4, "关于");
+    SideButton(3, "分类设置");
+    SideButton(4, "布局备份");
+    SideButton(5, "关于");
     if (debugUnlocked_)
-        SideButton(5, "调试");
+        SideButton(6, "调试");
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
@@ -498,6 +535,24 @@ namespace {
         std::wstring r(n, L'\0');
         MultiByteToWideChar(CP_UTF8, 0, u.c_str(), static_cast<int>(u.size()), r.data(), n);
         return r;
+    }
+
+    void CopyWideToUtf8Buffer(const std::wstring& text, char* buffer, size_t bufferSize)
+    {
+        if (!buffer || bufferSize == 0) return;
+        std::string utf8 = WideToUtf8(text);
+        std::strncpy(buffer, utf8.c_str(), bufferSize - 1);
+        buffer[bufferSize - 1] = '\0';
+    }
+
+    std::wstring TrimWide(std::wstring value)
+    {
+        auto isSpace = [](wchar_t ch) { return std::iswspace(ch) != 0; };
+        value.erase(value.begin(), std::find_if(value.begin(), value.end(),
+            [&](wchar_t ch) { return !isSpace(ch); }));
+        value.erase(std::find_if(value.rbegin(), value.rend(),
+            [&](wchar_t ch) { return !isSpace(ch); }).base(), value.end());
+        return value;
     }
 }
 
@@ -897,6 +952,188 @@ void SettingsWindow::DrawDisplayPage()
     ImGui::EndChild();
 }
 
+void SettingsWindow::SyncCategoryRuleBuffersFromSettings()
+{
+    categoryRuleBuffers_.clear();
+    categoryRuleBuffers_.reserve(categorySettings_.rules.size());
+    for (const CategoryRule& rule : categorySettings_.rules)
+    {
+        CategoryRuleEditBuffer buffer;
+        buffer.id = rule.id;
+        CopyWideToUtf8Buffer(rule.label, buffer.label, sizeof(buffer.label));
+        CopyWideToUtf8Buffer(rule.extensions, buffer.extensions, sizeof(buffer.extensions));
+        categoryRuleBuffers_.push_back(std::move(buffer));
+    }
+}
+
+void SettingsWindow::NormalizeCategoryRuleBuffers()
+{
+    categorySettings_.rules.clear();
+    categorySettings_.rules.reserve(categoryRuleBuffers_.size());
+    for (const CategoryRuleEditBuffer& buffer : categoryRuleBuffers_)
+    {
+        CategoryRule rule;
+        rule.id = buffer.id;
+        rule.label = TrimWide(Utf8ToWide(buffer.label));
+        if (rule.label.empty())
+            rule.label = L"未命名";
+        rule.extensions = NormalizeCategoryExtensionText(Utf8ToWide(buffer.extensions));
+        categorySettings_.rules.push_back(std::move(rule));
+    }
+    SyncCategoryRuleBuffersFromSettings();
+}
+
+/**
+ * @brief 绘制"分类设置"页面。
+ */
+void SettingsWindow::DrawCategorySettingsPage()
+{
+    const float pad = 16.0f * dpiScale_;
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##CategorySettingsPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+
+    const float labelW = 92.0f * dpiScale_;
+    const float inputW = std::max(280.0f * dpiScale_, ImGui::GetContentRegionAvail().x - labelW - 24.0f * dpiScale_);
+
+    auto markChanged = [&]() {
+        categorySettingsDirty_ = true;
+        categorySettingsSavedTick_ = 0;
+    };
+
+    ImGui::Text("分类设置");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("标签字号");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(220.0f * dpiScale_);
+    if (ImGui::SliderFloat("##CategoryTabFontSize", &categorySettings_.tabFontSize, 10.0f, 22.0f, "%.0f"))
+        markChanged();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("分类类型");
+    ImGui::TextDisabled("扩展名用空格、逗号或分号分隔；可省略点号，保存时会自动规范。");
+    ImGui::Spacing();
+
+    int deleteIndex = -1;
+    for (size_t i = 0; i < categoryRuleBuffers_.size(); ++i)
+    {
+        CategoryRuleEditBuffer& buffer = categoryRuleBuffers_[i];
+        ImGui::PushID(static_cast<int>(i));
+
+        ImGui::Text("名称");
+        ImGui::SameLine(labelW);
+        ImGui::SetNextItemWidth(150.0f * dpiScale_);
+        if (ImGui::InputText("##CategoryLabel", buffer.label, sizeof(buffer.label)))
+            markChanged();
+
+        ImGui::SameLine();
+        if (BlueButton("删除", ImVec2(56.0f * dpiScale_, 0)))
+            deleteIndex = static_cast<int>(i);
+
+        ImGui::Text("扩展名");
+        ImGui::SameLine(labelW);
+        ImGui::SetNextItemWidth(inputW);
+        if (ImGui::InputText("##CategoryExtensions", buffer.extensions, sizeof(buffer.extensions)))
+            markChanged();
+
+        ImGui::Spacing();
+        ImGui::PopID();
+    }
+
+    if (deleteIndex >= 0 && static_cast<size_t>(deleteIndex) < categoryRuleBuffers_.size())
+    {
+        categoryRuleBuffers_.erase(categoryRuleBuffers_.begin() + deleteIndex);
+        markChanged();
+    }
+
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("新增分类类型");
+    ImGui::Text("名称");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(150.0f * dpiScale_);
+    ImGui::InputText("##NewCategoryLabel", newCategoryLabelBuf_, sizeof(newCategoryLabelBuf_));
+
+    ImGui::Text("扩展名");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(inputW);
+    ImGui::InputText("##NewCategoryExtensions", newCategoryExtensionsBuf_, sizeof(newCategoryExtensionsBuf_));
+
+    ImGui::SameLine();
+    if (BlueButton("添加", ImVec2(64.0f * dpiScale_, 0)))
+    {
+        CategoryRuleEditBuffer buffer;
+        std::wstring id = L"custom-" + std::to_wstring(GetTickCount64());
+        bool unique = false;
+        int suffix = 2;
+        while (!unique)
+        {
+            unique = true;
+            for (const auto& existing : categoryRuleBuffers_)
+            {
+                if (existing.id == id)
+                {
+                    unique = false;
+                    id = L"custom-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(suffix++);
+                    break;
+                }
+            }
+        }
+        buffer.id = id;
+
+        std::wstring label = TrimWide(Utf8ToWide(newCategoryLabelBuf_));
+        if (label.empty())
+            label = L"新分类";
+        std::wstring extensions = NormalizeCategoryExtensionText(Utf8ToWide(newCategoryExtensionsBuf_));
+        CopyWideToUtf8Buffer(label, buffer.label, sizeof(buffer.label));
+        CopyWideToUtf8Buffer(extensions, buffer.extensions, sizeof(buffer.extensions));
+        categoryRuleBuffers_.push_back(std::move(buffer));
+        newCategoryLabelBuf_[0] = '\0';
+        newCategoryExtensionsBuf_[0] = '\0';
+        markChanged();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (BlueButton("应用", ImVec2(80.0f * dpiScale_, 0)))
+    {
+        categorySettingsDirty_ = true;
+        categorySettingsSaveRequested_ = true;
+    }
+    ImGui::SameLine();
+    if (BlueButton("恢复默认", ImVec2(96.0f * dpiScale_, 0)))
+    {
+        categorySettings_ = CategorySettings::Defaults();
+        SyncCategoryRuleBuffersFromSettings();
+        markChanged();
+        categorySettingsSaveRequested_ = true;
+    }
+
+    if (categorySettingsDirty_)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("有未保存更改");
+    }
+    else if (categorySettingsSavedTick_ != 0 && GetTickCount() - categorySettingsSavedTick_ < 2500)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("已保存");
+    }
+
+    ImGui::EndChild();
+}
+
 /**
  * @brief 绘制"组件显示设置"页面。
  *
@@ -1161,6 +1398,7 @@ void SettingsWindow::ShowWidgetEditor(size_t widgetIndex,
     const wchar_t* widgetId, const wchar_t* widgetName, const wchar_t* scriptPath)
 {
     editingWidgetIndex_ = widgetIndex;
+    widgetEditorBackPending_ = false;
     editingWidgetId_ = widgetId;
     editingWidgetName_ = widgetName;
     editingScriptPath_ = scriptPath;
@@ -1176,18 +1414,57 @@ void SettingsWindow::ShowWidgetEditor(size_t widgetIndex,
  */
 void SettingsWindow::DrawWidgetEditorPage()
 {
-    // Back button — white text on blue
-    if (BlueButton("返回主界面", ImVec2(100, 0)))
-    {
-        editingWidgetIndex_ = static_cast<size_t>(-1);
-        return;
-    }
+    const float pad = 14.0f * dpiScale_;
+    const float toolbarH = 48.0f * dpiScale_;
+    const ImVec2 toolbarPos = ImGui::GetCursorScreenPos();
+    const float toolbarW = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-    ImGui::SameLine();
-    ImGui::Text("组件编辑: %s", WideToUtf8(editingWidgetName_).c_str());
-    ImGui::Separator();
+    drawList->AddRectFilled(toolbarPos,
+        ImVec2(toolbarPos.x + toolbarW, toolbarPos.y + toolbarH),
+        IM_COL32(248, 248, 250, 255), 8.0f * dpiScale_);
+    drawList->AddLine(ImVec2(toolbarPos.x, toolbarPos.y + toolbarH),
+        ImVec2(toolbarPos.x + toolbarW, toolbarPos.y + toolbarH),
+        IM_COL32(210, 210, 218, 255), 1.0f);
 
-    if (widgetEngine_)
+    ImGui::SetCursorScreenPos(ImVec2(toolbarPos.x + pad, toolbarPos.y + 8.0f * dpiScale_));
+    const ImVec2 backSize(116.0f * dpiScale_, 32.0f * dpiScale_);
+    const ImVec2 backPos = ImGui::GetCursorScreenPos();
+    bool backClicked = ImGui::InvisibleButton("##WidgetEditorBack", backSize);
+    bool backHovered = ImGui::IsItemHovered();
+    drawList->AddRectFilled(backPos,
+        ImVec2(backPos.x + backSize.x, backPos.y + backSize.y),
+        backHovered ? IM_COL32(226, 234, 246, 255) : IM_COL32(238, 242, 248, 255),
+        16.0f * dpiScale_);
+    drawList->AddRect(backPos,
+        ImVec2(backPos.x + backSize.x, backPos.y + backSize.y),
+        backHovered ? IM_COL32(110, 145, 190, 255) : IM_COL32(198, 208, 222, 255),
+        16.0f * dpiScale_, 0, 1.0f);
+    drawList->AddText(ImVec2(backPos.x + 14.0f * dpiScale_, backPos.y + 7.0f * dpiScale_),
+        IM_COL32(42, 52, 68, 255), "<");
+    drawList->AddText(ImVec2(backPos.x + 34.0f * dpiScale_, backPos.y + 7.0f * dpiScale_),
+        IM_COL32(42, 52, 68, 255), "返回主页面");
+
+    std::string title = "组件编辑";
+    std::string name = WideToUtf8(editingWidgetName_);
+    if (!name.empty())
+        title += " / " + name;
+    drawList->AddText(ImVec2(backPos.x + backSize.x + 18.0f * dpiScale_,
+            toolbarPos.y + 15.0f * dpiScale_),
+        IM_COL32(36, 39, 46, 255), title.c_str());
+
+    ImGui::SetCursorScreenPos(ImVec2(toolbarPos.x, toolbarPos.y + toolbarH + 10.0f * dpiScale_));
+
+    if (backClicked)
+        widgetEditorBackPending_ = true;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##WidgetEditorScroll", ImVec2(0, 0),
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    ImGui::PopStyleVar();
+
+    if (widgetEngine_ && !widgetEditorBackPending_)
     {
         // Make input cursor clearly black
         ImGui::PushStyleColor(ImGuiCol_InputTextCursor, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
@@ -1197,6 +1474,8 @@ void SettingsWindow::DrawWidgetEditorPage()
 
         ImGui::PopStyleColor(1);
     }
+
+    ImGui::EndChild();
 }
 
 /**
@@ -1648,7 +1927,7 @@ void SettingsWindow::DrawAboutPage()
             if (versionClickCount_ >= 5)
             {
                 debugUnlocked_ = true;
-                activePage_ = 5;
+                activePage_ = 6;
             }
         }
     }
