@@ -2167,6 +2167,38 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
             break;
         }
     }
+    auto defaultPresetValues = [&]() -> const std::unordered_map<std::string, std::string>* {
+        if (defaultPresetIndex < 0) return nullptr;
+        return &presets[static_cast<size_t>(defaultPresetIndex)].values;
+    };
+    auto applyDefaultThemeValues = [&]() {
+        const auto* values = defaultPresetValues();
+        if (!values) return;
+        for (const auto& kv : *values)
+        {
+            if (IsHostAppearanceSettingKey(kv.first))
+                setStorage(kv.first, kv.second);
+        }
+        setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
+    };
+    auto applyDefaultSettingValues = [&]() {
+        const auto* values = defaultPresetValues();
+        for (const auto& setting : settings)
+        {
+            if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
+                IsHostAppearanceSettingKey(setting.key))
+                continue;
+
+            std::string value = setting.defaultValue;
+            if (value.empty() && values)
+            {
+                auto it = values->find(setting.key);
+                if (it != values->end())
+                    value = it->second;
+            }
+            setStorage(setting.key, value);
+        }
+    };
 
     if (widget.customStyle)
     {
@@ -2233,11 +2265,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
 
         if (defaultPresetIndex >= 0)
         {
-            if (whiteTextButton("恢复组件默认"))
-            {
-                applyValues(presets[static_cast<size_t>(defaultPresetIndex)].values);
-                setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
-            }
+            if (whiteTextButton("恢复默认主题"))
+                applyDefaultThemeValues();
         }
         ImGui::Spacing();
     }
@@ -2273,6 +2302,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         ImGui::Separator();
         for (const auto& setting : settings)
             renderSetting(setting);
+        if (whiteTextButton("恢复默认设置"))
+            applyDefaultSettingValues();
         ImGui::Spacing();
     }
 
@@ -2291,12 +2322,21 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         lua_getfield(L_, -1, "imguiRender");
         if (lua_isfunction(L_, -1))
         {
+            ImGui::Spacing();
+            float renderHeight = std::max(220.0f, ImGui::GetContentRegionAvail().y);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
+            ImGui::BeginChild("##LuaWidgetImguiRenderScroll", ImVec2(0.0f, renderHeight),
+                ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+                ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            ImGui::PopStyleVar();
+
             if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
             {
                 const char* err = lua_tostring(L_, -1);
                 RuntimeRecordError(widgetId, err ? err : "(imguiRender error)");
                 lua_pop(L_, 1);
             }
+            ImGui::EndChild();
         }
         else
             lua_pop(L_, 1);

@@ -18,6 +18,7 @@ set(SNOWDESKTOP_SOURCES
     src/personalization.cpp
     src/navigation_settings.cpp
     src/general_settings.cpp
+    src/category_settings.cpp
     src/search_match.cpp
     src/everything_search.cpp
     src/widget_engine.cpp

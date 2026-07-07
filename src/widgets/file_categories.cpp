@@ -18,38 +18,10 @@
 #include <shlwapi.h>
 #include <unordered_set>
 
+static constexpr float kDefaultFileCategoryTabFontCu = 14.0f;
+
 static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex);
 static int  FileCategoryCellHeight(FileCategories* widget);
-
-/**
- * @brief 获取文件分类的有序列表。
- * @return 包含所有分类 ID 的字符串向量，顺序决定了标签页的排列顺序。
- */
-static std::vector<std::wstring> FileCategoryOrder()
-{
-    return {
-        L"all", L"folders", L"videos", L"images", L"documents",
-        L"archives", L"audio", L"programs", L"others",
-    };
-}
-
-/**
- * @brief 获取分类 ID 对应的中文显示标签。
- * @param id 分类 ID，如 "all"、"folders"、"videos" 等。
- * @return 对应的中文标签字符串，如"全部"、"文件夹"、"视频"。未知 ID 返回"其他"。
- */
-static std::wstring FileCategoryLabel(const std::wstring& id)
-{
-    if (id == L"all") return L"全部";
-    if (id == L"folders") return L"文件夹";
-    if (id == L"videos") return L"视频";
-    if (id == L"images") return L"图片";
-    if (id == L"documents") return L"文档";
-    if (id == L"archives") return L"压缩包";
-    if (id == L"audio") return L"音频";
-    if (id == L"programs") return L"程序";
-    return L"其他";
-}
 
 /**
  * @brief 获取桌面项目文件扩展名的大写形式。
@@ -94,30 +66,14 @@ static bool IsFilesystemFolder(const DesktopItem& item)
  * @return 分类 ID 字符串，可能为 "folders"、"videos"、"images"、"documents"、
  *         "archives"、"audio"、"programs" 或 "others"。
  */
-static std::wstring FileCategoryIdForItem(const DesktopItem& item)
+static std::wstring FileCategoryIdForItem(const DesktopItem& item, const CategorySettings& settings)
 {
     const std::wstring ext = DesktopItemExtensionUpper(item);
-    if (ext == L".ZIP" || ext == L".RAR" || ext == L".7Z" || ext == L".TAR" ||
-        ext == L".GZ" || ext == L".BZ2" || ext == L".XZ")
-        return L"archives";
     if (IsFilesystemFolder(item))
         return L"folders";
-    if (ext == L".MP4" || ext == L".MOV" || ext == L".AVI" || ext == L".MKV" ||
-        ext == L".WMV" || ext == L".WEBM" || ext == L".M4V")
-        return L"videos";
-    if (ext == L".PNG" || ext == L".JPG" || ext == L".JPEG" || ext == L".GIF" ||
-        ext == L".BMP" || ext == L".WEBP" || ext == L".HEIC" || ext == L".SVG")
-        return L"images";
-    if (ext == L".TXT" || ext == L".MD" || ext == L".DOC" || ext == L".DOCX" ||
-        ext == L".PDF" || ext == L".XLS" || ext == L".XLSX" || ext == L".PPT" ||
-        ext == L".PPTX" || ext == L".CSV")
-        return L"documents";
-    if (ext == L".MP3" || ext == L".WAV" || ext == L".FLAC" || ext == L".AAC" ||
-        ext == L".M4A" || ext == L".OGG")
-        return L"audio";
-    if (ext == L".EXE" || ext == L".MSI" || ext == L".BAT" || ext == L".CMD" ||
-        ext == L".LNK")
-        return L"programs";
+    std::wstring categoryId = CategoryIdForExtension(settings, ext);
+    if (!categoryId.empty())
+        return categoryId;
     return L"others";
 }
 
@@ -265,7 +221,7 @@ void FileCategories::EnsureCategorySnapshot() const
         std::wstring key = ToUpperInvariant(item.layoutKey);
         if (!seen.insert(key).second) continue;
         allKeys.push_back(key);
-        categorySnapshot_.keysByCategory[FileCategoryIdForItem(item)].push_back(key);
+        categorySnapshot_.keysByCategory[FileCategoryIdForItem(item, app_->GetCategorySettings())].push_back(key);
     }
 
     if (data_->dateHeaders)
@@ -313,7 +269,7 @@ void FileCategories::EnsureCategorySnapshot() const
             });
     }
 
-    const auto& order = FileCategoryOrder();
+    const auto order = GetCategoryOrder(app_->GetCategorySettings());
     for (const auto& id : order)
     {
         auto it = categorySnapshot_.keysByCategory.find(id);
@@ -332,6 +288,12 @@ void FileCategories::InvalidateCategorySnapshot() const
     layoutCache_.clear();
     layoutCacheCategory_.clear();
     layoutCacheListMode_ = false;
+}
+
+void FileCategories::InvalidateCategoryCache()
+{
+    InvalidateCategorySnapshot();
+    InvalidateSlots();
 }
 
 const std::vector<std::wstring>& FileCategories::CachedCategoryKeys(
@@ -448,6 +410,35 @@ const std::vector<std::wstring>& FileCategories::GetSearchResultKeys() const
     return searchResultCache_;
 }
 
+int FileCategories::MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) const
+{
+    if (!app_ || !app_->dwriteFactory_ || !format || text.empty()) return 0;
+
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(app_->dwriteFactory_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
+        format, 4096.0f, FontCu(24.0f), &layout)) || !layout)
+        return 0;
+
+    DWRITE_TEXT_METRICS metrics{};
+    if (FAILED(layout->GetMetrics(&metrics)))
+        return 0;
+    return static_cast<int>(std::max(metrics.width, metrics.widthIncludingTrailingWhitespace) + 1.0f);
+}
+
+float FileCategories::GetCategoryTabFontSize() const
+{
+    if (!app_)
+        return kDefaultFileCategoryTabFontCu;
+    return std::clamp(app_->GetCategorySettings().tabFontSize, 10.0f, 22.0f);
+}
+
+std::wstring FileCategories::GetCategoryDisplayLabel(const std::wstring& categoryId) const
+{
+    if (!app_)
+        return categoryId;
+    return GetCategoryLabel(app_->GetCategorySettings(), categoryId);
+}
+
 /**
  * @brief 收集顶级桌面项目中可收录的项到 widget 的 itemKeys 中。
  *        跳过已在其他组件中的项目以及已存在的 key。
@@ -540,8 +531,8 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
     InflateRect(&body, -widget->Cu(10.0f), -widget->Cu(8.0f));
     if (IsRectEmptyRect(body)) return {};
     RECT search = widget->GetSearchBoxRect();
-    LONG top = IsRectEmptyRect(search) ? body.top : search.bottom + widget->Cu(4.0f);
-    LONG bottom = std::min<LONG>(body.bottom, top + widget->Cu(30.0f));
+    LONG top = IsRectEmptyRect(search) ? body.top : search.bottom + widget->Cu(5.0f);
+    LONG bottom = std::min<LONG>(body.bottom, top + widget->Cu(34.0f));
     if (bottom <= top) return {};
     return MakeRect(body.left, top, body.right, bottom);
 }
@@ -568,6 +559,71 @@ static RECT FileCategoryContentRect(FileCategories* widget)
     if (!IsRectEmptyRect(tabs))
         body.top = std::min<LONG>(body.bottom, tabs.bottom + widget->Cu(8.0f));
     return body;
+}
+
+static std::wstring FileCategoryTabDisplayText(FileCategories* widget, const std::wstring& categoryId)
+{
+    if (!widget || !widget->GetApp()) return categoryId;
+    return widget->GetCategoryDisplayLabel(categoryId) + L" " +
+        std::to_wstring(widget->CachedCategoryKeys(categoryId).size());
+}
+
+static float FileCategoryTabFontCu(FileCategories* widget)
+{
+    if (!widget)
+        return kDefaultFileCategoryTabFontCu;
+    return widget->GetCategoryTabFontSize();
+}
+
+static int FileCategoryMeasureTextWidth(FileCategories* widget, const std::wstring& text,
+    IDWriteTextFormat* format)
+{
+    return widget ? widget->MeasureTextWidth(text, format) : 0;
+}
+
+static int FileCategoryPreferredTabWidth(FileCategories* widget, const std::wstring& categoryId)
+{
+    if (!widget) return 0;
+    IDWriteTextFormat* tabFormat = widget->GetCuTextFormat(FileCategoryTabFontCu(widget), true, true);
+    const std::wstring text = FileCategoryTabDisplayText(widget, categoryId);
+    int measured = FileCategoryMeasureTextWidth(widget, text, tabFormat);
+    if (measured <= 0)
+        measured = static_cast<int>(text.size()) * widget->Cu(8.0f);
+    return std::max(widget->Cu(76.0f), measured + widget->Cu(24.0f));
+}
+
+static std::vector<int> FileCategoryTabWidths(FileCategories* widget, int availableWidth)
+{
+    std::vector<int> widths;
+    if (!widget) return widths;
+
+    const auto& tabs = widget->CachedVisibleCategoryIds();
+    widths.reserve(tabs.size());
+    int totalWidth = 0;
+    for (const auto& categoryId : tabs)
+    {
+        int width = FileCategoryPreferredTabWidth(widget, categoryId);
+        widths.push_back(width);
+        totalWidth += width;
+    }
+
+    if (!widths.empty() && totalWidth < availableWidth)
+    {
+        int extra = availableWidth - totalWidth;
+        int perTab = extra / static_cast<int>(widths.size());
+        int remainder = extra % static_cast<int>(widths.size());
+        for (size_t i = 0; i < widths.size(); ++i)
+            widths[i] += perTab + (static_cast<int>(i) < remainder ? 1 : 0);
+    }
+    return widths;
+}
+
+static int FileCategoryTabTotalWidth(const std::vector<int>& widths)
+{
+    int total = 0;
+    for (int width : widths)
+        total += width;
+    return total;
 }
 
 RECT FileCategories::GetContentViewportRect() const
@@ -617,18 +673,19 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
 
     RECT tabsRect = FileCategoryTabsRect(widget);
     if (IsRectEmptyRect(tabsRect)) return {};
-    const int minTabWidth = widget->Cu(64.0f);
-    int tabCount = static_cast<int>(tabs.size());
-    int equalWidth = std::max<int>(1, (tabsRect.right - tabsRect.left) / std::max(1, tabCount));
-    int tabWidth = std::max(minTabWidth, equalWidth);
-    int totalWidth = tabWidth * tabCount;
+    std::vector<int> widths = FileCategoryTabWidths(widget, tabsRect.right - tabsRect.left);
+    if (index >= widths.size()) return {};
+    int totalWidth = FileCategoryTabTotalWidth(widths);
     int maxScroll = std::max(0, totalWidth - static_cast<int>(tabsRect.right - tabsRect.left));
     int scroll = std::clamp(data ? data->tabScrollOffset : 0, 0, maxScroll);
     int startX = tabsRect.left - scroll;
+    int tabLeftOffset = 0;
+    for (size_t i = 0; i < index; ++i)
+        tabLeftOffset += widths[i];
     RECT rect = MakeRect(
-        startX + static_cast<LONG>(index * tabWidth),
+        startX + tabLeftOffset,
         tabsRect.top,
-        index + 1 == tabs.size() ? startX + totalWidth : startX + static_cast<LONG>((index + 1) * tabWidth),
+        startX + tabLeftOffset + widths[index],
         tabsRect.bottom);
     InflateRect(&rect, -widget->Cu(2.0f), -widget->Cu(2.0f));
     return rect;
@@ -1161,7 +1218,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     const auto& categoryIds = CachedVisibleCategoryIds();
     IDWriteTextFormat* normalFormat = GetCuTextFormat(13.0f, false, true);
-    IDWriteTextFormat* boldFormat = GetCuTextFormat(13.0f, true, true);
+    IDWriteTextFormat* tabFormat = GetCuTextFormat(FileCategoryTabFontCu(this), true, true);
     bool searching = !searchText_.empty();
 
     RECT searchRect = GetSearchBoxRect();
@@ -1317,20 +1374,19 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             bool active = categoryIds[i] == activeCategory;
             bool hovered = PtInRect(&tab, app_->lastMousePoint_) != FALSE;
-            app_->DrawD2DRoundedRectangle(context, tab, static_cast<float>(Cu(7.0f)),
+            app_->DrawD2DRoundedRectangle(context, tab, static_cast<float>(Cu(8.0f)),
                 active ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f)
                        : (hovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.13f)
                                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f)),
                 active ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f)
                        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
 
-            std::wstring label = FileCategoryLabel(categoryIds[i]) + L" " +
-                std::to_wstring(CachedCategoryKeys(categoryIds[i]).size());
-            RECT textRect = MakeRect(tab.left + Cu(4.0f), tab.top,
-                tab.right - Cu(4.0f), tab.bottom);
+            std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
+            RECT textRect = MakeRect(tab.left + Cu(7.0f), tab.top,
+                tab.right - Cu(7.0f), tab.bottom);
 
             app_->DrawD2DText(context, label, textRect,
-                boldFormat ? boldFormat :
+                tabFormat ? tabFormat :
                     (app_->fileCategoryTabTextFormat_
                         ? app_->fileCategoryTabTextFormat_.Get()
                         : app_->listItemTextFormat_.Get()),
@@ -1515,11 +1571,9 @@ bool FileCategories::TryScrollTabs(POINT pt, int delta)
     int tabCount = static_cast<int>(categories.size());
     if (tabCount <= 0) return false;
 
-    const int minTabWidth = Cu(64.0f);
     int tabsWidth = tabs.right - tabs.left;
-    int equalWidth = std::max(1, tabsWidth / tabCount);
-    int tabWidth = std::max(minTabWidth, equalWidth);
-    int totalWidth = tabWidth * tabCount;
+    std::vector<int> widths = FileCategoryTabWidths(this, tabsWidth);
+    int totalWidth = FileCategoryTabTotalWidth(widths);
     int maxScroll = std::max(0, totalWidth - tabsWidth);
     if (maxScroll <= 0) return false;
 

@@ -840,6 +840,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         { WriteCrashLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
     WriteCrashLogEntry(L"Composition target ready");
 
+    LoadCategorySettingsAndApply();
+
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual
     // overflow pages during the initial load.
@@ -892,6 +894,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
             SetItemFontSize(settingsWindow_->GetItemFontSizeD());
             SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
+        });
+        settingsWindow_->SetCategorySettingsChangedCallback([this]() {
+            LoadCategorySettingsAndApply();
         });
 
         settingsWindow_->SyncDisplaySettings(iconSpacingScale_, itemFontSize_, static_cast<float>(itemFontWeight_));

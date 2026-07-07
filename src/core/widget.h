@@ -313,6 +313,10 @@ public:
     std::wstring CategoryIdAtPoint(POINT pt) const;
     bool IsPointInTabsRect(POINT pt) const;
     bool TryScrollTabs(POINT pt, int delta);
+    int MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) const;
+    float GetCategoryTabFontSize() const;
+    std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
+    void InvalidateCategoryCache();
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
     Item* GetMemberItem(size_t idx) const override;
