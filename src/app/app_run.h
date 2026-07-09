@@ -705,6 +705,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     WriteCrashLogEntry(L"Run start");
 
+    MigrateLegacyDataPaths();
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };

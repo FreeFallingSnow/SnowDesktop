@@ -28,6 +28,7 @@
 #include "general_settings.h"
 #include "category_settings.h"
 #include "everything_search.h"
+#include "data_paths.h"
 #include "utils.h"
 #include "widget_engine.h"
 #include "types.h"

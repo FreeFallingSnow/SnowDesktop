@@ -1650,16 +1650,12 @@ inline void DesktopApp::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSi
 // ── 布局持久化 ──────────────────────────────────────────────
 
 /**
- * @brief 获取布局文件的完整路径（与 exe 同目录下的 SnowDesktop.layout.json）。
+ * @brief 获取布局文件的完整路径（exe\data 下的 SnowDesktop.layout.json）。
  * @return 布局文件路径。
  */
 inline std::wstring DesktopApp::GetLayoutPath() const
 {
-    wchar_t path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"SnowDesktop.layout.json");
-    return path;
+    return GetDataFilePath(L"SnowDesktop.layout.json");
 }
 
 /**

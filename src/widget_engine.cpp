@@ -12,6 +12,7 @@
  */
 
 #include "widget_engine.h"
+#include "data_paths.h"
 #include "system_snapshot.h"
 #include "constants.h"
 #include "utils.h"
@@ -1746,11 +1747,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
 
     // Init storage path
-    wchar_t exePath[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-    PathRemoveFileSpecW(exePath);
-    PathAppendW(exePath, L"SnowDesktop.storage.json");
-    g_storagePath = exePath;
+    g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
     LoadStorageFile();
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
     httpService_ = std::make_unique<AsyncHttpService>();

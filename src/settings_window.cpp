@@ -18,6 +18,7 @@
 #include "widget_engine.h"
 #include "resource.h"
 #include "crashlog.h"
+#include "data_paths.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -1262,13 +1263,8 @@ void SettingsWindow::DrawCategorySettingsPage()
     ImGui::SetNextItemWidth(150.0f * dpiScale_);
     ImGui::InputText("##NewCategoryLabel", newCategoryLabelBuf_, sizeof(newCategoryLabelBuf_));
 
-    ImGui::Text("扩展名");
-    ImGui::SameLine(labelW);
-    ImGui::SetNextItemWidth(inputW);
-    ImGui::InputText("##NewCategoryExtensions", newCategoryExtensionsBuf_, sizeof(newCategoryExtensionsBuf_));
-
     ImGui::SameLine();
-    if (BlueButton("添加", ImVec2(64.0f * dpiScale_, 0)))
+    if (BlueButton("添加", ImVec2(56.0f * dpiScale_, 0)))
     {
         CategoryRuleEditBuffer buffer;
         std::wstring id = L"custom-" + std::to_wstring(GetTickCount64());
@@ -1300,6 +1296,11 @@ void SettingsWindow::DrawCategorySettingsPage()
         newCategoryExtensionsBuf_[0] = '\0';
         markChanged();
     }
+
+    ImGui::Text("扩展名");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(inputW);
+    ImGui::InputText("##NewCategoryExtensions", newCategoryExtensionsBuf_, sizeof(newCategoryExtensionsBuf_));
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -2218,16 +2219,12 @@ void SettingsWindow::DrawAboutPage()
 /**
  * @brief 获取备份文件存储目录路径。
  *
- * 目录位于可执行文件所在目录下的 "backups" 子文件夹。
+ * 目录位于可执行文件所在目录下 data\backups 子文件夹。
  * @return 备份目录的完整宽字符串路径
  */
 std::wstring SettingsWindow::GetBackupDir() const
 {
-    wchar_t path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path)));
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"backups");
-    return path;
+    return GetDataSubdirectoryPath(L"backups");
 }
 
 /**
@@ -2288,7 +2285,7 @@ std::vector<LayoutBackup> SettingsWindow::ListBackups() const
 /**
  * @brief 保存当前布局文件到备份目录。
  *
- * 将 SnowDesktop.layout.json 复制到 backups/ 下，
+ * 将 data\SnowDesktop.layout.json 复制到 data\backups\ 下，
  * 备份文件名中不允许出现 : / \\ 字符（替换为 _），
  * 同名文件存在时自动在末尾追加递增序号。
  * @param name 备份名称
@@ -2299,12 +2296,8 @@ bool SettingsWindow::SaveBackup(const std::wstring& name)
     std::wstring backupDir = GetBackupDir();
     CreateDirectoryW(backupDir.c_str(), nullptr);
 
-    wchar_t exeDir[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exeDir, static_cast<DWORD>(std::size(exeDir)));
-    PathRemoveFileSpecW(exeDir);
-
-    std::wstring layoutPath = std::wstring(exeDir) + L"\\SnowDesktop.layout.json";
-    std::wstring storagePath = std::wstring(exeDir) + L"\\SnowDesktop.storage.json";
+    std::wstring layoutPath = GetDataFilePath(L"SnowDesktop.layout.json");
+    std::wstring storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
 
     // Sanitize: remove colons for filename safety
     std::wstring safeName = name;
@@ -2351,12 +2344,8 @@ std::wstring SettingsWindow::MakeBackupTimestampName() const
  */
 bool SettingsWindow::RestoreBackup(const std::wstring& filename)
 {
-    wchar_t exeDir[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exeDir, static_cast<DWORD>(std::size(exeDir)));
-    PathRemoveFileSpecW(exeDir);
-
-    std::wstring layoutPath = std::wstring(exeDir) + L"\\SnowDesktop.layout.json";
-    std::wstring storagePath = std::wstring(exeDir) + L"\\SnowDesktop.storage.json";
+    std::wstring layoutPath = GetDataFilePath(L"SnowDesktop.layout.json");
+    std::wstring storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
 
     std::wstring backupPath = GetBackupDir() + L"\\" + filename;
 
