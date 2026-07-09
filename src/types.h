@@ -180,6 +180,8 @@ struct DesktopItem
     GridSpan gridSpan;
     bool selected = false;
     bool shortcutArrow = false;
+    bool isShortcut = false;
+    bool isApplicationShortcut = false;
     bool isCut = false;
     IconState iconState = IconState::Loading;
 
@@ -202,6 +204,8 @@ struct DesktopItem
           gridSpan(other.gridSpan),
           selected(other.selected),
           shortcutArrow(other.shortcutArrow),
+          isShortcut(other.isShortcut),
+          isApplicationShortcut(other.isApplicationShortcut),
           isCut(other.isCut),
           iconState(other.iconState)
     {
@@ -234,6 +238,8 @@ struct DesktopItem
             gridSpan = other.gridSpan;
             selected = other.selected;
             shortcutArrow = other.shortcutArrow;
+            isShortcut = other.isShortcut;
+            isApplicationShortcut = other.isApplicationShortcut;
             isCut = other.isCut;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
@@ -268,6 +274,8 @@ struct FolderEntry
     bool selected = false;
     bool isCut = false;
     bool shortcutArrow = false;
+    bool isShortcut = false;
+    bool isApplicationShortcut = false;
     IconState iconState = IconState::Loading;
 
     FolderEntry() = default;
@@ -282,6 +290,8 @@ struct FolderEntry
           selected(other.selected),
           isCut(other.isCut),
           shortcutArrow(other.shortcutArrow),
+          isShortcut(other.isShortcut),
+          isApplicationShortcut(other.isApplicationShortcut),
           iconState(other.iconState)
     {
         if (other.iconBitmap != nullptr)
@@ -308,6 +318,8 @@ struct FolderEntry
             selected = other.selected;
             isCut = other.isCut;
             shortcutArrow = other.shortcutArrow;
+            isShortcut = other.isShortcut;
+            isApplicationShortcut = other.isApplicationShortcut;
             iconState = other.iconState;
             if (other.iconBitmap != nullptr)
             {
@@ -359,6 +371,8 @@ public:
           selected(other.selected),
           isCut(other.isCut),
           shortcutArrow(other.shortcutArrow),
+          isShortcut(other.isShortcut),
+          isApplicationShortcut(other.isApplicationShortcut),
           iconState(other.iconState)
     {
         other.iconBitmap = nullptr;
@@ -382,6 +396,8 @@ public:
             selected = other.selected;
             isCut = other.isCut;
             shortcutArrow = other.shortcutArrow;
+            isShortcut = other.isShortcut;
+            isApplicationShortcut = other.isApplicationShortcut;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
             other.iconBitmapSize = {};

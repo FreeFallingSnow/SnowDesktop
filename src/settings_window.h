@@ -20,6 +20,7 @@
 #include "navigation_settings.h"
 #include "category_settings.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <string>
@@ -145,11 +146,36 @@ public:
 
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
 
-    void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight)
+    void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight,
+        int shortcutArrowMode,
+        bool iconBeautifyEnabled,
+        int iconBeautifyMode,
+        float iconBeautifyBgOpacity,
+        bool iconBeautifyGradientEnabled,
+        float iconBeautifyBgStartR,
+        float iconBeautifyBgStartG,
+        float iconBeautifyBgStartB,
+        float iconBeautifyBgEndR,
+        float iconBeautifyBgEndG,
+        float iconBeautifyBgEndB,
+        int iconBeautifyGradientDirection)
     {
         iconSpacingScale_ = spacingScale;
         itemFontSize_ = fontSize;
         itemFontWeight_ = fontWeight;
+        shortcutArrowMode_ = std::clamp(shortcutArrowMode, 0, 2);
+        iconBeautifyEnabled_ = iconBeautifyEnabled;
+        iconBeautifyMode_ = std::clamp(iconBeautifyMode, 0, 1);
+        iconBeautifyBgOpacity_ = iconBeautifyBgOpacity;
+        iconBeautifyGradientEnabled_ = iconBeautifyGradientEnabled;
+        iconBeautifyBgStartR_ = iconBeautifyBgStartR;
+        iconBeautifyBgStartG_ = iconBeautifyBgStartG;
+        iconBeautifyBgStartB_ = iconBeautifyBgStartB;
+        iconBeautifyBgEndR_ = iconBeautifyBgEndR;
+        iconBeautifyBgEndG_ = iconBeautifyBgEndG;
+        iconBeautifyBgEndB_ = iconBeautifyBgEndB;
+        iconBeautifyGradientDirection_ = std::clamp(iconBeautifyGradientDirection, 0, 3);
+        iconBeautifyBgPreset_ = 0;
         displaySpacingPct_ = static_cast<int>(std::round(spacingScale * 100.0f));
     }
 
@@ -188,6 +214,18 @@ public:
     float GetIconSpacingScale() const { return iconSpacingScale_; }
     float GetItemFontSizeD() const { return itemFontSize_; }
     float GetItemFontWeightD() const { return itemFontWeight_; }
+    int GetShortcutArrowMode() const { return shortcutArrowMode_; }
+    bool GetIconBeautifyEnabled() const { return iconBeautifyEnabled_; }
+    int GetIconBeautifyMode() const { return iconBeautifyMode_; }
+    float GetIconBeautifyBgOpacity() const { return iconBeautifyBgOpacity_; }
+    bool GetIconBeautifyGradientEnabled() const { return iconBeautifyGradientEnabled_; }
+    float GetIconBeautifyBgStartR() const { return iconBeautifyBgStartR_; }
+    float GetIconBeautifyBgStartG() const { return iconBeautifyBgStartG_; }
+    float GetIconBeautifyBgStartB() const { return iconBeautifyBgStartB_; }
+    float GetIconBeautifyBgEndR() const { return iconBeautifyBgEndR_; }
+    float GetIconBeautifyBgEndG() const { return iconBeautifyBgEndG_; }
+    float GetIconBeautifyBgEndB() const { return iconBeautifyBgEndB_; }
+    int GetIconBeautifyGradientDirection() const { return iconBeautifyGradientDirection_; }
 
     /** @} */
 
@@ -480,6 +518,23 @@ private:
 
     /// 当前桌面项目字体粗细 (DWRITE_FONT_WEIGHT)
     float itemFontWeight_ = 600.0f;
+
+    int shortcutArrowMode_ = 0;
+
+    /// 是否统一图标为圆角矩形底板
+    bool iconBeautifyEnabled_ = false;
+
+    int iconBeautifyMode_ = 0;
+    float iconBeautifyBgOpacity_ = 0.65f;
+    bool iconBeautifyGradientEnabled_ = false;
+    int iconBeautifyGradientDirection_ = 0;
+    int iconBeautifyBgPreset_ = 1;
+    float iconBeautifyBgStartR_ = 232.0f / 255.0f;
+    float iconBeautifyBgStartG_ = 236.0f / 255.0f;
+    float iconBeautifyBgStartB_ = 244.0f / 255.0f;
+    float iconBeautifyBgEndR_ = 222.0f / 255.0f;
+    float iconBeautifyBgEndG_ = 228.0f / 255.0f;
+    float iconBeautifyBgEndB_ = 240.0f / 255.0f;
 
     int displaySpacingPct_ = 100;
 

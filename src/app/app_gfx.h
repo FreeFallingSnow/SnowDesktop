@@ -1862,6 +1862,59 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT ic
 {
     if (!ctx) return;
 
+    if (iconBeautifyEnabled_)
+    {
+        const int iconHeight = std::max(1, static_cast<int>(iconRect.bottom - iconRect.top));
+        const float scale = static_cast<float>(iconHeight) / 64.0f;
+        const int pad = std::max(1, static_cast<int>(std::round(2.0f * scale)));
+        int badgeSz = static_cast<int>(std::round(17.0f * scale));
+        const int iconWidth = std::max(1, static_cast<int>(iconRect.right - iconRect.left));
+        badgeSz = std::clamp(badgeSz, 9, std::max(9, iconWidth));
+        RECT badgeRect = MakeRect(
+            iconRect.left + pad,
+            iconRect.bottom - badgeSz - pad,
+            iconRect.left + pad + badgeSz,
+            iconRect.bottom - pad);
+
+        ComPtr<ID2D1SolidColorBrush> badgeFillBrush;
+        ComPtr<ID2D1SolidColorBrush> badgeStrokeBrush;
+        if (FAILED(ctx->CreateSolidColorBrush(
+                D2D1::ColorF(0.86f, 0.89f, 0.94f, 0.96f * alpha), &badgeFillBrush)) || !badgeFillBrush ||
+            FAILED(ctx->CreateSolidColorBrush(
+                D2D1::ColorF(0.54f, 0.61f, 0.72f, 0.58f * alpha), &badgeStrokeBrush)) || !badgeStrokeBrush)
+        {
+            return;
+        }
+
+        const float left = static_cast<float>(badgeRect.left);
+        const float top = static_cast<float>(badgeRect.top);
+        const float right = static_cast<float>(badgeRect.right);
+        const float bottom = static_cast<float>(badgeRect.bottom);
+        const float sz = right - left;
+        const D2D1_ELLIPSE badgeEllipse = D2D1::Ellipse(
+            D2D1::Point2F((left + right) * 0.5f, (top + bottom) * 0.5f),
+            sz * 0.5f,
+            sz * 0.5f);
+
+        ComPtr<ID2D1SolidColorBrush> arrowBrush;
+        if (FAILED(ctx->CreateSolidColorBrush(
+                D2D1::ColorF(0.18f, 0.30f, 0.48f, 0.92f * alpha), &arrowBrush)) || !arrowBrush)
+        {
+            return;
+        }
+
+        ctx->FillEllipse(badgeEllipse, badgeFillBrush.Get());
+        ctx->DrawEllipse(badgeEllipse, badgeStrokeBrush.Get(), std::max(1.0f, 1.1f * scale));
+
+        const float stroke = std::max(1.0f, sz * 0.11f);
+        const D2D1_POINT_2F start = D2D1::Point2F(left + sz * 0.30f, top + sz * 0.70f);
+        const D2D1_POINT_2F end = D2D1::Point2F(left + sz * 0.70f, top + sz * 0.30f);
+        ctx->DrawLine(start, end, arrowBrush.Get(), stroke);
+        ctx->DrawLine(end, D2D1::Point2F(left + sz * 0.46f, top + sz * 0.30f), arrowBrush.Get(), stroke);
+        ctx->DrawLine(end, D2D1::Point2F(left + sz * 0.70f, top + sz * 0.54f), arrowBrush.Get(), stroke);
+        return;
+    }
+
     auto createArrowBitmap = [&](ComPtr<ID2D1Bitmap>& outBitmap, SIZE& outSize) -> bool {
         if (outBitmap)
             return true;
@@ -1947,7 +2000,6 @@ inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconI
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext || !d2dContext_)
         return;
-    ID2D1RenderTarget* creationTarget = static_cast<ID2D1RenderTarget*>(d2dContext_.Get());
     auto& cache = placeholderIconCache_;
 
     auto cached = cache.find(sysIconIndex);
@@ -1983,23 +2035,15 @@ inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconI
         if (!alphaBitmap)
             return;
 
-        DIBSECTION ds{};
-        if (GetObjectW(alphaBitmap, sizeof(ds), &ds) == 0 ||
-            !ds.dsBm.bmBits || ds.dsBm.bmWidth <= 0 || ds.dsBm.bmHeight == 0)
+        ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(alphaBitmap);
+        DeleteObject(alphaBitmap);
+        if (!iconBitmap)
         {
-            DeleteObject(alphaBitmap);
             return;
         }
 
-        const UINT width = static_cast<UINT>(ds.dsBm.bmWidth);
-        const UINT height = static_cast<UINT>(std::abs(ds.dsBm.bmHeight));
-        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
         ComPtr<ID2D1Bitmap> bitmap;
-        HRESULT createHr = creationTarget->CreateBitmap(D2D1::SizeU(width, height),
-            ds.dsBm.bmBits, static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
-        DeleteObject(alphaBitmap);
-        if (FAILED(createHr) || !bitmap)
+        if (FAILED(iconBitmap.As(&bitmap)) || !bitmap)
             return;
 
         cached = cache.emplace(sysIconIndex, std::move(bitmap)).first;
@@ -2044,23 +2088,16 @@ inline void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconI
         DestroyIcon(icon);
         if (!alphaBitmap) return;
 
-        DIBSECTION ds{};
-        if (GetObjectW(alphaBitmap, sizeof(ds), &ds) == 0 ||
-            !ds.dsBm.bmBits || ds.dsBm.bmWidth <= 0 || ds.dsBm.bmHeight == 0)
+        ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(alphaBitmap);
+        DeleteObject(alphaBitmap);
+        if (!iconBitmap)
         {
-            DeleteObject(alphaBitmap);
             return;
         }
 
-        const UINT w = static_cast<UINT>(ds.dsBm.bmWidth);
-        const UINT h = static_cast<UINT>(std::abs(ds.dsBm.bmHeight));
-        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
         ComPtr<ID2D1Bitmap> bitmap;
-        HRESULT createHr = ctx->CreateBitmap(D2D1::SizeU(w, h),
-            ds.dsBm.bmBits, static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
-        DeleteObject(alphaBitmap);
-        if (FAILED(createHr) || !bitmap) return;
+        if (FAILED(iconBitmap.As(&bitmap)) || !bitmap)
+            return;
 
         cached = quickNavSysIconCache_.emplace(sysIconIndex, std::move(bitmap)).first;
     }

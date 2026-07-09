@@ -462,7 +462,7 @@ void SettingsWindow::Render()
     context_->OMSetRenderTargets(1, rtv_.GetAddressOf(), nullptr);
     context_->ClearRenderTargetView(rtv_.Get(), clearColor);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-    swapChain_->Present(1, 0);
+    swapChain_->Present(0, 0);
 }
 
 /**
@@ -837,15 +837,83 @@ void SettingsWindow::DrawDisplayPage()
 
     const float labelW = 110.0f * dpiScale_;
     const float sliderW = 200.0f * dpiScale_;
-
-    ImGui::Text("图标显示设置");
-    ImGui::Separator();
-    ImGui::Spacing();
+    const float colorW = 120.0f * dpiScale_;
 
     auto markChanged = [&]() {
         if (displaySettingsChangedCallback_)
             displaySettingsChangedCallback_();
     };
+
+    auto applyIconBeautifyPreset = [&](int preset) {
+        iconBeautifyBgPreset_ = preset;
+        switch (preset)
+        {
+        case 2:
+            iconBeautifyBgOpacity_ = 0.50f;
+            iconBeautifyGradientEnabled_ = false;
+            iconBeautifyGradientDirection_ = 0;
+            iconBeautifyBgStartR_ = 255.0f / 255.0f;
+            iconBeautifyBgStartG_ = 255.0f / 255.0f;
+            iconBeautifyBgStartB_ = 255.0f / 255.0f;
+            iconBeautifyBgEndR_ = iconBeautifyBgStartR_;
+            iconBeautifyBgEndG_ = iconBeautifyBgStartG_;
+            iconBeautifyBgEndB_ = iconBeautifyBgStartB_;
+            break;
+        case 3:
+            iconBeautifyBgOpacity_ = 0.82f;
+            iconBeautifyGradientEnabled_ = true;
+            iconBeautifyGradientDirection_ = 2;
+            iconBeautifyBgStartR_ = 156.0f / 255.0f;
+            iconBeautifyBgStartG_ = 216.0f / 255.0f;
+            iconBeautifyBgStartB_ = 255.0f / 255.0f;
+            iconBeautifyBgEndR_ = 74.0f / 255.0f;
+            iconBeautifyBgEndG_ = 128.0f / 255.0f;
+            iconBeautifyBgEndB_ = 255.0f / 255.0f;
+            break;
+        case 4:
+            iconBeautifyBgOpacity_ = 0.78f;
+            iconBeautifyGradientEnabled_ = true;
+            iconBeautifyGradientDirection_ = 3;
+            iconBeautifyBgStartR_ = 255.0f / 255.0f;
+            iconBeautifyBgStartG_ = 218.0f / 255.0f;
+            iconBeautifyBgStartB_ = 138.0f / 255.0f;
+            iconBeautifyBgEndR_ = 255.0f / 255.0f;
+            iconBeautifyBgEndG_ = 122.0f / 255.0f;
+            iconBeautifyBgEndB_ = 164.0f / 255.0f;
+            break;
+        case 5:
+            iconBeautifyBgOpacity_ = 0.70f;
+            iconBeautifyGradientEnabled_ = true;
+            iconBeautifyGradientDirection_ = 1;
+            iconBeautifyBgStartR_ = 24.0f / 255.0f;
+            iconBeautifyBgStartG_ = 32.0f / 255.0f;
+            iconBeautifyBgStartB_ = 48.0f / 255.0f;
+            iconBeautifyBgEndR_ = 87.0f / 255.0f;
+            iconBeautifyBgEndG_ = 105.0f / 255.0f;
+            iconBeautifyBgEndB_ = 135.0f / 255.0f;
+            break;
+        default:
+            iconBeautifyBgPreset_ = 1;
+            iconBeautifyBgOpacity_ = 0.65f;
+            iconBeautifyGradientEnabled_ = false;
+            iconBeautifyGradientDirection_ = 0;
+            iconBeautifyBgStartR_ = 232.0f / 255.0f;
+            iconBeautifyBgStartG_ = 236.0f / 255.0f;
+            iconBeautifyBgStartB_ = 244.0f / 255.0f;
+            iconBeautifyBgEndR_ = 222.0f / 255.0f;
+            iconBeautifyBgEndG_ = 228.0f / 255.0f;
+            iconBeautifyBgEndB_ = 240.0f / 255.0f;
+            break;
+        }
+    };
+
+    auto drawSectionTitle = [](const char* title) {
+        ImGui::TextUnformatted(title);
+        ImGui::Separator();
+        ImGui::Spacing();
+    };
+
+    drawSectionTitle("图标通用设置");
 
     // ── 图标间距 ──
     ImGui::Text("图标间距");
@@ -936,15 +1004,146 @@ void SettingsWindow::DrawDisplayPage()
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    if (ImGui::Button("恢复默认", ImVec2(80, 0)))
+    if (ImGui::Button("恢复通用默认", ImVec2(112.0f * dpiScale_, 0)))
     {
         iconSpacingScale_ = 1.0f;
         displaySpacingPct_ = 100;
         itemFontSize_ = 14.0f;
         itemFontWeight_ = 600.0f;
+        markChanged();
+    }
+    ImGui::PopStyleColor();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    drawSectionTitle("图标美化设置");
+
+    if (ImGui::Checkbox("统一圆角图标", &iconBeautifyEnabled_))
+        markChanged();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(智能识别或统一缩小补底)");
+
+    ImGui::BeginDisabled(!iconBeautifyEnabled_);
+    const char* beautifyModeNames[] = {
+        "智能识别",
+        "全部缩小加背景",
+    };
+    ImGui::Text("美化模式");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::Combo("##IconBeautifyMode", &iconBeautifyMode_,
+        beautifyModeNames, static_cast<int>(sizeof(beautifyModeNames) / sizeof(beautifyModeNames[0]))))
+    {
+        markChanged();
+    }
+
+    const char* presetNames[] = {
+        "自定义",
+        "默认浅灰",
+        "纯白柔光",
+        "亮蓝渐变",
+        "暖霞渐变",
+        "深色玻璃",
+    };
+    ImGui::Text("底色预设");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::Combo("##IconBeautifyBgPreset", &iconBeautifyBgPreset_,
+        presetNames, static_cast<int>(sizeof(presetNames) / sizeof(presetNames[0]))))
+    {
+        if (iconBeautifyBgPreset_ > 0)
+            applyIconBeautifyPreset(iconBeautifyBgPreset_);
+        markChanged();
+    }
+
+    ImGui::Text("默认底色");
+    ImGui::SameLine(labelW);
+    float bgStart[3] = { iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_ };
+    ImGui::SetNextItemWidth(colorW);
+    if (ImGui::ColorEdit3("##IconBeautifyBgStart", bgStart, ImGuiColorEditFlags_NoInputs))
+    {
+        iconBeautifyBgPreset_ = 0;
+        iconBeautifyBgStartR_ = bgStart[0];
+        iconBeautifyBgStartG_ = bgStart[1];
+        iconBeautifyBgStartB_ = bgStart[2];
+        markChanged();
+    }
+
+    ImGui::Text("底色不透明度");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##IconBeautifyBgOpacity", &iconBeautifyBgOpacity_, 0.0f, 1.0f, ""))
+    {
+        iconBeautifyBgPreset_ = 0;
+        markChanged();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d%%", static_cast<int>(std::round(iconBeautifyBgOpacity_ * 100.0f)));
+
+    ImGui::Text("启用渐变底色");
+    ImGui::SameLine(labelW);
+    if (ImGui::Checkbox("##IconBeautifyGradient", &iconBeautifyGradientEnabled_))
+    {
+        iconBeautifyBgPreset_ = 0;
+        markChanged();
+    }
+
+    ImGui::Text("渐变结束色");
+    ImGui::SameLine(labelW);
+    ImGui::BeginDisabled(!iconBeautifyGradientEnabled_);
+    float bgEnd[3] = { iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_ };
+    ImGui::SetNextItemWidth(colorW);
+    if (ImGui::ColorEdit3("##IconBeautifyBgEnd", bgEnd, ImGuiColorEditFlags_NoInputs))
+    {
+        iconBeautifyBgPreset_ = 0;
+        iconBeautifyBgEndR_ = bgEnd[0];
+        iconBeautifyBgEndG_ = bgEnd[1];
+        iconBeautifyBgEndB_ = bgEnd[2];
+        markChanged();
+    }
+
+    const char* directionNames[] = {
+        "上下",
+        "左右",
+        "左上到右下",
+        "左下到右上",
+    };
+    ImGui::Text("渐变方向");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::Combo("##IconBeautifyGradientDirection", &iconBeautifyGradientDirection_,
+        directionNames, static_cast<int>(sizeof(directionNames) / sizeof(directionNames[0]))))
+    {
+        iconBeautifyBgPreset_ = 0;
+        markChanged();
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+
+    const char* shortcutArrowModeNames[] = {
+        "默认（应用隐藏）",
+        "全部隐藏",
+        "全部显示",
+    };
+    ImGui::Text("快捷方式角标");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::Combo("##ShortcutArrowMode", &shortcutArrowMode_,
+        shortcutArrowModeNames, static_cast<int>(sizeof(shortcutArrowModeNames) / sizeof(shortcutArrowModeNames[0]))))
+    {
+        markChanged();
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    if (ImGui::Button("恢复图标美化默认", ImVec2(132.0f * dpiScale_, 0)))
+    {
+        iconBeautifyEnabled_ = false;
+        iconBeautifyMode_ = 0;
+        shortcutArrowMode_ = 0;
+        applyIconBeautifyPreset(1);
         markChanged();
     }
     ImGui::PopStyleColor();

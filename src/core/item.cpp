@@ -164,7 +164,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         }
     }
 
-    if (item_->shortcutArrow && item_->iconState != IconState::Loading)
+    if (app_->ShouldDrawShortcutArrow(item_->isShortcut, item_->isApplicationShortcut) &&
+        item_->iconState != IconState::Loading)
         app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
     if (!dragged && drawText)
@@ -319,7 +320,8 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
         }
     }
 
-    if (entry_->shortcutArrow && entry_->iconState != IconState::Loading)
+    if (app_->ShouldDrawShortcutArrow(entry_->isShortcut, entry_->isApplicationShortcut) &&
+        entry_->iconState != IconState::Loading)
         app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
 
     if (!dragged && drawText)

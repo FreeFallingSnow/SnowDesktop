@@ -301,7 +301,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         }
     }
 
-    if (item.shortcutArrow && item.iconState != IconState::Loading)
+    if (app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
+        item.iconState != IconState::Loading)
     {
         RECT arrowRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
         app_->DrawShortcutArrowOverlay(context, arrowRect, 1.0f);

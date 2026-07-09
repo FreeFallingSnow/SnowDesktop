@@ -586,12 +586,16 @@ inline void DesktopApp::StartIconLoader()
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
 
-            bool shortcutArrow = false;
+            bool isShortcut = false;
+            bool isApplicationShortcut = false;
             if (task.phase == IconLoadPhase::Phase1)
             {
                 std::wstring upper = task.parsingName;
                 for (auto& c : upper) c = static_cast<wchar_t>(towupper(c));
-                if (upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0)
+                const bool isLnk = upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0;
+                const bool isUrl = upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".URL") == 0;
+                isShortcut = isLnk || isUrl;
+                if (isLnk)
                 {
                     wchar_t lnkPath[MAX_PATH]{};
                     if (SHGetPathFromIDListW(task.absolutePidl.get(), lnkPath))
@@ -612,9 +616,13 @@ inline void DesktopApp::StartIconLoader()
                                     {
                                         std::wstring t(target);
                                         for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
-                                        if (t.size() < 4 || t.compare(t.size() - 4, 4, L".EXE") != 0)
-                                            shortcutArrow = true;
+                                        isApplicationShortcut =
+                                            t.size() >= 4 && t.compare(t.size() - 4, 4, L".EXE") == 0;
                                     }
+                                }
+                                else
+                                {
+                                    isApplicationShortcut = true;
                                 }
                             }
                         }
@@ -631,7 +639,9 @@ inline void DesktopApp::StartIconLoader()
                 result->widgetId = std::move(task.widgetId);
                 result->bitmap = bitmap;
                 result->bitmapSize = bitmapSize;
-                result->shortcutArrow = shortcutArrow;
+                result->isShortcut = isShortcut;
+                result->isApplicationShortcut = isApplicationShortcut;
+                result->shortcutArrow = isShortcut && !isApplicationShortcut;
                 result->phase = task.phase;
                 result->isDesktopItem = task.isDesktopItem;
                 result->folderPath = std::move(task.folderPath);
@@ -894,12 +904,30 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
             SetItemFontSize(settingsWindow_->GetItemFontSizeD());
             SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
+            SetShortcutArrowMode(settingsWindow_->GetShortcutArrowMode());
+            SetIconBeautifySettings(settingsWindow_->GetIconBeautifyEnabled(),
+                settingsWindow_->GetIconBeautifyMode(),
+                settingsWindow_->GetIconBeautifyBgOpacity(),
+                settingsWindow_->GetIconBeautifyGradientEnabled(),
+                settingsWindow_->GetIconBeautifyBgStartR(),
+                settingsWindow_->GetIconBeautifyBgStartG(),
+                settingsWindow_->GetIconBeautifyBgStartB(),
+                settingsWindow_->GetIconBeautifyBgEndR(),
+                settingsWindow_->GetIconBeautifyBgEndG(),
+                settingsWindow_->GetIconBeautifyBgEndB(),
+                settingsWindow_->GetIconBeautifyGradientDirection());
         });
         settingsWindow_->SetCategorySettingsChangedCallback([this]() {
             LoadCategorySettingsAndApply();
         });
 
-        settingsWindow_->SyncDisplaySettings(iconSpacingScale_, itemFontSize_, static_cast<float>(itemFontWeight_));
+        settingsWindow_->SyncDisplaySettings(iconSpacingScale_, itemFontSize_,
+            static_cast<float>(itemFontWeight_), shortcutArrowMode_, iconBeautifyEnabled_,
+            iconBeautifyMode_,
+            iconBeautifyBgOpacity_, iconBeautifyGradientEnabled_,
+            iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_,
+            iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_,
+            iconBeautifyGradientDirection_);
     }
     else
     {

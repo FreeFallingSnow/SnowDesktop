@@ -87,6 +87,8 @@ struct IconLoadResult {
     HBITMAP bitmap = nullptr;
     SIZE bitmapSize{};
     bool shortcutArrow = false;
+    bool isShortcut = false;
+    bool isApplicationShortcut = false;
     IconLoadPhase phase = IconLoadPhase::Phase1;
     bool isDesktopItem = true;
     std::wstring folderPath;
@@ -778,6 +780,21 @@ private:
     void SetItemFontSize(float value);
     /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
+    void SetShortcutArrowMode(int mode);
+    bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
+    /** @brief 设置是否统一图标为圆角底板样式。 */
+    void SetIconBeautifyEnabled(bool enabled);
+    void SetIconBeautifySettings(bool enabled,
+        int beautifyMode,
+        float backgroundOpacity,
+        bool gradientEnabled,
+        float backgroundStartR,
+        float backgroundStartG,
+        float backgroundStartB,
+        float backgroundEndR,
+        float backgroundEndG,
+        float backgroundEndB,
+        int gradientDirection);
     /** @brief 应用页面到显示器的映射关系（编排清理/补齐/重排/映射）。 */
     void ApplyPageMapping();
     /** @brief 清理溢出区空页（保留前 N-1 槽位页与末屏当前显示的空页）。 */
@@ -1140,6 +1157,9 @@ private:
      */
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
     ID2D1Bitmap* GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm);
+    ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm);
+    std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
+    void EraseD2DIconCacheForBitmap(HBITMAP hbm);
 
     /**
      * @brief 在指定矩形上绘制快捷方式箭头叠加层。
@@ -1532,6 +1552,18 @@ private:
     float iconSpacingScale_ = 1.0f;
     float itemFontSize_ = kItemFontSize;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    int shortcutArrowMode_ = 0;
+    bool iconBeautifyEnabled_ = false;
+    int iconBeautifyMode_ = 0;
+    float iconBeautifyBgOpacity_ = 0.65f;
+    bool iconBeautifyGradientEnabled_ = false;
+    int iconBeautifyGradientDirection_ = 0;
+    float iconBeautifyBgStartR_ = 232.0f / 255.0f;
+    float iconBeautifyBgStartG_ = 236.0f / 255.0f;
+    float iconBeautifyBgStartB_ = 244.0f / 255.0f;
+    float iconBeautifyBgEndR_ = 222.0f / 255.0f;
+    float iconBeautifyBgEndG_ = 228.0f / 255.0f;
+    float iconBeautifyBgEndB_ = 240.0f / 255.0f;
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;   // 持久化：锁定显示首屏的显示器
     std::wstring lastPageMonitorId_;    // 持久化：锁定显示末屏/翻页区的显示器
