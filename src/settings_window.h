@@ -142,6 +142,11 @@ public:
 
     void SetGeneralSettingsChangedCallback(std::function<void()> callback) { generalSettingsChangedCallback_ = std::move(callback); }
 
+    void SetDockEnabledChangedCallback(std::function<void(bool)> callback)
+    { dockEnabledChangedCallback_ = std::move(callback); }
+
+    void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
+
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
@@ -466,6 +471,8 @@ private:
     /// 通用设置变更回调
     std::function<void()> generalSettingsChangedCallback_;
 
+    std::function<void(bool)> dockEnabledChangedCallback_;
+
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
 
@@ -497,6 +504,8 @@ private:
 
     /// 当前通用设置
     GeneralSettings generalSettings_;
+
+    bool dockEnabled_ = false;
 
     /// 通用设置是否已修改（需要保存）
     bool generalSettingsDirty_ = false;

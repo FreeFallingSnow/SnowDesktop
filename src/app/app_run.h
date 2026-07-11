@@ -738,6 +738,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     virtualWidth_ = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     virtualHeight_ = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     BeginIconLoadGeneration();
+    LoadGeneralSettingsAndApply();
     LoadLayoutSlots();
     UpdateLayoutWorkArea();
     displayTopologySignature_ = CaptureDisplayTopologySignature();
@@ -874,7 +875,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     RegisterShellChangeNotifications();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
-    LoadGeneralSettingsAndApply();
 
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
@@ -884,7 +884,11 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsWindow_ = std::make_unique<SettingsWindow>();
     if (settingsWindow_->Init(instance, d3dDevice_.Get()))
     {
-        settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
+        settingsWindow_->SetReloadCallback([this]() {
+            ReloadItems();
+            if (settingsWindow_)
+                settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
+        });
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
         settingsWindow_->SetInvalidateCallback([this]() {
             if (hwnd_)
@@ -901,6 +905,17 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             LoadGeneralSettingsAndApply();
             if (quickNavigationOpen_)
                 InvalidateQuickNavigationWindow();
+        });
+        settingsWindow_->SetDockEnabledChangedCallback([this](bool enabled) {
+            if (generalSettings_.dockEnabled == enabled) return;
+            generalSettings_.dockEnabled = enabled;
+            UpdateLayoutWorkArea();
+            if (!enabled)
+                RestoreDockEntriesToDesktop();
+            LayoutItems();
+            SaveLayoutSlots();
+            InvalidateDragStaticScene();
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
@@ -930,6 +945,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_,
             iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_,
             iconBeautifyGradientDirection_);
+        settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
     }
     else
     {
@@ -1308,6 +1324,33 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         {
             HandleQuickNavigationClick(pt);
             return 0;
+        }
+
+        if (DockContainer* dock = GetDockContainer())
+        {
+            RECT dockBounds = dock->GetBounds();
+            if (PtInRect(&dockBounds, pt))
+            {
+                if (dock->IsSearchPoint(pt))
+                {
+                    OpenQuickNavigation();
+                    return 0;
+                }
+                if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
+                {
+                    size_t entryIndex = dockItem->GetEntryIndex();
+                    if (entryIndex < dockEntries_.size() &&
+                        dockEntries_[entryIndex].type == DockEntryType::DesktopItem)
+                    {
+                        size_t itemIndex = FindItemIndexByKey(dockEntries_[entryIndex].reference);
+                        if (itemIndex < items_.size())
+                            ShellExecuteW(nullptr, L"open", items_[itemIndex].parsingName.c_str(),
+                                nullptr, nullptr, SW_SHOWNORMAL);
+                    }
+                    return 0;
+                }
+                return 0;
+            }
         }
 
         if (popupWidgetIndex_ < widgets_.size())

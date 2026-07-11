@@ -37,6 +37,10 @@ constexpr int kTextExpandedHeight = 48;
 constexpr int kTextHeight = kTextCollapsedHeight;
 constexpr float kGapPercentX = 0.16f;
 constexpr float kGapPercentY = 0.14f;
+constexpr wchar_t kDockPageId[] = L"__snowdesktop_dock__";
+constexpr int kDockReservedHeight = 104;
+constexpr int kDockSlotWidth = 80;
+constexpr int kDockSlotHeight = 80;
 
 // ── 重命名编辑框控件ID ────────────────────────
 constexpr int kRenameEditId = 1001;
@@ -168,6 +172,9 @@ constexpr UINT_PTR kHiddenHintTimerId = 9;
 constexpr UINT kHiddenHintVisibleMs = 2000;
 constexpr UINT_PTR kWidgetAddedHintTimerId = 10;
 constexpr UINT kWidgetAddedHintVisibleMs = 2000;
+constexpr UINT_PTR kDockHandoffDwellTimerId = 11;
+constexpr UINT kDockHandoffDwellIntervalMs = 40;
+constexpr DWORD kDockHandoffDwellDelayMs = 520;
 
 // ── 组件独立刷新定时器 ────────────────────────
 // 由 manifest 的 refreshIntervalMs 声明驱动的 per-widget Win32 定时器 ID 基址，

@@ -20,6 +20,7 @@
 #include "slot.h"
 #include "container.h"
 #include "desktop.h"
+#include "dock.h"
 #include "widget.h"
 #include "drop_model.h"
 #include "drag_session.h"
@@ -223,6 +224,8 @@ public:
     friend class DesktopIcon;
     friend class FolderEntryIcon;
     friend class DesktopGrid;
+    friend class DockContainer;
+    friend class DockEntryItem;
     friend class Widget;
     friend class WidgetContainer;
     friend class Collection;
@@ -452,6 +455,21 @@ private:
     void LayoutItems();
     /** @brief 重建容器（网格、部件）和面向对象项列表。 */
     void RebuildContainersAndItems();
+    /** @brief 为首屏 Dock 预留工作区并计算其绘制区域。 */
+    void ApplyDockWorkAreaReservation();
+    DockContainer* GetDockContainer() const;
+    void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
+        size_t insertIndex, int mods);
+    void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
+    void RestoreDockEntriesToDesktop();
+    void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
+    bool FindDockReturnCell(std::unordered_set<std::wstring>& usedSlots,
+        const std::wstring& preferredPageId, int startSlot, GridCell& result);
+    bool DropItemsIntoDockCollection(const std::vector<Item*>& sourceItems,
+        Container* origin, DockEntryItem* targetItem, int mods);
+    bool IsDockExclusiveItemKey(const std::wstring& key) const;
+    bool IsDockExclusiveWidgetId(const std::wstring& id) const;
+    size_t FindWidgetIndexById(const std::wstring& id) const;
     /** @brief 显示设置窗口。 */
     void ShowSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */
@@ -1147,6 +1165,7 @@ private:
         DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis = true);
     /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
     void DrawCollectionPopup(ID2D1DeviceContext* ctx);
+    void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
@@ -1544,6 +1563,9 @@ private:
     std::unordered_map<std::wstring, size_t> itemIndexByKeyCache_;
     std::vector<GridPage> gridPages_;
     std::vector<DesktopWidget> widgets_;
+    std::vector<DockEntry> dockEntries_;
+    RECT dockArea_{};
+    size_t dockPressedEntry_ = static_cast<size_t>(-1);
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
@@ -1676,6 +1698,11 @@ private:
     GridCell widgetPreviewCell_{};
     GridSpan widgetPreviewSpan_{};
     bool widgetPreviewOccupied_ = false;
+    bool widgetDockTarget_ = false;
+    size_t widgetDockInsertIndex_ = 0;
+    size_t dockHandoffDwellIndex_ = static_cast<size_t>(-1);
+    DWORD dockHandoffDwellStartTick_ = 0;
+    bool dockHandoffDwellReady_ = false;
     /** @} */
 
     /** @name OLE 拖拽状态 */
@@ -1785,6 +1812,7 @@ private:
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
     bool popupHasAnchor_ = false;
+    bool popupAnchorAbove_ = false;
     POINT popupAnchorPoint_{};
     std::wstring popupPageId_;
     std::wstring popupCategoryId_;
@@ -1877,6 +1905,7 @@ private:
 // ── Inline implementations (split into sub-headers) ─────────
 #include "app_run.h"
 #include "app_gfx.h"
+#include "app_dock.h"
 #include "app_quick_navigation.h"
 #include "app_interact.h"
 #include "app_menu.h"

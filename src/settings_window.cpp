@@ -814,6 +814,16 @@ void SettingsWindow::DrawGeneralPage()
     ImGui::Text("桌面交互");
     ImGui::Spacing();
 
+    if (ImGui::Checkbox("启用主屏 Dock", &dockEnabled_))
+    {
+        if (dockEnabledChangedCallback_)
+            dockEnabledChangedCallback_(dockEnabled_);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(占用首屏底部空间；关闭时内容依次放回桌面)");
+
+    ImGui::Spacing();
+
     if (ImGui::Checkbox("双击空白处隐藏桌面", &generalSettings_.doubleClickHideDesktop))
         generalSettingsDirty_ = true;
     ImGui::SameLine();

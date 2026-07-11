@@ -10,6 +10,7 @@ set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
     src/core/item.cpp
+    src/core/dock.cpp
     src/core/slot.cpp
     src/core/container.cpp
     src/core/desktop.cpp

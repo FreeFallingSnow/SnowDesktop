@@ -1342,10 +1342,12 @@ inline std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidge
 
 inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
 {
+    const std::wstring& targetPageId = popupPageId_.empty()
+        ? widget.gridCell.pageId : popupPageId_;
     const GridPage* page = nullptr;
     for (const auto& p : gridPages_)
     {
-        if (p.id == widget.gridCell.pageId)
+        if (p.id == targetPageId)
         {
             page = &p;
             break;
@@ -1378,8 +1380,16 @@ inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) cons
     int top = work.top + (workHeight - height) / 2;
     if (popupHasAnchor_)
     {
-        left = popupAnchorPoint_.x + 12;
-        top = popupAnchorPoint_.y + 12;
+        if (popupAnchorAbove_)
+        {
+            left = popupAnchorPoint_.x - width / 2;
+            top = popupAnchorPoint_.y - height - 12;
+        }
+        else
+        {
+            left = popupAnchorPoint_.x + 12;
+            top = popupAnchorPoint_.y + 12;
+        }
         left = std::clamp(left, static_cast<int>(work.left + 12),
             static_cast<int>(std::max<LONG>(work.left + 12, work.right - width - 12)));
         top = std::clamp(top, static_cast<int>(work.top + 12),
@@ -1576,6 +1586,12 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
         }
     }
 
+    if (DockContainer* dock = GetDockContainer())
+    {
+        dock->DrawChrome(ctx, lastMousePoint_);
+        dock->DrawContents(ctx);
+    }
+
     DrawCollectionPopup(ctx);
 }
 
@@ -1585,6 +1601,13 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     // Widget drag/resize preview
     if ((widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize) && mouseDownWidgetIndex_ < widgets_.size())
     {
+        if (widgetDockTarget_)
+        {
+            if (DockContainer* dock = GetDockContainer())
+                dock->DrawInsertionPreview(ctx, widgetDockInsertIndex_);
+        }
+        else
+        {
         GridCell cell = widgetPreviewCell_;
         GridSpan span = widgetPreviewSpan_;
         RECT previewBounds = GetGridRect(gridPages_, cell, span);
@@ -1610,6 +1633,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
                                  : D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f);
 
         DrawD2DRoundedRectangle(ctx, previewBounds, radius, fill, border, 2.0f);
+        }
     }
 
     // Drop preview (blue bars / green Handoff box)

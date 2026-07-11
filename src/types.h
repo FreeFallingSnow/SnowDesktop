@@ -441,6 +441,26 @@ struct DesktopWidget
     std::vector<FolderEntry> folderEntries;
 };
 
+/** Dock 中的引用类型。Dock 只保存布局引用，不复制实际文件。 */
+enum class DockEntryType
+{
+    DesktopItem,
+    Collection,
+};
+
+/**
+ * @brief 主屏 Dock 条目。
+ * @details DesktopItem 使用 layoutKey，Collection 使用 widget id。
+ *          keepOnDesktop=true 表示 Ctrl“假复制”，原桌面入口继续显示。
+ */
+struct DockEntry
+{
+    DockEntryType type = DockEntryType::DesktopItem;
+    std::wstring reference;
+    bool keepOnDesktop = false;
+    bool selected = false;
+};
+
 /**
  * @brief 桌面窗口句柄集合
  * @details 缓存桌面相关的重要窗口句柄，包括 Progman、DefView、ListView 等

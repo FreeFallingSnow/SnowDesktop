@@ -230,7 +230,7 @@ inline void DesktopApp::ToggleFirstPagePin(POINT screenPoint)
             lastPageMonitorId_.clear();
     }
     pageOffset_ = 0;
-    ApplyPageMapping();
+    UpdateLayoutWorkArea();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -259,7 +259,7 @@ inline void DesktopApp::ToggleLastPagePin(POINT screenPoint)
             firstPageMonitorId_.clear();
     }
     pageOffset_ = 0;
-    ApplyPageMapping();
+    UpdateLayoutWorkArea();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -1743,6 +1743,7 @@ inline void DesktopApp::LoadLayoutSlots()
 
     layoutRecords_.clear();
     widgets_.clear();
+    dockEntries_.clear();
     savedPageIds_.clear();
     savedPageColumns_.clear();
     savedPageRows_.clear();
@@ -1764,6 +1765,10 @@ inline void DesktopApp::LoadLayoutSlots()
     std::string lastPageMonitorUtf8;
     if (ReadJsonStringField(text, "lastPageMonitor", lastPageMonitorUtf8))
         lastPageMonitorId_ = Utf8ToWide(lastPageMonitorUtf8);
+
+    bool loadedDockEnabled = false;
+    if (ReadJsonBoolField(text, "dockEnabled", loadedDockEnabled))
+        generalSettings_.dockEnabled = loadedDockEnabled;
 
     float loadedFontSize = 0;
     if (ReadJsonFloatField(text, "itemFontSize", loadedFontSize) &&
@@ -2007,6 +2012,42 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
         }
     }
 
+    // Load Dock references. "ref" intentionally differs from desktop item
+    // "key" so the legacy item scanner cannot mistake Dock entries for layout records.
+    {
+        size_t dockName = text.find("\"dockEntries\"");
+        if (dockName != std::string::npos)
+        {
+            size_t arrayStart = text.find('[', dockName);
+            size_t arrayEnd = arrayStart == std::string::npos
+                ? std::string::npos : FindJsonArrayEnd(text, arrayStart);
+            size_t dp = arrayStart == std::string::npos ? 0 : arrayStart + 1;
+            while (arrayEnd != std::string::npos &&
+                (dp = text.find('{', dp)) != std::string::npos && dp < arrayEnd)
+            {
+                size_t objectEnd = FindJsonObjectEnd(text, dp);
+                if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
+                std::string object = text.substr(dp, objectEnd - dp + 1);
+                std::string typeUtf8, referenceUtf8;
+                bool keepOnDesktop = false;
+                if (ReadJsonStringField(object, "type", typeUtf8) &&
+                    ReadJsonStringField(object, "ref", referenceUtf8))
+                {
+                    ReadJsonBoolField(object, "keepOnDesktop", keepOnDesktop);
+                    DockEntry entry;
+                    entry.type = typeUtf8 == "collection"
+                        ? DockEntryType::Collection : DockEntryType::DesktopItem;
+                    entry.reference = Utf8ToWide(referenceUtf8);
+                    if (entry.type == DockEntryType::DesktopItem)
+                        entry.reference = ToUpperInvariant(entry.reference);
+                    entry.keepOnDesktop = keepOnDesktop;
+                    if (!entry.reference.empty()) dockEntries_.push_back(std::move(entry));
+                }
+                dp = objectEnd + 1;
+            }
+        }
+    }
+
     {
         std::vector<std::wstring> savedOrder;
         ReadJsonStringArrayField(text, "navTabOrder", savedOrder);
@@ -2066,7 +2107,8 @@ inline void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
-         << "\",\n  \"itemFontSize\": " << itemFontSize_
+         << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
+         << ",\n  \"itemFontSize\": " << itemFontSize_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
@@ -2159,6 +2201,16 @@ inline void DesktopApp::SaveLayoutSlots()
         }
         file << "] }";
         file << (i + 1 == widgets_.size() ? "\n" : ",\n");
+    }
+    file << "  ],\n  \"dockEntries\": [\n";
+    for (size_t i = 0; i < dockEntries_.size(); ++i)
+    {
+        const DockEntry& entry = dockEntries_[i];
+        file << "    { \"type\": \""
+             << (entry.type == DockEntryType::Collection ? "collection" : "item")
+             << "\", \"ref\": \"" << JsonEscapeUtf8(entry.reference)
+             << "\", \"keepOnDesktop\": " << (entry.keepOnDesktop ? "true" : "false")
+             << " }" << (i + 1 == dockEntries_.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"navTabOrder\": [";
     for (size_t i = 0; i < navTabOrder_.size(); ++i)
@@ -2450,7 +2502,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     if (reloadLayoutFromDisk)
     {
         LoadLayoutSlots();
-        ApplyPageMapping();
+        UpdateLayoutWorkArea();
         if (widgetEngine_)
             widgetEngine_->ReloadStorage();
     }
@@ -2464,6 +2516,8 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     }
     LoadDesktopItems();
     RefreshCollectedKeysCache();
+    if (!generalSettings_.dockEnabled && !dockEntries_.empty())
+        RestoreDockEntriesToDesktop();
     ApplyAutoCollectFileCategoryWidgets();
 
     // Mark widgets as used
@@ -3212,6 +3266,7 @@ inline void DesktopApp::UpdateLayoutWorkArea()
     }
 
     ApplyPageMapping();
+    ApplyDockWorkAreaReservation();
 }
 
 /**
@@ -3842,6 +3897,12 @@ inline void DesktopApp::RefreshCollectedKeysCache()
             if (!key.empty())
                 collectedKeysCache_.insert(ToUpperInvariant(key));
     }
+    for (const auto& entry : dockEntries_)
+    {
+        if (entry.type == DockEntryType::DesktopItem && !entry.keepOnDesktop &&
+            !entry.reference.empty())
+            collectedKeysCache_.insert(ToUpperInvariant(entry.reference));
+    }
 }
 
 /**
@@ -4177,7 +4238,33 @@ inline DragSourceList DesktopApp::BuildDragSourceList(
         entry.displayName = src->GetTitle();
         entry.filePath = src->GetPath();
 
-        if (dynamic_cast<Widget*>(src))
+        if (auto* dockItem = dynamic_cast<DockEntryItem*>(src))
+        {
+            entry.fromDock = true;
+            entry.dockReference = dockItem->GetReference();
+            entry.dockEntryType = dockItem->GetEntryType();
+            if (entry.dockEntryType == DockEntryType::DesktopItem)
+            {
+                entry.kind = DropSourceKind::DesktopIcon;
+                entry.desktopKey = entry.dockReference;
+                entry.desktopIndex = FindItemIndexByKey(entry.desktopKey);
+                list.hasDesktopIcons = true;
+                if (entry.desktopIndex < items_.size())
+                {
+                    const DesktopItem& item = items_[entry.desktopIndex];
+                    entry.filePath = item.parsingName;
+                    entry.originalCell = item.gridCell;
+                    entry.originalSpan = item.gridSpan;
+                    entry.protectedDesktopIcon = IsProtectedDesktopIcon(item);
+                }
+            }
+            else
+            {
+                entry.kind = DropSourceKind::Widget;
+                list.hasWidgets = true;
+            }
+        }
+        else if (dynamic_cast<Widget*>(src))
         {
             entry.kind = DropSourceKind::Widget;
             list.hasWidgets = true;
@@ -4329,6 +4416,16 @@ inline DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& so
             preview.targetWidget->type == DesktopWidgetType::FolderMapping
                 ? DropTargetKind::FolderMapping
                 : DropTargetKind::KeyedWidget;
+        const bool sourceFromDock = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
+            [](const DragSourceEntry& entry) { return entry.fromDock; });
+        if (preview.targetKind == DropTargetKind::FolderMapping && sourceFromDock &&
+            preview.action == DropAction::Move)
+        {
+            // Dock entries are layout references. A logical move out of Dock
+            // must not physically remove the backing desktop file/shortcut.
+            preview.action = DropAction::Copy;
+            preview.consumeDockSource = true;
+        }
         preview.fileBacked = !(sourceList.origin == target && preview.action == DropAction::Move) &&
             IsDropFileBacked(sourceList, preview.targetKind, preview.action);
         preview.insertIndex = widget->GetDropInsertIndex(targetSlot, region);
@@ -4390,6 +4487,8 @@ inline DropPreviewList DesktopApp::BuildExternalDesktopPreviewList(GridCell targ
 inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     const DropPreviewList& preview)
 {
+    const bool sourceFromDock = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
+        [](const DragSourceEntry& entry) { return entry.fromDock; });
     if (sourceList.Empty()) return false;
     // A completely full desktop produces no visible landing preview. File
     // drops must still be materialized; ReloadItems will allocate virtual
@@ -4401,9 +4500,24 @@ inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         preview.action == DropAction::Move &&
         IsAutoCollectFileCategorySource(sourceList))
         return false;
-    return preview.fileBacked
+    bool executed = preview.fileBacked
         ? ExecuteFileBackedDropPlan(sourceList, preview)
         : ExecuteInternalDropPlan(sourceList, preview);
+    if (executed && (preview.action == DropAction::Move || preview.consumeDockSource) && sourceFromDock)
+    {
+        std::unordered_set<std::wstring> moved;
+        for (const auto& entry : sourceList.entries)
+            if (entry.fromDock && !entry.dockReference.empty())
+                moved.insert(std::to_wstring(static_cast<int>(entry.dockEntryType)) + L":" +
+                    ToUpperInvariant(entry.dockReference));
+        std::erase_if(dockEntries_, [&](const DockEntry& entry) {
+            const std::wstring key = std::to_wstring(static_cast<int>(entry.type)) + L":" +
+                ToUpperInvariant(entry.reference);
+            return moved.contains(key);
+        });
+        RefreshCollectedKeysCache();
+    }
+    return executed;
 }
 
 /**
@@ -5334,6 +5448,7 @@ inline void DesktopApp::RebuildContainersAndItems()
     // Widgets
     for (auto& w : widgets_)
     {
+        if (IsDockExclusiveWidgetId(w.id)) continue;
         auto widget = CreateWidget(&w, this);
         if (!widget) continue;
 
@@ -5347,6 +5462,9 @@ inline void DesktopApp::RebuildContainersAndItems()
             items_oo_.push_back(std::move(widget));
         }
     }
+
+    if (generalSettings_.dockEnabled && !IsRectEmptyRect(dockArea_))
+        containers_.push_back(std::make_unique<DockContainer>(this, &dockEntries_, dockArea_));
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {

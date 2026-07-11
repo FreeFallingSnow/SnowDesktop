@@ -439,6 +439,10 @@ inline void DesktopApp::InvalidateDragStaticScene()
  */
 inline void DesktopApp::EndDragSession()
 {
+    if (hwnd_) KillTimer(hwnd_, kDockHandoffDwellTimerId);
+    dockHandoffDwellIndex_ = static_cast<size_t>(-1);
+    dockHandoffDwellStartTick_ = 0;
+    dockHandoffDwellReady_ = false;
     dragSession_.End();
     dragRenderCache_.Reset();
     // 清除拖放预览缓存
@@ -472,9 +476,11 @@ inline void DesktopApp::LoadNavigationSettingsAndApply()
 
 inline void DesktopApp::LoadGeneralSettingsAndApply()
 {
+    const bool dockEnabled = generalSettings_.dockEnabled;
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    generalSettings_.dockEnabled = dockEnabled;
     quickNavLightTheme_ = (generalSettings_.quickNavTheme == 1);
 }
 
@@ -926,6 +932,8 @@ inline void DesktopApp::ClearSelection()
 {
     for (auto& item : items_)
         item.selected = false;
+    for (auto& entry : dockEntries_)
+        entry.selected = false;
     for (auto& widget : widgets_)
     {
         widget.selected = false;
@@ -982,6 +990,8 @@ inline void DesktopApp::SyncKeyboardNavFromSelection()
  */
 inline void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
 {
+    for (auto& entry : dockEntries_)
+        entry.selected = false;
     std::unordered_set<std::wstring> allowedKeys;
     if (widgetIndex < widgets_.size())
     {
@@ -1011,6 +1021,8 @@ inline void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
  */
 inline void DesktopApp::ClearSelectionOutsideDesktop()
 {
+    for (auto& entry : dockEntries_)
+        entry.selected = false;
     for (auto& item : items_)
     {
         if (IsItemInAnyWidget(item))
@@ -1200,6 +1212,14 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
+    // 外部点击先关闭集合弹窗，但保留本次按下事件，继续命中弹窗下方的真实目标。
+    if (popupWidgetIndex_ < widgets_.size())
+    {
+        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        if (!PtInRect(&popup, pt))
+            CloseCollectionPopup();
+    }
+
     if (HandleQuickNavigationClick(pt))
     {
         mouseDown_ = false;
@@ -1213,12 +1233,6 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-        if (!PtInRect(&popup, pt))
-        {
-            CloseCollectionPopup();
-            mouseDown_ = false;
-            return;
-        }
 
         std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
         RECT content = GetCollectionPopupContentRect(popup);
@@ -1273,6 +1287,36 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
         SyncKeyboardNavFromSelection();
         return;
+    }
+
+    // ── Dock hit-test（位于普通组件和桌面网格之上）──────────
+    dockPressedEntry_ = static_cast<size_t>(-1);
+    if (DockContainer* dock = GetDockContainer())
+    {
+        RECT dockBounds = dock->GetBounds();
+        if (PtInRect(&dockBounds, pt))
+        {
+            if (dock->IsSearchPoint(pt))
+            {
+                mouseDown_ = false;
+                OpenQuickNavigation();
+                return;
+            }
+            if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
+            {
+                if (!ctrl) ClearSelection();
+                dockItem->SetSelected(true);
+                dockPressedEntry_ = dockItem->GetEntryIndex();
+                mouseDownHit_ = dockItem;
+                SetCapture(hwnd_);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            if (!ctrl) ClearSelection();
+            mouseDown_ = false;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
     }
 
     // ── Widget hit-test ─────────────────────────────────────
@@ -1724,6 +1768,26 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
 
+        DockContainer* dock = GetDockContainer();
+        RECT dockBounds = dock ? dock->GetBounds() : RECT{};
+        const bool canDock = dock && PtInRect(&dockBounds, current) &&
+            widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection &&
+            widgets_[mouseDownWidgetIndex_].gridSpan.columns == 1 &&
+            widgets_[mouseDownWidgetIndex_].gridSpan.rows == 1;
+        if (canDock)
+        {
+            widgetDockTarget_ = true;
+            widgetDockInsertIndex_ = dock->GetInsertIndexAtPoint(current);
+            const bool keepSource = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+            ShowDragHintWindow(current, keepSource
+                ? L"释放：建立 Dock 映射（保留原入口）"
+                : L"释放：移动 1×1 集合到 Dock（按住 Ctrl 可建立映射）");
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        widgetDockTarget_ = false;
+        widgetDockInsertIndex_ = 0;
+
         // ── 跨页翻页：检测导航按钮悬停 + 自动翻页 ──
         if (MaxPageOffset() > 0)
         {
@@ -2000,6 +2064,19 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 return { popupWidget, popupWidget, 2, 0, true };
             }
 
+            if (DockContainer* dock = GetDockContainer())
+            {
+                RECT dockBounds = dock->GetBounds();
+                if (PtInRect(&dockBounds, point))
+                {
+                    if (DockEntryItem* entry = dock->EntryAtPoint(point))
+                        return { dock, entry, 8, entry->GetEntryIndex(), false };
+                    if (dock->IsSearchPoint(point))
+                        return { dock, dock, 9, 0, false };
+                    return { dock, dock, 10, 0, false };
+                }
+            }
+
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
                 auto* widget = dynamic_cast<WidgetContainer*>(it->get());
@@ -2079,11 +2156,16 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const MouseHoverVisual oldVisual = findHoverVisual(oldMouse);
         const MouseHoverVisual newVisual = findHoverVisual(current);
         const bool hoverChanged = !sameHoverVisual(oldVisual, newVisual);
+        const bool dockHoverChanged = hoverChanged &&
+            ((oldVisual.kind >= 8 && oldVisual.kind <= 10) ||
+             (newVisual.kind >= 8 && newVisual.kind <= 10));
         const bool needsContinuousHoverPaint =
             (oldVisual.owner && oldVisual.continuous) ||
             (newVisual.owner && newVisual.continuous);
         if (marqueeActive_ || hoverChanged || needsContinuousHoverPaint)
             InvalidateRect(hwnd_, nullptr, FALSE);
+        if (dockHoverChanged && hwnd_ && IsWindow(hwnd_))
+            UpdateWindow(hwnd_);
 
         for (auto& w : widgets_)
         {
@@ -2113,11 +2195,31 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {
         if (widgetAction_ == WidgetAction::Move)
-            PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, true);
+        {
+            DockContainer* dock = GetDockContainer();
+            RECT dockBounds = dock ? dock->GetBounds() : RECT{};
+            const bool canDock = dock && PtInRect(&dockBounds, upPoint) &&
+                widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection &&
+                widgets_[mouseDownWidgetIndex_].gridSpan.columns == 1 &&
+                widgets_[mouseDownWidgetIndex_].gridSpan.rows == 1;
+            if (canDock)
+            {
+                Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
+                int mods = (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
+                CommitDockDrop({ &dockSource }, nullptr, widgetDockInsertIndex_, mods);
+                SaveLayoutSlots();
+                RebuildContainersAndItems();
+                LayoutItems();
+            }
+            else
+                PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, true);
+        }
         else if (widgetAction_ == WidgetAction::Resize)
             PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
         // PendingMove/PendingResize: just cancel without displacement
         widgetAction_ = WidgetAction::None;
+        widgetDockTarget_ = false;
+        widgetDockInsertIndex_ = 0;
         InvalidateDragStaticScene();
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
@@ -2129,6 +2231,18 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
     if (!dragSession_.IsActive())
     {
+        if (dockPressedEntry_ < dockEntries_.size())
+        {
+            DockContainer* dock = GetDockContainer();
+            DockEntryItem* hit = dock ? dock->EntryAtPoint(upPoint) : nullptr;
+            if (hit && hit->GetEntryIndex() == dockPressedEntry_ &&
+                dockEntries_[dockPressedEntry_].type == DockEntryType::Collection)
+            {
+                size_t widgetIndex = FindWidgetIndexById(dockEntries_[dockPressedEntry_].reference);
+                if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, upPoint);
+            }
+        }
+        dockPressedEntry_ = static_cast<size_t>(-1);
         if (mouseDownWidgetIndex_ < widgets_.size() &&
             widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
             HitTestStandaloneWidget(mouseDownWidgetIndex_, upPoint) == WidgetHit::Content &&
@@ -2177,6 +2291,38 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             && dragSession_.TargetSlot()->GetItem())
         {
             Item* targetItem = dragSession_.TargetSlot()->GetItem();
+            if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
+            {
+                if (dockTarget->GetEntryType() == DockEntryType::Collection)
+                {
+                    const bool executed = DropItemsIntoDockCollection(
+                        dragSession_.Items(), dragSession_.Source(), dockTarget, mods);
+                    SaveLayoutSlots();
+                    ClearSelection();
+                    EndDragSession();
+                    if (executed)
+                    {
+                        RebuildContainersAndItems();
+                        LayoutItems();
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    }
+                    goto cleanup;
+                }
+            }
+            auto* targetDesktopIcon = dynamic_cast<DesktopIcon*>(targetItem);
+            DesktopItem* targetDesktopItem = targetDesktopIcon
+                ? targetDesktopIcon->GetDesktopItem() : nullptr;
+            if (dynamic_cast<DockContainer*>(dragSession_.Source()) && targetDesktopItem &&
+                _wcsicmp(targetDesktopItem->desktopIconClsid.c_str(),
+                    kDesktopIconClsidRecycleBin) == 0)
+            {
+                MoveDockItemsToDesktop(dragSession_.Items(),
+                    CellFromPointForDrag(dragSession_.CurrentPoint()));
+                SaveLayoutSlots();
+                ClearSelection();
+                EndDragSession();
+                goto cleanup;
+            }
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {
@@ -2262,6 +2408,7 @@ cleanup:
     navAutoFlipTick_ = 0;
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
+    dockPressedEntry_ = static_cast<size_t>(-1);
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     ReleaseCapture();
 }
@@ -2582,6 +2729,22 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
         break;
     case VK_DELETE:
     {
+        if (DockContainer* dock = GetDockContainer())
+        {
+            std::vector<Item*> selectedDockItems = dock->GetSelectedItems();
+            if (!selectedDockItems.empty())
+            {
+                GridCell returnCell;
+                if (const GridPage* firstPage = GetFirstPageGridPage())
+                    returnCell.pageId = firstPage->id;
+                MoveDockItemsToDesktop(selectedDockItems, returnCell);
+                SaveLayoutSlots();
+                ClearSelection();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                break;
+            }
+        }
+
         if (DeleteSelectedFolderEntries(shift))
             break;
 
@@ -3956,6 +4119,24 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
             OnMouseMove(0, MAKELPARAM(lastMousePoint_.x, lastMousePoint_.y));
         }
     }
+    else if (timerId == kDockHandoffDwellTimerId)
+    {
+        if (!dragSession_.IsActive() || dockHandoffDwellIndex_ == static_cast<size_t>(-1))
+        {
+            KillTimer(hwnd_, kDockHandoffDwellTimerId);
+            dockHandoffDwellReady_ = false;
+            return;
+        }
+        if (GetTickCount() - dockHandoffDwellStartTick_ >= kDockHandoffDwellDelayMs)
+        {
+            dockHandoffDwellReady_ = true;
+            KillTimer(hwnd_, kDockHandoffDwellTimerId);
+            if (!externalDragActive_)
+                OnMouseMove(0, MAKELPARAM(
+                    dragSession_.CurrentPoint().x, dragSession_.CurrentPoint().y));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+    }
     else if (timerId == kPageNotifyTimerId)
     {
         // 换页通知覆盖层：定期触发重绘以驱动淡入淡出动画
@@ -4085,9 +4266,30 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
+    popupAnchorAbove_ = false;
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_ = categoryId;
     popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
+    if (DockContainer* dock = GetDockContainer())
+    {
+        RECT dockBounds = dock->GetBounds();
+        if (PtInRect(&dockBounds, anchorPoint))
+        {
+            const GridPage* firstPage = GetFirstPageGridPage();
+            if (firstPage) popupPageId_ = firstPage->id;
+            if (DockEntryItem* dockItem = dock->EntryAtPoint(anchorPoint);
+                dockItem && dockItem->GetEntryType() == DockEntryType::Collection &&
+                dockItem->GetReference() == widgets_[widgetIndex].id)
+            {
+                RECT itemBounds = dockItem->GetBounds();
+                popupAnchorPoint_ = {
+                    (itemBounds.left + itemBounds.right) / 2,
+                    itemBounds.top
+                };
+                popupAnchorAbove_ = true;
+            }
+        }
+    }
     popupRect_ = GetCollectionPopupRect(widgets_[widgetIndex]);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
@@ -4106,6 +4308,7 @@ inline void DesktopApp::CloseCollectionPopup()
     popupWidgetIndex_ = static_cast<size_t>(-1);
     popupScrollOffset_ = 0;
     popupHasAnchor_ = false;
+    popupAnchorAbove_ = false;
     popupAnchorPoint_ = {};
     popupPageId_.clear();
     popupCategoryId_.clear();
@@ -5448,6 +5651,43 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         {
             // ── Shell handoff via IShellFolder::IDropTarget ────
             Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
+            if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
+            {
+                if (dockTarget->GetEntryType() == DockEntryType::Collection)
+                {
+                    int mods = 0;
+                    if (keyState & MK_CONTROL) mods |= MK_CONTROL;
+                    if (keyState & MK_ALT) mods |= MK_ALT;
+                    if (keyState & MK_SHIFT) mods |= MK_SHIFT;
+                    const bool executed = DropItemsIntoDockCollection(
+                        dragSession_.Items(), dragSession_.Source(), dockTarget, mods);
+                    SaveLayoutSlots();
+                    ClearSelection();
+                    EndDragSession();
+                    if (executed)
+                    {
+                        RebuildContainersAndItems();
+                        LayoutItems();
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    }
+                    *effect = executed ? DROPEFFECT_MOVE : DROPEFFECT_NONE;
+                    return S_OK;
+                }
+            }
+            auto* targetDesktopIcon = dynamic_cast<DesktopIcon*>(targetItem);
+            DesktopItem* targetDesktopItem = targetDesktopIcon
+                ? targetDesktopIcon->GetDesktopItem() : nullptr;
+            if (dynamic_cast<DockContainer*>(dragSession_.Source()) && targetDesktopItem &&
+                _wcsicmp(targetDesktopItem->desktopIconClsid.c_str(),
+                    kDesktopIconClsidRecycleBin) == 0)
+            {
+                MoveDockItemsToDesktop(dragSession_.Items(), CellFromPointForDrag(clientPoint));
+                SaveLayoutSlots();
+                ClearSelection();
+                EndDragSession();
+                *effect = DROPEFFECT_MOVE;
+                return S_OK;
+            }
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj && targetItem)
             {
@@ -5590,6 +5830,34 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         DragSourceList sourceList = BuildDragSourceList(sourceItems, nullptr);
         Container* target = dragSession_.TargetContainer() ? dragSession_.TargetContainer() : GetDesktopGrid();
         HitRegion targetRegion = dragSession_.TargetRegion() != HitRegion::None ? dragSession_.TargetRegion() : HitRegion::Empty;
+
+        if (auto* dock = dynamic_cast<DockContainer*>(target))
+        {
+            if (!dock->HasCapacity(sourceItems.size()))
+            {
+                MessageBeep(MB_ICONWARNING);
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
+
+            const size_t insertIndex = dock->GetDropInsertIndex(
+                dragSession_.TargetSlot(), targetRegion);
+            const auto existingKeys = SnapshotDesktopKeys();
+            DropPreviewList desktopPreview = BuildDropPreviewList(sourceList, GetDesktopGrid(),
+                nullptr, HitRegion::Empty, mods, clientPoint);
+            bool executed = ExecuteDropPipeline(sourceList, desktopPreview);
+            if (executed)
+            {
+                AddExternalItemsToDock(NewDesktopKeysSince(existingKeys), insertIndex);
+                SaveLayoutSlots();
+                EndDragSession();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                *effect = ChooseDropEffect(keyState, *effect);
+                return S_OK;
+            }
+        }
+
         DropPreviewList preview = BuildDropPreviewList(sourceList, target,
             dragSession_.TargetContainer() ? dragSession_.TargetSlot() : nullptr, targetRegion, mods, clientPoint);
         bool executed = ExecuteDropPipeline(sourceList, preview);
