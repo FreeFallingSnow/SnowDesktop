@@ -1353,18 +1353,32 @@ inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) cons
             break;
         }
     }
+    if (!page && popupHasAnchor_)
+    {
+        for (const auto& p : gridPages_)
+        {
+            if (PtInRect(&p.bounds, popupAnchorPoint_))
+            {
+                page = &p;
+                break;
+            }
+        }
+    }
+    if (!page && !gridPages_.empty())
+        page = &gridPages_.front();
 
     RECT work = page ? page->workArea : layoutWorkArea_;
     const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
     const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
-    const int cellW = page ? page->cellWidth : kCellWidth;
-    const int cellH = page ? page->cellHeight : kMinCellHeight;
-    const int maxWidth = std::max(280, std::min(560, workWidth - 80));
+    const int cellW = GetCollectionPopupCellWidth();
+    const int cellH = GetCollectionPopupCellHeight();
+    const int availableWidth = std::max(1, workWidth - 24);
+    const int maxWidth = std::min(560, availableWidth);
     const int maxColumns = std::max(1, (maxWidth - kCollectionPopupPaddingX * 2) / std::max(1, cellW));
     const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
     int columns = std::clamp(std::min(itemCount, 5), 1, maxColumns);
     int rows = (itemCount + columns - 1) / columns;
-    const int maxHeight = std::max(220, workHeight - 80);
+    const int maxHeight = std::max(1, workHeight - 24);
     int width = kCollectionPopupPaddingX * 2 + columns * cellW;
     int height = kCollectionPopupHeaderHeight + rows * cellH + kCollectionPopupBottomPadding;
     if (height > maxHeight && columns < maxColumns)
@@ -1374,16 +1388,35 @@ inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) cons
         width = kCollectionPopupPaddingX * 2 + columns * cellW;
         height = kCollectionPopupHeaderHeight + rows * cellH + kCollectionPopupBottomPadding;
     }
+    width = std::min(width, availableWidth);
     height = std::min(height, maxHeight);
 
     int left = work.left + (workWidth - width) / 2;
     int top = work.top + (workHeight - height) / 2;
     if (popupHasAnchor_)
     {
-        if (popupAnchorAbove_)
+        if (popupAnchoredToDock_)
         {
-            left = popupAnchorPoint_.x - width / 2;
-            top = popupAnchorPoint_.y - height - 12;
+            switch (popupDockPosition_)
+            {
+            case DockPosition::Top:
+                left = popupAnchorPoint_.x - width / 2;
+                top = popupAnchorPoint_.y + 12;
+                break;
+            case DockPosition::Left:
+                left = popupAnchorPoint_.x + 12;
+                top = popupAnchorPoint_.y - height / 2;
+                break;
+            case DockPosition::Right:
+                left = popupAnchorPoint_.x - width - 12;
+                top = popupAnchorPoint_.y - height / 2;
+                break;
+            case DockPosition::Bottom:
+            default:
+                left = popupAnchorPoint_.x - width / 2;
+                top = popupAnchorPoint_.y - height - 12;
+                break;
+            }
         }
         else
         {
@@ -1410,6 +1443,12 @@ inline RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
 inline int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
 {
     RECT content = GetCollectionPopupContentRect(popup);
+    const int cellW = GetCollectionPopupCellWidth();
+    return std::max(1, static_cast<int>(content.right - content.left) / std::max(1, cellW));
+}
+
+inline int DesktopApp::GetCollectionPopupCellWidth() const
+{
     int cellW = kCellWidth;
     for (const auto& page : gridPages_)
     {
@@ -1419,7 +1458,21 @@ inline int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
             break;
         }
     }
-    return std::max(1, static_cast<int>(content.right - content.left) / std::max(1, cellW));
+    return std::clamp(cellW, 64, kCellWidth);
+}
+
+inline int DesktopApp::GetCollectionPopupCellHeight() const
+{
+    int cellH = kMinCellHeight;
+    for (const auto& page : gridPages_)
+    {
+        if (page.id == popupPageId_)
+        {
+            cellH = page.cellHeight;
+            break;
+        }
+    }
+    return std::clamp(cellH, 84, kMinCellHeight);
 }
 
 inline int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const
@@ -1432,15 +1485,7 @@ inline int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, c
 inline int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const
 {
     RECT content = GetCollectionPopupContentRect(popup);
-    int cellH = kMinCellHeight;
-    for (const auto& page : gridPages_)
-    {
-        if (page.id == popupPageId_)
-        {
-            cellH = page.cellHeight;
-            break;
-        }
-    }
+    const int cellH = GetCollectionPopupCellHeight();
     const int rows = GetCollectionPopupRowCount(widget, popup);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
     return std::max(0, rows * std::max(1, cellH) - visibleHeight);
@@ -1449,17 +1494,8 @@ inline int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& wi
 inline RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
 {
     RECT content = GetCollectionPopupContentRect(popup);
-    int cellW = kCellWidth;
-    int cellH = kMinCellHeight;
-    for (const auto& page : gridPages_)
-    {
-        if (page.id == popupPageId_)
-        {
-            cellW = page.cellWidth;
-            cellH = page.cellHeight;
-            break;
-        }
-    }
+    const int cellW = GetCollectionPopupCellWidth();
+    const int cellH = GetCollectionPopupCellHeight();
     const int columns = GetCollectionPopupColumnCount(popup);
     const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
     const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
@@ -1482,7 +1518,6 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
     if (!ctx || popupWidgetIndex_ >= widgets_.size()) return;
 
     const DesktopWidget& widget = widgets_[popupWidgetIndex_];
-    popupPageId_ = widget.gridCell.pageId;
     std::vector<std::wstring> popupKeys = GetPopupItemKeys(widget);
     popupRect_ = GetCollectionPopupRect(widget);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
@@ -1515,11 +1550,7 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
     ctx->PopAxisAlignedClip();
 
     // Scrollbar — same style as widget content areas
-    int cellH = kMinCellHeight;
-    for (const auto& page : gridPages_)
-    {
-        if (page.id == popupPageId_) { cellH = page.cellHeight; break; }
-    }
+    const int cellH = GetCollectionPopupCellHeight();
     int columns = std::max(1, GetCollectionPopupColumnCount(popupRect_));
     int rows = (static_cast<int>(popupKeys.size()) + columns - 1) / columns;
     int contentHeight = rows * cellH;

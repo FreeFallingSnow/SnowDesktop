@@ -451,7 +451,8 @@ enum class DockEntryType
 /**
  * @brief 主屏 Dock 条目。
  * @details DesktopItem 使用 layoutKey，Collection 使用 widget id。
- *          keepOnDesktop=true 表示 Ctrl“假复制”，原桌面入口继续显示。
+ *          DesktopItem 的 keepOnDesktop=true 表示 Ctrl“假复制”；
+ *          Collection 始终是唯一实例，进入 Dock 后不会保留桌面入口。
  */
 struct DockEntry
 {

@@ -24,8 +24,7 @@ inline bool DesktopApp::IsDockExclusiveItemKey(const std::wstring& key) const
 inline bool DesktopApp::IsDockExclusiveWidgetId(const std::wstring& id) const
 {
     return std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const DockEntry& entry) {
-        return entry.type == DockEntryType::Collection && !entry.keepOnDesktop &&
-            entry.reference == id;
+        return entry.type == DockEntryType::Collection && entry.reference == id;
     });
 }
 
@@ -34,6 +33,35 @@ inline DockContainer* DesktopApp::GetDockContainer() const
     for (const auto& container : containers_)
         if (auto* dock = dynamic_cast<DockContainer*>(container.get())) return dock;
     return nullptr;
+}
+
+inline int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
+{
+    const int pitchX = page.cellWidth + (page.columns > 1 ? page.gapX : 0);
+    const int pitchY = page.cellHeight + (page.rows > 1 ? page.gapY : 0);
+    const float layoutScale = std::max(0.1f, std::min(
+        static_cast<float>(std::max(1, pitchX)) / static_cast<float>(kCellWidth),
+        static_cast<float>(std::max(1, pitchY)) / static_cast<float>(kMinCellHeight)));
+    const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+    if (page.cellHeight < static_cast<int>(std::round(50.0f * layoutScale)))
+    {
+        return std::max(1, std::min({
+            static_cast<int>(std::round(32.0f * layoutScale)),
+            std::max(1, page.cellWidth - inset * 2),
+            std::max(1, page.cellHeight - inset * 2) }));
+    }
+    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
+    const int textHeight = std::max(1,
+        static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
+    return std::max(1, std::min(
+        std::max(1, page.cellWidth - inset * 2),
+        std::max(1, page.cellHeight - textHeight - inset * 2)));
+}
+
+inline int DesktopApp::GetDockItemIconSize() const
+{
+    const GridPage* page = GetFirstPageGridPage();
+    return page ? GetGridPageItemIconSize(*page) : kIconSize;
 }
 
 inline void DesktopApp::ApplyDockWorkAreaReservation()
@@ -47,12 +75,73 @@ inline void DesktopApp::ApplyDockWorkAreaReservation()
         [&](const GridPage& page) { return &page == first; });
     if (it == gridPages_.end()) return;
 
-    const int height = std::max(1, static_cast<int>(it->workArea.bottom - it->workArea.top));
-    const int preferred = std::min(kDockReservedHeight, std::max(1, height - 1));
-    const int reserved = height >= 144 ? std::max(72, preferred) : preferred;
-    dockArea_ = RECT{ it->workArea.left, it->workArea.bottom - reserved,
-        it->workArea.right, it->workArea.bottom };
-    it->workArea.bottom = std::max<LONG>(it->workArea.top + 1, dockArea_.top);
+    const RECT originalWorkArea = it->workArea;
+    const int width = std::max(1, static_cast<int>(originalWorkArea.right - originalWorkArea.left));
+    const int height = std::max(1, static_cast<int>(originalWorkArea.bottom - originalWorkArea.top));
+    const bool vertical = dockSettings_.position == DockPosition::Left ||
+        dockSettings_.position == DockPosition::Right;
+    const int edgeExtent = vertical ? width : height;
+    auto reserveEdge = [&](GridPage& page, int reserved, RECT* dockArea) {
+        page.workArea = originalWorkArea;
+        RECT area{};
+        switch (dockSettings_.position)
+        {
+        case DockPosition::Top:
+            area = RECT{ originalWorkArea.left, originalWorkArea.top,
+                originalWorkArea.right, originalWorkArea.top + reserved };
+            page.workArea.top = area.bottom;
+            break;
+        case DockPosition::Left:
+            area = RECT{ originalWorkArea.left, originalWorkArea.top,
+                originalWorkArea.left + reserved, originalWorkArea.bottom };
+            page.workArea.left = area.right;
+            break;
+        case DockPosition::Right:
+            area = RECT{ originalWorkArea.right - reserved, originalWorkArea.top,
+                originalWorkArea.right, originalWorkArea.bottom };
+            page.workArea.right = area.left;
+            break;
+        case DockPosition::Bottom:
+        default:
+            area = RECT{ originalWorkArea.left, originalWorkArea.bottom - reserved,
+                originalWorkArea.right, originalWorkArea.bottom };
+            page.workArea.bottom = area.top;
+            break;
+        }
+        if (dockArea) *dockArea = area;
+    };
+
+    // Match the Dock thickness and its two edge gaps to the recalculated 1x1
+    // component thickness and the grid's component-side margin.
+    GridPage bestPage = *it;
+    int bestReserved = 1;
+    int bestError = INT_MAX;
+    for (int reserved = 1; reserved < edgeExtent; ++reserved)
+    {
+        GridPage candidate = *it;
+        reserveEdge(candidate, reserved, nullptr);
+        ApplyIconSpacingToPage(candidate);
+        const int componentMargin = vertical
+            ? candidate.marginX : candidate.marginY;
+        const int edgeDistance = std::max(kDockSpacing, componentMargin);
+        const int innerGap = edgeDistance - componentMargin;
+        const int panelThickness = GetGridPageItemIconSize(candidate) +
+            kDockSpacing * 2;
+        const int desiredReservation = dockSettings_.edgeAttached
+            ? panelThickness + innerGap
+            : panelThickness + edgeDistance + innerGap;
+        const int error = std::abs(desiredReservation - reserved);
+        if (error < bestError)
+        {
+            bestError = error;
+            bestReserved = reserved;
+            bestPage = candidate;
+            if (error == 0) break;
+        }
+    }
+
+    *it = bestPage;
+    reserveEdge(*it, bestReserved, &dockArea_);
     ApplyIconSpacingToPage(*it);
 }
 
@@ -102,9 +191,8 @@ inline void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
 
         auto* widget = dynamic_cast<Widget*>(source);
         DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
-        if (data && data->type == DesktopWidgetType::Collection &&
-            data->gridSpan.columns == 1 && data->gridSpan.rows == 1)
-            additions.push_back({ DockEntryType::Collection, data->id, keepSource });
+        if (data && data->type == DesktopWidgetType::Collection)
+            additions.push_back({ DockEntryType::Collection, data->id, false });
     }
     if (additions.empty()) return;
 
@@ -135,21 +223,20 @@ inline void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         {
             const bool becomingExclusive = existing->keepOnDesktop && !addition.keepOnDesktop;
             existing->keepOnDesktop = addition.keepOnDesktop;
+            if (addition.type == DockEntryType::Collection)
+            {
+                existing->keepOnDesktop = false;
+                size_t widgetIndex = FindWidgetIndexById(addition.reference);
+                if (widgetIndex < widgets_.size())
+                    widgets_[widgetIndex].gridCell = { kDockPageId, 0, 0 };
+                continue;
+            }
             if (becomingExclusive)
             {
-                if (addition.type == DockEntryType::DesktopItem)
-                {
-                    RemoveDesktopKeysFromWidgets({ addition.reference });
-                    size_t itemIndex = FindItemIndexByKey(addition.reference);
-                    if (itemIndex < items_.size())
-                        items_[itemIndex].gridCell = { kDockPageId, 0, 0 };
-                }
-                else
-                {
-                    size_t widgetIndex = FindWidgetIndexById(addition.reference);
-                    if (widgetIndex < widgets_.size())
-                        widgets_[widgetIndex].gridCell = { kDockPageId, 0, 0 };
-                }
+                RemoveDesktopKeysFromWidgets({ addition.reference });
+                size_t itemIndex = FindItemIndexByKey(addition.reference);
+                if (itemIndex < items_.size())
+                    items_[itemIndex].gridCell = { kDockPageId, 0, 0 };
             }
             continue;
         }
@@ -157,7 +244,7 @@ inline void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(insertIndex), addition);
         ++insertIndex;
 
-        if (addition.keepOnDesktop) continue;
+        if (addition.keepOnDesktop && addition.type == DockEntryType::DesktopItem) continue;
         if (addition.type == DockEntryType::DesktopItem)
         {
             RemoveDesktopKeysFromWidgets({ addition.reference });
@@ -204,9 +291,12 @@ inline void DesktopApp::AddExternalItemsToDock(
 
 inline bool DesktopApp::FindDockReturnCell(
     std::unordered_set<std::wstring>& usedSlots,
-    const std::wstring& preferredPageId, int startSlot, GridCell& result)
+    const std::wstring& preferredPageId, int startSlot, GridSpan span,
+    GridCell& result)
 {
-    if (TryFindFreeCell({ 1, 1 }, usedSlots, result, preferredPageId, startSlot))
+    span.columns = std::max(1, span.columns);
+    span.rows = std::max(1, span.rows);
+    if (TryFindFreeCell(span, usedSlots, result, preferredPageId, startSlot))
         return true;
 
     // Try saved pages that are currently off-screen before allocating a new one.
@@ -220,7 +310,9 @@ inline bool DesktopApp::FindDockReturnCell(
         for (int slot = 0; slot < columns * rows; ++slot)
         {
             GridCell candidate{ pageId, slot / rows, slot % rows };
-            if (!AreGridSlotsMarked(usedSlots, candidate, { 1, 1 }))
+            if (candidate.column + span.columns <= columns &&
+                candidate.row + span.rows <= rows &&
+                !AreGridSlotsMarked(usedSlots, candidate, span))
             {
                 result = candidate;
                 return true;
@@ -233,8 +325,8 @@ inline bool DesktopApp::FindDockReturnCell(
     const GridPage& reference = gridPages_[order.empty() ? 0 : order.back()];
     const std::wstring pageId = GeneratePageId();
     RememberSavedPageId(pageId);
-    savedPageColumns_[pageId] = std::max(1, reference.columns);
-    savedPageRows_[pageId] = std::max(1, reference.rows);
+    savedPageColumns_[pageId] = std::max(span.columns, reference.columns);
+    savedPageRows_[pageId] = std::max(span.rows, reference.rows);
     result = { pageId, 0, 0 };
     return true;
 }
@@ -285,10 +377,16 @@ inline void DesktopApp::MoveDockItemsToDesktop(
     for (const DockEntry& entry : moving)
     {
         if (entry.keepOnDesktop) continue;
+        GridSpan span{ 1, 1 };
+        if (entry.type == DockEntryType::Collection)
+        {
+            size_t widgetIndex = FindWidgetIndexById(entry.reference);
+            if (widgetIndex < widgets_.size()) span = widgets_[widgetIndex].gridSpan;
+        }
         GridCell freeCell;
-        if (!FindDockReturnCell(usedSlots, targetCell.pageId, startSlot, freeCell))
+        if (!FindDockReturnCell(usedSlots, targetCell.pageId, startSlot, span, freeCell))
             continue;
-        MarkGridArea(usedSlots, freeCell, { 1, 1 });
+        MarkGridArea(usedSlots, freeCell, span);
         ++startSlot;
         if (entry.type == DockEntryType::DesktopItem)
         {
@@ -327,9 +425,15 @@ inline void DesktopApp::RestoreDockEntriesToDesktop()
     for (const DockEntry& entry : dockEntries_)
     {
         if (entry.keepOnDesktop) continue;
+        GridSpan span{ 1, 1 };
+        if (entry.type == DockEntryType::Collection)
+        {
+            size_t widgetIndex = FindWidgetIndexById(entry.reference);
+            if (widgetIndex < widgets_.size()) span = widgets_[widgetIndex].gridSpan;
+        }
         GridCell cell;
-        if (!FindDockReturnCell(usedSlots, preferredPage, startSlot, cell)) continue;
-        MarkGridArea(usedSlots, cell, { 1, 1 });
+        if (!FindDockReturnCell(usedSlots, preferredPage, startSlot, span, cell)) continue;
+        MarkGridArea(usedSlots, cell, span);
         ++startSlot;
         if (entry.type == DockEntryType::DesktopItem)
         {
@@ -350,8 +454,13 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DockEntry& entry, RECT rect, int state)
 {
     if (!ctx) return;
-    RECT iconRect = rect;
-    InflateRect(&iconRect, -9, -9);
+    const int iconSize = GetDockItemIconSize();
+    RECT iconRect{
+        rect.left + (rect.right - rect.left - iconSize) / 2,
+        rect.top + (rect.bottom - rect.top - iconSize) / 2,
+        rect.left + (rect.right - rect.left + iconSize) / 2,
+        rect.top + (rect.bottom - rect.top + iconSize) / 2
+    };
 
     auto drawDesktopItem = [&](const DesktopItem& item, RECT target, int visualState) {
         if (visualState > 0)
@@ -364,26 +473,17 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.72f)
                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.16f));
         }
-        const int width = std::max(1, static_cast<int>(target.right - target.left));
-        const int height = std::max(1, static_cast<int>(target.bottom - target.top));
-        const int size = std::max(1, std::min({ 56, width - 8, height - 8 }));
-        RECT bitmapRect{
-            target.left + (width - size) / 2,
-            target.top + (height - size) / 2,
-            target.left + (width + size) / 2,
-            target.top + (height + size) / 2
-        };
         const float alpha = item.isCut ? 0.4f : 1.0f;
         if (item.iconState == IconState::Loading)
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapRect, alpha);
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, target, alpha);
         else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(item.iconBitmap))
-            ctx->DrawBitmap(bitmap, ToD2DRect(bitmapRect), alpha,
+            ctx->DrawBitmap(bitmap, ToD2DRect(target), alpha,
                 D2D1_INTERPOLATION_MODE_LINEAR);
         else
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapRect, alpha);
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, target, alpha);
         if (ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
             item.iconState != IconState::Loading)
-            DrawShortcutArrowOverlay(ctx, bitmapRect, alpha);
+            DrawShortcutArrowOverlay(ctx, target, alpha);
     };
 
     if (entry.type == DockEntryType::DesktopItem)
@@ -397,19 +497,21 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     size_t widgetIndex = FindWidgetIndexById(entry.reference);
     if (widgetIndex >= widgets_.size()) return;
     const DesktopWidget& widget = widgets_[widgetIndex];
-    RECT inner = iconRect;
-    InflateRect(&inner, -1, -1);
-    const int halfW = std::max(1L, (inner.right - inner.left) / 2);
-    const int halfH = std::max(1L, (inner.bottom - inner.top) / 2);
+    const int innerSize = std::max(1, static_cast<int>(
+        std::min(iconRect.right - iconRect.left, iconRect.bottom - iconRect.top)));
+    const int smallIconSize = std::max(1, (innerSize - kDockSpacing) / 2);
+    const int groupSize = smallIconSize * 2 + kDockSpacing;
+    const int groupLeft = iconRect.left + (innerSize - groupSize) / 2;
+    const int groupTop = iconRect.top + (innerSize - groupSize) / 2;
     for (size_t i = 0; i < std::min<size_t>(4, widget.itemKeys.size()); ++i)
     {
         size_t itemIndex = FindItemIndexByKey(widget.itemKeys[i]);
         if (itemIndex >= items_.size()) continue;
         int col = static_cast<int>(i % 2);
         int row = static_cast<int>(i / 2);
-        RECT cell{ inner.left + col * halfW, inner.top + row * halfH,
-            inner.left + (col + 1) * halfW, inner.top + (row + 1) * halfH };
-        InflateRect(&cell, -1, -1);
+        const int left = groupLeft + col * (smallIconSize + kDockSpacing);
+        const int top = groupTop + row * (smallIconSize + kDockSpacing);
+        RECT cell{ left, top, left + smallIconSize, top + smallIconSize };
         drawDesktopItem(items_[itemIndex], cell, 0);
     }
 }

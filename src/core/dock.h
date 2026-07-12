@@ -52,7 +52,7 @@ public:
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
     void DrawContents(ID2D1DeviceContext* context) override;
     RECT GetBounds() const override;
-    BarStyle GetInsertionStyle() const override { return BarStyle::VBar; }
+    BarStyle GetInsertionStyle() const override;
     std::vector<Item*> GetSelectedItems() const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
     std::wstring GetDragHint(Slot* slot, HitRegion region,
@@ -70,6 +70,10 @@ public:
     void DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const;
 
 private:
+    bool IsVertical() const;
+    bool IsEdgeAttached() const;
+    int ItemPitch() const;
+    int EdgeMargin() const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
 
     DesktopApp* app_ = nullptr;

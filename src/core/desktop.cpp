@@ -362,14 +362,14 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
     POINT dragPoint = app_->dragSession_.CurrentPoint();
 
     // Dock 中的集合不是普通桌面图标，通用预览不会为它生成 landing。
-    // 单独按 Dock 移出时使用的空位搜索规则绘制 1x1 网格落点，确保提示与实际位置一致。
+    // 按真实顺序和原始跨度复现 MoveDockItemsToDesktop 的可见页面落位计算。
     if (hasItemDrag && dynamic_cast<DockContainer*>(app_->dragSession_.Source()))
     {
         const bool hasCollection = std::any_of(app_->dragSession_.Items().begin(),
             app_->dragSession_.Items().end(), [](Item* item) {
                 auto* dockItem = dynamic_cast<DockEntryItem*>(item);
                 return dockItem && dockItem->GetEntryType() == DockEntryType::Collection;
-            });
+        });
         if (hasCollection)
         {
             GridCell requested = app_->CellFromPointForDrag(dragPoint);
@@ -385,16 +385,46 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                     !app_->IsItemInAnyWidget(item))
                     app_->MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
 
-            GridCell landing;
-            const int startSlot = SlotFromCell(app_->gridPages_, requested);
-            if (!app_->TryFindFreeCell({ 1, 1 }, usedSlots, landing,
-                requested.pageId, startSlot))
-                return;
+            std::vector<DockEntryItem*> dockItems;
+            for (Item* item : app_->dragSession_.Items())
+                if (auto* dockItem = dynamic_cast<DockEntryItem*>(item))
+                    dockItems.push_back(dockItem);
+            std::sort(dockItems.begin(), dockItems.end(),
+                [](const DockEntryItem* lhs, const DockEntryItem* rhs) {
+                    return lhs->GetEntryIndex() < rhs->GetEntryIndex();
+                });
 
-            RECT bounds = GetGridRect(app_->gridPages_, landing, { 1, 1 });
-            app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
-                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f),
-                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f), 2.0f);
+            int startSlot = SlotFromCell(app_->gridPages_, requested);
+            for (DockEntryItem* dockItem : dockItems)
+            {
+                GridSpan span{ 1, 1 };
+                if (dockItem->GetEntryType() == DockEntryType::Collection)
+                {
+                    size_t widgetIndex = app_->FindWidgetIndexById(dockItem->GetReference());
+                    if (widgetIndex < app_->widgets_.size())
+                        span = app_->widgets_[widgetIndex].gridSpan;
+                }
+                else
+                {
+                    size_t itemIndex = app_->FindItemIndexByKey(dockItem->GetReference());
+                    if (itemIndex < app_->items_.size())
+                        span = app_->items_[itemIndex].gridSpan;
+                }
+                span.columns = std::max(1, span.columns);
+                span.rows = std::max(1, span.rows);
+
+                GridCell landing;
+                if (!app_->TryFindFreeCell(span, usedSlots, landing,
+                    requested.pageId, startSlot))
+                    continue;
+
+                RECT bounds = GetGridRect(app_->gridPages_, landing, span);
+                app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
+                    D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f),
+                    D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f), 2.0f);
+                app_->MarkGridArea(usedSlots, landing, span);
+                ++startSlot;
+            }
             return;
         }
     }

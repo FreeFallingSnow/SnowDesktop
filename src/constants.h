@@ -38,9 +38,7 @@ constexpr int kTextHeight = kTextCollapsedHeight;
 constexpr float kGapPercentX = 0.16f;
 constexpr float kGapPercentY = 0.14f;
 constexpr wchar_t kDockPageId[] = L"__snowdesktop_dock__";
-constexpr int kDockReservedHeight = 104;
-constexpr int kDockSlotWidth = 80;
-constexpr int kDockSlotHeight = 80;
+constexpr int kDockSpacing = 12;
 
 // ── 重命名编辑框控件ID ────────────────────────
 constexpr int kRenameEditId = 1001;

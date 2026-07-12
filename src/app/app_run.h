@@ -739,6 +739,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     virtualHeight_ = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     BeginIconLoadGeneration();
     LoadGeneralSettingsAndApply();
+    LoadDockSettingsAndApply();
     LoadLayoutSlots();
     UpdateLayoutWorkArea();
     displayTopologySignature_ = CaptureDisplayTopologySignature();
@@ -915,6 +916,20 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             LayoutItems();
             SaveLayoutSlots();
             InvalidateDragStaticScene();
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+        });
+        settingsWindow_->SetDockSettingsChangedCallback([this]() {
+            const DockPosition previousPosition = dockSettings_.position;
+            const bool previousEdgeAttached = dockSettings_.edgeAttached;
+            LoadDockSettingsAndApply();
+            if (dockSettings_.position != previousPosition ||
+                dockSettings_.edgeAttached != previousEdgeAttached)
+            {
+                UpdateLayoutWorkArea();
+                LayoutItems();
+                SaveLayoutSlots();
+                InvalidateDragStaticScene();
+            }
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {

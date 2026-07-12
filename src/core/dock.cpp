@@ -95,10 +95,46 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
 DockContainer::DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area)
     : app_(app), entries_(entries), area_(area) {}
 
+bool DockContainer::IsVertical() const
+{
+    return app_ && (app_->dockSettings_.position == DockPosition::Left ||
+        app_->dockSettings_.position == DockPosition::Right);
+}
+
+bool DockContainer::IsEdgeAttached() const
+{
+    return app_ && app_->dockSettings_.edgeAttached;
+}
+
+int DockContainer::ItemPitch() const
+{
+    const int iconSize = app_ ? app_->GetDockItemIconSize() : kIconSize;
+    return std::max(1, iconSize + kDockSpacing);
+}
+
+int DockContainer::EdgeMargin() const
+{
+    if (app_)
+    {
+        const GridPage* page = app_->GetFirstPageGridPage();
+        if (page) return std::max(0, IsVertical() ? page->marginX : page->marginY);
+    }
+    return IsVertical() ? kGridMarginX : kGridMarginY;
+}
+
+BarStyle DockContainer::GetInsertionStyle() const
+{
+    return IsVertical() ? BarStyle::HBar : BarStyle::VBar;
+}
+
 size_t DockContainer::Capacity() const
 {
-    const int width = std::max(0L, area_.right - area_.left - 24L);
-    return static_cast<size_t>(std::max(0, width / kDockSlotWidth - 1));
+    const LONG extent = IsVertical()
+        ? area_.bottom - area_.top : area_.right - area_.left;
+    const LONG available = std::max(0L, extent -
+        (IsEdgeAttached() ? kDockSpacing : kDockSpacing * 3L));
+    const LONG visibleSlots = available / std::max(1, ItemPitch());
+    return static_cast<size_t>(std::max(0L, visibleSlots - 1L));
 }
 
 bool DockContainer::HasCapacity(size_t additional) const
@@ -109,22 +145,47 @@ bool DockContainer::HasCapacity(size_t additional) const
 RECT DockContainer::GetBounds() const
 {
     const size_t count = entries_ ? entries_->size() : 0;
-    const int desiredWidth = static_cast<int>((count + 1) * kDockSlotWidth + 16);
-    const int maxWidth = std::max(1, static_cast<int>(area_.right - area_.left) - 24);
-    const int width = std::min(desiredWidth, maxWidth);
-    const int reservedHeight = std::max(1, static_cast<int>(area_.bottom - area_.top));
-    int gridBottomMargin = kGridMarginY;
-    if (app_)
+    const bool vertical = IsVertical();
+    const int iconSize = app_ ? app_->GetDockItemIconSize() : kIconSize;
+    const int slotLength = ItemPitch();
+    const int desiredLength = static_cast<int>((count + 1) * slotLength) + kDockSpacing;
+    const int areaWidth = std::max(1, static_cast<int>(area_.right - area_.left));
+    const int areaHeight = std::max(1, static_cast<int>(area_.bottom - area_.top));
+    const int maxLength = std::max(1,
+        (vertical ? areaHeight : areaWidth) - kDockSpacing * 2);
+    const int length = std::min(desiredLength, maxLength);
+    const int thickness = std::min(iconSize + kDockSpacing * 2,
+        vertical ? areaWidth : areaHeight);
+    if (IsEdgeAttached())
     {
-        const GridPage* firstPage = app_->GetFirstPageGridPage();
-        if (firstPage) gridBottomMargin = std::max(0, firstPage->marginY);
+        switch (app_->dockSettings_.position)
+        {
+        case DockPosition::Top:
+            return RECT{ area_.left, area_.top, area_.right, area_.top + thickness };
+        case DockPosition::Left:
+            return RECT{ area_.left, area_.top, area_.left + thickness, area_.bottom };
+        case DockPosition::Right:
+            return RECT{ area_.right - thickness, area_.top, area_.right, area_.bottom };
+        case DockPosition::Bottom:
+        default:
+            return RECT{ area_.left, area_.bottom - thickness, area_.right, area_.bottom };
+        }
     }
-    const int verticalSpan = reservedHeight + gridBottomMargin;
-    const int height = std::min(kDockSlotHeight + 12, verticalSpan);
-    const int balancedGap = std::max(0, (verticalSpan - height) / 2);
-    const int left = area_.left + (area_.right - area_.left - width) / 2;
-    const int top = area_.top - gridBottomMargin + balancedGap;
-    return RECT{ left, top, left + width, top + height };
+    const int edgeDistance = std::max(kDockSpacing, EdgeMargin());
+    const int innerGap = edgeDistance - EdgeMargin();
+    if (vertical)
+    {
+        const int left = app_ && app_->dockSettings_.position == DockPosition::Left
+            ? area_.left + edgeDistance
+            : area_.left + innerGap;
+        const int top = area_.top + (areaHeight - length) / 2;
+        return RECT{ left, top, left + thickness, top + length };
+    }
+    const int left = area_.left + (areaWidth - length) / 2;
+    const int top = app_ && app_->dockSettings_.position == DockPosition::Top
+        ? area_.top + edgeDistance
+        : area_.top + innerGap;
+    return RECT{ left, top, left + length, top + thickness };
 }
 
 std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
@@ -133,14 +194,32 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     entryItems_.clear();
     RECT bounds = GetBounds();
     const size_t count = entries_ ? entries_->size() : 0;
+    const int slotLength = ItemPitch();
+    const int halfGap = kDockSpacing / 2;
     for (size_t i = 0; i <= count; ++i)
     {
-        RECT cell{
-            bounds.left + 8 + static_cast<LONG>(i * kDockSlotWidth),
-            bounds.top + 6,
-            bounds.left + 8 + static_cast<LONG>((i + 1) * kDockSlotWidth),
-            bounds.bottom - 6
-        };
+        RECT cell{};
+        const bool searchSlot = i == count;
+        if (IsVertical())
+        {
+            const LONG top = IsEdgeAttached() && searchSlot
+                ? bounds.bottom - halfGap - slotLength
+                : bounds.top + halfGap + static_cast<LONG>(i * slotLength);
+            cell = RECT{ bounds.left,
+                top,
+                bounds.right,
+                top + slotLength };
+        }
+        else
+        {
+            const LONG left = IsEdgeAttached() && searchSlot
+                ? bounds.right - halfGap - slotLength
+                : bounds.left + halfGap + static_cast<LONG>(i * slotLength);
+            cell = RECT{ left,
+                bounds.top,
+                left + slotLength,
+                bounds.bottom };
+        }
         auto slot = std::make_unique<Slot>(this, cell, i);
         if (i < count)
         {
@@ -171,7 +250,9 @@ size_t DockContainer::GetInsertIndexAtPoint(POINT pt) const
     {
         RECT bounds = slots[i]->GetBounds();
         if (PtInRect(&bounds, pt))
-            return pt.x < (bounds.left + bounds.right) / 2 ? i : i + 1;
+            return IsVertical()
+                ? (pt.y < (bounds.top + bounds.bottom) / 2 ? i : i + 1)
+                : (pt.x < (bounds.left + bounds.right) / 2 ? i : i + 1);
     }
     return count;
 }
@@ -183,15 +264,25 @@ void DockContainer::DrawInsertionPreview(
     const size_t count = entries_ ? entries_->size() : 0;
     insertIndex = std::min(insertIndex, count);
     RECT bounds = GetBounds();
-    const float x = static_cast<float>(bounds.left + 8 +
-        static_cast<LONG>(insertIndex * kDockSlotWidth));
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.95f), &brush);
-    if (brush)
+    if (!brush) return;
+    if (IsVertical())
+    {
+        const float y = static_cast<float>(bounds.top + kDockSpacing / 2 +
+            static_cast<LONG>(insertIndex * ItemPitch()));
         context->FillRoundedRectangle(D2D1::RoundedRect(
-            D2D1::RectF(x - 2.0f, static_cast<float>(bounds.top + 10),
-                x + 2.0f, static_cast<float>(bounds.bottom - 10)), 2.0f, 2.0f),
+            D2D1::RectF(static_cast<float>(bounds.left + 10), y - 2.0f,
+                static_cast<float>(bounds.right - 10), y + 2.0f), 2.0f, 2.0f),
             brush.Get());
+        return;
+    }
+    const float x = static_cast<float>(bounds.left + kDockSpacing / 2 +
+        static_cast<LONG>(insertIndex * ItemPitch()));
+    context->FillRoundedRectangle(D2D1::RoundedRect(
+        D2D1::RectF(x - 2.0f, static_cast<float>(bounds.top + 10),
+            x + 2.0f, static_cast<float>(bounds.bottom - 10)), 2.0f, 2.0f),
+        brush.Get());
 }
 
 void DockContainer::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
@@ -206,16 +297,53 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     (void)mousePt;
     if (!context) return;
     RECT bounds = GetBounds();
-    PersonalizationSettings p = app_ && app_->settingsWindow_
-        ? app_->settingsWindow_->GetPersonalization()
+    PersonalizationSettings p = app_ && !app_->dockSettings_.followPersonalization
+        ? app_->dockSettings_.appearance
         : PersonalizationSettings::DarkPreset();
+    if (app_ && app_->settingsWindow_)
+        p = app_->settingsWindow_->GetDockAppearance();
+    const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
     const D2D1_COLOR_F border = D2D1::ColorF(
         p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetBorderAlpha);
     if (app_)
-        app_->DrawWidgetPanelBackground(context, bounds, p.cornerRadius, 1.0f,
-            fill, border, false, 1.0f, &p);
+        app_->DrawWidgetPanelBackground(context, bounds, panelRadius, 1.0f,
+            fill, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, 1.0f, &p);
+
+    if (p.gradientEndA > 0.001f)
+    {
+        D2D1_GRADIENT_STOP stopsData[] = {
+            { 0.0f, D2D1::ColorF(fill.r, fill.g, fill.b, 0.0f) },
+            { 1.0f, D2D1::ColorF(fill.r, fill.g, fill.b,
+                std::clamp(p.gradientEndA, 0.0f, 1.0f)) },
+        };
+        ComPtr<ID2D1GradientStopCollection> stops;
+        ComPtr<ID2D1LinearGradientBrush> gradient;
+        if (SUCCEEDED(context->CreateGradientStopCollection(stopsData, 2,
+            D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops &&
+            SUCCEEDED(context->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(0.0f, bounds.top + (bounds.bottom - bounds.top) * 0.35f),
+                    D2D1::Point2F(0.0f, static_cast<float>(bounds.bottom))),
+                stops.Get(), &gradient)) && gradient)
+        {
+            context->FillRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+                    static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
+                panelRadius, panelRadius), gradient.Get());
+        }
+    }
+
+    if (border.a > 0.0f)
+    {
+        ComPtr<ID2D1SolidColorBrush> borderBrush;
+        if (SUCCEEDED(context->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
+            context->DrawRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+                    static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
+                panelRadius, panelRadius), borderBrush.Get(), 1.0f);
+    }
 
 }
 
@@ -224,6 +352,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (!context) return;
     const auto& slots = GetSlots();
     const size_t count = entries_ ? entries_->size() : 0;
+    std::wstring hoveredTitle;
+    RECT hoveredBounds{};
     for (size_t i = 0; i < count && i < slots.size(); ++i)
     {
         Item* item = slots[i]->GetItem();
@@ -231,39 +361,157 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         RECT slotBounds = slots[i]->GetBounds();
         const bool hovered = PtInRect(&slotBounds, app_->lastMousePoint_) != FALSE;
         item->Draw(context, slotBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
+        if (hovered && !app_->dragSession_.IsActive())
+        {
+            hoveredTitle = item->GetTitle();
+            hoveredBounds = slotBounds;
+        }
     }
 
     RECT search = GetSearchRect();
     const bool searchHovered = PtInRect(&search, app_->lastMousePoint_) != FALSE;
-    const int backgroundSize = std::max(1, std::min(58,
-        static_cast<int>(std::min(search.right - search.left, search.bottom - search.top)) - 10));
+    PersonalizationSettings dockAppearance = app_ && !app_->dockSettings_.followPersonalization
+        ? app_->dockSettings_.appearance
+        : PersonalizationSettings::DarkPreset();
+    if (app_ && app_->settingsWindow_)
+        dockAppearance = app_->settingsWindow_->GetDockAppearance();
+    const int backgroundSize = app_->GetDockItemIconSize();
+    const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
     RECT searchBackground{
         search.left + (search.right - search.left - backgroundSize) / 2,
         search.top + (search.bottom - search.top - backgroundSize) / 2,
         search.left + (search.right - search.left + backgroundSize) / 2,
         search.top + (search.bottom - search.top + backgroundSize) / 2
     };
-    const float backgroundAlpha = std::clamp(app_->iconBeautifyBgOpacity_, 0.18f, 1.0f);
-    app_->DrawD2DRoundedRectangle(context, searchBackground, 13.0f,
-        D2D1::ColorF(app_->iconBeautifyBgStartR_, app_->iconBeautifyBgStartG_,
-            app_->iconBeautifyBgStartB_, searchHovered
-                ? std::min(1.0f, backgroundAlpha + 0.12f) : backgroundAlpha),
-        searchHovered
-            ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.82f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
-        searchHovered ? 1.6f : 1.0f);
+    const float luminance = dockAppearance.widgetBgR * 0.2126f +
+        dockAppearance.widgetBgG * 0.7152f + dockAppearance.widgetBgB * 0.0722f;
+    const bool lightSurface = luminance > 0.58f && dockAppearance.widgetAlpha > 0.10f;
+    const D2D1_COLOR_F tileFill = searchHovered
+        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, lightSurface ? 0.20f : 0.25f)
+        : (lightSurface
+            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.075f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.11f));
+    const D2D1_COLOR_F tileBorder = searchHovered
+        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.88f)
+        : (lightSurface
+            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.14f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+    app_->DrawD2DRoundedRectangle(context, searchBackground,
+        std::max(6.0f, 15.0f * searchScale), tileFill, tileBorder,
+        (searchHovered ? 1.6f : 1.0f) * std::max(0.75f, searchScale));
 
-    const bool light = app_ && app_->quickNavLightTheme_;
     ComPtr<ID2D1SolidColorBrush> brush;
-    context->CreateSolidColorBrush(light
-        ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.90f)
-        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.90f), &brush);
+    context->CreateSolidColorBrush(searchHovered
+        ? D2D1::ColorF(0.30f, 0.58f, 1.0f, 1.0f)
+        : (lightSurface
+            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.88f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f)), &brush);
     if (!brush) return;
-    const float cx = (searchBackground.left + searchBackground.right) / 2.0f - 4.0f;
-    const float cy = (searchBackground.top + searchBackground.bottom) / 2.0f - 4.0f;
-    context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 12.0f, 12.0f), brush.Get(), 3.0f);
-    context->DrawLine(D2D1::Point2F(cx + 8.0f, cy + 8.0f),
-        D2D1::Point2F(cx + 18.0f, cy + 18.0f), brush.Get(), 3.0f);
+    ComPtr<ID2D1Factory> factory;
+    ComPtr<ID2D1StrokeStyle> roundedStroke;
+    context->GetFactory(&factory);
+    if (factory)
+    {
+        const D2D1_STROKE_STYLE_PROPERTIES properties = D2D1::StrokeStyleProperties(
+            D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
+            D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_SOLID, 0.0f);
+        factory->CreateStrokeStyle(properties, nullptr, 0, &roundedStroke);
+    }
+    const float centerX = (searchBackground.left + searchBackground.right) / 2.0f -
+        2.7f * searchScale;
+    const float centerY = (searchBackground.top + searchBackground.bottom) / 2.0f -
+        2.7f * searchScale;
+    const float searchStroke = std::max(1.5f, 2.35f * searchScale);
+    context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, centerY),
+        9.2f * searchScale, 9.2f * searchScale),
+        brush.Get(), searchStroke, roundedStroke.Get());
+    context->DrawLine(D2D1::Point2F(centerX + 6.6f * searchScale,
+            centerY + 6.6f * searchScale),
+        D2D1::Point2F(centerX + 13.5f * searchScale,
+            centerY + 13.5f * searchScale),
+        brush.Get(), searchStroke, roundedStroke.Get());
+
+    if (searchHovered && !app_->dragSession_.IsActive())
+    {
+        hoveredTitle = L"快捷搜索";
+        hoveredBounds = search;
+    }
+
+    if (!hoveredTitle.empty() && app_->dwriteFactory_)
+    {
+        ComPtr<IDWriteTextFormat> tooltipFormat;
+        app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"zh-CN", &tooltipFormat);
+        if (tooltipFormat)
+        {
+            tooltipFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            tooltipFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            ComPtr<IDWriteTextLayout> layout;
+            DWRITE_TEXT_METRICS metrics{};
+            if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
+                hoveredTitle.c_str(), static_cast<UINT32>(hoveredTitle.size()),
+                tooltipFormat.Get(), 240.0f, 28.0f, &layout)) && layout)
+                layout->GetMetrics(&metrics);
+
+            const int tooltipWidth = std::clamp(
+                static_cast<int>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + 20,
+                48, 260);
+            constexpr int tooltipHeight = 30;
+            constexpr int tooltipGap = 8;
+            RECT tooltip{};
+            switch (app_->dockSettings_.position)
+            {
+            case DockPosition::Top:
+                tooltip.left = (hoveredBounds.left + hoveredBounds.right - tooltipWidth) / 2;
+                tooltip.top = hoveredBounds.bottom + tooltipGap;
+                break;
+            case DockPosition::Left:
+                tooltip.left = hoveredBounds.right + tooltipGap;
+                tooltip.top = (hoveredBounds.top + hoveredBounds.bottom - tooltipHeight) / 2;
+                break;
+            case DockPosition::Right:
+                tooltip.left = hoveredBounds.left - tooltipGap - tooltipWidth;
+                tooltip.top = (hoveredBounds.top + hoveredBounds.bottom - tooltipHeight) / 2;
+                break;
+            case DockPosition::Bottom:
+            default:
+                tooltip.left = (hoveredBounds.left + hoveredBounds.right - tooltipWidth) / 2;
+                tooltip.top = hoveredBounds.top - tooltipGap - tooltipHeight;
+                break;
+            }
+            tooltip.right = tooltip.left + tooltipWidth;
+            tooltip.bottom = tooltip.top + tooltipHeight;
+
+            POINT dockCenter{
+                (hoveredBounds.left + hoveredBounds.right) / 2,
+                (hoveredBounds.top + hoveredBounds.bottom) / 2
+            };
+            for (const auto& page : app_->gridPages_)
+            {
+                if (!PtInRect(&page.bounds, dockCenter)) continue;
+                const int minLeft = static_cast<int>(page.bounds.left + 6);
+                const int maxLeft = static_cast<int>(std::max<LONG>(
+                    page.bounds.left + 6, page.bounds.right - tooltipWidth - 6));
+                const int minTop = static_cast<int>(page.bounds.top + 6);
+                const int maxTop = static_cast<int>(std::max<LONG>(
+                    page.bounds.top + 6, page.bounds.bottom - tooltipHeight - 6));
+                tooltip.left = std::clamp(static_cast<int>(tooltip.left), minLeft, maxLeft);
+                tooltip.top = std::clamp(static_cast<int>(tooltip.top), minTop, maxTop);
+                tooltip.right = tooltip.left + tooltipWidth;
+                tooltip.bottom = tooltip.top + tooltipHeight;
+                break;
+            }
+
+            app_->DrawD2DRoundedRectangle(context, tooltip, 7.0f,
+                D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.94f),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+            app_->DrawD2DTextEllipsis(context, hoveredTitle, tooltip,
+                tooltipFormat.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f),
+                DWRITE_TEXT_ALIGNMENT_CENTER,
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER, true);
+        }
+    }
 }
 
 std::vector<Item*> DockContainer::GetSelectedItems() const
@@ -330,6 +578,9 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         {
             resetDwell();
         }
+        if (IsVertical())
+            return pt.y < (bounds.top + bounds.bottom) / 2
+                ? HitRegion::SortBefore : HitRegion::SortAfter;
         return pt.x < (bounds.left + bounds.right) / 2
             ? HitRegion::SortBefore : HitRegion::SortAfter;
     }

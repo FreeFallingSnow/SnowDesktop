@@ -484,6 +484,13 @@ inline void DesktopApp::LoadGeneralSettingsAndApply()
     quickNavLightTheme_ = (generalSettings_.quickNavTheme == 1);
 }
 
+inline void DesktopApp::LoadDockSettingsAndApply()
+{
+    DockSettings settings;
+    LoadDockSettings(GetDockSettingsPath().c_str(), settings);
+    dockSettings_ = settings;
+}
+
 inline void DesktopApp::LoadCategorySettingsAndApply()
 {
     CategorySettings settings = CategorySettings::Defaults();
@@ -1771,17 +1778,12 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         DockContainer* dock = GetDockContainer();
         RECT dockBounds = dock ? dock->GetBounds() : RECT{};
         const bool canDock = dock && PtInRect(&dockBounds, current) &&
-            widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection &&
-            widgets_[mouseDownWidgetIndex_].gridSpan.columns == 1 &&
-            widgets_[mouseDownWidgetIndex_].gridSpan.rows == 1;
+            widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection;
         if (canDock)
         {
             widgetDockTarget_ = true;
             widgetDockInsertIndex_ = dock->GetInsertIndexAtPoint(current);
-            const bool keepSource = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-            ShowDragHintWindow(current, keepSource
-                ? L"释放：建立 Dock 映射（保留原入口）"
-                : L"释放：移动 1×1 集合到 Dock（按住 Ctrl 可建立映射）");
+            ShowDragHintWindow(current, L"释放：移动集合到 Dock");
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -2199,9 +2201,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             DockContainer* dock = GetDockContainer();
             RECT dockBounds = dock ? dock->GetBounds() : RECT{};
             const bool canDock = dock && PtInRect(&dockBounds, upPoint) &&
-                widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection &&
-                widgets_[mouseDownWidgetIndex_].gridSpan.columns == 1 &&
-                widgets_[mouseDownWidgetIndex_].gridSpan.rows == 1;
+                widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection;
             if (canDock)
             {
                 Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
@@ -3604,6 +3604,7 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             popupWidgetIndex_ = static_cast<size_t>(-1);
             popupScrollOffset_ = 0;
             popupHasAnchor_ = false;
+            popupAnchoredToDock_ = false;
             popupAnchorPoint_ = {};
             popupPageId_.clear();
             popupCategoryId_.clear();
@@ -3881,6 +3882,46 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);
+
+    if (DockContainer* dock = GetDockContainer())
+    {
+        if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
+        {
+            const size_t entryIndex = dockItem->GetEntryIndex();
+            if (entryIndex < dockEntries_.size())
+            {
+                ClearSelection();
+                dockEntries_[entryIndex].selected = true;
+                const RECT dockItemBounds = dockItem->GetBounds();
+                if (dockItem->GetEntryType() == DockEntryType::DesktopItem)
+                {
+                    size_t itemIndex = FindItemIndexByKey(dockItem->GetReference());
+                    if (itemIndex < items_.size())
+                    {
+                        items_[itemIndex].selected = true;
+                        items_[itemIndex].bounds = dockItemBounds;
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                        if (IsProtectedDesktopIcon(items_[itemIndex]))
+                            ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
+                        else
+                            ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+                    }
+                }
+                else
+                {
+                    size_t widgetIndex = FindWidgetIndexById(dockItem->GetReference());
+                    if (widgetIndex < widgets_.size())
+                    {
+                        widgets_[widgetIndex].selected = true;
+                        widgets_[widgetIndex].bounds = dockItemBounds;
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                        ShowWidgetContextMenu(screenPt, widgetIndex);
+                    }
+                }
+                return;
+            }
+        }
+    }
 
     if (popupWidgetIndex_ < widgets_.size())
     {
@@ -4190,8 +4231,18 @@ inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     }
 
     size_t hoveredCollection = static_cast<size_t>(-1);
+    if (DockContainer* dock = GetDockContainer())
+    {
+        if (DockEntryItem* entry = dock->EntryAtPoint(point);
+            entry && entry->GetEntryType() == DockEntryType::Collection)
+        {
+            hoveredCollection = FindWidgetIndexById(entry->GetReference());
+        }
+    }
+
     for (auto& c : containers_)
     {
+        if (hoveredCollection < widgets_.size()) break;
         auto* collection = dynamic_cast<Collection*>(c.get());
         if (!collection) continue;
 
@@ -4266,7 +4317,7 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
-    popupAnchorAbove_ = false;
+    popupAnchoredToDock_ = false;
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_ = categoryId;
     popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
@@ -4275,18 +4326,48 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
         RECT dockBounds = dock->GetBounds();
         if (PtInRect(&dockBounds, anchorPoint))
         {
-            const GridPage* firstPage = GetFirstPageGridPage();
-            if (firstPage) popupPageId_ = firstPage->id;
+            const POINT dockCenter{
+                (dockBounds.left + dockBounds.right) / 2,
+                (dockBounds.top + dockBounds.bottom) / 2
+            };
+            const GridPage* dockPage = nullptr;
+            for (const auto& page : gridPages_)
+            {
+                if (PtInRect(&page.bounds, dockCenter))
+                {
+                    dockPage = &page;
+                    break;
+                }
+            }
+            if (!dockPage) dockPage = GetFirstPageGridPage();
+            if (dockPage) popupPageId_ = dockPage->id;
             if (DockEntryItem* dockItem = dock->EntryAtPoint(anchorPoint);
                 dockItem && dockItem->GetEntryType() == DockEntryType::Collection &&
                 dockItem->GetReference() == widgets_[widgetIndex].id)
             {
                 RECT itemBounds = dockItem->GetBounds();
-                popupAnchorPoint_ = {
-                    (itemBounds.left + itemBounds.right) / 2,
-                    itemBounds.top
-                };
-                popupAnchorAbove_ = true;
+                popupDockPosition_ = dockSettings_.position;
+                popupAnchoredToDock_ = true;
+                switch (popupDockPosition_)
+                {
+                case DockPosition::Top:
+                    popupAnchorPoint_ = {
+                        (itemBounds.left + itemBounds.right) / 2, itemBounds.bottom };
+                    break;
+                case DockPosition::Left:
+                    popupAnchorPoint_ = {
+                        itemBounds.right, (itemBounds.top + itemBounds.bottom) / 2 };
+                    break;
+                case DockPosition::Right:
+                    popupAnchorPoint_ = {
+                        itemBounds.left, (itemBounds.top + itemBounds.bottom) / 2 };
+                    break;
+                case DockPosition::Bottom:
+                default:
+                    popupAnchorPoint_ = {
+                        (itemBounds.left + itemBounds.right) / 2, itemBounds.top };
+                    break;
+                }
             }
         }
     }
@@ -4308,7 +4389,7 @@ inline void DesktopApp::CloseCollectionPopup()
     popupWidgetIndex_ = static_cast<size_t>(-1);
     popupScrollOffset_ = 0;
     popupHasAnchor_ = false;
-    popupAnchorAbove_ = false;
+    popupAnchoredToDock_ = false;
     popupAnchorPoint_ = {};
     popupPageId_.clear();
     popupCategoryId_.clear();
@@ -6966,10 +7047,15 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     case kContextWidgetDelete:
     {
+        const std::wstring deletedWidgetId = widgets_[widgetIndex].id;
         if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript && widgetEngine_)
             widgetEngine_->UnloadWidget(widgets_[widgetIndex].id);
         // Move widget's itemKeys back to desktop by just removing the widget
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
+        std::erase_if(dockEntries_, [&](const DockEntry& entry) {
+            return entry.type == DockEntryType::Collection &&
+                entry.reference == deletedWidgetId;
+        });
         EnsureNavTabOrder();
         // 删除组件可能使页面变空（溢出区空页后面有非空页时应立即清理顺延）
         ApplyPageMapping();

@@ -562,7 +562,7 @@ inline const GridPage* DesktopApp::GetFirstPageGridPage() const
  */
 inline bool DesktopApp::PageHasContent(const std::wstring& pageId) const
 {
-    if (pageId.empty()) return false;
+    if (pageId.empty() || pageId == kDockPageId) return false;
     for (const auto& item : items_)
         if (!item.name.empty() && item.gridCell.pageId == pageId) return true;
     for (const auto& w : widgets_)
@@ -744,6 +744,9 @@ inline std::wstring DesktopApp::GeneratePageId() const
  */
 inline void DesktopApp::NormalizePageIds()
 {
+    std::erase(savedPageIds_, std::wstring(kDockPageId));
+    savedPageColumns_.erase(kDockPageId);
+    savedPageRows_.erase(kDockPageId);
     if (savedPageIds_.empty()) return;
     if (savedPageIds_.size() > 9999) return;   // 防御：编号爆炸
 
@@ -1682,6 +1685,11 @@ inline void DesktopApp::LoadSavedPagesFromJson(const std::string& text)
         if (ReadJsonStringField(objectText, "id", pageUtf8))
         {
             std::wstring pageId = Utf8ToWide(pageUtf8);
+            if (pageId == kDockPageId)
+            {
+                pos = objectEnd + 1;
+                continue;
+            }
             if (std::find(savedPageIds_.begin(), savedPageIds_.end(), pageId) == savedPageIds_.end())
                 savedPageIds_.push_back(pageId);
             int columns = 0, rows = 0;
@@ -1700,7 +1708,7 @@ inline void DesktopApp::LoadSavedPagesFromJson(const std::string& text)
  */
 inline void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
 {
-    if (pageId.empty()) return;
+    if (pageId.empty() || pageId == kDockPageId) return;
     if (std::find(savedPageIds_.begin(), savedPageIds_.end(), pageId) == savedPageIds_.end())
         savedPageIds_.push_back(pageId);
 }
@@ -2048,6 +2056,71 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
         }
     }
 
+    // Dock coordinates are not desktop pages. Migrate both current Dock
+    // entries and layouts previously polluted by a normalized Dock pseudo-page.
+    std::unordered_set<std::wstring> legacyDockPageCandidates;
+    for (auto& entry : dockEntries_)
+    {
+        if (entry.type == DockEntryType::Collection)
+        {
+            entry.keepOnDesktop = false;
+            size_t widgetIndex = FindWidgetIndexById(entry.reference);
+            if (widgetIndex >= widgets_.size()) continue;
+            DesktopWidget& widget = widgets_[widgetIndex];
+            if (!widget.gridCell.pageId.empty() && widget.gridCell.pageId != kDockPageId)
+                legacyDockPageCandidates.insert(widget.gridCell.pageId);
+            widget.gridCell = { kDockPageId, 0, 0 };
+            for (const auto& key : widget.itemKeys)
+            {
+                auto record = layoutRecords_.find(ToUpperInvariant(key));
+                if (record == layoutRecords_.end()) continue;
+                if (!record->second.cell.pageId.empty() &&
+                    record->second.cell.pageId != kDockPageId)
+                    legacyDockPageCandidates.insert(record->second.cell.pageId);
+                record->second.cell = { kDockPageId, 0, 0 };
+                record->second.span = { 1, 1 };
+                record->second.hasGrid = true;
+            }
+            continue;
+        }
+
+        if (entry.keepOnDesktop) continue;
+        auto record = layoutRecords_.find(ToUpperInvariant(entry.reference));
+        if (record == layoutRecords_.end()) continue;
+        if (!record->second.cell.pageId.empty() &&
+            record->second.cell.pageId != kDockPageId)
+            legacyDockPageCandidates.insert(record->second.cell.pageId);
+        record->second.cell = { kDockPageId, 0, 0 };
+        record->second.span = { 1, 1 };
+        record->second.hasGrid = true;
+    }
+
+    std::unordered_set<std::wstring> widgetOwnedKeys;
+    for (const auto& widget : widgets_)
+        for (const auto& key : widget.itemKeys)
+            widgetOwnedKeys.insert(ToUpperInvariant(key));
+
+    for (const auto& candidate : legacyDockPageCandidates)
+    {
+        if (candidate.empty() || candidate == kDockPageId) continue;
+        bool hasDesktopContent = std::any_of(widgets_.begin(), widgets_.end(),
+            [&](const DesktopWidget& widget) {
+                return widget.gridCell.pageId == candidate;
+            });
+        if (!hasDesktopContent)
+        {
+            hasDesktopContent = std::any_of(layoutRecords_.begin(), layoutRecords_.end(),
+                [&](const auto& pair) {
+                    return !widgetOwnedKeys.contains(pair.first) &&
+                        pair.second.hasGrid && pair.second.cell.pageId == candidate;
+                });
+        }
+        if (hasDesktopContent) continue;
+        std::erase(savedPageIds_, candidate);
+        savedPageColumns_.erase(candidate);
+        savedPageRows_.erase(candidate);
+    }
+
     {
         std::vector<std::wstring> savedOrder;
         ReadJsonStringArrayField(text, "navTabOrder", savedOrder);
@@ -2095,7 +2168,11 @@ inline void DesktopApp::SaveLayoutSlots()
         savedPageRows_[page.id] = page.rows;
     }
 
-    std::vector<std::wstring> pagesToWrite = savedPageIds_;
+    std::vector<std::wstring> pagesToWrite;
+    pagesToWrite.reserve(savedPageIds_.size());
+    for (const auto& pageId : savedPageIds_)
+        if (!pageId.empty() && pageId != kDockPageId)
+            pagesToWrite.push_back(pageId);
     if (pagesToWrite.empty() && !gridPages_.empty())
     {
         const GridPage* firstPage = GetFirstPageGridPage();
@@ -2502,7 +2579,9 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     if (reloadLayoutFromDisk)
     {
         LoadLayoutSlots();
-        UpdateLayoutWorkArea();
+        // The file has just populated savedPageColumns_/savedPageRows_. Do not
+        // overwrite those restored values with the pre-reload runtime grid.
+        UpdateLayoutWorkArea(false);
         if (widgetEngine_)
             widgetEngine_->ReloadStorage();
     }
@@ -3216,17 +3295,20 @@ inline void DesktopApp::RefreshDisplayTopologyIfChanged()
 /**
  * @brief 更新布局工作区，枚举显示器并创建对应 GridPage，然后应用页面映射。
  */
-inline void DesktopApp::UpdateLayoutWorkArea()
+inline void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
 {
     layoutWorkArea_ = MakeRect(0, 0, virtualWidth_, virtualHeight_);
     // Preserve the active page dimensions before rebuilding monitor geometry.
     // DPI, resolution and work-area changes may resize cells, but must not
     // replace an already established row/column count.
-    for (const auto& page : gridPages_)
+    if (preserveActiveDimensions)
     {
-        if (page.id.empty()) continue;
-        savedPageColumns_[page.id] = std::max(1, page.columns);
-        savedPageRows_[page.id] = std::max(1, page.rows);
+        for (const auto& page : gridPages_)
+        {
+            if (page.id.empty()) continue;
+            savedPageColumns_[page.id] = std::max(1, page.columns);
+            savedPageRows_[page.id] = std::max(1, page.rows);
+        }
     }
     gridPages_.clear();
 
@@ -4262,6 +4344,12 @@ inline DragSourceList DesktopApp::BuildDragSourceList(
             {
                 entry.kind = DropSourceKind::Widget;
                 list.hasWidgets = true;
+                size_t widgetIndex = FindWidgetIndexById(entry.dockReference);
+                if (widgetIndex < widgets_.size())
+                {
+                    entry.originalCell = widgets_[widgetIndex].gridCell;
+                    entry.originalSpan = widgets_[widgetIndex].gridSpan;
+                }
             }
         }
         else if (dynamic_cast<Widget*>(src))
@@ -5448,16 +5536,20 @@ inline void DesktopApp::RebuildContainersAndItems()
     // Widgets
     for (auto& w : widgets_)
     {
-        if (IsDockExclusiveWidgetId(w.id)) continue;
+        const bool dockExclusive = IsDockExclusiveWidgetId(w.id);
         auto widget = CreateWidget(&w, this);
         if (!widget) continue;
 
         if (auto* wc = dynamic_cast<WidgetContainer*>(widget.get()))
         {
+            // Dock-exclusive collections still need a runtime container so
+            // their popup can participate in selection, reorder and drops.
+            // Their saved Dock page has no grid rect, so normal widget drawing
+            // remains suppressed by the empty bounds.
             widget.release();
             containers_.push_back(std::unique_ptr<Container>(wc));
         }
-        else
+        else if (!dockExclusive)
         {
             items_oo_.push_back(std::move(widget));
         }

@@ -27,6 +27,7 @@
 #include "settings_window.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "dock_settings.h"
 #include "category_settings.h"
 #include "everything_search.h"
 #include "data_paths.h"
@@ -444,7 +445,7 @@ private:
     /** @brief 重新加载所有项目并可选从磁盘恢复布局。 @param reloadLayoutFromDisk 是否重新从磁盘加载布局 */
     void ReloadItems(bool reloadLayoutFromDisk = true);
     /** @brief 根据可用显示器信息更新布局工作区域。 */
-    void UpdateLayoutWorkArea();
+    void UpdateLayoutWorkArea(bool preserveActiveDimensions = true);
     /** @brief 用当前设置（行列数）配置指定网格页面。 @param page 网格页面引用 */
     void ConfigureGridPage(GridPage& page) const;
     /** @brief 将用户保存的网格尺寸应用到各页面上。 */
@@ -458,13 +459,16 @@ private:
     /** @brief 为首屏 Dock 预留工作区并计算其绘制区域。 */
     void ApplyDockWorkAreaReservation();
     DockContainer* GetDockContainer() const;
+    int GetGridPageItemIconSize(const GridPage& page) const;
+    int GetDockItemIconSize() const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
     void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
     bool FindDockReturnCell(std::unordered_set<std::wstring>& usedSlots,
-        const std::wstring& preferredPageId, int startSlot, GridCell& result);
+        const std::wstring& preferredPageId, int startSlot, GridSpan span,
+        GridCell& result);
     bool DropItemsIntoDockCollection(const std::vector<Item*>& sourceItems,
         Container* origin, DockEntryItem* targetItem, int mods);
     bool IsDockExclusiveItemKey(const std::wstring& key) const;
@@ -476,6 +480,8 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    /** @brief 加载 Dock 设置。 */
+    void LoadDockSettingsAndApply();
     /** @brief 加载分类设置并刷新分类组件。 */
     void LoadCategorySettingsAndApply();
     /** @brief 获取当前分类设置。 */
@@ -1402,6 +1408,8 @@ private:
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
     int GetCollectionPopupColumnCount(const RECT& popup) const;
+    int GetCollectionPopupCellWidth() const;
+    int GetCollectionPopupCellHeight() const;
     /** @brief 获取集合弹出面板中的行数。 @param widget 部件引用 @param popup 面板矩形 @return 行数 */
     int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容的最大滚动偏移。 @param widget 部件引用 @param popup 面板矩形 @return 最大滚动偏移 */
@@ -1537,6 +1545,7 @@ private:
     std::unique_ptr<WidgetEngine> widgetEngine_;
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
+    DockSettings dockSettings_;
     CategorySettings categorySettings_ = CategorySettings::Defaults();
     bool quickNavLightTheme_ = false;
     bool desktopIconsHidden_ = false;
@@ -1812,7 +1821,8 @@ private:
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
     bool popupHasAnchor_ = false;
-    bool popupAnchorAbove_ = false;
+    bool popupAnchoredToDock_ = false;
+    DockPosition popupDockPosition_ = DockPosition::Bottom;
     POINT popupAnchorPoint_{};
     std::wstring popupPageId_;
     std::wstring popupCategoryId_;

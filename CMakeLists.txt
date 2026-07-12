@@ -18,6 +18,7 @@ set(SNOWDESKTOP_SOURCES
     src/utils.cpp
     src/settings_window.cpp
     src/personalization.cpp
+    src/dock_settings.cpp
     src/navigation_settings.cpp
     src/general_settings.cpp
     src/category_settings.cpp

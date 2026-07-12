@@ -17,6 +17,7 @@
 
 #include "general_settings.h"
 #include "personalization.h"
+#include "dock_settings.h"
 #include "navigation_settings.h"
 #include "category_settings.h"
 
@@ -145,6 +146,9 @@ public:
     void SetDockEnabledChangedCallback(std::function<void(bool)> callback)
     { dockEnabledChangedCallback_ = std::move(callback); }
 
+    void SetDockSettingsChangedCallback(std::function<void()> callback)
+    { dockSettingsChangedCallback_ = std::move(callback); }
+
     void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
@@ -214,6 +218,11 @@ public:
      * @return 指向 PersonalizationSettings 的常引用
      */
     const PersonalizationSettings& GetPersonalization() const { return personalization_; }
+    const DockSettings& GetDockSettings() const { return dockSettings_; }
+    PersonalizationSettings GetDockAppearance() const
+    {
+        return dockSettings_.followPersonalization ? personalization_ : dockSettings_.appearance;
+    }
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
@@ -292,6 +301,8 @@ private:
      * @brief 绘制个性化设置页面（背景、字体等外观选项）
      */
     void DrawPersonalizationPage();
+
+    void DrawDockPage();
 
     void DrawDisplayPage();
 
@@ -418,7 +429,7 @@ private:
     /// 系统 DPI 缩放比例，用于字体和界面缩放适配
     float dpiScale_ = 1.0f;
 
-    /// 当前活动页面索引（0 = 通用, 1 = 组件显示, 2 = 图标显示, 3 = 分类设置, 4 = 布局备份, 5 = 关于, 6 = 调试）
+    /// 当前活动页面索引（0 = 通用, 1 = 组件显示, 2 = Dock, 3 = 图标显示, 4 = 分类设置, 5 = 布局备份, 6 = 关于, 7 = 调试）
     int activePage_ = 0;
 
     /// 备份名称输入缓冲区
@@ -473,6 +484,8 @@ private:
 
     std::function<void(bool)> dockEnabledChangedCallback_;
 
+    std::function<void()> dockSettingsChangedCallback_;
+
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
 
@@ -506,6 +519,10 @@ private:
     GeneralSettings generalSettings_;
 
     bool dockEnabled_ = false;
+
+    DockSettings dockSettings_;
+
+    bool dockSettingsDirty_ = false;
 
     /// 通用设置是否已修改（需要保存）
     bool generalSettingsDirty_ = false;
