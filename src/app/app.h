@@ -292,6 +292,23 @@ public:
         HIMAGELIST systemImageListSmall = nullptr;
     };
 
+    enum class QuickNavigationKeyboardTargetKind
+    {
+        None,
+        Item,
+        App,
+        Everything,
+        ExpandApps,
+        LoadMoreEverything,
+    };
+
+    struct QuickNavigationKeyboardTarget
+    {
+        QuickNavigationKeyboardTargetKind kind = QuickNavigationKeyboardTargetKind::None;
+        size_t index = 0;
+        RECT rect{};
+    };
+
     // ── OO 系统访问器（Object-Oriented System Accessors）────
     /** @brief 获取所有容器的引用（网格、部件等）。 @return 容器指针的 vector 引用 */
     std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
@@ -564,6 +581,12 @@ private:
     bool HasQuickNavigationEverythingLoadMoreButton() const;
     bool TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point);
     bool TryGetQuickNavigationAppEntryAtPoint(POINT point, const QuickNavigationAppEntry*& outEntry) const;
+    std::vector<QuickNavigationKeyboardTarget> GetQuickNavigationKeyboardTargets() const;
+    bool HandleQuickNavigationKeyboardInput(WPARAM key);
+    bool IsQuickNavigationKeyboardTarget(
+        QuickNavigationKeyboardTargetKind kind, size_t index) const;
+    void ResetQuickNavigationKeyboardTarget();
+    void EnsureQuickNavigationKeyboardTargetVisible(const RECT& targetRect);
     void ShowQuickNavigationAppContextMenu(const QuickNavigationAppEntry& entry, POINT screenPoint);
     bool CreateDesktopShortcutForApp(const QuickNavigationAppEntry& entry);
     bool CreateDesktopShortcutForPath(const std::wstring& path, bool isDirectory, const std::wstring& displayName = L"");
@@ -1883,6 +1906,9 @@ private:
     std::thread quickNavigationAppIndexThread_;
     uint64_t quickNavigationAppIndexSerial_ = 0;
     bool quickNavigationAppsExpanded_ = false;
+    QuickNavigationKeyboardTargetKind quickNavigationKeyboardTargetKind_ =
+        QuickNavigationKeyboardTargetKind::None;
+    size_t quickNavigationKeyboardTargetIndex_ = 0;
     float quickNavDpiScale_ = 1.0f;
     std::vector<std::wstring> navTabOrder_;
     size_t quickNavTabDragIndex_ = static_cast<size_t>(-1);

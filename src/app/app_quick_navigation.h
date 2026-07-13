@@ -1154,6 +1154,203 @@ inline bool DesktopApp::TryGetQuickNavigationEverythingEntryAtPoint(
     return false;
 }
 
+inline std::vector<DesktopApp::QuickNavigationKeyboardTarget>
+DesktopApp::GetQuickNavigationKeyboardTargets() const
+{
+    std::vector<QuickNavigationKeyboardTarget> targets;
+    if (!quickNavigationOpen_) return targets;
+
+    const RECT overlay = quickNavigationRect_;
+    const RECT content = GetQuickNavigationContentRect(overlay);
+    const std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
+    targets.reserve(entries.size() + GetQuickNavigationVisibleAppResultCount() +
+        quickNavigationEverythingResults_.size() + 2);
+    for (size_t i = 0; i < entries.size(); ++i)
+        targets.push_back({ QuickNavigationKeyboardTargetKind::Item,
+            i, GetQuickNavigationItemRect(overlay, i) });
+
+    if (GetQuickNavigationEffectiveSearchText().empty())
+        return targets;
+
+    const int columns = std::max(1, GetQuickNavigationColumnCount(overlay));
+    const int desktopRows = entries.empty() ? 0 :
+        (static_cast<int>(entries.size()) + columns - 1) / columns;
+    const int headerHeight = QuickNavScale(28);
+    const int gap = QuickNavScale(8);
+    const int rowHeight = QuickNavScale(46);
+    const int desktopGridHeight = QuickNavigationRowsHeight(desktopRows,
+        QuickNavScale(kQuickNavigationCellHeight),
+        QuickNavScale(kQuickNavigationItemRowGap));
+    const int appHeaderTop = content.top + headerHeight + gap +
+        desktopGridHeight + gap - quickNavigationScrollOffset_;
+    int everythingHeaderTop = appHeaderTop;
+
+    if (!quickNavigationAppResultIndices_.empty())
+    {
+        const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
+        const int appRowsTop = appHeaderTop + headerHeight + gap;
+        for (size_t i = 0; i < visibleAppCount; ++i)
+        {
+            const int top = appRowsTop + static_cast<int>(i) * rowHeight;
+            targets.push_back({ QuickNavigationKeyboardTargetKind::App, i,
+                MakeRect(content.left + QuickNavScale(8), top,
+                    content.right - QuickNavScale(12), top + rowHeight) });
+        }
+
+        int appRowsHeight = static_cast<int>(visibleAppCount) * rowHeight;
+        if (HasQuickNavigationAppExpandButton())
+        {
+            const int top = appRowsTop + appRowsHeight;
+            targets.push_back({ QuickNavigationKeyboardTargetKind::ExpandApps, 0,
+                MakeRect(content.left + QuickNavScale(8), top,
+                    content.right - QuickNavScale(12), top + rowHeight) });
+            appRowsHeight += rowHeight;
+        }
+        everythingHeaderTop = appRowsTop + appRowsHeight + gap;
+    }
+
+    const int everythingRowsTop = everythingHeaderTop + headerHeight + gap;
+    for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
+    {
+        const int top = everythingRowsTop + static_cast<int>(i) * rowHeight;
+        targets.push_back({ QuickNavigationKeyboardTargetKind::Everything, i,
+            MakeRect(content.left + QuickNavScale(8), top,
+                content.right - QuickNavScale(12), top + rowHeight) });
+    }
+    if (HasQuickNavigationEverythingLoadMoreButton())
+    {
+        const int top = everythingRowsTop +
+            static_cast<int>(quickNavigationEverythingResults_.size()) * rowHeight;
+        targets.push_back({ QuickNavigationKeyboardTargetKind::LoadMoreEverything, 0,
+            MakeRect(content.left + QuickNavScale(8), top,
+                content.right - QuickNavScale(12), top + rowHeight) });
+    }
+    return targets;
+}
+
+inline bool DesktopApp::IsQuickNavigationKeyboardTarget(
+    QuickNavigationKeyboardTargetKind kind, size_t index) const
+{
+    return quickNavigationKeyboardTargetKind_ == kind &&
+        quickNavigationKeyboardTargetIndex_ == index;
+}
+
+inline void DesktopApp::ResetQuickNavigationKeyboardTarget()
+{
+    quickNavigationKeyboardTargetKind_ = QuickNavigationKeyboardTargetKind::None;
+    quickNavigationKeyboardTargetIndex_ = 0;
+}
+
+inline void DesktopApp::EnsureQuickNavigationKeyboardTargetVisible(
+    const RECT& targetRect)
+{
+    const RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
+    const int margin = QuickNavScale(4);
+    if (targetRect.top < content.top + margin)
+        quickNavigationScrollOffset_ -= content.top + margin - targetRect.top;
+    else if (targetRect.bottom > content.bottom - margin)
+        quickNavigationScrollOffset_ += targetRect.bottom - (content.bottom - margin);
+    quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
+        GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
+}
+
+inline bool DesktopApp::HandleQuickNavigationKeyboardInput(WPARAM key)
+{
+    const bool directionKey = key == VK_LEFT || key == VK_RIGHT ||
+        key == VK_UP || key == VK_DOWN;
+    if (!quickNavigationOpen_ || (!directionKey && key != VK_RETURN))
+        return false;
+
+    std::vector<QuickNavigationKeyboardTarget> targets =
+        GetQuickNavigationKeyboardTargets();
+    if (targets.empty())
+        return true;
+
+    auto findCurrent = [&]() -> size_t {
+        for (size_t i = 0; i < targets.size(); ++i)
+        {
+            if (IsQuickNavigationKeyboardTarget(targets[i].kind, targets[i].index))
+                return i;
+        }
+        return static_cast<size_t>(-1);
+    };
+
+    size_t current = findCurrent();
+    if (key == VK_RETURN)
+    {
+        if (current >= targets.size()) current = 0;
+        quickNavigationKeyboardTargetKind_ = targets[current].kind;
+        quickNavigationKeyboardTargetIndex_ = targets[current].index;
+        EnsureQuickNavigationKeyboardTargetVisible(targets[current].rect);
+
+        targets = GetQuickNavigationKeyboardTargets();
+        current = findCurrent();
+        if (current >= targets.size()) return true;
+        const RECT rect = targets[current].rect;
+        const POINT point{ (rect.left + rect.right) / 2,
+            (rect.top + rect.bottom) / 2 };
+        ResetQuickNavigationKeyboardTarget();
+        return HandleQuickNavigationClick(point);
+    }
+
+    size_t next = current;
+    if (current >= targets.size())
+    {
+        next = (key == VK_LEFT || key == VK_UP) ? targets.size() - 1 : 0;
+    }
+    else
+    {
+        const RECT currentRect = targets[current].rect;
+        const long long currentX =
+            (static_cast<long long>(currentRect.left) + currentRect.right) / 2;
+        const long long currentY =
+            (static_cast<long long>(currentRect.top) + currentRect.bottom) / 2;
+        long long bestScore = std::numeric_limits<long long>::max();
+        size_t best = static_cast<size_t>(-1);
+        for (size_t i = 0; i < targets.size(); ++i)
+        {
+            if (i == current) continue;
+            const RECT candidateRect = targets[i].rect;
+            const long long candidateX =
+                (static_cast<long long>(candidateRect.left) + candidateRect.right) / 2;
+            const long long candidateY =
+                (static_cast<long long>(candidateRect.top) + candidateRect.bottom) / 2;
+            const long long dx = candidateX - currentX;
+            const long long dy = candidateY - currentY;
+            const bool inDirection =
+                (key == VK_LEFT && dx < 0) ||
+                (key == VK_RIGHT && dx > 0) ||
+                (key == VK_UP && dy < 0) ||
+                (key == VK_DOWN && dy > 0);
+            if (!inDirection) continue;
+
+            const long long primary = (key == VK_LEFT || key == VK_RIGHT)
+                ? std::abs(dx) : std::abs(dy);
+            const long long secondary = (key == VK_LEFT || key == VK_RIGHT)
+                ? std::abs(dy) : std::abs(dx);
+            if (primary * 2 < secondary) continue;
+            const long long score = primary * 4 + secondary;
+            if (score < bestScore)
+            {
+                bestScore = score;
+                best = i;
+            }
+        }
+        if (best < targets.size())
+            next = best;
+        else if ((key == VK_LEFT || key == VK_UP) && current > 0)
+            next = current - 1;
+        else if ((key == VK_RIGHT || key == VK_DOWN) && current + 1 < targets.size())
+            next = current + 1;
+    }
+
+    quickNavigationKeyboardTargetKind_ = targets[next].kind;
+    quickNavigationKeyboardTargetIndex_ = targets[next].index;
+    EnsureQuickNavigationKeyboardTargetVisible(targets[next].rect);
+    InvalidateQuickNavigationWindow();
+    return true;
+}
+
 inline int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) const
 {
     RECT content = GetQuickNavigationContentRect(overlay);
@@ -1350,6 +1547,7 @@ inline void DesktopApp::RefreshQuickNavigationSearchCompositionText(HWND editHwn
     quickNavigationSearchCompositionText_ = QuickNavigationReadImeCompositionString(editHwnd);
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
     {
+        ResetQuickNavigationKeyboardTarget();
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
         quickNavigationScrollOffset_ = 0;
@@ -1366,6 +1564,7 @@ inline void DesktopApp::ClearQuickNavigationSearchCompositionText()
     quickNavigationSearchCompositionText_.clear();
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
     {
+        ResetQuickNavigationKeyboardTarget();
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
         quickNavigationScrollOffset_ = 0;
@@ -1378,6 +1577,7 @@ inline void DesktopApp::ClearQuickNavigationSearchCompositionText()
  */
 inline void DesktopApp::RefreshQuickNavigationSearchText()
 {
+    ResetQuickNavigationKeyboardTarget();
     std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
     quickNavigationSearchText_.clear();
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
@@ -1733,6 +1933,7 @@ inline void DesktopApp::OpenQuickNavigation()
     }
     quickNavigationScrollOffset_ = 0;
     quickNavigationTabScrollOffset_ = 0;
+    ResetQuickNavigationKeyboardTarget();
     quickNavigationSearchText_.clear();
     quickNavigationSearchCompositionText_.clear();
     ClearQuickNavigationEverythingResults();
@@ -1774,6 +1975,7 @@ inline void DesktopApp::CloseQuickNavigation()
     quickNavigationOpen_ = false;
     quickNavigationScrollOffset_ = 0;
     quickNavigationTabScrollOffset_ = 0;
+    ResetQuickNavigationKeyboardTarget();
     quickNavigationSearchText_.clear();
     quickNavigationSearchCompositionText_.clear();
     ClearQuickNavigationEverythingResults();
@@ -1814,6 +2016,7 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
 {
     if (!quickNavigationOpen_)
         return false;
+    ResetQuickNavigationKeyboardTarget();
 
     RECT overlay = quickNavigationRect_;
     if (!PtInRect(&overlay, point))
@@ -2737,7 +2940,9 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 continue;
 
             const QuickNavigationEntry& entry = entries[i];
-            const int state = PtInRect(&itemRectApp, lastMousePoint_) != FALSE ? 1 : 0;
+            const int state = (PtInRect(&itemRectApp, lastMousePoint_) != FALSE ||
+                IsQuickNavigationKeyboardTarget(
+                    QuickNavigationKeyboardTargetKind::Item, i)) ? 1 : 0;
             // 图标本体复用桌面绘制，标题由快捷导航自绘，避免桌面标题布局和字重互相影响。
             if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
                 entry.itemIndex < items_.size())
@@ -2804,7 +3009,9 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
                         continue;
 
-                    if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE)
+                    if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE ||
+                        IsQuickNavigationKeyboardTarget(
+                            QuickNavigationKeyboardTargetKind::App, i))
                         DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                             static_cast<float>(QuickNavScale(10)) / 2.0f,
                             ToD2DColor(t.appRowHoverFill), ToD2DColor(t.appRowHoverStroke));
@@ -2846,7 +3053,9 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         contentApp.right - QuickNavScale(12), buttonTop + rowH);
                     if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
                     {
-                        const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE;
+                        const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE ||
+                            IsQuickNavigationKeyboardTarget(
+                                QuickNavigationKeyboardTargetKind::ExpandApps, 0);
                         std::wstring expandLabel = L"展开全部应用结果（" +
                             std::to_wstring(quickNavigationAppResultIndices_.size()) + L" 项）";
                         DrawD2DTextEllipsis(ctx.Get(), expandLabel, buttonRectApp,
@@ -2899,7 +3108,9 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
                         continue;
 
-                    if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE)
+                    if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE ||
+                        IsQuickNavigationKeyboardTarget(
+                            QuickNavigationKeyboardTargetKind::Everything, i))
                         DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                             static_cast<float>(QuickNavScale(10)) / 2.0f,
                             ToD2DColor(t.appRowHoverFill), ToD2DColor(t.appRowHoverStroke));
@@ -2966,7 +3177,9 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         contentApp.right - QuickNavScale(12), buttonTop + rowH);
                     if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
                     {
-                        const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE;
+                        const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE ||
+                            IsQuickNavigationKeyboardTarget(
+                                QuickNavigationKeyboardTargetKind::LoadMoreEverything, 0);
                         DrawD2DTextEllipsis(ctx.Get(), L"加载更多 Everything 结果", buttonRectApp,
                             quickNavTabTextFormat_.Get(),
                             hovered ? ToD2DColor(t.expandHoverText) : ToD2DColor(t.expandDefaultText),
@@ -3044,6 +3257,7 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
         break;
     case WM_LBUTTONDOWN:
     {
+        ResetQuickNavigationKeyboardTarget();
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT appPoint{ pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
 
@@ -3149,6 +3363,9 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
         POINT appPoint{ pt.x + quickNavigationRect_.left, pt.y + quickNavigationRect_.top };
         POINT previousMouse = lastMousePoint_;
         lastMousePoint_ = appPoint;
+        if ((previousMouse.x != appPoint.x || previousMouse.y != appPoint.y) &&
+            quickNavigationKeyboardTargetKind_ != QuickNavigationKeyboardTargetKind::None)
+            ResetQuickNavigationKeyboardTarget();
         TRACKMOUSEEVENT mouseTrack{};
         mouseTrack.cbSize = sizeof(mouseTrack);
         mouseTrack.dwFlags = TME_LEAVE;
@@ -3293,6 +3510,8 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
         }
         break;
     case WM_KEYDOWN:
+        if (HandleQuickNavigationKeyboardInput(wp))
+            return 0;
         if (wp == VK_ESCAPE)
         {
             if (quickNavScrollbarDragging_)
@@ -3361,6 +3580,11 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     if (message == WM_KEYDOWN && wParam == VK_ESCAPE)
     {
         app->CloseQuickNavigation();
+        return 0;
+    }
+    if (message == WM_KEYDOWN && app->quickNavigationSearchCompositionText_.empty() &&
+        app->HandleQuickNavigationKeyboardInput(wParam))
+    {
         return 0;
     }
     if (message == WM_MOUSEWHEEL)
