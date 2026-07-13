@@ -679,6 +679,38 @@ inline void DesktopApp::RestoreDockEntriesToDesktop()
     RefreshCollectedKeysCache();
 }
 
+inline bool DesktopApp::DrawDockControlBackground(
+    ID2D1DeviceContext* ctx, RECT rect, int state)
+{
+    if (!ctx || IsRectEmptyRect(rect)) return false;
+    PersonalizationSettings appearance = !dockSettings_.followPersonalization
+        ? dockSettings_.appearance
+        : PersonalizationSettings::DarkPreset();
+    if (settingsWindow_)
+        appearance = settingsWindow_->GetDockAppearance();
+
+    const float luminance = appearance.widgetBgR * 0.2126f +
+        appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
+    const bool lightSurface = luminance > 0.58f && appearance.widgetAlpha > 0.10f;
+    const bool active = state > 0;
+    const D2D1_COLOR_F fill = active
+        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, lightSurface ? 0.20f : 0.25f)
+        : (lightSurface
+            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.075f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.11f));
+    const D2D1_COLOR_F border = active
+        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.88f)
+        : (lightSurface
+            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.14f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+    const int width = std::max(1, static_cast<int>(rect.right - rect.left));
+    const int height = std::max(1, static_cast<int>(rect.bottom - rect.top));
+    const float scale = static_cast<float>(std::min(width, height)) / 52.0f;
+    DrawBeautifiedIconPlate(ctx, rect, fill, border,
+        (active ? 1.6f : 1.0f) * std::max(0.75f, scale));
+    return lightSurface;
+}
+
 inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DockEntry& entry, RECT rect, int state)
 {
@@ -692,6 +724,18 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     };
 
     auto drawDesktopItem = [&](const DesktopItem& item, RECT target, int visualState) {
+        RECT bitmapTarget = target;
+        const bool recycleBin = _wcsicmp(item.desktopIconClsid.c_str(),
+            kDesktopIconClsidRecycleBin) == 0;
+        if (recycleBin)
+        {
+            DrawDockControlBackground(ctx, target, visualState);
+            const int shortSide = std::max(1, static_cast<int>(std::min(
+                target.right - target.left, target.bottom - target.top)));
+            const int inset = std::max(1, static_cast<int>(std::round(shortSide * 0.16f)));
+            InflateRect(&bitmapTarget, -inset, -inset);
+            visualState = 0;
+        }
         if (visualState > 0)
         {
             DrawD2DRoundedRectangle(ctx, target, 10.0f,
@@ -704,15 +748,17 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         }
         const float alpha = item.isCut ? 0.4f : 1.0f;
         if (item.iconState == IconState::Loading)
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, target, alpha);
-        else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(item.iconBitmap))
-            ctx->DrawBitmap(bitmap, ToD2DRect(target), alpha,
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
+        else if (ID2D1Bitmap1* bitmap = recycleBin
+            ? GetOrCreateD2DBitmap(item.iconBitmap, false)
+            : GetOrCreateD2DBitmap(item.iconBitmap))
+            ctx->DrawBitmap(bitmap, ToD2DRect(bitmapTarget), alpha,
                 D2D1_INTERPOLATION_MODE_LINEAR);
         else
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, target, alpha);
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         if (ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
             item.iconState != IconState::Loading)
-            DrawShortcutArrowOverlay(ctx, target, alpha);
+            DrawShortcutArrowOverlay(ctx, bitmapTarget, alpha);
     };
 
     if (entry.type == DockEntryType::DesktopItem)

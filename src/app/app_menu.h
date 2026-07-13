@@ -155,8 +155,8 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, L"Dock 详细设置");
 
-    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
-    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
     SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
 
     SetForegroundWindow(hwnd_);

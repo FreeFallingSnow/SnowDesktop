@@ -39,6 +39,7 @@ constexpr float kGapPercentX = 0.16f;
 constexpr float kGapPercentY = 0.14f;
 constexpr wchar_t kDockPageId[] = L"__snowdesktop_dock__";
 constexpr int kDockSpacing = 12;
+constexpr int kDockSeparatorGap = 16;
 
 // ── 重命名编辑框控件ID ────────────────────────
 constexpr int kRenameEditId = 1001;
@@ -182,6 +183,8 @@ constexpr UINT kWidgetAddedHintVisibleMs = 2000;
 constexpr UINT_PTR kDockHandoffDwellTimerId = 11;
 constexpr UINT kDockHandoffDwellIntervalMs = 40;
 constexpr DWORD kDockHandoffDwellDelayMs = 520;
+constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
+constexpr float kIconBeautifyCornerExponent = 4.0f;
 
 // ── 组件独立刷新定时器 ────────────────────────
 // 由 manifest 的 refreshIntervalMs 声明驱动的 per-widget Win32 定时器 ID 基址，
@@ -198,6 +201,8 @@ constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;
 constexpr int kCollectionPopupPaddingX = 18;
 constexpr int kCollectionPopupHeaderHeight = 54;
 constexpr int kCollectionPopupBottomPadding = 18;
+constexpr int kCollectionPopupGapX = 10;
+constexpr int kCollectionPopupGapY = 8;
 
 // ── 快捷导航单元格尺寸 ────────────────────────
 constexpr int kQuickNavigationCellWidth = 72;

@@ -193,7 +193,8 @@ size_t DockContainer::Capacity() const
     const LONG extent = IsVertical()
         ? area_.bottom - area_.top : area_.right - area_.left;
     const LONG available = std::max(0L, extent -
-        (IsEdgeAttached() ? kDockSpacing : kDockSpacing * 3L));
+        (IsEdgeAttached() ? kDockSpacing : kDockSpacing * 3L) -
+        kDockSeparatorGap * 2L);
     const LONG visibleSlots = available / std::max(1, ItemPitch());
     return static_cast<size_t>(std::max(0L, visibleSlots - 1L));
 }
@@ -210,11 +211,16 @@ RECT DockContainer::GetBounds() const
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const size_t frequentCount = std::min(requestedFrequentCount,
         Capacity() > count ? Capacity() - count : 0);
+    const size_t fixedCount = SortableEntryCount();
+    const int separatorCount =
+        (fixedCount > 0 && frequentCount > 0 ? 1 : 0) +
+        (fixedCount + frequentCount > 0 ? 1 : 0);
     const bool vertical = IsVertical();
     const int iconSize = app_ ? app_->GetDockItemIconSize() : kIconSize;
     const int slotLength = ItemPitch();
     const int desiredLength = static_cast<int>(
-        (count + frequentCount + 1) * slotLength) + kDockSpacing;
+        (count + frequentCount + 1) * slotLength) + kDockSpacing +
+        separatorCount * kDockSeparatorGap;
     const int areaWidth = std::max(1, static_cast<int>(area_.right - area_.left));
     const int areaHeight = std::max(1, static_cast<int>(area_.bottom - area_.top));
     const int maxLength = std::max(1,
@@ -271,12 +277,18 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     const size_t frequentCount = frequentIndices.size();
     const int slotLength = ItemPitch();
     const int halfGap = kDockSpacing / 2;
+    const int frequentOffset = fixedCount > 0 && frequentCount > 0
+        ? kDockSeparatorGap : 0;
+    const int searchOffset = frequentOffset +
+        (fixedCount + frequentCount > 0 ? kDockSeparatorGap : 0);
 
-    auto makeCell = [&](size_t visualIndex, bool searchSlot, bool recycleBinSlot) {
+    auto makeCell = [&](size_t visualIndex, int axisOffset,
+        bool searchSlot, bool recycleBinSlot) {
         RECT cell{};
         if (IsVertical())
         {
-            LONG top = bounds.top + halfGap + static_cast<LONG>(visualIndex * slotLength);
+            LONG top = bounds.top + halfGap +
+                static_cast<LONG>(visualIndex * slotLength) + axisOffset;
             if (IsEdgeAttached() && (searchSlot || recycleBinSlot))
                 top = bounds.bottom - halfGap - slotLength *
                     (searchSlot && hasRecycleBin ? 2 : 1);
@@ -287,7 +299,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         }
         else
         {
-            LONG left = bounds.left + halfGap + static_cast<LONG>(visualIndex * slotLength);
+            LONG left = bounds.left + halfGap +
+                static_cast<LONG>(visualIndex * slotLength) + axisOffset;
             if (IsEdgeAttached() && (searchSlot || recycleBinSlot))
                 left = bounds.right - halfGap - slotLength *
                     (searchSlot && hasRecycleBin ? 2 : 1);
@@ -306,7 +319,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         const size_t visualIndex = recycleBinSlot
             ? fixedCount + frequentCount + 1
             : i;
-        RECT cell = makeCell(visualIndex, false, recycleBinSlot);
+        RECT cell = makeCell(visualIndex,
+            recycleBinSlot ? searchOffset : 0, false, recycleBinSlot);
         auto slot = std::make_unique<Slot>(this, cell, i);
         auto item = std::make_unique<DockEntryItem>(app_, this, i);
         item->SetBounds(cell);
@@ -318,7 +332,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     for (size_t i = 0; i < frequentCount; ++i)
     {
         const size_t slotIndex = count + i;
-        RECT cell = makeCell(fixedCount + i, false, false);
+        RECT cell = makeCell(fixedCount + i, frequentOffset, false, false);
         auto slot = std::make_unique<Slot>(this, cell, slotIndex);
         auto item = std::make_unique<DockFrequentItem>(
             app_, this, frequentIndices[i]);
@@ -329,7 +343,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     }
 
     const size_t searchIndex = count + frequentCount;
-    RECT searchCell = makeCell(fixedCount + frequentCount, true, false);
+    RECT searchCell = makeCell(
+        fixedCount + frequentCount, searchOffset, true, false);
     slots.push_back(std::make_unique<Slot>(this, searchCell, searchIndex));
     return slots;
 }
@@ -417,10 +432,45 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     {
         ComPtr<ID2D1SolidColorBrush> borderBrush;
         if (SUCCEEDED(context->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
-            context->DrawRoundedRectangle(D2D1::RoundedRect(
-                D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
-                    static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
-                panelRadius, panelRadius), borderBrush.Get(), 1.0f);
+        {
+            if (IsEdgeAttached())
+            {
+                D2D1_POINT_2F start{};
+                D2D1_POINT_2F end{};
+                switch (app_->dockSettings_.position)
+                {
+                case DockPosition::Top:
+                    start = D2D1::Point2F(static_cast<float>(bounds.left),
+                        static_cast<float>(bounds.bottom) - 0.5f);
+                    end = D2D1::Point2F(static_cast<float>(bounds.right), start.y);
+                    break;
+                case DockPosition::Left:
+                    start = D2D1::Point2F(static_cast<float>(bounds.right) - 0.5f,
+                        static_cast<float>(bounds.top));
+                    end = D2D1::Point2F(start.x, static_cast<float>(bounds.bottom));
+                    break;
+                case DockPosition::Right:
+                    start = D2D1::Point2F(static_cast<float>(bounds.left) + 0.5f,
+                        static_cast<float>(bounds.top));
+                    end = D2D1::Point2F(start.x, static_cast<float>(bounds.bottom));
+                    break;
+                case DockPosition::Bottom:
+                default:
+                    start = D2D1::Point2F(static_cast<float>(bounds.left),
+                        static_cast<float>(bounds.top) + 0.5f);
+                    end = D2D1::Point2F(static_cast<float>(bounds.right), start.y);
+                    break;
+                }
+                context->DrawLine(start, end, borderBrush.Get(), 1.0f);
+            }
+            else
+            {
+                context->DrawRoundedRectangle(D2D1::RoundedRect(
+                    D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+                        static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
+                    panelRadius, panelRadius), borderBrush.Get(), 1.0f);
+            }
+        }
     }
 
 }
@@ -460,39 +510,38 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     }
 
     const size_t fixedCount = SortableEntryCount();
-    if (fixedCount > 0 && !frequentItems_.empty() && fixedCount <= slots.size())
-    {
-        const RECT fixedBounds = slots[fixedCount - 1]->GetBounds();
-        const RECT frequentBounds = frequentItems_.front()->GetBounds();
+    auto drawSeparatorBefore = [&](const RECT& followingBounds) {
         ComPtr<ID2D1SolidColorBrush> separatorBrush;
         context->CreateSolidColorBrush(
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f), &separatorBrush);
-        if (separatorBrush)
+        if (!separatorBrush) return;
+        if (IsVertical())
         {
-            if (IsVertical())
-            {
-                const float y = (fixedBounds.bottom + frequentBounds.top) / 2.0f;
-                const float centerX = (fixedBounds.left + fixedBounds.right) / 2.0f;
-                context->DrawLine(D2D1::Point2F(centerX - 14.0f, y),
-                    D2D1::Point2F(centerX + 14.0f, y), separatorBrush.Get(), 1.0f);
-            }
-            else
-            {
-                const float x = (fixedBounds.right + frequentBounds.left) / 2.0f;
-                const float centerY = (fixedBounds.top + fixedBounds.bottom) / 2.0f;
-                context->DrawLine(D2D1::Point2F(x, centerY - 14.0f),
-                    D2D1::Point2F(x, centerY + 14.0f), separatorBrush.Get(), 1.0f);
-            }
+            const float y = static_cast<float>(followingBounds.top) -
+                static_cast<float>(kDockSeparatorGap) * 0.5f;
+            const float centerX = (followingBounds.left + followingBounds.right) / 2.0f;
+            context->DrawLine(D2D1::Point2F(centerX - 14.0f, y),
+                D2D1::Point2F(centerX + 14.0f, y), separatorBrush.Get(), 1.0f);
         }
+        else
+        {
+            const float x = static_cast<float>(followingBounds.left) -
+                static_cast<float>(kDockSeparatorGap) * 0.5f;
+            const float centerY = (followingBounds.top + followingBounds.bottom) / 2.0f;
+            context->DrawLine(D2D1::Point2F(x, centerY - 14.0f),
+                D2D1::Point2F(x, centerY + 14.0f), separatorBrush.Get(), 1.0f);
+        }
+    };
+
+    if (fixedCount > 0 && !frequentItems_.empty())
+    {
+        drawSeparatorBefore(frequentItems_.front()->GetBounds());
     }
 
     RECT search = GetSearchRect();
+    if (fixedCount > 0 || !frequentItems_.empty())
+        drawSeparatorBefore(search);
     const bool searchHovered = PtInRect(&search, app_->lastMousePoint_) != FALSE;
-    PersonalizationSettings dockAppearance = app_ && !app_->dockSettings_.followPersonalization
-        ? app_->dockSettings_.appearance
-        : PersonalizationSettings::DarkPreset();
-    if (app_ && app_->settingsWindow_)
-        dockAppearance = app_->settingsWindow_->GetDockAppearance();
     const int backgroundSize = app_->GetDockItemIconSize();
     const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
     RECT searchBackground{
@@ -501,22 +550,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         search.left + (search.right - search.left + backgroundSize) / 2,
         search.top + (search.bottom - search.top + backgroundSize) / 2
     };
-    const float luminance = dockAppearance.widgetBgR * 0.2126f +
-        dockAppearance.widgetBgG * 0.7152f + dockAppearance.widgetBgB * 0.0722f;
-    const bool lightSurface = luminance > 0.58f && dockAppearance.widgetAlpha > 0.10f;
-    const D2D1_COLOR_F tileFill = searchHovered
-        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, lightSurface ? 0.20f : 0.25f)
-        : (lightSurface
-            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.075f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.11f));
-    const D2D1_COLOR_F tileBorder = searchHovered
-        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.88f)
-        : (lightSurface
-            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.14f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
-    app_->DrawD2DRoundedRectangle(context, searchBackground,
-        std::max(6.0f, 15.0f * searchScale), tileFill, tileBorder,
-        (searchHovered ? 1.6f : 1.0f) * std::max(0.75f, searchScale));
+    const bool lightSurface = app_->DrawDockControlBackground(
+        context, searchBackground, searchHovered ? 1 : 0);
 
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(searchHovered

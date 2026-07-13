@@ -613,6 +613,10 @@ private:
     void OnLeftButtonDown(WPARAM wp, LPARAM lp);
     /** @brief 处理鼠标左键释放消息。 @param wp WPARAM @param lp LPARAM */
     void OnLeftButtonUp(WPARAM wp, LPARAM lp);
+    /** @brief 处理中键按下，在组件任意位置开始移动。 */
+    void OnMiddleButtonDown(WPARAM wp, LPARAM lp);
+    /** @brief 处理中键释放，完成组件移动。 */
+    void OnMiddleButtonUp(WPARAM wp, LPARAM lp);
     /** @brief 处理鼠标右键释放消息（弹出上下文菜单）。 @param lp LPARAM */
     void OnRightButtonUp(LPARAM lp);
     /** @brief 处理键盘按键消息。 @param key 按键虚拟键码 */
@@ -1187,6 +1191,11 @@ private:
     /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
     void DrawCollectionPopup(ID2D1DeviceContext* ctx);
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
+    static float GetBeautifiedIconCornerRadius(int width, int height);
+    void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
+        D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth);
+    void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
+    bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
@@ -1197,8 +1206,9 @@ private:
      * @return D2D 位图指针，失败返回 nullptr
      */
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
+    ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify);
     ID2D1Bitmap* GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm);
-    ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm);
+    ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
 
@@ -1216,7 +1226,8 @@ private:
     void BeginIconLoadGeneration();
     void EnqueueIconLoad(IconLoadTask task);
     void OnIconLoaded(WPARAM wParam, LPARAM lParam);
-    void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect, float alpha);
+    void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect,
+        float alpha, bool allowBeautify = true);
     /** @brief 绘制快捷导航行内系统图标（EXTRALARGE 源，缩放填满 dstRect）。 */
     void DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect);
 
@@ -1551,6 +1562,8 @@ private:
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
+    ComPtr<ID2D1Bitmap1> privacyFileIconBitmap_;
+    ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
     HANDLE faFontHandle_ = nullptr;
@@ -1718,6 +1731,7 @@ private:
     bool resizingWidget_ = false;
     enum class WidgetAction { None, PendingMove, PendingResize, Move, Resize };
     WidgetAction widgetAction_ = WidgetAction::None;
+    bool middleButtonWidgetMove_ = false;
     GridCell widgetDragOriginalCell_{};
     GridSpan widgetDragOriginalSpan_{};
     GridCell widgetPreviewCell_{};
@@ -1917,7 +1931,7 @@ private:
     std::atomic<bool> iconLoaderRunning_{false};
     uint64_t iconLoadSerial_ = 0;
 
-    std::unordered_map<int, ComPtr<ID2D1Bitmap>> placeholderIconCache_;
+    std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> placeholderIconCache_;
     /** @} */
 
     /** @name 新建菜单 COM 上下文 */

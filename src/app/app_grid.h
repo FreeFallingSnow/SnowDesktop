@@ -419,6 +419,8 @@ inline void DesktopApp::SetIconBeautifySettings(bool enabled,
     d2dIconCache_.clear();
     placeholderIconCache_.clear();
     quickNavSysIconCache_.clear();
+    privacyFileIconBitmap_.Reset();
+    privacyFolderIconBitmap_.Reset();
     InvalidateDragStaticScene();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -6894,8 +6896,9 @@ namespace
 
         // Superellipse corner: the larger radius offsets the softer continuous curve.
         const float distance = std::pow(
-            std::pow(dx, 4.0f) + std::pow(dy, 4.0f),
-            0.25f);
+            std::pow(dx, kIconBeautifyCornerExponent) +
+                std::pow(dy, kIconBeautifyCornerExponent),
+            1.0f / kIconBeautifyCornerExponent);
         const float coverage = std::clamp(radius + 0.5f - distance, 0.0f, 1.0f);
         return static_cast<int>(std::round(coverage * 255.0f));
     }
@@ -7129,13 +7132,14 @@ namespace
         int width,
         int height,
         const IconBackgroundPaint& backgroundPaint,
+        float cornerRadius,
         bool smartRecognitionEnabled)
     {
         const IconVisibleBounds bounds = AnalyzeIconVisibleBounds(source, width, height);
         if (!bounds.hasVisiblePixels)
             return source;
 
-        const float radius = std::max(6.0f, static_cast<float>(std::min(width, height)) * 0.35f);
+        const float radius = cornerRadius;
         IconBackgroundColor edgeFill{};
         const bool clipWithEdgeFill = smartRecognitionEnabled &&
             DetectSolidEdgeBackground(source, width, height, edgeFill);
@@ -7266,7 +7270,8 @@ inline void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
     d2dIconCache_.erase(GetD2DIconCacheKey(hbm, true));
 }
 
-inline ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(HBITMAP hbm)
+inline ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
+    HBITMAP hbm, bool beautify)
 {
     if (!hbm || !d2dContext_)
         return nullptr;
@@ -7275,7 +7280,7 @@ inline ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(HBITMAP hbm)
     if (!ReadHBitmapPixels(hbm, buffer))
         return nullptr;
 
-    if (iconBeautifyEnabled_)
+    if (beautify)
     {
         IconBackgroundPaint backgroundPaint{};
         backgroundPaint.start = IconColorFromFloats(
@@ -7290,7 +7295,9 @@ inline ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(HBITMAP hbm)
         if (!backgroundPaint.gradient)
             backgroundPaint.end = backgroundPaint.start;
         buffer.pixels = BeautifyIconPixels(
-            buffer.pixels, buffer.width, buffer.height, backgroundPaint, iconBeautifyMode_ == 0);
+            buffer.pixels, buffer.width, buffer.height, backgroundPaint,
+            GetBeautifiedIconCornerRadius(buffer.width, buffer.height),
+            iconBeautifyMode_ == 0);
     }
 
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -7318,12 +7325,17 @@ inline ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(HBITMAP hbm)
  */
 inline ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm)
 {
+    return GetOrCreateD2DBitmap(hbm, iconBeautifyEnabled_);
+}
+
+inline ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify)
+{
     if (!hbm) return nullptr;
-    const auto key = GetD2DIconCacheKey(hbm, iconBeautifyEnabled_);
+    const auto key = GetD2DIconCacheKey(hbm, beautify);
     auto it = d2dIconCache_.find(key);
     if (it != d2dIconCache_.end()) return it->second.Get();
 
-    ComPtr<ID2D1Bitmap1> bitmap = CreateD2DBitmapFromHBitmap(hbm);
+    ComPtr<ID2D1Bitmap1> bitmap = CreateD2DBitmapFromHBitmap(hbm, beautify);
     if (!bitmap)
         return nullptr;
 

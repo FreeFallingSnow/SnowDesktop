@@ -1314,6 +1314,11 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (desktopIconsHidden_) { ShowHiddenHint(); return 0; }
         OnLeftButtonDown(wp, lp);
         return 0;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONDBLCLK:
+        if (desktopIconsHidden_) return 0;
+        OnMiddleButtonDown(wp, lp);
+        return 0;
     case WM_MOUSEMOVE:
         if (desktopIconsHidden_) return 0;
         OnMouseMove(wp, lp);
@@ -1321,6 +1326,10 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_LBUTTONUP:
         if (desktopIconsHidden_) return 0;
         OnLeftButtonUp(wp, lp);
+        return 0;
+    case WM_MBUTTONUP:
+        if (desktopIconsHidden_) return 0;
+        OnMiddleButtonUp(wp, lp);
         return 0;
     case WM_MOUSEWHEEL:
         if (desktopIconsHidden_) return 0;

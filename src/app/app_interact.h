@@ -582,89 +582,18 @@ inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
     HitRegion targetRegion = HitRegion::None;
     popupDragTargetSlot_.reset();
 
-    if (popupWidgetIndex_ < widgets_.size())
-    {
-        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-        if (PtInRect(&popup, clientPoint))
-        {
-            WidgetContainer* popupContainer = nullptr;
-            for (auto& c : containers_)
-            {
-                popupContainer = dynamic_cast<WidgetContainer*>(c.get());
-                if (popupContainer && popupContainer->GetWidgetData() == &widgets_[popupWidgetIndex_])
-                    break;
-                popupContainer = nullptr;
-            }
+    const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+    const bool popupHit = !suppressDesktopWidgetTargets &&
+        HitTestPopupForDrag(clientPoint, targetContainer, targetSlot, targetRegion);
 
-            if (popupContainer)
-            {
-                std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
-                RECT content = GetCollectionPopupContentRect(popup);
-                size_t slotIndex = 0;
-                RECT slotBounds = content;
-                HitRegion region = HitRegion::Empty;
-                Item* handoffItem = nullptr;
-
-                if (!popupKeys.empty())
-                {
-                    bool foundItem = false;
-                    for (size_t i = 0; i < popupKeys.size(); ++i)
-                    {
-                        RECT itemRect = GetCollectionPopupItemRect(popup, i);
-                        RECT clipped = itemRect;
-                        clipped.top = std::max(clipped.top, content.top);
-                        clipped.bottom = std::min(clipped.bottom, content.bottom);
-                        if (clipped.bottom <= clipped.top || !PtInRect(&clipped, clientPoint))
-                            continue;
-
-                        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
-                        if (itemIndex != static_cast<size_t>(-1) && !items_[itemIndex].selected)
-                        {
-                            RECT iconRect = GetItemIconRect(itemRect);
-                            RECT handoffRect = { iconRect.left - 4, iconRect.top - 2,
-                                                 iconRect.right + 4, iconRect.bottom + 4 };
-                            if (PtInRect(&handoffRect, clientPoint))
-                            {
-                                region = HitRegion::Handoff;
-                                slotBounds = itemRect;
-                                handoffItem = popupContainer->GetMemberItem(i);
-                            }
-                        }
-
-                        if (region != HitRegion::Handoff)
-                        {
-                            slotIndex = i;
-                            slotBounds = itemRect;
-                            region = clientPoint.x < itemRect.left + (itemRect.right - itemRect.left) / 2
-                                ? HitRegion::SortBefore
-                                : HitRegion::SortAfter;
-                        }
-                        foundItem = true;
-                        break;
-                    }
-
-                    if (!foundItem)
-                    {
-                        slotIndex = popupKeys.size() - 1;
-                        slotBounds = GetCollectionPopupItemRect(popup, slotIndex);
-                        region = HitRegion::SortAfter;
-                    }
-                }
-
-                popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
-                if (handoffItem)
-                    popupDragTargetSlot_->SetItem(handoffItem);
-                targetContainer = popupContainer;
-                targetSlot = popupDragTargetSlot_.get();
-                targetRegion = region;
-            }
-        }
-    }
-
-    if (!targetContainer)
+    if (!popupHit && !targetContainer)
     {
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
+            if (suppressDesktopWidgetTargets &&
+                (dynamic_cast<DesktopGrid*>(it->get()) ||
+                 dynamic_cast<WidgetContainer*>(it->get())))
+                continue;
             Slot* slot = nullptr;
             HitRegion region = (*it)->HitTestDrag(clientPoint, slot);
             if (region != HitRegion::None)
@@ -762,60 +691,98 @@ inline bool DesktopApp::HitTestPopupForDrag(POINT client,
 
     std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
     RECT content = GetCollectionPopupContentRect(popup);
+    targetContainer = popupContainer;
+    targetSlot = nullptr;
+    targetRegion = HitRegion::None;
+    if (!PtInRect(&content, client))
+        return true;
+
     size_t slotIndex = 0;
     RECT slotBounds = content;
     HitRegion region = HitRegion::Empty;
     Item* handoffItem = nullptr;
 
-    if (!popupKeys.empty())
+    if (popupKeys.empty())
     {
-        bool foundItem = false;
-        for (size_t i = 0; i < popupKeys.size(); ++i)
+        popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, content, 0);
+        targetSlot = popupDragTargetSlot_.get();
+        targetRegion = HitRegion::Empty;
+        return true;
+    }
+
+    for (size_t i = 0; i < popupKeys.size(); ++i)
+    {
+        RECT itemRect = GetCollectionPopupItemRect(popup, i);
+        RECT clipped{};
+        if (!IntersectRect(&clipped, &itemRect, &content) ||
+            !PtInRect(&clipped, client))
+            continue;
+
+        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+        if (itemIndex != static_cast<size_t>(-1) && !items_[itemIndex].selected)
         {
-            RECT itemRect = GetCollectionPopupItemRect(popup, i);
-            RECT clipped = itemRect;
-            clipped.top = std::max(clipped.top, content.top);
-            clipped.bottom = std::min(clipped.bottom, content.bottom);
-            if (clipped.bottom <= clipped.top || !PtInRect(&clipped, client))
-                continue;
-
-            size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
-            if (itemIndex != static_cast<size_t>(-1) && !items_[itemIndex].selected)
+            RECT iconRect = GetItemIconRect(itemRect);
+            RECT handoffRect = { iconRect.left - 4, iconRect.top - 2,
+                                 iconRect.right + 4, iconRect.bottom + 4 };
+            if (PtInRect(&handoffRect, client))
             {
-                RECT iconRect = GetItemIconRect(itemRect);
-                RECT hf = { iconRect.left - 4, iconRect.top - 2,
-                            iconRect.right + 4, iconRect.bottom + 4 };
-                if (PtInRect(&hf, client))
-                {
-                    region = HitRegion::Handoff;
-                    slotBounds = itemRect;
-                    handoffItem = popupContainer->GetMemberItem(i);
-                }
+                region = HitRegion::Handoff;
+                handoffItem = popupContainer->GetMemberItem(i);
             }
-
-            if (region != HitRegion::Handoff)
-            {
-                slotIndex = i;
-                slotBounds = itemRect;
-                region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
-                    ? HitRegion::SortBefore : HitRegion::SortAfter;
-            }
-            foundItem = true;
-            break;
         }
 
-        if (!foundItem)
+        slotIndex = i;
+        slotBounds = itemRect;
+        if (region != HitRegion::Handoff)
         {
-            slotIndex = popupKeys.size() - 1;
-            slotBounds = GetCollectionPopupItemRect(popup, slotIndex);
-            region = HitRegion::SortAfter;
+            region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
+                ? HitRegion::SortBefore : HitRegion::SortAfter;
+        }
+        popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
+        if (handoffItem)
+            popupDragTargetSlot_->SetItem(handoffItem);
+        targetSlot = popupDragTargetSlot_.get();
+        targetRegion = region;
+        return true;
+    }
+
+    long long bestDistanceSquared = std::numeric_limits<long long>::max();
+    for (size_t i = 0; i < popupKeys.size(); ++i)
+    {
+        RECT itemRect = GetCollectionPopupItemRect(popup, i);
+        RECT clipped{};
+        if (!IntersectRect(&clipped, &itemRect, &content))
+            continue;
+
+        const LONG edgeXs[] = {
+            itemRect.left - kCollectionPopupGapX / 2,
+            itemRect.right + kCollectionPopupGapX / 2,
+        };
+        const HitRegion edgeRegions[] = {
+            HitRegion::SortBefore,
+            HitRegion::SortAfter,
+        };
+        for (size_t edge = 0; edge < 2; ++edge)
+        {
+            const long long dx = static_cast<long long>(client.x) - edgeXs[edge];
+            long long dy = 0;
+            if (client.y < clipped.top)
+                dy = static_cast<long long>(clipped.top) - client.y;
+            else if (client.y >= clipped.bottom)
+                dy = static_cast<long long>(client.y) - clipped.bottom + 1;
+            const long long distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared >= bestDistanceSquared) continue;
+            bestDistanceSquared = distanceSquared;
+            slotIndex = i;
+            slotBounds = itemRect;
+            region = edgeRegions[edge];
         }
     }
 
+    if (bestDistanceSquared == std::numeric_limits<long long>::max())
+        return true;
+
     popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
-    if (handoffItem)
-        popupDragTargetSlot_->SetItem(handoffItem);
-    targetContainer = popupContainer;
     targetSlot = popupDragTargetSlot_.get();
     targetRegion = region;
     return true;
@@ -1204,6 +1171,7 @@ inline void DesktopApp::SelectWidgetOnly(size_t index)
  */
 inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    if (middleButtonWidgetMove_) return;
     if (renameEdit_ != nullptr) return;
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
@@ -1657,6 +1625,82 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     SetCapture(hwnd_);
     InvalidateRect(hwnd_, nullptr, FALSE);
     SyncKeyboardNavFromSelection();
+}
+
+inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
+{
+    (void)wp;
+    if (renameEdit_ != nullptr || mouseDown_ || dragSession_.IsActive() ||
+        widgetAction_ != WidgetAction::None)
+        return;
+
+    POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    if (quickNavigationOpen_) return;
+    if (DockContainer* dock = GetDockContainer())
+    {
+        RECT dockBounds = dock->GetBounds();
+        if (PtInRect(&dockBounds, pt)) return;
+    }
+    if (popupWidgetIndex_ < widgets_.size())
+    {
+        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        if (PtInRect(&popup, pt)) return;
+        CloseCollectionPopup();
+    }
+
+    size_t widgetIndex = static_cast<size_t>(-1);
+    for (size_t n = widgets_.size(); n > 0; --n)
+    {
+        const size_t candidate = n - 1;
+        bool hit = HitTestStandaloneWidget(candidate, pt) != WidgetHit::None;
+        if (!hit && widgets_[candidate].type != DesktopWidgetType::LuaScript)
+        {
+            for (auto& container : containers_)
+            {
+                auto* widgetContainer = dynamic_cast<WidgetContainer*>(container.get());
+                if (!widgetContainer ||
+                    widgetContainer->GetWidgetData() != &widgets_[candidate])
+                    continue;
+                hit = widgetContainer->HitTestWidget(pt) != WidgetHit::None;
+                break;
+            }
+        }
+        if (hit)
+        {
+            widgetIndex = candidate;
+            break;
+        }
+    }
+    if (widgetIndex >= widgets_.size()) return;
+
+    FocusDesktopInputWindow();
+    SelectWidgetOnly(widgetIndex);
+    mouseDown_ = true;
+    mouseDownPoint_ = pt;
+    mouseDownHit_ = nullptr;
+    mouseDownWidgetIndex_ = widgetIndex;
+    marqueeActive_ = false;
+    marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleWidgetItem_ = nullptr;
+    widgetAction_ = WidgetAction::PendingMove;
+    middleButtonWidgetMove_ = true;
+    InvalidateDragStaticScene();
+    widgetDragOriginalCell_ = widgets_[widgetIndex].gridCell;
+    widgetDragOriginalSpan_ = widgets_[widgetIndex].gridSpan;
+    widgetPreviewCell_ = widgetDragOriginalCell_;
+    widgetPreviewSpan_ = widgetDragOriginalSpan_;
+    dragGroupOriginX_ = widgets_[widgetIndex].bounds.left;
+    dragGroupOriginY_ = widgets_[widgetIndex].bounds.top;
+    SetCapture(hwnd_);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+inline void DesktopApp::OnMiddleButtonUp(WPARAM wp, LPARAM lp)
+{
+    if (!middleButtonWidgetMove_) return;
+    middleButtonWidgetMove_ = false;
+    OnLeftButtonUp(wp, lp);
 }
 
 /**
@@ -2216,6 +2260,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
  */
 inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 {
+    if (middleButtonWidgetMove_) return;
     (void)wp;
     POINT upPoint{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     HideDragHintWindow();
@@ -4247,8 +4292,9 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
-        if (!dragSession_.IsActive() || popupWidgetIndex_ < widgets_.size() ||
-            popupDwellWidgetIndex_ >= widgets_.size())
+        if (!dragSession_.IsActive() ||
+            popupDwellWidgetIndex_ >= widgets_.size() ||
+            popupDwellWidgetIndex_ == popupWidgetIndex_)
         {
             popupDwellWidgetIndex_ = static_cast<size_t>(-1);
             KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -4324,8 +4370,8 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
  */
 inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
-    if (!dragSession_.IsActive() || SuppressDesktopWidgetDragTargets() ||
-        popupWidgetIndex_ < widgets_.size())
+    lastMousePoint_ = point;
+    if (!dragSession_.IsActive() || SuppressDesktopWidgetDragTargets())
     {
         popupDwellWidgetIndex_ = static_cast<size_t>(-1);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -4364,7 +4410,8 @@ inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
         break;
     }
 
-    if (hoveredCollection == static_cast<size_t>(-1))
+    if (hoveredCollection == static_cast<size_t>(-1) ||
+        hoveredCollection == popupWidgetIndex_)
     {
         popupDwellWidgetIndex_ = static_cast<size_t>(-1);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -4393,6 +4440,8 @@ inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
     if (SuppressDesktopWidgetDragTargets())
         return false;
     if (popupDwellWidgetIndex_ >= widgets_.size())
+        return false;
+    if (popupDwellWidgetIndex_ == popupWidgetIndex_)
         return false;
     if (now - popupDwellTick_ < kCollectionPopupDwellDelayMs)
         return false;
@@ -5562,6 +5611,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
             dragSession_.UpdatePoint(client);
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
+        UpdateCollectionPopupDwell(client);
         const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
         if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
@@ -5699,6 +5749,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
             dragSession_.UpdatePoint(client);
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
+        UpdateCollectionPopupDwell(client);
         const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
         if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
@@ -5812,6 +5863,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
     navAutoFlipTick_ = 0;
     if (selfDragActive_)
     {
+        popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
         HideDragHintWindow();
         OnPaint();

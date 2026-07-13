@@ -329,6 +329,8 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     dragRenderCache_.Reset();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
+    privacyFileIconBitmap_.Reset();
+    privacyFolderIconBitmap_.Reset();
     d2dIconCache_.clear();
     placeholderIconCache_.clear();
     shortcutArrowBitmap_.Reset();
@@ -1374,19 +1376,31 @@ inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) cons
     const int cellH = GetCollectionPopupCellHeight();
     const int availableWidth = std::max(1, workWidth - 24);
     const int maxWidth = std::min(560, availableWidth);
-    const int maxColumns = std::max(1, (maxWidth - kCollectionPopupPaddingX * 2) / std::max(1, cellW));
+    const int popupContentWidth = std::max(1, maxWidth - kCollectionPopupPaddingX * 2);
+    const int maxColumns = std::max(1,
+        (popupContentWidth + kCollectionPopupGapX) /
+        std::max(1, cellW + kCollectionPopupGapX));
     const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
     int columns = std::clamp(std::min(itemCount, 5), 1, maxColumns);
     int rows = (itemCount + columns - 1) / columns;
     const int maxHeight = std::max(1, workHeight - 24);
-    int width = kCollectionPopupPaddingX * 2 + columns * cellW;
-    int height = kCollectionPopupHeaderHeight + rows * cellH + kCollectionPopupBottomPadding;
+    auto popupWidthForColumns = [&](int columnCount) {
+        return kCollectionPopupPaddingX * 2 + columnCount * cellW +
+            std::max(0, columnCount - 1) * kCollectionPopupGapX;
+    };
+    auto popupHeightForRows = [&](int rowCount) {
+        return kCollectionPopupHeaderHeight + rowCount * cellH +
+            std::max(0, rowCount - 1) * kCollectionPopupGapY +
+            kCollectionPopupBottomPadding;
+    };
+    int width = popupWidthForColumns(columns);
+    int height = popupHeightForRows(rows);
     if (height > maxHeight && columns < maxColumns)
     {
         columns = maxColumns;
         rows = (itemCount + columns - 1) / columns;
-        width = kCollectionPopupPaddingX * 2 + columns * cellW;
-        height = kCollectionPopupHeaderHeight + rows * cellH + kCollectionPopupBottomPadding;
+        width = popupWidthForColumns(columns);
+        height = popupHeightForRows(rows);
     }
     width = std::min(width, availableWidth);
     height = std::min(height, maxHeight);
@@ -1444,7 +1458,9 @@ inline int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
 {
     RECT content = GetCollectionPopupContentRect(popup);
     const int cellW = GetCollectionPopupCellWidth();
-    return std::max(1, static_cast<int>(content.right - content.left) / std::max(1, cellW));
+    return std::max(1,
+        (static_cast<int>(content.right - content.left) + kCollectionPopupGapX) /
+        std::max(1, cellW + kCollectionPopupGapX));
 }
 
 inline int DesktopApp::GetCollectionPopupCellWidth() const
@@ -1488,7 +1504,9 @@ inline int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& wi
     const int cellH = GetCollectionPopupCellHeight();
     const int rows = GetCollectionPopupRowCount(widget, popup);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
-    return std::max(0, rows * std::max(1, cellH) - visibleHeight);
+    const int contentHeight = rows * std::max(1, cellH) +
+        std::max(0, rows - 1) * kCollectionPopupGapY;
+    return std::max(0, contentHeight - visibleHeight);
 }
 
 inline RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
@@ -1500,10 +1518,10 @@ inline RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t lin
     const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
     const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
     return MakeRect(
-        content.left + col * cellW,
-        content.top + row * cellH - popupScrollOffset_,
-        content.left + (col + 1) * cellW,
-        content.top + (row + 1) * cellH - popupScrollOffset_);
+        content.left + col * (cellW + kCollectionPopupGapX),
+        content.top + row * (cellH + kCollectionPopupGapY) - popupScrollOffset_,
+        content.left + col * (cellW + kCollectionPopupGapX) + cellW,
+        content.top + row * (cellH + kCollectionPopupGapY) - popupScrollOffset_ + cellH);
 }
 
 inline bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
@@ -1553,7 +1571,7 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
     const int cellH = GetCollectionPopupCellHeight();
     int columns = std::max(1, GetCollectionPopupColumnCount(popupRect_));
     int rows = (static_cast<int>(popupKeys.size()) + columns - 1) / columns;
-    int contentHeight = rows * cellH;
+    int contentHeight = rows * cellH + std::max(0, rows - 1) * kCollectionPopupGapY;
     int visibleHeight = std::max(1, (int)(content.bottom - content.top));
     bool popupHovered = PtInRect(&popupRect_, lastMousePoint_);
     DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered);
@@ -1688,12 +1706,12 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     {
         RECT clipViewport{};
         auto* wc = dynamic_cast<WidgetContainer*>(targetContainer);
+        const bool popupTarget = wc && popupWidgetIndex_ < widgets_.size() &&
+            wc->GetWidgetData() == &widgets_[popupWidgetIndex_] &&
+            targetSlot == popupDragTargetSlot_.get();
         if (wc)
         {
             RECT bodyRect = wc->GetBodyRect();
-            const bool popupTarget = popupWidgetIndex_ < widgets_.size() &&
-                wc->GetWidgetData() == &widgets_[popupWidgetIndex_] &&
-                targetSlot == popupDragTargetSlot_.get();
             if (popupTarget)
             {
                 RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -1728,7 +1746,17 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         }
         else
         {
-            targetContainer->DrawDropPreview(ctx, targetSlot, targetRegion);
+            if (popupTarget && targetSlot &&
+                (targetRegion == HitRegion::SortBefore ||
+                 targetRegion == HitRegion::SortAfter))
+            {
+                targetSlot->DrawDropIndicator(ctx, targetRegion,
+                    static_cast<float>(kCollectionPopupGapX) * 0.5f);
+            }
+            else
+            {
+                targetContainer->DrawDropPreview(ctx, targetSlot, targetRegion);
+            }
         }
         if (clipped) ctx->PopAxisAlignedClip();
     }
@@ -2058,7 +2086,167 @@ inline void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT ic
     ctx->DrawBitmap(arrowBitmap, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
-inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect, float alpha)
+inline float DesktopApp::GetBeautifiedIconCornerRadius(int width, int height)
+{
+    return std::max(6.0f,
+        static_cast<float>(std::min(width, height)) * kIconBeautifyCornerRadiusRatio);
+}
+
+inline void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
+    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth)
+{
+    if (!ctx || IsRectEmptyRect(rect)) return;
+    ComPtr<ID2D1Factory> factory;
+    ctx->GetFactory(&factory);
+    if (!factory) return;
+
+    ComPtr<ID2D1PathGeometry> geometry;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(factory->CreatePathGeometry(&geometry)) || !geometry ||
+        FAILED(geometry->Open(&sink)) || !sink)
+        return;
+
+    const float left = static_cast<float>(rect.left);
+    const float top = static_cast<float>(rect.top);
+    const float right = static_cast<float>(rect.right);
+    const float bottom = static_cast<float>(rect.bottom);
+    const float radius = std::min(GetBeautifiedIconCornerRadius(
+        rect.right - rect.left, rect.bottom - rect.top),
+        std::min(right - left, bottom - top) * 0.5f);
+    constexpr int kCornerSegments = 12;
+    const float coordinatePower = 2.0f / kIconBeautifyCornerExponent;
+    auto cornerPoint = [&](float centerX, float centerY, float angle) {
+        const float cosine = std::cos(angle);
+        const float sine = std::sin(angle);
+        const float x = std::copysign(std::pow(std::abs(cosine), coordinatePower), cosine);
+        const float y = std::copysign(std::pow(std::abs(sine), coordinatePower), sine);
+        return D2D1::Point2F(centerX + radius * x, centerY + radius * y);
+    };
+    auto addCorner = [&](float centerX, float centerY, float startAngle, float endAngle) {
+        for (int i = 1; i <= kCornerSegments; ++i)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(kCornerSegments);
+            sink->AddLine(cornerPoint(centerX, centerY,
+                startAngle + (endAngle - startAngle) * t));
+        }
+    };
+
+    constexpr float kPi = 3.14159265358979323846f;
+    sink->BeginFigure(D2D1::Point2F(left + radius, top), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(D2D1::Point2F(right - radius, top));
+    addCorner(right - radius, top + radius, -kPi * 0.5f, 0.0f);
+    sink->AddLine(D2D1::Point2F(right, bottom - radius));
+    addCorner(right - radius, bottom - radius, 0.0f, kPi * 0.5f);
+    sink->AddLine(D2D1::Point2F(left + radius, bottom));
+    addCorner(left + radius, bottom - radius, kPi * 0.5f, kPi);
+    sink->AddLine(D2D1::Point2F(left, top + radius));
+    addCorner(left + radius, top + radius, kPi, kPi * 1.5f);
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    if (FAILED(sink->Close())) return;
+
+    ComPtr<ID2D1SolidColorBrush> fillBrush;
+    ComPtr<ID2D1SolidColorBrush> borderBrush;
+    if (SUCCEEDED(ctx->CreateSolidColorBrush(fill, &fillBrush)) && fillBrush)
+        ctx->FillGeometry(geometry.Get(), fillBrush.Get());
+    if (strokeWidth > 0.0f && border.a > 0.0f &&
+        SUCCEEDED(ctx->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
+        ctx->DrawGeometry(geometry.Get(), borderBrush.Get(), strokeWidth);
+}
+
+inline void DesktopApp::DrawPrivacyFaIcon(
+    ID2D1DeviceContext* ctx, RECT rect, bool directory)
+{
+    if (!ctx || IsRectEmptyRect(rect)) return;
+    ComPtr<ID2D1Bitmap1>& cached = directory
+        ? privacyFolderIconBitmap_ : privacyFileIconBitmap_;
+    if (!cached)
+    {
+        constexpr int bitmapSize = kIconBitmapSize;
+        BITMAPINFO bitmapInfo{};
+        bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+        bitmapInfo.bmiHeader.biWidth = bitmapSize;
+        bitmapInfo.bmiHeader.biHeight = -bitmapSize;
+        bitmapInfo.bmiHeader.biPlanes = 1;
+        bitmapInfo.bmiHeader.biBitCount = 32;
+        bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+        HDC screenDc = GetDC(nullptr);
+        void* bits = nullptr;
+        HBITMAP source = CreateDIBSection(screenDc, &bitmapInfo,
+            DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (source && bits)
+        {
+            std::fill_n(static_cast<std::uint32_t*>(bits),
+                bitmapSize * bitmapSize, 0u);
+            HDC memoryDc = CreateCompatibleDC(screenDc);
+            if (memoryDc)
+            {
+                HGDIOBJ oldBitmap = SelectObject(memoryDc, source);
+                HFONT font = CreateFontW(-static_cast<int>(bitmapSize * 0.68f),
+                    0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                    ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                    L"Font Awesome 6 Free Solid");
+                HGDIOBJ oldFont = font ? SelectObject(memoryDc, font) : nullptr;
+                SetBkMode(memoryDc, TRANSPARENT);
+                SetTextColor(memoryDc, RGB(255, 255, 255));
+                RECT glyphRect{ 0, 0, bitmapSize, bitmapSize };
+                const wchar_t* glyph = L"";
+                DrawTextW(memoryDc, glyph, -1, &glyphRect,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                if (oldFont) SelectObject(memoryDc, oldFont);
+                if (font) DeleteObject(font);
+                SelectObject(memoryDc, oldBitmap);
+                DeleteDC(memoryDc);
+
+                constexpr int glyphR = 0xff;
+                constexpr int glyphG = 0xdb;
+                constexpr int glyphB = 0x76;
+                auto* pixels = static_cast<std::uint32_t*>(bits);
+                for (int i = 0; i < bitmapSize * bitmapSize; ++i)
+                {
+                    const std::uint32_t pixel = pixels[i];
+                    const int alpha = static_cast<int>(std::max({
+                        pixel & 0xffu, (pixel >> 8) & 0xffu,
+                        (pixel >> 16) & 0xffu }));
+                    pixels[i] = static_cast<std::uint32_t>(alpha) << 24 |
+                        static_cast<std::uint32_t>((glyphR * alpha + 127) / 255) << 16 |
+                        static_cast<std::uint32_t>((glyphG * alpha + 127) / 255) << 8 |
+                        static_cast<std::uint32_t>((glyphB * alpha + 127) / 255);
+                }
+                cached = CreateD2DBitmapFromHBitmap(source, true);
+            }
+            DeleteObject(source);
+        }
+        ReleaseDC(nullptr, screenDc);
+    }
+
+    if (cached)
+    {
+        ctx->DrawBitmap(cached.Get(), ToD2DRect(rect), 1.0f,
+            D2D1_INTERPOLATION_MODE_LINEAR);
+        return;
+    }
+
+    const float luminance = iconBeautifyBgStartR_ * 0.2126f +
+        iconBeautifyBgStartG_ * 0.7152f + iconBeautifyBgStartB_ * 0.0722f;
+    const D2D1_COLOR_F fill = D2D1::ColorF(iconBeautifyBgStartR_,
+        iconBeautifyBgStartG_, iconBeautifyBgStartB_, iconBeautifyBgOpacity_);
+    const D2D1_COLOR_F border = luminance > 0.58f
+        ? D2D1::ColorF(0.62f, 0.66f, 0.72f, iconBeautifyBgOpacity_)
+        : D2D1::ColorF(0.78f, 0.82f, 0.90f, iconBeautifyBgOpacity_);
+    DrawBeautifiedIconPlate(ctx, rect, fill, border, 1.0f);
+    ComPtr<IDWriteTextFormat> format;
+    format.Attach(CreateFaTextFormat(dwriteFactory_.Get(),
+        static_cast<float>(std::min(rect.right - rect.left, rect.bottom - rect.top)) * 0.52f));
+    if (format)
+        DrawD2DText(ctx, L"", rect, format.Get(),
+            D2D1::ColorF(1.0f, 219.0f / 255.0f, 118.0f / 255.0f, 0.94f));
+}
+
+inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
+    RECT iconRect, float alpha, bool allowBeautify)
 {
     if (!ctx || sysIconIndex < 0) return;
 
@@ -2068,8 +2256,12 @@ inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconI
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext || !d2dContext_)
         return;
     auto& cache = placeholderIconCache_;
+    const bool beautify = allowBeautify && iconBeautifyEnabled_;
+    const std::uint64_t cacheKey =
+        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(sysIconIndex)) << 1) |
+        static_cast<std::uint64_t>(beautify ? 1 : 0);
 
-    auto cached = cache.find(sysIconIndex);
+    auto cached = cache.find(cacheKey);
     if (cached == cache.end())
     {
         ComPtr<IImageList> imageList;
@@ -2102,7 +2294,7 @@ inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconI
         if (!alphaBitmap)
             return;
 
-        ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(alphaBitmap);
+        ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(alphaBitmap, beautify);
         DeleteObject(alphaBitmap);
         if (!iconBitmap)
         {
@@ -2113,7 +2305,7 @@ inline void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconI
         if (FAILED(iconBitmap.As(&bitmap)) || !bitmap)
             return;
 
-        cached = cache.emplace(sysIconIndex, std::move(bitmap)).first;
+        cached = cache.emplace(cacheKey, std::move(bitmap)).first;
     }
 
     D2D1_RECT_F dst = D2D1::RectF(
@@ -2155,7 +2347,8 @@ inline void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconI
         DestroyIcon(icon);
         if (!alphaBitmap) return;
 
-        ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(alphaBitmap);
+        ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(
+            alphaBitmap, iconBeautifyEnabled_);
         DeleteObject(alphaBitmap);
         if (!iconBitmap)
         {
@@ -2397,7 +2590,8 @@ inline void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
         }
     }
 
-    const std::wstring hintText = L"拖动组件底部可移动组件位置，拖动组件右下角圆点可调整组件大小";
+    const std::wstring hintText =
+        L"拖动组件底部或在任意位置按住中键可移动组件，拖动右下角圆点可调整大小";
 
     ComPtr<IDWriteTextFormat> fmt;
     if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
