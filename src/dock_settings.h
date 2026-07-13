@@ -17,6 +17,8 @@ struct DockSettings
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
     bool followPersonalization = true;
+    bool showFrequentItems = false;
+    int frequentItemCount = 3;
     PersonalizationSettings appearance = PersonalizationSettings::DarkPreset();
 };
 

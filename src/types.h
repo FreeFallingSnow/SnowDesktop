@@ -462,6 +462,12 @@ struct DockEntry
     bool selected = false;
 };
 
+struct DockUsageRecord
+{
+    int launchCount = 0;
+    int lastUsed = 0;
+};
+
 /**
  * @brief 桌面窗口句柄集合
  * @details 缓存桌面相关的重要窗口句柄，包括 Progman、DefView、ListView 等

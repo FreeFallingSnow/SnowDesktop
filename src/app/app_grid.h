@@ -2056,6 +2056,8 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
         }
     }
 
+    NormalizeDockRecycleBinPosition();
+
     // Dock coordinates are not desktop pages. Migrate both current Dock
     // entries and layouts previously polluted by a normalized Dock pseudo-page.
     std::unordered_set<std::wstring> legacyDockPageCandidates;
@@ -2594,6 +2596,11 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         }
     }
     LoadDesktopItems();
+    if (FindItemIndexByKey(kDesktopIconClsidRecycleBin) == static_cast<size_t>(-1))
+    {
+        std::erase_if(dockEntries_,
+            [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
+    }
     RefreshCollectedKeysCache();
     if (!generalSettings_.dockEnabled && !dockEntries_.empty())
         RestoreDockEntriesToDesktop();
@@ -4350,6 +4357,21 @@ inline DragSourceList DesktopApp::BuildDragSourceList(
                     entry.originalCell = widgets_[widgetIndex].gridCell;
                     entry.originalSpan = widgets_[widgetIndex].gridSpan;
                 }
+            }
+        }
+        else if (auto* frequentItem = dynamic_cast<DockFrequentItem*>(src))
+        {
+            entry.fromDock = true;
+            entry.kind = DropSourceKind::DesktopIcon;
+            entry.desktopIndex = frequentItem->GetItemIndex();
+            list.hasDesktopIcons = true;
+            if (entry.desktopIndex < items_.size())
+            {
+                const DesktopItem& item = items_[entry.desktopIndex];
+                entry.desktopKey = item.layoutKey;
+                entry.filePath = item.parsingName;
+                entry.originalCell = item.gridCell;
+                entry.originalSpan = item.gridSpan;
             }
         }
         else if (dynamic_cast<Widget*>(src))

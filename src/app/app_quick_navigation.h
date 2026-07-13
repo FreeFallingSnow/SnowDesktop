@@ -487,6 +487,12 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
 {
     std::vector<QuickNavigationEntry> result;
     std::unordered_set<std::wstring> seenDesktop;
+    std::unordered_set<std::wstring> dockDesktopKeys;
+    for (const DockEntry& dockEntry : dockEntries_)
+    {
+        if (dockEntry.type == DockEntryType::DesktopItem)
+            dockDesktopKeys.insert(ToUpperInvariant(dockEntry.reference));
+    }
     const std::wstring query = GetQuickNavigationEffectiveSearchText();
     auto matches = [&](const std::wstring& name) {
         return query.empty() || NameMatchesQuery(name, query);
@@ -507,11 +513,20 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
         entry.source = source;
         result.push_back(std::move(entry));
     };
+    auto appendDockDesktopItems = [&]() {
+        for (const DockEntry& dockEntry : dockEntries_)
+        {
+            if (dockEntry.type != DockEntryType::DesktopItem)
+                continue;
+            appendDesktop(FindItemIndexByKey(dockEntry.reference), L"Dock");
+        }
+    };
 
     if (query.empty())
     {
         if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
         {
+            appendDockDesktopItems();
             for (const auto& key : GetQuickNavigationItemKeys())
                 appendDesktop(FindItemIndexByKey(key), L"集合");
 
@@ -630,6 +645,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
         return result;
     }
 
+    appendDockDesktopItems();
     for (size_t i = 0; i < items_.size(); ++i)
         appendDesktop(i, L"桌面");
 
@@ -667,6 +683,20 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
 
     std::stable_sort(result.begin(), result.end(),
         [&](const QuickNavigationEntry& a, const QuickNavigationEntry& b) {
+            auto isDockEntry = [&](const QuickNavigationEntry& entry) {
+                if (entry.kind != QuickNavigationEntry::Kind::DesktopItem ||
+                    entry.itemIndex >= items_.size())
+                    return false;
+                const DesktopItem& item = items_[entry.itemIndex];
+                return dockDesktopKeys.contains(ToUpperInvariant(
+                    item.layoutKey.empty() ? item.parsingName : item.layoutKey));
+            };
+            const bool aIsDockEntry = isDockEntry(a);
+            const bool bIsDockEntry = isDockEntry(b);
+            if (aIsDockEntry != bIsDockEntry)
+                return aIsDockEntry;
+            if (aIsDockEntry)
+                return false;
             return NameSearchMatchRank(a.name, query) <
                 NameSearchMatchRank(b.name, query);
         });
@@ -1926,8 +1956,7 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
-            ShellExecuteW(nullptr, L"open", items_[entry.itemIndex].parsingName.c_str(),
-                nullptr, nullptr, SW_SHOWNORMAL);
+            LaunchDesktopItem(entry.itemIndex);
         }
         else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
         {

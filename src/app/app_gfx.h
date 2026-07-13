@@ -1564,6 +1564,11 @@ extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCel
 // ── Static background layer (icons + widget chrome + popup) ──
 inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
 {
+    const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+    const POINT interactionMousePoint = lastMousePoint_;
+    if (suppressDesktopWidgetTargets)
+        lastMousePoint_ = { LONG_MIN, LONG_MIN };
+
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
     for (auto& ooItem : items_oo_)
@@ -1617,13 +1622,20 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
         }
     }
 
+    if (suppressDesktopWidgetTargets)
+        lastMousePoint_ = interactionMousePoint;
+
     if (DockContainer* dock = GetDockContainer())
     {
         dock->DrawChrome(ctx, lastMousePoint_);
         dock->DrawContents(ctx);
     }
 
+    if (suppressDesktopWidgetTargets)
+        lastMousePoint_ = { LONG_MIN, LONG_MIN };
     DrawCollectionPopup(ctx);
+    if (suppressDesktopWidgetTargets)
+        lastMousePoint_ = interactionMousePoint;
 }
 
 // ── Dynamic overlays (drag preview, dragged items, marquee, nav) ──

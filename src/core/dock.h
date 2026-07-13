@@ -9,6 +9,31 @@
 
 class DesktopApp;
 
+class DockFrequentItem final : public Item
+{
+public:
+    DockFrequentItem(DesktopApp* app, Container* container, size_t itemIndex);
+
+    std::wstring GetTitle() const override;
+    std::wstring GetPath() const override;
+    HBITMAP GetIconBitmap() const override;
+    RECT GetBounds() const override;
+    void SetBounds(RECT bounds) override;
+    bool IsSelected() const override;
+    void SetSelected(bool selected) override;
+    Container* GetContainer() const override;
+    void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    ComPtr<IDataObject> CreateDataObject() override;
+
+    size_t GetItemIndex() const { return itemIndex_; }
+
+private:
+    DesktopApp* app_ = nullptr;
+    Container* container_ = nullptr;
+    size_t itemIndex_ = static_cast<size_t>(-1);
+    RECT bounds_{};
+};
+
 /** Dock 中用于绘制和拖拽的轻量引用项。 */
 class DockEntryItem final : public Item
 {
@@ -63,6 +88,7 @@ public:
     bool HasCapacity(size_t additional) const;
     bool IsSearchPoint(POINT pt) const;
     DockEntryItem* EntryAtPoint(POINT pt) const;
+    DockFrequentItem* FrequentItemAtPoint(POINT pt) const;
     RECT GetSearchRect() const;
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
@@ -72,6 +98,7 @@ public:
 private:
     bool IsVertical() const;
     bool IsEdgeAttached() const;
+    size_t SortableEntryCount() const;
     int ItemPitch() const;
     int EdgeMargin() const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
@@ -80,4 +107,5 @@ private:
     std::vector<DockEntry>* entries_ = nullptr;
     RECT area_{};
     mutable std::vector<std::unique_ptr<DockEntryItem>> entryItems_;
+    mutable std::vector<std::unique_ptr<DockFrequentItem>> frequentItems_;
 };

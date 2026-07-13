@@ -141,6 +141,15 @@ constexpr UINT kContextGridRecommended1610First = 41419;
 constexpr UINT kContextGridRecommended1610Last = 41423;
 constexpr UINT kContextPageJumpFirst = 41500;
 constexpr UINT kContextPageJumpLast  = 41550;
+constexpr UINT kContextDockPositionBottom = 41800;
+constexpr UINT kContextDockPositionTop = 41801;
+constexpr UINT kContextDockPositionLeft = 41802;
+constexpr UINT kContextDockPositionRight = 41803;
+constexpr UINT kContextDockLayoutIsland = 41804;
+constexpr UINT kContextDockLayoutEdge = 41805;
+constexpr UINT kContextDockFollowPersonalization = 41806;
+constexpr UINT kContextDockDetailedSettings = 41807;
+constexpr UINT kContextDockShowFrequentItems = 41808;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;

@@ -99,6 +99,9 @@ public:
      */
     void Show();
 
+    /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
+    void ShowDockSettings();
+
     /**
      * @brief 检查窗口当前是否可见
      * @return 窗口已创建且可见时返回 true
@@ -150,6 +153,7 @@ public:
     { dockSettingsChangedCallback_ = std::move(callback); }
 
     void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
+    void SyncDockSettings(const DockSettings& settings) { dockSettings_ = settings; }
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 

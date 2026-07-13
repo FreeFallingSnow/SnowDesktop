@@ -162,6 +162,7 @@ void MigrateLegacyDataPaths()
         L"SnowDesktop.navigation.json",
         L"SnowDesktop.categories.json",
         L"SnowDesktop.personalization.json",
+        L"SnowDesktop.dock-usage.json",
     };
 
     for (const wchar_t* file : files)

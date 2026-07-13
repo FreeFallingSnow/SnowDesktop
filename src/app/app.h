@@ -58,6 +58,7 @@
 #include <functional>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -227,6 +228,7 @@ public:
     friend class DesktopGrid;
     friend class DockContainer;
     friend class DockEntryItem;
+    friend class DockFrequentItem;
     friend class Widget;
     friend class WidgetContainer;
     friend class Collection;
@@ -466,6 +468,15 @@ private:
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
     void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
+    bool LaunchDesktopItem(size_t itemIndex);
+    void LoadDockUsageStats();
+    void SaveDockUsageStats() const;
+    void RecordDockItemUsage(size_t itemIndex);
+    bool IsDockUsageEligibleItem(const DesktopItem& item) const;
+    bool RemoveDockDragOutItems(const std::vector<Item*>& sourceItems);
+    std::vector<size_t> GetFrequentDockItemIndices() const;
+    bool SuppressDesktopWidgetDragTargets() const;
+    std::wstring GetDockDragOutRemovalHint(POINT point) const;
     bool FindDockReturnCell(std::unordered_set<std::wstring>& usedSlots,
         const std::wstring& preferredPageId, int startSlot, GridSpan span,
         GridCell& result);
@@ -473,6 +484,8 @@ private:
         Container* origin, DockEntryItem* targetItem, int mods);
     bool IsDockExclusiveItemKey(const std::wstring& key) const;
     bool IsDockExclusiveWidgetId(const std::wstring& id) const;
+    bool IsRecycleBinDockEntry(const DockEntry& entry) const;
+    void NormalizeDockRecycleBinPosition();
     size_t FindWidgetIndexById(const std::wstring& id) const;
     /** @brief 显示设置窗口。 */
     void ShowSettingsWindow();
@@ -733,6 +746,8 @@ private:
     // ── Context menus ───────────────────────────────────────
     /** @brief 显示桌面背景上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowBackgroundContextMenu(POINT screenPoint);
+    /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
+    void ShowDockContextMenu(POINT screenPoint);
     /** @brief 连续显示行列调整菜单，直到用户取消。 */
     void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
@@ -1573,6 +1588,7 @@ private:
     std::vector<GridPage> gridPages_;
     std::vector<DesktopWidget> widgets_;
     std::vector<DockEntry> dockEntries_;
+    std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
     RECT dockArea_{};
     size_t dockPressedEntry_ = static_cast<size_t>(-1);
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;

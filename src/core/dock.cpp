@@ -8,6 +8,59 @@
 #include <cmath>
 #include <shlwapi.h>
 
+DockFrequentItem::DockFrequentItem(
+    DesktopApp* app, Container* container, size_t itemIndex)
+    : app_(app), container_(container), itemIndex_(itemIndex) {}
+
+std::wstring DockFrequentItem::GetTitle() const
+{
+    return app_ && itemIndex_ < app_->items_.size()
+        ? app_->items_[itemIndex_].name : L"";
+}
+
+std::wstring DockFrequentItem::GetPath() const
+{
+    return app_ && itemIndex_ < app_->items_.size()
+        ? app_->items_[itemIndex_].parsingName : L"";
+}
+
+HBITMAP DockFrequentItem::GetIconBitmap() const
+{
+    return app_ && itemIndex_ < app_->items_.size()
+        ? app_->items_[itemIndex_].iconBitmap : nullptr;
+}
+
+RECT DockFrequentItem::GetBounds() const { return bounds_; }
+void DockFrequentItem::SetBounds(RECT bounds) { bounds_ = bounds; }
+
+bool DockFrequentItem::IsSelected() const
+{
+    return app_ && itemIndex_ < app_->items_.size() && app_->items_[itemIndex_].selected;
+}
+
+void DockFrequentItem::SetSelected(bool selected)
+{
+    if (app_ && itemIndex_ < app_->items_.size())
+        app_->items_[itemIndex_].selected = selected;
+}
+
+Container* DockFrequentItem::GetContainer() const { return container_; }
+
+void DockFrequentItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
+{
+    if (!app_ || itemIndex_ >= app_->items_.size()) return;
+    DockEntry entry{ DockEntryType::DesktopItem,
+        app_->items_[itemIndex_].layoutKey, true };
+    app_->DrawDockEntry(context, entry, rect, state);
+}
+
+ComPtr<IDataObject> DockFrequentItem::CreateDataObject()
+{
+    if (!app_ || itemIndex_ >= app_->items_.size()) return nullptr;
+    DesktopIcon icon(&app_->items_[itemIndex_], container_, app_);
+    return icon.CreateDataObject();
+}
+
 DockEntryItem::DockEntryItem(DesktopApp* app, Container* container, size_t entryIndex)
     : app_(app), container_(container), entryIndex_(entryIndex) {}
 
@@ -106,6 +159,14 @@ bool DockContainer::IsEdgeAttached() const
     return app_ && app_->dockSettings_.edgeAttached;
 }
 
+size_t DockContainer::SortableEntryCount() const
+{
+    const size_t count = entries_ ? entries_->size() : 0;
+    return count > 0 && app_ && app_->IsRecycleBinDockEntry(entries_->back())
+        ? count - 1
+        : count;
+}
+
 int DockContainer::ItemPitch() const
 {
     const int iconSize = app_ ? app_->GetDockItemIconSize() : kIconSize;
@@ -145,10 +206,15 @@ bool DockContainer::HasCapacity(size_t additional) const
 RECT DockContainer::GetBounds() const
 {
     const size_t count = entries_ ? entries_->size() : 0;
+    const size_t requestedFrequentCount = app_
+        ? app_->GetFrequentDockItemIndices().size() : 0;
+    const size_t frequentCount = std::min(requestedFrequentCount,
+        Capacity() > count ? Capacity() - count : 0);
     const bool vertical = IsVertical();
     const int iconSize = app_ ? app_->GetDockItemIconSize() : kIconSize;
     const int slotLength = ItemPitch();
-    const int desiredLength = static_cast<int>((count + 1) * slotLength) + kDockSpacing;
+    const int desiredLength = static_cast<int>(
+        (count + frequentCount + 1) * slotLength) + kDockSpacing;
     const int areaWidth = std::max(1, static_cast<int>(area_.right - area_.left));
     const int areaHeight = std::max(1, static_cast<int>(area_.bottom - area_.top));
     const int maxLength = std::max(1,
@@ -192,19 +258,28 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
 {
     std::vector<std::unique_ptr<Slot>> slots;
     entryItems_.clear();
+    frequentItems_.clear();
     RECT bounds = GetBounds();
     const size_t count = entries_ ? entries_->size() : 0;
+    const size_t fixedCount = SortableEntryCount();
+    const bool hasRecycleBin = fixedCount < count;
+    std::vector<size_t> frequentIndices = app_
+        ? app_->GetFrequentDockItemIndices() : std::vector<size_t>{};
+    const size_t availableFrequent = Capacity() > count ? Capacity() - count : 0;
+    if (frequentIndices.size() > availableFrequent)
+        frequentIndices.resize(availableFrequent);
+    const size_t frequentCount = frequentIndices.size();
     const int slotLength = ItemPitch();
     const int halfGap = kDockSpacing / 2;
-    for (size_t i = 0; i <= count; ++i)
-    {
+
+    auto makeCell = [&](size_t visualIndex, bool searchSlot, bool recycleBinSlot) {
         RECT cell{};
-        const bool searchSlot = i == count;
         if (IsVertical())
         {
-            const LONG top = IsEdgeAttached() && searchSlot
-                ? bounds.bottom - halfGap - slotLength
-                : bounds.top + halfGap + static_cast<LONG>(i * slotLength);
+            LONG top = bounds.top + halfGap + static_cast<LONG>(visualIndex * slotLength);
+            if (IsEdgeAttached() && (searchSlot || recycleBinSlot))
+                top = bounds.bottom - halfGap - slotLength *
+                    (searchSlot && hasRecycleBin ? 2 : 1);
             cell = RECT{ bounds.left,
                 top,
                 bounds.right,
@@ -212,30 +287,56 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         }
         else
         {
-            const LONG left = IsEdgeAttached() && searchSlot
-                ? bounds.right - halfGap - slotLength
-                : bounds.left + halfGap + static_cast<LONG>(i * slotLength);
+            LONG left = bounds.left + halfGap + static_cast<LONG>(visualIndex * slotLength);
+            if (IsEdgeAttached() && (searchSlot || recycleBinSlot))
+                left = bounds.right - halfGap - slotLength *
+                    (searchSlot && hasRecycleBin ? 2 : 1);
             cell = RECT{ left,
                 bounds.top,
                 left + slotLength,
                 bounds.bottom };
         }
+        return cell;
+    };
+
+    slots.reserve(count + frequentCount + 1);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const bool recycleBinSlot = hasRecycleBin && i + 1 == count;
+        const size_t visualIndex = recycleBinSlot
+            ? fixedCount + frequentCount + 1
+            : i;
+        RECT cell = makeCell(visualIndex, false, recycleBinSlot);
         auto slot = std::make_unique<Slot>(this, cell, i);
-        if (i < count)
-        {
-            auto item = std::make_unique<DockEntryItem>(app_, this, i);
-            item->SetBounds(cell);
-            slot->SetItem(item.get());
-            entryItems_.push_back(std::move(item));
-        }
+        auto item = std::make_unique<DockEntryItem>(app_, this, i);
+        item->SetBounds(cell);
+        slot->SetItem(item.get());
+        entryItems_.push_back(std::move(item));
         slots.push_back(std::move(slot));
     }
+
+    for (size_t i = 0; i < frequentCount; ++i)
+    {
+        const size_t slotIndex = count + i;
+        RECT cell = makeCell(fixedCount + i, false, false);
+        auto slot = std::make_unique<Slot>(this, cell, slotIndex);
+        auto item = std::make_unique<DockFrequentItem>(
+            app_, this, frequentIndices[i]);
+        item->SetBounds(cell);
+        slot->SetItem(item.get());
+        frequentItems_.push_back(std::move(item));
+        slots.push_back(std::move(slot));
+    }
+
+    const size_t searchIndex = count + frequentCount;
+    RECT searchCell = makeCell(fixedCount + frequentCount, true, false);
+    slots.push_back(std::make_unique<Slot>(this, searchCell, searchIndex));
     return slots;
 }
 
 size_t DockContainer::InsertIndexFor(Slot* slot, HitRegion region) const
 {
-    const size_t count = entries_ ? entries_->size() : 0;
+    const size_t count = SortableEntryCount();
     if (!slot) return count;
     size_t index = std::min(slot->GetIndex(), count);
     if (region == HitRegion::SortAfter) ++index;
@@ -244,7 +345,7 @@ size_t DockContainer::InsertIndexFor(Slot* slot, HitRegion region) const
 
 size_t DockContainer::GetInsertIndexAtPoint(POINT pt) const
 {
-    const size_t count = entries_ ? entries_->size() : 0;
+    const size_t count = SortableEntryCount();
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
     for (size_t i = 0; i < count && i < slots.size(); ++i)
     {
@@ -261,7 +362,7 @@ void DockContainer::DrawInsertionPreview(
     ID2D1DeviceContext* context, size_t insertIndex) const
 {
     if (!context) return;
-    const size_t count = entries_ ? entries_->size() : 0;
+    const size_t count = SortableEntryCount();
     insertIndex = std::min(insertIndex, count);
     RECT bounds = GetBounds();
     ComPtr<ID2D1SolidColorBrush> brush;
@@ -302,6 +403,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         : PersonalizationSettings::DarkPreset();
     if (app_ && app_->settingsWindow_)
         p = app_->settingsWindow_->GetDockAppearance();
+    p.shadowAlpha = 0.0f;
     const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
@@ -310,30 +412,6 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (app_)
         app_->DrawWidgetPanelBackground(context, bounds, panelRadius, 1.0f,
             fill, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, 1.0f, &p);
-
-    if (p.gradientEndA > 0.001f)
-    {
-        D2D1_GRADIENT_STOP stopsData[] = {
-            { 0.0f, D2D1::ColorF(fill.r, fill.g, fill.b, 0.0f) },
-            { 1.0f, D2D1::ColorF(fill.r, fill.g, fill.b,
-                std::clamp(p.gradientEndA, 0.0f, 1.0f)) },
-        };
-        ComPtr<ID2D1GradientStopCollection> stops;
-        ComPtr<ID2D1LinearGradientBrush> gradient;
-        if (SUCCEEDED(context->CreateGradientStopCollection(stopsData, 2,
-            D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops &&
-            SUCCEEDED(context->CreateLinearGradientBrush(
-                D2D1::LinearGradientBrushProperties(
-                    D2D1::Point2F(0.0f, bounds.top + (bounds.bottom - bounds.top) * 0.35f),
-                    D2D1::Point2F(0.0f, static_cast<float>(bounds.bottom))),
-                stops.Get(), &gradient)) && gradient)
-        {
-            context->FillRoundedRectangle(D2D1::RoundedRect(
-                D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
-                    static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
-                panelRadius, panelRadius), gradient.Get());
-        }
-    }
 
     if (border.a > 0.0f)
     {
@@ -365,6 +443,46 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         {
             hoveredTitle = item->GetTitle();
             hoveredBounds = slotBounds;
+        }
+    }
+
+    for (const auto& item : frequentItems_)
+    {
+        if (!item) continue;
+        const RECT itemBounds = item->GetBounds();
+        const bool hovered = PtInRect(&itemBounds, app_->lastMousePoint_) != FALSE;
+        item->Draw(context, itemBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
+        if (hovered && !app_->dragSession_.IsActive())
+        {
+            hoveredTitle = item->GetTitle();
+            hoveredBounds = itemBounds;
+        }
+    }
+
+    const size_t fixedCount = SortableEntryCount();
+    if (fixedCount > 0 && !frequentItems_.empty() && fixedCount <= slots.size())
+    {
+        const RECT fixedBounds = slots[fixedCount - 1]->GetBounds();
+        const RECT frequentBounds = frequentItems_.front()->GetBounds();
+        ComPtr<ID2D1SolidColorBrush> separatorBrush;
+        context->CreateSolidColorBrush(
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f), &separatorBrush);
+        if (separatorBrush)
+        {
+            if (IsVertical())
+            {
+                const float y = (fixedBounds.bottom + frequentBounds.top) / 2.0f;
+                const float centerX = (fixedBounds.left + fixedBounds.right) / 2.0f;
+                context->DrawLine(D2D1::Point2F(centerX - 14.0f, y),
+                    D2D1::Point2F(centerX + 14.0f, y), separatorBrush.Get(), 1.0f);
+            }
+            else
+            {
+                const float x = (fixedBounds.right + frequentBounds.left) / 2.0f;
+                const float centerY = (fixedBounds.top + fixedBounds.bottom) / 2.0f;
+                context->DrawLine(D2D1::Point2F(x, centerY - 14.0f),
+                    D2D1::Point2F(x, centerY + 14.0f), separatorBrush.Get(), 1.0f);
+            }
         }
     }
 
@@ -519,6 +637,8 @@ std::vector<Item*> DockContainer::GetSelectedItems() const
     std::vector<Item*> selected;
     for (const auto& item : entryItems_)
         if (item && item->IsSelected()) selected.push_back(item.get());
+    for (const auto& item : frequentItems_)
+        if (item && item->IsSelected()) selected.push_back(item.get());
     return selected;
 }
 
@@ -543,7 +663,8 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         RECT bounds = slot->GetBounds();
         if (!PtInRect(&bounds, pt)) continue;
         outSlot = slot.get();
-        if (slot->GetIndex() >= (entries_ ? entries_->size() : 0))
+        Item* targetItem = slot->GetItem();
+        if (!targetItem || dynamic_cast<DockFrequentItem*>(targetItem))
         {
             resetDwell();
             return HitRegion::Empty;
@@ -551,7 +672,16 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 
         RECT handoffRect = bounds;
         InflateRect(&handoffRect, -16, -10);
-        Item* targetItem = slot->GetItem();
+        if (auto* dockItem = dynamic_cast<DockEntryItem*>(targetItem);
+            dockItem && app_ && dockItem->GetEntryIndex() < app_->dockEntries_.size() &&
+            app_->IsRecycleBinDockEntry(app_->dockEntries_[dockItem->GetEntryIndex()]))
+        {
+            resetDwell();
+            const auto& sourceItems = app_->dragSession_.Items();
+            const bool isDragSource = std::find(sourceItems.begin(), sourceItems.end(),
+                targetItem) != sourceItems.end();
+            return isDragSource ? HitRegion::None : HitRegion::Handoff;
+        }
         const bool canHandoff = targetItem && !targetItem->IsSelected() &&
             PtInRect(&handoffRect, pt);
         if (canHandoff && app_)
@@ -635,6 +765,18 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
     {
         RECT bounds = slots[i]->GetBounds();
         if (PtInRect(&bounds, pt)) return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
+    }
+    return nullptr;
+}
+
+DockFrequentItem* DockContainer::FrequentItemAtPoint(POINT pt) const
+{
+    const_cast<DockContainer*>(this)->GetSlots();
+    for (const auto& item : frequentItems_)
+    {
+        if (!item) continue;
+        RECT bounds = item->GetBounds();
+        if (PtInRect(&bounds, pt)) return item.get();
     }
     return nullptr;
 }

@@ -1319,6 +1319,15 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
+            if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
+            {
+                if (!ctrl) ClearSelection();
+                frequentItem->SetSelected(true);
+                mouseDownHit_ = frequentItem;
+                SetCapture(hwnd_);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
             if (!ctrl) ClearSelection();
             mouseDown_ = false;
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1967,7 +1976,14 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
         }
 
-        if (!UpdateDragPageNavigation(current))
+        const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+        if (suppressDesktopWidgetTargets)
+        {
+            navHoverSide_ = 0;
+            navAutoFlipDir_ = 0;
+            navAutoFlipTick_ = 0;
+        }
+        else if (!UpdateDragPageNavigation(current))
             return;
 
         // OO hit testing: iterate all containers in reverse (topmost first)
@@ -1976,10 +1992,16 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         HitRegion targetRegion = HitRegion::None;
         popupDragTargetSlot_.reset();
 
-        if (!HitTestPopupForDrag(current, targetContainer, targetSlot, targetRegion))
+        const bool popupHit = !suppressDesktopWidgetTargets &&
+            HitTestPopupForDrag(current, targetContainer, targetSlot, targetRegion);
+        if (!popupHit)
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (suppressDesktopWidgetTargets &&
+                    (dynamic_cast<DesktopGrid*>(it->get()) ||
+                     dynamic_cast<WidgetContainer*>(it->get())))
+                    continue;
                 Slot* slot = nullptr;
                 HitRegion region = (*it)->HitTestDrag(current, slot);
                 if (region != HitRegion::None)
@@ -1994,7 +2016,10 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 
         std::wstring hint;
-        if (targetContainer && targetRegion != HitRegion::None)
+        if (const std::wstring removalHint = GetDockDragOutRemovalHint(current);
+            !removalHint.empty())
+            hint = removalHint;
+        else if (targetContainer && targetRegion != HitRegion::None)
             hint = targetContainer->GetDragHint(targetSlot, targetRegion,
                 dragSession_.Items(), dragSession_.Source(), currentMods);
 
@@ -2073,6 +2098,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 {
                     if (DockEntryItem* entry = dock->EntryAtPoint(point))
                         return { dock, entry, 8, entry->GetEntryIndex(), false };
+                    if (DockFrequentItem* item = dock->FrequentItemAtPoint(point))
+                        return { dock, item, 11, item->GetItemIndex(), false };
                     if (dock->IsSearchPoint(point))
                         return { dock, dock, 9, 0, false };
                     return { dock, dock, 10, 0, false };
@@ -2159,8 +2186,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const MouseHoverVisual newVisual = findHoverVisual(current);
         const bool hoverChanged = !sameHoverVisual(oldVisual, newVisual);
         const bool dockHoverChanged = hoverChanged &&
-            ((oldVisual.kind >= 8 && oldVisual.kind <= 10) ||
-             (newVisual.kind >= 8 && newVisual.kind <= 10));
+            ((oldVisual.kind >= 8 && oldVisual.kind <= 11) ||
+             (newVisual.kind >= 8 && newVisual.kind <= 11));
         const bool needsContinuousHoverPaint =
             (oldVisual.owner && oldVisual.continuous) ||
             (newVisual.owner && newVisual.continuous);
@@ -2274,6 +2301,21 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         ReleaseCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
+    }
+
+    if (!GetDockDragOutRemovalHint(upPoint).empty())
+    {
+        const bool removed = RemoveDockDragOutItems(dragSession_.Items());
+        ClearSelection();
+        EndDragSession();
+        if (removed)
+        {
+            SaveLayoutSlots();
+            RebuildContainersAndItems();
+            LayoutItems();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        goto cleanup;
     }
 
     if (!dragSession_.TargetContainer() || dragSession_.TargetRegion() == HitRegion::None)
@@ -2411,6 +2453,39 @@ cleanup:
     dockPressedEntry_ = static_cast<size_t>(-1);
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     ReleaseCapture();
+}
+
+inline bool DesktopApp::SuppressDesktopWidgetDragTargets() const
+{
+    if (!dragSession_.IsActive()) return false;
+    return std::any_of(dragSession_.Items().begin(), dragSession_.Items().end(),
+        [this](Item* item) {
+            if (dynamic_cast<DockFrequentItem*>(item)) return true;
+            const auto* dockItem = dynamic_cast<DockEntryItem*>(item);
+            const size_t index = dockItem
+                ? dockItem->GetEntryIndex() : static_cast<size_t>(-1);
+            return index < dockEntries_.size() && dockEntries_[index].keepOnDesktop;
+        });
+}
+
+inline std::wstring DesktopApp::GetDockDragOutRemovalHint(POINT point) const
+{
+    const auto* sourceDock = dynamic_cast<DockContainer*>(dragSession_.Source());
+    if (!sourceDock) return L"";
+    RECT sourceBounds = sourceDock->GetBounds();
+    if (PtInRect(&sourceBounds, point)) return L"";
+
+    for (Item* item : dragSession_.Items())
+    {
+        if (dynamic_cast<DockFrequentItem*>(item))
+            return L"释放：从常用项目移除";
+        const auto* dockItem = dynamic_cast<DockEntryItem*>(item);
+        const size_t index = dockItem
+            ? dockItem->GetEntryIndex() : static_cast<size_t>(-1);
+        if (index < dockEntries_.size() && dockEntries_[index].keepOnDesktop)
+            return L"释放：移除 Dock 映射";
+    }
+    return L"";
 }
 
 /**
@@ -2985,8 +3060,9 @@ inline void DesktopApp::RefreshDragHintFromKeyboard()
     if (dragSession_.IsActive())
         dragSession_.UpdateActionFromMods(mods, externalDragActive_ ? DropAction::Copy : DropAction::Move);
 
-    std::wstring hint;
-    if (dragSession_.TargetContainer() && dragSession_.TargetRegion() != HitRegion::None)
+    std::wstring hint = GetDockDragOutRemovalHint(dragSession_.CurrentPoint());
+    if (hint.empty() && dragSession_.TargetContainer() &&
+        dragSession_.TargetRegion() != HitRegion::None)
     {
         hint = dragSession_.TargetContainer()->GetDragHint(dragSession_.TargetSlot(),
             dragSession_.TargetRegion(), dragSession_.Items(), dragSession_.Source(), mods);
@@ -3743,12 +3819,12 @@ inline void DesktopApp::ExitWidget()
  */
 inline void DesktopApp::OpenSelectedDesktopItem()
 {
-    for (const auto& item : items_)
+    for (size_t i = 0; i < items_.size(); ++i)
     {
-        if (item.selected && !item.name.empty() && !item.parsingName.empty())
+        if (items_[i].selected && !items_[i].name.empty() &&
+            !items_[i].parsingName.empty())
         {
-            ShellExecuteW(nullptr, L"open", item.parsingName.c_str(),
-                nullptr, nullptr, SW_SHOWNORMAL);
+            LaunchDesktopItem(i);
             break;
         }
     }
@@ -3784,8 +3860,7 @@ inline void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
         if (itemIdx != static_cast<size_t>(-1) &&
             !items_[itemIdx].parsingName.empty())
         {
-            ShellExecuteW(nullptr, L"open", items_[itemIdx].parsingName.c_str(),
-                nullptr, nullptr, SW_SHOWNORMAL);
+            LaunchDesktopItem(itemIdx);
         }
     }
 }
@@ -3920,6 +3995,32 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
                 }
                 return;
             }
+        }
+
+        if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
+        {
+            const size_t itemIndex = frequentItem->GetItemIndex();
+            if (itemIndex < items_.size())
+            {
+                ClearSelection();
+                items_[itemIndex].selected = true;
+                items_[itemIndex].bounds = frequentItem->GetBounds();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                if (IsProtectedDesktopIcon(items_[itemIndex]))
+                    ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
+                else
+                    ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+                return;
+            }
+        }
+
+        RECT dockBounds = dock->GetBounds();
+        if (PtInRect(&dockBounds, pt))
+        {
+            ClearSelection();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            ShowDockContextMenu(screenPt);
+            return;
         }
     }
 
@@ -4223,7 +4324,8 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
  */
 inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
-    if (!dragSession_.IsActive() || popupWidgetIndex_ < widgets_.size())
+    if (!dragSession_.IsActive() || SuppressDesktopWidgetDragTargets() ||
+        popupWidgetIndex_ < widgets_.size())
     {
         popupDwellWidgetIndex_ = static_cast<size_t>(-1);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -4288,6 +4390,8 @@ inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
  */
 inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
 {
+    if (SuppressDesktopWidgetDragTargets())
+        return false;
     if (popupDwellWidgetIndex_ >= widgets_.size())
         return false;
     if (now - popupDwellTick_ < kCollectionPopupDwellDelayMs)
@@ -5458,7 +5562,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
             dragSession_.UpdatePoint(client);
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
-        if (!UpdateDragPageNavigation(client))
+        const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+        if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
             *effect = DROPEFFECT_NONE;
             OnPaint();
@@ -5469,10 +5574,16 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         Container* targetContainer = nullptr;
         Slot* targetSlot = nullptr;
         HitRegion targetRegion = HitRegion::None;
-        if (!HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion))
+        const bool popupHit = !suppressDesktopWidgetTargets &&
+            HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion);
+        if (!popupHit)
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (suppressDesktopWidgetTargets &&
+                    (dynamic_cast<DesktopGrid*>(it->get()) ||
+                     dynamic_cast<WidgetContainer*>(it->get())))
+                    continue;
                 Slot* slot = nullptr;
                 HitRegion region = (*it)->HitTestDrag(client, slot);
                 if (region != HitRegion::None)
@@ -5492,7 +5603,10 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
 
         std::wstring hint;
-        if (targetContainer && targetRegion != HitRegion::None)
+        if (const std::wstring removalHint = GetDockDragOutRemovalHint(client);
+            !removalHint.empty())
+            hint = removalHint;
+        else if (targetContainer && targetRegion != HitRegion::None)
             hint = targetContainer->GetDragHint(targetSlot, targetRegion,
                 dragSession_.Items(), dragSession_.Source(), mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
@@ -5585,7 +5699,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
             dragSession_.UpdatePoint(client);
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
-        if (!UpdateDragPageNavigation(client))
+        const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+        if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
             *effect = DROPEFFECT_NONE;
             OnPaint();
@@ -5596,10 +5711,16 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         Container* targetContainer = nullptr;
         Slot* targetSlot = nullptr;
         HitRegion targetRegion = HitRegion::None;
-        if (!HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion))
+        const bool popupHit = !suppressDesktopWidgetTargets &&
+            HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion);
+        if (!popupHit)
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (suppressDesktopWidgetTargets &&
+                    (dynamic_cast<DesktopGrid*>(it->get()) ||
+                     dynamic_cast<WidgetContainer*>(it->get())))
+                    continue;
                 Slot* slot = nullptr;
                 HitRegion region = (*it)->HitTestDrag(client, slot);
                 if (region != HitRegion::None)
@@ -5619,7 +5740,10 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
 
         std::wstring hint;
-        if (targetContainer && targetRegion != HitRegion::None)
+        if (const std::wstring removalHint = GetDockDragOutRemovalHint(client);
+            !removalHint.empty())
+            hint = removalHint;
+        else if (targetContainer && targetRegion != HitRegion::None)
             hint = targetContainer->GetDragHint(targetSlot, targetRegion,
                 dragSession_.Items(), dragSession_.Source(), mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
@@ -5727,6 +5851,22 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         ReleaseCapture();
+
+        if (!GetDockDragOutRemovalHint(clientPoint).empty())
+        {
+            const bool removed = RemoveDockDragOutItems(dragSession_.Items());
+            ClearSelection();
+            EndDragSession();
+            if (removed)
+            {
+                SaveLayoutSlots();
+                RebuildContainersAndItems();
+                LayoutItems();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            *effect = DROPEFFECT_MOVE;
+            return S_OK;
+        }
 
         if (dragSession_.TargetRegion() == HitRegion::Handoff)
         {

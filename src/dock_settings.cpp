@@ -62,6 +62,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.position = static_cast<DockPosition>(std::clamp(static_cast<int>(value), 0, 3));
     ReadBoolField(text, "edgeAttached", settings.edgeAttached);
     ReadBoolField(text, "followPersonalization", settings.followPersonalization);
+    ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
+    if (ReadDoubleField(text, "frequentItemCount", value))
+        settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
 
     PersonalizationSettings& style = settings.appearance;
     if (ReadDoubleField(text, "backgroundR", value)) style.widgetBgR = static_cast<float>(value);
@@ -72,11 +75,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "borderB", value)) style.widgetBorderB = static_cast<float>(value);
     if (ReadDoubleField(text, "backgroundAlpha", value)) style.widgetAlpha = static_cast<float>(value);
     if (ReadDoubleField(text, "borderAlpha", value)) style.widgetBorderAlpha = static_cast<float>(value);
-    if (ReadDoubleField(text, "gradientEndAlpha", value)) style.gradientEndA = static_cast<float>(value);
     if (ReadDoubleField(text, "cornerRadius", value)) style.cornerRadius = static_cast<float>(value);
-    if (ReadDoubleField(text, "shadowAlpha", value)) style.shadowAlpha = static_cast<float>(value);
-    if (ReadDoubleField(text, "shadowBlur", value)) style.shadowBlur = static_cast<float>(value);
-    if (ReadDoubleField(text, "shadowOffsetY", value)) style.shadowOffsetY = static_cast<float>(value);
     if (ReadDoubleField(text, "highlightAlpha", value)) style.highlightAlpha = static_cast<float>(value);
     if (ReadDoubleField(text, "noiseAlpha", value)) style.noiseAlpha = static_cast<float>(value);
     return true;
@@ -94,6 +93,9 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.edgeAttached ? "true" : "false") << ",\n";
     file << "  \"followPersonalization\": "
          << (settings.followPersonalization ? "true" : "false") << ",\n";
+    file << "  \"showFrequentItems\": "
+         << (settings.showFrequentItems ? "true" : "false") << ",\n";
+    file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"backgroundR\": " << style.widgetBgR << ",\n";
     file << "  \"backgroundG\": " << style.widgetBgG << ",\n";
     file << "  \"backgroundB\": " << style.widgetBgB << ",\n";
@@ -102,11 +104,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"borderB\": " << style.widgetBorderB << ",\n";
     file << "  \"backgroundAlpha\": " << style.widgetAlpha << ",\n";
     file << "  \"borderAlpha\": " << style.widgetBorderAlpha << ",\n";
-    file << "  \"gradientEndAlpha\": " << style.gradientEndA << ",\n";
     file << "  \"cornerRadius\": " << style.cornerRadius << ",\n";
-    file << "  \"shadowAlpha\": " << style.shadowAlpha << ",\n";
-    file << "  \"shadowBlur\": " << style.shadowBlur << ",\n";
-    file << "  \"shadowOffsetY\": " << style.shadowOffsetY << ",\n";
     file << "  \"highlightAlpha\": " << style.highlightAlpha << ",\n";
     file << "  \"noiseAlpha\": " << style.noiseAlpha << "\n";
     file << "}\n";

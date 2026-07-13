@@ -740,6 +740,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     BeginIconLoadGeneration();
     LoadGeneralSettingsAndApply();
     LoadDockSettingsAndApply();
+    LoadDockUsageStats();
     LoadLayoutSlots();
     UpdateLayoutWorkArea();
     displayTopologySignature_ = CaptureDisplayTopologySignature();
@@ -921,9 +922,13 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetDockSettingsChangedCallback([this]() {
             const DockPosition previousPosition = dockSettings_.position;
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
+            const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
+            const int previousFrequentItemCount = dockSettings_.frequentItemCount;
             LoadDockSettingsAndApply();
             if (dockSettings_.position != previousPosition ||
-                dockSettings_.edgeAttached != previousEdgeAttached)
+                dockSettings_.edgeAttached != previousEdgeAttached ||
+                dockSettings_.showFrequentItems != previousShowFrequentItems ||
+                dockSettings_.frequentItemCount != previousFrequentItemCount)
             {
                 UpdateLayoutWorkArea();
                 LayoutItems();
@@ -1359,9 +1364,13 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     {
                         size_t itemIndex = FindItemIndexByKey(dockEntries_[entryIndex].reference);
                         if (itemIndex < items_.size())
-                            ShellExecuteW(nullptr, L"open", items_[itemIndex].parsingName.c_str(),
-                                nullptr, nullptr, SW_SHOWNORMAL);
+                            LaunchDesktopItem(itemIndex);
                     }
+                    return 0;
+                }
+                if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
+                {
+                    LaunchDesktopItem(frequentItem->GetItemIndex());
                     return 0;
                 }
                 return 0;
@@ -1385,8 +1394,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
                     if (itemIndex != static_cast<size_t>(-1))
                     {
-                        ShellExecuteW(nullptr, L"open", items_[itemIndex].parsingName.c_str(),
-                            nullptr, nullptr, SW_SHOWNORMAL);
+                        LaunchDesktopItem(itemIndex);
                         CloseCollectionPopup();
                         return 0;
                     }
@@ -1425,8 +1433,9 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     DesktopItem* item = icon->GetDesktopItem();
                     if (item)
                     {
-                        ShellExecuteW(nullptr, L"open", item->parsingName.c_str(),
-                            nullptr, nullptr, SW_SHOWNORMAL);
+                        const size_t itemIndex = FindItemIndexByKey(item->layoutKey);
+                        if (itemIndex < items_.size())
+                            LaunchDesktopItem(itemIndex);
                         return 0;
                     }
                 }
@@ -1446,8 +1455,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         int hit = HitTestItem(pt);
         if (hit >= 0)
         {
-            ShellExecuteW(nullptr, L"open", items_[hit].parsingName.c_str(),
-                nullptr, nullptr, SW_SHOWNORMAL);
+            LaunchDesktopItem(static_cast<size_t>(hit));
             return 0;
         }
 

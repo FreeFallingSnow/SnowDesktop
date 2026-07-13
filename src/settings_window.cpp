@@ -263,6 +263,12 @@ void SettingsWindow::Show()
     SetFocus(hwnd_);
 }
 
+void SettingsWindow::ShowDockSettings()
+{
+    activePage_ = 2;
+    Show();
+}
+
 /**
  * @brief 显示退出确认对话框。
  *
@@ -900,8 +906,23 @@ void SettingsWindow::DrawDockPage()
     }
     ImGui::SameLine();
     ImGui::TextDisabled(dockSettings_.edgeAttached
-        ? "(三边贴屏，图标与搜索分居两端)"
+        ? "(普通项与搜索分居两端，回收站位于搜索之后)"
         : "(居中悬浮，宽度随内容变化)");
+
+    ImGui::Spacing();
+    if (ImGui::Checkbox("显示常用项目", &dockSettings_.showFrequentItems))
+        markChanged();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(仅统计 .lnk 与 .url 快捷方式)");
+
+    ImGui::BeginDisabled(!dockSettings_.showFrequentItems);
+    ImGui::Text("显示数量");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::SliderInt("##DockFrequentItemCount",
+        &dockSettings_.frequentItemCount, 1, 8, "%d 个"))
+        markChanged();
+    ImGui::EndDisabled();
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -912,7 +933,7 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::Checkbox("跟随组件个性化", &dockSettings_.followPersonalization))
         markChanged();
     ImGui::SameLine();
-    ImGui::TextDisabled("(背景、边框、圆角与效果保持一致)");
+    ImGui::TextDisabled("(背景、边框与圆角保持一致)");
 
     ImGui::BeginDisabled(dockSettings_.followPersonalization);
     PersonalizationSettings& style = dockSettings_.appearance;
@@ -954,19 +975,11 @@ void SettingsWindow::DrawDockPage()
 
     alphaSlider("背景不透明度", "##DockBackgroundAlpha", style.widgetAlpha);
     alphaSlider("边框不透明度", "##DockBorderAlpha", style.widgetBorderAlpha);
-    alphaSlider("渐变结束透明度", "##DockGradientAlpha", style.gradientEndA);
 
     ImGui::Text("圆角半径");
     ImGui::SameLine(labelW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::SliderFloat("##DockCornerRadius", &style.cornerRadius, 4.0f, 28.0f, "%.0f cu"))
-        markChanged();
-
-    alphaSlider("阴影强度", "##DockShadowAlpha", style.shadowAlpha);
-    ImGui::Text("阴影柔化半径");
-    ImGui::SameLine(labelW);
-    ImGui::SetNextItemWidth(controlW);
-    if (ImGui::SliderFloat("##DockShadowBlur", &style.shadowBlur, 0.0f, 32.0f, "%.0f cu"))
         markChanged();
 
     ImGui::Spacing();
