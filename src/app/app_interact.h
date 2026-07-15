@@ -2368,6 +2368,17 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         goto cleanup;
     }
 
+    // Shell drop handlers may synchronously show a progress window. End the
+    // interactive/visual phase before entering them, while retaining the
+    // source and target context until EndDragSession() performs final cleanup.
+    dragSession_.DeactivateForDrop();
+    dragRenderCache_.Reset();
+    mouseDown_ = false;
+    mouseDownHit_ = nullptr;
+    ReleaseCapture();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    UpdateWindow(hwnd_);
+
     {
         int mods = 0;
         if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
@@ -5904,6 +5915,10 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         ReleaseCapture();
+        dragSession_.DeactivateForDrop();
+        dragRenderCache_.Reset();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        UpdateWindow(hwnd_);
 
         if (!GetDockDragOutRemovalHint(clientPoint).empty())
         {
@@ -6031,6 +6046,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             }
         }
         *effect = DROPEFFECT_MOVE;
+        EndDragSession();
         return S_OK;
     }
 
@@ -6038,6 +6054,10 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
     externalDropHasShortcut_ = false;
+    dragSession_.DeactivateForDrop();
+    dragRenderCache_.Reset();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    UpdateWindow(hwnd_);
 
     std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
     if (dropPaths.empty() && dataObject)
