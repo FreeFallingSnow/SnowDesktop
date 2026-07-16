@@ -206,7 +206,7 @@ local theme = widget.theme()
 -- theme.highlightAlpha, theme.noiseAlpha
 
 widget.editText(key, x, y, width, height, multiline,
-    initialText?, selectAll?, textColor?)
+    initialText?, selectAll?, textColor?, fontSize?)
 
 widget.openSettings()
 ```
@@ -220,6 +220,7 @@ the widget without using the right-click menu.
 - `initialText`: current stored value.
 - `selectAll`: `true`.
 - `textColor`: `0x000000`.
+- `fontSize`: `15` pixels. Pass `layout.fontCu(...)` to match widget text.
 
 Time:
 

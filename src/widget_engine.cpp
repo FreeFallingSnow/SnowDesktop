@@ -1488,6 +1488,7 @@ static int lua_WidgetEditText(lua_State* L)
     request.multiline = multiline;
     request.selectAll = lua_isnil(L, 8) ? true : (lua_toboolean(L, 8) != 0);
     request.textColor = static_cast<int>(luaL_optinteger(L, 9, 0x000000));
+    request.fontSize = static_cast<float>(luaL_optnumber(L, 10, 15.0));
     s->engine->RuntimeBeginInlineTextEdit(request);
     return 0;
 }
@@ -2324,7 +2325,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
             ImGui::BeginChild("##LuaWidgetImguiRenderScroll", ImVec2(0.0f, renderHeight),
                 ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
-                ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                ImGuiWindowFlags_None);
             ImGui::PopStyleVar();
 
             if (lua_pcall(L_, 0, 0, 0) != LUA_OK)

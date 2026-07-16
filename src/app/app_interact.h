@@ -389,7 +389,9 @@ inline void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& r
         (request.textColor >> 8) & 0xFF, request.textColor & 0xFF);
 
     if (luaInlineEditFont_) DeleteObject(luaInlineEditFont_);
-    luaInlineEditFont_ = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    const int editFontSize = std::clamp(
+        static_cast<int>(std::round(request.fontSize)), 9, 96);
+    luaInlineEditFont_ = CreateFontW(-editFontSize, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(luaInlineEdit_, WM_SETFONT,

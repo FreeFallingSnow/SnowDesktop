@@ -177,6 +177,7 @@ struct LuaInlineTextEditRequest
     bool multiline = false;  ///< 是否支持多行输入
     bool selectAll = true;   ///< 是否自动全选文本
     int textColor = 0x000000; ///< 文本颜色（ARGB 格式，默认黑色）
+    float fontSize = 15.0f;  ///< 编辑框字号（像素，默认 15）
 };
 
 /**
