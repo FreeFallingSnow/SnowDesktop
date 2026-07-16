@@ -3,10 +3,11 @@
  * @brief 个性化设置持久化实现
  *
  * 提供个性化配置（深色/浅色预设）的加载、保存及路径管理功能。
- * 配置以 JSON 格式存储于可执行文件同目录下的 SnowDesktop.personalization.json 文件中。
+ * 配置以 JSON 格式存储于 data 目录下的 SnowDesktop.personalization.json 文件中。
  */
 
 #include "personalization.h"
+#include "data_paths.h"
 
 #include <windows.h>
 #include <shlwapi.h>
@@ -156,17 +157,13 @@ PersonalizationSettings PersonalizationSettings::HighContrastPreset()
 /**
  * @brief 获取个性化配置文件的完整路径
  *
- * 构造可执行文件所在目录下的 SnowDesktop.personalization.json 路径。
+ * 构造 data 目录下的 SnowDesktop.personalization.json 路径。
  *
  * @return std::wstring 配置文件的绝对路径
  */
 std::wstring GetPersonalizationPath()
 {
-    wchar_t path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, path, (DWORD)std::size(path));
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"SnowDesktop.personalization.json");
-    return path;
+    return GetDataFilePath(L"SnowDesktop.personalization.json");
 }
 
 /**

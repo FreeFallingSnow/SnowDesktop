@@ -4,6 +4,7 @@
  */
 
 #include "category_settings.h"
+#include "data_paths.h"
 #include "utils.h"
 
 #include <windows.h>
@@ -302,11 +303,7 @@ CategorySettings CategorySettings::Defaults()
 
 std::wstring GetCategorySettingsPath()
 {
-    wchar_t path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, path, static_cast<DWORD>(sizeof(path) / sizeof(path[0])));
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"SnowDesktop.categories.json");
-    return path;
+    return GetDataFilePath(L"SnowDesktop.categories.json");
 }
 
 std::vector<std::wstring> ParseCategoryExtensionList(const std::wstring& text)

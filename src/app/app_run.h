@@ -586,12 +586,16 @@ inline void DesktopApp::StartIconLoader()
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
 
-            bool shortcutArrow = false;
+            bool isShortcut = false;
+            bool isApplicationShortcut = false;
             if (task.phase == IconLoadPhase::Phase1)
             {
                 std::wstring upper = task.parsingName;
                 for (auto& c : upper) c = static_cast<wchar_t>(towupper(c));
-                if (upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0)
+                const bool isLnk = upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0;
+                const bool isUrl = upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".URL") == 0;
+                isShortcut = isLnk || isUrl;
+                if (isLnk)
                 {
                     wchar_t lnkPath[MAX_PATH]{};
                     if (SHGetPathFromIDListW(task.absolutePidl.get(), lnkPath))
@@ -612,9 +616,13 @@ inline void DesktopApp::StartIconLoader()
                                     {
                                         std::wstring t(target);
                                         for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
-                                        if (t.size() < 4 || t.compare(t.size() - 4, 4, L".EXE") != 0)
-                                            shortcutArrow = true;
+                                        isApplicationShortcut =
+                                            t.size() >= 4 && t.compare(t.size() - 4, 4, L".EXE") == 0;
                                     }
+                                }
+                                else
+                                {
+                                    isApplicationShortcut = true;
                                 }
                             }
                         }
@@ -631,7 +639,9 @@ inline void DesktopApp::StartIconLoader()
                 result->widgetId = std::move(task.widgetId);
                 result->bitmap = bitmap;
                 result->bitmapSize = bitmapSize;
-                result->shortcutArrow = shortcutArrow;
+                result->isShortcut = isShortcut;
+                result->isApplicationShortcut = isApplicationShortcut;
+                result->shortcutArrow = isShortcut && !isApplicationShortcut;
                 result->phase = task.phase;
                 result->isDesktopItem = task.isDesktopItem;
                 result->folderPath = std::move(task.folderPath);
@@ -695,6 +705,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     WriteCrashLogEntry(L"Run start");
 
+    MigrateLegacyDataPaths();
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };
@@ -726,6 +738,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     virtualWidth_ = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     virtualHeight_ = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     BeginIconLoadGeneration();
+    LoadGeneralSettingsAndApply();
+    LoadDockSettingsAndApply();
+    LoadDockUsageStats();
     LoadLayoutSlots();
     UpdateLayoutWorkArea();
     displayTopologySignature_ = CaptureDisplayTopologySignature();
@@ -862,7 +877,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     RegisterShellChangeNotifications();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
-    LoadGeneralSettingsAndApply();
 
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
@@ -872,7 +886,11 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsWindow_ = std::make_unique<SettingsWindow>();
     if (settingsWindow_->Init(instance, d3dDevice_.Get()))
     {
-        settingsWindow_->SetReloadCallback([this]() { ReloadItems(); });
+        settingsWindow_->SetReloadCallback([this]() {
+            ReloadItems();
+            if (settingsWindow_)
+                settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
+        });
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
         settingsWindow_->SetInvalidateCallback([this]() {
             if (hwnd_)
@@ -890,16 +908,64 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (quickNavigationOpen_)
                 InvalidateQuickNavigationWindow();
         });
+        settingsWindow_->SetDockEnabledChangedCallback([this](bool enabled) {
+            if (generalSettings_.dockEnabled == enabled) return;
+            generalSettings_.dockEnabled = enabled;
+            UpdateLayoutWorkArea();
+            if (!enabled)
+                RestoreDockEntriesToDesktop();
+            LayoutItems();
+            SaveLayoutSlots();
+            InvalidateDragStaticScene();
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+        });
+        settingsWindow_->SetDockSettingsChangedCallback([this]() {
+            const DockPosition previousPosition = dockSettings_.position;
+            const bool previousEdgeAttached = dockSettings_.edgeAttached;
+            const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
+            const int previousFrequentItemCount = dockSettings_.frequentItemCount;
+            LoadDockSettingsAndApply();
+            if (dockSettings_.position != previousPosition ||
+                dockSettings_.edgeAttached != previousEdgeAttached ||
+                dockSettings_.showFrequentItems != previousShowFrequentItems ||
+                dockSettings_.frequentItemCount != previousFrequentItemCount)
+            {
+                UpdateLayoutWorkArea();
+                LayoutItems();
+                SaveLayoutSlots();
+                InvalidateDragStaticScene();
+            }
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+        });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
             SetItemFontSize(settingsWindow_->GetItemFontSizeD());
             SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
+            SetShortcutArrowMode(settingsWindow_->GetShortcutArrowMode());
+            SetIconBeautifySettings(settingsWindow_->GetIconBeautifyEnabled(),
+                settingsWindow_->GetIconBeautifyMode(),
+                settingsWindow_->GetIconBeautifyBgOpacity(),
+                settingsWindow_->GetIconBeautifyGradientEnabled(),
+                settingsWindow_->GetIconBeautifyBgStartR(),
+                settingsWindow_->GetIconBeautifyBgStartG(),
+                settingsWindow_->GetIconBeautifyBgStartB(),
+                settingsWindow_->GetIconBeautifyBgEndR(),
+                settingsWindow_->GetIconBeautifyBgEndG(),
+                settingsWindow_->GetIconBeautifyBgEndB(),
+                settingsWindow_->GetIconBeautifyGradientDirection());
         });
         settingsWindow_->SetCategorySettingsChangedCallback([this]() {
             LoadCategorySettingsAndApply();
         });
 
-        settingsWindow_->SyncDisplaySettings(iconSpacingScale_, itemFontSize_, static_cast<float>(itemFontWeight_));
+        settingsWindow_->SyncDisplaySettings(iconSpacingScale_, itemFontSize_,
+            static_cast<float>(itemFontWeight_), shortcutArrowMode_, iconBeautifyEnabled_,
+            iconBeautifyMode_,
+            iconBeautifyBgOpacity_, iconBeautifyGradientEnabled_,
+            iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_,
+            iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_,
+            iconBeautifyGradientDirection_);
+        settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
     }
     else
     {
@@ -950,6 +1016,15 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         widgetEngine_->SetInlineTextEditCallback([this](const LuaInlineTextEditRequest& request) {
             BeginLuaInlineTextEdit(request);
+        });
+        widgetEngine_->SetHostInputFocusCallback([this]() {
+            for (auto& container : containers_)
+            {
+                auto* fileCategories = dynamic_cast<FileCategories*>(container.get());
+                if (fileCategories)
+                    fileCategories->SetSearchFocused(false);
+            }
+            FocusDesktopInputWindow();
         });
         widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
             ShowBalloonNotification(title, message);
@@ -1103,11 +1178,21 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
+        if (widgetEngine_ && widgetEngine_->HandleHostInputKey(wp))
+        {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
         OnKeyDown(wp);
         return 0;
     case WM_CHAR:
     {
         wchar_t ch = static_cast<wchar_t>(wp);
+        if (widgetEngine_ && widgetEngine_->HandleHostInputChar(ch))
+        {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
         if (ch >= 0x20 && ch != 0x7F)
         {
             for (auto& c : containers_)
@@ -1212,6 +1297,16 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
     switch (msg)
     {
+    case WM_CTLCOLOREDIT:
+        if (reinterpret_cast<HWND>(lp) == luaInlineEdit_)
+        {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetTextColor(dc, luaInlineEditTextColor_);
+            SetBkColor(dc, luaInlineEditBackgroundColor_);
+            return reinterpret_cast<LRESULT>(luaInlineEditBackgroundBrush_
+                ? luaInlineEditBackgroundBrush_ : GetStockObject(WHITE_BRUSH));
+        }
+        break;
     case WM_PAINT:
     {
         PAINTSTRUCT ps{};
@@ -1248,6 +1343,11 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (desktopIconsHidden_) { ShowHiddenHint(); return 0; }
         OnLeftButtonDown(wp, lp);
         return 0;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONDBLCLK:
+        if (desktopIconsHidden_) return 0;
+        OnMiddleButtonDown(wp, lp);
+        return 0;
     case WM_MOUSEMOVE:
         if (desktopIconsHidden_) return 0;
         OnMouseMove(wp, lp);
@@ -1255,6 +1355,10 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_LBUTTONUP:
         if (desktopIconsHidden_) return 0;
         OnLeftButtonUp(wp, lp);
+        return 0;
+    case WM_MBUTTONUP:
+        if (desktopIconsHidden_) return 0;
+        OnMiddleButtonUp(wp, lp);
         return 0;
     case WM_MOUSEWHEEL:
         if (desktopIconsHidden_) return 0;
@@ -1280,6 +1384,37 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             return 0;
         }
 
+        if (DockContainer* dock = GetDockContainer())
+        {
+            RECT dockBounds = dock->GetBounds();
+            if (PtInRect(&dockBounds, pt))
+            {
+                if (dock->IsSearchPoint(pt))
+                {
+                    OpenQuickNavigation();
+                    return 0;
+                }
+                if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
+                {
+                    size_t entryIndex = dockItem->GetEntryIndex();
+                    if (entryIndex < dockEntries_.size() &&
+                        dockEntries_[entryIndex].type == DockEntryType::DesktopItem)
+                    {
+                        size_t itemIndex = FindItemIndexByKey(dockEntries_[entryIndex].reference);
+                        if (itemIndex < items_.size())
+                            LaunchDesktopItem(itemIndex);
+                    }
+                    return 0;
+                }
+                if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
+                {
+                    LaunchDesktopItem(frequentItem->GetItemIndex());
+                    return 0;
+                }
+                return 0;
+            }
+        }
+
         if (popupWidgetIndex_ < widgets_.size())
         {
             RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -1297,8 +1432,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
                     if (itemIndex != static_cast<size_t>(-1))
                     {
-                        ShellExecuteW(nullptr, L"open", items_[itemIndex].parsingName.c_str(),
-                            nullptr, nullptr, SW_SHOWNORMAL);
+                        LaunchDesktopItem(itemIndex);
                         CloseCollectionPopup();
                         return 0;
                     }
@@ -1337,8 +1471,9 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     DesktopItem* item = icon->GetDesktopItem();
                     if (item)
                     {
-                        ShellExecuteW(nullptr, L"open", item->parsingName.c_str(),
-                            nullptr, nullptr, SW_SHOWNORMAL);
+                        const size_t itemIndex = FindItemIndexByKey(item->layoutKey);
+                        if (itemIndex < items_.size())
+                            LaunchDesktopItem(itemIndex);
                         return 0;
                     }
                 }
@@ -1358,8 +1493,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         int hit = HitTestItem(pt);
         if (hit >= 0)
         {
-            ShellExecuteW(nullptr, L"open", items_[hit].parsingName.c_str(),
-                nullptr, nullptr, SW_SHOWNORMAL);
+            LaunchDesktopItem(static_cast<size_t>(hit));
             return 0;
         }
 

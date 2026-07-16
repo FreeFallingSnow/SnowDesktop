@@ -183,6 +183,20 @@ public:
     }
 
     /**
+     * @brief 在执行同步放置操作前结束交互态，但暂时保留放置上下文
+     *
+     * Shell 文件操作可能在返回前显示进度窗口并进入嵌套消息循环。
+     * 此时拖拽交互必须已经结束，否则界面会继续绘制拖拽预览。
+     * Items / Source / Target / CurrentPoint 会保留到 End()，供当前放置调用完成。
+     */
+    void DeactivateForDrop()
+    {
+        if (!active_) return;
+        active_ = false;
+        InvalidateStaticScene();
+    }
+
+    /**
      * @brief 使当前静态场景版本号失效（递增版本号）
      *
      * 版本号递增后若归零，则重置为 1，确保版本号始终为正数。

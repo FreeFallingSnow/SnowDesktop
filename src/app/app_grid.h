@@ -230,7 +230,7 @@ inline void DesktopApp::ToggleFirstPagePin(POINT screenPoint)
             lastPageMonitorId_.clear();
     }
     pageOffset_ = 0;
-    ApplyPageMapping();
+    UpdateLayoutWorkArea();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -259,7 +259,7 @@ inline void DesktopApp::ToggleLastPagePin(POINT screenPoint)
             firstPageMonitorId_.clear();
     }
     pageOffset_ = 0;
-    ApplyPageMapping();
+    UpdateLayoutWorkArea();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -318,6 +318,114 @@ inline void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
     RecreateItemTextFormat();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::SetShortcutArrowMode(int mode)
+{
+    mode = std::clamp(mode, 0, 2);
+    if (mode == shortcutArrowMode_) return;
+    shortcutArrowMode_ = mode;
+    InvalidateDragStaticScene();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    if (quickNavigationOpen_)
+        InvalidateQuickNavigationWindow();
+}
+
+inline bool DesktopApp::ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const
+{
+    if (!isShortcut)
+        return false;
+
+    switch (shortcutArrowMode_)
+    {
+    case 1:
+        return false;
+    case 2:
+        return true;
+    default:
+        return !isApplicationShortcut;
+    }
+}
+
+inline void DesktopApp::SetIconBeautifyEnabled(bool enabled)
+{
+    SetIconBeautifySettings(enabled,
+        iconBeautifyMode_,
+        iconBeautifyBgOpacity_,
+        iconBeautifyGradientEnabled_,
+        iconBeautifyBgStartR_,
+        iconBeautifyBgStartG_,
+        iconBeautifyBgStartB_,
+        iconBeautifyBgEndR_,
+        iconBeautifyBgEndG_,
+        iconBeautifyBgEndB_,
+        iconBeautifyGradientDirection_);
+}
+
+inline void DesktopApp::SetIconBeautifySettings(bool enabled,
+    int beautifyMode,
+    float backgroundOpacity,
+    bool gradientEnabled,
+    float backgroundStartR,
+    float backgroundStartG,
+    float backgroundStartB,
+    float backgroundEndR,
+    float backgroundEndG,
+    float backgroundEndB,
+    int gradientDirection)
+{
+    beautifyMode = std::clamp(beautifyMode, 0, 1);
+    backgroundOpacity = std::clamp(backgroundOpacity, 0.0f, 1.0f);
+    backgroundStartR = std::clamp(backgroundStartR, 0.0f, 1.0f);
+    backgroundStartG = std::clamp(backgroundStartG, 0.0f, 1.0f);
+    backgroundStartB = std::clamp(backgroundStartB, 0.0f, 1.0f);
+    backgroundEndR = std::clamp(backgroundEndR, 0.0f, 1.0f);
+    backgroundEndG = std::clamp(backgroundEndG, 0.0f, 1.0f);
+    backgroundEndB = std::clamp(backgroundEndB, 0.0f, 1.0f);
+    gradientDirection = std::clamp(gradientDirection, 0, 3);
+
+    auto differs = [](float lhs, float rhs) {
+        return std::fabs(lhs - rhs) > 0.0005f;
+    };
+
+    if (enabled == iconBeautifyEnabled_ &&
+        beautifyMode == iconBeautifyMode_ &&
+        gradientEnabled == iconBeautifyGradientEnabled_ &&
+        !differs(backgroundOpacity, iconBeautifyBgOpacity_) &&
+        !differs(backgroundStartR, iconBeautifyBgStartR_) &&
+        !differs(backgroundStartG, iconBeautifyBgStartG_) &&
+        !differs(backgroundStartB, iconBeautifyBgStartB_) &&
+        !differs(backgroundEndR, iconBeautifyBgEndR_) &&
+        !differs(backgroundEndG, iconBeautifyBgEndG_) &&
+        !differs(backgroundEndB, iconBeautifyBgEndB_) &&
+        gradientDirection == iconBeautifyGradientDirection_)
+    {
+        return;
+    }
+
+    iconBeautifyEnabled_ = enabled;
+    iconBeautifyMode_ = beautifyMode;
+    iconBeautifyBgOpacity_ = backgroundOpacity;
+    iconBeautifyGradientEnabled_ = gradientEnabled;
+    iconBeautifyBgStartR_ = backgroundStartR;
+    iconBeautifyBgStartG_ = backgroundStartG;
+    iconBeautifyBgStartB_ = backgroundStartB;
+    iconBeautifyBgEndR_ = backgroundEndR;
+    iconBeautifyBgEndG_ = backgroundEndG;
+    iconBeautifyBgEndB_ = backgroundEndB;
+    iconBeautifyGradientDirection_ = gradientDirection;
+
+    d2dIconCache_.clear();
+    placeholderIconCache_.clear();
+    quickNavSysIconCache_.clear();
+    privacyFileIconBitmap_.Reset();
+    privacyFolderIconBitmap_.Reset();
+    InvalidateDragStaticScene();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    if (quickNavigationOpen_)
+        InvalidateQuickNavigationWindow();
 }
 
 /**
@@ -456,7 +564,7 @@ inline const GridPage* DesktopApp::GetFirstPageGridPage() const
  */
 inline bool DesktopApp::PageHasContent(const std::wstring& pageId) const
 {
-    if (pageId.empty()) return false;
+    if (pageId.empty() || pageId == kDockPageId) return false;
     for (const auto& item : items_)
         if (!item.name.empty() && item.gridCell.pageId == pageId) return true;
     for (const auto& w : widgets_)
@@ -638,6 +746,9 @@ inline std::wstring DesktopApp::GeneratePageId() const
  */
 inline void DesktopApp::NormalizePageIds()
 {
+    std::erase(savedPageIds_, std::wstring(kDockPageId));
+    savedPageColumns_.erase(kDockPageId);
+    savedPageRows_.erase(kDockPageId);
     if (savedPageIds_.empty()) return;
     if (savedPageIds_.size() > 9999) return;   // 防御：编号爆炸
 
@@ -1544,16 +1655,12 @@ inline void DesktopApp::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSi
 // ── 布局持久化 ──────────────────────────────────────────────
 
 /**
- * @brief 获取布局文件的完整路径（与 exe 同目录下的 SnowDesktop.layout.json）。
+ * @brief 获取布局文件的完整路径（exe\data 下的 SnowDesktop.layout.json）。
  * @return 布局文件路径。
  */
 inline std::wstring DesktopApp::GetLayoutPath() const
 {
-    wchar_t path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"SnowDesktop.layout.json");
-    return path;
+    return GetDataFilePath(L"SnowDesktop.layout.json");
 }
 
 /**
@@ -1580,6 +1687,11 @@ inline void DesktopApp::LoadSavedPagesFromJson(const std::string& text)
         if (ReadJsonStringField(objectText, "id", pageUtf8))
         {
             std::wstring pageId = Utf8ToWide(pageUtf8);
+            if (pageId == kDockPageId)
+            {
+                pos = objectEnd + 1;
+                continue;
+            }
             if (std::find(savedPageIds_.begin(), savedPageIds_.end(), pageId) == savedPageIds_.end())
                 savedPageIds_.push_back(pageId);
             int columns = 0, rows = 0;
@@ -1598,7 +1710,7 @@ inline void DesktopApp::LoadSavedPagesFromJson(const std::string& text)
  */
 inline void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
 {
-    if (pageId.empty()) return;
+    if (pageId.empty() || pageId == kDockPageId) return;
     if (std::find(savedPageIds_.begin(), savedPageIds_.end(), pageId) == savedPageIds_.end())
         savedPageIds_.push_back(pageId);
 }
@@ -1633,7 +1745,7 @@ inline void DesktopApp::LoadLayoutSlots()
             for (auto& entry : preserved.entries)
             {
                 if (entry.iconBitmap)
-                    d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(entry.iconBitmap));
+                    EraseD2DIconCacheForBitmap(entry.iconBitmap);
             }
         }
         preservedFolderEntries.clear();
@@ -1641,6 +1753,7 @@ inline void DesktopApp::LoadLayoutSlots()
 
     layoutRecords_.clear();
     widgets_.clear();
+    dockEntries_.clear();
     savedPageIds_.clear();
     savedPageColumns_.clear();
     savedPageRows_.clear();
@@ -1663,6 +1776,10 @@ inline void DesktopApp::LoadLayoutSlots()
     if (ReadJsonStringField(text, "lastPageMonitor", lastPageMonitorUtf8))
         lastPageMonitorId_ = Utf8ToWide(lastPageMonitorUtf8);
 
+    bool loadedDockEnabled = false;
+    if (ReadJsonBoolField(text, "dockEnabled", loadedDockEnabled))
+        generalSettings_.dockEnabled = loadedDockEnabled;
+
     float loadedFontSize = 0;
     if (ReadJsonFloatField(text, "itemFontSize", loadedFontSize) &&
         loadedFontSize >= 10.0f && loadedFontSize <= 24.0f)
@@ -1677,6 +1794,40 @@ inline void DesktopApp::LoadLayoutSlots()
     if (ReadJsonFloatField(text, "iconSpacing", loadedIconSpacing) &&
         loadedIconSpacing >= 0.5f && loadedIconSpacing <= 2.0f)
         iconSpacingScale_ = loadedIconSpacing;
+
+    int loadedShortcutArrowMode = 0;
+    if (ReadJsonIntField(text, "shortcutArrowMode", loadedShortcutArrowMode))
+        shortcutArrowMode_ = std::clamp(loadedShortcutArrowMode, 0, 2);
+
+    bool loadedIconBeautify = false;
+    if (ReadJsonBoolField(text, "iconBeautifyEnabled", loadedIconBeautify))
+        iconBeautifyEnabled_ = loadedIconBeautify;
+
+    int loadedIconBeautifyMode = 0;
+    if (ReadJsonIntField(text, "iconBeautifyMode", loadedIconBeautifyMode))
+        iconBeautifyMode_ = std::clamp(loadedIconBeautifyMode, 0, 1);
+
+    float loadedIconBeautifyFloat = 0.0f;
+    if (ReadJsonFloatField(text, "iconBeautifyBgOpacity", loadedIconBeautifyFloat))
+        iconBeautifyBgOpacity_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
+    bool loadedIconBeautifyGradient = false;
+    if (ReadJsonBoolField(text, "iconBeautifyGradientEnabled", loadedIconBeautifyGradient))
+        iconBeautifyGradientEnabled_ = loadedIconBeautifyGradient;
+    int loadedIconBeautifyDirection = 0;
+    if (ReadJsonIntField(text, "iconBeautifyGradientDirection", loadedIconBeautifyDirection))
+        iconBeautifyGradientDirection_ = std::clamp(loadedIconBeautifyDirection, 0, 3);
+    if (ReadJsonFloatField(text, "iconBeautifyBgStartR", loadedIconBeautifyFloat))
+        iconBeautifyBgStartR_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
+    if (ReadJsonFloatField(text, "iconBeautifyBgStartG", loadedIconBeautifyFloat))
+        iconBeautifyBgStartG_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
+    if (ReadJsonFloatField(text, "iconBeautifyBgStartB", loadedIconBeautifyFloat))
+        iconBeautifyBgStartB_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
+    if (ReadJsonFloatField(text, "iconBeautifyBgEndR", loadedIconBeautifyFloat))
+        iconBeautifyBgEndR_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
+    if (ReadJsonFloatField(text, "iconBeautifyBgEndG", loadedIconBeautifyFloat))
+        iconBeautifyBgEndG_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
+    if (ReadJsonFloatField(text, "iconBeautifyBgEndB", loadedIconBeautifyFloat))
+        iconBeautifyBgEndB_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
 
     LoadSavedPagesFromJson(text);
 
@@ -1871,6 +2022,109 @@ widget.tabScrollOffset = std::max(0, tabScrollOffset);
         }
     }
 
+    // Load Dock references. "ref" intentionally differs from desktop item
+    // "key" so the legacy item scanner cannot mistake Dock entries for layout records.
+    {
+        size_t dockName = text.find("\"dockEntries\"");
+        if (dockName != std::string::npos)
+        {
+            size_t arrayStart = text.find('[', dockName);
+            size_t arrayEnd = arrayStart == std::string::npos
+                ? std::string::npos : FindJsonArrayEnd(text, arrayStart);
+            size_t dp = arrayStart == std::string::npos ? 0 : arrayStart + 1;
+            while (arrayEnd != std::string::npos &&
+                (dp = text.find('{', dp)) != std::string::npos && dp < arrayEnd)
+            {
+                size_t objectEnd = FindJsonObjectEnd(text, dp);
+                if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
+                std::string object = text.substr(dp, objectEnd - dp + 1);
+                std::string typeUtf8, referenceUtf8;
+                bool keepOnDesktop = false;
+                if (ReadJsonStringField(object, "type", typeUtf8) &&
+                    ReadJsonStringField(object, "ref", referenceUtf8))
+                {
+                    ReadJsonBoolField(object, "keepOnDesktop", keepOnDesktop);
+                    DockEntry entry;
+                    entry.type = typeUtf8 == "collection"
+                        ? DockEntryType::Collection : DockEntryType::DesktopItem;
+                    entry.reference = Utf8ToWide(referenceUtf8);
+                    if (entry.type == DockEntryType::DesktopItem)
+                        entry.reference = ToUpperInvariant(entry.reference);
+                    entry.keepOnDesktop = keepOnDesktop;
+                    if (!entry.reference.empty()) dockEntries_.push_back(std::move(entry));
+                }
+                dp = objectEnd + 1;
+            }
+        }
+    }
+
+    NormalizeDockRecycleBinPosition();
+
+    // Dock coordinates are not desktop pages. Migrate both current Dock
+    // entries and layouts previously polluted by a normalized Dock pseudo-page.
+    std::unordered_set<std::wstring> legacyDockPageCandidates;
+    for (auto& entry : dockEntries_)
+    {
+        if (entry.type == DockEntryType::Collection)
+        {
+            entry.keepOnDesktop = false;
+            size_t widgetIndex = FindWidgetIndexById(entry.reference);
+            if (widgetIndex >= widgets_.size()) continue;
+            DesktopWidget& widget = widgets_[widgetIndex];
+            if (!widget.gridCell.pageId.empty() && widget.gridCell.pageId != kDockPageId)
+                legacyDockPageCandidates.insert(widget.gridCell.pageId);
+            widget.gridCell = { kDockPageId, 0, 0 };
+            for (const auto& key : widget.itemKeys)
+            {
+                auto record = layoutRecords_.find(ToUpperInvariant(key));
+                if (record == layoutRecords_.end()) continue;
+                if (!record->second.cell.pageId.empty() &&
+                    record->second.cell.pageId != kDockPageId)
+                    legacyDockPageCandidates.insert(record->second.cell.pageId);
+                record->second.cell = { kDockPageId, 0, 0 };
+                record->second.span = { 1, 1 };
+                record->second.hasGrid = true;
+            }
+            continue;
+        }
+
+        if (entry.keepOnDesktop) continue;
+        auto record = layoutRecords_.find(ToUpperInvariant(entry.reference));
+        if (record == layoutRecords_.end()) continue;
+        if (!record->second.cell.pageId.empty() &&
+            record->second.cell.pageId != kDockPageId)
+            legacyDockPageCandidates.insert(record->second.cell.pageId);
+        record->second.cell = { kDockPageId, 0, 0 };
+        record->second.span = { 1, 1 };
+        record->second.hasGrid = true;
+    }
+
+    std::unordered_set<std::wstring> widgetOwnedKeys;
+    for (const auto& widget : widgets_)
+        for (const auto& key : widget.itemKeys)
+            widgetOwnedKeys.insert(ToUpperInvariant(key));
+
+    for (const auto& candidate : legacyDockPageCandidates)
+    {
+        if (candidate.empty() || candidate == kDockPageId) continue;
+        bool hasDesktopContent = std::any_of(widgets_.begin(), widgets_.end(),
+            [&](const DesktopWidget& widget) {
+                return widget.gridCell.pageId == candidate;
+            });
+        if (!hasDesktopContent)
+        {
+            hasDesktopContent = std::any_of(layoutRecords_.begin(), layoutRecords_.end(),
+                [&](const auto& pair) {
+                    return !widgetOwnedKeys.contains(pair.first) &&
+                        pair.second.hasGrid && pair.second.cell.pageId == candidate;
+                });
+        }
+        if (hasDesktopContent) continue;
+        std::erase(savedPageIds_, candidate);
+        savedPageColumns_.erase(candidate);
+        savedPageRows_.erase(candidate);
+    }
+
     {
         std::vector<std::wstring> savedOrder;
         ReadJsonStringArrayField(text, "navTabOrder", savedOrder);
@@ -1918,7 +2172,11 @@ inline void DesktopApp::SaveLayoutSlots()
         savedPageRows_[page.id] = page.rows;
     }
 
-    std::vector<std::wstring> pagesToWrite = savedPageIds_;
+    std::vector<std::wstring> pagesToWrite;
+    pagesToWrite.reserve(savedPageIds_.size());
+    for (const auto& pageId : savedPageIds_)
+        if (!pageId.empty() && pageId != kDockPageId)
+            pagesToWrite.push_back(pageId);
     if (pagesToWrite.empty() && !gridPages_.empty())
     {
         const GridPage* firstPage = GetFirstPageGridPage();
@@ -1930,9 +2188,22 @@ inline void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
-         << "\",\n  \"itemFontSize\": " << itemFontSize_
+         << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
+         << ",\n  \"itemFontSize\": " << itemFontSize_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
+         << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
+         << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifyEnabled_ ? "true" : "false")
+         << ",\n  \"iconBeautifyMode\": " << iconBeautifyMode_
+         << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifyBgOpacity_
+         << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifyGradientEnabled_ ? "true" : "false")
+         << ",\n  \"iconBeautifyGradientDirection\": " << iconBeautifyGradientDirection_
+         << ",\n  \"iconBeautifyBgStartR\": " << iconBeautifyBgStartR_
+         << ",\n  \"iconBeautifyBgStartG\": " << iconBeautifyBgStartG_
+         << ",\n  \"iconBeautifyBgStartB\": " << iconBeautifyBgStartB_
+         << ",\n  \"iconBeautifyBgEndR\": " << iconBeautifyBgEndR_
+         << ",\n  \"iconBeautifyBgEndG\": " << iconBeautifyBgEndG_
+         << ",\n  \"iconBeautifyBgEndB\": " << iconBeautifyBgEndB_
          << ",\n  \"pages\": [\n";
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
@@ -2011,6 +2282,16 @@ inline void DesktopApp::SaveLayoutSlots()
         }
         file << "] }";
         file << (i + 1 == widgets_.size() ? "\n" : ",\n");
+    }
+    file << "  ],\n  \"dockEntries\": [\n";
+    for (size_t i = 0; i < dockEntries_.size(); ++i)
+    {
+        const DockEntry& entry = dockEntries_[i];
+        file << "    { \"type\": \""
+             << (entry.type == DockEntryType::Collection ? "collection" : "item")
+             << "\", \"ref\": \"" << JsonEscapeUtf8(entry.reference)
+             << "\", \"keepOnDesktop\": " << (entry.keepOnDesktop ? "true" : "false")
+             << " }" << (i + 1 == dockEntries_.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"navTabOrder\": [";
     for (size_t i = 0; i < navTabOrder_.size(); ++i)
@@ -2302,7 +2583,9 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     if (reloadLayoutFromDisk)
     {
         LoadLayoutSlots();
-        ApplyPageMapping();
+        // The file has just populated savedPageColumns_/savedPageRows_. Do not
+        // overwrite those restored values with the pre-reload runtime grid.
+        UpdateLayoutWorkArea(false);
         if (widgetEngine_)
             widgetEngine_->ReloadStorage();
     }
@@ -2315,7 +2598,14 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         }
     }
     LoadDesktopItems();
+    if (FindItemIndexByKey(kDesktopIconClsidRecycleBin) == static_cast<size_t>(-1))
+    {
+        std::erase_if(dockEntries_,
+            [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
+    }
     RefreshCollectedKeysCache();
+    if (!generalSettings_.dockEnabled && !dockEntries_.empty())
+        RestoreDockEntriesToDesktop();
     ApplyAutoCollectFileCategoryWidgets();
 
     // Mark widgets as used
@@ -2558,7 +2848,7 @@ inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
             {
                 if (result->bitmap)
                 {
-                    if (item.iconBitmap) { d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(item.iconBitmap)); DeleteObject(item.iconBitmap); }
+                    if (item.iconBitmap) { EraseD2DIconCacheForBitmap(item.iconBitmap); DeleteObject(item.iconBitmap); }
                     item.iconBitmap = result->bitmap;
                     item.iconBitmapSize = result->bitmapSize;
                     result->bitmap = nullptr;
@@ -2568,6 +2858,8 @@ inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 {
                     item.iconState = IconState::IconReady;
                     item.shortcutArrow = result->shortcutArrow;
+                    item.isShortcut = result->isShortcut;
+                    item.isApplicationShortcut = result->isApplicationShortcut;
                     IconLoadTask phase2;
                     phase2.serial = result->serial;
                     phase2.layoutKey = item.layoutKey;
@@ -2600,7 +2892,7 @@ inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 {
                     if (result->bitmap)
                     {
-                        if (entry.iconBitmap) { d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(entry.iconBitmap)); DeleteObject(entry.iconBitmap); }
+                        if (entry.iconBitmap) { EraseD2DIconCacheForBitmap(entry.iconBitmap); DeleteObject(entry.iconBitmap); }
                         entry.iconBitmap = result->bitmap;
                         entry.iconBitmapSize = result->bitmapSize;
                         result->bitmap = nullptr;
@@ -2610,6 +2902,8 @@ inline void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     {
                         entry.iconState = IconState::IconReady;
                         entry.shortcutArrow = result->shortcutArrow;
+                        entry.isShortcut = result->isShortcut;
+                        entry.isApplicationShortcut = result->isApplicationShortcut;
                         IconLoadTask phase2;
                         phase2.serial = result->serial;
                         phase2.widgetId = widget.id;
@@ -2657,6 +2951,8 @@ inline void DesktopApp::LoadDesktopItems()
         SIZE size{};
         int sysIconIndex = -1;
         bool shortcutArrow = false;
+        bool isShortcut = false;
+        bool isApplicationShortcut = false;
         IconState iconState = IconState::Loading;
     };
     std::unordered_map<std::wstring, OldIcon> oldIconCache;
@@ -2667,6 +2963,8 @@ inline void DesktopApp::LoadDesktopItems()
             old.size = item.iconBitmapSize;
             old.sysIconIndex = item.sysIconIndex;
             old.shortcutArrow = item.shortcutArrow;
+            old.isShortcut = item.isShortcut;
+            old.isApplicationShortcut = item.isApplicationShortcut;
             old.iconState = item.iconState;
             oldIconCache.emplace(ToUpperInvariant(item.layoutKey), std::move(old));
             item.iconBitmap = nullptr;
@@ -2782,6 +3080,8 @@ auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
             item.iconBitmap = oldIt->second.bitmap;
             item.iconBitmapSize = oldIt->second.size;
             item.shortcutArrow = oldIt->second.shortcutArrow;
+            item.isShortcut = oldIt->second.isShortcut;
+            item.isApplicationShortcut = oldIt->second.isApplicationShortcut;
             item.iconState = oldIt->second.iconState;
             oldIt->second.bitmap = nullptr;
             oldIconCache.erase(oldIt);
@@ -2800,7 +3100,7 @@ auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
         } else {
             if (oldIt != oldIconCache.end()) {
                 if (oldIt->second.bitmap) {
-                    d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(oldIt->second.bitmap));
+                    EraseD2DIconCacheForBitmap(oldIt->second.bitmap);
                     DeleteObject(oldIt->second.bitmap);
                 }
                 oldIconCache.erase(oldIt);
@@ -2844,7 +3144,7 @@ auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
 
     for (auto& [key, old] : oldIconCache) {
         if (old.bitmap) {
-            d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(old.bitmap));
+            EraseD2DIconCacheForBitmap(old.bitmap);
             DeleteObject(old.bitmap);
         }
     }
@@ -3004,17 +3304,20 @@ inline void DesktopApp::RefreshDisplayTopologyIfChanged()
 /**
  * @brief 更新布局工作区，枚举显示器并创建对应 GridPage，然后应用页面映射。
  */
-inline void DesktopApp::UpdateLayoutWorkArea()
+inline void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
 {
     layoutWorkArea_ = MakeRect(0, 0, virtualWidth_, virtualHeight_);
     // Preserve the active page dimensions before rebuilding monitor geometry.
     // DPI, resolution and work-area changes may resize cells, but must not
     // replace an already established row/column count.
-    for (const auto& page : gridPages_)
+    if (preserveActiveDimensions)
     {
-        if (page.id.empty()) continue;
-        savedPageColumns_[page.id] = std::max(1, page.columns);
-        savedPageRows_[page.id] = std::max(1, page.rows);
+        for (const auto& page : gridPages_)
+        {
+            if (page.id.empty()) continue;
+            savedPageColumns_[page.id] = std::max(1, page.columns);
+            savedPageRows_[page.id] = std::max(1, page.rows);
+        }
     }
     gridPages_.clear();
 
@@ -3054,6 +3357,7 @@ inline void DesktopApp::UpdateLayoutWorkArea()
     }
 
     ApplyPageMapping();
+    ApplyDockWorkAreaReservation();
 }
 
 /**
@@ -3684,6 +3988,12 @@ inline void DesktopApp::RefreshCollectedKeysCache()
             if (!key.empty())
                 collectedKeysCache_.insert(ToUpperInvariant(key));
     }
+    for (const auto& entry : dockEntries_)
+    {
+        if (entry.type == DockEntryType::DesktopItem && !entry.keepOnDesktop &&
+            !entry.reference.empty())
+            collectedKeysCache_.insert(ToUpperInvariant(entry.reference));
+    }
 }
 
 /**
@@ -4019,7 +4329,54 @@ inline DragSourceList DesktopApp::BuildDragSourceList(
         entry.displayName = src->GetTitle();
         entry.filePath = src->GetPath();
 
-        if (dynamic_cast<Widget*>(src))
+        if (auto* dockItem = dynamic_cast<DockEntryItem*>(src))
+        {
+            entry.fromDock = true;
+            entry.dockReference = dockItem->GetReference();
+            entry.dockEntryType = dockItem->GetEntryType();
+            if (entry.dockEntryType == DockEntryType::DesktopItem)
+            {
+                entry.kind = DropSourceKind::DesktopIcon;
+                entry.desktopKey = entry.dockReference;
+                entry.desktopIndex = FindItemIndexByKey(entry.desktopKey);
+                list.hasDesktopIcons = true;
+                if (entry.desktopIndex < items_.size())
+                {
+                    const DesktopItem& item = items_[entry.desktopIndex];
+                    entry.filePath = item.parsingName;
+                    entry.originalCell = item.gridCell;
+                    entry.originalSpan = item.gridSpan;
+                    entry.protectedDesktopIcon = IsProtectedDesktopIcon(item);
+                }
+            }
+            else
+            {
+                entry.kind = DropSourceKind::Widget;
+                list.hasWidgets = true;
+                size_t widgetIndex = FindWidgetIndexById(entry.dockReference);
+                if (widgetIndex < widgets_.size())
+                {
+                    entry.originalCell = widgets_[widgetIndex].gridCell;
+                    entry.originalSpan = widgets_[widgetIndex].gridSpan;
+                }
+            }
+        }
+        else if (auto* frequentItem = dynamic_cast<DockFrequentItem*>(src))
+        {
+            entry.fromDock = true;
+            entry.kind = DropSourceKind::DesktopIcon;
+            entry.desktopIndex = frequentItem->GetItemIndex();
+            list.hasDesktopIcons = true;
+            if (entry.desktopIndex < items_.size())
+            {
+                const DesktopItem& item = items_[entry.desktopIndex];
+                entry.desktopKey = item.layoutKey;
+                entry.filePath = item.parsingName;
+                entry.originalCell = item.gridCell;
+                entry.originalSpan = item.gridSpan;
+            }
+        }
+        else if (dynamic_cast<Widget*>(src))
         {
             entry.kind = DropSourceKind::Widget;
             list.hasWidgets = true;
@@ -4171,6 +4528,16 @@ inline DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& so
             preview.targetWidget->type == DesktopWidgetType::FolderMapping
                 ? DropTargetKind::FolderMapping
                 : DropTargetKind::KeyedWidget;
+        const bool sourceFromDock = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
+            [](const DragSourceEntry& entry) { return entry.fromDock; });
+        if (preview.targetKind == DropTargetKind::FolderMapping && sourceFromDock &&
+            preview.action == DropAction::Move)
+        {
+            // Dock entries are layout references. A logical move out of Dock
+            // must not physically remove the backing desktop file/shortcut.
+            preview.action = DropAction::Copy;
+            preview.consumeDockSource = true;
+        }
         preview.fileBacked = !(sourceList.origin == target && preview.action == DropAction::Move) &&
             IsDropFileBacked(sourceList, preview.targetKind, preview.action);
         preview.insertIndex = widget->GetDropInsertIndex(targetSlot, region);
@@ -4232,6 +4599,8 @@ inline DropPreviewList DesktopApp::BuildExternalDesktopPreviewList(GridCell targ
 inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     const DropPreviewList& preview)
 {
+    const bool sourceFromDock = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
+        [](const DragSourceEntry& entry) { return entry.fromDock; });
     if (sourceList.Empty()) return false;
     // A completely full desktop produces no visible landing preview. File
     // drops must still be materialized; ReloadItems will allocate virtual
@@ -4243,9 +4612,24 @@ inline bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         preview.action == DropAction::Move &&
         IsAutoCollectFileCategorySource(sourceList))
         return false;
-    return preview.fileBacked
+    bool executed = preview.fileBacked
         ? ExecuteFileBackedDropPlan(sourceList, preview)
         : ExecuteInternalDropPlan(sourceList, preview);
+    if (executed && (preview.action == DropAction::Move || preview.consumeDockSource) && sourceFromDock)
+    {
+        std::unordered_set<std::wstring> moved;
+        for (const auto& entry : sourceList.entries)
+            if (entry.fromDock && !entry.dockReference.empty())
+                moved.insert(std::to_wstring(static_cast<int>(entry.dockEntryType)) + L":" +
+                    ToUpperInvariant(entry.dockReference));
+        std::erase_if(dockEntries_, [&](const DockEntry& entry) {
+            const std::wstring key = std::to_wstring(static_cast<int>(entry.type)) + L":" +
+                ToUpperInvariant(entry.reference);
+            return moved.contains(key);
+        });
+        RefreshCollectedKeysCache();
+    }
+    return executed;
 }
 
 /**
@@ -5176,19 +5560,27 @@ inline void DesktopApp::RebuildContainersAndItems()
     // Widgets
     for (auto& w : widgets_)
     {
+        const bool dockExclusive = IsDockExclusiveWidgetId(w.id);
         auto widget = CreateWidget(&w, this);
         if (!widget) continue;
 
         if (auto* wc = dynamic_cast<WidgetContainer*>(widget.get()))
         {
+            // Dock-exclusive collections still need a runtime container so
+            // their popup can participate in selection, reorder and drops.
+            // Their saved Dock page has no grid rect, so normal widget drawing
+            // remains suppressed by the empty bounds.
             widget.release();
             containers_.push_back(std::unique_ptr<Container>(wc));
         }
-        else
+        else if (!dockExclusive)
         {
             items_oo_.push_back(std::move(widget));
         }
     }
+
+    if (generalSettings_.dockEnabled && !IsRectEmptyRect(dockArea_))
+        containers_.push_back(std::make_unique<DockContainer>(this, &dockEntries_, dockArea_));
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {
@@ -5213,6 +5605,8 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
         SIZE size{};
         int sysIconIndex = -1;
         bool shortcutArrow = false;
+        bool isShortcut = false;
+        bool isApplicationShortcut = false;
         IconState iconState = IconState::Loading;
     };
     std::unordered_map<std::wstring, OldFolderIcon> oldFolderIconCache;
@@ -5225,6 +5619,8 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
             old.size = entry.iconBitmapSize;
             old.sysIconIndex = entry.sysIconIndex;
             old.shortcutArrow = entry.shortcutArrow;
+            old.isShortcut = entry.isShortcut;
+            old.isApplicationShortcut = entry.isApplicationShortcut;
             old.iconState = entry.iconState;
             oldFolderIconCache.emplace(ToUpperInvariant(entry.fullPath), std::move(old));
             entry.iconBitmap = nullptr;
@@ -5237,7 +5633,7 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
     if (widget.sourceFolderPath.empty()) {
         for (auto& [key, old] : oldFolderIconCache) {
             if (old.bitmap) {
-                d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(old.bitmap));
+                EraseD2DIconCacheForBitmap(old.bitmap);
                 DeleteObject(old.bitmap);
             }
         }
@@ -5249,7 +5645,7 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
     if (hFind == INVALID_HANDLE_VALUE) {
         for (auto& [key, old] : oldFolderIconCache) {
             if (old.bitmap) {
-                d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(old.bitmap));
+                EraseD2DIconCacheForBitmap(old.bitmap);
                 DeleteObject(old.bitmap);
             }
         }
@@ -5271,6 +5667,8 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
             entry.iconBitmap = oldIt->second.bitmap;
             entry.iconBitmapSize = oldIt->second.size;
             entry.shortcutArrow = oldIt->second.shortcutArrow;
+            entry.isShortcut = oldIt->second.isShortcut;
+            entry.isApplicationShortcut = oldIt->second.isApplicationShortcut;
             entry.iconState = oldIt->second.iconState;
             oldIt->second.bitmap = nullptr;
             oldFolderIconCache.erase(oldIt);
@@ -5310,7 +5708,7 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
         } else {
             if (oldIt != oldFolderIconCache.end()) {
                 if (oldIt->second.bitmap) {
-                    d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(oldIt->second.bitmap));
+                    EraseD2DIconCacheForBitmap(oldIt->second.bitmap);
                     DeleteObject(oldIt->second.bitmap);
                 }
                 oldFolderIconCache.erase(oldIt);
@@ -5339,7 +5737,7 @@ inline void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget)
     FindClose(hFind);
     for (auto& [key, old] : oldFolderIconCache) {
         if (old.bitmap) {
-            d2dIconCache_.erase(reinterpret_cast<std::uintptr_t>(old.bitmap));
+            EraseD2DIconCacheForBitmap(old.bitmap);
             DeleteObject(old.bitmap);
         }
     }
@@ -5908,6 +6306,1018 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
     SaveLayoutSlots();
 }
 
+namespace
+{
+    struct IconPixelBuffer
+    {
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint32_t> pixels;
+    };
+
+    struct IconVisibleBounds
+    {
+        bool hasVisiblePixels = false;
+        int left = 0;
+        int top = 0;
+        int right = 0;
+        int bottom = 0;
+    };
+
+    struct IconBackgroundColor
+    {
+        int r = 246;
+        int g = 247;
+        int b = 250;
+    };
+
+    inline std::uint8_t PixelA(std::uint32_t pixel)
+    {
+        return static_cast<std::uint8_t>((pixel >> 24) & 0xff);
+    }
+
+    inline std::uint32_t PackBgra(int b, int g, int r, int a)
+    {
+        return (static_cast<std::uint32_t>(std::clamp(a, 0, 255)) << 24) |
+            (static_cast<std::uint32_t>(std::clamp(r, 0, 255)) << 16) |
+            (static_cast<std::uint32_t>(std::clamp(g, 0, 255)) << 8) |
+            static_cast<std::uint32_t>(std::clamp(b, 0, 255));
+    }
+
+    inline std::uint32_t PackPremultipliedRgb(int r, int g, int b, int a)
+    {
+        return PackBgra(
+            (b * a + 127) / 255,
+            (g * a + 127) / 255,
+            (r * a + 127) / 255,
+            a);
+    }
+
+    inline void NormalizePremultipliedBgra(std::vector<std::uint32_t>& pixels)
+    {
+        bool hasAlpha = false;
+        bool hasVisibleColor = false;
+        for (std::uint32_t pixel : pixels)
+        {
+            if (PixelA(pixel) != 0)
+                hasAlpha = true;
+            if ((pixel & 0x00ffffff) != 0)
+                hasVisibleColor = true;
+        }
+
+        if (!hasAlpha && hasVisibleColor)
+        {
+            for (std::uint32_t& pixel : pixels)
+            {
+                if ((pixel & 0x00ffffff) != 0)
+                    pixel |= 0xff000000;
+            }
+        }
+
+        bool needsPremultiply = false;
+        for (std::uint32_t pixel : pixels)
+        {
+            const int a = PixelA(pixel);
+            if (a == 0 || a == 255) continue;
+            if (((pixel >> 16) & 0xff) > static_cast<std::uint32_t>(a) ||
+                ((pixel >> 8) & 0xff) > static_cast<std::uint32_t>(a) ||
+                (pixel & 0xff) > static_cast<std::uint32_t>(a))
+            {
+                needsPremultiply = true;
+                break;
+            }
+        }
+
+        for (std::uint32_t& pixel : pixels)
+        {
+            const int a = PixelA(pixel);
+            if (a == 0)
+            {
+                pixel = 0;
+                continue;
+            }
+            if (!needsPremultiply || a == 255)
+                continue;
+
+            const int r = static_cast<int>((pixel >> 16) & 0xff);
+            const int g = static_cast<int>((pixel >> 8) & 0xff);
+            const int b = static_cast<int>(pixel & 0xff);
+            pixel = PackBgra(
+                (b * a + 127) / 255,
+                (g * a + 127) / 255,
+                (r * a + 127) / 255,
+                a);
+        }
+    }
+
+    inline bool ReadHBitmapPixels(HBITMAP hbm, IconPixelBuffer& out)
+    {
+        BITMAP bm{};
+        if (!hbm || GetObjectW(hbm, sizeof(bm), &bm) == 0)
+            return false;
+
+        const int width = bm.bmWidth;
+        const int height = std::abs(bm.bmHeight);
+        if (width <= 0 || height <= 0)
+            return false;
+
+        out.width = width;
+        out.height = height;
+        out.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+
+        if (bm.bmBits != nullptr && bm.bmBitsPixel == 32)
+        {
+            const auto* src = static_cast<const std::uint8_t*>(bm.bmBits);
+            const int stride = std::abs(bm.bmWidthBytes);
+            for (int y = 0; y < height; ++y)
+            {
+                std::memcpy(out.pixels.data() + static_cast<size_t>(y) * width,
+                    src + static_cast<size_t>(y) * stride,
+                    static_cast<size_t>(width) * sizeof(std::uint32_t));
+            }
+            NormalizePremultipliedBgra(out.pixels);
+            return true;
+        }
+
+        HDC screenDc = GetDC(nullptr);
+        if (!screenDc)
+            return false;
+
+        BITMAPINFO bitmapInfo{};
+        bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+        bitmapInfo.bmiHeader.biWidth = width;
+        bitmapInfo.bmiHeader.biHeight = -height;
+        bitmapInfo.bmiHeader.biPlanes = 1;
+        bitmapInfo.bmiHeader.biBitCount = 32;
+        bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+        const bool ok = GetDIBits(screenDc, hbm, 0, static_cast<UINT>(height),
+            out.pixels.data(), &bitmapInfo, DIB_RGB_COLORS) != 0;
+        ReleaseDC(nullptr, screenDc);
+        if (!ok)
+            return false;
+
+        NormalizePremultipliedBgra(out.pixels);
+        return true;
+    }
+
+    inline IconVisibleBounds AnalyzeIconVisibleBounds(const std::vector<std::uint32_t>& pixels,
+        int width, int height)
+    {
+        IconVisibleBounds bounds{};
+        bounds.left = width;
+        bounds.top = height;
+        bounds.right = -1;
+        bounds.bottom = -1;
+
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                const std::uint8_t a = PixelA(pixels[static_cast<size_t>(y) * width + x]);
+                if (a > 16)
+                {
+                    bounds.hasVisiblePixels = true;
+                    bounds.left = std::min(bounds.left, x);
+                    bounds.top = std::min(bounds.top, y);
+                    bounds.right = std::max(bounds.right, x);
+                    bounds.bottom = std::max(bounds.bottom, y);
+                }
+            }
+        }
+
+        return bounds;
+    }
+
+    inline IconBackgroundColor StraightIconColor(std::uint32_t pixel)
+    {
+        const int a = PixelA(pixel);
+        if (a <= 0)
+            return IconBackgroundColor{ 0, 0, 0 };
+
+        return IconBackgroundColor{
+            std::clamp((((static_cast<int>(pixel >> 16) & 0xff) * 255) + a / 2) / a, 0, 255),
+            std::clamp((((static_cast<int>(pixel >> 8) & 0xff) * 255) + a / 2) / a, 0, 255),
+            std::clamp((((static_cast<int>(pixel) & 0xff) * 255) + a / 2) / a, 0, 255)
+        };
+    }
+
+    inline int IconColorDistanceSq(const IconBackgroundColor& lhs, const IconBackgroundColor& rhs)
+    {
+        const int dr = lhs.r - rhs.r;
+        const int dg = lhs.g - rhs.g;
+        const int db = lhs.b - rhs.b;
+        return dr * dr + dg * dg + db * db;
+    }
+
+    inline bool DetectSolidEdgeBackground(const std::vector<std::uint32_t>& pixels,
+        int width, int height, IconBackgroundColor& color)
+    {
+        if (width <= 2 || height <= 2)
+            return false;
+
+        constexpr int kEdgeAlpha = 16;
+        constexpr int kReliableAlpha = 160;
+        constexpr int kMaxInnerProbe = 4;
+        constexpr int kColorBucketSize = 24;
+        constexpr int kEdgeColorToleranceSq = 30 * 30 * 3;
+        constexpr float kMinimumFillRatio = 0.992f;
+        constexpr float kStrongEdgeDominantRatio = 0.86f;
+        constexpr int kStrongEdgeSectorCount = 7;
+        constexpr float kGradientEdgeDominantRatio = 0.55f;
+        constexpr int kGradientEdgeSectorCount = 6;
+        constexpr float kShapePlateExtentRatio = 0.80f;
+        constexpr float kShapePlateStabilityRatio = 0.78f;
+        constexpr float kShapePlateMaxAspectRatio = 1.12f;
+        constexpr float kRoundedPlateMinCapRatio = 0.64f;
+        constexpr float kShapePlateMaxCapRatio = 1.18f;
+        constexpr float kGradientPlateMinCapRatio = 0.76f;
+        constexpr float kGradientPlateMaxCapDelta = 0.12f;
+        constexpr float kCirclePlateMaxAspectRatio = 1.08f;
+        constexpr float kCirclePlateMaxCapRatio = 0.72f;
+        constexpr float kCirclePlateMaxCapDelta = 0.14f;
+        constexpr int kSectorCount = 8;
+        constexpr float kPi = 3.14159265358979323846f;
+
+        std::vector<int> left(static_cast<size_t>(height), -1);
+        std::vector<int> right(static_cast<size_t>(height), -1);
+        std::vector<int> top(static_cast<size_t>(width), -1);
+        std::vector<int> bottom(static_cast<size_t>(width), -1);
+
+        auto isVisible = [&](int x, int y) {
+            return PixelA(pixels[static_cast<size_t>(y) * width + x]) > kEdgeAlpha;
+        };
+
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                if (isVisible(x, y))
+                {
+                    left[static_cast<size_t>(y)] = x;
+                    break;
+                }
+            }
+            for (int x = width - 1; x >= 0; --x)
+            {
+                if (isVisible(x, y))
+                {
+                    right[static_cast<size_t>(y)] = x;
+                    break;
+                }
+            }
+        }
+
+        for (int x = 0; x < width; ++x)
+        {
+            for (int y = 0; y < height; ++y)
+            {
+                if (isVisible(x, y))
+                {
+                    top[static_cast<size_t>(x)] = y;
+                    break;
+                }
+            }
+            for (int y = height - 1; y >= 0; --y)
+            {
+                if (isVisible(x, y))
+                {
+                    bottom[static_cast<size_t>(x)] = y;
+                    break;
+                }
+            }
+        }
+
+        int boundsLeft = width;
+        int boundsRight = -1;
+        int boundsTop = height;
+        int boundsBottom = -1;
+        for (int y = 0; y < height; ++y)
+        {
+            if (left[static_cast<size_t>(y)] < 0)
+                continue;
+            boundsLeft = std::min(boundsLeft, left[static_cast<size_t>(y)]);
+            boundsRight = std::max(boundsRight, right[static_cast<size_t>(y)]);
+            boundsTop = std::min(boundsTop, y);
+            boundsBottom = std::max(boundsBottom, y);
+        }
+
+        if (boundsRight < boundsLeft || boundsBottom < boundsTop)
+            return false;
+
+        const int extentW = boundsRight - boundsLeft + 1;
+        const int extentH = boundsBottom - boundsTop + 1;
+        const float extentRatio = std::min(
+            static_cast<float>(extentW) / static_cast<float>(width),
+            static_cast<float>(extentH) / static_cast<float>(height));
+
+        int filledPixels = 0;
+        int expectedPixels = 0;
+        for (int y = boundsTop; y <= boundsBottom; ++y)
+        {
+            const int rowLeft = left[static_cast<size_t>(y)];
+            const int rowRight = right[static_cast<size_t>(y)];
+            if (rowLeft < 0 || rowRight < rowLeft)
+                return false;
+
+            for (int x = rowLeft; x <= rowRight; ++x)
+            {
+                ++expectedPixels;
+                if (!isVisible(x, y))
+                    return false;
+                ++filledPixels;
+            }
+        }
+        const float fillRatio = expectedPixels > 0
+            ? static_cast<float>(filledPixels) / static_cast<float>(expectedPixels)
+            : 0.0f;
+        if (fillRatio < kMinimumFillRatio)
+            return false;
+
+        auto stableEdgeColor = [&](int x, int y, int dx, int dy) {
+            int bestX = x;
+            int bestY = y;
+            int bestAlpha = PixelA(pixels[static_cast<size_t>(y) * width + x]);
+
+            for (int step = 1; step <= kMaxInnerProbe; ++step)
+            {
+                const int nx = x + dx * step;
+                const int ny = y + dy * step;
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+                    break;
+
+                const int alpha = PixelA(pixels[static_cast<size_t>(ny) * width + nx]);
+                if (alpha <= kEdgeAlpha)
+                    break;
+                if (alpha > bestAlpha)
+                {
+                    bestAlpha = alpha;
+                    bestX = nx;
+                    bestY = ny;
+                }
+                if (alpha >= kReliableAlpha)
+                    break;
+            }
+
+            return StraightIconColor(pixels[static_cast<size_t>(bestY) * width + bestX]);
+        };
+
+        struct IconEdgeSample
+        {
+            IconBackgroundColor color;
+            int x = 0;
+            int y = 0;
+        };
+
+        struct IconColorBucket
+        {
+            long long sumR = 0;
+            long long sumG = 0;
+            long long sumB = 0;
+            int count = 0;
+        };
+
+        std::vector<IconEdgeSample> edgeSamples;
+        edgeSamples.reserve(static_cast<size_t>((width + height) * 2));
+        std::unordered_map<int, IconColorBucket> buckets;
+
+        auto addSample = [&](IconBackgroundColor sample, int x, int y) {
+            edgeSamples.push_back(IconEdgeSample{ sample, x, y });
+
+            const int key =
+                (std::clamp(sample.r / kColorBucketSize, 0, 255) << 16) |
+                (std::clamp(sample.g / kColorBucketSize, 0, 255) << 8) |
+                std::clamp(sample.b / kColorBucketSize, 0, 255);
+            IconColorBucket& bucket = buckets[key];
+            bucket.sumR += sample.r;
+            bucket.sumG += sample.g;
+            bucket.sumB += sample.b;
+            ++bucket.count;
+        };
+
+        for (int y = boundsTop; y <= boundsBottom; ++y)
+        {
+            const int rowLeft = left[static_cast<size_t>(y)];
+            const int rowRight = right[static_cast<size_t>(y)];
+            addSample(stableEdgeColor(rowLeft, y, 1, 0), rowLeft, y);
+            if (rowRight != rowLeft)
+                addSample(stableEdgeColor(rowRight, y, -1, 0), rowRight, y);
+        }
+
+        for (int x = boundsLeft; x <= boundsRight; ++x)
+        {
+            const int colTop = top[static_cast<size_t>(x)];
+            const int colBottom = bottom[static_cast<size_t>(x)];
+            if (colTop < 0 || colBottom < colTop)
+                return false;
+
+            addSample(stableEdgeColor(x, colTop, 0, 1), x, colTop);
+            if (colBottom != colTop)
+                addSample(stableEdgeColor(x, colBottom, 0, -1), x, colBottom);
+        }
+
+        if (edgeSamples.empty())
+            return false;
+
+        const IconColorBucket* dominantBucket = nullptr;
+        for (const auto& [_, bucket] : buckets)
+        {
+            if (!dominantBucket || bucket.count > dominantBucket->count)
+                dominantBucket = &bucket;
+        }
+        if (!dominantBucket || dominantBucket->count <= 0)
+            return false;
+
+        const IconBackgroundColor dominant{
+            std::clamp(static_cast<int>(
+                (dominantBucket->sumR + dominantBucket->count / 2) / dominantBucket->count), 0, 255),
+            std::clamp(static_cast<int>(
+                (dominantBucket->sumG + dominantBucket->count / 2) / dominantBucket->count), 0, 255),
+            std::clamp(static_cast<int>(
+                (dominantBucket->sumB + dominantBucket->count / 2) / dominantBucket->count), 0, 255)
+        };
+
+        const float centerX = (static_cast<float>(boundsLeft + boundsRight) + 1.0f) * 0.5f;
+        const float centerY = (static_cast<float>(boundsTop + boundsBottom) + 1.0f) * 0.5f;
+        auto sectorForPoint = [&](int x, int y) {
+            float angle = std::atan2(
+                (static_cast<float>(y) + 0.5f) - centerY,
+                (static_cast<float>(x) + 0.5f) - centerX);
+            if (angle < 0.0f)
+                angle += kPi * 2.0f;
+            return std::clamp(
+                static_cast<int>(std::floor(angle / (kPi * 2.0f) * static_cast<float>(kSectorCount))),
+                0,
+                kSectorCount - 1);
+        };
+
+        unsigned dominantSectors = 0;
+        int closeCount = 0;
+        for (const IconEdgeSample& sample : edgeSamples)
+        {
+            if (IconColorDistanceSq(sample.color, dominant) <= kEdgeColorToleranceSq)
+            {
+                ++closeCount;
+                dominantSectors |= 1u << sectorForPoint(sample.x, sample.y);
+            }
+        }
+
+        const int sampleCount = static_cast<int>(edgeSamples.size());
+        const float edgeDominantRatio = sampleCount > 0
+            ? static_cast<float>(closeCount) / static_cast<float>(sampleCount)
+            : 0.0f;
+
+        int sectorCount = 0;
+        for (int i = 0; i < kSectorCount; ++i)
+        {
+            if ((dominantSectors & (1u << i)) != 0)
+                ++sectorCount;
+        }
+
+        std::vector<int> rowWidths;
+        rowWidths.reserve(static_cast<size_t>(extentH));
+        for (int y = boundsTop; y <= boundsBottom; ++y)
+        {
+            if (left[static_cast<size_t>(y)] >= 0 && right[static_cast<size_t>(y)] >= left[static_cast<size_t>(y)])
+                rowWidths.push_back(right[static_cast<size_t>(y)] - left[static_cast<size_t>(y)] + 1);
+        }
+
+        std::vector<int> columnHeights;
+        columnHeights.reserve(static_cast<size_t>(extentW));
+        for (int x = boundsLeft; x <= boundsRight; ++x)
+        {
+            if (top[static_cast<size_t>(x)] >= 0 && bottom[static_cast<size_t>(x)] >= top[static_cast<size_t>(x)])
+                columnHeights.push_back(bottom[static_cast<size_t>(x)] - top[static_cast<size_t>(x)] + 1);
+        }
+
+        auto centeredStability = [](const std::vector<int>& values) {
+            if (values.empty())
+                return 0.0f;
+
+            const size_t start = values.size() >= 4 ? values.size() / 4 : 0;
+            const size_t end = values.size() >= 4 ? (values.size() * 3) / 4 : values.size();
+            int minValue = values[start];
+            int maxValue = values[start];
+            for (size_t i = start + 1; i < end; ++i)
+            {
+                minValue = std::min(minValue, values[i]);
+                maxValue = std::max(maxValue, values[i]);
+            }
+
+            return maxValue > 0
+                ? static_cast<float>(minValue) / static_cast<float>(maxValue)
+                : 0.0f;
+        };
+
+        auto averageSpan = [](const std::vector<int>& values, size_t start, size_t end) {
+            if (values.empty() || start >= end)
+                return 0.0f;
+
+            long long sum = 0;
+            for (size_t i = start; i < end; ++i)
+                sum += values[i];
+            return static_cast<float>(sum) / static_cast<float>(end - start);
+        };
+
+        const size_t capRows = std::max<size_t>(1, rowWidths.size() / 8);
+        const size_t midStart = rowWidths.size() >= 4 ? rowWidths.size() / 4 : 0;
+        const size_t midEnd = rowWidths.size() >= 4 ? (rowWidths.size() * 3) / 4 : rowWidths.size();
+        const float midWidthAverage = averageSpan(rowWidths, midStart, midEnd);
+        const float topCapRatio = midWidthAverage > 0.0f
+            ? averageSpan(rowWidths, 0, std::min(capRows, rowWidths.size())) / midWidthAverage
+            : 0.0f;
+        const float bottomCapRatio = midWidthAverage > 0.0f
+            ? averageSpan(rowWidths, rowWidths.size() - std::min(capRows, rowWidths.size()), rowWidths.size()) /
+                midWidthAverage
+            : 0.0f;
+
+        const float aspectRatio = std::max(
+            static_cast<float>(extentW) / static_cast<float>(extentH),
+            static_cast<float>(extentH) / static_cast<float>(extentW));
+        const float rowStability = centeredStability(rowWidths);
+        const float columnStability = centeredStability(columnHeights);
+
+        const bool roundedRectPlate =
+            extentRatio >= kShapePlateExtentRatio &&
+            aspectRatio <= kShapePlateMaxAspectRatio &&
+            rowStability >= kShapePlateStabilityRatio &&
+            columnStability >= kShapePlateStabilityRatio &&
+            topCapRatio >= kRoundedPlateMinCapRatio &&
+            bottomCapRatio >= kRoundedPlateMinCapRatio &&
+            topCapRatio <= kShapePlateMaxCapRatio &&
+            bottomCapRatio <= kShapePlateMaxCapRatio;
+
+        const bool circlePlate =
+            extentRatio >= kShapePlateExtentRatio &&
+            aspectRatio <= kCirclePlateMaxAspectRatio &&
+            rowStability >= kShapePlateStabilityRatio &&
+            columnStability >= kShapePlateStabilityRatio &&
+            topCapRatio <= kCirclePlateMaxCapRatio &&
+            bottomCapRatio <= kCirclePlateMaxCapRatio &&
+            std::abs(topCapRatio - bottomCapRatio) <= kCirclePlateMaxCapDelta;
+
+        const bool strongEdgeColor =
+            edgeDominantRatio >= kStrongEdgeDominantRatio &&
+            sectorCount >= kStrongEdgeSectorCount;
+        const bool gradientPlateEdgeColor =
+            roundedRectPlate &&
+            topCapRatio >= kGradientPlateMinCapRatio &&
+            bottomCapRatio >= kGradientPlateMinCapRatio &&
+            std::abs(topCapRatio - bottomCapRatio) <= kGradientPlateMaxCapDelta &&
+            edgeDominantRatio >= kGradientEdgeDominantRatio &&
+            sectorCount >= kGradientEdgeSectorCount;
+
+        if ((!roundedRectPlate && !circlePlate) ||
+            (!strongEdgeColor && !gradientPlateEdgeColor))
+        {
+            return false;
+        }
+
+        color = dominant;
+        return true;
+    }
+
+    inline int RoundedRectMaskAlpha(int x, int y, int width, int height, float radius)
+    {
+        const float px = static_cast<float>(x) + 0.5f;
+        const float py = static_cast<float>(y) + 0.5f;
+        const float left = radius;
+        const float top = radius;
+        const float right = static_cast<float>(width) - radius;
+        const float bottom = static_cast<float>(height) - radius;
+
+        float dx = 0.0f;
+        if (px < left) dx = left - px;
+        else if (px > right) dx = px - right;
+
+        float dy = 0.0f;
+        if (py < top) dy = top - py;
+        else if (py > bottom) dy = py - bottom;
+
+        // Superellipse corner: the larger radius offsets the softer continuous curve.
+        const float distance = std::pow(
+            std::pow(dx, kIconBeautifyCornerExponent) +
+                std::pow(dy, kIconBeautifyCornerExponent),
+            1.0f / kIconBeautifyCornerExponent);
+        const float coverage = std::clamp(radius + 0.5f - distance, 0.0f, 1.0f);
+        return static_cast<int>(std::round(coverage * 255.0f));
+    }
+
+    inline std::uint32_t ScalePremultipliedPixel(std::uint32_t pixel, int scale)
+    {
+        if (scale <= 0 || PixelA(pixel) == 0)
+            return 0;
+        if (scale >= 255)
+            return pixel;
+
+        const int b = static_cast<int>(pixel & 0xff);
+        const int g = static_cast<int>((pixel >> 8) & 0xff);
+        const int r = static_cast<int>((pixel >> 16) & 0xff);
+        const int a = static_cast<int>((pixel >> 24) & 0xff);
+        return PackBgra(
+            (b * scale + 127) / 255,
+            (g * scale + 127) / 255,
+            (r * scale + 127) / 255,
+            (a * scale + 127) / 255);
+    }
+
+    inline std::uint32_t SourceOverPremultiplied(std::uint32_t src, std::uint32_t dst)
+    {
+        const int sa = PixelA(src);
+        if (sa == 0) return dst;
+        if (sa == 255) return src;
+
+        const int inv = 255 - sa;
+        const int sb = static_cast<int>(src & 0xff);
+        const int sg = static_cast<int>((src >> 8) & 0xff);
+        const int sr = static_cast<int>((src >> 16) & 0xff);
+        const int db = static_cast<int>(dst & 0xff);
+        const int dg = static_cast<int>((dst >> 8) & 0xff);
+        const int dr = static_cast<int>((dst >> 16) & 0xff);
+        const int da = PixelA(dst);
+
+        return PackBgra(
+            sb + (db * inv + 127) / 255,
+            sg + (dg * inv + 127) / 255,
+            sr + (dr * inv + 127) / 255,
+            sa + (da * inv + 127) / 255);
+    }
+
+    inline std::uint32_t SampleBgraBilinear(const std::vector<std::uint32_t>& pixels,
+        int width, int height, float x, float y)
+    {
+        x = std::clamp(x, 0.0f, static_cast<float>(std::max(0, width - 1)));
+        y = std::clamp(y, 0.0f, static_cast<float>(std::max(0, height - 1)));
+
+        const int x0 = static_cast<int>(std::floor(x));
+        const int y0 = static_cast<int>(std::floor(y));
+        const int x1 = std::min(width - 1, x0 + 1);
+        const int y1 = std::min(height - 1, y0 + 1);
+        const float fx = x - static_cast<float>(x0);
+        const float fy = y - static_cast<float>(y0);
+
+        const std::uint32_t p00 = pixels[static_cast<size_t>(y0) * width + x0];
+        const std::uint32_t p10 = pixels[static_cast<size_t>(y0) * width + x1];
+        const std::uint32_t p01 = pixels[static_cast<size_t>(y1) * width + x0];
+        const std::uint32_t p11 = pixels[static_cast<size_t>(y1) * width + x1];
+
+        auto channel = [&](int shift) {
+            const float c00 = static_cast<float>((p00 >> shift) & 0xff);
+            const float c10 = static_cast<float>((p10 >> shift) & 0xff);
+            const float c01 = static_cast<float>((p01 >> shift) & 0xff);
+            const float c11 = static_cast<float>((p11 >> shift) & 0xff);
+            const float top = c00 + (c10 - c00) * fx;
+            const float bottom = c01 + (c11 - c01) * fx;
+            return static_cast<int>(std::round(top + (bottom - top) * fy));
+        };
+
+        return PackBgra(channel(0), channel(8), channel(16), channel(24));
+    }
+
+    struct IconBackgroundPaint
+    {
+        IconBackgroundColor start{};
+        IconBackgroundColor end{};
+        IconBackgroundColor border{};
+        int opacity = 255;
+        bool gradient = false;
+        int gradientDirection = 0;
+    };
+
+    inline int IconColorLuma(const IconBackgroundColor& color)
+    {
+        return (color.r * 299 + color.g * 587 + color.b * 114) / 1000;
+    }
+
+    inline IconBackgroundColor MixIconColor(
+        const IconBackgroundColor& start,
+        const IconBackgroundColor& end,
+        float amount)
+    {
+        amount = std::clamp(amount, 0.0f, 1.0f);
+        return IconBackgroundColor{
+            std::clamp(static_cast<int>(std::round(
+                static_cast<float>(start.r) + static_cast<float>(end.r - start.r) * amount)), 0, 255),
+            std::clamp(static_cast<int>(std::round(
+                static_cast<float>(start.g) + static_cast<float>(end.g - start.g) * amount)), 0, 255),
+            std::clamp(static_cast<int>(std::round(
+                static_cast<float>(start.b) + static_cast<float>(end.b - start.b) * amount)), 0, 255)
+        };
+    }
+
+    inline IconBackgroundColor AutoIconBorderColor(
+        const IconBackgroundColor& start,
+        const IconBackgroundColor& end)
+    {
+        const IconBackgroundColor mid = MixIconColor(start, end, 0.5f);
+        const int delta = IconColorLuma(mid) >= 128 ? -34 : 34;
+        return IconBackgroundColor{
+            std::clamp(mid.r + delta, 0, 255),
+            std::clamp(mid.g + delta, 0, 255),
+            std::clamp(mid.b + delta, 0, 255)
+        };
+    }
+
+    inline IconBackgroundColor IconColorFromFloats(float r, float g, float b)
+    {
+        return IconBackgroundColor{
+            std::clamp(static_cast<int>(std::round(std::clamp(r, 0.0f, 1.0f) * 255.0f)), 0, 255),
+            std::clamp(static_cast<int>(std::round(std::clamp(g, 0.0f, 1.0f) * 255.0f)), 0, 255),
+            std::clamp(static_cast<int>(std::round(std::clamp(b, 0.0f, 1.0f) * 255.0f)), 0, 255)
+        };
+    }
+
+    inline void FillRoundedIconBackground(std::vector<std::uint32_t>& output,
+        int width,
+        int height,
+        float radius,
+        const IconBackgroundPaint& paint)
+    {
+        for (int y = 0; y < height; ++y)
+        {
+            const float yT = height > 1
+                ? static_cast<float>(y) / static_cast<float>(height - 1)
+                : 0.0f;
+            for (int x = 0; x < width; ++x)
+            {
+                const float xT = width > 1
+                    ? static_cast<float>(x) / static_cast<float>(width - 1)
+                    : 0.0f;
+                float gradientT = 0.0f;
+                if (paint.gradient)
+                {
+                    switch (paint.gradientDirection)
+                    {
+                    case 1: gradientT = xT; break;
+                    case 2: gradientT = (xT + yT) * 0.5f; break;
+                    case 3: gradientT = (xT + (1.0f - yT)) * 0.5f; break;
+                    default: gradientT = yT; break;
+                    }
+                }
+                const IconBackgroundColor fill = MixIconColor(paint.start, paint.end, gradientT);
+                const int mask = RoundedRectMaskAlpha(x, y, width, height, radius);
+                const int innerWidth = std::max(1, width - 2);
+                const int innerHeight = std::max(1, height - 2);
+                const int innerMask = RoundedRectMaskAlpha(
+                    x - 1, y - 1, innerWidth, innerHeight, std::max(1.0f, radius - 1.0f));
+                const float borderMix = mask > 0
+                    ? static_cast<float>(std::clamp(mask - innerMask, 0, 255)) / static_cast<float>(mask)
+                    : 0.0f;
+                const int r = static_cast<int>(std::round(
+                    static_cast<float>(fill.r) + static_cast<float>(paint.border.r - fill.r) * borderMix));
+                const int g = static_cast<int>(std::round(
+                    static_cast<float>(fill.g) + static_cast<float>(paint.border.g - fill.g) * borderMix));
+                const int b = static_cast<int>(std::round(
+                    static_cast<float>(fill.b) + static_cast<float>(paint.border.b - fill.b) * borderMix));
+                const int alpha = (mask * paint.opacity + 127) / 255;
+                output[static_cast<size_t>(y) * width + x] = PackPremultipliedRgb(r, g, b, alpha);
+            }
+        }
+    }
+
+    inline void ApplyRoundedIconOutline(std::vector<std::uint32_t>& output,
+        int width,
+        int height,
+        float radius,
+        IconBackgroundColor stroke,
+        int opacity)
+    {
+        const int innerWidth = std::max(1, width - 2);
+        const int innerHeight = std::max(1, height - 2);
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                const int mask = RoundedRectMaskAlpha(x, y, width, height, radius);
+                if (mask <= 0)
+                    continue;
+
+                const int innerMask = RoundedRectMaskAlpha(
+                    x - 1, y - 1, innerWidth, innerHeight, std::max(1.0f, radius - 1.0f));
+                const int edgeAlpha = std::clamp(mask - innerMask, 0, 255);
+                if (edgeAlpha <= 0)
+                    continue;
+
+                const int alpha = (edgeAlpha * opacity + 127) / 255;
+                std::uint32_t& dst = output[static_cast<size_t>(y) * width + x];
+                dst = SourceOverPremultiplied(
+                    PackPremultipliedRgb(stroke.r, stroke.g, stroke.b, alpha),
+                    dst);
+            }
+        }
+    }
+
+    struct IconShadowPass
+    {
+        int dx = 0;
+        int dy = 0;
+        int opacity = 0;
+    };
+
+    inline std::uint32_t MakeIconSourceShadow(std::uint32_t sampled, int mask, int opacity)
+    {
+        if (mask <= 0 || opacity <= 0)
+            return 0;
+
+        const int alpha = PixelA(sampled);
+        if (alpha <= 0)
+            return 0;
+
+        const int shadowAlpha = (alpha * mask * opacity + 255 * 255 / 2) / (255 * 255);
+        return PackPremultipliedRgb(48, 58, 72, shadowAlpha);
+    }
+
+    inline std::vector<std::uint32_t> BeautifyIconPixels(
+        const std::vector<std::uint32_t>& source,
+        int width,
+        int height,
+        const IconBackgroundPaint& backgroundPaint,
+        float cornerRadius,
+        bool smartRecognitionEnabled)
+    {
+        const IconVisibleBounds bounds = AnalyzeIconVisibleBounds(source, width, height);
+        if (!bounds.hasVisiblePixels)
+            return source;
+
+        const float radius = cornerRadius;
+        IconBackgroundColor edgeFill{};
+        const bool clipWithEdgeFill = smartRecognitionEnabled &&
+            DetectSolidEdgeBackground(source, width, height, edgeFill);
+        std::vector<std::uint32_t> output(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+
+        if (clipWithEdgeFill)
+        {
+            const std::uint32_t background = PackPremultipliedRgb(edgeFill.r, edgeFill.g, edgeFill.b, 255);
+            for (int y = 0; y < height; ++y)
+            {
+                for (int x = 0; x < width; ++x)
+                {
+                    const int mask = RoundedRectMaskAlpha(x, y, width, height, radius);
+                    const std::uint32_t composed = SourceOverPremultiplied(
+                        source[static_cast<size_t>(y) * width + x], background);
+                    output[static_cast<size_t>(y) * width + x] =
+                        ScalePremultipliedPixel(composed, mask);
+                }
+            }
+            if (IconColorLuma(edgeFill) >= 232)
+            {
+                ApplyRoundedIconOutline(output, width, height, radius,
+                    IconBackgroundColor{ 190, 199, 214 }, 150);
+            }
+            return output;
+        }
+
+        FillRoundedIconBackground(output, width, height, radius, backgroundPaint);
+
+        const int sourceW = std::max(1, bounds.right - bounds.left + 1);
+        const int sourceH = std::max(1, bounds.bottom - bounds.top + 1);
+        const int padding = std::max(5, static_cast<int>(std::round(std::min(width, height) * 0.16f)));
+        const int maxW = std::max(1, width - padding * 2);
+        const int maxH = std::max(1, height - padding * 2);
+        const float scale = std::min(
+            static_cast<float>(maxW) / static_cast<float>(sourceW),
+            static_cast<float>(maxH) / static_cast<float>(sourceH));
+        const int destW = std::max(1, static_cast<int>(std::round(sourceW * scale)));
+        const int destH = std::max(1, static_cast<int>(std::round(sourceH * scale)));
+        const int destLeft = (width - destW) / 2;
+        const int destTop = (height - destH) / 2;
+
+        constexpr IconShadowPass kShadowPasses[] = {
+            { 0, 1, 42 },
+            { -1, 1, 22 },
+            { 1, 1, 22 },
+            { 0, 2, 18 },
+            { -1, 0, 14 },
+            { 1, 0, 14 },
+            { 0, -1, 10 },
+        };
+
+        for (int y = 0; y < destH; ++y)
+        {
+            for (int x = 0; x < destW; ++x)
+            {
+                const float sx = static_cast<float>(bounds.left) +
+                    ((static_cast<float>(x) + 0.5f) / static_cast<float>(destW)) *
+                    static_cast<float>(sourceW) - 0.5f;
+                const float sy = static_cast<float>(bounds.top) +
+                    ((static_cast<float>(y) + 0.5f) / static_cast<float>(destH)) *
+                    static_cast<float>(sourceH) - 0.5f;
+                const std::uint32_t sampled = SampleBgraBilinear(source, width, height, sx, sy);
+                if (PixelA(sampled) == 0)
+                    continue;
+
+                const int outX = destLeft + x;
+                const int outY = destTop + y;
+                for (const IconShadowPass& pass : kShadowPasses)
+                {
+                    const int shadowX = outX + pass.dx;
+                    const int shadowY = outY + pass.dy;
+                    if (shadowX < 0 || shadowY < 0 || shadowX >= width || shadowY >= height)
+                        continue;
+
+                    const int mask = RoundedRectMaskAlpha(shadowX, shadowY, width, height, radius);
+                    std::uint32_t shadow = MakeIconSourceShadow(sampled, mask, pass.opacity);
+                    std::uint32_t& dst = output[static_cast<size_t>(shadowY) * width + shadowX];
+                    dst = SourceOverPremultiplied(shadow, dst);
+                }
+            }
+        }
+
+        for (int y = 0; y < destH; ++y)
+        {
+            for (int x = 0; x < destW; ++x)
+            {
+                const float sx = static_cast<float>(bounds.left) +
+                    ((static_cast<float>(x) + 0.5f) / static_cast<float>(destW)) *
+                    static_cast<float>(sourceW) - 0.5f;
+                const float sy = static_cast<float>(bounds.top) +
+                    ((static_cast<float>(y) + 0.5f) / static_cast<float>(destH)) *
+                    static_cast<float>(sourceH) - 0.5f;
+                std::uint32_t sampled = SampleBgraBilinear(source, width, height, sx, sy);
+
+                const int outX = destLeft + x;
+                const int outY = destTop + y;
+                if (outX < 0 || outY < 0 || outX >= width || outY >= height)
+                    continue;
+
+                const int mask = RoundedRectMaskAlpha(outX, outY, width, height, radius);
+                sampled = ScalePremultipliedPixel(sampled, mask);
+                std::uint32_t& dst = output[static_cast<size_t>(outY) * width + outX];
+                dst = SourceOverPremultiplied(sampled, dst);
+            }
+        }
+
+        return output;
+    }
+}
+
+inline std::uintptr_t DesktopApp::GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const
+{
+    std::uintptr_t key = reinterpret_cast<std::uintptr_t>(hbm);
+    if (!beautified)
+        return key;
+
+    if constexpr (sizeof(std::uintptr_t) >= 8)
+        return key ^ static_cast<std::uintptr_t>(0x9e3779b97f4a7c15ull);
+    else
+        return key ^ static_cast<std::uintptr_t>(0x9e3779b9u);
+}
+
+inline void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
+{
+    if (!hbm) return;
+    d2dIconCache_.erase(GetD2DIconCacheKey(hbm, false));
+    d2dIconCache_.erase(GetD2DIconCacheKey(hbm, true));
+}
+
+inline ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
+    HBITMAP hbm, bool beautify)
+{
+    if (!hbm || !d2dContext_)
+        return nullptr;
+
+    IconPixelBuffer buffer;
+    if (!ReadHBitmapPixels(hbm, buffer))
+        return nullptr;
+
+    if (beautify)
+    {
+        IconBackgroundPaint backgroundPaint{};
+        backgroundPaint.start = IconColorFromFloats(
+            iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_);
+        backgroundPaint.end = IconColorFromFloats(
+            iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_);
+        backgroundPaint.border = AutoIconBorderColor(backgroundPaint.start, backgroundPaint.end);
+        backgroundPaint.opacity = std::clamp(
+            static_cast<int>(std::round(iconBeautifyBgOpacity_ * 255.0f)), 0, 255);
+        backgroundPaint.gradient = iconBeautifyGradientEnabled_;
+        backgroundPaint.gradientDirection = iconBeautifyGradientDirection_;
+        if (!backgroundPaint.gradient)
+            backgroundPaint.end = backgroundPaint.start;
+        buffer.pixels = BeautifyIconPixels(
+            buffer.pixels, buffer.width, buffer.height, backgroundPaint,
+            GetBeautifiedIconCornerRadius(buffer.width, buffer.height),
+            iconBeautifyMode_ == 0);
+    }
+
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+    ComPtr<ID2D1Bitmap1> bitmap;
+    if (FAILED(d2dContext_->CreateBitmap(
+            D2D1::SizeU(static_cast<UINT32>(buffer.width), static_cast<UINT32>(buffer.height)),
+            buffer.pixels.data(),
+            static_cast<UINT32>(buffer.width * sizeof(std::uint32_t)),
+            &props,
+            &bitmap)))
+    {
+        return nullptr;
+    }
+
+    return bitmap;
+}
+
 /**
  * @brief 获取或创建 HBITMAP 对应的 Direct2D 位图（带缓存）。
  * @param hbm HBITMAP 句柄。
@@ -5915,27 +7325,22 @@ inline void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell
  */
 inline ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm)
 {
+    return GetOrCreateD2DBitmap(hbm, iconBeautifyEnabled_);
+}
+
+inline ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify)
+{
     if (!hbm) return nullptr;
-    auto key = reinterpret_cast<std::uintptr_t>(hbm);
+    const auto key = GetD2DIconCacheKey(hbm, beautify);
     auto it = d2dIconCache_.find(key);
     if (it != d2dIconCache_.end()) return it->second.Get();
 
-    BITMAP bm{};
-    if (!GetObjectW(hbm, sizeof(bm), &bm)) return nullptr;
-
-    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_NONE, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-
-    ComPtr<ID2D1Bitmap1> bitmap;
-    if (FAILED(d2dContext_->CreateBitmap(D2D1::SizeU(bm.bmWidth, bm.bmHeight),
-        nullptr, 0, &props, &bitmap)))
+    ComPtr<ID2D1Bitmap1> bitmap = CreateD2DBitmapFromHBitmap(hbm, beautify);
+    if (!bitmap)
         return nullptr;
 
-    D2D1_RECT_U dst = D2D1::RectU(0, 0, static_cast<UINT32>(bm.bmWidth), static_cast<UINT32>(bm.bmHeight));
-    bitmap->CopyFromMemory(&dst, bm.bmBits, bm.bmWidthBytes);
-
     auto* result = bitmap.Get();
-    d2dIconCache_[key] = bitmap;
+    d2dIconCache_[key] = std::move(bitmap);
     return result;
 }
 

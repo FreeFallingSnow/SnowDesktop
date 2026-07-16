@@ -170,6 +170,37 @@ static size_t GetCollectionAllButtonSlot(const DesktopWidget& widget)
     return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
 }
 
+static RECT GetCollectionCompactSlotRect(
+    const Collection* collection, size_t slot, RECT body, int padding)
+{
+    if (!collection || IsRectEmptyRect(body) || slot >= 4) return {};
+
+    constexpr int columns = 2;
+    padding = std::max(0, padding);
+    InflateRect(&body, -padding, -padding);
+    const int bodyW = std::max<int>(1, body.right - body.left);
+    const int bodyH = std::max<int>(1, body.bottom - body.top);
+    const int itemSize = std::max(1, std::min(bodyW, bodyH) / columns);
+    const int extraX = std::max(0, bodyW - itemSize * columns);
+    const int extraY = std::max(0, bodyH - itemSize * columns);
+    const int gapX = extraX >= 3 ? extraX / 3 : (extraX > 0 ? 1 : 0);
+    const int gapY = extraY >= 3 ? extraY / 3 : (extraY > 0 ? 1 : 0);
+    const int gridW = itemSize * columns + gapX;
+    const int gridH = itemSize * columns + gapY;
+    const int gridLeft = body.left + (bodyW - gridW) / 2;
+    const int gridTop = body.top + (bodyH - gridH) / 2;
+    const int col = static_cast<int>(slot % columns);
+    const int row = static_cast<int>(slot / columns);
+    return RECT{
+        gridLeft + col * (itemSize + gapX),
+        gridTop + row * (itemSize + gapY),
+        col + 1 == columns ? gridLeft + gridW
+                           : gridLeft + (col + 1) * itemSize + col * gapX,
+        row + 1 == columns ? gridTop + gridH
+                           : gridTop + (row + 1) * itemSize + row * gapY
+    };
+}
+
 /**
  * @brief 计算集合中指定槽位的矩形区域（与桌面网格对齐）
  *
@@ -191,32 +222,8 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
 
     bool compact = data->gridSpan.columns <= 1 && data->gridSpan.rows <= 1;
     if (compact)
-    {
-        // 2×2 grid centered in body; gap = 1/3 of remaining space
-        const int columns = 2;
-        int padding = collection->Cu(6.0f);
-        InflateRect(&body, -padding, -padding);
-        int bodyW = std::max<int>(1, (int)(body.right - body.left));
-        int bodyH = std::max<int>(1, (int)(body.bottom - body.top));
-        int itemSz = std::max<int>(1, std::min(bodyW, bodyH) / columns);
-        int extraX = std::max(0, bodyW - itemSz * columns);
-        int extraY = std::max(0, bodyH - itemSz * columns);
-        int gapX = extraX >= 3 ? extraX / 3 : (extraX > 0 ? 1 : 0);
-        int gapY = extraY >= 3 ? extraY / 3 : (extraY > 0 ? 1 : 0);
-        int gridW = itemSz * columns + gapX;
-        int gridH = itemSz * columns + gapY;
-        int gridLeft = body.left + (bodyW - gridW) / 2;
-        int gridTop  = body.top  + (bodyH - gridH) / 2;
-        int col = (int)(slot % (size_t)columns);
-        int row = (int)(slot / (size_t)columns);
-        RECT rect = {
-            gridLeft + col * (itemSz + gapX),
-            gridTop  + row * (itemSz + gapY),
-            col + 1 == columns ? gridLeft + gridW : gridLeft + (col + 1) * itemSz + col * gapX,
-            row + 1 == columns ? gridTop  + gridH : gridTop  + (row + 1) * itemSz + row * gapY
-        };
-        return rect;
-    }
+        return GetCollectionCompactSlotRect(collection, slot, body,
+            collection->Cu(6.0f));
 
     // Non-compact: grid-aligned slots matching desktop cell size
     InflateRect(&body, -collection->Cu(4.0f), -collection->Cu(4.0f));
@@ -301,7 +308,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         }
     }
 
-    if (item.shortcutArrow && item.iconState != IconState::Loading)
+    if (app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
+        item.iconState != IconState::Loading)
     {
         RECT arrowRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
         app_->DrawShortcutArrowOverlay(context, arrowRect, 1.0f);
@@ -423,20 +431,11 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             if (!hasRemainingIcon && !PtInRect(&allRect, app_->lastMousePoint_))
                 return;
 
-            RECT inner = allRect;
-            InflateRect(&inner, -Cu(8.0f), -Cu(8.0f));
-            OffsetRect(&inner, 0, -Cu(4.0f));
-            int tileW = std::max<int>(1, (int)(inner.right - inner.left) / 2);
-            int tileH = std::max<int>(1, (int)(inner.bottom - inner.top) / 2);
-
+            const RECT mosaicRect = app_->GetItemIconRect(allRect);
             for (int j = 0; j < 4; ++j)
             {
-                int col = j % 2;
-                int row = j / 2;
-                RECT tile = { inner.left + col * tileW, inner.top + row * tileH,
-                              col + 1 == 2 ? inner.right : inner.left + (col + 1) * tileW,
-                              row + 1 == 2 ? inner.bottom : inner.top + (row + 1) * tileH };
-                InflateRect(&tile, -Cu(2.0f), -Cu(2.0f));
+                RECT tile = GetCollectionCompactSlotRect(this,
+                    static_cast<size_t>(j), mosaicRect, 0);
 
                 size_t keyIdx = inlineCapacity + (size_t)j;
                 if (keyIdx < data_->itemKeys.size())
@@ -445,7 +444,6 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     if (itemIdx != static_cast<size_t>(-1))
                     {
                         const DesktopItem& di = items[itemIdx];
-                        InflateRect(&tile, -Cu(4.0f), -Cu(4.0f));
                         if (privacyActive)
                             DrawPrivacyPlaceholder(context, tile, di.name, false);
                         else
@@ -463,6 +461,10 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     }
                 }
             }
+
+            const std::wstring collectionTitle = data_->title.empty()
+                ? L"集合" : data_->title;
+            app_->DrawItemText(context, allRect, collectionTitle, false);
         }
     }
 }

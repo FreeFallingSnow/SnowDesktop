@@ -5,6 +5,7 @@
  */
 
 #include "general_settings.h"
+#include "data_paths.h"
 
 #include <shlwapi.h>
 
@@ -43,11 +44,7 @@ namespace
 
 std::wstring GetGeneralSettingsPath()
 {
-    wchar_t path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, path, static_cast<DWORD>(sizeof(path) / sizeof(path[0])));
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"SnowDesktop.general.json");
-    return path;
+    return GetDataFilePath(L"SnowDesktop.general.json");
 }
 
 bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)

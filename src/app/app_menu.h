@@ -114,6 +114,113 @@ inline void DesktopApp::ClearMenuIcons()
     menuIconPool_.clear();
 }
 
+inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
+{
+    HMENU menu = CreatePopupMenu();
+    HMENU positionMenu = CreatePopupMenu();
+    HMENU layoutMenu = CreatePopupMenu();
+    if (!menu || !positionMenu || !layoutMenu)
+    {
+        if (positionMenu) DestroyMenu(positionMenu);
+        if (layoutMenu) DestroyMenu(layoutMenu);
+        if (menu) DestroyMenu(menu);
+        return;
+    }
+
+    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionBottom, L"底部");
+    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionTop, L"顶部");
+    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionLeft, L"左侧");
+    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionRight, L"右侧");
+    CheckMenuRadioItem(positionMenu,
+        kContextDockPositionBottom, kContextDockPositionRight,
+        kContextDockPositionBottom + static_cast<UINT>(dockSettings_.position),
+        MF_BYCOMMAND);
+
+    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutIsland, L"岛式");
+    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutEdge, L"靠边");
+    CheckMenuRadioItem(layoutMenu,
+        kContextDockLayoutIsland, kContextDockLayoutEdge,
+        dockSettings_.edgeAttached ? kContextDockLayoutEdge : kContextDockLayoutIsland,
+        MF_BYCOMMAND);
+
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), L"Dock 位置");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"栏体形式");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu,
+        MF_STRING | (dockSettings_.followPersonalization ? MF_CHECKED : MF_UNCHECKED),
+        kContextDockFollowPersonalization, L"跟随组件个性化");
+    AppendMenuW(menu,
+        MF_STRING | (dockSettings_.showFrequentItems ? MF_CHECKED : MF_UNCHECKED),
+        kContextDockShowFrequentItems, L"显示常用项目");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, L"Dock 详细设置");
+
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
+    SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
+
+    SetForegroundWindow(hwnd_);
+    const UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+
+    DockSettings updated = dockSettings_;
+    bool layoutChanged = false;
+    switch (command)
+    {
+    case kContextDockPositionBottom:
+    case kContextDockPositionTop:
+    case kContextDockPositionLeft:
+    case kContextDockPositionRight:
+        updated.position = static_cast<DockPosition>(
+            command - kContextDockPositionBottom);
+        layoutChanged = updated.position != dockSettings_.position;
+        break;
+    case kContextDockLayoutIsland:
+        updated.edgeAttached = false;
+        layoutChanged = updated.edgeAttached != dockSettings_.edgeAttached;
+        break;
+    case kContextDockLayoutEdge:
+        updated.edgeAttached = true;
+        layoutChanged = updated.edgeAttached != dockSettings_.edgeAttached;
+        break;
+    case kContextDockFollowPersonalization:
+        updated.followPersonalization = !updated.followPersonalization;
+        break;
+    case kContextDockShowFrequentItems:
+        updated.showFrequentItems = !updated.showFrequentItems;
+        layoutChanged = true;
+        break;
+    case kContextDockDetailedSettings:
+        if (settingsWindow_)
+        {
+            settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
+            settingsWindow_->SyncDockSettings(dockSettings_);
+            settingsWindow_->ShowDockSettings();
+        }
+        return;
+    default:
+        return;
+    }
+
+    dockSettings_ = updated;
+    SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
+    if (settingsWindow_)
+        settingsWindow_->SyncDockSettings(dockSettings_);
+    if (layoutChanged)
+    {
+        UpdateLayoutWorkArea();
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateDragStaticScene();
+    }
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
 /**
  * @brief 连续显示行列调整菜单。
  * @details 标准 Win32 菜单执行命令后会结束。这里在每次调整完成后立即按
@@ -751,10 +858,10 @@ inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
     {
     case kContextOpenCommand:
     {
-        for (const auto& item : items_)
+        for (size_t i = 0; i < items_.size(); ++i)
         {
-            if (item.selected)
-                ShellExecuteW(nullptr, L"open", item.parsingName.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            if (items_[i].selected)
+                LaunchDesktopItem(i);
         }
         break;
     }

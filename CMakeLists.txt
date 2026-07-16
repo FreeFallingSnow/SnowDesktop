@@ -10,12 +10,15 @@ set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
     src/core/item.cpp
+    src/core/dock.cpp
     src/core/slot.cpp
     src/core/container.cpp
     src/core/desktop.cpp
+    src/data_paths.cpp
     src/utils.cpp
     src/settings_window.cpp
     src/personalization.cpp
+    src/dock_settings.cpp
     src/navigation_settings.cpp
     src/general_settings.cpp
     src/category_settings.cpp
@@ -90,6 +93,7 @@ target_include_directories(SnowDesktop PRIVATE
 )
 
 if (MSVC)
+    set_property(TARGET SnowDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktop PRIVATE /W4 /permissive- /EHsc /utf-8 /Zi /FS)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS

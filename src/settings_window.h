@@ -17,9 +17,11 @@
 
 #include "general_settings.h"
 #include "personalization.h"
+#include "dock_settings.h"
 #include "navigation_settings.h"
 #include "category_settings.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <string>
@@ -97,6 +99,9 @@ public:
      */
     void Show();
 
+    /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
+    void ShowDockSettings();
+
     /**
      * @brief 检查窗口当前是否可见
      * @return 窗口已创建且可见时返回 true
@@ -141,15 +146,49 @@ public:
 
     void SetGeneralSettingsChangedCallback(std::function<void()> callback) { generalSettingsChangedCallback_ = std::move(callback); }
 
+    void SetDockEnabledChangedCallback(std::function<void(bool)> callback)
+    { dockEnabledChangedCallback_ = std::move(callback); }
+
+    void SetDockSettingsChangedCallback(std::function<void()> callback)
+    { dockSettingsChangedCallback_ = std::move(callback); }
+
+    void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
+    void SyncDockSettings(const DockSettings& settings) { dockSettings_ = settings; }
+
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
 
-    void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight)
+    void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight,
+        int shortcutArrowMode,
+        bool iconBeautifyEnabled,
+        int iconBeautifyMode,
+        float iconBeautifyBgOpacity,
+        bool iconBeautifyGradientEnabled,
+        float iconBeautifyBgStartR,
+        float iconBeautifyBgStartG,
+        float iconBeautifyBgStartB,
+        float iconBeautifyBgEndR,
+        float iconBeautifyBgEndG,
+        float iconBeautifyBgEndB,
+        int iconBeautifyGradientDirection)
     {
         iconSpacingScale_ = spacingScale;
         itemFontSize_ = fontSize;
         itemFontWeight_ = fontWeight;
+        shortcutArrowMode_ = std::clamp(shortcutArrowMode, 0, 2);
+        iconBeautifyEnabled_ = iconBeautifyEnabled;
+        iconBeautifyMode_ = std::clamp(iconBeautifyMode, 0, 1);
+        iconBeautifyBgOpacity_ = iconBeautifyBgOpacity;
+        iconBeautifyGradientEnabled_ = iconBeautifyGradientEnabled;
+        iconBeautifyBgStartR_ = iconBeautifyBgStartR;
+        iconBeautifyBgStartG_ = iconBeautifyBgStartG;
+        iconBeautifyBgStartB_ = iconBeautifyBgStartB;
+        iconBeautifyBgEndR_ = iconBeautifyBgEndR;
+        iconBeautifyBgEndG_ = iconBeautifyBgEndG;
+        iconBeautifyBgEndB_ = iconBeautifyBgEndB;
+        iconBeautifyGradientDirection_ = std::clamp(iconBeautifyGradientDirection, 0, 3);
+        iconBeautifyBgPreset_ = 0;
         displaySpacingPct_ = static_cast<int>(std::round(spacingScale * 100.0f));
     }
 
@@ -183,11 +222,28 @@ public:
      * @return 指向 PersonalizationSettings 的常引用
      */
     const PersonalizationSettings& GetPersonalization() const { return personalization_; }
+    const DockSettings& GetDockSettings() const { return dockSettings_; }
+    PersonalizationSettings GetDockAppearance() const
+    {
+        return dockSettings_.followPersonalization ? personalization_ : dockSettings_.appearance;
+    }
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
     float GetItemFontSizeD() const { return itemFontSize_; }
     float GetItemFontWeightD() const { return itemFontWeight_; }
+    int GetShortcutArrowMode() const { return shortcutArrowMode_; }
+    bool GetIconBeautifyEnabled() const { return iconBeautifyEnabled_; }
+    int GetIconBeautifyMode() const { return iconBeautifyMode_; }
+    float GetIconBeautifyBgOpacity() const { return iconBeautifyBgOpacity_; }
+    bool GetIconBeautifyGradientEnabled() const { return iconBeautifyGradientEnabled_; }
+    float GetIconBeautifyBgStartR() const { return iconBeautifyBgStartR_; }
+    float GetIconBeautifyBgStartG() const { return iconBeautifyBgStartG_; }
+    float GetIconBeautifyBgStartB() const { return iconBeautifyBgStartB_; }
+    float GetIconBeautifyBgEndR() const { return iconBeautifyBgEndR_; }
+    float GetIconBeautifyBgEndG() const { return iconBeautifyBgEndG_; }
+    float GetIconBeautifyBgEndB() const { return iconBeautifyBgEndB_; }
+    int GetIconBeautifyGradientDirection() const { return iconBeautifyGradientDirection_; }
 
     /** @} */
 
@@ -249,6 +305,8 @@ private:
      * @brief 绘制个性化设置页面（背景、字体等外观选项）
      */
     void DrawPersonalizationPage();
+
+    void DrawDockPage();
 
     void DrawDisplayPage();
 
@@ -375,7 +433,7 @@ private:
     /// 系统 DPI 缩放比例，用于字体和界面缩放适配
     float dpiScale_ = 1.0f;
 
-    /// 当前活动页面索引（0 = 通用, 1 = 组件显示, 2 = 图标显示, 3 = 分类设置, 4 = 布局备份, 5 = 关于, 6 = 调试）
+    /// 当前活动页面索引（0 = 通用, 1 = 组件显示, 2 = Dock, 3 = 图标显示, 4 = 分类设置, 5 = 布局备份, 6 = 关于, 7 = 调试）
     int activePage_ = 0;
 
     /// 备份名称输入缓冲区
@@ -428,6 +486,10 @@ private:
     /// 通用设置变更回调
     std::function<void()> generalSettingsChangedCallback_;
 
+    std::function<void(bool)> dockEnabledChangedCallback_;
+
+    std::function<void()> dockSettingsChangedCallback_;
+
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
 
@@ -460,6 +522,12 @@ private:
     /// 当前通用设置
     GeneralSettings generalSettings_;
 
+    bool dockEnabled_ = false;
+
+    DockSettings dockSettings_;
+
+    bool dockSettingsDirty_ = false;
+
     /// 通用设置是否已修改（需要保存）
     bool generalSettingsDirty_ = false;
 
@@ -480,6 +548,23 @@ private:
 
     /// 当前桌面项目字体粗细 (DWRITE_FONT_WEIGHT)
     float itemFontWeight_ = 600.0f;
+
+    int shortcutArrowMode_ = 0;
+
+    /// 是否统一图标为圆角矩形底板
+    bool iconBeautifyEnabled_ = false;
+
+    int iconBeautifyMode_ = 0;
+    float iconBeautifyBgOpacity_ = 0.65f;
+    bool iconBeautifyGradientEnabled_ = false;
+    int iconBeautifyGradientDirection_ = 0;
+    int iconBeautifyBgPreset_ = 1;
+    float iconBeautifyBgStartR_ = 232.0f / 255.0f;
+    float iconBeautifyBgStartG_ = 236.0f / 255.0f;
+    float iconBeautifyBgStartB_ = 244.0f / 255.0f;
+    float iconBeautifyBgEndR_ = 222.0f / 255.0f;
+    float iconBeautifyBgEndG_ = 228.0f / 255.0f;
+    float iconBeautifyBgEndB_ = 240.0f / 255.0f;
 
     int displaySpacingPct_ = 100;
 

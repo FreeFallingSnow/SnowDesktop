@@ -228,6 +228,10 @@ public:
         const std::wstring& name, bool isDir) const;
 
     BarStyle GetInsertionStyle() const override;
+
+private:
+    void DrawListItemTitle(ID2D1DeviceContext* context, RECT cell,
+        RECT iconRect, const std::wstring& title) const;
 };
 
 /**

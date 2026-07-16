@@ -231,6 +231,9 @@ struct DragSourceEntry
     std::wstring desktopKey;
     std::wstring filePath;
     std::wstring displayName;
+    std::wstring dockReference;
+    DockEntryType dockEntryType = DockEntryType::DesktopItem;
+    bool fromDock = false;
     GridCell originalCell;
     GridSpan originalSpan;
     bool protectedDesktopIcon = false;
@@ -327,6 +330,7 @@ struct DropPreviewList
     GridCell anchorCell;
     size_t insertIndex = 0;
     bool fileBacked = false;
+    bool consumeDockSource = false;
     std::vector<DropLanding> landings;
 
     bool Empty() const { return landings.empty(); }

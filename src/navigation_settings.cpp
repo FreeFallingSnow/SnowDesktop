@@ -7,6 +7,7 @@
  */
 
 #include "navigation_settings.h"
+#include "data_paths.h"
 
 #include <shlwapi.h>
 
@@ -91,17 +92,13 @@ namespace
 
 /**
  * @brief 获取导航设置文件路径
- * @details 通过获取当前可执行文件所在目录，在其下拼接
+ * @details 通过统一数据路径获取 data 目录下的
  *          "SnowDesktop.navigation.json" 作为设置文件的完整路径
  * @return std::wstring 设置文件的绝对路径
  */
 std::wstring GetNavigationSettingsPath()
 {
-    wchar_t path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, path, static_cast<DWORD>(sizeof(path) / sizeof(path[0])));
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"SnowDesktop.navigation.json");
-    return path;
+    return GetDataFilePath(L"SnowDesktop.navigation.json");
 }
 
 /**

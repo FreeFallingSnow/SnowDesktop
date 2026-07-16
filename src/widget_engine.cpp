@@ -12,6 +12,7 @@
  */
 
 #include "widget_engine.h"
+#include "data_paths.h"
 #include "system_snapshot.h"
 #include "constants.h"
 #include "utils.h"
@@ -29,6 +30,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <fstream>
 #include <sstream>
@@ -308,7 +310,8 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
     DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL,
     bool centered = false,
     DWRITE_WORD_WRAPPING wrapping = DWRITE_WORD_WRAPPING_WRAP,
-    bool fontAwesome = false)
+    bool fontAwesome = false,
+    bool verticallyCentered = false)
 {
     if (!state || !state->dwrite) return nullptr;
     const auto sizeKey = static_cast<std::uint64_t>(std::clamp(
@@ -317,7 +320,8 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
         (static_cast<std::uint64_t>(weight) << 24) |
         (static_cast<std::uint64_t>(centered) << 36) |
         (static_cast<std::uint64_t>(wrapping) << 37) |
-        (static_cast<std::uint64_t>(fontAwesome) << 40);
+        (static_cast<std::uint64_t>(fontAwesome) << 40) |
+        (static_cast<std::uint64_t>(verticallyCentered) << 41);
     if (auto found = state->textFormatCache.find(key); found != state->textFormatCache.end())
         return found->second.Get();
 
@@ -335,7 +339,7 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
     format->SetTextAlignment(centered
         ? DWRITE_TEXT_ALIGNMENT_CENTER
         : DWRITE_TEXT_ALIGNMENT_LEADING);
-    format->SetParagraphAlignment(centered
+    format->SetParagraphAlignment(centered || verticallyCentered
         ? DWRITE_PARAGRAPH_ALIGNMENT_CENTER
         : DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     format->SetWordWrapping(wrapping);
@@ -1233,6 +1237,185 @@ static void DrawHostText(D2DState* state, const std::wstring& text,
         brush);
 }
 
+static void DrawHostStrokeRect(D2DState* state, float x, float y, float width, float height,
+    int color, float radius, float thickness, float alpha)
+{
+    if (!state || !state->ctx) return;
+    ID2D1SolidColorBrush* brush = GetCachedBrush(state, color, alpha);
+    if (!brush) return;
+    D2D1_RECT_F rect = D2D1::RectF(
+        state->widgetRect.left + x, state->widgetRect.top + y,
+        state->widgetRect.left + x + width, state->widgetRect.top + y + height);
+    if (radius > 0)
+        state->ctx->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush, thickness);
+    else
+        state->ctx->DrawRectangle(rect, brush, thickness);
+}
+
+static void DrawHostTextPixels(D2DState* state, const std::wstring& text,
+    float x, float y, float width, float height, float size, int color)
+{
+    if (!state || !state->ctx || !state->dwrite || text.empty()) return;
+    IDWriteTextFormat* format = GetCachedTextFormat(state, std::max(9.0f, size),
+        DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(state, color);
+    if (!format || !brush) return;
+    state->ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
+        D2D1::RectF(state->widgetRect.left + x, state->widgetRect.top + y,
+            state->widgetRect.left + x + width, state->widgetRect.top + y + height),
+        brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+static float MeasureHostTextWidthPixels(D2DState* state, const std::wstring& text,
+    float size, float height)
+{
+    if (!state || !state->dwrite || text.empty()) return 0.0f;
+    IDWriteTextFormat* format = GetCachedTextFormat(state, std::max(9.0f, size),
+        DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
+    if (!format) return 0.0f;
+
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(state->dwrite->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
+        format, 100000.0f, std::max(1.0f, height), &layout)) || !layout)
+        return 0.0f;
+
+    DWRITE_TEXT_METRICS metrics{};
+    return SUCCEEDED(layout->GetMetrics(&metrics))
+        ? metrics.widthIncludingTrailingWhitespace : 0.0f;
+}
+
+static int lua_UiTextInput(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    const char* storageKey = luaL_checkstring(L, 2);
+    float x = static_cast<float>(luaL_checknumber(L, 3));
+    float y = static_cast<float>(luaL_checknumber(L, 4));
+    float width = static_cast<float>(luaL_checknumber(L, 5));
+    float height = static_cast<float>(luaL_checknumber(L, 6));
+    const int options = lua_istable(L, 7) ? lua_absindex(L, 7) : 0;
+
+    auto numberOption = [&](const char* key, double fallback) {
+        if (!options) return fallback;
+        lua_getfield(L, options, key);
+        double result = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : fallback;
+        lua_pop(L, 1);
+        return result;
+    };
+    auto integerOption = [&](const char* key, int fallback) {
+        return static_cast<int>(numberOption(key, fallback));
+    };
+    auto boolOption = [&](const char* key, bool fallback) {
+        if (!options) return fallback;
+        lua_getfield(L, options, key);
+        bool result = lua_isnil(L, -1) ? fallback : lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return result;
+    };
+    auto stringOption = [&](const char* key, const char* fallback) {
+        if (!options) return std::string(fallback);
+        lua_getfield(L, options, key);
+        std::string result = lua_isstring(L, -1) ? lua_tostring(L, -1) : fallback;
+        lua_pop(L, 1);
+        return result;
+    };
+
+    const std::string placeholder = stringOption("placeholder", "");
+    const float fontSize = std::clamp(static_cast<float>(numberOption("fontSize", 14.0)), 9.0f, 96.0f);
+    const int textColor = integerOption("textColor", 0xFFFFFF);
+    const int placeholderColor = integerOption("placeholderColor", 0x94A3B8);
+    const int backgroundColor = integerOption("backgroundColor", 0xFFFFFF);
+    const int borderColor = integerOption("borderColor", 0xFFFFFF);
+    const int focusedBorderColor = integerOption("focusedBorderColor", 0x64A8FF);
+    const float backgroundAlpha = std::clamp(
+        static_cast<float>(numberOption("backgroundAlpha", 0.05)), 0.0f, 1.0f);
+    const float focusedBackgroundAlpha = std::clamp(
+        static_cast<float>(numberOption("focusedBackgroundAlpha", 0.12)), 0.0f, 1.0f);
+    const float borderAlpha = std::clamp(
+        static_cast<float>(numberOption("borderAlpha", 0.12)), 0.0f, 1.0f);
+    const float focusedBorderAlpha = std::clamp(
+        static_cast<float>(numberOption("focusedBorderAlpha", 0.70)), 0.0f, 1.0f);
+    const float radius = std::max(0.0f, static_cast<float>(numberOption("radius", 6.0)));
+    const float padding = std::max(0.0f, static_cast<float>(numberOption("padding", 10.0)));
+    const float borderThickness = std::max(0.5f,
+        static_cast<float>(numberOption("borderThickness", 1.0)));
+    const bool selectAll = boolOption("selectAll", false);
+    const bool liveUpdate = boolOption("liveUpdate", true);
+
+    auto* s = GetD2D(L);
+    std::string value;
+    if (s && s->engine && storageKey && *storageKey)
+        value = s->engine->RuntimeGetStorageValue(s->currentWidgetId, storageKey);
+
+    bool focused = false;
+    bool focusedSelectAll = false;
+    size_t cursor = 0;
+    std::wstring focusedText;
+    if (s && s->engine && id && *id)
+    {
+        focused = s->engine->RuntimeGetFocusedHostInput(
+            s->currentWidgetId, id, focusedText, cursor, focusedSelectAll);
+        if (focused)
+            value = WidgetWideToUtf8(focusedText);
+    }
+
+    DrawHostRect(s, x, y, width, height, backgroundColor, radius,
+        focused ? focusedBackgroundAlpha : backgroundAlpha);
+    DrawHostStrokeRect(s, x, y, width, height,
+        focused ? focusedBorderColor : borderColor, radius, borderThickness,
+        focused ? focusedBorderAlpha : borderAlpha);
+    const bool showingPlaceholder = value.empty() && !focused;
+    const std::wstring displayText = Utf8ToWideLocal(showingPlaceholder ? placeholder : value);
+    if (focused && focusedSelectAll && !focusedText.empty())
+    {
+        const float selectionWidth = std::min(std::max(1.0f, width - padding * 2.0f),
+            MeasureHostTextWidthPixels(s, focusedText, fontSize, height));
+        const float selectionHeight = std::min(height, std::max(fontSize * 1.35f, 12.0f));
+        DrawHostRect(s, x + padding, y + (height - selectionHeight) * 0.5f,
+            selectionWidth, selectionHeight, focusedBorderColor, 2.0f, 0.35f);
+    }
+    DrawHostTextPixels(s, displayText,
+        x + padding, y, std::max(1.0f, width - padding * 2.0f), height,
+        fontSize, showingPlaceholder ? placeholderColor : textColor);
+
+    if (focused)
+    {
+        const size_t safeCursor = std::min(cursor, focusedText.size());
+        const std::wstring beforeCursor = focusedText.substr(0, safeCursor);
+        const float cursorOffset = MeasureHostTextWidthPixels(s, beforeCursor, fontSize, height);
+        const float cursorX = std::clamp(x + padding + cursorOffset + 1.0f,
+            x + padding, x + std::max(padding, width - padding - 1.5f));
+        const float cursorHeight = std::min(height, std::max(fontSize, 12.0f));
+        DrawHostRect(s, cursorX, y + (height - cursorHeight) * 0.5f,
+            1.5f, cursorHeight, textColor, 0.0f, 0.98f);
+    }
+
+    if (s && s->engine && id && *id && storageKey && *storageKey)
+    {
+        LuaWidget::HostControl control;
+        control.type = LuaWidget::HostControl::Type::Input;
+        control.id = id;
+        control.storageKey = storageKey;
+        control.rect = { static_cast<LONG>(std::lround(x)), static_cast<LONG>(std::lround(y)),
+            static_cast<LONG>(std::lround(x + width)), static_cast<LONG>(std::lround(y + height)) };
+        control.selectAll = selectAll;
+        control.liveUpdate = liveUpdate;
+        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+    }
+
+    lua_pushlstring(L, value.data(), value.size());
+    return 1;
+}
+
+static int lua_UiFocusInput(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    auto* s = GetD2D(L);
+    bool focused = s && s->engine && id && *id &&
+        s->engine->RuntimeFocusHostInput(s->currentWidgetId, id);
+    lua_pushboolean(L, focused);
+    return 1;
+}
+
 static int lua_UiButton(lua_State* L)
 {
     const char* id = luaL_checkstring(L, 1);
@@ -1487,6 +1670,8 @@ static int lua_WidgetEditText(lua_State* L)
     request.multiline = multiline;
     request.selectAll = lua_isnil(L, 8) ? true : (lua_toboolean(L, 8) != 0);
     request.textColor = static_cast<int>(luaL_optinteger(L, 9, 0x000000));
+    request.fontSize = static_cast<float>(luaL_optnumber(L, 10, 15.0));
+    request.backgroundColor = static_cast<int>(luaL_optinteger(L, 11, 0xFFFFFF));
     s->engine->RuntimeBeginInlineTextEdit(request);
     return 0;
 }
@@ -1746,11 +1931,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
 
     // Init storage path
-    wchar_t exePath[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-    PathRemoveFileSpecW(exePath);
-    PathAppendW(exePath, L"SnowDesktop.storage.json");
-    g_storagePath = exePath;
+    g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
     LoadStorageFile();
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
     httpService_ = std::make_unique<AsyncHttpService>();
@@ -1759,6 +1940,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
 
 void WidgetEngine::Shutdown()
 {
+    focusedHostInput_ = {};
     for (auto& widget : widgets_)
     {
         if (widget.valid && widget.hostVisible)
@@ -1786,6 +1968,8 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
+    if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId)
+        focusedHostInput_ = {};
     if (widgets_[idx].hostVisible)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
     if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
@@ -2323,12 +2507,6 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         if (lua_isfunction(L_, -1))
         {
             ImGui::Spacing();
-            float renderHeight = std::max(220.0f, ImGui::GetContentRegionAvail().y);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
-            ImGui::BeginChild("##LuaWidgetImguiRenderScroll", ImVec2(0.0f, renderHeight),
-                ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
-                ImGuiWindowFlags_AlwaysVerticalScrollbar);
-            ImGui::PopStyleVar();
 
             if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
             {
@@ -2336,7 +2514,6 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
                 RuntimeRecordError(widgetId, err ? err : "(imguiRender error)");
                 lua_pop(L_, 1);
             }
-            ImGui::EndChild();
         }
         else
             lua_pop(L_, 1);
@@ -2655,6 +2832,13 @@ void WidgetEngine::InvokeOpen(const std::wstring& widgetId)
     else
         lua_pop(L_, 1);
     lua_pop(L_, 1);
+}
+
+void WidgetEngine::InvokeSelected(const std::wstring& widgetId)
+{
+    int idx = FindWidget(widgetId);
+    if (idx < 0) return;
+    InvokeSimpleCallback(widgets_[idx], "onSelected");
 }
 
 void WidgetEngine::InvokeClick(const std::wstring& widgetId, int x, int y)
@@ -3190,6 +3374,255 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
     widgets_[index].hostControls.push_back(std::move(control));
 }
 
+bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id)
+{
+    int index = FindWidget(widgetId);
+    if (index < 0 || id.empty()) return false;
+    auto& controls = widgets_[index].hostControls;
+    auto found = std::find_if(controls.rbegin(), controls.rend(), [&](const auto& control) {
+        return control.type == LuaWidget::HostControl::Type::Input && control.id == id;
+    });
+    if (found == controls.rend() || found->storageKey.empty()) return false;
+
+    if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId &&
+        focusedHostInput_.id == id)
+    {
+        if (hostInputFocusCallback_)
+            hostInputFocusCallback_();
+        return true;
+    }
+
+    BlurHostInput(false);
+    focusedHostInput_.active = true;
+    focusedHostInput_.widgetId = widgetId;
+    focusedHostInput_.id = id;
+    focusedHostInput_.storageKey = found->storageKey;
+    focusedHostInput_.text = Utf8ToWideLocal(
+        RuntimeGetStorageValue(widgetId, found->storageKey));
+    focusedHostInput_.originalText = focusedHostInput_.text;
+    focusedHostInput_.cursor = focusedHostInput_.text.size();
+    focusedHostInput_.selectAll = found->selectAll;
+    focusedHostInput_.liveUpdate = found->liveUpdate;
+    if (hostInputFocusCallback_)
+        hostInputFocusCallback_();
+    RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
+bool WidgetEngine::RuntimeGetFocusedHostInput(const std::wstring& widgetId,
+    const std::string& id, std::wstring& text, size_t& cursor, bool& selectAll) const
+{
+    if (!focusedHostInput_.active || focusedHostInput_.widgetId != widgetId ||
+        focusedHostInput_.id != id)
+        return false;
+    text = focusedHostInput_.text;
+    cursor = focusedHostInput_.cursor;
+    selectAll = focusedHostInput_.selectAll;
+    return true;
+}
+
+bool WidgetEngine::HasFocusedHostInput() const
+{
+    return focusedHostInput_.active;
+}
+
+void WidgetEngine::BlurHostInput(bool cancel)
+{
+    if (!focusedHostInput_.active) return;
+
+    const std::wstring widgetId = focusedHostInput_.widgetId;
+    if (cancel)
+    {
+        if (focusedHostInput_.liveUpdate)
+            RuntimeSetStorageValue(widgetId, focusedHostInput_.storageKey,
+                WidgetWideToUtf8(focusedHostInput_.originalText));
+    }
+    else
+    {
+        RuntimeSetStorageValue(widgetId, focusedHostInput_.storageKey,
+            WidgetWideToUtf8(focusedHostInput_.text));
+    }
+    focusedHostInput_ = {};
+    RuntimeInvalidateHost(widgetId);
+}
+
+bool WidgetEngine::HandleHostInputChar(wchar_t ch)
+{
+    if (!focusedHostInput_.active || ch < 0x20 || ch == 0x7F)
+        return false;
+
+    if (focusedHostInput_.selectAll)
+    {
+        focusedHostInput_.text.clear();
+        focusedHostInput_.cursor = 0;
+        focusedHostInput_.selectAll = false;
+    }
+    focusedHostInput_.cursor = std::min(
+        focusedHostInput_.cursor, focusedHostInput_.text.size());
+    focusedHostInput_.text.insert(focusedHostInput_.cursor, 1, ch);
+    ++focusedHostInput_.cursor;
+    if (focusedHostInput_.liveUpdate)
+        RuntimeSetStorageValue(focusedHostInput_.widgetId, focusedHostInput_.storageKey,
+            WidgetWideToUtf8(focusedHostInput_.text));
+    RuntimeInvalidateHost(focusedHostInput_.widgetId);
+    return true;
+}
+
+bool WidgetEngine::HandleHostInputKey(WPARAM key)
+{
+    if (!focusedHostInput_.active) return false;
+
+    const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool changed = false;
+    if (key == VK_ESCAPE)
+    {
+        BlurHostInput(true);
+        return true;
+    }
+    if (key == VK_RETURN)
+    {
+        BlurHostInput(false);
+        return true;
+    }
+    if (ctrl && key == 'A')
+    {
+        focusedHostInput_.selectAll = !focusedHostInput_.text.empty();
+        focusedHostInput_.cursor = focusedHostInput_.text.size();
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+        return true;
+    }
+    if (ctrl && (key == 'C' || key == 'X'))
+    {
+        if (focusedHostInput_.selectAll && !focusedHostInput_.text.empty() && OpenClipboard(nullptr))
+        {
+            EmptyClipboard();
+            const SIZE_T bytes = (focusedHostInput_.text.size() + 1) * sizeof(wchar_t);
+            HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+            if (memory)
+            {
+                if (void* target = GlobalLock(memory))
+                {
+                    memcpy(target, focusedHostInput_.text.c_str(), bytes);
+                    GlobalUnlock(memory);
+                    if (!SetClipboardData(CF_UNICODETEXT, memory))
+                        GlobalFree(memory);
+                }
+                else
+                    GlobalFree(memory);
+            }
+            CloseClipboard();
+            if (key == 'X')
+            {
+                focusedHostInput_.text.clear();
+                focusedHostInput_.cursor = 0;
+                focusedHostInput_.selectAll = false;
+                changed = true;
+            }
+        }
+    }
+    else if (ctrl && key == 'V')
+    {
+        std::wstring pasted;
+        if (OpenClipboard(nullptr))
+        {
+            if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
+            {
+                if (const wchar_t* source = static_cast<const wchar_t*>(GlobalLock(data)))
+                {
+                    for (; *source; ++source)
+                    {
+                        if (*source == L'\r') continue;
+                        pasted.push_back((*source == L'\n' || *source == L'\t') ? L' ' : *source);
+                    }
+                    GlobalUnlock(data);
+                }
+            }
+            CloseClipboard();
+        }
+        if (!pasted.empty())
+        {
+            if (focusedHostInput_.selectAll)
+            {
+                focusedHostInput_.text.clear();
+                focusedHostInput_.cursor = 0;
+                focusedHostInput_.selectAll = false;
+            }
+            focusedHostInput_.cursor = std::min(
+                focusedHostInput_.cursor, focusedHostInput_.text.size());
+            focusedHostInput_.text.insert(focusedHostInput_.cursor, pasted);
+            focusedHostInput_.cursor += pasted.size();
+            changed = true;
+        }
+    }
+    else if (key == VK_BACK)
+    {
+        if (focusedHostInput_.selectAll)
+        {
+            focusedHostInput_.text.clear();
+            focusedHostInput_.cursor = 0;
+            focusedHostInput_.selectAll = false;
+            changed = true;
+        }
+        else if (focusedHostInput_.cursor > 0)
+        {
+            focusedHostInput_.text.erase(--focusedHostInput_.cursor, 1);
+            changed = true;
+        }
+    }
+    else if (key == VK_DELETE)
+    {
+        if (focusedHostInput_.selectAll)
+        {
+            focusedHostInput_.text.clear();
+            focusedHostInput_.cursor = 0;
+            focusedHostInput_.selectAll = false;
+            changed = true;
+        }
+        else if (focusedHostInput_.cursor < focusedHostInput_.text.size())
+        {
+            focusedHostInput_.text.erase(focusedHostInput_.cursor, 1);
+            changed = true;
+        }
+    }
+    else if (key == VK_LEFT || key == VK_HOME)
+    {
+        focusedHostInput_.cursor = focusedHostInput_.selectAll || key == VK_HOME
+            ? 0 : (focusedHostInput_.cursor > 0 ? focusedHostInput_.cursor - 1 : 0);
+        focusedHostInput_.selectAll = false;
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+        return true;
+    }
+    else if (key == VK_RIGHT || key == VK_END)
+    {
+        focusedHostInput_.cursor = focusedHostInput_.selectAll || key == VK_END
+            ? focusedHostInput_.text.size()
+            : std::min(focusedHostInput_.cursor + 1, focusedHostInput_.text.size());
+        focusedHostInput_.selectAll = false;
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+        return true;
+    }
+    else if (key == VK_CONTROL || key == VK_SHIFT || key == VK_MENU ||
+        key == VK_CAPITAL || key == VK_TAB)
+    {
+        return true;
+    }
+    else
+    {
+        // Printable keys arrive through WM_CHAR; consume the keydown so desktop
+        // shortcuts do not run while the host-rendered field owns focus.
+        return true;
+    }
+
+    if (changed)
+    {
+        if (focusedHostInput_.liveUpdate)
+            RuntimeSetStorageValue(focusedHostInput_.widgetId, focusedHostInput_.storageKey,
+                WidgetWideToUtf8(focusedHostInput_.text));
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+    }
+    return true;
+}
+
 int WidgetEngine::RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const
 {
     int index = FindWidget(widgetId);
@@ -3230,6 +3663,11 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             return true;
         }
         if (wheel) continue;
+        if (it->type == LuaWidget::HostControl::Type::Input)
+        {
+            RuntimeFocusHostInput(widgetId, it->id);
+            return true;
+        }
         if (it->type == LuaWidget::HostControl::Type::Button ||
             it->type == LuaWidget::HostControl::Type::Toggle)
         {
@@ -4129,6 +4567,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_setglobal(L, "http");
 
     lua_newtable(L);
+    lua_pushcfunction(L, lua_UiTextInput); lua_setfield(L, -2, "textInput");
+    lua_pushcfunction(L, lua_UiFocusInput); lua_setfield(L, -2, "focusInput");
     lua_pushcfunction(L, lua_UiButton); lua_setfield(L, -2, "button");
     lua_pushcfunction(L, lua_UiToggle); lua_setfield(L, -2, "toggle");
     lua_pushcfunction(L, lua_UiProgress); lua_setfield(L, -2, "progress");

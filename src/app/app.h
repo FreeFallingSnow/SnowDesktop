@@ -20,14 +20,17 @@
 #include "slot.h"
 #include "container.h"
 #include "desktop.h"
+#include "dock.h"
 #include "widget.h"
 #include "drop_model.h"
 #include "drag_session.h"
 #include "settings_window.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "dock_settings.h"
 #include "category_settings.h"
 #include "everything_search.h"
+#include "data_paths.h"
 #include "utils.h"
 #include "widget_engine.h"
 #include "types.h"
@@ -55,6 +58,7 @@
 #include <functional>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -87,6 +91,8 @@ struct IconLoadResult {
     HBITMAP bitmap = nullptr;
     SIZE bitmapSize{};
     bool shortcutArrow = false;
+    bool isShortcut = false;
+    bool isApplicationShortcut = false;
     IconLoadPhase phase = IconLoadPhase::Phase1;
     bool isDesktopItem = true;
     std::wstring folderPath;
@@ -220,6 +226,9 @@ public:
     friend class DesktopIcon;
     friend class FolderEntryIcon;
     friend class DesktopGrid;
+    friend class DockContainer;
+    friend class DockEntryItem;
+    friend class DockFrequentItem;
     friend class Widget;
     friend class WidgetContainer;
     friend class Collection;
@@ -281,6 +290,23 @@ public:
         uint64_t serial = 0;
         std::vector<QuickNavigationAppEntry> entries;
         HIMAGELIST systemImageListSmall = nullptr;
+    };
+
+    enum class QuickNavigationKeyboardTargetKind
+    {
+        None,
+        Item,
+        App,
+        Everything,
+        ExpandApps,
+        LoadMoreEverything,
+    };
+
+    struct QuickNavigationKeyboardTarget
+    {
+        QuickNavigationKeyboardTargetKind kind = QuickNavigationKeyboardTargetKind::None;
+        size_t index = 0;
+        RECT rect{};
     };
 
     // ── OO 系统访问器（Object-Oriented System Accessors）────
@@ -438,7 +464,7 @@ private:
     /** @brief 重新加载所有项目并可选从磁盘恢复布局。 @param reloadLayoutFromDisk 是否重新从磁盘加载布局 */
     void ReloadItems(bool reloadLayoutFromDisk = true);
     /** @brief 根据可用显示器信息更新布局工作区域。 */
-    void UpdateLayoutWorkArea();
+    void UpdateLayoutWorkArea(bool preserveActiveDimensions = true);
     /** @brief 用当前设置（行列数）配置指定网格页面。 @param page 网格页面引用 */
     void ConfigureGridPage(GridPage& page) const;
     /** @brief 将用户保存的网格尺寸应用到各页面上。 */
@@ -449,12 +475,43 @@ private:
     void LayoutItems();
     /** @brief 重建容器（网格、部件）和面向对象项列表。 */
     void RebuildContainersAndItems();
+    /** @brief 为首屏 Dock 预留工作区并计算其绘制区域。 */
+    void ApplyDockWorkAreaReservation();
+    DockContainer* GetDockContainer() const;
+    int GetGridPageItemIconSize(const GridPage& page) const;
+    int GetDockItemIconSize() const;
+    void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
+        size_t insertIndex, int mods);
+    void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
+    void RestoreDockEntriesToDesktop();
+    void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
+    bool LaunchDesktopItem(size_t itemIndex);
+    void LoadDockUsageStats();
+    void SaveDockUsageStats() const;
+    void RecordDockItemUsage(size_t itemIndex);
+    bool IsDockUsageEligibleItem(const DesktopItem& item) const;
+    bool RemoveDockDragOutItems(const std::vector<Item*>& sourceItems);
+    std::vector<size_t> GetFrequentDockItemIndices() const;
+    bool SuppressDesktopWidgetDragTargets() const;
+    std::wstring GetDockDragOutRemovalHint(POINT point) const;
+    bool FindDockReturnCell(std::unordered_set<std::wstring>& usedSlots,
+        const std::wstring& preferredPageId, int startSlot, GridSpan span,
+        GridCell& result);
+    bool DropItemsIntoDockCollection(const std::vector<Item*>& sourceItems,
+        Container* origin, DockEntryItem* targetItem, int mods);
+    bool IsDockExclusiveItemKey(const std::wstring& key) const;
+    bool IsDockExclusiveWidgetId(const std::wstring& id) const;
+    bool IsRecycleBinDockEntry(const DockEntry& entry) const;
+    void NormalizeDockRecycleBinPosition();
+    size_t FindWidgetIndexById(const std::wstring& id) const;
     /** @brief 显示设置窗口。 */
     void ShowSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    /** @brief 加载 Dock 设置。 */
+    void LoadDockSettingsAndApply();
     /** @brief 加载分类设置并刷新分类组件。 */
     void LoadCategorySettingsAndApply();
     /** @brief 获取当前分类设置。 */
@@ -524,6 +581,12 @@ private:
     bool HasQuickNavigationEverythingLoadMoreButton() const;
     bool TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point);
     bool TryGetQuickNavigationAppEntryAtPoint(POINT point, const QuickNavigationAppEntry*& outEntry) const;
+    std::vector<QuickNavigationKeyboardTarget> GetQuickNavigationKeyboardTargets() const;
+    bool HandleQuickNavigationKeyboardInput(WPARAM key);
+    bool IsQuickNavigationKeyboardTarget(
+        QuickNavigationKeyboardTargetKind kind, size_t index) const;
+    void ResetQuickNavigationKeyboardTarget();
+    void EnsureQuickNavigationKeyboardTargetVisible(const RECT& targetRect);
     void ShowQuickNavigationAppContextMenu(const QuickNavigationAppEntry& entry, POINT screenPoint);
     bool CreateDesktopShortcutForApp(const QuickNavigationAppEntry& entry);
     bool CreateDesktopShortcutForPath(const std::wstring& path, bool isDirectory, const std::wstring& displayName = L"");
@@ -573,6 +636,10 @@ private:
     void OnLeftButtonDown(WPARAM wp, LPARAM lp);
     /** @brief 处理鼠标左键释放消息。 @param wp WPARAM @param lp LPARAM */
     void OnLeftButtonUp(WPARAM wp, LPARAM lp);
+    /** @brief 处理中键按下，在组件任意位置开始移动。 */
+    void OnMiddleButtonDown(WPARAM wp, LPARAM lp);
+    /** @brief 处理中键释放，完成组件移动。 */
+    void OnMiddleButtonUp(WPARAM wp, LPARAM lp);
     /** @brief 处理鼠标右键释放消息（弹出上下文菜单）。 @param lp LPARAM */
     void OnRightButtonUp(LPARAM lp);
     /** @brief 处理键盘按键消息。 @param key 按键虚拟键码 */
@@ -706,6 +773,8 @@ private:
     // ── Context menus ───────────────────────────────────────
     /** @brief 显示桌面背景上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowBackgroundContextMenu(POINT screenPoint);
+    /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
+    void ShowDockContextMenu(POINT screenPoint);
     /** @brief 连续显示行列调整菜单，直到用户取消。 */
     void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
@@ -778,6 +847,21 @@ private:
     void SetItemFontSize(float value);
     /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
+    void SetShortcutArrowMode(int mode);
+    bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
+    /** @brief 设置是否统一图标为圆角底板样式。 */
+    void SetIconBeautifyEnabled(bool enabled);
+    void SetIconBeautifySettings(bool enabled,
+        int beautifyMode,
+        float backgroundOpacity,
+        bool gradientEnabled,
+        float backgroundStartR,
+        float backgroundStartG,
+        float backgroundStartB,
+        float backgroundEndR,
+        float backgroundEndG,
+        float backgroundEndB,
+        int gradientDirection);
     /** @brief 应用页面到显示器的映射关系（编排清理/补齐/重排/映射）。 */
     void ApplyPageMapping();
     /** @brief 清理溢出区空页（保留前 N-1 槽位页与末屏当前显示的空页）。 */
@@ -1129,6 +1213,12 @@ private:
         DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis = true);
     /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
     void DrawCollectionPopup(ID2D1DeviceContext* ctx);
+    void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
+    static float GetBeautifiedIconCornerRadius(int width, int height);
+    void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
+        D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth);
+    void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
+    bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
@@ -1139,7 +1229,11 @@ private:
      * @return D2D 位图指针，失败返回 nullptr
      */
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
+    ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify);
     ID2D1Bitmap* GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm);
+    ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify);
+    std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
+    void EraseD2DIconCacheForBitmap(HBITMAP hbm);
 
     /**
      * @brief 在指定矩形上绘制快捷方式箭头叠加层。
@@ -1155,7 +1249,8 @@ private:
     void BeginIconLoadGeneration();
     void EnqueueIconLoad(IconLoadTask task);
     void OnIconLoaded(WPARAM wParam, LPARAM lParam);
-    void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect, float alpha);
+    void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect,
+        float alpha, bool allowBeautify = true);
     /** @brief 绘制快捷导航行内系统图标（EXTRALARGE 源，缩放填满 dstRect）。 */
     void DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect);
 
@@ -1362,6 +1457,8 @@ private:
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
     int GetCollectionPopupColumnCount(const RECT& popup) const;
+    int GetCollectionPopupCellWidth() const;
+    int GetCollectionPopupCellHeight() const;
     /** @brief 获取集合弹出面板中的行数。 @param widget 部件引用 @param popup 面板矩形 @return 行数 */
     int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容的最大滚动偏移。 @param widget 部件引用 @param popup 面板矩形 @return 最大滚动偏移 */
@@ -1488,6 +1585,8 @@ private:
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
+    ComPtr<ID2D1Bitmap1> privacyFileIconBitmap_;
+    ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
     HANDLE faFontHandle_ = nullptr;
@@ -1497,6 +1596,7 @@ private:
     std::unique_ptr<WidgetEngine> widgetEngine_;
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
+    DockSettings dockSettings_;
     CategorySettings categorySettings_ = CategorySettings::Defaults();
     bool quickNavLightTheme_ = false;
     bool desktopIconsHidden_ = false;
@@ -1523,6 +1623,10 @@ private:
     std::unordered_map<std::wstring, size_t> itemIndexByKeyCache_;
     std::vector<GridPage> gridPages_;
     std::vector<DesktopWidget> widgets_;
+    std::vector<DockEntry> dockEntries_;
+    std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
+    RECT dockArea_{};
+    size_t dockPressedEntry_ = static_cast<size_t>(-1);
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
@@ -1532,6 +1636,18 @@ private:
     float iconSpacingScale_ = 1.0f;
     float itemFontSize_ = kItemFontSize;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    int shortcutArrowMode_ = 0;
+    bool iconBeautifyEnabled_ = false;
+    int iconBeautifyMode_ = 0;
+    float iconBeautifyBgOpacity_ = 0.65f;
+    bool iconBeautifyGradientEnabled_ = false;
+    int iconBeautifyGradientDirection_ = 0;
+    float iconBeautifyBgStartR_ = 232.0f / 255.0f;
+    float iconBeautifyBgStartG_ = 236.0f / 255.0f;
+    float iconBeautifyBgStartB_ = 244.0f / 255.0f;
+    float iconBeautifyBgEndR_ = 222.0f / 255.0f;
+    float iconBeautifyBgEndG_ = 228.0f / 255.0f;
+    float iconBeautifyBgEndB_ = 240.0f / 255.0f;
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;   // 持久化：锁定显示首屏的显示器
     std::wstring lastPageMonitorId_;    // 持久化：锁定显示末屏/翻页区的显示器
@@ -1638,11 +1754,17 @@ private:
     bool resizingWidget_ = false;
     enum class WidgetAction { None, PendingMove, PendingResize, Move, Resize };
     WidgetAction widgetAction_ = WidgetAction::None;
+    bool middleButtonWidgetMove_ = false;
     GridCell widgetDragOriginalCell_{};
     GridSpan widgetDragOriginalSpan_{};
     GridCell widgetPreviewCell_{};
     GridSpan widgetPreviewSpan_{};
     bool widgetPreviewOccupied_ = false;
+    bool widgetDockTarget_ = false;
+    size_t widgetDockInsertIndex_ = 0;
+    size_t dockHandoffDwellIndex_ = static_cast<size_t>(-1);
+    DWORD dockHandoffDwellStartTick_ = 0;
+    bool dockHandoffDwellReady_ = false;
     /** @} */
 
     /** @name OLE 拖拽状态 */
@@ -1708,11 +1830,17 @@ private:
     HFONT luaInlineEditFont_ = nullptr;
     std::wstring luaInlineEditWidgetId_;
     std::string luaInlineEditStorageKey_;
+    std::wstring luaInlineEditOriginalText_;
     bool luaInlineEditMultiline_ = false;
+    bool luaInlineEditLiveUpdate_ = false;
     COLORREF luaInlineEditTextColor_ = RGB(0, 0, 0);
+    COLORREF luaInlineEditBackgroundColor_ = RGB(255, 255, 255);
+    HBRUSH luaInlineEditBackgroundBrush_ = nullptr;
     /** @brief Lua 内联编辑框的子类化窗口过程。 @param hwnd 窗口句柄 @param message 消息 @param wParam WPARAM @param lParam LPARAM @param subclassId 子类化 ID @param refData 引用数据 @return 消息处理结果 */
     static LRESULT CALLBACK LuaInlineEditSubclassProc(HWND hwnd, UINT message,
         WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData);
+    /** @brief 将 Lua 内联编辑框的当前内容实时写回小部件存储。 */
+    void PreviewLuaInlineTextEdit();
     /** @} */
 
     /** @name 拖拽提示窗口 */
@@ -1752,6 +1880,8 @@ private:
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
     bool popupHasAnchor_ = false;
+    bool popupAnchoredToDock_ = false;
+    DockPosition popupDockPosition_ = DockPosition::Bottom;
     POINT popupAnchorPoint_{};
     std::wstring popupPageId_;
     std::wstring popupCategoryId_;
@@ -1782,6 +1912,9 @@ private:
     std::thread quickNavigationAppIndexThread_;
     uint64_t quickNavigationAppIndexSerial_ = 0;
     bool quickNavigationAppsExpanded_ = false;
+    QuickNavigationKeyboardTargetKind quickNavigationKeyboardTargetKind_ =
+        QuickNavigationKeyboardTargetKind::None;
+    size_t quickNavigationKeyboardTargetIndex_ = 0;
     float quickNavDpiScale_ = 1.0f;
     std::vector<std::wstring> navTabOrder_;
     size_t quickNavTabDragIndex_ = static_cast<size_t>(-1);
@@ -1830,7 +1963,7 @@ private:
     std::atomic<bool> iconLoaderRunning_{false};
     uint64_t iconLoadSerial_ = 0;
 
-    std::unordered_map<int, ComPtr<ID2D1Bitmap>> placeholderIconCache_;
+    std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> placeholderIconCache_;
     /** @} */
 
     /** @name 新建菜单 COM 上下文 */
@@ -1844,6 +1977,7 @@ private:
 // ── Inline implementations (split into sub-headers) ─────────
 #include "app_run.h"
 #include "app_gfx.h"
+#include "app_dock.h"
 #include "app_quick_navigation.h"
 #include "app_interact.h"
 #include "app_menu.h"

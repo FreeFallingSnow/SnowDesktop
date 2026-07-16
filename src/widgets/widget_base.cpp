@@ -520,6 +520,54 @@ BarStyle ScrollingItemWidget::GetInsertionStyle() const
     return data_ && data_->listMode ? BarStyle::HBar : BarStyle::VBar;
 }
 
+void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
+    RECT cell, RECT iconRect, const std::wstring& title) const
+{
+    if (!app_ || !context || title.empty()) return;
+    RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
+        cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
+    if (textRect.right <= textRect.left) return;
+
+    const float width = static_cast<float>(
+        std::max<LONG>(1, textRect.right - textRect.left));
+    const float height = static_cast<float>(
+        std::max<LONG>(1, textRect.bottom - textRect.top));
+    const float layoutScale = app_->GetItemLayoutScale(cell);
+    const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
+    std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
+        std::to_wstring(textRect.right - textRect.left) + L"x" +
+        std::to_wstring(textRect.bottom - textRect.top) + L"@" +
+        std::to_wstring(scaleKey);
+    auto layoutIt = app_->itemTextLayoutCache_.find(layoutKey);
+    if (layoutIt == app_->itemTextLayoutCache_.end())
+    {
+        ComPtr<IDWriteTextLayout> layout;
+        if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
+            title.c_str(), static_cast<UINT32>(title.size()),
+            app_->itemTextFormat_.Get(), width, height, &layout)) && layout)
+        {
+            const DWRITE_TEXT_RANGE fullRange{
+                0, static_cast<UINT32>(title.size())
+            };
+            layout->SetFontSize(app_->itemFontSize_ * layoutScale, fullRange);
+            layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                app_->itemFontSize_ * 7.0f / 6.0f * layoutScale,
+                app_->itemFontSize_ * 5.0f / 6.0f * layoutScale);
+            layoutIt = app_->itemTextLayoutCache_.emplace(
+                std::move(layoutKey), std::move(layout)).first;
+        }
+    }
+    if (layoutIt != app_->itemTextLayoutCache_.end())
+        app_->DrawStyledItemTextLayout(context, layoutIt->second.Get(),
+            layoutIt->first,
+            D2D1::Point2F(static_cast<float>(textRect.left),
+                static_cast<float>(textRect.top)),
+            D2D1::SizeF(width, height), layoutScale, 1.0f);
+}
+
 /**
  * @brief 绘制列表模式下的单个项目（图标+文字）
  * @param context D2D 设备上下文
@@ -561,49 +609,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, 1.0f);
     }
 
-    RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
-        cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
-    if (textRect.right > textRect.left && !name.empty())
-    {
-        float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
-        float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
-        const float layoutScale = app_->GetItemLayoutScale(cell);
-        const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
-        std::wstring layoutKey = L"list\x1f" + name + L"\x1f" +
-            std::to_wstring(textRect.right - textRect.left) + L"x" +
-            std::to_wstring(textRect.bottom - textRect.top) + L"@" +
-            std::to_wstring(scaleKey);
-        auto layoutIt = app_->itemTextLayoutCache_.find(layoutKey);
-        if (layoutIt == app_->itemTextLayoutCache_.end())
-        {
-            ComPtr<IDWriteTextLayout> layout;
-            if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
-                name.c_str(), static_cast<UINT32>(name.size()),
-                app_->itemTextFormat_.Get(), tw, th, &layout)) && layout)
-            {
-                const DWRITE_TEXT_RANGE fullRange{
-                    0, static_cast<UINT32>(name.size())
-                };
-                layout->SetFontSize(app_->itemFontSize_ * layoutScale, fullRange);
-                layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-                layout->SetLineSpacing(
-                    DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                    app_->itemFontSize_ * 7.0f / 6.0f * layoutScale,
-                    app_->itemFontSize_ * 5.0f / 6.0f * layoutScale);
-                layoutIt = app_->itemTextLayoutCache_.emplace(
-                    std::move(layoutKey), std::move(layout)).first;
-            }
-        }
-        if (layoutIt != app_->itemTextLayoutCache_.end())
-            app_->DrawStyledItemTextLayout(
-                context, layoutIt->second.Get(), layoutIt->first,
-                D2D1::Point2F(
-                    static_cast<float>(textRect.left),
-                    static_cast<float>(textRect.top)),
-                D2D1::SizeF(tw, th), layoutScale, 1.0f);
-    }
+    DrawListItemTitle(context, cell, iconRect, name);
 }
 
 void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
@@ -612,66 +618,50 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     if (!app_ || !context || IsRectEmptyRect(rect)) return;
     (void)name;
 
-    const std::wstring glyph = isDir ? L"" : L"";
     const std::wstring label = isDir ? L"文件夹" : L"文件";
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
 
-    int w = rect.right - rect.left;
-    int h = rect.bottom - rect.top;
-    int iconSz = std::min(w, h) - Cu(2.0f);
-
-    if (w > h * 2)
+    if (width > height * 2)
     {
-        // List-like: icon on left, text on right
-        int listIconSz = h - Cu(2.0f);
-        RECT iconRect = {
-            rect.left + Cu(4.0f),
-            rect.top + (h - listIconSz) / 2,
-            rect.left + Cu(4.0f) + listIconSz,
-            rect.top + (h + listIconSz) / 2
-        };
-
-        IDWriteTextFormat* faFormat = GetCuFaTextFormat(static_cast<float>(listIconSz) * 0.88f);
-        app_->DrawD2DText(context, glyph, iconRect,
-            faFormat ? faFormat : (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f));
-
-        RECT nameRect = { iconRect.right + Cu(6.0f), rect.top + Cu(2.0f), rect.right - Cu(6.0f), rect.bottom - Cu(2.0f) };
-        if (nameRect.right > nameRect.left)
-        {
-            IDWriteTextFormat* textFormat = GetCuTextFormat(12.0f, false, false);
-            app_->DrawD2DText(context, label, nameRect,
-                textFormat ? textFormat : app_->listItemTextFormat_.Get(),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f));
-        }
+        const int iconSize = std::max(1, std::min(Cu(32.0f),
+            std::max(1, height - Cu(4.0f))));
+        RECT iconRect = MakeRect(rect.left + Cu(4.0f),
+            rect.top + (height - iconSize) / 2,
+            rect.left + Cu(4.0f) + iconSize,
+            rect.top + (height + iconSize) / 2);
+        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        DrawListItemTitle(context, rect, iconRect, label);
+        return;
     }
-    else
+
+    const float layoutScale = app_->GetItemLayoutScale(rect);
+    const int regularLayoutThreshold = static_cast<int>(
+        std::round(50.0f * layoutScale));
+    if (height >= regularLayoutThreshold)
     {
-        // Grid-like: icon centered at top, text below
-        int iconH = iconSz;
-        if (iconH > h - Cu(16.0f)) iconH = h - Cu(16.0f);
-        if (iconH < Cu(4.0f)) iconH = Cu(4.0f);
-
-        RECT iconRect = {
-            rect.left + (w - iconH) / 2,
-            rect.top + std::max(0, (h - iconH - Cu(14.0f)) / 2),
-            rect.left + (w + iconH) / 2,
-            rect.top + std::max(0, (h + iconH - Cu(14.0f)) / 2)
-        };
-
-        IDWriteTextFormat* faFormat = GetCuFaTextFormat(static_cast<float>(iconH) * 0.88f);
-        app_->DrawD2DText(context, glyph, iconRect,
-            faFormat ? faFormat : (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f));
-
-        RECT nameRect = { rect.left + Cu(4.0f), iconRect.bottom + Cu(2.0f), rect.right - Cu(4.0f), rect.bottom - Cu(2.0f) };
-        if (nameRect.right > nameRect.left)
-        {
-            IDWriteTextFormat* textFormat = GetCuTextFormat(12.0f, false, true);
-            app_->DrawD2DText(context, label, nameRect,
-                textFormat ? textFormat : app_->listItemTextFormat_.Get(),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f));
-        }
+        const RECT iconRect = app_->GetItemIconRect(rect);
+        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        app_->DrawItemText(context, rect, label, false);
+        return;
     }
+
+    const int titleHeight = std::max(1, std::min(Cu(14.0f), height / 3));
+    const int iconSize = std::max(1, std::min(
+        std::max(1, width - Cu(4.0f)),
+        std::max(1, height - titleHeight - Cu(2.0f))));
+    const int iconTop = rect.top + std::max(0,
+        (height - titleHeight - iconSize - Cu(2.0f)) / 2);
+    RECT iconRect = MakeRect(rect.left + (width - iconSize) / 2,
+        iconTop, rect.left + (width + iconSize) / 2, iconTop + iconSize);
+    app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+
+    RECT titleRect = MakeRect(rect.left + Cu(1.0f), iconRect.bottom + Cu(2.0f),
+        rect.right - Cu(1.0f), rect.bottom);
+    IDWriteTextFormat* titleFormat = GetCuTextFormat(12.0f, false, true);
+    app_->DrawD2DText(context, label, titleRect,
+        titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.88f));
 }
 
 // ── Scrollbar helper (free function, shared by WidgetContainer and popup) ─

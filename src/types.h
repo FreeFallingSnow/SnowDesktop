@@ -180,6 +180,8 @@ struct DesktopItem
     GridSpan gridSpan;
     bool selected = false;
     bool shortcutArrow = false;
+    bool isShortcut = false;
+    bool isApplicationShortcut = false;
     bool isCut = false;
     IconState iconState = IconState::Loading;
 
@@ -202,6 +204,8 @@ struct DesktopItem
           gridSpan(other.gridSpan),
           selected(other.selected),
           shortcutArrow(other.shortcutArrow),
+          isShortcut(other.isShortcut),
+          isApplicationShortcut(other.isApplicationShortcut),
           isCut(other.isCut),
           iconState(other.iconState)
     {
@@ -234,6 +238,8 @@ struct DesktopItem
             gridSpan = other.gridSpan;
             selected = other.selected;
             shortcutArrow = other.shortcutArrow;
+            isShortcut = other.isShortcut;
+            isApplicationShortcut = other.isApplicationShortcut;
             isCut = other.isCut;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
@@ -268,6 +274,8 @@ struct FolderEntry
     bool selected = false;
     bool isCut = false;
     bool shortcutArrow = false;
+    bool isShortcut = false;
+    bool isApplicationShortcut = false;
     IconState iconState = IconState::Loading;
 
     FolderEntry() = default;
@@ -282,6 +290,8 @@ struct FolderEntry
           selected(other.selected),
           isCut(other.isCut),
           shortcutArrow(other.shortcutArrow),
+          isShortcut(other.isShortcut),
+          isApplicationShortcut(other.isApplicationShortcut),
           iconState(other.iconState)
     {
         if (other.iconBitmap != nullptr)
@@ -308,6 +318,8 @@ struct FolderEntry
             selected = other.selected;
             isCut = other.isCut;
             shortcutArrow = other.shortcutArrow;
+            isShortcut = other.isShortcut;
+            isApplicationShortcut = other.isApplicationShortcut;
             iconState = other.iconState;
             if (other.iconBitmap != nullptr)
             {
@@ -359,6 +371,8 @@ public:
           selected(other.selected),
           isCut(other.isCut),
           shortcutArrow(other.shortcutArrow),
+          isShortcut(other.isShortcut),
+          isApplicationShortcut(other.isApplicationShortcut),
           iconState(other.iconState)
     {
         other.iconBitmap = nullptr;
@@ -382,6 +396,8 @@ public:
             selected = other.selected;
             isCut = other.isCut;
             shortcutArrow = other.shortcutArrow;
+            isShortcut = other.isShortcut;
+            isApplicationShortcut = other.isApplicationShortcut;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
             other.iconBitmapSize = {};
@@ -423,6 +439,33 @@ struct DesktopWidget
     bool dateHeaders = false;
     std::vector<std::wstring> itemKeys;
     std::vector<FolderEntry> folderEntries;
+};
+
+/** Dock 中的引用类型。Dock 只保存布局引用，不复制实际文件。 */
+enum class DockEntryType
+{
+    DesktopItem,
+    Collection,
+};
+
+/**
+ * @brief 主屏 Dock 条目。
+ * @details DesktopItem 使用 layoutKey，Collection 使用 widget id。
+ *          DesktopItem 的 keepOnDesktop=true 表示 Ctrl“假复制”；
+ *          Collection 始终是唯一实例，进入 Dock 后不会保留桌面入口。
+ */
+struct DockEntry
+{
+    DockEntryType type = DockEntryType::DesktopItem;
+    std::wstring reference;
+    bool keepOnDesktop = false;
+    bool selected = false;
+};
+
+struct DockUsageRecord
+{
+    int launchCount = 0;
+    int lastUsed = 0;
 };
 
 /**

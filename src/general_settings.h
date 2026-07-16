@@ -13,6 +13,7 @@ struct GeneralSettings
 {
     bool doubleClickHideDesktop = false;
     int quickNavTheme = 1; // 0=dark, 1=light
+    bool dockEnabled = false;
 };
 
 std::wstring GetGeneralSettingsPath();
