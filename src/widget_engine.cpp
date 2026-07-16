@@ -2321,12 +2321,6 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         if (lua_isfunction(L_, -1))
         {
             ImGui::Spacing();
-            float renderHeight = std::max(220.0f, ImGui::GetContentRegionAvail().y);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
-            ImGui::BeginChild("##LuaWidgetImguiRenderScroll", ImVec2(0.0f, renderHeight),
-                ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
-                ImGuiWindowFlags_None);
-            ImGui::PopStyleVar();
 
             if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
             {
@@ -2334,7 +2328,6 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
                 RuntimeRecordError(widgetId, err ? err : "(imguiRender error)");
                 lua_pop(L_, 1);
             }
-            ImGui::EndChild();
         }
         else
             lua_pop(L_, 1);
