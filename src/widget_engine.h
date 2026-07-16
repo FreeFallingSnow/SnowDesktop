@@ -176,7 +176,9 @@ struct LuaInlineTextEditRequest
     RECT localRect{};        ///< 输入框在小部件本地坐标系中的位置和尺寸
     bool multiline = false;  ///< 是否支持多行输入
     bool selectAll = true;   ///< 是否自动全选文本
+    bool liveUpdate = false; ///< 输入过程中是否实时写回存储
     int textColor = 0x000000; ///< 文本颜色（ARGB 格式，默认黑色）
+    int backgroundColor = 0xFFFFFF; ///< 编辑框背景颜色（RGB，默认白色）
     float fontSize = 15.0f;  ///< 编辑框字号（像素，默认 15）
 };
 
@@ -218,11 +220,14 @@ struct LuaWidget
 {
     struct HostControl
     {
-        enum class Type { Button, Toggle, Scroll };
+        enum class Type { Button, Toggle, Input, Scroll };
         Type type = Type::Button;
         std::string id;
+        std::string storageKey;
         RECT rect{};
         bool value = false;
+        bool selectAll = true;
+        bool liveUpdate = false;
         int contentHeight = 0;
         int viewportHeight = 0;
     };
@@ -303,6 +308,7 @@ public:
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
     using DesktopRefreshCallback = std::function<void()>;
     using InlineTextEditCallback = std::function<void(const LuaInlineTextEditRequest&)>;
+    using HostInputFocusCallback = std::function<void()>;
     using NotifyCallback = std::function<void(const std::wstring&, const std::wstring&)>;
     using WidgetTimerRequestCallback = std::function<UINT_PTR(const std::wstring& widgetId, UINT intervalMs)>;
     using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
@@ -324,6 +330,8 @@ public:
     void SetDesktopRefreshCallback(DesktopRefreshCallback callback) { desktopRefreshCallback_ = std::move(callback); }
     /** @brief 设置内联文本编辑回调 */
     void SetInlineTextEditCallback(InlineTextEditCallback callback) { inlineTextEditCallback_ = std::move(callback); }
+    /** @brief 设置宿主绘制输入框取得键盘焦点时的回调 */
+    void SetHostInputFocusCallback(HostInputFocusCallback callback) { hostInputFocusCallback_ = std::move(callback); }
     /** @brief 设置打开组件设置面板回调 */
     void SetOpenWidgetSettingsCallback(WidgetTitleCallback callback) { openWidgetSettingsCallback_ = std::move(callback); }
     /** @brief 设置系统通知回调 */
@@ -392,6 +400,12 @@ public:
      * @param widgetId 小部件实例 ID
      */
     void InvokeOpen(const std::wstring& widgetId);
+
+    /**
+     * @brief 触发小部件被选中的回调
+     * @param widgetId 小部件实例 ID
+     */
+    void InvokeSelected(const std::wstring& widgetId);
 
     /**
      * @brief 触发小部件的点击回调
@@ -660,6 +674,13 @@ public:
     int RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options);
     bool RuntimeHttpCancel(const std::wstring& widgetId, int requestId);
     void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
+    bool RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id);
+    bool RuntimeGetFocusedHostInput(const std::wstring& widgetId, const std::string& id,
+        std::wstring& text, size_t& cursor, bool& selectAll) const;
+    bool HandleHostInputKey(WPARAM key);
+    bool HandleHostInputChar(wchar_t ch);
+    bool HasFocusedHostInput() const;
+    void BlurHostInput(bool cancel = false);
     int RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const;
     bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y, int delta, bool wheel);
     std::vector<LuaWidget::HostControl> GetScrollControls(const std::wstring& widgetId) const;
@@ -710,6 +731,7 @@ private:
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
     DesktopRefreshCallback desktopRefreshCallback_;    ///< 刷新桌面的回调
     InlineTextEditCallback inlineTextEditCallback_;    ///< 内联文本编辑请求的回调
+    HostInputFocusCallback hostInputFocusCallback_;    ///< 让隐藏桌面输入窗口取得键盘焦点的回调
     NotifyCallback notifyCallback_;                     ///< 系统通知回调
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
@@ -718,4 +740,17 @@ private:
     std::atomic<bool> systemSnapshotChanged_{ false };
     std::atomic<bool> mediaSnapshotChanged_{ false };
     std::unique_ptr<AsyncHttpService> httpService_;
+    struct FocusedHostInput
+    {
+        bool active = false;
+        std::wstring widgetId;
+        std::string id;
+        std::string storageKey;
+        std::wstring text;
+        std::wstring originalText;
+        size_t cursor = 0;
+        bool selectAll = false;
+        bool liveUpdate = true;
+    };
+    FocusedHostInput focusedHostInput_;
 };

@@ -1830,11 +1830,17 @@ private:
     HFONT luaInlineEditFont_ = nullptr;
     std::wstring luaInlineEditWidgetId_;
     std::string luaInlineEditStorageKey_;
+    std::wstring luaInlineEditOriginalText_;
     bool luaInlineEditMultiline_ = false;
+    bool luaInlineEditLiveUpdate_ = false;
     COLORREF luaInlineEditTextColor_ = RGB(0, 0, 0);
+    COLORREF luaInlineEditBackgroundColor_ = RGB(255, 255, 255);
+    HBRUSH luaInlineEditBackgroundBrush_ = nullptr;
     /** @brief Lua 内联编辑框的子类化窗口过程。 @param hwnd 窗口句柄 @param message 消息 @param wParam WPARAM @param lParam LPARAM @param subclassId 子类化 ID @param refData 引用数据 @return 消息处理结果 */
     static LRESULT CALLBACK LuaInlineEditSubclassProc(HWND hwnd, UINT message,
         WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData);
+    /** @brief 将 Lua 内联编辑框的当前内容实时写回小部件存储。 */
+    void PreviewLuaInlineTextEdit();
     /** @} */
 
     /** @name 拖拽提示窗口 */

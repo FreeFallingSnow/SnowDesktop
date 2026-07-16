@@ -1017,6 +1017,15 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetInlineTextEditCallback([this](const LuaInlineTextEditRequest& request) {
             BeginLuaInlineTextEdit(request);
         });
+        widgetEngine_->SetHostInputFocusCallback([this]() {
+            for (auto& container : containers_)
+            {
+                auto* fileCategories = dynamic_cast<FileCategories*>(container.get());
+                if (fileCategories)
+                    fileCategories->SetSearchFocused(false);
+            }
+            FocusDesktopInputWindow();
+        });
         widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
             ShowBalloonNotification(title, message);
         });
@@ -1169,11 +1178,21 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
+        if (widgetEngine_ && widgetEngine_->HandleHostInputKey(wp))
+        {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
         OnKeyDown(wp);
         return 0;
     case WM_CHAR:
     {
         wchar_t ch = static_cast<wchar_t>(wp);
+        if (widgetEngine_ && widgetEngine_->HandleHostInputChar(ch))
+        {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
         if (ch >= 0x20 && ch != 0x7F)
         {
             for (auto& c : containers_)
@@ -1278,6 +1297,16 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
     switch (msg)
     {
+    case WM_CTLCOLOREDIT:
+        if (reinterpret_cast<HWND>(lp) == luaInlineEdit_)
+        {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetTextColor(dc, luaInlineEditTextColor_);
+            SetBkColor(dc, luaInlineEditBackgroundColor_);
+            return reinterpret_cast<LRESULT>(luaInlineEditBackgroundBrush_
+                ? luaInlineEditBackgroundBrush_ : GetStockObject(WHITE_BRUSH));
+        }
+        break;
     case WM_PAINT:
     {
         PAINTSTRUCT ps{};

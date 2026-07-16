@@ -13,6 +13,7 @@
 // This file is included by app.h after the class definition.
 
 #include "drop_model.h"
+#include <imm.h>
 #include <wincodec.h>
 #include <urlmon.h>
 
@@ -384,9 +385,15 @@ inline void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& r
 
     luaInlineEditWidgetId_ = request.widgetId;
     luaInlineEditStorageKey_ = request.storageKey;
+    luaInlineEditOriginalText_ = initial;
     luaInlineEditMultiline_ = request.multiline;
+    luaInlineEditLiveUpdate_ = request.liveUpdate;
     luaInlineEditTextColor_ = RGB((request.textColor >> 16) & 0xFF,
         (request.textColor >> 8) & 0xFF, request.textColor & 0xFF);
+    luaInlineEditBackgroundColor_ = RGB((request.backgroundColor >> 16) & 0xFF,
+        (request.backgroundColor >> 8) & 0xFF, request.backgroundColor & 0xFF);
+    if (luaInlineEditBackgroundBrush_) DeleteObject(luaInlineEditBackgroundBrush_);
+    luaInlineEditBackgroundBrush_ = CreateSolidBrush(luaInlineEditBackgroundColor_);
 
     if (luaInlineEditFont_) DeleteObject(luaInlineEditFont_);
     const int editFontSize = std::clamp(
@@ -1157,12 +1164,16 @@ inline void DesktopApp::UpdateMarqueeSelection(POINT current)
  */
 inline void DesktopApp::SelectWidgetOnly(size_t index)
 {
+    if (index >= widgets_.size()) return;
     ClearSelection();
     for (auto& w : widgets_)
     {
         w.selected = (&w == &widgets_[index]);
         for (auto& e : w.folderEntries) e.selected = false;
     }
+    if (widgetEngine_ && widgets_[index].type == DesktopWidgetType::LuaScript &&
+        widgetEngine_->EnsureWidgetLoaded(widgets_[index].id, widgets_[index].scriptPath))
+        widgetEngine_->InvokeSelected(widgets_[index].id);
 }
 
 /**
@@ -1178,6 +1189,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
     FocusDesktopInputWindow();
+    if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
+        widgetEngine_->BlurHostInput(false);
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     mouseDown_ = true;
     mouseDownPoint_ = pt;
@@ -5401,6 +5414,21 @@ inline LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
     return DefSubclassProc(hwnd, message, wParam, lParam);
 }
 
+/** @brief 将 Lua 内联编辑框当前内容实时写回小部件存储。 */
+inline void DesktopApp::PreviewLuaInlineTextEdit()
+{
+    if (!luaInlineEditLiveUpdate_ || !luaInlineEdit_ || !widgetEngine_ ||
+        luaInlineEditWidgetId_.empty() || luaInlineEditStorageKey_.empty())
+        return;
+
+    int length = GetWindowTextLengthW(luaInlineEdit_);
+    std::vector<wchar_t> buffer(static_cast<size_t>(std::max(0, length)) + 1);
+    GetWindowTextW(luaInlineEdit_, buffer.data(), length + 1);
+    widgetEngine_->RuntimeSetStorageValue(luaInlineEditWidgetId_, luaInlineEditStorageKey_,
+        LuaWidgetWideToUtf8(std::wstring(buffer.data())));
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 /**
  * @brief 提交或取消 Lua 内联文本编辑
  * @param cancel 是否取消编辑
@@ -5424,18 +5452,30 @@ inline void DesktopApp::CommitLuaInlineTextEdit(bool cancel)
 
     DestroyWindow(edit);
     if (luaInlineEditFont_) { DeleteObject(luaInlineEditFont_); luaInlineEditFont_ = nullptr; }
-
-    if (!cancel && widgetEngine_ && !luaInlineEditWidgetId_.empty() && !luaInlineEditStorageKey_.empty())
+    if (luaInlineEditBackgroundBrush_)
     {
-        widgetEngine_->RuntimeSetStorageValue(luaInlineEditWidgetId_, luaInlineEditStorageKey_,
-            LuaWidgetWideToUtf8(value));
+        DeleteObject(luaInlineEditBackgroundBrush_);
+        luaInlineEditBackgroundBrush_ = nullptr;
+    }
+
+    if (widgetEngine_ && !luaInlineEditWidgetId_.empty() && !luaInlineEditStorageKey_.empty())
+    {
+        if (cancel && luaInlineEditLiveUpdate_)
+            widgetEngine_->RuntimeSetStorageValue(luaInlineEditWidgetId_, luaInlineEditStorageKey_,
+                LuaWidgetWideToUtf8(luaInlineEditOriginalText_));
+        else if (!cancel)
+            widgetEngine_->RuntimeSetStorageValue(luaInlineEditWidgetId_, luaInlineEditStorageKey_,
+                LuaWidgetWideToUtf8(value));
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
     luaInlineEditWidgetId_.clear();
     luaInlineEditStorageKey_.clear();
+    luaInlineEditOriginalText_.clear();
     luaInlineEditMultiline_ = false;
+    luaInlineEditLiveUpdate_ = false;
     luaInlineEditTextColor_ = RGB(0, 0, 0);
+    luaInlineEditBackgroundColor_ = RGB(255, 255, 255);
 }
 
 /**
@@ -5462,7 +5502,30 @@ inline LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
                 return 0;
             }
         }
+        if (wParam == VK_DELETE && app->luaInlineEditLiveUpdate_)
+        {
+            LRESULT result = DefSubclassProc(hwnd, message, wParam, lParam);
+            app->PreviewLuaInlineTextEdit();
+            return result;
+        }
         break;
+    case WM_CHAR:
+    case WM_PASTE:
+    case WM_CUT:
+    case WM_CLEAR:
+    case WM_UNDO:
+    {
+        LRESULT result = DefSubclassProc(hwnd, message, wParam, lParam);
+        app->PreviewLuaInlineTextEdit();
+        return result;
+    }
+    case WM_IME_COMPOSITION:
+    {
+        LRESULT result = DefSubclassProc(hwnd, message, wParam, lParam);
+        if ((lParam & GCS_RESULTSTR) != 0)
+            app->PreviewLuaInlineTextEdit();
+        return result;
+    }
     case WM_KILLFOCUS:
         app->CommitLuaInlineTextEdit(false);
         return 0;
