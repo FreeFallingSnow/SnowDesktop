@@ -2084,7 +2084,6 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
         ShowDragHintWindow(current, hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
-        UpdateWindow(hwnd_);
         return;
     }
 
@@ -2093,8 +2092,12 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
+            if (!marqueeActive_)
+                dragRenderCache_.Reset();
             marqueeActive_ = true;
             UpdateMarqueeSelection(current);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
         }
     }
 
@@ -4295,6 +4298,9 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kRecycleBinPollTimerId)
     {
+        if (mouseDown_ || dragSession_.IsActive() || externalDragActive_ ||
+            widgetAction_ != WidgetAction::None)
+            return;
         SHQUERYRBINFO info{};
         info.cbSize = sizeof(info);
         if (SUCCEEDED(SHQueryRecycleBinW(nullptr, &info)))

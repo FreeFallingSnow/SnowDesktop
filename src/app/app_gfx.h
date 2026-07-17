@@ -1639,7 +1639,8 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
             continue;
 
         const bool hovered = !mouseOverWidget && PtInRect(&di->bounds, lastMousePoint_) != FALSE;
-        const bool selected = di->selected;
+        const bool selected = di->selected &&
+            !(marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size());
         int state = selected ? 2 : (hovered ? 1 : 0);
         icon->Draw(ctx, di->bounds, state);
     }
@@ -1823,6 +1824,17 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
     if (marqueeActive_)
     {
+        if (marqueeWidgetIndex_ >= widgets_.size())
+        {
+            for (auto& ooItem : items_oo_)
+            {
+                auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
+                if (!icon) continue;
+                DesktopItem* item = icon->GetDesktopItem();
+                if (!item || !item->selected || IsRectEmptyRect(item->bounds)) continue;
+                icon->Draw(ctx, item->bounds, 2);
+            }
+        }
         if (marqueeWidgetIndex_ < widgets_.size())
         {
             RECT viewport = GetMarqueeViewportRect();
@@ -1854,7 +1866,9 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
     }
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize;
-    if (dragSession_.IsActive() || widgetPreviewActive)
+    const bool desktopMarqueeActive =
+        marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
+    if (dragSession_.IsActive() || widgetPreviewActive || desktopMarqueeActive)
     {
         RECT client{};
         GetClientRect(hwnd_, &client);
