@@ -112,6 +112,7 @@ inline void DesktopApp::RegisterOleDropTarget()
  */
 inline void DesktopApp::ResetDesktopWindowResources()
 {
+    recycleBinPollState_->targetWindow = nullptr;
     if (hwnd_ && IsWindow(hwnd_))
     {
         UnregisterNavigationHotkey();

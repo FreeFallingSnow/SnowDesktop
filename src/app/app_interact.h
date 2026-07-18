@@ -4298,20 +4298,24 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kRecycleBinPollTimerId)
     {
-        if (mouseDown_ || dragSession_.IsActive() || externalDragActive_ ||
-            widgetAction_ != WidgetAction::None)
+        const auto pollState = recycleBinPollState_;
+        if (pollState->queryInFlight.exchange(true))
             return;
-        SHQUERYRBINFO info{};
-        info.cbSize = sizeof(info);
-        if (SUCCEEDED(SHQueryRecycleBinW(nullptr, &info)))
-        {
-            if (lastRecycleBinItemCount_ >= 0 && info.i64NumItems != lastRecycleBinItemCount_)
+        const HWND target = hwnd_;
+        pollState->targetWindow = target;
+        std::thread([target, pollState] {
+            SHQUERYRBINFO info{};
+            info.cbSize = sizeof(info);
+            const HRESULT result = SHQueryRecycleBinW(nullptr, &info);
+            if (SUCCEEDED(result))
             {
-                if (!mouseDown_ && !reloading_)
-                    ReloadItems();
+                const int64_t previousCount = pollState->itemCount.exchange(info.i64NumItems);
+                if (previousCount >= 0 && previousCount != info.i64NumItems &&
+                    pollState->targetWindow.load() == target)
+                    PostMessageW(target, kShellChangeMessage, 0, 0);
             }
-            lastRecycleBinItemCount_ = info.i64NumItems;
-        }
+            pollState->queryInFlight = false;
+        }).detach();
     }
     else if (timerId == kDesktopHostWatchTimerId)
     {
