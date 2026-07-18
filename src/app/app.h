@@ -83,6 +83,12 @@ struct IconLoadTask {
     IconLoadPhase phase = IconLoadPhase::Phase1;
 };
 
+struct RecycleBinPollState {
+    std::atomic<int64_t> itemCount{ -1 };
+    std::atomic<bool> queryInFlight{ false };
+    std::atomic<HWND> targetWindow{ nullptr };
+};
+
 struct IconLoadResult {
     uint64_t serial = 0;
     std::wstring requestKey;
@@ -1801,7 +1807,8 @@ private:
     DWORD ChooseDropEffect(DWORD keyState, DWORD allowed) const;
 
     /** @brief 回收站项计数（用于轮询检测回收站状态变化） */
-    int64_t lastRecycleBinItemCount_ = -1;
+    std::shared_ptr<RecycleBinPollState> recycleBinPollState_ =
+        std::make_shared<RecycleBinPollState>();
 
     /** @brief 剪贴板剪切追踪的路径集合 */
     std::unordered_set<std::wstring> cutPaths_;
