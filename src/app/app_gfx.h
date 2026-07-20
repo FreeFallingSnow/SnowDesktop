@@ -1638,9 +1638,11 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
             dragSession_.IsMoveAction() && di->selected)
             continue;
 
-        const bool hovered = !mouseOverWidget && PtInRect(&di->bounds, lastMousePoint_) != FALSE;
-        const bool selected = di->selected &&
-            !(marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size());
+        const bool desktopMarqueeActive =
+            marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
+        const bool hovered = !desktopMarqueeActive && !mouseOverWidget &&
+            PtInRect(&di->bounds, lastMousePoint_) != FALSE;
+        const bool selected = di->selected && !desktopMarqueeActive;
         int state = selected ? 2 : (hovered ? 1 : 0);
         icon->Draw(ctx, di->bounds, state);
     }
