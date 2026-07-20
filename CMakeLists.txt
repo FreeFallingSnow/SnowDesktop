@@ -9,6 +9,7 @@ message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
+    src/app/wallpaper_engine_capture.cpp
     src/core/item.cpp
     src/core/dock.cpp
     src/core/slot.cpp
@@ -71,6 +72,38 @@ set(THIRD_PARTY_SOURCES
     ${LUA_SOURCES}
 )
 
+set(MINHOOK_SOURCES
+    third_party/minhook/src/buffer.c
+    third_party/minhook/src/hook.c
+    third_party/minhook/src/trampoline.c
+    third_party/minhook/src/hde/hde64.c
+)
+
+add_library(SnowDesktopWallpaperHook SHARED
+    src/wallpaper_hook/wallpaper_hook.cpp
+    src/wallpaper_hook/wallpaper_hook_protocol.h
+    ${MINHOOK_SOURCES}
+)
+target_compile_features(SnowDesktopWallpaperHook PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopWallpaperHook PRIVATE
+    src/wallpaper_hook
+    third_party/minhook/include
+    third_party/minhook/src
+    third_party/minhook/src/hde
+)
+target_compile_definitions(SnowDesktopWallpaperHook PRIVATE
+    _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+    WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+target_link_libraries(SnowDesktopWallpaperHook PRIVATE d3d11 dxgi user32)
+
+if (MSVC)
+    set_property(TARGET SnowDesktopWallpaperHook PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopWallpaperHook PRIVATE /W4 /permissive- /EHsc /utf-8)
+    set_source_files_properties(${MINHOOK_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "/wd4100;/wd4201;/wd4244;/wd4267;/wd4310;/wd4701")
+endif()
+
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
     ${EVERYTHING_SOURCES}
@@ -78,6 +111,7 @@ add_executable(SnowDesktop WIN32
     ${THIRD_PARTY_SOURCES}
     src/resource.rc
 )
+add_dependencies(SnowDesktop SnowDesktopWallpaperHook)
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
@@ -101,7 +135,7 @@ if (MSVC)
         SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
     target_link_options(SnowDesktop PRIVATE
         "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
-        /DEBUG:FULL /OPT:REF /OPT:ICF)
+        /DEBUG:FULL /INCREMENTAL:NO /OPT:REF /OPT:ICF)
 else()
     target_compile_options(SnowDesktop PRIVATE -Wall -Wextra -pedantic)
     target_compile_definitions(SnowDesktop PRIVATE
@@ -111,7 +145,7 @@ endif()
 
 target_link_libraries(SnowDesktop PRIVATE
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    bcrypt imm32 iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowscodecs uuid winhttp
+    bcrypt imm32 iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp
 )
 
 add_custom_command(TARGET SnowDesktop PRE_BUILD

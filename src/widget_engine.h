@@ -473,6 +473,9 @@ public:
      * @param shadowOffsetY 输出：阴影垂直偏移
      * @param highlightAlpha 输出：顶部高光强度
      * @param noiseAlpha 输出：磨砂颗粒强度
+     * @param glassEnabled 输出：毛玻璃背景开关
+     * @param glassBlurRadius 输出：毛玻璃模糊半径
+     * @param glassRefreshMode 输出：毛玻璃刷新档位
      * @return 成功读取返回 true
      */
     bool ReadCustomColors(const std::wstring& widgetId,
@@ -480,7 +483,8 @@ public:
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
         float& gradientEndA, float& shadowAlpha,
         float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
-        float& noiseAlpha) const;
+        float& noiseAlpha, bool& glassEnabled, float& glassBlurRadius,
+        int& glassRefreshMode) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表

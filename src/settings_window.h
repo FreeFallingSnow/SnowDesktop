@@ -137,6 +137,9 @@ public:
      * @param callback 无参回调，在需要刷新缓存时触发
      */
     void SetInvalidateCallback(std::function<void()> callback) { invalidateCallback_ = std::move(callback); }
+    /** @brief 设置毛玻璃采样参数变更回调。 */
+    void SetGlassSettingsChangedCallback(std::function<void()> callback)
+    { glassSettingsChangedCallback_ = std::move(callback); }
 
     /**
      * @brief 设置导航设置变更回调
@@ -158,6 +161,9 @@ public:
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
+
+    /** @brief 设置毛玻璃动态壁纸状态文本提供者（设置界面只读状态行）。 */
+    void SetGlassStatusProvider(std::function<std::wstring()> provider) { glassStatusProvider_ = std::move(provider); }
 
     void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight,
         int shortcutArrowMode,
@@ -480,6 +486,9 @@ private:
     /// 缓存失效回调（设置变更后通知主窗口）
     std::function<void()> invalidateCallback_;
 
+    /// 模糊半径、开关或刷新档位变化后通知主窗口重建玻璃快照
+    std::function<void()> glassSettingsChangedCallback_;
+
     /// 导航设置变更回调
     std::function<void()> navigationSettingsChangedCallback_;
 
@@ -496,6 +505,9 @@ private:
     /// 分类设置变更回调
     std::function<void()> categorySettingsChangedCallback_;
 
+    /// 毛玻璃动态壁纸状态文本提供者
+    std::function<std::wstring()> glassStatusProvider_;
+
     /** @} */
 
     /** @name 设置数据
@@ -509,6 +521,9 @@ private:
 
     /// 当前帧是否需要将个性化修改实时预览到桌面
     bool personalizationPreviewDirty_ = false;
+
+    /// 当前帧的个性化变更是否影响毛玻璃采样缓存
+    bool glassSettingsPreviewDirty_ = false;
 
     /// 是否应在当前帧持久化个性化设置（连续拖动结束后置位）
     bool personalizationSaveRequested_ = false;

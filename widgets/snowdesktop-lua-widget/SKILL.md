@@ -54,10 +54,12 @@ Use these optional top-level flags and appearance globals:
   `noiseAlpha`: decimal values from `0.0` to `1.0`.
 - `shadowBlur`, `shadowOffsetY`: design-unit values converted through the host
   component scale.
+- `glassEnabled`, `glassBlurRadius`, `glassRefreshMode`: per-widget frosted
+  backdrop switch, pixel blur radius (`4`–`48`), and refresh mode (`0`–`3`).
 
 For `useCustomStyle` widgets, prefer declarative `settings.presets` for visual
 presets and `settings.fields` for behavior. Presets should stay appearance-only:
-put colors, alpha, shadow, highlight, noise, and `followPersonalization` there;
+  put colors, alpha, shadow, highlight, noise, glass, and `followPersonalization` there;
 keep data sources, intervals, toggles, durations, and other behavior in fields.
 Set `followPersonalization = true` in the default preset when the widget should
 initially follow global personalization. Keep it `false` for widgets that should

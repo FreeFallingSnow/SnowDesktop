@@ -142,7 +142,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         if (customStyle && widgetOk)
         {
             std::string fp = app_->widgetEngine_->RuntimeGetStorageValue(data_->id, "followPersonalization");
-            if (fp == "1")
+            if (fp == "1" || fp == "true")
                 customStyle = false;
         }
 
@@ -154,10 +154,14 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             float luaGradientEndA = gradientEndA;
             float luaShadowAlpha = 0.0f, luaShadowBlur = 12.0f, luaShadowOffsetY = 4.0f;
             float luaHighlightAlpha = 0.0f, luaNoiseAlpha = 0.0f;
+            bool luaGlassEnabled = false;
+            float luaGlassBlurRadius = 24.0f;
+            int luaGlassRefreshMode = 1;
             if (app_->widgetEngine_->ReadCustomColors(data_->id,
                 bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
                 luaGradientEndA, luaShadowAlpha, luaShadowBlur,
-                luaShadowOffsetY, luaHighlightAlpha, luaNoiseAlpha))
+                luaShadowOffsetY, luaHighlightAlpha, luaNoiseAlpha,
+                luaGlassEnabled, luaGlassBlurRadius, luaGlassRefreshMode))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
@@ -168,6 +172,9 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 effectSettings.shadowOffsetY = luaShadowOffsetY;
                 effectSettings.highlightAlpha = luaHighlightAlpha;
                 effectSettings.noiseAlpha = luaNoiseAlpha;
+                effectSettings.glassEnabled = luaGlassEnabled;
+                effectSettings.glassBlurRadius = luaGlassBlurRadius;
+                effectSettings.glassRefreshMode = luaGlassRefreshMode;
             }
         }
 

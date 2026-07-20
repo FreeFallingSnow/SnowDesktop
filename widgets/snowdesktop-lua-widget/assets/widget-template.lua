@@ -6,6 +6,9 @@ bg = 0x18202A
 border = 0x5F7691
 alpha = 0.92
 gradientEndA = 0.0
+glassEnabled = false
+glassBlurRadius = 24
+glassRefreshMode = 1
 
 settings = {
     presets = {
@@ -22,6 +25,9 @@ settings = {
                 shadowAlpha = 0.0,
                 highlightAlpha = 0.0,
                 noiseAlpha = 0.0,
+                glassEnabled = false,
+                glassBlurRadius = 24,
+                glassRefreshMode = 1,
                 followPersonalization = true,
             }
         }

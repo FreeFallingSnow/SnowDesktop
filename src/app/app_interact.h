@@ -4316,6 +4316,13 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
     }
+    else if (timerId == kGlassRefreshTimerId)
+    {
+        // 毛玻璃实时档：定时置脏并触发重绘，重绘时重新捕获快照
+        glassBackdropDirty_ = true;
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+    }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
         if (!dragSession_.IsActive() ||

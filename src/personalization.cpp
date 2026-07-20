@@ -11,6 +11,7 @@
 
 #include <windows.h>
 #include <shlwapi.h>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -36,6 +37,28 @@ static bool ReadDoubleField(const std::string& text, const char* field, double& 
     if (p == std::string::npos) return false;
     out = atof(text.c_str() + p);
     return true;
+}
+
+/**
+ * @brief 从 JSON 文本中读取指定字段的 bool 值
+ * @param text   JSON 格式的字符串
+ * @param field  要读取的字段名（不含引号）
+ * @param out    输出参数，解析成功时写入对应的 bool 值
+ * @return true  字段找到且解析成功
+ * @return false 字段不存在或解析失败
+ */
+static bool ReadBoolField(const std::string& text, const char* field, bool& out)
+{
+    std::string marker = "\"" + std::string(field) + "\"";
+    size_t p = text.find(marker);
+    if (p == std::string::npos) return false;
+    p = text.find(':', p);
+    if (p == std::string::npos) return false;
+    p = text.find_first_not_of(" \t\r\n", p + 1);
+    if (p == std::string::npos) return false;
+    if (text.compare(p, 4, "true") == 0) { out = true; return true; }
+    if (text.compare(p, 5, "false") == 0) { out = false; return true; }
+    return false;
 }
 
 /**
@@ -100,6 +123,8 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
     s.shadowOffsetY = 5.0f;
     s.highlightAlpha = 0.10f;
     s.noiseAlpha = 0.012f;
+    s.glassEnabled = true;
+    s.glassBlurRadius = 24.0f;
     return s;
 }
 
@@ -117,6 +142,8 @@ PersonalizationSettings PersonalizationSettings::GlassLightPreset()
     s.shadowOffsetY = 4.0f;
     s.highlightAlpha = 0.18f;
     s.noiseAlpha = 0.014f;
+    s.glassEnabled = true;
+    s.glassBlurRadius = 22.0f;
     return s;
 }
 
@@ -134,6 +161,8 @@ PersonalizationSettings PersonalizationSettings::FrostedPreset()
     s.shadowOffsetY = 5.0f;
     s.highlightAlpha = 0.20f;
     s.noiseAlpha = 0.025f;
+    s.glassEnabled = true;
+    s.glassBlurRadius = 28.0f;
     return s;
 }
 
@@ -204,6 +233,10 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     if (ReadDoubleField(text, "shadowOffsetY", v)) s.shadowOffsetY = (float)v;
     if (ReadDoubleField(text, "highlightAlpha", v)) s.highlightAlpha = (float)v;
     if (ReadDoubleField(text, "noiseAlpha", v)) s.noiseAlpha = (float)v;
+    bool b = false;
+    if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
+    if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
+    if (ReadDoubleField(text, "glassRefreshMode", v)) s.glassRefreshMode = std::clamp((int)v, 0, 3);
     return true;
 }
 
@@ -239,7 +272,10 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"shadowBlur\": " << s.shadowBlur << ",\n";
     file << "  \"shadowOffsetY\": " << s.shadowOffsetY << ",\n";
     file << "  \"highlightAlpha\": " << s.highlightAlpha << ",\n";
-    file << "  \"noiseAlpha\": " << s.noiseAlpha << "\n";
+    file << "  \"noiseAlpha\": " << s.noiseAlpha << ",\n";
+    file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
+    file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";
+    file << "  \"glassRefreshMode\": " << s.glassRefreshMode << "\n";
     file << "}\n";
     return true;
 }

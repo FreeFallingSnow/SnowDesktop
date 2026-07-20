@@ -338,6 +338,24 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     itemTextShadowCache_.clear();
     itemTextEffectContext_.Reset();
     widgetPanelEffectContext_.Reset();
+    glassEffectContext_.Reset();
+    glassBackdropBitmap_.Reset();
+    glassBackdropRadiusCache_.clear();
+    glassStaticLayerBitmap_.Reset();
+    glassComposeBitmap_.Reset();
+    glassDynamicLayerBitmap_.Reset();
+    if (wallpaperEngineCapture_)
+        wallpaperEngineCapture_->Stop();
+    wallpaperEngineCapture_.reset();
+    glassWallpaperCache_.clear();
+    glassBackdropSignature_.clear();
+    glassStaticSignature_.clear();
+    glassBackdropDirty_ = true;
+    glassWasDynamic_ = false;
+    glassRequestedByPanels_ = false;
+    glassRequestedRefreshMode_ = 0;
+    glassEffectiveRefreshMode_ = 0;
+    glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
 }
 
 inline void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
@@ -428,6 +446,9 @@ inline void DesktopApp::OnPaint()
         context->SetTransform(D2D1::Matrix3x2F::Translation(
             static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)));
         context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+
+        ++glassPaintSerial_;
+        UpdateGlassRefreshState();
 
         if (!desktopIconsHidden_)
             RenderFrame(context.Get());
@@ -785,6 +806,18 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
     }
 
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
+
+    // 毛玻璃：先采样背后的模糊桌面快照，再叠加半透明色调填充
+    if (p.glassEnabled)
+    {
+        glassRequestedByPanels_ = true;
+        glassRequestedRefreshMode_ = std::max(
+            glassRequestedRefreshMode_, std::clamp(p.glassRefreshMode, 0, 3));
+        if (EnsureGlassBackdrop(p.glassBlurRadius,
+                std::max(p.glassRefreshMode, glassEffectiveRefreshMode_)))
+            DrawGlassBackdropRegion(ctx, frame, radius);
+    }
+
     if (fill.a > 0.0f)
     {
         if (auto* fillBrush = getBrush(fill))
@@ -875,7 +908,13 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
         : border;
     if (stroke.a > 0.0f)
     {
-        if (auto* strokeBrush = getBrush(stroke))
+        // 毛玻璃开启时描边使用玻璃边缘光渐变（顶亮底暗）
+        ComPtr<ID2D1LinearGradientBrush> glassStroke;
+        if (p.glassEnabled && !selected)
+            glassStroke = CreateGlassBorderBrush(ctx, frame, stroke);
+        if (glassStroke)
+            ctx->DrawRoundedRectangle(rr, glassStroke.Get(), strokeWidth, nullptr);
+        else if (auto* strokeBrush = getBrush(stroke))
             ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
     }
 }

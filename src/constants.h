@@ -183,6 +183,10 @@ constexpr UINT kWidgetAddedHintVisibleMs = 2000;
 constexpr UINT_PTR kDockHandoffDwellTimerId = 11;
 constexpr UINT kDockHandoffDwellIntervalMs = 40;
 constexpr DWORD kDockHandoffDwellDelayMs = 520;
+constexpr UINT_PTR kGlassRefreshTimerId = 12;
+constexpr UINT kGlassRefreshRealtimeIntervalMs = 66;  // 毛玻璃实时档重绘间隔（约 15fps）
+constexpr DWORD kGlassRefreshLowMs = 3000;            // 毛玻璃低频兜底刷新间隔
+constexpr DWORD kGlassRefreshMidMs = 1000;            // 毛玻璃中频兜底刷新间隔
 constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 

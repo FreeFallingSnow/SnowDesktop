@@ -33,6 +33,17 @@ copy /Y ".build\Release\SnowDesktop.exe" "release\" >nul
 if errorlevel 1 ( echo Failed to copy SnowDesktop.exe & pause & exit /b 1 )
 echo   OK
 
+echo Copying SnowDesktopWallpaperHook.dll (.build\Release\SnowDesktopWallpaperHook.dll -^> release\)
+copy /Y ".build\Release\SnowDesktopWallpaperHook.dll" "release\" >nul
+if errorlevel 1 ( echo Failed to copy SnowDesktopWallpaperHook.dll & pause & exit /b 1 )
+echo   OK
+
+if not exist "release\licenses" mkdir "release\licenses"
+echo Copying MinHook license (third_party\minhook\LICENSE.txt -^> release\licenses\MinHook.txt)
+copy /Y "third_party\minhook\LICENSE.txt" "release\licenses\MinHook.txt" >nul
+if errorlevel 1 ( echo Failed to copy MinHook license & pause & exit /b 1 )
+echo   OK
+
 echo Copying widgets\ (including documentation and skills)...
 if exist "release\widgets" rd /s /q "release\widgets"
 xcopy /E /I /Y "widgets" "release\widgets" >nul

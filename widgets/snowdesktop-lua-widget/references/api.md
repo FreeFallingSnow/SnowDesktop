@@ -49,10 +49,16 @@ shadowBlur = 16
 shadowOffsetY = 4
 highlightAlpha = 0.12
 noiseAlpha = 0.014
+glassEnabled = false
+glassBlurRadius = 24
+glassRefreshMode = 1
 ```
 
 `bg` and `border` use `0xRRGGBB`. The alpha fields use `0.0` through `1.0`.
 `shadowBlur` and `shadowOffsetY` are design-unit values scaled by the host.
+`glassBlurRadius` is in pixels (`4` through `48`); `glassRefreshMode` is `0`
+through `3` (event-only, low, medium, real-time). These glass values are scoped
+to the component instance just like the other appearance values.
 The per-instance storage values with the same keys override script defaults.
 Set `followPersonalization` to `"1"`/`true` in storage or a default preset to
 use the global personalization colors and effects instead of the widget style.
@@ -544,6 +550,9 @@ settings = {
         shadowOffsetY = 4,
         highlightAlpha = 0.12,
         noiseAlpha = 0.014,
+        glassEnabled = false,
+        glassBlurRadius = 24,
+        glassRefreshMode = 1,
         followPersonalization = true
       } }
   },
@@ -570,6 +579,9 @@ keys:
 | `shadowOffsetY` | vertical shadow offset in design units |
 | `highlightAlpha` | top highlight opacity, `0.0` through `0.8` |
 | `noiseAlpha` | frosted noise opacity, `0.0` through `0.18` |
+| `glassEnabled` | enable the per-widget frosted backdrop |
+| `glassBlurRadius` | backdrop blur radius in pixels, `4` through `48` |
+| `glassRefreshMode` | `0` event-only, `1` low, `2` medium, `3` real-time |
 | `followPersonalization` | `true`, `"1"`, or `"true"` to follow global personalization |
 
 Keep presets appearance-only. Put data URLs, refresh intervals, feature toggles,

@@ -966,7 +966,9 @@ static bool IsHostAppearanceSettingKey(const std::string& key)
         key == "borderAlpha" || key == "gradientEndA" ||
         key == "shadowAlpha" || key == "shadowBlur" ||
         key == "shadowOffsetY" || key == "highlightAlpha" ||
-        key == "noiseAlpha" || key == "followPersonalization";
+        key == "noiseAlpha" || key == "glassEnabled" ||
+        key == "glassBlurRadius" || key == "glassRefreshMode" ||
+        key == "followPersonalization";
 }
 
 static std::string FindDeclaredDefaultValue(const LuaWidget& widget, const std::string& key)
@@ -2418,9 +2420,13 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f, borderAlpha = 0.40f;
         float gradientEndA = 0.0f, shadowAlpha = 0.0f, shadowBlur = 12.0f;
         float shadowOffsetY = 4.0f, highlightAlpha = 0.0f, noiseAlpha = 0.0f;
+        bool glassEnabled = false;
+        float glassBlurRadius = 24.0f;
+        int glassRefreshMode = 1;
         ReadCustomColors(widgetId, bgR, bgG, bgB, alpha, borderR, borderG, borderB,
             borderAlpha, gradientEndA, shadowAlpha, shadowBlur, shadowOffsetY,
-            highlightAlpha, noiseAlpha);
+            highlightAlpha, noiseAlpha, glassEnabled, glassBlurRadius,
+            glassRefreshMode);
 
         float bgColor[3] = { bgR, bgG, bgB };
         if (ImGui::ColorEdit3("背景颜色", bgColor, ImGuiColorEditFlags_NoInputs))
@@ -2444,6 +2450,19 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
             setStorage("highlightAlpha", std::to_string(highlightAlpha));
         if (ImGui::SliderFloat("磨砂颗粒", &noiseAlpha, 0.0f, 0.18f))
             setStorage("noiseAlpha", std::to_string(noiseAlpha));
+
+        if (ImGui::Checkbox("毛玻璃背景", &glassEnabled))
+            setStorage("glassEnabled", glassEnabled ? "1" : "0");
+        ImGui::BeginDisabled(!glassEnabled);
+        if (ImGui::SliderFloat("模糊半径", &glassBlurRadius, 4.0f, 48.0f, "%.0f px"))
+            setStorage("glassBlurRadius", std::to_string(glassBlurRadius));
+        const char* glassRefreshNames[] = {
+            "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
+        };
+        if (ImGui::Combo("背景刷新", &glassRefreshMode, glassRefreshNames,
+                static_cast<int>(std::size(glassRefreshNames))))
+            setStorage("glassRefreshMode", std::to_string(glassRefreshMode));
+        ImGui::EndDisabled();
 
         ImGui::EndDisabled();
 
@@ -3021,7 +3040,8 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
     float& gradientEndA, float& shadowAlpha,
     float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
-    float& noiseAlpha) const
+    float& noiseAlpha, bool& glassEnabled, float& glassBlurRadius,
+    int& glassRefreshMode) const
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
@@ -3045,6 +3065,18 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
                 lua_pop(L_, 1);
             };
 
+            auto readBool = [&](const char* key, bool& out, bool def) {
+                lua_getfield(L_, -1, key);
+                out = lua_isnil(L_, -1) ? def : (lua_toboolean(L_, -1) != 0);
+                lua_pop(L_, 1);
+            };
+
+            auto readInt = [&](const char* key, int& out, int def) {
+                lua_getfield(L_, -1, key);
+                out = lua_isnumber(L_, -1) ? static_cast<int>(lua_tointeger(L_, -1)) : def;
+                lua_pop(L_, 1);
+            };
+
             readHex("bg", bgR, bgG, bgB, 0x151A21);
             readHex("border", borderR, borderG, borderB, 0xFFFFFF);
             readFloat("alpha", alpha, 0.36f);
@@ -3055,6 +3087,9 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readFloat("shadowOffsetY", shadowOffsetY, 4.0f);
             readFloat("highlightAlpha", highlightAlpha, 0.0f);
             readFloat("noiseAlpha", noiseAlpha, 0.0f);
+            readBool("glassEnabled", glassEnabled, false);
+            readFloat("glassBlurRadius", glassBlurRadius, 24.0f);
+            readInt("glassRefreshMode", glassRefreshMode, 1);
 
             const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
             auto readStoredColor = [&](const char* key, float& r, float& g, float& b) {
@@ -3069,6 +3104,15 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
                 auto it = g_storage.find(prefix + key);
                 if (it != g_storage.end()) out = static_cast<float>(std::atof(it->second.c_str()));
             };
+            auto readStoredBool = [&](const char* key, bool& out) {
+                auto it = g_storage.find(prefix + key);
+                if (it != g_storage.end())
+                    out = it->second == "1" || it->second == "true";
+            };
+            auto readStoredInt = [&](const char* key, int& out) {
+                auto it = g_storage.find(prefix + key);
+                if (it != g_storage.end()) out = std::atoi(it->second.c_str());
+            };
             readStoredColor("bg", bgR, bgG, bgB);
             readStoredColor("border", borderR, borderG, borderB);
             readStoredFloat("alpha", alpha);
@@ -3079,6 +3123,11 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readStoredFloat("shadowOffsetY", shadowOffsetY);
             readStoredFloat("highlightAlpha", highlightAlpha);
             readStoredFloat("noiseAlpha", noiseAlpha);
+            readStoredBool("glassEnabled", glassEnabled);
+            readStoredFloat("glassBlurRadius", glassBlurRadius);
+            readStoredInt("glassRefreshMode", glassRefreshMode);
+            glassBlurRadius = std::clamp(glassBlurRadius, 4.0f, 48.0f);
+            glassRefreshMode = std::clamp(glassRefreshMode, 0, 3);
 
             lua_pop(L_, 1);
             return true;

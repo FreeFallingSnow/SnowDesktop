@@ -78,6 +78,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "cornerRadius", value)) style.cornerRadius = static_cast<float>(value);
     if (ReadDoubleField(text, "highlightAlpha", value)) style.highlightAlpha = static_cast<float>(value);
     if (ReadDoubleField(text, "noiseAlpha", value)) style.noiseAlpha = static_cast<float>(value);
+    ReadBoolField(text, "glassEnabled", style.glassEnabled);
     return true;
 }
 
@@ -106,7 +107,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"borderAlpha\": " << style.widgetBorderAlpha << ",\n";
     file << "  \"cornerRadius\": " << style.cornerRadius << ",\n";
     file << "  \"highlightAlpha\": " << style.highlightAlpha << ",\n";
-    file << "  \"noiseAlpha\": " << style.noiseAlpha << "\n";
+    file << "  \"noiseAlpha\": " << style.noiseAlpha << ",\n";
+    file << "  \"glassEnabled\": " << (style.glassEnabled ? "true" : "false") << "\n";
     file << "}\n";
     return true;
 }

@@ -121,6 +121,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
+        KillTimer(hwnd_, kGlassRefreshTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             KillTimer(hwnd_, timerId);
         if (dropTargetRegistered_)
@@ -146,6 +147,30 @@ inline void DesktopApp::ResetDesktopWindowResources()
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
     widgetPanelEffectContext_.Reset();
+    glassEffectContext_.Reset();
+    glassBackdropBitmap_.Reset();
+    glassBackdropRadiusCache_.clear();
+    glassStaticLayerBitmap_.Reset();
+    glassComposeBitmap_.Reset();
+    glassDynamicLayerBitmap_.Reset();
+    glassWallpaperCache_.clear();
+    glassBackdropSignature_.clear();
+    glassStaticSignature_.clear();
+    glassBackdropDirty_ = true;
+    glassWasDynamic_ = false;
+    glassRefreshTimerActive_ = false;
+    glassRequestedByPanels_ = false;
+    glassRequestedRefreshMode_ = 0;
+    glassEffectiveRefreshMode_ = 0;
+    glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
+    if (wallpaperEngineCapture_)
+        wallpaperEngineCapture_->Stop();
+    wallpaperEngineCapture_.reset();
+    dynamicWallpaperWindows_.clear();
+    dynamicWallpaperEngine_.clear();
+    dynamicWallpaperCaptureError_.clear();
+    dynamicWallpaperIncompatible_ = false;
+    glassLastDetectTick_ = 0;
     dcompSurface_.Reset();
     dcompVisual_.Reset();
     dcompTarget_.Reset();
@@ -264,7 +289,7 @@ inline HWND DesktopApp::ShellDialogOwnerHwnd() const
  * @return true  窗口创建成功且所有组件初始化完成
  * @return false 创建失败，已自动回滚相关资源
  *
- * 依次创建覆盖层窗口（首选子窗口，兜底弹窗）、DirectComposition 目标
+ * 依次创建桌面宿主子窗口、DirectComposition 目标
  * 与视觉树、组合表面，设置应用图标，注册 OLE 拖放与导航热键，
  * 启动 Shell 变更通知和定时器，最终使窗口可见并触发首次绘制。
  */
@@ -280,27 +305,15 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     HWND parent = desktopWindows_.host && IsWindow(desktopWindows_.host)
         ? desktopWindows_.host
         : GetDesktopWindow();
-    POINT origin{ virtualLeft_, virtualTop_ };
-    ScreenToClient(parent, &origin);
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         L"SnowDesktopWindow", L"SnowDesktop",
-        WS_CHILD | WS_VISIBLE, origin.x, origin.y, virtualWidth_, virtualHeight_,
-        parent, nullptr, instance_, this);
-    if (!hwnd_)
-    {
-        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
-            L"SnowDesktopWindow", L"SnowDesktop",
-            WS_POPUP | WS_VISIBLE, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
-            nullptr, nullptr, instance_, this);
-        if (hwnd_ && parent && parent != GetDesktopWindow())
-            AttachWindowToDesktopHost(parent);
-    }
+        WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
+        nullptr, nullptr, instance_, this);
     if (!hwnd_)
         return false;
 
-    SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
-        SWP_NOACTIVATE);
+    AttachWindowToDesktopHost(parent);
     if (!CreateDesktopInputWindow(parent))
         return fail();
 
@@ -792,28 +805,10 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         wc.lpszClassName, L"SnowDesktop",
-        WS_CHILD | WS_VISIBLE, origin.x, origin.y, virtualWidth_, virtualHeight_,
-        parent, nullptr, instance, this);
-    if (!hwnd_)
-    {
-        WriteCrashLogEntry(L"Child failed, fallback popup");
-        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
-            wc.lpszClassName, L"SnowDesktop",
-            WS_POPUP | WS_VISIBLE, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
-            nullptr, nullptr, instance, this);
-        if (hwnd_ && parent && parent != GetDesktopWindow())
-        {
-            SetParent(hwnd_, parent);
-            LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
-            style &= ~WS_POPUP;
-            style |= WS_CHILD | WS_VISIBLE;
-            SetWindowLongPtrW(hwnd_, GWL_STYLE, style);
-            SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
-                SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-        }
-    }
+        WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
+        nullptr, nullptr, instance, this);
     if (!hwnd_) { WriteCrashLogEntry(L"CreateWindow FAILED"); return __LINE__; }
-    SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+    AttachWindowToDesktopHost(parent);
     if (!CreateDesktopInputWindow(parent))
     {
         WriteCrashLogEntry(L"CreateInputWindow FAILED");
@@ -899,6 +894,14 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 UpdateWindow(hwnd_);
             }
+        });
+        settingsWindow_->SetGlassSettingsChangedCallback([this]() {
+            InvalidateGlassBackdrop();
+            if (hwnd_)
+                InvalidateRect(hwnd_, nullptr, FALSE);
+        });
+        settingsWindow_->SetGlassStatusProvider([this]() {
+            return GetDynamicWallpaperStatusText();
         });
         settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
             LoadNavigationSettingsAndApply();
@@ -1103,8 +1106,9 @@ inline LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
         app = reinterpret_cast<DesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
-    // Log first few messages
-    if (msg == WM_NCCREATE || msg == WM_CREATE || msg == WM_SIZE || msg == WM_PAINT || msg == WM_SHOWWINDOW)
+    // 只记录低频生命周期消息；WM_PAINT 在实时毛玻璃模式下可达 15fps，
+    // 逐帧写日志会造成同步文件 I/O 和整份日志扫描。
+    if (msg == WM_NCCREATE || msg == WM_CREATE || msg == WM_SIZE || msg == WM_SHOWWINDOW)
     {
         wchar_t buf[128];
         wsprintfW(buf, L"WndProc msg=0x%04X app=%p", msg, app);
@@ -1538,9 +1542,11 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_DISPLAYCHANGE:
         ScheduleDisplayTopologyRefresh();
+        InvalidateGlassBackdrop();
         return 0;
     case WM_SETTINGCHANGE:
         ScheduleDisplayTopologyRefresh();
+        InvalidateGlassBackdrop();
         // Explorer broadcasts this message when view options such as
         // "Hidden items" change. Re-enumerate both desktop and mapped folders.
         ReloadItems(false);

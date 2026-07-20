@@ -391,6 +391,13 @@ void SettingsWindow::Render()
         editingWidgetIndex_ = static_cast<size_t>(-1);
     }
 
+    if (glassSettingsPreviewDirty_)
+    {
+        glassSettingsPreviewDirty_ = false;
+        if (glassSettingsChangedCallback_)
+            glassSettingsChangedCallback_();
+    }
+
     if (personalizationPreviewDirty_)
     {
         personalizationPreviewDirty_ = false;
@@ -982,6 +989,13 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::SliderFloat("##DockCornerRadius", &style.cornerRadius, 4.0f, 28.0f, "%.0f cu"))
         markChanged();
 
+    ImGui::Text("毛玻璃背景");
+    ImGui::SameLine(labelW);
+    if (ImGui::Checkbox("##DockGlassEnabled", &style.glassEnabled))
+        markChanged();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(会增加 GPU 占用，实时刷新开销较高)");
+
     ImGui::Spacing();
     if (BlueButton("复制当前组件样式", ImVec2(144.0f * dpiScale_, 0)))
     {
@@ -1553,14 +1567,19 @@ void SettingsWindow::DrawPersonalizationPage()
             nearlyEqual(a.shadowBlur, b.shadowBlur) &&
             nearlyEqual(a.shadowOffsetY, b.shadowOffsetY) &&
             nearlyEqual(a.highlightAlpha, b.highlightAlpha) &&
-            nearlyEqual(a.noiseAlpha, b.noiseAlpha);
+            nearlyEqual(a.noiseAlpha, b.noiseAlpha) &&
+            a.glassEnabled == b.glassEnabled &&
+            nearlyEqual(a.glassBlurRadius, b.glassBlurRadius) &&
+            a.glassRefreshMode == b.glassRefreshMode;
     };
     auto percentText = [](float value) {
         return std::to_string(static_cast<int>(std::round(std::clamp(value, 0.0f, 1.0f) * 100.0f))) + "%";
     };
-    auto markChanged = [&](bool saveImmediately) {
+    auto markChanged = [&](bool saveImmediately, bool glassSettingsChanged = false) {
         personalizationDirty_ = true;
         personalizationPreviewDirty_ = true;
+        if (glassSettingsChanged)
+            glassSettingsPreviewDirty_ = true;
         if (saveImmediately)
             personalizationSaveRequested_ = true;
     };
@@ -1607,7 +1626,7 @@ void SettingsWindow::DrawPersonalizationPage()
         presetNames, static_cast<int>(sizeof(presetNames) / sizeof(presetNames[0]))))
     {
         personalization_ = presetForIndex(presetIndex);
-        markChanged(true);
+        markChanged(true, true);
     }
 
     ImGui::Spacing();
@@ -1741,6 +1760,46 @@ void SettingsWindow::DrawPersonalizationPage()
 
     ImGui::Spacing();
 
+    ImGui::Text("毛玻璃背景");
+    ImGui::SameLine(labelW);
+    if (ImGui::Checkbox("##WidgetGlassEnabled", &personalization_.glassEnabled))
+        markChanged(true, true);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(会增加 GPU 占用，实时刷新开销较高)");
+
+    ImGui::BeginDisabled(!personalization_.glassEnabled);
+    ImGui::Text("模糊半径");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##GlassBlurRadius", &personalization_.glassBlurRadius, 4.0f, 48.0f, "%.0f px"))
+        markChanged(false, true);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+
+    ImGui::Text("背景刷新");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    const char* glassRefreshNames[] = {
+        "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
+    };
+    int glassRefreshIndex = std::clamp(personalization_.glassRefreshMode, 0, 3);
+    if (ImGui::Combo("##GlassRefreshMode", &glassRefreshIndex,
+        glassRefreshNames, static_cast<int>(sizeof(glassRefreshNames) / sizeof(glassRefreshNames[0]))))
+    {
+        personalization_.glassRefreshMode = glassRefreshIndex;
+        markChanged(true, true);
+    }
+
+    if (glassStatusProvider_)
+    {
+        ImGui::Text("动态壁纸");
+        ImGui::SameLine(labelW);
+        ImGui::TextDisabled("%s", WideToUtf8(glassStatusProvider_()).c_str());
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
+
     ImGui::Text("底栏高度");
     ImGui::SameLine(labelW);
     ImGui::SetNextItemWidth(sliderW);
@@ -1756,7 +1815,7 @@ void SettingsWindow::DrawPersonalizationPage()
     if (BlueButton("恢复默认", ImVec2(80, 0)))
     {
         personalization_ = PersonalizationSettings::DarkPreset();
-        markChanged(true);
+        markChanged(true, true);
     }
 
     ImGui::EndChild();

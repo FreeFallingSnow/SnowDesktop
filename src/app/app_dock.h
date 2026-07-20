@@ -680,7 +680,7 @@ inline void DesktopApp::RestoreDockEntriesToDesktop()
 }
 
 inline bool DesktopApp::DrawDockControlBackground(
-    ID2D1DeviceContext* ctx, RECT rect, int state)
+    ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle)
 {
     if (!ctx || IsRectEmptyRect(rect)) return false;
     PersonalizationSettings appearance = !dockSettings_.followPersonalization
@@ -691,18 +691,23 @@ inline bool DesktopApp::DrawDockControlBackground(
 
     const float luminance = appearance.widgetBgR * 0.2126f +
         appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
-    const bool lightSurface = luminance > 0.58f && appearance.widgetAlpha > 0.10f;
+    const bool lightSurface = !forceWhiteStyle &&
+        luminance > 0.58f && appearance.widgetAlpha > 0.10f;
     const bool active = state > 0;
-    const D2D1_COLOR_F fill = active
-        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, lightSurface ? 0.20f : 0.25f)
-        : (lightSurface
-            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.075f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.11f));
-    const D2D1_COLOR_F border = active
-        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.88f)
-        : (lightSurface
-            ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.14f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+    const D2D1_COLOR_F fill = forceWhiteStyle
+        ? D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.18f : 0.11f)
+        : (active
+            ? D2D1::ColorF(0.39f, 0.66f, 1.0f, lightSurface ? 0.20f : 0.25f)
+            : (lightSurface
+                ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.075f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.11f)));
+    const D2D1_COLOR_F border = forceWhiteStyle
+        ? D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.36f : 0.20f)
+        : (active
+            ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.88f)
+            : (lightSurface
+                ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.14f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f)));
     const int width = std::max(1, static_cast<int>(rect.right - rect.left));
     const int height = std::max(1, static_cast<int>(rect.bottom - rect.top));
     const float scale = static_cast<float>(std::min(width, height)) / 52.0f;
