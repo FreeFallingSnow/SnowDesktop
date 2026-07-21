@@ -813,7 +813,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
  * @param screenPoint 菜单弹出的屏幕坐标。
  * @param itemIndex   当前右键点击的桌面项索引。
  */
-inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
+inline void DesktopApp::ShowItemContextMenu(
+    POINT screenPoint, int itemIndex, bool dockFrequentItem)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
     ClearMenuIcons();
@@ -838,6 +839,12 @@ inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
     AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextDeleteCommand, L"删除");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+    if (dockFrequentItem)
+    {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextDockRemoveFrequentItem,
+            L"移出常用项目");
+    }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
     SetMenuItemIcon(menu, kContextRenameCommand, L"");
@@ -845,6 +852,8 @@ inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
     SetMenuItemIcon(menu, kContextCopyCommand, L"");
     SetMenuItemIcon(menu, kContextDeleteCommand, L"");
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
+    if (dockFrequentItem)
+        SetMenuItemIcon(menu, kContextDockRemoveFrequentItem, L"");
 
     SetForegroundWindow(hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -949,6 +958,22 @@ inline void DesktopApp::ShowItemContextMenu(POINT screenPoint, int itemIndex)
     case kContextMoreCommand:
         ShowShellContextMenu(screenPoint, itemIndex);
         break;
+    case kContextDockRemoveFrequentItem:
+    {
+        const DesktopItem& item = items_[static_cast<size_t>(itemIndex)];
+        const std::wstring key = ToUpperInvariant(
+            item.layoutKey.empty() ? item.parsingName : item.layoutKey);
+        if (!key.empty() && dockUsageStats_.erase(key) > 0)
+        {
+            SaveDockUsageStats();
+            if (DockContainer* dock = GetDockContainer())
+                dock->InvalidateSlots();
+            InvalidateDragStaticScene();
+        }
+        ClearSelection();
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    }
     }
 }
 

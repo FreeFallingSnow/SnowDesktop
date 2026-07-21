@@ -39,6 +39,7 @@ if %ERRORLEVEL% NEQ 0 (
 echo.
 echo === Build complete ===
 echo SnowDesktop.exe: .build\Release\SnowDesktop.exe
+echo Taskbar transparency Hook: .build\Release\SnowDesktopTaskbarHook.dll
 echo 64-bit Hook: .build\Release\SnowDesktopWallpaperHook.dll
 echo 32-bit Hook: .build\Release\SnowDesktopWallpaperHook32.dll
 echo 32-bit injector: .build\Release\SnowDesktopWallpaperInjector32.exe

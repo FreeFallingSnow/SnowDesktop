@@ -195,7 +195,8 @@ void Slot::ExecuteDrop(HitRegion region, const std::vector<Item*>& sourceItems, 
  */
 void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region, float itemPad) const
 {
-    if (!ctx || !parent_ || region == HitRegion::None || region == HitRegion::Handoff)
+    if (!ctx || !parent_ || region == HitRegion::None ||
+        region == HitRegion::Handoff || region == HitRegion::Blocked)
         return;
 
     BarStyle style = parent_->GetInsertionStyle();

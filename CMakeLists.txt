@@ -79,6 +79,66 @@ set(MINHOOK_SOURCES
     third_party/minhook/src/hde/hde64.c
 )
 
+if (MSVC)
+    cmake_host_system_information(RESULT WINDOWS_KITS_ROOT QUERY WINDOWS_REGISTRY
+        "HKLM/SOFTWARE/Microsoft/Windows Kits/Installed Roots"
+        VALUE "KitsRoot10" VIEW 32_64)
+    file(GLOB CPPWINRT_CANDIDATES
+        "${WINDOWS_KITS_ROOT}/bin/*/x64/cppwinrt.exe")
+    list(SORT CPPWINRT_CANDIDATES COMPARE NATURAL ORDER DESCENDING)
+    if (NOT CPPWINRT_CANDIDATES)
+        message(FATAL_ERROR "cppwinrt.exe was not found in the Windows 10/11 SDK")
+    endif()
+    list(GET CPPWINRT_CANDIDATES 0 CPPWINRT_EXECUTABLE)
+    get_filename_component(CPPWINRT_ARCH_DIR "${CPPWINRT_EXECUTABLE}" DIRECTORY)
+    get_filename_component(CPPWINRT_VERSION_DIR "${CPPWINRT_ARCH_DIR}" DIRECTORY)
+    get_filename_component(CPPWINRT_SDK_VERSION "${CPPWINRT_VERSION_DIR}" NAME)
+    set(WINDOWS_WINMD
+        "${WINDOWS_KITS_ROOT}/UnionMetadata/${CPPWINRT_SDK_VERSION}/Windows.winmd")
+    if (NOT EXISTS "${WINDOWS_WINMD}")
+        message(FATAL_ERROR "Windows.winmd was not found for SDK ${CPPWINRT_SDK_VERSION}")
+    endif()
+
+    set(CPPWINRT_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated/cppwinrt")
+    add_custom_command(
+        OUTPUT
+            "${CPPWINRT_OUTPUT_DIR}/winrt/base.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h"
+        COMMAND "${CPPWINRT_EXECUTABLE}"
+            -in "${WINDOWS_WINMD}" -out "${CPPWINRT_OUTPUT_DIR}"
+        DEPENDS "${WINDOWS_WINMD}"
+        COMMENT "Generating C++/WinRT projections for the taskbar XAML hook..."
+        VERBATIM)
+    add_custom_target(SnowDesktopCppWinRT DEPENDS
+        "${CPPWINRT_OUTPUT_DIR}/winrt/base.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h")
+
+    add_library(SnowDesktopTaskbarHook SHARED
+        src/taskbar_hook/taskbar_hook.cpp
+        src/taskbar_hook/taskbar_hook_protocol.h
+        src/taskbar_hook/taskbar_hook.def
+    )
+    add_dependencies(SnowDesktopTaskbarHook SnowDesktopCppWinRT)
+    set_target_properties(SnowDesktopTaskbarHook PROPERTIES
+        OUTPUT_NAME "SnowDesktopTaskbarHook")
+    target_compile_features(SnowDesktopTaskbarHook PRIVATE cxx_std_20)
+    target_include_directories(SnowDesktopTaskbarHook PRIVATE
+        src/taskbar_hook
+        "${CPPWINRT_OUTPUT_DIR}"
+    )
+    target_compile_definitions(SnowDesktopTaskbarHook PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+        WINVER=0x0A00 _WIN32_WINNT=0x0A00 WINRT_NO_MODULE_LOCK)
+    target_link_libraries(SnowDesktopTaskbarHook PRIVATE
+        comctl32 d2d1 dxguid ole32 runtimeobject user32 windowsapp)
+    set_property(TARGET SnowDesktopTaskbarHook PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopTaskbarHook PRIVATE
+        /W4 /permissive- /EHsc /utf-8)
+endif()
+
 add_library(SnowDesktopWallpaperHook SHARED
     src/wallpaper_hook/wallpaper_hook.cpp
     src/wallpaper_hook/wallpaper_hook_protocol.h
@@ -112,6 +172,9 @@ add_executable(SnowDesktop WIN32
     src/resource.rc
 )
 add_dependencies(SnowDesktop SnowDesktopWallpaperHook)
+if (TARGET SnowDesktopTaskbarHook)
+    add_dependencies(SnowDesktop SnowDesktopTaskbarHook)
+endif()
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
@@ -145,7 +208,7 @@ endif()
 
 target_link_libraries(SnowDesktop PRIVATE
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    bcrypt imm32 iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp
+    advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp
 )
 
 add_custom_command(TARGET SnowDesktop PRE_BUILD

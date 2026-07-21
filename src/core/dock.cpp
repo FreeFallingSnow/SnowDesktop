@@ -8,6 +8,58 @@
 #include <cmath>
 #include <shlwapi.h>
 
+DockRunningItem::DockRunningItem(
+    DesktopApp* app, Container* container, size_t runningIndex)
+    : app_(app), container_(container), runningIndex_(runningIndex) {}
+
+std::wstring DockRunningItem::GetTitle() const
+{
+    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size()
+        ? app_->dockUnpinnedRunningApps_[runningIndex_].title : L"";
+}
+
+std::wstring DockRunningItem::GetPath() const
+{
+    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size()
+        ? app_->dockUnpinnedRunningApps_[runningIndex_].executablePath : L"";
+}
+
+HBITMAP DockRunningItem::GetIconBitmap() const
+{
+    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size()
+        ? app_->dockUnpinnedRunningApps_[runningIndex_].iconBitmap : nullptr;
+}
+
+RECT DockRunningItem::GetBounds() const { return bounds_; }
+void DockRunningItem::SetBounds(RECT bounds) { bounds_ = bounds; }
+
+bool DockRunningItem::IsSelected() const
+{
+    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size() &&
+        app_->dockUnpinnedRunningApps_[runningIndex_].selected;
+}
+
+void DockRunningItem::SetSelected(bool selected)
+{
+    if (app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size())
+        app_->dockUnpinnedRunningApps_[runningIndex_].selected = selected;
+}
+
+Container* DockRunningItem::GetContainer() const { return container_; }
+
+void DockRunningItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
+{
+    if (app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size())
+        app_->DrawDockRunningApp(
+            context, app_->dockUnpinnedRunningApps_[runningIndex_], rect, state);
+}
+
+std::wstring DockRunningItem::GetIdentityKey() const
+{
+    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size()
+        ? app_->dockUnpinnedRunningApps_[runningIndex_].identityKey : L"";
+}
+
 DockFrequentItem::DockFrequentItem(
     DesktopApp* app, Container* container, size_t itemIndex)
     : app_(app), container_(container), itemIndex_(itemIndex) {}
@@ -192,11 +244,13 @@ size_t DockContainer::Capacity() const
 {
     const LONG extent = IsVertical()
         ? area_.bottom - area_.top : area_.right - area_.left;
+    const bool showWindowsButton = app_ && app_->dockSettings_.showWindowsButton;
     const LONG available = std::max(0L, extent -
         (IsEdgeAttached() ? kDockSpacing : kDockSpacing * 3L) -
-        kDockSeparatorGap * 2L);
+        kDockSeparatorGap * (showWindowsButton ? 4L : 3L));
     const LONG visibleSlots = available / std::max(1, ItemPitch());
-    return static_cast<size_t>(std::max(0L, visibleSlots - 1L));
+    const LONG controlSlots = showWindowsButton ? 2L : 1L;
+    return static_cast<size_t>(std::max(0L, visibleSlots - controlSlots));
 }
 
 bool DockContainer::HasCapacity(size_t additional) const
@@ -207,19 +261,26 @@ bool DockContainer::HasCapacity(size_t additional) const
 RECT DockContainer::GetBounds() const
 {
     const size_t count = entries_ ? entries_->size() : 0;
+    const size_t requestedRunningCount = app_
+        ? app_->dockUnpinnedRunningApps_.size() : 0;
+    const size_t runningCount = std::min(requestedRunningCount,
+        Capacity() > count ? Capacity() - count : 0);
     const size_t requestedFrequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const size_t frequentCount = std::min(requestedFrequentCount,
-        Capacity() > count ? Capacity() - count : 0);
+        Capacity() > count + runningCount ? Capacity() - count - runningCount : 0);
     const size_t fixedCount = SortableEntryCount();
-    const int separatorCount =
-        (fixedCount > 0 && frequentCount > 0 ? 1 : 0) +
-        (fixedCount + frequentCount > 0 ? 1 : 0);
+    const bool showWindowsButton = app_ && app_->dockSettings_.showWindowsButton;
+    const int nonEmptyGroupCount = static_cast<int>(fixedCount > 0) +
+        static_cast<int>(runningCount > 0) + static_cast<int>(frequentCount > 0);
+    const int separatorCount = nonEmptyGroupCount +
+        static_cast<int>(showWindowsButton);
     const bool vertical = IsVertical();
     const int iconSize = app_ ? app_->GetDockItemIconSize() : kIconSize;
     const int slotLength = ItemPitch();
     const int desiredLength = static_cast<int>(
-        (count + frequentCount + 1) * slotLength) + kDockSpacing +
+        (count + runningCount + frequentCount + 1 +
+            static_cast<size_t>(showWindowsButton)) * slotLength) + kDockSpacing +
         separatorCount * kDockSeparatorGap;
     const int areaWidth = std::max(1, static_cast<int>(area_.right - area_.left));
     const int areaHeight = std::max(1, static_cast<int>(area_.bottom - area_.top));
@@ -264,23 +325,37 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
 {
     std::vector<std::unique_ptr<Slot>> slots;
     entryItems_.clear();
+    runningItems_.clear();
     frequentItems_.clear();
     RECT bounds = GetBounds();
     const size_t count = entries_ ? entries_->size() : 0;
     const size_t fixedCount = SortableEntryCount();
     const bool hasRecycleBin = fixedCount < count;
+    const size_t availableRunning = Capacity() > count ? Capacity() - count : 0;
+    const size_t runningCount = std::min(
+        app_ ? app_->dockUnpinnedRunningApps_.size() : 0, availableRunning);
     std::vector<size_t> frequentIndices = app_
         ? app_->GetFrequentDockItemIndices() : std::vector<size_t>{};
-    const size_t availableFrequent = Capacity() > count ? Capacity() - count : 0;
+    const size_t availableFrequent = Capacity() > count + runningCount
+        ? Capacity() - count - runningCount : 0;
     if (frequentIndices.size() > availableFrequent)
         frequentIndices.resize(availableFrequent);
     const size_t frequentCount = frequentIndices.size();
     const int slotLength = ItemPitch();
     const int halfGap = kDockSpacing / 2;
-    const int frequentOffset = fixedCount > 0 && frequentCount > 0
-        ? kDockSeparatorGap : 0;
-    const int searchOffset = frequentOffset +
-        (fixedCount + frequentCount > 0 ? kDockSeparatorGap : 0);
+    const bool showWindowsButton = app_ && app_->dockSettings_.showWindowsButton;
+    const size_t leadingControlSlots = showWindowsButton ? 1 : 0;
+    const int leadingControlOffset = showWindowsButton ? kDockSeparatorGap : 0;
+    int groupOffset = 0;
+    if (runningCount > 0 && fixedCount > 0)
+        groupOffset += kDockSeparatorGap;
+    const int runningOffset = groupOffset;
+    if (frequentCount > 0 && (fixedCount > 0 || runningCount > 0))
+        groupOffset += kDockSeparatorGap;
+    const int frequentOffset = groupOffset;
+    if (fixedCount > 0 || runningCount > 0 || frequentCount > 0)
+        groupOffset += kDockSeparatorGap;
+    const int searchOffset = groupOffset;
 
     auto makeCell = [&](size_t visualIndex, int axisOffset,
         bool searchSlot, bool recycleBinSlot) {
@@ -312,15 +387,16 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         return cell;
     };
 
-    slots.reserve(count + frequentCount + 1);
+    slots.reserve(count + runningCount + frequentCount + 1);
     for (size_t i = 0; i < count; ++i)
     {
         const bool recycleBinSlot = hasRecycleBin && i + 1 == count;
         const size_t visualIndex = recycleBinSlot
-            ? fixedCount + frequentCount + 1
+            ? fixedCount + runningCount + frequentCount + 1
             : i;
-        RECT cell = makeCell(visualIndex,
-            recycleBinSlot ? searchOffset : 0, false, recycleBinSlot);
+        RECT cell = makeCell(visualIndex + leadingControlSlots,
+            (recycleBinSlot ? searchOffset : 0) + leadingControlOffset,
+            false, recycleBinSlot);
         auto slot = std::make_unique<Slot>(this, cell, i);
         auto item = std::make_unique<DockEntryItem>(app_, this, i);
         item->SetBounds(cell);
@@ -329,10 +405,25 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         slots.push_back(std::move(slot));
     }
 
-    for (size_t i = 0; i < frequentCount; ++i)
+    for (size_t i = 0; i < runningCount; ++i)
     {
         const size_t slotIndex = count + i;
-        RECT cell = makeCell(fixedCount + i, frequentOffset, false, false);
+        RECT cell = makeCell(fixedCount + i + leadingControlSlots,
+            runningOffset + leadingControlOffset, false, false);
+        auto slot = std::make_unique<Slot>(this, cell, slotIndex);
+        auto item = std::make_unique<DockRunningItem>(app_, this, i);
+        item->SetBounds(cell);
+        slot->SetItem(item.get());
+        runningItems_.push_back(std::move(item));
+        slots.push_back(std::move(slot));
+    }
+
+    for (size_t i = 0; i < frequentCount; ++i)
+    {
+        const size_t slotIndex = count + runningCount + i;
+        RECT cell = makeCell(
+            fixedCount + runningCount + i + leadingControlSlots,
+            frequentOffset + leadingControlOffset, false, false);
         auto slot = std::make_unique<Slot>(this, cell, slotIndex);
         auto item = std::make_unique<DockFrequentItem>(
             app_, this, frequentIndices[i]);
@@ -342,9 +433,10 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         slots.push_back(std::move(slot));
     }
 
-    const size_t searchIndex = count + frequentCount;
+    const size_t searchIndex = count + runningCount + frequentCount;
     RECT searchCell = makeCell(
-        fixedCount + frequentCount, searchOffset, true, false);
+        fixedCount + runningCount + frequentCount + leadingControlSlots,
+        searchOffset + leadingControlOffset, true, false);
     slots.push_back(std::make_unique<Slot>(this, searchCell, searchIndex));
     return slots;
 }
@@ -385,7 +477,9 @@ void DockContainer::DrawInsertionPreview(
     if (!brush) return;
     if (IsVertical())
     {
-        const float y = static_cast<float>(bounds.top + kDockSpacing / 2 +
+        const int leadingOffset = app_ && app_->dockSettings_.showWindowsButton
+            ? ItemPitch() + kDockSeparatorGap : 0;
+        const float y = static_cast<float>(bounds.top + kDockSpacing / 2 + leadingOffset +
             static_cast<LONG>(insertIndex * ItemPitch()));
         context->FillRoundedRectangle(D2D1::RoundedRect(
             D2D1::RectF(static_cast<float>(bounds.left + 10), y - 2.0f,
@@ -393,7 +487,9 @@ void DockContainer::DrawInsertionPreview(
             brush.Get());
         return;
     }
-    const float x = static_cast<float>(bounds.left + kDockSpacing / 2 +
+    const int leadingOffset = app_ && app_->dockSettings_.showWindowsButton
+        ? ItemPitch() + kDockSeparatorGap : 0;
+    const float x = static_cast<float>(bounds.left + kDockSpacing / 2 + leadingOffset +
         static_cast<LONG>(insertIndex * ItemPitch()));
     context->FillRoundedRectangle(D2D1::RoundedRect(
         D2D1::RectF(x - 2.0f, static_cast<float>(bounds.top + 10),
@@ -404,7 +500,7 @@ void DockContainer::DrawInsertionPreview(
 void DockContainer::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
     Slot* targetSlot, HitRegion region, int mods)
 {
-    if (!app_) return;
+    if (!app_ || region == HitRegion::Blocked) return;
     app_->CommitDockDrop(sourceItems, origin, InsertIndexFor(targetSlot, region), mods);
 }
 
@@ -485,6 +581,48 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t count = entries_ ? entries_->size() : 0;
     std::wstring hoveredTitle;
     RECT hoveredBounds{};
+
+    const RECT windowsButton = GetWindowsButtonRect();
+    if (!IsRectEmpty(&windowsButton))
+    {
+        const bool hovered = PtInRect(&windowsButton, app_->lastMousePoint_) != FALSE;
+        const int backgroundSize = app_->GetDockItemIconSize();
+        RECT background{
+            windowsButton.left + (windowsButton.right - windowsButton.left - backgroundSize) / 2,
+            windowsButton.top + (windowsButton.bottom - windowsButton.top - backgroundSize) / 2,
+            windowsButton.left + (windowsButton.right - windowsButton.left + backgroundSize) / 2,
+            windowsButton.top + (windowsButton.bottom - windowsButton.top + backgroundSize) / 2
+        };
+        app_->DrawDockControlBackground(context, background, hovered ? 1 : 0, true);
+
+        const float logoSize = std::max(20.0f, backgroundSize * 0.58f);
+        const float paneGap = std::max(1.5f, logoSize * 0.09f);
+        const float paneSize = (logoSize - paneGap) * 0.5f;
+        const float logoLeft = (background.left + background.right - logoSize) * 0.5f;
+        const float logoTop = (background.top + background.bottom - logoSize) * 0.5f;
+        ComPtr<ID2D1SolidColorBrush> windowsBrush;
+        context->CreateSolidColorBrush(
+            D2D1::ColorF(0.0f, 0.47f, 0.84f, hovered ? 1.0f : 0.94f),
+            &windowsBrush);
+        if (windowsBrush)
+        {
+            context->FillRectangle(D2D1::RectF(logoLeft, logoTop,
+                logoLeft + paneSize, logoTop + paneSize), windowsBrush.Get());
+            context->FillRectangle(D2D1::RectF(logoLeft + paneSize + paneGap, logoTop,
+                logoLeft + logoSize, logoTop + paneSize), windowsBrush.Get());
+            context->FillRectangle(D2D1::RectF(logoLeft, logoTop + paneSize + paneGap,
+                logoLeft + paneSize, logoTop + logoSize), windowsBrush.Get());
+            context->FillRectangle(D2D1::RectF(
+                logoLeft + paneSize + paneGap, logoTop + paneSize + paneGap,
+                logoLeft + logoSize, logoTop + logoSize), windowsBrush.Get());
+        }
+        if (hovered && !app_->dragSession_.IsActive())
+        {
+            hoveredTitle = L"开始菜单";
+            hoveredBounds = windowsButton;
+        }
+    }
+
     for (size_t i = 0; i < count && i < slots.size(); ++i)
     {
         Item* item = slots[i]->GetItem();
@@ -496,6 +634,19 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         {
             hoveredTitle = item->GetTitle();
             hoveredBounds = slotBounds;
+        }
+    }
+
+    for (const auto& item : runningItems_)
+    {
+        if (!item) continue;
+        const RECT itemBounds = item->GetBounds();
+        const bool hovered = PtInRect(&itemBounds, app_->lastMousePoint_) != FALSE;
+        item->Draw(context, itemBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
+        if (hovered && !app_->dragSession_.IsActive())
+        {
+            hoveredTitle = item->GetTitle();
+            hoveredBounds = itemBounds;
         }
     }
 
@@ -536,13 +687,24 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         }
     };
 
-    if (fixedCount > 0 && !frequentItems_.empty())
-    {
-        drawSeparatorBefore(frequentItems_.front()->GetBounds());
-    }
-
     RECT search = GetSearchRect();
-    if (fixedCount > 0 || !frequentItems_.empty())
+    if (!IsRectEmpty(&windowsButton))
+    {
+        RECT following = search;
+        if (fixedCount > 0 && !slots.empty())
+            following = slots.front()->GetBounds();
+        else if (!runningItems_.empty())
+            following = runningItems_.front()->GetBounds();
+        else if (!frequentItems_.empty())
+            following = frequentItems_.front()->GetBounds();
+        drawSeparatorBefore(following);
+    }
+    if (fixedCount > 0 && !runningItems_.empty())
+        drawSeparatorBefore(runningItems_.front()->GetBounds());
+    if ((fixedCount > 0 || !runningItems_.empty()) && !frequentItems_.empty())
+        drawSeparatorBefore(frequentItems_.front()->GetBounds());
+
+    if (fixedCount > 0 || !runningItems_.empty() || !frequentItems_.empty())
         drawSeparatorBefore(search);
     const bool searchHovered = PtInRect(&search, app_->lastMousePoint_) != FALSE;
     const int backgroundSize = app_->GetDockItemIconSize();
@@ -672,8 +834,6 @@ std::vector<Item*> DockContainer::GetSelectedItems() const
     std::vector<Item*> selected;
     for (const auto& item : entryItems_)
         if (item && item->IsSelected()) selected.push_back(item.get());
-    for (const auto& item : frequentItems_)
-        if (item && item->IsSelected()) selected.push_back(item.get());
     return selected;
 }
 
@@ -693,16 +853,32 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         resetDwell();
         return HitRegion::None;
     }
+    if (IsWindowsButtonPoint(pt))
+    {
+        resetDwell();
+        return HitRegion::Blocked;
+    }
     for (const auto& slot : GetSlots())
     {
         RECT bounds = slot->GetBounds();
         if (!PtInRect(&bounds, pt)) continue;
         outSlot = slot.get();
         Item* targetItem = slot->GetItem();
-        if (!targetItem || dynamic_cast<DockFrequentItem*>(targetItem))
+        if (!targetItem)
         {
+            // The only item-less Dock slot is Search. Dropping here inserts at
+            // the end of the fixed entries; its preview is translated to that
+            // real insertion boundary by DrawDropPreview.
             resetDwell();
-            return HitRegion::Empty;
+            return HitRegion::SortAfter;
+        }
+        if (dynamic_cast<DockFrequentItem*>(targetItem) ||
+            dynamic_cast<DockRunningItem*>(targetItem))
+        {
+            // Generated frequent and running items are not members of the
+            // sortable Dock list. Block without passing through to the grid.
+            resetDwell();
+            return HitRegion::Blocked;
         }
 
         RECT handoffRect = bounds;
@@ -756,6 +932,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
     const std::vector<Item*>& sourceItems, Container* origin, int mods) const
 {
+    if (region == HitRegion::Blocked) return L"";
     if (region == HitRegion::Handoff && slot && slot->GetItem())
         return L"释放：交给「" + slot->GetItem()->GetTitle() + L"」处理";
     if (origin != this && !HasCapacity(sourceItems.empty() ? 1 : sourceItems.size()))
@@ -768,7 +945,13 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
 
 void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
-    if (!slot || !ctx) return;
+    if (!slot || !ctx || region == HitRegion::Blocked) return;
+    const auto& slots = GetSlots();
+    if (!slots.empty() && slot == slots.back().get())
+    {
+        DrawInsertionPreview(ctx, SortableEntryCount());
+        return;
+    }
     if (region == HitRegion::Handoff)
     {
         RECT bounds = slot->GetBounds();
@@ -786,6 +969,26 @@ RECT DockContainer::GetSearchRect() const
     return slots.empty() ? RECT{} : slots.back()->GetBounds();
 }
 
+RECT DockContainer::GetWindowsButtonRect() const
+{
+    if (!app_ || !app_->dockSettings_.showWindowsButton)
+        return RECT{};
+    const RECT bounds = GetBounds();
+    const int halfGap = kDockSpacing / 2;
+    const int slotLength = ItemPitch();
+    if (IsVertical())
+        return RECT{ bounds.left, bounds.top + halfGap,
+            bounds.right, bounds.top + halfGap + slotLength };
+    return RECT{ bounds.left + halfGap, bounds.top,
+        bounds.left + halfGap + slotLength, bounds.bottom };
+}
+
+bool DockContainer::IsWindowsButtonPoint(POINT pt) const
+{
+    const RECT rect = GetWindowsButtonRect();
+    return !IsRectEmpty(&rect) && PtInRect(&rect, pt) != FALSE;
+}
+
 bool DockContainer::IsSearchPoint(POINT pt) const
 {
     RECT rect = GetSearchRect();
@@ -800,6 +1003,18 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
     {
         RECT bounds = slots[i]->GetBounds();
         if (PtInRect(&bounds, pt)) return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
+    }
+    return nullptr;
+}
+
+DockRunningItem* DockContainer::RunningItemAtPoint(POINT pt) const
+{
+    const_cast<DockContainer*>(this)->GetSlots();
+    for (const auto& item : runningItems_)
+    {
+        if (!item) continue;
+        RECT bounds = item->GetBounds();
+        if (PtInRect(&bounds, pt)) return item.get();
     }
     return nullptr;
 }

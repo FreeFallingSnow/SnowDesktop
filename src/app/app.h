@@ -42,9 +42,12 @@
 #include <tlhelp32.h>
 #include <dbt.h>
 #include <shellapi.h>
+#include <appmodel.h>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <shellscalingapi.h>
+#include <propkey.h>
+#include <propsys.h>
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <d3d11.h>
@@ -68,6 +71,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -114,6 +118,54 @@ struct RecycleBinPollState {
     std::atomic<int64_t> itemCount{ -1 };
     std::atomic<bool> queryInFlight{ false };
     std::atomic<HWND> targetWindow{ nullptr };
+};
+
+enum class DockWindowVisualState
+{
+    Closed,
+    Running,
+    Foreground,
+    Minimized,
+};
+
+enum class DockAppIdentityKind
+{
+    None,
+    Executable,
+    Applications,
+    Steam,
+};
+
+struct DockAppIdentity
+{
+    DockAppIdentityKind kind = DockAppIdentityKind::None;
+    std::wstring sourceParsingName;
+    std::wstring executablePath;
+    std::wstring appUserModelId;
+    std::wstring steamAppId;
+    std::wstring steamInstallDirectory;
+};
+
+struct DockWindowInfo
+{
+    HWND window = nullptr;
+    bool minimized = false;
+    bool running = false;
+    bool foreground = false;
+};
+
+struct DockRunningAppInfo
+{
+    std::wstring identityKey;
+    std::wstring title;
+    std::wstring executablePath;
+    std::wstring appUserModelId;
+    HWND window = nullptr;
+    HBITMAP iconBitmap = nullptr;
+    SIZE iconBitmapSize{};
+    bool minimized = false;
+    bool foreground = false;
+    bool selected = false;
 };
 
 struct IconLoadResult {
@@ -262,6 +314,7 @@ public:
     friend class DockContainer;
     friend class DockEntryItem;
     friend class DockFrequentItem;
+    friend class DockRunningItem;
     friend class Widget;
     friend class WidgetContainer;
     friend class Collection;
@@ -566,12 +619,25 @@ private:
     void RestoreDockEntriesToDesktop();
     void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
     bool LaunchDesktopItem(size_t itemIndex);
+    bool ActivateOrToggleDockItem(size_t itemIndex);
+    bool ActivateOrToggleDockWindow(HWND window);
+    bool HandleDockClickRelease(POINT point);
+    void ToggleWindowsStartMenu();
+    DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
+    DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
+    void RefreshDockRunningWindows(bool invalidateChanged = true,
+        HWND preferredWindow = nullptr);
+    void StartDockForegroundMonitor();
+    void StopDockForegroundMonitor();
+    void UpdateSystemTaskbarRevealGuard();
+    static void CALLBACK DockForegroundWinEventProc(HWINEVENTHOOK hook, DWORD event,
+        HWND window, LONG objectId, LONG childId, DWORD eventThread, DWORD eventTime);
     void LoadDockUsageStats();
     void SaveDockUsageStats() const;
     void RecordDockItemUsage(size_t itemIndex);
     bool IsDockUsageEligibleItem(const DesktopItem& item) const;
     bool RemoveDockDragOutItems(const std::vector<Item*>& sourceItems);
-    std::vector<size_t> GetFrequentDockItemIndices() const;
+    std::vector<size_t> GetFrequentDockItemIndices();
     bool SuppressDesktopWidgetDragTargets() const;
     std::wstring GetDockDragOutRemovalHint(POINT point) const;
     bool FindDockReturnCell(std::unordered_set<std::wstring>& usedSlots,
@@ -592,6 +658,13 @@ private:
     void LoadGeneralSettingsAndApply();
     /** @brief 加载 Dock 设置。 */
     void LoadDockSettingsAndApply();
+    PersonalizationSettings ResolveSystemTaskbarAppearance(
+        const DockSettings& settings) const
+    {
+        if (settings.systemTaskbarFollowPersonalization && settingsWindow_)
+            return settingsWindow_->GetPersonalization();
+        return settings.systemTaskbarAppearance;
+    }
     /** @brief 加载分类设置并刷新分类组件。 */
     void LoadCategorySettingsAndApply();
     /** @brief 获取当前分类设置。 */
@@ -861,8 +934,9 @@ private:
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex);
     /** @brief 显示文件夹条目上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
     void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex);
-    /** @brief 显示桌面项上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引 */
-    void ShowItemContextMenu(POINT screenPoint, int itemIndex);
+    /** @brief 显示桌面项上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引 @param dockFrequentItem 是否来自 Dock 常用区 */
+    void ShowItemContextMenu(POINT screenPoint, int itemIndex,
+        bool dockFrequentItem = false);
     /** @brief 显示外壳扩展上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引（可选，-1 表示背景） */
     void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1);
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
@@ -1300,6 +1374,8 @@ private:
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
     bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
         bool forceWhiteStyle = false);
+    void DrawDockRunningApp(ID2D1DeviceContext* ctx,
+        const DockRunningAppInfo& app, RECT rect, int state);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
@@ -1753,6 +1829,7 @@ private:
     ComPtr<IDCompositionSurface> dcompSurface_;
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
     bool compositionRenderRecoveryPending_ = false;
+    bool compositionPaintInProgress_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
@@ -1799,8 +1876,24 @@ private:
     std::vector<DesktopWidget> widgets_;
     std::vector<DockEntry> dockEntries_;
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
+    std::unordered_map<std::wstring, DockAppIdentity> dockAppIdentityCache_;
+    std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
+    std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
+    DWORD systemTaskbarBackdropRefreshTick_ = 0;
+    DWORD systemTaskbarBackdropForegroundTick_ = 0;
+    HWINEVENTHOOK dockForegroundEventHook_ = nullptr;
+    inline static std::atomic<HWND> dockForegroundWindow_{ nullptr };
+    inline static std::atomic<HWND> dockPreviousForegroundWindow_{ nullptr };
+    inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
     RECT dockArea_{};
     size_t dockPressedEntry_ = static_cast<size_t>(-1);
+    size_t dockPressedFrequentItem_ = static_cast<size_t>(-1);
+    std::wstring dockPressedRunningAppKey_;
+    size_t dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+    size_t dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+    DWORD dockPendingDoubleClickTick_ = 0;
+    HWND dockPressedForegroundWindow_ = nullptr;
+    DWORD dockPressedForegroundTick_ = 0;
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::unordered_map<std::wstring, int> savedPageColumns_;

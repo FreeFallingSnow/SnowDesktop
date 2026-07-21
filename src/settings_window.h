@@ -241,6 +241,11 @@ public:
         appearance.glassRefreshMode = personalization_.glassRefreshMode;
         return appearance;
     }
+    PersonalizationSettings GetSystemTaskbarAppearance() const
+    {
+        return dockSettings_.systemTaskbarFollowPersonalization
+            ? personalization_ : dockSettings_.systemTaskbarAppearance;
+    }
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
@@ -321,6 +326,8 @@ private:
     void DrawPersonalizationPage();
 
     void DrawDockPage();
+
+    void DrawSystemTaskbarPage();
 
     void DrawDisplayPage();
 

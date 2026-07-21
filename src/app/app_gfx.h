@@ -434,6 +434,22 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
 
 inline void DesktopApp::OnPaint(const RECT* updateRect)
     {
+        // COM calls made while resolving glass wallpaper sources may dispatch a
+        // nested WM_PAINT on this same UI thread. D2D/DComp drawing is not
+        // re-entrant, so defer that invalidation until the active frame ends.
+        if (compositionPaintInProgress_)
+        {
+            if (hwnd_ && IsWindow(hwnd_))
+                InvalidateRect(hwnd_, updateRect, FALSE);
+            return;
+        }
+        compositionPaintInProgress_ = true;
+        struct PaintScope final
+        {
+            bool& active;
+            ~PaintScope() { active = false; }
+        } paintScope{ compositionPaintInProgress_ };
+
         HRESULT hr = CreateOrResizeCompositionSurface();
         if (FAILED(hr))
         {

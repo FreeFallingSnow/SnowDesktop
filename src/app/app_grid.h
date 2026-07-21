@@ -2578,6 +2578,8 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     if (reloading_) return;
     reloading_ = true;
+    dockAppIdentityCache_.clear();
+    dockRunningWindows_.clear();
     BeginIconLoadGeneration();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     if (reloadLayoutFromDisk)
@@ -2598,11 +2600,32 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         }
     }
     LoadDesktopItems();
-    if (FindItemIndexByKey(kDesktopIconClsidRecycleBin) == static_cast<size_t>(-1))
-    {
-        std::erase_if(dockEntries_,
-            [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
-    }
+    // A Shell delete removes the desktop item, but its persisted Dock mapping
+    // otherwise survives and still consumes a slot.  Only prune references
+    // that are confirmed missing on disk: hidden files and temporarily
+    // unenumerated Shell items must remain pinned.
+    std::erase_if(dockEntries_, [this](const DockEntry& entry) {
+        if (entry.type != DockEntryType::DesktopItem)
+            return false;
+        if (IsRecycleBinDockEntry(entry))
+            return FindItemIndexByKey(entry.reference) == static_cast<size_t>(-1);
+
+        const std::wstring& path = entry.reference;
+        const bool driveAbsolute = path.size() >= 3 &&
+            ((path[0] >= L'A' && path[0] <= L'Z') ||
+             (path[0] >= L'a' && path[0] <= L'z')) &&
+            path[1] == L':' && (path[2] == L'\\' || path[2] == L'/');
+        const bool uncAbsolute = path.starts_with(L"\\\\");
+        if (!driveAbsolute && !uncAbsolute)
+            return false;
+
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
+            return false;
+        const DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
+            error == ERROR_INVALID_NAME;
+    });
+    NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
     if (!generalSettings_.dockEnabled && !dockEntries_.empty())
         RestoreDockEntriesToDesktop();
@@ -2798,6 +2821,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     SaveLayoutSlots();
     RebuildContainersAndItems();
     reloading_ = false;
+    RefreshDockRunningWindows(false);
     if (widgetEngine_)
         widgetEngine_->NotifyDesktopChanged("reload");
     InvalidateRect(hwnd_, nullptr, TRUE);

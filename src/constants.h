@@ -151,6 +151,7 @@ constexpr UINT kContextDockLayoutEdge = 41805;
 constexpr UINT kContextDockFollowPersonalization = 41806;
 constexpr UINT kContextDockDetailedSettings = 41807;
 constexpr UINT kContextDockShowFrequentItems = 41808;
+constexpr UINT kContextDockRemoveFrequentItem = 41809;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
@@ -194,6 +195,8 @@ constexpr DWORD kGlassTransitionLowMs = 360;
 constexpr DWORD kGlassTransitionMidMs = 240;
 constexpr UINT_PTR kWallpaperEventDebounceTimerId = 14;
 constexpr UINT kWallpaperEventDebounceMs = 180;
+constexpr UINT_PTR kTaskbarRevealGuardTimerId = 15;
+constexpr UINT kTaskbarRevealGuardIntervalMs = 50;
 constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 

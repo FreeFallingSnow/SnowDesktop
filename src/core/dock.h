@@ -9,6 +9,32 @@
 
 class DesktopApp;
 
+class DockRunningItem final : public Item
+{
+public:
+    DockRunningItem(DesktopApp* app, Container* container, size_t runningIndex);
+
+    std::wstring GetTitle() const override;
+    std::wstring GetPath() const override;
+    HBITMAP GetIconBitmap() const override;
+    RECT GetBounds() const override;
+    void SetBounds(RECT bounds) override;
+    bool IsSelected() const override;
+    void SetSelected(bool selected) override;
+    Container* GetContainer() const override;
+    void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    ComPtr<IDataObject> CreateDataObject() override { return nullptr; }
+
+    size_t GetRunningIndex() const { return runningIndex_; }
+    std::wstring GetIdentityKey() const;
+
+private:
+    DesktopApp* app_ = nullptr;
+    Container* container_ = nullptr;
+    size_t runningIndex_ = static_cast<size_t>(-1);
+    RECT bounds_{};
+};
+
 class DockFrequentItem final : public Item
 {
 public:
@@ -86,9 +112,12 @@ public:
 
     size_t Capacity() const;
     bool HasCapacity(size_t additional) const;
+    bool IsWindowsButtonPoint(POINT pt) const;
     bool IsSearchPoint(POINT pt) const;
     DockEntryItem* EntryAtPoint(POINT pt) const;
+    DockRunningItem* RunningItemAtPoint(POINT pt) const;
     DockFrequentItem* FrequentItemAtPoint(POINT pt) const;
+    RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
@@ -107,5 +136,6 @@ private:
     std::vector<DockEntry>* entries_ = nullptr;
     RECT area_{};
     mutable std::vector<std::unique_ptr<DockEntryItem>> entryItems_;
+    mutable std::vector<std::unique_ptr<DockRunningItem>> runningItems_;
     mutable std::vector<std::unique_ptr<DockFrequentItem>> frequentItems_;
 };

@@ -393,6 +393,7 @@ void SettingsWindow::Render()
             else
                 DrawAboutPage();
             break;
+        case 8: DrawSystemTaskbarPage(); break;
         }
         ImGui::EndChild();
     }
@@ -542,6 +543,7 @@ void SettingsWindow::DrawSidebar()
     SideButton(0, "通用");
     SideButton(1, "组件显示");
     SideButton(2, "Dock 栏");
+    SideButton(8, "系统任务栏");
     SideButton(3, "图标显示");
     SideButton(4, "分类设置");
     SideButton(5, "布局备份");
@@ -908,6 +910,10 @@ void SettingsWindow::DrawDockPage()
     ImGui::SameLine();
     ImGui::TextDisabled("(关闭后，Dock 内容会依次放回桌面)");
 
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("SnowDesktop Dock");
     ImGui::BeginDisabled(!dockEnabled_);
     ImGui::Spacing();
     ImGui::Text("Dock 位置");
@@ -936,6 +942,12 @@ void SettingsWindow::DrawDockPage()
     ImGui::TextDisabled(dockSettings_.edgeAttached
         ? "(普通项与搜索分居两端，回收站位于搜索之后)"
         : "(居中悬浮，宽度随内容变化)");
+
+    ImGui::Spacing();
+    if (ImGui::Checkbox("显示 Windows 按钮", &dockSettings_.showWindowsButton))
+        markChanged();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(位于 Dock 最前端，单击打开或关闭开始菜单)");
 
     ImGui::Spacing();
     if (ImGui::Checkbox("显示常用项目", &dockSettings_.showFrequentItems))
@@ -1069,6 +1081,199 @@ void SettingsWindow::DrawDockPage()
     }
     ImGui::EndDisabled();
 
+    ImGui::EndChild();
+}
+
+/**
+ * @brief 绘制 Windows 系统任务栏的独立设置页面。
+ */
+void SettingsWindow::DrawSystemTaskbarPage()
+{
+    const float pad = 16.0f * dpiScale_;
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##SystemTaskbarPageInner", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+
+    const float labelW = 116.0f * dpiScale_;
+    const float controlW = 260.0f * dpiScale_;
+    auto markChanged = [&]() { dockSettingsDirty_ = true; };
+    auto percentText = [](float value) {
+        return std::to_string(static_cast<int>(std::round(
+            std::clamp(value, 0.0f, 1.0f) * 100.0f))) + "%";
+    };
+
+    ImGui::Text("Windows 系统任务栏");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Checkbox("自动隐藏系统任务栏",
+        &dockSettings_.systemTaskbarAutoHide))
+    {
+        if (dockSettings_.systemTaskbarAutoHide)
+            dockSettings_.systemTaskbarBackdropEnabled = false;
+        markChanged();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(修改 Windows 全局任务栏设置)");
+    ImGui::TextDisabled(
+        "底部岛式 Dock 会保护其正下方区域；靠边模式不保护，以便正常唤出任务栏。");
+
+    ImGui::Spacing();
+    if (ImGui::Checkbox("启用系统任务栏高斯背景",
+        &dockSettings_.systemTaskbarBackdropEnabled))
+    {
+        if (dockSettings_.systemTaskbarBackdropEnabled)
+            dockSettings_.systemTaskbarAutoHide = false;
+        markChanged();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(背景直接绘制在 Explorer 任务栏层)");
+    if (dockSettings_.systemTaskbarBackdropEnabled)
+    {
+        const char* runtimeStatus = "正在连接 Explorer 任务栏...";
+        switch (GetSystemTaskbarBackdropRuntimeState())
+        {
+        case SystemTaskbarBackdropRuntimeState::Active:
+            runtimeStatus = "系统任务栏高斯背景已启用";
+            break;
+        case SystemTaskbarBackdropRuntimeState::Unsupported:
+            runtimeStatus = "当前系统不支持 Win11 XAML 任务栏背景方案";
+            break;
+        case SystemTaskbarBackdropRuntimeState::Failed:
+            runtimeStatus = "Explorer 任务栏背景连接失败，请重启 Explorer 后重试";
+            break;
+        case SystemTaskbarBackdropRuntimeState::Disabled:
+        case SystemTaskbarBackdropRuntimeState::Loading:
+        default:
+            break;
+        }
+        ImGui::TextDisabled("%s", runtimeStatus);
+    }
+    ImGui::TextDisabled("自动隐藏与透明背景互斥；请勿与 TranslucentTB 等美化工具同时启用。");
+
+    ImGui::Spacing();
+    ImGui::Text("独立外观");
+    if (ImGui::Checkbox("跟随组件个性化",
+        &dockSettings_.systemTaskbarFollowPersonalization))
+        markChanged();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(背景、边框、透明度与毛玻璃参数保持一致)");
+    ImGui::TextDisabled("任务栏不跟随 Dock；普通窗口不会夹在图标与背景之间。");
+    ImGui::Spacing();
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * dpiScale_, 12.0f * dpiScale_));
+    ImGui::BeginChild("##SystemTaskbarAppearancePanel", ImVec2(0, 0),
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+
+    PersonalizationSettings& style = dockSettings_.systemTaskbarAppearance;
+    ImGui::BeginDisabled(dockSettings_.systemTaskbarFollowPersonalization);
+
+    ImGui::Text("背景颜色");
+    ImGui::SameLine(labelW);
+    float background[3] = { style.widgetBgR, style.widgetBgG, style.widgetBgB };
+    ImGui::SetNextItemWidth(210.0f * dpiScale_);
+    if (ImGui::ColorEdit3("##SystemTaskbarBackground", background,
+        ImGuiColorEditFlags_NoInputs))
+    {
+        style.widgetBgR = background[0];
+        style.widgetBgG = background[1];
+        style.widgetBgB = background[2];
+        markChanged();
+    }
+
+    ImGui::Text("边框颜色");
+    ImGui::SameLine(labelW);
+    float border[3] = { style.widgetBorderR, style.widgetBorderG, style.widgetBorderB };
+    ImGui::SetNextItemWidth(210.0f * dpiScale_);
+    if (ImGui::ColorEdit3("##SystemTaskbarBorder", border,
+        ImGuiColorEditFlags_NoInputs))
+    {
+        style.widgetBorderR = border[0];
+        style.widgetBorderG = border[1];
+        style.widgetBorderB = border[2];
+        markChanged();
+    }
+
+    auto alphaSlider = [&](const char* label, const char* id, float& value) {
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine(labelW);
+        ImGui::SetNextItemWidth(controlW);
+        if (ImGui::SliderFloat(id, &value, 0.0f, 1.0f, ""))
+            markChanged();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", percentText(value).c_str());
+    };
+    alphaSlider("背景不透明度", "##SystemTaskbarBackgroundAlpha", style.widgetAlpha);
+    alphaSlider("边框不透明度", "##SystemTaskbarBorderAlpha", style.widgetBorderAlpha);
+
+    ImGui::Text("毛玻璃背景");
+    ImGui::SameLine(labelW);
+    if (ImGui::Checkbox("##SystemTaskbarGlassEnabled", &style.glassEnabled))
+        markChanged();
+
+    ImGui::BeginDisabled(!style.glassEnabled);
+    ImGui::Text("模糊半径");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::SliderFloat("##SystemTaskbarGlassBlurRadius", &style.glassBlurRadius,
+        4.0f, 48.0f, "%.0f px"))
+        markChanged();
+
+    ImGui::Text("背景刷新");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(controlW);
+    const char* refreshNames[] = {
+        "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
+    };
+    int refreshIndex = std::clamp(style.glassRefreshMode, 0, 3);
+    if (ImGui::Combo("##SystemTaskbarGlassRefreshMode", &refreshIndex,
+        refreshNames, static_cast<int>(std::size(refreshNames))))
+    {
+        style.glassRefreshMode = refreshIndex;
+        markChanged();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    if (BlueButton("复制 Dock 外观", ImVec2(120.0f * dpiScale_, 0)))
+    {
+        style = GetDockAppearance();
+        style.cornerRadius = 0.0f;
+        style.shadowAlpha = 0.0f;
+        markChanged();
+    }
+    ImGui::SameLine();
+    if (BlueButton("恢复默认", ImVec2(88.0f * dpiScale_, 0)))
+    {
+        style = PersonalizationSettings::GlassDarkPreset();
+        style.cornerRadius = 0.0f;
+        markChanged();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("Windows 主题");
+    ImGui::Text("默认 Windows 模式");
+    ImGui::SameLine(labelW);
+    const char* windowsThemeNames[] = { "浅色", "深色" };
+    int windowsTheme = IsWindowsSystemLightThemeEnabled() ? 0 : 1;
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##WindowsSystemTheme", &windowsTheme,
+        windowsThemeNames, IM_ARRAYSIZE(windowsThemeNames)))
+    {
+        SetWindowsSystemLightThemeEnabled(windowsTheme == 0);
+    }
+    ImGui::TextDisabled(
+        "同步任务栏、开始菜单和 Windows 系统面板；不会修改“默认应用模式”。");
+
+    ImGui::EndChild();
     ImGui::EndChild();
 }
 

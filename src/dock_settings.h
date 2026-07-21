@@ -12,16 +12,38 @@ enum class DockPosition
     Right = 3
 };
 
+enum class SystemTaskbarBackdropRuntimeState
+{
+    Disabled,
+    Loading,
+    Active,
+    Unsupported,
+    Failed
+};
+
 struct DockSettings
 {
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
+    bool showWindowsButton = true;
     bool followPersonalization = true;
     bool showFrequentItems = false;
     int frequentItemCount = 3;
+    bool systemTaskbarAutoHide = false;
+    bool systemTaskbarBackdropEnabled = false;
+    bool systemTaskbarFollowPersonalization = true;
     PersonalizationSettings appearance = PersonalizationSettings::DarkPreset();
+    PersonalizationSettings systemTaskbarAppearance =
+        PersonalizationSettings::GlassDarkPreset();
 };
 
 std::wstring GetDockSettingsPath();
+bool IsSystemTaskbarAutoHideEnabled();
+bool SetSystemTaskbarAutoHideEnabled(bool enabled);
+bool IsWindowsSystemLightThemeEnabled();
+bool SetWindowsSystemLightThemeEnabled(bool enabled);
+SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
+bool ApplySystemTaskbarBackdrop(bool enabled, const DockSettings& settings,
+    const PersonalizationSettings& appearance);
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings);
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings);

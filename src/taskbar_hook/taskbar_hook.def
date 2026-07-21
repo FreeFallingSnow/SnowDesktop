@@ -1,0 +1,4 @@
+LIBRARY SnowDesktopTaskbarHook
+EXPORTS
+    DllGetClassObject PRIVATE
+    SnowDesktopTaskbarHookProc

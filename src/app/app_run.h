@@ -25,11 +25,22 @@
  */
 inline DesktopApp::~DesktopApp()
 {
+    if (customDesktopVisible_ && dockSettings_.systemTaskbarBackdropEnabled)
+        ApplySystemTaskbarBackdrop(false, dockSettings_,
+            ResolveSystemTaskbarAppearance(dockSettings_));
     StopQuickNavigationAppIndexing();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
     widgetEngine_.reset();
     settingsWindow_.reset();
+    for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
+    {
+        if (!app.iconBitmap) continue;
+        EraseD2DIconCacheForBitmap(app.iconBitmap);
+        DeleteObject(app.iconBitmap);
+        app.iconBitmap = nullptr;
+    }
+    dockUnpinnedRunningApps_.clear();
     items_oo_.clear();
     containers_.clear();
     ClearMenuIcons();
@@ -125,11 +136,13 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kGlassRefreshTimerId);
         KillTimer(hwnd_, kGlassTransitionTimerId);
         KillTimer(hwnd_, kWallpaperEventDebounceTimerId);
+        KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             KillTimer(hwnd_, timerId);
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }
+    StopDockForegroundMonitor();
     StopGlassWallpaperEventMonitor();
     ClearGlassBackdropTransition();
     widgetTimerIds_.clear();
@@ -343,6 +356,9 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     RegisterShellChangeNotifications();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
+    SetTimer(hwnd_, kTaskbarRevealGuardTimerId,
+        kTaskbarRevealGuardIntervalMs, nullptr);
+    StartDockForegroundMonitor();
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -382,6 +398,15 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
 
     HideExplorerIcons();
     AddTrayIcon(true);
+    // Explorer owns the system taskbar; restore the user's Dock setting after
+    // an Explorer/taskbar restart recreates that window.
+    SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
+    if (dockSettings_.systemTaskbarBackdropEnabled)
+    {
+        ApplySystemTaskbarBackdrop(true, dockSettings_,
+            ResolveSystemTaskbarAppearance(dockSettings_));
+        systemTaskbarBackdropRefreshTick_ = GetTickCount();
+    }
     if (controlHwnd_ && IsWindow(controlHwnd_))
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
 
@@ -884,6 +909,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
+    SetTimer(hwnd_, kTaskbarRevealGuardTimerId,
+        kTaskbarRevealGuardIntervalMs, nullptr);
+    StartDockForegroundMonitor();
 
     settingsWindow_ = std::make_unique<SettingsWindow>();
     if (settingsWindow_->Init(instance, d3dDevice_.Get()))
@@ -895,6 +923,13 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
         settingsWindow_->SetInvalidateCallback([this]() {
+            if (customDesktopVisible_ &&
+                dockSettings_.systemTaskbarBackdropEnabled &&
+                dockSettings_.systemTaskbarFollowPersonalization)
+            {
+                ApplySystemTaskbarBackdrop(true, dockSettings_,
+                    ResolveSystemTaskbarAppearance(dockSettings_));
+            }
             if (hwnd_)
             {
                 InvalidateAllWidgetSlots();
@@ -932,14 +967,19 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetDockSettingsChangedCallback([this]() {
             const DockPosition previousPosition = dockSettings_.position;
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
+            const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
             const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
             const int previousFrequentItemCount = dockSettings_.frequentItemCount;
+            const bool previousSystemTaskbarAutoHide =
+                dockSettings_.systemTaskbarAutoHide;
             LoadDockSettingsAndApply();
             InvalidateGlassBackdrop();
             if (dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
+                dockSettings_.showWindowsButton != previousShowWindowsButton ||
                 dockSettings_.showFrequentItems != previousShowFrequentItems ||
-                dockSettings_.frequentItemCount != previousFrequentItemCount)
+                dockSettings_.frequentItemCount != previousFrequentItemCount ||
+                dockSettings_.systemTaskbarAutoHide != previousSystemTaskbarAutoHide)
             {
                 UpdateLayoutWorkArea();
                 LayoutItems();
@@ -1310,6 +1350,25 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
     switch (msg)
     {
+    case WM_MOUSEACTIVATE:
+    {
+        POINT point{};
+        if (GetCursorPos(&point))
+        {
+            ScreenToClient(hwnd_, &point);
+            if (DockContainer* dock = GetDockContainer())
+            {
+                const RECT dockBounds = dock->GetBounds();
+                if (PtInRect(&dockBounds, point))
+                {
+                    dockPressedForegroundWindow_ = GetForegroundWindow();
+                    dockPressedForegroundTick_ = GetTickCount();
+                    return MA_NOACTIVATE;
+                }
+            }
+        }
+        break;
+    }
     case WM_CTLCOLOREDIT:
         if (reinterpret_cast<HWND>(lp) == luaInlineEdit_)
         {
@@ -1409,19 +1468,47 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 }
                 if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
                 {
-                    size_t entryIndex = dockItem->GetEntryIndex();
-                    if (entryIndex < dockEntries_.size() &&
-                        dockEntries_[entryIndex].type == DockEntryType::DesktopItem)
+                    const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
+                    if (dockItem->GetEntryType() == DockEntryType::DesktopItem &&
+                        dockPendingDoubleClickEntry_ == dockItem->GetEntryIndex() &&
+                        elapsed <= GetDoubleClickTime())
                     {
-                        size_t itemIndex = FindItemIndexByKey(dockEntries_[entryIndex].reference);
-                        if (itemIndex < items_.size())
-                            LaunchDesktopItem(itemIndex);
+                        const size_t entryIndex = dockItem->GetEntryIndex();
+                        dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        ClearSelection();
+                        if (entryIndex < dockEntries_.size())
+                        {
+                            const size_t itemIndex =
+                                FindItemIndexByKey(dockEntries_[entryIndex].reference);
+                            if (itemIndex < items_.size())
+                                ActivateOrToggleDockItem(itemIndex);
+                        }
+                        InvalidateRect(hwnd_, &dockBounds, FALSE);
                     }
+                    return 0;
+                }
+                if (dock->RunningItemAtPoint(pt))
+                {
+                    // Dynamic running apps already react on the first click.
                     return 0;
                 }
                 if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
                 {
-                    LaunchDesktopItem(frequentItem->GetItemIndex());
+                    const size_t itemIndex = frequentItem->GetItemIndex();
+                    const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
+                    if (dockPendingDoubleClickFrequentItem_ == itemIndex &&
+                        elapsed <= GetDoubleClickTime())
+                    {
+                        dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        ClearSelection();
+                        if (itemIndex < items_.size())
+                            ActivateOrToggleDockItem(itemIndex);
+                        InvalidateRect(hwnd_, &dockBounds, FALSE);
+                    }
                     return 0;
                 }
                 return 0;

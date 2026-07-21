@@ -39,6 +39,11 @@ copy /Y ".build\Release\SnowDesktop.exe" "release\" >nul
 if errorlevel 1 ( echo Failed to copy SnowDesktop.exe & pause & exit /b 1 )
 echo   OK
 
+echo Copying SnowDesktopTaskbarHook.dll (.build\Release\SnowDesktopTaskbarHook.dll -^> release\)
+copy /Y ".build\Release\SnowDesktopTaskbarHook.dll" "release\" >nul
+if errorlevel 1 ( echo Failed to copy SnowDesktopTaskbarHook.dll & pause & exit /b 1 )
+echo   OK
+
 echo Copying SnowDesktopWallpaperHook.dll (.build\Release\SnowDesktopWallpaperHook.dll -^> release\)
 copy /Y ".build\Release\SnowDesktopWallpaperHook.dll" "release\" >nul
 if errorlevel 1 ( echo Failed to copy SnowDesktopWallpaperHook.dll & pause & exit /b 1 )
@@ -58,6 +63,11 @@ if not exist "release\licenses" mkdir "release\licenses"
 echo Copying MinHook license (third_party\minhook\LICENSE.txt -^> release\licenses\MinHook.txt)
 copy /Y "third_party\minhook\LICENSE.txt" "release\licenses\MinHook.txt" >nul
 if errorlevel 1 ( echo Failed to copy MinHook license & pause & exit /b 1 )
+echo   OK
+
+echo Copying TranslucentTB implementation notice (third_party\translucenttb-NOTICE.md -^> release\licenses\TranslucentTB-NOTICE.md)
+copy /Y "third_party\translucenttb-NOTICE.md" "release\licenses\TranslucentTB-NOTICE.md" >nul
+if errorlevel 1 ( echo Failed to copy TranslucentTB notice & pause & exit /b 1 )
 echo   OK
 
 echo Copying widgets\ (including documentation and skills)...
