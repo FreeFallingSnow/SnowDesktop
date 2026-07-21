@@ -123,11 +123,15 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
         KillTimer(hwnd_, kGlassRefreshTimerId);
+        KillTimer(hwnd_, kGlassTransitionTimerId);
+        KillTimer(hwnd_, kWallpaperEventDebounceTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             KillTimer(hwnd_, timerId);
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }
+    StopGlassWallpaperEventMonitor();
+    ClearGlassBackdropTransition();
     widgetTimerIds_.clear();
     nextWidgetTimerId_ = kWidgetTimerIdBase;
     dropTargetRegistered_ = false;
@@ -154,19 +158,19 @@ inline void DesktopApp::ResetDesktopWindowResources()
     glassStaticLayerBitmap_.Reset();
     glassComposeBitmap_.Reset();
     glassDynamicLayerBitmap_.Reset();
+    glassCapturedDynamicWindows_.clear();
     glassWallpaperCache_.clear();
     glassBackdropSignature_.clear();
     glassStaticSignature_.clear();
     glassBackdropDirty_ = true;
     glassWasDynamic_ = false;
     glassRefreshTimerActive_ = false;
+    glassRefreshTimerIntervalMs_ = 0;
     glassRequestedByPanels_ = false;
     glassRequestedRefreshMode_ = 0;
     glassEffectiveRefreshMode_ = 0;
     glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
-    if (wallpaperEngineCapture_)
-        wallpaperEngineCapture_->Stop();
-    wallpaperEngineCapture_.reset();
+    StopWallpaperEngineCaptures();
     dynamicWallpaperWindows_.clear();
     dynamicWallpaperEngine_.clear();
     dynamicWallpaperCaptureError_.clear();
@@ -1543,14 +1547,22 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_DISPLAYCHANGE:
         ScheduleDisplayTopologyRefresh();
+        glassLastDetectTick_ = 0;
         InvalidateGlassBackdrop();
+        InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_SETTINGCHANGE:
         ScheduleDisplayTopologyRefresh();
+        glassLastDetectTick_ = 0;
         InvalidateGlassBackdrop();
+        InvalidateRect(hwnd_, nullptr, FALSE);
         // Explorer broadcasts this message when view options such as
         // "Hidden items" change. Re-enumerate both desktop and mapped folders.
         ReloadItems(false);
+        return 0;
+    case kWallpaperWindowEventMessage:
+        ScheduleGlassWallpaperEventRefresh(static_cast<UINT>(wp),
+            reinterpret_cast<HWND>(lp));
         return 0;
     case kShellChangeMessage:
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);

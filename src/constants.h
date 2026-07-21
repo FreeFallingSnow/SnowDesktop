@@ -157,6 +157,7 @@ constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT kIconLoadedMessage = WM_APP + 3;
 constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
 constexpr UINT kCommitRenameMessage = WM_APP + 5;
+constexpr UINT kWallpaperWindowEventMessage = WM_APP + 6;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 
@@ -187,6 +188,12 @@ constexpr UINT_PTR kGlassRefreshTimerId = 12;
 constexpr UINT kGlassRefreshRealtimeIntervalMs = 66;  // 毛玻璃实时档重绘间隔（约 15fps）
 constexpr DWORD kGlassRefreshLowMs = 3000;            // 毛玻璃低频兜底刷新间隔
 constexpr DWORD kGlassRefreshMidMs = 1000;            // 毛玻璃中频兜底刷新间隔
+constexpr UINT_PTR kGlassTransitionTimerId = 13;
+constexpr UINT kGlassTransitionFrameMs = 33;           // 新旧模糊快照交叉淡化（约 30fps）
+constexpr DWORD kGlassTransitionLowMs = 360;
+constexpr DWORD kGlassTransitionMidMs = 240;
+constexpr UINT_PTR kWallpaperEventDebounceTimerId = 14;
+constexpr UINT kWallpaperEventDebounceMs = 180;
 constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 

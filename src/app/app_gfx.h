@@ -341,12 +341,12 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     glassEffectContext_.Reset();
     glassBackdropBitmap_.Reset();
     glassBackdropRadiusCache_.clear();
+    ClearGlassBackdropTransition();
     glassStaticLayerBitmap_.Reset();
     glassComposeBitmap_.Reset();
     glassDynamicLayerBitmap_.Reset();
-    if (wallpaperEngineCapture_)
-        wallpaperEngineCapture_->Stop();
-    wallpaperEngineCapture_.reset();
+    glassCapturedDynamicWindows_.clear();
+    StopWallpaperEngineCaptures();
     glassWallpaperCache_.clear();
     glassBackdropSignature_.clear();
     glassStaticSignature_.clear();

@@ -4328,7 +4328,28 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kGlassRefreshTimerId)
     {
-        // 毛玻璃实时档：定时置脏并触发重绘，重绘时重新捕获快照
+        // 低/中/实时档：按当前档位定时置脏并请求下一张共享帧。
+        glassBackdropDirty_ = true;
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    else if (timerId == kGlassTransitionTimerId)
+    {
+        const bool finished = glassTransitionStartTick_ == 0 ||
+            glassTransitionDurationMs_ == 0 ||
+            GetTickCount() - glassTransitionStartTick_ >=
+                glassTransitionDurationMs_;
+        if (finished)
+            ClearGlassBackdropTransition();
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    else if (timerId == kWallpaperEventDebounceTimerId)
+    {
+        if (hwnd_ && IsWindow(hwnd_))
+            KillTimer(hwnd_, kWallpaperEventDebounceTimerId);
+        glassLastDetectTick_ = 0;
+        DetectDynamicWallpaperWindows(true);
         glassBackdropDirty_ = true;
         if (hwnd_ && IsWindow(hwnd_))
             InvalidateRect(hwnd_, nullptr, FALSE);

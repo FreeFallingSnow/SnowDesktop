@@ -94,7 +94,7 @@ target_include_directories(SnowDesktopWallpaperHook PRIVATE
 target_compile_definitions(SnowDesktopWallpaperHook PRIVATE
     _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
     WINVER=0x0A00 _WIN32_WINNT=0x0A00)
-target_link_libraries(SnowDesktopWallpaperHook PRIVATE d3d11 dxgi user32)
+target_link_libraries(SnowDesktopWallpaperHook PRIVATE d3d9 d3d11 dxgi user32)
 
 if (MSVC)
     set_property(TARGET SnowDesktopWallpaperHook PROPERTY

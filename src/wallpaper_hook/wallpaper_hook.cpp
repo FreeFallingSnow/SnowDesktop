@@ -1,6 +1,8 @@
 #include "wallpaper_hook_protocol.h"
 
 #include <MinHook.h>
+#include <tlhelp32.h>
+#include <d3d9.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
@@ -19,16 +21,33 @@ using Present1Fn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain1*, UINT, UINT,
     const DXGI_PRESENT_PARAMETERS*);
 using ResizeBuffersFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT,
     DXGI_FORMAT, UINT);
+using D3D9PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9*, const RECT*,
+    const RECT*, HWND, const RGNDATA*);
+using D3D9PresentExFn = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, const RECT*,
+    const RECT*, HWND, const RGNDATA*, DWORD);
+using D3D9SwapChainPresentFn = HRESULT(STDMETHODCALLTYPE*)(IDirect3DSwapChain9*,
+    const RECT*, const RECT*, HWND, const RGNDATA*, DWORD);
+using D3D9ResetFn = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9*,
+    D3DPRESENT_PARAMETERS*);
+using D3D9ResetExFn = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*,
+    D3DPRESENT_PARAMETERS*, D3DDISPLAYMODEEX*);
 
 struct RuntimeSlot {
     IDXGISwapChain* swapChain = nullptr;
+    IDirect3DDevice9* d3d9Device = nullptr;
+    IDirect3DSwapChain9* d3d9SwapChain = nullptr;
     ComPtr<ID3D11Texture2D> sharedTexture;
     ComPtr<ID3D11Texture2D> resolveTexture;
     ComPtr<IDXGIKeyedMutex> keyedMutex;
+    ComPtr<IDirect3DTexture9> d3d9SharedTexture;
+    ComPtr<IDirect3DSurface9> d3d9SharedSurface;
+    ComPtr<IDirect3DQuery9> d3d9CompletionQuery;
     UINT width = 0;
     UINT height = 0;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
     ULONGLONG lastCopyTick = 0;
+    bool d3d9CopyPending = false;
+    LONG d3d9PendingRequestSerial = 0;
 };
 
 HMODULE g_module = nullptr;
@@ -37,6 +56,11 @@ SharedState* g_state = nullptr;
 PresentFn g_present = nullptr;
 Present1Fn g_present1 = nullptr;
 ResizeBuffersFn g_resizeBuffers = nullptr;
+D3D9PresentFn g_d3d9Present = nullptr;
+D3D9PresentExFn g_d3d9PresentEx = nullptr;
+D3D9SwapChainPresentFn g_d3d9SwapChainPresent = nullptr;
+D3D9ResetFn g_d3d9Reset = nullptr;
+D3D9ResetExFn g_d3d9ResetEx = nullptr;
 SRWLOCK g_slotLock = SRWLOCK_INIT;
 std::array<RuntimeSlot, kMaxFrameSlots> g_slots;
 
@@ -64,7 +88,189 @@ void SetFailure(HRESULT hr)
 bool IsWallpaperEngineClass(const wchar_t* className)
 {
     return _wcsicmp(className, L"WPEDesktopDX11Window") == 0 ||
-        _wcsicmp(className, L"WPECloneView") == 0;
+        _wcsicmp(className, L"WPECloneView") == 0 ||
+        _wcsicmp(className, L"WPEVideoWallpaper") == 0;
+}
+
+bool IsWallpaperEngineVideoClass(const wchar_t* className)
+{
+    return _wcsicmp(className, L"WPEVideoWallpaper") == 0 ||
+        _wcsicmp(className, L"EVRFullscreenVideo") == 0;
+}
+
+bool IsDesktopHostClass(const wchar_t* className)
+{
+    return _wcsicmp(className, L"WorkerW") == 0 ||
+        _wcsicmp(className, L"Progman") == 0;
+}
+
+bool IsDesktopOutputWindow(HWND window)
+{
+    if (!window || !IsWindow(window))
+        return false;
+    wchar_t className[64]{};
+    GetClassNameW(window, className, static_cast<int>(std::size(className)));
+    if (IsWallpaperEngineClass(className))
+        return true;
+    for (HWND current = GetParent(window); current; current = GetParent(current))
+    {
+        wchar_t parentClass[64]{};
+        GetClassNameW(current, parentClass,
+            static_cast<int>(std::size(parentClass)));
+        if (IsDesktopHostClass(parentClass))
+            return true;
+    }
+    return false;
+}
+
+bool IsValidDesktopRect(const RECT& rect)
+{
+    return rect.right > rect.left && rect.bottom > rect.top;
+}
+
+struct RendererOutputSearch {
+    std::array<DWORD, 8> processIds{};
+    std::size_t processCount = 0;
+    HWND bestWindow = nullptr;
+    RECT bestRect{};
+    std::uint64_t bestArea = 0;
+};
+
+bool SearchContainsProcess(const RendererOutputSearch& search, DWORD processId)
+{
+    return std::find(search.processIds.begin(),
+        search.processIds.begin() + search.processCount, processId) !=
+        search.processIds.begin() + search.processCount;
+}
+
+BOOL CALLBACK FindRendererOutputWindow(HWND window, LPARAM parameter)
+{
+    auto* search = reinterpret_cast<RendererOutputSearch*>(parameter);
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    if (!SearchContainsProcess(*search, processId) ||
+        !IsDesktopOutputWindow(window))
+        return TRUE;
+    RECT rect{};
+    if (!GetWindowRect(window, &rect) || !IsValidDesktopRect(rect))
+        return TRUE;
+    const auto area = static_cast<std::uint64_t>(rect.right - rect.left) *
+        static_cast<std::uint64_t>(rect.bottom - rect.top);
+    if (area > search->bestArea)
+    {
+        search->bestWindow = window;
+        search->bestRect = rect;
+        search->bestArea = area;
+    }
+    return TRUE;
+}
+
+BOOL CALLBACK FindRendererOutputRoot(HWND window, LPARAM parameter)
+{
+    FindRendererOutputWindow(window, parameter);
+    EnumChildWindows(window, FindRendererOutputWindow, parameter);
+    return TRUE;
+}
+
+void CollectProcessAncestors(RendererOutputSearch& search)
+{
+    search.processIds[search.processCount++] = GetCurrentProcessId();
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return;
+    DWORD current = search.processIds[0];
+    while (search.processCount < search.processIds.size())
+    {
+        DWORD parent = 0;
+        PROCESSENTRY32W entry{ sizeof(entry) };
+        if (Process32FirstW(snapshot, &entry))
+        {
+            do {
+                if (entry.th32ProcessID == current)
+                {
+                    parent = entry.th32ParentProcessID;
+                    break;
+                }
+            } while (Process32NextW(snapshot, &entry));
+        }
+        if (!parent || parent == current)
+            break;
+        current = parent;
+        search.processIds[search.processCount++] = current;
+    }
+    CloseHandle(snapshot);
+}
+
+bool TryGetCachedSwapChainOutput(IDXGISwapChain* chain, HWND& outputWindow,
+    RECT& desktopRect)
+{
+    bool found = false;
+    AcquireSRWLockShared(&g_slotLock);
+    for (std::size_t i = 0; i < g_slots.size(); ++i)
+    {
+        if (g_slots[i].swapChain != chain)
+            continue;
+        outputWindow = reinterpret_cast<HWND>(g_state->slots[i].output_window);
+        desktopRect = g_state->slots[i].desktop_rect;
+        found = IsValidDesktopRect(desktopRect);
+        break;
+    }
+    ReleaseSRWLockShared(&g_slotLock);
+    return found;
+}
+
+bool ResolveSwapChainOutput(IDXGISwapChain* chain, HWND describedWindow,
+    HWND& outputWindow, RECT& desktopRect)
+{
+    outputWindow = describedWindow;
+    if (IsDesktopOutputWindow(outputWindow) &&
+        GetWindowRect(outputWindow, &desktopRect) &&
+        IsValidDesktopRect(desktopRect))
+        return true;
+    if (TryGetCachedSwapChainOutput(chain, outputWindow, desktopRect))
+        return true;
+
+    ComPtr<IDXGISwapChain1> chain1;
+    HWND chainWindow = nullptr;
+    if (SUCCEEDED(chain->QueryInterface(IID_PPV_ARGS(&chain1))) && chain1 &&
+        SUCCEEDED(chain1->GetHwnd(&chainWindow)) &&
+        IsDesktopOutputWindow(chainWindow) &&
+        GetWindowRect(chainWindow, &desktopRect) &&
+        IsValidDesktopRect(desktopRect))
+    {
+        outputWindow = chainWindow;
+        return true;
+    }
+
+    // Chromium/CEF web wallpapers use DirectComposition swap chains whose
+    // OutputWindow is null. The GPU child has no HWND of its own, so walk its
+    // process ancestry to the webwallpaper owner window.
+    RendererOutputSearch ancestry{};
+    CollectProcessAncestors(ancestry);
+    for (std::size_t depth = 0; depth < ancestry.processCount; ++depth)
+    {
+        RendererOutputSearch search{};
+        search.processIds[search.processCount++] = ancestry.processIds[depth];
+        EnumWindows(FindRendererOutputRoot, reinterpret_cast<LPARAM>(&search));
+        if (search.bestWindow)
+        {
+            outputWindow = search.bestWindow;
+            desktopRect = search.bestRect;
+            return true;
+        }
+    }
+
+    ComPtr<IDXGIOutput> output;
+    DXGI_OUTPUT_DESC outputDesc{};
+    if (SUCCEEDED(chain->GetContainingOutput(&output)) && output &&
+        SUCCEEDED(output->GetDesc(&outputDesc)) &&
+        IsValidDesktopRect(outputDesc.DesktopCoordinates))
+    {
+        outputWindow = nullptr;
+        desktopRect = outputDesc.DesktopCoordinates;
+        return true;
+    }
+    return false;
 }
 
 void ClearPublishedSlot(std::size_t index)
@@ -87,14 +293,21 @@ void ReleaseRuntimeSlot(std::size_t index, bool removeSwapChain)
     runtime.keyedMutex.Reset();
     runtime.sharedTexture.Reset();
     runtime.resolveTexture.Reset();
+    runtime.d3d9CompletionQuery.Reset();
+    runtime.d3d9SharedSurface.Reset();
+    runtime.d3d9SharedTexture.Reset();
     runtime.width = 0;
     runtime.height = 0;
     runtime.format = DXGI_FORMAT_UNKNOWN;
     runtime.lastCopyTick = 0;
+    runtime.d3d9CopyPending = false;
+    runtime.d3d9PendingRequestSerial = 0;
     ClearPublishedSlot(index);
     if (removeSwapChain)
     {
         runtime.swapChain = nullptr;
+        runtime.d3d9Device = nullptr;
+        runtime.d3d9SwapChain = nullptr;
         if (g_state)
         {
             auto& published = g_state->slots[index];
@@ -114,11 +327,58 @@ int FindOrCreateSlot(IDXGISwapChain* chain, HWND outputWindow, const wchar_t* cl
     }
     for (std::size_t i = 0; i < g_slots.size(); ++i)
     {
-        if (g_slots[i].swapChain)
+        if (g_slots[i].swapChain || g_slots[i].d3d9Device)
             continue;
         g_slots[i].swapChain = chain;
         auto& published = g_state->slots[i];
         published.swap_chain = reinterpret_cast<std::uint64_t>(chain);
+        published.output_window = reinterpret_cast<std::uint64_t>(outputWindow);
+        wcsncpy_s(published.window_class, className, _TRUNCATE);
+        const LONG requiredCount = static_cast<LONG>(i + 1);
+        if (g_state->slot_count < requiredCount)
+            InterlockedExchange(&g_state->slot_count, requiredCount);
+        return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int FindOrCreateD3D9Slot(IDirect3DDevice9* device,
+    IDirect3DSwapChain9* swapChain, HWND outputWindow, const wchar_t* className)
+{
+    const ULONGLONG now = GetTickCount64();
+    for (std::size_t i = 0; i < g_slots.size(); ++i)
+    {
+        if (!g_slots[i].d3d9Device ||
+            reinterpret_cast<HWND>(g_state->slots[i].output_window) != outputWindow)
+            continue;
+        if (g_slots[i].d3d9Device == device &&
+            (!swapChain || !g_slots[i].d3d9SwapChain ||
+                g_slots[i].d3d9SwapChain == swapChain))
+        {
+            if (swapChain)
+                g_slots[i].d3d9SwapChain = swapChain;
+            return static_cast<int>(i);
+        }
+
+        // EVR can expose several D3D9 presenters for one WPEVideoWallpaper.
+        // Bind the output to the first active producer so a single monitor does
+        // not trigger duplicate shared-texture copies. If that producer stops,
+        // a later presenter may take over after the cached frame grace period.
+        if (g_slots[i].lastCopyTick &&
+            now - g_slots[i].lastCopyTick <= 2000)
+            return -1;
+        ReleaseRuntimeSlot(i, true);
+        break;
+    }
+    for (std::size_t i = 0; i < g_slots.size(); ++i)
+    {
+        if (g_slots[i].swapChain || g_slots[i].d3d9Device)
+            continue;
+        g_slots[i].d3d9Device = device;
+        g_slots[i].d3d9SwapChain = swapChain;
+        auto& published = g_state->slots[i];
+        published.swap_chain = reinterpret_cast<std::uint64_t>(
+            swapChain ? static_cast<void*>(swapChain) : static_cast<void*>(device));
         published.output_window = reinterpret_cast<std::uint64_t>(outputWindow);
         wcsncpy_s(published.window_class, className, _TRUNCATE);
         const LONG requiredCount = static_cast<LONG>(i + 1);
@@ -209,6 +469,249 @@ HRESULT CreateSharedTexture(std::size_t index, ID3D11Texture2D* source,
     return S_OK;
 }
 
+struct VideoWindowSearch {
+    DWORD processId = 0;
+    HWND best = nullptr;
+    std::uint64_t bestArea = 0;
+};
+
+BOOL CALLBACK FindVideoWindow(HWND window, LPARAM parameter)
+{
+    auto* search = reinterpret_cast<VideoWindowSearch*>(parameter);
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    if (processId != search->processId)
+        return TRUE;
+    wchar_t className[64]{};
+    GetClassNameW(window, className, static_cast<int>(std::size(className)));
+    if (_wcsicmp(className, L"WPEVideoWallpaper") != 0)
+        return TRUE;
+    RECT rect{};
+    if (!GetWindowRect(window, &rect))
+        return TRUE;
+    const auto width = static_cast<std::uint64_t>(std::max<LONG>(0,
+        rect.right - rect.left));
+    const auto height = static_cast<std::uint64_t>(std::max<LONG>(0,
+        rect.bottom - rect.top));
+    const std::uint64_t area = width * height;
+    if (area > search->bestArea)
+    {
+        search->best = window;
+        search->bestArea = area;
+    }
+    return TRUE;
+}
+
+BOOL CALLBACK FindVideoWindowRoot(HWND window, LPARAM parameter)
+{
+    FindVideoWindow(window, parameter);
+    EnumChildWindows(window, FindVideoWindow, parameter);
+    return TRUE;
+}
+
+HWND ResolveD3D9OutputWindow(IDirect3DDevice9* device,
+    IDirect3DSwapChain9* presentedSwapChain, HWND overrideWindow)
+{
+    if (IsDesktopOutputWindow(overrideWindow))
+        return overrideWindow;
+
+    // EVR may call Present/PresentEx without hDestWindowOverride. The swap-chain
+    // presentation parameters retain the per-output device window and are more
+    // precise than the device focus window when one process renders two monitors.
+    ComPtr<IDirect3DSwapChain9> primarySwapChain;
+    IDirect3DSwapChain9* swapChain = presentedSwapChain;
+    if (!swapChain && SUCCEEDED(device->GetSwapChain(0, &primarySwapChain)))
+        swapChain = primarySwapChain.Get();
+    D3DPRESENT_PARAMETERS presentParameters{};
+    if (swapChain && SUCCEEDED(swapChain->GetPresentParameters(&presentParameters)) &&
+        IsDesktopOutputWindow(presentParameters.hDeviceWindow))
+        return presentParameters.hDeviceWindow;
+
+    D3DDEVICE_CREATION_PARAMETERS creation{};
+    if (SUCCEEDED(device->GetCreationParameters(&creation)) &&
+        IsDesktopOutputWindow(creation.hFocusWindow))
+        return creation.hFocusWindow;
+
+    VideoWindowSearch search{};
+    search.processId = GetCurrentProcessId();
+    EnumWindows(FindVideoWindowRoot, reinterpret_cast<LPARAM>(&search));
+    if (search.best)
+        return search.best;
+    if (overrideWindow)
+        return overrideWindow;
+    return SUCCEEDED(device->GetCreationParameters(&creation))
+        ? creation.hFocusWindow
+        : nullptr;
+}
+
+HRESULT CreateD3D9SharedTexture(std::size_t index, IDirect3DDevice9* device,
+    const D3DSURFACE_DESC& sourceDesc)
+{
+    ComPtr<IDirect3DDevice9Ex> deviceEx;
+    HRESULT hr = device->QueryInterface(IID_PPV_ARGS(&deviceEx));
+    if (FAILED(hr) || !deviceEx)
+        return E_NOINTERFACE;
+
+    HANDLE sharedHandle = nullptr;
+    ComPtr<IDirect3DTexture9> texture;
+    hr = device->CreateTexture(sourceDesc.Width, sourceDesc.Height, 1,
+        D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+        &texture, &sharedHandle);
+    if (FAILED(hr) || !texture || !sharedHandle)
+        return FAILED(hr) ? hr : E_FAIL;
+
+    ComPtr<IDirect3DSurface9> surface;
+    hr = texture->GetSurfaceLevel(0, &surface);
+    if (FAILED(hr) || !surface)
+        return FAILED(hr) ? hr : E_FAIL;
+    ComPtr<IDirect3DQuery9> completionQuery;
+    hr = device->CreateQuery(D3DQUERYTYPE_EVENT, &completionQuery);
+    if (FAILED(hr) || !completionQuery)
+        return FAILED(hr) ? hr : E_FAIL;
+
+    LUID adapterLuid{};
+    D3DDEVICE_CREATION_PARAMETERS creation{};
+    ComPtr<IDirect3D9> d3d9;
+    ComPtr<IDirect3D9Ex> d3d9Ex;
+    if (SUCCEEDED(device->GetCreationParameters(&creation)) &&
+        SUCCEEDED(device->GetDirect3D(&d3d9)) && d3d9 &&
+        SUCCEEDED(d3d9.As(&d3d9Ex)) && d3d9Ex)
+        d3d9Ex->GetAdapterLUID(creation.AdapterOrdinal, &adapterLuid);
+
+    auto& runtime = g_slots[index];
+    runtime.d3d9SharedTexture = std::move(texture);
+    runtime.d3d9SharedSurface = std::move(surface);
+    runtime.d3d9CompletionQuery = std::move(completionQuery);
+    runtime.width = sourceDesc.Width;
+    runtime.height = sourceDesc.Height;
+    runtime.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+    auto& published = g_state->slots[index];
+    published.shared_handle = reinterpret_cast<std::uint64_t>(sharedHandle);
+    published.width = sourceDesc.Width;
+    published.height = sourceDesc.Height;
+    published.format = static_cast<std::uint32_t>(DXGI_FORMAT_B8G8R8A8_UNORM);
+    published.adapter_luid_low = adapterLuid.LowPart;
+    published.adapter_luid_high = adapterLuid.HighPart;
+    InterlockedIncrement(&published.generation);
+    InterlockedExchange(&g_state->status, static_cast<LONG>(Status::sharing));
+    return S_OK;
+}
+
+void CaptureD3D9Device(IDirect3DDevice9* device,
+    IDirect3DSwapChain9* presentedSwapChain, HWND overrideWindow)
+{
+    if (!device || !g_state || g_state->shutdown_requested ||
+        !g_state->capture_enabled)
+        return;
+    const ULONGLONG now = GetTickCount64();
+    const auto heartbeat = static_cast<ULONGLONG>(g_state->consumer_heartbeat);
+    if (heartbeat == 0 || (now >= heartbeat && now - heartbeat > 5000))
+        return;
+
+    HWND outputWindow = ResolveD3D9OutputWindow(device, presentedSwapChain,
+        overrideWindow);
+    wchar_t className[64]{};
+    if (!outputWindow ||
+        !GetClassNameW(outputWindow, className,
+            static_cast<int>(std::size(className))) ||
+        (!IsDesktopOutputWindow(outputWindow) &&
+            !IsWallpaperEngineVideoClass(className)))
+        return;
+
+    ComPtr<IDirect3DSurface9> source;
+    const HRESULT backBufferHr = presentedSwapChain
+        ? presentedSwapChain->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &source)
+        : device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &source);
+    if (FAILED(backBufferHr) ||
+        !source)
+        return;
+    D3DSURFACE_DESC sourceDesc{};
+    if (FAILED(source->GetDesc(&sourceDesc)) ||
+        sourceDesc.Width < 64 || sourceDesc.Height < 64)
+        return;
+
+    AcquireSRWLockExclusive(&g_slotLock);
+    const int slotIndex = FindOrCreateD3D9Slot(device, presentedSwapChain,
+        outputWindow, className);
+    if (slotIndex < 0)
+    {
+        ReleaseSRWLockExclusive(&g_slotLock);
+        return;
+    }
+    const auto index = static_cast<std::size_t>(slotIndex);
+    auto& runtime = g_slots[index];
+    auto& published = g_state->slots[index];
+    published.output_window = reinterpret_cast<std::uint64_t>(outputWindow);
+    wcsncpy_s(published.window_class, className, _TRUNCATE);
+    GetWindowRect(outputWindow, &published.desktop_rect);
+
+    if (runtime.d3d9CopyPending)
+    {
+        const HRESULT queryHr = runtime.d3d9CompletionQuery
+            ? runtime.d3d9CompletionQuery->GetData(nullptr, 0, 0)
+            : E_FAIL;
+        if (queryHr == S_FALSE)
+        {
+            ReleaseSRWLockExclusive(&g_slotLock);
+            return;
+        }
+        if (FAILED(queryHr))
+        {
+            ReleaseRuntimeSlot(index, false);
+            ReleaseSRWLockExclusive(&g_slotLock);
+            return;
+        }
+        runtime.d3d9CopyPending = false;
+        InterlockedExchange(&published.completed_request_serial,
+            runtime.d3d9PendingRequestSerial);
+        InterlockedIncrement64(&published.frame_number);
+    }
+
+    const LONG requestSerial = g_state->request_serial;
+    const LONG observedInterval = g_state->requested_interval_ms;
+    const DWORD interval = static_cast<DWORD>(std::max<LONG>(0, observedInterval));
+    const bool explicitlyRequested =
+        published.completed_request_serial != requestSerial;
+    const bool intervalDue = interval != 0 &&
+        (runtime.lastCopyTick == 0 || now - runtime.lastCopyTick >= interval);
+    if ((!explicitlyRequested && !intervalDue) ||
+        published.frame_number > published.consumed_frame_number)
+    {
+        ReleaseSRWLockExclusive(&g_slotLock);
+        return;
+    }
+
+    if (!runtime.d3d9SharedTexture ||
+        runtime.width != sourceDesc.Width || runtime.height != sourceDesc.Height)
+    {
+        ReleaseRuntimeSlot(index, false);
+        const HRESULT createHr = CreateD3D9SharedTexture(index, device, sourceDesc);
+        if (FAILED(createHr))
+        {
+            SetFailure(createHr);
+            ReleaseSRWLockExclusive(&g_slotLock);
+            return;
+        }
+    }
+
+    const HRESULT copyHr = device->StretchRect(source.Get(), nullptr,
+        runtime.d3d9SharedSurface.Get(), nullptr, D3DTEXF_NONE);
+    const HRESULT queryHr = SUCCEEDED(copyHr)
+        ? runtime.d3d9CompletionQuery->Issue(D3DISSUE_END)
+        : copyHr;
+    if (FAILED(queryHr))
+    {
+        SetFailure(queryHr);
+        ReleaseSRWLockExclusive(&g_slotLock);
+        return;
+    }
+    runtime.d3d9CopyPending = true;
+    runtime.d3d9PendingRequestSerial = requestSerial;
+    runtime.lastCopyTick = now;
+    ReleaseSRWLockExclusive(&g_slotLock);
+}
+
 void CaptureSwapChain(IDXGISwapChain* chain)
 {
     if (!g_state || g_state->shutdown_requested || !g_state->capture_enabled)
@@ -220,12 +723,19 @@ void CaptureSwapChain(IDXGISwapChain* chain)
         return;
 
     DXGI_SWAP_CHAIN_DESC swapDesc{};
-    if (FAILED(chain->GetDesc(&swapDesc)) || !swapDesc.OutputWindow)
+    if (FAILED(chain->GetDesc(&swapDesc)))
+        return;
+    HWND outputWindow = nullptr;
+    RECT desktopRect{};
+    if (!ResolveSwapChainOutput(chain, swapDesc.OutputWindow,
+            outputWindow, desktopRect))
         return;
     wchar_t className[64]{};
-    if (!GetClassNameW(swapDesc.OutputWindow, className,
-            static_cast<int>(std::size(className))) || !IsWallpaperEngineClass(className))
-        return;
+    if (outputWindow)
+        GetClassNameW(outputWindow, className,
+            static_cast<int>(std::size(className)));
+    if (!className[0])
+        wcsncpy_s(className, L"WPECompositionSurface", _TRUNCATE);
 
     ComPtr<ID3D11Texture2D> source;
     if (FAILED(chain->GetBuffer(0, IID_PPV_ARGS(&source))) || !source)
@@ -236,7 +746,7 @@ void CaptureSwapChain(IDXGISwapChain* chain)
         return;
 
     AcquireSRWLockExclusive(&g_slotLock);
-    const int slotIndex = FindOrCreateSlot(chain, swapDesc.OutputWindow, className);
+    const int slotIndex = FindOrCreateSlot(chain, outputWindow, className);
     if (slotIndex < 0)
     {
         ReleaseSRWLockExclusive(&g_slotLock);
@@ -245,7 +755,9 @@ void CaptureSwapChain(IDXGISwapChain* chain)
     const auto index = static_cast<std::size_t>(slotIndex);
     auto& runtime = g_slots[index];
     auto& published = g_state->slots[index];
-    GetWindowRect(swapDesc.OutputWindow, &published.desktop_rect);
+    published.output_window = reinterpret_cast<std::uint64_t>(outputWindow);
+    published.desktop_rect = desktopRect;
+    wcsncpy_s(published.window_class, className, _TRUNCATE);
 
     const LONG requestSerial = g_state->request_serial;
     const LONG observedInterval = g_state->requested_interval_ms;
@@ -347,6 +859,65 @@ HRESULT STDMETHODCALLTYPE HookResizeBuffers(IDXGISwapChain* chain, UINT bufferCo
     return g_resizeBuffers(chain, bufferCount, width, height, format, flags);
 }
 
+HRESULT STDMETHODCALLTYPE HookD3D9Present(IDirect3DDevice9* device,
+    const RECT* sourceRect, const RECT* destinationRect, HWND destinationWindow,
+    const RGNDATA* dirtyRegion)
+{
+    ActiveHook active;
+    CaptureD3D9Device(device, nullptr, destinationWindow);
+    return g_d3d9Present(device, sourceRect, destinationRect,
+        destinationWindow, dirtyRegion);
+}
+
+HRESULT STDMETHODCALLTYPE HookD3D9PresentEx(IDirect3DDevice9Ex* device,
+    const RECT* sourceRect, const RECT* destinationRect, HWND destinationWindow,
+    const RGNDATA* dirtyRegion, DWORD flags)
+{
+    ActiveHook active;
+    CaptureD3D9Device(device, nullptr, destinationWindow);
+    return g_d3d9PresentEx(device, sourceRect, destinationRect,
+        destinationWindow, dirtyRegion, flags);
+}
+
+HRESULT STDMETHODCALLTYPE HookD3D9SwapChainPresent(IDirect3DSwapChain9* swapChain,
+    const RECT* sourceRect, const RECT* destinationRect, HWND destinationWindow,
+    const RGNDATA* dirtyRegion, DWORD flags)
+{
+    ActiveHook active;
+    ComPtr<IDirect3DDevice9> device;
+    if (swapChain && SUCCEEDED(swapChain->GetDevice(&device)) && device)
+        CaptureD3D9Device(device.Get(), swapChain, destinationWindow);
+    return g_d3d9SwapChainPresent(swapChain, sourceRect, destinationRect,
+        destinationWindow, dirtyRegion, flags);
+}
+
+void ReleaseD3D9DeviceSlots(IDirect3DDevice9* device)
+{
+    AcquireSRWLockExclusive(&g_slotLock);
+    for (std::size_t i = 0; i < g_slots.size(); ++i)
+    {
+        if (g_slots[i].d3d9Device == device)
+            ReleaseRuntimeSlot(i, true);
+    }
+    ReleaseSRWLockExclusive(&g_slotLock);
+}
+
+HRESULT STDMETHODCALLTYPE HookD3D9Reset(IDirect3DDevice9* device,
+    D3DPRESENT_PARAMETERS* parameters)
+{
+    ActiveHook active;
+    ReleaseD3D9DeviceSlots(device);
+    return g_d3d9Reset(device, parameters);
+}
+
+HRESULT STDMETHODCALLTYPE HookD3D9ResetEx(IDirect3DDevice9Ex* device,
+    D3DPRESENT_PARAMETERS* parameters, D3DDISPLAYMODEEX* fullscreenMode)
+{
+    ActiveHook active;
+    ReleaseD3D9DeviceSlots(device);
+    return g_d3d9ResetEx(device, parameters, fullscreenMode);
+}
+
 LRESULT CALLBACK DummyWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     return DefWindowProcW(window, message, wparam, lparam);
@@ -404,6 +975,67 @@ HRESULT DiscoverHookTargets(void** present, void** present1, void** resizeBuffer
     return hr;
 }
 
+HRESULT DiscoverD3D9HookTargets(void** present, void** presentEx,
+    void** swapChainPresent, void** reset, void** resetEx)
+{
+    constexpr wchar_t className[] = L"SnowDesktopWallpaperHookD3D9Dummy";
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = DummyWindowProc;
+    windowClass.hInstance = g_module;
+    windowClass.lpszClassName = className;
+    RegisterClassW(&windowClass);
+    HWND window = CreateWindowExW(0, className, L"", WS_OVERLAPPEDWINDOW,
+        0, 0, 64, 64, nullptr, nullptr, g_module, nullptr);
+    if (!window)
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    D3DPRESENT_PARAMETERS parameters{};
+    parameters.BackBufferWidth = 64;
+    parameters.BackBufferHeight = 64;
+    parameters.BackBufferFormat = D3DFMT_A8R8G8B8;
+    parameters.BackBufferCount = 1;
+    parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    parameters.hDeviceWindow = window;
+    parameters.Windowed = TRUE;
+    parameters.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+
+    ComPtr<IDirect3D9Ex> d3d9;
+    ComPtr<IDirect3DDevice9Ex> device;
+    HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d9);
+    if (SUCCEEDED(hr) && d3d9)
+    {
+        hr = d3d9->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
+            D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED,
+            &parameters, nullptr, &device);
+        if (FAILED(hr))
+        {
+            hr = d3d9->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
+                D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED,
+                &parameters, nullptr, &device);
+        }
+    }
+    if (SUCCEEDED(hr) && device)
+    {
+        void** vtable = *reinterpret_cast<void***>(device.Get());
+        *reset = vtable[16];
+        *present = vtable[17];
+        *presentEx = vtable[121];
+        *resetEx = vtable[132];
+        ComPtr<IDirect3DSwapChain9> swapChain;
+        if (SUCCEEDED(device->GetSwapChain(0, &swapChain)) && swapChain)
+        {
+            void** swapChainVtable = *reinterpret_cast<void***>(swapChain.Get());
+            *swapChainPresent = swapChainVtable[3];
+        }
+    }
+
+    device.Reset();
+    d3d9.Reset();
+    DestroyWindow(window);
+    UnregisterClassW(className, g_module);
+    return hr;
+}
+
 DWORD WINAPI WorkerThread(void*)
 {
     wchar_t mappingName[128]{};
@@ -434,6 +1066,14 @@ DWORD WINAPI WorkerThread(void*)
         return 3;
     }
 
+    void* d3d9Present = nullptr;
+    void* d3d9PresentEx = nullptr;
+    void* d3d9SwapChainPresent = nullptr;
+    void* d3d9Reset = nullptr;
+    void* d3d9ResetEx = nullptr;
+    const HRESULT d3d9DiscoverHr = DiscoverD3D9HookTargets(&d3d9Present,
+        &d3d9PresentEx, &d3d9SwapChainPresent, &d3d9Reset, &d3d9ResetEx);
+
     if (MH_Initialize() != MH_OK ||
         MH_CreateHook(present, &HookPresent, reinterpret_cast<void**>(&g_present)) != MH_OK ||
         MH_CreateHook(resizeBuffers, &HookResizeBuffers,
@@ -452,10 +1092,42 @@ DWORD WINAPI WorkerThread(void*)
             return 5;
         }
     }
+    if (SUCCEEDED(d3d9DiscoverHr) && d3d9Present && d3d9Reset)
+    {
+        if (MH_CreateHook(d3d9Present, &HookD3D9Present,
+                reinterpret_cast<void**>(&g_d3d9Present)) != MH_OK ||
+            MH_CreateHook(d3d9Reset, &HookD3D9Reset,
+                reinterpret_cast<void**>(&g_d3d9Reset)) != MH_OK)
+        {
+            SetFailure(E_FAIL);
+            return 6;
+        }
+        if (d3d9SwapChainPresent &&
+            MH_CreateHook(d3d9SwapChainPresent, &HookD3D9SwapChainPresent,
+                reinterpret_cast<void**>(&g_d3d9SwapChainPresent)) != MH_OK)
+        {
+            SetFailure(E_FAIL);
+            return 7;
+        }
+        if (d3d9PresentEx &&
+            MH_CreateHook(d3d9PresentEx, &HookD3D9PresentEx,
+                reinterpret_cast<void**>(&g_d3d9PresentEx)) != MH_OK)
+        {
+            SetFailure(E_FAIL);
+            return 8;
+        }
+        if (d3d9ResetEx &&
+            MH_CreateHook(d3d9ResetEx, &HookD3D9ResetEx,
+                reinterpret_cast<void**>(&g_d3d9ResetEx)) != MH_OK)
+        {
+            SetFailure(E_FAIL);
+            return 9;
+        }
+    }
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
     {
         SetFailure(E_FAIL);
-        return 6;
+        return 10;
     }
     InterlockedExchange(&g_state->status, static_cast<LONG>(Status::hooked));
 

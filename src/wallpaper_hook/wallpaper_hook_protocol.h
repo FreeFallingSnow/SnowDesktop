@@ -21,6 +21,7 @@ enum class Status : LONG {
     failed = -1,
 };
 
+#pragma pack(push, 8)
 struct SharedFrameSlot {
     std::uint64_t swap_chain;
     std::uint64_t output_window;
@@ -55,6 +56,14 @@ struct SharedState {
     volatile LONG64 consumer_heartbeat;
     SharedFrameSlot slots[kMaxFrameSlots];
 };
+#pragma pack(pop)
+
+// 共享内存由 32/64 位进程同时访问，布局必须与指针宽度无关。
+static_assert(offsetof(SharedFrameSlot, frame_number) == 32);
+static_assert(sizeof(SharedFrameSlot) == 224);
+static_assert(offsetof(SharedState, producer_heartbeat) == 48);
+static_assert(offsetof(SharedState, slots) == 64);
+static_assert(sizeof(SharedState) == 1856);
 
 inline void MakeMappingName(DWORD processId, wchar_t (&buffer)[128])
 {

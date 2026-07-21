@@ -1,6 +1,6 @@
 /**
  * @file wallpaper_engine_capture.cpp
- * @brief 注入 Wallpaper Engine 的轻量 DXGI Hook，并接收共享 D3D11 纹理。
+ * @brief 注入 Wallpaper Engine 的轻量 GPU Hook，并接收共享纹理。
  */
 #include "wallpaper_engine_capture.h"
 #include "../wallpaper_hook/wallpaper_hook_protocol.h"
@@ -14,6 +14,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <thread>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 using namespace snow::wallpaper_hook;
@@ -24,6 +25,11 @@ constexpr ULONGLONG kProducerHeartbeatTimeoutMs = 2500;
 constexpr ULONGLONG kHookInitializationTimeoutMs = 5000;
 constexpr ULONGLONG kHookInitializationPollMs = 250;
 constexpr ULONGLONG kReconnectMaxDelayMs = 8000;
+
+enum class WallpaperProcessArchitecture {
+    x86,
+    x64,
+};
 
 std::wstring FormatSystemError(const wchar_t* stage, DWORD error)
 {
@@ -39,7 +45,8 @@ std::wstring FormatHresult(const wchar_t* stage, HRESULT hr)
     return message;
 }
 
-bool IsWallpaper64Process(DWORD processId, std::wstring& error)
+bool QueryWallpaperProcessArchitecture(DWORD processId,
+    WallpaperProcessArchitecture& architecture, std::wstring& error)
 {
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
     if (!process)
@@ -50,35 +57,120 @@ bool IsWallpaper64Process(DWORD processId, std::wstring& error)
     wchar_t path[32768]{};
     DWORD length = static_cast<DWORD>(std::size(path));
     const bool queried = QueryFullProcessImageNameW(process, 0, path, &length) != FALSE;
-    CloseHandle(process);
     if (!queried)
     {
-        error = FormatSystemError(L"无法读取 Wallpaper Engine 路径", GetLastError());
+        const DWORD queryError = GetLastError();
+        CloseHandle(process);
+        error = FormatSystemError(L"无法读取 Wallpaper Engine 路径", queryError);
         return false;
     }
     std::wstring fileName = std::filesystem::path(path).filename().wstring();
     std::transform(fileName.begin(), fileName.end(), fileName.begin(),
         [](wchar_t value) { return static_cast<wchar_t>(std::towlower(value)); });
-    if (fileName != L"wallpaper64.exe")
+
+    using IsWow64Process2Fn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
+    const auto isWow64Process2 = reinterpret_cast<IsWow64Process2Fn>(GetProcAddress(
+        GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2"));
+    bool architectureKnown = false;
+    if (isWow64Process2)
     {
-        error = L"DXGI Hook 当前仅支持 64 位 Wallpaper Engine";
+        USHORT processMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+        USHORT nativeMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+        if (!isWow64Process2(process, &processMachine, &nativeMachine))
+        {
+            const DWORD architectureError = GetLastError();
+            CloseHandle(process);
+            error = FormatSystemError(L"无法识别 Wallpaper Engine 架构",
+                architectureError);
+            return false;
+        }
+        if (processMachine == IMAGE_FILE_MACHINE_I386)
+        {
+            architecture = WallpaperProcessArchitecture::x86;
+            architectureKnown = true;
+        }
+        else if (processMachine == IMAGE_FILE_MACHINE_AMD64 ||
+            (processMachine == IMAGE_FILE_MACHINE_UNKNOWN &&
+                nativeMachine == IMAGE_FILE_MACHINE_AMD64))
+        {
+            architecture = WallpaperProcessArchitecture::x64;
+            architectureKnown = true;
+        }
+    }
+    else
+    {
+        BOOL isWow64 = FALSE;
+        if (!IsWow64Process(process, &isWow64))
+        {
+            const DWORD architectureError = GetLastError();
+            CloseHandle(process);
+            error = FormatSystemError(L"无法识别 Wallpaper Engine 架构",
+                architectureError);
+            return false;
+        }
+        architecture = isWow64
+            ? WallpaperProcessArchitecture::x86
+            : WallpaperProcessArchitecture::x64;
+        architectureKnown = true;
+    }
+    CloseHandle(process);
+
+    if (!architectureKnown)
+    {
+        error = L"GPU Hook 不支持当前 Wallpaper Engine 进程架构";
+        return false;
+    }
+    const bool known32BitRenderer =
+        fileName == L"wallpaper32.exe" ||
+        fileName == L"webwallpaper32.exe" ||
+        fileName == L"edgewallpaper32.exe" ||
+        fileName == L"msedgewebview2.exe";
+    const bool known64BitRenderer =
+        fileName == L"wallpaper64.exe" ||
+        fileName == L"webwallpaper64.exe" ||
+        fileName == L"edgewallpaper64.exe" ||
+        fileName == L"msedgewebview2.exe";
+    const bool expectedExecutable =
+        (architecture == WallpaperProcessArchitecture::x86 && known32BitRenderer) ||
+        (architecture == WallpaperProcessArchitecture::x64 && known64BitRenderer);
+    if (!expectedExecutable)
+    {
+        error = L"目标进程不是受支持的 Wallpaper Engine 渲染器";
         return false;
     }
     return true;
 }
 
-std::filesystem::path HookDllPath()
+std::filesystem::path ApplicationDirectory()
 {
     wchar_t modulePath[32768]{};
     const DWORD length = GetModuleFileNameW(nullptr, modulePath,
         static_cast<DWORD>(std::size(modulePath)));
     if (length == 0 || length >= std::size(modulePath))
         return {};
-    return std::filesystem::path(modulePath).parent_path() /
-        L"SnowDesktopWallpaperHook.dll";
+    return std::filesystem::path(modulePath).parent_path();
 }
 
-bool InjectHook(DWORD processId, const std::filesystem::path& dllPath, std::wstring& error)
+std::filesystem::path HookDllPath(WallpaperProcessArchitecture architecture)
+{
+    const auto directory = ApplicationDirectory();
+    if (directory.empty())
+        return {};
+    return directory / (architecture == WallpaperProcessArchitecture::x86
+        ? L"SnowDesktopWallpaperHook32.dll"
+        : L"SnowDesktopWallpaperHook.dll");
+}
+
+std::filesystem::path Injector32Path()
+{
+    const auto directory = ApplicationDirectory();
+    return directory.empty()
+        ? std::filesystem::path{}
+        : directory / L"SnowDesktopWallpaperInjector32.exe";
+}
+
+bool InjectHookDirect(DWORD processId, const std::filesystem::path& dllPath,
+    std::wstring& error)
 {
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
         PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, processId);
@@ -123,13 +215,72 @@ bool InjectHook(DWORD processId, const std::filesystem::path& dllPath, std::wstr
         return false;
     }
 
-    const DWORD waitResult = WaitForSingleObject(thread, 5000);
+    const DWORD waitResult = WaitForSingleObject(thread, 10000);
+    DWORD remoteModule = 0;
+    const bool loaded = waitResult == WAIT_OBJECT_0 &&
+        GetExitCodeThread(thread, &remoteModule) && remoteModule != 0;
     CloseHandle(thread);
-    VirtualFreeEx(process, remotePath, 0, MEM_RELEASE);
+    if (waitResult == WAIT_OBJECT_0)
+        VirtualFreeEx(process, remotePath, 0, MEM_RELEASE);
     CloseHandle(process);
     if (waitResult != WAIT_OBJECT_0)
     {
         error = L"Wallpaper Engine Hook 加载超时";
+        return false;
+    }
+    if (!loaded)
+    {
+        error = L"Wallpaper Engine Hook DLL 加载失败";
+        return false;
+    }
+    return true;
+}
+
+bool InjectHook32(DWORD processId, const std::filesystem::path& dllPath,
+    std::wstring& error)
+{
+    const std::filesystem::path injectorPath = Injector32Path();
+    if (injectorPath.empty() || !std::filesystem::is_regular_file(injectorPath))
+    {
+        error = L"SnowDesktopWallpaperInjector32.exe 不存在";
+        return false;
+    }
+
+    std::wstring commandLine = L"\"" + injectorPath.wstring() + L"\" " +
+        std::to_wstring(processId) + L" \"" +
+        std::filesystem::absolute(dllPath).wstring() + L"\"";
+    std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+    mutableCommand.push_back(L'\0');
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION processInfo{};
+    const BOOL created = CreateProcessW(injectorPath.c_str(), mutableCommand.data(),
+        nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+        injectorPath.parent_path().c_str(), &startup, &processInfo);
+    if (!created)
+    {
+        error = FormatSystemError(L"无法启动 32 位 Hook 注入器", GetLastError());
+        return false;
+    }
+
+    CloseHandle(processInfo.hThread);
+    const DWORD waitResult = WaitForSingleObject(processInfo.hProcess, 15000);
+    DWORD exitCode = STILL_ACTIVE;
+    const bool completed = waitResult == WAIT_OBJECT_0 &&
+        GetExitCodeProcess(processInfo.hProcess, &exitCode);
+    CloseHandle(processInfo.hProcess);
+    if (!completed)
+    {
+        error = L"32 位 Wallpaper Engine Hook 注入超时";
+        return false;
+    }
+    if (exitCode != 0)
+    {
+        wchar_t message[192]{};
+        swprintf_s(message, L"32 位 Wallpaper Engine Hook 注入失败（代码 %lu）",
+            static_cast<unsigned long>(exitCode));
+        error = message;
         return false;
     }
     return true;
@@ -142,19 +293,25 @@ struct WallpaperEngineCaptureSession::Impl {
         LONG generation = -1;
         ComPtr<ID3D11Texture2D> texture;
         ComPtr<IDXGIKeyedMutex> keyedMutex;
+        ComPtr<ID3D11Query> completionQuery;
         ComPtr<ID2D1Bitmap1> bitmap;
         LONG64 lastConsumedFrame = 0;
         LONG64 acquiredFrame = 0;
+        LONG64 pendingConsumedFrame = 0;
         bool acquired = false;
+        bool completionPending = false;
 
         void ResetResource()
         {
             bitmap.Reset();
+            completionQuery.Reset();
             keyedMutex.Reset();
             texture.Reset();
             generation = -1;
             acquiredFrame = 0;
+            pendingConsumedFrame = 0;
             acquired = false;
+            completionPending = false;
         }
     };
 
@@ -162,6 +319,7 @@ struct WallpaperEngineCaptureSession::Impl {
     HANDLE mapping = nullptr;
     SharedState* state = nullptr;
     ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
     ComPtr<ID2D1DeviceContext> d2dContext;
     std::array<OpenedSlot, kMaxFrameSlots> slots;
     std::wstring lastError;
@@ -193,6 +351,7 @@ struct WallpaperEngineCaptureSession::Impl {
         state = nullptr;
         mapping = nullptr;
         d2dContext.Reset();
+        d3dContext.Reset();
         d3dDevice.Reset();
         connectedTick = 0;
     }
@@ -275,7 +434,8 @@ struct WallpaperEngineCaptureSession::Impl {
         auto& opened = slots[index];
         auto& published = state->slots[index];
         const LONG generation = published.generation;
-        if (generation == opened.generation && opened.texture && opened.keyedMutex)
+        if (generation == opened.generation && opened.texture &&
+            (opened.keyedMutex || opened.completionQuery))
             return true;
         opened.ResetResource();
 
@@ -293,9 +453,16 @@ struct WallpaperEngineCaptureSession::Impl {
         hr = opened.texture.As(&opened.keyedMutex);
         if (FAILED(hr) || !opened.keyedMutex)
         {
-            lastError = FormatHresult(L"打开 Wallpaper Engine 同步锁失败", hr);
-            opened.ResetResource();
-            return false;
+            opened.keyedMutex.Reset();
+            D3D11_QUERY_DESC queryDesc{};
+            queryDesc.Query = D3D11_QUERY_EVENT;
+            hr = d3dDevice->CreateQuery(&queryDesc, &opened.completionQuery);
+            if (FAILED(hr) || !opened.completionQuery)
+            {
+                lastError = FormatHresult(L"创建视频共享纹理同步查询失败", hr);
+                opened.ResetResource();
+                return false;
+            }
         }
         opened.generation = generation;
         return true;
@@ -313,7 +480,9 @@ struct WallpaperEngineCaptureSession::Impl {
             lastError = FormatHresult(L"共享纹理转换为 DXGI 表面失败", hr);
             return false;
         }
-        const auto format = static_cast<DXGI_FORMAT>(state->slots[index].format);
+        D3D11_TEXTURE2D_DESC textureDesc{};
+        opened.texture->GetDesc(&textureDesc);
+        const auto format = textureDesc.Format;
         const D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
             D2D1_BITMAP_OPTIONS_NONE,
             D2D1::PixelFormat(format, D2D1_ALPHA_MODE_IGNORE));
@@ -325,6 +494,32 @@ struct WallpaperEngineCaptureSession::Impl {
             return false;
         }
         return true;
+    }
+
+    HRESULT CompletePendingRead(std::size_t index)
+    {
+        auto& opened = slots[index];
+        if (!opened.completionPending)
+            return S_OK;
+        if (!d3dContext || !opened.completionQuery)
+            return E_NOINTERFACE;
+        BOOL complete = FALSE;
+        const HRESULT hr = d3dContext->GetData(opened.completionQuery.Get(),
+            &complete, sizeof(complete), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if (hr == S_FALSE || (SUCCEEDED(hr) && !complete))
+            return S_FALSE;
+        if (FAILED(hr))
+        {
+            lastError = FormatHresult(L"等待视频共享纹理读取完成失败", hr);
+            return hr;
+        }
+        if (state)
+            InterlockedExchange64(&state->slots[index].consumed_frame_number,
+                opened.pendingConsumedFrame);
+        opened.lastConsumedFrame = opened.pendingConsumedFrame;
+        opened.pendingConsumedFrame = 0;
+        opened.completionPending = false;
+        return S_OK;
     }
 };
 
@@ -352,6 +547,8 @@ bool WallpaperEngineCaptureSession::EnsureStarted(DWORD rendererPid,
         impl_->rendererPid = rendererPid;
     }
     impl_->d3dDevice = d3dDevice;
+    if (!impl_->d3dContext)
+        impl_->d3dDevice->GetImmediateContext(&impl_->d3dContext);
     impl_->d2dContext = d2dContext;
 
     if (impl_->IsReconnectDelayed())
@@ -362,17 +559,24 @@ bool WallpaperEngineCaptureSession::EnsureStarted(DWORD rendererPid,
         const ULONGLONG now = GetTickCount64();
         if (!impl_->injectionAttempted)
         {
-            if (!IsWallpaper64Process(rendererPid, impl_->lastError))
+            WallpaperProcessArchitecture architecture{};
+            if (!QueryWallpaperProcessArchitecture(rendererPid, architecture,
+                    impl_->lastError))
                 return false;
-            const std::filesystem::path hookPath = HookDllPath();
+            const std::filesystem::path hookPath = HookDllPath(architecture);
             if (hookPath.empty() || !std::filesystem::is_regular_file(hookPath))
             {
-                impl_->lastError = L"SnowDesktopWallpaperHook.dll 不存在";
+                impl_->lastError = architecture == WallpaperProcessArchitecture::x86
+                    ? L"SnowDesktopWallpaperHook32.dll 不存在"
+                    : L"SnowDesktopWallpaperHook.dll 不存在";
                 return false;
             }
             impl_->injectionAttempted = true;
             impl_->injectionAttemptTick = now;
-            if (!InjectHook(rendererPid, hookPath, impl_->lastError))
+            const bool injected = architecture == WallpaperProcessArchitecture::x86
+                ? InjectHook32(rendererPid, hookPath, impl_->lastError)
+                : InjectHookDirect(rendererPid, hookPath, impl_->lastError);
+            if (!injected)
             {
                 impl_->ScheduleReconnect(impl_->lastError);
                 return false;
@@ -484,20 +688,31 @@ WallpaperEngineFrameState WallpaperEngineCaptureSession::TryAcquireLatestFrames(
         if (!published.swap_chain || !published.shared_handle)
             continue;
         sawPublishedSlot = true;
+        const HRESULT completionHr = impl_->CompletePendingRead(index);
+        if (completionHr == S_FALSE)
+            continue;
+        if (FAILED(completionHr))
+        {
+            ReleaseFrames(false);
+            return WallpaperEngineFrameState::error;
+        }
         const LONG64 frameNumber = published.frame_number;
         if (frameNumber <= opened.lastConsumedFrame)
             continue;
         if (!impl_->OpenSlot(index))
             continue;
-        const HRESULT acquireHr = opened.keyedMutex->AcquireSync(1, 0);
-        if (acquireHr == WAIT_TIMEOUT)
-            continue;
-        if (FAILED(acquireHr))
+        if (opened.keyedMutex)
         {
-            impl_->lastError = FormatHresult(L"获取 Wallpaper Engine 共享帧失败",
-                acquireHr);
-            ReleaseFrames(false);
-            return WallpaperEngineFrameState::error;
+            const HRESULT acquireHr = opened.keyedMutex->AcquireSync(1, 0);
+            if (acquireHr == WAIT_TIMEOUT)
+                continue;
+            if (FAILED(acquireHr))
+            {
+                impl_->lastError = FormatHresult(L"获取 Wallpaper Engine 共享帧失败",
+                    acquireHr);
+                ReleaseFrames(false);
+                return WallpaperEngineFrameState::error;
+            }
         }
         opened.acquired = true;
         opened.acquiredFrame = frameNumber;
@@ -507,9 +722,11 @@ WallpaperEngineFrameState WallpaperEngineCaptureSession::TryAcquireLatestFrames(
             return WallpaperEngineFrameState::error;
         }
         WallpaperEngineFrame frame{};
+        frame.processId = impl_->rendererPid;
         frame.desktopRect = published.desktop_rect;
         frame.outputWindow = reinterpret_cast<HWND>(published.output_window);
         frame.bitmap = opened.bitmap.Get();
+        frame.d3d9Video = !opened.keyedMutex;
         frame.slotIndex = index;
         frame.frameNumber = static_cast<unsigned long long>(frameNumber);
         frames.push_back(frame);
@@ -522,7 +739,7 @@ WallpaperEngineFrameState WallpaperEngineCaptureSession::TryAcquireLatestFrames(
     }
     if (!sawPublishedSlot && impl_->connectedTick &&
         GetTickCount64() - impl_->connectedTick > 3000)
-        impl_->lastError = L"等待 Wallpaper Engine DXGI 交换链";
+        impl_->lastError = L"等待 Wallpaper Engine GPU 交换链";
     return WallpaperEngineFrameState::pending;
 }
 
@@ -536,10 +753,30 @@ void WallpaperEngineCaptureSession::ReleaseFrames(bool consumed)
         if (consumed)
             slot.lastConsumedFrame = slot.acquiredFrame;
         if (slot.keyedMutex)
+        {
             slot.keyedMutex->ReleaseSync(0);
-        if (impl_->state)
+            if (impl_->state)
+                InterlockedExchange64(&impl_->state->slots[index].consumed_frame_number,
+                    slot.acquiredFrame);
+        }
+        else if (consumed && slot.completionQuery && impl_->d3dContext)
+        {
+            // D3D9Ex 与 D3D11 共享表面没有 keyed mutex。让 D2D 提交读取，
+            // 再用 D3D11 EVENT query 异步确认 GPU 已经不再访问该表面；生产端
+            // 在 consumed_frame_number 前进前不会覆盖它。
+            if (impl_->d2dContext)
+                impl_->d2dContext->Flush();
+            impl_->d3dContext->End(slot.completionQuery.Get());
+            impl_->d3dContext->Flush();
+            slot.pendingConsumedFrame = slot.acquiredFrame;
+            slot.completionPending = true;
+        }
+        else if (impl_->state)
+        {
             InterlockedExchange64(&impl_->state->slots[index].consumed_frame_number,
                 slot.acquiredFrame);
+            slot.lastConsumedFrame = slot.acquiredFrame;
+        }
         slot.acquired = false;
         slot.acquiredFrame = 0;
     }

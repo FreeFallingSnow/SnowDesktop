@@ -1,6 +1,6 @@
 /**
  * @file wallpaper_engine_capture.h
- * @brief Wallpaper Engine DXGI Hook 共享纹理接收端。
+ * @brief Wallpaper Engine DXGI/D3D9 Hook 共享纹理接收端。
  */
 #pragma once
 
@@ -14,9 +14,11 @@
 #include <vector>
 
 struct WallpaperEngineFrame {
+    DWORD processId = 0;
     RECT desktopRect{};
     HWND outputWindow = nullptr;
     ID2D1Bitmap1* bitmap = nullptr;
+    bool d3d9Video = false;
     std::size_t slotIndex = 0;
     unsigned long long frameNumber = 0;
 };

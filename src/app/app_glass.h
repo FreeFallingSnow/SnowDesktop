@@ -4,8 +4,8 @@
  * @details 快照内容分两层：
  *          - 静态层：通过 IDesktopWallpaper 按显示器查询当前壁纸与铺放方式，
  *            WIC 解码后按桌面规则合成到 0.5x 位图（签名不变不重建）；
- *          - 动态层：检测到 Wallpaper Engine 后，在其 Present/Present1
- *            入口复制 BackBuffer 到共享 D3D11 纹理，再由本进程直接拼合。
+ *          - 动态层：检测到 Wallpaper Engine 后，在其 DXGI/D3D9 Present
+ *            入口复制 BackBuffer 到共享 GPU 纹理，再由本进程直接拼合。
  *          合成结果经 Direct2D 高斯模糊后作为整窗背景快照；各组件面板按自身
  *          矩形裁剪采样，叠加半透明色调与渐变描边，形成 macOS Dock 式的
  *          磨砂玻璃观感。渲染窗保持原有 Progman 子窗口层级；采样源来自
@@ -24,6 +24,254 @@ constexpr size_t kGlassRadiusCacheLimit = 6;
 /** @brief 动态壁纸窗口检测间隔（毫秒）。 */
 constexpr DWORD kGlassDetectIntervalMs = 10000;
 
+inline std::wstring WallpaperProcessName(DWORD processId)
+{
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process)
+        return {};
+    wchar_t path[32768]{};
+    DWORD length = static_cast<DWORD>(std::size(path));
+    const bool queried = QueryFullProcessImageNameW(process, 0, path, &length) != FALSE;
+    CloseHandle(process);
+    if (!queried)
+        return {};
+    std::wstring name = std::filesystem::path(path).filename().wstring();
+    std::transform(name.begin(), name.end(), name.begin(), ::towlower);
+    return name;
+}
+
+inline std::wstring WallpaperProcessCommandLine(DWORD processId)
+{
+    using NtQueryInformationProcessFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG,
+        PULONG);
+    struct NativeUnicodeString {
+        USHORT length;
+        USHORT maximumLength;
+        PWSTR buffer;
+    };
+    const auto query = reinterpret_cast<NtQueryInformationProcessFn>(GetProcAddress(
+        GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess"));
+    if (!query)
+        return {};
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process)
+        return {};
+    ULONG required = 0;
+    query(process, 60, nullptr, 0, &required); // ProcessCommandLineInformation
+    if (required < sizeof(NativeUnicodeString))
+    {
+        CloseHandle(process);
+        return {};
+    }
+    std::vector<std::byte> buffer(required);
+    const LONG status = query(process, 60, buffer.data(), required, &required);
+    CloseHandle(process);
+    if (status < 0)
+        return {};
+    const auto* command = reinterpret_cast<const NativeUnicodeString*>(buffer.data());
+    if (!command->buffer || !command->length)
+        return {};
+    std::wstring result(command->buffer, command->length / sizeof(wchar_t));
+    std::transform(result.begin(), result.end(), result.begin(), ::towlower);
+    return result;
+}
+
+inline bool IsWallpaperWebProcess(const std::wstring& name)
+{
+    return name == L"webwallpaper32.exe" ||
+        name == L"webwallpaper64.exe" ||
+        name == L"edgewallpaper32.exe" ||
+        name == L"edgewallpaper64.exe" ||
+        name == L"msedgewebview2.exe";
+}
+
+inline DWORD ResolveWallpaperOwnerProcess(DWORD processId)
+{
+    if (!processId || !IsWallpaperWebProcess(WallpaperProcessName(processId)))
+        return processId;
+    struct ProcessEntry {
+        DWORD processId = 0;
+        DWORD parentId = 0;
+    };
+    std::vector<ProcessEntry> processes;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return processId;
+    PROCESSENTRY32W entry{ sizeof(entry) };
+    if (Process32FirstW(snapshot, &entry))
+    {
+        do {
+            processes.push_back({ entry.th32ProcessID, entry.th32ParentProcessID });
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+
+    DWORD owner = processId;
+    for (int depth = 0; depth < 8; ++depth)
+    {
+        const auto current = std::find_if(processes.begin(), processes.end(),
+            [owner](const ProcessEntry& process) {
+                return process.processId == owner;
+            });
+        if (current == processes.end() || !current->parentId)
+            break;
+        if (!IsWallpaperWebProcess(WallpaperProcessName(current->parentId)))
+            break;
+        owner = current->parentId;
+    }
+    return owner;
+}
+
+inline std::vector<DWORD> ResolveWallpaperCaptureProcesses(DWORD ownerPid)
+{
+    ownerPid = ResolveWallpaperOwnerProcess(ownerPid);
+    const std::wstring ownerName = WallpaperProcessName(ownerPid);
+    const bool webRenderer = ownerName == L"webwallpaper32.exe" ||
+        ownerName == L"webwallpaper64.exe" ||
+        ownerName == L"edgewallpaper32.exe" ||
+        ownerName == L"edgewallpaper64.exe";
+    if (!webRenderer)
+        return { ownerPid };
+
+    struct ProcessEntry {
+        DWORD processId = 0;
+        DWORD parentId = 0;
+    };
+    std::vector<ProcessEntry> processes;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE)
+    {
+        PROCESSENTRY32W entry{ sizeof(entry) };
+        if (Process32FirstW(snapshot, &entry))
+        {
+            do {
+                processes.push_back({ entry.th32ProcessID, entry.th32ParentProcessID });
+            } while (Process32NextW(snapshot, &entry));
+        }
+        CloseHandle(snapshot);
+    }
+
+    std::unordered_set<DWORD> descendants{ ownerPid };
+    for (int pass = 0; pass < 4; ++pass)
+    {
+        for (const auto& process : processes)
+        {
+            if (descendants.contains(process.parentId))
+                descendants.insert(process.processId);
+        }
+    }
+
+    std::vector<DWORD> gpuProcesses;
+    for (DWORD processId : descendants)
+    {
+        if (processId == ownerPid)
+            continue;
+        const std::wstring name = WallpaperProcessName(processId);
+        if (name != L"webwallpaper32.exe" &&
+            name != L"webwallpaper64.exe" &&
+            name != L"edgewallpaper32.exe" &&
+            name != L"edgewallpaper64.exe" &&
+            name != L"msedgewebview2.exe")
+            continue;
+        const std::wstring commandLine = WallpaperProcessCommandLine(processId);
+        if (commandLine.find(L"--type=gpu-process") != std::wstring::npos)
+            gpuProcesses.push_back(processId);
+    }
+    if (gpuProcesses.empty())
+        gpuProcesses.push_back(ownerPid);
+    return gpuProcesses;
+}
+
+inline bool IsGlassWallpaperWindowClass(HWND window)
+{
+    if (!window)
+        return false;
+    wchar_t className[64]{};
+    if (!GetClassNameW(window, className, static_cast<int>(std::size(className))))
+        return false;
+    return _wcsicmp(className, L"WPEDesktopDX11Window") == 0 ||
+        _wcsicmp(className, L"WPEDesktopCEFWindow") == 0 ||
+        _wcsicmp(className, L"WPEVideoWallpaper") == 0 ||
+        _wcsicmp(className, L"WPECloneView") == 0 ||
+        _wcsicmp(className, L"EVRFullscreenVideo") == 0 ||
+        _wcsicmp(className, L"Intermediate D3D Window") == 0;
+}
+
+inline bool IsDesktopHostedWallpaperWindow(HWND window)
+{
+    if (IsGlassWallpaperWindowClass(window))
+        return true;
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    const std::wstring name = WallpaperProcessName(processId);
+    return name == L"wallpaper32.exe" || name == L"wallpaper64.exe" ||
+        name == L"webwallpaper32.exe" || name == L"webwallpaper64.exe" ||
+        name == L"edgewallpaper32.exe" || name == L"edgewallpaper64.exe" ||
+        name == L"msedgewebview2.exe";
+}
+
+inline void CALLBACK DesktopApp::GlassWallpaperWinEventProc(HWINEVENTHOOK,
+    DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD)
+{
+    if (!window || objectId != OBJID_WINDOW || childId != CHILDID_SELF)
+        return;
+    if (event != EVENT_OBJECT_CREATE && event != EVENT_OBJECT_DESTROY &&
+        event != EVENT_OBJECT_SHOW && event != EVENT_OBJECT_HIDE &&
+        event != EVENT_OBJECT_REORDER && event != EVENT_OBJECT_LOCATIONCHANGE &&
+        event != EVENT_OBJECT_NAMECHANGE)
+        return;
+    if (event != EVENT_OBJECT_DESTROY &&
+        !IsDesktopHostedWallpaperWindow(window))
+        return;
+    const HWND target = glassWallpaperEventTarget_;
+    if (target && IsWindow(target))
+        PostMessageW(target, kWallpaperWindowEventMessage,
+            static_cast<WPARAM>(event), reinterpret_cast<LPARAM>(window));
+}
+
+inline void DesktopApp::StartGlassWallpaperEventMonitor()
+{
+    if (glassWallpaperEventHook_ || !hwnd_ || !IsWindow(hwnd_))
+        return;
+    glassWallpaperEventTarget_ = hwnd_;
+    glassWallpaperEventHook_ = SetWinEventHook(EVENT_OBJECT_CREATE,
+        EVENT_OBJECT_NAMECHANGE, nullptr, &DesktopApp::GlassWallpaperWinEventProc,
+        0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    if (!glassWallpaperEventHook_)
+        glassWallpaperEventTarget_ = nullptr;
+}
+
+inline void DesktopApp::StopGlassWallpaperEventMonitor()
+{
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kWallpaperEventDebounceTimerId);
+    if (glassWallpaperEventHook_)
+    {
+        UnhookWinEvent(glassWallpaperEventHook_);
+        glassWallpaperEventHook_ = nullptr;
+    }
+    if (glassWallpaperEventTarget_ == hwnd_)
+        glassWallpaperEventTarget_ = nullptr;
+}
+
+inline void DesktopApp::ScheduleGlassWallpaperEventRefresh(UINT event,
+    HWND sourceWindow)
+{
+    if (!glassWallpaperEventHook_ || !hwnd_ || !IsWindow(hwnd_))
+        return;
+    const bool tracked = std::any_of(dynamicWallpaperWindows_.begin(),
+        dynamicWallpaperWindows_.end(), [sourceWindow](const auto& source) {
+            return source.hwnd == sourceWindow;
+        });
+    if (event == EVENT_OBJECT_DESTROY && !tracked)
+        return;
+    if (event != EVENT_OBJECT_DESTROY && !tracked &&
+        !IsDesktopHostedWallpaperWindow(sourceWindow))
+        return;
+    SetTimer(hwnd_, kWallpaperEventDebounceTimerId,
+        kWallpaperEventDebounceMs, nullptr);
+}
+
 /**
  * @brief 使毛玻璃背景快照失效。
  * @details 在壁纸/显示器拓扑/窗口几何变化、玻璃参数调整等时机调用，
@@ -32,6 +280,18 @@ constexpr DWORD kGlassDetectIntervalMs = 10000;
 inline void DesktopApp::InvalidateGlassBackdrop()
 {
     glassBackdropDirty_ = true;
+}
+
+inline void DesktopApp::StopWallpaperEngineCaptures()
+{
+    for (auto& [_, capture] : wallpaperEngineCaptures_)
+    {
+        if (capture)
+            capture->Stop();
+    }
+    wallpaperEngineCaptures_.clear();
+    wallpaperCaptureProcessCache_.clear();
+    wallpaperCaptureProcessCacheTick_ = 0;
 }
 
 /**
@@ -262,6 +522,7 @@ inline void DesktopApp::DetectDynamicWallpaperWindows(bool force)
             GetWindowThreadProcessId(hwnd, &pid);
             if (pid == c->ourPid || (c->shellPid != 0 && pid == c->shellPid))
                 return TRUE;
+            pid = ResolveWallpaperOwnerProcess(pid);
 
             wchar_t className[64]{};
             if (GetClassNameW(hwnd, className, 64))
@@ -315,31 +576,91 @@ inline void DesktopApp::DetectDynamicWallpaperWindows(bool force)
     // EnumChildWindows 按 z 序（顶→底）枚举，反转为自底向上用于叠加合成。
     std::reverse(found.begin(), found.end());
 
+    // CEF and EVR both expose nested full-screen child windows. Treat windows
+    // from the same renderer that cover the same display area as one output;
+    // otherwise one web/video monitor is mistaken for several capture sources.
+    auto windowPriority = [](HWND window) {
+        wchar_t className[64]{};
+        GetClassNameW(window, className, static_cast<int>(std::size(className)));
+        if (_wcsicmp(className, L"WPEDesktopCEFWindow") == 0)
+            return 0;
+        if (_wcsicmp(className, L"WPEDesktopDX11Window") == 0 ||
+            _wcsicmp(className, L"WPEVideoWallpaper") == 0 ||
+            _wcsicmp(className, L"WPECloneView") == 0)
+            return 4;
+        if (_wcsicmp(className, L"Intermediate D3D Window") == 0 ||
+            _wcsicmp(className, L"EVRFullscreenVideo") == 0)
+            return 3;
+        return 1;
+    };
+    auto isWebProxyWindow = [](HWND window) {
+        wchar_t className[64]{};
+        GetClassNameW(window, className, static_cast<int>(std::size(className)));
+        return _wcsicmp(className, L"WPEDesktopCEFWindow") == 0;
+    };
+    std::vector<DynamicWallpaperWindow> outputs;
+    for (const auto& candidate : found)
+    {
+        const std::int64_t candidateArea =
+            static_cast<std::int64_t>(candidate.rect.right - candidate.rect.left) *
+            static_cast<std::int64_t>(candidate.rect.bottom - candidate.rect.top);
+        bool merged = false;
+        for (auto& output : outputs)
+        {
+            if (output.rendererPid != candidate.rendererPid &&
+                !isWebProxyWindow(output.hwnd) &&
+                !isWebProxyWindow(candidate.hwnd))
+                continue;
+            RECT overlap{};
+            if (!IntersectRect(&overlap, &output.rect, &candidate.rect))
+                continue;
+            const std::int64_t outputArea =
+                static_cast<std::int64_t>(output.rect.right - output.rect.left) *
+                static_cast<std::int64_t>(output.rect.bottom - output.rect.top);
+            const std::int64_t overlapArea =
+                static_cast<std::int64_t>(overlap.right - overlap.left) *
+                static_cast<std::int64_t>(overlap.bottom - overlap.top);
+            const std::int64_t smallerArea = std::min(outputArea, candidateArea);
+            const std::int64_t largerArea = std::max(outputArea, candidateArea);
+            if (smallerArea <= 0 || overlapArea * 100 < smallerArea * 90 ||
+                largerArea * 100 > smallerArea * 110)
+                continue;
+            if (windowPriority(candidate.hwnd) > windowPriority(output.hwnd) ||
+                (windowPriority(candidate.hwnd) == windowPriority(output.hwnd) &&
+                    candidateArea > outputArea))
+                output = candidate;
+            merged = true;
+            break;
+        }
+        if (!merged)
+            outputs.push_back(candidate);
+    }
+    found = std::move(outputs);
+
     // 候选集合变化时重置 Hook 失败标记（给新引擎一次机会）；
     // 同一候选集合下每 30 秒也重试一次（引擎启动初期可能暂时黑屏）
     const bool changed = found.size() != dynamicWallpaperWindows_.size() ||
         !std::equal(found.begin(), found.end(), dynamicWallpaperWindows_.begin(),
             [](const DynamicWallpaperWindow& a, const DynamicWallpaperWindow& b) {
-                return a.hwnd == b.hwnd;
+                return a.hwnd == b.hwnd &&
+                    a.rendererPid == b.rendererPid &&
+                    EqualRect(&a.rect, &b.rect) != FALSE;
             });
     const bool retryDue = dynamicWallpaperIncompatible_ &&
         now - dynamicWallpaperIncompatibleTick_ >= 30000;
     if (changed || retryDue)
     {
-        if (wallpaperEngineCapture_)
-            wallpaperEngineCapture_->Stop();
-        wallpaperEngineCapture_.reset();
+        StopWallpaperEngineCaptures();
+        glassDynamicLayerBitmap_.Reset();
+        glassCapturedDynamicWindows_.clear();
         dynamicWallpaperIncompatible_ = false;
         dynamicWallpaperIncompatibleTick_ = 0;
         dynamicWallpaperCaptureError_.clear();
     }
 
     dynamicWallpaperWindows_ = std::move(found);
-    if (dynamicWallpaperWindows_.empty() && wallpaperEngineCapture_)
-    {
-        wallpaperEngineCapture_->Stop();
-        wallpaperEngineCapture_.reset();
-    }
+    if (dynamicWallpaperWindows_.empty())
+        StopWallpaperEngineCaptures();
 
     // 引擎识别（诊断与设置界面状态行）
     dynamicWallpaperEngine_.clear();
@@ -376,7 +697,7 @@ inline void DesktopApp::DetectDynamicWallpaperWindows(bool force)
         GetClassNameW(dynamicWallpaperWindows_.front().hwnd, className, 64);
         wchar_t message[256]{};
         wsprintfW(message,
-            L"Dynamic wallpaper source count=%u class=%s backend=DXGI-Present-Hook engine=%s",
+            L"Dynamic wallpaper source count=%u class=%s backend=GPU-Present-Hook engine=%s",
             static_cast<unsigned>(dynamicWallpaperWindows_.size()), className,
             dynamicWallpaperEngine_.empty() ? L"unknown" : dynamicWallpaperEngine_.c_str());
         WriteCrashLogEntry(message);
@@ -384,8 +705,9 @@ inline void DesktopApp::DetectDynamicWallpaperWindows(bool force)
 }
 
 /**
- * @brief 通过 Wallpaper Engine DXGI Hook 共享纹理取得动态壁纸 GPU 帧。
- * @details 各显示器帧保持在 D3D11/DXGI 上，直接降采样拼合成 0.5x D2D
+ * @brief 通过 Wallpaper Engine GPU Hook 共享纹理取得动态壁纸帧。
+ * @details 场景/网页使用 DXGI，视频使用 D3D9Ex；各显示器独立选择输出，
+ *          直接降采样拼合成 0.5x D2D
  *          动态层，不执行 GDI 全屏复制、CPU 逐像素处理，也不隐藏/恢复窗口。
  *          本函数没有其他捕获后端；失败原因会直接写入诊断状态。
  * @param refreshMode 请求该帧的刷新档位
@@ -399,18 +721,31 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     *outBitmap = nullptr;
     dynamicWallpaperCaptureDeferred_ = false;
 
+    auto scheduleFrameRetry = [this]() {
+        if (!hwnd_ || !IsWindow(hwnd_))
+            return;
+        if (glassRefreshTimerActive_ &&
+            glassRefreshTimerIntervalMs_ != kGlassRefreshRealtimeIntervalMs)
+        {
+            KillTimer(hwnd_, kGlassRefreshTimerId);
+            glassRefreshTimerActive_ = false;
+        }
+        if (!glassRefreshTimerActive_)
+        {
+            SetTimer(hwnd_, kGlassRefreshTimerId,
+                kGlassRefreshRealtimeIntervalMs, nullptr);
+            glassRefreshTimerActive_ = true;
+            glassRefreshTimerIntervalMs_ = kGlassRefreshRealtimeIntervalMs;
+        }
+    };
     auto fail = [this](const std::wstring& stage) {
         dynamicWallpaperCaptureError_ = stage;
         return false;
     };
-    auto defer = [this](const std::wstring& stage) {
+    auto defer = [this, &scheduleFrameRetry](const std::wstring& stage) {
         dynamicWallpaperCaptureDeferred_ = true;
         dynamicWallpaperCaptureError_ = stage;
-        if (!glassRefreshTimerActive_ && hwnd_ && IsWindow(hwnd_))
-        {
-            SetTimer(hwnd_, kGlassRefreshTimerId, kGlassRefreshRealtimeIntervalMs, nullptr);
-            glassRefreshTimerActive_ = true;
-        }
+        scheduleFrameRetry();
         return false;
     };
 
@@ -419,24 +754,49 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     if (dynamicWallpaperWindows_.empty())
         return fail(L"动态壁纸候选已消失");
 
-    DWORD rendererPid = 0;
-    bool wallpaperEngineWindow = dynamicWallpaperEngine_ == L"Wallpaper Engine";
+    std::unordered_set<DWORD> ownerPids;
     for (const auto& window : dynamicWallpaperWindows_)
     {
-        wchar_t className[64]{};
-        GetClassNameW(window.hwnd, className, static_cast<int>(std::size(className)));
-        if (_wcsicmp(className, L"WPEDesktopDX11Window") == 0 ||
-            _wcsicmp(className, L"WPECloneView") == 0)
+        DWORD processId = window.rendererPid;
+        if (!processId)
+            GetWindowThreadProcessId(window.hwnd, &processId);
+        if (processId)
+            ownerPids.insert(processId);
+    }
+
+    const DWORD processCacheNow = GetTickCount();
+    const bool refreshProcessCache = wallpaperCaptureProcessCacheTick_ == 0 ||
+        processCacheNow - wallpaperCaptureProcessCacheTick_ >= 2000;
+    for (auto it = wallpaperCaptureProcessCache_.begin();
+        it != wallpaperCaptureProcessCache_.end();)
+    {
+        if (!ownerPids.contains(it->first))
+            it = wallpaperCaptureProcessCache_.erase(it);
+        else
+            ++it;
+    }
+    for (DWORD ownerPid : ownerPids)
+    {
+        if (refreshProcessCache ||
+            !wallpaperCaptureProcessCache_.contains(ownerPid))
+            wallpaperCaptureProcessCache_[ownerPid] =
+                ResolveWallpaperCaptureProcesses(ownerPid);
+    }
+    if (refreshProcessCache)
+        wallpaperCaptureProcessCacheTick_ = processCacheNow;
+
+    std::unordered_set<DWORD> rendererPids;
+    std::unordered_map<DWORD, DWORD> captureOwnerPids;
+    for (DWORD ownerPid : ownerPids)
+    {
+        for (DWORD capturePid : wallpaperCaptureProcessCache_[ownerPid])
         {
-            wallpaperEngineWindow = true;
-            rendererPid = window.rendererPid;
-            if (!rendererPid)
-                GetWindowThreadProcessId(window.hwnd, &rendererPid);
-            break;
+            rendererPids.insert(capturePid);
+            captureOwnerPids[capturePid] = ownerPid;
         }
     }
-    if (!wallpaperEngineWindow || !rendererPid)
-        return fail(L"DXGI Present Hook 当前仅支持 Wallpaper Engine");
+    if (dynamicWallpaperEngine_ != L"Wallpaper Engine" || rendererPids.empty())
+        return fail(L"GPU Hook 当前仅支持 Wallpaper Engine");
 
     const int mode = std::clamp(refreshMode, 0, 3);
     DWORD intervalMs = 0;
@@ -447,36 +807,73 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     else if (mode == 3)
         intervalMs = kGlassRefreshRealtimeIntervalMs;
 
-    if (!wallpaperEngineCapture_)
-        wallpaperEngineCapture_ = std::make_unique<WallpaperEngineCaptureSession>();
-    if (!wallpaperEngineCapture_->EnsureStarted(rendererPid, d3dDevice_.Get(),
-            glassEffectContext_.Get(), intervalMs))
+    for (auto it = wallpaperEngineCaptures_.begin();
+        it != wallpaperEngineCaptures_.end();)
     {
-        const std::wstring error = wallpaperEngineCapture_->LastError();
-        if (error.find(L"等待") != std::wstring::npos)
-            return defer(error);
-        const std::wstring reason = error.empty()
-            ? L"Wallpaper Engine Hook 连接中断"
-            : error;
-        wallpaperEngineCapture_->RequestReconnect(reason);
-        return defer(L"DXGI Hook 中断，等待自动重连：" + reason);
+        if (!rendererPids.contains(it->first))
+        {
+            if (it->second)
+                it->second->Stop();
+            it = wallpaperEngineCaptures_.erase(it);
+        }
+        else
+            ++it;
     }
 
     std::vector<WallpaperEngineFrame> frames;
-    const WallpaperEngineFrameState frameState =
-        wallpaperEngineCapture_->TryAcquireLatestFrames(frames);
-    if (frameState == WallpaperEngineFrameState::pending)
+    std::vector<WallpaperEngineCaptureSession*> acquiredSessions;
+    bool waitingForSource = false;
+    std::wstring waitingReason;
+    for (DWORD rendererPid : rendererPids)
     {
-        wallpaperEngineCapture_->RequestFrame();
-        return defer(L"等待 Wallpaper Engine 下一次 Present");
+        auto& capture = wallpaperEngineCaptures_[rendererPid];
+        if (!capture)
+            capture = std::make_unique<WallpaperEngineCaptureSession>();
+        if (!capture->EnsureStarted(rendererPid, d3dDevice_.Get(),
+                glassEffectContext_.Get(), intervalMs))
+        {
+            std::wstring error = capture->LastError();
+            if (error.empty())
+                error = L"Wallpaper Engine Hook 连接中断";
+            if (error.find(L"等待") == std::wstring::npos)
+                capture->RequestReconnect(error);
+            waitingForSource = true;
+            if (waitingReason.empty())
+                waitingReason = error;
+            continue;
+        }
+
+        std::vector<WallpaperEngineFrame> processFrames;
+        const WallpaperEngineFrameState frameState =
+            capture->TryAcquireLatestFrames(processFrames);
+        if (frameState == WallpaperEngineFrameState::pending)
+        {
+            capture->RequestFrame();
+            waitingForSource = true;
+            if (waitingReason.empty())
+                waitingReason = L"等待 Wallpaper Engine 下一次 Present";
+            continue;
+        }
+        if (frameState == WallpaperEngineFrameState::error)
+        {
+            std::wstring reason = capture->LastError();
+            if (reason.empty())
+                reason = L"Wallpaper Engine 共享帧读取失败";
+            capture->RequestReconnect(reason);
+            waitingForSource = true;
+            if (waitingReason.empty())
+                waitingReason = reason;
+            continue;
+        }
+        acquiredSessions.push_back(capture.get());
+        frames.insert(frames.end(), processFrames.begin(), processFrames.end());
     }
-    if (frameState == WallpaperEngineFrameState::error)
+
+    if (frames.empty())
     {
-        std::wstring reason = wallpaperEngineCapture_->LastError();
-        if (reason.empty())
-            reason = L"Wallpaper Engine 共享帧读取失败";
-        wallpaperEngineCapture_->RequestReconnect(reason);
-        return defer(L"DXGI Hook 中断，等待自动重连：" + reason);
+        return defer(waitingReason.empty()
+            ? L"等待 Wallpaper Engine 下一次 Present"
+            : waitingReason);
     }
 
     RECT client{};
@@ -485,7 +882,8 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     const LONG height = client.bottom - client.top;
     if (width <= 0 || height <= 0)
     {
-        wallpaperEngineCapture_->ReleaseFrames(false);
+        for (auto* capture : acquiredSessions)
+            capture->ReleaseFrames(false);
         return fail(L"主窗口客户区尺寸无效");
     }
     const UINT sampleW = std::max<UINT>(1,
@@ -495,7 +893,11 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     if (glassDynamicLayerBitmap_ &&
         (glassDynamicLayerBitmap_->GetPixelSize().width != sampleW ||
             glassDynamicLayerBitmap_->GetPixelSize().height != sampleH))
+    {
         glassDynamicLayerBitmap_.Reset();
+        glassCapturedDynamicWindows_.clear();
+    }
+    bool dynamicLayerCreated = false;
     if (!glassDynamicLayerBitmap_)
     {
         const D2D1_BITMAP_PROPERTIES1 targetProps = D2D1::BitmapProperties1(
@@ -507,9 +909,11 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
             &glassDynamicLayerBitmap_);
         if (FAILED(createHr) || !glassDynamicLayerBitmap_)
         {
-            wallpaperEngineCapture_->ReleaseFrames(false);
+            for (auto* capture : acquiredSessions)
+                capture->ReleaseFrames(false);
             return fail(L"共享纹理动态层创建失败");
         }
+        dynamicLayerCreated = true;
     }
 
     POINT origin{};
@@ -518,48 +922,137 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     glassEffectContext_->SetTarget(glassDynamicLayerBitmap_.Get());
     glassEffectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
     glassEffectContext_->BeginDraw();
-    glassEffectContext_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-    auto drawFrameAtRect = [this, origin, scale, sampleW, sampleH](
-        const WallpaperEngineFrame& frame, const RECT& desktopRect) {
+    if (dynamicLayerCreated)
+        glassEffectContext_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+    auto validRect = [](const RECT& rect) {
+        return rect.right > rect.left && rect.bottom > rect.top;
+    };
+    auto intersectionArea = [validRect](const RECT& left, const RECT& right) {
+        RECT intersection{};
+        if (!validRect(left) || !validRect(right) ||
+            !IntersectRect(&intersection, &left, &right))
+            return std::int64_t{ 0 };
+        return static_cast<std::int64_t>(intersection.right - intersection.left) *
+            static_cast<std::int64_t>(intersection.bottom - intersection.top);
+    };
+    auto drawFrameForOutput = [this, origin, scale, sampleW, sampleH, validRect](
+        const WallpaperEngineFrame& frame, const RECT& outputRect) {
         if (!frame.bitmap)
             return;
         const D2D1_SIZE_U sourceSize = frame.bitmap->GetPixelSize();
+        RECT drawRect = outputRect;
+        D2D1_RECT_F source = D2D1::RectF(0.0f, 0.0f,
+            static_cast<float>(sourceSize.width),
+            static_cast<float>(sourceSize.height));
+
+        // A renderer may publish one swap chain spanning multiple displays. Crop
+        // the corresponding source portion for this output instead of scaling the
+        // whole virtual-desktop frame independently onto every monitor.
+        if (validRect(frame.desktopRect) && validRect(outputRect))
+        {
+            RECT intersection{};
+            if (IntersectRect(&intersection, &frame.desktopRect, &outputRect))
+            {
+                const float frameWidth = static_cast<float>(
+                    frame.desktopRect.right - frame.desktopRect.left);
+                const float frameHeight = static_cast<float>(
+                    frame.desktopRect.bottom - frame.desktopRect.top);
+                source = D2D1::RectF(
+                    (intersection.left - frame.desktopRect.left) / frameWidth *
+                        sourceSize.width,
+                    (intersection.top - frame.desktopRect.top) / frameHeight *
+                        sourceSize.height,
+                    (intersection.right - frame.desktopRect.left) / frameWidth *
+                        sourceSize.width,
+                    (intersection.bottom - frame.desktopRect.top) / frameHeight *
+                        sourceSize.height);
+                drawRect = intersection;
+            }
+        }
         D2D1_RECT_F destination = D2D1::RectF(
-            (desktopRect.left - origin.x) * scale,
-            (desktopRect.top - origin.y) * scale,
-            (desktopRect.right - origin.x) * scale,
-            (desktopRect.bottom - origin.y) * scale);
+            (drawRect.left - origin.x) * scale,
+            (drawRect.top - origin.y) * scale,
+            (drawRect.right - origin.x) * scale,
+            (drawRect.bottom - origin.y) * scale);
         if (destination.right <= destination.left || destination.bottom <= destination.top)
         {
             destination = D2D1::RectF(0.0f, 0.0f,
                 static_cast<float>(sampleW), static_cast<float>(sampleH));
         }
         glassEffectContext_->DrawBitmap(frame.bitmap, destination, 1.0f,
-            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-            D2D1::RectF(0.0f, 0.0f, static_cast<float>(sourceSize.width),
-                static_cast<float>(sourceSize.height)));
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, source);
     };
-    for (const auto& frame : frames)
-        drawFrameAtRect(frame, frame.desktopRect);
 
-    // WPECloneView 没有独立 Present；它由 Wallpaper Engine 把主交换链克隆到
-    // 另一显示器。只有在 Hook 未发布该 HWND 的独立交换链时才复用首帧。
+    // Select one source for every dynamic output. This keeps a native wallpaper
+    // monitor untouched, allows scene/video/web renderers to coexist, and avoids
+    // a black DXGI compositor surface overriding an EVR D3D9 video frame.
     for (const auto& window : dynamicWallpaperWindows_)
     {
         wchar_t className[64]{};
         GetClassNameW(window.hwnd, className, static_cast<int>(std::size(className)));
-        if (_wcsicmp(className, L"WPECloneView") != 0)
-            continue;
-        const bool hasOwnSwapChain = std::any_of(frames.begin(), frames.end(),
-            [&window](const WallpaperEngineFrame& frame) {
-                return frame.outputWindow == window.hwnd;
-            });
-        if (!hasOwnSwapChain && !frames.empty())
-            drawFrameAtRect(frames.front(), window.rect);
+        const bool videoOutput = _wcsicmp(className, L"WPEVideoWallpaper") == 0 ||
+            _wcsicmp(className, L"EVRFullscreenVideo") == 0;
+        const bool cloneOutput = _wcsicmp(className, L"WPECloneView") == 0;
+        const WallpaperEngineFrame* selected = nullptr;
+        std::int64_t selectedScore = std::numeric_limits<std::int64_t>::min();
+        for (const auto& frame : frames)
+        {
+            const auto owner = captureOwnerPids.find(frame.processId);
+            const DWORD frameOwnerPid = owner != captureOwnerPids.end()
+                ? owner->second
+                : frame.processId;
+            const bool sameOwner = frameOwnerPid == window.rendererPid;
+            const bool exactWindow = frame.outputWindow == window.hwnd;
+            const bool relatedWindow = frame.outputWindow && window.hwnd &&
+                (IsChild(window.hwnd, frame.outputWindow) ||
+                    IsChild(frame.outputWindow, window.hwnd));
+            const std::int64_t overlap = intersectionArea(
+                frame.desktopRect, window.rect);
+            if (!exactWindow && !relatedWindow && overlap == 0 &&
+                !(cloneOutput && sameOwner))
+                continue;
+            if (!sameOwner && !exactWindow && !relatedWindow)
+                continue;
+
+            std::int64_t score = sameOwner ? 1000000000ll : 0ll;
+            if (exactWindow)
+                score += 4000000000000ll;
+            else if (relatedWindow)
+                score += 3000000000000ll;
+            if (overlap > 0)
+            {
+                const std::int64_t outputArea =
+                    static_cast<std::int64_t>(window.rect.right - window.rect.left) *
+                    static_cast<std::int64_t>(window.rect.bottom - window.rect.top);
+                if (outputArea > 0)
+                    score += std::min<std::int64_t>(2000000000000ll,
+                        overlap * 2000000000000ll / outputArea);
+            }
+            if (frame.d3d9Video == videoOutput)
+                score += 8000000000000ll;
+            if (score > selectedScore)
+            {
+                selected = &frame;
+                selectedScore = score;
+            }
+        }
+
+        if (selected)
+        {
+            drawFrameForOutput(*selected, window.rect);
+            glassCapturedDynamicWindows_.insert(window.hwnd);
+        }
+        else if (!glassCapturedDynamicWindows_.contains(window.hwnd))
+        {
+            waitingForSource = true;
+            if (waitingReason.empty())
+                waitingReason = L"等待 Wallpaper Engine 当前显示器输出帧";
+        }
     }
     const HRESULT composeHr = glassEffectContext_->EndDraw();
     glassEffectContext_->SetTarget(nullptr);
-    wallpaperEngineCapture_->ReleaseFrames(SUCCEEDED(composeHr));
+    for (auto* capture : acquiredSessions)
+        capture->ReleaseFrames(SUCCEEDED(composeHr));
     if (FAILED(composeHr))
     {
         wchar_t message[128]{};
@@ -568,13 +1061,17 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
         return fail(message);
     }
 
-    if (mode != 3 && glassRefreshTimerActive_)
+    if (waitingForSource)
     {
-        KillTimer(hwnd_, kGlassRefreshTimerId);
-        glassRefreshTimerActive_ = false;
+        dynamicWallpaperCaptureDeferred_ = true;
+        dynamicWallpaperCaptureError_ = waitingReason;
+        scheduleFrameRetry();
     }
-    dynamicWallpaperCaptureError_.clear();
-    dynamicWallpaperCaptureDeferred_ = false;
+    else
+    {
+        dynamicWallpaperCaptureError_.clear();
+        dynamicWallpaperCaptureDeferred_ = false;
+    }
     *outBitmap = glassDynamicLayerBitmap_.Get();
     (*outBitmap)->AddRef();
     return true;
@@ -754,10 +1251,53 @@ inline bool DesktopApp::ComposeGlassDynamicFrame(ID2D1Bitmap1* frame)
     return SUCCEEDED(hr);
 }
 
+inline void DesktopApp::ClearGlassBackdropTransition()
+{
+    glassPreviousBackdropBitmap_.Reset();
+    glassPreviousBackdropRadiusCache_.clear();
+    glassTransitionStartTick_ = 0;
+    glassTransitionDurationMs_ = 0;
+    if (glassTransitionTimerActive_)
+    {
+        if (hwnd_ && IsWindow(hwnd_))
+            KillTimer(hwnd_, kGlassTransitionTimerId);
+        glassTransitionTimerActive_ = false;
+    }
+}
+
+inline void DesktopApp::BeginGlassBackdropTransition(int refreshMode)
+{
+    refreshMode = std::clamp(refreshMode, 0, 3);
+    const bool canTransition = (refreshMode == 1 || refreshMode == 2) &&
+        !glassBackdropRadiusCache_.empty();
+    if (!canTransition)
+    {
+        ClearGlassBackdropTransition();
+        glassBackdropBitmap_.Reset();
+        glassBackdropRadiusCache_.clear();
+        return;
+    }
+
+    glassPreviousBackdropRadiusCache_ = std::move(glassBackdropRadiusCache_);
+    glassPreviousBackdropBitmap_ = glassBackdropBitmap_;
+    glassBackdropBitmap_.Reset();
+    glassTransitionStartTick_ = GetTickCount();
+    glassTransitionDurationMs_ = refreshMode == 1
+        ? kGlassTransitionLowMs
+        : kGlassTransitionMidMs;
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(hwnd_, kGlassTransitionTimerId,
+            kGlassTransitionFrameMs, nullptr);
+        glassTransitionTimerActive_ = true;
+    }
+}
+
 /**
  * @brief 将 0.5x 位图高斯模糊到 glassBackdropBitmap_。
  * @details 同一源帧按半径缓存输出，使不同 Lua 组件可以使用独立半径，
- *          同时避免每个面板重复执行高斯模糊。
+ *          同时避免每个面板重复执行高斯模糊。每台物理显示器先独立裁剪，
+ *          使用硬边界扩展完成模糊，再拼回原区域，禁止跨屏采样颜色。
  * @return 成功返回 true
  */
 inline bool DesktopApp::BlurGlassBitmapToBackdrop(ID2D1Bitmap1* source, float blurRadius)
@@ -768,6 +1308,13 @@ inline bool DesktopApp::BlurGlassBitmapToBackdrop(ID2D1Bitmap1* source, float bl
     blurRadius = std::clamp(blurRadius, 4.0f, 48.0f);
     const int radiusKey = static_cast<int>(std::lround(blurRadius));
     blurRadius = static_cast<float>(radiusKey);
+    auto selectPreviousRadius = [this, radiusKey]() {
+        const auto previous = glassPreviousBackdropRadiusCache_.find(radiusKey);
+        if (previous != glassPreviousBackdropRadiusCache_.end())
+            glassPreviousBackdropBitmap_ = previous->second;
+        else
+            glassPreviousBackdropBitmap_.Reset();
+    };
     auto cached = glassBackdropRadiusCache_.find(radiusKey);
     if (cached != glassBackdropRadiusCache_.end())
     {
@@ -775,6 +1322,7 @@ inline bool DesktopApp::BlurGlassBitmapToBackdrop(ID2D1Bitmap1* source, float bl
         if (cachedSize.width == size.width && cachedSize.height == size.height)
         {
             glassBackdropBitmap_ = cached->second;
+            selectPreviousRadius();
             return true;
         }
         glassBackdropRadiusCache_.erase(cached);
@@ -788,21 +1336,109 @@ inline bool DesktopApp::BlurGlassBitmapToBackdrop(ID2D1Bitmap1* source, float bl
             &target)) || !target)
         return false;
 
-    ComPtr<ID2D1Effect> blur;
-    if (FAILED(glassEffectContext_->CreateEffect(CLSID_D2D1GaussianBlur, &blur)) || !blur)
+    POINT windowOrigin{};
+    SetLastError(ERROR_SUCCESS);
+    if (!MapWindowPoints(hwnd_, nullptr, &windowOrigin, 1))
+    {
+        const DWORD mapError = GetLastError();
+        if (mapError != ERROR_SUCCESS)
+            return false;
+    }
+    struct MonitorRegionContext {
+        std::vector<D2D1_RECT_F>* regions = nullptr;
+        POINT origin{};
+        D2D1_SIZE_U bitmapSize{};
+    } monitorContext{};
+    std::vector<D2D1_RECT_F> monitorRegions;
+    monitorContext.regions = &monitorRegions;
+    monitorContext.origin = windowOrigin;
+    monitorContext.bitmapSize = size;
+    EnumDisplayMonitors(nullptr, nullptr,
+        [](HMONITOR, HDC, LPRECT monitorRect, LPARAM parameter) -> BOOL {
+            auto* context = reinterpret_cast<MonitorRegionContext*>(parameter);
+            D2D1_RECT_F region = D2D1::RectF(
+                (monitorRect->left - context->origin.x) * kGlassBackdropScale,
+                (monitorRect->top - context->origin.y) * kGlassBackdropScale,
+                (monitorRect->right - context->origin.x) * kGlassBackdropScale,
+                (monitorRect->bottom - context->origin.y) * kGlassBackdropScale);
+            region.left = std::clamp(region.left, 0.0f,
+                static_cast<float>(context->bitmapSize.width));
+            region.top = std::clamp(region.top, 0.0f,
+                static_cast<float>(context->bitmapSize.height));
+            region.right = std::clamp(region.right, 0.0f,
+                static_cast<float>(context->bitmapSize.width));
+            region.bottom = std::clamp(region.bottom, 0.0f,
+                static_cast<float>(context->bitmapSize.height));
+            if (region.right > region.left && region.bottom > region.top)
+            {
+                const bool duplicate = std::any_of(context->regions->begin(),
+                    context->regions->end(), [&region](const D2D1_RECT_F& existing) {
+                        return existing.left == region.left &&
+                            existing.top == region.top &&
+                            existing.right == region.right &&
+                            existing.bottom == region.bottom;
+                    });
+                if (!duplicate)
+                    context->regions->push_back(region);
+            }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&monitorContext));
+    if (monitorRegions.empty())
         return false;
-    blur->SetInput(0, source);
-    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
-        blurRadius * kGlassBackdropScale);
-    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_SOFT);
-    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,
-        D2D1_GAUSSIANBLUR_OPTIMIZATION_QUALITY);
+
+    struct MonitorBlurEffect {
+        D2D1_RECT_F destination{};
+        D2D1_RECT_F imageBounds{};
+        ComPtr<ID2D1Effect> crop;
+        ComPtr<ID2D1Effect> blur;
+        ComPtr<ID2D1Image> output;
+    };
+    std::vector<MonitorBlurEffect> monitorEffects;
+    monitorEffects.reserve(monitorRegions.size());
+    for (const auto& region : monitorRegions)
+    {
+        MonitorBlurEffect effect{};
+        effect.destination = region;
+        if (FAILED(glassEffectContext_->CreateEffect(CLSID_D2D1Crop,
+                &effect.crop)) || !effect.crop ||
+            FAILED(glassEffectContext_->CreateEffect(CLSID_D2D1GaussianBlur,
+                &effect.blur)) || !effect.blur)
+            return false;
+        effect.crop->SetInput(0, source);
+        effect.crop->SetValue(D2D1_CROP_PROP_RECT, region);
+        effect.crop->SetValue(D2D1_CROP_PROP_BORDER_MODE,
+            D2D1_BORDER_MODE_HARD);
+        effect.blur->SetInputEffect(0, effect.crop.Get());
+        effect.blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
+            blurRadius * kGlassBackdropScale);
+        effect.blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE,
+            D2D1_BORDER_MODE_HARD);
+        effect.blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,
+            D2D1_GAUSSIANBLUR_OPTIMIZATION_QUALITY);
+        effect.blur->GetOutput(&effect.output);
+        if (!effect.output ||
+            FAILED(glassEffectContext_->GetImageLocalBounds(effect.output.Get(),
+                &effect.imageBounds)) ||
+            effect.imageBounds.right <= effect.imageBounds.left ||
+            effect.imageBounds.bottom <= effect.imageBounds.top)
+            return false;
+        monitorEffects.push_back(std::move(effect));
+    }
 
     glassEffectContext_->SetTarget(target.Get());
     glassEffectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
     glassEffectContext_->BeginDraw();
     glassEffectContext_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-    glassEffectContext_->DrawImage(blur.Get());
+    for (const auto& effect : monitorEffects)
+    {
+        glassEffectContext_->PushAxisAlignedClip(effect.destination,
+            D2D1_ANTIALIAS_MODE_ALIASED);
+        glassEffectContext_->DrawImage(effect.output.Get(),
+            D2D1::Point2F(effect.destination.left, effect.destination.top),
+            effect.imageBounds, D2D1_INTERPOLATION_MODE_LINEAR,
+            D2D1_COMPOSITE_MODE_SOURCE_COPY);
+        glassEffectContext_->PopAxisAlignedClip();
+    }
     HRESULT hr = glassEffectContext_->EndDraw();
     glassEffectContext_->SetTarget(nullptr);
     if (FAILED(hr))
@@ -812,6 +1448,7 @@ inline bool DesktopApp::BlurGlassBitmapToBackdrop(ID2D1Bitmap1* source, float bl
         glassBackdropRadiusCache_.erase(glassBackdropRadiusCache_.begin());
     glassBackdropRadiusCache_[radiusKey] = target;
     glassBackdropBitmap_ = std::move(target);
+    selectPreviousRadius();
     return true;
 }
 
@@ -904,13 +1541,13 @@ inline bool DesktopApp::EnsureGlassBackdrop(float blurRadius, int refreshMode)
     const UINT sampleH = std::max<UINT>(1,
         static_cast<UINT>(std::lround(height * kGlassBackdropScale)));
 
+    bool staticLayerChanged = false;
     if (staticSig != glassStaticSignature_ || !glassStaticLayerBitmap_)
     {
         if (!ComposeGlassStaticLayer(sources, position, bgColor, sampleW, sampleH))
             return false;
-        glassBackdropBitmap_.Reset();
-        glassBackdropRadiusCache_.clear();
         glassStaticSignature_ = staticSig;
+        staticLayerChanged = true;
     }
 
     // ── 2. 动态/静态分支 → 模糊输出 ────────────────────────
@@ -918,11 +1555,8 @@ inline bool DesktopApp::EnsureGlassBackdrop(float blurRadius, int refreshMode)
 
     if (!dynamicActive)
     {
-        if (glassWasDynamic_)
-        {
-            glassBackdropBitmap_.Reset();
-            glassBackdropRadiusCache_.clear();
-        }
+        if (staticLayerChanged || glassWasDynamic_)
+            BeginGlassBackdropTransition(refreshMode);
         if (!BlurGlassBitmapToBackdrop(glassStaticLayerBitmap_.Get(), blurRadius))
             return false;
         glassBackdropSignature_ = staticSig;
@@ -961,16 +1595,15 @@ inline bool DesktopApp::EnsureGlassBackdrop(float blurRadius, int refreshMode)
             }
             dynamicWallpaperIncompatible_ = true;
             dynamicWallpaperIncompatibleTick_ = GetTickCount();
-            if (wallpaperEngineCapture_)
-                wallpaperEngineCapture_->Stop();
-            wallpaperEngineCapture_.reset();
-            std::wstring message = L"Dynamic wallpaper DXGI Hook failed: ";
+            StopWallpaperEngineCaptures();
+            std::wstring message = L"Dynamic wallpaper GPU Hook failed: ";
             message += dynamicWallpaperCaptureError_.empty()
                 ? L"unknown stage"
                 : dynamicWallpaperCaptureError_;
             WriteCrashLogEntry(message.c_str());
             glassBackdropBitmap_.Reset();
             glassBackdropRadiusCache_.clear();
+            ClearGlassBackdropTransition();
             glassBackdropSignature_.clear();
             glassWasDynamic_ = false;
             glassBackdropDirty_ = false;
@@ -982,22 +1615,22 @@ inline bool DesktopApp::EnsureGlassBackdrop(float blurRadius, int refreshMode)
             if (!ComposeGlassDynamicFrame(frame.Get()))
             {
                 dynamicWallpaperCaptureError_ = L"D2D 动态帧合成失败";
-                WriteCrashLogEntry(L"Dynamic wallpaper DXGI Hook failed: D2D compose");
+                WriteCrashLogEntry(L"Dynamic wallpaper GPU Hook failed: D2D compose");
                 return false;
             }
-            // glassComposeBitmap_ 已写入新帧，所有半径的旧模糊结果均失效。
-            glassBackdropBitmap_.Reset();
-            glassBackdropRadiusCache_.clear();
+            // glassComposeBitmap_ 已写入新帧。低/中频保留上一组模糊结果，
+            // 由绘制路径在短时间内做 GPU 交叉淡化；其他档直接替换。
+            BeginGlassBackdropTransition(refreshMode);
             if (!BlurGlassBitmapToBackdrop(glassComposeBitmap_.Get(), blurRadius))
             {
                 dynamicWallpaperCaptureError_ = L"D2D 高斯模糊失败";
-                WriteCrashLogEntry(L"Dynamic wallpaper DXGI Hook failed: D2D blur");
+                WriteCrashLogEntry(L"Dynamic wallpaper GPU Hook failed: D2D blur");
                 return false;
             }
             frame.Reset();
 
             if (!glassWasDynamic_)
-                WriteCrashLogEntry(L"Dynamic wallpaper DXGI shared texture active");
+                WriteCrashLogEntry(L"Dynamic wallpaper GPU shared texture active");
             glassBackdropSignature_ = finalSig;
             glassWasDynamic_ = true;
         }
@@ -1005,6 +1638,15 @@ inline bool DesktopApp::EnsureGlassBackdrop(float blurRadius, int refreshMode)
 
     glassBackdropDirty_ = false;
     glassLastCaptureTick_ = GetTickCount();
+    if ((refreshMode == 1 || refreshMode == 2) &&
+        glassRefreshTimerActive_ && hwnd_ && IsWindow(hwnd_))
+    {
+        const UINT interval = refreshMode == 1
+            ? static_cast<UINT>(kGlassRefreshLowMs)
+            : static_cast<UINT>(kGlassRefreshMidMs);
+        SetTimer(hwnd_, kGlassRefreshTimerId, interval, nullptr);
+        glassRefreshTimerIntervalMs_ = interval;
+    }
     return glassBackdropBitmap_ != nullptr;
 }
 
@@ -1036,7 +1678,27 @@ inline void DesktopApp::DrawGlassBackdropRegion(ID2D1DeviceContext* ctx, RECT fr
             clipped = true;
         }
     }
-    ctx->DrawBitmap(glassBackdropBitmap_.Get(), dest, 1.0f,
+    float currentOpacity = 1.0f;
+    bool drawPrevious = glassPreviousBackdropBitmap_ &&
+        glassTransitionStartTick_ != 0 && glassTransitionDurationMs_ != 0;
+    if (drawPrevious)
+    {
+        const D2D1_SIZE_U currentSize = glassBackdropBitmap_->GetPixelSize();
+        const D2D1_SIZE_U previousSize = glassPreviousBackdropBitmap_->GetPixelSize();
+        drawPrevious = currentSize.width == previousSize.width &&
+            currentSize.height == previousSize.height;
+    }
+    if (drawPrevious)
+    {
+        const DWORD elapsed = GetTickCount() - glassTransitionStartTick_;
+        currentOpacity = std::clamp(
+            static_cast<float>(elapsed) /
+                static_cast<float>(glassTransitionDurationMs_),
+            0.0f, 1.0f);
+        ctx->DrawBitmap(glassPreviousBackdropBitmap_.Get(), dest, 1.0f,
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
+    }
+    ctx->DrawBitmap(glassBackdropBitmap_.Get(), dest, currentOpacity,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
     if (clipped) ctx->PopLayer();
 }
@@ -1083,14 +1745,14 @@ inline std::wstring DesktopApp::GetDynamicWallpaperStatusText() const
     if (dynamicWallpaperIncompatible_)
     {
         if (!dynamicWallpaperCaptureError_.empty())
-            return L"DXGI Hook 捕获失败：" + dynamicWallpaperCaptureError_;
-        return L"DXGI Hook 捕获失败";
+            return L"GPU Hook 捕获失败：" + dynamicWallpaperCaptureError_;
+        return L"GPU Hook 捕获失败";
     }
     if (dynamicWallpaperCaptureDeferred_)
     {
         if (dynamicWallpaperCaptureError_.find(L"重连") != std::wstring::npos)
             return dynamicWallpaperCaptureError_;
-        return L"DXGI Hook 已连接，等待 Wallpaper Engine 下一帧";
+        return L"GPU Hook 已连接，等待 Wallpaper Engine 下一帧";
     }
     if (!dynamicWallpaperEngine_.empty())
         return L"已通过 DXGI 共享纹理捕获 " + dynamicWallpaperEngine_;
@@ -1102,9 +1764,9 @@ inline std::wstring DesktopApp::GetDynamicWallpaperStatusText() const
  * @details 每帧 OnPaint 调用一次：
  *          - 玻璃整体关闭时释放快照/静态层/壁纸缓存并停止实时定时器；
  *          - 隐藏图标期间置脏，恢复显示时强制重评估；
- *          - 低频/中频档按时间戳做周期兜底失效（仅在发生重绘时生效）；
- *          - 实时档维护约 15fps 的重绘定时器（静态场景签名不变时重绘零成本，
- *            动态壁纸场景则逐帧重捕）。
+ *          - 仅事件档用 WinEvent 感知动态壁纸窗口生命周期，系统消息感知原生壁纸；
+ *          - 低频/中频/实时档分别维护 3s/1s/66ms 重绘定时器；
+ *          - 静态场景签名不变时重绘零成本，动态场景按档位请求新共享帧。
  */
 inline void DesktopApp::UpdateGlassRefreshState()
 {
@@ -1130,20 +1792,20 @@ inline void DesktopApp::UpdateGlassRefreshState()
         if (glassBackdropBitmap_)
             glassBackdropBitmap_.Reset();
         glassBackdropRadiusCache_.clear();
+        ClearGlassBackdropTransition();
         if (glassStaticLayerBitmap_)
             glassStaticLayerBitmap_.Reset();
         if (glassComposeBitmap_)
             glassComposeBitmap_.Reset();
         if (glassDynamicLayerBitmap_)
             glassDynamicLayerBitmap_.Reset();
+        glassCapturedDynamicWindows_.clear();
         glassWallpaperCache_.clear();
         glassBackdropSignature_.clear();
         glassStaticSignature_.clear();
         glassBackdropDirty_ = true;
         glassWasDynamic_ = false;
-        if (wallpaperEngineCapture_)
-            wallpaperEngineCapture_->Stop();
-        wallpaperEngineCapture_.reset();
+        StopWallpaperEngineCaptures();
         dynamicWallpaperWindows_.clear();
         dynamicWallpaperEngine_.clear();
         dynamicWallpaperCaptureError_.clear();
@@ -1152,14 +1814,18 @@ inline void DesktopApp::UpdateGlassRefreshState()
         glassEffectiveRefreshMode_ = 0;
         glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
         glassLastDetectTick_ = 0;
+        StopGlassWallpaperEventMonitor();
         if (glassRefreshTimerActive_)
         {
             if (hwnd_ && IsWindow(hwnd_))
                 KillTimer(hwnd_, kGlassRefreshTimerId);
             glassRefreshTimerActive_ = false;
+            glassRefreshTimerIntervalMs_ = 0;
         }
         return;
     }
+
+    StartGlassWallpaperEventMonitor();
 
     if (desktopIconsHidden_)
         glassBackdropDirty_ = true;
@@ -1181,17 +1847,29 @@ inline void DesktopApp::UpdateGlassRefreshState()
         glassBackdropDirty_ = true;
     }
 
-    const bool wantTimer = mode == 3 && !desktopIconsHidden_ &&
-        hwnd_ && IsWindow(hwnd_);
-    if (wantTimer && !glassRefreshTimerActive_)
+    UINT desiredInterval = 0;
+    if (!desktopIconsHidden_)
     {
-        SetTimer(hwnd_, kGlassRefreshTimerId, kGlassRefreshRealtimeIntervalMs, nullptr);
-        glassRefreshTimerActive_ = true;
+        if (mode == 1)
+            desiredInterval = static_cast<UINT>(kGlassRefreshLowMs);
+        else if (mode == 2)
+            desiredInterval = static_cast<UINT>(kGlassRefreshMidMs);
+        else if (mode == 3)
+            desiredInterval = kGlassRefreshRealtimeIntervalMs;
     }
-    else if (!wantTimer && glassRefreshTimerActive_)
+    const bool canUseTimer = desiredInterval != 0 && hwnd_ && IsWindow(hwnd_);
+    if (glassRefreshTimerActive_ &&
+        (!canUseTimer || glassRefreshTimerIntervalMs_ != desiredInterval))
     {
         if (hwnd_ && IsWindow(hwnd_))
             KillTimer(hwnd_, kGlassRefreshTimerId);
         glassRefreshTimerActive_ = false;
+        glassRefreshTimerIntervalMs_ = 0;
+    }
+    if (canUseTimer && !glassRefreshTimerActive_)
+    {
+        SetTimer(hwnd_, kGlassRefreshTimerId, desiredInterval, nullptr);
+        glassRefreshTimerActive_ = true;
+        glassRefreshTimerIntervalMs_ = desiredInterval;
     }
 }
