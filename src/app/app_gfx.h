@@ -1739,8 +1739,10 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
     if (suppressDesktopWidgetTargets)
         lastMousePoint_ = interactionMousePoint;
 
-    if (DockContainer* dock = GetDockContainer())
+    for (const auto& container : containers_)
     {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
         dock->DrawChrome(ctx, lastMousePoint_);
         dock->DrawContents(ctx);
     }
@@ -1760,8 +1762,9 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     {
         if (widgetDockTarget_)
         {
-            if (DockContainer* dock = GetDockContainer())
-                dock->DrawInsertionPreview(ctx, widgetDockInsertIndex_);
+            if (widgetDockTargetContainer_)
+                widgetDockTargetContainer_->DrawInsertionPreview(
+                    ctx, widgetDockInsertIndex_);
         }
         else
         {

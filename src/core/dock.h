@@ -90,7 +90,7 @@ private:
     RECT bounds_{};
 };
 
-/** 首屏底部的单行 Dock 容器。 */
+/** 单台显示器边缘的 Dock 容器；多个实例共享同一份 Dock 数据。 */
 class DockContainer final : public Container
 {
 public:
@@ -128,6 +128,7 @@ private:
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     size_t SortableEntryCount() const;
+    int ItemIconSize() const;
     int ItemPitch() const;
     int EdgeMargin() const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;

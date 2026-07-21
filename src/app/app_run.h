@@ -25,8 +25,8 @@
  */
 inline DesktopApp::~DesktopApp()
 {
-    if (customDesktopVisible_ && dockSettings_.systemTaskbarBackdropEnabled)
-        ApplySystemTaskbarBackdrop(false, dockSettings_,
+    if (dockSettings_.systemTaskbarBackdropEnabled)
+        ApplySystemTaskbarBackdrop(false,
             ResolveSystemTaskbarAppearance(dockSettings_));
     StopQuickNavigationAppIndexing();
     StopIconLoader();
@@ -403,7 +403,7 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
     if (dockSettings_.systemTaskbarBackdropEnabled)
     {
-        ApplySystemTaskbarBackdrop(true, dockSettings_,
+        ApplySystemTaskbarBackdrop(true,
             ResolveSystemTaskbarAppearance(dockSettings_));
         systemTaskbarBackdropRefreshTick_ = GetTickCount();
     }
@@ -923,11 +923,10 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
         settingsWindow_->SetInvalidateCallback([this]() {
-            if (customDesktopVisible_ &&
-                dockSettings_.systemTaskbarBackdropEnabled &&
+            if (dockSettings_.systemTaskbarBackdropEnabled &&
                 dockSettings_.systemTaskbarFollowPersonalization)
             {
-                ApplySystemTaskbarBackdrop(true, dockSettings_,
+                ApplySystemTaskbarBackdrop(true,
                     ResolveSystemTaskbarAppearance(dockSettings_));
             }
             if (hwnd_)
@@ -967,6 +966,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetDockSettingsChangedCallback([this]() {
             const DockPosition previousPosition = dockSettings_.position;
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
+            const DockMonitorScope previousMonitorScope = dockSettings_.monitorScope;
             const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
             const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
             const int previousFrequentItemCount = dockSettings_.frequentItemCount;
@@ -976,6 +976,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             InvalidateGlassBackdrop();
             if (dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
+                dockSettings_.monitorScope != previousMonitorScope ||
                 dockSettings_.showWindowsButton != previousShowWindowsButton ||
                 dockSettings_.showFrequentItems != previousShowFrequentItems ||
                 dockSettings_.frequentItemCount != previousFrequentItemCount ||
@@ -1356,7 +1357,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (GetCursorPos(&point))
         {
             ScreenToClient(hwnd_, &point);
-            if (DockContainer* dock = GetDockContainer())
+            if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
                 const RECT dockBounds = dock->GetBounds();
                 if (PtInRect(&dockBounds, point))
@@ -1456,7 +1457,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             return 0;
         }
 
-        if (DockContainer* dock = GetDockContainer())
+        if (DockContainer* dock = GetDockContainerAtPoint(pt))
         {
             RECT dockBounds = dock->GetBounds();
             if (PtInRect(&dockBounds, pt))

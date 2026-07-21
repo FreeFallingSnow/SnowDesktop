@@ -608,13 +608,15 @@ private:
     void LayoutItems();
     /** @brief 重建容器（网格、部件）和面向对象项列表。 */
     void RebuildContainersAndItems();
-    /** @brief 为首屏 Dock 预留工作区并计算其绘制区域。 */
+    /** @brief 为目标显示器上的 Dock 预留工作区并计算各自绘制区域。 */
     void ApplyDockWorkAreaReservation();
     DockContainer* GetDockContainer() const;
+    DockContainer* GetDockContainerAtPoint(POINT point) const;
+    void InvalidateDockContainers();
+    void InvalidateDockRects(BOOL erase = FALSE) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
-    int GetDockItemIconSize() const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
-        size_t insertIndex, int mods);
+        DockContainer* targetDock, size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
     void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
@@ -1885,7 +1887,8 @@ private:
     inline static std::atomic<HWND> dockForegroundWindow_{ nullptr };
     inline static std::atomic<HWND> dockPreviousForegroundWindow_{ nullptr };
     inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
-    RECT dockArea_{};
+    std::vector<RECT> dockAreas_;
+    DockContainer* dockPressedContainer_ = nullptr;
     size_t dockPressedEntry_ = static_cast<size_t>(-1);
     size_t dockPressedFrequentItem_ = static_cast<size_t>(-1);
     std::wstring dockPressedRunningAppKey_;
@@ -2028,6 +2031,7 @@ private:
     GridSpan widgetPreviewSpan_{};
     bool widgetPreviewOccupied_ = false;
     bool widgetDockTarget_ = false;
+    DockContainer* widgetDockTargetContainer_ = nullptr;
     size_t widgetDockInsertIndex_ = 0;
     size_t dockHandoffDwellIndex_ = static_cast<size_t>(-1);
     DWORD dockHandoffDwellStartTick_ = 0;

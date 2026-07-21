@@ -331,6 +331,18 @@ void SettingsWindow::Render()
 {
     if (hwnd_ == nullptr || !IsWindowVisible(hwnd_) || IsIconic(hwnd_)) return;
     if (swapChain_ == nullptr) return;
+    if (renderInProgress_)
+    {
+        renderRequested_ = true;
+        return;
+    }
+
+    renderInProgress_ = true;
+    struct RenderScope final
+    {
+        bool& inProgress;
+        ~RenderScope() { inProgress = false; }
+    } renderScope{ renderInProgress_ };
 
     renderRequested_ = false;
 
@@ -902,7 +914,7 @@ void SettingsWindow::DrawDockPage()
     ImGui::Separator();
     ImGui::Spacing();
 
-    if (ImGui::Checkbox("启用主屏 Dock", &dockEnabled_))
+    if (ImGui::Checkbox("启用 Dock 栏", &dockEnabled_))
     {
         if (dockEnabledChangedCallback_)
             dockEnabledChangedCallback_(dockEnabled_);
@@ -925,6 +937,34 @@ void SettingsWindow::DrawDockPage()
     {
         dockSettings_.position = static_cast<DockPosition>(position);
         markChanged();
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("显示范围");
+    ImGui::SameLine(labelW);
+    const char* monitorScopeNames[] = { "仅首屏", "仅末屏", "所有屏幕" };
+    int monitorScope = std::clamp(
+        static_cast<int>(dockSettings_.monitorScope), 0, 2);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##DockMonitorScope", &monitorScope,
+        monitorScopeNames, IM_ARRAYSIZE(monitorScopeNames)))
+    {
+        dockSettings_.monitorScope = static_cast<DockMonitorScope>(monitorScope);
+        markChanged();
+    }
+    ImGui::SameLine();
+    switch (dockSettings_.monitorScope)
+    {
+    case DockMonitorScope::Last:
+        ImGui::TextDisabled("(显示在桌面页顺序的最后一块屏幕上)");
+        break;
+    case DockMonitorScope::All:
+        ImGui::TextDisabled("(各屏显示并操作同一份 Dock 内容)");
+        break;
+    case DockMonitorScope::First:
+    default:
+        ImGui::TextDisabled("(默认，显示在桌面页顺序的第一块屏幕上)");
+        break;
     }
 
     ImGui::Spacing();
@@ -1112,39 +1152,31 @@ void SettingsWindow::DrawSystemTaskbarPage()
 
     if (ImGui::Checkbox("自动隐藏系统任务栏",
         &dockSettings_.systemTaskbarAutoHide))
-    {
-        if (dockSettings_.systemTaskbarAutoHide)
-            dockSettings_.systemTaskbarBackdropEnabled = false;
         markChanged();
-    }
     ImGui::SameLine();
     ImGui::TextDisabled("(修改 Windows 全局任务栏设置)");
     ImGui::TextDisabled(
         "底部岛式 Dock 会保护其正下方区域；靠边模式不保护，以便正常唤出任务栏。");
 
     ImGui::Spacing();
-    if (ImGui::Checkbox("启用系统任务栏高斯背景",
+    if (ImGui::Checkbox("系统任务栏个性化",
         &dockSettings_.systemTaskbarBackdropEnabled))
-    {
-        if (dockSettings_.systemTaskbarBackdropEnabled)
-            dockSettings_.systemTaskbarAutoHide = false;
         markChanged();
-    }
     ImGui::SameLine();
-    ImGui::TextDisabled("(背景直接绘制在 Explorer 任务栏层)");
+    ImGui::TextDisabled("(背景与边框直接绘制在 Explorer 任务栏层)");
     if (dockSettings_.systemTaskbarBackdropEnabled)
     {
         const char* runtimeStatus = "正在连接 Explorer 任务栏...";
         switch (GetSystemTaskbarBackdropRuntimeState())
         {
         case SystemTaskbarBackdropRuntimeState::Active:
-            runtimeStatus = "系统任务栏高斯背景已启用";
+            runtimeStatus = "系统任务栏个性化已启用";
             break;
         case SystemTaskbarBackdropRuntimeState::Unsupported:
-            runtimeStatus = "当前系统不支持 Win11 XAML 任务栏背景方案";
+            runtimeStatus = "当前系统不支持 Win11 XAML 任务栏个性化方案";
             break;
         case SystemTaskbarBackdropRuntimeState::Failed:
-            runtimeStatus = "Explorer 任务栏背景连接失败，请重启 Explorer 后重试";
+            runtimeStatus = "Explorer 任务栏个性化连接失败，请重启 Explorer 后重试";
             break;
         case SystemTaskbarBackdropRuntimeState::Disabled:
         case SystemTaskbarBackdropRuntimeState::Loading:
@@ -1153,7 +1185,7 @@ void SettingsWindow::DrawSystemTaskbarPage()
         }
         ImGui::TextDisabled("%s", runtimeStatus);
     }
-    ImGui::TextDisabled("自动隐藏与透明背景互斥；请勿与 TranslucentTB 等美化工具同时启用。");
+    ImGui::TextDisabled("可与自动隐藏同时启用；请勿与 TranslucentTB 等美化工具同时启用。");
 
     ImGui::Spacing();
     ImGui::Text("独立外观");
@@ -1224,19 +1256,6 @@ void SettingsWindow::DrawSystemTaskbarPage()
         4.0f, 48.0f, "%.0f px"))
         markChanged();
 
-    ImGui::Text("背景刷新");
-    ImGui::SameLine(labelW);
-    ImGui::SetNextItemWidth(controlW);
-    const char* refreshNames[] = {
-        "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
-    };
-    int refreshIndex = std::clamp(style.glassRefreshMode, 0, 3);
-    if (ImGui::Combo("##SystemTaskbarGlassRefreshMode", &refreshIndex,
-        refreshNames, static_cast<int>(std::size(refreshNames))))
-    {
-        style.glassRefreshMode = refreshIndex;
-        markChanged();
-    }
     ImGui::EndDisabled();
 
     ImGui::Spacing();
@@ -1260,11 +1279,18 @@ void SettingsWindow::DrawSystemTaskbarPage()
     ImGui::Separator();
     ImGui::Spacing();
     ImGui::Text("Windows 主题");
-    ImGui::Text("默认 Windows 模式");
-    ImGui::SameLine(labelW);
+    const char* windowsThemeLabel = "默认 Windows 模式";
+    const float windowsThemeRowWidth = ImGui::GetContentRegionAvail().x;
+    const float windowsThemeLabelW = std::max(labelW,
+        ImGui::CalcTextSize(windowsThemeLabel).x + 16.0f * dpiScale_);
+    const float windowsThemeControlW = std::max(100.0f * dpiScale_,
+        std::min(controlW, windowsThemeRowWidth - windowsThemeLabelW -
+            ImGui::GetStyle().ItemSpacing.x));
+    ImGui::TextUnformatted(windowsThemeLabel);
+    ImGui::SameLine(windowsThemeLabelW);
     const char* windowsThemeNames[] = { "浅色", "深色" };
     int windowsTheme = IsWindowsSystemLightThemeEnabled() ? 0 : 1;
-    ImGui::SetNextItemWidth(controlW);
+    ImGui::SetNextItemWidth(windowsThemeControlW);
     if (ImGui::Combo("##WindowsSystemTheme", &windowsTheme,
         windowsThemeNames, IM_ARRAYSIZE(windowsThemeNames)))
     {
@@ -2920,9 +2946,8 @@ bool SettingsWindow::DeleteBackup(const std::wstring& filename)
 /**
  * @brief 创建 DirectX 交换链及渲染目标视图。
  *
- * 根据窗口当前客户区尺寸重新创建交换链，
- * 同时更新 ImGui 的 DisplaySize。
- * 调用前会清理旧的交换链资源。
+ * 根据窗口当前客户区尺寸调整已有交换链，
+ * 仅在尚未创建或调整失败时重新创建，并同步 ImGui DisplaySize。
  * @return true 创建成功
  */
 bool SettingsWindow::CreateSwapChain()
@@ -2932,27 +2957,42 @@ bool SettingsWindow::CreateSwapChain()
     windowWidth_ = (cr.right - cr.left > 1) ? (cr.right - cr.left) : 1;
     windowHeight_ = (cr.bottom - cr.top > 1) ? (cr.bottom - cr.top) : 1;
 
-    CleanupSwapChain();
-    device_->GetImmediateContext(&context_);
+    if (!context_)
+        device_->GetImmediateContext(&context_);
+    context_->OMSetRenderTargets(0, nullptr, nullptr);
+    rtv_.Reset();
 
-    ComPtr<IDXGIDevice> dxgiDevice;
-    if (FAILED(device_.As(&dxgiDevice))) return false;
-    ComPtr<IDXGIAdapter> adapter;
-    if (FAILED(dxgiDevice->GetAdapter(&adapter))) return false;
-    ComPtr<IDXGIFactory2> factory;
-    if (FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) return false;
+    if (swapChain_)
+    {
+        const HRESULT resizeResult = swapChain_->ResizeBuffers(0,
+            static_cast<UINT>(windowWidth_), static_cast<UINT>(windowHeight_),
+            DXGI_FORMAT_UNKNOWN, 0);
+        if (FAILED(resizeResult))
+            swapChain_.Reset();
+    }
 
-    DXGI_SWAP_CHAIN_DESC1 desc = {};
-    desc.Width = static_cast<UINT>(windowWidth_);
-    desc.Height = static_cast<UINT>(windowHeight_);
-    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    desc.BufferCount = 2;
-    desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    if (!swapChain_)
+    {
+        ComPtr<IDXGIDevice> dxgiDevice;
+        if (FAILED(device_.As(&dxgiDevice))) return false;
+        ComPtr<IDXGIAdapter> adapter;
+        if (FAILED(dxgiDevice->GetAdapter(&adapter))) return false;
+        ComPtr<IDXGIFactory2> factory;
+        if (FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) return false;
 
-    if (FAILED(factory->CreateSwapChainForHwnd(device_.Get(), hwnd_, &desc, nullptr, nullptr, &swapChain_)))
-        return false;
+        DXGI_SWAP_CHAIN_DESC1 desc = {};
+        desc.Width = static_cast<UINT>(windowWidth_);
+        desc.Height = static_cast<UINT>(windowHeight_);
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        desc.BufferCount = 2;
+        desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+
+        if (FAILED(factory->CreateSwapChainForHwnd(device_.Get(), hwnd_,
+                &desc, nullptr, nullptr, &swapChain_)))
+            return false;
+    }
 
     ComPtr<ID3D11Texture2D> backBuffer;
     if (FAILED(swapChain_->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) return false;
@@ -3126,8 +3166,14 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     case WM_SIZE:
         if (g_settingsWindow != nullptr && wParam != SIZE_MINIMIZED)
         {
-            g_settingsWindow->CreateSwapChain();
-            g_settingsWindow->renderRequested_ = true;
+            if (g_settingsWindow->CreateSwapChain())
+            {
+                g_settingsWindow->renderRequested_ = true;
+                // 交互式拖动边框时，系统的尺寸调整循环会暂停外层
+                // GetMessage 循环，因此需要在 WM_SIZE 内立即 Present。
+                if (IsWindowVisible(hwnd) && !IsIconic(hwnd))
+                    g_settingsWindow->Render();
+            }
         }
         return 0;
     case WM_DPICHANGED:

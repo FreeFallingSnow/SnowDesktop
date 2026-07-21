@@ -89,8 +89,7 @@ public:
             CloseHandle(mapping_);
     }
 
-    bool Apply(bool enabled, const DockSettings& settings,
-        const PersonalizationSettings& appearance)
+    bool Apply(bool enabled, const PersonalizationSettings& appearance)
     {
         std::lock_guard lock(mutex_);
         if (!OpenState())
@@ -332,10 +331,10 @@ SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState()
     return GetTaskbarBackdropController().RuntimeState();
 }
 
-bool ApplySystemTaskbarBackdrop(bool enabled, const DockSettings& settings,
+bool ApplySystemTaskbarBackdrop(bool enabled,
     const PersonalizationSettings& appearance)
 {
-    return GetTaskbarBackdropController().Apply(enabled, settings, appearance);
+    return GetTaskbarBackdropController().Apply(enabled, appearance);
 }
 
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
@@ -354,6 +353,22 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "position", value))
         settings.position = static_cast<DockPosition>(std::clamp(static_cast<int>(value), 0, 3));
     ReadBoolField(text, "edgeAttached", settings.edgeAttached);
+    if (ReadDoubleField(text, "monitorScope", value))
+    {
+        settings.monitorScope = static_cast<DockMonitorScope>(
+            std::clamp(static_cast<int>(value), 0, 2));
+    }
+    else
+    {
+        // v0.1.21 development builds briefly used a boolean option. Preserve
+        // that choice while upgrading to the three-state monitor scope.
+        bool showOnAllMonitors = false;
+        if (ReadBoolField(text, "showOnAllMonitors", showOnAllMonitors))
+        {
+            settings.monitorScope = showOnAllMonitors
+                ? DockMonitorScope::All : DockMonitorScope::First;
+        }
+    }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
     ReadBoolField(text, "followPersonalization", settings.followPersonalization);
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
@@ -364,8 +379,6 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.systemTaskbarBackdropEnabled);
     ReadBoolField(text, "systemTaskbarFollowPersonalization",
         settings.systemTaskbarFollowPersonalization);
-    if (settings.systemTaskbarBackdropEnabled)
-        settings.systemTaskbarAutoHide = false;
     PersonalizationSettings& style = settings.appearance;
     if (ReadDoubleField(text, "backgroundR", value)) style.widgetBgR = static_cast<float>(value);
     if (ReadDoubleField(text, "backgroundG", value)) style.widgetBgG = static_cast<float>(value);
@@ -395,8 +408,6 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "taskbarBackgroundAlpha", value)) taskbarStyle.widgetAlpha = static_cast<float>(value);
     if (ReadDoubleField(text, "taskbarBorderAlpha", value)) taskbarStyle.widgetBorderAlpha = static_cast<float>(value);
     if (ReadDoubleField(text, "taskbarGlassBlurRadius", value)) taskbarStyle.glassBlurRadius = static_cast<float>(value);
-    if (ReadDoubleField(text, "taskbarGlassRefreshMode", value))
-        taskbarStyle.glassRefreshMode = std::clamp(static_cast<int>(value), 0, 3);
     ReadBoolField(text, "taskbarGlassEnabled", taskbarStyle.glassEnabled);
     if (!hasTaskbarAppearance)
     {
@@ -419,6 +430,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"position\": " << static_cast<int>(settings.position) << ",\n";
     file << "  \"edgeAttached\": "
          << (settings.edgeAttached ? "true" : "false") << ",\n";
+    file << "  \"monitorScope\": "
+         << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
     file << "  \"followPersonalization\": "
@@ -454,8 +467,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"taskbarBorderAlpha\": " << taskbarStyle.widgetBorderAlpha << ",\n";
     file << "  \"taskbarGlassEnabled\": "
          << (taskbarStyle.glassEnabled ? "true" : "false") << ",\n";
-    file << "  \"taskbarGlassBlurRadius\": " << taskbarStyle.glassBlurRadius << ",\n";
-    file << "  \"taskbarGlassRefreshMode\": " << taskbarStyle.glassRefreshMode << "\n";
+    file << "  \"taskbarGlassBlurRadius\": " << taskbarStyle.glassBlurRadius << "\n";
     file << "}\n";
     return true;
 }

@@ -219,17 +219,31 @@ size_t DockContainer::SortableEntryCount() const
         : count;
 }
 
+int DockContainer::ItemIconSize() const
+{
+    if (!app_) return kIconSize;
+    const POINT center{
+        (area_.left + area_.right) / 2,
+        (area_.top + area_.bottom) / 2
+    };
+    const GridPage* page = app_->GridPageFromPoint(center);
+    return page ? app_->GetGridPageItemIconSize(*page) : kIconSize;
+}
+
 int DockContainer::ItemPitch() const
 {
-    const int iconSize = app_ ? app_->GetDockItemIconSize() : kIconSize;
-    return std::max(1, iconSize + kDockSpacing);
+    return std::max(1, ItemIconSize() + kDockSpacing);
 }
 
 int DockContainer::EdgeMargin() const
 {
     if (app_)
     {
-        const GridPage* page = app_->GetFirstPageGridPage();
+        const POINT center{
+            (area_.left + area_.right) / 2,
+            (area_.top + area_.bottom) / 2
+        };
+        const GridPage* page = app_->GridPageFromPoint(center);
         if (page) return std::max(0, IsVertical() ? page->marginX : page->marginY);
     }
     return IsVertical() ? kGridMarginX : kGridMarginY;
@@ -276,7 +290,7 @@ RECT DockContainer::GetBounds() const
     const int separatorCount = nonEmptyGroupCount +
         static_cast<int>(showWindowsButton);
     const bool vertical = IsVertical();
-    const int iconSize = app_ ? app_->GetDockItemIconSize() : kIconSize;
+    const int iconSize = ItemIconSize();
     const int slotLength = ItemPitch();
     const int desiredLength = static_cast<int>(
         (count + runningCount + frequentCount + 1 +
@@ -501,7 +515,8 @@ void DockContainer::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
     Slot* targetSlot, HitRegion region, int mods)
 {
     if (!app_ || region == HitRegion::Blocked) return;
-    app_->CommitDockDrop(sourceItems, origin, InsertIndexFor(targetSlot, region), mods);
+    app_->CommitDockDrop(sourceItems, origin, this,
+        InsertIndexFor(targetSlot, region), mods);
 }
 
 void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
@@ -586,7 +601,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (!IsRectEmpty(&windowsButton))
     {
         const bool hovered = PtInRect(&windowsButton, app_->lastMousePoint_) != FALSE;
-        const int backgroundSize = app_->GetDockItemIconSize();
+        const int backgroundSize = ItemIconSize();
         RECT background{
             windowsButton.left + (windowsButton.right - windowsButton.left - backgroundSize) / 2,
             windowsButton.top + (windowsButton.bottom - windowsButton.top - backgroundSize) / 2,
@@ -707,7 +722,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (fixedCount > 0 || !runningItems_.empty() || !frequentItems_.empty())
         drawSeparatorBefore(search);
     const bool searchHovered = PtInRect(&search, app_->lastMousePoint_) != FALSE;
-    const int backgroundSize = app_->GetDockItemIconSize();
+    const int backgroundSize = ItemIconSize();
     const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
     RECT searchBackground{
         search.left + (search.right - search.left - backgroundSize) / 2,

@@ -501,11 +501,11 @@ inline void DesktopApp::LoadDockSettingsAndApply()
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
     SetSystemTaskbarAutoHideEnabled(settings.systemTaskbarAutoHide);
     settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
-    if (settings.systemTaskbarBackdropEnabled && customDesktopVisible_)
-        ApplySystemTaskbarBackdrop(true, settings,
+    if (settings.systemTaskbarBackdropEnabled)
+        ApplySystemTaskbarBackdrop(true,
             ResolveSystemTaskbarAppearance(settings));
-    else if (taskbarBackdropWasEnabled || !customDesktopVisible_)
-        ApplySystemTaskbarBackdrop(false, settings,
+    else if (taskbarBackdropWasEnabled)
+        ApplySystemTaskbarBackdrop(false,
             ResolveSystemTaskbarAppearance(settings));
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     dockSettings_ = settings;
@@ -1205,12 +1205,9 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-    bool pointInDock = false;
-    if (DockContainer* dock = GetDockContainer())
-    {
-        const RECT dockBounds = dock->GetBounds();
-        pointInDock = PtInRect(&dockBounds, pt) != FALSE;
-    }
+    DockContainer* pointDock = GetDockContainerAtPoint(pt);
+    const bool pointInDock = pointDock != nullptr;
+    dockPressedContainer_ = pointDock;
     // Dock is an app switcher: do not move focus away from the current app before
     // deciding whether this click should minimize or restore it.
     if (pointInDock)
@@ -1324,7 +1321,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
-    if (DockContainer* dock = GetDockContainer())
+    if (DockContainer* dock = pointDock)
     {
         RECT dockBounds = dock->GetBounds();
         if (PtInRect(&dockBounds, pt))
@@ -1718,11 +1715,7 @@ inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (quickNavigationOpen_) return;
-    if (DockContainer* dock = GetDockContainer())
-    {
-        RECT dockBounds = dock->GetBounds();
-        if (PtInRect(&dockBounds, pt)) return;
-    }
+    if (GetDockContainerAtPoint(pt)) return;
     if (popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -1920,19 +1913,20 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
 
-        DockContainer* dock = GetDockContainer();
-        RECT dockBounds = dock ? dock->GetBounds() : RECT{};
-        const bool canDock = dock && PtInRect(&dockBounds, current) &&
+        DockContainer* dock = GetDockContainerAtPoint(current);
+        const bool canDock = dock &&
             widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection;
         if (canDock)
         {
             widgetDockTarget_ = true;
+            widgetDockTargetContainer_ = dock;
             widgetDockInsertIndex_ = dock->GetInsertIndexAtPoint(current);
             ShowDragHintWindow(current, L"释放：移动集合到 Dock");
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
         widgetDockTarget_ = false;
+        widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
 
         // ── 跨页翻页：检测导航按钮悬停 + 自动翻页 ──
@@ -2230,7 +2224,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 return { popupWidget, popupWidget, 2, 0, true };
             }
 
-            if (DockContainer* dock = GetDockContainer())
+            if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
                 RECT dockBounds = dock->GetBounds();
                 if (PtInRect(&dockBounds, point))
@@ -2353,7 +2347,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
 inline bool DesktopApp::HandleDockClickRelease(POINT point)
 {
-    DockContainer* dock = GetDockContainer();
+    DockContainer* dock = dockPressedContainer_;
+    if (!dock) dock = GetDockContainerAtPoint(point);
     if (!dock) return false;
 
     DockEntryType entryType = DockEntryType::DesktopItem;
@@ -2432,6 +2427,7 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
+    dockPressedContainer_ = nullptr;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     navHoverSide_ = 0;
@@ -2503,15 +2499,15 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     {
         if (widgetAction_ == WidgetAction::Move)
         {
-            DockContainer* dock = GetDockContainer();
-            RECT dockBounds = dock ? dock->GetBounds() : RECT{};
-            const bool canDock = dock && PtInRect(&dockBounds, upPoint) &&
+            DockContainer* dock = GetDockContainerAtPoint(upPoint);
+            const bool canDock = dock &&
                 widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection;
             if (canDock)
             {
                 Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
                 int mods = (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
-                CommitDockDrop({ &dockSource }, nullptr, widgetDockInsertIndex_, mods);
+                CommitDockDrop({ &dockSource }, nullptr, dock,
+                    widgetDockInsertIndex_, mods);
                 SaveLayoutSlots();
                 RebuildContainersAndItems();
                 LayoutItems();
@@ -2524,6 +2520,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         // PendingMove/PendingResize: just cancel without displacement
         widgetAction_ = WidgetAction::None;
         widgetDockTarget_ = false;
+        widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
         InvalidateDragStaticScene();
         mouseDown_ = false;
@@ -2541,6 +2538,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         dockPressedEntry_ = static_cast<size_t>(-1);
         dockPressedFrequentItem_ = static_cast<size_t>(-1);
         dockPressedRunningAppKey_.clear();
+        dockPressedContainer_ = nullptr;
         if (mouseDownWidgetIndex_ < widgets_.size() &&
             widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
             HitTestStandaloneWidget(mouseDownWidgetIndex_, upPoint) == WidgetHit::Content &&
@@ -2741,6 +2739,7 @@ cleanup:
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
+    dockPressedContainer_ = nullptr;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     ReleaseCapture();
 }
@@ -2762,6 +2761,9 @@ inline std::wstring DesktopApp::GetDockDragOutRemovalHint(POINT point) const
 {
     const auto* sourceDock = dynamic_cast<DockContainer*>(dragSession_.Source());
     if (!sourceDock) return L"";
+    // A replicated Dock on another monitor is still a valid Dock target, not
+    // a drag-out removal area.
+    if (GetDockContainerAtPoint(point)) return L"";
     RECT sourceBounds = sourceDock->GetBounds();
     if (PtInRect(&sourceBounds, point)) return L"";
 
@@ -4248,7 +4250,7 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);
 
-    if (DockContainer* dock = GetDockContainer())
+    if (DockContainer* dock = GetDockContainerAtPoint(pt))
     {
         if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
         {
@@ -4553,11 +4555,11 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         const bool foregroundSettling = foregroundTick != 0 &&
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
-        if (customDesktopVisible_ && dockSettings_.systemTaskbarBackdropEnabled &&
+        if (dockSettings_.systemTaskbarBackdropEnabled &&
             (foregroundChanged || foregroundSettling ||
                 now - systemTaskbarBackdropRefreshTick_ >= 1500))
         {
-            ApplySystemTaskbarBackdrop(true, dockSettings_,
+            ApplySystemTaskbarBackdrop(true,
                 ResolveSystemTaskbarAppearance(dockSettings_));
             systemTaskbarBackdropRefreshTick_ = now;
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
@@ -4696,7 +4698,7 @@ inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     }
 
     size_t hoveredCollection = static_cast<size_t>(-1);
-    if (DockContainer* dock = GetDockContainer())
+    if (DockContainer* dock = GetDockContainerAtPoint(point))
     {
         if (DockEntryItem* entry = dock->EntryAtPoint(point);
             entry && entry->GetEntryType() == DockEntryType::Collection)
@@ -4791,7 +4793,7 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_ = categoryId;
     popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
-    if (DockContainer* dock = GetDockContainer())
+    if (DockContainer* dock = GetDockContainerAtPoint(anchorPoint))
     {
         RECT dockBounds = dock->GetBounds();
         if (PtInRect(&dockBounds, anchorPoint))
@@ -7903,9 +7905,7 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     {
     case kTraySwitchNativeCommand:
         customDesktopVisible_ = false;
-        if (dockSettings_.systemTaskbarBackdropEnabled)
-            ApplySystemTaskbarBackdrop(false, dockSettings_,
-                ResolveSystemTaskbarAppearance(dockSettings_));
+        // 系统任务栏材质位于 Explorer 层，独立于 SnowDesktop 桌面是否显示。
         KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
         SaveLayoutSlots();
         HideDragHintWindow();
@@ -7917,14 +7917,6 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     case kTraySwitchCustomCommand:
         customDesktopVisible_ = true;
         desktopIconsHidden_ = false;
-        if (dockSettings_.systemTaskbarBackdropEnabled)
-        {
-            ApplySystemTaskbarBackdrop(true, dockSettings_,
-                ResolveSystemTaskbarAppearance(dockSettings_));
-            systemTaskbarBackdropRefreshTick_ = GetTickCount();
-            systemTaskbarBackdropForegroundTick_ =
-                dockForegroundChangedTick_.load();
-        }
         HideExplorerIcons();
         ShowWindow(hwnd_, SW_SHOW);
         if (inputHwnd_ && IsWindow(inputHwnd_))

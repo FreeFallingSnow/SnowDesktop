@@ -5558,6 +5558,8 @@ inline void DesktopApp::RebuildContainersAndItems()
     // destroyed. Clear them before releasing containers and item wrappers.
     mouseDownHit_ = nullptr;
     pendingCtrlToggleWidgetItem_ = nullptr;
+    dockPressedContainer_ = nullptr;
+    widgetDockTargetContainer_ = nullptr;
     popupDragTargetSlot_.reset();
     popupMouseDownItem_.reset();
 
@@ -5603,8 +5605,15 @@ inline void DesktopApp::RebuildContainersAndItems()
         }
     }
 
-    if (generalSettings_.dockEnabled && !IsRectEmptyRect(dockArea_))
-        containers_.push_back(std::make_unique<DockContainer>(this, &dockEntries_, dockArea_));
+    if (generalSettings_.dockEnabled)
+    {
+        for (const RECT& dockArea : dockAreas_)
+        {
+            if (!IsRectEmptyRect(dockArea))
+                containers_.push_back(
+                    std::make_unique<DockContainer>(this, &dockEntries_, dockArea));
+        }
+    }
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {

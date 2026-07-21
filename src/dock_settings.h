@@ -12,6 +12,13 @@ enum class DockPosition
     Right = 3
 };
 
+enum class DockMonitorScope
+{
+    First = 0,
+    Last = 1,
+    All = 2
+};
+
 enum class SystemTaskbarBackdropRuntimeState
 {
     Disabled,
@@ -25,6 +32,7 @@ struct DockSettings
 {
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
+    DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
     bool followPersonalization = true;
     bool showFrequentItems = false;
@@ -43,7 +51,7 @@ bool SetSystemTaskbarAutoHideEnabled(bool enabled);
 bool IsWindowsSystemLightThemeEnabled();
 bool SetWindowsSystemLightThemeEnabled(bool enabled);
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
-bool ApplySystemTaskbarBackdrop(bool enabled, const DockSettings& settings,
+bool ApplySystemTaskbarBackdrop(bool enabled,
     const PersonalizationSettings& appearance);
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings);
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings);

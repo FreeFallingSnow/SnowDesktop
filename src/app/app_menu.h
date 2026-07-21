@@ -966,8 +966,7 @@ inline void DesktopApp::ShowItemContextMenu(
         if (!key.empty() && dockUsageStats_.erase(key) > 0)
         {
             SaveDockUsageStats();
-            if (DockContainer* dock = GetDockContainer())
-                dock->InvalidateSlots();
+            InvalidateDockContainers();
             InvalidateDragStaticScene();
         }
         ClearSelection();

@@ -469,6 +469,9 @@ private:
     /// 设置窗口脏帧标记；避免桌面消息触发无关的 ImGui Present。
     bool renderRequested_ = false;
 
+    /// 防止尺寸变化消息在当前帧内嵌套进入 ImGui/DX11 渲染。
+    bool renderInProgress_ = false;
+
     /// 是否已解锁调试页面（通过版本号点击彩蛋激活）
     bool debugUnlocked_ = false;
 
