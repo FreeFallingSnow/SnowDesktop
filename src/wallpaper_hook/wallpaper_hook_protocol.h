@@ -10,7 +10,7 @@
 namespace snow::wallpaper_hook {
 
 constexpr std::uint32_t kMagic = 0x534E4F57; // SNOW
-constexpr std::uint32_t kVersion = 2;
+constexpr std::uint32_t kVersion = 3;
 constexpr std::size_t kMaxFrameSlots = 8;
 
 enum class Status : LONG {
@@ -52,6 +52,8 @@ struct SharedState {
     volatile LONG requested_interval_ms;
     volatile LONG request_serial;
     volatile LONG slot_count;
+    volatile LONG64 present_calls;
+    volatile LONG64 matched_present_calls;
     volatile LONG64 producer_heartbeat;
     volatile LONG64 consumer_heartbeat;
     SharedFrameSlot slots[kMaxFrameSlots];
@@ -61,14 +63,15 @@ struct SharedState {
 // 共享内存由 32/64 位进程同时访问，布局必须与指针宽度无关。
 static_assert(offsetof(SharedFrameSlot, frame_number) == 32);
 static_assert(sizeof(SharedFrameSlot) == 224);
-static_assert(offsetof(SharedState, producer_heartbeat) == 48);
-static_assert(offsetof(SharedState, slots) == 64);
-static_assert(sizeof(SharedState) == 1856);
+static_assert(offsetof(SharedState, present_calls) == 48);
+static_assert(offsetof(SharedState, producer_heartbeat) == 64);
+static_assert(offsetof(SharedState, slots) == 80);
+static_assert(sizeof(SharedState) == 1872);
 
 inline void MakeMappingName(DWORD processId, wchar_t (&buffer)[128])
 {
     _snwprintf_s(buffer, 128, _TRUNCATE,
-        L"Local\\SnowDesktop.WallpaperEngine.DxgiHook.v2.%lu",
+        L"Local\\SnowDesktop.WallpaperEngine.DxgiHook.v3.%lu",
         static_cast<unsigned long>(processId));
 }
 

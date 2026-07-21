@@ -216,6 +216,8 @@ inline bool DesktopApp::InitGraphics()
         WriteCrashLogEntry(buf);
     }
     if (FAILED(hr)) return false;
+    d3dDevice_->GetImmediateContext(&d3dImmediateContext_);
+    if (!d3dImmediateContext_) return false;
 
     // D2D
     D2D1_FACTORY_OPTIONS factoryOptions{};
@@ -340,6 +342,15 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     widgetPanelEffectContext_.Reset();
     glassEffectContext_.Reset();
     glassBackdropBitmap_.Reset();
+    glassLuminanceBitmap_.Reset();
+    for (auto& readback : glassLuminanceReadbacks_)
+        readback.Reset();
+    glassLuminanceReadbackPending_.fill(false);
+    glassLuminanceMap_.clear();
+    glassRefractionCurrentSource_.Reset();
+    glassRefractionCurrentBrush_.Reset();
+    glassRefractionPreviousSource_.Reset();
+    glassRefractionPreviousBrush_.Reset();
     glassBackdropRadiusCache_.clear();
     ClearGlassBackdropTransition();
     glassStaticLayerBitmap_.Reset();
@@ -355,6 +366,7 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     glassRequestedByPanels_ = false;
     glassRequestedRefreshMode_ = 0;
     glassEffectiveRefreshMode_ = 0;
+    glassRefreshThrottled_ = false;
     glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
 }
 
@@ -420,7 +432,7 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         return S_OK;
     }
 
-inline void DesktopApp::OnPaint()
+inline void DesktopApp::OnPaint(const RECT* updateRect)
     {
         HRESULT hr = CreateOrResizeCompositionSurface();
         if (FAILED(hr))
@@ -429,9 +441,17 @@ inline void DesktopApp::OnPaint()
             return;
         }
 
+        RECT clientRect{};
+        GetClientRect(hwnd_, &clientRect);
+        RECT clippedUpdate{};
+        const RECT* dcompUpdate = nullptr;
+        if (updateRect && IntersectRect(&clippedUpdate, updateRect, &clientRect) &&
+            !IsRectEmpty(&clippedUpdate))
+            dcompUpdate = &clippedUpdate;
+
         ID2D1DeviceContext* rawContext = nullptr;
         POINT updateOffset{};
-        hr = dcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+        hr = dcompSurface_->BeginDraw(dcompUpdate, __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(&rawContext), &updateOffset);
         if (FAILED(hr))
         {
@@ -443,8 +463,11 @@ inline void DesktopApp::OnPaint()
         context.Attach(rawContext);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
+        const LONG updateTop = dcompUpdate ? dcompUpdate->top : 0;
         context->SetTransform(D2D1::Matrix3x2F::Translation(
-            static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)));
+            static_cast<float>(updateOffset.x - updateLeft),
+            static_cast<float>(updateOffset.y - updateTop)));
         context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
         ++glassPaintSerial_;
@@ -810,11 +833,27 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
     // 毛玻璃：先采样背后的模糊桌面快照，再叠加半透明色调填充
     if (p.glassEnabled)
     {
+        float sharedBlurRadius = p.glassBlurRadius;
+        int sharedRefreshMode = std::clamp(p.glassRefreshMode, 0, 3);
+        if (settingsWindow_)
+        {
+            const auto& global = settingsWindow_->GetPersonalization();
+            sharedBlurRadius = global.glassBlurRadius;
+            sharedRefreshMode = std::clamp(global.glassRefreshMode, 0, 3);
+        }
         glassRequestedByPanels_ = true;
         glassRequestedRefreshMode_ = std::max(
-            glassRequestedRefreshMode_, std::clamp(p.glassRefreshMode, 0, 3));
-        if (EnsureGlassBackdrop(p.glassBlurRadius,
-                std::max(p.glassRefreshMode, glassEffectiveRefreshMode_)))
+            glassRequestedRefreshMode_, sharedRefreshMode);
+        const bool regionTracked = std::any_of(glassRequestedRegions_.begin(),
+            glassRequestedRegions_.end(), [&frame](const RECT& existing) {
+                return EqualRect(&existing, &frame) != FALSE;
+            });
+        if (!regionTracked)
+            glassRequestedRegions_.push_back(frame);
+        const int effectiveRefreshMode = glassRefreshThrottled_
+            ? 2
+            : std::max(sharedRefreshMode, glassEffectiveRefreshMode_);
+        if (EnsureGlassBackdrop(sharedBlurRadius, effectiveRefreshMode))
             DrawGlassBackdropRegion(ctx, frame, radius);
     }
 
@@ -908,14 +947,13 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
         : border;
     if (stroke.a > 0.0f)
     {
-        // 毛玻璃开启时描边使用玻璃边缘光渐变（顶亮底暗）
-        ComPtr<ID2D1LinearGradientBrush> glassStroke;
-        if (p.glassEnabled && !selected)
-            glassStroke = CreateGlassBorderBrush(ctx, frame, stroke);
-        if (glassStroke)
-            ctx->DrawRoundedRectangle(rr, glassStroke.Get(), strokeWidth, nullptr);
-        else if (auto* strokeBrush = getBrush(stroke))
-            ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
+        const bool glassDrawn = p.glassEnabled && !selected &&
+            DrawGlassBorder(ctx, frame, radius, stroke, strokeWidth);
+        if (!glassDrawn)
+        {
+            if (auto* strokeBrush = getBrush(stroke))
+                ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
+        }
     }
 }
 

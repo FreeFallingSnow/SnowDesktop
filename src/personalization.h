@@ -97,8 +97,11 @@ struct PersonalizationSettings
      * @return 亮色主题的 PersonalizationSettings 实例
      */
     static PersonalizationSettings LightPreset();
+    static PersonalizationSettings TranslucentDarkPreset();
+    static PersonalizationSettings TranslucentLightPreset();
     static PersonalizationSettings GlassDarkPreset();
     static PersonalizationSettings GlassLightPreset();
+    static PersonalizationSettings TransparentGlassPreset();
     static PersonalizationSettings FrostedPreset();
     static PersonalizationSettings HighContrastPreset();
 };

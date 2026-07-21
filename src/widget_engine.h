@@ -28,6 +28,7 @@
 #include "http_runtime.h"
 
 struct ImGuiContext;
+struct PersonalizationSettings;
 
 extern "C" {
 #include <lua.h>
@@ -474,8 +475,6 @@ public:
      * @param highlightAlpha 输出：顶部高光强度
      * @param noiseAlpha 输出：磨砂颗粒强度
      * @param glassEnabled 输出：毛玻璃背景开关
-     * @param glassBlurRadius 输出：毛玻璃模糊半径
-     * @param glassRefreshMode 输出：毛玻璃刷新档位
      * @return 成功读取返回 true
      */
     bool ReadCustomColors(const std::wstring& widgetId,
@@ -483,8 +482,7 @@ public:
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
         float& gradientEndA, float& shadowAlpha,
         float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
-        float& noiseAlpha, bool& glassEnabled, float& glassBlurRadius,
-        int& glassRefreshMode) const;
+        float& noiseAlpha, bool& glassEnabled) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表
@@ -541,9 +539,15 @@ public:
      * @brief 渲染指定小部件的 ImGui 编辑器界面
      * @param widgetId 小部件实例 ID
      * @param widgetName 小部件名称
+     * @param mainPersonalization 当前宿主个性化设置；共享毛玻璃控件直接修改其中参数
+     * @param sharedGlassSettingsChanged 输出：共享模糊半径或刷新档位已变化
+     * @param sharedGlassSettingsSaveRequested 输出：共享参数需要持久化
      * @return 渲染成功返回 true
      */
-    bool RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName);
+    bool RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName,
+        PersonalizationSettings& mainPersonalization,
+        bool& sharedGlassSettingsChanged,
+        bool& sharedGlassSettingsSaveRequested);
 
     /**
      * @brief 检查小部件是否拥有指定运行时权限

@@ -168,7 +168,9 @@ inline void DesktopApp::ResetDesktopWindowResources()
     glassRefreshTimerIntervalMs_ = 0;
     glassRequestedByPanels_ = false;
     glassRequestedRefreshMode_ = 0;
+    glassRequestedRegions_.clear();
     glassEffectiveRefreshMode_ = 0;
+    glassRefreshThrottled_ = false;
     glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
     StopWallpaperEngineCaptures();
     dynamicWallpaperWindows_.clear();
@@ -933,6 +935,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
             const int previousFrequentItemCount = dockSettings_.frequentItemCount;
             LoadDockSettingsAndApply();
+            InvalidateGlassBackdrop();
             if (dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
                 dockSettings_.showFrequentItems != previousShowFrequentItems ||
@@ -1078,7 +1081,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
-        if (settingsWindow_ && settingsWindow_->IsVisible())
+        if (settingsWindow_ && settingsWindow_->IsVisible() &&
+            settingsWindow_->NeedsRender())
             settingsWindow_->Render();
     }
     OleUninitialize();
@@ -1321,7 +1325,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         PAINTSTRUCT ps{};
         BeginPaint(hwnd_, &ps);
         EndPaint(hwnd_, &ps);
-        OnPaint();
+        OnPaint(&ps.rcPaint);
         return 0;
     }
     case WM_ERASEBKGND:

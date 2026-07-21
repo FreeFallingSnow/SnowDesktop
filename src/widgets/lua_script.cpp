@@ -155,13 +155,11 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             float luaShadowAlpha = 0.0f, luaShadowBlur = 12.0f, luaShadowOffsetY = 4.0f;
             float luaHighlightAlpha = 0.0f, luaNoiseAlpha = 0.0f;
             bool luaGlassEnabled = false;
-            float luaGlassBlurRadius = 24.0f;
-            int luaGlassRefreshMode = 1;
             if (app_->widgetEngine_->ReadCustomColors(data_->id,
                 bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
                 luaGradientEndA, luaShadowAlpha, luaShadowBlur,
                 luaShadowOffsetY, luaHighlightAlpha, luaNoiseAlpha,
-                luaGlassEnabled, luaGlassBlurRadius, luaGlassRefreshMode))
+                luaGlassEnabled))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
@@ -173,9 +171,15 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 effectSettings.highlightAlpha = luaHighlightAlpha;
                 effectSettings.noiseAlpha = luaNoiseAlpha;
                 effectSettings.glassEnabled = luaGlassEnabled;
-                effectSettings.glassBlurRadius = luaGlassBlurRadius;
-                effectSettings.glassRefreshMode = luaGlassRefreshMode;
             }
+        }
+
+        // 所有面板共享一份宿主采样参数；Lua 仅保留实例级毛玻璃开关。
+        if (app_->settingsWindow_)
+        {
+            const auto& global = app_->settingsWindow_->GetPersonalization();
+            effectSettings.glassBlurRadius = global.glassBlurRadius;
+            effectSettings.glassRefreshMode = global.glassRefreshMode;
         }
 
         if (widgetOk)

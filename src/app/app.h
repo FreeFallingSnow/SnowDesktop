@@ -57,6 +57,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <cstdint>
 #include <functional>
@@ -453,7 +454,7 @@ private:
     /** @brief 在 DComp 渲染失败后重置 surface 并安排一次恢复重绘。 */
     void RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr);
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
-    void OnPaint();
+    void OnPaint(const RECT* updateRect = nullptr);
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */
     void RenderFrame(ID2D1DeviceContext* ctx);
     /** @brief 绘制静态背景（桌面项图标、文本、网格等）。 @param ctx D2D 设备上下文 */
@@ -507,11 +508,19 @@ private:
     std::wstring GetDynamicWallpaperStatusText() const;
     /** @brief 在指定矩形内按圆角裁剪绘制毛玻璃背景采样。 @param ctx D2D 上下文 @param frame 面板矩形（客户区坐标） @param radius 圆角半径 */
     void DrawGlassBackdropRegion(ID2D1DeviceContext* ctx, RECT frame, float radius);
-    /** @brief 创建毛玻璃边缘光渐变描边画刷（顶部亮、底部暗）。 @return 失败返回空指针 */
-    ComPtr<ID2D1LinearGradientBrush> CreateGlassBorderBrush(ID2D1DeviceContext* ctx,
-        RECT frame, D2D1_COLOR_F color);
+    /** @brief 绘制自适应液态玻璃边缘（斜向受光、柔亮外缘、暗色内缘）。 @return 成功绘制返回 true */
+    bool DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame, float radius,
+        D2D1_COLOR_F color, float strokeWidth);
+    /** @brief 异步生成低分辨率毛玻璃亮度图，不阻塞动态壁纸渲染。 */
+    void ScheduleGlassLuminanceReadback(ID2D1Bitmap1* source);
+    /** @brief 非阻塞消费已完成的亮度图 GPU 回读。 */
+    void TryConsumeGlassLuminanceReadbacks();
+    /** @brief 返回面板边缘下方的平均亮度，尚无样本时返回中灰。 */
+    float SampleGlassBorderLuminance(RECT frame);
     /** @brief 按当前设置维护毛玻璃刷新状态（周期失效、实时档定时器、关闭时释放缓存）。 */
     void UpdateGlassRefreshState();
+    /** @brief 仅使上一帧实际使用毛玻璃的面板区域失效。 */
+    void InvalidateGlassRequestedRegions();
     /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
@@ -1633,6 +1642,7 @@ private:
     /** @name D3D / D2D / DComp 图形资源 */
     /** @{ */
     ComPtr<ID3D11Device> d3dDevice_;
+    ComPtr<ID3D11DeviceContext> d3dImmediateContext_;
     ComPtr<ID2D1Factory1> d2dFactory_;
     ID2D1Factory1* GetD2DFactory() const { return d2dFactory_.Get(); }
     IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }
@@ -1646,7 +1656,19 @@ private:
     ComPtr<ID2D1DeviceContext> glassEffectContext_;
     /** @brief 毛玻璃背景快照（窗口背后内容降采样后的高斯模糊位图）。 */
     ComPtr<ID2D1Bitmap1> glassBackdropBitmap_;
-    /** @brief 同一背景帧按模糊半径缓存的位图，允许 Lua 组件使用独立玻璃参数。 */
+    /** @brief 32x18 GPU 缩略图，用于异步估计各面板边缘下方的背景亮度。 */
+    ComPtr<ID2D1Bitmap1> glassLuminanceBitmap_;
+    /** @brief 双缓冲 staging 纹理；DO_NOT_WAIT 回读避免阻塞桌面渲染线程。 */
+    std::array<ComPtr<ID3D11Texture2D>, 2> glassLuminanceReadbacks_;
+    std::array<bool, 2> glassLuminanceReadbackPending_{};
+    /** @brief 最近一次成功回读的 32x18 亮度值。 */
+    std::vector<float> glassLuminanceMap_;
+    /** @brief 当前/过渡背景对应的折射位图画刷；跨组件复用，只更新变换。 */
+    ComPtr<ID2D1Bitmap1> glassRefractionCurrentSource_;
+    ComPtr<ID2D1BitmapBrush1> glassRefractionCurrentBrush_;
+    ComPtr<ID2D1Bitmap1> glassRefractionPreviousSource_;
+    ComPtr<ID2D1BitmapBrush1> glassRefractionPreviousBrush_;
+    /** @brief 当前共享模糊半径及过渡帧使用的位图缓存。 */
     std::unordered_map<int, ComPtr<ID2D1Bitmap1>> glassBackdropRadiusCache_;
     /** @brief 交叉淡化期间保留的上一帧各模糊半径结果。 */
     std::unordered_map<int, ComPtr<ID2D1Bitmap1>> glassPreviousBackdropRadiusCache_;
@@ -1669,8 +1691,12 @@ private:
     bool glassRequestedByPanels_ = false;
     /** @brief 上一绘制帧所有玻璃面板要求的最高刷新档位。 */
     int glassRequestedRefreshMode_ = 0;
+    /** @brief 上一帧实际绘制毛玻璃的面板区域，用于局部刷新 DComp 表面。 */
+    std::vector<RECT> glassRequestedRegions_;
     /** @brief 当前绘制帧采用的最高刷新档位（由全局、Dock 与上一帧面板请求合并）。 */
     int glassEffectiveRefreshMode_ = 0;
+    /** @brief 实时档当前是否因前台最大化/全屏应用而临时降为中频。 */
+    bool glassRefreshThrottled_ = false;
     /** @brief 当前桌面绘制序号，用于避免同一帧按组件重复请求共享帧。 */
     std::uint64_t glassPaintSerial_ = 0;
     std::uint64_t glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
@@ -1714,6 +1740,8 @@ private:
     std::wstring dynamicWallpaperCaptureError_;
     /** @brief 标记 GPU Hook 捕获失败的时间戳（用于限时重试）。 */
     DWORD dynamicWallpaperIncompatibleTick_ = 0;
+    /** @brief 连续等待新 Present 的起始时间；长时间无帧时降低 UI 轮询频率。 */
+    DWORD glassDynamicWaitStartTick_ = 0;
     /** @brief 上次合成最终快照时是否处于动态模式（模式切换强制重建）。 */
     bool glassWasDynamic_ = false;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */

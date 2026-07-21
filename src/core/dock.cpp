@@ -417,13 +417,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         ? app_->dockSettings_.appearance
         : PersonalizationSettings::DarkPreset();
     if (app_ && app_->settingsWindow_)
-    {
         p = app_->settingsWindow_->GetDockAppearance();
-        // Dock 只保存独立开关；采样参数仍明确跟随组件主设置。
-        const auto& global = app_->settingsWindow_->GetPersonalization();
-        p.glassBlurRadius = global.glassBlurRadius;
-        p.glassRefreshMode = global.glassRefreshMode;
-    }
     p.shadowAlpha = 0.0f;
     const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
@@ -471,17 +465,12 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             }
             else
             {
-                // 毛玻璃开启时使用玻璃边缘光渐变描边（顶亮底暗）
-                ComPtr<ID2D1LinearGradientBrush> glassBorder;
-                if (p.glassEnabled)
-                    glassBorder = app_->CreateGlassBorderBrush(context, bounds, border);
                 D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
                     D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
                         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
                     panelRadius, panelRadius);
-                if (glassBorder)
-                    context->DrawRoundedRectangle(rr, glassBorder.Get(), 1.0f);
-                else
+                if (!p.glassEnabled ||
+                    !app_->DrawGlassBorder(context, bounds, panelRadius, border, 1.0f))
                     context->DrawRoundedRectangle(rr, borderBrush.Get(), 1.0f);
             }
         }

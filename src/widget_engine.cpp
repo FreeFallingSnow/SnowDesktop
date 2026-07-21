@@ -17,6 +17,7 @@
 #include "constants.h"
 #include "utils.h"
 #include "search_match.h"
+#include "personalization.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -958,6 +959,11 @@ static std::unordered_map<std::string, std::string> JsonReadValueMap(
 static bool IsHostStructureSettingKey(const std::string& key)
 {
     return key == "cornerRadius" || key == "barHeight";
+}
+
+static bool IsHostSharedGlassSettingKey(const std::string& key)
+{
+    return key == "glassBlurRadius" || key == "glassRefreshMode";
 }
 
 static bool IsHostAppearanceSettingKey(const std::string& key)
@@ -2203,9 +2209,15 @@ void WidgetEngine::RenderAll(ID2D1DeviceContext* context)
     d2dState_->ctx = context;
 }
 
-bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName)
+bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
+    const std::wstring& widgetName,
+    PersonalizationSettings& mainPersonalization,
+    bool& sharedGlassSettingsChanged,
+    bool& sharedGlassSettingsSaveRequested)
 {
     (void)widgetName;
+    sharedGlassSettingsChanged = false;
+    sharedGlassSettingsSaveRequested = false;
 
     SetWidgetExecutionContext(d2dState_, widgetId);
     int idx = FindWidget(widgetId);
@@ -2228,7 +2240,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         return !defaultValue.empty() ? defaultValue : fallback;
     };
     auto setStorage = [&](const std::string& key, const std::string& value) {
-        if (key.empty() || IsHostStructureSettingKey(key)) return;
+        if (key.empty() || IsHostStructureSettingKey(key) ||
+            IsHostSharedGlassSettingKey(key)) return;
         std::string fullKey = prefix + key;
         auto it = g_storage.find(fullKey);
         if (it != g_storage.end() && it->second == value) return;
@@ -2256,6 +2269,23 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
             return std::clamp(static_cast<int>(std::round(v * 255.0f)), 0, 255);
         };
         return (toByte(r) << 16) | (toByte(g) << 8) | toByte(b);
+    };
+    constexpr const char* kMainPersonalizationSnapshot = "__main_personalization";
+    auto syncMainPersonalization = [&]() {
+        setStorage("bg", std::to_string(colorToInt(mainPersonalization.widgetBgR,
+            mainPersonalization.widgetBgG, mainPersonalization.widgetBgB)));
+        setStorage("border", std::to_string(colorToInt(mainPersonalization.widgetBorderR,
+            mainPersonalization.widgetBorderG, mainPersonalization.widgetBorderB)));
+        setStorage("alpha", std::to_string(mainPersonalization.widgetAlpha));
+        setStorage("borderAlpha", std::to_string(mainPersonalization.widgetBorderAlpha));
+        setStorage("gradientEndA", std::to_string(mainPersonalization.gradientEndA));
+        setStorage("shadowAlpha", std::to_string(mainPersonalization.shadowAlpha));
+        setStorage("shadowBlur", std::to_string(mainPersonalization.shadowBlur));
+        setStorage("shadowOffsetY", std::to_string(mainPersonalization.shadowOffsetY));
+        setStorage("highlightAlpha", std::to_string(mainPersonalization.highlightAlpha));
+        setStorage("noiseAlpha", std::to_string(mainPersonalization.noiseAlpha));
+        setStorage("glassEnabled", mainPersonalization.glassEnabled ? "1" : "0");
+        setStorage("__preset", kMainPersonalizationSnapshot);
     };
     auto parseColor = [](const std::string& value, int fallback) {
         if (value.empty()) return fallback;
@@ -2397,22 +2427,39 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         if (ImGui::Checkbox("跟随个性化设置", &followPersonalization))
             setStorage("followPersonalization", followPersonalization ? "1" : "0");
 
+        ImGui::SameLine();
+        ImGui::BeginDisabled(followPersonalization);
+        if (whiteTextButton("同步主设置"))
+            syncMainPersonalization();
+        ImGui::EndDisabled();
+
         ImGui::BeginDisabled(followPersonalization);
 
         if (!presets.empty())
         {
             std::string currentPreset = getStorage("__preset", defaultPresetIndex >= 0
                 ? presets[static_cast<size_t>(defaultPresetIndex)].id : presets[0].id);
-            int selectedPreset = 0;
-            for (size_t i = 0; i < presets.size(); ++i)
-                if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
+            const bool mainPersonalizationSnapshot =
+                currentPreset == kMainPersonalizationSnapshot;
+            int selectedPreset = mainPersonalizationSnapshot
+                ? static_cast<int>(presets.size()) : 0;
+            if (!mainPersonalizationSnapshot)
+            {
+                for (size_t i = 0; i < presets.size(); ++i)
+                    if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
+            }
             std::vector<const char*> presetLabels;
             for (const auto& preset : presets) presetLabels.push_back(preset.label.c_str());
+            if (mainPersonalizationSnapshot)
+                presetLabels.push_back("主设置副本");
             if (ImGui::Combo("组件预设", &selectedPreset, presetLabels.data(),
                 static_cast<int>(presetLabels.size())))
             {
-                applyValues(presets[static_cast<size_t>(selectedPreset)].values);
-                setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
+                if (selectedPreset >= 0 && selectedPreset < static_cast<int>(presets.size()))
+                {
+                    applyValues(presets[static_cast<size_t>(selectedPreset)].values);
+                    setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
+                }
             }
         }
 
@@ -2421,12 +2468,9 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         float gradientEndA = 0.0f, shadowAlpha = 0.0f, shadowBlur = 12.0f;
         float shadowOffsetY = 4.0f, highlightAlpha = 0.0f, noiseAlpha = 0.0f;
         bool glassEnabled = false;
-        float glassBlurRadius = 24.0f;
-        int glassRefreshMode = 1;
         ReadCustomColors(widgetId, bgR, bgG, bgB, alpha, borderR, borderG, borderB,
             borderAlpha, gradientEndA, shadowAlpha, shadowBlur, shadowOffsetY,
-            highlightAlpha, noiseAlpha, glassEnabled, glassBlurRadius,
-            glassRefreshMode);
+            highlightAlpha, noiseAlpha, glassEnabled);
 
         float bgColor[3] = { bgR, bgG, bgB };
         if (ImGui::ColorEdit3("背景颜色", bgColor, ImGuiColorEditFlags_NoInputs))
@@ -2453,18 +2497,30 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
 
         if (ImGui::Checkbox("毛玻璃背景", &glassEnabled))
             setStorage("glassEnabled", glassEnabled ? "1" : "0");
-        ImGui::BeginDisabled(!glassEnabled);
-        if (ImGui::SliderFloat("模糊半径", &glassBlurRadius, 4.0f, 48.0f, "%.0f px"))
-            setStorage("glassBlurRadius", std::to_string(glassBlurRadius));
+
+        ImGui::EndDisabled();
+
+        ImGui::Spacing();
+        ImGui::Text("共享毛玻璃采样");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(与组件显示设置、Dock 设置同步)");
+        if (ImGui::SliderFloat("模糊半径##SharedGlassBlurRadius",
+            &mainPersonalization.glassBlurRadius, 4.0f, 48.0f, "%.0f px"))
+            sharedGlassSettingsChanged = true;
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            sharedGlassSettingsSaveRequested = true;
         const char* glassRefreshNames[] = {
             "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
         };
-        if (ImGui::Combo("背景刷新", &glassRefreshMode, glassRefreshNames,
+        if (ImGui::Combo("背景刷新##SharedGlassRefreshMode",
+                &mainPersonalization.glassRefreshMode, glassRefreshNames,
                 static_cast<int>(std::size(glassRefreshNames))))
-            setStorage("glassRefreshMode", std::to_string(glassRefreshMode));
-        ImGui::EndDisabled();
-
-        ImGui::EndDisabled();
+        {
+            mainPersonalization.glassRefreshMode = std::clamp(
+                mainPersonalization.glassRefreshMode, 0, 3);
+            sharedGlassSettingsChanged = true;
+            sharedGlassSettingsSaveRequested = true;
+        }
 
         if (defaultPresetIndex >= 0)
         {
@@ -3040,8 +3096,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
     float& gradientEndA, float& shadowAlpha,
     float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
-    float& noiseAlpha, bool& glassEnabled, float& glassBlurRadius,
-    int& glassRefreshMode) const
+    float& noiseAlpha, bool& glassEnabled) const
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
@@ -3071,12 +3126,6 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
                 lua_pop(L_, 1);
             };
 
-            auto readInt = [&](const char* key, int& out, int def) {
-                lua_getfield(L_, -1, key);
-                out = lua_isnumber(L_, -1) ? static_cast<int>(lua_tointeger(L_, -1)) : def;
-                lua_pop(L_, 1);
-            };
-
             readHex("bg", bgR, bgG, bgB, 0x151A21);
             readHex("border", borderR, borderG, borderB, 0xFFFFFF);
             readFloat("alpha", alpha, 0.36f);
@@ -3088,8 +3137,6 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readFloat("highlightAlpha", highlightAlpha, 0.0f);
             readFloat("noiseAlpha", noiseAlpha, 0.0f);
             readBool("glassEnabled", glassEnabled, false);
-            readFloat("glassBlurRadius", glassBlurRadius, 24.0f);
-            readInt("glassRefreshMode", glassRefreshMode, 1);
 
             const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
             auto readStoredColor = [&](const char* key, float& r, float& g, float& b) {
@@ -3109,10 +3156,6 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
                 if (it != g_storage.end())
                     out = it->second == "1" || it->second == "true";
             };
-            auto readStoredInt = [&](const char* key, int& out) {
-                auto it = g_storage.find(prefix + key);
-                if (it != g_storage.end()) out = std::atoi(it->second.c_str());
-            };
             readStoredColor("bg", bgR, bgG, bgB);
             readStoredColor("border", borderR, borderG, borderB);
             readStoredFloat("alpha", alpha);
@@ -3124,10 +3167,6 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readStoredFloat("highlightAlpha", highlightAlpha);
             readStoredFloat("noiseAlpha", noiseAlpha);
             readStoredBool("glassEnabled", glassEnabled);
-            readStoredFloat("glassBlurRadius", glassBlurRadius);
-            readStoredInt("glassRefreshMode", glassRefreshMode);
-            glassBlurRadius = std::clamp(glassBlurRadius, 4.0f, 48.0f);
-            glassRefreshMode = std::clamp(glassRefreshMode, 0, 3);
 
             lua_pop(L_, 1);
             return true;

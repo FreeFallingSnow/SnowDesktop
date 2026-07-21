@@ -41,6 +41,11 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 SettingsWindow* g_settingsWindow = nullptr;
 
+namespace {
+constexpr UINT_PTR kSettingsRefreshTimerId = 1;
+constexpr UINT kSettingsRefreshIntervalMs = 500;
+}
+
 /**
  * @brief 配置 ImGui 的浅色主题配色方案。
  *
@@ -214,6 +219,9 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
  */
 void SettingsWindow::Shutdown()
 {
+    if (hwnd_ != nullptr)
+        KillTimer(hwnd_, kSettingsRefreshTimerId);
+
     if (personalizationDirty_)
     {
         SavePersonalization(GetPersonalizationPath().c_str(), personalization_);
@@ -243,6 +251,7 @@ void SettingsWindow::Shutdown()
     ImGui::DestroyContext();
     CleanupSwapChain();
     if (hwnd_ != nullptr) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
+    renderRequested_ = false;
 }
 
 /**
@@ -258,6 +267,8 @@ void SettingsWindow::Show()
             return;
     }
     ShowWindow(hwnd_, IsIconic(hwnd_) ? SW_RESTORE : SW_SHOW);
+    SetTimer(hwnd_, kSettingsRefreshTimerId, kSettingsRefreshIntervalMs, nullptr);
+    renderRequested_ = true;
     BringWindowToTop(hwnd_);
     SetForegroundWindow(hwnd_);
     SetFocus(hwnd_);
@@ -297,6 +308,7 @@ void SettingsWindow::RequestClose()
     if (categorySettingsDirty_)
         categorySettingsSaveRequested_ = true;
     pendingClose_ = true;
+    renderRequested_ = true;
 }
 
 /**
@@ -319,6 +331,8 @@ void SettingsWindow::Render()
 {
     if (hwnd_ == nullptr || !IsWindowVisible(hwnd_) || IsIconic(hwnd_)) return;
     if (swapChain_ == nullptr) return;
+
+    renderRequested_ = false;
 
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -870,6 +884,13 @@ void SettingsWindow::DrawDockPage()
     const float labelW = 116.0f * dpiScale_;
     const float controlW = 260.0f * dpiScale_;
     auto markChanged = [&]() { dockSettingsDirty_ = true; };
+    auto markSharedGlassChanged = [&](bool saveImmediately) {
+        personalizationDirty_ = true;
+        personalizationPreviewDirty_ = true;
+        glassSettingsPreviewDirty_ = true;
+        if (saveImmediately)
+            personalizationSaveRequested_ = true;
+    };
     auto percentText = [](float value) {
         return std::to_string(static_cast<int>(std::round(
             std::clamp(value, 0.0f, 1.0f) * 100.0f))) + "%";
@@ -1009,6 +1030,43 @@ void SettingsWindow::DrawDockPage()
         markChanged();
     }
     ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("共享毛玻璃采样");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(与组件显示设置、Lua 组件设置同步)");
+
+    ImGui::Text("模糊半径");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::SliderFloat("##DockGlassBlurRadius", &personalization_.glassBlurRadius,
+        4.0f, 48.0f, "%.0f px"))
+        markSharedGlassChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
+
+    ImGui::Text("背景刷新");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(controlW);
+    const char* dockGlassRefreshNames[] = {
+        "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
+    };
+    int dockGlassRefreshIndex = std::clamp(personalization_.glassRefreshMode, 0, 3);
+    if (ImGui::Combo("##DockGlassRefreshMode", &dockGlassRefreshIndex,
+        dockGlassRefreshNames, static_cast<int>(std::size(dockGlassRefreshNames))))
+    {
+        personalization_.glassRefreshMode = dockGlassRefreshIndex;
+        markSharedGlassChanged(true);
+    }
+
+    if (glassStatusProvider_)
+    {
+        ImGui::Text("采样状态");
+        ImGui::SameLine(labelW);
+        ImGui::TextDisabled("%s", WideToUtf8(glassStatusProvider_()).c_str());
+    }
     ImGui::EndDisabled();
 
     ImGui::EndChild();
@@ -1602,10 +1660,13 @@ void SettingsWindow::DrawPersonalizationPage()
         switch (index)
         {
         case 1: return PersonalizationSettings::LightPreset();
-        case 2: return PersonalizationSettings::GlassDarkPreset();
-        case 3: return PersonalizationSettings::GlassLightPreset();
+        case 2: return PersonalizationSettings::TranslucentDarkPreset();
+        case 3: return PersonalizationSettings::TranslucentLightPreset();
         case 4: return PersonalizationSettings::FrostedPreset();
         case 5: return PersonalizationSettings::HighContrastPreset();
+        case 6: return PersonalizationSettings::GlassDarkPreset();
+        case 7: return PersonalizationSettings::GlassLightPreset();
+        case 8: return PersonalizationSettings::TransparentGlassPreset();
         default: return PersonalizationSettings::DarkPreset();
         }
     };
@@ -1613,22 +1674,34 @@ void SettingsWindow::DrawPersonalizationPage()
     const char* presetNames[] = {
         "经典深色",
         "浅色柔和",
-        "深色玻璃",
-        "亮色玻璃",
+        "深色通透",
+        "浅色通透",
         "磨砂柔光",
-        "高对比"
+        "高对比",
+        "深色毛玻璃",
+        "浅色毛玻璃",
+        "透明毛玻璃"
     };
-    int presetIndex = std::clamp(personalization_.backgroundPreset, 0, 5);
+    int presetIndex = std::clamp(personalization_.backgroundPreset, 0, 8);
     ImGui::Text("背景预设");
     ImGui::SameLine(labelW);
     ImGui::SetNextItemWidth(sliderW);
     if (ImGui::Combo("##WidgetBackgroundPreset", &presetIndex,
         presetNames, static_cast<int>(sizeof(presetNames) / sizeof(presetNames[0]))))
     {
+        const float cornerRadius = personalization_.cornerRadius;
+        const float barHeight = personalization_.barHeight;
         personalization_ = presetForIndex(presetIndex);
+        personalization_.cornerRadius = cornerRadius;
+        personalization_.barHeight = barHeight;
         markChanged(true, true);
     }
 
+    ImGui::Spacing();
+    ImGui::Text("预设外观");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(切换背景预设时更新)");
+    ImGui::Separator();
     ImGui::Spacing();
 
     ImGui::Text("组件背景");
@@ -1685,7 +1758,9 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::SameLine(labelW);
     if (ImGui::Checkbox("##GradientToggle", &gradientToggle))
     {
-        personalization_.gradientEndA = gradientToggle ? PersonalizationSettings::DarkPreset().gradientEndA : 0.0f;
+        personalization_.gradientEndA = gradientToggle
+            ? presetForIndex(personalization_.backgroundPreset).gradientEndA
+            : 0.0f;
         markChanged(true);
         gradientEnabled = gradientToggle;
     }
@@ -1701,16 +1776,6 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("%s", percentText(personalization_.gradientEndA).c_str());
-
-    ImGui::Spacing();
-
-    ImGui::Text("圆角半径");
-    ImGui::SameLine(labelW);
-    ImGui::SetNextItemWidth(sliderW);
-    if (ImGui::SliderFloat("##WidgetCornerRadius", &personalization_.cornerRadius, 4.0f, 28.0f, "%.0f cu"))
-        markChanged(false);
-    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
-        personalizationSaveRequested_ = true;
 
     ImGui::Text("阴影柔化半径");
     ImGui::SameLine(labelW);
@@ -1767,7 +1832,9 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::SameLine();
     ImGui::TextDisabled("(会增加 GPU 占用，实时刷新开销较高)");
 
-    ImGui::BeginDisabled(!personalization_.glassEnabled);
+    ImGui::Text("共享采样参数");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(与 Dock 设置、Lua 组件设置同步)");
     ImGui::Text("模糊半径");
     ImGui::SameLine(labelW);
     ImGui::SetNextItemWidth(sliderW);
@@ -1792,13 +1859,26 @@ void SettingsWindow::DrawPersonalizationPage()
 
     if (glassStatusProvider_)
     {
-        ImGui::Text("动态壁纸");
+        ImGui::Text("采样状态");
         ImGui::SameLine(labelW);
         ImGui::TextDisabled("%s", WideToUtf8(glassStatusProvider_()).c_str());
     }
-    ImGui::EndDisabled();
 
     ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("独立布局");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(不随预设，由宿主统一控制，Lua 组件不可覆盖)");
+    ImGui::Spacing();
+
+    ImGui::Text("圆角半径");
+    ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(sliderW);
+    if (ImGui::SliderFloat("##WidgetCornerRadius", &personalization_.cornerRadius, 4.0f, 28.0f, "%.0f cu"))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
+        personalizationSaveRequested_ = true;
 
     ImGui::Text("底栏高度");
     ImGui::SameLine(labelW);
@@ -1907,7 +1987,19 @@ void SettingsWindow::DrawWidgetEditorPage()
         ImGui::PushStyleColor(ImGuiCol_InputTextCursor, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
 
         widgetEngine_->EnsureWidgetLoaded(editingWidgetId_, editingScriptPath_);
-        widgetEngine_->RenderWidgetEditor(editingWidgetId_, editingWidgetName_);
+        bool sharedGlassSettingsChanged = false;
+        bool sharedGlassSettingsSaveRequested = false;
+        widgetEngine_->RenderWidgetEditor(editingWidgetId_, editingWidgetName_,
+            personalization_, sharedGlassSettingsChanged,
+            sharedGlassSettingsSaveRequested);
+        if (sharedGlassSettingsChanged)
+        {
+            personalizationDirty_ = true;
+            personalizationPreviewDirty_ = true;
+            glassSettingsPreviewDirty_ = true;
+        }
+        if (sharedGlassSettingsSaveRequested && personalizationDirty_)
+            personalizationSaveRequested_ = true;
 
         ImGui::PopStyleColor(1);
     }
@@ -2804,6 +2896,11 @@ void SettingsWindow::SetAutoStart(bool enable) const
  */
 LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    // 只有设置窗口自身的消息才会请求新帧。桌面窗口的鼠标、拖拽与
+    // 定时器消息不再连带触发 ImGui 重建和交换链 Present。
+    if (g_settingsWindow != nullptr && msg != WM_TIMER)
+        g_settingsWindow->renderRequested_ = true;
+
     if (g_settingsWindow != nullptr && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && wParam == VK_ESCAPE)
     {
         g_settingsWindow->RequestClose();
@@ -2815,13 +2912,21 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 
     switch (msg)
     {
+    case WM_TIMER:
+        if (g_settingsWindow != nullptr && wParam == kSettingsRefreshTimerId)
+        {
+            // 低频更新动态壁纸状态、调试采样和文本光标等动态内容。
+            g_settingsWindow->renderRequested_ = true;
+            return 0;
+        }
+        break;
     case WM_MOUSEACTIVATE:
         return MA_ACTIVATE;
     case WM_SIZE:
         if (g_settingsWindow != nullptr && wParam != SIZE_MINIMIZED)
         {
             g_settingsWindow->CreateSwapChain();
-            g_settingsWindow->Render();
+            g_settingsWindow->renderRequested_ = true;
         }
         return 0;
     case WM_DPICHANGED:

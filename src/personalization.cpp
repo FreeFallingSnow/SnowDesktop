@@ -74,9 +74,8 @@ PersonalizationSettings PersonalizationSettings::DarkPreset()
     s.widgetBgR = 0.08f; s.widgetBgG = 0.10f; s.widgetBgB = 0.13f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.34f; s.widgetBorderAlpha = 0.32f;
-    s.gradientEndA = 0.56f; s.barHeight = 24.0f;
+    s.gradientEndA = 0.56f;
     s.backgroundPreset = 0;
-    s.cornerRadius = 12.0f;
     s.shadowAlpha = 0.0f;
     s.shadowBlur = 12.0f;
     s.shadowOffsetY = 4.0f;
@@ -98,9 +97,8 @@ PersonalizationSettings PersonalizationSettings::LightPreset()
     s.widgetBgR = 0.95f; s.widgetBgG = 0.96f; s.widgetBgB = 0.97f;
     s.widgetBorderR = 0.5f; s.widgetBorderG = 0.5f; s.widgetBorderB = 0.55f;
     s.widgetAlpha = 0.12f; s.widgetBorderAlpha = 0.20f;
-    s.gradientEndA = 0.12f; s.barHeight = 24.0f;
+    s.gradientEndA = 0.12f;
     s.backgroundPreset = 1;
-    s.cornerRadius = 14.0f;
     s.shadowAlpha = 0.10f;
     s.shadowBlur = 12.0f;
     s.shadowOffsetY = 4.0f;
@@ -109,41 +107,35 @@ PersonalizationSettings PersonalizationSettings::LightPreset()
     return s;
 }
 
-PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
+PersonalizationSettings PersonalizationSettings::TranslucentDarkPreset()
 {
     PersonalizationSettings s;
     s.widgetBgR = 0.05f; s.widgetBgG = 0.07f; s.widgetBgB = 0.10f;
     s.widgetBorderR = 0.78f; s.widgetBorderG = 0.88f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.22f; s.widgetBorderAlpha = 0.24f;
-    s.gradientEndA = 0.42f; s.barHeight = 24.0f;
+    s.gradientEndA = 0.42f;
     s.backgroundPreset = 2;
-    s.cornerRadius = 16.0f;
     s.shadowAlpha = 0.16f;
     s.shadowBlur = 16.0f;
     s.shadowOffsetY = 5.0f;
     s.highlightAlpha = 0.10f;
     s.noiseAlpha = 0.012f;
-    s.glassEnabled = true;
-    s.glassBlurRadius = 24.0f;
     return s;
 }
 
-PersonalizationSettings PersonalizationSettings::GlassLightPreset()
+PersonalizationSettings PersonalizationSettings::TranslucentLightPreset()
 {
     PersonalizationSettings s;
     s.widgetBgR = 0.92f; s.widgetBgG = 0.96f; s.widgetBgB = 1.0f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.16f; s.widgetBorderAlpha = 0.28f;
-    s.gradientEndA = 0.20f; s.barHeight = 24.0f;
+    s.gradientEndA = 0.20f;
     s.backgroundPreset = 3;
-    s.cornerRadius = 16.0f;
     s.shadowAlpha = 0.11f;
     s.shadowBlur = 14.0f;
     s.shadowOffsetY = 4.0f;
     s.highlightAlpha = 0.18f;
     s.noiseAlpha = 0.014f;
-    s.glassEnabled = true;
-    s.glassBlurRadius = 22.0f;
     return s;
 }
 
@@ -153,16 +145,13 @@ PersonalizationSettings PersonalizationSettings::FrostedPreset()
     s.widgetBgR = 0.78f; s.widgetBgG = 0.84f; s.widgetBgB = 0.90f;
     s.widgetBorderR = 0.95f; s.widgetBorderG = 0.98f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.16f; s.widgetBorderAlpha = 0.26f;
-    s.gradientEndA = 0.22f; s.barHeight = 24.0f;
+    s.gradientEndA = 0.22f;
     s.backgroundPreset = 4;
-    s.cornerRadius = 18.0f;
     s.shadowAlpha = 0.12f;
     s.shadowBlur = 18.0f;
     s.shadowOffsetY = 5.0f;
     s.highlightAlpha = 0.20f;
     s.noiseAlpha = 0.025f;
-    s.glassEnabled = true;
-    s.glassBlurRadius = 28.0f;
     return s;
 }
 
@@ -172,14 +161,57 @@ PersonalizationSettings PersonalizationSettings::HighContrastPreset()
     s.widgetBgR = 0.02f; s.widgetBgG = 0.02f; s.widgetBgB = 0.025f;
     s.widgetBorderR = 0.25f; s.widgetBorderG = 0.62f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.72f; s.widgetBorderAlpha = 0.72f;
-    s.gradientEndA = 0.78f; s.barHeight = 26.0f;
+    s.gradientEndA = 0.78f;
     s.backgroundPreset = 5;
-    s.cornerRadius = 10.0f;
     s.shadowAlpha = 0.12f;
     s.shadowBlur = 10.0f;
     s.shadowOffsetY = 3.0f;
     s.highlightAlpha = 0.10f;
     s.noiseAlpha = 0.0f;
+    return s;
+}
+
+PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
+{
+    PersonalizationSettings s = TranslucentDarkPreset();
+    s.backgroundPreset = 6;
+    s.gradientEndA = 0.0f;
+    s.shadowAlpha = 0.0f;
+    s.highlightAlpha = 0.0f;
+    s.noiseAlpha = 0.0f;
+    s.glassEnabled = true;
+    s.glassBlurRadius = 24.0f;
+    return s;
+}
+
+PersonalizationSettings PersonalizationSettings::GlassLightPreset()
+{
+    PersonalizationSettings s = TranslucentLightPreset();
+    s.backgroundPreset = 7;
+    s.widgetAlpha = 0.08f;
+    s.gradientEndA = 0.0f;
+    s.shadowAlpha = 0.0f;
+    s.highlightAlpha = 0.0f;
+    s.noiseAlpha = 0.0f;
+    s.glassEnabled = true;
+    s.glassBlurRadius = 22.0f;
+    return s;
+}
+
+PersonalizationSettings PersonalizationSettings::TransparentGlassPreset()
+{
+    PersonalizationSettings s = DarkPreset();
+    s.backgroundPreset = 8;
+    s.widgetBgR = 1.0f; s.widgetBgG = 1.0f; s.widgetBgB = 1.0f;
+    s.widgetAlpha = 0.0f;
+    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
+    s.widgetBorderAlpha = 0.18f;
+    s.gradientEndA = 0.0f;
+    s.shadowAlpha = 0.0f;
+    s.highlightAlpha = 0.0f;
+    s.noiseAlpha = 0.0f;
+    s.glassEnabled = true;
+    s.glassBlurRadius = 24.0f;
     return s;
 }
 

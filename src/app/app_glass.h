@@ -21,6 +21,10 @@ constexpr float kGlassBackdropScale = 0.5f;
 /** @brief 同一源帧最多保留的模糊半径数量，限制 GPU 位图占用。 */
 constexpr size_t kGlassRadiusCacheLimit = 6;
 
+/** @brief 液态玻璃边缘自适应使用的低分辨率亮度图尺寸。 */
+constexpr UINT kGlassLuminanceWidth = 32;
+constexpr UINT kGlassLuminanceHeight = 18;
+
 /** @brief 动态壁纸窗口检测间隔（毫秒）。 */
 constexpr DWORD kGlassDetectIntervalMs = 10000;
 
@@ -197,31 +201,15 @@ inline bool IsGlassWallpaperWindowClass(HWND window)
         _wcsicmp(className, L"Intermediate D3D Window") == 0;
 }
 
-inline bool IsDesktopHostedWallpaperWindow(HWND window)
-{
-    if (IsGlassWallpaperWindowClass(window))
-        return true;
-    DWORD processId = 0;
-    GetWindowThreadProcessId(window, &processId);
-    const std::wstring name = WallpaperProcessName(processId);
-    return name == L"wallpaper32.exe" || name == L"wallpaper64.exe" ||
-        name == L"webwallpaper32.exe" || name == L"webwallpaper64.exe" ||
-        name == L"edgewallpaper32.exe" || name == L"edgewallpaper64.exe" ||
-        name == L"msedgewebview2.exe";
-}
-
 inline void CALLBACK DesktopApp::GlassWallpaperWinEventProc(HWINEVENTHOOK,
     DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD)
 {
     if (!window || objectId != OBJID_WINDOW || childId != CHILDID_SELF)
         return;
     if (event != EVENT_OBJECT_CREATE && event != EVENT_OBJECT_DESTROY &&
-        event != EVENT_OBJECT_SHOW && event != EVENT_OBJECT_HIDE &&
-        event != EVENT_OBJECT_REORDER && event != EVENT_OBJECT_LOCATIONCHANGE &&
-        event != EVENT_OBJECT_NAMECHANGE)
+        event != EVENT_OBJECT_SHOW && event != EVENT_OBJECT_HIDE)
         return;
-    if (event != EVENT_OBJECT_DESTROY &&
-        !IsDesktopHostedWallpaperWindow(window))
+    if (event != EVENT_OBJECT_DESTROY && !IsGlassWallpaperWindowClass(window))
         return;
     const HWND target = glassWallpaperEventTarget_;
     if (target && IsWindow(target))
@@ -235,7 +223,7 @@ inline void DesktopApp::StartGlassWallpaperEventMonitor()
         return;
     glassWallpaperEventTarget_ = hwnd_;
     glassWallpaperEventHook_ = SetWinEventHook(EVENT_OBJECT_CREATE,
-        EVENT_OBJECT_NAMECHANGE, nullptr, &DesktopApp::GlassWallpaperWinEventProc,
+        EVENT_OBJECT_HIDE, nullptr, &DesktopApp::GlassWallpaperWinEventProc,
         0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
     if (!glassWallpaperEventHook_)
         glassWallpaperEventTarget_ = nullptr;
@@ -266,7 +254,7 @@ inline void DesktopApp::ScheduleGlassWallpaperEventRefresh(UINT event,
     if (event == EVENT_OBJECT_DESTROY && !tracked)
         return;
     if (event != EVENT_OBJECT_DESTROY && !tracked &&
-        !IsDesktopHostedWallpaperWindow(sourceWindow))
+        !IsGlassWallpaperWindowClass(sourceWindow))
         return;
     SetTimer(hwnd_, kWallpaperEventDebounceTimerId,
         kWallpaperEventDebounceMs, nullptr);
@@ -292,6 +280,7 @@ inline void DesktopApp::StopWallpaperEngineCaptures()
     wallpaperEngineCaptures_.clear();
     wallpaperCaptureProcessCache_.clear();
     wallpaperCaptureProcessCacheTick_ = 0;
+    glassDynamicWaitStartTick_ = 0;
 }
 
 /**
@@ -724,18 +713,26 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     auto scheduleFrameRetry = [this]() {
         if (!hwnd_ || !IsWindow(hwnd_))
             return;
+        const DWORD now = GetTickCount();
+        if (glassDynamicWaitStartTick_ == 0)
+            glassDynamicWaitStartTick_ = now;
+        const DWORD waitMs = now - glassDynamicWaitStartTick_;
+        UINT retryInterval = kGlassRefreshRealtimeIntervalMs;
+        if (waitMs >= 5000)
+            retryInterval = 500;
+        else if (waitMs >= 1000)
+            retryInterval = 250;
         if (glassRefreshTimerActive_ &&
-            glassRefreshTimerIntervalMs_ != kGlassRefreshRealtimeIntervalMs)
+            glassRefreshTimerIntervalMs_ != retryInterval)
         {
             KillTimer(hwnd_, kGlassRefreshTimerId);
             glassRefreshTimerActive_ = false;
         }
         if (!glassRefreshTimerActive_)
         {
-            SetTimer(hwnd_, kGlassRefreshTimerId,
-                kGlassRefreshRealtimeIntervalMs, nullptr);
+            SetTimer(hwnd_, kGlassRefreshTimerId, retryInterval, nullptr);
             glassRefreshTimerActive_ = true;
-            glassRefreshTimerIntervalMs_ = kGlassRefreshRealtimeIntervalMs;
+            glassRefreshTimerIntervalMs_ = retryInterval;
         }
     };
     auto fail = [this](const std::wstring& stage) {
@@ -851,7 +848,11 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
             capture->RequestFrame();
             waitingForSource = true;
             if (waitingReason.empty())
-                waitingReason = L"等待 Wallpaper Engine 下一次 Present";
+            {
+                waitingReason = capture->LastError();
+                if (waitingReason.empty())
+                    waitingReason = L"等待 Wallpaper Engine 下一次 Present";
+            }
             continue;
         }
         if (frameState == WallpaperEngineFrameState::error)
@@ -1071,6 +1072,7 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     {
         dynamicWallpaperCaptureError_.clear();
         dynamicWallpaperCaptureDeferred_ = false;
+        glassDynamicWaitStartTick_ = 0;
     }
     *outBitmap = glassDynamicLayerBitmap_.Get();
     (*outBitmap)->AddRef();
@@ -1295,8 +1297,8 @@ inline void DesktopApp::BeginGlassBackdropTransition(int refreshMode)
 
 /**
  * @brief 将 0.5x 位图高斯模糊到 glassBackdropBitmap_。
- * @details 同一源帧按半径缓存输出，使不同 Lua 组件可以使用独立半径，
- *          同时避免每个面板重复执行高斯模糊。每台物理显示器先独立裁剪，
+ * @details 同一源帧按共享半径缓存输出，避免每个面板重复执行高斯模糊。
+ *          每台物理显示器先独立裁剪，
  *          使用硬边界扩展完成模糊，再拼回原区域，禁止跨屏采样颜色。
  * @return 成功返回 true
  */
@@ -1443,6 +1445,8 @@ inline bool DesktopApp::BlurGlassBitmapToBackdrop(ID2D1Bitmap1* source, float bl
     glassEffectContext_->SetTarget(nullptr);
     if (FAILED(hr))
         return false;
+
+    ScheduleGlassLuminanceReadback(target.Get());
 
     if (glassBackdropRadiusCache_.size() >= kGlassRadiusCacheLimit)
         glassBackdropRadiusCache_.erase(glassBackdropRadiusCache_.begin());
@@ -1602,6 +1606,8 @@ inline bool DesktopApp::EnsureGlassBackdrop(float blurRadius, int refreshMode)
                 : dynamicWallpaperCaptureError_;
             WriteCrashLogEntry(message.c_str());
             glassBackdropBitmap_.Reset();
+            glassLuminanceMap_.clear();
+            glassLuminanceReadbackPending_.fill(false);
             glassBackdropRadiusCache_.clear();
             ClearGlassBackdropTransition();
             glassBackdropSignature_.clear();
@@ -1653,7 +1659,8 @@ inline bool DesktopApp::EnsureGlassBackdrop(float blurRadius, int refreshMode)
 /**
  * @brief 在面板矩形内绘制毛玻璃背景采样。
  * @details 目标矩形与源矩形按 kGlassBackdropScale 换算一一对应；
- *          radius > 0.5 时用圆角几何裁剪（角落不露出方形背景）。
+ *          radius > 0.5 时用圆角几何裁剪（角落不露出方形背景）。基础背景
+ *          绘制后，在 2–4 px 边缘带内向面板中心偏移采样，模拟轻微折射。
  * @param ctx    主渲染 D2D 设备上下文
  * @param frame  面板矩形（客户区坐标）
  * @param radius 面板圆角半径
@@ -1678,6 +1685,53 @@ inline void DesktopApp::DrawGlassBackdropRegion(ID2D1DeviceContext* ctx, RECT fr
             clipped = true;
         }
     }
+
+    const float width = dest.right - dest.left;
+    const float height = dest.bottom - dest.top;
+    const float rimWidth = std::min(
+        std::clamp(2.0f + radius * 0.08f, 2.0f, 4.0f),
+        std::max(0.0f, std::min(width, height) * 0.45f));
+    const float displacement = std::clamp(rimWidth * 0.46f, 0.9f, 1.8f);
+    auto drawRefractedRim = [&](ID2D1Bitmap1* bitmap, float opacity,
+        ComPtr<ID2D1Bitmap1>& cachedSource,
+        ComPtr<ID2D1BitmapBrush1>& cachedBrush) {
+        if (!bitmap || rimWidth < 0.5f || opacity <= 0.001f)
+            return;
+        if (cachedSource.Get() != bitmap || !cachedBrush)
+        {
+            cachedSource = bitmap;
+            cachedBrush.Reset();
+            const D2D1_BITMAP_BRUSH_PROPERTIES1 bitmapProperties =
+                D2D1::BitmapBrushProperties1(D2D1_EXTEND_MODE_CLAMP,
+                    D2D1_EXTEND_MODE_CLAMP,
+                    D2D1_INTERPOLATION_MODE_LINEAR);
+            if (FAILED(ctx->CreateBitmapBrush(bitmap, &bitmapProperties,
+                    nullptr, &cachedBrush)) || !cachedBrush)
+                return;
+        }
+        const float sourceLeft = (frame.left + displacement) * kGlassBackdropScale;
+        const float sourceTop = (frame.top + displacement) * kGlassBackdropScale;
+        const float sourceWidth = std::max(0.5f,
+            (width - displacement * 2.0f) * kGlassBackdropScale);
+        const float sourceHeight = std::max(0.5f,
+            (height - displacement * 2.0f) * kGlassBackdropScale);
+        const float scaleX = width / sourceWidth;
+        const float scaleY = height / sourceHeight;
+        cachedBrush->SetTransform(D2D1::Matrix3x2F(
+            scaleX, 0.0f, 0.0f, scaleY,
+            dest.left - sourceLeft * scaleX,
+            dest.top - sourceTop * scaleY));
+        cachedBrush->SetOpacity(opacity);
+
+        const float halfRim = rimWidth * 0.5f;
+        const D2D1_RECT_F rimRect = D2D1::RectF(
+            dest.left + halfRim, dest.top + halfRim,
+            dest.right - halfRim, dest.bottom - halfRim);
+        ctx->DrawRoundedRectangle(D2D1::RoundedRect(rimRect,
+            std::max(0.0f, radius - halfRim),
+            std::max(0.0f, radius - halfRim)), cachedBrush.Get(), rimWidth);
+    };
+
     float currentOpacity = 1.0f;
     bool drawPrevious = glassPreviousBackdropBitmap_ &&
         glassTransitionStartTick_ != 0 && glassTransitionDurationMs_ != 0;
@@ -1697,42 +1751,250 @@ inline void DesktopApp::DrawGlassBackdropRegion(ID2D1DeviceContext* ctx, RECT fr
             0.0f, 1.0f);
         ctx->DrawBitmap(glassPreviousBackdropBitmap_.Get(), dest, 1.0f,
             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
+        drawRefractedRim(glassPreviousBackdropBitmap_.Get(), 0.62f,
+            glassRefractionPreviousSource_, glassRefractionPreviousBrush_);
     }
     ctx->DrawBitmap(glassBackdropBitmap_.Get(), dest, currentOpacity,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
+    drawRefractedRim(glassBackdropBitmap_.Get(), 0.62f * currentOpacity,
+        glassRefractionCurrentSource_, glassRefractionCurrentBrush_);
     if (clipped) ctx->PopLayer();
 }
 
-/**
- * @brief 创建毛玻璃边缘光渐变描边画刷。
- * @details 竖直方向线性渐变：顶部为完整边框色（受光边缘），底部衰减到
- *          30% 不透明度，模拟 macOS Dock 玻璃边缘的折射高光。
- * @param ctx   D2D 设备上下文
- * @param frame 面板矩形（决定渐变起止点）
- * @param color 边框颜色（含 alpha）
- * @return 渐变画刷；失败返回空 ComPtr
- */
-inline ComPtr<ID2D1LinearGradientBrush> DesktopApp::CreateGlassBorderBrush(
-    ID2D1DeviceContext* ctx, RECT frame, D2D1_COLOR_F color)
+inline void DesktopApp::TryConsumeGlassLuminanceReadbacks()
 {
-    ComPtr<ID2D1LinearGradientBrush> brush;
-    if (!ctx || color.a <= 0.0f) return brush;
+    if (!d3dImmediateContext_)
+        return;
+    for (size_t index = 0; index < glassLuminanceReadbacks_.size(); ++index)
+    {
+        if (!glassLuminanceReadbackPending_[index] ||
+            !glassLuminanceReadbacks_[index])
+            continue;
 
-    D2D1_GRADIENT_STOP stops[] = {
-        { 0.0f, D2D1::ColorF(color.r, color.g, color.b, color.a) },
-        { 1.0f, D2D1::ColorF(color.r, color.g, color.b, color.a * 0.30f) },
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        const HRESULT hr = d3dImmediateContext_->Map(
+            glassLuminanceReadbacks_[index].Get(), 0,
+            D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+        if (hr == DXGI_ERROR_WAS_STILL_DRAWING)
+            continue;
+        glassLuminanceReadbackPending_[index] = false;
+        if (FAILED(hr))
+            continue;
+
+        glassLuminanceMap_.resize(
+            static_cast<size_t>(kGlassLuminanceWidth) * kGlassLuminanceHeight);
+        for (UINT y = 0; y < kGlassLuminanceHeight; ++y)
+        {
+            const auto* row = static_cast<const std::uint8_t*>(mapped.pData) +
+                static_cast<size_t>(y) * mapped.RowPitch;
+            for (UINT x = 0; x < kGlassLuminanceWidth; ++x)
+            {
+                const auto* pixel = row + static_cast<size_t>(x) * 4;
+                const float b = pixel[0] / 255.0f;
+                const float g = pixel[1] / 255.0f;
+                const float r = pixel[2] / 255.0f;
+                glassLuminanceMap_[static_cast<size_t>(y) * kGlassLuminanceWidth + x] =
+                    std::clamp(r * 0.2126f + g * 0.7152f + b * 0.0722f,
+                        0.0f, 1.0f);
+            }
+        }
+        d3dImmediateContext_->Unmap(glassLuminanceReadbacks_[index].Get(), 0);
+    }
+}
+
+inline void DesktopApp::ScheduleGlassLuminanceReadback(ID2D1Bitmap1* source)
+{
+    if (!source || !glassEffectContext_ || !d3dDevice_ || !d3dImmediateContext_)
+        return;
+
+    TryConsumeGlassLuminanceReadbacks();
+    size_t freeIndex = glassLuminanceReadbacks_.size();
+    for (size_t index = 0; index < glassLuminanceReadbacks_.size(); ++index)
+    {
+        if (!glassLuminanceReadbackPending_[index])
+        {
+            freeIndex = index;
+            break;
+        }
+    }
+    if (freeIndex >= glassLuminanceReadbacks_.size())
+        return;
+
+    if (!glassLuminanceBitmap_)
+    {
+        const D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (FAILED(glassEffectContext_->CreateBitmap(
+                D2D1::SizeU(kGlassLuminanceWidth, kGlassLuminanceHeight),
+                nullptr, 0, &properties, &glassLuminanceBitmap_)) ||
+            !glassLuminanceBitmap_)
+            return;
+    }
+
+    const D2D1_SIZE_U sourceSize = source->GetPixelSize();
+    glassEffectContext_->SetTarget(glassLuminanceBitmap_.Get());
+    glassEffectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
+    glassEffectContext_->BeginDraw();
+    glassEffectContext_->Clear(D2D1::ColorF(0.5f, 0.5f, 0.5f, 1.0f));
+    glassEffectContext_->DrawBitmap(source,
+        D2D1::RectF(0.0f, 0.0f, static_cast<float>(kGlassLuminanceWidth),
+            static_cast<float>(kGlassLuminanceHeight)),
+        1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+        D2D1::RectF(0.0f, 0.0f, static_cast<float>(sourceSize.width),
+            static_cast<float>(sourceSize.height)));
+    const HRESULT drawHr = glassEffectContext_->EndDraw();
+    glassEffectContext_->SetTarget(nullptr);
+    if (FAILED(drawHr))
+        return;
+
+    ComPtr<IDXGISurface> surface;
+    ComPtr<ID3D11Texture2D> gpuTexture;
+    if (FAILED(glassLuminanceBitmap_->GetSurface(&surface)) || !surface ||
+        FAILED(surface.As(&gpuTexture)) || !gpuTexture)
+        return;
+
+    if (!glassLuminanceReadbacks_[freeIndex])
+    {
+        D3D11_TEXTURE2D_DESC description{};
+        gpuTexture->GetDesc(&description);
+        description.Usage = D3D11_USAGE_STAGING;
+        description.BindFlags = 0;
+        description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        description.MiscFlags = 0;
+        if (FAILED(d3dDevice_->CreateTexture2D(&description, nullptr,
+                &glassLuminanceReadbacks_[freeIndex])) ||
+            !glassLuminanceReadbacks_[freeIndex])
+            return;
+    }
+
+    d3dImmediateContext_->CopyResource(glassLuminanceReadbacks_[freeIndex].Get(),
+        gpuTexture.Get());
+    glassLuminanceReadbackPending_[freeIndex] = true;
+    // 静态壁纸的“仅事件”档也需要一个后续绘制帧来非阻塞消费回读。
+    InvalidateGlassRequestedRegions();
+}
+
+inline float DesktopApp::SampleGlassBorderLuminance(RECT frame)
+{
+    TryConsumeGlassLuminanceReadbacks();
+    if (glassLuminanceMap_.size() !=
+            static_cast<size_t>(kGlassLuminanceWidth) * kGlassLuminanceHeight ||
+        !hwnd_ || !IsWindow(hwnd_))
+        return 0.5f;
+
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    const float clientWidth = static_cast<float>(std::max<LONG>(1, client.right));
+    const float clientHeight = static_cast<float>(std::max<LONG>(1, client.bottom));
+    auto mapX = [&](LONG value) {
+        return std::clamp(static_cast<int>(std::floor(
+            value / clientWidth * kGlassLuminanceWidth)),
+            0, static_cast<int>(kGlassLuminanceWidth) - 1);
     };
-    ComPtr<ID2D1GradientStopCollection> stopCollection;
-    if (FAILED(ctx->CreateGradientStopCollection(stops, 2,
-            D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stopCollection)) || !stopCollection)
-        return brush;
+    auto mapY = [&](LONG value) {
+        return std::clamp(static_cast<int>(std::floor(
+            value / clientHeight * kGlassLuminanceHeight)),
+            0, static_cast<int>(kGlassLuminanceHeight) - 1);
+    };
+    const int left = mapX(frame.left);
+    const int right = mapX(std::max(frame.left, frame.right - 1));
+    const int top = mapY(frame.top);
+    const int bottom = mapY(std::max(frame.top, frame.bottom - 1));
+    const int edgeX = std::max(1, (right - left + 1) / 4);
+    const int edgeY = std::max(1, (bottom - top + 1) / 4);
+    float sum = 0.0f;
+    int count = 0;
+    for (int y = top; y <= bottom; ++y)
+    {
+        for (int x = left; x <= right; ++x)
+        {
+            if (x >= left + edgeX && x <= right - edgeX &&
+                y >= top + edgeY && y <= bottom - edgeY)
+                continue;
+            sum += glassLuminanceMap_[static_cast<size_t>(y) *
+                kGlassLuminanceWidth + static_cast<size_t>(x)];
+            ++count;
+        }
+    }
+    return count > 0 ? std::clamp(sum / count, 0.0f, 1.0f) : 0.5f;
+}
 
-    ctx->CreateLinearGradientBrush(
-        D2D1::LinearGradientBrushProperties(
-            D2D1::Point2F(0.0f, static_cast<float>(frame.top)),
-            D2D1::Point2F(0.0f, static_cast<float>(frame.bottom))),
-        stopCollection.Get(), &brush);
-    return brush;
+/**
+ * @brief 绘制内容自适应的液态玻璃边缘。
+ * @details 左上角使用柔亮斜向高光，右下角收暗；外侧增加低强度光晕，
+ *          内侧增加暗边形成厚度。明暗强度由异步回读的面板边缘背景亮度
+ *          调节，因此亮壁纸强化暗内缘、暗壁纸强化亮外缘。
+ */
+inline bool DesktopApp::DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame,
+    float radius, D2D1_COLOR_F color, float strokeWidth)
+{
+    if (!ctx || color.a <= 0.0f || IsRectEmptyRect(frame))
+        return false;
+
+    const float luminance = SampleGlassBorderLuminance(frame);
+    const float lightAdapt = 1.15f - luminance * 0.48f;
+    auto mixWhite = [](float value, float amount) {
+        return std::clamp(value + (1.0f - value) * amount, 0.0f, 1.0f);
+    };
+    const D2D1_COLOR_F bright = D2D1::ColorF(
+        mixWhite(color.r, 0.58f), mixWhite(color.g, 0.58f),
+        mixWhite(color.b, 0.58f),
+        std::clamp(color.a * lightAdapt, 0.0f, 1.0f));
+    const D2D1_COLOR_F middle = D2D1::ColorF(color.r, color.g, color.b,
+        std::clamp(color.a * (0.72f - luminance * 0.10f), 0.0f, 1.0f));
+    const D2D1_COLOR_F dim = D2D1::ColorF(
+        color.r * 0.72f, color.g * 0.72f, color.b * 0.72f,
+        std::clamp(color.a * (0.24f + (1.0f - luminance) * 0.08f),
+            0.0f, 1.0f));
+    const D2D1_GRADIENT_STOP outerStops[] = {
+        { 0.0f, bright },
+        { 0.38f, middle },
+        { 0.72f, D2D1::ColorF(color.r, color.g, color.b, color.a * 0.42f) },
+        { 1.0f, dim },
+    };
+    ComPtr<ID2D1GradientStopCollection> outerCollection;
+    ComPtr<ID2D1LinearGradientBrush> outerBrush;
+    if (FAILED(ctx->CreateGradientStopCollection(outerStops,
+            static_cast<UINT32>(std::size(outerStops)), D2D1_GAMMA_2_2,
+            D2D1_EXTEND_MODE_CLAMP, &outerCollection)) || !outerCollection ||
+        FAILED(ctx->CreateLinearGradientBrush(
+            D2D1::LinearGradientBrushProperties(
+                D2D1::Point2F(static_cast<float>(frame.left),
+                    static_cast<float>(frame.top)),
+                D2D1::Point2F(static_cast<float>(frame.right),
+                    static_cast<float>(frame.bottom))),
+            outerCollection.Get(), &outerBrush)) || !outerBrush)
+        return false;
+
+    const D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(ToD2DRect(frame),
+        radius, radius);
+    outerBrush->SetOpacity(0.24f);
+    ctx->DrawRoundedRectangle(outer, outerBrush.Get(), strokeWidth + 1.35f);
+    outerBrush->SetOpacity(1.0f);
+    ctx->DrawRoundedRectangle(outer, outerBrush.Get(), strokeWidth);
+
+    const float inset = std::max(0.85f, strokeWidth * 0.85f);
+    const D2D1_RECT_F innerRect = D2D1::RectF(
+        frame.left + inset, frame.top + inset,
+        frame.right - inset, frame.bottom - inset);
+    if (innerRect.right > innerRect.left && innerRect.bottom > innerRect.top)
+    {
+        const float darkAlpha = std::clamp(
+            color.a * (0.18f + luminance * 0.68f), 0.025f, 0.24f);
+        ComPtr<ID2D1SolidColorBrush> innerBrush;
+        if (SUCCEEDED(ctx->CreateSolidColorBrush(
+                D2D1::ColorF(0.0f, 0.0f, 0.0f, darkAlpha),
+                &innerBrush)) && innerBrush)
+        {
+            ctx->DrawRoundedRectangle(D2D1::RoundedRect(innerRect,
+                std::max(0.0f, radius - inset),
+                std::max(0.0f, radius - inset)), innerBrush.Get(),
+                std::max(0.65f, strokeWidth * 0.65f));
+        }
+    }
+    return true;
 }
 
 /**
@@ -1740,23 +2002,54 @@ inline ComPtr<ID2D1LinearGradientBrush> DesktopApp::CreateGlassBorderBrush(
  */
 inline std::wstring DesktopApp::GetDynamicWallpaperStatusText() const
 {
+    std::wstring status;
     if (dynamicWallpaperWindows_.empty())
-        return L"未检测到动态壁纸引擎";
-    if (dynamicWallpaperIncompatible_)
+        status = L"未检测到动态壁纸引擎";
+    else if (dynamicWallpaperIncompatible_)
     {
         if (!dynamicWallpaperCaptureError_.empty())
-            return L"GPU Hook 捕获失败：" + dynamicWallpaperCaptureError_;
-        return L"GPU Hook 捕获失败";
+            status = L"GPU Hook 捕获失败：" + dynamicWallpaperCaptureError_;
+        else
+            status = L"GPU Hook 捕获失败";
     }
-    if (dynamicWallpaperCaptureDeferred_)
+    else if (dynamicWallpaperCaptureDeferred_)
     {
-        if (dynamicWallpaperCaptureError_.find(L"重连") != std::wstring::npos)
-            return dynamicWallpaperCaptureError_;
-        return L"GPU Hook 已连接，等待 Wallpaper Engine 下一帧";
+        if (!dynamicWallpaperCaptureError_.empty())
+            status = dynamicWallpaperCaptureError_;
+        else
+            status = L"GPU Hook 已连接，等待 Wallpaper Engine 下一帧";
     }
-    if (!dynamicWallpaperEngine_.empty())
-        return L"已通过 DXGI 共享纹理捕获 " + dynamicWallpaperEngine_;
-    return L"已通过 DXGI 共享纹理捕获动态壁纸";
+    else if (!dynamicWallpaperEngine_.empty())
+        status = L"已通过 DXGI 共享纹理捕获 " + dynamicWallpaperEngine_;
+    else
+        status = L"已通过 DXGI 共享纹理捕获动态壁纸";
+
+    status += L"\n玻璃面板：";
+    status += std::to_wstring(glassRequestedRegions_.size());
+    status += glassRefreshThrottled_
+        ? L"；检测到前台最大化/全屏应用，实时临时降为中频"
+        : L"；按所选档位刷新";
+    return status;
+}
+
+inline void DesktopApp::InvalidateGlassRequestedRegions()
+{
+    if (!hwnd_ || !IsWindow(hwnd_))
+        return;
+    if (glassRequestedRegions_.empty())
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    for (RECT region : glassRequestedRegions_)
+    {
+        InflateRect(&region, 2, 2);
+        RECT clipped{};
+        if (IntersectRect(&clipped, &region, &client))
+            InvalidateRect(hwnd_, &clipped, FALSE);
+    }
 }
 
 /**
@@ -1774,16 +2067,18 @@ inline void DesktopApp::UpdateGlassRefreshState()
     const int panelRefreshMode = glassRequestedRefreshMode_;
     glassRequestedByPanels_ = false;
     glassRequestedRefreshMode_ = 0;
+    glassRequestedRegions_.clear();
 
     bool globalGlassActive = false;
     bool dockGlassActive = false;
-    int globalRefreshMode = 0;
+    int sharedRefreshMode = 0;
     if (settingsWindow_)
     {
         const auto& global = settingsWindow_->GetPersonalization();
         globalGlassActive = global.glassEnabled;
-        dockGlassActive = settingsWindow_->GetDockAppearance().glassEnabled;
-        globalRefreshMode = std::clamp(global.glassRefreshMode, 0, 3);
+        const auto dock = settingsWindow_->GetDockAppearance();
+        dockGlassActive = dock.glassEnabled;
+        sharedRefreshMode = std::clamp(global.glassRefreshMode, 0, 3);
     }
     const bool glassActive = globalGlassActive || dockGlassActive || panelGlassActive;
 
@@ -1791,6 +2086,15 @@ inline void DesktopApp::UpdateGlassRefreshState()
     {
         if (glassBackdropBitmap_)
             glassBackdropBitmap_.Reset();
+        glassLuminanceBitmap_.Reset();
+        for (auto& readback : glassLuminanceReadbacks_)
+            readback.Reset();
+        glassLuminanceReadbackPending_.fill(false);
+        glassLuminanceMap_.clear();
+        glassRefractionCurrentSource_.Reset();
+        glassRefractionCurrentBrush_.Reset();
+        glassRefractionPreviousSource_.Reset();
+        glassRefractionPreviousBrush_.Reset();
         glassBackdropRadiusCache_.clear();
         ClearGlassBackdropTransition();
         if (glassStaticLayerBitmap_)
@@ -1812,6 +2116,7 @@ inline void DesktopApp::UpdateGlassRefreshState()
         dynamicWallpaperCaptureDeferred_ = false;
         dynamicWallpaperIncompatible_ = false;
         glassEffectiveRefreshMode_ = 0;
+        glassRefreshThrottled_ = false;
         glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
         glassLastDetectTick_ = 0;
         StopGlassWallpaperEventMonitor();
@@ -1832,7 +2137,49 @@ inline void DesktopApp::UpdateGlassRefreshState()
 
     int mode = panelGlassActive ? std::clamp(panelRefreshMode, 0, 3) : 0;
     if (globalGlassActive || dockGlassActive)
-        mode = std::max(mode, globalRefreshMode);
+        mode = std::max(mode, sharedRefreshMode);
+
+    auto foregroundIsMaximizedOrFullscreen = []() {
+        HWND foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
+        if (!foreground || !IsWindowVisible(foreground) || IsIconic(foreground))
+            return false;
+        DWORD processId = 0;
+        GetWindowThreadProcessId(foreground, &processId);
+        if (processId == GetCurrentProcessId())
+            return false;
+        wchar_t className[64]{};
+        GetClassNameW(foreground, className, static_cast<int>(std::size(className)));
+        if (_wcsicmp(className, L"Progman") == 0 ||
+            _wcsicmp(className, L"WorkerW") == 0 ||
+            _wcsicmp(className, L"Shell_TrayWnd") == 0)
+            return false;
+        DWORD cloaked = 0;
+        if (SUCCEEDED(DwmGetWindowAttribute(foreground, DWMWA_CLOAKED,
+                &cloaked, sizeof(cloaked))) && cloaked)
+            return false;
+        if (IsZoomed(foreground))
+            return true;
+        RECT bounds{};
+        if (FAILED(DwmGetWindowAttribute(foreground,
+                DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds))) &&
+            !GetWindowRect(foreground, &bounds))
+            return false;
+        HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO info{ sizeof(info) };
+        if (!monitor || !GetMonitorInfoW(monitor, &info))
+            return false;
+        return bounds.left <= info.rcMonitor.left + 8 &&
+            bounds.top <= info.rcMonitor.top + 8 &&
+            bounds.right >= info.rcMonitor.right - 8 &&
+            bounds.bottom >= info.rcMonitor.bottom - 8;
+    };
+    const bool previousThrottled = glassRefreshThrottled_;
+    glassRefreshThrottled_ = mode == 3 && foregroundIsMaximizedOrFullscreen();
+    if (glassRefreshThrottled_)
+        mode = 2;
+    if (previousThrottled != glassRefreshThrottled_)
+        glassBackdropDirty_ = true;
+
     glassEffectiveRefreshMode_ = mode;
     if (mode == 1 || mode == 2)
     {
@@ -1843,7 +2190,6 @@ inline void DesktopApp::UpdateGlassRefreshState()
     }
     else if (mode == 3)
     {
-        // 实时档：每次重绘都重新评估（静态场景签名不变零成本，动态场景逐帧重捕）
         glassBackdropDirty_ = true;
     }
 

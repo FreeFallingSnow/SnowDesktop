@@ -108,6 +108,9 @@ public:
      */
     bool IsVisible() const { return hwnd_ != nullptr && IsWindowVisible(hwnd_); }
 
+    /** @brief 设置窗口是否有尚未绘制的界面变化。 */
+    bool NeedsRender() const { return renderRequested_; }
+
     /**
      * @brief 渲染一帧 ImGui 界面
      *
@@ -231,7 +234,12 @@ public:
     const DockSettings& GetDockSettings() const { return dockSettings_; }
     PersonalizationSettings GetDockAppearance() const
     {
-        return dockSettings_.followPersonalization ? personalization_ : dockSettings_.appearance;
+        PersonalizationSettings appearance = dockSettings_.followPersonalization
+            ? personalization_ : dockSettings_.appearance;
+        // 模糊采样参数只有一份全局值；Dock 自定义页只是提供同值控件。
+        appearance.glassBlurRadius = personalization_.glassBlurRadius;
+        appearance.glassRefreshMode = personalization_.glassRefreshMode;
+        return appearance;
     }
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
@@ -450,6 +458,9 @@ private:
 
     /// 是否请求关闭窗口（延迟关闭标记）
     bool pendingClose_ = false;
+
+    /// 设置窗口脏帧标记；避免桌面消息触发无关的 ImGui Present。
+    bool renderRequested_ = false;
 
     /// 是否已解锁调试页面（通过版本号点击彩蛋激活）
     bool debugUnlocked_ = false;

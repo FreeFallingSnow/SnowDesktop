@@ -618,6 +618,7 @@ void CaptureD3D9Device(IDirect3DDevice9* device,
         (!IsDesktopOutputWindow(outputWindow) &&
             !IsWallpaperEngineVideoClass(className)))
         return;
+    InterlockedIncrement64(&g_state->matched_present_calls);
 
     ComPtr<IDirect3DSurface9> source;
     const HRESULT backBufferHr = presentedSwapChain
@@ -730,6 +731,7 @@ void CaptureSwapChain(IDXGISwapChain* chain)
     if (!ResolveSwapChainOutput(chain, swapDesc.OutputWindow,
             outputWindow, desktopRect))
         return;
+    InterlockedIncrement64(&g_state->matched_present_calls);
     wchar_t className[64]{};
     if (outputWindow)
         GetClassNameW(outputWindow, className,
@@ -819,7 +821,9 @@ void CaptureSwapChain(IDXGISwapChain* chain)
     {
         context->CopyResource(runtime.sharedTexture.Get(), source.Get());
     }
-    context->Flush();
+    // ReleaseSync establishes the cross-device producer/consumer ordering.
+    // An explicit Flush here forces a command-buffer submission inside the
+    // wallpaper's Present path and carries significant per-frame overhead.
     runtime.keyedMutex->ReleaseSync(1);
     runtime.lastCopyTick = now;
     InterlockedExchange(&published.completed_request_serial, requestSerial);
@@ -830,6 +834,8 @@ void CaptureSwapChain(IDXGISwapChain* chain)
 HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, UINT flags)
 {
     ActiveHook active;
+    if (g_state)
+        InterlockedIncrement64(&g_state->present_calls);
     CaptureSwapChain(chain);
     return g_present(chain, syncInterval, flags);
 }
@@ -838,6 +844,8 @@ HRESULT STDMETHODCALLTYPE HookPresent1(IDXGISwapChain1* chain, UINT syncInterval
     const DXGI_PRESENT_PARAMETERS* parameters)
 {
     ActiveHook active;
+    if (g_state)
+        InterlockedIncrement64(&g_state->present_calls);
     CaptureSwapChain(chain);
     return g_present1(chain, syncInterval, flags, parameters);
 }
@@ -864,6 +872,8 @@ HRESULT STDMETHODCALLTYPE HookD3D9Present(IDirect3DDevice9* device,
     const RGNDATA* dirtyRegion)
 {
     ActiveHook active;
+    if (g_state)
+        InterlockedIncrement64(&g_state->present_calls);
     CaptureD3D9Device(device, nullptr, destinationWindow);
     return g_d3d9Present(device, sourceRect, destinationRect,
         destinationWindow, dirtyRegion);
@@ -874,6 +884,8 @@ HRESULT STDMETHODCALLTYPE HookD3D9PresentEx(IDirect3DDevice9Ex* device,
     const RGNDATA* dirtyRegion, DWORD flags)
 {
     ActiveHook active;
+    if (g_state)
+        InterlockedIncrement64(&g_state->present_calls);
     CaptureD3D9Device(device, nullptr, destinationWindow);
     return g_d3d9PresentEx(device, sourceRect, destinationRect,
         destinationWindow, dirtyRegion, flags);
@@ -884,6 +896,8 @@ HRESULT STDMETHODCALLTYPE HookD3D9SwapChainPresent(IDirect3DSwapChain9* swapChai
     const RGNDATA* dirtyRegion, DWORD flags)
 {
     ActiveHook active;
+    if (g_state)
+        InterlockedIncrement64(&g_state->present_calls);
     ComPtr<IDirect3DDevice9> device;
     if (swapChain && SUCCEEDED(swapChain->GetDevice(&device)) && device)
         CaptureD3D9Device(device.Get(), swapChain, destinationWindow);

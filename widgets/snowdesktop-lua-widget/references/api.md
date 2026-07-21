@@ -50,16 +50,13 @@ shadowOffsetY = 4
 highlightAlpha = 0.12
 noiseAlpha = 0.014
 glassEnabled = false
-glassBlurRadius = 24
-glassRefreshMode = 1
 ```
 
 `bg` and `border` use `0xRRGGBB`. The alpha fields use `0.0` through `1.0`.
 `shadowBlur` and `shadowOffsetY` are design-unit values scaled by the host.
-`glassBlurRadius` is in pixels (`4` through `48`); `glassRefreshMode` is `0`
-through `3` (event-only, low, medium, real-time). These glass values are scoped
-to the component instance just like the other appearance values.
-The per-instance storage values with the same keys override script defaults.
+Blur radius and refresh mode are host-wide shared sampling values. The component,
+Dock, and Lua widget settings pages expose mirrored controls for the same values;
+scripts and per-instance storage do not override them.
 Set `followPersonalization` to `"1"`/`true` in storage or a default preset to
 use the global personalization colors and effects instead of the widget style.
 
@@ -483,6 +480,10 @@ For `useCustomStyle = true` widgets, the host separates reset actions:
 - **恢复默认主题** applies only host appearance keys from the default preset.
 - **恢复默认设置** applies declarative field defaults, falling back to matching
   values from the default preset when a field has no explicit `default`.
+- With **跟随个性化设置** disabled, **同步主设置** copies the current global
+  appearance into the widget once and keeps the widget independent. The copy
+  excludes host-owned `cornerRadius` and `barHeight`; blur radius and refresh
+  mode also remain globally linked instead of being copied.
 
 Keep custom `imguiRender()` reset buttons consistent with that split when a
 widget exposes both visual style and behavior/data settings.
@@ -551,8 +552,6 @@ settings = {
         highlightAlpha = 0.12,
         noiseAlpha = 0.014,
         glassEnabled = false,
-        glassBlurRadius = 24,
-        glassRefreshMode = 1,
         followPersonalization = true
       } }
   },
@@ -580,8 +579,6 @@ keys:
 | `highlightAlpha` | top highlight opacity, `0.0` through `0.8` |
 | `noiseAlpha` | frosted noise opacity, `0.0` through `0.18` |
 | `glassEnabled` | enable the per-widget frosted backdrop |
-| `glassBlurRadius` | backdrop blur radius in pixels, `4` through `48` |
-| `glassRefreshMode` | `0` event-only, `1` low, `2` medium, `3` real-time |
 | `followPersonalization` | `true`, `"1"`, or `"true"` to follow global personalization |
 
 Keep presets appearance-only. Put data URLs, refresh intervals, feature toggles,

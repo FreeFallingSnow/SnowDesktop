@@ -739,7 +739,19 @@ WallpaperEngineFrameState WallpaperEngineCaptureSession::TryAcquireLatestFrames(
     }
     if (!sawPublishedSlot && impl_->connectedTick &&
         GetTickCount64() - impl_->connectedTick > 3000)
-        impl_->lastError = L"等待 Wallpaper Engine GPU 交换链";
+    {
+        const LONG64 presentCalls = impl_->state->present_calls;
+        const LONG64 matchedCalls = impl_->state->matched_present_calls;
+        if (presentCalls == 0)
+            impl_->lastError =
+                L"Hook 已连接，但当前进程未调用 DXGI/D3D9 Present（可能已暂停或使用 DComp Surface）";
+        else if (matchedCalls == 0)
+            impl_->lastError =
+                L"已观察到 Present，但尚未匹配到桌面壁纸输出窗口";
+        else
+            impl_->lastError =
+                L"已匹配壁纸 Present，但尚未发布可共享 GPU 纹理";
+    }
     return WallpaperEngineFrameState::pending;
 }
 
