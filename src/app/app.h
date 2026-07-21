@@ -1695,7 +1695,7 @@ private:
     std::vector<RECT> glassRequestedRegions_;
     /** @brief 当前绘制帧采用的最高刷新档位（由全局、Dock 与上一帧面板请求合并）。 */
     int glassEffectiveRefreshMode_ = 0;
-    /** @brief 实时档当前是否因前台最大化/全屏应用而临时降为中频。 */
+    /** @brief 当前是否因前台最大化/全屏应用而将所有档位临时切为仅事件刷新。 */
     bool glassRefreshThrottled_ = false;
     /** @brief 当前桌面绘制序号，用于避免同一帧按组件重复请求共享帧。 */
     std::uint64_t glassPaintSerial_ = 0;

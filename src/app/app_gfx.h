@@ -851,7 +851,7 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
         if (!regionTracked)
             glassRequestedRegions_.push_back(frame);
         const int effectiveRefreshMode = glassRefreshThrottled_
-            ? 2
+            ? 0
             : std::max(sharedRefreshMode, glassEffectiveRefreshMode_);
         if (EnsureGlassBackdrop(sharedBlurRadius, effectiveRefreshMode))
             DrawGlassBackdropRegion(ctx, frame, radius);

@@ -1752,8 +1752,7 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::SameLine();
     ImGui::TextDisabled("%s", percentText(personalization_.widgetBorderAlpha).c_str());
 
-    bool gradientEnabled = personalization_.gradientEndA > 0.001f;
-    bool gradientToggle = gradientEnabled;
+    bool gradientToggle = personalization_.gradientEndA > 0.001f;
     ImGui::Text("启用底部渐变");
     ImGui::SameLine(labelW);
     if (ImGui::Checkbox("##GradientToggle", &gradientToggle))
@@ -1762,18 +1761,15 @@ void SettingsWindow::DrawPersonalizationPage()
             ? presetForIndex(personalization_.backgroundPreset).gradientEndA
             : 0.0f;
         markChanged(true);
-        gradientEnabled = gradientToggle;
     }
 
     ImGui::Text("渐变结束透明度");
     ImGui::SameLine(labelW);
-    ImGui::BeginDisabled(!gradientEnabled);
     ImGui::SetNextItemWidth(sliderW);
     if (ImGui::SliderFloat("##GradientEndAlpha", &personalization_.gradientEndA, 0.0f, 1.0f, ""))
         markChanged(false);
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
-    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("%s", percentText(personalization_.gradientEndA).c_str());
 

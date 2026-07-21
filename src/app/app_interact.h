@@ -4328,9 +4328,25 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kGlassRefreshTimerId)
     {
-        // 低/中/实时档：按当前档位定时置脏并请求下一张共享帧。
-        glassBackdropDirty_ = true;
-        InvalidateGlassRequestedRegions();
+        const bool foregroundThrottled =
+            IsGlassForegroundMaximizedOrFullscreen();
+        if (glassRefreshThrottled_)
+        {
+            // 全屏期间仅轮询策略状态，不重绘、不请求壁纸帧；退出后恢复原档位。
+            if (!foregroundThrottled)
+                InvalidateGlassRequestedRegions();
+        }
+        else if (foregroundThrottled)
+        {
+            // 前台进入最大化/全屏属于一次状态事件；让下一帧切换策略即可。
+            InvalidateGlassRequestedRegions();
+        }
+        else
+        {
+            // 低/中/实时档：按当前档位定时置脏并请求下一张共享帧。
+            glassBackdropDirty_ = true;
+            InvalidateGlassRequestedRegions();
+        }
     }
     else if (timerId == kGlassTransitionTimerId)
     {

@@ -201,6 +201,47 @@ inline bool IsGlassWallpaperWindowClass(HWND window)
         _wcsicmp(className, L"Intermediate D3D Window") == 0;
 }
 
+/**
+ * @brief 判断当前前台是否为其他进程的最大化或全屏窗口。
+ * @details 排除 SnowDesktop 自身与桌面 Shell 窗口，避免打开设置面板或右键菜单时
+ *          误触发毛玻璃的全屏节流策略。
+ */
+inline bool IsGlassForegroundMaximizedOrFullscreen()
+{
+    HWND foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
+    if (!foreground || !IsWindowVisible(foreground) || IsIconic(foreground))
+        return false;
+    DWORD processId = 0;
+    GetWindowThreadProcessId(foreground, &processId);
+    if (processId == GetCurrentProcessId())
+        return false;
+    wchar_t className[64]{};
+    GetClassNameW(foreground, className, static_cast<int>(std::size(className)));
+    if (_wcsicmp(className, L"Progman") == 0 ||
+        _wcsicmp(className, L"WorkerW") == 0 ||
+        _wcsicmp(className, L"Shell_TrayWnd") == 0)
+        return false;
+    DWORD cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(foreground, DWMWA_CLOAKED,
+            &cloaked, sizeof(cloaked))) && cloaked)
+        return false;
+    if (IsZoomed(foreground))
+        return true;
+    RECT bounds{};
+    if (FAILED(DwmGetWindowAttribute(foreground,
+            DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds))) &&
+        !GetWindowRect(foreground, &bounds))
+        return false;
+    HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info{ sizeof(info) };
+    if (!monitor || !GetMonitorInfoW(monitor, &info))
+        return false;
+    return bounds.left <= info.rcMonitor.left + 8 &&
+        bounds.top <= info.rcMonitor.top + 8 &&
+        bounds.right >= info.rcMonitor.right - 8 &&
+        bounds.bottom >= info.rcMonitor.bottom - 8;
+}
+
 inline void CALLBACK DesktopApp::GlassWallpaperWinEventProc(HWINEVENTHOOK,
     DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD)
 {
@@ -711,7 +752,7 @@ inline bool DesktopApp::CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitma
     dynamicWallpaperCaptureDeferred_ = false;
 
     auto scheduleFrameRetry = [this]() {
-        if (!hwnd_ || !IsWindow(hwnd_))
+        if (glassRefreshThrottled_ || !hwnd_ || !IsWindow(hwnd_))
             return;
         const DWORD now = GetTickCount();
         if (glassDynamicWaitStartTick_ == 0)
@@ -2027,7 +2068,7 @@ inline std::wstring DesktopApp::GetDynamicWallpaperStatusText() const
     status += L"\n玻璃面板：";
     status += std::to_wstring(glassRequestedRegions_.size());
     status += glassRefreshThrottled_
-        ? L"；检测到前台最大化/全屏应用，实时临时降为中频"
+        ? L"；检测到前台最大化/全屏应用，所有档位临时切为仅事件刷新"
         : L"；按所选档位刷新";
     return status;
 }
@@ -2139,44 +2180,10 @@ inline void DesktopApp::UpdateGlassRefreshState()
     if (globalGlassActive || dockGlassActive)
         mode = std::max(mode, sharedRefreshMode);
 
-    auto foregroundIsMaximizedOrFullscreen = []() {
-        HWND foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
-        if (!foreground || !IsWindowVisible(foreground) || IsIconic(foreground))
-            return false;
-        DWORD processId = 0;
-        GetWindowThreadProcessId(foreground, &processId);
-        if (processId == GetCurrentProcessId())
-            return false;
-        wchar_t className[64]{};
-        GetClassNameW(foreground, className, static_cast<int>(std::size(className)));
-        if (_wcsicmp(className, L"Progman") == 0 ||
-            _wcsicmp(className, L"WorkerW") == 0 ||
-            _wcsicmp(className, L"Shell_TrayWnd") == 0)
-            return false;
-        DWORD cloaked = 0;
-        if (SUCCEEDED(DwmGetWindowAttribute(foreground, DWMWA_CLOAKED,
-                &cloaked, sizeof(cloaked))) && cloaked)
-            return false;
-        if (IsZoomed(foreground))
-            return true;
-        RECT bounds{};
-        if (FAILED(DwmGetWindowAttribute(foreground,
-                DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds))) &&
-            !GetWindowRect(foreground, &bounds))
-            return false;
-        HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO info{ sizeof(info) };
-        if (!monitor || !GetMonitorInfoW(monitor, &info))
-            return false;
-        return bounds.left <= info.rcMonitor.left + 8 &&
-            bounds.top <= info.rcMonitor.top + 8 &&
-            bounds.right >= info.rcMonitor.right - 8 &&
-            bounds.bottom >= info.rcMonitor.bottom - 8;
-    };
     const bool previousThrottled = glassRefreshThrottled_;
-    glassRefreshThrottled_ = mode == 3 && foregroundIsMaximizedOrFullscreen();
+    glassRefreshThrottled_ = IsGlassForegroundMaximizedOrFullscreen();
     if (glassRefreshThrottled_)
-        mode = 2;
+        mode = 0;
     if (previousThrottled != glassRefreshThrottled_)
         glassBackdropDirty_ = true;
 
@@ -2196,7 +2203,10 @@ inline void DesktopApp::UpdateGlassRefreshState()
     UINT desiredInterval = 0;
     if (!desktopIconsHidden_)
     {
-        if (mode == 1)
+        // 仅用轻量轮询发现前台窗口退出最大化/全屏；轮询本身不请求新壁纸帧。
+        if (glassRefreshThrottled_)
+            desiredInterval = static_cast<UINT>(kGlassRefreshMidMs);
+        else if (mode == 1)
             desiredInterval = static_cast<UINT>(kGlassRefreshLowMs);
         else if (mode == 2)
             desiredInterval = static_cast<UINT>(kGlassRefreshMidMs);
