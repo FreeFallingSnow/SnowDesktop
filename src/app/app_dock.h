@@ -260,9 +260,46 @@ inline std::wstring QueryDockWindowAppUserModelId(HWND window)
     return appUserModelId;
 }
 
-inline HBITMAP CreateDockWindowIconBitmap(
-    HWND window, const std::wstring& executablePath, SIZE& bitmapSize)
+inline HBITMAP CreateDockShellIconBitmap(
+    const std::wstring& parsingName, SIZE& bitmapSize)
 {
+    if (parsingName.empty()) return nullptr;
+
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    SFGAOF attributes = 0;
+    if (FAILED(SHParseDisplayName(parsingName.c_str(), nullptr,
+            &pidl, 0, &attributes)) || !pidl)
+        return nullptr;
+
+    SHFILEINFOW info{};
+    int fallbackIndex = -1;
+    if (SHGetFileInfoW(reinterpret_cast<LPCWSTR>(pidl), 0, &info,
+            sizeof(info), SHGFI_PIDL | SHGFI_SYSICONINDEX))
+        fallbackIndex = info.iIcon;
+
+    HBITMAP bitmap = GetHighResolutionShellIconBitmap(
+        pidl, fallbackIndex, bitmapSize, false);
+    CoTaskMemFree(pidl);
+    return bitmap;
+}
+
+inline HBITMAP CreateDockWindowIconBitmap(
+    HWND window, const std::wstring& executablePath,
+    const std::wstring& appUserModelId, SIZE& bitmapSize)
+{
+    // The window icon often describes the current document or Explorer
+    // location (for example "This PC") and is commonly only 16/32 px. Resolve
+    // the application identity through the Shell first so the running area
+    // receives the stable high-resolution application icon.
+    if (!appUserModelId.empty())
+    {
+        if (HBITMAP bitmap = CreateDockShellIconBitmap(
+                L"shell:AppsFolder\\" + appUserModelId, bitmapSize))
+            return bitmap;
+    }
+    if (HBITMAP bitmap = CreateDockShellIconBitmap(executablePath, bitmapSize))
+        return bitmap;
+
     HICON icon = nullptr;
     DWORD_PTR iconResult = 0;
     if (SendMessageTimeoutW(window, WM_GETICON, ICON_BIG, 0,
@@ -279,15 +316,6 @@ inline HBITMAP CreateDockWindowIconBitmap(
         return CreateAlphaBitmapFromIcon(
             icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
 
-    SHFILEINFOW info{};
-    if (!executablePath.empty() && SHGetFileInfoW(executablePath.c_str(), 0, &info,
-            sizeof(info), SHGFI_ICON | SHGFI_LARGEICON) && info.hIcon)
-    {
-        HBITMAP bitmap = CreateAlphaBitmapFromIcon(
-            info.hIcon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
-        DestroyIcon(info.hIcon);
-        return bitmap;
-    }
     return nullptr;
 }
 
@@ -680,7 +708,8 @@ inline std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
     for (const Candidate& candidate : candidates)
     {
         const DockAppIdentity identity = ResolveDockAppIdentity(candidate.itemIndex);
-        const bool isShownAsRunning = std::any_of(dockUnpinnedRunningApps_.begin(),
+        const bool isShownAsRunning = dockSettings_.showRunningApps &&
+            std::any_of(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& running) {
                 switch (identity.kind)
                 {
@@ -1064,6 +1093,33 @@ inline void DesktopApp::RefreshDockRunningWindows(
     }
     dockRunningWindows_ = std::move(updated);
 
+    if (!dockSettings_.showRunningApps)
+        runningCandidates.clear();
+
+    // EnumWindows does not promise a stable order. Keep surviving applications
+    // in their existing Dock positions and append only genuinely new ones.
+    if (runningCandidates.size() > 1 && !dockUnpinnedRunningApps_.empty())
+    {
+        std::vector<RunningWindowCandidate> stableCandidates;
+        stableCandidates.reserve(runningCandidates.size());
+        std::vector<bool> consumed(runningCandidates.size(), false);
+        for (const DockRunningAppInfo& existing : dockUnpinnedRunningApps_)
+        {
+            const auto found = runningCandidateIndices.find(existing.identityKey);
+            if (found == runningCandidateIndices.end() ||
+                found->second >= runningCandidates.size() || consumed[found->second])
+                continue;
+            consumed[found->second] = true;
+            stableCandidates.push_back(std::move(runningCandidates[found->second]));
+        }
+        for (size_t i = 0; i < runningCandidates.size(); ++i)
+        {
+            if (!consumed[i])
+                stableCandidates.push_back(std::move(runningCandidates[i]));
+        }
+        runningCandidates = std::move(stableCandidates);
+    }
+
     std::vector<DockRunningAppInfo> runningApps;
     runningApps.reserve(runningCandidates.size());
     std::vector<bool> reused(dockUnpinnedRunningApps_.size(), false);
@@ -1090,7 +1146,8 @@ inline void DesktopApp::RefreshDockRunningWindows(
         }
         if (!info.iconBitmap)
             info.iconBitmap = CreateDockWindowIconBitmap(
-                info.window, info.executablePath, info.iconBitmapSize);
+                info.window, info.executablePath, info.appUserModelId,
+                info.iconBitmapSize);
         runningApps.push_back(std::move(info));
     }
 
@@ -1426,10 +1483,14 @@ inline void DesktopApp::ApplyDockWorkAreaReservation()
             ApplyIconSpacingToPage(candidate);
             const int componentMargin = vertical
                 ? candidate.marginX : candidate.marginY;
-            const int edgeDistance = std::max(kDockSpacing, componentMargin);
+            const float dockScale = ClampDockScale(dockSettings_.thicknessScale);
+            const int scaledIconSize = std::max(1, static_cast<int>(std::round(
+                GetGridPageItemIconSize(candidate) * dockScale)));
+            const int scaledSpacing = std::max(1, static_cast<int>(std::round(
+                kDockSpacing * dockScale)));
+            const int edgeDistance = std::max(scaledSpacing, componentMargin);
             const int innerGap = edgeDistance - componentMargin;
-            const int panelThickness = GetGridPageItemIconSize(candidate) +
-                kDockSpacing * 2;
+            const int panelThickness = scaledIconSize + scaledSpacing * 2;
             const int desiredReservation = dockSettings_.edgeAttached
                 ? panelThickness + innerGap
                 : panelThickness + edgeDistance + innerGap;
@@ -1824,18 +1885,28 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DockEntry& entry, RECT rect, int state)
 {
     if (!ctx) return;
+    const int scaledSpacing = std::max(1, static_cast<int>(std::round(
+        kDockSpacing * ClampDockScale(dockSettings_.thicknessScale))));
     const int iconSize = std::max(1, static_cast<int>(std::min(
-        rect.right - rect.left, rect.bottom - rect.top)) - kDockSpacing);
+        rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
     RECT iconRect{
         rect.left + (rect.right - rect.left - iconSize) / 2,
         rect.top + (rect.bottom - rect.top - iconSize) / 2,
         rect.left + (rect.right - rect.left + iconSize) / 2,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
+    bool recycleBinEntry = false;
+    if (entry.type == DockEntryType::DesktopItem)
+    {
+        const size_t itemIndex = FindItemIndexByKey(entry.reference);
+        recycleBinEntry = itemIndex < items_.size() &&
+            _wcsicmp(items_[itemIndex].desktopIconClsid.c_str(),
+                kDesktopIconClsidRecycleBin) == 0;
+    }
 
     // Hover/selected feedback belongs to the whole Dock slot, not just the bitmap.
     // Keep a small inset so adjacent items remain visually separated.
-    if (state > 0)
+    if (state > 0 && !recycleBinEntry)
     {
         RECT feedbackRect = rect;
         InflateRect(&feedbackRect, -2, -2);
@@ -1855,7 +1926,7 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             kDesktopIconClsidRecycleBin) == 0;
         if (recycleBin)
         {
-            DrawDockControlBackground(ctx, target, visualState);
+            DrawDockControlBackground(ctx, target, visualState, true);
             const int shortSide = std::max(1, static_cast<int>(std::min(
                 target.right - target.left, target.bottom - target.top)));
             const int inset = std::max(1, static_cast<int>(std::round(shortSide * 0.16f)));
@@ -1952,8 +2023,10 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DesktopWidget& widget = widgets_[widgetIndex];
     const int innerSize = std::max(1, static_cast<int>(
         std::min(iconRect.right - iconRect.left, iconRect.bottom - iconRect.top)));
-    const int smallIconSize = std::max(1, (innerSize - kDockSpacing) / 2);
-    const int groupSize = smallIconSize * 2 + kDockSpacing;
+    const int collectionGap = std::clamp(static_cast<int>(std::round(
+        innerSize * 0.04f)), 2, 4);
+    const int smallIconSize = std::max(1, (innerSize - collectionGap) / 2);
+    const int groupSize = smallIconSize * 2 + collectionGap;
     const int groupLeft = iconRect.left + (innerSize - groupSize) / 2;
     const int groupTop = iconRect.top + (innerSize - groupSize) / 2;
     for (size_t i = 0; i < std::min<size_t>(4, widget.itemKeys.size()); ++i)
@@ -1962,8 +2035,8 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         if (itemIndex >= items_.size()) continue;
         int col = static_cast<int>(i % 2);
         int row = static_cast<int>(i / 2);
-        const int left = groupLeft + col * (smallIconSize + kDockSpacing);
-        const int top = groupTop + row * (smallIconSize + kDockSpacing);
+        const int left = groupLeft + col * (smallIconSize + collectionGap);
+        const int top = groupTop + row * (smallIconSize + collectionGap);
         RECT cell{ left, top, left + smallIconSize, top + smallIconSize };
         drawDesktopItem(items_[itemIndex], cell, 0);
     }
@@ -1973,8 +2046,10 @@ inline void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     const DockRunningAppInfo& app, RECT rect, int state)
 {
     if (!ctx) return;
+    const int scaledSpacing = std::max(1, static_cast<int>(std::round(
+        kDockSpacing * ClampDockScale(dockSettings_.thicknessScale))));
     const int iconSize = std::max(1, static_cast<int>(std::min(
-        rect.right - rect.left, rect.bottom - rect.top)) - kDockSpacing);
+        rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
     RECT iconRect{
         rect.left + (rect.right - rect.left - iconSize) / 2,
         rect.top + (rect.bottom - rect.top - iconSize) / 2,

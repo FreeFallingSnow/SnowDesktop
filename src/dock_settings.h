@@ -2,7 +2,16 @@
 
 #include "personalization.h"
 
+#include <algorithm>
 #include <string>
+
+constexpr float kDockMinimumScale = 0.50f;
+constexpr float kDockMaximumScale = 1.00f;
+
+inline float ClampDockScale(float scale)
+{
+    return std::clamp(scale, kDockMinimumScale, kDockMaximumScale);
+}
 
 enum class DockPosition
 {
@@ -34,8 +43,10 @@ struct DockSettings
     bool edgeAttached = false;
     DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
+    bool showRunningApps = true;
     bool showFrequentItems = false;
     int frequentItemCount = 3;
+    float thicknessScale = 1.0f;
     bool systemTaskbarAutoHide = false;
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;

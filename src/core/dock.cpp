@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <shlwapi.h>
 
 DockRunningItem::DockRunningItem(
@@ -227,12 +228,28 @@ int DockContainer::ItemIconSize() const
         (area_.top + area_.bottom) / 2
     };
     const GridPage* page = app_->GridPageFromPoint(center);
-    return page ? app_->GetGridPageItemIconSize(*page) : kIconSize;
+    const int baseIconSize = page ? app_->GetGridPageItemIconSize(*page) : kIconSize;
+    return std::max(1, static_cast<int>(std::round(
+        baseIconSize * ClampDockScale(app_->dockSettings_.thicknessScale))));
 }
 
 int DockContainer::ItemPitch() const
 {
-    return std::max(1, ItemIconSize() + kDockSpacing);
+    return std::max(1, ItemIconSize() + ScaledSpacing());
+}
+
+int DockContainer::ScaledSpacing() const
+{
+    const float scale = app_
+        ? ClampDockScale(app_->dockSettings_.thicknessScale) : 1.0f;
+    return std::max(1, static_cast<int>(std::round(kDockSpacing * scale)));
+}
+
+int DockContainer::ScaledSeparatorGap() const
+{
+    const float scale = app_
+        ? ClampDockScale(app_->dockSettings_.thicknessScale) : 1.0f;
+    return std::max(1, static_cast<int>(std::round(kDockSeparatorGap * scale)));
 }
 
 int DockContainer::EdgeMargin() const
@@ -256,33 +273,21 @@ BarStyle DockContainer::GetInsertionStyle() const
 
 size_t DockContainer::Capacity() const
 {
-    const LONG extent = IsVertical()
-        ? area_.bottom - area_.top : area_.right - area_.left;
-    const bool showWindowsButton = app_ && app_->dockSettings_.showWindowsButton;
-    const LONG available = std::max(0L, extent -
-        (IsEdgeAttached() ? kDockSpacing : kDockSpacing * 3L) -
-        kDockSeparatorGap * (showWindowsButton ? 4L : 3L));
-    const LONG visibleSlots = available / std::max(1, ItemPitch());
-    const LONG controlSlots = showWindowsButton ? 2L : 1L;
-    return static_cast<size_t>(std::max(0L, visibleSlots - controlSlots));
+    return std::numeric_limits<size_t>::max();
 }
 
 bool DockContainer::HasCapacity(size_t additional) const
 {
-    return entries_ && entries_->size() + additional <= Capacity();
+    return entries_ && additional <= Capacity() - entries_->size();
 }
 
 RECT DockContainer::GetBounds() const
 {
     const size_t count = entries_ ? entries_->size() : 0;
-    const size_t requestedRunningCount = app_
+    const size_t runningCount = app_ && app_->dockSettings_.showRunningApps
         ? app_->dockUnpinnedRunningApps_.size() : 0;
-    const size_t runningCount = std::min(requestedRunningCount,
-        Capacity() > count ? Capacity() - count : 0);
-    const size_t requestedFrequentCount = app_
+    const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
-    const size_t frequentCount = std::min(requestedFrequentCount,
-        Capacity() > count + runningCount ? Capacity() - count - runningCount : 0);
     const size_t fixedCount = SortableEntryCount();
     const bool showWindowsButton = app_ && app_->dockSettings_.showWindowsButton;
     const int nonEmptyGroupCount = static_cast<int>(fixedCount > 0) +
@@ -292,16 +297,19 @@ RECT DockContainer::GetBounds() const
     const bool vertical = IsVertical();
     const int iconSize = ItemIconSize();
     const int slotLength = ItemPitch();
+    const int spacing = ScaledSpacing();
+    const int separatorGap = ScaledSeparatorGap();
     const int desiredLength = static_cast<int>(
         (count + runningCount + frequentCount + 1 +
-            static_cast<size_t>(showWindowsButton)) * slotLength) + kDockSpacing +
-        separatorCount * kDockSeparatorGap;
+            static_cast<size_t>(showWindowsButton)) * slotLength) + spacing +
+        separatorCount * separatorGap;
     const int areaWidth = std::max(1, static_cast<int>(area_.right - area_.left));
     const int areaHeight = std::max(1, static_cast<int>(area_.bottom - area_.top));
     const int maxLength = std::max(1,
-        (vertical ? areaHeight : areaWidth) - kDockSpacing * 2);
+        (vertical ? areaHeight : areaWidth) - spacing * 2);
     const int length = std::min(desiredLength, maxLength);
-    const int thickness = std::min(iconSize + kDockSpacing * 2,
+    const int desiredThickness = iconSize + spacing * 2;
+    const int thickness = std::min(desiredThickness,
         vertical ? areaWidth : areaHeight);
     if (IsEdgeAttached())
     {
@@ -318,7 +326,7 @@ RECT DockContainer::GetBounds() const
             return RECT{ area_.left, area_.bottom - thickness, area_.right, area_.bottom };
         }
     }
-    const int edgeDistance = std::max(kDockSpacing, EdgeMargin());
+    const int edgeDistance = std::max(spacing, EdgeMargin());
     const int innerGap = edgeDistance - EdgeMargin();
     if (vertical)
     {
@@ -335,6 +343,86 @@ RECT DockContainer::GetBounds() const
     return RECT{ left, top, left + length, top + thickness };
 }
 
+RECT DockContainer::GetScrollViewport(const RECT& bounds) const
+{
+    RECT viewport = bounds;
+    const int halfGap = ScaledSpacing() / 2;
+    const int leadingLength = app_ && app_->dockSettings_.showWindowsButton
+        ? ItemPitch() + ScaledSeparatorGap() : 0;
+    const size_t count = entries_ ? entries_->size() : 0;
+    const size_t fixedCount = SortableEntryCount();
+    const bool hasRecycleBin = fixedCount < count;
+    const size_t runningCount = app_ && app_->dockSettings_.showRunningApps
+        ? app_->dockUnpinnedRunningApps_.size() : 0;
+    const size_t frequentCount = app_
+        ? app_->GetFrequentDockItemIndices().size() : 0;
+    const bool hasScrollableItems = fixedCount > 0 || runningCount > 0 || frequentCount > 0;
+    const int trailingLength = static_cast<int>(1 + hasRecycleBin) * ItemPitch() +
+        (hasScrollableItems ? ScaledSeparatorGap() : 0);
+    if (IsVertical())
+    {
+        viewport.top += halfGap + leadingLength;
+        viewport.bottom -= halfGap + trailingLength;
+        viewport.bottom = std::max(viewport.top, viewport.bottom);
+    }
+    else
+    {
+        viewport.left += halfGap + leadingLength;
+        viewport.right -= halfGap + trailingLength;
+        viewport.right = std::max(viewport.left, viewport.right);
+    }
+    return viewport;
+}
+
+int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
+{
+    const size_t fixedCount = SortableEntryCount();
+    const size_t runningCount = app_ && app_->dockSettings_.showRunningApps
+        ? app_->dockUnpinnedRunningApps_.size() : 0;
+    const size_t frequentCount = app_
+        ? app_->GetFrequentDockItemIndices().size() : 0;
+    int groupGapCount = 0;
+    if (runningCount > 0 && fixedCount > 0) ++groupGapCount;
+    if (frequentCount > 0 && (fixedCount > 0 || runningCount > 0)) ++groupGapCount;
+
+    const size_t slotCount = fixedCount + runningCount + frequentCount;
+    const long long contentExtent = static_cast<long long>(slotCount) * ItemPitch() +
+        static_cast<long long>(groupGapCount) * ScaledSeparatorGap();
+    const RECT viewport = GetScrollViewport(bounds);
+    const int viewportExtent = std::max(0, IsVertical()
+        ? static_cast<int>(viewport.bottom - viewport.top)
+        : static_cast<int>(viewport.right - viewport.left));
+    return static_cast<int>(std::clamp<long long>(
+        contentExtent - viewportExtent, 0, std::numeric_limits<int>::max()));
+}
+
+bool DockContainer::IsPointInScrollViewport(POINT point) const
+{
+    const RECT viewport = GetScrollViewport(GetBounds());
+    return PtInRect(&viewport, point) != FALSE;
+}
+
+bool DockContainer::ScrollByWheelDelta(int wheelDelta)
+{
+    const RECT bounds = GetBounds();
+    const int maxOffset = GetMaxScrollOffset(bounds);
+    if (maxOffset <= 0)
+    {
+        if (scrollOffset_ != 0)
+        {
+            scrollOffset_ = 0;
+            InvalidateSlots();
+        }
+        return false;
+    }
+
+    const int previousOffset = scrollOffset_;
+    scrollOffset_ = std::clamp(scrollOffset_ - wheelDelta / 2, 0, maxOffset);
+    if (scrollOffset_ != previousOffset)
+        InvalidateSlots();
+    return true;
+}
+
 std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
 {
     std::vector<std::unique_ptr<Slot>> slots;
@@ -342,45 +430,36 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     runningItems_.clear();
     frequentItems_.clear();
     RECT bounds = GetBounds();
+    scrollOffset_ = std::clamp(scrollOffset_, 0, GetMaxScrollOffset(bounds));
     const size_t count = entries_ ? entries_->size() : 0;
     const size_t fixedCount = SortableEntryCount();
     const bool hasRecycleBin = fixedCount < count;
-    const size_t availableRunning = Capacity() > count ? Capacity() - count : 0;
-    const size_t runningCount = std::min(
-        app_ ? app_->dockUnpinnedRunningApps_.size() : 0, availableRunning);
+    const size_t runningCount = app_ && app_->dockSettings_.showRunningApps
+        ? app_->dockUnpinnedRunningApps_.size() : 0;
     std::vector<size_t> frequentIndices = app_
         ? app_->GetFrequentDockItemIndices() : std::vector<size_t>{};
-    const size_t availableFrequent = Capacity() > count + runningCount
-        ? Capacity() - count - runningCount : 0;
-    if (frequentIndices.size() > availableFrequent)
-        frequentIndices.resize(availableFrequent);
     const size_t frequentCount = frequentIndices.size();
     const int slotLength = ItemPitch();
-    const int halfGap = kDockSpacing / 2;
+    const int halfGap = ScaledSpacing() / 2;
+    const int separatorGap = ScaledSeparatorGap();
     const bool showWindowsButton = app_ && app_->dockSettings_.showWindowsButton;
     const size_t leadingControlSlots = showWindowsButton ? 1 : 0;
-    const int leadingControlOffset = showWindowsButton ? kDockSeparatorGap : 0;
+    const int leadingControlOffset = showWindowsButton ? separatorGap : 0;
     int groupOffset = 0;
     if (runningCount > 0 && fixedCount > 0)
-        groupOffset += kDockSeparatorGap;
+        groupOffset += separatorGap;
     const int runningOffset = groupOffset;
     if (frequentCount > 0 && (fixedCount > 0 || runningCount > 0))
-        groupOffset += kDockSeparatorGap;
+        groupOffset += separatorGap;
     const int frequentOffset = groupOffset;
-    if (fixedCount > 0 || runningCount > 0 || frequentCount > 0)
-        groupOffset += kDockSeparatorGap;
-    const int searchOffset = groupOffset;
 
-    auto makeCell = [&](size_t visualIndex, int axisOffset,
-        bool searchSlot, bool recycleBinSlot) {
+    auto makeCell = [&](size_t visualIndex, int axisOffset) {
         RECT cell{};
         if (IsVertical())
         {
             LONG top = bounds.top + halfGap +
-                static_cast<LONG>(visualIndex * slotLength) + axisOffset;
-            if (IsEdgeAttached() && (searchSlot || recycleBinSlot))
-                top = bounds.bottom - halfGap - slotLength *
-                    (searchSlot && hasRecycleBin ? 2 : 1);
+                static_cast<LONG>(visualIndex * slotLength) + axisOffset -
+                scrollOffset_;
             cell = RECT{ bounds.left,
                 top,
                 bounds.right,
@@ -389,14 +468,29 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         else
         {
             LONG left = bounds.left + halfGap +
-                static_cast<LONG>(visualIndex * slotLength) + axisOffset;
-            if (IsEdgeAttached() && (searchSlot || recycleBinSlot))
-                left = bounds.right - halfGap - slotLength *
-                    (searchSlot && hasRecycleBin ? 2 : 1);
+                static_cast<LONG>(visualIndex * slotLength) + axisOffset -
+                scrollOffset_;
             cell = RECT{ left,
                 bounds.top,
                 left + slotLength,
                 bounds.bottom };
+        }
+        return cell;
+    };
+    const size_t trailingControlSlots = 1 + static_cast<size_t>(hasRecycleBin);
+    auto makeTrailingCell = [&](size_t trailingIndex) {
+        RECT cell{};
+        if (IsVertical())
+        {
+            const LONG top = bounds.bottom - halfGap -
+                static_cast<LONG>((trailingControlSlots - trailingIndex) * slotLength);
+            cell = RECT{ bounds.left, top, bounds.right, top + slotLength };
+        }
+        else
+        {
+            const LONG left = bounds.right - halfGap -
+                static_cast<LONG>((trailingControlSlots - trailingIndex) * slotLength);
+            cell = RECT{ left, bounds.top, left + slotLength, bounds.bottom };
         }
         return cell;
     };
@@ -405,12 +499,9 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     for (size_t i = 0; i < count; ++i)
     {
         const bool recycleBinSlot = hasRecycleBin && i + 1 == count;
-        const size_t visualIndex = recycleBinSlot
-            ? fixedCount + runningCount + frequentCount + 1
-            : i;
-        RECT cell = makeCell(visualIndex + leadingControlSlots,
-            (recycleBinSlot ? searchOffset : 0) + leadingControlOffset,
-            false, recycleBinSlot);
+        RECT cell = recycleBinSlot
+            ? makeTrailingCell(1)
+            : makeCell(i + leadingControlSlots, leadingControlOffset);
         auto slot = std::make_unique<Slot>(this, cell, i);
         auto item = std::make_unique<DockEntryItem>(app_, this, i);
         item->SetBounds(cell);
@@ -423,7 +514,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     {
         const size_t slotIndex = count + i;
         RECT cell = makeCell(fixedCount + i + leadingControlSlots,
-            runningOffset + leadingControlOffset, false, false);
+            runningOffset + leadingControlOffset);
         auto slot = std::make_unique<Slot>(this, cell, slotIndex);
         auto item = std::make_unique<DockRunningItem>(app_, this, i);
         item->SetBounds(cell);
@@ -437,7 +528,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         const size_t slotIndex = count + runningCount + i;
         RECT cell = makeCell(
             fixedCount + runningCount + i + leadingControlSlots,
-            frequentOffset + leadingControlOffset, false, false);
+            frequentOffset + leadingControlOffset);
         auto slot = std::make_unique<Slot>(this, cell, slotIndex);
         auto item = std::make_unique<DockFrequentItem>(
             app_, this, frequentIndices[i]);
@@ -448,9 +539,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     }
 
     const size_t searchIndex = count + runningCount + frequentCount;
-    RECT searchCell = makeCell(
-        fixedCount + runningCount + frequentCount + leadingControlSlots,
-        searchOffset + leadingControlOffset, true, false);
+    RECT searchCell = makeTrailingCell(0);
     slots.push_back(std::make_unique<Slot>(this, searchCell, searchIndex));
     return slots;
 }
@@ -467,6 +556,7 @@ size_t DockContainer::InsertIndexFor(Slot* slot, HitRegion region) const
 size_t DockContainer::GetInsertIndexAtPoint(POINT pt) const
 {
     const size_t count = SortableEntryCount();
+    if (!IsPointInScrollViewport(pt)) return count;
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
     for (size_t i = 0; i < count && i < slots.size(); ++i)
     {
@@ -489,22 +579,25 @@ void DockContainer::DrawInsertionPreview(
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.95f), &brush);
     if (!brush) return;
+    const RECT viewport = GetScrollViewport(bounds);
+    const int leadingOffset = app_ && app_->dockSettings_.showWindowsButton
+        ? ItemPitch() + ScaledSeparatorGap() : 0;
     if (IsVertical())
     {
-        const int leadingOffset = app_ && app_->dockSettings_.showWindowsButton
-            ? ItemPitch() + kDockSeparatorGap : 0;
-        const float y = static_cast<float>(bounds.top + kDockSpacing / 2 + leadingOffset +
-            static_cast<LONG>(insertIndex * ItemPitch()));
+        const float y = static_cast<float>(bounds.top + ScaledSpacing() / 2 +
+            leadingOffset + static_cast<LONG>(insertIndex * ItemPitch()) -
+            scrollOffset_);
+        if (y < viewport.top || y > viewport.bottom) return;
         context->FillRoundedRectangle(D2D1::RoundedRect(
             D2D1::RectF(static_cast<float>(bounds.left + 10), y - 2.0f,
                 static_cast<float>(bounds.right - 10), y + 2.0f), 2.0f, 2.0f),
             brush.Get());
         return;
     }
-    const int leadingOffset = app_ && app_->dockSettings_.showWindowsButton
-        ? ItemPitch() + kDockSeparatorGap : 0;
-    const float x = static_cast<float>(bounds.left + kDockSpacing / 2 + leadingOffset +
-        static_cast<LONG>(insertIndex * ItemPitch()));
+    const float x = static_cast<float>(bounds.left + ScaledSpacing() / 2 +
+        leadingOffset + static_cast<LONG>(insertIndex * ItemPitch()) -
+        scrollOffset_);
+    if (x < viewport.left || x > viewport.right) return;
     context->FillRoundedRectangle(D2D1::RoundedRect(
         D2D1::RectF(x - 2.0f, static_cast<float>(bounds.top + 10),
             x + 2.0f, static_cast<float>(bounds.bottom - 10)), 2.0f, 2.0f),
@@ -593,6 +686,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (!context) return;
     const auto& slots = GetSlots();
     const size_t count = entries_ ? entries_->size() : 0;
+    const size_t fixedCount = SortableEntryCount();
+    const bool hasRecycleBin = fixedCount < count;
     std::wstring hoveredTitle;
     RECT hoveredBounds{};
 
@@ -637,12 +732,28 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         }
     }
 
-    for (size_t i = 0; i < count && i < slots.size(); ++i)
+    const RECT scrollViewport = GetScrollViewport(GetBounds());
+    context->PushAxisAlignedClip(
+        D2D1::RectF(static_cast<float>(scrollViewport.left),
+            static_cast<float>(scrollViewport.top),
+            static_cast<float>(scrollViewport.right),
+            static_cast<float>(scrollViewport.bottom)),
+        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    auto isVisibleInViewport = [&](const RECT& rect) {
+        RECT intersection{};
+        return IntersectRect(&intersection, &rect, &scrollViewport) != FALSE;
+    };
+    const bool mouseInScrollViewport =
+        PtInRect(&scrollViewport, app_->lastMousePoint_) != FALSE;
+
+    for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
     {
         Item* item = slots[i]->GetItem();
         if (!item) continue;
         RECT slotBounds = slots[i]->GetBounds();
-        const bool hovered = PtInRect(&slotBounds, app_->lastMousePoint_) != FALSE;
+        if (!isVisibleInViewport(slotBounds)) continue;
+        const bool hovered = mouseInScrollViewport &&
+            PtInRect(&slotBounds, app_->lastMousePoint_) != FALSE;
         item->Draw(context, slotBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
         if (hovered && !app_->dragSession_.IsActive())
         {
@@ -655,7 +766,9 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     {
         if (!item) continue;
         const RECT itemBounds = item->GetBounds();
-        const bool hovered = PtInRect(&itemBounds, app_->lastMousePoint_) != FALSE;
+        if (!isVisibleInViewport(itemBounds)) continue;
+        const bool hovered = mouseInScrollViewport &&
+            PtInRect(&itemBounds, app_->lastMousePoint_) != FALSE;
         item->Draw(context, itemBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
         if (hovered && !app_->dragSession_.IsActive())
         {
@@ -668,7 +781,9 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     {
         if (!item) continue;
         const RECT itemBounds = item->GetBounds();
-        const bool hovered = PtInRect(&itemBounds, app_->lastMousePoint_) != FALSE;
+        if (!isVisibleInViewport(itemBounds)) continue;
+        const bool hovered = mouseInScrollViewport &&
+            PtInRect(&itemBounds, app_->lastMousePoint_) != FALSE;
         item->Draw(context, itemBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
         if (hovered && !app_->dragSession_.IsActive())
         {
@@ -677,7 +792,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         }
     }
 
-    const size_t fixedCount = SortableEntryCount();
     auto drawSeparatorBefore = [&](const RECT& followingBounds) {
         ComPtr<ID2D1SolidColorBrush> separatorBrush;
         context->CreateSolidColorBrush(
@@ -686,7 +800,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         if (IsVertical())
         {
             const float y = static_cast<float>(followingBounds.top) -
-                static_cast<float>(kDockSeparatorGap) * 0.5f;
+                static_cast<float>(ScaledSeparatorGap()) * 0.5f;
             const float centerX = (followingBounds.left + followingBounds.right) / 2.0f;
             context->DrawLine(D2D1::Point2F(centerX - 14.0f, y),
                 D2D1::Point2F(centerX + 14.0f, y), separatorBrush.Get(), 1.0f);
@@ -694,7 +808,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         else
         {
             const float x = static_cast<float>(followingBounds.left) -
-                static_cast<float>(kDockSeparatorGap) * 0.5f;
+                static_cast<float>(ScaledSeparatorGap()) * 0.5f;
             const float centerY = (followingBounds.top + followingBounds.bottom) / 2.0f;
             context->DrawLine(D2D1::Point2F(x, centerY - 14.0f),
                 D2D1::Point2F(x, centerY + 14.0f), separatorBrush.Get(), 1.0f);
@@ -702,24 +816,41 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     };
 
     RECT search = GetSearchRect();
-    if (!IsRectEmpty(&windowsButton))
-    {
-        RECT following = search;
-        if (fixedCount > 0 && !slots.empty())
-            following = slots.front()->GetBounds();
-        else if (!runningItems_.empty())
-            following = runningItems_.front()->GetBounds();
-        else if (!frequentItems_.empty())
-            following = frequentItems_.front()->GetBounds();
-        drawSeparatorBefore(following);
-    }
     if (fixedCount > 0 && !runningItems_.empty())
         drawSeparatorBefore(runningItems_.front()->GetBounds());
     if ((fixedCount > 0 || !runningItems_.empty()) && !frequentItems_.empty())
         drawSeparatorBefore(frequentItems_.front()->GetBounds());
 
-    if (fixedCount > 0 || !runningItems_.empty() || !frequentItems_.empty())
+    context->PopAxisAlignedClip();
+
+    const bool hasScrollableItems = fixedCount > 0 ||
+        !runningItems_.empty() || !frequentItems_.empty();
+    if (!IsRectEmpty(&windowsButton))
+    {
+        RECT following = hasScrollableItems ? scrollViewport : search;
+        drawSeparatorBefore(following);
+    }
+    if (hasScrollableItems)
         drawSeparatorBefore(search);
+
+    if (hasRecycleBin && fixedCount < slots.size())
+    {
+        Item* recycleBin = slots[fixedCount]->GetItem();
+        if (recycleBin)
+        {
+            const RECT recycleBounds = slots[fixedCount]->GetBounds();
+            const bool hovered = PtInRect(
+                &recycleBounds, app_->lastMousePoint_) != FALSE;
+            recycleBin->Draw(context, recycleBounds,
+                recycleBin->IsSelected() ? 2 : (hovered ? 1 : 0));
+            if (hovered && !app_->dragSession_.IsActive())
+            {
+                hoveredTitle = recycleBin->GetTitle();
+                hoveredBounds = recycleBounds;
+            }
+        }
+    }
+
     const bool searchHovered = PtInRect(&search, app_->lastMousePoint_) != FALSE;
     const int backgroundSize = ItemIconSize();
     const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
@@ -735,30 +866,32 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(
         D2D1::ColorF(1.0f, 1.0f, 1.0f, searchHovered ? 1.0f : 0.92f), &brush);
-    if (!brush) return;
-    ComPtr<ID2D1Factory> factory;
-    ComPtr<ID2D1StrokeStyle> roundedStroke;
-    context->GetFactory(&factory);
-    if (factory)
+    if (brush)
     {
-        const D2D1_STROKE_STYLE_PROPERTIES properties = D2D1::StrokeStyleProperties(
-            D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
-            D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_SOLID, 0.0f);
-        factory->CreateStrokeStyle(properties, nullptr, 0, &roundedStroke);
+        ComPtr<ID2D1Factory> factory;
+        ComPtr<ID2D1StrokeStyle> roundedStroke;
+        context->GetFactory(&factory);
+        if (factory)
+        {
+            const D2D1_STROKE_STYLE_PROPERTIES properties = D2D1::StrokeStyleProperties(
+                D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
+                D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_SOLID, 0.0f);
+            factory->CreateStrokeStyle(properties, nullptr, 0, &roundedStroke);
+        }
+        const float centerX = (searchBackground.left + searchBackground.right) / 2.0f -
+            2.7f * searchScale;
+        const float centerY = (searchBackground.top + searchBackground.bottom) / 2.0f -
+            2.7f * searchScale;
+        const float searchStroke = std::max(1.5f, 2.35f * searchScale);
+        context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, centerY),
+            9.2f * searchScale, 9.2f * searchScale),
+            brush.Get(), searchStroke, roundedStroke.Get());
+        context->DrawLine(D2D1::Point2F(centerX + 6.6f * searchScale,
+                centerY + 6.6f * searchScale),
+            D2D1::Point2F(centerX + 13.5f * searchScale,
+                centerY + 13.5f * searchScale),
+            brush.Get(), searchStroke, roundedStroke.Get());
     }
-    const float centerX = (searchBackground.left + searchBackground.right) / 2.0f -
-        2.7f * searchScale;
-    const float centerY = (searchBackground.top + searchBackground.bottom) / 2.0f -
-        2.7f * searchScale;
-    const float searchStroke = std::max(1.5f, 2.35f * searchScale);
-    context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, centerY),
-        9.2f * searchScale, 9.2f * searchScale),
-        brush.Get(), searchStroke, roundedStroke.Get());
-    context->DrawLine(D2D1::Point2F(centerX + 6.6f * searchScale,
-            centerY + 6.6f * searchScale),
-        D2D1::Point2F(centerX + 13.5f * searchScale,
-            centerY + 13.5f * searchScale),
-        brush.Get(), searchStroke, roundedStroke.Get());
 
     if (searchHovered && !app_->dragSession_.IsActive())
     {
@@ -872,12 +1005,22 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         resetDwell();
         return HitRegion::Blocked;
     }
-    for (const auto& slot : GetSlots())
+    const bool pointInScrollViewport = IsPointInScrollViewport(pt);
+    const auto& slots = GetSlots();
+    for (const auto& slot : slots)
     {
         RECT bounds = slot->GetBounds();
         if (!PtInRect(&bounds, pt)) continue;
-        outSlot = slot.get();
         Item* targetItem = slot->GetItem();
+        const bool searchSlot = !targetItem && slot.get() == slots.back().get();
+        const auto* dockEntry = dynamic_cast<DockEntryItem*>(targetItem);
+        const bool recycleBinSlot = dockEntry && app_ &&
+            dockEntry->GetEntryIndex() < app_->dockEntries_.size() &&
+            app_->IsRecycleBinDockEntry(
+                app_->dockEntries_[dockEntry->GetEntryIndex()]);
+        if (!pointInScrollViewport && !searchSlot && !recycleBinSlot)
+            continue;
+        outSlot = slot.get();
         if (!targetItem)
         {
             // The only item-less Dock slot is Search. Dropping here inserts at
@@ -897,9 +1040,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 
         RECT handoffRect = bounds;
         InflateRect(&handoffRect, -16, -10);
-        if (auto* dockItem = dynamic_cast<DockEntryItem*>(targetItem);
-            dockItem && app_ && dockItem->GetEntryIndex() < app_->dockEntries_.size() &&
-            app_->IsRecycleBinDockEntry(app_->dockEntries_[dockItem->GetEntryIndex()]))
+        if (recycleBinSlot)
         {
             resetDwell();
             const auto& sourceItems = app_->dragSession_.Items();
@@ -988,7 +1129,7 @@ RECT DockContainer::GetWindowsButtonRect() const
     if (!app_ || !app_->dockSettings_.showWindowsButton)
         return RECT{};
     const RECT bounds = GetBounds();
-    const int halfGap = kDockSpacing / 2;
+    const int halfGap = ScaledSpacing() / 2;
     const int slotLength = ItemPitch();
     if (IsVertical())
         return RECT{ bounds.left, bounds.top + halfGap,
@@ -1013,16 +1154,28 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
 {
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
     const size_t count = entries_ ? entries_->size() : 0;
-    for (size_t i = 0; i < count && i < slots.size(); ++i)
+    const size_t fixedCount = SortableEntryCount();
+    if (IsPointInScrollViewport(pt))
     {
-        RECT bounds = slots[i]->GetBounds();
-        if (PtInRect(&bounds, pt)) return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
+        for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
+        {
+            RECT bounds = slots[i]->GetBounds();
+            if (PtInRect(&bounds, pt))
+                return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
+        }
+    }
+    if (fixedCount < count && fixedCount < slots.size())
+    {
+        RECT bounds = slots[fixedCount]->GetBounds();
+        if (PtInRect(&bounds, pt))
+            return dynamic_cast<DockEntryItem*>(slots[fixedCount]->GetItem());
     }
     return nullptr;
 }
 
 DockRunningItem* DockContainer::RunningItemAtPoint(POINT pt) const
 {
+    if (!IsPointInScrollViewport(pt)) return nullptr;
     const_cast<DockContainer*>(this)->GetSlots();
     for (const auto& item : runningItems_)
     {
@@ -1035,6 +1188,7 @@ DockRunningItem* DockContainer::RunningItemAtPoint(POINT pt) const
 
 DockFrequentItem* DockContainer::FrequentItemAtPoint(POINT pt) const
 {
+    if (!IsPointInScrollViewport(pt)) return nullptr;
     const_cast<DockContainer*>(this)->GetSlots();
     for (const auto& item : frequentItems_)
     {

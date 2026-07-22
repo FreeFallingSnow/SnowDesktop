@@ -549,9 +549,12 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         }
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
+    ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
+    if (ReadDoubleField(text, "thicknessScale", value))
+        settings.thicknessScale = ClampDockScale(static_cast<float>(value));
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
     ReadBoolField(text, "systemTaskbarBackdropEnabled",
         settings.systemTaskbarBackdropEnabled);
@@ -588,9 +591,12 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
+    file << "  \"showRunningApps\": "
+         << (settings.showRunningApps ? "true" : "false") << ",\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
+    file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
     file << "  \"systemTaskbarAutoHide\": "
          << (settings.systemTaskbarAutoHide ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarBackdropEnabled\": "

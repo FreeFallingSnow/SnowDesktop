@@ -938,6 +938,11 @@ void SettingsWindow::DrawGeneralPage()
 void SettingsWindow::DrawDockPage()
 {
     const float controlW = kSettingControlWidthDip * dpiScale_;
+    const char* thicknessResetLabel = "恢复默认##DockThicknessDefault";
+    const float resetW = SettingButtonWidth(thicknessResetLabel);
+    const float sliderActionW = controlW;
+    const float actionSliderW = std::max(1.0f,
+        sliderActionW - ImGui::GetStyle().ItemSpacing.x - resetW);
     auto markChanged = [&]() { dockSettingsDirty_ = true; };
 
     if (DrawSettingCheckbox("启用 Dock 栏", "##DockEnabled", &dockEnabled_))
@@ -978,8 +983,29 @@ void SettingsWindow::DrawDockPage()
         dockSettings_.edgeAttached = layoutMode == 1;
         markChanged();
     }
+    BeginSettingRow("栏体粗细", sliderActionW,
+        "同步调节 Dock 栏体与图标大小。");
+    ImGui::SetNextItemWidth(actionSliderW);
+    int thicknessPercent = static_cast<int>(std::round(
+        dockSettings_.thicknessScale * 100.0f));
+    if (ImGui::SliderInt("##DockThickness", &thicknessPercent, 50, 100, "%d%%"))
+    {
+        dockSettings_.thicknessScale = thicknessPercent / 100.0f;
+        markChanged();
+    }
+    ImGui::SameLine();
+    if (BlueButton(thicknessResetLabel, ImVec2(resetW, 0)))
+    {
+        dockSettings_.thicknessScale = 1.0f;
+        markChanged();
+    }
+
     if (DrawSettingCheckbox("显示 Windows 按钮", "##DockShowWindowsButton",
         &dockSettings_.showWindowsButton))
+        markChanged();
+
+    if (DrawSettingCheckbox("显示运行区", "##DockShowRunningApps",
+        &dockSettings_.showRunningApps))
         markChanged();
 
     if (DrawSettingCheckbox("显示常用项目", "##DockShowFrequentItems",

@@ -1060,8 +1060,10 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
             const DockMonitorScope previousMonitorScope = dockSettings_.monitorScope;
             const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
+            const bool previousShowRunningApps = dockSettings_.showRunningApps;
             const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
             const int previousFrequentItemCount = dockSettings_.frequentItemCount;
+            const float previousThicknessScale = dockSettings_.thicknessScale;
             const bool previousSystemTaskbarAutoHide =
                 dockSettings_.systemTaskbarAutoHide;
             LoadDockSettingsAndApply();
@@ -1069,10 +1071,14 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 dockSettings_.edgeAttached != previousEdgeAttached ||
                 dockSettings_.monitorScope != previousMonitorScope ||
                 dockSettings_.showWindowsButton != previousShowWindowsButton ||
+                dockSettings_.showRunningApps != previousShowRunningApps ||
                 dockSettings_.showFrequentItems != previousShowFrequentItems ||
                 dockSettings_.frequentItemCount != previousFrequentItemCount ||
+                std::abs(dockSettings_.thicknessScale - previousThicknessScale) > 0.0001f ||
                 dockSettings_.systemTaskbarAutoHide != previousSystemTaskbarAutoHide)
             {
+                if (dockSettings_.showRunningApps != previousShowRunningApps)
+                    RefreshDockRunningWindows(false);
                 UpdateLayoutWorkArea();
                 LayoutItems();
                 SaveLayoutSlots();

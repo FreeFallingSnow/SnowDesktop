@@ -112,6 +112,7 @@ public:
 
     size_t Capacity() const;
     bool HasCapacity(size_t additional) const;
+    bool ScrollByWheelDelta(int wheelDelta);
     bool IsWindowsButtonPoint(POINT pt) const;
     bool IsSearchPoint(POINT pt) const;
     DockEntryItem* EntryAtPoint(POINT pt) const;
@@ -130,7 +131,12 @@ private:
     size_t SortableEntryCount() const;
     int ItemIconSize() const;
     int ItemPitch() const;
+    int ScaledSpacing() const;
+    int ScaledSeparatorGap() const;
     int EdgeMargin() const;
+    RECT GetScrollViewport(const RECT& bounds) const;
+    int GetMaxScrollOffset(const RECT& bounds) const;
+    bool IsPointInScrollViewport(POINT point) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
 
     DesktopApp* app_ = nullptr;
@@ -139,4 +145,5 @@ private:
     mutable std::vector<std::unique_ptr<DockEntryItem>> entryItems_;
     mutable std::vector<std::unique_ptr<DockRunningItem>> runningItems_;
     mutable std::vector<std::unique_ptr<DockFrequentItem>> frequentItems_;
+    mutable int scrollOffset_ = 0;
 };

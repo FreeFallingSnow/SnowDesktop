@@ -4930,6 +4930,17 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         InvalidateDragStaticScene();
     };
 
+    if (DockContainer* dock = GetDockContainerAtPoint(pt))
+    {
+        const int delta = GET_WHEEL_DELTA_WPARAM(wp);
+        if (dock->ScrollByWheelDelta(delta))
+        {
+            refreshDragAfterScroll();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
+
     if (popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
