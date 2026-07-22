@@ -299,7 +299,7 @@ inline void DesktopApp::AdjustIconSpacing(float delta)
 }
 
 /**
- * @brief 设置图标标题字号（12/14/16），重新创建文本格式并刷新。
+ * @brief 设置图标标题字号，重新创建文本格式并刷新。
  * @param value 新的字号。
  */
 inline void DesktopApp::SetItemFontSize(float value)

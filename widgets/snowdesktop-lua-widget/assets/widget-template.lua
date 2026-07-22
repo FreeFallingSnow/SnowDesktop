@@ -12,7 +12,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "默认",
+            label = "示例主题",
             default = true,
             values = {
                 bg = 0x18202A,
@@ -20,11 +20,7 @@ settings = {
                 alpha = 0.92,
                 borderAlpha = 0.80,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
                 glassEnabled = false,
-                followPersonalization = true,
             }
         }
     },

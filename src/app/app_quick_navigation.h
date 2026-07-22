@@ -1515,9 +1515,8 @@ inline void DesktopApp::UpdateQuickNavigationBackdrop()
     if (!GetClientRect(quickNavigationHwnd_, &clientRect))
         return;
     const float cornerRadius = static_cast<float>(QuickNavScale(16)) / 2.0f;
-    const float blurRadius = quickNavLightTheme_ ? 24.0f : 28.0f;
     quickNavBackdropCompositor_.BeginFrame(true);
-    quickNavBackdropCompositor_.AddPanel(clientRect, cornerRadius, blurRadius);
+    quickNavBackdropCompositor_.AddPanel(clientRect, cornerRadius, quickNavBlurRadius_);
     quickNavBackdropCompositor_.EndFrame();
 }
 
@@ -2755,17 +2754,19 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     brushCacheContext_ = ctx.Get();
 
     const RECT& overlay = quickNavigationRect_;
-    // 毛玻璃主题只绘制半透明色调；原有主题保持不透明背景。
-    const float windowAlpha = quickNavGlassTheme_
-        ? (quickNavLightTheme_ ? 0.62f : 0.56f)
-        : 1.0f;
-    const float borderAlpha = quickNavGlassTheme_ ? 0.76f : 1.0f;
-    DrawD2DFilledRectangle(ctx.Get(), overlay, ToD2DColor(t.windowBg, windowAlpha),
+    const float windowAlpha = std::clamp(quickNavAppearance_.widgetAlpha, 0.0f, 1.0f);
+    const float borderAlpha = std::clamp(quickNavAppearance_.widgetBorderAlpha, 0.0f, 1.0f);
+    DrawD2DFilledRectangle(ctx.Get(), overlay,
+        D2D1::ColorF(quickNavAppearance_.widgetBgR, quickNavAppearance_.widgetBgG,
+            quickNavAppearance_.widgetBgB, windowAlpha),
         D2D1::ColorF(0, 0, 0, 0));
     DrawD2DRoundedRectangle(ctx.Get(),
         MakeRect(overlay.left, overlay.top, overlay.right - 1, overlay.bottom - 1),
         static_cast<float>(QuickNavScale(16)) / 2.0f,
-        D2D1::ColorF(0, 0, 0, 0), ToD2DColor(t.windowBorder, borderAlpha));
+        D2D1::ColorF(0, 0, 0, 0),
+        D2D1::ColorF(quickNavAppearance_.widgetBorderR,
+            quickNavAppearance_.widgetBorderG,
+            quickNavAppearance_.widgetBorderB, borderAlpha));
 
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
@@ -2839,14 +2840,16 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             D2D1_COLOR_F fill, stroke;
             if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
             {
-                fill = ToD2DColor(t.tabDragFill);
-                stroke = ToD2DColor(t.tabDragStroke);
+                fill = ToD2DColor(t.tabDragFill, 0.78f);
+                stroke = ToD2DColor(t.tabDragStroke, 0.82f);
             }
             else
             {
-                fill = active ? ToD2DColor(t.tabActiveFill)
-                    : (hovered ? ToD2DColor(t.tabHoverFill) : ToD2DColor(t.tabDefaultFill));
-                stroke = active ? ToD2DColor(t.tabActiveStroke) : ToD2DColor(t.tabDefaultStroke);
+                fill = active ? ToD2DColor(t.tabActiveFill, 0.82f)
+                    : (hovered ? ToD2DColor(t.tabHoverFill, 0.72f)
+                               : ToD2DColor(t.tabDefaultFill, 0.62f));
+                stroke = active ? ToD2DColor(t.tabActiveStroke, 0.88f)
+                                : ToD2DColor(t.tabDefaultStroke, 0.72f);
             }
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(14)) / 2.0f, fill, stroke);
@@ -2920,7 +2923,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             tabRect.right = std::min<LONG>(tabRect.right, static_cast<LONG>(tabClipRight));
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(14)) / 2.0f,
-                ToD2DColor(t.tabDragFloatFill), ToD2DColor(t.tabDragFloatStroke));
+                ToD2DColor(t.tabDragFloatFill, 0.82f),
+                ToD2DColor(t.tabDragFloatStroke, 0.88f));
 
             std::wstring label = GetQuickNavTabLabel(quickNavTabDragIndex_);
             RECT textRect = tabRect;

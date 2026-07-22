@@ -1,5 +1,6 @@
 name = "媒体控制"
 useCustomStyle = true
+followPersonalizationDefault = true
 bottomBarHover = true
 
 bg = 0x0F172A
@@ -7,12 +8,6 @@ border = 0xFFFFFF
 alpha = 0.42
 borderAlpha = 0.16
 gradientEndA = 0.30
-shadowAlpha = 0.12
-shadowBlur = 16
-shadowOffsetY = 5
-highlightAlpha = 0.10
-noiseAlpha = 0.014
-
 local btnRects = {}
 local pendState = nil
 
@@ -20,7 +15,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "默认外观",
+            label = "深色媒体",
             default = true,
             values = {
                 bg = 0x0F172A,
@@ -28,12 +23,6 @@ settings = {
                 alpha = 0.42,
                 borderAlpha = 0.16,
                 gradientEndA = 0.30,
-                shadowAlpha = 0.12,
-                shadowBlur = 16,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.10,
-                noiseAlpha = 0.014,
-                followPersonalization = true,
             }
         },
         {
@@ -45,12 +34,6 @@ settings = {
                 alpha = 0.24,
                 borderAlpha = 0.14,
                 gradientEndA = 0.28,
-                shadowAlpha = 0.10,
-                shadowBlur = 18,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.12,
-                noiseAlpha = 0.016,
-                followPersonalization = false,
             }
         }
     },

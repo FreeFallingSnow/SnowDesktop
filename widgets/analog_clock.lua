@@ -11,7 +11,7 @@ settings = {
     presets = {
         {
             id = "transparent",
-            label = "默认透明",
+            label = "透明表盘",
             default = true,
             values = {
                 bg = 0x000000,
@@ -19,10 +19,6 @@ settings = {
                 alpha = 0,
                 borderAlpha = 0,
                 gradientEndA = 0,
-                shadowAlpha = 0,
-                highlightAlpha = 0,
-                noiseAlpha = 0,
-                followPersonalization = false,
             }
         },
         {
@@ -34,12 +30,6 @@ settings = {
                 alpha = 0.16,
                 borderAlpha = 0.24,
                 gradientEndA = 0.20,
-                shadowAlpha = 0.10,
-                shadowBlur = 14,
-                shadowOffsetY = 4,
-                highlightAlpha = 0.16,
-                noiseAlpha = 0.012,
-                followPersonalization = false,
             }
         }
     },
@@ -146,18 +136,4 @@ function render()
     if showSecondHand then
         draw.circle(cx, cy, su(2.1), 0xEF4444, 1.0)
     end
-end
-function loadConfig()
-    bg = tonumber(storage.get("bg")) or bg
-    alpha = tonumber(storage.get("alpha")) or alpha
-    followPersonalization = storage.get("followPersonalization") == "1"
-end
-
-function resetDefaults()
-    bg = 0x000000
-    alpha = 0
-    storage.set("bg", tostring(bg))
-    storage.set("alpha", tostring(alpha))
-    storage.set("followPersonalization", "0")
-    followPersonalization = false
 end

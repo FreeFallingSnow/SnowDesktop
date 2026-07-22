@@ -11,8 +11,9 @@
 
 struct GeneralSettings
 {
+    bool softwareDesktopEnabled = true;
     bool doubleClickHideDesktop = false;
-    int quickNavTheme = 1; // 0=dark, 1=light, 2=glass dark, 3=glass light
+    int quickNavTheme = 1; // 全局自定义时：0=深色，1=浅色，2/3=对应毛玻璃
     bool dockEnabled = false;
 };
 

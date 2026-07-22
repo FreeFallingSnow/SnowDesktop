@@ -798,7 +798,6 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     float radius = static_cast<float>(Cu(cornerRadiusCu));
     float strokeW = selected ? 1.6f : 1.0f;
-    float effectScale = std::max(0.5f, static_cast<float>(Cu(1.0f)));
 
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
         const auto key = D2DColorBrushKey(c);
@@ -813,8 +812,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     };
 
     // ── 1. Background + border ────────────────────────────────
-    app_->DrawWidgetPanelBackground(context, frame, radius, effectScale,
-        fillColor, borderColor, selected, strokeW);
+    app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, borderColor,
+        selected, strokeW);
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {

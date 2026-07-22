@@ -1787,11 +1787,11 @@ inline bool DesktopApp::DrawDockControlBackground(
     ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle)
 {
     if (!ctx || IsRectEmptyRect(rect)) return false;
-    PersonalizationSettings appearance = !dockSettings_.followPersonalization
-        ? dockSettings_.appearance
-        : PersonalizationSettings::DarkPreset();
+    PersonalizationSettings appearance = PersonalizationSettings::DarkPreset();
     if (settingsWindow_)
-        appearance = settingsWindow_->GetDockAppearance();
+        appearance = settingsWindow_->GetPersonalization();
+    else
+        LoadPersonalization(GetPersonalizationPath().c_str(), appearance);
 
     const float luminance = appearance.widgetBgR * 0.2126f +
         appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;

@@ -467,9 +467,14 @@ inline void DesktopApp::EndDragSession()
 inline void DesktopApp::ShowSettingsWindow()
 {
     if (settingsWindow_)
+    {
+        showSettingsPending_ = false;
         settingsWindow_->Show();
+    }
     else
-        MessageBeep(MB_ICONWARNING);
+    {
+        showSettingsPending_ = true;
+    }
 }
 
 /**
@@ -491,9 +496,38 @@ inline void DesktopApp::LoadGeneralSettingsAndApply()
     generalSettings_ = settings;
     generalSettings_.dockEnabled = dockEnabled;
     generalSettings_.quickNavTheme = std::clamp(generalSettings_.quickNavTheme, 0, 3);
-    quickNavLightTheme_ = (generalSettings_.quickNavTheme == 1 ||
-        generalSettings_.quickNavTheme == 3);
-    quickNavGlassTheme_ = (generalSettings_.quickNavTheme >= 2);
+    SetSoftwareDesktopEnabled(generalSettings_.softwareDesktopEnabled, false);
+    ApplyQuickNavigationAppearance();
+}
+
+inline void DesktopApp::ApplyQuickNavigationAppearance()
+{
+    PersonalizationSettings globalAppearance;
+    if (settingsWindow_)
+    {
+        globalAppearance = settingsWindow_->GetPersonalization();
+    }
+    else
+    {
+        globalAppearance = PersonalizationSettings::DarkPreset();
+        LoadPersonalization(GetPersonalizationPath().c_str(), globalAppearance);
+    }
+    constexpr int quickNavPresetIds[] = {
+        kAppearancePresetDark, kAppearancePresetLight,
+        kAppearancePresetGlassDark, kAppearancePresetGlassLight
+    };
+    const int presetId = globalAppearance.backgroundPreset == kAppearancePresetCustom
+        ? quickNavPresetIds[std::clamp(generalSettings_.quickNavTheme, 0, 3)]
+        : globalAppearance.backgroundPreset;
+    const PersonalizationSettings appearance =
+        MakeQuickNavigationAppearancePreset(presetId);
+
+    const float luminance = appearance.widgetBgR * 0.2126f +
+        appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
+    quickNavLightTheme_ = luminance >= 0.55f;
+    quickNavGlassTheme_ = appearance.glassEnabled;
+    quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
+    quickNavAppearance_ = appearance;
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         UpdateQuickNavigationBackdrop();
 }
@@ -7851,6 +7885,7 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
+    AppendMenuW(menu, MF_STRING, kTrayRestartExplorerCommand, L"重启文件资源管理器");
     AppendMenuW(menu, MF_STRING, kTrayRestartCommand, L"重启软件");
     AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
 
@@ -7866,36 +7901,22 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     switch (command)
     {
     case kTraySwitchNativeCommand:
-        customDesktopVisible_ = false;
-        // 系统任务栏材质位于 Explorer 层，独立于 SnowDesktop 桌面是否显示。
-        SaveLayoutSlots();
-        HideDragHintWindow();
-        RestoreExplorerIcons();
-        ShowWindow(hwnd_, SW_HIDE);
-        if (inputHwnd_ && IsWindow(inputHwnd_))
-            ShowWindow(inputHwnd_, SW_HIDE);
+        SetSoftwareDesktopEnabled(false, true);
         break;
     case kTraySwitchCustomCommand:
-        customDesktopVisible_ = true;
-        desktopIconsHidden_ = false;
-        if (explorerDesktopRecreatePending_)
-        {
-            RecoverDesktopHostAfterExplorerRestart();
-            break;
-        }
-        HideExplorerIcons();
-        ShowWindow(hwnd_, SW_SHOW);
-        if (inputHwnd_ && IsWindow(inputHwnd_))
-            ShowWindow(inputHwnd_, SW_SHOWNA);
-        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
-        InvalidateRect(hwnd_, nullptr, TRUE);
-        ReloadItems();
+        SetSoftwareDesktopEnabled(true, true);
         break;
     case kTraySettingsCommand:
         ShowSettingsWindow();
         break;
     case kTrayRestartCommand:
         RequestRestart();
+        break;
+    case kTrayRestartExplorerCommand:
+        if (!RestartWindowsExplorer())
+            MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+                L"无法重启文件资源管理器，请稍后重试。",
+                L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;
     case kTrayExitCommand:
         if (settingsWindow_)

@@ -443,6 +443,63 @@ bool SetWindowsSystemLightThemeEnabled(bool enabled)
     return IsWindowsSystemLightThemeEnabled() == enabled;
 }
 
+bool RestartWindowsExplorer()
+{
+    HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    DWORD explorerProcessId = 0;
+    if (!taskbar || !GetWindowThreadProcessId(taskbar, &explorerProcessId) ||
+        explorerProcessId == 0)
+        return false;
+
+    HANDLE explorerProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE,
+        FALSE, explorerProcessId);
+    if (!explorerProcess)
+        return false;
+
+    // Ask Explorer to run the same clean shell-exit path used by its hidden
+    // "Exit Explorer" command. This lets in-process taskbar hooks and the XAML
+    // visual tree unwind before a new shell instance is launched. The command
+    // is shell-private, so retain a force-terminate fallback for Windows builds
+    // that no longer handle it.
+    constexpr UINT kExitExplorerMessage = WM_USER + 436;
+    const bool exitRequested = PostMessageW(taskbar,
+        kExitExplorerMessage, 0, 0) != FALSE;
+    DWORD waitResult = exitRequested
+        ? WaitForSingleObject(explorerProcess, 5000)
+        : WAIT_TIMEOUT;
+    if (waitResult != WAIT_OBJECT_0)
+    {
+        if (!TerminateProcess(explorerProcess, 0))
+        {
+            CloseHandle(explorerProcess);
+            return false;
+        }
+        waitResult = WaitForSingleObject(explorerProcess, 5000);
+    }
+    CloseHandle(explorerProcess);
+    if (waitResult != WAIT_OBJECT_0)
+        return false;
+
+    wchar_t explorerPath[MAX_PATH]{};
+    const UINT windowsPathLength = GetWindowsDirectoryW(
+        explorerPath, static_cast<UINT>(std::size(explorerPath)));
+    if (!windowsPathLength || windowsPathLength >= std::size(explorerPath))
+        return false;
+    if (explorerPath[windowsPathLength - 1] != L'\\')
+        wcscat_s(explorerPath, L"\\");
+    wcscat_s(explorerPath, L"explorer.exe");
+
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    PROCESS_INFORMATION processInfo{};
+    if (!CreateProcessW(explorerPath, nullptr, nullptr, nullptr, FALSE, 0,
+        nullptr, nullptr, &startupInfo, &processInfo))
+        return false;
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+    return true;
+}
+
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState()
 {
     return GetTaskbarBackdropController().RuntimeState();
@@ -492,7 +549,6 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         }
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
-    ReadBoolField(text, "followPersonalization", settings.followPersonalization);
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
@@ -501,27 +557,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.systemTaskbarBackdropEnabled);
     ReadBoolField(text, "systemTaskbarFollowPersonalization",
         settings.systemTaskbarFollowPersonalization);
-    PersonalizationSettings& style = settings.appearance;
-    if (ReadDoubleField(text, "backgroundR", value)) style.widgetBgR = static_cast<float>(value);
-    if (ReadDoubleField(text, "backgroundG", value)) style.widgetBgG = static_cast<float>(value);
-    if (ReadDoubleField(text, "backgroundB", value)) style.widgetBgB = static_cast<float>(value);
-    if (ReadDoubleField(text, "borderR", value)) style.widgetBorderR = static_cast<float>(value);
-    if (ReadDoubleField(text, "borderG", value)) style.widgetBorderG = static_cast<float>(value);
-    if (ReadDoubleField(text, "borderB", value)) style.widgetBorderB = static_cast<float>(value);
-    if (ReadDoubleField(text, "backgroundAlpha", value)) style.widgetAlpha = static_cast<float>(value);
-    if (ReadDoubleField(text, "borderAlpha", value)) style.widgetBorderAlpha = static_cast<float>(value);
-    if (ReadDoubleField(text, "cornerRadius", value)) style.cornerRadius = static_cast<float>(value);
-    if (ReadDoubleField(text, "highlightAlpha", value)) style.highlightAlpha = static_cast<float>(value);
-    if (ReadDoubleField(text, "noiseAlpha", value)) style.noiseAlpha = static_cast<float>(value);
-    ReadBoolField(text, "glassEnabled", style.glassEnabled);
-
     PersonalizationSettings& taskbarStyle = settings.systemTaskbarAppearance;
-    bool hasTaskbarAppearance = false;
     if (ReadDoubleField(text, "taskbarBackgroundR", value))
-    {
         taskbarStyle.widgetBgR = static_cast<float>(value);
-        hasTaskbarAppearance = true;
-    }
     if (ReadDoubleField(text, "taskbarBackgroundG", value)) taskbarStyle.widgetBgG = static_cast<float>(value);
     if (ReadDoubleField(text, "taskbarBackgroundB", value)) taskbarStyle.widgetBgB = static_cast<float>(value);
     if (ReadDoubleField(text, "taskbarBorderR", value)) taskbarStyle.widgetBorderR = static_cast<float>(value);
@@ -530,14 +568,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "taskbarBackgroundAlpha", value)) taskbarStyle.widgetAlpha = static_cast<float>(value);
     if (ReadDoubleField(text, "taskbarBorderAlpha", value)) taskbarStyle.widgetBorderAlpha = static_cast<float>(value);
     if (ReadDoubleField(text, "taskbarGlassBlurRadius", value)) taskbarStyle.glassBlurRadius = static_cast<float>(value);
+    if (ReadDoubleField(text, "taskbarAppearancePreset", value))
+        taskbarStyle.backgroundPreset = NormalizeAppearancePresetId(static_cast<int>(value));
     ReadBoolField(text, "taskbarGlassEnabled", taskbarStyle.glassEnabled);
-    if (!hasTaskbarAppearance)
-    {
-        // 首次升级时以旧版 Dock 独立外观为起点；保存后两者完全独立。
-        taskbarStyle = style;
-        taskbarStyle.cornerRadius = 0.0f;
-        taskbarStyle.shadowAlpha = 0.0f;
-    }
     return true;
 }
 
@@ -546,7 +579,6 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
 
-    const PersonalizationSettings& style = settings.appearance;
     const PersonalizationSettings& taskbarStyle = settings.systemTaskbarAppearance;
     file << "{\n";
     file << "  \"position\": " << static_cast<int>(settings.position) << ",\n";
@@ -556,8 +588,6 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
-    file << "  \"followPersonalization\": "
-         << (settings.followPersonalization ? "true" : "false") << ",\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
@@ -567,18 +597,6 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.systemTaskbarBackdropEnabled ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarFollowPersonalization\": "
          << (settings.systemTaskbarFollowPersonalization ? "true" : "false") << ",\n";
-    file << "  \"backgroundR\": " << style.widgetBgR << ",\n";
-    file << "  \"backgroundG\": " << style.widgetBgG << ",\n";
-    file << "  \"backgroundB\": " << style.widgetBgB << ",\n";
-    file << "  \"borderR\": " << style.widgetBorderR << ",\n";
-    file << "  \"borderG\": " << style.widgetBorderG << ",\n";
-    file << "  \"borderB\": " << style.widgetBorderB << ",\n";
-    file << "  \"backgroundAlpha\": " << style.widgetAlpha << ",\n";
-    file << "  \"borderAlpha\": " << style.widgetBorderAlpha << ",\n";
-    file << "  \"cornerRadius\": " << style.cornerRadius << ",\n";
-    file << "  \"highlightAlpha\": " << style.highlightAlpha << ",\n";
-    file << "  \"noiseAlpha\": " << style.noiseAlpha << ",\n";
-    file << "  \"glassEnabled\": " << (style.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"taskbarBackgroundR\": " << taskbarStyle.widgetBgR << ",\n";
     file << "  \"taskbarBackgroundG\": " << taskbarStyle.widgetBgG << ",\n";
     file << "  \"taskbarBackgroundB\": " << taskbarStyle.widgetBgB << ",\n";
@@ -587,6 +605,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"taskbarBorderB\": " << taskbarStyle.widgetBorderB << ",\n";
     file << "  \"taskbarBackgroundAlpha\": " << taskbarStyle.widgetAlpha << ",\n";
     file << "  \"taskbarBorderAlpha\": " << taskbarStyle.widgetBorderAlpha << ",\n";
+    file << "  \"taskbarAppearancePreset\": " << taskbarStyle.backgroundPreset << ",\n";
     file << "  \"taskbarGlassEnabled\": "
          << (taskbarStyle.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"taskbarGlassBlurRadius\": " << taskbarStyle.glassBlurRadius << "\n";

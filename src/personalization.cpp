@@ -76,11 +76,6 @@ PersonalizationSettings PersonalizationSettings::DarkPreset()
     s.widgetAlpha = 0.34f; s.widgetBorderAlpha = 0.32f;
     s.gradientEndA = 0.56f;
     s.backgroundPreset = 0;
-    s.shadowAlpha = 0.0f;
-    s.shadowBlur = 12.0f;
-    s.shadowOffsetY = 4.0f;
-    s.highlightAlpha = 0.0f;
-    s.noiseAlpha = 0.0f;
     return s;
 }
 
@@ -99,86 +94,17 @@ PersonalizationSettings PersonalizationSettings::LightPreset()
     s.widgetAlpha = 0.12f; s.widgetBorderAlpha = 0.20f;
     s.gradientEndA = 0.12f;
     s.backgroundPreset = 1;
-    s.shadowAlpha = 0.10f;
-    s.shadowBlur = 12.0f;
-    s.shadowOffsetY = 4.0f;
-    s.highlightAlpha = 0.12f;
-    s.noiseAlpha = 0.010f;
-    return s;
-}
-
-PersonalizationSettings PersonalizationSettings::TranslucentDarkPreset()
-{
-    PersonalizationSettings s;
-    s.widgetBgR = 0.05f; s.widgetBgG = 0.07f; s.widgetBgB = 0.10f;
-    s.widgetBorderR = 0.78f; s.widgetBorderG = 0.88f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.22f; s.widgetBorderAlpha = 0.24f;
-    s.gradientEndA = 0.42f;
-    s.backgroundPreset = 2;
-    s.shadowAlpha = 0.16f;
-    s.shadowBlur = 16.0f;
-    s.shadowOffsetY = 5.0f;
-    s.highlightAlpha = 0.10f;
-    s.noiseAlpha = 0.012f;
-    return s;
-}
-
-PersonalizationSettings PersonalizationSettings::TranslucentLightPreset()
-{
-    PersonalizationSettings s;
-    s.widgetBgR = 0.92f; s.widgetBgG = 0.96f; s.widgetBgB = 1.0f;
-    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.16f; s.widgetBorderAlpha = 0.28f;
-    s.gradientEndA = 0.20f;
-    s.backgroundPreset = 3;
-    s.shadowAlpha = 0.11f;
-    s.shadowBlur = 14.0f;
-    s.shadowOffsetY = 4.0f;
-    s.highlightAlpha = 0.18f;
-    s.noiseAlpha = 0.014f;
-    return s;
-}
-
-PersonalizationSettings PersonalizationSettings::FrostedPreset()
-{
-    PersonalizationSettings s;
-    s.widgetBgR = 0.78f; s.widgetBgG = 0.84f; s.widgetBgB = 0.90f;
-    s.widgetBorderR = 0.95f; s.widgetBorderG = 0.98f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.16f; s.widgetBorderAlpha = 0.26f;
-    s.gradientEndA = 0.22f;
-    s.backgroundPreset = 4;
-    s.shadowAlpha = 0.12f;
-    s.shadowBlur = 18.0f;
-    s.shadowOffsetY = 5.0f;
-    s.highlightAlpha = 0.20f;
-    s.noiseAlpha = 0.025f;
-    return s;
-}
-
-PersonalizationSettings PersonalizationSettings::HighContrastPreset()
-{
-    PersonalizationSettings s;
-    s.widgetBgR = 0.02f; s.widgetBgG = 0.02f; s.widgetBgB = 0.025f;
-    s.widgetBorderR = 0.25f; s.widgetBorderG = 0.62f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.72f; s.widgetBorderAlpha = 0.72f;
-    s.gradientEndA = 0.78f;
-    s.backgroundPreset = 5;
-    s.shadowAlpha = 0.12f;
-    s.shadowBlur = 10.0f;
-    s.shadowOffsetY = 3.0f;
-    s.highlightAlpha = 0.10f;
-    s.noiseAlpha = 0.0f;
     return s;
 }
 
 PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
 {
-    PersonalizationSettings s = TranslucentDarkPreset();
+    PersonalizationSettings s = DarkPreset();
+    s.widgetBgR = 0.05f; s.widgetBgG = 0.07f; s.widgetBgB = 0.10f;
+    s.widgetBorderR = 0.78f; s.widgetBorderG = 0.88f; s.widgetBorderB = 1.0f;
+    s.widgetAlpha = 0.22f; s.widgetBorderAlpha = 0.24f;
     s.backgroundPreset = 6;
     s.gradientEndA = 0.0f;
-    s.shadowAlpha = 0.0f;
-    s.highlightAlpha = 0.0f;
-    s.noiseAlpha = 0.0f;
     s.glassEnabled = true;
     s.glassBlurRadius = 24.0f;
     return s;
@@ -186,32 +112,97 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
 
 PersonalizationSettings PersonalizationSettings::GlassLightPreset()
 {
-    PersonalizationSettings s = TranslucentLightPreset();
+    PersonalizationSettings s = LightPreset();
+    s.widgetBgR = 0.92f; s.widgetBgG = 0.96f; s.widgetBgB = 1.0f;
+    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.backgroundPreset = 7;
-    s.widgetAlpha = 0.08f;
+    s.widgetAlpha = 0.08f; s.widgetBorderAlpha = 0.28f;
     s.gradientEndA = 0.0f;
-    s.shadowAlpha = 0.0f;
-    s.highlightAlpha = 0.0f;
-    s.noiseAlpha = 0.0f;
     s.glassEnabled = true;
     s.glassBlurRadius = 22.0f;
     return s;
 }
 
-PersonalizationSettings PersonalizationSettings::TransparentGlassPreset()
+int NormalizeAppearancePresetId(int presetId)
 {
-    PersonalizationSettings s = DarkPreset();
-    s.backgroundPreset = 8;
-    s.widgetBgR = 1.0f; s.widgetBgG = 1.0f; s.widgetBgB = 1.0f;
-    s.widgetAlpha = 0.0f;
-    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
-    s.widgetBorderAlpha = 0.18f;
-    s.gradientEndA = 0.0f;
-    s.shadowAlpha = 0.0f;
-    s.highlightAlpha = 0.0f;
-    s.noiseAlpha = 0.0f;
-    s.glassEnabled = true;
-    s.glassBlurRadius = 24.0f;
+    switch (presetId)
+    {
+    case 0:
+    case 1:
+    case 6:
+    case 7:
+    case 9:
+        return presetId;
+    case 3:
+    case 4:
+        return 1;
+    case 2:
+    case 5:
+        return 0;
+    case 8:
+        return 6;
+    default:
+        return 0;
+    }
+}
+
+PersonalizationSettings MakeAppearancePreset(int presetId)
+{
+    switch (NormalizeAppearancePresetId(presetId))
+    {
+    case 1: return PersonalizationSettings::LightPreset();
+    case 6: return PersonalizationSettings::GlassDarkPreset();
+    case 7: return PersonalizationSettings::GlassLightPreset();
+    case 9:
+    {
+        PersonalizationSettings custom = PersonalizationSettings::DarkPreset();
+        custom.backgroundPreset = kAppearancePresetCustom;
+        return custom;
+    }
+    default: return PersonalizationSettings::DarkPreset();
+    }
+}
+
+PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId)
+{
+    PersonalizationSettings s;
+    switch (NormalizeAppearancePresetId(presetId))
+    {
+    case kAppearancePresetLight:
+        s = PersonalizationSettings::LightPreset();
+        s.widgetBgR = 0.965f; s.widgetBgG = 0.973f; s.widgetBgB = 0.988f;
+        s.widgetBorderR = 0.706f; s.widgetBorderG = 0.745f; s.widgetBorderB = 0.784f;
+        s.widgetAlpha = 0.96f; s.widgetBorderAlpha = 0.70f;
+        s.glassEnabled = false;
+        break;
+    case kAppearancePresetGlassDark:
+        s = PersonalizationSettings::GlassDarkPreset();
+        s.widgetBgR = 0.055f; s.widgetBgG = 0.071f; s.widgetBgB = 0.102f;
+        s.widgetBorderR = 0.549f; s.widgetBorderG = 0.620f; s.widgetBorderB = 0.741f;
+        s.widgetAlpha = 0.68f; s.widgetBorderAlpha = 0.72f;
+        s.glassEnabled = true;
+        s.glassBlurRadius = 28.0f;
+        break;
+    case kAppearancePresetGlassLight:
+        s = PersonalizationSettings::GlassLightPreset();
+        s.widgetBgR = 0.930f; s.widgetBgG = 0.950f; s.widgetBgB = 0.980f;
+        s.widgetBorderR = 0.700f; s.widgetBorderG = 0.760f; s.widgetBorderB = 0.840f;
+        s.widgetAlpha = 0.74f; s.widgetBorderAlpha = 0.76f;
+        s.glassEnabled = true;
+        s.glassBlurRadius = 24.0f;
+        break;
+    case kAppearancePresetCustom:
+        s = PersonalizationSettings::DarkPreset();
+        s.backgroundPreset = kAppearancePresetCustom;
+        break;
+    default:
+        s = PersonalizationSettings::DarkPreset();
+        s.widgetBgR = 0.055f; s.widgetBgG = 0.071f; s.widgetBgB = 0.102f;
+        s.widgetBorderR = 0.471f; s.widgetBorderG = 0.510f; s.widgetBorderB = 0.588f;
+        s.widgetAlpha = 0.96f; s.widgetBorderAlpha = 0.62f;
+        s.glassEnabled = false;
+        break;
+    }
     return s;
 }
 
@@ -258,13 +249,11 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     if (ReadDoubleField(text, "widgetBorderAlpha", v)) s.widgetBorderAlpha = (float)v;
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
-    if (ReadDoubleField(text, "backgroundPreset", v)) s.backgroundPreset = (int)v;
+    if (ReadDoubleField(text, "backgroundPreset", v))
+    {
+        s.backgroundPreset = NormalizeAppearancePresetId((int)v);
+    }
     if (ReadDoubleField(text, "cornerRadius", v)) s.cornerRadius = (float)v;
-    if (ReadDoubleField(text, "shadowAlpha", v)) s.shadowAlpha = (float)v;
-    if (ReadDoubleField(text, "shadowBlur", v)) s.shadowBlur = (float)v;
-    if (ReadDoubleField(text, "shadowOffsetY", v)) s.shadowOffsetY = (float)v;
-    if (ReadDoubleField(text, "highlightAlpha", v)) s.highlightAlpha = (float)v;
-    if (ReadDoubleField(text, "noiseAlpha", v)) s.noiseAlpha = (float)v;
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
@@ -299,11 +288,6 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"barHeight\": " << s.barHeight << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
-    file << "  \"shadowAlpha\": " << s.shadowAlpha << ",\n";
-    file << "  \"shadowBlur\": " << s.shadowBlur << ",\n";
-    file << "  \"shadowOffsetY\": " << s.shadowOffsetY << ",\n";
-    file << "  \"highlightAlpha\": " << s.highlightAlpha << ",\n";
-    file << "  \"noiseAlpha\": " << s.noiseAlpha << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"glassBlurRadius\": " << s.glassBlurRadius << "\n";
     file << "}\n";

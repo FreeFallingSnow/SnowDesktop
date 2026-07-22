@@ -203,6 +203,16 @@ static std::unordered_map<std::string, std::string> g_storage;
 static std::wstring g_storagePath;
 static std::deque<WidgetLogEntry> g_widgetLogs;
 
+static bool IsRemovedPanelEffectSettingKey(const std::string& key)
+{
+    const size_t separator = key.rfind('.');
+    const std::string setting = separator == std::string::npos
+        ? key : key.substr(separator + 1);
+    return setting == "shadowAlpha" || setting == "shadowBlur" ||
+        setting == "shadowOffsetY" || setting == "highlightAlpha" ||
+        setting == "noiseAlpha";
+}
+
 static void LoadStorageFile()
 {
     g_storage.clear();
@@ -227,7 +237,8 @@ static void LoadStorageFile()
         if (pos == std::string::npos) break;
         size_t valEnd = text.find('"', pos + 1);
         if (valEnd == std::string::npos) break;
-        g_storage[key] = text.substr(pos + 1, valEnd - pos - 1);
+        if (!IsRemovedPanelEffectSettingKey(key))
+            g_storage[key] = text.substr(pos + 1, valEnd - pos - 1);
         pos = valEnd + 1;
     }
 }
@@ -970,9 +981,7 @@ static bool IsHostAppearanceSettingKey(const std::string& key)
 {
     return key == "bg" || key == "border" || key == "alpha" ||
         key == "borderAlpha" || key == "gradientEndA" ||
-        key == "shadowAlpha" || key == "shadowBlur" ||
-        key == "shadowOffsetY" || key == "highlightAlpha" ||
-        key == "noiseAlpha" || key == "glassEnabled" ||
+        IsRemovedPanelEffectSettingKey(key) || key == "glassEnabled" ||
         key == "glassBlurRadius" ||
         key == "followPersonalization";
 }
@@ -1637,18 +1646,13 @@ static int lua_WidgetTheme(lua_State* L)
     LuaWidgetTheme theme;
     if (s && s->engine)
         theme = s->engine->RuntimeGetWidgetTheme(s->currentWidgetId);
-    lua_createtable(L, 0, 11);
+    lua_createtable(L, 0, 6);
     lua_pushinteger(L, theme.bg); lua_setfield(L, -2, "bg");
     lua_pushinteger(L, theme.border); lua_setfield(L, -2, "border");
     lua_pushnumber(L, theme.alpha); lua_setfield(L, -2, "alpha");
     lua_pushnumber(L, theme.borderAlpha); lua_setfield(L, -2, "borderAlpha");
     lua_pushnumber(L, theme.gradientEndA); lua_setfield(L, -2, "gradientEndA");
     lua_pushnumber(L, theme.cornerRadius); lua_setfield(L, -2, "cornerRadius");
-    lua_pushnumber(L, theme.shadowAlpha); lua_setfield(L, -2, "shadowAlpha");
-    lua_pushnumber(L, theme.shadowBlur); lua_setfield(L, -2, "shadowBlur");
-    lua_pushnumber(L, theme.shadowOffsetY); lua_setfield(L, -2, "shadowOffsetY");
-    lua_pushnumber(L, theme.highlightAlpha); lua_setfield(L, -2, "highlightAlpha");
-    lua_pushnumber(L, theme.noiseAlpha); lua_setfield(L, -2, "noiseAlpha");
     return 1;
 }
 
@@ -2169,6 +2173,12 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
         customStyle = lua_toboolean(L_, -1) != 0;
     lua_pop(L_, 1);
 
+    bool followPersonalizationDefault = false;
+    lua_getfield(L_, -1, "followPersonalizationDefault");
+    if (!lua_isnil(L_, -1))
+        followPersonalizationDefault = lua_toboolean(L_, -1) != 0;
+    lua_pop(L_, 1);
+
     std::vector<LuaWidgetManifest::Setting> scriptSettings;
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets;
     ReadLuaDeclaredSettings(L_, -1, scriptSettings, scriptPresets);
@@ -2184,6 +2194,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     w.ref = ref;
     w.valid = true;
     w.customStyle = customStyle;
+    w.followPersonalizationDefault = followPersonalizationDefault;
     w.scriptSettings = std::move(scriptSettings);
     w.scriptPresets = std::move(scriptPresets);
     WIN32_FILE_ATTRIBUTE_DATA attr{};
@@ -2216,6 +2227,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     bool& sharedGlassSettingsSaveRequested)
 {
     (void)widgetName;
+    (void)mainPersonalization;
     sharedGlassSettingsChanged = false;
     sharedGlassSettingsSaveRequested = false;
 
@@ -2241,7 +2253,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     };
     auto setStorage = [&](const std::string& key, const std::string& value) {
         if (key.empty() || IsHostStructureSettingKey(key) ||
-            IsHostSharedGlassSettingKey(key)) return;
+            IsHostSharedGlassSettingKey(key) ||
+            IsRemovedPanelEffectSettingKey(key)) return;
         std::string fullKey = prefix + key;
         auto it = g_storage.find(fullKey);
         if (it != g_storage.end() && it->second == value) return;
@@ -2270,22 +2283,15 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         };
         return (toByte(r) << 16) | (toByte(g) << 8) | toByte(b);
     };
-    constexpr const char* kMainPersonalizationSnapshot = "__main_personalization";
-    auto syncMainPersonalization = [&]() {
-        setStorage("bg", std::to_string(colorToInt(mainPersonalization.widgetBgR,
-            mainPersonalization.widgetBgG, mainPersonalization.widgetBgB)));
-        setStorage("border", std::to_string(colorToInt(mainPersonalization.widgetBorderR,
-            mainPersonalization.widgetBorderG, mainPersonalization.widgetBorderB)));
-        setStorage("alpha", std::to_string(mainPersonalization.widgetAlpha));
-        setStorage("borderAlpha", std::to_string(mainPersonalization.widgetBorderAlpha));
-        setStorage("gradientEndA", std::to_string(mainPersonalization.gradientEndA));
-        setStorage("shadowAlpha", std::to_string(mainPersonalization.shadowAlpha));
-        setStorage("shadowBlur", std::to_string(mainPersonalization.shadowBlur));
-        setStorage("shadowOffsetY", std::to_string(mainPersonalization.shadowOffsetY));
-        setStorage("highlightAlpha", std::to_string(mainPersonalization.highlightAlpha));
-        setStorage("noiseAlpha", std::to_string(mainPersonalization.noiseAlpha));
-        setStorage("glassEnabled", mainPersonalization.glassEnabled ? "1" : "0");
-        setStorage("__preset", kMainPersonalizationSnapshot);
+    auto applyAppearance = [&](const PersonalizationSettings& appearance) {
+        setStorage("bg", std::to_string(colorToInt(appearance.widgetBgR,
+            appearance.widgetBgG, appearance.widgetBgB)));
+        setStorage("border", std::to_string(colorToInt(appearance.widgetBorderR,
+            appearance.widgetBorderG, appearance.widgetBorderB)));
+        setStorage("alpha", std::to_string(appearance.widgetAlpha));
+        setStorage("borderAlpha", std::to_string(appearance.widgetBorderAlpha));
+        setStorage("gradientEndA", std::to_string(appearance.gradientEndA));
+        setStorage("glassEnabled", appearance.glassEnabled ? "1" : "0");
     };
     auto parseColor = [](const std::string& value, int fallback) {
         if (value.empty()) return fallback;
@@ -2293,6 +2299,28 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         long parsed = std::strtol(value.c_str(), &end, 0);
         return end != value.c_str() ? static_cast<int>(parsed) : fallback;
     };
+    auto beginEditorRow = [](const char* label, float requestedWidth) {
+        const float rowStart = ImGui::GetCursorPosX();
+        const float availableWidth = ImGui::GetContentRegionAvail().x;
+        const float rowRight = rowStart + availableWidth;
+        const float maximumWidth = std::max(ImGui::GetFrameHeight(), availableWidth * 0.58f);
+        const float controlWidth = std::min(requestedWidth, maximumWidth);
+        const float controlX = std::max(rowStart, rowRight - controlWidth);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine(controlX);
+        return controlWidth;
+    };
+    auto editorCheckbox = [&](const char* label, const char* id, bool* value) {
+        beginEditorRow(label, ImGui::GetFrameHeight());
+        return ImGui::Checkbox(id, value);
+    };
+    auto editorButtonWidth = [](const char* label) {
+        return ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    };
+    constexpr float kEditorControlWidth = 300.0f;
+    constexpr float kEditorSliderWidth = kEditorControlWidth;
+    constexpr float kEditorColorWidth = kEditorControlWidth;
     auto renderSetting = [&](const LuaWidgetManifest::Setting& setting) {
         if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
             IsHostAppearanceSettingKey(setting.key))
@@ -2304,7 +2332,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         if (setting.type == "bool")
         {
             bool value = current == "1" || current == "true";
-            if (ImGui::Checkbox(setting.label.c_str(), &value))
+            if (editorCheckbox(setting.label.c_str(), "##Value", &value))
             {
                 next = value ? "1" : "0";
                 changed = true;
@@ -2313,7 +2341,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         else if (setting.type == "int")
         {
             int value = std::atoi(current.c_str());
-            if (ImGui::SliderInt(setting.label.c_str(), &value,
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorSliderWidth));
+            if (ImGui::SliderInt("##Value", &value,
                 static_cast<int>(setting.minValue), static_cast<int>(setting.maxValue)))
             {
                 next = std::to_string(value);
@@ -2323,7 +2352,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         else if (setting.type == "float")
         {
             float value = static_cast<float>(std::atof(current.c_str()));
-            if (ImGui::SliderFloat(setting.label.c_str(), &value,
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorSliderWidth));
+            if (ImGui::SliderFloat("##Value", &value,
                 static_cast<float>(setting.minValue), static_cast<float>(setting.maxValue)))
             {
                 std::ostringstream ss;
@@ -2340,7 +2370,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 ((color >> 8) & 0xFF) / 255.0f,
                 (color & 0xFF) / 255.0f
             };
-            if (ImGui::ColorEdit3(setting.label.c_str(), rgb, ImGuiColorEditFlags_NoInputs))
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorColorWidth));
+            if (ImGui::ColorEdit3("##Value", rgb, ImGuiColorEditFlags_NoInputs))
             {
                 next = std::to_string(colorToInt(rgb[0], rgb[1], rgb[2]));
                 changed = true;
@@ -2353,7 +2384,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 if (setting.options[i] == current) selected = static_cast<int>(i);
             std::vector<const char*> labels;
             for (const auto& option : setting.options) labels.push_back(option.c_str());
-            if (ImGui::Combo(setting.label.c_str(), &selected, labels.data(),
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorControlWidth));
+            if (ImGui::Combo("##Value", &selected, labels.data(),
                 static_cast<int>(labels.size())))
             {
                 next = setting.options[selected];
@@ -2364,7 +2396,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         {
             char buffer[512]{};
             strncpy_s(buffer, current.c_str(), _TRUNCATE);
-            if (ImGui::InputText(setting.label.c_str(), buffer, sizeof(buffer)))
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorControlWidth));
+            if (ImGui::InputText("##Value", buffer, sizeof(buffer)))
             {
                 next = buffer;
                 changed = true;
@@ -2387,16 +2420,6 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         if (defaultPresetIndex < 0) return nullptr;
         return &presets[static_cast<size_t>(defaultPresetIndex)].values;
     };
-    auto applyDefaultThemeValues = [&]() {
-        const auto* values = defaultPresetValues();
-        if (!values) return;
-        for (const auto& kv : *values)
-        {
-            if (IsHostAppearanceSettingKey(kv.first))
-                setStorage(kv.first, kv.second);
-        }
-        setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
-    };
     auto applyDefaultSettingValues = [&]() {
         const auto* values = defaultPresetValues();
         for (const auto& setting : settings)
@@ -2418,110 +2441,136 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
 
     if (widget.customStyle)
     {
-        ImGui::Text("外观");
-        ImGui::Separator();
+        ImGui::SeparatorText("外观");
 
         bool followPersonalization =
             getStorage("followPersonalization", "0") == "1" ||
             getStorage("followPersonalization", "0") == "true";
-        if (ImGui::Checkbox("跟随个性化设置", &followPersonalization))
+        if (editorCheckbox("跟随全局", "##FollowPersonalization", &followPersonalization))
             setStorage("followPersonalization", followPersonalization ? "1" : "0");
 
-        ImGui::SameLine();
-        ImGui::BeginDisabled(followPersonalization);
-        if (whiteTextButton("同步主设置"))
-            syncMainPersonalization();
-        ImGui::EndDisabled();
+        constexpr const char* builtInThemeIds[] = {
+            "__global_dark", "__global_light",
+            "__global_glass_dark", "__global_glass_light"
+        };
+        constexpr int builtInPresetIds[] = {
+            kAppearancePresetDark, kAppearancePresetLight,
+            kAppearancePresetGlassDark, kAppearancePresetGlassLight
+        };
+        constexpr const char* customThemeId = "__custom";
+        constexpr const char* legacyMainSnapshotId = "__main_personalization";
+        std::vector<const char*> themeLabels = {
+            "全局 - 深色", "全局 - 浅色",
+            "全局 - 深色毛玻璃", "全局 - 浅色毛玻璃", "自定义"
+        };
+        for (const auto& preset : presets)
+            themeLabels.push_back(preset.label.c_str());
 
-        ImGui::BeginDisabled(followPersonalization);
-
-        if (!presets.empty())
+        std::string currentPreset = getStorage("__preset",
+            defaultPresetIndex >= 0
+                ? presets[static_cast<size_t>(defaultPresetIndex)].id
+                : customThemeId);
+        int selectedTheme = 4;
+        for (int i = 0; i < IM_ARRAYSIZE(builtInThemeIds); ++i)
         {
-            std::string currentPreset = getStorage("__preset", defaultPresetIndex >= 0
-                ? presets[static_cast<size_t>(defaultPresetIndex)].id : presets[0].id);
-            const bool mainPersonalizationSnapshot =
-                currentPreset == kMainPersonalizationSnapshot;
-            int selectedPreset = mainPersonalizationSnapshot
-                ? static_cast<int>(presets.size()) : 0;
-            if (!mainPersonalizationSnapshot)
+            if (currentPreset == builtInThemeIds[i])
             {
-                for (size_t i = 0; i < presets.size(); ++i)
-                    if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
+                selectedTheme = i;
+                break;
             }
-            std::vector<const char*> presetLabels;
-            for (const auto& preset : presets) presetLabels.push_back(preset.label.c_str());
-            if (mainPersonalizationSnapshot)
-                presetLabels.push_back("主设置副本");
-            if (ImGui::Combo("组件预设", &selectedPreset, presetLabels.data(),
-                static_cast<int>(presetLabels.size())))
+        }
+        if (currentPreset != customThemeId && currentPreset != legacyMainSnapshotId &&
+            selectedTheme == 4)
+        {
+            for (size_t i = 0; i < presets.size(); ++i)
             {
-                if (selectedPreset >= 0 && selectedPreset < static_cast<int>(presets.size()))
+                if (presets[i].id == currentPreset)
                 {
-                    applyValues(presets[static_cast<size_t>(selectedPreset)].values);
-                    setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
+                    selectedTheme = 5 + static_cast<int>(i);
+                    break;
                 }
             }
         }
 
-        float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.36f;
-        float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f, borderAlpha = 0.40f;
-        float gradientEndA = 0.0f, shadowAlpha = 0.0f, shadowBlur = 12.0f;
-        float shadowOffsetY = 4.0f, highlightAlpha = 0.0f, noiseAlpha = 0.0f;
-        bool glassEnabled = false;
-        ReadCustomColors(widgetId, bgR, bgG, bgB, alpha, borderR, borderG, borderB,
-            borderAlpha, gradientEndA, shadowAlpha, shadowBlur, shadowOffsetY,
-            highlightAlpha, noiseAlpha, glassEnabled);
-
-        float bgColor[3] = { bgR, bgG, bgB };
-        if (ImGui::ColorEdit3("背景颜色", bgColor, ImGuiColorEditFlags_NoInputs))
-            setStorage("bg", std::to_string(colorToInt(bgColor[0], bgColor[1], bgColor[2])));
-        if (ImGui::SliderFloat("背景不透明度", &alpha, 0.0f, 1.0f))
-            setStorage("alpha", std::to_string(alpha));
-        float borderColor[3] = { borderR, borderG, borderB };
-        if (ImGui::ColorEdit3("边框颜色", borderColor, ImGuiColorEditFlags_NoInputs))
-            setStorage("border", std::to_string(colorToInt(borderColor[0], borderColor[1], borderColor[2])));
-        if (ImGui::SliderFloat("边框不透明度", &borderAlpha, 0.0f, 1.0f))
-            setStorage("borderAlpha", std::to_string(borderAlpha));
-        if (ImGui::SliderFloat("渐变结束透明度", &gradientEndA, 0.0f, 1.0f))
-            setStorage("gradientEndA", std::to_string(gradientEndA));
-        if (ImGui::SliderFloat("阴影强度", &shadowAlpha, 0.0f, 0.8f))
-            setStorage("shadowAlpha", std::to_string(shadowAlpha));
-        if (ImGui::SliderFloat("阴影柔化半径", &shadowBlur, 0.0f, 32.0f))
-            setStorage("shadowBlur", std::to_string(shadowBlur));
-        if (ImGui::SliderFloat("阴影偏移", &shadowOffsetY, 0.0f, 16.0f))
-            setStorage("shadowOffsetY", std::to_string(shadowOffsetY));
-        if (ImGui::SliderFloat("顶部高光", &highlightAlpha, 0.0f, 0.8f))
-            setStorage("highlightAlpha", std::to_string(highlightAlpha));
-        if (ImGui::SliderFloat("磨砂颗粒", &noiseAlpha, 0.0f, 0.18f))
-            setStorage("noiseAlpha", std::to_string(noiseAlpha));
-
-        if (ImGui::Checkbox("毛玻璃背景", &glassEnabled))
-            setStorage("glassEnabled", glassEnabled ? "1" : "0");
-
+        ImGui::BeginDisabled(followPersonalization);
+        ImGui::SetNextItemWidth(beginEditorRow("主题", kEditorControlWidth));
+        if (ImGui::Combo("##Theme", &selectedTheme, themeLabels.data(),
+            static_cast<int>(themeLabels.size())))
+        {
+            if (selectedTheme >= 0 && selectedTheme < 4)
+            {
+                applyAppearance(MakeAppearancePreset(
+                    builtInPresetIds[selectedTheme]));
+                setStorage("__preset", builtInThemeIds[selectedTheme]);
+            }
+            else if (selectedTheme == 4)
+            {
+                setStorage("__preset", customThemeId);
+            }
+            else
+            {
+                const size_t presetIndex = static_cast<size_t>(selectedTheme - 5);
+                if (presetIndex < presets.size())
+                {
+                    if (presets[presetIndex].values.find("glassEnabled") ==
+                        presets[presetIndex].values.end())
+                        setStorage("glassEnabled", "0");
+                    for (const auto& kv : presets[presetIndex].values)
+                    {
+                        if (kv.first != "followPersonalization")
+                            setStorage(kv.first, kv.second);
+                    }
+                    setStorage("__preset", presets[presetIndex].id);
+                }
+            }
+        }
         ImGui::EndDisabled();
 
-        ImGui::Spacing();
-        ImGui::Text("共享原生毛玻璃");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(与组件显示设置、Dock 设置同步)");
-        if (ImGui::SliderFloat("模糊半径##SharedGlassBlurRadius",
-            &mainPersonalization.glassBlurRadius, 4.0f, 48.0f, "%.0f px"))
-            sharedGlassSettingsChanged = true;
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            sharedGlassSettingsSaveRequested = true;
-
-        if (defaultPresetIndex >= 0)
+        const bool customThemeSelected = selectedTheme == 4;
+        if (!followPersonalization && customThemeSelected)
         {
-            if (whiteTextButton("恢复默认主题"))
-                applyDefaultThemeValues();
+            ImGui::Spacing();
+            ImGui::Indent();
+            float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.36f;
+            float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f;
+            float borderAlpha = 0.40f;
+            float gradientEndA = 0.0f;
+            bool glassEnabled = false;
+            ReadCustomColors(widgetId, bgR, bgG, bgB, alpha,
+                borderR, borderG, borderB, borderAlpha,
+                gradientEndA, glassEnabled);
+
+            float bgColor[3] = { bgR, bgG, bgB };
+            ImGui::SetNextItemWidth(beginEditorRow("背景颜色", kEditorColorWidth));
+            if (ImGui::ColorEdit3("##BackgroundColor", bgColor,
+                ImGuiColorEditFlags_NoInputs))
+                setStorage("bg", std::to_string(colorToInt(
+                    bgColor[0], bgColor[1], bgColor[2])));
+            ImGui::SetNextItemWidth(beginEditorRow("背景不透明度", kEditorSliderWidth));
+            if (ImGui::SliderFloat("##BackgroundOpacity", &alpha, 0.0f, 1.0f))
+                setStorage("alpha", std::to_string(alpha));
+            float borderColor[3] = { borderR, borderG, borderB };
+            ImGui::SetNextItemWidth(beginEditorRow("边框颜色", kEditorColorWidth));
+            if (ImGui::ColorEdit3("##BorderColor", borderColor,
+                ImGuiColorEditFlags_NoInputs))
+                setStorage("border", std::to_string(colorToInt(
+                    borderColor[0], borderColor[1], borderColor[2])));
+            ImGui::SetNextItemWidth(beginEditorRow("边框不透明度", kEditorSliderWidth));
+            if (ImGui::SliderFloat("##BorderOpacity", &borderAlpha, 0.0f, 1.0f))
+                setStorage("borderAlpha", std::to_string(borderAlpha));
+            ImGui::SetNextItemWidth(beginEditorRow("渐变结束透明度", kEditorSliderWidth));
+            if (ImGui::SliderFloat("##GradientEndOpacity", &gradientEndA, 0.0f, 1.0f))
+                setStorage("gradientEndA", std::to_string(gradientEndA));
+            if (editorCheckbox("毛玻璃背景", "##GlassBackground", &glassEnabled))
+                setStorage("glassEnabled", glassEnabled ? "1" : "0");
+            ImGui::Unindent();
         }
         ImGui::Spacing();
     }
 
     if (!widget.customStyle && !presets.empty())
     {
-        ImGui::Text("组件预设");
-        ImGui::Separator();
+        ImGui::SeparatorText("组件预设");
         std::string currentPreset = getStorage("__preset", defaultPresetIndex >= 0
             ? presets[static_cast<size_t>(defaultPresetIndex)].id : presets[0].id);
         int selectedPreset = 0;
@@ -2529,27 +2578,34 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
         std::vector<const char*> presetLabels;
         for (const auto& preset : presets) presetLabels.push_back(preset.label.c_str());
-        if (ImGui::Combo("组件预设", &selectedPreset, presetLabels.data(),
+        ImGui::SetNextItemWidth(beginEditorRow("当前预设", kEditorControlWidth));
+        if (ImGui::Combo("##WidgetPreset", &selectedPreset, presetLabels.data(),
             static_cast<int>(presetLabels.size())))
         {
             applyValues(presets[static_cast<size_t>(selectedPreset)].values);
             setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
         }
-        if (defaultPresetIndex >= 0 && whiteTextButton("恢复组件默认"))
+        const char* resetPresetLabel = "恢复组件默认";
+        if (defaultPresetIndex >= 0)
         {
-            applyValues(presets[static_cast<size_t>(defaultPresetIndex)].values);
-            setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
+            beginEditorRow("预设默认值", editorButtonWidth(resetPresetLabel));
+            if (whiteTextButton(resetPresetLabel))
+            {
+                applyValues(presets[static_cast<size_t>(defaultPresetIndex)].values);
+                setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
+            }
         }
         ImGui::Spacing();
     }
 
     if (!settings.empty())
     {
-        ImGui::Text("基础设置");
-        ImGui::Separator();
+        ImGui::SeparatorText("基础设置");
         for (const auto& setting : settings)
             renderSetting(setting);
-        if (whiteTextButton("恢复默认设置"))
+        const char* resetSettingsLabel = "恢复默认设置";
+        beginEditorRow("基础默认值", editorButtonWidth(resetSettingsLabel));
+        if (whiteTextButton(resetSettingsLabel))
             applyDefaultSettingValues();
         ImGui::Spacing();
     }
@@ -3082,9 +3138,7 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag
 bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& bgR, float& bgG, float& bgB, float& alpha,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
-    float& gradientEndA, float& shadowAlpha,
-    float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
-    float& noiseAlpha, bool& glassEnabled) const
+    float& gradientEndA, bool& glassEnabled) const
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
@@ -3119,11 +3173,6 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readFloat("alpha", alpha, 0.36f);
             readFloat("borderAlpha", borderAlpha, alpha);
             readFloat("gradientEndA", gradientEndA, 0.0f);
-            readFloat("shadowAlpha", shadowAlpha, 0.0f);
-            readFloat("shadowBlur", shadowBlur, 12.0f);
-            readFloat("shadowOffsetY", shadowOffsetY, 4.0f);
-            readFloat("highlightAlpha", highlightAlpha, 0.0f);
-            readFloat("noiseAlpha", noiseAlpha, 0.0f);
             readBool("glassEnabled", glassEnabled, false);
 
             const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
@@ -3149,11 +3198,6 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readStoredFloat("alpha", alpha);
             readStoredFloat("borderAlpha", borderAlpha);
             readStoredFloat("gradientEndA", gradientEndA);
-            readStoredFloat("shadowAlpha", shadowAlpha);
-            readStoredFloat("shadowBlur", shadowBlur);
-            readStoredFloat("shadowOffsetY", shadowOffsetY);
-            readStoredFloat("highlightAlpha", highlightAlpha);
-            readStoredFloat("noiseAlpha", noiseAlpha);
             readStoredBool("glassEnabled", glassEnabled);
 
             lua_pop(L_, 1);
@@ -3293,12 +3337,17 @@ std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, c
         return it->second;
 
     int idx = FindWidget(widgetId);
-    return idx >= 0 ? FindDeclaredDefaultValue(widgets_[idx], key) : std::string{};
+    if (idx < 0) return {};
+    const LuaWidget& widget = widgets_[idx];
+    if (key == "followPersonalization" && widget.customStyle &&
+        widget.followPersonalizationDefault)
+        return "1";
+    return FindDeclaredDefaultValue(widget, key);
 }
 
 void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const std::string& key, const std::string& value)
 {
-    if (key.empty()) return;
+    if (key.empty() || IsRemovedPanelEffectSettingKey(key)) return;
     g_storage[WidgetWideToUtf8(widgetId) + "." + key] = value;
     SaveStorageFile();
 }
@@ -4262,7 +4311,7 @@ static int lua_StorageSet(lua_State* L)
     const char* key = luaL_checkstring(L, 1);
     const char* value = luaL_checkstring(L, 2);
     auto* s = GetD2D(L);
-    if (!s) return 0;
+    if (!s || IsRemovedPanelEffectSettingKey(key)) return 0;
     g_storage[s->storagePrefix + "." + key] = value;
     SaveStorageFile();
     return 0;

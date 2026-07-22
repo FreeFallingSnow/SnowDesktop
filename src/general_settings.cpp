@@ -41,6 +41,7 @@ namespace
         try { out = std::stoi(text.substr(p)); return true; }
         catch (...) { return false; }
     }
+
 }
 
 std::wstring GetGeneralSettingsPath()
@@ -58,6 +59,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     if (text.empty()) return false;
 
     bool val = false;
+    if (ReadBoolField(text, "softwareDesktopEnabled", val))
+        settings.softwareDesktopEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
         settings.doubleClickHideDesktop = val;
     int theme = 0;
@@ -71,6 +74,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file << "{\n";
+    file << "  \"softwareDesktopEnabled\": "
+         << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
     file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << "\n";
     file << "}\n";

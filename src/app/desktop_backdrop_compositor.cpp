@@ -202,6 +202,7 @@ struct DesktopBackdropCompositor::Impl
     bool completeCollection = true;
     bool available = false;
     bool popupMode = false;
+    bool visible = true;
 
     void SetError(const wchar_t* stage, HRESULT hr)
     {
@@ -293,7 +294,8 @@ struct DesktopBackdropCompositor::Impl
         if (!QueryContentPlacement(parent, origin, size))
             return false;
         SetWindowPos(backdropWindow, contentWindow, origin.x, origin.y,
-            size.cx, size.cy, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            size.cx, size.cy, SWP_NOACTIVATE |
+            (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
         return true;
     }
 
@@ -331,6 +333,7 @@ struct DesktopBackdropCompositor::Impl
         backdropWindow = nullptr;
         contentWindow = nullptr;
         popupMode = false;
+        visible = true;
     }
 };
 
@@ -381,6 +384,7 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
     SIZE size{};
     impl_->contentWindow = contentWindow;
     impl_->popupMode = popupMode;
+    impl_->visible = true;
     if (!impl_->QueryContentPlacement(parent, origin, size))
     {
         impl_->lastError = L"无法读取 SnowDesktop 内容窗口位置";
@@ -462,6 +466,20 @@ void DesktopBackdropCompositor::Reattach(HWND contentWindow)
         return;
     impl_->contentWindow = contentWindow;
     impl_->SyncWindowPlacement();
+}
+
+void DesktopBackdropCompositor::SetVisible(bool visible)
+{
+    if (!impl_)
+        return;
+    impl_->visible = visible;
+    if (!impl_->available || !impl_->backdropWindow ||
+        !IsWindow(impl_->backdropWindow))
+        return;
+    if (visible)
+        impl_->SyncWindowPlacement();
+    else
+        ShowWindow(impl_->backdropWindow, SW_HIDE);
 }
 
 void DesktopBackdropCompositor::BeginFrame(bool completeCollection)

@@ -32,6 +32,7 @@ Coordinates passed to drawing and mouse callbacks are local to the component. Th
 showTitle = true        -- display widget.setTitle() value in the bottom bar
 bottomBarHover = true   -- show the bottom bar only while hovering (default: true)
 useCustomStyle = true   -- enable Lua custom background style and the unified appearance panel
+followPersonalizationDefault = true -- follow global appearance until explicitly changed
 ```
 
 The host reads these from the script globals before each render. `showTitle` defaults to `false`.
@@ -44,21 +45,19 @@ border = 0xFFFFFF
 alpha = 0.92
 borderAlpha = 0.18
 gradientEndA = 0.28
-shadowAlpha = 0.12
-shadowBlur = 16
-shadowOffsetY = 4
-highlightAlpha = 0.12
-noiseAlpha = 0.014
 glassEnabled = false
 ```
 
 `bg` and `border` use `0xRRGGBB`. The alpha fields use `0.0` through `1.0`.
-`shadowBlur` and `shadowOffsetY` are design-unit values scaled by the host.
-Blur radius is a host-wide native-composition value. The component,
-Dock, and Lua widget settings pages expose mirrored controls for the same value;
-scripts and per-instance storage do not override them.
-Set `followPersonalization` to `"1"`/`true` in storage or a default preset to
-use the global personalization colors and effects instead of the widget style.
+Blur radius is a host-wide native-composition value owned by the global
+appearance page; scripts and per-instance storage do not override it.
+The widget editor exposes a separate **跟随全局** checkbox and a **主题** selector.
+The selector contains the four host themes, **自定义**, and themes injected by
+the manifest or Lua script. Switching themes does not change the follow state.
+Set `followPersonalization` to `"1"`/`true` in storage when the widget should
+follow global personalization. Use the top-level
+`followPersonalizationDefault = true` declaration to make this the initial
+state without coupling it to a theme preset.
 
 The host checks the script timestamp and hot-reloads it while rendering. Persistent storage is scoped by component instance ID, so two instances of the same script keep separate values.
 
@@ -207,8 +206,7 @@ widget.log("info", "message")
 
 local theme = widget.theme()
 -- theme.bg, theme.border, theme.alpha, theme.borderAlpha, theme.gradientEndA
--- theme.cornerRadius, theme.shadowAlpha, theme.shadowBlur, theme.shadowOffsetY
--- theme.highlightAlpha, theme.noiseAlpha
+-- theme.cornerRadius
 
 widget.editText(key, x, y, width, height, multiline,
     initialText?, selectAll?, textColor?, fontSize?, backgroundColor?)
@@ -475,15 +473,11 @@ imgui.endDisabled()
 Controls return the new/current value. Persist a value only when it differs from
 the previous value.
 
-For `useCustomStyle = true` widgets, the host separates reset actions:
-
-- **恢复默认主题** applies only host appearance keys from the default preset.
-- **恢复默认设置** applies declarative field defaults, falling back to matching
-  values from the default preset when a field has no explicit `default`.
-- With **跟随个性化设置** disabled, **同步主设置** copies the current global
-  appearance into the widget once and keeps the widget independent. The copy
-  excludes host-owned `cornerRadius` and `barHeight`; blur radius and refresh
-  mode also remain globally linked instead of being copied.
+For `useCustomStyle = true` widgets, the host shows **跟随全局** and **主题** by
+default. Manual colors, opacity, gradient, and glass controls appear only for
+the **自定义** theme. **恢复默认设置** applies declarative field defaults,
+falling back to matching values from the default preset when a field has no
+explicit `default`.
 
 Keep custom `imguiRender()` reset buttons consistent with that split when a
 widget exposes both visual style and behavior/data settings.
@@ -515,13 +509,7 @@ The manifest filename is derived by replacing `.lua` with `.widget.json`.
         "border": 16777215,
         "alpha": 0.92,
         "borderAlpha": 0.18,
-        "gradientEndA": 0.28,
-        "shadowAlpha": 0.12,
-        "shadowBlur": 16,
-        "shadowOffsetY": 4,
-        "highlightAlpha": 0.12,
-        "noiseAlpha": 0.014,
-        "followPersonalization": "1"
+        "gradientEndA": 0.28
       }
     }
   ],
@@ -546,13 +534,7 @@ settings = {
         alpha = 0.92,
         borderAlpha = 0.18,
         gradientEndA = 0.28,
-        shadowAlpha = 0.12,
-        shadowBlur = 16,
-        shadowOffsetY = 4,
-        highlightAlpha = 0.12,
-        noiseAlpha = 0.014,
-        glassEnabled = false,
-        followPersonalization = true
+        glassEnabled = false
       } }
   },
   fields = {
@@ -562,9 +544,9 @@ settings = {
 }
 ```
 
-For `useCustomStyle = true` widgets, presets appear in the **外观** section
-alongside the host-managed background controls. A preset may set these visual
-keys:
+For `useCustomStyle = true` widgets, manifest and script presets are appended to
+the **主题** selector after the four host themes and **自定义**. Selecting one
+applies only these visual keys:
 
 | Key | Meaning |
 |---|---|
@@ -573,13 +555,10 @@ keys:
 | `alpha` | background opacity, `0.0` through `1.0` |
 | `borderAlpha` | border opacity, `0.0` through `1.0` |
 | `gradientEndA` | bottom gradient opacity, `0.0` through `1.0` |
-| `shadowAlpha` | shadow opacity, `0.0` through `0.8` |
-| `shadowBlur` | shadow blur radius in design units |
-| `shadowOffsetY` | vertical shadow offset in design units |
-| `highlightAlpha` | top highlight opacity, `0.0` through `0.8` |
-| `noiseAlpha` | frosted noise opacity, `0.0` through `0.18` |
 | `glassEnabled` | enable the per-widget frosted backdrop |
-| `followPersonalization` | `true`, `"1"`, or `"true"` to follow global personalization |
+
+`followPersonalization` is controlled separately and should not be included in
+theme presets.
 
 Keep presets appearance-only. Put data URLs, refresh intervals, feature toggles,
 timers, and other behavior into declarative fields so visual presets do not

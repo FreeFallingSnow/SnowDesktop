@@ -20,7 +20,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "默认专注",
+            label = "暖白专注",
             default = true,
             values = {
                 bg = 0xFFFFFF,
@@ -28,12 +28,6 @@ settings = {
                 alpha = 0.98,
                 borderAlpha = 0.70,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
-                workColor = DEFAULT_WORK_COLOR,
-                breakColor = DEFAULT_BREAK_COLOR,
                 trackColor = DEFAULT_TRACK_COLOR,
             }
         },
@@ -46,14 +40,6 @@ settings = {
                 alpha = 0.86,
                 borderAlpha = 0.28,
                 gradientEndA = 0.16,
-                shadowAlpha = 0.10,
-                shadowBlur = 16,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.12,
-                noiseAlpha = 0.012,
-                followPersonalization = false,
-                workColor = DEFAULT_WORK_COLOR,
-                breakColor = DEFAULT_BREAK_COLOR,
                 trackColor = 0xF1D7D0,
             }
         },
@@ -66,14 +52,6 @@ settings = {
                 alpha = 0.28,
                 borderAlpha = 0.18,
                 gradientEndA = 0.24,
-                shadowAlpha = 0.12,
-                shadowBlur = 18,
-                shadowOffsetY = 6,
-                highlightAlpha = 0.14,
-                noiseAlpha = 0.016,
-                followPersonalization = false,
-                workColor = DEFAULT_WORK_COLOR,
-                breakColor = DEFAULT_BREAK_COLOR,
                 trackColor = 0xE8E8E8,
             }
         }

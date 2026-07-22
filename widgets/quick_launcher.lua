@@ -1,5 +1,6 @@
 name = "快速启动"
 useCustomStyle = true
+followPersonalizationDefault = true
 showTitle = true
 bottomBarHover = false
 
@@ -8,19 +9,13 @@ border = 0xFFFFFF
 alpha = 0.40
 borderAlpha = 0.22
 gradientEndA = 0.32
-shadowAlpha = 0.12
-shadowBlur = 16
-shadowOffsetY = 5
-highlightAlpha = 0.10
-noiseAlpha = 0.014
-
 local lastQuery = nil
 
 settings = {
     presets = {
         {
             id = "default",
-            label = "默认外观",
+            label = "深色搜索",
             default = true,
             values = {
                 bg = 0x151A21,
@@ -28,12 +23,6 @@ settings = {
                 alpha = 0.40,
                 borderAlpha = 0.22,
                 gradientEndA = 0.32,
-                shadowAlpha = 0.12,
-                shadowBlur = 16,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.10,
-                noiseAlpha = 0.014,
-                followPersonalization = true,
             }
         },
         {
@@ -45,12 +34,6 @@ settings = {
                 alpha = 0.34,
                 borderAlpha = 0.28,
                 gradientEndA = 0.28,
-                shadowAlpha = 0.10,
-                shadowBlur = 18,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.12,
-                noiseAlpha = 0.015,
-                followPersonalization = false,
             }
         }
     },

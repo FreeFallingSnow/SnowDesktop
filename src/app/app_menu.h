@@ -147,9 +147,6 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"栏体形式");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
-        MF_STRING | (dockSettings_.followPersonalization ? MF_CHECKED : MF_UNCHECKED),
-        kContextDockFollowPersonalization, L"跟随组件个性化");
-    AppendMenuW(menu,
         MF_STRING | (dockSettings_.showFrequentItems ? MF_CHECKED : MF_UNCHECKED),
         kContextDockShowFrequentItems, L"显示常用项目");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -186,9 +183,6 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     case kContextDockLayoutEdge:
         updated.edgeAttached = true;
         layoutChanged = updated.edgeAttached != dockSettings_.edgeAttached;
-        break;
-    case kContextDockFollowPersonalization:
-        updated.followPersonalization = !updated.followPersonalization;
         break;
     case kContextDockShowFrequentItems:
         updated.showFrequentItems = !updated.showFrequentItems;

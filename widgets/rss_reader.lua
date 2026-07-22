@@ -1,5 +1,6 @@
 name = "RSS 阅读器"
 useCustomStyle = true
+followPersonalizationDefault = true
 bottomBarHover = false
 
 bg = 0x0F172A
@@ -7,12 +8,6 @@ border = 0xFFFFFF
 alpha = 0.38
 borderAlpha = 0.16
 gradientEndA = 0.28
-shadowAlpha = 0.12
-shadowBlur = 16
-shadowOffsetY = 5
-highlightAlpha = 0.10
-noiseAlpha = 0.014
-
 local articles = {}
 local feedTitle = ""
 local loading = false
@@ -26,7 +21,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "默认外观",
+            label = "标准列表",
             default = true,
             values = {
                 bg = 0x0F172A,
@@ -34,12 +29,6 @@ settings = {
                 alpha = 0.38,
                 borderAlpha = 0.16,
                 gradientEndA = 0.28,
-                shadowAlpha = 0.12,
-                shadowBlur = 16,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.10,
-                noiseAlpha = 0.014,
-                followPersonalization = true,
             }
         },
         {
@@ -51,12 +40,6 @@ settings = {
                 alpha = 0.28,
                 borderAlpha = 0.14,
                 gradientEndA = 0.30,
-                shadowAlpha = 0.10,
-                shadowBlur = 18,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.12,
-                noiseAlpha = 0.016,
-                followPersonalization = false,
             }
         },
         {
@@ -68,12 +51,6 @@ settings = {
                 alpha = 0.50,
                 borderAlpha = 0.14,
                 gradientEndA = 0.18,
-                shadowAlpha = 0.10,
-                shadowBlur = 14,
-                shadowOffsetY = 4,
-                highlightAlpha = 0.06,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
             }
         }
     },

@@ -34,13 +34,11 @@ struct DockSettings
     bool edgeAttached = false;
     DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
-    bool followPersonalization = true;
     bool showFrequentItems = false;
     int frequentItemCount = 3;
     bool systemTaskbarAutoHide = false;
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;
-    PersonalizationSettings appearance = PersonalizationSettings::DarkPreset();
     PersonalizationSettings systemTaskbarAppearance =
         PersonalizationSettings::GlassDarkPreset();
 };
@@ -50,6 +48,7 @@ bool IsSystemTaskbarAutoHideEnabled();
 bool SetSystemTaskbarAutoHideEnabled(bool enabled);
 bool IsWindowsSystemLightThemeEnabled();
 bool SetWindowsSystemLightThemeEnabled(bool enabled);
+bool RestartWindowsExplorer();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
 void NotifySystemTaskbarCreated();
 bool ApplySystemTaskbarBackdrop(bool enabled,

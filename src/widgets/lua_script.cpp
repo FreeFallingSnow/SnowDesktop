@@ -152,24 +152,15 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
             float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, borderAlpha = 0.0f;
             float luaGradientEndA = gradientEndA;
-            float luaShadowAlpha = 0.0f, luaShadowBlur = 12.0f, luaShadowOffsetY = 4.0f;
-            float luaHighlightAlpha = 0.0f, luaNoiseAlpha = 0.0f;
             bool luaGlassEnabled = false;
             if (app_->widgetEngine_->ReadCustomColors(data_->id,
                 bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
-                luaGradientEndA, luaShadowAlpha, luaShadowBlur,
-                luaShadowOffsetY, luaHighlightAlpha, luaNoiseAlpha,
-                luaGlassEnabled))
+                luaGradientEndA, luaGlassEnabled))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
                 gradientEndA = luaGradientEndA;
                 effectSettings = PersonalizationSettings::DarkPreset();
-                effectSettings.shadowAlpha = luaShadowAlpha;
-                effectSettings.shadowBlur = luaShadowBlur;
-                effectSettings.shadowOffsetY = luaShadowOffsetY;
-                effectSettings.highlightAlpha = luaHighlightAlpha;
-                effectSettings.noiseAlpha = luaNoiseAlpha;
                 effectSettings.glassEnabled = luaGlassEnabled;
             }
         }
@@ -197,18 +188,13 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             theme.borderAlpha = borderColor.a;
             theme.gradientEndA = gradientEndA;
             theme.cornerRadius = cornerRadiusCu;
-            theme.shadowAlpha = effectSettings.shadowAlpha;
-            theme.shadowBlur = effectSettings.shadowBlur;
-            theme.shadowOffsetY = effectSettings.shadowOffsetY;
-            theme.highlightAlpha = effectSettings.highlightAlpha;
-            theme.noiseAlpha = effectSettings.noiseAlpha;
             app_->widgetEngine_->SetWidgetTheme(data_->id, theme);
         }
     }
 
     app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
-        std::max(0.5f, static_cast<float>(Cu(1.0f))), fillColor, borderColor,
-        selected, selected ? 1.6f : 1.0f, customStyle ? &effectSettings : nullptr);
+        fillColor, borderColor, selected, selected ? 1.6f : 1.0f,
+        customStyle ? &effectSettings : nullptr);
 
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (app_->widgetEngine_ && widgetOk)

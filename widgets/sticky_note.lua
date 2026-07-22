@@ -1,6 +1,7 @@
 -- sticky_note.lua - 便签组件
 name = "便签"
 useCustomStyle = true
+followPersonalizationDefault = true
 showTitle = true
 bottomBarHover = false
 
@@ -9,7 +10,7 @@ bg = 0xFFF7D1
 border = 0xD0D0D0
 alpha = 1.0
 gradientEndA = 0.0
-textColor = 0x000000
+textColor = 0xFFFFFF
 
 settings = {
     presets = {
@@ -23,11 +24,7 @@ settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
-                textColor = 0x000000,
+                textColor = 0xFFFFFF,
             }
         },
         {
@@ -39,10 +36,6 @@ settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
                 textColor = 0x000000,
             }
         },
@@ -55,10 +48,6 @@ settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
                 textColor = 0x2A111A,
             }
         },
@@ -71,10 +60,6 @@ settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
                 textColor = 0x102033,
             }
         },
@@ -87,10 +72,6 @@ settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
                 textColor = 0x102818,
             }
         },
@@ -103,10 +84,6 @@ settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
                 textColor = 0x211330,
             }
         },
@@ -119,16 +96,12 @@ settings = {
                 alpha = 1.0,
                 borderAlpha = 0.95,
                 gradientEndA = 0.0,
-                shadowAlpha = 0.0,
-                highlightAlpha = 0.0,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
                 textColor = 0xFFFFFF,
             }
         }
     },
     fields = {
-        { key = "textColor", label = "文字颜色", type = "color", default = 0x000000 },
+        { key = "textColor", label = "文字颜色", type = "color", default = 0xFFFFFF },
         { key = "fontSize", label = "文字字号", type = "int", default = 15, min = 10, max = 24 },
     }
 }
@@ -196,19 +169,16 @@ function resetDefaults()
     border = 0xD0D0D0
     alpha = 1.0
     gradientEndA = 0.0
-    textColor = 0x000000
+    textColor = 0xFFFFFF
     storage.set("bg", tostring(bg))
     storage.set("border", tostring(border))
     storage.set("alpha", tostring(alpha))
     storage.set("borderAlpha", "0.85")
     storage.set("gradientEndA", tostring(gradientEndA))
-    storage.set("shadowAlpha", "0.0")
-    storage.set("highlightAlpha", "0.0")
-    storage.set("noiseAlpha", "0.0")
     storage.set("textColor", tostring(textColor))
     storage.set("fontSize", "15")
-    storage.set("followPersonalization", "0")
-    storage.set("__followPersonalizationState", "0")
+    storage.set("followPersonalization", "1")
+    storage.set("__followPersonalizationState", "1")
     storage.remove("__followTextColorPending")
     storage.set("__preset", "classic")
 end

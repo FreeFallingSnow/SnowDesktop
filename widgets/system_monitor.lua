@@ -1,5 +1,6 @@
 name = "系统状态"
 useCustomStyle = true
+followPersonalizationDefault = true
 showTitle = true
 bottomBarHover = true
 
@@ -8,12 +9,6 @@ border = 0xFFFFFF
 alpha = 0.34
 borderAlpha = 0.16
 gradientEndA = 0.30
-shadowAlpha = 0.12
-shadowBlur = 16
-shadowOffsetY = 5
-highlightAlpha = 0.10
-noiseAlpha = 0.014
-
 local prevCols = 0
 local prevRows = 0
 local scrollGen = 0
@@ -26,7 +21,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "默认卡片",
+            label = "标准卡片",
             default = true,
             values = {
                 bg = 0x0F172A,
@@ -34,19 +29,12 @@ settings = {
                 alpha = 0.34,
                 borderAlpha = 0.16,
                 gradientEndA = 0.30,
-                shadowAlpha = 0.12,
-                shadowBlur = 16,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.10,
-                noiseAlpha = 0.014,
-                followPersonalization = true,
                 cardBgColor = 0x000000,
                 cardBgAlpha = 0.08,
                 cardBdColor = 0xFFFFFF,
                 cardBdAlpha = 0.10,
                 cardTextColor = 0xFFFFFF,
                 cardSubColor = 0x94A3B8,
-                cardSubFontSize = 12,
             }
         },
         {
@@ -58,19 +46,12 @@ settings = {
                 alpha = 0.24,
                 borderAlpha = 0.14,
                 gradientEndA = 0.26,
-                shadowAlpha = 0.10,
-                shadowBlur = 18,
-                shadowOffsetY = 5,
-                highlightAlpha = 0.12,
-                noiseAlpha = 0.016,
-                followPersonalization = false,
                 cardBgColor = 0xFFFFFF,
                 cardBgAlpha = 0.05,
                 cardBdColor = 0xFFFFFF,
                 cardBdAlpha = 0.08,
                 cardTextColor = 0xFFFFFF,
                 cardSubColor = 0xB8C4D6,
-                cardSubFontSize = 12,
             }
         },
         {
@@ -82,19 +63,12 @@ settings = {
                 alpha = 0.62,
                 borderAlpha = 0.14,
                 gradientEndA = 0.12,
-                shadowAlpha = 0.10,
-                shadowBlur = 14,
-                shadowOffsetY = 4,
-                highlightAlpha = 0.06,
-                noiseAlpha = 0.0,
-                followPersonalization = false,
                 cardBgColor = 0x0F172A,
                 cardBgAlpha = 0.24,
                 cardBdColor = 0xFFFFFF,
                 cardBdAlpha = 0.14,
                 cardTextColor = 0xFFFFFF,
                 cardSubColor = 0xA7B4C7,
-                cardSubFontSize = 12,
             }
         }
     },

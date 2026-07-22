@@ -161,7 +161,6 @@ inline void DesktopApp::ResetDesktopWindowResources()
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
-    widgetPanelEffectContext_.Reset();
     dcompSurface_.Reset();
     dcompVisual_.Reset();
     dcompTarget_.Reset();
@@ -370,7 +369,8 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
 
     // These resources belong to the Explorer shell rather than to the custom
     // desktop window. Restore them even when the native desktop is selected.
-    AddTrayIcon(true);
+    if (startupInitializationComplete_)
+        AddTrayIcon(true);
     SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
     if (controlHwnd_ && IsWindow(controlHwnd_))
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
@@ -747,6 +747,70 @@ inline void DesktopApp::BeginIconLoadGeneration()
     iconLoaderPendingKeys_.clear();
 }
 
+inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
+{
+    const bool wasEnabled = customDesktopVisible_;
+    customDesktopVisible_ = enabled;
+    generalSettings_.softwareDesktopEnabled = enabled;
+    if (persist)
+        SaveGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
+    if (settingsWindow_)
+        settingsWindow_->SyncSoftwareDesktopEnabled(enabled);
+
+    if (!hwnd_ || !IsWindow(hwnd_))
+        return;
+
+    if (!enabled)
+    {
+        if (wasEnabled)
+        {
+            SaveLayoutSlots();
+            HideDragHintWindow();
+        }
+        desktopBackdropCompositor_.SetVisible(false);
+        ShowWindow(hwnd_, SW_HIDE);
+        if (inputHwnd_ && IsWindow(inputHwnd_))
+            ShowWindow(inputHwnd_, SW_HIDE);
+        RestoreExplorerIcons();
+        return;
+    }
+
+    desktopIconsHidden_ = false;
+    if (explorerDesktopRecreatePending_)
+    {
+        RecoverDesktopHostAfterExplorerRestart();
+        return;
+    }
+
+    HideExplorerIcons();
+    ShowWindow(hwnd_, SW_SHOW);
+    if (!desktopBackdropCompositor_.IsAvailable())
+    {
+        if (desktopBackdropCompositor_.Initialize(hwnd_))
+        {
+            nativeGlassPanelReadyLogged_ = false;
+            WriteCrashLogEntry(
+                L"Native desktop CompositionBackdropBrush initialized");
+        }
+        else
+        {
+            std::wstring message =
+                L"Native desktop CompositionBackdropBrush unavailable: ";
+            message += desktopBackdropCompositor_.LastError();
+            WriteCrashLogEntry(message.c_str());
+        }
+    }
+    desktopBackdropCompositor_.SetVisible(true);
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        ShowWindow(inputHwnd_, SW_SHOWNA);
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId,
+            kDesktopHostWatchIntervalMs, nullptr);
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    if (!wasEnabled)
+        ReloadItems();
+}
+
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
@@ -765,7 +829,10 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     instance_ = instance;
 
-    // Find and hide Explorer icon layer
+    // Resolve the persisted desktop mode before touching Explorer's icon layer.
+    LoadGeneralSettingsAndApply();
+
+    // Find and optionally hide Explorer icon layer.
     desktopWindows_ = FindDesktopWindows();
     if (desktopWindows_.host && IsWindow(desktopWindows_.host))
         GetWindowThreadProcessId(desktopWindows_.host,
@@ -777,11 +844,18 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             desktopWindows_.listView, desktopWindows_.host);
         WriteCrashLogEntry(buf);
     }
-    HideExplorerIcons();
-    if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
-        WriteCrashLogEntry(L"Explorer icon layer hidden");
+    if (customDesktopVisible_)
+    {
+        HideExplorerIcons();
+        if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
+            WriteCrashLogEntry(L"Explorer icon layer hidden");
+        else
+            WriteCrashLogEntry(L"Explorer icon layer not found or already hidden");
+    }
     else
-        WriteCrashLogEntry(L"Explorer icon layer not found or already hidden");
+    {
+        WriteCrashLogEntry(L"Native desktop selected by persisted setting");
+    }
 
     // Create desktop overlay window as child of desktop host
     virtualLeft_ = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -789,7 +863,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     virtualWidth_ = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     virtualHeight_ = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     BeginIconLoadGeneration();
-    LoadGeneralSettingsAndApply();
     LoadDockSettingsAndApply();
     LoadDockUsageStats();
     LoadLayoutSlots();
@@ -887,16 +960,21 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (FAILED(CreateOrResizeCompositionSurface()))
         { WriteCrashLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
     WriteCrashLogEntry(L"Composition target ready");
-    if (desktopBackdropCompositor_.Initialize(hwnd_))
+    if (customDesktopVisible_)
     {
-        nativeGlassPanelReadyLogged_ = false;
-        WriteCrashLogEntry(L"Native desktop CompositionBackdropBrush initialized");
-    }
-    else
-    {
-        std::wstring message = L"Native desktop CompositionBackdropBrush unavailable: ";
-        message += desktopBackdropCompositor_.LastError();
-        WriteCrashLogEntry(message.c_str());
+        if (desktopBackdropCompositor_.Initialize(hwnd_))
+        {
+            nativeGlassPanelReadyLogged_ = false;
+            WriteCrashLogEntry(
+                L"Native desktop CompositionBackdropBrush initialized");
+        }
+        else
+        {
+            std::wstring message =
+                L"Native desktop CompositionBackdropBrush unavailable: ";
+            message += desktopBackdropCompositor_.LastError();
+            WriteCrashLogEntry(message.c_str());
+        }
     }
 
     LoadCategorySettingsAndApply();
@@ -917,7 +995,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
     }
 
-    AddTrayIcon();
     RegisterShellChangeNotifications();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
@@ -940,6 +1017,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
         settingsWindow_->SetInvalidateCallback([this]() {
+            ApplyQuickNavigationAppearance();
+            if (quickNavigationOpen_)
+                InvalidateQuickNavigationWindow();
             if (dockSettings_.systemTaskbarBackdropEnabled &&
                 dockSettings_.systemTaskbarFollowPersonalization)
             {
@@ -1123,10 +1203,22 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_.reset();
     }
 
-    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    InvalidateRect(hwnd_, nullptr, FALSE);
-    UpdateWindow(hwnd_);
-    WriteCrashLogEntry(L"Window shown, entering loop");
+    // Expose the tray menu only after SettingsWindow and all of its callbacks
+    // are ready. Otherwise a click during startup can reach the temporary
+    // settingsWindow_ == nullptr state and appear to require a second click.
+    startupInitializationComplete_ = true;
+    AddTrayIcon();
+    if (showSettingsPending_ && settingsWindow_)
+    {
+        showSettingsPending_ = false;
+        settingsWindow_->Show();
+    }
+    SetSoftwareDesktopEnabled(customDesktopVisible_, false);
+    if (customDesktopVisible_)
+        UpdateWindow(hwnd_);
+    WriteCrashLogEntry(customDesktopVisible_
+        ? L"Window shown, entering loop"
+        : L"Native desktop active, entering loop");
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0)

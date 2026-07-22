@@ -500,10 +500,9 @@ private:
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 绘制添加组件操作提示。 */
     void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
-    /** @brief 绘制组件面板背景效果（玻璃填充、柔化阴影、高光、颗粒、描边）。 */
+    /** @brief 绘制组件面板背景（玻璃填充、色调与描边）。 */
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
-        float effectScale, D2D1_COLOR_F fill, D2D1_COLOR_F border,
-        bool selected, float strokeWidth,
+        D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
         const PersonalizationSettings* effectSettings = nullptr);
     /** @brief 绘制液态玻璃边缘（斜向受光、柔亮外缘、暗色内缘）。 @return 成功绘制返回 true */
     bool DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame, float radius,
@@ -594,6 +593,10 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    /** @brief 应用软件桌面启用状态，并可选择持久化到通用设置。 */
+    void SetSoftwareDesktopEnabled(bool enabled, bool persist);
+    /** @brief 根据全局继承或快捷搜索覆盖项解析并应用主题。 */
+    void ApplyQuickNavigationAppearance();
     /** @brief 加载 Dock 设置。 */
     void LoadDockSettingsAndApply();
     PersonalizationSettings ResolveSystemTaskbarAppearance(
@@ -1666,8 +1669,6 @@ private:
     ComPtr<ID2D1DeviceContext> d2dContext_;
     /** @brief 用于录制标题阴影蒙版的独立 D2D 上下文。 */
     ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
-    /** @brief 用于录制组件背景柔化阴影的独立 D2D 上下文。 */
-    ComPtr<ID2D1DeviceContext> widgetPanelEffectContext_;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
     ID2D1RenderTarget* brushCacheContext_ = nullptr;
@@ -1703,6 +1704,9 @@ private:
     CategorySettings categorySettings_ = CategorySettings::Defaults();
     bool quickNavLightTheme_ = false;
     bool quickNavGlassTheme_ = false;
+    float quickNavBlurRadius_ = 24.0f;
+    PersonalizationSettings quickNavAppearance_ =
+        MakeQuickNavigationAppearancePreset(kAppearancePresetLight);
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
@@ -1827,6 +1831,8 @@ private:
     bool explorerDesktopRecreatePending_ = false;
     DWORD desktopHostExplorerProcessId_ = 0;
     bool exitRequested_ = false;
+    bool startupInitializationComplete_ = false;
+    bool showSettingsPending_ = false;
     bool customDesktopVisible_ = true;
     bool updatingDisplayTopology_ = false;
     std::wstring displayTopologySignature_;

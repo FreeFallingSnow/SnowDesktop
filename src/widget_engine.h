@@ -199,11 +199,6 @@ struct LuaWidgetTheme
     float borderAlpha = 0.40f;  ///< 边框透明度（0~1，默认 0.40）
     float gradientEndA = 0.65f; ///< 渐变末端透明度（0~1，默认 0.65）
     float cornerRadius = 12.0f; ///< 圆角半径（cu）
-    float shadowAlpha = 0.0f;   ///< 阴影强度（0~1）
-    float shadowBlur = 12.0f;   ///< 阴影柔化半径（cu）
-    float shadowOffsetY = 4.0f; ///< 阴影垂直偏移（cu）
-    float highlightAlpha = 0.0f; ///< 顶部高光强度（0~1）
-    float noiseAlpha = 0.0f;    ///< 磨砂颗粒强度（0~1）
 };
 
 /**
@@ -240,6 +235,7 @@ struct LuaWidget
     int ref = LUA_NOREF;                 ///< Lua 注册表引用，LUA_NOREF 表示无效
     bool valid = false;                  ///< 是否已成功加载且可执行
     bool customStyle = false;            ///< 是否启用了自定义主题样式
+    bool followPersonalizationDefault = false; ///< 尚未保存外观状态时是否默认跟随全局
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
     std::vector<LuaWidgetManifest::Setting> scriptSettings; ///< Lua 顶层声明式设置
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets; ///< Lua 顶层声明式预设
@@ -469,20 +465,13 @@ public:
      * @param borderB 输出：边框色蓝色分量
      * @param borderAlpha 输出：边框透明度
      * @param gradientEndA 输出：渐变末端透明度
-     * @param shadowAlpha 输出：阴影强度
-     * @param shadowBlur 输出：阴影柔化半径
-     * @param shadowOffsetY 输出：阴影垂直偏移
-     * @param highlightAlpha 输出：顶部高光强度
-     * @param noiseAlpha 输出：磨砂颗粒强度
      * @param glassEnabled 输出：毛玻璃背景开关
      * @return 成功读取返回 true
      */
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
-        float& gradientEndA, float& shadowAlpha,
-        float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
-        float& noiseAlpha, bool& glassEnabled) const;
+        float& gradientEndA, bool& glassEnabled) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表

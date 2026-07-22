@@ -339,7 +339,6 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();
     itemTextEffectContext_.Reset();
-    widgetPanelEffectContext_.Reset();
 }
 
 inline void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
@@ -721,7 +720,7 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rec
 }
 
 inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
-    float effectScale, D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
+    D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
     const PersonalizationSettings* effectSettings)
 {
     if (!ctx || IsRectEmptyRect(frame)) return;
@@ -736,12 +735,8 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
         : (settingsWindow_
             ? settingsWindow_->GetPersonalization()
             : PersonalizationSettings::DarkPreset());
-    effectScale = std::max(0.25f, effectScale);
     radius = std::max(0.0f, radius);
 
-    auto clamp01 = [](float value) {
-        return std::clamp(value, 0.0f, 1.0f);
-    };
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
         const auto key = D2DColorBrushKey(c);
         auto it = brushCache_.find(key);
@@ -754,188 +749,18 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
         return it->second.Get();
     };
 
-    const float shadowAlpha = clamp01(p.shadowAlpha);
-    const float shadowBlur = std::max(0.0f, p.shadowBlur * effectScale);
-    const float shadowOffsetY = p.shadowOffsetY * effectScale;
-    const LONG width = frame.right - frame.left;
-    const LONG height = frame.bottom - frame.top;
-
-    if (shadowAlpha > 0.001f && width > 0 && height > 0 && d2dDevice_)
-    {
-        if (!widgetPanelEffectContext_)
-        {
-            d2dDevice_->CreateDeviceContext(
-                D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &widgetPanelEffectContext_);
-            if (widgetPanelEffectContext_)
-            {
-                widgetPanelEffectContext_->SetDpi(96.0f, 96.0f);
-                widgetPanelEffectContext_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-            }
-        }
-
-        if (widgetPanelEffectContext_)
-        {
-            const float padF = std::ceil(std::max(4.0f, shadowBlur * 3.0f + std::abs(shadowOffsetY) + 4.0f));
-            const UINT pad = static_cast<UINT>(std::min<float>(256.0f, padF));
-            const UINT bitmapW = static_cast<UINT>(std::max<LONG>(1, width)) + pad * 2;
-            const UINT bitmapH = static_cast<UINT>(std::max<LONG>(1, height)) + pad * 2;
-
-            ComPtr<ID2D1CommandList> mask;
-            ComPtr<ID2D1Effect> shadow;
-            ComPtr<ID2D1Bitmap1> shadowBitmap;
-            D2D1_BITMAP_PROPERTIES1 bitmapProps = D2D1::BitmapProperties1(
-                D2D1_BITMAP_OPTIONS_TARGET,
-                D2D1::PixelFormat(
-                    DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-
-            if (SUCCEEDED(widgetPanelEffectContext_->CreateCommandList(&mask)) && mask &&
-                SUCCEEDED(widgetPanelEffectContext_->CreateBitmap(
-                    D2D1::SizeU(bitmapW, bitmapH), nullptr, 0,
-                    &bitmapProps, &shadowBitmap)) && shadowBitmap &&
-                SUCCEEDED(widgetPanelEffectContext_->CreateEffect(CLSID_D2D1Shadow, &shadow)) && shadow)
-            {
-                widgetPanelEffectContext_->SetTarget(mask.Get());
-                widgetPanelEffectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
-                widgetPanelEffectContext_->BeginDraw();
-
-                ComPtr<ID2D1SolidColorBrush> maskBrush;
-                if (SUCCEEDED(widgetPanelEffectContext_->CreateSolidColorBrush(
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &maskBrush)) && maskBrush)
-                {
-                    D2D1_ROUNDED_RECT maskRect = D2D1::RoundedRect(
-                        D2D1::RectF(static_cast<float>(pad), static_cast<float>(pad),
-                            static_cast<float>(pad + width), static_cast<float>(pad + height)),
-                        radius, radius);
-                    widgetPanelEffectContext_->FillRoundedRectangle(maskRect, maskBrush.Get());
-                }
-
-                HRESULT maskHr = widgetPanelEffectContext_->EndDraw();
-                widgetPanelEffectContext_->SetTarget(nullptr);
-                if (SUCCEEDED(maskHr) && SUCCEEDED(mask->Close()))
-                {
-                    shadow->SetInput(0, mask.Get());
-                    shadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, shadowBlur);
-                    shadow->SetValue(D2D1_SHADOW_PROP_COLOR,
-                        D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f, shadowAlpha });
-                    shadow->SetValue(D2D1_SHADOW_PROP_OPTIMIZATION,
-                        D2D1_SHADOW_OPTIMIZATION_QUALITY);
-
-                    widgetPanelEffectContext_->SetTarget(shadowBitmap.Get());
-                    widgetPanelEffectContext_->BeginDraw();
-                    widgetPanelEffectContext_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-                    widgetPanelEffectContext_->DrawImage(shadow.Get());
-                    HRESULT shadowHr = widgetPanelEffectContext_->EndDraw();
-                    widgetPanelEffectContext_->SetTarget(nullptr);
-
-                    if (SUCCEEDED(shadowHr))
-                    {
-                        D2D1_RECT_F dest = D2D1::RectF(
-                            static_cast<float>(frame.left) - pad,
-                            static_cast<float>(frame.top) - pad + shadowOffsetY,
-                            static_cast<float>(frame.left) - pad + bitmapW,
-                            static_cast<float>(frame.top) - pad + shadowOffsetY + bitmapH);
-                        ctx->DrawBitmap(shadowBitmap.Get(), dest, 1.0f,
-                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-                    }
-                }
-            }
-        }
-    }
-
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
 
     // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
     if (p.glassEnabled)
     {
-        float sharedBlurRadius = p.glassBlurRadius;
-        if (settingsWindow_)
-            sharedBlurRadius = settingsWindow_->GetPersonalization().glassBlurRadius;
-        desktopBackdropCompositor_.AddPanel(frame, radius, sharedBlurRadius);
+        desktopBackdropCompositor_.AddPanel(frame, radius, p.glassBlurRadius);
     }
 
     if (fill.a > 0.0f)
     {
         if (auto* fillBrush = getBrush(fill))
             ctx->FillRoundedRectangle(rr, fillBrush);
-    }
-
-    ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
-    if ((p.highlightAlpha > 0.001f || p.noiseAlpha > 0.001f) && d2dFactory_)
-    {
-        d2dFactory_->CreateRoundedRectangleGeometry(rr, &clipGeo);
-    }
-
-    const float highlightAlpha = clamp01(p.highlightAlpha);
-    if (highlightAlpha > 0.001f)
-    {
-        bool clipped = false;
-        if (clipGeo)
-        {
-            ctx->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
-            clipped = true;
-        }
-
-        ComPtr<ID2D1GradientStopCollection> stops;
-        D2D1_GRADIENT_STOP sd[] = {
-            { 0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, highlightAlpha) },
-            { 1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f) },
-        };
-        if (SUCCEEDED(ctx->CreateGradientStopCollection(sd, 2,
-            D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
-        {
-            ComPtr<ID2D1LinearGradientBrush> brush;
-            const float midY = static_cast<float>(frame.top) +
-                std::max(1.0f, (frame.bottom - frame.top) * 0.45f);
-            if (SUCCEEDED(ctx->CreateLinearGradientBrush(
-                D2D1::LinearGradientBrushProperties(
-                    D2D1::Point2F(0.0f, static_cast<float>(frame.top)),
-                    D2D1::Point2F(0.0f, midY)),
-                stops.Get(), &brush)) && brush)
-            {
-                ctx->FillRectangle(
-                    D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
-                        static_cast<float>(frame.right), midY),
-                    brush.Get());
-            }
-        }
-
-        if (clipped) ctx->PopLayer();
-    }
-
-    const float noiseAlpha = clamp01(p.noiseAlpha);
-    if (noiseAlpha > 0.001f)
-    {
-        bool clipped = false;
-        if (clipGeo)
-        {
-            ctx->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
-            clipped = true;
-        }
-
-        ID2D1SolidColorBrush* whiteNoise = getBrush(
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, noiseAlpha));
-        ID2D1SolidColorBrush* darkNoise = getBrush(
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, noiseAlpha * 0.45f));
-        const int area = std::max<LONG>(1, width * height);
-        const int count = std::clamp(area / 520, 12, 900);
-        std::uint32_t seed = static_cast<std::uint32_t>(
-            (frame.left * 73856093) ^ (frame.top * 19349663) ^
-            (frame.right * 83492791) ^ (frame.bottom * 2654435761u));
-        for (int i = 0; i < count; ++i)
-        {
-            seed = seed * 1664525u + 1013904223u;
-            LONG x = frame.left + static_cast<LONG>(seed % std::max<LONG>(1, width));
-            seed = seed * 1664525u + 1013904223u;
-            LONG y = frame.top + static_cast<LONG>(seed % std::max<LONG>(1, height));
-            ID2D1SolidColorBrush* brush = (seed & 1u) ? whiteNoise : darkNoise;
-            if (!brush) continue;
-            ctx->FillRectangle(
-                D2D1::RectF(static_cast<float>(x), static_cast<float>(y),
-                    static_cast<float>(x + 1), static_cast<float>(y + 1)),
-                brush);
-        }
-
-        if (clipped) ctx->PopLayer();
     }
 
     D2D1_COLOR_F stroke = selected

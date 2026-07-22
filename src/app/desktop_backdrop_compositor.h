@@ -32,6 +32,8 @@ public:
     bool InitializePopup(HWND contentWindow);
     /** @brief 内容窗口更换桌面宿主后，同步 backdrop 窗口的 parent 和层级。 */
     void Reattach(HWND contentWindow);
+    /** @brief 显示或隐藏独立的 backdrop 辅助窗口。 */
+    void SetVisible(bool visible);
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
     /** @brief 注册或更新一个圆角玻璃面板。 */

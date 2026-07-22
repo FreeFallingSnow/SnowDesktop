@@ -10,6 +10,12 @@
 #include <d2d1_1.h>
 #include <string>
 
+constexpr int kAppearancePresetDark = 0;
+constexpr int kAppearancePresetLight = 1;
+constexpr int kAppearancePresetGlassDark = 6;
+constexpr int kAppearancePresetGlassLight = 7;
+constexpr int kAppearancePresetCustom = 9;
+
 /**
  * @brief 个性化设置结构体
  * @details 存储桌面组件的颜色与透明度外观参数，包含预设工厂方法。
@@ -57,15 +63,12 @@ struct PersonalizationSettings
      */
     float gradientEndA = 0.65f;
 
+    /** @brief 独立的组件底栏高度，不属于主题预设。 */
     float barHeight = 24.0f;
 
     int backgroundPreset = 0;
+    /** @brief 独立的组件圆角半径，不属于主题预设。 */
     float cornerRadius = 12.0f;
-    float shadowAlpha = 0.0f;
-    float shadowBlur = 12.0f;
-    float shadowOffsetY = 4.0f;
-    float highlightAlpha = 0.0f;
-    float noiseAlpha = 0.0f;
 
     /**
      * @brief 毛玻璃背景开关（苹果 Dock 效果）
@@ -90,14 +93,18 @@ struct PersonalizationSettings
      * @return 亮色主题的 PersonalizationSettings 实例
      */
     static PersonalizationSettings LightPreset();
-    static PersonalizationSettings TranslucentDarkPreset();
-    static PersonalizationSettings TranslucentLightPreset();
     static PersonalizationSettings GlassDarkPreset();
     static PersonalizationSettings GlassLightPreset();
-    static PersonalizationSettings TransparentGlassPreset();
-    static PersonalizationSettings FrostedPreset();
-    static PersonalizationSettings HighContrastPreset();
 };
+
+/** @brief 将旧版或无效预设 ID 映射到现有四个主题。 */
+int NormalizeAppearancePresetId(int presetId);
+
+/** @brief 根据预设 ID 创建深色、浅色或对应毛玻璃主题。 */
+PersonalizationSettings MakeAppearancePreset(int presetId);
+
+/** @brief 根据预设 ID 创建针对快捷搜索可读性优化的外观主题。 */
+PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId);
 
 /**
  * @brief 从 JSON 文件加载个性化设置

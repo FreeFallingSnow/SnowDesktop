@@ -155,6 +155,8 @@ public:
     { dockSettingsChangedCallback_ = std::move(callback); }
 
     void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
+    void SyncSoftwareDesktopEnabled(bool enabled)
+    { generalSettings_.softwareDesktopEnabled = enabled; }
     void SyncDockSettings(const DockSettings& settings) { dockSettings_ = settings; }
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
@@ -193,7 +195,43 @@ public:
         iconBeautifyBgEndG_ = iconBeautifyBgEndG;
         iconBeautifyBgEndB_ = iconBeautifyBgEndB;
         iconBeautifyGradientDirection_ = std::clamp(iconBeautifyGradientDirection, 0, 3);
-        iconBeautifyBgPreset_ = 0;
+        auto closeEnough = [](float value, float expected) {
+            return value >= expected - 0.001f && value <= expected + 0.001f;
+        };
+        auto matchesPreset = [&](float opacity, bool gradient,
+            float startR, float startG, float startB,
+            float endR, float endG, float endB, int direction) {
+            return closeEnough(iconBeautifyBgOpacity_, opacity) &&
+                iconBeautifyGradientEnabled_ == gradient &&
+                closeEnough(iconBeautifyBgStartR_, startR) &&
+                closeEnough(iconBeautifyBgStartG_, startG) &&
+                closeEnough(iconBeautifyBgStartB_, startB) &&
+                closeEnough(iconBeautifyBgEndR_, endR) &&
+                closeEnough(iconBeautifyBgEndG_, endG) &&
+                closeEnough(iconBeautifyBgEndB_, endB) &&
+                iconBeautifyGradientDirection_ == direction;
+        };
+        if (matchesPreset(0.65f, false,
+            232.0f / 255.0f, 236.0f / 255.0f, 244.0f / 255.0f,
+            222.0f / 255.0f, 228.0f / 255.0f, 240.0f / 255.0f, 0))
+            iconBeautifyBgPreset_ = 1;
+        else if (matchesPreset(0.50f, false,
+            1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0))
+            iconBeautifyBgPreset_ = 2;
+        else if (matchesPreset(0.82f, true,
+            156.0f / 255.0f, 216.0f / 255.0f, 1.0f,
+            74.0f / 255.0f, 128.0f / 255.0f, 1.0f, 2))
+            iconBeautifyBgPreset_ = 3;
+        else if (matchesPreset(0.78f, true,
+            1.0f, 218.0f / 255.0f, 138.0f / 255.0f,
+            1.0f, 122.0f / 255.0f, 164.0f / 255.0f, 3))
+            iconBeautifyBgPreset_ = 4;
+        else if (matchesPreset(0.70f, true,
+            24.0f / 255.0f, 32.0f / 255.0f, 48.0f / 255.0f,
+            87.0f / 255.0f, 105.0f / 255.0f, 135.0f / 255.0f, 1))
+            iconBeautifyBgPreset_ = 5;
+        else
+            iconBeautifyBgPreset_ = 0;
         displaySpacingPct_ = static_cast<int>(std::round(spacingScale * 100.0f));
     }
 
@@ -228,14 +266,6 @@ public:
      */
     const PersonalizationSettings& GetPersonalization() const { return personalization_; }
     const DockSettings& GetDockSettings() const { return dockSettings_; }
-    PersonalizationSettings GetDockAppearance() const
-    {
-        PersonalizationSettings appearance = dockSettings_.followPersonalization
-            ? personalization_ : dockSettings_.appearance;
-        // 原生模糊半径只有一份全局值；Dock 自定义页只是提供同值控件。
-        appearance.glassBlurRadius = personalization_.glassBlurRadius;
-        return appearance;
-    }
     PersonalizationSettings GetSystemTaskbarAppearance() const
     {
         return dockSettings_.systemTaskbarFollowPersonalization

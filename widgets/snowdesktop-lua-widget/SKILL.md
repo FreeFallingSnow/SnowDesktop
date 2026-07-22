@@ -46,25 +46,24 @@ Use these optional top-level flags and appearance globals:
 
 - `useCustomStyle = true`: enable Lua-controlled background appearance and the
   host's unified **外观** settings panel for this widget.
+- `followPersonalizationDefault = true`: make a new instance follow the global
+  appearance until the user explicitly changes its follow state.
 - `showTitle = true`: show the host title and enable host rename actions. When
   false or omitted, the host hides **重命名** and ignores F2 for the widget.
 - `bottomBarHover = false`: keep the bottom bar from using the default hover-only behavior.
 - `bg`, `border`: `0xRRGGBB`.
-- `alpha`, `borderAlpha`, `gradientEndA`, `shadowAlpha`, `highlightAlpha`,
-  `noiseAlpha`: decimal values from `0.0` to `1.0`.
-- `shadowBlur`, `shadowOffsetY`: design-unit values converted through the host
-  component scale.
-- `glassEnabled`: per-widget frosted backdrop switch. Blur radius and refresh
-  mode are host-wide shared values; the widget editor exposes mirrored controls
-  that update the same values as component and Dock settings.
+- `alpha`, `borderAlpha`, `gradientEndA`: decimal values from `0.0` to `1.0`.
+- `glassEnabled`: per-widget frosted backdrop switch. Blur radius is owned by
+  the global appearance page.
 
 For `useCustomStyle` widgets, prefer declarative `settings.presets` for visual
 presets and `settings.fields` for behavior. Presets should stay appearance-only:
-  put colors, alpha, shadow, highlight, noise, glass, and `followPersonalization` there;
+put colors, alpha, and glass there;
 keep data sources, intervals, toggles, durations, and other behavior in fields.
-Set `followPersonalization = true` in the default preset when the widget should
-initially follow global personalization. Keep it `false` for widgets that should
-own their style by default.
+The host displays one independent **跟随全局** checkbox and one **主题** selector.
+The selector contains the four host themes, **自定义**, and all manifest/script
+presets. Theme changes never change the follow checkbox, and presets must not
+contain `followPersonalization`.
 
 ## Manifest
 
@@ -123,12 +122,9 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 - Prefer declarative manifest `settings` for simple text, bool, integer, float,
   select, and color fields; keep `imguiRender()` for custom editors.
 - The host wraps `imguiRender()` in a scrollable editor area. For
-  `useCustomStyle` widgets, **恢复默认主题** only restores appearance keys, while
-  **恢复默认设置** restores declarative fields.
-- When personalization following is disabled, **同步主设置** copies the current
-  host appearance into the widget as an independent snapshot. It does not enable
-  following and never copies host-owned layout keys or the shared glass sampling
-  values, which always remain globally linked.
+  `useCustomStyle` widgets, manual appearance controls are shown only when the
+  host **主题** selector is set to **自定义**. **恢复默认设置** restores declarative
+  behavior fields.
 - Lua scripts may also declare `settings = { presets = {...}, fields = {...} }`
   directly. The host merges manifest and script declarations into the same
   settings panel.
