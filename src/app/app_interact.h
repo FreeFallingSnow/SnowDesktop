@@ -532,19 +532,9 @@ inline void DesktopApp::LoadCategorySettingsAndApply()
 inline void DesktopApp::ToggleDesktopIconsVisibility()
 {
     desktopIconsHidden_ = !desktopIconsHidden_;
-
-    if (desktopIconsHidden_)
-    {
-        ClearHiddenHint();
-        if (controlHwnd_ && IsWindow(controlHwnd_))
-            KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
-    }
-    else
-    {
-        ClearHiddenHint();
-        if (controlHwnd_ && IsWindow(controlHwnd_))
-            SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
-    }
+    // The control-window timer also maintains the Explorer taskbar hook and
+    // the blurred desktop background. Keep it alive while icons are hidden.
+    ClearHiddenHint();
 
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -4537,7 +4527,18 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kDesktopHostWatchTimerId)
     {
+        // Restore the Explorer-owned desktop host first. Hook injection can
+        // take time while the new taskbar XAML tree is still starting up.
         WatchDesktopHost();
+        const DWORD now = GetTickCount();
+        if (dockSettings_.systemTaskbarBackdropEnabled &&
+            (systemTaskbarBackdropRefreshTick_ == 0 ||
+                now - systemTaskbarBackdropRefreshTick_ >= 1500))
+        {
+            ApplySystemTaskbarBackdrop(true,
+                ResolveSystemTaskbarAppearance(dockSettings_));
+            systemTaskbarBackdropRefreshTick_ = now;
+        }
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
@@ -4556,8 +4557,7 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
         if (dockSettings_.systemTaskbarBackdropEnabled &&
-            (foregroundChanged || foregroundSettling ||
-                now - systemTaskbarBackdropRefreshTick_ >= 1500))
+            (foregroundChanged || foregroundSettling))
         {
             ApplySystemTaskbarBackdrop(true,
                 ResolveSystemTaskbarAppearance(dockSettings_));
@@ -7906,7 +7906,6 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     case kTraySwitchNativeCommand:
         customDesktopVisible_ = false;
         // 系统任务栏材质位于 Explorer 层，独立于 SnowDesktop 桌面是否显示。
-        KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
         SaveLayoutSlots();
         HideDragHintWindow();
         RestoreExplorerIcons();
@@ -7917,6 +7916,11 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     case kTraySwitchCustomCommand:
         customDesktopVisible_ = true;
         desktopIconsHidden_ = false;
+        if (explorerDesktopRecreatePending_)
+        {
+            RecoverDesktopHostAfterExplorerRestart();
+            break;
+        }
         HideExplorerIcons();
         ShowWindow(hwnd_, SW_SHOW);
         if (inputHwnd_ && IsWindow(inputHwnd_))

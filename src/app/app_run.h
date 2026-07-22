@@ -378,11 +378,39 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     if (exitRequested_)
         return;
 
+    // TaskbarCreated can be dispatched re-entrantly by a shell COM call made
+    // during painting. Destroying the overlay between BeginDraw and EndDraw
+    // leaves the DComp surface permanently in SURFACE_BEING_RENDERED state.
+    // The independent control timer will retry as soon as this frame unwinds.
+    if (compositionPaintInProgress_)
+        return;
+
+    // These resources belong to the Explorer shell rather than to the custom
+    // desktop window. Restore them even when the native desktop is selected.
+    AddTrayIcon(true);
+    SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+
+    // System-taskbar personalization is independent of the custom desktop.
+    // Do not accidentally show SnowDesktop again when the user selected the
+    // native desktop before Explorer restarted.
+    if (!customDesktopVisible_)
+        return;
+
     DesktopWindows current = FindDesktopWindows();
     if (!current.host || !IsWindow(current.host))
         return;
 
     desktopWindows_ = current;
+
+    // A child HWND can survive the death of its cross-process Explorer parent
+    // and be reparented to the newly created Progman. Its visibility flags then
+    // look healthy even though the old DirectComposition target no longer
+    // presents. Rebuild the complete overlay pipeline after TaskbarCreated.
+    if (explorerDesktopRecreatePending_ && hwnd_ && IsWindow(hwnd_))
+        DestroyWindow(hwnd_);
+
     if (hwnd_ && IsWindow(hwnd_))
     {
         AttachWindowToDesktopHost(desktopWindows_.host);
@@ -395,20 +423,11 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         if (!CreateDesktopOverlayWindow())
             return;
     }
+    explorerDesktopRecreatePending_ = false;
+    GetWindowThreadProcessId(desktopWindows_.host,
+        &desktopHostExplorerProcessId_);
 
     HideExplorerIcons();
-    AddTrayIcon(true);
-    // Explorer owns the system taskbar; restore the user's Dock setting after
-    // an Explorer/taskbar restart recreates that window.
-    SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
-    if (dockSettings_.systemTaskbarBackdropEnabled)
-    {
-        ApplySystemTaskbarBackdrop(true,
-            ResolveSystemTaskbarAppearance(dockSettings_));
-        systemTaskbarBackdropRefreshTick_ = GetTickCount();
-    }
-    if (controlHwnd_ && IsWindow(controlHwnd_))
-        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
 
     if (!mouseDown_ && !reloading_)
         ReloadItems(false);
@@ -437,10 +456,11 @@ inline void DesktopApp::WatchDesktopHost()
     if (!customDesktopVisible_)
         return;
 
-    if (desktopIconsHidden_)
-        return;
-
-    if (!hwnd_ || !IsWindow(hwnd_))
+    // A pending Explorer restart must rebuild the DComp target even if Windows
+    // automatically reparented the old HWND and it still reports as visible.
+    // This also keeps the blurred background alive while desktop icons are
+    // hidden by double-click.
+    if (explorerDesktopRecreatePending_ || !hwnd_ || !IsWindow(hwnd_))
     {
         RecoverDesktopHostAfterExplorerRestart();
         return;
@@ -764,6 +784,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     // Find and hide Explorer icon layer
     desktopWindows_ = FindDesktopWindows();
+    if (desktopWindows_.host && IsWindow(desktopWindows_.host))
+        GetWindowThreadProcessId(desktopWindows_.host,
+            &desktopHostExplorerProcessId_);
     {
         wchar_t buf[256];
         wsprintfW(buf, L"Desktop: progman=%p defView=%p listView=%p host=%p",

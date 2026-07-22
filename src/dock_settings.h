@@ -51,6 +51,7 @@ bool SetSystemTaskbarAutoHideEnabled(bool enabled);
 bool IsWindowsSystemLightThemeEnabled();
 bool SetWindowsSystemLightThemeEnabled(bool enabled);
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
+void NotifySystemTaskbarCreated();
 bool ApplySystemTaskbarBackdrop(bool enabled,
     const PersonalizationSettings& appearance);
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings);

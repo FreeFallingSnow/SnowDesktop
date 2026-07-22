@@ -465,9 +465,14 @@ inline void DesktopApp::OnPaint(const RECT* updateRect)
             !IsRectEmpty(&clippedUpdate))
             dcompUpdate = &clippedUpdate;
 
+        // Keep the exact surface used by BeginDraw alive locally. Explorer can
+        // synchronously broadcast shell messages from COM calls made during a
+        // frame; a deferred recovery may replace dcompSurface_ before this
+        // function reaches EndDraw.
+        ComPtr<IDCompositionSurface> paintSurface = dcompSurface_;
         ID2D1DeviceContext* rawContext = nullptr;
         POINT updateOffset{};
-        hr = dcompSurface_->BeginDraw(dcompUpdate, __uuidof(ID2D1DeviceContext),
+        hr = paintSurface->BeginDraw(dcompUpdate, __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(&rawContext), &updateOffset);
         if (FAILED(hr))
         {
@@ -500,7 +505,7 @@ inline void DesktopApp::OnPaint(const RECT* updateRect)
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
 
-        hr = dcompSurface_->EndDraw();
+        hr = paintSurface->EndDraw();
         if (FAILED(hr))
         {
             RecoverCompositionRenderFailure(L"EndDraw", hr);

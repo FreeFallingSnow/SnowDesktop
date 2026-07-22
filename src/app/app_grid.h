@@ -2521,6 +2521,16 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
 {
     if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
     {
+        NotifySystemTaskbarCreated();
+        systemTaskbarBackdropRefreshTick_ = 0;
+        DWORD currentExplorerProcessId = 0;
+        if (HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr))
+            GetWindowThreadProcessId(taskbar, &currentExplorerProcessId);
+        // Explorer can broadcast TaskbarCreated more than once while its shell
+        // windows settle. Rebuild the desktop pipeline once per Explorer PID.
+        if (!currentExplorerProcessId ||
+            currentExplorerProcessId != desktopHostExplorerProcessId_)
+            explorerDesktopRecreatePending_ = true;
         RecoverDesktopHostAfterExplorerRestart();
         return 0;
     }

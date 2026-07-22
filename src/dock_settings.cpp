@@ -8,11 +8,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 namespace
@@ -81,16 +83,64 @@ bool IsWindows11OrGreater()
 class TaskbarBackdropController
 {
 public:
+    TaskbarBackdropController()
+        : injectionCancelEvent_(CreateEventW(nullptr, TRUE, FALSE, nullptr))
+    {
+    }
+
     ~TaskbarBackdropController()
     {
+        if (injectionCancelEvent_)
+            SetEvent(injectionCancelEvent_);
+        if (injectionThread_.joinable())
+            injectionThread_.join();
+        if (injectionCancelEvent_)
+            CloseHandle(injectionCancelEvent_);
         if (state_)
             UnmapViewOfFile(state_);
         if (mapping_)
             CloseHandle(mapping_);
     }
 
+    void NotifyTaskbarCreated()
+    {
+        std::lock_guard lock(mutex_);
+        if (!OpenState()) return;
+
+        DWORD currentExplorerProcessId = 0;
+        if (HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr))
+            GetWindowThreadProcessId(taskbar, &currentExplorerProcessId);
+
+        // A TaskbarCreated broadcast can arrive before Shell_TrayWnd is fully
+        // available. Clear only stale-process state; same-process taskbar
+        // recreation is still owned by the existing visual-tree watcher.
+        const bool explorerProcessChanged = !currentExplorerProcessId ||
+            state_->explorerProcessId != currentExplorerProcessId;
+        if (explorerProcessChanged)
+        {
+            if (injectionCancelEvent_)
+                SetEvent(injectionCancelEvent_);
+            state_->explorerProcessId = 0;
+            InterlockedExchange(&state_->status,
+                snowdesktop::taskbar_hook::kStatusIdle);
+            InterlockedExchange(&state_->lastError, ERROR_SUCCESS);
+            InterlockedExchange(&state_->diagnosticStage, 0);
+        }
+        // A same-process taskbar rebuild should first be handled by the already
+        // installed visual-tree watcher. A new Explorer process needs an
+        // immediate fresh injection.
+        lastInjectionAttemptTick_ = explorerProcessChanged
+            ? 0 : GetTickCount64();
+    }
+
     bool Apply(bool enabled, const PersonalizationSettings& appearance)
     {
+        // Reap a completed worker before reusing its std::thread object. The
+        // actual injection never runs on the UI thread.
+        if (!injectionInFlight_.load(std::memory_order_acquire) &&
+            injectionThread_.joinable())
+            injectionThread_.join();
+
         std::lock_guard lock(mutex_);
         if (!OpenState())
             return false;
@@ -124,16 +174,23 @@ public:
             PostMessageW(taskbar, applyMessage, 0, 0);
 
         if (!enabled)
+        {
+            if (injectionCancelEvent_)
+                SetEvent(injectionCancelEvent_);
             return true;
+        }
         if (!IsWindows11OrGreater() || !primaryTaskbar || !explorerProcessId)
             return false;
 
         if (state_->explorerProcessId == explorerProcessId &&
             state_->status >= snowdesktop::taskbar_hook::kStatusInjecting)
             return true;
+        if (injectionInFlight_.load(std::memory_order_acquire))
+            return false;
         const ULONGLONG now = GetTickCount64();
+        constexpr ULONGLONG kFailedInjectionRetryDelayMs = 10000;
         if (state_->explorerProcessId == explorerProcessId &&
-            now - lastInjectionAttemptTick_ < 60000)
+            now - lastInjectionAttemptTick_ < kFailedInjectionRetryDelayMs)
             return false;
 
         state_->explorerProcessId = explorerProcessId;
@@ -141,7 +198,32 @@ public:
         InterlockedExchange(&state_->status,
             snowdesktop::taskbar_hook::kStatusInjecting);
         InterlockedExchange(&state_->lastError, ERROR_SUCCESS);
-        return Inject(primaryTaskbar);
+        if (injectionCancelEvent_)
+            ResetEvent(injectionCancelEvent_);
+        injectionInFlight_.store(true, std::memory_order_release);
+        try
+        {
+            injectionThread_ = std::thread([this, primaryTaskbar, explorerProcessId] {
+                const bool injected = Inject(primaryTaskbar, explorerProcessId);
+                {
+                    std::lock_guard workerLock(mutex_);
+                    if (!injected && state_ &&
+                        state_->explorerProcessId == explorerProcessId)
+                        lastInjectionAttemptTick_ = GetTickCount64();
+                }
+                injectionInFlight_.store(false, std::memory_order_release);
+            });
+        }
+        catch (...)
+        {
+            injectionInFlight_.store(false, std::memory_order_release);
+            lastInjectionAttemptTick_ = GetTickCount64();
+            InterlockedExchange(&state_->lastError, ERROR_NOT_ENOUGH_MEMORY);
+            InterlockedExchange(&state_->status,
+                snowdesktop::taskbar_hook::kStatusFailed);
+            return false;
+        }
+        return true;
     }
 
     SystemTaskbarBackdropRuntimeState RuntimeState()
@@ -188,31 +270,33 @@ private:
         return true;
     }
 
-    bool Inject(HWND taskbar)
+    bool Inject(HWND taskbar, DWORD expectedExplorerProcessId)
     {
         const std::filesystem::path hookPath =
             std::filesystem::path(GetExecutableDirectoryPath()) /
             L"SnowDesktopTaskbarHook.dll";
         if (!std::filesystem::is_regular_file(hookPath))
         {
-            InterlockedExchange(&state_->status,
-                snowdesktop::taskbar_hook::kStatusFailed);
-            InterlockedExchange(&state_->lastError, ERROR_FILE_NOT_FOUND);
-            return false;
+            return Fail(expectedExplorerProcessId, ERROR_FILE_NOT_FOUND);
         }
 
         HANDLE readyEvent = CreateEventW(nullptr, TRUE, FALSE,
             snowdesktop::taskbar_hook::kReadyEventName);
         if (!readyEvent)
-            return Fail(GetLastError());
+            return Fail(expectedExplorerProcessId, GetLastError());
         ResetEvent(readyEvent);
+
+        HANDLE explorerProcess = OpenProcess(SYNCHRONIZE, FALSE,
+            expectedExplorerProcessId);
 
         HMODULE module = LoadLibraryW(hookPath.c_str());
         if (!module)
         {
             const DWORD error = GetLastError();
+            if (explorerProcess)
+                CloseHandle(explorerProcess);
             CloseHandle(readyEvent);
-            return Fail(error);
+            return Fail(expectedExplorerProcessId, error);
         }
         auto hookProc = reinterpret_cast<HOOKPROC>(
             GetProcAddress(module, "SnowDesktopTaskbarHookProc"));
@@ -225,34 +309,67 @@ private:
         {
             const DWORD error = GetLastError();
             FreeLibrary(module);
+            if (explorerProcess)
+                CloseHandle(explorerProcess);
             CloseHandle(readyEvent);
-            return Fail(error ? error : ERROR_INVALID_FUNCTION);
+            return Fail(expectedExplorerProcessId,
+                error ? error : ERROR_INVALID_FUNCTION);
         }
 
         DWORD_PTR ignored = 0;
         SendMessageTimeoutW(taskbar, WM_NULL, 0, 0,
             SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored);
-        const DWORD waitResult = WaitForSingleObject(readyEvent, 35000);
+        std::array<HANDLE, 3> waitHandles{};
+        DWORD waitCount = 0;
+        waitHandles[waitCount++] = readyEvent;
+        const DWORD explorerWaitIndex = explorerProcess ? waitCount : MAXDWORD;
+        if (explorerProcess)
+            waitHandles[waitCount++] = explorerProcess;
+        const DWORD cancelWaitIndex = injectionCancelEvent_ ? waitCount : MAXDWORD;
+        if (injectionCancelEvent_)
+            waitHandles[waitCount++] = injectionCancelEvent_;
+        const DWORD waitResult = WaitForMultipleObjects(
+            waitCount, waitHandles.data(), FALSE, 35000);
         UnhookWindowsHookEx(hook);
         FreeLibrary(module);
+        if (explorerProcess)
+            CloseHandle(explorerProcess);
         CloseHandle(readyEvent);
 
+        if (cancelWaitIndex != MAXDWORD &&
+            waitResult == WAIT_OBJECT_0 + cancelWaitIndex)
+            return false;
+        if (explorerWaitIndex != MAXDWORD &&
+            waitResult == WAIT_OBJECT_0 + explorerWaitIndex)
+            return Fail(expectedExplorerProcessId, ERROR_PROCESS_ABORTED);
         if (waitResult != WAIT_OBJECT_0)
-            return Fail(waitResult == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError());
-        return state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
+            return Fail(expectedExplorerProcessId,
+                waitResult == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError());
+
+        std::lock_guard lock(mutex_);
+        return state_ &&
+            state_->explorerProcessId == expectedExplorerProcessId &&
+            state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
     }
 
-    bool Fail(DWORD error)
+    bool Fail(DWORD expectedExplorerProcessId, DWORD error)
     {
-        InterlockedExchange(&state_->lastError, static_cast<LONG>(error));
-        InterlockedExchange(&state_->status,
-            snowdesktop::taskbar_hook::kStatusFailed);
+        std::lock_guard lock(mutex_);
+        if (state_ && state_->explorerProcessId == expectedExplorerProcessId)
+        {
+            InterlockedExchange(&state_->lastError, static_cast<LONG>(error));
+            InterlockedExchange(&state_->status,
+                snowdesktop::taskbar_hook::kStatusFailed);
+        }
         return false;
     }
 
     std::mutex mutex_;
     HANDLE mapping_ = nullptr;
     snowdesktop::taskbar_hook::SharedState* state_ = nullptr;
+    HANDLE injectionCancelEvent_ = nullptr;
+    std::thread injectionThread_;
+    std::atomic<bool> injectionInFlight_{ false };
     ULONGLONG lastInjectionAttemptTick_ = 0;
 };
 
@@ -329,6 +446,11 @@ bool SetWindowsSystemLightThemeEnabled(bool enabled)
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState()
 {
     return GetTaskbarBackdropController().RuntimeState();
+}
+
+void NotifySystemTaskbarCreated()
+{
+    GetTaskbarBackdropController().NotifyTaskbarCreated();
 }
 
 bool ApplySystemTaskbarBackdrop(bool enabled,

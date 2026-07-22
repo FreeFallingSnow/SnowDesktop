@@ -1968,6 +1968,11 @@ private:
     LRESULT HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     HWND navigationHotkeyHwnd_ = nullptr;
     UINT taskbarRestartMsg_ = 0;
+    // Explorer owns the parent of the desktop overlay. Recreate the overlay
+    // and its DirectComposition target after TaskbarCreated instead of
+    // trusting a child HWND that Windows may have reparented automatically.
+    bool explorerDesktopRecreatePending_ = false;
+    DWORD desktopHostExplorerProcessId_ = 0;
     bool exitRequested_ = false;
     bool customDesktopVisible_ = true;
     bool updatingDisplayTopology_ = false;
