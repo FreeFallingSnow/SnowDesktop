@@ -9,6 +9,7 @@
 
 #include <shlwapi.h>
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -61,7 +62,7 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.doubleClickHideDesktop = val;
     int theme = 0;
     if (ReadIntField(text, "quickNavTheme", theme))
-        settings.quickNavTheme = theme;
+        settings.quickNavTheme = std::clamp(theme, 0, 3);
     return true;
 }
 

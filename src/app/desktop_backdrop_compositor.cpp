@@ -201,6 +201,7 @@ struct DesktopBackdropCompositor::Impl
     std::wstring lastError;
     bool completeCollection = true;
     bool available = false;
+    bool popupMode = false;
 
     void SetError(const wchar_t* stage, HRESULT hr)
     {
@@ -248,10 +249,19 @@ struct DesktopBackdropCompositor::Impl
 
     bool QueryContentPlacement(HWND parent, POINT& origin, SIZE& size) const
     {
-        if (!contentWindow || !IsWindow(contentWindow) || !parent || !IsWindow(parent))
+        if (!contentWindow || !IsWindow(contentWindow))
             return false;
         RECT rect{};
         if (!GetWindowRect(contentWindow, &rect))
+            return false;
+        if (popupMode)
+        {
+            origin = { rect.left, rect.top };
+            size.cx = std::max<LONG>(1, rect.right - rect.left);
+            size.cy = std::max<LONG>(1, rect.bottom - rect.top);
+            return true;
+        }
+        if (!parent || !IsWindow(parent))
             return false;
         POINT points[2] = {
             { rect.left, rect.top },
@@ -269,11 +279,14 @@ struct DesktopBackdropCompositor::Impl
         if (!available || !backdropWindow || !IsWindow(backdropWindow) ||
             !contentWindow || !IsWindow(contentWindow))
             return false;
-        HWND parent = GetParent(contentWindow);
-        if (!parent || !IsWindow(parent))
-            return false;
-        if (GetParent(backdropWindow) != parent)
-            SetParent(backdropWindow, parent);
+        HWND parent = popupMode ? nullptr : GetParent(contentWindow);
+        if (!popupMode)
+        {
+            if (!parent || !IsWindow(parent))
+                return false;
+            if (GetParent(backdropWindow) != parent)
+                SetParent(backdropWindow, parent);
+        }
 
         POINT origin{};
         SIZE size{};
@@ -317,6 +330,7 @@ struct DesktopBackdropCompositor::Impl
             DestroyWindow(backdropWindow);
         backdropWindow = nullptr;
         contentWindow = nullptr;
+        popupMode = false;
     }
 };
 
@@ -332,6 +346,16 @@ DesktopBackdropCompositor::~DesktopBackdropCompositor()
 
 bool DesktopBackdropCompositor::Initialize(HWND contentWindow)
 {
+    return InitializeInternal(contentWindow, false);
+}
+
+bool DesktopBackdropCompositor::InitializePopup(HWND contentWindow)
+{
+    return InitializeInternal(contentWindow, true);
+}
+
+bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popupMode)
+{
     Reset();
     impl_->lastError.clear();
     if (!contentWindow || !IsWindow(contentWindow))
@@ -339,8 +363,8 @@ bool DesktopBackdropCompositor::Initialize(HWND contentWindow)
         impl_->lastError = L"SnowDesktop 内容窗口无效";
         return false;
     }
-    HWND parent = GetParent(contentWindow);
-    if (!parent || !IsWindow(parent))
+    HWND parent = popupMode ? nullptr : GetParent(contentWindow);
+    if (!popupMode && (!parent || !IsWindow(parent)))
     {
         impl_->lastError = L"SnowDesktop 桌面宿主窗口无效";
         return false;
@@ -356,6 +380,7 @@ bool DesktopBackdropCompositor::Initialize(HWND contentWindow)
     POINT origin{};
     SIZE size{};
     impl_->contentWindow = contentWindow;
+    impl_->popupMode = popupMode;
     if (!impl_->QueryContentPlacement(parent, origin, size))
     {
         impl_->lastError = L"无法读取 SnowDesktop 内容窗口位置";
@@ -363,10 +388,14 @@ bool DesktopBackdropCompositor::Initialize(HWND contentWindow)
         return false;
     }
 
+    const DWORD extendedStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+        WS_EX_TRANSPARENT | (popupMode ? WS_EX_TOPMOST : 0);
+    const DWORD windowStyle = popupMode ? (WS_POPUP | WS_VISIBLE) :
+        (WS_CHILD | WS_VISIBLE);
     impl_->backdropWindow = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+        extendedStyle,
         kBackdropWindowClassName, L"SnowDesktopBackdrop",
-        WS_CHILD | WS_VISIBLE,
+        windowStyle,
         origin.x, origin.y, size.cx, size.cy,
         parent, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!impl_->backdropWindow)
@@ -552,6 +581,11 @@ void DesktopBackdropCompositor::Reset()
 bool DesktopBackdropCompositor::IsAvailable() const
 {
     return impl_ && impl_->available;
+}
+
+bool DesktopBackdropCompositor::IsBackdropWindow(HWND window) const
+{
+    return impl_ && window && impl_->backdropWindow == window;
 }
 
 std::size_t DesktopBackdropCompositor::PanelCount() const

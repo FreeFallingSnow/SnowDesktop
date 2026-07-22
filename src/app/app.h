@@ -633,6 +633,8 @@ private:
     void DestroyQuickNavigationWindow();
     /** @brief 计算并设置快速导航窗口的位置。 */
     void PositionQuickNavigationWindow();
+    /** @brief 根据当前主题创建、同步或移除快捷导航原生毛玻璃层。 */
+    void UpdateQuickNavigationBackdrop();
     /** @brief 使快速导航窗口失效并触发重绘。 */
     void InvalidateQuickNavigationWindow();
     /** @brief 创建或调整快捷导航 DComp 表面大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
@@ -1700,6 +1702,7 @@ private:
     DockSettings dockSettings_;
     CategorySettings categorySettings_ = CategorySettings::Defaults();
     bool quickNavLightTheme_ = false;
+    bool quickNavGlassTheme_ = false;
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
@@ -1793,6 +1796,8 @@ private:
     HWND controlHwnd_ = nullptr;
     HWND inputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
+    /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
+    DesktopBackdropCompositor quickNavBackdropCompositor_;
     HWND quickNavigationSearchEdit_ = nullptr;
     HFONT quickNavigationSearchFont_ = nullptr;
 

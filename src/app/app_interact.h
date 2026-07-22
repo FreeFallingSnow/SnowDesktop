@@ -490,7 +490,12 @@ inline void DesktopApp::LoadGeneralSettingsAndApply()
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
     generalSettings_.dockEnabled = dockEnabled;
-    quickNavLightTheme_ = (generalSettings_.quickNavTheme == 1);
+    generalSettings_.quickNavTheme = std::clamp(generalSettings_.quickNavTheme, 0, 3);
+    quickNavLightTheme_ = (generalSettings_.quickNavTheme == 1 ||
+        generalSettings_.quickNavTheme == 3);
+    quickNavGlassTheme_ = (generalSettings_.quickNavTheme >= 2);
+    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+        UpdateQuickNavigationBackdrop();
 }
 
 inline void DesktopApp::LoadDockSettingsAndApply()

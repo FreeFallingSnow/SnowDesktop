@@ -28,6 +28,8 @@ public:
 
     /** @brief 为指定 SnowDesktop 内容窗口创建原生 backdrop 合成窗口。 */
     bool Initialize(HWND contentWindow);
+    /** @brief 为指定顶层弹出窗口创建原生 backdrop 合成窗口。 */
+    bool InitializePopup(HWND contentWindow);
     /** @brief 内容窗口更换桌面宿主后，同步 backdrop 窗口的 parent 和层级。 */
     void Reattach(HWND contentWindow);
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
@@ -42,10 +44,13 @@ public:
     void Reset();
 
     bool IsAvailable() const;
+    /** @brief 判断窗口是否为该实例创建的 backdrop 辅助窗口。 */
+    bool IsBackdropWindow(HWND window) const;
     std::size_t PanelCount() const;
     const std::wstring& LastError() const;
 
 private:
+    bool InitializeInternal(HWND contentWindow, bool popupMode);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

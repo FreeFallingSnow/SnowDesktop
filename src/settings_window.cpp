@@ -849,9 +849,9 @@ void SettingsWindow::DrawGeneralPage()
     ImGui::TextDisabled("当前快捷键: %s", WideToUtf8(hotkeyText).c_str());
 
     ImGui::Spacing();
-    const char* themeItems[] = { "暗色", "浅色" };
-    int themeIdx = generalSettings_.quickNavTheme;
-    ImGui::SetNextItemWidth(160.0f * dpiScale_);
+    const char* themeItems[] = { "深色", "浅色", "毛玻璃深色", "毛玻璃浅色" };
+    int themeIdx = std::clamp(generalSettings_.quickNavTheme, 0, 3);
+    ImGui::SetNextItemWidth(180.0f * dpiScale_);
     if (ImGui::Combo("主题", &themeIdx, themeItems, IM_ARRAYSIZE(themeItems)))
     {
         generalSettings_.quickNavTheme = themeIdx;

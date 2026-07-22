@@ -12,7 +12,7 @@
 struct GeneralSettings
 {
     bool doubleClickHideDesktop = false;
-    int quickNavTheme = 1; // 0=dark, 1=light
+    int quickNavTheme = 1; // 0=dark, 1=light, 2=glass dark, 3=glass light
     bool dockEnabled = false;
 };
 
