@@ -123,6 +123,8 @@ inline void DesktopApp::RegisterOleDropTarget()
  */
 inline void DesktopApp::ResetDesktopWindowResources()
 {
+    desktopBackdropCompositor_.Reset();
+    nativeGlassPanelReadyLogged_ = false;
     recycleBinPollState_->targetWindow = nullptr;
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -133,9 +135,6 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
-        KillTimer(hwnd_, kGlassRefreshTimerId);
-        KillTimer(hwnd_, kGlassTransitionTimerId);
-        KillTimer(hwnd_, kWallpaperEventDebounceTimerId);
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             KillTimer(hwnd_, timerId);
@@ -143,8 +142,6 @@ inline void DesktopApp::ResetDesktopWindowResources()
             RevokeDragDrop(hwnd_);
     }
     StopDockForegroundMonitor();
-    StopGlassWallpaperEventMonitor();
-    ClearGlassBackdropTransition();
     widgetTimerIds_.clear();
     nextWidgetTimerId_ = kWidgetTimerIdBase;
     dropTargetRegistered_ = false;
@@ -165,32 +162,6 @@ inline void DesktopApp::ResetDesktopWindowResources()
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
     widgetPanelEffectContext_.Reset();
-    glassEffectContext_.Reset();
-    glassBackdropBitmap_.Reset();
-    glassBackdropRadiusCache_.clear();
-    glassStaticLayerBitmap_.Reset();
-    glassComposeBitmap_.Reset();
-    glassDynamicLayerBitmap_.Reset();
-    glassCapturedDynamicWindows_.clear();
-    glassWallpaperCache_.clear();
-    glassBackdropSignature_.clear();
-    glassStaticSignature_.clear();
-    glassBackdropDirty_ = true;
-    glassWasDynamic_ = false;
-    glassRefreshTimerActive_ = false;
-    glassRefreshTimerIntervalMs_ = 0;
-    glassRequestedByPanels_ = false;
-    glassRequestedRefreshMode_ = 0;
-    glassRequestedRegions_.clear();
-    glassEffectiveRefreshMode_ = 0;
-    glassRefreshThrottled_ = false;
-    glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
-    StopWallpaperEngineCaptures();
-    dynamicWallpaperWindows_.clear();
-    dynamicWallpaperEngine_.clear();
-    dynamicWallpaperCaptureError_.clear();
-    dynamicWallpaperIncompatible_ = false;
-    glassLastDetectTick_ = 0;
     dcompSurface_.Reset();
     dcompVisual_.Reset();
     dcompTarget_.Reset();
@@ -225,6 +196,7 @@ inline void DesktopApp::AttachWindowToDesktopHost(HWND host)
     SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
         SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    desktopBackdropCompositor_.Reattach(hwnd_);
     if (inputHwnd_ && IsWindow(inputHwnd_))
         AttachInputWindowToDesktopHost(host);
     else
@@ -344,6 +316,17 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     dcompTarget_->SetRoot(dcompVisual_.Get());
     if (FAILED(CreateOrResizeCompositionSurface()))
         return fail();
+    if (desktopBackdropCompositor_.Initialize(hwnd_))
+    {
+        nativeGlassPanelReadyLogged_ = false;
+        WriteCrashLogEntry(L"Native desktop CompositionBackdropBrush initialized");
+    }
+    else
+    {
+        std::wstring message = L"Native desktop CompositionBackdropBrush unavailable: ";
+        message += desktopBackdropCompositor_.LastError();
+        WriteCrashLogEntry(message.c_str());
+    }
 
     if (HICON appIcon = LoadAppIcon())
     {
@@ -904,6 +887,17 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (FAILED(CreateOrResizeCompositionSurface()))
         { WriteCrashLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
     WriteCrashLogEntry(L"Composition target ready");
+    if (desktopBackdropCompositor_.Initialize(hwnd_))
+    {
+        nativeGlassPanelReadyLogged_ = false;
+        WriteCrashLogEntry(L"Native desktop CompositionBackdropBrush initialized");
+    }
+    else
+    {
+        std::wstring message = L"Native desktop CompositionBackdropBrush unavailable: ";
+        message += desktopBackdropCompositor_.LastError();
+        WriteCrashLogEntry(message.c_str());
+    }
 
     LoadCategorySettingsAndApply();
 
@@ -959,13 +953,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 UpdateWindow(hwnd_);
             }
         });
-        settingsWindow_->SetGlassSettingsChangedCallback([this]() {
-            InvalidateGlassBackdrop();
-            if (hwnd_)
-                InvalidateRect(hwnd_, nullptr, FALSE);
-        });
         settingsWindow_->SetGlassStatusProvider([this]() {
-            return GetDynamicWallpaperStatusText();
+            return GetGlassBackendStatusText();
         });
         settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
             LoadNavigationSettingsAndApply();
@@ -996,7 +985,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const bool previousSystemTaskbarAutoHide =
                 dockSettings_.systemTaskbarAutoHide;
             LoadDockSettingsAndApply();
-            InvalidateGlassBackdrop();
             if (dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
                 dockSettings_.monitorScope != previousMonitorScope ||
@@ -1179,8 +1167,8 @@ inline LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
         app = reinterpret_cast<DesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
-    // 只记录低频生命周期消息；WM_PAINT 在实时毛玻璃模式下可达 15fps，
-    // 逐帧写日志会造成同步文件 I/O 和整份日志扫描。
+    // 只记录低频生命周期消息；逐帧记录 WM_PAINT 会造成同步文件 I/O
+    // 和整份日志扫描。
     if (msg == WM_NCCREATE || msg == WM_CREATE || msg == WM_SIZE || msg == WM_SHOWWINDOW)
     {
         wchar_t buf[128];
@@ -1662,22 +1650,14 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_DISPLAYCHANGE:
         ScheduleDisplayTopologyRefresh();
-        glassLastDetectTick_ = 0;
-        InvalidateGlassBackdrop();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_SETTINGCHANGE:
         ScheduleDisplayTopologyRefresh();
-        glassLastDetectTick_ = 0;
-        InvalidateGlassBackdrop();
         InvalidateRect(hwnd_, nullptr, FALSE);
         // Explorer broadcasts this message when view options such as
         // "Hidden items" change. Re-enumerate both desktop and mapped folders.
         ReloadItems(false);
-        return 0;
-    case kWallpaperWindowEventMessage:
-        ScheduleGlassWallpaperEventRefresh(static_cast<UINT>(wp),
-            reinterpret_cast<HWND>(lp));
         return 0;
     case kShellChangeMessage:
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);

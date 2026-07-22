@@ -340,34 +340,6 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     itemTextShadowCache_.clear();
     itemTextEffectContext_.Reset();
     widgetPanelEffectContext_.Reset();
-    glassEffectContext_.Reset();
-    glassBackdropBitmap_.Reset();
-    glassLuminanceBitmap_.Reset();
-    for (auto& readback : glassLuminanceReadbacks_)
-        readback.Reset();
-    glassLuminanceReadbackPending_.fill(false);
-    glassLuminanceMap_.clear();
-    glassRefractionCurrentSource_.Reset();
-    glassRefractionCurrentBrush_.Reset();
-    glassRefractionPreviousSource_.Reset();
-    glassRefractionPreviousBrush_.Reset();
-    glassBackdropRadiusCache_.clear();
-    ClearGlassBackdropTransition();
-    glassStaticLayerBitmap_.Reset();
-    glassComposeBitmap_.Reset();
-    glassDynamicLayerBitmap_.Reset();
-    glassCapturedDynamicWindows_.clear();
-    StopWallpaperEngineCaptures();
-    glassWallpaperCache_.clear();
-    glassBackdropSignature_.clear();
-    glassStaticSignature_.clear();
-    glassBackdropDirty_ = true;
-    glassWasDynamic_ = false;
-    glassRequestedByPanels_ = false;
-    glassRequestedRefreshMode_ = 0;
-    glassEffectiveRefreshMode_ = 0;
-    glassRefreshThrottled_ = false;
-    glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
 }
 
 inline void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
@@ -491,8 +463,18 @@ inline void DesktopApp::OnPaint(const RECT* updateRect)
             static_cast<float>(updateOffset.y - updateTop)));
         context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
-        ++glassPaintSerial_;
-        UpdateGlassRefreshState();
+        const bool widgetPreviewActive =
+            widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize;
+        const bool desktopMarqueeActive =
+            marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
+        const bool completeGlassCollection = !dragSession_.IsActive() &&
+            !widgetPreviewActive && !desktopMarqueeActive;
+        if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size())
+        {
+            desktopBackdropCompositor_.RemovePanel(
+                GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]));
+        }
+        desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
 
         if (!desktopIconsHidden_)
             RenderFrame(context.Get());
@@ -501,6 +483,17 @@ inline void DesktopApp::OnPaint(const RECT* updateRect)
 
         if (showWidgetAddedHint_)
             DrawWidgetAddedHintOverlay(context.Get());
+
+        desktopBackdropCompositor_.EndFrame();
+        if (!nativeGlassPanelReadyLogged_ &&
+            desktopBackdropCompositor_.IsAvailable() &&
+            desktopBackdropCompositor_.PanelCount() > 0)
+        {
+            std::wstring message = L"Native desktop CompositionBackdropBrush active, panels=";
+            message += std::to_wstring(desktopBackdropCompositor_.PanelCount());
+            WriteCrashLogEntry(message.c_str());
+            nativeGlassPanelReadyLogged_ = true;
+        }
 
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
@@ -851,31 +844,13 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
 
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
 
-    // 毛玻璃：先采样背后的模糊桌面快照，再叠加半透明色调填充
+    // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
     if (p.glassEnabled)
     {
         float sharedBlurRadius = p.glassBlurRadius;
-        int sharedRefreshMode = std::clamp(p.glassRefreshMode, 0, 3);
         if (settingsWindow_)
-        {
-            const auto& global = settingsWindow_->GetPersonalization();
-            sharedBlurRadius = global.glassBlurRadius;
-            sharedRefreshMode = std::clamp(global.glassRefreshMode, 0, 3);
-        }
-        glassRequestedByPanels_ = true;
-        glassRequestedRefreshMode_ = std::max(
-            glassRequestedRefreshMode_, sharedRefreshMode);
-        const bool regionTracked = std::any_of(glassRequestedRegions_.begin(),
-            glassRequestedRegions_.end(), [&frame](const RECT& existing) {
-                return EqualRect(&existing, &frame) != FALSE;
-            });
-        if (!regionTracked)
-            glassRequestedRegions_.push_back(frame);
-        const int effectiveRefreshMode = glassRefreshThrottled_
-            ? 0
-            : std::max(sharedRefreshMode, glassEffectiveRefreshMode_);
-        if (EnsureGlassBackdrop(sharedBlurRadius, effectiveRefreshMode))
-            DrawGlassBackdropRegion(ctx, frame, radius);
+            sharedBlurRadius = settingsWindow_->GetPersonalization().glassBlurRadius;
+        desktopBackdropCompositor_.AddPanel(frame, radius, sharedBlurRadius);
     }
 
     if (fill.a > 0.0f)

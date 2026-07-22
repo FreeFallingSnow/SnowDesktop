@@ -963,7 +963,7 @@ static bool IsHostStructureSettingKey(const std::string& key)
 
 static bool IsHostSharedGlassSettingKey(const std::string& key)
 {
-    return key == "glassBlurRadius" || key == "glassRefreshMode";
+    return key == "glassBlurRadius";
 }
 
 static bool IsHostAppearanceSettingKey(const std::string& key)
@@ -973,7 +973,7 @@ static bool IsHostAppearanceSettingKey(const std::string& key)
         key == "shadowAlpha" || key == "shadowBlur" ||
         key == "shadowOffsetY" || key == "highlightAlpha" ||
         key == "noiseAlpha" || key == "glassEnabled" ||
-        key == "glassBlurRadius" || key == "glassRefreshMode" ||
+        key == "glassBlurRadius" ||
         key == "followPersonalization";
 }
 
@@ -2501,7 +2501,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         ImGui::EndDisabled();
 
         ImGui::Spacing();
-        ImGui::Text("共享毛玻璃采样");
+        ImGui::Text("共享原生毛玻璃");
         ImGui::SameLine();
         ImGui::TextDisabled("(与组件显示设置、Dock 设置同步)");
         if (ImGui::SliderFloat("模糊半径##SharedGlassBlurRadius",
@@ -2509,18 +2509,6 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             sharedGlassSettingsChanged = true;
         if (ImGui::IsItemDeactivatedAfterEdit())
             sharedGlassSettingsSaveRequested = true;
-        const char* glassRefreshNames[] = {
-            "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
-        };
-        if (ImGui::Combo("背景刷新##SharedGlassRefreshMode",
-                &mainPersonalization.glassRefreshMode, glassRefreshNames,
-                static_cast<int>(std::size(glassRefreshNames))))
-        {
-            mainPersonalization.glassRefreshMode = std::clamp(
-                mainPersonalization.glassRefreshMode, 0, 3);
-            sharedGlassSettingsChanged = true;
-            sharedGlassSettingsSaveRequested = true;
-        }
 
         if (defaultPresetIndex >= 0)
         {

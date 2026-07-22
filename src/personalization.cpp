@@ -268,7 +268,6 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
-    if (ReadDoubleField(text, "glassRefreshMode", v)) s.glassRefreshMode = std::clamp((int)v, 0, 3);
     return true;
 }
 
@@ -306,8 +305,7 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"highlightAlpha\": " << s.highlightAlpha << ",\n";
     file << "  \"noiseAlpha\": " << s.noiseAlpha << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
-    file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";
-    file << "  \"glassRefreshMode\": " << s.glassRefreshMode << "\n";
+    file << "  \"glassBlurRadius\": " << s.glassBlurRadius << "\n";
     file << "}\n";
     return true;
 }

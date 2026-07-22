@@ -54,8 +54,8 @@ glassEnabled = false
 
 `bg` and `border` use `0xRRGGBB`. The alpha fields use `0.0` through `1.0`.
 `shadowBlur` and `shadowOffsetY` are design-unit values scaled by the host.
-Blur radius and refresh mode are host-wide shared sampling values. The component,
-Dock, and Lua widget settings pages expose mirrored controls for the same values;
+Blur radius is a host-wide native-composition value. The component,
+Dock, and Lua widget settings pages expose mirrored controls for the same value;
 scripts and per-instance storage do not override them.
 Set `followPersonalization` to `"1"`/`true` in storage or a default preset to
 use the global personalization colors and effects instead of the widget style.

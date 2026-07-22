@@ -9,7 +9,7 @@ message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
-    src/app/wallpaper_engine_capture.cpp
+    src/app/desktop_backdrop_compositor.cpp
     src/core/item.cpp
     src/core/dock.cpp
     src/core/slot.cpp
@@ -72,13 +72,6 @@ set(THIRD_PARTY_SOURCES
     ${LUA_SOURCES}
 )
 
-set(MINHOOK_SOURCES
-    third_party/minhook/src/buffer.c
-    third_party/minhook/src/hook.c
-    third_party/minhook/src/trampoline.c
-    third_party/minhook/src/hde/hde64.c
-)
-
 if (MSVC)
     cmake_host_system_information(RESULT WINDOWS_KITS_ROOT QUERY WINDOWS_REGISTRY
         "HKLM/SOFTWARE/Microsoft/Windows Kits/Installed Roots"
@@ -139,31 +132,6 @@ if (MSVC)
         /W4 /permissive- /EHsc /utf-8)
 endif()
 
-add_library(SnowDesktopWallpaperHook SHARED
-    src/wallpaper_hook/wallpaper_hook.cpp
-    src/wallpaper_hook/wallpaper_hook_protocol.h
-    ${MINHOOK_SOURCES}
-)
-target_compile_features(SnowDesktopWallpaperHook PRIVATE cxx_std_20)
-target_include_directories(SnowDesktopWallpaperHook PRIVATE
-    src/wallpaper_hook
-    third_party/minhook/include
-    third_party/minhook/src
-    third_party/minhook/src/hde
-)
-target_compile_definitions(SnowDesktopWallpaperHook PRIVATE
-    _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
-    WINVER=0x0A00 _WIN32_WINNT=0x0A00)
-target_link_libraries(SnowDesktopWallpaperHook PRIVATE d3d9 d3d11 dxgi user32)
-
-if (MSVC)
-    set_property(TARGET SnowDesktopWallpaperHook PROPERTY
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopWallpaperHook PRIVATE /W4 /permissive- /EHsc /utf-8)
-    set_source_files_properties(${MINHOOK_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "/wd4100;/wd4201;/wd4244;/wd4267;/wd4310;/wd4701")
-endif()
-
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
     ${EVERYTHING_SOURCES}
@@ -171,9 +139,9 @@ add_executable(SnowDesktop WIN32
     ${THIRD_PARTY_SOURCES}
     src/resource.rc
 )
-add_dependencies(SnowDesktop SnowDesktopWallpaperHook)
 if (TARGET SnowDesktopTaskbarHook)
-    add_dependencies(SnowDesktop SnowDesktopTaskbarHook)
+    add_dependencies(SnowDesktop SnowDesktopTaskbarHook SnowDesktopCppWinRT)
+    target_include_directories(SnowDesktop PRIVATE "${CPPWINRT_OUTPUT_DIR}")
 endif()
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)

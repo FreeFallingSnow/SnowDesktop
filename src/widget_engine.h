@@ -539,9 +539,9 @@ public:
      * @brief 渲染指定小部件的 ImGui 编辑器界面
      * @param widgetId 小部件实例 ID
      * @param widgetName 小部件名称
-     * @param mainPersonalization 当前宿主个性化设置；共享毛玻璃控件直接修改其中参数
-     * @param sharedGlassSettingsChanged 输出：共享模糊半径或刷新档位已变化
-     * @param sharedGlassSettingsSaveRequested 输出：共享参数需要持久化
+     * @param mainPersonalization 当前宿主个性化设置；原生毛玻璃控件直接修改其中参数
+     * @param sharedGlassSettingsChanged 输出：共享模糊半径已变化
+     * @param sharedGlassSettingsSaveRequested 输出：模糊半径需要持久化
      * @return 渲染成功返回 true
      */
     bool RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName,

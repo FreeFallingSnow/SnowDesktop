@@ -418,13 +418,6 @@ void SettingsWindow::Render()
         editingWidgetIndex_ = static_cast<size_t>(-1);
     }
 
-    if (glassSettingsPreviewDirty_)
-    {
-        glassSettingsPreviewDirty_ = false;
-        if (glassSettingsChangedCallback_)
-            glassSettingsChangedCallback_();
-    }
-
     if (personalizationPreviewDirty_)
     {
         personalizationPreviewDirty_ = false;
@@ -898,12 +891,9 @@ void SettingsWindow::DrawDockPage()
     const float labelW = 116.0f * dpiScale_;
     const float controlW = 260.0f * dpiScale_;
     auto markChanged = [&]() { dockSettingsDirty_ = true; };
-    auto markSharedGlassChanged = [&](bool saveImmediately) {
+    auto markSharedGlassChanged = [&]() {
         personalizationDirty_ = true;
         personalizationPreviewDirty_ = true;
-        glassSettingsPreviewDirty_ = true;
-        if (saveImmediately)
-            personalizationSaveRequested_ = true;
     };
     auto percentText = [](float value) {
         return std::to_string(static_cast<int>(std::round(
@@ -1067,7 +1057,7 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::Checkbox("##DockGlassEnabled", &style.glassEnabled))
         markChanged();
     ImGui::SameLine();
-    ImGui::TextDisabled("(会增加 GPU 占用，实时刷新开销较高)");
+    ImGui::TextDisabled("(由 DWM 原生合成器实时刷新)");
 
     ImGui::Spacing();
     if (BlueButton("复制当前组件样式", ImVec2(144.0f * dpiScale_, 0)))
@@ -1086,7 +1076,7 @@ void SettingsWindow::DrawDockPage()
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::Text("共享毛玻璃采样");
+    ImGui::Text("共享原生毛玻璃");
     ImGui::SameLine();
     ImGui::TextDisabled("(与组件显示设置、Lua 组件设置同步)");
 
@@ -1095,27 +1085,13 @@ void SettingsWindow::DrawDockPage()
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::SliderFloat("##DockGlassBlurRadius", &personalization_.glassBlurRadius,
         4.0f, 48.0f, "%.0f px"))
-        markSharedGlassChanged(false);
+        markSharedGlassChanged();
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
 
-    ImGui::Text("背景刷新");
-    ImGui::SameLine(labelW);
-    ImGui::SetNextItemWidth(controlW);
-    const char* dockGlassRefreshNames[] = {
-        "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
-    };
-    int dockGlassRefreshIndex = std::clamp(personalization_.glassRefreshMode, 0, 3);
-    if (ImGui::Combo("##DockGlassRefreshMode", &dockGlassRefreshIndex,
-        dockGlassRefreshNames, static_cast<int>(std::size(dockGlassRefreshNames))))
-    {
-        personalization_.glassRefreshMode = dockGlassRefreshIndex;
-        markSharedGlassChanged(true);
-    }
-
     if (glassStatusProvider_)
     {
-        ImGui::Text("采样状态");
+        ImGui::Text("原生合成");
         ImGui::SameLine(labelW);
         ImGui::TextDisabled("%s", WideToUtf8(glassStatusProvider_()).c_str());
     }
@@ -1858,17 +1834,14 @@ void SettingsWindow::DrawPersonalizationPage()
             nearlyEqual(a.highlightAlpha, b.highlightAlpha) &&
             nearlyEqual(a.noiseAlpha, b.noiseAlpha) &&
             a.glassEnabled == b.glassEnabled &&
-            nearlyEqual(a.glassBlurRadius, b.glassBlurRadius) &&
-            a.glassRefreshMode == b.glassRefreshMode;
+            nearlyEqual(a.glassBlurRadius, b.glassBlurRadius);
     };
     auto percentText = [](float value) {
         return std::to_string(static_cast<int>(std::round(std::clamp(value, 0.0f, 1.0f) * 100.0f))) + "%";
     };
-    auto markChanged = [&](bool saveImmediately, bool glassSettingsChanged = false) {
+    auto markChanged = [&](bool saveImmediately) {
         personalizationDirty_ = true;
         personalizationPreviewDirty_ = true;
-        if (glassSettingsChanged)
-            glassSettingsPreviewDirty_ = true;
         if (saveImmediately)
             personalizationSaveRequested_ = true;
     };
@@ -1925,7 +1898,7 @@ void SettingsWindow::DrawPersonalizationPage()
         personalization_ = presetForIndex(presetIndex);
         personalization_.cornerRadius = cornerRadius;
         personalization_.barHeight = barHeight;
-        markChanged(true, true);
+        markChanged(true);
     }
 
     ImGui::Spacing();
@@ -2055,38 +2028,24 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::Text("毛玻璃背景");
     ImGui::SameLine(labelW);
     if (ImGui::Checkbox("##WidgetGlassEnabled", &personalization_.glassEnabled))
-        markChanged(true, true);
+        markChanged(true);
     ImGui::SameLine();
-    ImGui::TextDisabled("(会增加 GPU 占用，实时刷新开销较高)");
+    ImGui::TextDisabled("(由 DWM 原生合成器实时刷新)");
 
-    ImGui::Text("共享采样参数");
+    ImGui::Text("共享原生毛玻璃");
     ImGui::SameLine();
     ImGui::TextDisabled("(与 Dock 设置、Lua 组件设置同步)");
     ImGui::Text("模糊半径");
     ImGui::SameLine(labelW);
     ImGui::SetNextItemWidth(sliderW);
     if (ImGui::SliderFloat("##GlassBlurRadius", &personalization_.glassBlurRadius, 4.0f, 48.0f, "%.0f px"))
-        markChanged(false, true);
+        markChanged(false);
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
 
-    ImGui::Text("背景刷新");
-    ImGui::SameLine(labelW);
-    ImGui::SetNextItemWidth(sliderW);
-    const char* glassRefreshNames[] = {
-        "仅事件（最省电）", "低频（约 3 秒）", "中频（约 1 秒）", "实时（约 15 帧，更耗电）"
-    };
-    int glassRefreshIndex = std::clamp(personalization_.glassRefreshMode, 0, 3);
-    if (ImGui::Combo("##GlassRefreshMode", &glassRefreshIndex,
-        glassRefreshNames, static_cast<int>(sizeof(glassRefreshNames) / sizeof(glassRefreshNames[0]))))
-    {
-        personalization_.glassRefreshMode = glassRefreshIndex;
-        markChanged(true, true);
-    }
-
     if (glassStatusProvider_)
     {
-        ImGui::Text("采样状态");
+        ImGui::Text("原生合成");
         ImGui::SameLine(labelW);
         ImGui::TextDisabled("%s", WideToUtf8(glassStatusProvider_()).c_str());
     }
@@ -2122,7 +2081,7 @@ void SettingsWindow::DrawPersonalizationPage()
     if (BlueButton("恢复默认", ImVec2(80, 0)))
     {
         personalization_ = PersonalizationSettings::DarkPreset();
-        markChanged(true, true);
+        markChanged(true);
     }
 
     ImGui::EndChild();
@@ -2223,7 +2182,6 @@ void SettingsWindow::DrawWidgetEditorPage()
         {
             personalizationDirty_ = true;
             personalizationPreviewDirty_ = true;
-            glassSettingsPreviewDirty_ = true;
         }
         if (sharedGlassSettingsSaveRequested && personalizationDirty_)
             personalizationSaveRequested_ = true;
@@ -3156,7 +3114,7 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     case WM_TIMER:
         if (g_settingsWindow != nullptr && wParam == kSettingsRefreshTimerId)
         {
-            // 低频更新动态壁纸状态、调试采样和文本光标等动态内容。
+            // 低频更新后端状态、调试采样和文本光标等动态内容。
             g_settingsWindow->renderRequested_ = true;
             return 0;
         }

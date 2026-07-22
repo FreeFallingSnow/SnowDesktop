@@ -36,10 +36,9 @@
 #include "types.h"
 #include "constants.h"
 #include "resource.h"
-#include "wallpaper_engine_capture.h"
+#include "desktop_backdrop_compositor.h"
 
 #include <windowsx.h>
-#include <tlhelp32.h>
 #include <dbt.h>
 #include <shellapi.h>
 #include <appmodel.h>
@@ -79,27 +78,6 @@
 using Microsoft::WRL::ComPtr;
 
 enum class IconLoadPhase { Phase1, Phase2 };
-
-/**
- * @brief 毛玻璃壁纸合成源（单台显示器）
- * @details 记录一台显示器在窗口客户区坐标系下的矩形及其当前壁纸文件路径，
- *          由 QueryGlassWallpaperSources 填充，用于合成纯壁纸背景快照。
- */
-struct GlassWallpaperSource {
-    D2D1_RECT_F rect{};    ///< 显示器矩形（客户区坐标，未缩放）
-    std::wstring path;     ///< 壁纸文件路径（为空表示纯色背景）
-};
-
-/**
- * @brief 动态壁纸捕获源
- * @details 记录动态壁纸渲染窗口、桌面区域及渲染进程；实际帧通过注入
- *          Wallpaper Engine 的 DXGI/D3D9 Present Hook 共享 GPU 纹理取得。
- */
-struct DynamicWallpaperWindow {
-    HWND hwnd = nullptr;       ///< 动态壁纸渲染窗口
-    RECT rect{};               ///< 渲染窗口矩形（屏幕坐标）
-    DWORD rendererPid = 0;     ///< 动态壁纸渲染进程 PID（用于引擎识别）
-};
 
 struct IconLoadTask {
     uint64_t serial = 0;
@@ -527,53 +505,11 @@ private:
         float effectScale, D2D1_COLOR_F fill, D2D1_COLOR_F border,
         bool selected, float strokeWidth,
         const PersonalizationSettings* effectSettings = nullptr);
-    /** @brief 使毛玻璃背景快照失效，下次绘制时重新合成。 */
-    void InvalidateGlassBackdrop();
-    /** @brief 确保毛玻璃背景快照可用（必要时重新合成壁纸层并模糊）。 @return 快照可绘制返回 true */
-    bool EnsureGlassBackdrop(float blurRadius, int refreshMode);
-    /** @brief 收集各显示器壁纸来源、铺放方式与背景色。 @param[out] sources 各显示器壁纸源 @param[out] position 铺放方式（与 DESKTOP_WALLPAPER_POSITION 一致） @param[out] bgColor 桌面背景色 @return 成功返回 true */
-    bool QueryGlassWallpaperSources(std::vector<GlassWallpaperSource>& sources,
-        int& position, D2D1_COLOR_F& bgColor);
-    /** @brief 解码并缓存壁纸位图（按文件路径缓存）。 @return 失败返回 nullptr */
-    ID2D1Bitmap1* LoadGlassWallpaperBitmap(const std::wstring& path);
-    /** @brief 检测桌面层动态壁纸渲染窗口（10 秒防抖，候选变化时重置不兼容标记）。 @param force 跳过防抖强制重检 */
-    void DetectDynamicWallpaperWindows(bool force);
-    /** @brief 监听桌面动态壁纸窗口创建、销毁、显隐及类型切换事件。 */
-    void StartGlassWallpaperEventMonitor();
-    void StopGlassWallpaperEventMonitor();
-    void ScheduleGlassWallpaperEventRefresh(UINT event, HWND sourceWindow);
-    static void CALLBACK GlassWallpaperWinEventProc(HWINEVENTHOOK hook, DWORD event,
-        HWND window, LONG objectId, LONG childId, DWORD eventThread, DWORD eventTime);
-    void StopWallpaperEngineCaptures();
-    /** @brief 通过 Wallpaper Engine GPU Hook 共享纹理取得并拼合各屏帧。 @param[out] outBitmap 0.5x 捕获结果 @return 成功取得帧返回 true */
-    bool CaptureDynamicWallpaperLayer(int refreshMode, ID2D1Bitmap1** outBitmap);
-    /** @brief 合成 0.5x 静态壁纸层（不含模糊），按需重建缓存。 @return 成功返回 true */
-    bool ComposeGlassStaticLayer(const std::vector<GlassWallpaperSource>& sources,
-        int position, D2D1_COLOR_F bgColor, UINT sampleW, UINT sampleH);
-    /** @brief 在静态层之上叠加动态帧的候选区域到合成位图（透明失败区域保留静态壁纸）。 @return 成功返回 true */
-    bool ComposeGlassDynamicFrame(ID2D1Bitmap1* frame);
-    /** @brief 将 0.5x 位图高斯模糊到 glassBackdropBitmap_（复用已有位图）。 @return 成功返回 true */
-    bool BlurGlassBitmapToBackdrop(ID2D1Bitmap1* source, float blurRadius);
-    /** @brief 为低/中频新快照保留上一组模糊结果并启动交叉淡化。 */
-    void BeginGlassBackdropTransition(int refreshMode);
-    void ClearGlassBackdropTransition();
-    /** @brief 获取动态壁纸状态文本（设置界面只读状态行）。 */
-    std::wstring GetDynamicWallpaperStatusText() const;
-    /** @brief 在指定矩形内按圆角裁剪绘制毛玻璃背景采样。 @param ctx D2D 上下文 @param frame 面板矩形（客户区坐标） @param radius 圆角半径 */
-    void DrawGlassBackdropRegion(ID2D1DeviceContext* ctx, RECT frame, float radius);
-    /** @brief 绘制自适应液态玻璃边缘（斜向受光、柔亮外缘、暗色内缘）。 @return 成功绘制返回 true */
+    /** @brief 绘制液态玻璃边缘（斜向受光、柔亮外缘、暗色内缘）。 @return 成功绘制返回 true */
     bool DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame, float radius,
         D2D1_COLOR_F color, float strokeWidth);
-    /** @brief 异步生成低分辨率毛玻璃亮度图，不阻塞动态壁纸渲染。 */
-    void ScheduleGlassLuminanceReadback(ID2D1Bitmap1* source);
-    /** @brief 非阻塞消费已完成的亮度图 GPU 回读。 */
-    void TryConsumeGlassLuminanceReadbacks();
-    /** @brief 返回面板边缘下方的平均亮度，尚无样本时返回中灰。 */
-    float SampleGlassBorderLuminance(RECT frame);
-    /** @brief 按当前设置维护毛玻璃刷新状态（周期失效、实时档定时器、关闭时释放缓存）。 */
-    void UpdateGlassRefreshState();
-    /** @brief 仅使上一帧实际使用毛玻璃的面板区域失效。 */
-    void InvalidateGlassRequestedRegions();
+    /** @brief 获取原生毛玻璃后端状态文本。 */
+    std::wstring GetGlassBackendStatusText() const;
     /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
@@ -1730,98 +1666,6 @@ private:
     ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
     /** @brief 用于录制组件背景柔化阴影的独立 D2D 上下文。 */
     ComPtr<ID2D1DeviceContext> widgetPanelEffectContext_;
-    /** @brief 用于录制毛玻璃背景模糊效果的独立 D2D 上下文。 */
-    ComPtr<ID2D1DeviceContext> glassEffectContext_;
-    /** @brief 毛玻璃背景快照（窗口背后内容降采样后的高斯模糊位图）。 */
-    ComPtr<ID2D1Bitmap1> glassBackdropBitmap_;
-    /** @brief 32x18 GPU 缩略图，用于异步估计各面板边缘下方的背景亮度。 */
-    ComPtr<ID2D1Bitmap1> glassLuminanceBitmap_;
-    /** @brief 双缓冲 staging 纹理；DO_NOT_WAIT 回读避免阻塞桌面渲染线程。 */
-    std::array<ComPtr<ID3D11Texture2D>, 2> glassLuminanceReadbacks_;
-    std::array<bool, 2> glassLuminanceReadbackPending_{};
-    /** @brief 最近一次成功回读的 32x18 亮度值。 */
-    std::vector<float> glassLuminanceMap_;
-    /** @brief 当前/过渡背景对应的折射位图画刷；跨组件复用，只更新变换。 */
-    ComPtr<ID2D1Bitmap1> glassRefractionCurrentSource_;
-    ComPtr<ID2D1BitmapBrush1> glassRefractionCurrentBrush_;
-    ComPtr<ID2D1Bitmap1> glassRefractionPreviousSource_;
-    ComPtr<ID2D1BitmapBrush1> glassRefractionPreviousBrush_;
-    /** @brief 当前共享模糊半径及过渡帧使用的位图缓存。 */
-    std::unordered_map<int, ComPtr<ID2D1Bitmap1>> glassBackdropRadiusCache_;
-    /** @brief 交叉淡化期间保留的上一帧各模糊半径结果。 */
-    std::unordered_map<int, ComPtr<ID2D1Bitmap1>> glassPreviousBackdropRadiusCache_;
-    /** @brief 当前面板模糊半径对应的上一帧位图。 */
-    ComPtr<ID2D1Bitmap1> glassPreviousBackdropBitmap_;
-    DWORD glassTransitionStartTick_ = 0;
-    DWORD glassTransitionDurationMs_ = 0;
-    bool glassTransitionTimerActive_ = false;
-    /** @brief 毛玻璃快照脏标记：为 true 时下次绘制重新评估合成。 */
-    bool glassBackdropDirty_ = true;
-    /** @brief 毛玻璃快照源签名（显示器壁纸路径/铺放/背景色/尺寸），变化才重新合成。 */
-    std::wstring glassBackdropSignature_;
-    /** @brief 上次毛玻璃合成的时间戳（周期兜底刷新检测）。 */
-    DWORD glassLastCaptureTick_ = 0;
-    /** @brief 毛玻璃实时档重绘定时器是否已启动。 */
-    bool glassRefreshTimerActive_ = false;
-    /** @brief 当前毛玻璃刷新定时器间隔；等待 Hook 帧时可暂时切到 66ms。 */
-    UINT glassRefreshTimerIntervalMs_ = 0;
-    /** @brief 上一绘制帧是否存在启用毛玻璃的面板。 */
-    bool glassRequestedByPanels_ = false;
-    /** @brief 上一绘制帧所有玻璃面板要求的最高刷新档位。 */
-    int glassRequestedRefreshMode_ = 0;
-    /** @brief 上一帧实际绘制毛玻璃的面板区域，用于局部刷新 DComp 表面。 */
-    std::vector<RECT> glassRequestedRegions_;
-    /** @brief 当前绘制帧采用的最高刷新档位（由全局、Dock 与上一帧面板请求合并）。 */
-    int glassEffectiveRefreshMode_ = 0;
-    /** @brief 当前是否因前台最大化/全屏应用而将所有档位临时切为仅事件刷新。 */
-    bool glassRefreshThrottled_ = false;
-    /** @brief 当前桌面绘制序号，用于避免同一帧按组件重复请求共享帧。 */
-    std::uint64_t glassPaintSerial_ = 0;
-    std::uint64_t glassLastCaptureAttemptSerial_ = std::numeric_limits<std::uint64_t>::max();
-    /** @brief 桌面壁纸 COM 接口（按显示器查询当前壁纸路径与铺放方式）。 */
-    ComPtr<IDesktopWallpaper> desktopWallpaper_;
-    /** @brief 壁纸解码用 WIC 工厂（惰性创建）。 */
-    ComPtr<IWICImagingFactory> glassWicFactory_;
-    /** @brief 壁纸位图缓存：文件路径到已解码 D2D 位图。 */
-    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> glassWallpaperCache_;
-    /** @brief 0.5x 静态壁纸合成层（未模糊），静态签名变化才重建。 */
-    ComPtr<ID2D1Bitmap1> glassStaticLayerBitmap_;
-    /** @brief 静态合成层内容签名。 */
-    std::wstring glassStaticSignature_;
-    /** @brief 动态模式合成工作位图（静态层打底 + 动态帧区域）。 */
-    ComPtr<ID2D1Bitmap1> glassComposeBitmap_;
-    /** @brief 按渲染进程维护的 Wallpaper Engine 捕获会话，支持混合多屏来源。 */
-    std::unordered_map<DWORD, std::unique_ptr<WallpaperEngineCaptureSession>>
-        wallpaperEngineCaptures_;
-    /** @brief 壁纸宿主 PID 到实际 GPU 捕获进程的缓存，避免逐帧枚举进程树。 */
-    std::unordered_map<DWORD, std::vector<DWORD>> wallpaperCaptureProcessCache_;
-    /** @brief 上次校验网页 GPU 子进程缓存的时间戳。 */
-    DWORD wallpaperCaptureProcessCacheTick_ = 0;
-    /** @brief Wallpaper Engine 共享帧拼合后的 0.5x 动态层。 */
-    ComPtr<ID2D1Bitmap1> glassDynamicLayerBitmap_;
-    /** @brief 已写入动态层缓存的输出窗口；每个屏幕可独立沿用上一张有效帧。 */
-    std::unordered_set<HWND> glassCapturedDynamicWindows_;
-    /** @brief 检测到的动态壁纸候选窗口（自底向上 z 序）。 */
-    std::vector<DynamicWallpaperWindow> dynamicWallpaperWindows_;
-    /** @brief 上次动态壁纸窗口检测时间戳（10 秒防抖）。 */
-    DWORD glassLastDetectTick_ = 0;
-    /** @brief 系统级窗口事件 Hook，用于仅事件档感知动态壁纸生命周期。 */
-    HWINEVENTHOOK glassWallpaperEventHook_ = nullptr;
-    inline static HWND glassWallpaperEventTarget_ = nullptr;
-    /** @brief 识别到的动态壁纸引擎名称（如 Wallpaper Engine），空为未检测到。 */
-    std::wstring dynamicWallpaperEngine_;
-    /** @brief GPU Hook 捕获失败标记（候选变化或 30 秒后重试，不切换捕获后端）。 */
-    bool dynamicWallpaperIncompatible_ = false;
-    /** @brief Hook 已请求下一帧，等待 Wallpaper Engine 下一次 Present。 */
-    bool dynamicWallpaperCaptureDeferred_ = false;
-    /** @brief 最近一次 GPU Hook 捕获失败阶段（设置界面诊断用）。 */
-    std::wstring dynamicWallpaperCaptureError_;
-    /** @brief 标记 GPU Hook 捕获失败的时间戳（用于限时重试）。 */
-    DWORD dynamicWallpaperIncompatibleTick_ = 0;
-    /** @brief 连续等待新 Present 的起始时间；长时间无帧时降低 UI 轮询频率。 */
-    DWORD glassDynamicWaitStartTick_ = 0;
-    /** @brief 上次合成最终快照时是否处于动态模式（模式切换强制重建）。 */
-    bool glassWasDynamic_ = false;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
     ID2D1RenderTarget* brushCacheContext_ = nullptr;
@@ -1832,6 +1676,10 @@ private:
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
     bool compositionRenderRecoveryPending_ = false;
     bool compositionPaintInProgress_ = false;
+    /** @brief DWM 原生 backdrop 子窗口。 */
+    DesktopBackdropCompositor desktopBackdropCompositor_;
+    /** @brief 是否已经记录过本次合成目标的首个原生玻璃面板。 */
+    bool nativeGlassPanelReadyLogged_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;

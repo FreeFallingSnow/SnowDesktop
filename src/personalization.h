@@ -69,7 +69,7 @@ struct PersonalizationSettings
 
     /**
      * @brief 毛玻璃背景开关（苹果 Dock 效果）
-     * @details 开启后面板背景改为采样「背后桌面内容的模糊快照」，
+     * @details 开启后由 DWM 原生合成器模糊面板背后的桌面内容，
      *          填充色作为半透明色调叠加，边框切换为玻璃边缘光渐变描边。
      */
     bool glassEnabled = false;
@@ -78,13 +78,6 @@ struct PersonalizationSettings
      * @brief 毛玻璃模糊半径（像素），取值约 [4.0f, 48.0f]
      */
     float glassBlurRadius = 24.0f;
-
-    /**
-     * @brief 毛玻璃背景刷新档位
-     * @details 0=仅事件（壁纸/拓扑/窗口变化时重截）；1=低频兜底（约3秒）；
-     *          2=中频兜底（约1秒）；3=实时（每帧重截，开销最大）。
-     */
-    int glassRefreshMode = 1;
 
     /**
      * @brief 获取暗色预设

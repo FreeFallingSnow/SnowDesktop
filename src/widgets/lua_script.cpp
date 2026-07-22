@@ -174,12 +174,11 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             }
         }
 
-        // 所有面板共享一份宿主采样参数；Lua 仅保留实例级毛玻璃开关。
+        // 所有面板共享原生模糊半径；Lua 仅保留实例级毛玻璃开关。
         if (app_->settingsWindow_)
         {
             const auto& global = app_->settingsWindow_->GetPersonalization();
             effectSettings.glassBlurRadius = global.glassBlurRadius;
-            effectSettings.glassRefreshMode = global.glassRefreshMode;
         }
 
         if (widgetOk)

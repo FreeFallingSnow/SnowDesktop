@@ -22,12 +22,6 @@ if errorlevel 1 ( echo CMake configure FAILED & pause & exit /b 1 )
 cmake --build .build --config Release --target SnowDesktop
 if errorlevel 1 ( echo Build FAILED & pause & exit /b 1 )
 
-cmake -B .build\hook32 -S src\wallpaper_hook -A Win32
-if errorlevel 1 ( echo 32-bit Hook CMake configure FAILED & pause & exit /b 1 )
-
-cmake --build .build\hook32 --config Release --target SnowDesktopWallpaperHook32 SnowDesktopWallpaperInjector32
-if errorlevel 1 ( echo 32-bit Hook build FAILED & pause & exit /b 1 )
-
 echo.
 echo [2/4] Staging artifacts to release\ ...
 echo.
@@ -44,27 +38,7 @@ copy /Y ".build\Release\SnowDesktopTaskbarHook.dll" "release\" >nul
 if errorlevel 1 ( echo Failed to copy SnowDesktopTaskbarHook.dll & pause & exit /b 1 )
 echo   OK
 
-echo Copying SnowDesktopWallpaperHook.dll (.build\Release\SnowDesktopWallpaperHook.dll -^> release\)
-copy /Y ".build\Release\SnowDesktopWallpaperHook.dll" "release\" >nul
-if errorlevel 1 ( echo Failed to copy SnowDesktopWallpaperHook.dll & pause & exit /b 1 )
-echo   OK
-
-echo Copying SnowDesktopWallpaperHook32.dll (.build\Release\SnowDesktopWallpaperHook32.dll -^> release\)
-copy /Y ".build\Release\SnowDesktopWallpaperHook32.dll" "release\" >nul
-if errorlevel 1 ( echo Failed to copy SnowDesktopWallpaperHook32.dll & pause & exit /b 1 )
-echo   OK
-
-echo Copying SnowDesktopWallpaperInjector32.exe (.build\Release\SnowDesktopWallpaperInjector32.exe -^> release\)
-copy /Y ".build\Release\SnowDesktopWallpaperInjector32.exe" "release\" >nul
-if errorlevel 1 ( echo Failed to copy SnowDesktopWallpaperInjector32.exe & pause & exit /b 1 )
-echo   OK
-
 if not exist "release\licenses" mkdir "release\licenses"
-echo Copying MinHook license (third_party\minhook\LICENSE.txt -^> release\licenses\MinHook.txt)
-copy /Y "third_party\minhook\LICENSE.txt" "release\licenses\MinHook.txt" >nul
-if errorlevel 1 ( echo Failed to copy MinHook license & pause & exit /b 1 )
-echo   OK
-
 echo Copying TranslucentTB implementation notice (third_party\translucenttb-NOTICE.md -^> release\licenses\TranslucentTB-NOTICE.md)
 copy /Y "third_party\translucenttb-NOTICE.md" "release\licenses\TranslucentTB-NOTICE.md" >nul
 if errorlevel 1 ( echo Failed to copy TranslucentTB notice & pause & exit /b 1 )
