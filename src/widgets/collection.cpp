@@ -330,6 +330,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     if (data_->itemKeys.empty()) return;
+    const bool lt = app_->IsLightContentTheme();
 
     bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
 
@@ -393,7 +394,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (compact)
         {
             if (privacyActive)
-                DrawPrivacyPlaceholder(context, slotRect, di.name, false);
+                DrawPrivacyPlaceholder(context, slotRect, di.name, false, false);
             else
                 DrawThumbnail(context, di, slotRect, di.selected);
         }
@@ -458,8 +459,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     {
                         InflateRect(&tile, -Cu(2.0f), -Cu(2.0f));
                         app_->DrawD2DRoundedRectangle(context, tile, static_cast<float>(Cu(3.0f)),
-                            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
-                            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f));
+                            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
+                            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f));
                     }
                 }
             }
@@ -756,6 +757,20 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
         if (PtInRect(&allRect, pt)) return WidgetHit::CollectionOpenBtn;
     }
     return base;
+}
+
+HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
+{
+    HitRegion result = WidgetContainer::HitTestDrag(pt, outSlot);
+    if (!data_ || result != HitRegion::Handoff) return result;
+    bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
+    if (!compact) return result;
+    if (!outSlot) return HitRegion::SortAfter;
+    RECT bounds = outSlot->GetBounds();
+    int cellH = bounds.bottom - bounds.top;
+    return (pt.y < bounds.top + cellH / 2)
+        ? HitRegion::SortBefore
+        : HitRegion::SortAfter;
 }
 
 /**
