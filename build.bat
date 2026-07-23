@@ -18,11 +18,12 @@ if %ERRORLEVEL% EQU 0 (
     timeout /t 1 /nobreak >nul
 )
 rem Explorer keeps the hook DLL loaded; terminate it briefly to release the lock.
-rem Windows will auto-restart explorer after termination on Win10+.
 taskkill /f /im explorer.exe >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     echo Explorer terminated to release DLL lock.
     timeout /t 2 /nobreak >nul
+    echo Starting explorer...
+    start explorer.exe
 )
 
 echo.
@@ -32,12 +33,6 @@ if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
     pause
     exit /b 1
-)
-
-rem Ensure explorer is running after build.
-tasklist /fi "IMAGENAME eq explorer.exe" 2>nul | find /i "explorer.exe" >nul
-if %ERRORLEVEL% NEQ 0 (
-    start explorer.exe
 )
 
 echo.
