@@ -50,6 +50,7 @@ struct DockSettings
     bool systemTaskbarAutoHide = false;
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;
+    int systemTaskbarContentTheme = -1; // -1=跟随全局, 0=浅色, 1=深色
     PersonalizationSettings systemTaskbarAppearance =
         PersonalizationSettings::GlassDarkPreset();
 };

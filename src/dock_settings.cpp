@@ -96,10 +96,6 @@ public:
             injectionThread_.join();
         if (injectionCancelEvent_)
             CloseHandle(injectionCancelEvent_);
-        if (state_)
-            UnmapViewOfFile(state_);
-        if (mapping_)
-            CloseHandle(mapping_);
     }
 
     void NotifyTaskbarCreated()
@@ -134,8 +130,7 @@ public:
     }
 
     bool Apply(bool enabled, const PersonalizationSettings& appearance)
-    {
-        // Reap a completed worker before reusing its std::thread object. The
+    {        // Reap a completed worker before reusing its std::thread object. The
         // actual injection never runs on the UI thread.
         if (!injectionInFlight_.load(std::memory_order_acquire) &&
             injectionThread_.joinable())
@@ -151,10 +146,9 @@ public:
             GetWindowThreadProcessId(primaryTaskbar, &explorerProcessId);
 
         state_->enabled = enabled ? TRUE : FALSE;
-        // The material is rendered inside Explorer's taskbar XAML layer so
-        // ordinary windows cannot appear between the icons and their backdrop.
         state_->style = appearance.glassEnabled
             ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
+        state_->contentTheme = appearance.contentTheme;
         state_->ownerProcessId = GetCurrentProcessId();
         state_->red = std::clamp(appearance.widgetBgR, 0.0f, 1.0f);
         state_->green = std::clamp(appearance.widgetBgG, 0.0f, 1.0f);
@@ -574,6 +568,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "taskbarAppearancePreset", value))
         taskbarStyle.backgroundPreset = NormalizeAppearancePresetId(static_cast<int>(value));
     ReadBoolField(text, "taskbarGlassEnabled", taskbarStyle.glassEnabled);
+    if (ReadDoubleField(text, "taskbarContentTheme", value))
+        settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
+    if (ReadDoubleField(text, "systemTaskbarContentTheme", value))
+        settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
     return true;
 }
 
@@ -614,7 +612,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"taskbarAppearancePreset\": " << taskbarStyle.backgroundPreset << ",\n";
     file << "  \"taskbarGlassEnabled\": "
          << (taskbarStyle.glassEnabled ? "true" : "false") << ",\n";
-    file << "  \"taskbarGlassBlurRadius\": " << taskbarStyle.glassBlurRadius << "\n";
+    file << "  \"taskbarGlassBlurRadius\": " << taskbarStyle.glassBlurRadius << ",\n";
+    file << "  \"systemTaskbarContentTheme\": " << settings.systemTaskbarContentTheme << "\n";
     file << "}\n";
     return true;
 }

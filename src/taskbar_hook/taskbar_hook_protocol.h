@@ -7,14 +7,14 @@
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 2;
+inline constexpr std::uint32_t kSharedStateVersion = 3;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v2";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v3";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v2";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v3";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v2";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v3";
 
 inline constexpr LONG kStatusIdle = 0;
 inline constexpr LONG kStatusInjecting = 1;
@@ -32,6 +32,7 @@ struct SharedState
     volatile LONG generation = 0;
     volatile LONG enabled = FALSE;
     volatile LONG style = 0;
+    volatile LONG contentTheme = 0; // 0=dark(white text), 1=light(black text)
     DWORD ownerProcessId = 0;
     DWORD explorerProcessId = 0;
     float red = 0.08f;
@@ -53,6 +54,7 @@ struct Snapshot
     LONG generation = 0;
     bool enabled = false;
     LONG style = 0;
+    LONG contentTheme = 0;
     DWORD ownerProcessId = 0;
     float red = 0.08f;
     float green = 0.10f;

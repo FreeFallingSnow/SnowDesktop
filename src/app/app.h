@@ -602,9 +602,21 @@ private:
     PersonalizationSettings ResolveSystemTaskbarAppearance(
         const DockSettings& settings) const
     {
-        if (settings.systemTaskbarFollowPersonalization && settingsWindow_)
-            return settingsWindow_->GetPersonalization();
-        return settings.systemTaskbarAppearance;
+        PersonalizationSettings result = settings.systemTaskbarFollowPersonalization && settingsWindow_
+            ? settingsWindow_->GetPersonalization()
+            : settings.systemTaskbarAppearance;
+        if (settings.systemTaskbarContentTheme >= 0)
+            result.contentTheme = settings.systemTaskbarContentTheme;
+        else if (settingsWindow_)
+            result.contentTheme = settingsWindow_->GetPersonalization().contentTheme;
+        return result;
+    }
+    /** @brief 当前文字颜色是否为深色(黑字)。contentTheme==1 时为 true。 */
+    bool IsLightContentTheme() const
+    {
+        if (settingsWindow_)
+            return settingsWindow_->GetPersonalization().contentTheme == 1;
+        return false;
     }
     /** @brief 加载分类设置并刷新分类组件。 */
     void LoadCategorySettingsAndApply();

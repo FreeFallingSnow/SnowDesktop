@@ -1337,7 +1337,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                     RECT bodyRect = GetBodyRect();
                     bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
                     DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
-                    icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0));
+                    icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
+                        app_->IsLightContentTheme());
                 }
                 continue;
             }
@@ -1453,7 +1454,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 RECT bodyRect = GetBodyRect();
                 bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
                 DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
-                icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0));
+                icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
+                    app_->IsLightContentTheme());
             }
             continue;
         }
@@ -1476,6 +1478,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
+    const bool lt = app_->IsLightContentTheme();
 
     RECT dateToggle = FileCategoryDateToggleRect(this);
     bool dateHot = PtInRect(&dateToggle, app_->lastMousePoint_) != FALSE;
@@ -1484,16 +1487,22 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     app_->DrawD2DText(context, L"", dateToggle,
         faFormat ? faFormat :
             (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-        data_->dateHeaders
-            ? (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f))
-            : (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f)));
+        lt
+            ? (data_->dateHeaders
+                ? (dateHot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
+                : (dateHot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.45f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.25f)))
+            : (data_->dateHeaders
+                ? (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f))
+                : (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f))));
 
     RECT toggle = FileCategoryToggleRect(this);
     bool hot = PtInRect(&toggle, app_->lastMousePoint_) != FALSE;
     app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggle,
         faFormat ? faFormat :
             (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-        hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f));
+        lt
+            ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
+            : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f)));
     (void)handleRect;
     (void)hovered;
 }

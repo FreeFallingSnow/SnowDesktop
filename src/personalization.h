@@ -83,6 +83,13 @@ struct PersonalizationSettings
     float glassBlurRadius = 24.0f;
 
     /**
+     * @brief 文字颜色主题 (0=浅色/白字, 1=深色/黑字)
+     * @details 影响任务栏文字图标、Dock组件标题和右下角图标、Lua组件文字颜色。
+     *          默认浅色（白字），与现有主题预设一致。
+     */
+    int contentTheme = 0;
+
+    /**
      * @brief 获取暗色预设
      * @return 暗色主题的 PersonalizationSettings 实例
      */

@@ -565,7 +565,8 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
             layoutIt->first,
             D2D1::Point2F(static_cast<float>(textRect.left),
                 static_cast<float>(textRect.top)),
-            D2D1::SizeF(width, height), layoutScale, 1.0f);
+            D2D1::SizeF(width, height), layoutScale, 1.0f,
+            app_->IsLightContentTheme());
 }
 
 /**
@@ -642,7 +643,8 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     {
         const RECT iconRect = app_->GetItemIconRect(rect);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
-        app_->DrawItemText(context, rect, label, false);
+        app_->DrawItemText(context, rect, label, false, 1.0f,
+            app_->IsLightContentTheme());
         return;
     }
 
@@ -782,6 +784,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     const bool selected = data_->selected;
     const bool hovered = PtInRect(&frame, mousePt) != FALSE;
+    const bool lightTheme = app_->IsLightContentTheme();
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
@@ -902,12 +905,17 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {
-                        if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
-                            context->DrawTextLayout(
-                                D2D1::Point2F((float)titleRect.left + Cu(1.0f), (float)titleRect.top + Cu(1.0f)),
-                                layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        if (!lightTheme)
+                        {
+                            if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
+                                context->DrawTextLayout(
+                                    D2D1::Point2F((float)titleRect.left + Cu(1.0f), (float)titleRect.top + Cu(1.0f)),
+                                    layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        }
 
-                        if (auto* textBrush = getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f)))
+                        if (auto* textBrush = getBrush(lightTheme
+                            ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.82f)
+                            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f)))
                             context->DrawTextLayout(
                                 D2D1::Point2F((float)titleRect.left, (float)titleRect.top),
                                 layout.Get(), textBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -928,8 +936,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 static_cast<float>(Cu(4.0f * GetBarScale())), static_cast<float>(Cu(4.0f * GetBarScale())));
             D2D1::ColorF dotFill = selected
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f);
-            D2D1::ColorF dotStroke(1.0f, 1.0f, 1.0f, 0.50f);
+                : (lightTheme
+                    ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f));
+            D2D1::ColorF dotStroke = lightTheme
+                ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
 
             if (auto* b = getBrush(dotFill))
                 context->FillRoundedRectangle(pill, b);

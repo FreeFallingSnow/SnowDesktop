@@ -1040,9 +1040,11 @@ void SettingsWindow::DrawSystemTaskbarPage()
     const float restartExplorerButtonW = SettingButtonWidth(restartExplorerLabel);
     const float windowsThemeComboW = std::max(1.0f,
         controlW - ImGui::GetStyle().ItemSpacing.x - restartExplorerButtonW);
-    BeginSettingRow("Windows 模式", controlW);
+    BeginSettingRow("开始面板等的效果", controlW,
+        "控制开始菜单、通知中心、系统托盘等系统面板的外观主题，"
+        "切换后需重启文件资源管理器生效。");
     const char* windowsThemeNames[] = {
-        "浅色（黑色字）", "深色（白色字）"
+        "浅色", "深色"
     };
     int windowsTheme = IsWindowsSystemLightThemeEnabled() ? 0 : 1;
     ImGui::SetNextItemWidth(windowsThemeComboW);
@@ -1050,6 +1052,7 @@ void SettingsWindow::DrawSystemTaskbarPage()
         windowsThemeNames, IM_ARRAYSIZE(windowsThemeNames)))
     {
         SetWindowsSystemLightThemeEnabled(windowsTheme == 0);
+        dockSettingsDirty_ = true;
     }
     ImGui::SameLine();
     if (BlueButton(restartExplorerLabel))
@@ -1667,6 +1670,17 @@ void SettingsWindow::DrawPersonalizationPage()
         personalizationSaveRequested_ = true;
     ImGui::EndDisabled();
 
+    BeginSettingRow("文字颜色", controlW);
+    const char* contentThemeNames[] = { "浅色", "深色" };
+    int contentTheme = personalization_.contentTheme;
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##ContentTheme", &contentTheme,
+        contentThemeNames, IM_ARRAYSIZE(contentThemeNames)))
+    {
+        personalization_.contentTheme = contentTheme;
+        markChanged(true);
+    }
+
     ImGui::Unindent(8.0f * dpiScale_);
     }
 
@@ -1779,6 +1793,18 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::PushID(id);
         if (DrawSettingCheckbox("任务栏继承全局", "##FollowGlobal", &followGlobal))
             dockSettingsDirty_ = true;
+
+        BeginSettingRow("文字颜色", controlW);
+        const char* ctNames[] = { "跟随全局", "浅色", "深色" };
+        int ct = dockSettings_.systemTaskbarContentTheme + 1;
+        ImGui::SetNextItemWidth(controlW);
+        if (ImGui::Combo("##ContentThemeTaskbar", &ct,
+            ctNames, IM_ARRAYSIZE(ctNames)))
+        {
+            dockSettings_.systemTaskbarContentTheme = ct - 1;
+            dockSettingsDirty_ = true;
+        }
+
         if (!followGlobal)
         {
             int selection = presetSelectionForId(overrideStyle.backgroundPreset);
@@ -1836,7 +1862,7 @@ void SettingsWindow::DrawPersonalizationPage()
         taskbarBackdropHelp += "\n";
     }
     taskbarBackdropHelp += "请勿同时运行 TranslucentTB 等任务栏美化工具。";
-    if (DrawSettingCheckbox("启用任务栏背景个性化",
+    if (DrawSettingCheckbox("启用任务栏个性化",
         "##SystemTaskbarBackdropEnabled",
         &dockSettings_.systemTaskbarBackdropEnabled,
         taskbarBackdropHelp.c_str()))

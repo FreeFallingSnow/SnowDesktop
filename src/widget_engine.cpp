@@ -1646,13 +1646,14 @@ static int lua_WidgetTheme(lua_State* L)
     LuaWidgetTheme theme;
     if (s && s->engine)
         theme = s->engine->RuntimeGetWidgetTheme(s->currentWidgetId);
-    lua_createtable(L, 0, 6);
+    lua_createtable(L, 0, 7);
     lua_pushinteger(L, theme.bg); lua_setfield(L, -2, "bg");
     lua_pushinteger(L, theme.border); lua_setfield(L, -2, "border");
     lua_pushnumber(L, theme.alpha); lua_setfield(L, -2, "alpha");
     lua_pushnumber(L, theme.borderAlpha); lua_setfield(L, -2, "borderAlpha");
     lua_pushnumber(L, theme.gradientEndA); lua_setfield(L, -2, "gradientEndA");
     lua_pushnumber(L, theme.cornerRadius); lua_setfield(L, -2, "cornerRadius");
+    lua_pushinteger(L, theme.contentTheme); lua_setfield(L, -2, "contentTheme");
     return 1;
 }
 

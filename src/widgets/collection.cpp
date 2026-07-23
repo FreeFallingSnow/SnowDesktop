@@ -358,7 +358,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 {
                     bool hovered = !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
                     DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
-                    icon.Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0));
+                    icon.Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0),
+                        app_->IsLightContentTheme());
                 }
             }
             else
@@ -405,7 +406,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 RECT bodyRect = GetBodyRect();
                 bool hovered = PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
                 DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
-                icon.Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0));
+                icon.Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0),
+                    app_->IsLightContentTheme());
             }
         }
     }
@@ -464,7 +466,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             const std::wstring collectionTitle = data_->title.empty()
                 ? L"集合" : data_->title;
-            app_->DrawItemText(context, allRect, collectionTitle, false);
+            app_->DrawItemText(context, allRect, collectionTitle, false, 1.0f,
+                app_->IsLightContentTheme());
         }
     }
 }
@@ -867,7 +870,9 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
     app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggleBtn,
         faFormat ? faFormat :
             (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-        hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f));
+        app_->IsLightContentTheme()
+            ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
+            : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f)));
     (void)hovered;
 }
 

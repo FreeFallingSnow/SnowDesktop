@@ -199,6 +199,7 @@ struct LuaWidgetTheme
     float borderAlpha = 0.40f;  ///< 边框透明度（0~1，默认 0.40）
     float gradientEndA = 0.65f; ///< 渐变末端透明度（0~1，默认 0.65）
     float cornerRadius = 12.0f; ///< 圆角半径（cu）
+    int contentTheme = 0;       ///< 文字颜色主题 (0=浅色/白字, 1=深色/黑字)
 };
 
 /**

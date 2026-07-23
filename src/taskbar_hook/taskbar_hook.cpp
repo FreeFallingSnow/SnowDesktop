@@ -110,6 +110,7 @@ bool ReadSnapshot(Snapshot& snapshot)
         snapshot.generation = generation;
         snapshot.enabled = g_sharedState->enabled != FALSE;
         snapshot.style = g_sharedState->style;
+        snapshot.contentTheme = g_sharedState->contentTheme;
         snapshot.ownerProcessId = g_sharedState->ownerProcessId;
         snapshot.red = g_sharedState->red;
         snapshot.green = g_sharedState->green;
@@ -537,7 +538,27 @@ public:
     {
         Snapshot snapshot;
         if (!ReadSnapshot(snapshot))
+        {
+            // Shared memory is gone (process exited/crashed). Clear any
+            // applied content theme and backdrop on all registered taskbars.
+            for (auto& [handle, info] : taskbars_)
+            {
+                (void)handle;
+                if (info.rootElement && info.appliedContentTheme >= 0)
+                {
+                    try
+                    {
+                        info.rootElement.ClearValue(
+                            wux::FrameworkElement::RequestedThemeProperty());
+                        info.appliedContentTheme = -1;
+                    }
+                    catch (...) {}
+                }
+                RestoreControl(info.background);
+                RestoreControl(info.border);
+            }
             return;
+        }
         const bool ownerAlive = IsProcessAlive(snapshot.ownerProcessId);
         if (snapshot.enabled && ownerAlive)
             WatchOwnerProcess(snapshot.ownerProcessId);
@@ -547,8 +568,35 @@ public:
         for (auto& [handle, info] : taskbars_)
         {
             (void)handle;
-            if (info.taskbar != taskbar || !info.background.control ||
-                !info.background.originalFill)
+            if (info.taskbar != taskbar)
+                continue;
+
+            // Apply content theme (light/dark text and icons) independently
+            // of the backdrop. contentTheme: 0=浅色(白字)→Dark, 1=深色(黑字)→Light,
+            // -1=恢复跟随系统(ClearValue).
+            const int effectiveContentTheme = enabled ? snapshot.contentTheme : -1;
+            if (info.rootElement &&
+                info.appliedContentTheme != effectiveContentTheme)
+            {
+                try
+                {
+                    if (effectiveContentTheme < 0)
+                        info.rootElement.ClearValue(
+                            wux::FrameworkElement::RequestedThemeProperty());
+                    else if (effectiveContentTheme == 0)
+                        info.rootElement.RequestedTheme(
+                            wux::ElementTheme::Dark);
+                    else
+                        info.rootElement.RequestedTheme(
+                            wux::ElementTheme::Light);
+                    info.appliedContentTheme = effectiveContentTheme;
+                }
+                catch (...)
+                {
+                }
+            }
+
+            if (!info.background.control || !info.background.originalFill)
                 continue;
             if (info.appliedGeneration == snapshot.generation &&
                 info.appliedEnabled == enabled)
@@ -568,7 +616,7 @@ public:
             }
             info.appliedGeneration = snapshot.generation;
             info.appliedEnabled = enabled;
-            applied = enabled;
+            applied = applied || enabled;
         }
         if (applied)
             SetHookStatus(kStatusApplied);
@@ -592,9 +640,11 @@ private:
     {
         ControlInfo background;
         ControlInfo border;
+        wux::FrameworkElement rootElement{nullptr};
         HWND xamlWindow = nullptr;
         HWND taskbar = nullptr;
         LONG appliedGeneration = -1;
+        LONG appliedContentTheme = -1;
         bool appliedEnabled = false;
     };
 
@@ -752,6 +802,8 @@ private:
             auto& info = taskbars_[frameHandle];
             info.xamlWindow = xamlWindow;
             info.taskbar = taskbar;
+            info.rootElement = rootGrid.try_as<wux::FrameworkElement>();
+            info.appliedContentTheme = -1;
             if (taskbar && subclassedTaskbars_.insert(taskbar).second)
                 SetWindowSubclass(taskbar, TaskbarSubclassProc,
                     kTaskbarSubclassId, reinterpret_cast<DWORD_PTR>(this));

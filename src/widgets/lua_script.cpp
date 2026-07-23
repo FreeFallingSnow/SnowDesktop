@@ -114,6 +114,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     const bool selected = data_->selected || state == 2;
     const bool hovered = PtInRect(&frame, app_->lastMousePoint_) != FALSE;
+    const bool lightTheme = app_->IsLightContentTheme();
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
@@ -188,6 +189,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             theme.borderAlpha = borderColor.a;
             theme.gradientEndA = gradientEndA;
             theme.cornerRadius = cornerRadiusCu;
+            theme.contentTheme = effectSettings.contentTheme;
             app_->widgetEngine_->SetWidgetTheme(data_->id, theme);
         }
     }
@@ -309,7 +311,9 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         IDWriteTextFormat* titleFormat = GetCuTextFormat(bh * 0.542f, false, false);
         app_->DrawD2DText(context, data_->title, titleRect,
             titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+            lightTheme
+                ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.96f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
     }
 
     RECT resize = app_->GetStandaloneWidgetResizeHandleRect(*data_);
@@ -319,6 +323,10 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     RECT dotRect = { cx - dot / 2, cy - dot / 2, cx + dot / 2, cy + dot / 2 };
     app_->DrawD2DRoundedRectangle(context, dotRect, static_cast<float>(Cu(4.0f * GetBarScale())),
         selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
-                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f));
+                 : (lightTheme
+                    ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f)),
+        lightTheme
+            ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f));
 }

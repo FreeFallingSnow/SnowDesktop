@@ -257,6 +257,7 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
+    if (ReadDoubleField(text, "contentTheme", v)) s.contentTheme = std::clamp(static_cast<int>(v), 0, 1);
     return true;
 }
 
@@ -289,7 +290,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
-    file << "  \"glassBlurRadius\": " << s.glassBlurRadius << "\n";
+    file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";
+    file << "  \"contentTheme\": " << s.contentTheme << "\n";
     file << "}\n";
     return true;
 }
