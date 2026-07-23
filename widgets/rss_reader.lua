@@ -8,6 +8,7 @@ border = 0xFFFFFF
 alpha = 0.38
 borderAlpha = 0.16
 gradientEndA = 0.28
+textColor = 0xFFFFFF
 local articles = {}
 local feedTitle = ""
 local loading = false
@@ -16,6 +17,52 @@ local visibleRange = { first = 0, last = 0, offset = 0 }
 local lastUrl = nil
 local lastInterval = nil
 local lastMaxItems = nil
+
+local function resolveTextColor()
+    local tc = tonumber(storage.get("textColor")) or textColor
+    local follows = storage.get("followPersonalization") == "1"
+        or storage.get("followPersonalization") == "true"
+    if follows then
+        local theme = widget.theme()
+        if theme then
+            tc = (theme.contentTheme == 1) and 0x000000 or 0xFFFFFF
+        end
+    end
+    return tc
+end
+
+local palettes = {
+    dark = {
+        headerText  = 0xF8FAFC,
+        countText   = 0xF1F5F9,
+        divColor    = 0xFFFFFF,
+        numberText  = 0xFFFFFF,
+        titleText   = 0xF1F5F9,
+        dateText    = 0x94A3B8,
+        loadingText = 0xF1F5F9,
+        errorText   = 0xFF8B8B,
+        emptyText   = 0xF1F5F9,
+    },
+    light = {
+        headerText  = 0x0F172A,
+        countText   = 0x334155,
+        divColor    = 0x334155,
+        numberText  = 0x475569,
+        titleText   = 0x1E293B,
+        dateText    = 0x94A3B8,
+        loadingText = 0x334155,
+        errorText   = 0xDC2626,
+        emptyText   = 0x334155,
+    },
+}
+
+local function getPalette()
+    local theme = widget.theme()
+    if theme and theme.contentTheme == 1 then
+        return palettes.light
+    end
+    return palettes.dark
+end
 
 settings = {
     presets = {
@@ -30,28 +77,6 @@ settings = {
                 borderAlpha = 0.16,
                 gradientEndA = 0.28,
             }
-        },
-        {
-            id = "clear",
-            label = "清透列表",
-            values = {
-                bg = 0x111827,
-                border = 0xFFFFFF,
-                alpha = 0.28,
-                borderAlpha = 0.14,
-                gradientEndA = 0.30,
-            }
-        },
-        {
-            id = "solid",
-            label = "深色列表",
-            values = {
-                bg = 0x0B1020,
-                border = 0xFFFFFF,
-                alpha = 0.50,
-                borderAlpha = 0.14,
-                gradientEndA = 0.18,
-            }
         }
     },
     fields = {
@@ -59,6 +84,7 @@ settings = {
         { key = "interval", label = "刷新间隔（秒）", type = "int", default = 1800, min = 60, max = 3600 },
         { key = "maxItems", label = "最大条目数", type = "int", default = 30, min = 10, max = 100 },
         { key = "fontSize", label = "文章字号", type = "int", default = 12, min = 10, max = 24 },
+        { key = "textColor", label = "文字颜色", type = "color", default = 0xFFFFFF },
     }
 }
 
@@ -234,17 +260,18 @@ function render()
     local numberW = layout.cu(20)
     local textX = padX + numberW + layout.cu(5)
     local textW = math.max(layout.cu(40), w - textX - padX)
+    local pal = getPalette()
 
     if loading and #articles == 0 then
-        draw.text(padX, h * 0.34, "正在获取订阅…", layout.fontCu(13), 0x94A3B8,
+        draw.text(padX, h * 0.34, "正在获取订阅…", layout.fontCu(13), pal.loadingText,
             w - padX * 2, true, true)
         return
     end
     if lastError ~= "" and #articles == 0 then
-        draw.text(padX, h * 0.27, lastError, layout.fontCu(12), 0xFF8B8B,
+        draw.text(padX, h * 0.27, lastError, layout.fontCu(12), pal.errorText,
             w - padX * 2, false, false)
-        draw.text(padX, h * 0.27 + layout.cu(34), "可在“详细设置”中修改 RSS 地址",
-            layout.fontCu(11), 0x94A3B8, w - padX * 2, false, true)
+        draw.text(padX, h * 0.27 + layout.cu(34), "可在\u{201c}详细设置\u{201d}中修改 RSS 地址",
+            layout.fontCu(11), pal.loadingText, w - padX * 2, false, true)
         return
     end
 
@@ -253,13 +280,13 @@ function render()
     local countMetrics = draw.measureText(countText, layout.fontCu(countFontSize), w, false)
     local countW = math.max(layout.cu(52), math.ceil(countMetrics.width))
     draw.text(padX, headerTop, feedTitle ~= "" and feedTitle or "RSS",
-        layout.fontCu(headerFontSize), 0xF8FAFC,
+        layout.fontCu(headerFontSize), pal.headerText,
         w - padX * 2 - countW - layout.cu(6), false, true)
     local countTop = headerTop + layout.cu(math.max(0, (headerFontSize - countFontSize) / 2))
     draw.text(w - layout.cu(14) - countMetrics.width, countTop, countText,
-        layout.fontCu(countFontSize), 0x8291A3, countMetrics.width + 1, false, true)
+        layout.fontCu(countFontSize), pal.countText, countMetrics.width + 1, false, true)
     draw.line(padX, headerTop + headerHeight, w - padX,
-        headerTop + headerHeight, layout.cu(1), 0xFFFFFF, 0.10)
+        headerTop + headerHeight, layout.cu(1), pal.divColor, 0.10)
 
     local visible = ui.virtualList("articles", padX, listTop,
         w - padX * 2, math.max(1, listBottom - listTop), itemH, #articles)
@@ -274,23 +301,23 @@ function render()
             local numberMetrics = draw.measureText(numberText, layout.fontCu(13), numberW, true)
             draw.text(padX + (numberW - numberMetrics.width) / 2,
                 y + (itemH - numberMetrics.height) / 2,
-                numberText, layout.fontCu(13), 0xFFFFFF, numberW, true, true)
-            draw.text(textX, y + layout.cu(4), a.title, layout.fontCu(cfg.fontSize), 0xF1F5F9,
+                numberText, layout.fontCu(13), pal.numberText, numberW, true, true)
+            draw.text(textX, y + layout.cu(4), a.title, layout.fontCu(cfg.fontSize), pal.titleText,
                 textW, false, true)
             local dateShort = a.date:match("(%d%d? .%l%l%l? %d%d%d%d)") or a.date:sub(1, 16)
             if dateShort == "" then dateShort = a.date:sub(1, 10) end
             draw.text(textX, y + layout.cu(secondaryTopCu),
                 dateShort ~= "" and dateShort or a.link:sub(1, 36),
-                layout.fontCu(secondaryFontSize), 0x7E8C9D, textW, false, true)
+                layout.fontCu(secondaryFontSize), pal.dateText, textW, false, true)
             draw.line(textX, y + itemH - layout.cu(1), w - padX,
-                y + itemH - layout.cu(1), layout.cu(1), 0xFFFFFF, 0.07)
+                y + itemH - layout.cu(1), layout.cu(1), pal.divColor, 0.07)
         end
     end
     draw.popClip()
 
     if #articles == 0 then
         draw.text(padX, listTop + layout.cu(22), "暂无文章，等待刷新…",
-            layout.fontCu(12), 0x94A3B8, w - padX * 2, true, true)
+            layout.fontCu(12), pal.emptyText, w - padX * 2, true, true)
     end
 end
 

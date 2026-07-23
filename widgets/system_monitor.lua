@@ -17,6 +17,40 @@ local timerStarted = false
 
 local wrappedLineCache = {}
 
+local function getPalette()
+    local theme = widget.theme()
+    if theme and theme.contentTheme == 1 then
+        return {
+            cardBg     = 0xFFFFFF,
+            cardBgA    = 0.14,
+            cardBd     = 0x334155,
+            cardBdA    = 0.12,
+            cardText   = 0x1E293B,
+            cardSub    = 0x334155,
+            trackBg    = 0xE2E8F0,
+            netDown    = 0x0D9488,
+            netUp      = 0xEA580C,
+            usageHigh  = 0xDC2626,
+            usageMed   = 0xD97706,
+            usageLow   = 0x059669,
+        }
+    end
+    return {
+        cardBg     = 0x000000,
+        cardBgA    = 0.08,
+        cardBd     = 0xFFFFFF,
+        cardBdA    = 0.10,
+        cardText   = 0xFFFFFF,
+        cardSub    = 0xF1F5F9,
+        trackBg    = 0x1E293B,
+        netDown    = 0x67D5B5,
+        netUp      = 0xFFB56B,
+        usageHigh  = 0xFF6B6B,
+        usageMed   = 0xFFD166,
+        usageLow   = 0x4ECB71,
+    }
+end
+
 settings = {
     presets = {
         {
@@ -29,46 +63,6 @@ settings = {
                 alpha = 0.34,
                 borderAlpha = 0.16,
                 gradientEndA = 0.30,
-                cardBgColor = 0x000000,
-                cardBgAlpha = 0.08,
-                cardBdColor = 0xFFFFFF,
-                cardBdAlpha = 0.10,
-                cardTextColor = 0xFFFFFF,
-                cardSubColor = 0x94A3B8,
-            }
-        },
-        {
-            id = "clean",
-            label = "轻透卡片",
-            values = {
-                bg = 0x111827,
-                border = 0xFFFFFF,
-                alpha = 0.24,
-                borderAlpha = 0.14,
-                gradientEndA = 0.26,
-                cardBgColor = 0xFFFFFF,
-                cardBgAlpha = 0.05,
-                cardBdColor = 0xFFFFFF,
-                cardBdAlpha = 0.08,
-                cardTextColor = 0xFFFFFF,
-                cardSubColor = 0xB8C4D6,
-            }
-        },
-        {
-            id = "solid",
-            label = "深色卡片",
-            values = {
-                bg = 0x0B1020,
-                border = 0xFFFFFF,
-                alpha = 0.62,
-                borderAlpha = 0.14,
-                gradientEndA = 0.12,
-                cardBgColor = 0x0F172A,
-                cardBgAlpha = 0.24,
-                cardBdColor = 0xFFFFFF,
-                cardBdAlpha = 0.14,
-                cardTextColor = 0xFFFFFF,
-                cardSubColor = 0xA7B4C7,
             }
         }
     },
@@ -79,13 +73,6 @@ settings = {
         { key = "show_vram", label = "显示显存", type = "bool", default = true },
         { key = "show_network", label = "显示网络", type = "bool", default = true },
         { key = "show_battery", label = "显示电池", type = "bool", default = true },
-        { key = "cardBgColor", label = "卡片背景色", type = "color", default = 0x000000 },
-        { key = "cardBgAlpha", label = "卡片背景不透明度", type = "float", default = 0.08, min = 0, max = 1 },
-        { key = "cardBdColor", label = "卡片边框色", type = "color", default = 0xFFFFFF },
-        { key = "cardBdAlpha", label = "卡片边框不透明度", type = "float", default = 0.10, min = 0, max = 1 },
-        { key = "cardTextColor", label = "卡片文字色", type = "color", default = 0xFFFFFF },
-        { key = "cardSubColor", label = "卡片副文字色", type = "color", default = 0x94A3B8 },
-        { key = "cardSubFontSize", label = "卡片副文字字号", type = "int", default = 12, min = 8, max = 18 },
     }
 }
 
@@ -93,10 +80,10 @@ local function clamp(v)
     return math.max(0, math.min(100, v or 0))
 end
 
-local function usageColor(pct)
-    if pct >= 90 then return 0xFF6B6B
-    elseif pct >= 70 then return 0xFFD166
-    else return 0x4ECB71 end
+local function usageColor(pct, pal)
+    if pct >= 90 then return pal.usageHigh
+    elseif pct >= 70 then return pal.usageMed
+    else return pal.usageLow end
 end
 
 local function formatRate(bytes)
@@ -107,20 +94,6 @@ end
 
 local function showCard(name)
     return storage.get("show_" .. name) ~= "0"
-end
-
-local function readConfig()
-    local subFontSize = tonumber(storage.get("cardSubFontSize")) or 12
-    subFontSize = math.max(8, math.min(18, subFontSize))
-    return {
-        cardBgColor   = tonumber(storage.get("cardBgColor"))   or 0x000000,
-        cardBgAlpha   = tonumber(storage.get("cardBgAlpha"))   or 0.08,
-        cardBdColor   = tonumber(storage.get("cardBdColor"))   or 0xFFFFFF,
-        cardBdAlpha   = tonumber(storage.get("cardBdAlpha"))   or 0.10,
-        cardTextColor = tonumber(storage.get("cardTextColor")) or 0xFFFFFF,
-        cardSubColor  = tonumber(storage.get("cardSubColor"))  or 0x94A3B8,
-        cardSubFontSize = subFontSize,
-    }
 end
 
 local function splitWrap(text, fontSize, maxWidth)
@@ -141,19 +114,20 @@ local function splitWrap(text, fontSize, maxWidth)
     return lines
 end
 
-local function drawCard(x, y, w, h, info, theme, cfg)
-    draw.rect(x, y, w, h, cfg.cardBgColor, layout.cu(10), cfg.cardBgAlpha)
-    draw.strokeRect(x, y, w, h, cfg.cardBdColor, layout.cu(10), layout.cu(1.0), cfg.cardBdAlpha)
+local function drawCard(x, y, w, h, info, pal)
+    draw.rect(x, y, w, h, pal.cardBg, layout.cu(10), pal.cardBgA)
+    draw.strokeRect(x, y, w, h, pal.cardBd, layout.cu(10), layout.cu(1.0), pal.cardBdA)
 
     local ipad = layout.cu(8)
-    local subFont = layout.fontCu(cfg.cardSubFontSize)
-    draw.text(x + ipad, y + layout.cu(6), info.title, subFont, cfg.cardSubColor, w - ipad * 2, true, true)
+    local subFontSize = 12
+    local subFont = layout.fontCu(subFontSize)
+    draw.text(x + ipad, y + layout.cu(6), info.title, subFont, pal.cardSub, w - ipad * 2, true, true)
 
     if info.lines then
         local lineY = y + h * 0.32
         local lineH = math.max(layout.cu(12), math.floor(h * 0.11))
         for _, line in ipairs(info.lines) do
-            draw.text(x + ipad, lineY, line.text, lineH, line.color or cfg.cardTextColor, w - ipad * 2, false, true)
+            draw.text(x + ipad, lineY, line.text, lineH, line.color or pal.cardText, w - ipad * 2, false, true)
             lineY = lineY + lineH + layout.cu(2)
         end
     else
@@ -161,7 +135,7 @@ local function drawCard(x, y, w, h, info, theme, cfg)
         local vm = draw.measureText(info.value, valFont, 0, true)
         local vx = x + (w - vm.width) / 2
         local vy = y + h * 0.42 - vm.height / 2
-        draw.text(vx, vy, info.value, valFont, cfg.cardTextColor, 0, true)
+        draw.text(vx, vy, info.value, valFont, pal.cardText, 0, true)
     end
 
     local barY = nil
@@ -169,7 +143,7 @@ local function drawCard(x, y, w, h, info, theme, cfg)
         local barPad = layout.cu(8)
         local barH = layout.cu(4)
         barY = y + h - layout.cu(16)
-        draw.rect(x + barPad, barY, w - barPad * 2, barH, 0x1E293B, layout.cu(2), 1.0)
+        draw.rect(x + barPad, barY, w - barPad * 2, barH, pal.trackBg, layout.cu(2), 1.0)
         draw.rect(x + barPad, barY, (w - barPad * 2) * info.progress, barH, info.color, layout.cu(2), 1.0)
     end
 
@@ -177,7 +151,7 @@ local function drawCard(x, y, w, h, info, theme, cfg)
         local subW = w - layout.cu(16)
         local subText = info.sub
         if info.rotateLines then
-            local cacheKey = info.sub .. "\n" .. tostring(subW) .. "\n" .. tostring(cfg.cardSubFontSize)
+            local cacheKey = info.sub .. "\n" .. tostring(subW) .. "\n" .. tostring(subFontSize)
             local lines = wrappedLineCache[cacheKey]
             if not lines then
                 lines = splitWrap(info.sub, subFont, subW)
@@ -190,7 +164,7 @@ local function drawCard(x, y, w, h, info, theme, cfg)
         local subMetrics = draw.measureText(subText, subFont, subW, false)
         local subBottom = barY and (barY - layout.cu(4)) or (y + h - layout.cu(6))
         local subY = subBottom - subMetrics.height
-        draw.text(x + layout.cu(8), subY, subText, subFont, cfg.cardSubColor, subW, false, info.rotateLines == true)
+        draw.text(x + layout.cu(8), subY, subText, subFont, pal.cardSub, subW, false, info.rotateLines == true)
     end
 end
 
@@ -204,6 +178,7 @@ function render()
     local gpu = sys.gpu and sys.gpu() or nil
     local w = layout.width()
     local h = layout.height()
+    local pal = getPalette()
 
     local cards = {}
 
@@ -213,7 +188,7 @@ function render()
             title = "CPU",
             value = string.format("%.0f%%", pct),
             progress = pct / 100,
-            color = usageColor(pct),
+            color = usageColor(pct, pal),
             sub = cpu.name ~= "" and cpu.name or (cpu.logicalProcessors and cpu.logicalProcessors > 0 and (cpu.logicalProcessors .. " 线程") or nil),
             rotateLines = true
         })
@@ -225,7 +200,7 @@ function render()
             title = "内存",
             value = string.format("%.0f%%", pct),
             progress = pct / 100,
-            color = usageColor(pct),
+            color = usageColor(pct, pal),
             sub = memory.totalBytes and memory.totalBytes > 0 and
                 string.format("%.1f / %.1f GB",
                     memory.usedBytes / 1024 / 1024 / 1024,
@@ -239,7 +214,7 @@ function render()
             title = "GPU",
             value = string.format("%.0f%%", pct),
             progress = pct / 100,
-            color = usageColor(pct),
+            color = usageColor(pct, pal),
             sub = gpu.name or "",
             rotateLines = true
         })
@@ -253,7 +228,7 @@ function render()
             title = "显存",
             value = string.format("%.0f%%", vramPct),
             progress = vramPct / 100,
-            color = usageColor(vramPct),
+            color = usageColor(vramPct, pal),
             sub = string.format("%.1f / %.1f GB", vramUsed, vramTotal)
         })
     end
@@ -261,12 +236,12 @@ function render()
     if showCard("network") then
         table.insert(cards, {
             title = "网络",
-            color = 0x67D5B5,
+            color = pal.netDown,
             lines = {
                 { text = "↓ " .. (network.connected and formatRate(network.downloadBytesPerSec) or "—"),
-                  color = 0x67D5B5 },
+                  color = pal.netDown },
                 { text = "↑ " .. (network.connected and formatRate(network.uploadBytesPerSec) or "—"),
-                  color = 0xFFB56B },
+                  color = pal.netUp },
             }
         })
     end
@@ -282,7 +257,7 @@ function render()
             title = "电池",
             value = string.format("%.0f%%", clamp(batPct)),
             progress = clamp(batPct) / 100,
-            color = usageColor(100 - batPct),
+            color = usageColor(100 - batPct, pal),
             sub = status
         })
     end
@@ -290,7 +265,7 @@ function render()
     local cols = math.max(1, layout.columns())
     local rows = #cards > 0 and math.ceil(#cards / cols) or 0
     if rows == 0 then
-        draw.text(layout.cu(10), layout.cu(10), "无可见卡片", layout.fontCu(12), 0x94A3B8)
+        draw.text(layout.cu(10), layout.cu(10), "无可见卡片", layout.fontCu(12), pal.cardSub)
         return
     end
 
@@ -315,12 +290,6 @@ function render()
     local scrollId = "s" .. tostring(scrollGen)
     local scroll = ui.scrollArea(scrollId, 0, 0, w, h, totalH)
 
-    local theme = widget.theme()
-    if not theme or not theme.bg then
-        theme = { bg = 0x151A21, border = 0xFFFFFF, alpha = 0.36, gradientEndA = 0.65 }
-    end
-    local cfg = readConfig()
-
     for i, card in ipairs(cards) do
         local col = (i - 1) % cols
         local row = math.floor((i - 1) / cols)
@@ -328,7 +297,7 @@ function render()
         local cy = inset + row * (cardH + vGap) - scroll
 
         if cy + cardH > 0 and cy < h then
-            drawCard(cx, cy, cardW, cardH, card, theme, cfg)
+            drawCard(cx, cy, cardW, cardH, card, pal)
         end
     end
 end
@@ -364,9 +333,6 @@ function onMenu(id)
     if id == 1 then
         widget.invalidate()
     elseif id == 2 then
-        for _, k in ipairs({ "cardBgColor", "cardBgAlpha", "cardBdColor", "cardBdAlpha", "cardTextColor", "cardSubColor", "cardSubFontSize" }) do
-            storage.remove(k)
-        end
         widget.invalidate()
     end
 end
