@@ -130,7 +130,8 @@ public:
     }
 
     bool Apply(bool enabled, const PersonalizationSettings& appearance)
-    {        // Reap a completed worker before reusing its std::thread object. The
+    {
+        // Reap a completed worker before reusing its std::thread object. The
         // actual injection never runs on the UI thread.
         if (!injectionInFlight_.load(std::memory_order_acquire) &&
             injectionThread_.joinable())
@@ -568,7 +569,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "taskbarAppearancePreset", value))
         taskbarStyle.backgroundPreset = NormalizeAppearancePresetId(static_cast<int>(value));
     ReadBoolField(text, "taskbarGlassEnabled", taskbarStyle.glassEnabled);
-    if (ReadDoubleField(text, "taskbarContentTheme", value))
+    if (ReadDoubleField(text, "taskbarContentTheme", value)) // legacy name
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
     if (ReadDoubleField(text, "systemTaskbarContentTheme", value))
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);

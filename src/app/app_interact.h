@@ -522,8 +522,11 @@ inline void DesktopApp::ApplyQuickNavigationAppearance()
     const PersonalizationSettings appearance =
         MakeQuickNavigationAppearancePreset(presetId);
 
+    const float luminance = appearance.widgetBgR * 0.2126f +
+        appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
     quickNavLightTheme_ = (presetId == kAppearancePresetLight ||
-        presetId == kAppearancePresetGlassLight);
+        presetId == kAppearancePresetGlassLight) ||
+        luminance >= 0.55f;
     quickNavGlassTheme_ = appearance.glassEnabled;
     quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
     quickNavAppearance_ = appearance;

@@ -1040,7 +1040,7 @@ void SettingsWindow::DrawSystemTaskbarPage()
     const float restartExplorerButtonW = SettingButtonWidth(restartExplorerLabel);
     const float windowsThemeComboW = std::max(1.0f,
         controlW - ImGui::GetStyle().ItemSpacing.x - restartExplorerButtonW);
-    BeginSettingRow("开始面板等的效果", controlW,
+    BeginSettingRow("系统面板样式", controlW,
         "控制开始菜单、通知中心、系统托盘等系统面板的外观主题，"
         "切换后需重启文件资源管理器生效。");
     const char* windowsThemeNames[] = {
@@ -1791,6 +1791,7 @@ void SettingsWindow::DrawPersonalizationPage()
         bool& followGlobal = dockSettings_.systemTaskbarFollowPersonalization;
         const char* id = "SystemTaskbarAppearance";
         ImGui::PushID(id);
+        ImGui::Indent(8.0f * dpiScale_);
         if (DrawSettingCheckbox("任务栏继承全局", "##FollowGlobal", &followGlobal))
             dockSettingsDirty_ = true;
 
@@ -1827,6 +1828,7 @@ void SettingsWindow::DrawPersonalizationPage()
                 drawOverrideAdvanced(overrideStyle, "OverrideAdvanced"))
                 dockSettingsDirty_ = true;
         }
+        ImGui::Unindent(8.0f * dpiScale_);
         ImGui::PopID();
     };
 
@@ -1867,7 +1869,8 @@ void SettingsWindow::DrawPersonalizationPage()
         &dockSettings_.systemTaskbarBackdropEnabled,
         taskbarBackdropHelp.c_str()))
         dockSettingsDirty_ = true;
-    drawTaskbarPreset();
+    if (dockSettings_.systemTaskbarBackdropEnabled)
+        drawTaskbarPreset();
     ImGui::Spacing();
     DrawSystemTaskbarPage();
 
