@@ -11,6 +11,7 @@ showWeekday = true
 showDate = true
 showSeconds = true
 textColor = 0xFFFFFF
+clockScale = 1.0
 
 settings = {
     presets = {
@@ -33,6 +34,7 @@ settings = {
         { key = "showDate", label = "显示日期", type = "bool", default = true },
         { key = "showSeconds", label = "显示秒", type = "bool", default = true },
         { key = "textColor", label = "文字颜色", type = "color", default = 0xFFFFFF },
+        { key = "scale", label = "缩放", type = "float", default = 1.0, min = 0.5, max = 3.0 },
     }
 }
 
@@ -49,6 +51,7 @@ function loadConfig()
     showDate = storage.get("showDate") ~= "0"
     showSeconds = storage.get("showSeconds") ~= "0"
     textColor = tonumber(storage.get("textColor")) or textColor
+    clockScale = tonumber(storage.get("scale")) or clockScale
     followPersonalization = storage.get("followPersonalization") == "1"
     if followPersonalization then
         local theme = widget.theme()
@@ -99,7 +102,7 @@ function render()
     local innerHeight = math.max(layout.cu(40), h - layout.cu(24))
     local widthScale = innerWidth / math.max(1, widest)
     local heightScale = (innerHeight - gap * math.max(0, #lines - 1)) / math.max(1, totalBaseHeight)
-    local scale = math.max(0.7, math.min(widthScale, heightScale))
+    local scale = math.max(0.7, math.min(widthScale, heightScale)) * clockScale
 
     for i = 1, #lines do
         lines[i].size = lines[i].size * scale
