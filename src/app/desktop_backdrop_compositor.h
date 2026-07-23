@@ -10,6 +10,8 @@
 #include <memory>
 #include <string>
 
+struct ID2D1Device;
+
 /**
  * @brief 独立桌面玻璃合成窗口。
  *
@@ -37,7 +39,8 @@ public:
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
     /** @brief 注册或更新一个圆角玻璃面板。 */
-    bool AddPanel(const RECT& frame, float cornerRadius, float blurRadius);
+    bool AddPanel(const RECT& frame, float cornerRadius, float blurRadius,
+        bool acrylicEnabled = false);
     /** @brief 立即移除指定矩形对应的玻璃面板。 */
     bool RemovePanel(const RECT& frame);
     /** @brief 提交本帧面板集合。 */

@@ -149,7 +149,11 @@ public:
         state_->enabled = enabled ? TRUE : FALSE;
         state_->style = appearance.glassEnabled
             ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
+        if (appearance.glassEnabled && appearance.acrylicEnabled)
+            state_->style |= snowdesktop::taskbar_hook::kStyleAcrylicBackdrop;
         state_->contentTheme = appearance.contentTheme;
+        state_->systemUsesLightTheme = IsWindowsSystemLightThemeEnabled()
+            ? TRUE : FALSE;
         state_->ownerProcessId = GetCurrentProcessId();
         state_->red = std::clamp(appearance.widgetBgR, 0.0f, 1.0f);
         state_->green = std::clamp(appearance.widgetBgG, 0.0f, 1.0f);
@@ -404,6 +408,39 @@ bool SetSystemTaskbarAutoHideEnabled(bool enabled)
     return IsSystemTaskbarAutoHideEnabled() == enabled;
 }
 
+bool IsSystemTaskbarAlignmentCentered()
+{
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            L"TaskbarAl", RRF_RT_REG_DWORD, nullptr,
+            &value, &size) != ERROR_SUCCESS)
+        return true;
+    return value != 0;
+}
+
+bool SetSystemTaskbarAlignmentCentered(bool centered)
+{
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+        return false;
+    const DWORD value = centered ? 1 : 0;
+    const LONG result = RegSetValueExW(key, L"TaskbarAl", 0,
+        REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS)
+        return false;
+
+    DWORD_PTR ignored = 0;
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+        reinterpret_cast<LPARAM>(L"TraySettings"),
+        SMTO_ABORTIFHUNG | SMTO_NORMAL, 1500, &ignored);
+    return IsSystemTaskbarAlignmentCentered() == centered;
+}
+
 bool IsWindowsSystemLightThemeEnabled()
 {
     DWORD value = 1;
@@ -516,6 +553,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     // Older configuration files do not contain this system setting. Start
     // from the current Windows state so upgrading never changes it silently.
     settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
+    settings.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
     std::ostringstream stream;
@@ -551,6 +589,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "thicknessScale", value))
         settings.thicknessScale = ClampDockScale(static_cast<float>(value));
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
+    if (ReadDoubleField(text, "systemTaskbarAlignment", value))
+        settings.systemTaskbarAlignment = std::clamp(static_cast<int>(value), 0, 1);
     ReadBoolField(text, "systemTaskbarBackdropEnabled",
         settings.systemTaskbarBackdropEnabled);
     ReadBoolField(text, "systemTaskbarFollowPersonalization",
@@ -569,6 +609,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "taskbarAppearancePreset", value))
         taskbarStyle.backgroundPreset = NormalizeAppearancePresetId(static_cast<int>(value));
     ReadBoolField(text, "taskbarGlassEnabled", taskbarStyle.glassEnabled);
+    ReadBoolField(text, "taskbarAcrylicEnabled", taskbarStyle.acrylicEnabled);
     if (ReadDoubleField(text, "taskbarContentTheme", value)) // legacy name
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
     if (ReadDoubleField(text, "systemTaskbarContentTheme", value))
@@ -598,6 +639,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
     file << "  \"systemTaskbarAutoHide\": "
          << (settings.systemTaskbarAutoHide ? "true" : "false") << ",\n";
+    file << "  \"systemTaskbarAlignment\": " << settings.systemTaskbarAlignment << ",\n";
     file << "  \"systemTaskbarBackdropEnabled\": "
          << (settings.systemTaskbarBackdropEnabled ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarFollowPersonalization\": "
@@ -613,6 +655,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"taskbarAppearancePreset\": " << taskbarStyle.backgroundPreset << ",\n";
     file << "  \"taskbarGlassEnabled\": "
          << (taskbarStyle.glassEnabled ? "true" : "false") << ",\n";
+    file << "  \"taskbarAcrylicEnabled\": "
+         << (taskbarStyle.acrylicEnabled ? "true" : "false") << ",\n";
     file << "  \"taskbarGlassBlurRadius\": " << taskbarStyle.glassBlurRadius << ",\n";
     file << "  \"systemTaskbarContentTheme\": " << settings.systemTaskbarContentTheme << "\n";
     file << "}\n";

@@ -311,6 +311,11 @@ inline void DesktopApp::SetItemFontSize(float value)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+inline DWRITE_FONT_WEIGHT DesktopApp::GetItemFontWeight() const
+{
+    return itemFontWeight_;
+}
+
 inline void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
 {
     if (weight == itemFontWeight_) return;

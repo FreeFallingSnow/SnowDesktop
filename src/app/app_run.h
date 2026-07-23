@@ -372,6 +372,7 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     if (startupInitializationComplete_)
         AddTrayIcon(true);
     SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
+    SetSystemTaskbarAlignmentCentered(dockSettings_.systemTaskbarAlignment == 1);
     if (controlHwnd_ && IsWindow(controlHwnd_))
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
 
@@ -1066,6 +1067,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const float previousThicknessScale = dockSettings_.thicknessScale;
             const bool previousSystemTaskbarAutoHide =
                 dockSettings_.systemTaskbarAutoHide;
+            const int previousSystemTaskbarAlignment =
+                dockSettings_.systemTaskbarAlignment;
             LoadDockSettingsAndApply();
             if (dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
@@ -1075,7 +1078,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 dockSettings_.showFrequentItems != previousShowFrequentItems ||
                 dockSettings_.frequentItemCount != previousFrequentItemCount ||
                 std::abs(dockSettings_.thicknessScale - previousThicknessScale) > 0.0001f ||
-                dockSettings_.systemTaskbarAutoHide != previousSystemTaskbarAutoHide)
+                dockSettings_.systemTaskbarAutoHide != previousSystemTaskbarAutoHide ||
+                dockSettings_.systemTaskbarAlignment != previousSystemTaskbarAlignment)
             {
                 if (dockSettings_.showRunningApps != previousShowRunningApps)
                     RefreshDockRunningWindows(false);
@@ -1085,6 +1089,13 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 InvalidateDragStaticScene();
             }
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+        });
+        settingsWindow_->SetPersonalizationChangedCallback([this]() {
+            if (dockSettings_.systemTaskbarBackdropEnabled &&
+                dockSettings_.systemTaskbarFollowPersonalization)
+                ApplySystemTaskbarBackdrop(true,
+                    ResolveSystemTaskbarAppearance(dockSettings_));
+            systemTaskbarBackdropRefreshTick_ = GetTickCount();
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());

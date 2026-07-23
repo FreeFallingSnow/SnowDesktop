@@ -7,14 +7,14 @@
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 3;
+inline constexpr std::uint32_t kSharedStateVersion = 4;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v3";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v4";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v3";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v4";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v3";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v4";
 
 inline constexpr LONG kStatusIdle = 0;
 inline constexpr LONG kStatusInjecting = 1;
@@ -23,6 +23,7 @@ inline constexpr LONG kStatusApplied = 3;
 inline constexpr LONG kStatusFailed = -1;
 
 inline constexpr LONG kStyleGlassBackdrop = 1 << 0;
+inline constexpr LONG kStyleAcrylicBackdrop = 1 << 1;
 
 struct SharedState
 {
@@ -33,6 +34,7 @@ struct SharedState
     volatile LONG enabled = FALSE;
     volatile LONG style = 0;
     volatile LONG contentTheme = 0; // 0=dark(white text), 1=light(black text)
+    volatile LONG systemUsesLightTheme = TRUE; // 1=system light, 0=system dark
     DWORD ownerProcessId = 0;
     DWORD explorerProcessId = 0;
     float red = 0.08f;
@@ -55,6 +57,7 @@ struct Snapshot
     bool enabled = false;
     LONG style = 0;
     LONG contentTheme = 0;
+    LONG systemUsesLightTheme = TRUE;
     DWORD ownerProcessId = 0;
     float red = 0.08f;
     float green = 0.10f;

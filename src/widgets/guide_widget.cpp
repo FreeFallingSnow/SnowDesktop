@@ -189,5 +189,5 @@ void GuideWidget::DrawScrollbar(ID2D1DeviceContext *context, bool hovered) const
         return;
 
     DrawScrollbarAt(context, sbRect, contentHeight, static_cast<int>(bodyHeight),
-                    scrollOffset, hovered, GetCellScale());
+                    scrollOffset, hovered, app_->IsLightContentTheme(), GetCellScale());
 }

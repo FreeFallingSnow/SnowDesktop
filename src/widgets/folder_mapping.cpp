@@ -382,15 +382,18 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (!data_ || !app_) return;
     (void)body;
     bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
+    const bool lt = app_->IsLightContentTheme();
 
     if (data_->folderEntries.empty())
     {
         RECT empty = GetBodyRect();
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
         IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
+        IDWriteTextFormat* lightCentered = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true) : nullptr;
         app_->DrawD2DText(context, L"空文件夹", empty,
-            centered ? centered : app_->listItemTextFormat_.Get(),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+            (lt && lightCentered) ? lightCentered :
+                (centered ? centered : app_->listItemTextFormat_.Get()),
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
         return;
     }
 

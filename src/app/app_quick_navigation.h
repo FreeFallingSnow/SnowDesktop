@@ -1497,7 +1497,7 @@ inline void DesktopApp::UpdateQuickNavigationBackdrop()
 
     if (!quickNavBackdropCompositor_.IsAvailable())
     {
-        if (!quickNavBackdropCompositor_.InitializePopup(quickNavigationHwnd_))
+if (!quickNavBackdropCompositor_.InitializePopup(quickNavigationHwnd_))
         {
             std::wstring message = L"Quick navigation native backdrop unavailable: ";
             message += quickNavBackdropCompositor_.LastError();
@@ -1516,7 +1516,8 @@ inline void DesktopApp::UpdateQuickNavigationBackdrop()
         return;
     const float cornerRadius = static_cast<float>(QuickNavScale(16)) / 2.0f;
     quickNavBackdropCompositor_.BeginFrame(true);
-    quickNavBackdropCompositor_.AddPanel(clientRect, cornerRadius, quickNavBlurRadius_);
+    quickNavBackdropCompositor_.AddPanel(clientRect, cornerRadius, quickNavBlurRadius_,
+        quickNavAppearance_.acrylicEnabled);
     quickNavBackdropCompositor_.EndFrame();
 }
 

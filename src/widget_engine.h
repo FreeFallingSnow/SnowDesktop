@@ -467,12 +467,13 @@ public:
      * @param borderAlpha 输出：边框透明度
      * @param gradientEndA 输出：渐变末端透明度
      * @param glassEnabled 输出：毛玻璃背景开关
+     * @param acrylicEnabled 输出：亚克力颗粒开关
      * @return 成功读取返回 true
      */
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
-        float& gradientEndA, bool& glassEnabled) const;
+        float& gradientEndA, bool& glassEnabled, bool& acrylicEnabled) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表
@@ -650,6 +651,8 @@ public:
     void SetGridCellSize(int cellWidth, int cellHeight);
     void SetGridCellGap(int gapY);
     void SetBarHeight(int barHeight);
+    void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
+    void SetItemFontSizeScale(float scale);
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
 
     /**

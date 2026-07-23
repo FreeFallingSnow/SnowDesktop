@@ -154,6 +154,9 @@ public:
     void SetDockSettingsChangedCallback(std::function<void()> callback)
     { dockSettingsChangedCallback_ = std::move(callback); }
 
+    void SetPersonalizationChangedCallback(std::function<void()> callback)
+    { personalizationChangedCallback_ = std::move(callback); }
+
     void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
     void SyncSoftwareDesktopEnabled(bool enabled)
     { generalSettings_.softwareDesktopEnabled = enabled; }
@@ -541,6 +544,8 @@ private:
     std::function<void(bool)> dockEnabledChangedCallback_;
 
     std::function<void()> dockSettingsChangedCallback_;
+
+    std::function<void()> personalizationChangedCallback_;
 
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;

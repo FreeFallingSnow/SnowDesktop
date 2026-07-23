@@ -753,9 +753,7 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
 
     // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
     if (p.glassEnabled)
-    {
         desktopBackdropCompositor_.AddPanel(frame, radius, p.glassBlurRadius);
-    }
 
     if (fill.a > 0.0f)
     {
@@ -1022,7 +1020,8 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     std::wstring layoutKey = L"grid\x1f" + text + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
-        std::to_wstring(scaleKey);
+        std::to_wstring(scaleKey) + L"@" +
+        std::to_wstring(lightTheme ? 1 : 0);
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
@@ -1033,6 +1032,12 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             return;
         const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
         layout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+        if (lightTheme)
+        {
+            const auto w = static_cast<DWRITE_FONT_WEIGHT>(
+                std::max<int>(100, static_cast<int>(itemFontWeight_) - 200));
+            layout->SetFontWeight(w, fullRange);
+        }
         layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
             itemFontSize_ * 7.0f / 6.0f * layoutScale,
             itemFontSize_ * 5.0f / 6.0f * layoutScale);
@@ -1472,7 +1477,7 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
     int contentHeight = rows * cellH + std::max(0, rows - 1) * kCollectionPopupGapY;
     int visibleHeight = std::max(1, (int)(content.bottom - content.top));
     bool popupHovered = PtInRect(&popupRect_, lastMousePoint_);
-    DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered);
+    DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered, IsLightContentTheme());
 }
 
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);

@@ -495,7 +495,7 @@ inline void DesktopApp::LoadGeneralSettingsAndApply()
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
     generalSettings_.dockEnabled = dockEnabled;
-    generalSettings_.quickNavTheme = std::clamp(generalSettings_.quickNavTheme, 0, 5);
+    generalSettings_.quickNavTheme = std::clamp(generalSettings_.quickNavTheme, 0, 3);
     SetSoftwareDesktopEnabled(generalSettings_.softwareDesktopEnabled, false);
     ApplyQuickNavigationAppearance();
 }
@@ -514,11 +514,10 @@ inline void DesktopApp::ApplyQuickNavigationAppearance()
     }
     constexpr int quickNavPresetIds[] = {
         kAppearancePresetDark, kAppearancePresetLight,
-        kAppearancePresetGlassDark, kAppearancePresetGlassLight,
         kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight
     };
     const int presetId = globalAppearance.backgroundPreset == kAppearancePresetCustom
-        ? quickNavPresetIds[std::clamp(generalSettings_.quickNavTheme, 0, 5)]
+        ? quickNavPresetIds[std::clamp(generalSettings_.quickNavTheme, 0, 3)]
         : globalAppearance.backgroundPreset;
     const PersonalizationSettings appearance =
         MakeQuickNavigationAppearancePreset(presetId);
@@ -526,7 +525,6 @@ inline void DesktopApp::ApplyQuickNavigationAppearance()
     const float luminance = appearance.widgetBgR * 0.2126f +
         appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
     quickNavLightTheme_ = (presetId == kAppearancePresetLight ||
-        presetId == kAppearancePresetGlassLight ||
         presetId == kAppearancePresetAcrylicLight) ||
         luminance >= 0.55f;
     quickNavGlassTheme_ = appearance.glassEnabled;
@@ -544,6 +542,8 @@ inline void DesktopApp::LoadDockSettingsAndApply()
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
     SetSystemTaskbarAutoHideEnabled(settings.systemTaskbarAutoHide);
     settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
+    SetSystemTaskbarAlignmentCentered(settings.systemTaskbarAlignment == 1);
+    settings.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     if (settings.systemTaskbarBackdropEnabled)
         ApplySystemTaskbarBackdrop(true,
             ResolveSystemTaskbarAppearance(settings));

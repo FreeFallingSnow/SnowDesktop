@@ -1215,9 +1215,11 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (!data_ || !app_) return;
     (void)body;
     bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
+    const bool lt = app_->IsLightContentTheme();
 
     const auto& categoryIds = CachedVisibleCategoryIds();
     IDWriteTextFormat* normalFormat = GetCuTextFormat(13.0f, false, true);
+    IDWriteTextFormat* lightHintFormat = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true) : nullptr;
     IDWriteTextFormat* tabFormat = GetCuTextFormat(FileCategoryTabFontCu(this), true, true);
     bool searching = !searchText_.empty();
 
@@ -1227,14 +1229,15 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         bool searchHovered = PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
         app_->DrawD2DRoundedRectangle(context, searchRect, static_cast<float>(Cu(7.0f)),
             searchFocused_
-                ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f)
-                : (searchHovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f)
-                                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f)),
+                ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f))
+                : (searchHovered ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f))
+                                 : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.04f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f))),
             searchFocused_
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.70f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f));
+                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f)));
 
         IDWriteTextFormat* searchFormat = GetCuTextFormat(13.0f, false, false);
+        IDWriteTextFormat* lightSearchFormat = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, false) : nullptr;
         RECT searchTextRect = MakeRect(searchRect.left + Cu(8.0f), searchRect.top,
             searchRect.right - Cu(8.0f), searchRect.bottom);
 
@@ -1245,7 +1248,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                     (app_->fileCategoryTabTextFormat_
                         ? app_->fileCategoryTabTextFormat_.Get()
                         : app_->listItemTextFormat_.Get()),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f));
+                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f));
 
             if (searchFocused_)
             {
@@ -1281,18 +1284,19 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                     static_cast<LONG>(cursorTop + cursorHeight)
                 };
                 app_->DrawD2DFilledRectangle(context, cursorRect,
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f),
+                    lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f),
                     D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
             }
         }
         else
         {
             app_->DrawD2DText(context, L"  搜索文件...", searchTextRect,
-                searchFormat ? searchFormat :
+                (lt && lightSearchFormat) ? lightSearchFormat :
+                    (searchFormat ? searchFormat :
                     (app_->fileCategoryTabTextFormat_
                         ? app_->fileCategoryTabTextFormat_.Get()
-                        : app_->listItemTextFormat_.Get()),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f));
+                        : app_->listItemTextFormat_.Get())),
+                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.42f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.70f));
         }
     }
 
@@ -1310,9 +1314,10 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             RECT empty = GetBodyRect();
             InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
             app_->DrawD2DText(context, L"没有匹配结果", empty,
-                normalFormat ? normalFormat :
-                    (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+                (lt && lightHintFormat) ? lightHintFormat :
+                    (normalFormat ? normalFormat :
+                    (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get())),
+                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
             return;
         }
 
@@ -1357,9 +1362,10 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         RECT empty = GetBodyRect();
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
         app_->DrawD2DText(context, L"暂无散文件", empty,
-            normalFormat ? normalFormat :
-                (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+            (lt && lightHintFormat) ? lightHintFormat :
+                (normalFormat ? normalFormat :
+                (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get())),
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
         return;
     }
 
@@ -1376,11 +1382,11 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             bool active = categoryIds[i] == activeCategory;
             bool hovered = PtInRect(&tab, app_->lastMousePoint_) != FALSE;
             app_->DrawD2DRoundedRectangle(context, tab, static_cast<float>(Cu(8.0f)),
-                active ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f)
-                       : (hovered ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.13f)
-                                  : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f)),
+                active ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f))
+                       : (hovered ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.13f))
+                                  : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.04f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f))),
                 active ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f)
-                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+                       : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f)));
 
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
             RECT textRect = MakeRect(tab.left + Cu(7.0f), tab.top,
@@ -1391,14 +1397,15 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                     (app_->fileCategoryTabTextFormat_
                         ? app_->fileCategoryTabTextFormat_.Get()
                         : app_->listItemTextFormat_.Get()),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.98f : 0.78f));
+                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, active ? 0.88f : 0.74f)
+                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.98f : 0.78f));
         }
         context->PopAxisAlignedClip();
 
         RECT line = MakeRect(tabsRect.left, tabsRect.bottom + Cu(2.0f),
             tabsRect.right, tabsRect.bottom + Cu(3.0f));
         app_->DrawD2DFilledRectangle(context, line,
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),
             D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
     }
 
@@ -1415,6 +1422,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     {
         EnsureLayout();
         IDWriteTextFormat* headerFormat = GetCuTextFormat(13.0f, false, false);
+        IDWriteTextFormat* lightHeaderFormat = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, false) : nullptr;
         int scroll = std::clamp(data_->scrollOffset, 0, FileCategoryMaxScrollOffset(this));
         for (const auto& seg : layoutCache_)
         {
@@ -1429,8 +1437,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             labelRect.left += Cu(8.0f);
             InflateRect(&labelRect, 0, -Cu(8.0f));
             app_->DrawD2DText(context, seg.label, labelRect,
-                headerFormat ? headerFormat : app_->listItemTextFormat_.Get(),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.52f));
+                (lt && lightHeaderFormat) ? lightHeaderFormat :
+                    (headerFormat ? headerFormat : app_->listItemTextFormat_.Get()),
+                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.52f));
         }
     }
 

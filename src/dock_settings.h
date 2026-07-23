@@ -48,16 +48,19 @@ struct DockSettings
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
     bool systemTaskbarAutoHide = false;
+    int systemTaskbarAlignment = 1; // 0=靠左, 1=居中
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;
     int systemTaskbarContentTheme = -1; // -1=跟随全局, 0=浅色, 1=深色
     PersonalizationSettings systemTaskbarAppearance =
-        PersonalizationSettings::GlassDarkPreset();
+        PersonalizationSettings::AcrylicDarkPreset();
 };
 
 std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
 bool SetSystemTaskbarAutoHideEnabled(bool enabled);
+bool IsSystemTaskbarAlignmentCentered();
+bool SetSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();
 bool SetWindowsSystemLightThemeEnabled(bool enabled);
 bool RestartWindowsExplorer();

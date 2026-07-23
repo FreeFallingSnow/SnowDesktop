@@ -65,7 +65,10 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.doubleClickHideDesktop = val;
     int theme = 0;
     if (ReadIntField(text, "quickNavTheme", theme))
+    {
+        if (theme >= 4) theme -= 2;
         settings.quickNavTheme = std::clamp(theme, 0, 3);
+    }
     return true;
 }
 

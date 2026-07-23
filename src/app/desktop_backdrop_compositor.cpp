@@ -4,6 +4,7 @@
  */
 #include "desktop_backdrop_compositor.h"
 
+#include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <DispatcherQueue.h>
 #include <windows.graphics.effects.interop.h>
@@ -20,7 +21,9 @@
 #pragma pop_macro("GetCurrentTime")
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -34,6 +37,7 @@ namespace wuc = winrt::Windows::UI::Composition;
 namespace wucd = winrt::Windows::UI::Composition::Desktop;
 namespace awge = ABI::Windows::Graphics::Effects;
 namespace awucd = ABI::Windows::UI::Composition::Desktop;
+namespace awuci = ABI::Windows::UI::Composition;
 
 namespace {
 
@@ -179,11 +183,13 @@ using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOption
 
 struct DesktopBackdropCompositor::Impl
 {
+
     struct PanelVisual
     {
         RECT frame{};
         int cornerRadius = 0;
         int blurRadius = 0;
+        bool acrylicEnabled = false;
         wuc::SpriteVisual visual{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
         wuc::CompositionGeometricClip clip{nullptr};
@@ -496,7 +502,7 @@ void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
 }
 
 bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
-    float blurRadius)
+    float blurRadius, bool acrylicEnabled)
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
@@ -515,6 +521,7 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
             panel.frame = frame;
             panel.cornerRadius = cornerKey;
             panel.blurRadius = blurKey;
+            panel.acrylicEnabled = acrylicEnabled;
             panel.visual = impl_->compositor.CreateSpriteVisual();
             panel.geometry = impl_->compositor.CreateRoundedRectangleGeometry();
             panel.clip = impl_->compositor.CreateGeometricClip(panel.geometry);
@@ -530,6 +537,7 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
             existing->visual.Brush(impl_->GetBlurBrush(blurKey));
         }
         existing->cornerRadius = cornerKey;
+        existing->acrylicEnabled = acrylicEnabled;
         existing->visual.Offset(wfn::float3{
             static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f });
         const wfn::float2 panelSize{

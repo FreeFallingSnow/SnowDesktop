@@ -342,6 +342,8 @@ void SettingsWindow::Show()
         if (!Init(instance_, device_.Get()))
             return;
     }
+    dockSettings_.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
+    dockSettings_.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     ShowWindow(hwnd_, IsIconic(hwnd_) ? SW_RESTORE : SW_SHOW);
     SetTimer(hwnd_, kSettingsRefreshTimerId, kSettingsRefreshIntervalMs, nullptr);
     renderRequested_ = true;
@@ -503,6 +505,8 @@ void SettingsWindow::Render()
         SavePersonalization(GetPersonalizationPath().c_str(), personalization_);
         personalizationDirty_ = false;
         personalizationSaveRequested_ = false;
+        if (personalizationChangedCallback_)
+            personalizationChangedCallback_();
     }
 
     if (dockSettingsDirty_)
@@ -1036,6 +1040,18 @@ void SettingsWindow::DrawSystemTaskbarPage()
         &dockSettings_.systemTaskbarAutoHide))
         markChanged();
 
+    BeginSettingRow("任务栏对齐", controlW,
+        "控制 Windows 系统任务栏图标的对齐方式。");
+    const char* alignmentNames[] = { "靠左", "居中" };
+    int alignment = std::clamp(dockSettings_.systemTaskbarAlignment, 0, 1);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##SystemTaskbarAlignment", &alignment,
+        alignmentNames, IM_ARRAYSIZE(alignmentNames)))
+    {
+        dockSettings_.systemTaskbarAlignment = alignment;
+        markChanged();
+    }
+
     const char* restartExplorerLabel = "重启文件资源管理器##WindowsTheme";
     const float restartExplorerButtonW = SettingButtonWidth(restartExplorerLabel);
     const float windowsThemeComboW = std::max(1.0f,
@@ -1245,9 +1261,8 @@ void SettingsWindow::DrawDisplayPage()
 
     if (iconBeautifyBgPreset_ == 0)
     {
-    BeginSettingRow("默认底色", colorW);
+    BeginSettingRow("默认底色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float bgStart[3] = { iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_ };
-    ImGui::SetNextItemWidth(colorW);
     if (ImGui::ColorEdit3("##IconBeautifyBgStart", bgStart, ImGuiColorEditFlags_NoInputs))
     {
         iconBeautifyBgPreset_ = 0;
@@ -1274,10 +1289,9 @@ void SettingsWindow::DrawDisplayPage()
         markChanged();
     }
 
-    BeginSettingRow("渐变结束色", colorW);
+    BeginSettingRow("渐变结束色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     ImGui::BeginDisabled(!iconBeautifyGradientEnabled_);
     float bgEnd[3] = { iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_ };
-    ImGui::SetNextItemWidth(colorW);
     if (ImGui::ColorEdit3("##IconBeautifyBgEnd", bgEnd, ImGuiColorEditFlags_NoInputs))
     {
         iconBeautifyBgPreset_ = 0;
@@ -1487,7 +1501,7 @@ void SettingsWindow::DrawCategorySettingsPage()
  * @brief 绘制统一外观页面。
  *
  * 提供以下定制能力：
- * - 四种全局主题快速切换与自定义参数调整
+ * - 六种全局主题快速切换与自定义参数调整
  * - Dock 固定继承、快捷搜索自定义主题与系统任务栏覆盖
  * - 修改立即通知桌面预览；连续拖动结束后再持久化
  */
@@ -1526,11 +1540,14 @@ void SettingsWindow::DrawPersonalizationPage()
         "浅色",
         "深色毛玻璃",
         "浅色毛玻璃",
+        "深色亚克力",
+        "浅色亚克力",
         "自定义"
     };
     constexpr int presetIds[] = {
         kAppearancePresetDark, kAppearancePresetLight,
         kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+        kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight,
         kAppearancePresetCustom
     };
     int presetIndex = 0;
@@ -1555,8 +1572,8 @@ void SettingsWindow::DrawPersonalizationPage()
             switch (NormalizeAppearancePresetId(previousPreset))
             {
             case kAppearancePresetLight: generalSettings_.quickNavTheme = 1; break;
-            case kAppearancePresetGlassDark: generalSettings_.quickNavTheme = 2; break;
-            case kAppearancePresetGlassLight: generalSettings_.quickNavTheme = 3; break;
+            case kAppearancePresetAcrylicDark: generalSettings_.quickNavTheme = 2; break;
+            case kAppearancePresetAcrylicLight: generalSettings_.quickNavTheme = 3; break;
             default: generalSettings_.quickNavTheme = 0; break;
             }
             generalSettingsDirty_ = true;
@@ -1577,7 +1594,7 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::Indent(8.0f * dpiScale_);
 
     const char* quickNavThemeNames[] = {
-        "深色", "浅色", "深色毛玻璃", "浅色毛玻璃"
+        "深色", "浅色", "深色亚克力", "浅色亚克力"
     };
     BeginSettingRow("快捷搜索主题", controlW);
     ImGui::SetNextItemWidth(controlW);
@@ -1585,9 +1602,8 @@ void SettingsWindow::DrawPersonalizationPage()
         quickNavThemeNames, IM_ARRAYSIZE(quickNavThemeNames)))
         generalSettingsDirty_ = true;
 
-    BeginSettingRow("组件背景", colorW);
+    BeginSettingRow("组件背景", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float bgColor[3] = { personalization_.widgetBgR, personalization_.widgetBgG, personalization_.widgetBgB };
-    ImGui::SetNextItemWidth(colorW);
     if (ImGui::ColorEdit3("##WidgetBgColor", bgColor, ImGuiColorEditFlags_NoInputs))
     {
         personalization_.widgetBgR = bgColor[0]; personalization_.widgetBgG = bgColor[1];
@@ -1597,9 +1613,8 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
 
-    BeginSettingRow("组件边框", colorW);
+    BeginSettingRow("组件边框", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float borderColor[3] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB };
-    ImGui::SetNextItemWidth(colorW);
     if (ImGui::ColorEdit3("##WidgetBorderColor", borderColor, ImGuiColorEditFlags_NoInputs))
     {
         personalization_.widgetBorderR = borderColor[0]; personalization_.widgetBorderG = borderColor[1];
@@ -1668,6 +1683,10 @@ void SettingsWindow::DrawPersonalizationPage()
         markChanged(false);
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
+
+    if (DrawSettingCheckbox("亚克力噪点", "##WidgetAcrylicEnabled",
+        &personalization_.acrylicEnabled))
+        markChanged(true);
     ImGui::EndDisabled();
 
     BeginSettingRow("文字颜色", controlW);
@@ -1729,8 +1748,7 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::Spacing();
         ImGui::Indent(8.0f * dpiScale_);
         float background[3] = { style.widgetBgR, style.widgetBgG, style.widgetBgB };
-            BeginSettingRow("背景颜色", colorW);
-            ImGui::SetNextItemWidth(colorW);
+            BeginSettingRow("背景颜色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
             if (ImGui::ColorEdit3("##Background", background, ImGuiColorEditFlags_NoInputs))
             {
                 style.widgetBgR = background[0];
@@ -1740,8 +1758,7 @@ void SettingsWindow::DrawPersonalizationPage()
             }
 
             float border[3] = { style.widgetBorderR, style.widgetBorderG, style.widgetBorderB };
-            BeginSettingRow("边框颜色", colorW);
-            ImGui::SetNextItemWidth(colorW);
+            BeginSettingRow("边框颜色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
             if (ImGui::ColorEdit3("##Border", border, ImGuiColorEditFlags_NoInputs))
             {
                 style.widgetBorderR = border[0];
@@ -1778,6 +1795,10 @@ void SettingsWindow::DrawPersonalizationPage()
             ImGui::SetNextItemWidth(controlW);
             if (ImGui::SliderFloat("##GlassBlurRadius", &style.glassBlurRadius,
                 4.0f, 48.0f, "%.0f px"))
+                changed = true;
+
+            if (DrawSettingCheckbox("亚克力噪点", "##AcrylicEnabled",
+                &style.acrylicEnabled))
                 changed = true;
             ImGui::EndDisabled();
 

@@ -688,6 +688,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t count = entries_ ? entries_->size() : 0;
     const size_t fixedCount = SortableEntryCount();
     const bool hasRecycleBin = fixedCount < count;
+    const bool lt = app_->IsLightContentTheme();
     std::wstring hoveredTitle;
     RECT hoveredBounds{};
 
@@ -702,7 +703,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             windowsButton.left + (windowsButton.right - windowsButton.left + backgroundSize) / 2,
             windowsButton.top + (windowsButton.bottom - windowsButton.top + backgroundSize) / 2
         };
-        app_->DrawDockControlBackground(context, background, hovered ? 1 : 0, true);
+        app_->DrawDockControlBackground(context, background, hovered ? 1 : 0, !lt);
 
         const float logoSize = std::max(20.0f, backgroundSize * 0.58f);
         const float paneGap = std::max(1.5f, logoSize * 0.09f);
@@ -795,7 +796,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     auto drawSeparatorBefore = [&](const RECT& followingBounds) {
         ComPtr<ID2D1SolidColorBrush> separatorBrush;
         context->CreateSolidColorBrush(
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f), &separatorBrush);
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f), &separatorBrush);
         if (!separatorBrush) return;
         if (IsVertical())
         {
@@ -861,11 +862,12 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         search.top + (search.bottom - search.top + backgroundSize) / 2
     };
     app_->DrawDockControlBackground(
-        context, searchBackground, searchHovered ? 1 : 0, true);
+        context, searchBackground, searchHovered ? 1 : 0, !lt);
 
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, searchHovered ? 1.0f : 0.92f), &brush);
+        lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, searchHovered ? 0.88f : 0.72f)
+           : D2D1::ColorF(1.0f, 1.0f, 1.0f, searchHovered ? 1.0f : 0.92f), &brush);
     if (brush)
     {
         ComPtr<ID2D1Factory> factory;
@@ -903,7 +905,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     {
         ComPtr<IDWriteTextFormat> tooltipFormat;
         app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            lt ? DWRITE_FONT_WEIGHT_LIGHT : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"zh-CN", &tooltipFormat);
         if (tooltipFormat)
         {
@@ -966,10 +968,10 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             }
 
             app_->DrawD2DRoundedRectangle(context, tooltip, 7.0f,
-                D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.94f),
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+                lt ? D2D1::ColorF(0.94f, 0.95f, 0.97f, 0.94f) : D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.94f),
+                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
             app_->DrawD2DTextEllipsis(context, hoveredTitle, tooltip,
-                tooltipFormat.Get(), D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f),
+                tooltipFormat.Get(), lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f),
                 DWRITE_TEXT_ALIGNMENT_CENTER,
                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER, true);
         }

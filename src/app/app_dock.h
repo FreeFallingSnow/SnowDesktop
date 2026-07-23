@@ -1904,6 +1904,8 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 kDesktopIconClsidRecycleBin) == 0;
     }
 
+    const bool lt = IsLightContentTheme();
+
     // Hover/selected feedback belongs to the whole Dock slot, not just the bitmap.
     // Keep a small inset so adjacent items remain visually separated.
     if (state > 0 && !recycleBinEntry)
@@ -1913,10 +1915,10 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         DrawD2DRoundedRectangle(ctx, feedbackRect, 12.0f,
             state == 2
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.28f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),
+                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f)),
             state == 2
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.82f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f),
+                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f)),
             state == 2 ? 1.6f : 1.0f);
     }
 
@@ -1926,7 +1928,7 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             kDesktopIconClsidRecycleBin) == 0;
         if (recycleBin)
         {
-            DrawDockControlBackground(ctx, target, visualState, true);
+            DrawDockControlBackground(ctx, target, visualState, !lt);
             const int shortSide = std::max(1, static_cast<int>(std::min(
                 target.right - target.left, target.bottom - target.top)));
             const int inset = std::max(1, static_cast<int>(std::round(shortSide * 0.16f)));
@@ -1985,10 +1987,13 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             }
 
             ComPtr<ID2D1SolidColorBrush> indicatorBrush;
-            const D2D1_COLOR_F indicatorColor =
-                foreground
+            const D2D1_COLOR_F indicatorColor = lt
+                ? (foreground
+                    ? D2D1::ColorF(0.14f, 0.16f, 0.22f, 1.0f)
+                    : D2D1::ColorF(0.24f, 0.26f, 0.32f, minimized ? 0.82f : 0.90f))
+                : (foreground
                     ? D2D1::ColorF(0.86f, 0.88f, 0.92f, 1.0f)
-                    : D2D1::ColorF(0.72f, 0.75f, 0.80f, minimized ? 0.82f : 0.90f);
+                    : D2D1::ColorF(0.72f, 0.75f, 0.80f, minimized ? 0.82f : 0.90f));
             if (SUCCEEDED(ctx->CreateSolidColorBrush(indicatorColor, &indicatorBrush)) &&
                 indicatorBrush)
             {
@@ -2056,6 +2061,7 @@ inline void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.left + (rect.right - rect.left + iconSize) / 2,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
+    const bool lt = IsLightContentTheme();
     if (state > 0)
     {
         RECT feedbackRect = rect;
@@ -2063,10 +2069,10 @@ inline void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawD2DRoundedRectangle(ctx, feedbackRect, 12.0f,
             state == 2
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.28f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),
+                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f)),
             state == 2
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.82f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f),
+                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f)),
             state == 2 ? 1.6f : 1.0f);
     }
     if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
@@ -2102,9 +2108,13 @@ inline void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     }
 
     ComPtr<ID2D1SolidColorBrush> brush;
-    const D2D1_COLOR_F color = app.foreground
-        ? D2D1::ColorF(0.86f, 0.88f, 0.92f, 1.0f)
-        : D2D1::ColorF(0.72f, 0.75f, 0.80f, app.minimized ? 0.82f : 0.90f);
+    const D2D1_COLOR_F color = lt
+        ? (app.foreground
+            ? D2D1::ColorF(0.14f, 0.16f, 0.22f, 1.0f)
+            : D2D1::ColorF(0.24f, 0.26f, 0.32f, app.minimized ? 0.82f : 0.90f))
+        : (app.foreground
+            ? D2D1::ColorF(0.86f, 0.88f, 0.92f, 1.0f)
+            : D2D1::ColorF(0.72f, 0.75f, 0.80f, app.minimized ? 0.82f : 0.90f));
     if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
     if (app.minimized)
     {

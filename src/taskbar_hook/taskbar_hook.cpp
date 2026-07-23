@@ -111,6 +111,7 @@ bool ReadSnapshot(Snapshot& snapshot)
         snapshot.enabled = g_sharedState->enabled != FALSE;
         snapshot.style = g_sharedState->style;
         snapshot.contentTheme = g_sharedState->contentTheme;
+        snapshot.systemUsesLightTheme = g_sharedState->systemUsesLightTheme;
         snapshot.ownerProcessId = g_sharedState->ownerProcessId;
         snapshot.red = g_sharedState->red;
         snapshot.green = g_sharedState->green;
@@ -572,23 +573,21 @@ public:
                 continue;
 
             // Apply content theme (light/dark text and icons) independently
-            // of the backdrop. contentTheme: 0=浅色(白字)→Dark, 1=深色(黑字)→Light,
-            // -1=恢复跟随系统(ClearValue).
-            const int effectiveContentTheme = enabled ? snapshot.contentTheme : -1;
+            // of the backdrop. contentTheme: 0=深(白字)→Dark, 1=浅(黑字)→Light,
+            // when disabled, fall back to the system theme stored in the snapshot.
+            const int effectiveContentTheme = enabled
+                ? snapshot.contentTheme
+                : snapshot.systemUsesLightTheme;
             if (info.rootElement &&
                 info.appliedContentTheme != effectiveContentTheme)
             {
                 try
                 {
-                    if (effectiveContentTheme < 0)
-                        info.rootElement.ClearValue(
-                            wux::FrameworkElement::RequestedThemeProperty());
-                    else if (effectiveContentTheme == 0)
-                        info.rootElement.RequestedTheme(
-                            wux::ElementTheme::Dark);
-                    else
-                        info.rootElement.RequestedTheme(
-                            wux::ElementTheme::Light);
+                    info.rootElement.RequestedTheme(
+                        effectiveContentTheme != 0
+                            ? wux::ElementTheme::Light
+                            : wux::ElementTheme::Dark);
+                    info.rootElement.InvalidateArrange();
                     info.appliedContentTheme = effectiveContentTheme;
                 }
                 catch (...)
@@ -661,7 +660,8 @@ private:
             // current theme rather than the one active when the hook was loaded.
             control.originalFill = currentFill;
         }
-        const LONG backdropStyle = snapshot.style & kStyleGlassBackdrop;
+        const LONG backdropStyle = snapshot.style &
+            (kStyleGlassBackdrop | kStyleAcrylicBackdrop);
         const bool parametersMatch = control.appliedStyle == backdropStyle &&
             control.appliedRed == snapshot.red &&
             control.appliedGreen == snapshot.green &&
@@ -679,7 +679,14 @@ private:
             static_cast<std::uint8_t>(std::clamp(snapshot.green, 0.0f, 1.0f) * 255.0f),
             static_cast<std::uint8_t>(std::clamp(snapshot.blue, 0.0f, 1.0f) * 255.0f)
         };
-        if (backdropStyle == kStyleGlassBackdrop)
+        if ((backdropStyle & kStyleAcrylicBackdrop) != 0)
+        {
+            // AcrylicBrush(BackgroundSource=HostBackdrop) 在 Explorer
+            // XAML 树内无法正确采样桌面背景，实际会回退为纯色。统一走
+            // XamlBlurBrush 提供模糊，噪点由 SnowDesktop 主进程在桌面
+            // DComp 层统一叠加。
+        }
+        if (!brush && (backdropStyle & kStyleGlassBackdrop) != 0)
         {
             auto compositor = wuxh::ElementCompositionPreview::
                 GetElementVisual(control.control).Compositor();
@@ -690,7 +697,7 @@ private:
                     tint.B / 255.0f, tint.A / 255.0f
                 });
         }
-        else
+        if (!brush)
         {
             wux::Media::SolidColorBrush solid;
             solid.Color(tint);

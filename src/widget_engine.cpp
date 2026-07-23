@@ -282,6 +282,8 @@ struct D2DState
     int gridCellH = 116;
     int gridGapY = 8;
     int barHeight = 24;
+    DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    float itemFontSizeScale = 1.0f;
     int widgetClipDepth = 0;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
     ID2D1DeviceContext* brushContext = nullptr;
@@ -590,7 +592,7 @@ static int lua_DrawText(lua_State* L)
     if (!s || !s->ctx || !s->dwrite) return 0;
 
     IDWriteTextFormat* format = GetCachedTextFormat(s, size,
-        bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        bold ? DWRITE_FONT_WEIGHT_BOLD : s->itemFontWeight,
         false, maxWidth > 0 && singleLine
             ? DWRITE_WORD_WRAPPING_NO_WRAP
             : DWRITE_WORD_WRAPPING_WRAP);
@@ -657,7 +659,7 @@ static int lua_MeasureText(lua_State* L)
         return pushSize(0.0f, 0.0f);
 
     IDWriteTextFormat* format = GetCachedTextFormat(s, size,
-        bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        bold ? DWRITE_FONT_WEIGHT_BOLD : s->itemFontWeight,
         false, DWRITE_WORD_WRAPPING_WRAP);
     if (!format)
         return pushSize(0.0f, 0.0f);
@@ -982,7 +984,7 @@ static bool IsHostAppearanceSettingKey(const std::string& key)
     return key == "bg" || key == "border" || key == "alpha" ||
         key == "borderAlpha" || key == "gradientEndA" ||
         IsRemovedPanelEffectSettingKey(key) || key == "glassEnabled" ||
-        key == "glassBlurRadius" ||
+        key == "glassBlurRadius" || key == "acrylicEnabled" ||
         key == "followPersonalization";
 }
 
@@ -2293,6 +2295,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         setStorage("borderAlpha", std::to_string(appearance.widgetBorderAlpha));
         setStorage("gradientEndA", std::to_string(appearance.gradientEndA));
         setStorage("glassEnabled", appearance.glassEnabled ? "1" : "0");
+        setStorage("acrylicEnabled", appearance.acrylicEnabled ? "1" : "0");
     };
     auto parseColor = [](const std::string& value, int fallback) {
         if (value.empty()) return fallback;
@@ -2371,7 +2374,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 ((color >> 8) & 0xFF) / 255.0f,
                 (color & 0xFF) / 255.0f
             };
-            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorColorWidth));
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x));
             if (ImGui::ColorEdit3("##Value", rgb, ImGuiColorEditFlags_NoInputs))
             {
                 next = std::to_string(colorToInt(rgb[0], rgb[1], rgb[2]));
@@ -2450,19 +2453,24 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         if (editorCheckbox("跟随全局", "##FollowPersonalization", &followPersonalization))
             setStorage("followPersonalization", followPersonalization ? "1" : "0");
 
-        constexpr const char* builtInThemeIds[] = {
+    constexpr const char* builtInThemeIds[] = {
             "__global_dark", "__global_light",
-            "__global_glass_dark", "__global_glass_light"
+            "__global_glass_dark", "__global_glass_light",
+            "__global_acrylic_dark", "__global_acrylic_light"
         };
         constexpr int builtInPresetIds[] = {
             kAppearancePresetDark, kAppearancePresetLight,
-            kAppearancePresetGlassDark, kAppearancePresetGlassLight
+            kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+            kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight
         };
+        constexpr int builtInThemeCount = IM_ARRAYSIZE(builtInThemeIds);
+        constexpr int customThemeIndex = builtInThemeCount;
         constexpr const char* customThemeId = "__custom";
         constexpr const char* legacyMainSnapshotId = "__main_personalization";
         std::vector<const char*> themeLabels = {
             "全局 - 深色", "全局 - 浅色",
-            "全局 - 深色毛玻璃", "全局 - 浅色毛玻璃", "自定义"
+            "全局 - 深色毛玻璃", "全局 - 浅色毛玻璃",
+            "全局 - 深色亚克力", "全局 - 浅色亚克力", "自定义"
         };
         for (const auto& preset : presets)
             themeLabels.push_back(preset.label.c_str());
@@ -2471,7 +2479,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             defaultPresetIndex >= 0
                 ? presets[static_cast<size_t>(defaultPresetIndex)].id
                 : customThemeId);
-        int selectedTheme = 4;
+        int selectedTheme = customThemeIndex;
         for (int i = 0; i < IM_ARRAYSIZE(builtInThemeIds); ++i)
         {
             if (currentPreset == builtInThemeIds[i])
@@ -2481,13 +2489,13 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             }
         }
         if (currentPreset != customThemeId && currentPreset != legacyMainSnapshotId &&
-            selectedTheme == 4)
+            selectedTheme == customThemeIndex)
         {
             for (size_t i = 0; i < presets.size(); ++i)
             {
                 if (presets[i].id == currentPreset)
                 {
-                    selectedTheme = 5 + static_cast<int>(i);
+                    selectedTheme = customThemeIndex + 1 + static_cast<int>(i);
                     break;
                 }
             }
@@ -2498,36 +2506,43 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         if (ImGui::Combo("##Theme", &selectedTheme, themeLabels.data(),
             static_cast<int>(themeLabels.size())))
         {
-            if (selectedTheme >= 0 && selectedTheme < 4)
+            if (selectedTheme >= 0 && selectedTheme < builtInThemeCount)
             {
-                applyAppearance(MakeAppearancePreset(
-                    builtInPresetIds[selectedTheme]));
+                auto preset = MakeAppearancePreset(
+                    builtInPresetIds[selectedTheme]);
+                applyAppearance(preset);
                 setStorage("__preset", builtInThemeIds[selectedTheme]);
+                setStorage("__contentTheme", std::to_string(preset.contentTheme));
             }
-            else if (selectedTheme == 4)
+            else if (selectedTheme == customThemeIndex)
             {
                 setStorage("__preset", customThemeId);
             }
             else
             {
-                const size_t presetIndex = static_cast<size_t>(selectedTheme - 5);
+                const size_t presetIndex = static_cast<size_t>(
+                    selectedTheme - customThemeIndex - 1);
                 if (presetIndex < presets.size())
                 {
                     if (presets[presetIndex].values.find("glassEnabled") ==
                         presets[presetIndex].values.end())
                         setStorage("glassEnabled", "0");
+                    if (presets[presetIndex].values.find("acrylicEnabled") ==
+                        presets[presetIndex].values.end())
+                        setStorage("acrylicEnabled", "0");
                     for (const auto& kv : presets[presetIndex].values)
                     {
                         if (kv.first != "followPersonalization")
                             setStorage(kv.first, kv.second);
                     }
                     setStorage("__preset", presets[presetIndex].id);
+                    setStorage("__contentTheme", "");
                 }
             }
         }
         ImGui::EndDisabled();
 
-        const bool customThemeSelected = selectedTheme == 4;
+        const bool customThemeSelected = selectedTheme == customThemeIndex;
         if (!followPersonalization && customThemeSelected)
         {
             ImGui::Spacing();
@@ -2537,12 +2552,13 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             float borderAlpha = 0.40f;
             float gradientEndA = 0.0f;
             bool glassEnabled = false;
+            bool acrylicEnabled = false;
             ReadCustomColors(widgetId, bgR, bgG, bgB, alpha,
                 borderR, borderG, borderB, borderAlpha,
-                gradientEndA, glassEnabled);
+                gradientEndA, glassEnabled, acrylicEnabled);
 
             float bgColor[3] = { bgR, bgG, bgB };
-            ImGui::SetNextItemWidth(beginEditorRow("背景颜色", kEditorColorWidth));
+            ImGui::SetNextItemWidth(beginEditorRow("背景颜色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x));
             if (ImGui::ColorEdit3("##BackgroundColor", bgColor,
                 ImGuiColorEditFlags_NoInputs))
                 setStorage("bg", std::to_string(colorToInt(
@@ -2551,7 +2567,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             if (ImGui::SliderFloat("##BackgroundOpacity", &alpha, 0.0f, 1.0f))
                 setStorage("alpha", std::to_string(alpha));
             float borderColor[3] = { borderR, borderG, borderB };
-            ImGui::SetNextItemWidth(beginEditorRow("边框颜色", kEditorColorWidth));
+            ImGui::SetNextItemWidth(beginEditorRow("边框颜色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x));
             if (ImGui::ColorEdit3("##BorderColor", borderColor,
                 ImGuiColorEditFlags_NoInputs))
                 setStorage("border", std::to_string(colorToInt(
@@ -2563,7 +2579,33 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             if (ImGui::SliderFloat("##GradientEndOpacity", &gradientEndA, 0.0f, 1.0f))
                 setStorage("gradientEndA", std::to_string(gradientEndA));
             if (editorCheckbox("毛玻璃背景", "##GlassBackground", &glassEnabled))
+            {
                 setStorage("glassEnabled", glassEnabled ? "1" : "0");
+                if (!glassEnabled && acrylicEnabled)
+                {
+                    acrylicEnabled = false;
+                    setStorage("acrylicEnabled", "0");
+                }
+            }
+            if (editorCheckbox("亚克力颗粒", "##AcrylicBackground", &acrylicEnabled))
+            {
+                setStorage("acrylicEnabled", acrylicEnabled ? "1" : "0");
+                if (acrylicEnabled && !glassEnabled)
+                {
+                    glassEnabled = true;
+                    setStorage("glassEnabled", "1");
+                }
+            }
+            {
+                const char* contentThemeNames[] = { "浅色", "深色" };
+                std::string stored = getStorage("__contentTheme", "");
+                int ctValue = std::clamp(stored.empty() ? mainPersonalization.contentTheme
+                    : std::stoi(stored), 0, 1);
+                ImGui::SetNextItemWidth(beginEditorRow("文字颜色", kEditorControlWidth));
+                if (ImGui::Combo("##ContentTheme", &ctValue,
+                    contentThemeNames, IM_ARRAYSIZE(contentThemeNames)))
+                    setStorage("__contentTheme", std::to_string(ctValue));
+            }
             ImGui::Unindent();
         }
         ImGui::Spacing();
@@ -3139,7 +3181,7 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag
 bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& bgR, float& bgG, float& bgB, float& alpha,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
-    float& gradientEndA, bool& glassEnabled) const
+    float& gradientEndA, bool& glassEnabled, bool& acrylicEnabled) const
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
@@ -3175,6 +3217,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readFloat("borderAlpha", borderAlpha, alpha);
             readFloat("gradientEndA", gradientEndA, 0.0f);
             readBool("glassEnabled", glassEnabled, false);
+            readBool("acrylicEnabled", acrylicEnabled, false);
 
             const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
             auto readStoredColor = [&](const char* key, float& r, float& g, float& b) {
@@ -3200,6 +3243,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readStoredFloat("borderAlpha", borderAlpha);
             readStoredFloat("gradientEndA", gradientEndA);
             readStoredBool("glassEnabled", glassEnabled);
+            readStoredBool("acrylicEnabled", acrylicEnabled);
 
             lua_pop(L_, 1);
             return true;
@@ -3856,6 +3900,20 @@ void WidgetEngine::SetBarHeight(int barHeight)
 {
     if (d2dState_)
         d2dState_->barHeight = barHeight;
+}
+
+void WidgetEngine::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
+{
+    if (!d2dState_) return;
+    if (d2dState_->itemFontWeight == weight) return;
+    d2dState_->itemFontWeight = weight;
+    d2dState_->textFormatCache.clear();
+}
+
+void WidgetEngine::SetItemFontSizeScale(float scale)
+{
+    if (!d2dState_) return;
+    d2dState_->itemFontSizeScale = std::max(0.5f, scale);
 }
 
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
@@ -4624,7 +4682,8 @@ static int lua_LayoutFontCu(lua_State* L)
     auto* s = GetD2D(L);
     const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
     const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
-    lua_pushnumber(L, std::max(9.0f, value * CalculateWidgetCellScale(cellWidth, cellHeight)));
+    const float fontScale = s ? s->itemFontSizeScale : 1.0f;
+    lua_pushnumber(L, std::max(9.0f, value * CalculateWidgetCellScale(cellWidth, cellHeight) * fontScale));
     return 1;
 }
 

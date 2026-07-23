@@ -956,6 +956,7 @@ private:
     void SetItemFontSize(float value);
     /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
+    DWRITE_FONT_WEIGHT GetItemFontWeight() const;
     void SetShortcutArrowMode(int mode);
     bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
     /** @brief 设置是否统一图标为圆角底板样式。 */

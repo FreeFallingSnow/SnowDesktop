@@ -115,6 +115,9 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     const bool selected = data_->selected || state == 2;
     const bool hovered = PtInRect(&frame, app_->lastMousePoint_) != FALSE;
     const bool lightTheme = app_->IsLightContentTheme();
+    int globalContentTheme = 0;
+    if (app_->settingsWindow_)
+        globalContentTheme = app_->settingsWindow_->GetPersonalization().contentTheme;
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
@@ -154,19 +157,31 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, borderAlpha = 0.0f;
             float luaGradientEndA = gradientEndA;
             bool luaGlassEnabled = false;
+            bool luaAcrylicEnabled = false;
             if (app_->widgetEngine_->ReadCustomColors(data_->id,
                 bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
-                luaGradientEndA, luaGlassEnabled))
+                luaGradientEndA, luaGlassEnabled, luaAcrylicEnabled))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
                 gradientEndA = luaGradientEndA;
                 effectSettings = PersonalizationSettings::DarkPreset();
                 effectSettings.glassEnabled = luaGlassEnabled;
+                effectSettings.acrylicEnabled =
+                    luaGlassEnabled && luaAcrylicEnabled;
             }
         }
 
         // 所有面板共享原生模糊半径；Lua 仅保留实例级毛玻璃开关。
+        // 自定义风格组件保留文字颜色设置：优先组件级存储，其次使用全局值
+        if (customStyle && app_->settingsWindow_)
+        {
+            int ct = globalContentTheme;
+            std::string stored = app_->widgetEngine_->RuntimeGetStorageValue(data_->id, "__contentTheme");
+            if (!stored.empty())
+                ct = std::clamp(std::stoi(stored), 0, 1);
+            effectSettings.contentTheme = ct;
+        }
         if (app_->settingsWindow_)
         {
             const auto& global = app_->settingsWindow_->GetPersonalization();
@@ -214,6 +229,8 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             app_->widgetEngine_->SetGridCellSize(realPage->cellWidth, realPage->cellHeight);
             app_->widgetEngine_->SetGridCellGap(realPage->gapY);
             app_->widgetEngine_->SetBarHeight(static_cast<int>(GetBarHeight()));
+            app_->widgetEngine_->SetItemFontWeight(app_->GetItemFontWeight());
+            app_->widgetEngine_->SetItemFontSizeScale(app_->itemFontSize_ / kItemFontSize);
             if (data_->gridCell.pageId != realPage->id)
             {
                 data_->gridCell.pageId = realPage->id;
@@ -253,7 +270,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             int scrollOff = app_->widgetEngine_->RuntimeGetScrollOffset(data_->id, ctrl.id);
             bool showScrollbar = hovered || !data_->bottomBarHover;
             DrawScrollbarAt(context, sbRect, ctrl.contentHeight, ctrl.viewportHeight,
-                scrollOff, showScrollbar, GetCellScale());
+                scrollOff, showScrollbar, app_->IsLightContentTheme(), GetCellScale());
         }
     }
 
@@ -308,7 +325,9 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(bh * 1.17f)),
             handle.bottom - Cu(bh * 0.083f)
         };
-        IDWriteTextFormat* titleFormat = GetCuTextFormat(bh * 0.542f, false, false);
+        auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
+            std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
+        IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
         app_->DrawD2DText(context, data_->title, titleRect,
             titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
             lightTheme
