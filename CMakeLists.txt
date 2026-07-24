@@ -23,6 +23,7 @@ set(SNOWDESKTOP_SOURCES
     src/navigation_settings.cpp
     src/general_settings.cpp
     src/category_settings.cpp
+    src/l10n.cpp
     src/search_match.cpp
     src/everything_search.cpp
     src/widget_engine.cpp
@@ -67,10 +68,49 @@ set(LUA_SOURCES
     third_party/lua/lvm.c third_party/lua/lzio.c
 )
 
-set(THIRD_PARTY_SOURCES
-    ${IMGUI_SOURCES}
-    ${LUA_SOURCES}
+add_library(SnowDesktopImgui STATIC ${IMGUI_SOURCES})
+target_compile_features(SnowDesktopImgui PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopImgui PUBLIC
+    third_party/imgui
+    third_party/imgui/backends
 )
+if(MSVC)
+    set_property(TARGET SnowDesktopImgui PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopImgui PRIVATE /MP /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_definitions(SnowDesktopImgui PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+endif()
+
+add_library(SnowDesktopLua STATIC ${LUA_SOURCES})
+set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE C)
+target_include_directories(SnowDesktopLua PUBLIC third_party/lua)
+if(MSVC)
+    set_property(TARGET SnowDesktopLua PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopLua PRIVATE /MP
+        /wd4244 /wd4310 /wd4324 /wd4701 /wd4702)
+endif()
+
+add_library(SnowDesktopEverything STATIC ${EVERYTHING_SOURCES})
+set_source_files_properties(${EVERYTHING_SOURCES} PROPERTIES LANGUAGE C)
+target_include_directories(SnowDesktopEverything PUBLIC
+    third_party/everything/include)
+if(MSVC)
+    set_property(TARGET SnowDesktopEverything PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopEverything PRIVATE /MP /wd4100 /wd4133 /wd4996)
+endif()
+
+add_library(SnowDesktopPinyinData STATIC ${PINYIN_DATA_SOURCES})
+target_compile_features(SnowDesktopPinyinData PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopPinyinData PUBLIC
+    third_party/pinyin-data)
+if(MSVC)
+    set_property(TARGET SnowDesktopPinyinData PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopPinyinData PRIVATE /MP)
+endif()
 
 if (MSVC)
     cmake_host_system_information(RESULT WINDOWS_KITS_ROOT QUERY WINDOWS_REGISTRY
@@ -134,9 +174,6 @@ endif()
 
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
-    ${EVERYTHING_SOURCES}
-    ${PINYIN_DATA_SOURCES}
-    ${THIRD_PARTY_SOURCES}
     src/resource.rc
 )
 if (TARGET SnowDesktopTaskbarHook)
@@ -150,20 +187,37 @@ target_include_directories(SnowDesktop PRIVATE
     src/core
     src/app
     third_party/spdlog/include
-    third_party/imgui
-    third_party/imgui/backends
-    third_party/lua
-    third_party/everything/include
-    third_party/pinyin-data
 )
 
 if (MSVC)
     set_property(TARGET SnowDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktop PRIVATE /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_options(SnowDesktop PRIVATE /MP /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00
         SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
+    target_precompile_headers(SnowDesktop PRIVATE
+        <windows.h>
+        <shlwapi.h>
+        <shlobj.h>
+        <shellapi.h>
+        <d2d1_1.h>
+        <wrl/client.h>
+        <algorithm>
+        <atomic>
+        <cmath>
+        <cstdint>
+        <fstream>
+        <functional>
+        <memory>
+        <mutex>
+        <sstream>
+        <string>
+        <thread>
+        <unordered_map>
+        <unordered_set>
+        <vector>
+    )
     target_link_options(SnowDesktop PRIVATE
         "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
         /DEBUG:FULL /INCREMENTAL:NO /OPT:REF /OPT:ICF)
@@ -175,6 +229,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
+    SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
     advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp
 )
@@ -189,19 +244,11 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
         "$<TARGET_FILE_DIR:SnowDesktop>/widgets"
     COMMENT "Copying widget scripts to output (SnowDesktop)..."
 )
-
-set_source_files_properties(
-    ${LUA_SOURCES}
-    PROPERTIES LANGUAGE C
-)
-set_source_files_properties(
-    ${EVERYTHING_SOURCES}
-    PROPERTIES LANGUAGE C
+add_custom_command(TARGET SnowDesktop POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/lang"
+        "$<TARGET_FILE_DIR:SnowDesktop>/lang"
+    COMMENT "Copying language files to output (SnowDesktop)..."
 )
 
-if (MSVC)
-    set_source_files_properties(${LUA_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "/wd4244;/wd4310;/wd4324;/wd4701;/wd4702")
-    set_source_files_properties(${EVERYTHING_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "/wd4100;/wd4996")
-endif()
+

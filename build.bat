@@ -28,7 +28,7 @@ if %ERRORLEVEL% EQU 0 (
 
 echo.
 echo === Building SnowDesktop.exe ===
-cmake --build .build --config Release --target SnowDesktop
+cmake --build .build --config Release --target SnowDesktop --parallel
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
     pause
