@@ -3460,6 +3460,13 @@ inline void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
             savedPageRows_[page.id] = std::max(1, page.rows);
         }
     }
+
+    // The pages below are rebuilt from MONITORINFO::rcWork, so their work
+    // areas no longer contain our previous Dock reservation. Discard the old
+    // rectangles before ApplyDockWorkAreaReservation() runs; otherwise it
+    // "restores" that stale reservation into the fresh work area and can
+    // expand it across the Windows taskbar.
+    dockAreas_.clear();
     gridPages_.clear();
 
     MonitorEnumContext ctx{};
