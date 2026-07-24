@@ -137,6 +137,13 @@ public:
     void SetExitCallback(std::function<void()> callback) { exitCallback_ = std::move(callback); }
 
     /**
+     * @brief 设置重启应用回调
+     * @param callback 无参回调，在完整数据迁移后触发
+     */
+    void SetRestartCallback(std::function<void()> callback)
+    { restartCallback_ = std::move(callback); }
+
+    /**
      * @brief 设置失效回调（通知主窗口使缓存失效）
      * @param callback 无参回调，在需要刷新缓存时触发
      */
@@ -423,6 +430,11 @@ private:
     bool DeleteBackup(const std::wstring& filename);
 
     /**
+     * @brief 选择携带版目录，将其中全部数据迁移到当前商店版数据目录
+     */
+    void MigratePortableData();
+
+    /**
      * @brief 基于当前时间生成唯一的备份文件名
      * @return 格式为 "Layout_YYYYMMDD_HHMMSS" 的字符串
      */
@@ -522,6 +534,12 @@ private:
     /// 是否有可用更新
     bool updateAvailable_ = false;
 
+    /// MSIX StartupTask 状态是否已完成首次查询
+    mutable bool packagedAutoStartStateKnown_ = false;
+
+    /// MSIX StartupTask 最近一次查询或设置后的实际状态
+    mutable bool packagedAutoStartEnabled_ = false;
+
     /// 调试页使用的 Font Awesome 字体
     ImFont* faDebugFont_ = nullptr;
 
@@ -538,6 +556,9 @@ private:
 
     /// 退出应用回调
     std::function<void()> exitCallback_;
+
+    /// 完整数据迁移后的重启回调
+    std::function<void()> restartCallback_;
 
     /// 缓存失效回调（设置变更后通知主窗口）
     std::function<void()> invalidateCallback_;

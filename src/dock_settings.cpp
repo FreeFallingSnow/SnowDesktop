@@ -1,6 +1,7 @@
 #include "dock_settings.h"
 
 #include "data_paths.h"
+#include "deployment_context.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 
 #include <windows.h>
@@ -416,8 +417,7 @@ private:
     bool Inject(HWND taskbar, DWORD expectedExplorerProcessId)
     {
         const std::filesystem::path hookPath =
-            std::filesystem::path(GetExecutableDirectoryPath()) /
-            L"SnowDesktopTaskbarHook.dll";
+            snowdesktop::deployment::GetTaskbarHookPath();
         if (!std::filesystem::is_regular_file(hookPath))
         {
             return Fail(expectedExplorerProcessId, ERROR_FILE_NOT_FOUND);

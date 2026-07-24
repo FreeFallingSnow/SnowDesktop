@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include "data_paths.h"
+
 #pragma comment(lib, "dbghelp.lib")
 
 /**
@@ -35,7 +37,7 @@ inline void InstallCrashHandler()
  * @brief 写入 Windows minidump 文件
  * @details 在崩溃时生成 .dmp 文件，配合 PDB 可在 Visual Studio / WinDbg 中
  *          精确还原崩溃现场（调用栈、局部变量、寄存器、线程状态）。
- *          文件命名为 SnowDesktop_<pid>_<tick>.dmp，写入可执行文件所在目录下的
+ *          文件命名为 SnowDesktop_<pid>_<tick>.dmp，写入用户数据目录下的
  *          crashdumps 子目录（首次崩溃时自动创建）。自动清理旧 dump，仅保留最近
  *          5 个，避免磁盘无限增长。
  * @param info 异常指针，传给 MiniDumpWriteDump 用于记录异常上下文
@@ -99,7 +101,7 @@ inline void WriteMiniDump(EXCEPTION_POINTERS* info, const std::wstring& exeDir)
 /**
  * @brief 顶层未处理异常处理函数
  * @details 通过 SetUnhandledExceptionFilter 注册，异常发生时生成包含调用栈的崩溃日志，
- *          日志写入可执行文件所在目录的 crash.log 文件
+ *          日志写入用户数据目录的 crashdumps\crash.log 文件
  * @param info 异常指针，包含异常记录与线程上下文
  * @return 始终返回 EXCEPTION_EXECUTE_HANDLER，终止进程
  */
@@ -108,12 +110,8 @@ inline LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
     if (!info || !info->ExceptionRecord) return EXCEPTION_CONTINUE_SEARCH;
 
     // --- 打开崩溃日志文件 crash.log（追加模式） ---
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    std::wstring dir(exePath);
-    dir = dir.substr(0, dir.find_last_of(L"\\/") + 1);
-    std::wstring dumpDir = dir + L"\\crashdumps";
-    CreateDirectoryW(dumpDir.c_str(), nullptr);
+    const std::wstring dumpDir =
+        GetDataSubdirectoryPath(L"crashdumps");
 
     HANDLE f = CreateFileW((dumpDir + L"\\crash.log").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
         nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);

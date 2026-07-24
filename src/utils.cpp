@@ -9,6 +9,7 @@
 
 #include "utils.h"
 #include "resource.h"
+#include "data_paths.h"
 
 #include <commoncontrols.h>
 #include <shellapi.h>
@@ -1271,9 +1272,10 @@ bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value
 
 void WriteCrashLogEntry(const wchar_t* message)
 {
-    const wchar_t* filename = L"SnowDesktop_crash.log";
+    const std::wstring filename =
+        GetDataFilePath(L"SnowDesktop_crash.log");
 
-    HANDLE f = CreateFileW(filename, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+    HANDLE f = CreateFileW(filename.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
         OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f != INVALID_HANDLE_VALUE)
     {
@@ -1283,7 +1285,7 @@ void WriteCrashLogEntry(const wchar_t* message)
         CloseHandle(f);
     }
 
-    f = CreateFileW(filename, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+    f = CreateFileW(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) return;
 

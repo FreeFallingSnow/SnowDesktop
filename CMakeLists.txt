@@ -4,6 +4,80 @@ project(SnowDesktop LANGUAGES C CXX)
 
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
 string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
+
+file(READ
+    "${CMAKE_SOURCE_DIR}/packaging/store-identity.json"
+    STORE_IDENTITY_JSON)
+string(JSON SNOWDESKTOP_STORE_ID
+    GET "${STORE_IDENTITY_JSON}" "storeId")
+string(JSON SNOWDESKTOP_PACKAGE_FAMILY_NAME
+    GET "${STORE_IDENTITY_JSON}" "packageFamilyName")
+string(LENGTH "${SNOWDESKTOP_STORE_ID}" SNOWDESKTOP_STORE_ID_LENGTH)
+if (NOT SNOWDESKTOP_STORE_ID MATCHES "^[A-Z0-9]+$" OR
+    NOT SNOWDESKTOP_STORE_ID_LENGTH EQUAL 12)
+    message(FATAL_ERROR
+        "packaging/store-identity.json contains an invalid Store ID")
+endif()
+if (SNOWDESKTOP_PACKAGE_FAMILY_NAME STREQUAL "")
+    message(FATAL_ERROR
+        "packaging/store-identity.json contains an empty package family name")
+endif()
+
+string(REPLACE "." ";" SNOWDESKTOP_VERSION_PARTS "${SNOWDESKTOP_VERSION}")
+list(LENGTH SNOWDESKTOP_VERSION_PARTS SNOWDESKTOP_VERSION_PART_COUNT)
+if (NOT SNOWDESKTOP_VERSION_PART_COUNT EQUAL 4)
+    message(FATAL_ERROR
+        "version.json must contain a four-part version: A.B.C.D")
+endif()
+
+foreach(VERSION_PART IN LISTS SNOWDESKTOP_VERSION_PARTS)
+    if (NOT VERSION_PART MATCHES "^(0|[1-9][0-9]*)$")
+        message(FATAL_ERROR
+            "Version components must be canonical non-negative integers: ${SNOWDESKTOP_VERSION}")
+    endif()
+    if (VERSION_PART GREATER 65535)
+        message(FATAL_ERROR
+            "Each version component must be between 0 and 65535: ${SNOWDESKTOP_VERSION}")
+    endif()
+endforeach()
+
+list(GET SNOWDESKTOP_VERSION_PARTS 0 SNOWDESKTOP_VERSION_MAJOR)
+list(GET SNOWDESKTOP_VERSION_PARTS 1 SNOWDESKTOP_VERSION_MINOR)
+list(GET SNOWDESKTOP_VERSION_PARTS 2 SNOWDESKTOP_VERSION_PATCH)
+list(GET SNOWDESKTOP_VERSION_PARTS 3 SNOWDESKTOP_VERSION_REVISION)
+if (SNOWDESKTOP_VERSION_MAJOR EQUAL 0)
+    message(FATAL_ERROR
+        "The first version component must be greater than zero for MSIX packages")
+endif()
+if (NOT SNOWDESKTOP_VERSION_REVISION EQUAL 0)
+    message(FATAL_ERROR
+        "The fourth version component must be zero for Microsoft Store submissions")
+endif()
+
+set(SNOWDESKTOP_VERSION_RESOURCE_DIR
+    "${CMAKE_BINARY_DIR}/generated/version")
+file(MAKE_DIRECTORY "${SNOWDESKTOP_VERSION_RESOURCE_DIR}")
+
+set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop")
+set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktop.exe")
+set(SNOWDESKTOP_FILE_TYPE "VFT_APP")
+set(SNOWDESKTOP_EXE_VERSION_RESOURCE
+    "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktop.version.rc")
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
+    @ONLY)
+
+set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop taskbar hook")
+set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktopTaskbarHook.dll")
+set(SNOWDESKTOP_FILE_TYPE "VFT_DLL")
+set(SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE
+    "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktopTaskbarHook.version.rc")
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE}"
+    @ONLY)
+
 message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
 
 set(SNOWDESKTOP_SOURCES
@@ -17,6 +91,7 @@ set(SNOWDESKTOP_SOURCES
     src/core/container.cpp
     src/core/desktop.cpp
     src/data_paths.cpp
+    src/deployment_context.cpp
     src/utils.cpp
     src/settings_window.cpp
     src/personalization.cpp
@@ -168,6 +243,8 @@ if (MSVC)
     add_custom_command(
         OUTPUT
             "${CPPWINRT_OUTPUT_DIR}/winrt/base.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.ApplicationModel.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.Foundation.h"
             "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.h"
             "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h"
             "${CPPWINRT_OUTPUT_DIR}/winrt/WindowsUdk.UI.Shell.h"
@@ -180,6 +257,8 @@ if (MSVC)
         VERBATIM)
     add_custom_target(SnowDesktopCppWinRT DEPENDS
         "${CPPWINRT_OUTPUT_DIR}/winrt/base.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.ApplicationModel.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.Foundation.h"
         "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.h"
         "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h"
         "${CPPWINRT_OUTPUT_DIR}/winrt/WindowsUdk.UI.Shell.h")
@@ -189,6 +268,7 @@ if (MSVC)
         src/taskbar_hook/taskbar_hook_protocol.h
         src/taskbar_hook/taskview_visibility.h
         src/taskbar_hook/taskbar_hook.def
+        "${SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE}"
     )
     add_dependencies(SnowDesktopTaskbarHook SnowDesktopCppWinRT)
     set_target_properties(SnowDesktopTaskbarHook PROPERTIES
@@ -212,6 +292,7 @@ endif()
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
     src/resource.rc
+    "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
 if (TARGET SnowDesktopTaskbarHook)
     add_dependencies(SnowDesktop SnowDesktopTaskbarHook SnowDesktopCppWinRT)
@@ -232,7 +313,9 @@ if (MSVC)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00
-        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
+        SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
+        SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
     target_precompile_headers(SnowDesktop PRIVATE
         <windows.h>
         <shlwapi.h>
@@ -262,13 +345,16 @@ else()
     target_compile_options(SnowDesktop PRIVATE -Wall -Wextra -pedantic)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
-        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
+        SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
+        SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
     advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp
+    wbemuuid
 )
 
 add_custom_command(TARGET SnowDesktop PRE_BUILD

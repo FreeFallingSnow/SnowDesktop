@@ -20,6 +20,7 @@
 #include "resource.h"
 #include "crashlog.h"
 #include "data_paths.h"
+#include "deployment_context.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -28,12 +29,14 @@
 #include <shlwapi.h>
 #include <shobjidl.h>
 #include <shellapi.h>
+#include <wbemidl.h>
 #include <winhttp.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cwctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -46,6 +49,233 @@ namespace {
 constexpr UINT_PTR kSettingsRefreshTimerId = 1;
 constexpr UINT kSettingsRefreshIntervalMs = 500;
 constexpr float kSettingControlWidthDip = 300.0f;
+constexpr wchar_t kAutoStartRunSubKey[] =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
+constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
+
+std::wstring QueryPortableAutoStartCommandViaWmi()
+{
+    ComPtr<IWbemLocator> locator;
+    if (FAILED(CoCreateInstance(CLSID_WbemLocator, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&locator))))
+        return {};
+
+    BSTR nameSpace = SysAllocString(L"ROOT\\CIMV2");
+    if (!nameSpace)
+        return {};
+    ComPtr<IWbemServices> services;
+    const HRESULT connectResult = locator->ConnectServer(
+        nameSpace, nullptr, nullptr, nullptr, 0, nullptr, nullptr, &services);
+    SysFreeString(nameSpace);
+    if (FAILED(connectResult))
+        return {};
+
+    if (FAILED(CoSetProxyBlanket(services.Get(), RPC_C_AUTHN_WINNT,
+            RPC_C_AUTHZ_NONE, nullptr, RPC_C_AUTHN_LEVEL_CALL,
+            RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE)))
+        return {};
+
+    BSTR queryLanguage = SysAllocString(L"WQL");
+    BSTR query = SysAllocString(
+        L"SELECT Command FROM Win32_StartupCommand "
+        L"WHERE Name='SnowDesktop'");
+    if (!queryLanguage || !query)
+    {
+        if (queryLanguage)
+            SysFreeString(queryLanguage);
+        if (query)
+            SysFreeString(query);
+        return {};
+    }
+
+    ComPtr<IEnumWbemClassObject> results;
+    const HRESULT queryResult = services->ExecQuery(
+        queryLanguage, query,
+        WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+        nullptr, &results);
+    SysFreeString(queryLanguage);
+    SysFreeString(query);
+    if (FAILED(queryResult))
+        return {};
+
+    ComPtr<IWbemClassObject> item;
+    ULONG returned = 0;
+    if (FAILED(results->Next(1000, 1, &item, &returned)) ||
+        returned == 0)
+    {
+        return {};
+    }
+
+    VARIANT command{};
+    VariantInit(&command);
+    const HRESULT getResult = item->Get(
+        L"Command", 0, &command, nullptr, nullptr);
+    std::wstring value;
+    if (SUCCEEDED(getResult) && command.vt == VT_BSTR &&
+        command.bstrVal != nullptr)
+    {
+        value = command.bstrVal;
+    }
+    VariantClear(&command);
+    return value;
+}
+
+std::wstring ReadPortableAutoStartCommand()
+{
+    if (snowdesktop::deployment::IsPackaged())
+    {
+        static DWORD lastQueryTick = 0;
+        static std::wstring cachedCommand;
+        const DWORD now = GetTickCount();
+        if (lastQueryTick == 0 ||
+            now - lastQueryTick >= kPortableAutoStartQueryIntervalMs)
+        {
+            cachedCommand = QueryPortableAutoStartCommandViaWmi();
+            lastQueryTick = now;
+        }
+        return cachedCommand;
+    }
+
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kAutoStartRunSubKey,
+            0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+        return {};
+
+    DWORD type = 0;
+    DWORD size = 0;
+    LONG result = RegQueryValueExW(key, kAutoStartRunValue,
+        nullptr, &type, nullptr, &size);
+    if (result != ERROR_SUCCESS ||
+        (type != REG_SZ && type != REG_EXPAND_SZ) ||
+        size < sizeof(wchar_t))
+    {
+        RegCloseKey(key);
+        return {};
+    }
+
+    std::vector<wchar_t> buffer(
+        static_cast<size_t>(size / sizeof(wchar_t)) + 1, L'\0');
+    result = RegQueryValueExW(key, kAutoStartRunValue,
+        nullptr, &type, reinterpret_cast<BYTE*>(buffer.data()), &size);
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS)
+        return {};
+
+    std::wstring command(buffer.data());
+    if (type != REG_EXPAND_SZ)
+        return command;
+
+    const DWORD expandedLength =
+        ExpandEnvironmentStringsW(command.c_str(), nullptr, 0);
+    if (expandedLength <= 1)
+        return command;
+    std::wstring expanded(expandedLength, L'\0');
+    if (ExpandEnvironmentStringsW(
+            command.c_str(), expanded.data(), expandedLength) == 0)
+    {
+        return command;
+    }
+    expanded.resize(expandedLength - 1);
+    return expanded;
+}
+
+bool LooksLikeSnowDesktopDataDirectory(const std::filesystem::path& path)
+{
+    std::error_code error;
+    if (!std::filesystem::is_directory(path, error))
+        return false;
+
+    return std::filesystem::is_regular_file(
+               path / L"SnowDesktop.layout.json", error) ||
+        std::filesystem::is_regular_file(
+            path / L"SnowDesktop.general.json", error) ||
+        std::filesystem::is_directory(path / L"widgets", error) ||
+        std::filesystem::is_directory(path / L"backups", error);
+}
+
+std::wstring NormalizePathForComparison(const std::filesystem::path& path)
+{
+    std::error_code error;
+    std::filesystem::path normalized =
+        std::filesystem::weakly_canonical(path, error);
+    if (error)
+        normalized = path.lexically_normal();
+
+    std::wstring result = normalized.wstring();
+    std::replace(result.begin(), result.end(), L'/', L'\\');
+    while (result.size() > 3 && result.back() == L'\\')
+        result.pop_back();
+    std::transform(result.begin(), result.end(), result.begin(),
+        [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+    return result;
+}
+
+bool PathsOverlap(const std::filesystem::path& first,
+    const std::filesystem::path& second)
+{
+    const std::wstring left = NormalizePathForComparison(first);
+    const std::wstring right = NormalizePathForComparison(second);
+    if (left == right)
+        return true;
+    const std::wstring leftPrefix = left + L"\\";
+    const std::wstring rightPrefix = right + L"\\";
+    return left.starts_with(rightPrefix) || right.starts_with(leftPrefix);
+}
+
+bool CopyDirectoryContents(const std::filesystem::path& source,
+    const std::filesystem::path& destination)
+{
+    std::error_code error;
+    std::filesystem::create_directories(destination, error);
+    if (error)
+        return false;
+
+    std::filesystem::recursive_directory_iterator entry(source, error);
+    const std::filesystem::recursive_directory_iterator end;
+    if (error)
+        return false;
+
+    while (entry != end)
+    {
+        const std::filesystem::file_status status =
+            entry->symlink_status(error);
+        if (error || std::filesystem::is_symlink(status))
+            return false;
+
+        const std::filesystem::path relative =
+            entry->path().lexically_relative(source);
+        if (relative.empty() || relative.native().starts_with(L".."))
+            return false;
+        const std::filesystem::path target = destination / relative;
+
+        if (std::filesystem::is_directory(status))
+        {
+            std::filesystem::create_directories(target, error);
+            if (error)
+                return false;
+        }
+        else if (std::filesystem::is_regular_file(status))
+        {
+            std::filesystem::create_directories(target.parent_path(), error);
+            if (error)
+                return false;
+            std::filesystem::copy_file(entry->path(), target,
+                std::filesystem::copy_options::overwrite_existing, error);
+            if (error)
+                return false;
+        }
+        else
+        {
+            return false;
+        }
+
+        entry.increment(error);
+        if (error)
+            return false;
+    }
+    return true;
+}
 
 void DrawHelpTooltip(const char* description)
 {
@@ -348,6 +578,9 @@ void SettingsWindow::Shutdown()
  */
 void SettingsWindow::Show()
 {
+    if (snowdesktop::deployment::IsPackaged())
+        packagedAutoStartStateKnown_ = false;
+
     if (hwnd_ == nullptr)
     {
         if (!Init(instance_, device_.Get()))
@@ -815,16 +1048,21 @@ void SettingsWindow::DrawBackupPage()
     ImGui::SeparatorText(_L("app.settings.backup_page_title"));
     ImGui::Spacing();
 
-    const float controlW = kSettingControlWidthDip * dpiScale_;
-    const float saveButtonW = 84.0f * dpiScale_;
-    const float inputW = std::max(1.0f,
-        controlW - ImGui::GetStyle().ItemSpacing.x - saveButtonW);
+    const char* saveBackupLabel = _L("app.settings.save_backup");
+    const char* openDataFolderLabel = _L("app.settings.open_data_folder");
+    const float saveButtonW = std::max(
+        84.0f * dpiScale_, SettingButtonWidth(saveBackupLabel));
+    const float openDataButtonW = std::max(
+        112.0f * dpiScale_, SettingButtonWidth(openDataFolderLabel));
+    const float inputW = 180.0f * dpiScale_;
+    const float controlW = inputW + saveButtonW + openDataButtonW +
+        ImGui::GetStyle().ItemSpacing.x * 2.0f;
     BeginSettingRow(_L("app.settings.save_current_layout"), controlW);
     ImGui::SetNextItemWidth(inputW);
     ImGui::InputTextWithHint("##BackupName", _L("app.settings.backup_name_hint"), backupNameBuf_, sizeof(backupNameBuf_));
 
     ImGui::SameLine();
-    if (BlueButton(_L("app.settings.save_backup"), ImVec2(saveButtonW, 0)))
+    if (BlueButton(saveBackupLabel, ImVec2(saveButtonW, 0)))
     {
         std::wstring name = Utf8ToWide(backupNameBuf_);
         if (name.empty()) name = MakeBackupTimestampName();
@@ -833,20 +1071,32 @@ void SettingsWindow::DrawBackupPage()
             backupNameBuf_[0] = '\0';
         }
     }
+    ImGui::SameLine();
+    if (BlueButton(openDataFolderLabel, ImVec2(openDataButtonW, 0)))
+    {
+        const std::wstring dataDir = GetDataDirectoryPath();
+        ShellExecuteW(nullptr, L"open", dataDir.c_str(),
+            nullptr, nullptr, SW_SHOW);
+    }
 
     ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.saved_backups"));
     ImGui::Spacing();
 
     std::vector<LayoutBackup> backups = ListBackups();
+    const float migrationAreaHeight =
+        ImGui::GetTextLineHeightWithSpacing() +
+        ImGui::GetFrameHeightWithSpacing() + 32.0f * dpiScale_;
+    const float backupListHeight = std::max(
+        100.0f * dpiScale_,
+        ImGui::GetContentRegionAvail().y - migrationAreaHeight);
+    ImGui::BeginChild("##BackupList", ImVec2(0, backupListHeight), true);
     if (backups.empty())
     {
         ImGui::TextDisabled("%s", _L("app.settings.no_backups"));
     }
     else
     {
-        ImGui::BeginChild("##BackupList", ImVec2(0, 0), true);
-
         for (size_t i = 0; i < backups.size(); ++i)
         {
             const auto& b = backups[i];
@@ -867,8 +1117,14 @@ void SettingsWindow::DrawBackupPage()
             }
             ImGui::PopID();
         }
-        ImGui::EndChild();
     }
+    ImGui::EndChild();
+
+    ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.data_migration"));
+    ImGui::Spacing();
+    if (BlueButton(_L("app.settings.migrate_portable_data")))
+        MigratePortableData();
 
     ImGui::EndChild();
 }
@@ -898,6 +1154,54 @@ void SettingsWindow::DrawGeneralPage()
     bool autoStart = IsAutoStartEnabled();
     if (DrawSettingCheckbox(_L("app.settings.auto_start"), "##AutoStart", &autoStart))
         SetAutoStart(autoStart);
+
+    if (snowdesktop::deployment::IsPackaged())
+    {
+        const std::wstring otherAutoStart =
+            ReadPortableAutoStartCommand();
+        if (!otherAutoStart.empty())
+        {
+            ImGui::Spacing();
+            const std::string warning = _LF(
+                "app.settings.auto_start_other_version",
+                WideToUtf8(otherAutoStart));
+            ImGui::PushStyleColor(
+                ImGuiCol_Text, ImVec4(0.95f, 0.58f, 0.16f, 1.0f));
+            ImGui::TextWrapped("%s", warning.c_str());
+            ImGui::PopStyleColor();
+            if (BlueButton(
+                    _L("app.settings.auto_start_open_windows_settings")))
+            {
+                ShellExecuteW(nullptr, L"open",
+                    L"ms-settings:startupapps",
+                    nullptr, nullptr, SW_SHOW);
+            }
+            ImGui::Spacing();
+        }
+    }
+    else
+    {
+        const auto installedState =
+            snowdesktop::deployment::GetInstalledPackagedAutoStartState();
+        if (snowdesktop::deployment::IsPackagedAutoStartStateEnabled(
+                installedState))
+        {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(
+                ImGuiCol_Text, ImVec4(0.95f, 0.58f, 0.16f, 1.0f));
+            ImGui::TextWrapped("%s",
+                _L("app.settings.auto_start_installed_version_active"));
+            ImGui::PopStyleColor();
+            if (BlueButton(
+                    _L("app.settings.auto_start_open_windows_settings")))
+            {
+                ShellExecuteW(nullptr, L"open",
+                    L"ms-settings:startupapps",
+                    nullptr, nullptr, SW_SHOW);
+            }
+            ImGui::Spacing();
+        }
+    }
 
     if (DrawSettingCheckbox(_L("app.settings.software_desktop"), "##SoftwareDesktopEnabled",
         &generalSettings_.softwareDesktopEnabled))
@@ -2297,11 +2601,14 @@ void SettingsWindow::DrawDebugPage()
 
     if (BlueButton(_L("app.settings.open_widget_folder")))
     {
-        wchar_t exePath[MAX_PATH]{};
-        GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-        PathRemoveFileSpecW(exePath);
-        PathAppendW(exePath, L"widgets");
-        ShellExecuteW(nullptr, L"open", exePath, nullptr, nullptr, SW_SHOW);
+        const std::wstring widgetPath =
+            snowdesktop::deployment::IsPackaged()
+            ? GetDataSubdirectoryPath(L"widgets")
+            : (std::filesystem::path(GetExecutableDirectoryPath()) /
+                L"widgets").wstring();
+        CreateDirectoryW(widgetPath.c_str(), nullptr);
+        ShellExecuteW(nullptr, L"open", widgetPath.c_str(),
+            nullptr, nullptr, SW_SHOW);
     }
     ImGui::Spacing();
 
@@ -2514,6 +2821,22 @@ void SettingsWindow::PerformUpdateCheck()
     updateCheckStatusArgument_.clear();
     updateAvailable_ = false;
 
+    if (snowdesktop::deployment::IsPackaged())
+    {
+        const std::wstring storeUri =
+            snowdesktop::deployment::GetStoreProductPageUri();
+        if (!storeUri.empty())
+        {
+            ShellExecuteW(nullptr, L"open", storeUri.c_str(),
+                nullptr, nullptr, SW_SHOW);
+        }
+        updateCheckStatusKey_ =
+            L10N_KEY("app.settings.store_managed_updates");
+        updateCheckStatus_ =
+            _L("app.settings.store_managed_updates");
+        return;
+    }
+
     HINTERNET session = WinHttpOpen(L"SnowDesktop/" SNOWDESKTOP_VERSION,
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
     if (!session)
@@ -2681,6 +3004,12 @@ void SettingsWindow::DrawAboutPage()
     ImGui::Text("    逍遥飘雪（郭云哲）"); // l10n-allow: author name is intentionally fixed
     ImGui::Spacing();
 
+    ImGui::SeparatorText(_L("app.settings.copyright"));
+    ImGui::Spacing();
+    ImGui::TextWrapped("    %s", _L("app.settings.copyright_notice"));
+    ImGui::TextWrapped("    %s", _L("app.settings.license_notice"));
+    ImGui::Spacing();
+
     auto LinkButton = [](const char* label, const char* url) {
         ImGui::Text("    ");
         ImGui::SameLine();
@@ -2696,7 +3025,8 @@ void SettingsWindow::DrawAboutPage()
         }
     };
 
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::SeparatorText(_L("app.settings.personal_homepages"));
+    ImGui::Spacing();
     LinkButton("Bilibili", "https://space.bilibili.com/32837853");
     ImGui::Dummy(ImVec2(0, 2));
     LinkButton("GitHub", "https://github.com/FreeFallingSnow/");
@@ -2789,30 +3119,39 @@ void SettingsWindow::DrawAboutPage()
     ImGui::SeparatorText(_L("app.settings.third_party_libs"));
     ImGui::Spacing();
 
-    ImGui::Text("    Everything SDK");
+    LinkButton("Everything SDK", "https://www.voidtools.com/support/everything/sdk/");
     ImGui::SameLine();
     ImGui::TextDisabled("(MIT)");
     ImGui::TextDisabled("        Copyright (C) 2016 David Carpenter");
 
-    ImGui::Text("    Dear ImGui");
+    LinkButton("Dear ImGui", "https://github.com/ocornut/imgui");
     ImGui::SameLine();
     ImGui::TextDisabled("(MIT)");
     ImGui::TextDisabled("        Copyright (c) 2014-2025 Omar Cornut");
 
-    ImGui::Text("    Lua");
+    LinkButton("Lua", "https://www.lua.org/");
     ImGui::SameLine();
     ImGui::TextDisabled("(MIT)");
     ImGui::TextDisabled("        Copyright (C) 1994-2024 Lua.org, PUC-Rio");
 
-    ImGui::Text("    spdlog");
+    LinkButton("spdlog", "https://github.com/gabime/spdlog");
     ImGui::SameLine();
     ImGui::TextDisabled("(MIT)");
     ImGui::TextDisabled("        Copyright (c) 2016-present, Gabi Melman");
 
-    ImGui::Text("    pinyin-data");
+    LinkButton("pinyin-data", "https://github.com/mozillazg/pinyin-data");
     ImGui::SameLine();
     ImGui::TextDisabled("(MIT)");
     ImGui::TextDisabled("        Copyright (c) 2016 mozillazg");
+
+    ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.reference_programs"));
+    ImGui::Spacing();
+
+    LinkButton("TranslucentTB", "https://github.com/TranslucentTB/TranslucentTB");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(GPL-3.0)");
+    ImGui::TextDisabled("        Copyright (c) TranslucentTB contributors");
 
     ImGui::EndChild();
 }
@@ -2822,9 +3161,193 @@ void SettingsWindow::DrawAboutPage()
 // ════════════════════════════════════════════════════════════════
 
 /**
+ * @brief 从用户选择的携带版目录迁移全部 SnowDesktop 数据。
+ *
+ * 用户既可选择携带版程序目录，也可直接选择其中的 data 目录。迁移时先把
+ * 来源完整复制到 LocalState\TempState 下的暂存目录，再将当前 data 原子移动
+ * 为完整备份并替换为暂存数据，成功后重载布局并重启应用。
+ */
+void SettingsWindow::MigratePortableData()
+{
+    const wchar_t* title = _LW("app.settings.data_migration");
+
+    ComPtr<IFileOpenDialog> dialog;
+    HRESULT result = CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(result))
+    {
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+            title, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+    {
+        dialog->SetOptions(options | FOS_PICKFOLDERS |
+            FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    }
+    dialog->SetTitle(_LW("app.settings.select_portable_data"));
+
+    result = dialog->Show(hwnd_);
+    if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+        return;
+    if (FAILED(result))
+    {
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+            title, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    ComPtr<IShellItem> selectedItem;
+    if (FAILED(dialog->GetResult(&selectedItem)) || !selectedItem)
+    {
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+            title, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    PWSTR selectedPath = nullptr;
+    if (FAILED(selectedItem->GetDisplayName(
+            SIGDN_FILESYSPATH, &selectedPath)) || !selectedPath)
+    {
+        if (selectedPath)
+            CoTaskMemFree(selectedPath);
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+            title, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    std::filesystem::path selectedDirectory(selectedPath);
+    CoTaskMemFree(selectedPath);
+
+    std::filesystem::path sourceData = selectedDirectory;
+    std::filesystem::path sourceWidgets;
+    const std::filesystem::path nestedData =
+        selectedDirectory / L"data";
+    if (LooksLikeSnowDesktopDataDirectory(nestedData))
+    {
+        sourceData = nestedData;
+        sourceWidgets = selectedDirectory / L"widgets";
+    }
+    else if (_wcsicmp(
+                 selectedDirectory.filename().c_str(), L"data") == 0)
+    {
+        sourceWidgets = selectedDirectory.parent_path() / L"widgets";
+    }
+
+    std::error_code sourceWidgetsError;
+    if (!std::filesystem::is_directory(
+            sourceWidgets, sourceWidgetsError))
+    {
+        sourceWidgets.clear();
+    }
+
+    const std::filesystem::path targetData(GetDataDirectoryPath());
+    if (!LooksLikeSnowDesktopDataDirectory(sourceData) ||
+        PathsOverlap(sourceData, targetData) ||
+        (!sourceWidgets.empty() && PathsOverlap(sourceWidgets, targetData)))
+    {
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_invalid"),
+            title, MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    if (MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_confirm"),
+            title, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    {
+        return;
+    }
+
+    std::filesystem::path stateRoot =
+        snowdesktop::deployment::GetPackageLocalStatePath();
+    if (stateRoot.empty())
+        stateRoot = targetData.parent_path();
+
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    wchar_t token[96]{};
+    swprintf_s(token, L"%04u%02u%02u-%02u%02u%02u-%lu-%llu",
+        now.wYear, now.wMonth, now.wDay,
+        now.wHour, now.wMinute, now.wSecond,
+        GetCurrentProcessId(),
+        static_cast<unsigned long long>(GetTickCount64()));
+
+    const std::filesystem::path migrationRoot =
+        stateRoot / L"TempState" / L"PortableMigration";
+    const std::filesystem::path stagingData =
+        migrationRoot / (std::wstring(L"staging-") + token);
+    const std::filesystem::path backupData =
+        migrationRoot / (std::wstring(L"backup-") + token);
+
+    std::error_code error;
+    std::filesystem::create_directories(migrationRoot, error);
+    bool staged = !error &&
+        CopyDirectoryContents(sourceData, stagingData);
+    if (staged && !sourceWidgets.empty())
+    {
+        // Portable widgets live next to the executable. Copy them after data
+        // so they replace any stale duplicate left by an earlier build.
+        staged = CopyDirectoryContents(
+            sourceWidgets, stagingData / L"widgets");
+    }
+    if (!staged ||
+        !LooksLikeSnowDesktopDataDirectory(stagingData))
+    {
+        error.clear();
+        std::filesystem::remove_all(stagingData, error);
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+            title, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    error.clear();
+    std::filesystem::rename(targetData, backupData, error);
+    if (error)
+    {
+        error.clear();
+        std::filesystem::remove_all(stagingData, error);
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+            title, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    error.clear();
+    std::filesystem::rename(stagingData, targetData, error);
+    if (error)
+    {
+        std::error_code rollbackError;
+        std::filesystem::rename(backupData, targetData, rollbackError);
+        std::filesystem::remove_all(stagingData, rollbackError);
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+            title, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    // Prevent the current settings frame from writing pre-migration values
+    // over the imported files while the application is restarting.
+    personalizationDirty_ = false;
+    personalizationPreviewDirty_ = false;
+    personalizationSaveRequested_ = false;
+    dockSettingsDirty_ = false;
+    navigationSettingsDirty_ = false;
+    generalSettingsDirty_ = false;
+    categorySettingsDirty_ = false;
+    categorySettingsSaveRequested_ = false;
+
+    if (reloadCallback_)
+        reloadCallback_();
+
+    MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_success"),
+        title, MB_OK | MB_ICONINFORMATION);
+    if (restartCallback_)
+        restartCallback_();
+}
+
+/**
  * @brief 获取备份文件存储目录路径。
  *
- * 目录位于可执行文件所在目录下 data\backups 子文件夹。
+ * 目录位于当前部署数据目录下的 backups 子文件夹。
  * @return 备份目录的完整宽字符串路径
  */
 std::wstring SettingsWindow::GetBackupDir() const
@@ -3119,6 +3642,20 @@ void SettingsWindow::SetupFonts()
  */
 bool SettingsWindow::IsAutoStartEnabled() const
 {
+    if (snowdesktop::deployment::IsPackaged())
+    {
+        if (!packagedAutoStartStateKnown_)
+        {
+            const auto state =
+                snowdesktop::deployment::GetPackagedAutoStartState();
+            packagedAutoStartEnabled_ =
+                snowdesktop::deployment::IsPackagedAutoStartStateEnabled(
+                    state);
+            packagedAutoStartStateKnown_ = true;
+        }
+        return packagedAutoStartEnabled_;
+    }
+
     HKEY key;
     if (RegOpenKeyExW(HKEY_CURRENT_USER,
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
@@ -3143,9 +3680,109 @@ bool SettingsWindow::IsAutoStartEnabled() const
  */
 void SettingsWindow::SetAutoStart(bool enable) const
 {
+    if (snowdesktop::deployment::IsPackaged())
+    {
+        using snowdesktop::deployment::PackagedAutoStartState;
+        const std::wstring otherAutoStart =
+            ReadPortableAutoStartCommand();
+        if (enable && !otherAutoStart.empty())
+        {
+            const std::wstring confirmation = _LFW(
+                "app.settings.auto_start_portable_conflict",
+                otherAutoStart);
+            if (MessageBoxW(hwnd_, confirmation.c_str(),
+                    _LW("app.settings.auto_start"),
+                    MB_YESNO | MB_ICONWARNING) == IDYES)
+            {
+                ShellExecuteW(nullptr, L"open",
+                    L"ms-settings:startupapps",
+                    nullptr, nullptr, SW_SHOW);
+            }
+            return;
+        }
+
+        const PackagedAutoStartState state =
+            snowdesktop::deployment::SetPackagedAutoStartEnabled(enable);
+        if (state != PackagedAutoStartState::Unavailable)
+        {
+            packagedAutoStartStateKnown_ = true;
+            packagedAutoStartEnabled_ =
+                snowdesktop::deployment::IsPackagedAutoStartStateEnabled(
+                    state);
+        }
+
+        if (enable && !packagedAutoStartEnabled_)
+        {
+            if (state == PackagedAutoStartState::DisabledByUser)
+            {
+                if (MessageBoxW(hwnd_,
+                        _LW("app.settings.auto_start_manual_required"),
+                        _LW("app.settings.auto_start"),
+                        MB_YESNO | MB_ICONINFORMATION) == IDYES)
+                {
+                    ShellExecuteW(nullptr, L"open",
+                        L"ms-settings:startupapps",
+                        nullptr, nullptr, SW_SHOW);
+                }
+            }
+            else if (state == PackagedAutoStartState::DisabledByPolicy)
+            {
+                MessageBoxW(hwnd_,
+                    _LW("app.settings.auto_start_policy_disabled"),
+                    _LW("app.settings.auto_start"),
+                    MB_OK | MB_ICONWARNING);
+            }
+            else
+            {
+                MessageBoxW(hwnd_,
+                    _LW("app.settings.auto_start_enable_failed"),
+                    _LW("app.settings.auto_start"),
+                    MB_OK | MB_ICONERROR);
+            }
+        }
+        else if (!enable && packagedAutoStartEnabled_)
+        {
+            if (state == PackagedAutoStartState::EnabledByPolicy)
+            {
+                MessageBoxW(hwnd_,
+                    _LW("app.settings.auto_start_policy_enabled"),
+                    _LW("app.settings.auto_start"),
+                    MB_OK | MB_ICONWARNING);
+            }
+            else
+            {
+                MessageBoxW(hwnd_,
+                    _LW("app.settings.auto_start_disable_failed"),
+                    _LW("app.settings.auto_start"),
+                    MB_OK | MB_ICONERROR);
+            }
+        }
+        return;
+    }
+
+    if (enable)
+    {
+        const auto installedState =
+            snowdesktop::deployment::GetInstalledPackagedAutoStartState();
+        if (snowdesktop::deployment::IsPackagedAutoStartStateEnabled(
+                installedState))
+        {
+            if (MessageBoxW(hwnd_,
+                    _LW("app.settings.auto_start_installed_conflict"),
+                    _LW("app.settings.auto_start"),
+                    MB_YESNO | MB_ICONWARNING) == IDYES)
+            {
+                ShellExecuteW(nullptr, L"open",
+                    L"ms-settings:startupapps",
+                    nullptr, nullptr, SW_SHOW);
+            }
+            return;
+        }
+    }
+
     HKEY key;
     if (RegCreateKeyExW(HKEY_CURRENT_USER,
-        L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        kAutoStartRunSubKey,
         0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
         return;
 
@@ -3153,13 +3790,13 @@ void SettingsWindow::SetAutoStart(bool enable) const
     {
         wchar_t path[MAX_PATH]{};
         GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path)));
-        RegSetValueExW(key, L"SnowDesktop", 0, REG_SZ,
+        RegSetValueExW(key, kAutoStartRunValue, 0, REG_SZ,
             reinterpret_cast<const BYTE*>(path),
             static_cast<DWORD>((wcslen(path) + 1) * sizeof(wchar_t)));
     }
     else
     {
-        RegDeleteValueW(key, L"SnowDesktop");
+        RegDeleteValueW(key, kAutoStartRunValue);
     }
     RegCloseKey(key);
 }

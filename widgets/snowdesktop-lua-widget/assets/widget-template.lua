@@ -1,4 +1,4 @@
--- Copy this file to widgets/my_widget.lua.
+-- Copy this file to SnowDesktop's active widgets/my_widget.lua.
 name = l10n.tr("lua_widget.template.name")
 useCustomStyle = true
 

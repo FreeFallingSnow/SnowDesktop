@@ -13,7 +13,7 @@ widgets/
 └── my_widget.widget.json
 ```
 
-Place runnable `.lua` files directly in the executable's `widgets` directory. SnowDesktop only discovers `widgets\*.lua`; it does not scan subdirectories.
+Place runnable `.lua` files directly in SnowDesktop's active `widgets` directory. Portable builds use the `widgets` directory beside the executable directly. MSIX builds use `LocalState\data\widgets`, initially seeded from the packaged `widgets` directory. SnowDesktop only discovers `widgets\*.lua`; it does not scan subdirectories.
 
 ## Workflow
 

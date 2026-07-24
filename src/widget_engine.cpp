@@ -13,6 +13,7 @@
 
 #include "widget_engine.h"
 #include "data_paths.h"
+#include "deployment_context.h"
 #include "json_value.h"
 #include "l10n.h"
 #include "system_snapshot.h"
@@ -35,6 +36,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -174,18 +176,134 @@ static std::vector<std::string> JsonReadStringArray(const std::string& text, con
     return result;
 }
 
-static std::wstring GetExeWidgetsDir()
+static std::filesystem::path GetBundledWidgetsDir()
 {
-    wchar_t exePath[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-    PathRemoveFileSpecW(exePath);
-    PathAppendW(exePath, L"widgets");
-    return exePath;
+    return std::filesystem::path(GetExecutableDirectoryPath()) / L"widgets";
+}
+
+static bool CopyWidgetDirectoryContents(
+    const std::filesystem::path& sourceDir,
+    const std::filesystem::path& targetDir,
+    std::filesystem::copy_options copyOptions)
+{
+    std::error_code error;
+    std::filesystem::create_directories(targetDir, error);
+    if (error)
+        return false;
+
+    error.clear();
+    if (!std::filesystem::is_directory(sourceDir, error))
+        return false;
+
+    std::filesystem::recursive_directory_iterator entry(
+        sourceDir,
+        std::filesystem::directory_options::skip_permission_denied,
+        error);
+    const std::filesystem::recursive_directory_iterator end;
+    if (error)
+        return false;
+
+    while (entry != end)
+    {
+        const std::filesystem::file_status status =
+            entry->symlink_status(error);
+        if (error || std::filesystem::is_symlink(status))
+            return false;
+
+        const std::filesystem::path relative =
+            entry->path().lexically_relative(sourceDir);
+        if (relative.empty() || relative.native().starts_with(L".."))
+            return false;
+        const std::filesystem::path target = targetDir / relative;
+
+        if (std::filesystem::is_directory(status))
+        {
+            error.clear();
+            std::filesystem::create_directories(target, error);
+            if (error)
+                return false;
+        }
+        else if (std::filesystem::is_regular_file(status))
+        {
+            error.clear();
+            std::filesystem::create_directories(target.parent_path(), error);
+            if (error)
+                return false;
+            error.clear();
+            std::filesystem::copy_file(
+                entry->path(), target, copyOptions, error);
+            if (error)
+                return false;
+        }
+        else
+        {
+            return false;
+        }
+
+        error.clear();
+        entry.increment(error);
+        if (error)
+            return false;
+    }
+
+    return true;
+}
+
+static void SeedPackagedWidgets(const std::filesystem::path& targetDir)
+{
+    CopyWidgetDirectoryContents(
+        GetBundledWidgetsDir(),
+        targetDir,
+        std::filesystem::copy_options::skip_existing);
+}
+
+static std::filesystem::path GetPortableWidgetsDir()
+{
+    const std::filesystem::path widgetsDir = GetBundledWidgetsDir();
+    const std::filesystem::path legacyDataWidgets =
+        std::filesystem::path(GetDataDirectoryPath()) / L"widgets";
+
+    std::error_code error;
+    if (!std::filesystem::is_directory(legacyDataWidgets, error))
+    {
+        error.clear();
+        std::filesystem::create_directories(widgetsDir, error);
+        return widgetsDir;
+    }
+
+    // Earlier unified-data builds temporarily stored portable widgets under
+    // data\widgets. Merge user edits back into the original portable widgets
+    // directory, then remove the duplicate only after a complete copy.
+    if (!CopyWidgetDirectoryContents(
+            legacyDataWidgets,
+            widgetsDir,
+            std::filesystem::copy_options::overwrite_existing))
+    {
+        return legacyDataWidgets;
+    }
+
+    error.clear();
+    std::filesystem::remove_all(legacyDataWidgets, error);
+    return widgetsDir;
+}
+
+static const std::wstring& GetWidgetsDir()
+{
+    static const std::wstring path = [] {
+        if (!snowdesktop::deployment::IsPackaged())
+            return GetPortableWidgetsDir().wstring();
+
+        const std::filesystem::path dataDir(
+            GetDataSubdirectoryPath(L"widgets"));
+        SeedPackagedWidgets(dataDir);
+        return dataDir.wstring();
+    }();
+    return path;
 }
 
 static std::wstring ResolveWidgetPath(const std::wstring& scriptPath)
 {
-    std::wstring fullPath = GetExeWidgetsDir();
+    std::wstring fullPath = GetWidgetsDir();
     fullPath += L"\\";
     fullPath += scriptPath;
     return fullPath;
@@ -1911,7 +2029,7 @@ static int lua_DrawImage(lua_State* L)
     std::wstring path = Utf8ToWideLocal(pathRaw ? pathRaw : "");
     if (path.empty() || !PathIsRelativeW(path.c_str()))
         return 0;
-    std::wstring fullPath = GetExeWidgetsDir();
+    std::wstring fullPath = GetWidgetsDir();
     fullPath += L"\\";
     fullPath += path;
     ID2D1Bitmap1* bmp = LoadImageBitmap(s, fullPath);
@@ -1990,6 +2108,9 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     d2dState_->engine = this;
     lua_pushlightuserdata(L_, d2dState_);
     lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
+
+    // Initialize the writable widget library before loading layouts or menus.
+    (void)GetWidgetsDir();
 
     // Init storage path
     g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
@@ -4023,7 +4144,7 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
 std::vector<std::wstring> WidgetEngine::ListAvailable()
 {
     std::vector<std::wstring> result;
-    std::wstring search = GetExeWidgetsDir();
+    std::wstring search = GetWidgetsDir();
     search += L"\\*.lua";
 
     WIN32_FIND_DATAW fd{};
@@ -4311,7 +4432,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
     std::wstring stem = PathFindFileNameW(manifestPath.c_str());
     if (stem.size() > 12 && stem.substr(stem.size() - 12) == L".widget.json")
         stem.resize(stem.size() - 12);
-    std::wstring targetDir = GetExeWidgetsDir();
+    std::wstring targetDir = GetWidgetsDir();
     std::wstring targetManifest = targetDir + L"\\" + stem + L".widget.json";
     std::wstring targetScript = targetDir + L"\\" + stem + L".lua";
     std::wstring tempStem = stem + L".installing";

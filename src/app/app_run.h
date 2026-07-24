@@ -1024,6 +1024,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
         });
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
+        settingsWindow_->SetRestartCallback([this]() { RequestRestart(); });
         settingsWindow_->SetInvalidateCallback([this]() {
             ApplyQuickNavigationAppearance();
             if (quickNavigationOpen_)
