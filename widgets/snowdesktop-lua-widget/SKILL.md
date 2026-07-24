@@ -180,7 +180,7 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 For repository development:
 
 1. Save the files under the source `widgets` directory.
-2. Run `check_l10n.bat` to catch untranslated Lua strings and missing keys.
+2. Run `scripts/check_l10n.bat` to catch untranslated Lua strings and missing keys.
 3. Run `build.bat`; CMake copies the complete directory recursively to `.build\Release\widgets`.
 4. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
 5. Exercise click, double-click, wheel, editor, context-menu, and language-switch behavior as applicable.

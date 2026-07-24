@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "(Get-Content version.json | ConvertFrom-Json).version"`) do set VERSION=%%v
 if "%VERSION%"=="" (
@@ -8,10 +8,17 @@ if "%VERSION%"=="" (
     exit /b 1
 )
 
+powershell -NoProfile -Command "$parts = $env:VERSION -split '\.'; if ($parts.Count -ne 4 -or $parts[0] -eq '0' -or $parts[3] -ne '0') { exit 1 }; foreach ($part in $parts) { if ($part -notmatch '^(0|[1-9][0-9]*)$' -or [uint64]$part -gt 65535) { exit 1 } }"
+if errorlevel 1 (
+    echo Refusing to squash: version.json must use Store-compatible A.B.C.0 format.
+    echo Each component must be an integer from 0 to 65535, and A must be greater than zero.
+    exit /b 1
+)
+
 for /f "delims=" %%b in ('git branch --show-current 2^>nul') do set CURRENT_BRANCH=%%b
 if /i not "%CURRENT_BRANCH:~0,9%"=="release/v" (
     echo Refusing to squash: current branch is "%CURRENT_BRANCH%".
-    echo Expected a version branch named release/vX.Y.Z.
+    echo Expected a version branch named release/vA.B.C.D.
     exit /b 1
 )
 
@@ -46,7 +53,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set "COMMIT_MESSAGE=%~1"
+set "COMMIT_MESSAGE=%SNOWDESKTOP_RELEASE_MESSAGE%"
+if not defined COMMIT_MESSAGE set "COMMIT_MESSAGE=%~1"
 if not defined COMMIT_MESSAGE (
     set /p "COMMIT_MESSAGE=Version commit message [%TAG% - version update]: "
 )
@@ -75,10 +83,12 @@ echo This script performs local Git operations only.
 echo It will not fetch, pull, push, call remote APIs, or delete any branch.
 echo After the squash commit, it will create the local annotated tag %TAG%.
 echo.
-choice /C YN /N /M "Continue with the local squash merge? [Y/N] "
-if errorlevel 2 (
-    echo Squash merge cancelled.
-    exit /b 0
+if /i not "%SNOWDESKTOP_RELEASE_APPROVED%"=="1" (
+    choice /C YN /N /M "Continue with the local squash merge? [Y/N] "
+    if errorlevel 2 (
+        echo Squash merge cancelled.
+        exit /b 0
+    )
 )
 
 git switch main

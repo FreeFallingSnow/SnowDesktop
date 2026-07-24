@@ -80,7 +80,7 @@ local language = l10n.language()
   settings labels, presets, menus, and other cached strings with `l10n.tr`.
 - Every widget must use literal keys and add the same keys to every language in
   its own manifest `locales` object. Lua widget strings do not belong in the
-  host `lang/*.json`. Run `check_l10n.bat` to validate missing keys,
+  host `lang/*.json`. Run `scripts/check_l10n.bat` to validate missing keys,
   placeholders, manifest keys, and hard-coded Chinese in Lua strings.
 - Manifests support `nameKey` and `descriptionKey`. Keep `name` and
   `description` as English fallbacks for hosts that do not contain those keys.

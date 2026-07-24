@@ -5,7 +5,7 @@ echo === Configuring CMake (Release) ===
 cmake -B .build -S .
 if %ERRORLEVEL% NEQ 0 (
     echo CMake configure FAILED
-    pause
+    if not defined SNOWDESKTOP_NONINTERACTIVE pause
     exit /b 1
 )
 
@@ -15,15 +15,15 @@ tasklist /fi "IMAGENAME eq SnowDesktop.exe" 2>nul | find /i "SnowDesktop.exe" >n
 if %ERRORLEVEL% EQU 0 (
     echo Stopping running SnowDesktop.exe...
     taskkill /f /im SnowDesktop.exe >nul 2>&1
-    timeout /t 1 /nobreak >nul
+    ping 127.0.0.1 -n 2 >nul
 )
 rem Explorer keeps the hook DLL loaded; terminate it briefly to release the lock.
 taskkill /f /im explorer.exe >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     echo Explorer terminated to release DLL lock.
-    timeout /t 2 /nobreak >nul
+    ping 127.0.0.1 -n 3 >nul
     echo Starting explorer...
-    start explorer.exe
+    start "" explorer.exe >nul 2>&1
 )
 
 echo.
@@ -31,7 +31,7 @@ echo === Building SnowDesktop.exe ===
 cmake --build .build --config Release --target SnowDesktop --parallel
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
-    pause
+    if not defined SNOWDESKTOP_NONINTERACTIVE pause
     exit /b 1
 )
 
@@ -40,7 +40,7 @@ echo === Build complete ===
 echo SnowDesktop.exe: .build\Release\SnowDesktop.exe
 echo Taskbar appearance Hook: .build\Release\SnowDesktopTaskbarHook.dll
 echo.
-echo For a version release, run release.bat after the release branch has been
-echo completed. It includes the guarded local squash and tag workflow.
+echo For a version release, run release.bat to open the unified release center.
+echo Agent and automation usage is available through release.bat COMMAND.
 echo.
-pause
+if not defined SNOWDESKTOP_NONINTERACTIVE pause
