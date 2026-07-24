@@ -607,8 +607,12 @@ private:
             : settings.systemTaskbarAppearance;
         if (settings.systemTaskbarContentTheme >= 0)
             result.contentTheme = settings.systemTaskbarContentTheme;
-        else if (settingsWindow_)
-            result.contentTheme = settingsWindow_->GetPersonalization().contentTheme;
+        else if (!settings.systemTaskbarFollowPersonalization &&
+                 settings.systemTaskbarAppearance.backgroundPreset !=
+                     kAppearancePresetCustom)
+            result.contentTheme = MakeAppearancePreset(
+                settings.systemTaskbarAppearance.backgroundPreset)
+                .contentTheme;
         return result;
     }
     /** @brief 当前文字颜色是否为深色(黑字)。contentTheme==1 时为 true。 */

@@ -1806,52 +1806,6 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::PopID();
         return changed;
     };
-    auto drawTaskbarPreset = [&]() {
-        PersonalizationSettings& overrideStyle =
-            dockSettings_.systemTaskbarAppearance;
-        bool& followGlobal = dockSettings_.systemTaskbarFollowPersonalization;
-        const char* id = "SystemTaskbarAppearance";
-        ImGui::PushID(id);
-        ImGui::Indent(8.0f * dpiScale_);
-        if (DrawSettingCheckbox("任务栏继承全局", "##FollowGlobal", &followGlobal))
-            dockSettingsDirty_ = true;
-
-        BeginSettingRow("文字颜色", controlW);
-        const char* ctNames[] = { "跟随全局", "浅色", "深色" };
-        int ct = dockSettings_.systemTaskbarContentTheme + 1;
-        ImGui::SetNextItemWidth(controlW);
-        if (ImGui::Combo("##ContentThemeTaskbar", &ct,
-            ctNames, IM_ARRAYSIZE(ctNames)))
-        {
-            dockSettings_.systemTaskbarContentTheme = ct - 1;
-            dockSettingsDirty_ = true;
-        }
-
-        if (!followGlobal)
-        {
-            int selection = presetSelectionForId(overrideStyle.backgroundPreset);
-            BeginSettingRow("任务栏主题", controlW);
-            ImGui::SetNextItemWidth(controlW);
-            if (ImGui::Combo("##OverrideTheme", &selection,
-                presetNames, IM_ARRAYSIZE(presetNames)))
-            {
-                if (presetIds[selection] == kAppearancePresetCustom)
-                {
-                    overrideStyle.backgroundPreset = kAppearancePresetCustom;
-                }
-                else
-                {
-                    overrideStyle = MakeAppearancePreset(presetIds[selection]);
-                }
-                dockSettingsDirty_ = true;
-            }
-            if (overrideStyle.backgroundPreset == kAppearancePresetCustom &&
-                drawOverrideAdvanced(overrideStyle, "OverrideAdvanced"))
-                dockSettingsDirty_ = true;
-        }
-        ImGui::Unindent(8.0f * dpiScale_);
-        ImGui::PopID();
-    };
 
     ImGui::Spacing();
     ImGui::SeparatorText("桌面图标");
@@ -1861,37 +1815,154 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::Spacing();
     ImGui::SeparatorText("系统外观");
     ImGui::Spacing();
-    const char* taskbarRuntimeStatus = nullptr;
-    switch (GetSystemTaskbarBackdropRuntimeState())
+
+    int taskbarThemeMode;
+    if (!dockSettings_.systemTaskbarBackdropEnabled)
+        taskbarThemeMode = 0;
+    else if (dockSettings_.systemTaskbarFollowPersonalization)
+        taskbarThemeMode = 1;
+    else
     {
-    case SystemTaskbarBackdropRuntimeState::Loading:
-        taskbarRuntimeStatus = "正在连接 Explorer 任务栏...";
-        break;
-    case SystemTaskbarBackdropRuntimeState::Unsupported:
-        taskbarRuntimeStatus = "当前系统不支持 Win11 XAML 任务栏个性化方案";
-        break;
-    case SystemTaskbarBackdropRuntimeState::Failed:
-        taskbarRuntimeStatus = "Explorer 任务栏个性化连接失败，请重启 Explorer 后重试";
-        break;
-    case SystemTaskbarBackdropRuntimeState::Disabled:
-    case SystemTaskbarBackdropRuntimeState::Active:
-    default:
-        break;
+        const int preset = NormalizeAppearancePresetId(
+            dockSettings_.systemTaskbarAppearance.backgroundPreset);
+        if (preset == kAppearancePresetCustom)
+            taskbarThemeMode = 8;
+        else switch (preset)
+        {
+        case kAppearancePresetDark:        taskbarThemeMode = 2; break;
+        case kAppearancePresetLight:       taskbarThemeMode = 3; break;
+        case kAppearancePresetGlassDark:   taskbarThemeMode = 4; break;
+        case kAppearancePresetGlassLight:  taskbarThemeMode = 5; break;
+        case kAppearancePresetAcrylicDark: taskbarThemeMode = 6; break;
+        case kAppearancePresetAcrylicLight: taskbarThemeMode = 7; break;
+        default:                            taskbarThemeMode = 2; break;
+        }
     }
-    std::string taskbarBackdropHelp;
-    if (taskbarRuntimeStatus)
+
+    BeginSettingRow("任务栏主题", controlW,
+        "请勿同时运行 TranslucentTB 等任务栏美化工具。");
+    const char* taskbarThemeNames[] = {
+        "不美化", "跟随全局主题",
+        "深色", "浅色", "深色毛玻璃", "浅色毛玻璃",
+        "深色亚克力", "浅色亚克力", "自定义"
+    };
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##TaskbarThemeMode", &taskbarThemeMode,
+        taskbarThemeNames, IM_ARRAYSIZE(taskbarThemeNames)))
     {
-        taskbarBackdropHelp = taskbarRuntimeStatus;
-        taskbarBackdropHelp += "\n";
-    }
-    taskbarBackdropHelp += "请勿同时运行 TranslucentTB 等任务栏美化工具。";
-    if (DrawSettingCheckbox("启用任务栏个性化",
-        "##SystemTaskbarBackdropEnabled",
-        &dockSettings_.systemTaskbarBackdropEnabled,
-        taskbarBackdropHelp.c_str()))
+        switch (taskbarThemeMode)
+        {
+        case 0:
+            dockSettings_.systemTaskbarBackdropEnabled = false;
+            break;
+        case 1:
+            dockSettings_.systemTaskbarBackdropEnabled = true;
+            dockSettings_.systemTaskbarFollowPersonalization = true;
+            dockSettings_.systemTaskbarContentTheme = -1;
+            break;
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+        case 6:
+        case 7:
+            dockSettings_.systemTaskbarBackdropEnabled = true;
+            dockSettings_.systemTaskbarFollowPersonalization = false;
+            dockSettings_.systemTaskbarContentTheme = -1;
+            {
+                constexpr int modeToPreset[] = {
+                    -1, -1,
+                    kAppearancePresetDark,
+                    kAppearancePresetLight,
+                    kAppearancePresetGlassDark,
+                    kAppearancePresetGlassLight,
+                    kAppearancePresetAcrylicDark,
+                    kAppearancePresetAcrylicLight
+                };
+                dockSettings_.systemTaskbarAppearance =
+                    MakeAppearancePreset(
+                        modeToPreset[taskbarThemeMode]);
+            }
+            break;
+        case 8:
+            dockSettings_.systemTaskbarBackdropEnabled = true;
+            dockSettings_.systemTaskbarFollowPersonalization = false;
+            dockSettings_.systemTaskbarAppearance.backgroundPreset =
+                kAppearancePresetCustom;
+            if (dockSettings_.systemTaskbarContentTheme < 0)
+                dockSettings_.systemTaskbarContentTheme =
+                    dockSettings_.systemTaskbarAppearance.contentTheme;
+            break;
+        }
         dockSettingsDirty_ = true;
-    if (dockSettings_.systemTaskbarBackdropEnabled)
-        drawTaskbarPreset();
+    }
+
+    if (taskbarThemeMode != 0)
+    {
+        const char* taskbarRuntimeStatus = nullptr;
+        switch (GetSystemTaskbarBackdropRuntimeState())
+        {
+        case SystemTaskbarBackdropRuntimeState::Loading:
+            taskbarRuntimeStatus = "正在连接 Explorer 任务栏...";
+            break;
+        case SystemTaskbarBackdropRuntimeState::Unsupported:
+            taskbarRuntimeStatus =
+                "当前系统不支持 Win11 XAML 任务栏个性化方案";
+            break;
+        case SystemTaskbarBackdropRuntimeState::Failed:
+            taskbarRuntimeStatus =
+                "Explorer 任务栏个性化连接失败，请重启 Explorer 后重试";
+            break;
+        case SystemTaskbarBackdropRuntimeState::Disabled:
+        case SystemTaskbarBackdropRuntimeState::Active:
+        default:
+            break;
+        }
+        if (taskbarRuntimeStatus)
+        {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                "%s", taskbarRuntimeStatus);
+        }
+
+        BeginSettingRow("文字颜色", controlW);
+        if (taskbarThemeMode == 8)
+        {
+            const char* ctNames[] = { "浅色", "深色" };
+            int ct = dockSettings_.systemTaskbarContentTheme;
+            if (ct < 0)
+                ct = dockSettings_.systemTaskbarAppearance.contentTheme;
+            ImGui::SetNextItemWidth(controlW);
+            if (ImGui::Combo("##ContentThemeTaskbar", &ct,
+                ctNames, IM_ARRAYSIZE(ctNames)))
+            {
+                dockSettings_.systemTaskbarContentTheme = ct;
+                dockSettingsDirty_ = true;
+            }
+        }
+        else
+        {
+            const char* ctNames[] = { "跟随主题", "浅色", "深色" };
+            int ct = dockSettings_.systemTaskbarContentTheme + 1;
+            ImGui::SetNextItemWidth(controlW);
+            if (ImGui::Combo("##ContentThemeTaskbar", &ct,
+                ctNames, IM_ARRAYSIZE(ctNames)))
+            {
+                dockSettings_.systemTaskbarContentTheme = ct - 1;
+                dockSettingsDirty_ = true;
+            }
+        }
+
+        if (taskbarThemeMode == 8)
+        {
+            ImGui::Indent(8.0f * dpiScale_);
+            if (drawOverrideAdvanced(
+                dockSettings_.systemTaskbarAppearance,
+                "OverrideAdvanced"))
+                dockSettingsDirty_ = true;
+            ImGui::Unindent(8.0f * dpiScale_);
+        }
+    }
     ImGui::Spacing();
     DrawSystemTaskbarPage();
 
