@@ -7,6 +7,8 @@
  */
 #pragma once
 
+#include <ShObjIdl.h>
+
 #include "drop_model.h"
 
 // ── 网格辅助函数 ──────────────────────────────────────────
@@ -6065,18 +6067,35 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
 
-    // Pick source folder
-    BROWSEINFOW bi{};
-    bi.hwndOwner = hwnd_;
-    bi.lpszTitle = L"选择要映射的文件夹";
-    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
-    if (!pidl) return;
-    wchar_t path[MAX_PATH]{};
-    SHGetPathFromIDListW(pidl, path);
-    CoTaskMemFree(pidl);
-
-    std::wstring folderPath(path);
+    // Pick source folder via modern file-explorer-style dialog
+    std::wstring folderPath;
+    {
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        IFileOpenDialog* pfd = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                        IID_PPV_ARGS(&pfd))))
+        {
+            pfd->SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+            pfd->SetTitle(L"选择要映射的文件夹");
+            if (SUCCEEDED(pfd->Show(hwnd_)))
+            {
+                IShellItem* psi = nullptr;
+                if (SUCCEEDED(pfd->GetResult(&psi)))
+                {
+                    PWSTR pszPath = nullptr;
+                    if (SUCCEEDED(psi->GetDisplayName(SIGDN_FILESYSPATH, &pszPath)))
+                    {
+                        folderPath = pszPath;
+                        CoTaskMemFree(pszPath);
+                    }
+                    psi->Release();
+                }
+            }
+            pfd->Release();
+        }
+        CoUninitialize();
+    }
+    if (folderPath.empty()) return;
     std::wstring title = folderPath;
     if (!title.empty() && title.back() == L'\\') title.pop_back();
     size_t lastSep = title.find_last_of(L"\\/");
