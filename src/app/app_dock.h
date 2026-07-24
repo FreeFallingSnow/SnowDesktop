@@ -1403,6 +1403,36 @@ inline int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
 
 inline void DesktopApp::ApplyDockWorkAreaReservation()
 {
+    for (const RECT& dockArea : dockAreas_)
+    {
+        for (auto& page : gridPages_)
+        {
+            RECT intersect;
+            if (!IntersectRect(&intersect, &dockArea, &page.bounds)) continue;
+            int reserved;
+            switch (dockSettings_.position)
+            {
+            case DockPosition::Top:
+                reserved = dockArea.bottom - dockArea.top;
+                page.workArea.top = std::max(page.bounds.top, page.workArea.top - reserved);
+                break;
+            case DockPosition::Bottom:
+                reserved = dockArea.bottom - dockArea.top;
+                page.workArea.bottom = std::min(page.bounds.bottom, page.workArea.bottom + reserved);
+                break;
+            case DockPosition::Left:
+                reserved = dockArea.right - dockArea.left;
+                page.workArea.left = std::max(page.bounds.left, page.workArea.left - reserved);
+                break;
+            case DockPosition::Right:
+                reserved = dockArea.right - dockArea.left;
+                page.workArea.right = std::min(page.bounds.right, page.workArea.right + reserved);
+                break;
+            }
+            break;
+        }
+    }
+
     dockAreas_.clear();
     if (!generalSettings_.dockEnabled || gridPages_.empty()) return;
 

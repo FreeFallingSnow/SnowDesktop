@@ -95,6 +95,7 @@ inline void DesktopApp::AdjustGridRows(int delta)
     ApplyIconSpacingToPage(*targetPage);
     savedPageColumns_[targetPage->id] = targetPage->columns;
     savedPageRows_[targetPage->id] = targetPage->rows;
+    ApplyDockWorkAreaReservation();
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
@@ -126,6 +127,7 @@ inline void DesktopApp::AdjustGridColumns(int delta)
     ApplyIconSpacingToPage(*targetPage);
     savedPageColumns_[targetPage->id] = targetPage->columns;
     savedPageRows_[targetPage->id] = targetPage->rows;
+    ApplyDockWorkAreaReservation();
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
@@ -169,6 +171,7 @@ inline void DesktopApp::SetGridDimensions(int columns, int rows)
     ApplyIconSpacingToPage(*targetPage);
     savedPageColumns_[targetPage->id] = targetPage->columns;
     savedPageRows_[targetPage->id] = targetPage->rows;
+    ApplyDockWorkAreaReservation();
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
@@ -279,6 +282,7 @@ inline void DesktopApp::SetIconSpacing(float value)
     iconSpacingScale_ = clamped;
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
+    ApplyDockWorkAreaReservation();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -295,6 +299,7 @@ inline void DesktopApp::AdjustIconSpacing(float delta)
     iconSpacingScale_ = newVal;
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
+    ApplyDockWorkAreaReservation();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -700,7 +705,7 @@ inline void DesktopApp::PlaceGuideWidgetOnPage(const std::wstring& pageId)
     DesktopWidget w;
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::Guide;
-    w.title = L"分页使用指南";
+    w.title = _LW("app.guide.title");
     w.showTitle = true;
     w.bottomBarHover = true;
     w.gridSpan = { 4, 3 };
@@ -1936,13 +1941,13 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                             }
                             else if (widget.type == DesktopWidgetType::Guide)
                             {
-                                widget.title = L"分页使用指南";
+                                widget.title = _LW("app.guide.title");
                             }
                             else
                             {
-                                widget.title = widget.type == DesktopWidgetType::FileCategories ? L"桌面文件"
-                                    : widget.type == DesktopWidgetType::FolderMapping ? L"文件夹映射"
-                                    : L"集合";
+                                widget.title = widget.type == DesktopWidgetType::FileCategories ? _LW("widget.desktop_files")
+                                    : widget.type == DesktopWidgetType::FolderMapping ? _LW("widget.folder_mapping")
+                                    : _LW("widget.collection");
                             }
                         }
                         else
@@ -4851,7 +4856,7 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
         for (int i = 1; i < 1000; ++i)
         {
             std::wstring name = i <= 1
-                ? stem + L" - 副本" + ext
+                    ? stem + _LW("app.grid.copy_suffix") + ext
                 : stem + L" - 副本 (" + std::to_wstring(i) + L")" + ext;
             wchar_t dst[MAX_PATH]{};
             PathCombineW(dst, desktopPath.c_str(), name.c_str());
@@ -4859,7 +4864,7 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
                 return std::wstring(dst);
         }
         wchar_t fallback[MAX_PATH]{};
-        PathCombineW(fallback, desktopPath.c_str(), (stem + L" - 副本 (1000)" + ext).c_str());
+        PathCombineW(fallback, desktopPath.c_str(), (stem + _LW("app.grid.copy_suffix_1000") + ext).c_str());
         return std::wstring(fallback);
     };
 
@@ -4868,7 +4873,7 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
         wchar_t stemBuf[MAX_PATH]{};
         wcscpy_s(stemBuf, fileName ? fileName : L"");
         PathRemoveExtensionW(stemBuf);
-        std::wstring stem = stemBuf[0] != L'\0' ? stemBuf : L"快捷方式";
+        std::wstring stem = stemBuf[0] != L'\0' ? stemBuf : _LW("widget.shortcut");
 
         for (int i = 1; i < 1000; ++i)
         {
@@ -6036,7 +6041,7 @@ inline void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
     DesktopWidget w;
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::Collection;
-    w.title = L"集合";
+    w.title = _LW("widget.collection");
     w.showTitle = true;
     w.bottomBarHover = true;
     AddWidgetToGrid(std::move(w), { 1, 1 });
@@ -6053,7 +6058,7 @@ inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
     DesktopWidget w;
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::FileCategories;
-    w.title = L"桌面文件";
+    w.title = _LW("widget.desktop_files");
     w.showTitle = true;
     AddWidgetToGrid(std::move(w), { 2, 2 });
     ShowWidgetAddedHint();
@@ -6076,7 +6081,7 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
                                         IID_PPV_ARGS(&pfd))))
         {
             pfd->SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-            pfd->SetTitle(L"选择要映射的文件夹");
+            pfd->SetTitle(_LW("app.interact.select_folder"));
             if (SUCCEEDED(pfd->Show(hwnd_)))
             {
                 IShellItem* psi = nullptr;
