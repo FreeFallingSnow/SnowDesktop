@@ -1659,6 +1659,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
                 (targetRegion == HitRegion::SortBefore ||
                  targetRegion == HitRegion::SortAfter))
             {
+                if (clipped) { ctx->PopAxisAlignedClip(); clipped = false; }
                 targetSlot->DrawDropIndicator(ctx, targetRegion,
                     static_cast<float>(kCollectionPopupGapX) * 0.5f);
             }
