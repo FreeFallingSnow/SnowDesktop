@@ -13,10 +13,14 @@
 
 #include "widget_engine.h"
 #include "data_paths.h"
+#include "deployment_context.h"
+#include "json_value.h"
+#include "l10n.h"
 #include "system_snapshot.h"
 #include "constants.h"
 #include "utils.h"
 #include "search_match.h"
+#include "personalization.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -32,7 +36,9 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -170,18 +176,134 @@ static std::vector<std::string> JsonReadStringArray(const std::string& text, con
     return result;
 }
 
-static std::wstring GetExeWidgetsDir()
+static std::filesystem::path GetBundledWidgetsDir()
 {
-    wchar_t exePath[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-    PathRemoveFileSpecW(exePath);
-    PathAppendW(exePath, L"widgets");
-    return exePath;
+    return std::filesystem::path(GetExecutableDirectoryPath()) / L"widgets";
+}
+
+static bool CopyWidgetDirectoryContents(
+    const std::filesystem::path& sourceDir,
+    const std::filesystem::path& targetDir,
+    std::filesystem::copy_options copyOptions)
+{
+    std::error_code error;
+    std::filesystem::create_directories(targetDir, error);
+    if (error)
+        return false;
+
+    error.clear();
+    if (!std::filesystem::is_directory(sourceDir, error))
+        return false;
+
+    std::filesystem::recursive_directory_iterator entry(
+        sourceDir,
+        std::filesystem::directory_options::skip_permission_denied,
+        error);
+    const std::filesystem::recursive_directory_iterator end;
+    if (error)
+        return false;
+
+    while (entry != end)
+    {
+        const std::filesystem::file_status status =
+            entry->symlink_status(error);
+        if (error || std::filesystem::is_symlink(status))
+            return false;
+
+        const std::filesystem::path relative =
+            entry->path().lexically_relative(sourceDir);
+        if (relative.empty() || relative.native().starts_with(L".."))
+            return false;
+        const std::filesystem::path target = targetDir / relative;
+
+        if (std::filesystem::is_directory(status))
+        {
+            error.clear();
+            std::filesystem::create_directories(target, error);
+            if (error)
+                return false;
+        }
+        else if (std::filesystem::is_regular_file(status))
+        {
+            error.clear();
+            std::filesystem::create_directories(target.parent_path(), error);
+            if (error)
+                return false;
+            error.clear();
+            std::filesystem::copy_file(
+                entry->path(), target, copyOptions, error);
+            if (error)
+                return false;
+        }
+        else
+        {
+            return false;
+        }
+
+        error.clear();
+        entry.increment(error);
+        if (error)
+            return false;
+    }
+
+    return true;
+}
+
+static void SeedPackagedWidgets(const std::filesystem::path& targetDir)
+{
+    CopyWidgetDirectoryContents(
+        GetBundledWidgetsDir(),
+        targetDir,
+        std::filesystem::copy_options::skip_existing);
+}
+
+static std::filesystem::path GetPortableWidgetsDir()
+{
+    const std::filesystem::path widgetsDir = GetBundledWidgetsDir();
+    const std::filesystem::path legacyDataWidgets =
+        std::filesystem::path(GetDataDirectoryPath()) / L"widgets";
+
+    std::error_code error;
+    if (!std::filesystem::is_directory(legacyDataWidgets, error))
+    {
+        error.clear();
+        std::filesystem::create_directories(widgetsDir, error);
+        return widgetsDir;
+    }
+
+    // Earlier unified-data builds temporarily stored portable widgets under
+    // data\widgets. Merge user edits back into the original portable widgets
+    // directory, then remove the duplicate only after a complete copy.
+    if (!CopyWidgetDirectoryContents(
+            legacyDataWidgets,
+            widgetsDir,
+            std::filesystem::copy_options::overwrite_existing))
+    {
+        return legacyDataWidgets;
+    }
+
+    error.clear();
+    std::filesystem::remove_all(legacyDataWidgets, error);
+    return widgetsDir;
+}
+
+static const std::wstring& GetWidgetsDir()
+{
+    static const std::wstring path = [] {
+        if (!snowdesktop::deployment::IsPackaged())
+            return GetPortableWidgetsDir().wstring();
+
+        const std::filesystem::path dataDir(
+            GetDataSubdirectoryPath(L"widgets"));
+        SeedPackagedWidgets(dataDir);
+        return dataDir.wstring();
+    }();
+    return path;
 }
 
 static std::wstring ResolveWidgetPath(const std::wstring& scriptPath)
 {
-    std::wstring fullPath = GetExeWidgetsDir();
+    std::wstring fullPath = GetWidgetsDir();
     fullPath += L"\\";
     fullPath += scriptPath;
     return fullPath;
@@ -201,6 +323,16 @@ static std::wstring ManifestPathForScriptFile(const std::wstring& fullScriptPath
 static std::unordered_map<std::string, std::string> g_storage;
 static std::wstring g_storagePath;
 static std::deque<WidgetLogEntry> g_widgetLogs;
+
+static bool IsRemovedPanelEffectSettingKey(const std::string& key)
+{
+    const size_t separator = key.rfind('.');
+    const std::string setting = separator == std::string::npos
+        ? key : key.substr(separator + 1);
+    return setting == "shadowAlpha" || setting == "shadowBlur" ||
+        setting == "shadowOffsetY" || setting == "highlightAlpha" ||
+        setting == "noiseAlpha";
+}
 
 static void LoadStorageFile()
 {
@@ -226,7 +358,8 @@ static void LoadStorageFile()
         if (pos == std::string::npos) break;
         size_t valEnd = text.find('"', pos + 1);
         if (valEnd == std::string::npos) break;
-        g_storage[key] = text.substr(pos + 1, valEnd - pos - 1);
+        if (!IsRemovedPanelEffectSettingKey(key))
+            g_storage[key] = text.substr(pos + 1, valEnd - pos - 1);
         pos = valEnd + 1;
     }
 }
@@ -270,6 +403,8 @@ struct D2DState
     int gridCellH = 116;
     int gridGapY = 8;
     int barHeight = 24;
+    DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    float itemFontSizeScale = 1.0f;
     int widgetClipDepth = 0;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
     ID2D1DeviceContext* brushContext = nullptr;
@@ -578,7 +713,7 @@ static int lua_DrawText(lua_State* L)
     if (!s || !s->ctx || !s->dwrite) return 0;
 
     IDWriteTextFormat* format = GetCachedTextFormat(s, size,
-        bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        bold ? DWRITE_FONT_WEIGHT_BOLD : s->itemFontWeight,
         false, maxWidth > 0 && singleLine
             ? DWRITE_WORD_WRAPPING_NO_WRAP
             : DWRITE_WORD_WRAPPING_WRAP);
@@ -645,7 +780,7 @@ static int lua_MeasureText(lua_State* L)
         return pushSize(0.0f, 0.0f);
 
     IDWriteTextFormat* format = GetCachedTextFormat(s, size,
-        bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        bold ? DWRITE_FONT_WEIGHT_BOLD : s->itemFontWeight,
         false, DWRITE_WORD_WRAPPING_WRAP);
     if (!format)
         return pushSize(0.0f, 0.0f);
@@ -935,7 +1070,16 @@ static std::unordered_map<std::string, std::string> JsonReadValueMap(
             {
                 if (object[p] == '"') { ++p; break; }
                 if (object[p] == '\\' && p + 1 < object.size())
-                    value.push_back(object[++p]);
+                {
+                    const char escaped = object[++p];
+                    switch (escaped)
+                    {
+                    case 'n': value.push_back('\n'); break;
+                    case 'r': value.push_back('\r'); break;
+                    case 't': value.push_back('\t'); break;
+                    default: value.push_back(escaped); break;
+                    }
+                }
                 else
                     value.push_back(object[p]);
             }
@@ -955,18 +1099,57 @@ static std::unordered_map<std::string, std::string> JsonReadValueMap(
     return result;
 }
 
+static const std::unordered_map<std::string, std::string>*
+SelectManifestLocale(const LuaWidgetManifest& manifest)
+{
+    const std::string language = Locale::Instance().GetEffectiveLanguage();
+    auto catalog = manifest.locales.find(language);
+    if (catalog != manifest.locales.end())
+        return &catalog->second;
+    catalog = manifest.locales.find("en-US");
+    if (catalog != manifest.locales.end())
+        return &catalog->second;
+    return manifest.locales.empty() ? nullptr : &manifest.locales.begin()->second;
+}
+
+static std::string TranslateManifest(const LuaWidgetManifest& manifest,
+    const std::string& key, const std::string& fallback = {})
+{
+    if (const auto* catalog = SelectManifestLocale(manifest))
+    {
+        auto value = catalog->find(key);
+        if (value != catalog->end())
+            return value->second;
+    }
+    auto english = manifest.locales.find("en-US");
+    if (english != manifest.locales.end())
+    {
+        auto value = english->second.find(key);
+        if (value != english->second.end())
+            return value->second;
+    }
+    return fallback.empty() ? key : fallback;
+}
+
+static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest);
+
 static bool IsHostStructureSettingKey(const std::string& key)
 {
     return key == "cornerRadius" || key == "barHeight";
+}
+
+static bool IsHostSharedGlassSettingKey(const std::string& key)
+{
+    return key == "glassBlurRadius";
 }
 
 static bool IsHostAppearanceSettingKey(const std::string& key)
 {
     return key == "bg" || key == "border" || key == "alpha" ||
         key == "borderAlpha" || key == "gradientEndA" ||
-        key == "shadowAlpha" || key == "shadowBlur" ||
-        key == "shadowOffsetY" || key == "highlightAlpha" ||
-        key == "noiseAlpha" || key == "followPersonalization";
+        IsRemovedPanelEffectSettingKey(key) || key == "glassEnabled" ||
+        key == "glassBlurRadius" || key == "acrylicEnabled" ||
+        key == "followPersonalization";
 }
 
 static std::string FindDeclaredDefaultValue(const LuaWidget& widget, const std::string& key)
@@ -1629,18 +1812,14 @@ static int lua_WidgetTheme(lua_State* L)
     LuaWidgetTheme theme;
     if (s && s->engine)
         theme = s->engine->RuntimeGetWidgetTheme(s->currentWidgetId);
-    lua_createtable(L, 0, 11);
+    lua_createtable(L, 0, 7);
     lua_pushinteger(L, theme.bg); lua_setfield(L, -2, "bg");
     lua_pushinteger(L, theme.border); lua_setfield(L, -2, "border");
     lua_pushnumber(L, theme.alpha); lua_setfield(L, -2, "alpha");
     lua_pushnumber(L, theme.borderAlpha); lua_setfield(L, -2, "borderAlpha");
     lua_pushnumber(L, theme.gradientEndA); lua_setfield(L, -2, "gradientEndA");
     lua_pushnumber(L, theme.cornerRadius); lua_setfield(L, -2, "cornerRadius");
-    lua_pushnumber(L, theme.shadowAlpha); lua_setfield(L, -2, "shadowAlpha");
-    lua_pushnumber(L, theme.shadowBlur); lua_setfield(L, -2, "shadowBlur");
-    lua_pushnumber(L, theme.shadowOffsetY); lua_setfield(L, -2, "shadowOffsetY");
-    lua_pushnumber(L, theme.highlightAlpha); lua_setfield(L, -2, "highlightAlpha");
-    lua_pushnumber(L, theme.noiseAlpha); lua_setfield(L, -2, "noiseAlpha");
+    lua_pushinteger(L, theme.contentTheme); lua_setfield(L, -2, "contentTheme");
     return 1;
 }
 
@@ -1850,7 +2029,7 @@ static int lua_DrawImage(lua_State* L)
     std::wstring path = Utf8ToWideLocal(pathRaw ? pathRaw : "");
     if (path.empty() || !PathIsRelativeW(path.c_str()))
         return 0;
-    std::wstring fullPath = GetExeWidgetsDir();
+    std::wstring fullPath = GetWidgetsDir();
     fullPath += L"\\";
     fullPath += path;
     ID2D1Bitmap1* bmp = LoadImageBitmap(s, fullPath);
@@ -1929,6 +2108,9 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     d2dState_->engine = this;
     lua_pushlightuserdata(L_, d2dState_);
     lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
+
+    // Initialize the writable widget library before loading layouts or menus.
+    (void)GetWidgetsDir();
 
     // Init storage path
     g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
@@ -2052,6 +2234,8 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     lua_getglobal(L, "media");   lua_setfield(L, -2, "media");
     lua_getglobal(L, "http");    lua_setfield(L, -2, "http");
     lua_getglobal(L, "ui");      lua_setfield(L, -2, "ui");
+    PushWidgetL10nAPI(L, widget.manifest);
+    lua_setfield(L, -2, "l10n");
 
     if (widget.permissions.contains("ui.input"))
     {
@@ -2161,6 +2345,12 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
         customStyle = lua_toboolean(L_, -1) != 0;
     lua_pop(L_, 1);
 
+    bool followPersonalizationDefault = false;
+    lua_getfield(L_, -1, "followPersonalizationDefault");
+    if (!lua_isnil(L_, -1))
+        followPersonalizationDefault = lua_toboolean(L_, -1) != 0;
+    lua_pop(L_, 1);
+
     std::vector<LuaWidgetManifest::Setting> scriptSettings;
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets;
     ReadLuaDeclaredSettings(L_, -1, scriptSettings, scriptPresets);
@@ -2176,6 +2366,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     w.ref = ref;
     w.valid = true;
     w.customStyle = customStyle;
+    w.followPersonalizationDefault = followPersonalizationDefault;
     w.scriptSettings = std::move(scriptSettings);
     w.scriptPresets = std::move(scriptPresets);
     WIN32_FILE_ATTRIBUTE_DATA attr{};
@@ -2201,9 +2392,16 @@ void WidgetEngine::RenderAll(ID2D1DeviceContext* context)
     d2dState_->ctx = context;
 }
 
-bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName)
+bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
+    const std::wstring& widgetName,
+    PersonalizationSettings& mainPersonalization,
+    bool& sharedGlassSettingsChanged,
+    bool& sharedGlassSettingsSaveRequested)
 {
     (void)widgetName;
+    (void)mainPersonalization;
+    sharedGlassSettingsChanged = false;
+    sharedGlassSettingsSaveRequested = false;
 
     SetWidgetExecutionContext(d2dState_, widgetId);
     int idx = FindWidget(widgetId);
@@ -2226,7 +2424,9 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         return !defaultValue.empty() ? defaultValue : fallback;
     };
     auto setStorage = [&](const std::string& key, const std::string& value) {
-        if (key.empty() || IsHostStructureSettingKey(key)) return;
+        if (key.empty() || IsHostStructureSettingKey(key) ||
+            IsHostSharedGlassSettingKey(key) ||
+            IsRemovedPanelEffectSettingKey(key)) return;
         std::string fullKey = prefix + key;
         auto it = g_storage.find(fullKey);
         if (it != g_storage.end() && it->second == value) return;
@@ -2255,12 +2455,44 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         };
         return (toByte(r) << 16) | (toByte(g) << 8) | toByte(b);
     };
+    auto applyAppearance = [&](const PersonalizationSettings& appearance) {
+        setStorage("bg", std::to_string(colorToInt(appearance.widgetBgR,
+            appearance.widgetBgG, appearance.widgetBgB)));
+        setStorage("border", std::to_string(colorToInt(appearance.widgetBorderR,
+            appearance.widgetBorderG, appearance.widgetBorderB)));
+        setStorage("alpha", std::to_string(appearance.widgetAlpha));
+        setStorage("borderAlpha", std::to_string(appearance.widgetBorderAlpha));
+        setStorage("gradientEndA", std::to_string(appearance.gradientEndA));
+        setStorage("glassEnabled", appearance.glassEnabled ? "1" : "0");
+        setStorage("acrylicEnabled", appearance.acrylicEnabled ? "1" : "0");
+    };
     auto parseColor = [](const std::string& value, int fallback) {
         if (value.empty()) return fallback;
         char* end = nullptr;
         long parsed = std::strtol(value.c_str(), &end, 0);
         return end != value.c_str() ? static_cast<int>(parsed) : fallback;
     };
+    auto beginEditorRow = [](const char* label, float requestedWidth) {
+        const float rowStart = ImGui::GetCursorPosX();
+        const float availableWidth = ImGui::GetContentRegionAvail().x;
+        const float rowRight = rowStart + availableWidth;
+        const float maximumWidth = std::max(ImGui::GetFrameHeight(), availableWidth * 0.58f);
+        const float controlWidth = std::min(requestedWidth, maximumWidth);
+        const float controlX = std::max(rowStart, rowRight - controlWidth);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine(controlX);
+        return controlWidth;
+    };
+    auto editorCheckbox = [&](const char* label, const char* id, bool* value) {
+        beginEditorRow(label, ImGui::GetFrameHeight());
+        return ImGui::Checkbox(id, value);
+    };
+    auto editorButtonWidth = [](const char* label) {
+        return ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    };
+    constexpr float kEditorControlWidth = 300.0f;
+    constexpr float kEditorSliderWidth = kEditorControlWidth;
     auto renderSetting = [&](const LuaWidgetManifest::Setting& setting) {
         if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
             IsHostAppearanceSettingKey(setting.key))
@@ -2272,7 +2504,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         if (setting.type == "bool")
         {
             bool value = current == "1" || current == "true";
-            if (ImGui::Checkbox(setting.label.c_str(), &value))
+            if (editorCheckbox(setting.label.c_str(), "##Value", &value))
             {
                 next = value ? "1" : "0";
                 changed = true;
@@ -2281,7 +2513,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         else if (setting.type == "int")
         {
             int value = std::atoi(current.c_str());
-            if (ImGui::SliderInt(setting.label.c_str(), &value,
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorSliderWidth));
+            if (ImGui::SliderInt("##Value", &value,
                 static_cast<int>(setting.minValue), static_cast<int>(setting.maxValue)))
             {
                 next = std::to_string(value);
@@ -2291,7 +2524,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         else if (setting.type == "float")
         {
             float value = static_cast<float>(std::atof(current.c_str()));
-            if (ImGui::SliderFloat(setting.label.c_str(), &value,
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorSliderWidth));
+            if (ImGui::SliderFloat("##Value", &value,
                 static_cast<float>(setting.minValue), static_cast<float>(setting.maxValue)))
             {
                 std::ostringstream ss;
@@ -2308,7 +2542,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
                 ((color >> 8) & 0xFF) / 255.0f,
                 (color & 0xFF) / 255.0f
             };
-            if (ImGui::ColorEdit3(setting.label.c_str(), rgb, ImGuiColorEditFlags_NoInputs))
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x));
+            if (ImGui::ColorEdit3("##Value", rgb, ImGuiColorEditFlags_NoInputs))
             {
                 next = std::to_string(colorToInt(rgb[0], rgb[1], rgb[2]));
                 changed = true;
@@ -2321,7 +2556,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
                 if (setting.options[i] == current) selected = static_cast<int>(i);
             std::vector<const char*> labels;
             for (const auto& option : setting.options) labels.push_back(option.c_str());
-            if (ImGui::Combo(setting.label.c_str(), &selected, labels.data(),
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorControlWidth));
+            if (ImGui::Combo("##Value", &selected, labels.data(),
                 static_cast<int>(labels.size())))
             {
                 next = setting.options[selected];
@@ -2332,7 +2568,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         {
             char buffer[512]{};
             strncpy_s(buffer, current.c_str(), _TRUNCATE);
-            if (ImGui::InputText(setting.label.c_str(), buffer, sizeof(buffer)))
+            ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorControlWidth));
+            if (ImGui::InputText("##Value", buffer, sizeof(buffer)))
             {
                 next = buffer;
                 changed = true;
@@ -2355,16 +2592,6 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
         if (defaultPresetIndex < 0) return nullptr;
         return &presets[static_cast<size_t>(defaultPresetIndex)].values;
     };
-    auto applyDefaultThemeValues = [&]() {
-        const auto* values = defaultPresetValues();
-        if (!values) return;
-        for (const auto& kv : *values)
-        {
-            if (IsHostAppearanceSettingKey(kv.first))
-                setStorage(kv.first, kv.second);
-        }
-        setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
-    };
     auto applyDefaultSettingValues = [&]() {
         const auto* values = defaultPresetValues();
         for (const auto& setting : settings)
@@ -2386,79 +2613,188 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
 
     if (widget.customStyle)
     {
-        ImGui::Text("外观");
-        ImGui::Separator();
+        ImGui::SeparatorText(_L("app.settings.appearance"));
 
         bool followPersonalization =
             getStorage("followPersonalization", "0") == "1" ||
             getStorage("followPersonalization", "0") == "true";
-        if (ImGui::Checkbox("跟随个性化设置", &followPersonalization))
+        if (editorCheckbox(_L("engine.editor.follow_global"), "##FollowPersonalization", &followPersonalization))
             setStorage("followPersonalization", followPersonalization ? "1" : "0");
 
-        ImGui::BeginDisabled(followPersonalization);
+        constexpr const char* builtInThemeIds[] = {
+            "__global_dark", "__global_light",
+            "__global_glass_dark", "__global_glass_light",
+            "__global_acrylic_dark", "__global_acrylic_light"
+        };
+        constexpr int builtInPresetIds[] = {
+            kAppearancePresetDark, kAppearancePresetLight,
+            kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+            kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight
+        };
+        constexpr int builtInThemeCount = IM_ARRAYSIZE(builtInThemeIds);
+        constexpr int customThemeIndex = builtInThemeCount;
+        constexpr const char* customThemeId = "__custom";
+        constexpr const char* legacyMainSnapshotId = "__main_personalization";
+        constexpr const char* builtInThemeNameKeys[] = {
+            L10N_KEY("app.settings.dark"), L10N_KEY("app.settings.light"),
+            L10N_KEY("app.settings.dark_glass"), L10N_KEY("app.settings.light_glass"),
+            L10N_KEY("app.settings.dark_acrylic"), L10N_KEY("app.settings.light_acrylic")
+        };
+        static_assert(IM_ARRAYSIZE(builtInThemeNameKeys) == builtInThemeCount);
+        std::vector<std::string> builtInThemeLabels;
+        builtInThemeLabels.reserve(builtInThemeCount);
+        for (const char* key : builtInThemeNameKeys)
+            builtInThemeLabels.push_back(
+                _LF("engine.editor.global_theme_format", _L(key)));
 
-        if (!presets.empty())
+        std::vector<const char*> themeLabels;
+        themeLabels.reserve(builtInThemeCount + 1 + presets.size());
+        for (const std::string& label : builtInThemeLabels)
+            themeLabels.push_back(label.c_str());
+        themeLabels.push_back(_L("app.settings.custom"));
+        for (const auto& preset : presets)
+            themeLabels.push_back(preset.label.c_str());
+
+        std::string currentPreset = getStorage("__preset",
+            defaultPresetIndex >= 0
+                ? presets[static_cast<size_t>(defaultPresetIndex)].id
+                : customThemeId);
+        int selectedTheme = customThemeIndex;
+        for (int i = 0; i < IM_ARRAYSIZE(builtInThemeIds); ++i)
         {
-            std::string currentPreset = getStorage("__preset", defaultPresetIndex >= 0
-                ? presets[static_cast<size_t>(defaultPresetIndex)].id : presets[0].id);
-            int selectedPreset = 0;
-            for (size_t i = 0; i < presets.size(); ++i)
-                if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
-            std::vector<const char*> presetLabels;
-            for (const auto& preset : presets) presetLabels.push_back(preset.label.c_str());
-            if (ImGui::Combo("组件预设", &selectedPreset, presetLabels.data(),
-                static_cast<int>(presetLabels.size())))
+            if (currentPreset == builtInThemeIds[i])
             {
-                applyValues(presets[static_cast<size_t>(selectedPreset)].values);
-                setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
+                selectedTheme = i;
+                break;
+            }
+        }
+        if (currentPreset != customThemeId && currentPreset != legacyMainSnapshotId &&
+            selectedTheme == customThemeIndex)
+        {
+            for (size_t i = 0; i < presets.size(); ++i)
+            {
+                if (presets[i].id == currentPreset)
+                {
+                    selectedTheme = customThemeIndex + 1 + static_cast<int>(i);
+                    break;
+                }
             }
         }
 
-        float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.36f;
-        float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f, borderAlpha = 0.40f;
-        float gradientEndA = 0.0f, shadowAlpha = 0.0f, shadowBlur = 12.0f;
-        float shadowOffsetY = 4.0f, highlightAlpha = 0.0f, noiseAlpha = 0.0f;
-        ReadCustomColors(widgetId, bgR, bgG, bgB, alpha, borderR, borderG, borderB,
-            borderAlpha, gradientEndA, shadowAlpha, shadowBlur, shadowOffsetY,
-            highlightAlpha, noiseAlpha);
-
-        float bgColor[3] = { bgR, bgG, bgB };
-        if (ImGui::ColorEdit3("背景颜色", bgColor, ImGuiColorEditFlags_NoInputs))
-            setStorage("bg", std::to_string(colorToInt(bgColor[0], bgColor[1], bgColor[2])));
-        if (ImGui::SliderFloat("背景不透明度", &alpha, 0.0f, 1.0f))
-            setStorage("alpha", std::to_string(alpha));
-        float borderColor[3] = { borderR, borderG, borderB };
-        if (ImGui::ColorEdit3("边框颜色", borderColor, ImGuiColorEditFlags_NoInputs))
-            setStorage("border", std::to_string(colorToInt(borderColor[0], borderColor[1], borderColor[2])));
-        if (ImGui::SliderFloat("边框不透明度", &borderAlpha, 0.0f, 1.0f))
-            setStorage("borderAlpha", std::to_string(borderAlpha));
-        if (ImGui::SliderFloat("渐变结束透明度", &gradientEndA, 0.0f, 1.0f))
-            setStorage("gradientEndA", std::to_string(gradientEndA));
-        if (ImGui::SliderFloat("阴影强度", &shadowAlpha, 0.0f, 0.8f))
-            setStorage("shadowAlpha", std::to_string(shadowAlpha));
-        if (ImGui::SliderFloat("阴影柔化半径", &shadowBlur, 0.0f, 32.0f))
-            setStorage("shadowBlur", std::to_string(shadowBlur));
-        if (ImGui::SliderFloat("阴影偏移", &shadowOffsetY, 0.0f, 16.0f))
-            setStorage("shadowOffsetY", std::to_string(shadowOffsetY));
-        if (ImGui::SliderFloat("顶部高光", &highlightAlpha, 0.0f, 0.8f))
-            setStorage("highlightAlpha", std::to_string(highlightAlpha));
-        if (ImGui::SliderFloat("磨砂颗粒", &noiseAlpha, 0.0f, 0.18f))
-            setStorage("noiseAlpha", std::to_string(noiseAlpha));
-
+        ImGui::BeginDisabled(followPersonalization);
+        ImGui::SetNextItemWidth(beginEditorRow(
+            _L("app.settings.theme"), kEditorControlWidth));
+        if (ImGui::Combo("##Theme", &selectedTheme, themeLabels.data(),
+            static_cast<int>(themeLabels.size())))
+        {
+            if (selectedTheme >= 0 && selectedTheme < builtInThemeCount)
+            {
+                auto preset = MakeAppearancePreset(
+                    builtInPresetIds[selectedTheme]);
+                applyAppearance(preset);
+                setStorage("__preset", builtInThemeIds[selectedTheme]);
+                setStorage("__contentTheme", std::to_string(preset.contentTheme));
+            }
+            else if (selectedTheme == customThemeIndex)
+            {
+                setStorage("__preset", customThemeId);
+            }
+            else
+            {
+                const size_t presetIndex = static_cast<size_t>(
+                    selectedTheme - customThemeIndex - 1);
+                if (presetIndex < presets.size())
+                {
+                    if (presets[presetIndex].values.find("glassEnabled") ==
+                        presets[presetIndex].values.end())
+                        setStorage("glassEnabled", "0");
+                    if (presets[presetIndex].values.find("acrylicEnabled") ==
+                        presets[presetIndex].values.end())
+                        setStorage("acrylicEnabled", "0");
+                    for (const auto& kv : presets[presetIndex].values)
+                    {
+                        if (kv.first != "followPersonalization")
+                            setStorage(kv.first, kv.second);
+                    }
+                    setStorage("__preset", presets[presetIndex].id);
+                    setStorage("__contentTheme", "");
+                }
+            }
+        }
         ImGui::EndDisabled();
 
-        if (defaultPresetIndex >= 0)
+        const bool customThemeSelected = selectedTheme == customThemeIndex;
+        if (!followPersonalization && customThemeSelected)
         {
-            if (whiteTextButton("恢复默认主题"))
-                applyDefaultThemeValues();
+            ImGui::Spacing();
+            ImGui::Indent();
+            float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.36f;
+            float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f;
+            float borderAlpha = 0.40f;
+            float gradientEndA = 0.0f;
+            bool glassEnabled = false;
+            bool acrylicEnabled = false;
+            ReadCustomColors(widgetId, bgR, bgG, bgB, alpha,
+                borderR, borderG, borderB, borderAlpha,
+                gradientEndA, glassEnabled, acrylicEnabled);
+
+            float bgColor[3] = { bgR, bgG, bgB };
+            ImGui::SetNextItemWidth(beginEditorRow(_L("app.settings.bg_color"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x));
+            if (ImGui::ColorEdit3("##BackgroundColor", bgColor,
+                ImGuiColorEditFlags_NoInputs))
+                setStorage("bg", std::to_string(colorToInt(
+                    bgColor[0], bgColor[1], bgColor[2])));
+            ImGui::SetNextItemWidth(beginEditorRow(_L("app.settings.bg_opacity"), kEditorSliderWidth));
+            if (ImGui::SliderFloat("##BackgroundOpacity", &alpha, 0.0f, 1.0f))
+                setStorage("alpha", std::to_string(alpha));
+            float borderColor[3] = { borderR, borderG, borderB };
+            ImGui::SetNextItemWidth(beginEditorRow(_L("app.settings.border_color"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x));
+            if (ImGui::ColorEdit3("##BorderColor", borderColor,
+                ImGuiColorEditFlags_NoInputs))
+                setStorage("border", std::to_string(colorToInt(
+                    borderColor[0], borderColor[1], borderColor[2])));
+            ImGui::SetNextItemWidth(beginEditorRow(_L("app.settings.border_opacity"), kEditorSliderWidth));
+            if (ImGui::SliderFloat("##BorderOpacity", &borderAlpha, 0.0f, 1.0f))
+                setStorage("borderAlpha", std::to_string(borderAlpha));
+            ImGui::SetNextItemWidth(beginEditorRow(_L("app.settings.gradient_end_alpha"), kEditorSliderWidth));
+            if (ImGui::SliderFloat("##GradientEndOpacity", &gradientEndA, 0.0f, 1.0f))
+                setStorage("gradientEndA", std::to_string(gradientEndA));
+            if (editorCheckbox(_L("app.settings.glass_bg"), "##GlassBackground", &glassEnabled))
+            {
+                setStorage("glassEnabled", glassEnabled ? "1" : "0");
+                if (!glassEnabled && acrylicEnabled)
+                {
+                    acrylicEnabled = false;
+                    setStorage("acrylicEnabled", "0");
+                }
+            }
+            if (editorCheckbox(_L("app.settings.acrylic_enable"), "##AcrylicBackground", &acrylicEnabled))
+            {
+                setStorage("acrylicEnabled", acrylicEnabled ? "1" : "0");
+                if (acrylicEnabled && !glassEnabled)
+                {
+                    glassEnabled = true;
+                    setStorage("glassEnabled", "1");
+                }
+            }
+            {
+                const char* contentThemeNames[] = { _L("app.settings.light"), _L("app.settings.dark") };
+                std::string stored = getStorage("__contentTheme", "");
+                int ctValue = std::clamp(stored.empty() ? mainPersonalization.contentTheme
+                    : std::stoi(stored), 0, 1);
+                ImGui::SetNextItemWidth(beginEditorRow(_L("app.settings.widget_content_theme"), kEditorControlWidth));
+                if (ImGui::Combo("##ContentTheme", &ctValue,
+                    contentThemeNames, IM_ARRAYSIZE(contentThemeNames)))
+                    setStorage("__contentTheme", std::to_string(ctValue));
+            }
+            ImGui::Unindent();
         }
         ImGui::Spacing();
     }
 
     if (!widget.customStyle && !presets.empty())
     {
-        ImGui::Text("组件预设");
-        ImGui::Separator();
+        ImGui::SeparatorText(_L("app.settings.style_preview"));
         std::string currentPreset = getStorage("__preset", defaultPresetIndex >= 0
             ? presets[static_cast<size_t>(defaultPresetIndex)].id : presets[0].id);
         int selectedPreset = 0;
@@ -2466,27 +2802,34 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId, const std::w
             if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
         std::vector<const char*> presetLabels;
         for (const auto& preset : presets) presetLabels.push_back(preset.label.c_str());
-        if (ImGui::Combo("组件预设", &selectedPreset, presetLabels.data(),
+        ImGui::SetNextItemWidth(beginEditorRow(_L("app.settings.current_preview"), kEditorControlWidth));
+        if (ImGui::Combo("##WidgetPreset", &selectedPreset, presetLabels.data(),
             static_cast<int>(presetLabels.size())))
         {
             applyValues(presets[static_cast<size_t>(selectedPreset)].values);
             setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
         }
-        if (defaultPresetIndex >= 0 && whiteTextButton("恢复组件默认"))
+        const char* resetPresetLabel = _L("app.settings.restore_script_default");
+        if (defaultPresetIndex >= 0)
         {
-            applyValues(presets[static_cast<size_t>(defaultPresetIndex)].values);
-            setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
+            beginEditorRow(_L("app.settings.preview_default"), editorButtonWidth(resetPresetLabel));
+            if (whiteTextButton(resetPresetLabel))
+            {
+                applyValues(presets[static_cast<size_t>(defaultPresetIndex)].values);
+                setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
+            }
         }
         ImGui::Spacing();
     }
 
     if (!settings.empty())
     {
-        ImGui::Text("基础设置");
-        ImGui::Separator();
+        ImGui::SeparatorText(_L("app.settings.script_settings"));
         for (const auto& setting : settings)
             renderSetting(setting);
-        if (whiteTextButton("恢复默认设置"))
+        const char* resetSettingsLabel = _L("app.settings.restore_default_settings");
+        beginEditorRow(_L("app.settings.set_as_default"), editorButtonWidth(resetSettingsLabel));
+        if (whiteTextButton(resetSettingsLabel))
             applyDefaultSettingValues();
         ImGui::Spacing();
     }
@@ -3019,9 +3362,7 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag
 bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& bgR, float& bgG, float& bgB, float& alpha,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
-    float& gradientEndA, float& shadowAlpha,
-    float& shadowBlur, float& shadowOffsetY, float& highlightAlpha,
-    float& noiseAlpha) const
+    float& gradientEndA, bool& glassEnabled, bool& acrylicEnabled) const
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
@@ -3045,16 +3386,19 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
                 lua_pop(L_, 1);
             };
 
+            auto readBool = [&](const char* key, bool& out, bool def) {
+                lua_getfield(L_, -1, key);
+                out = lua_isnil(L_, -1) ? def : (lua_toboolean(L_, -1) != 0);
+                lua_pop(L_, 1);
+            };
+
             readHex("bg", bgR, bgG, bgB, 0x151A21);
             readHex("border", borderR, borderG, borderB, 0xFFFFFF);
             readFloat("alpha", alpha, 0.36f);
             readFloat("borderAlpha", borderAlpha, alpha);
             readFloat("gradientEndA", gradientEndA, 0.0f);
-            readFloat("shadowAlpha", shadowAlpha, 0.0f);
-            readFloat("shadowBlur", shadowBlur, 12.0f);
-            readFloat("shadowOffsetY", shadowOffsetY, 4.0f);
-            readFloat("highlightAlpha", highlightAlpha, 0.0f);
-            readFloat("noiseAlpha", noiseAlpha, 0.0f);
+            readBool("glassEnabled", glassEnabled, false);
+            readBool("acrylicEnabled", acrylicEnabled, false);
 
             const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
             auto readStoredColor = [&](const char* key, float& r, float& g, float& b) {
@@ -3069,16 +3413,18 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
                 auto it = g_storage.find(prefix + key);
                 if (it != g_storage.end()) out = static_cast<float>(std::atof(it->second.c_str()));
             };
+            auto readStoredBool = [&](const char* key, bool& out) {
+                auto it = g_storage.find(prefix + key);
+                if (it != g_storage.end())
+                    out = it->second == "1" || it->second == "true";
+            };
             readStoredColor("bg", bgR, bgG, bgB);
             readStoredColor("border", borderR, borderG, borderB);
             readStoredFloat("alpha", alpha);
             readStoredFloat("borderAlpha", borderAlpha);
             readStoredFloat("gradientEndA", gradientEndA);
-            readStoredFloat("shadowAlpha", shadowAlpha);
-            readStoredFloat("shadowBlur", shadowBlur);
-            readStoredFloat("shadowOffsetY", shadowOffsetY);
-            readStoredFloat("highlightAlpha", highlightAlpha);
-            readStoredFloat("noiseAlpha", noiseAlpha);
+            readStoredBool("glassEnabled", glassEnabled);
+            readStoredBool("acrylicEnabled", acrylicEnabled);
 
             lua_pop(L_, 1);
             return true;
@@ -3132,6 +3478,15 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
         return widget.widgetId == widgetId;
     });
     return LoadWidget(path, widgetId);
+}
+
+void WidgetEngine::NotifyLanguageChanged(const std::wstring& widgetId)
+{
+    int index = FindWidget(widgetId);
+    if (index < 0)
+        return;
+    InvokeSimpleCallback(widgets_[index], "onLanguageChanged");
+    RuntimeInvalidateHost(widgetId);
 }
 
 bool WidgetEngine::RuntimeHasPermission(const std::wstring& widgetId, const char* permission) const
@@ -3217,12 +3572,17 @@ std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, c
         return it->second;
 
     int idx = FindWidget(widgetId);
-    return idx >= 0 ? FindDeclaredDefaultValue(widgets_[idx], key) : std::string{};
+    if (idx < 0) return {};
+    const LuaWidget& widget = widgets_[idx];
+    if (key == "followPersonalization" && widget.customStyle &&
+        widget.followPersonalizationDefault)
+        return "1";
+    return FindDeclaredDefaultValue(widget, key);
 }
 
 void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const std::string& key, const std::string& value)
 {
-    if (key.empty()) return;
+    if (key.empty() || IsRemovedPanelEffectSettingKey(key)) return;
     g_storage[WidgetWideToUtf8(widgetId) + "." + key] = value;
     SaveStorageFile();
 }
@@ -3732,6 +4092,20 @@ void WidgetEngine::SetBarHeight(int barHeight)
         d2dState_->barHeight = barHeight;
 }
 
+void WidgetEngine::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
+{
+    if (!d2dState_) return;
+    if (d2dState_->itemFontWeight == weight) return;
+    d2dState_->itemFontWeight = weight;
+    d2dState_->textFormatCache.clear();
+}
+
+void WidgetEngine::SetItemFontSizeScale(float scale)
+{
+    if (!d2dState_) return;
+    d2dState_->itemFontSizeScale = std::max(0.5f, scale);
+}
+
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
 {
     if (openWidgetSettingsCallback_)
@@ -3770,7 +4144,7 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
 std::vector<std::wstring> WidgetEngine::ListAvailable()
 {
     std::vector<std::wstring> result;
-    std::wstring search = GetExeWidgetsDir();
+    std::wstring search = GetWidgetsDir();
     search += L"\\*.lua";
 
     WIN32_FIND_DATAW fd{};
@@ -3804,96 +4178,181 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     if (text.empty())
         return manifest;
 
+    JsonValue root;
+    if (!ParseJson(text, root) || !root.IsObject())
+        return manifest;
     manifest.hasManifest = true;
-    JsonReadString(text, "name", manifest.name);
-    JsonReadString(text, "version", manifest.version);
-    JsonReadString(text, "description", manifest.description);
-    JsonReadString(text, "publisher", manifest.publisher);
-    JsonReadString(text, "minHostVersion", manifest.minHostVersion);
-    JsonReadString(text, "preview", manifest.preview);
-    JsonReadString(text, "entry", manifest.entry);
-    JsonReadString(text, "signature", manifest.signature);
-    manifest.permissions = JsonReadStringArray(text, "permissions");
-    manifest.networkDomains = JsonReadStringArray(text, "networkDomains");
-    int refreshMs = 0;
-    if (JsonReadInt(text, "refreshIntervalMs", refreshMs) && refreshMs > 0)
-        manifest.refreshIntervalMs = std::clamp(refreshMs,
-            static_cast<int>(kWidgetRefreshMinIntervalMs),
-            static_cast<int>(kWidgetRefreshMaxIntervalMs));
-    for (const auto& object : JsonReadObjectArray(text, "settings"))
-    {
-        LuaWidgetManifest::Setting setting;
-        JsonReadString(object, "key", setting.key);
-        JsonReadString(object, "label", setting.label);
-        JsonReadString(object, "type", setting.type);
-        JsonReadString(object, "default", setting.defaultValue);
-        JsonReadDouble(object, "min", setting.minValue);
-        JsonReadDouble(object, "max", setting.maxValue);
-        setting.options = JsonReadStringArray(object, "options");
-        if (!setting.key.empty() && !setting.label.empty())
+
+    auto readString = [](const JsonValue& object, const char* field,
+        std::string& output) {
+        const JsonValue* value = object.Find(field);
+        if (!value || !value->IsString())
+            return false;
+        output = value->string;
+        return true;
+    };
+    auto valueString = [](const JsonValue& value) -> std::string {
+        if (value.IsString()) return value.string;
+        if (value.IsBoolean()) return value.boolean ? "1" : "0";
+        if (value.IsNumber())
         {
-            if (setting.type.empty()) setting.type = "text";
-            if (!IsHostStructureSettingKey(setting.key) &&
-                !IsHostAppearanceSettingKey(setting.key))
-                manifest.settings.push_back(std::move(setting));
+            std::ostringstream stream;
+            stream << value.number;
+            return stream.str();
         }
-    }
-    for (const auto& object : JsonReadObjectArray(text, "presets"))
-    {
-        LuaWidgetManifest::SettingPreset preset;
-        JsonReadString(object, "id", preset.id);
-        JsonReadString(object, "label", preset.label);
-        if (preset.label.empty())
-            JsonReadString(object, "name", preset.label);
-        JsonReadBool(object, "default", preset.isDefault);
-        preset.values = JsonReadValueMap(object, "values");
-        for (auto it = preset.values.begin(); it != preset.values.end();)
-        {
-            if (IsHostStructureSettingKey(it->first))
-                it = preset.values.erase(it);
-            else
-                ++it;
-        }
-        if (!preset.id.empty() && !preset.label.empty() && !preset.values.empty())
-        {
-            manifest.presets.push_back(std::move(preset));
-        }
-    }
-    auto sizeObject = [&text](const char* field) {
-        std::string result;
-        std::string key = std::string("\"") + field + "\"";
-        size_t name = text.find(key);
-        if (name == std::string::npos) return result;
-        size_t open = text.find('{', name + key.size());
-        size_t close = text.find('}', open == std::string::npos ? name : open + 1);
-        if (open != std::string::npos && close != std::string::npos && close > open)
-            result = text.substr(open, close - open + 1);
+        return {};
+    };
+    auto readStringArray = [](const JsonValue& object, const char* field) {
+        std::vector<std::string> result;
+        const JsonValue* values = object.Find(field);
+        if (!values || !values->IsArray())
+            return result;
+        for (const JsonValue& value : values->array)
+            if (value.IsString())
+                result.push_back(value.string);
         return result;
     };
+    auto readNumber = [](const JsonValue& object, const char* field,
+        double& output) {
+        const JsonValue* value = object.Find(field);
+        if (!value || !value->IsNumber())
+            return false;
+        output = value->number;
+        return true;
+    };
+    auto readBool = [](const JsonValue& object, const char* field,
+        bool& output) {
+        const JsonValue* value = object.Find(field);
+        if (!value || !value->IsBoolean())
+            return false;
+        output = value->boolean;
+        return true;
+    };
 
-    std::string sizeText = sizeObject("defaultSize");
-    int columns = manifest.defaultColumns;
-    int rows = manifest.defaultRows;
-    if (!sizeText.empty() && JsonReadInt(sizeText, "columns", columns))
-        manifest.defaultColumns = std::clamp(columns, 1, 8);
-    if (!sizeText.empty() && JsonReadInt(sizeText, "rows", rows))
-        manifest.defaultRows = std::clamp(rows, 1, 8);
-
-    std::string minSizeText = sizeObject("minSize");
-    columns = manifest.minColumns;
-    rows = manifest.minRows;
-    if (!minSizeText.empty() && JsonReadInt(minSizeText, "columns", columns))
-        manifest.minColumns = std::max(1, columns);
-    if (!minSizeText.empty() && JsonReadInt(minSizeText, "rows", rows))
-        manifest.minRows = std::max(1, rows);
-
-    std::string maxSizeText = sizeObject("maxSize");
-    columns = manifest.maxColumns;
-    rows = manifest.maxRows;
-    if (!maxSizeText.empty() && JsonReadInt(maxSizeText, "columns", columns))
-        manifest.maxColumns = std::max(0, columns);
-    if (!maxSizeText.empty() && JsonReadInt(maxSizeText, "rows", rows))
-        manifest.maxRows = std::max(0, rows);
+    readString(root, "name", manifest.name);
+    readString(root, "nameKey", manifest.nameKey);
+    readString(root, "version", manifest.version);
+    readString(root, "description", manifest.description);
+    readString(root, "descriptionKey", manifest.descriptionKey);
+    manifest.titleKeys = readStringArray(root, "titleKeys");
+    if (const JsonValue* locales = root.Find("locales");
+        locales && locales->IsObject())
+    {
+        for (const auto& [language, values] : locales->object)
+        {
+            if (!values.IsObject())
+                continue;
+            std::unordered_map<std::string, std::string> catalog;
+            bool valid = true;
+            for (const auto& [key, value] : values.object)
+            {
+                if (!value.IsString())
+                {
+                    valid = false;
+                    break;
+                }
+                catalog.emplace(key, value.string);
+            }
+            if (valid && !catalog.empty())
+                manifest.locales.emplace(language, std::move(catalog));
+        }
+    }
+    if (!manifest.nameKey.empty())
+        manifest.name = TranslateManifest(manifest, manifest.nameKey, manifest.name);
+    if (!manifest.descriptionKey.empty())
+        manifest.description =
+            TranslateManifest(manifest, manifest.descriptionKey, manifest.description);
+    readString(root, "publisher", manifest.publisher);
+    readString(root, "minHostVersion", manifest.minHostVersion);
+    readString(root, "preview", manifest.preview);
+    readString(root, "entry", manifest.entry);
+    readString(root, "signature", manifest.signature);
+    manifest.permissions = readStringArray(root, "permissions");
+    manifest.networkDomains = readStringArray(root, "networkDomains");
+    double refreshMs = 0;
+    if (readNumber(root, "refreshIntervalMs", refreshMs) &&
+        std::isfinite(refreshMs) && refreshMs > 0)
+    {
+        const double clamped = std::clamp(refreshMs,
+            static_cast<double>(kWidgetRefreshMinIntervalMs),
+            static_cast<double>(kWidgetRefreshMaxIntervalMs));
+        manifest.refreshIntervalMs = static_cast<int>(clamped);
+    }
+    if (const JsonValue* settings = root.Find("settings");
+        settings && settings->IsArray())
+    {
+        for (const JsonValue& object : settings->array)
+        {
+            if (!object.IsObject())
+                continue;
+            LuaWidgetManifest::Setting setting;
+            readString(object, "key", setting.key);
+            readString(object, "label", setting.label);
+            readString(object, "type", setting.type);
+            if (const JsonValue* defaultValue = object.Find("default"))
+                setting.defaultValue = valueString(*defaultValue);
+            readNumber(object, "min", setting.minValue);
+            readNumber(object, "max", setting.maxValue);
+            setting.options = readStringArray(object, "options");
+            if (!setting.key.empty() && !setting.label.empty())
+            {
+                if (setting.type.empty()) setting.type = "text";
+                if (!IsHostStructureSettingKey(setting.key) &&
+                    !IsHostAppearanceSettingKey(setting.key))
+                    manifest.settings.push_back(std::move(setting));
+            }
+        }
+    }
+    if (const JsonValue* presets = root.Find("presets");
+        presets && presets->IsArray())
+    {
+        for (const JsonValue& object : presets->array)
+        {
+            if (!object.IsObject())
+                continue;
+            LuaWidgetManifest::SettingPreset preset;
+            readString(object, "id", preset.id);
+            readString(object, "label", preset.label);
+            if (preset.label.empty())
+                readString(object, "name", preset.label);
+            readBool(object, "default", preset.isDefault);
+            if (const JsonValue* values = object.Find("values");
+                values && values->IsObject())
+            {
+                for (const auto& [key, value] : values->object)
+                {
+                    if (!IsHostStructureSettingKey(key))
+                        preset.values[key] = valueString(value);
+                }
+            }
+            if (!preset.id.empty() && !preset.label.empty() &&
+                !preset.values.empty())
+                manifest.presets.push_back(std::move(preset));
+        }
+    }
+    auto readSize = [&](const char* field, int& columns, int& rows,
+        int minimum, int maximum) {
+        const JsonValue* size = root.Find(field);
+        if (!size || !size->IsObject())
+            return;
+        auto normalize = [&](double value) {
+            if (!std::isfinite(value))
+                return minimum;
+            const double upper = maximum > minimum
+                ? static_cast<double>(maximum)
+                : static_cast<double>((std::numeric_limits<int>::max)());
+            return static_cast<int>(std::clamp(
+                value, static_cast<double>(minimum), upper));
+        };
+        double value = 0;
+        if (readNumber(*size, "columns", value))
+            columns = normalize(value);
+        if (readNumber(*size, "rows", value))
+            rows = normalize(value);
+    };
+    readSize("defaultSize", manifest.defaultColumns, manifest.defaultRows, 1, 8);
+    readSize("minSize", manifest.minColumns, manifest.minRows, 1, 1);
+    readSize("maxSize", manifest.maxColumns, manifest.maxRows, 0, 0);
 
     if (manifest.maxColumns > 0)
         manifest.maxColumns = std::max(manifest.maxColumns, manifest.minColumns);
@@ -3922,9 +4381,17 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
 bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::wstring& error)
 {
     std::string text = ReadTextFile(manifestPath);
-    if (text.empty()) { error = L"无法读取组件包清单。"; return false; }
+    if (text.empty()) { error = _LW("engine.error.read_manifest"); return false; }
+    JsonValue packageRoot;
+    std::string parseError;
+    if (!ParseJson(text, packageRoot, &parseError) || !packageRoot.IsObject())
+    {
+        error = _LW("engine.error.invalid_manifest");
+        return false;
+    }
     std::string entry;
-    JsonReadString(text, "entry", entry);
+    if (const JsonValue* entryValue = packageRoot.Find("entry"); entryValue && entryValue->IsString())
+        entry = entryValue->string;
     wchar_t sourceDirBuffer[MAX_PATH]{};
     wcsncpy_s(sourceDirBuffer, manifestPath.c_str(), _TRUNCATE);
     PathRemoveFileSpecW(sourceDirBuffer);
@@ -3941,7 +4408,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
     }
     if (GetFileAttributesW(sourceScript.c_str()) == INVALID_FILE_ATTRIBUTES)
     {
-        error = L"组件包缺少 entry 指定的 Lua 文件。";
+        error = _LW("engine.error.missing_entry");
         return false;
     }
     wchar_t canonicalDir[MAX_PATH]{};
@@ -3949,7 +4416,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
     if (!GetFullPathNameW(sourceDir.c_str(), MAX_PATH, canonicalDir, nullptr) ||
         !GetFullPathNameW(sourceScript.c_str(), MAX_PATH, canonicalScript, nullptr))
     {
-        error = L"无法解析组件包路径。";
+        error = _LW("engine.error.resolve_path");
         return false;
     }
     std::wstring allowedPrefix = canonicalDir;
@@ -3958,14 +4425,14 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
     if (_wcsnicmp(canonicalScript, allowedPrefix.c_str(), allowedPrefix.size()) != 0 ||
         _wcsicmp(PathFindExtensionW(canonicalScript), L".lua") != 0)
     {
-        error = L"entry 必须指向组件包目录内的 Lua 文件。";
+        error = _LW("engine.error.entry_local");
         return false;
     }
 
     std::wstring stem = PathFindFileNameW(manifestPath.c_str());
     if (stem.size() > 12 && stem.substr(stem.size() - 12) == L".widget.json")
         stem.resize(stem.size() - 12);
-    std::wstring targetDir = GetExeWidgetsDir();
+    std::wstring targetDir = GetWidgetsDir();
     std::wstring targetManifest = targetDir + L"\\" + stem + L".widget.json";
     std::wstring targetScript = targetDir + L"\\" + stem + L".lua";
     std::wstring tempStem = stem + L".installing";
@@ -3978,7 +4445,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
     {
         DeleteFileW(tempScript.c_str());
         DeleteFileW(tempManifest.c_str());
-        error = L"复制组件包文件失败。";
+        error = _LW("engine.error.copy_failed");
         return false;
     }
     LuaWidgetManifest installed = GetWidgetManifest(tempScript);
@@ -3986,7 +4453,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
     {
         DeleteFileW(tempScript.c_str());
         DeleteFileW(tempManifest.c_str());
-        error = L"组件包 SHA-256 签名校验失败。";
+        error = _LW("engine.error.signature_failed");
         return false;
     }
     if (!installed.minHostVersion.empty() &&
@@ -3994,7 +4461,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
     {
         DeleteFileW(tempScript.c_str());
         DeleteFileW(tempManifest.c_str());
-        error = L"组件包要求更高版本的 SnowDesktop。";
+        error = _LW("engine.error.host_version");
         return false;
     }
 
@@ -4011,7 +4478,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
             MoveFileExW(backupScript.c_str(), targetScript.c_str(), MOVEFILE_REPLACE_EXISTING);
         DeleteFileW(tempScript.c_str());
         DeleteFileW(tempManifest.c_str());
-        error = L"无法备份现有组件版本。";
+        error = _LW("engine.error.backup_failed");
         return false;
     }
     const bool scriptInstalled = MoveFileExW(tempScript.c_str(), targetScript.c_str(), MOVEFILE_REPLACE_EXISTING);
@@ -4027,7 +4494,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::w
             MoveFileExW(backupManifest.c_str(), targetManifest.c_str(), MOVEFILE_REPLACE_EXISTING);
         DeleteFileW(tempScript.c_str());
         DeleteFileW(tempManifest.c_str());
-        error = L"替换组件包文件失败，已恢复旧版本。";
+        error = _LW("engine.error.replace_failed");
         return false;
     }
     DeleteFileW(backupScript.c_str());
@@ -4054,6 +4521,28 @@ std::wstring WidgetEngine::GetWidgetDisplayName(const std::wstring& filename)
     if (fallback.size() > 4 && fallback.substr(fallback.size() - 4) == L".lua")
         fallback = fallback.substr(0, fallback.size() - 4);
     return fallback;
+}
+
+bool WidgetEngine::IsWidgetDefaultName(const std::wstring& filename,
+    const std::wstring& title)
+{
+    if (title.empty())
+        return false;
+    const LuaWidgetManifest manifest = GetWidgetManifest(filename);
+    std::vector<std::string> managedKeys = manifest.titleKeys;
+    if (!manifest.nameKey.empty())
+        managedKeys.push_back(manifest.nameKey);
+    for (const auto& [language, catalog] : manifest.locales)
+    {
+        (void)language;
+        for (const std::string& key : managedKeys)
+        {
+            auto value = catalog.find(key);
+            if (value != catalog.end() && Utf8ToWideLocal(value->second) == title)
+                return true;
+        }
+    }
+    return !manifest.name.empty() && Utf8ToWideLocal(manifest.name) == title;
 }
 
 static int lua_DrawLine(lua_State* L)
@@ -4186,7 +4675,7 @@ static int lua_StorageSet(lua_State* L)
     const char* key = luaL_checkstring(L, 1);
     const char* value = luaL_checkstring(L, 2);
     auto* s = GetD2D(L);
-    if (!s) return 0;
+    if (!s || IsRemovedPanelEffectSettingKey(key)) return 0;
     g_storage[s->storagePrefix + "." + key] = value;
     SaveStorageFile();
     return 0;
@@ -4498,7 +4987,8 @@ static int lua_LayoutFontCu(lua_State* L)
     auto* s = GetD2D(L);
     const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
     const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
-    lua_pushnumber(L, std::max(9.0f, value * CalculateWidgetCellScale(cellWidth, cellHeight)));
+    const float fontScale = s ? s->itemFontSizeScale : 1.0f;
+    lua_pushnumber(L, std::max(9.0f, value * CalculateWidgetCellScale(cellWidth, cellHeight) * fontScale));
     return 1;
 }
 
@@ -4514,6 +5004,68 @@ static int lua_LayoutBarHeight(lua_State* L)
     auto* s = GetD2D(L);
     lua_pushinteger(L, s ? std::max(16, s->barHeight) : 24);
     return 1;
+}
+
+static int lua_L10nTr(lua_State* L)
+{
+    const char* key = luaL_checkstring(L, 1);
+    lua_getfield(L, lua_upvalueindex(1), key);
+    std::string result = lua_isstring(L, -1) ? lua_tostring(L, -1) : key;
+    lua_pop(L, 1);
+    const int argumentCount = lua_gettop(L);
+    for (int index = 2; index <= argumentCount; ++index)
+    {
+        size_t length = 0;
+        const char* value = luaL_tolstring(L, index, &length);
+        const std::string placeholder =
+            "{" + std::to_string(index - 2) + "}";
+        size_t position = 0;
+        while ((position = result.find(placeholder, position)) != std::string::npos)
+        {
+            result.replace(position, placeholder.size(), value, length);
+            position += length;
+        }
+        lua_pop(L, 1);
+    }
+    lua_pushlstring(L, result.data(), result.size());
+    return 1;
+}
+
+static int lua_L10nLanguage(lua_State* L)
+{
+    const std::string language = Locale::Instance().GetEffectiveLanguage();
+    lua_pushlstring(L, language.data(), language.size());
+    return 1;
+}
+
+static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
+{
+    lua_newtable(L);
+
+    lua_newtable(L);
+    auto pushCatalog = [L](
+        const std::unordered_map<std::string, std::string>& catalog) {
+        for (const auto& [key, value] : catalog)
+        {
+            lua_pushlstring(L, value.data(), value.size());
+            lua_setfield(L, -2, key.c_str());
+        }
+    };
+    auto english = manifest.locales.find("en-US");
+    if (english != manifest.locales.end())
+        pushCatalog(english->second);
+
+    const auto* selected = SelectManifestLocale(manifest);
+    if (selected && (english == manifest.locales.end() ||
+        selected != &english->second))
+    {
+        pushCatalog(*selected);
+    }
+    lua_pushcclosure(L, lua_L10nTr, 1);
+    lua_setfield(L, -2, "tr");
+
+    lua_pushcfunction(L, lua_L10nLanguage);
+    lua_setfield(L, -2, "language");
 }
 
 void WidgetEngine::RegisterDrawAPI(lua_State* L)

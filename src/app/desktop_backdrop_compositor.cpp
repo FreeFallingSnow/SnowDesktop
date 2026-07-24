@@ -1,0 +1,624 @@
+/**
+ * @file desktop_backdrop_compositor.cpp
+ * @brief Win32 DesktopWindowTarget + CompositionBackdropBrush 实现。
+ */
+#include "desktop_backdrop_compositor.h"
+
+#include <d2d1_1.h>
+#include <d2d1effects.h>
+#include <DispatcherQueue.h>
+#include <windows.graphics.effects.interop.h>
+#include <windows.ui.composition.interop.h>
+
+#include "l10n.h"
+
+#pragma push_macro("GetCurrentTime")
+#undef GetCurrentTime
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Numerics.h>
+#include <winrt/Windows.Graphics.Effects.h>
+#include <winrt/Windows.System.h>
+#include <winrt/Windows.UI.Composition.h>
+#include <winrt/Windows.UI.Composition.Desktop.h>
+#pragma pop_macro("GetCurrentTime")
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace wf = winrt::Windows::Foundation;
+namespace wfn = winrt::Windows::Foundation::Numerics;
+namespace wge = winrt::Windows::Graphics::Effects;
+namespace ws = winrt::Windows::System;
+namespace wuc = winrt::Windows::UI::Composition;
+namespace wucd = winrt::Windows::UI::Composition::Desktop;
+namespace awge = ABI::Windows::Graphics::Effects;
+namespace awucd = ABI::Windows::UI::Composition::Desktop;
+namespace awuci = ABI::Windows::UI::Composition;
+
+namespace {
+
+constexpr wchar_t kBackdropWindowClassName[] = L"SnowDesktopBackdropWindow";
+
+std::wstring FormatHresult(const wchar_t* stage, HRESULT hr)
+{
+    wchar_t text[192]{};
+    swprintf_s(text, L"%ls（0x%08X）", stage, static_cast<unsigned>(hr));
+    return text;
+}
+
+LRESULT CALLBACK BackdropWindowProc(HWND window, UINT message, WPARAM wparam,
+    LPARAM lparam)
+{
+    if (message == WM_NCHITTEST)
+        return HTTRANSPARENT;
+    if (message == WM_ERASEBKGND)
+        return 1;
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+bool RegisterBackdropWindowClass()
+{
+    WNDCLASSEXW existing{};
+    existing.cbSize = sizeof(existing);
+    HINSTANCE instance = GetModuleHandleW(nullptr);
+    if (GetClassInfoExW(instance, kBackdropWindowClassName, &existing))
+        return true;
+
+    WNDCLASSEXW windowClass{};
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.lpfnWndProc = BackdropWindowProc;
+    windowClass.hInstance = instance;
+    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    windowClass.hbrBackground = nullptr;
+    windowClass.lpszClassName = kBackdropWindowClassName;
+    return RegisterClassExW(&windowClass) != 0 ||
+        GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+/** @brief 可由 CompositionEffectFactory 消费的最小 D2D 高斯模糊描述。 */
+struct GaussianBlurEffect : winrt::implements<GaussianBlurEffect,
+    wge::IGraphicsEffect, wge::IGraphicsEffectSource,
+    awge::IGraphicsEffectD2D1Interop>
+{
+    HRESULT STDMETHODCALLTYPE GetEffectId(GUID* id) noexcept override
+    {
+        if (!id) return E_INVALIDARG;
+        *id = CLSID_D2D1GaussianBlur;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetNamedPropertyMapping(LPCWSTR name, UINT* index,
+        awge::GRAPHICS_EFFECT_PROPERTY_MAPPING* mapping) noexcept override
+    {
+        if (!name || !index || !mapping) return E_INVALIDARG;
+        const std::wstring_view property(name);
+        if (property == L"BlurAmount")
+        {
+            *index = D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION;
+            *mapping = awge::GRAPHICS_EFFECT_PROPERTY_MAPPING_DIRECT;
+            return S_OK;
+        }
+        if (property == L"Optimization")
+        {
+            *index = D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION;
+            *mapping = awge::GRAPHICS_EFFECT_PROPERTY_MAPPING_DIRECT;
+            return S_OK;
+        }
+        if (property == L"BorderMode")
+        {
+            *index = D2D1_GAUSSIANBLUR_PROP_BORDER_MODE;
+            *mapping = awge::GRAPHICS_EFFECT_PROPERTY_MAPPING_DIRECT;
+            return S_OK;
+        }
+        return E_INVALIDARG;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetPropertyCount(UINT* count) noexcept override
+    {
+        if (!count) return E_INVALIDARG;
+        *count = 3;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetProperty(UINT index,
+        ABI::Windows::Foundation::IPropertyValue** value) noexcept override try
+    {
+        if (!value) return E_INVALIDARG;
+        switch (index)
+        {
+        case D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION:
+            *value = wf::PropertyValue::CreateSingle(blurAmount)
+                .as<ABI::Windows::Foundation::IPropertyValue>().detach();
+            return S_OK;
+        case D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION:
+            *value = wf::PropertyValue::CreateUInt32(
+                D2D1_GAUSSIANBLUR_OPTIMIZATION_BALANCED)
+                .as<ABI::Windows::Foundation::IPropertyValue>().detach();
+            return S_OK;
+        case D2D1_GAUSSIANBLUR_PROP_BORDER_MODE:
+            *value = wf::PropertyValue::CreateUInt32(D2D1_BORDER_MODE_HARD)
+                .as<ABI::Windows::Foundation::IPropertyValue>().detach();
+            return S_OK;
+        default:
+            return E_BOUNDS;
+        }
+    }
+    catch (...)
+    {
+        return winrt::to_hresult();
+    }
+
+    HRESULT STDMETHODCALLTYPE GetSource(UINT index,
+        awge::IGraphicsEffectSource** source) noexcept override
+    {
+        if (!source) return E_INVALIDARG;
+        if (index != 0) return E_BOUNDS;
+        winrt::copy_to_abi(effectSource, *reinterpret_cast<void**>(source));
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetSourceCount(UINT* count) noexcept override
+    {
+        if (!count) return E_INVALIDARG;
+        *count = 1;
+        return S_OK;
+    }
+
+    winrt::hstring Name() const { return effectName; }
+    void Name(const winrt::hstring& value) { effectName = value; }
+
+    wge::IGraphicsEffectSource effectSource{nullptr};
+    float blurAmount = 24.0f;
+    winrt::hstring effectName = L"SnowDesktopBackdropBlur";
+};
+
+using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOptions,
+    ABI::Windows::System::IDispatcherQueueController**);
+
+} // namespace
+
+struct DesktopBackdropCompositor::Impl
+{
+
+    struct PanelVisual
+    {
+        RECT frame{};
+        int cornerRadius = 0;
+        int blurRadius = 0;
+        wuc::SpriteVisual visual{nullptr};
+        wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
+        wuc::CompositionGeometricClip clip{nullptr};
+        bool seen = false;
+    };
+
+    HWND contentWindow = nullptr;
+    HWND backdropWindow = nullptr;
+    ws::DispatcherQueueController dispatcherController{nullptr};
+    wuc::Compositor compositor{nullptr};
+    wucd::DesktopWindowTarget target{nullptr};
+    wuc::ContainerVisual root{nullptr};
+    std::unordered_map<int, wuc::CompositionEffectBrush> blurBrushes;
+    std::vector<PanelVisual> panels;
+    std::wstring lastError;
+    bool completeCollection = true;
+    bool available = false;
+    bool popupMode = false;
+    bool visible = true;
+
+    void SetError(const wchar_t* stage, HRESULT hr)
+    {
+        lastError = FormatHresult(stage, hr);
+        available = false;
+    }
+
+    bool EnsureDispatcherQueue()
+    {
+        if (ws::DispatcherQueue::GetForCurrentThread())
+            return true;
+
+        HMODULE coreMessaging = LoadLibraryW(L"CoreMessaging.dll");
+        if (!coreMessaging)
+        {
+            SetError(_LW("backdrop.load_core_msg"), HRESULT_FROM_WIN32(GetLastError()));
+            return false;
+        }
+        const auto createController = reinterpret_cast<CreateDispatcherQueueControllerFn>(
+            GetProcAddress(coreMessaging, "CreateDispatcherQueueController"));
+        if (!createController)
+        {
+            const HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+            FreeLibrary(coreMessaging);
+            SetError(_LW("backdrop.find_dispatch"), hr);
+            return false;
+        }
+
+        DispatcherQueueOptions options{};
+        options.dwSize = sizeof(options);
+        options.threadType = DQTYPE_THREAD_CURRENT;
+        options.apartmentType = DQTAT_COM_STA;
+        ABI::Windows::System::IDispatcherQueueController* rawController = nullptr;
+        const HRESULT hr = createController(options, &rawController);
+        FreeLibrary(coreMessaging);
+        if (FAILED(hr) || !rawController)
+        {
+            SetError(_LW("backdrop.create_dispatch"), FAILED(hr) ? hr : E_FAIL);
+            return false;
+        }
+        dispatcherController = ws::DispatcherQueueController{
+            rawController, winrt::take_ownership_from_abi };
+        return true;
+    }
+
+    bool QueryContentPlacement(HWND parent, POINT& origin, SIZE& size) const
+    {
+        if (!contentWindow || !IsWindow(contentWindow))
+            return false;
+        RECT rect{};
+        if (!GetWindowRect(contentWindow, &rect))
+            return false;
+        if (popupMode)
+        {
+            origin = { rect.left, rect.top };
+            size.cx = std::max<LONG>(1, rect.right - rect.left);
+            size.cy = std::max<LONG>(1, rect.bottom - rect.top);
+            return true;
+        }
+        if (!parent || !IsWindow(parent))
+            return false;
+        POINT points[2] = {
+            { rect.left, rect.top },
+            { rect.right, rect.bottom },
+        };
+        MapWindowPoints(nullptr, parent, points, 2);
+        origin = points[0];
+        size.cx = std::max<LONG>(1, points[1].x - points[0].x);
+        size.cy = std::max<LONG>(1, points[1].y - points[0].y);
+        return true;
+    }
+
+    bool SyncWindowPlacement()
+    {
+        if (!available || !backdropWindow || !IsWindow(backdropWindow) ||
+            !contentWindow || !IsWindow(contentWindow))
+            return false;
+        HWND parent = popupMode ? nullptr : GetParent(contentWindow);
+        if (!popupMode)
+        {
+            if (!parent || !IsWindow(parent))
+                return false;
+            if (GetParent(backdropWindow) != parent)
+                SetParent(backdropWindow, parent);
+        }
+
+        POINT origin{};
+        SIZE size{};
+        if (!QueryContentPlacement(parent, origin, size))
+            return false;
+        SetWindowPos(backdropWindow, contentWindow, origin.x, origin.y,
+            size.cx, size.cy, SWP_NOACTIVATE |
+            (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+        return true;
+    }
+
+    wuc::CompositionEffectBrush GetBlurBrush(int blurRadius)
+    {
+        const auto found = blurBrushes.find(blurRadius);
+        if (found != blurBrushes.end())
+            return found->second;
+
+        auto backdrop = compositor.CreateBackdropBrush();
+        auto blur = winrt::make_self<GaussianBlurEffect>();
+        blur->effectSource = wuc::CompositionEffectSourceParameter(L"backdrop");
+        blur->blurAmount = static_cast<float>(blurRadius);
+        auto brush = compositor.CreateEffectFactory(*blur).CreateBrush();
+        brush.SetSourceParameter(L"backdrop", backdrop);
+        blurBrushes.emplace(blurRadius, brush);
+        return brush;
+    }
+
+    void Reset()
+    {
+        available = false;
+        panels.clear();
+        blurBrushes.clear();
+        if (target)
+            target.Root(nullptr);
+        root = nullptr;
+        target = nullptr;
+        if (compositor)
+            compositor.Close();
+        compositor = nullptr;
+        dispatcherController = nullptr;
+        if (backdropWindow && IsWindow(backdropWindow))
+            DestroyWindow(backdropWindow);
+        backdropWindow = nullptr;
+        contentWindow = nullptr;
+        popupMode = false;
+        visible = true;
+    }
+};
+
+DesktopBackdropCompositor::DesktopBackdropCompositor()
+    : impl_(std::make_unique<Impl>())
+{
+}
+
+DesktopBackdropCompositor::~DesktopBackdropCompositor()
+{
+    Reset();
+}
+
+bool DesktopBackdropCompositor::Initialize(HWND contentWindow)
+{
+    return InitializeInternal(contentWindow, false);
+}
+
+bool DesktopBackdropCompositor::InitializePopup(HWND contentWindow)
+{
+    return InitializeInternal(contentWindow, true);
+}
+
+bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popupMode)
+{
+    Reset();
+    impl_->lastError.clear();
+    if (!contentWindow || !IsWindow(contentWindow))
+    {
+        impl_->lastError = _LW("backdrop.content_invalid");
+        return false;
+    }
+    HWND parent = popupMode ? nullptr : GetParent(contentWindow);
+    if (!popupMode && (!parent || !IsWindow(parent)))
+    {
+        impl_->lastError = _LW("backdrop.host_invalid");
+        return false;
+    }
+    if (!impl_->EnsureDispatcherQueue() || !RegisterBackdropWindowClass())
+    {
+        if (impl_->lastError.empty())
+            impl_->lastError = FormatHresult(_LW("backdrop.register_class"),
+                HRESULT_FROM_WIN32(GetLastError()));
+        return false;
+    }
+
+    POINT origin{};
+    SIZE size{};
+    impl_->contentWindow = contentWindow;
+    impl_->popupMode = popupMode;
+    impl_->visible = true;
+    if (!impl_->QueryContentPlacement(parent, origin, size))
+    {
+        impl_->lastError = _LW("backdrop.read_position");
+        impl_->contentWindow = nullptr;
+        return false;
+    }
+
+    const DWORD extendedStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+        WS_EX_TRANSPARENT | (popupMode ? WS_EX_TOPMOST : 0);
+    const DWORD windowStyle = popupMode ? (WS_POPUP | WS_VISIBLE) :
+        (WS_CHILD | WS_VISIBLE);
+    impl_->backdropWindow = CreateWindowExW(
+        extendedStyle,
+        kBackdropWindowClassName, L"SnowDesktopBackdrop",
+        windowStyle,
+        origin.x, origin.y, size.cx, size.cy,
+        parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!impl_->backdropWindow)
+    {
+        impl_->lastError = FormatHresult(_LW("backdrop.create_window"),
+            HRESULT_FROM_WIN32(GetLastError()));
+        impl_->contentWindow = nullptr;
+        return false;
+    }
+
+    try
+    {
+        impl_->compositor = wuc::Compositor();
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.activate_compositor"), error.code());
+        impl_->Reset();
+        return false;
+    }
+
+    try
+    {
+        auto interop = impl_->compositor.as<awucd::ICompositorDesktopInterop>();
+        const HRESULT hr = interop->CreateDesktopWindowTarget(
+            impl_->backdropWindow, FALSE,
+            reinterpret_cast<awucd::IDesktopWindowTarget**>(
+                winrt::put_abi(impl_->target)));
+        if (FAILED(hr))
+        {
+            impl_->SetError(_LW("backdrop.create_target"), hr);
+            impl_->Reset();
+            return false;
+        }
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.get_interop"), error.code());
+        impl_->Reset();
+        return false;
+    }
+
+    try
+    {
+        impl_->root = impl_->compositor.CreateContainerVisual();
+        impl_->target.Root(impl_->root);
+        impl_->available = true;
+        impl_->SyncWindowPlacement();
+        ShowWindow(impl_->backdropWindow, SW_SHOWNOACTIVATE);
+        impl_->lastError.clear();
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.set_root"), error.code());
+        impl_->Reset();
+        return false;
+    }
+}
+
+void DesktopBackdropCompositor::Reattach(HWND contentWindow)
+{
+    if (!impl_->available || !contentWindow || !IsWindow(contentWindow))
+        return;
+    impl_->contentWindow = contentWindow;
+    impl_->SyncWindowPlacement();
+}
+
+void DesktopBackdropCompositor::SetVisible(bool visible)
+{
+    if (!impl_)
+        return;
+    impl_->visible = visible;
+    if (!impl_->available || !impl_->backdropWindow ||
+        !IsWindow(impl_->backdropWindow))
+        return;
+    if (visible)
+        impl_->SyncWindowPlacement();
+    else
+        ShowWindow(impl_->backdropWindow, SW_HIDE);
+}
+
+void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
+{
+    if (!impl_->available)
+        return;
+    impl_->completeCollection = completeCollection;
+    if (completeCollection)
+    {
+        for (auto& panel : impl_->panels)
+            panel.seen = false;
+    }
+    impl_->SyncWindowPlacement();
+}
+
+bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
+    float blurRadius)
+{
+    if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
+        return false;
+    const int cornerKey = std::max(0, static_cast<int>(std::lround(cornerRadius)));
+    const int blurKey = std::clamp(static_cast<int>(std::lround(blurRadius)), 0, 48);
+
+    try
+    {
+        auto existing = std::find_if(impl_->panels.begin(), impl_->panels.end(),
+            [&frame](const Impl::PanelVisual& panel) {
+                return EqualRect(&panel.frame, &frame) != FALSE;
+            });
+        if (existing == impl_->panels.end())
+        {
+            Impl::PanelVisual panel{};
+            panel.frame = frame;
+            panel.cornerRadius = cornerKey;
+            panel.blurRadius = blurKey;
+            panel.visual = impl_->compositor.CreateSpriteVisual();
+            panel.geometry = impl_->compositor.CreateRoundedRectangleGeometry();
+            panel.clip = impl_->compositor.CreateGeometricClip(panel.geometry);
+            panel.visual.Clip(panel.clip);
+            impl_->root.Children().InsertAtTop(panel.visual);
+            impl_->panels.push_back(std::move(panel));
+            existing = std::prev(impl_->panels.end());
+        }
+
+        if (existing->blurRadius != blurKey || !existing->visual.Brush())
+        {
+            existing->blurRadius = blurKey;
+            existing->visual.Brush(impl_->GetBlurBrush(blurKey));
+        }
+        existing->cornerRadius = cornerKey;
+        existing->visual.Offset(wfn::float3{
+            static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f });
+        const wfn::float2 panelSize{
+            static_cast<float>(frame.right - frame.left),
+            static_cast<float>(frame.bottom - frame.top) };
+        existing->visual.Size(panelSize);
+        existing->geometry.Size(panelSize);
+        existing->geometry.CornerRadius(wfn::float2{
+            static_cast<float>(cornerKey), static_cast<float>(cornerKey) });
+        existing->seen = true;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
+{
+    if (!impl_->available || !impl_->root)
+        return false;
+    auto existing = std::find_if(impl_->panels.begin(), impl_->panels.end(),
+        [&frame](const Impl::PanelVisual& panel) {
+            return EqualRect(&panel.frame, &frame) != FALSE;
+        });
+    if (existing == impl_->panels.end())
+        return false;
+
+    try
+    {
+        impl_->root.Children().Remove(existing->visual);
+        impl_->panels.erase(existing);
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.remove_panel"), error.code());
+        return false;
+    }
+}
+
+void DesktopBackdropCompositor::EndFrame()
+{
+    if (!impl_->available || !impl_->completeCollection)
+        return;
+    auto children = impl_->root.Children();
+    for (auto iterator = impl_->panels.begin(); iterator != impl_->panels.end();)
+    {
+        if (iterator->seen)
+        {
+            ++iterator;
+            continue;
+        }
+        children.Remove(iterator->visual);
+        iterator = impl_->panels.erase(iterator);
+    }
+}
+
+void DesktopBackdropCompositor::Reset()
+{
+    if (impl_)
+        impl_->Reset();
+}
+
+bool DesktopBackdropCompositor::IsAvailable() const
+{
+    return impl_ && impl_->available;
+}
+
+bool DesktopBackdropCompositor::IsBackdropWindow(HWND window) const
+{
+    return impl_ && window && impl_->backdropWindow == window;
+}
+
+std::size_t DesktopBackdropCompositor::PanelCount() const
+{
+    return impl_ ? impl_->panels.size() : 0;
+}
+
+const std::wstring& DesktopBackdropCompositor::LastError() const
+{
+    return impl_->lastError;
+}

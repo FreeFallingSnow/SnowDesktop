@@ -18,7 +18,8 @@
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
-#include <unordered_set>
+#include "../l10n.h"
+
 
 static RECT CollectionItemRect(Collection* widget, size_t linearIndex);
 
@@ -330,6 +331,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     if (data_->itemKeys.empty()) return;
+    const bool lt = app_->IsLightContentTheme();
 
     bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
 
@@ -358,7 +360,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 {
                     bool hovered = !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
                     DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
-                    icon.Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0));
+                    icon.Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0),
+                        app_->IsLightContentTheme());
                 }
             }
             else
@@ -392,7 +395,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (compact)
         {
             if (privacyActive)
-                DrawPrivacyPlaceholder(context, slotRect, di.name, false);
+                DrawPrivacyPlaceholder(context, slotRect, di.name, false, false);
             else
                 DrawThumbnail(context, di, slotRect, di.selected);
         }
@@ -405,7 +408,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 RECT bodyRect = GetBodyRect();
                 bool hovered = PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
                 DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
-                icon.Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0));
+                icon.Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0),
+                    app_->IsLightContentTheme());
             }
         }
     }
@@ -456,15 +460,16 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     {
                         InflateRect(&tile, -Cu(2.0f), -Cu(2.0f));
                         app_->DrawD2DRoundedRectangle(context, tile, static_cast<float>(Cu(3.0f)),
-                            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
-                            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f));
+                            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
+                            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f));
                     }
                 }
             }
 
             const std::wstring collectionTitle = data_->title.empty()
-                ? L"集合" : data_->title;
-            app_->DrawItemText(context, allRect, collectionTitle, false);
+                ? _LW("widget.collection") : data_->title;
+            app_->DrawItemText(context, allRect, collectionTitle, false, 1.0f,
+                app_->IsLightContentTheme());
         }
     }
 }
@@ -755,6 +760,20 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
     return base;
 }
 
+HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
+{
+    HitRegion result = WidgetContainer::HitTestDrag(pt, outSlot);
+    if (!data_ || result != HitRegion::Handoff) return result;
+    bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
+    if (!compact) return result;
+    if (!outSlot) return HitRegion::SortAfter;
+    RECT bounds = outSlot->GetBounds();
+    int cellH = bounds.bottom - bounds.top;
+    return (pt.y < bounds.top + cellH / 2)
+        ? HitRegion::SortBefore
+        : HitRegion::SortAfter;
+}
+
 /**
  * @brief 处理项被拖放到集合中的事件
  *
@@ -867,7 +886,9 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
     app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggleBtn,
         faFormat ? faFormat :
             (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-        hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f));
+        app_->IsLightContentTheme()
+            ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
+            : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f)));
     (void)hovered;
 }
 

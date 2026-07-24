@@ -25,11 +25,21 @@
  */
 inline DesktopApp::~DesktopApp()
 {
+    ApplySystemTaskbarBackdrop(false, false,
+        ResolveSystemTaskbarAppearance(dockSettings_));
     StopQuickNavigationAppIndexing();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
     widgetEngine_.reset();
     settingsWindow_.reset();
+    for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
+    {
+        if (!app.iconBitmap) continue;
+        EraseD2DIconCacheForBitmap(app.iconBitmap);
+        DeleteObject(app.iconBitmap);
+        app.iconBitmap = nullptr;
+    }
+    dockUnpinnedRunningApps_.clear();
     items_oo_.clear();
     containers_.clear();
     ClearMenuIcons();
@@ -112,6 +122,9 @@ inline void DesktopApp::RegisterOleDropTarget()
  */
 inline void DesktopApp::ResetDesktopWindowResources()
 {
+    desktopBackdropCompositor_.Reset();
+    nativeGlassPanelReadyLogged_ = false;
+    recycleBinPollState_->targetWindow = nullptr;
     if (hwnd_ && IsWindow(hwnd_))
     {
         UnregisterNavigationHotkey();
@@ -121,11 +134,13 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
+        KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             KillTimer(hwnd_, timerId);
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }
+    StopDockForegroundMonitor();
     widgetTimerIds_.clear();
     nextWidgetTimerId_ = kWidgetTimerIdBase;
     dropTargetRegistered_ = false;
@@ -145,7 +160,6 @@ inline void DesktopApp::ResetDesktopWindowResources()
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
-    widgetPanelEffectContext_.Reset();
     dcompSurface_.Reset();
     dcompVisual_.Reset();
     dcompTarget_.Reset();
@@ -180,6 +194,7 @@ inline void DesktopApp::AttachWindowToDesktopHost(HWND host)
     SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
         SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    desktopBackdropCompositor_.Reattach(hwnd_);
     if (inputHwnd_ && IsWindow(inputHwnd_))
         AttachInputWindowToDesktopHost(host);
     else
@@ -264,7 +279,7 @@ inline HWND DesktopApp::ShellDialogOwnerHwnd() const
  * @return true  窗口创建成功且所有组件初始化完成
  * @return false 创建失败，已自动回滚相关资源
  *
- * 依次创建覆盖层窗口（首选子窗口，兜底弹窗）、DirectComposition 目标
+ * 依次创建桌面宿主子窗口、DirectComposition 目标
  * 与视觉树、组合表面，设置应用图标，注册 OLE 拖放与导航热键，
  * 启动 Shell 变更通知和定时器，最终使窗口可见并触发首次绘制。
  */
@@ -280,27 +295,15 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     HWND parent = desktopWindows_.host && IsWindow(desktopWindows_.host)
         ? desktopWindows_.host
         : GetDesktopWindow();
-    POINT origin{ virtualLeft_, virtualTop_ };
-    ScreenToClient(parent, &origin);
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         L"SnowDesktopWindow", L"SnowDesktop",
-        WS_CHILD | WS_VISIBLE, origin.x, origin.y, virtualWidth_, virtualHeight_,
-        parent, nullptr, instance_, this);
-    if (!hwnd_)
-    {
-        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
-            L"SnowDesktopWindow", L"SnowDesktop",
-            WS_POPUP | WS_VISIBLE, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
-            nullptr, nullptr, instance_, this);
-        if (hwnd_ && parent && parent != GetDesktopWindow())
-            AttachWindowToDesktopHost(parent);
-    }
+        WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
+        nullptr, nullptr, instance_, this);
     if (!hwnd_)
         return false;
 
-    SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
-        SWP_NOACTIVATE);
+    AttachWindowToDesktopHost(parent);
     if (!CreateDesktopInputWindow(parent))
         return fail();
 
@@ -311,6 +314,17 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     dcompTarget_->SetRoot(dcompVisual_.Get());
     if (FAILED(CreateOrResizeCompositionSurface()))
         return fail();
+    if (desktopBackdropCompositor_.Initialize(hwnd_))
+    {
+        nativeGlassPanelReadyLogged_ = false;
+        WriteCrashLogEntry(L"Native desktop CompositionBackdropBrush initialized");
+    }
+    else
+    {
+        std::wstring message = L"Native desktop CompositionBackdropBrush unavailable: ";
+        message += desktopBackdropCompositor_.LastError();
+        WriteCrashLogEntry(message.c_str());
+    }
 
     if (HICON appIcon = LoadAppIcon())
     {
@@ -323,6 +337,9 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     RegisterShellChangeNotifications();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
+    SetTimer(hwnd_, kTaskbarRevealGuardTimerId,
+        kTaskbarRevealGuardIntervalMs, nullptr);
+    StartDockForegroundMonitor();
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -342,11 +359,41 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     if (exitRequested_)
         return;
 
+    // TaskbarCreated can be dispatched re-entrantly by a shell COM call made
+    // during painting. Destroying the overlay between BeginDraw and EndDraw
+    // leaves the DComp surface permanently in SURFACE_BEING_RENDERED state.
+    // The independent control timer will retry as soon as this frame unwinds.
+    if (compositionPaintInProgress_)
+        return;
+
+    // These resources belong to the Explorer shell rather than to the custom
+    // desktop window. Restore them even when the native desktop is selected.
+    if (startupInitializationComplete_)
+        AddTrayIcon(true);
+    SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
+    SetSystemTaskbarAlignmentCentered(dockSettings_.systemTaskbarAlignment == 1);
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+
+    // System-taskbar personalization is independent of the custom desktop.
+    // Do not accidentally show SnowDesktop again when the user selected the
+    // native desktop before Explorer restarted.
+    if (!customDesktopVisible_)
+        return;
+
     DesktopWindows current = FindDesktopWindows();
     if (!current.host || !IsWindow(current.host))
         return;
 
     desktopWindows_ = current;
+
+    // A child HWND can survive the death of its cross-process Explorer parent
+    // and be reparented to the newly created Progman. Its visibility flags then
+    // look healthy even though the old DirectComposition target no longer
+    // presents. Rebuild the complete overlay pipeline after TaskbarCreated.
+    if (explorerDesktopRecreatePending_ && hwnd_ && IsWindow(hwnd_))
+        DestroyWindow(hwnd_);
+
     if (hwnd_ && IsWindow(hwnd_))
     {
         AttachWindowToDesktopHost(desktopWindows_.host);
@@ -359,11 +406,11 @@ inline void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         if (!CreateDesktopOverlayWindow())
             return;
     }
+    explorerDesktopRecreatePending_ = false;
+    GetWindowThreadProcessId(desktopWindows_.host,
+        &desktopHostExplorerProcessId_);
 
     HideExplorerIcons();
-    AddTrayIcon(true);
-    if (controlHwnd_ && IsWindow(controlHwnd_))
-        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
 
     if (!mouseDown_ && !reloading_)
         ReloadItems(false);
@@ -392,10 +439,11 @@ inline void DesktopApp::WatchDesktopHost()
     if (!customDesktopVisible_)
         return;
 
-    if (desktopIconsHidden_)
-        return;
-
-    if (!hwnd_ || !IsWindow(hwnd_))
+    // A pending Explorer restart must rebuild the DComp target even if Windows
+    // automatically reparented the old HWND and it still reports as visible.
+    // This also keeps the blurred background alive while desktop icons are
+    // hidden by double-click.
+    if (explorerDesktopRecreatePending_ || !hwnd_ || !IsWindow(hwnd_))
     {
         RecoverDesktopHostAfterExplorerRestart();
         return;
@@ -474,7 +522,7 @@ inline void DesktopApp::RequestRestart()
     if (pathLen == 0 || pathLen >= std::size(exePath))
     {
         MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
-            L"无法获取 SnowDesktop 的程序路径。", L"重启失败",
+            _LW("app.run.no_path"), _LW("app.run.restart_failed"),
             MB_OK | MB_ICONERROR);
         return;
     }
@@ -510,10 +558,10 @@ inline void DesktopApp::RequestRestart()
     if (!created)
     {
         const DWORD error = GetLastError();
-        std::wstring message = L"无法启动新的 SnowDesktop 实例。\n错误码：";
-        message += std::to_wstring(error);
+        std::wstring message =
+            _LFW("app.run.restart_error", std::to_wstring(error));
         MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
-            L"重启失败", MB_OK | MB_ICONERROR);
+            _LW("app.run.restart_failed"), MB_OK | MB_ICONERROR);
         return;
     }
 
@@ -699,6 +747,70 @@ inline void DesktopApp::BeginIconLoadGeneration()
     iconLoaderPendingKeys_.clear();
 }
 
+inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
+{
+    const bool wasEnabled = customDesktopVisible_;
+    customDesktopVisible_ = enabled;
+    generalSettings_.softwareDesktopEnabled = enabled;
+    if (persist)
+        SaveGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
+    if (settingsWindow_)
+        settingsWindow_->SyncSoftwareDesktopEnabled(enabled);
+
+    if (!hwnd_ || !IsWindow(hwnd_))
+        return;
+
+    if (!enabled)
+    {
+        if (wasEnabled)
+        {
+            SaveLayoutSlots();
+            HideDragHintWindow();
+        }
+        desktopBackdropCompositor_.SetVisible(false);
+        ShowWindow(hwnd_, SW_HIDE);
+        if (inputHwnd_ && IsWindow(inputHwnd_))
+            ShowWindow(inputHwnd_, SW_HIDE);
+        RestoreExplorerIcons();
+        return;
+    }
+
+    desktopIconsHidden_ = false;
+    if (explorerDesktopRecreatePending_)
+    {
+        RecoverDesktopHostAfterExplorerRestart();
+        return;
+    }
+
+    HideExplorerIcons();
+    ShowWindow(hwnd_, SW_SHOW);
+    if (!desktopBackdropCompositor_.IsAvailable())
+    {
+        if (desktopBackdropCompositor_.Initialize(hwnd_))
+        {
+            nativeGlassPanelReadyLogged_ = false;
+            WriteCrashLogEntry(
+                L"Native desktop CompositionBackdropBrush initialized");
+        }
+        else
+        {
+            std::wstring message =
+                L"Native desktop CompositionBackdropBrush unavailable: ";
+            message += desktopBackdropCompositor_.LastError();
+            WriteCrashLogEntry(message.c_str());
+        }
+    }
+    desktopBackdropCompositor_.SetVisible(true);
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        ShowWindow(inputHwnd_, SW_SHOWNA);
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        SetTimer(controlHwnd_, kDesktopHostWatchTimerId,
+            kDesktopHostWatchIntervalMs, nullptr);
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    if (!wasEnabled)
+        ReloadItems();
+}
+
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
@@ -706,6 +818,12 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     WriteCrashLogEntry(L"Run start");
 
     MigrateLegacyDataPaths();
+
+    {
+        std::wstring langDir = GetExecutableDirectoryPath();
+        langDir += L"\\lang";
+        Locale::Instance().Init(langDir.c_str());
+    }
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -717,8 +835,14 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     instance_ = instance;
 
-    // Find and hide Explorer icon layer
+    // Resolve the persisted desktop mode before touching Explorer's icon layer.
+    LoadGeneralSettingsAndApply();
+
+    // Find and optionally hide Explorer icon layer.
     desktopWindows_ = FindDesktopWindows();
+    if (desktopWindows_.host && IsWindow(desktopWindows_.host))
+        GetWindowThreadProcessId(desktopWindows_.host,
+            &desktopHostExplorerProcessId_);
     {
         wchar_t buf[256];
         wsprintfW(buf, L"Desktop: progman=%p defView=%p listView=%p host=%p",
@@ -726,11 +850,18 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             desktopWindows_.listView, desktopWindows_.host);
         WriteCrashLogEntry(buf);
     }
-    HideExplorerIcons();
-    if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
-        WriteCrashLogEntry(L"Explorer icon layer hidden");
+    if (customDesktopVisible_)
+    {
+        HideExplorerIcons();
+        if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
+            WriteCrashLogEntry(L"Explorer icon layer hidden");
+        else
+            WriteCrashLogEntry(L"Explorer icon layer not found or already hidden");
+    }
     else
-        WriteCrashLogEntry(L"Explorer icon layer not found or already hidden");
+    {
+        WriteCrashLogEntry(L"Native desktop selected by persisted setting");
+    }
 
     // Create desktop overlay window as child of desktop host
     virtualLeft_ = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -738,7 +869,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     virtualWidth_ = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     virtualHeight_ = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     BeginIconLoadGeneration();
-    LoadGeneralSettingsAndApply();
     LoadDockSettingsAndApply();
     LoadDockUsageStats();
     LoadLayoutSlots();
@@ -792,28 +922,10 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         wc.lpszClassName, L"SnowDesktop",
-        WS_CHILD | WS_VISIBLE, origin.x, origin.y, virtualWidth_, virtualHeight_,
-        parent, nullptr, instance, this);
-    if (!hwnd_)
-    {
-        WriteCrashLogEntry(L"Child failed, fallback popup");
-        hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
-            wc.lpszClassName, L"SnowDesktop",
-            WS_POPUP | WS_VISIBLE, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
-            nullptr, nullptr, instance, this);
-        if (hwnd_ && parent && parent != GetDesktopWindow())
-        {
-            SetParent(hwnd_, parent);
-            LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
-            style &= ~WS_POPUP;
-            style |= WS_CHILD | WS_VISIBLE;
-            SetWindowLongPtrW(hwnd_, GWL_STYLE, style);
-            SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
-                SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-        }
-    }
+        WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
+        nullptr, nullptr, instance, this);
     if (!hwnd_) { WriteCrashLogEntry(L"CreateWindow FAILED"); return __LINE__; }
-    SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+    AttachWindowToDesktopHost(parent);
     if (!CreateDesktopInputWindow(parent))
     {
         WriteCrashLogEntry(L"CreateInputWindow FAILED");
@@ -844,6 +956,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         kControlWindowClassName, L"SnowDesktopControl", WS_POPUP,
         0, 0, 1, 1, nullptr, nullptr, instance, this);
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
+    systemTaskbarTaskViewStateMsg_ = RegisterWindowMessageW(
+        L"SnowDesktop.Taskbar.Dynamic.TaskView.v1");
 
     // Create DComp target and initial surface
     if (FAILED(dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_)))
@@ -854,6 +968,22 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (FAILED(CreateOrResizeCompositionSurface()))
         { WriteCrashLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
     WriteCrashLogEntry(L"Composition target ready");
+    if (customDesktopVisible_)
+    {
+        if (desktopBackdropCompositor_.Initialize(hwnd_))
+        {
+            nativeGlassPanelReadyLogged_ = false;
+            WriteCrashLogEntry(
+                L"Native desktop CompositionBackdropBrush initialized");
+        }
+        else
+        {
+            std::wstring message =
+                L"Native desktop CompositionBackdropBrush unavailable: ";
+            message += desktopBackdropCompositor_.LastError();
+            WriteCrashLogEntry(message.c_str());
+        }
+    }
 
     LoadCategorySettingsAndApply();
 
@@ -873,7 +1003,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
     }
 
-    AddTrayIcon();
     RegisterShellChangeNotifications();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
@@ -882,6 +1011,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
+    SetTimer(hwnd_, kTaskbarRevealGuardTimerId,
+        kTaskbarRevealGuardIntervalMs, nullptr);
+    StartDockForegroundMonitor();
 
     settingsWindow_ = std::make_unique<SettingsWindow>();
     if (settingsWindow_->Init(instance, d3dDevice_.Get()))
@@ -892,13 +1024,28 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
         });
         settingsWindow_->SetExitCallback([this]() { RequestExit(); });
+        settingsWindow_->SetRestartCallback([this]() { RequestRestart(); });
         settingsWindow_->SetInvalidateCallback([this]() {
+            ApplyQuickNavigationAppearance();
+            if (quickNavigationOpen_)
+                InvalidateQuickNavigationWindow();
+            if (dockSettings_.systemTaskbarFollowPersonalization ||
+                dockSettings_.systemTaskbarVisibleWindow.themeMode ==
+                    SystemTaskbarThemeMode::FollowGlobal ||
+                dockSettings_.systemTaskbarMaximizedWindow.themeMode ==
+                    SystemTaskbarThemeMode::FollowGlobal ||
+                dockSettings_.systemTaskbarShellUi.themeMode ==
+                    SystemTaskbarThemeMode::FollowGlobal)
+                RefreshSystemTaskbarAppearance(false);
             if (hwnd_)
             {
                 InvalidateAllWidgetSlots();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 UpdateWindow(hwnd_);
             }
+        });
+        settingsWindow_->SetGlassStatusProvider([this]() {
+            return GetGlassBackendStatusText();
         });
         settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
             LoadNavigationSettingsAndApply();
@@ -907,6 +1054,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             LoadGeneralSettingsAndApply();
             if (quickNavigationOpen_)
                 InvalidateQuickNavigationWindow();
+        });
+        settingsWindow_->SetLanguageChangedCallback([this]() {
+            ApplyLanguageChange();
         });
         settingsWindow_->SetDockEnabledChangedCallback([this](bool enabled) {
             if (generalSettings_.dockEnabled == enabled) return;
@@ -922,20 +1072,39 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetDockSettingsChangedCallback([this]() {
             const DockPosition previousPosition = dockSettings_.position;
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
+            const DockMonitorScope previousMonitorScope = dockSettings_.monitorScope;
+            const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
+            const bool previousShowRunningApps = dockSettings_.showRunningApps;
             const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
             const int previousFrequentItemCount = dockSettings_.frequentItemCount;
+            const float previousThicknessScale = dockSettings_.thicknessScale;
+            const bool previousSystemTaskbarAutoHide =
+                dockSettings_.systemTaskbarAutoHide;
+            const int previousSystemTaskbarAlignment =
+                dockSettings_.systemTaskbarAlignment;
             LoadDockSettingsAndApply();
             if (dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
+                dockSettings_.monitorScope != previousMonitorScope ||
+                dockSettings_.showWindowsButton != previousShowWindowsButton ||
+                dockSettings_.showRunningApps != previousShowRunningApps ||
                 dockSettings_.showFrequentItems != previousShowFrequentItems ||
-                dockSettings_.frequentItemCount != previousFrequentItemCount)
+                dockSettings_.frequentItemCount != previousFrequentItemCount ||
+                std::abs(dockSettings_.thicknessScale - previousThicknessScale) > 0.0001f ||
+                dockSettings_.systemTaskbarAutoHide != previousSystemTaskbarAutoHide ||
+                dockSettings_.systemTaskbarAlignment != previousSystemTaskbarAlignment)
             {
+                if (dockSettings_.showRunningApps != previousShowRunningApps)
+                    RefreshDockRunningWindows(false);
                 UpdateLayoutWorkArea();
                 LayoutItems();
                 SaveLayoutSlots();
                 InvalidateDragStaticScene();
             }
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+        });
+        settingsWindow_->SetPersonalizationChangedCallback([this]() {
+            RefreshSystemTaskbarAppearance(false);
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
@@ -1060,17 +1229,30 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_.reset();
     }
 
-    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    InvalidateRect(hwnd_, nullptr, FALSE);
-    UpdateWindow(hwnd_);
-    WriteCrashLogEntry(L"Window shown, entering loop");
+    // Expose the tray menu only after SettingsWindow and all of its callbacks
+    // are ready. Otherwise a click during startup can reach the temporary
+    // settingsWindow_ == nullptr state and appear to require a second click.
+    startupInitializationComplete_ = true;
+    AddTrayIcon();
+    if (showSettingsPending_ && settingsWindow_)
+    {
+        showSettingsPending_ = false;
+        settingsWindow_->Show();
+    }
+    SetSoftwareDesktopEnabled(customDesktopVisible_, false);
+    if (customDesktopVisible_)
+        UpdateWindow(hwnd_);
+    WriteCrashLogEntry(customDesktopVisible_
+        ? L"Window shown, entering loop"
+        : L"Native desktop active, entering loop");
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0)
     {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
-        if (settingsWindow_ && settingsWindow_->IsVisible())
+        if (settingsWindow_ && settingsWindow_->IsVisible() &&
+            settingsWindow_->NeedsRender())
             settingsWindow_->Render();
     }
     OleUninitialize();
@@ -1103,8 +1285,9 @@ inline LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
         app = reinterpret_cast<DesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
-    // Log first few messages
-    if (msg == WM_NCCREATE || msg == WM_CREATE || msg == WM_SIZE || msg == WM_PAINT || msg == WM_SHOWWINDOW)
+    // 只记录低频生命周期消息；逐帧记录 WM_PAINT 会造成同步文件 I/O
+    // 和整份日志扫描。
+    if (msg == WM_NCCREATE || msg == WM_CREATE || msg == WM_SIZE || msg == WM_SHOWWINDOW)
     {
         wchar_t buf[128];
         wsprintfW(buf, L"WndProc msg=0x%04X app=%p", msg, app);
@@ -1297,6 +1480,25 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
     switch (msg)
     {
+    case WM_MOUSEACTIVATE:
+    {
+        POINT point{};
+        if (GetCursorPos(&point))
+        {
+            ScreenToClient(hwnd_, &point);
+            if (DockContainer* dock = GetDockContainerAtPoint(point))
+            {
+                const RECT dockBounds = dock->GetBounds();
+                if (PtInRect(&dockBounds, point))
+                {
+                    dockPressedForegroundWindow_ = GetForegroundWindow();
+                    dockPressedForegroundTick_ = GetTickCount();
+                    return MA_NOACTIVATE;
+                }
+            }
+        }
+        break;
+    }
     case WM_CTLCOLOREDIT:
         if (reinterpret_cast<HWND>(lp) == luaInlineEdit_)
         {
@@ -1312,7 +1514,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         PAINTSTRUCT ps{};
         BeginPaint(hwnd_, &ps);
         EndPaint(hwnd_, &ps);
-        OnPaint();
+        OnPaint(&ps.rcPaint);
         return 0;
     }
     case WM_ERASEBKGND:
@@ -1384,7 +1586,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             return 0;
         }
 
-        if (DockContainer* dock = GetDockContainer())
+        if (DockContainer* dock = GetDockContainerAtPoint(pt))
         {
             RECT dockBounds = dock->GetBounds();
             if (PtInRect(&dockBounds, pt))
@@ -1396,19 +1598,47 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 }
                 if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
                 {
-                    size_t entryIndex = dockItem->GetEntryIndex();
-                    if (entryIndex < dockEntries_.size() &&
-                        dockEntries_[entryIndex].type == DockEntryType::DesktopItem)
+                    const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
+                    if (dockItem->GetEntryType() == DockEntryType::DesktopItem &&
+                        dockPendingDoubleClickEntry_ == dockItem->GetEntryIndex() &&
+                        elapsed <= GetDoubleClickTime())
                     {
-                        size_t itemIndex = FindItemIndexByKey(dockEntries_[entryIndex].reference);
-                        if (itemIndex < items_.size())
-                            LaunchDesktopItem(itemIndex);
+                        const size_t entryIndex = dockItem->GetEntryIndex();
+                        dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        ClearSelection();
+                        if (entryIndex < dockEntries_.size())
+                        {
+                            const size_t itemIndex =
+                                FindItemIndexByKey(dockEntries_[entryIndex].reference);
+                            if (itemIndex < items_.size())
+                                ActivateOrToggleDockItem(itemIndex);
+                        }
+                        InvalidateRect(hwnd_, &dockBounds, FALSE);
                     }
+                    return 0;
+                }
+                if (dock->RunningItemAtPoint(pt))
+                {
+                    // Dynamic running apps already react on the first click.
                     return 0;
                 }
                 if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
                 {
-                    LaunchDesktopItem(frequentItem->GetItemIndex());
+                    const size_t itemIndex = frequentItem->GetItemIndex();
+                    const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
+                    if (dockPendingDoubleClickFrequentItem_ == itemIndex &&
+                        elapsed <= GetDoubleClickTime())
+                    {
+                        dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        ClearSelection();
+                        if (itemIndex < items_.size())
+                            ActivateOrToggleDockItem(itemIndex);
+                        InvalidateRect(hwnd_, &dockBounds, FALSE);
+                    }
                     return 0;
                 }
                 return 0;
@@ -1538,9 +1768,11 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_DISPLAYCHANGE:
         ScheduleDisplayTopologyRefresh();
+        InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_SETTINGCHANGE:
         ScheduleDisplayTopologyRefresh();
+        InvalidateRect(hwnd_, nullptr, FALSE);
         // Explorer broadcasts this message when view options such as
         // "Hidden items" change. Re-enumerate both desktop and mapped folders.
         ReloadItems(false);

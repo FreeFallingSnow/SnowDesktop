@@ -18,6 +18,9 @@
 #include "app.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
+#include "../l10n.h"
+
+
 #include <algorithm>
 #include <cmath>
 
@@ -138,6 +141,30 @@ IDWriteTextFormat* Widget::GetCuTextFormat(float value, bool bold, bool centered
     app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
         bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+    if (!format)
+        return nullptr;
+    format->SetTextAlignment(centered
+        ? DWRITE_TEXT_ALIGNMENT_CENTER
+        : DWRITE_TEXT_ALIGNMENT_LEADING);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    return cuTextFormatCache_.emplace(key, std::move(format)).first->second.Get();
+}
+
+IDWriteTextFormat* Widget::GetCuTextFormatWeight(float value, DWRITE_FONT_WEIGHT weight, bool centered) const
+{
+    if (!app_ || !app_->dwriteFactory_)
+        return nullptr;
+    const float size = FontCu(value);
+    const int key = static_cast<int>(std::round(size * 100.0f)) |
+        (static_cast<int>(weight) << 14) | (centered ? 1 << 25 : 0);
+    auto found = cuTextFormatCache_.find(key);
+    if (found != cuTextFormatCache_.end())
+        return found->second.Get();
+
+    ComPtr<IDWriteTextFormat> format;
+    app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+        weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     if (!format)
         return nullptr;
     format->SetTextAlignment(centered
@@ -429,39 +456,39 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
         }
 
         if (sourceHasShortcut)
-            return L"桌面文件不支持收纳快捷方式";
+            return _LW("widget.desktop.no_shortcut");
         if (action == DropAction::Link)
-            return L"桌面文件不支持创建快捷方式";
+            return _LW("widget.desktop.no_create_shortcut");
 
         if (data_->dateHeaders &&
             origin == this && (region == HitRegion::SortBefore || region == HitRegion::SortAfter))
-            return L"请先关闭日期表头再进行排序";
+            return _LW("widget.desktop.sort_after_date");
     }
 
     auto actionText = [&]() -> std::wstring {
         switch (action)
         {
         case DropAction::Copy:
-            return L"复制";
+            return _LW("widget.base.copy_label");
         case DropAction::Link:
-            return L"创建快捷方式";
+            return _LW("widget.base.create_shortcut");
         case DropAction::Move:
         default:
-            return L"移动";
+            return _LW("widget.base.move");
         }
     };
 
     if (region == HitRegion::SortBefore || region == HitRegion::SortAfter)
     {
         if (origin == this && action == DropAction::Move)
-            return L"释放：重新排序";
-        return L"释放：" + actionText() + L"并插入到此处";
+            return _LW("widget.base.release_reorder");
+        return _LFW("widget.base.release_insert", actionText());
     }
     if (region == HitRegion::Empty)
-        return L"释放：" + actionText() + L"到此处";
+        return _LFW("widget.base.release_move_here", actionText());
     if (slot)
         return slot->GetDropHint(region, sourceItems);
-    return L"释放：" + actionText() + L"到此处";
+    return _LFW("widget.base.release_move_here", actionText());
 }
 
 /**
@@ -565,7 +592,8 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
             layoutIt->first,
             D2D1::Point2F(static_cast<float>(textRect.left),
                 static_cast<float>(textRect.top)),
-            D2D1::SizeF(width, height), layoutScale, 1.0f);
+            D2D1::SizeF(width, height), layoutScale, 1.0f,
+            app_->IsLightContentTheme());
 }
 
 /**
@@ -585,9 +613,12 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
 
     bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
     if (hovered && !selected)
+    {
+        const bool lt = app_->IsLightContentTheme();
         app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+    }
     if (selected)
         app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.30f),
@@ -613,12 +644,12 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
 }
 
 void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
-    const std::wstring& name, bool isDir) const
+    const std::wstring& name, bool isDir, bool showLabel) const
 {
     if (!app_ || !context || IsRectEmptyRect(rect)) return;
     (void)name;
 
-    const std::wstring label = isDir ? L"文件夹" : L"文件";
+    const std::wstring label = isDir ? _LW("widget.base.folder_type") : _LW("widget.base.file_type");
     const int width = rect.right - rect.left;
     const int height = rect.bottom - rect.top;
 
@@ -631,7 +662,8 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
             rect.left + Cu(4.0f) + iconSize,
             rect.top + (height + iconSize) / 2);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
-        DrawListItemTitle(context, rect, iconRect, label);
+        if (showLabel)
+            DrawListItemTitle(context, rect, iconRect, label);
         return;
     }
 
@@ -642,7 +674,21 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     {
         const RECT iconRect = app_->GetItemIconRect(rect);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
-        app_->DrawItemText(context, rect, label, false);
+        if (showLabel)
+            app_->DrawItemText(context, rect, label, false, 1.0f,
+                app_->IsLightContentTheme());
+        return;
+    }
+
+    if (!showLabel)
+    {
+        const int iconSize = std::max(1, std::min(width - Cu(4.0f), height - Cu(4.0f)));
+        const RECT iconRect = MakeRect(
+            rect.left + (width - iconSize) / 2,
+            rect.top + (height - iconSize) / 2,
+            rect.left + (width + iconSize) / 2,
+            rect.top + (height + iconSize) / 2);
+        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         return;
     }
 
@@ -658,10 +704,13 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
 
     RECT titleRect = MakeRect(rect.left + Cu(1.0f), iconRect.bottom + Cu(2.0f),
         rect.right - Cu(1.0f), rect.bottom);
-    IDWriteTextFormat* titleFormat = GetCuTextFormat(12.0f, false, true);
+    const bool lt = app_->IsLightContentTheme();
+    IDWriteTextFormat* titleFormat = lt
+        ? GetCuTextFormatWeight(12.0f, DWRITE_FONT_WEIGHT_LIGHT, true)
+        : GetCuTextFormat(12.0f, false, true);
     app_->DrawD2DText(context, label, titleRect,
         titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.88f));
+        lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.88f));
 }
 
 // ── Scrollbar helper (free function, shared by WidgetContainer and popup) ─
@@ -676,7 +725,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
  * @param hovered 鼠标是否悬停在滚动区域
  */
 void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
-    int visibleHeight, int scrollOffset, bool hovered, float cellScale)
+    int visibleHeight, int scrollOffset, bool hovered, bool lightTheme, float cellScale)
 {
     if (contentHeight <= visibleHeight || visibleHeight <= 0) return;
     if (!hovered) return;
@@ -694,7 +743,8 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     // Track background
     RECT trackRect = MakeRect(trackLeft, trackTop, trackLeft + trackWidth, trackBottom);
     ComPtr<ID2D1SolidColorBrush> trackBrush;
-    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f), &trackBrush);
+    context->CreateSolidColorBrush(
+        lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f), &trackBrush);
     if (trackBrush)
     {
         D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
@@ -715,7 +765,8 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     RECT thumbRect = MakeRect(trackLeft, thumbTop, trackLeft + trackWidth, thumbTop + thumbHeight);
 
     ComPtr<ID2D1SolidColorBrush> thumbBrush;
-    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f), &thumbBrush);
+    context->CreateSolidColorBrush(
+        lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.28f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f), &thumbBrush);
     if (thumbBrush)
     {
         D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
@@ -735,7 +786,7 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
 {
     RECT body = GetBodyRect();
     DrawScrollbarAt(context, body, GetTotalContentHeight(),
-        GetVisibleContentHeight(), GetScrollOffset(), hovered, GetCellScale());
+        GetVisibleContentHeight(), GetScrollOffset(), hovered, app_->IsLightContentTheme(), GetCellScale());
 }
 
 // ── Cached clip geometry ─────────────────────────────────────
@@ -782,6 +833,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     const bool selected = data_->selected;
     const bool hovered = PtInRect(&frame, mousePt) != FALSE;
+    const bool lightTheme = app_->IsLightContentTheme();
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
@@ -798,7 +850,6 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     float radius = static_cast<float>(Cu(cornerRadiusCu));
     float strokeW = selected ? 1.6f : 1.0f;
-    float effectScale = std::max(0.5f, static_cast<float>(Cu(1.0f)));
 
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
         const auto key = D2DColorBrushKey(c);
@@ -813,8 +864,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     };
 
     // ── 1. Background + border ────────────────────────────────
-    app_->DrawWidgetPanelBackground(context, frame, radius, effectScale,
-        fillColor, borderColor, selected, strokeW);
+    app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, borderColor,
+        selected, strokeW);
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {
@@ -894,7 +945,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             if (tw > 0 && th > 0 && app_->GetDWriteFactory())
             {
                 auto* dwrite = app_->GetDWriteFactory();
-                IDWriteTextFormat* fmt = GetCuTextFormat(GetBarHeight() * 0.542f, false, false);
+                auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
+                    std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
+                IDWriteTextFormat* fmt = GetCuTextFormatWeight(GetBarHeight() * 0.542f, titleWeight, false);
                 if (fmt)
                 {
                     ComPtr<IDWriteTextLayout> layout;
@@ -903,12 +956,17 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {
-                        if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
-                            context->DrawTextLayout(
-                                D2D1::Point2F((float)titleRect.left + Cu(1.0f), (float)titleRect.top + Cu(1.0f)),
-                                layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        if (!lightTheme)
+                        {
+                            if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
+                                context->DrawTextLayout(
+                                    D2D1::Point2F((float)titleRect.left + Cu(1.0f), (float)titleRect.top + Cu(1.0f)),
+                                    layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        }
 
-                        if (auto* textBrush = getBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f)))
+                        if (auto* textBrush = getBrush(lightTheme
+                            ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.82f)
+                            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f)))
                             context->DrawTextLayout(
                                 D2D1::Point2F((float)titleRect.left, (float)titleRect.top),
                                 layout.Get(), textBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -929,8 +987,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 static_cast<float>(Cu(4.0f * GetBarScale())), static_cast<float>(Cu(4.0f * GetBarScale())));
             D2D1::ColorF dotFill = selected
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f);
-            D2D1::ColorF dotStroke(1.0f, 1.0f, 1.0f, 0.50f);
+                : (lightTheme
+                    ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f));
+            D2D1::ColorF dotStroke = lightTheme
+                ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
 
             if (auto* b = getBrush(dotFill))
                 context->FillRoundedRectangle(pill, b);

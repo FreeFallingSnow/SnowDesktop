@@ -27,7 +27,29 @@
 .\build.bat
 ```
 
-构建脚本会自动终止已在运行的 SnowDesktop.exe。
+构建脚本会自动终止已在运行的 SnowDesktop.exe，并为释放任务栏 Hook DLL
+短暂重启 Explorer。
+
+## 打包
+
+```bat
+.\release.bat
+```
+
+该命令打开统一发布界面，可完成状态检查、Release 构建、携带版与 MSIX
+打包、二进制 Release 仓库同步、版本分支压缩合并、远程发布和 GitHub
+Release 创建。每个版本的安装包、哈希、发布说明和日志统一保存在
+`artifacts\vA.B.C.0\`。
+
+Agent 和自动化脚本可使用非交互入口：
+
+```bat
+.\release.bat status -Json
+.\release.bat package
+```
+
+完整命令和 Microsoft Store 身份配置见
+[packaging/README.md](./packaging/README.md)。
 
 ## 技术栈
 

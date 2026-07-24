@@ -62,6 +62,7 @@ constexpr UINT kTrayDesktopIconNetwork = 40009;
 constexpr UINT kTrayDesktopIconControlPanel = 40010;
 constexpr UINT kTrayDesktopIconRecycleBin = 40011;
 constexpr UINT kTrayRestartCommand = 40013;
+constexpr UINT kTrayRestartExplorerCommand = 40014;
 
 // ── 桌面特殊图标CLSID ─────────────────────────
 constexpr wchar_t kDesktopIconClsidThisPC[] = L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
@@ -148,9 +149,9 @@ constexpr UINT kContextDockPositionLeft = 41802;
 constexpr UINT kContextDockPositionRight = 41803;
 constexpr UINT kContextDockLayoutIsland = 41804;
 constexpr UINT kContextDockLayoutEdge = 41805;
-constexpr UINT kContextDockFollowPersonalization = 41806;
 constexpr UINT kContextDockDetailedSettings = 41807;
 constexpr UINT kContextDockShowFrequentItems = 41808;
+constexpr UINT kContextDockRemoveFrequentItem = 41809;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
@@ -183,6 +184,8 @@ constexpr UINT kWidgetAddedHintVisibleMs = 2000;
 constexpr UINT_PTR kDockHandoffDwellTimerId = 11;
 constexpr UINT kDockHandoffDwellIntervalMs = 40;
 constexpr DWORD kDockHandoffDwellDelayMs = 520;
+constexpr UINT_PTR kTaskbarRevealGuardTimerId = 15;
+constexpr UINT kTaskbarRevealGuardIntervalMs = 50;
 constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 

@@ -22,6 +22,7 @@
 #include "container.h"
 #include "slot.h"
 #include <d2d1_1.h>
+#include <dwrite.h>
 #include <wrl/client.h>
 #include <string>
 #include <unordered_map>
@@ -90,6 +91,7 @@ public:
     int Cu(float value) const;
     float FontCu(float value) const;
     IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;
+    IDWriteTextFormat* GetCuTextFormatWeight(float value, DWRITE_FONT_WEIGHT weight, bool centered) const;
     IDWriteTextFormat* GetCuFaTextFormat(float value) const;
     float GetBarHeight() const;
     float GetBarScale() const;
@@ -225,7 +227,7 @@ public:
         const std::wstring& name, bool selected) const;
 
     void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
-        const std::wstring& name, bool isDir) const;
+        const std::wstring& name, bool isDir, bool showLabel = true) const;
 
     BarStyle GetInsertionStyle() const override;
 
@@ -259,6 +261,7 @@ public:
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
+    HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
     std::wstring CategoryIdAtPoint(POINT pt) const;
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
@@ -533,4 +536,4 @@ std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app);
  * @param hovered       鼠标是否悬停在滚动条区域
  */
 void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
-    int visibleHeight, int scrollOffset, bool hovered, float cellScale = 1.0f);
+    int visibleHeight, int scrollOffset, bool hovered, bool lightTheme, float cellScale = 1.0f);

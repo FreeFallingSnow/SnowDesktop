@@ -11,9 +11,11 @@
 
 struct GeneralSettings
 {
+    bool softwareDesktopEnabled = true;
     bool doubleClickHideDesktop = false;
-    int quickNavTheme = 1; // 0=dark, 1=light
+    int quickNavTheme = 1;
     bool dockEnabled = false;
+    char language[85] = "system";
 };
 
 std::wstring GetGeneralSettingsPath();

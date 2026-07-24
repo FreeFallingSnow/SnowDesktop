@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include "../l10n.h"
 
 static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex);
 
@@ -382,15 +383,18 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (!data_ || !app_) return;
     (void)body;
     bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
+    const bool lt = app_->IsLightContentTheme();
 
     if (data_->folderEntries.empty())
     {
         RECT empty = GetBodyRect();
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
         IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
-        app_->DrawD2DText(context, L"空文件夹", empty,
-            centered ? centered : app_->listItemTextFormat_.Get(),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+        IDWriteTextFormat* lightCentered = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true) : nullptr;
+        app_->DrawD2DText(context, _LW("widget.folder_mapping.empty"), empty,
+            (lt && lightCentered) ? lightCentered :
+                (centered ? centered : app_->listItemTextFormat_.Get()),
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
         return;
     }
 
@@ -414,7 +418,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                 RECT bodyRect = GetBodyRect();
                 bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
                 FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
-                icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0));
+                icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0),
+                    app_->IsLightContentTheme());
             }
             continue;
         }
@@ -442,6 +447,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
+    const bool lt = app_->IsLightContentTheme();
 
     const float bs = GetBarScale();
     const int btnSize = Cu(14.0f * bs);
@@ -469,7 +475,9 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
         app_->DrawD2DText(context, glyph, rect,
             faFormat ? faFormat :
                 (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
-            hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f));
+            lt
+            ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
+            : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f)));
     };
 
     drawFaButton(toggleBtn, data_->listMode ? L"" : L"");

@@ -4,17 +4,94 @@ project(SnowDesktop LANGUAGES C CXX)
 
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
 string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
+
+file(READ
+    "${CMAKE_SOURCE_DIR}/packaging/store-identity.json"
+    STORE_IDENTITY_JSON)
+string(JSON SNOWDESKTOP_STORE_ID
+    GET "${STORE_IDENTITY_JSON}" "storeId")
+string(JSON SNOWDESKTOP_PACKAGE_FAMILY_NAME
+    GET "${STORE_IDENTITY_JSON}" "packageFamilyName")
+string(LENGTH "${SNOWDESKTOP_STORE_ID}" SNOWDESKTOP_STORE_ID_LENGTH)
+if (NOT SNOWDESKTOP_STORE_ID MATCHES "^[A-Z0-9]+$" OR
+    NOT SNOWDESKTOP_STORE_ID_LENGTH EQUAL 12)
+    message(FATAL_ERROR
+        "packaging/store-identity.json contains an invalid Store ID")
+endif()
+if (SNOWDESKTOP_PACKAGE_FAMILY_NAME STREQUAL "")
+    message(FATAL_ERROR
+        "packaging/store-identity.json contains an empty package family name")
+endif()
+
+string(REPLACE "." ";" SNOWDESKTOP_VERSION_PARTS "${SNOWDESKTOP_VERSION}")
+list(LENGTH SNOWDESKTOP_VERSION_PARTS SNOWDESKTOP_VERSION_PART_COUNT)
+if (NOT SNOWDESKTOP_VERSION_PART_COUNT EQUAL 4)
+    message(FATAL_ERROR
+        "version.json must contain a four-part version: A.B.C.D")
+endif()
+
+foreach(VERSION_PART IN LISTS SNOWDESKTOP_VERSION_PARTS)
+    if (NOT VERSION_PART MATCHES "^(0|[1-9][0-9]*)$")
+        message(FATAL_ERROR
+            "Version components must be canonical non-negative integers: ${SNOWDESKTOP_VERSION}")
+    endif()
+    if (VERSION_PART GREATER 65535)
+        message(FATAL_ERROR
+            "Each version component must be between 0 and 65535: ${SNOWDESKTOP_VERSION}")
+    endif()
+endforeach()
+
+list(GET SNOWDESKTOP_VERSION_PARTS 0 SNOWDESKTOP_VERSION_MAJOR)
+list(GET SNOWDESKTOP_VERSION_PARTS 1 SNOWDESKTOP_VERSION_MINOR)
+list(GET SNOWDESKTOP_VERSION_PARTS 2 SNOWDESKTOP_VERSION_PATCH)
+list(GET SNOWDESKTOP_VERSION_PARTS 3 SNOWDESKTOP_VERSION_REVISION)
+if (SNOWDESKTOP_VERSION_MAJOR EQUAL 0)
+    message(FATAL_ERROR
+        "The first version component must be greater than zero for MSIX packages")
+endif()
+if (NOT SNOWDESKTOP_VERSION_REVISION EQUAL 0)
+    message(FATAL_ERROR
+        "The fourth version component must be zero for Microsoft Store submissions")
+endif()
+
+set(SNOWDESKTOP_VERSION_RESOURCE_DIR
+    "${CMAKE_BINARY_DIR}/generated/version")
+file(MAKE_DIRECTORY "${SNOWDESKTOP_VERSION_RESOURCE_DIR}")
+
+set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop")
+set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktop.exe")
+set(SNOWDESKTOP_FILE_TYPE "VFT_APP")
+set(SNOWDESKTOP_EXE_VERSION_RESOURCE
+    "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktop.version.rc")
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
+    @ONLY)
+
+set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop taskbar hook")
+set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktopTaskbarHook.dll")
+set(SNOWDESKTOP_FILE_TYPE "VFT_DLL")
+set(SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE
+    "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktopTaskbarHook.version.rc")
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE}"
+    @ONLY)
+
 message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
 
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
+    src/app/desktop_backdrop_compositor.cpp
+    src/taskbar_dynamic/search_visibility_detector.cpp
     src/core/item.cpp
     src/core/dock.cpp
     src/core/slot.cpp
     src/core/container.cpp
     src/core/desktop.cpp
     src/data_paths.cpp
+    src/deployment_context.cpp
     src/utils.cpp
     src/settings_window.cpp
     src/personalization.cpp
@@ -22,6 +99,7 @@ set(SNOWDESKTOP_SOURCES
     src/navigation_settings.cpp
     src/general_settings.cpp
     src/category_settings.cpp
+    src/l10n.cpp
     src/search_match.cpp
     src/everything_search.cpp
     src/widget_engine.cpp
@@ -66,18 +144,160 @@ set(LUA_SOURCES
     third_party/lua/lvm.c third_party/lua/lzio.c
 )
 
-set(THIRD_PARTY_SOURCES
-    ${IMGUI_SOURCES}
-    ${LUA_SOURCES}
+add_library(SnowDesktopImgui STATIC ${IMGUI_SOURCES})
+target_compile_features(SnowDesktopImgui PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopImgui PUBLIC
+    third_party/imgui
+    third_party/imgui/backends
 )
+if(MSVC)
+    set_property(TARGET SnowDesktopImgui PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopImgui PRIVATE /MP /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_definitions(SnowDesktopImgui PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+endif()
+
+add_library(SnowDesktopLua STATIC ${LUA_SOURCES})
+set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE C)
+target_include_directories(SnowDesktopLua PUBLIC third_party/lua)
+if(MSVC)
+    set_property(TARGET SnowDesktopLua PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopLua PRIVATE /MP
+        /wd4244 /wd4310 /wd4324 /wd4701 /wd4702)
+endif()
+
+add_library(SnowDesktopEverything STATIC ${EVERYTHING_SOURCES})
+set_source_files_properties(${EVERYTHING_SOURCES} PROPERTIES LANGUAGE C)
+target_include_directories(SnowDesktopEverything PUBLIC
+    third_party/everything/include)
+if(MSVC)
+    set_property(TARGET SnowDesktopEverything PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopEverything PRIVATE /MP /wd4100 /wd4133 /wd4996)
+endif()
+
+add_library(SnowDesktopPinyinData STATIC ${PINYIN_DATA_SOURCES})
+target_compile_features(SnowDesktopPinyinData PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopPinyinData PUBLIC
+    third_party/pinyin-data)
+if(MSVC)
+    set_property(TARGET SnowDesktopPinyinData PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopPinyinData PRIVATE /MP)
+endif()
+
+if (MSVC)
+    cmake_host_system_information(RESULT WINDOWS_KITS_ROOT QUERY WINDOWS_REGISTRY
+        "HKLM/SOFTWARE/Microsoft/Windows Kits/Installed Roots"
+        VALUE "KitsRoot10" VIEW 32_64)
+    file(GLOB CPPWINRT_CANDIDATES
+        "${WINDOWS_KITS_ROOT}/bin/*/x64/cppwinrt.exe")
+    list(SORT CPPWINRT_CANDIDATES COMPARE NATURAL ORDER DESCENDING)
+    if (NOT CPPWINRT_CANDIDATES)
+        message(FATAL_ERROR "cppwinrt.exe was not found in the Windows 10/11 SDK")
+    endif()
+    list(GET CPPWINRT_CANDIDATES 0 CPPWINRT_EXECUTABLE)
+    get_filename_component(CPPWINRT_ARCH_DIR "${CPPWINRT_EXECUTABLE}" DIRECTORY)
+    set(MIDLRT_EXECUTABLE "${CPPWINRT_ARCH_DIR}/midlrt.exe")
+    if (NOT EXISTS "${MIDLRT_EXECUTABLE}")
+        message(FATAL_ERROR "midlrt.exe was not found next to cppwinrt.exe")
+    endif()
+    get_filename_component(CPPWINRT_VERSION_DIR "${CPPWINRT_ARCH_DIR}" DIRECTORY)
+    get_filename_component(CPPWINRT_SDK_VERSION "${CPPWINRT_VERSION_DIR}" NAME)
+    set(WINDOWS_WINMD
+        "${WINDOWS_KITS_ROOT}/UnionMetadata/${CPPWINRT_SDK_VERSION}/Windows.winmd")
+    if (NOT EXISTS "${WINDOWS_WINMD}")
+        message(FATAL_ERROR "Windows.winmd was not found for SDK ${CPPWINRT_SDK_VERSION}")
+    endif()
+
+    set(CPPWINRT_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated/cppwinrt")
+    set(SHELLVIEW_WINMD_DIR "${CMAKE_BINARY_DIR}/generated/winmd")
+    set(SHELLVIEW_WINMD "${SHELLVIEW_WINMD_DIR}/WindowsUdk.winmd")
+    file(TO_NATIVE_PATH
+        "${WINDOWS_KITS_ROOT}/Include/${CPPWINRT_SDK_VERSION}/winrt"
+        MIDLRT_INCLUDE_DIR)
+    file(TO_NATIVE_PATH
+        "${WINDOWS_KITS_ROOT}/UnionMetadata/${CPPWINRT_SDK_VERSION}"
+        MIDLRT_METADATA_DIR)
+    file(TO_NATIVE_PATH "${WINDOWS_WINMD}" MIDLRT_WINDOWS_WINMD)
+    file(TO_NATIVE_PATH "${SHELLVIEW_WINMD_DIR}" MIDLRT_OUTPUT_DIR)
+    add_custom_command(
+        OUTPUT "${SHELLVIEW_WINMD}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHELLVIEW_WINMD_DIR}"
+        COMMAND "${MIDLRT_EXECUTABLE}"
+            /winrt /nomidl /no_cpp
+            /I "${MIDLRT_INCLUDE_DIR}"
+            /metadata_dir "${MIDLRT_METADATA_DIR}"
+            /reference "${MIDLRT_WINDOWS_WINMD}"
+            /out "${MIDLRT_OUTPUT_DIR}"
+            /winmd WindowsUdk.winmd
+            "ShellViewCoordinator.idl"
+        DEPENDS
+            "${CMAKE_SOURCE_DIR}/src/taskbar_dynamic/ShellViewCoordinator.idl"
+            "${WINDOWS_WINMD}"
+        COMMENT "Compiling the ShellViewCoordinator WinMD..."
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/src/taskbar_dynamic"
+        VERBATIM)
+    add_custom_command(
+        OUTPUT
+            "${CPPWINRT_OUTPUT_DIR}/winrt/base.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.ApplicationModel.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.Foundation.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/WindowsUdk.UI.Shell.h"
+        COMMAND "${CPPWINRT_EXECUTABLE}"
+            -in "${WINDOWS_WINMD}"
+            -in "${SHELLVIEW_WINMD}"
+            -out "${CPPWINRT_OUTPUT_DIR}"
+        DEPENDS "${WINDOWS_WINMD}" "${SHELLVIEW_WINMD}"
+        COMMENT "Generating C++/WinRT projections for the taskbar XAML hook..."
+        VERBATIM)
+    add_custom_target(SnowDesktopCppWinRT DEPENDS
+        "${CPPWINRT_OUTPUT_DIR}/winrt/base.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.ApplicationModel.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.Foundation.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/WindowsUdk.UI.Shell.h")
+
+    add_library(SnowDesktopTaskbarHook SHARED
+        src/taskbar_hook/taskbar_hook.cpp
+        src/taskbar_hook/taskbar_hook_protocol.h
+        src/taskbar_hook/taskview_visibility.h
+        src/taskbar_hook/taskbar_hook.def
+        "${SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE}"
+    )
+    add_dependencies(SnowDesktopTaskbarHook SnowDesktopCppWinRT)
+    set_target_properties(SnowDesktopTaskbarHook PROPERTIES
+        OUTPUT_NAME "SnowDesktopTaskbarHook")
+    target_compile_features(SnowDesktopTaskbarHook PRIVATE cxx_std_20)
+    target_include_directories(SnowDesktopTaskbarHook PRIVATE
+        src/taskbar_hook
+        "${CPPWINRT_OUTPUT_DIR}"
+    )
+    target_compile_definitions(SnowDesktopTaskbarHook PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+        WINVER=0x0A00 _WIN32_WINNT=0x0A00 WINRT_NO_MODULE_LOCK)
+    target_link_libraries(SnowDesktopTaskbarHook PRIVATE
+        comctl32 d2d1 dxguid ole32 runtimeobject user32 windowsapp)
+    set_property(TARGET SnowDesktopTaskbarHook PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopTaskbarHook PRIVATE
+        /W4 /permissive- /EHsc /utf-8)
+endif()
 
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
-    ${EVERYTHING_SOURCES}
-    ${PINYIN_DATA_SOURCES}
-    ${THIRD_PARTY_SOURCES}
     src/resource.rc
+    "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
+if (TARGET SnowDesktopTaskbarHook)
+    add_dependencies(SnowDesktop SnowDesktopTaskbarHook SnowDesktopCppWinRT)
+    target_include_directories(SnowDesktop PRIVATE "${CPPWINRT_OUTPUT_DIR}")
+endif()
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
@@ -85,33 +305,56 @@ target_include_directories(SnowDesktop PRIVATE
     src/core
     src/app
     third_party/spdlog/include
-    third_party/imgui
-    third_party/imgui/backends
-    third_party/lua
-    third_party/everything/include
-    third_party/pinyin-data
 )
 
 if (MSVC)
     set_property(TARGET SnowDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktop PRIVATE /W4 /permissive- /EHsc /utf-8 /Zi /FS)
+    target_compile_options(SnowDesktop PRIVATE /MP /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00
-        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
+        SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
+        SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
+    target_precompile_headers(SnowDesktop PRIVATE
+        <windows.h>
+        <shlwapi.h>
+        <shlobj.h>
+        <shellapi.h>
+        <d2d1_1.h>
+        <wrl/client.h>
+        <algorithm>
+        <atomic>
+        <cmath>
+        <cstdint>
+        <fstream>
+        <functional>
+        <memory>
+        <mutex>
+        <sstream>
+        <string>
+        <thread>
+        <unordered_map>
+        <unordered_set>
+        <vector>
+    )
     target_link_options(SnowDesktop PRIVATE
         "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
-        /DEBUG:FULL /OPT:REF /OPT:ICF)
+        /DEBUG:FULL /INCREMENTAL:NO /OPT:REF /OPT:ICF)
 else()
     target_compile_options(SnowDesktop PRIVATE -Wall -Wextra -pedantic)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
-        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
+        SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
+        SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
+    SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    bcrypt imm32 iphlpapi ole32 pdh runtimeobject shcore shell32 shlwapi urlmon user32 windowscodecs uuid winhttp
+    advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp
+    wbemuuid
 )
 
 add_custom_command(TARGET SnowDesktop PRE_BUILD
@@ -124,19 +367,11 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
         "$<TARGET_FILE_DIR:SnowDesktop>/widgets"
     COMMENT "Copying widget scripts to output (SnowDesktop)..."
 )
-
-set_source_files_properties(
-    ${LUA_SOURCES}
-    PROPERTIES LANGUAGE C
-)
-set_source_files_properties(
-    ${EVERYTHING_SOURCES}
-    PROPERTIES LANGUAGE C
+add_custom_command(TARGET SnowDesktop POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/lang"
+        "$<TARGET_FILE_DIR:SnowDesktop>/lang"
+    COMMENT "Copying language files to output (SnowDesktop)..."
 )
 
-if (MSVC)
-    set_source_files_properties(${LUA_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "/wd4244;/wd4310;/wd4324;/wd4701;/wd4702")
-    set_source_files_properties(${EVERYTHING_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "/wd4100;/wd4996")
-endif()
+

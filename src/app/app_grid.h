@@ -7,6 +7,8 @@
  */
 #pragma once
 
+#include <ShObjIdl.h>
+
 #include "drop_model.h"
 
 // ── 网格辅助函数 ──────────────────────────────────────────
@@ -93,6 +95,7 @@ inline void DesktopApp::AdjustGridRows(int delta)
     ApplyIconSpacingToPage(*targetPage);
     savedPageColumns_[targetPage->id] = targetPage->columns;
     savedPageRows_[targetPage->id] = targetPage->rows;
+    ApplyDockWorkAreaReservation();
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
@@ -124,6 +127,7 @@ inline void DesktopApp::AdjustGridColumns(int delta)
     ApplyIconSpacingToPage(*targetPage);
     savedPageColumns_[targetPage->id] = targetPage->columns;
     savedPageRows_[targetPage->id] = targetPage->rows;
+    ApplyDockWorkAreaReservation();
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
@@ -167,6 +171,7 @@ inline void DesktopApp::SetGridDimensions(int columns, int rows)
     ApplyIconSpacingToPage(*targetPage);
     savedPageColumns_[targetPage->id] = targetPage->columns;
     savedPageRows_[targetPage->id] = targetPage->rows;
+    ApplyDockWorkAreaReservation();
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
@@ -277,6 +282,7 @@ inline void DesktopApp::SetIconSpacing(float value)
     iconSpacingScale_ = clamped;
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
+    ApplyDockWorkAreaReservation();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -293,13 +299,14 @@ inline void DesktopApp::AdjustIconSpacing(float delta)
     iconSpacingScale_ = newVal;
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
+    ApplyDockWorkAreaReservation();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 /**
- * @brief 设置图标标题字号（12/14/16），重新创建文本格式并刷新。
+ * @brief 设置图标标题字号，重新创建文本格式并刷新。
  * @param value 新的字号。
  */
 inline void DesktopApp::SetItemFontSize(float value)
@@ -309,6 +316,11 @@ inline void DesktopApp::SetItemFontSize(float value)
     RecreateItemTextFormat();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline DWRITE_FONT_WEIGHT DesktopApp::GetItemFontWeight() const
+{
+    return itemFontWeight_;
 }
 
 inline void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
@@ -615,7 +627,7 @@ inline int DesktopApp::MaxPageOffset() const
 
 inline std::wstring DesktopApp::GetPageDisplayName(int index) const
 {
-    return L"第" + std::to_wstring(index + 1) + L"页";
+    return _LFW("app.grid.page_label", std::to_wstring(index + 1));
 }
 
 inline void DesktopApp::NavigatePageOffset(int delta)
@@ -693,7 +705,7 @@ inline void DesktopApp::PlaceGuideWidgetOnPage(const std::wstring& pageId)
     DesktopWidget w;
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::Guide;
-    w.title = L"分页使用指南";
+    w.title = _LW("app.guide.title");
     w.showTitle = true;
     w.bottomBarHover = true;
     w.gridSpan = { 4, 3 };
@@ -1768,6 +1780,10 @@ inline void DesktopApp::LoadLayoutSlots()
     buf << file.rdbuf();
     std::string text = buf.str();
 
+    int widgetTitleSchemaVersion = 0;
+    ReadJsonIntField(text, "widgetTitleSchemaVersion", widgetTitleSchemaVersion);
+    const bool hasTrustedWidgetTitleMode = widgetTitleSchemaVersion >= 1;
+
     std::string firstPageMonitorUtf8;
     if (ReadJsonStringField(text, "firstPageMonitor", firstPageMonitorUtf8))
         firstPageMonitorId_ = Utf8ToWide(firstPageMonitorUtf8);
@@ -1888,7 +1904,9 @@ inline void DesktopApp::LoadLayoutSlots()
                         size_t objectEnd = FindJsonObjectEnd(text, wp);
                         if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
-                        std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
+                        std::string idUtf8, typeUtf8, titleUtf8, customTitleUtf8,
+                            titleModeUtf8, sourceUtf8, scriptUtf8,
+                            activeCategoryUtf8, pageUtf8;
                         int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0, tabScrollOffset = 0;
                         bool autoCollect = false, listMode = false, dateHeaders = false, showOnHoverOnly = false, privacyMode = false, scrollContainerMode = false, showTitle = false, bottomBarHover = false, userRenamed = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
@@ -1901,6 +1919,10 @@ inline void DesktopApp::LoadLayoutSlots()
                         }
                         ReadJsonStringField(obj, "type", typeUtf8);
                         ReadJsonStringField(obj, "title", titleUtf8);
+                        const bool hasCustomTitle =
+                            ReadJsonStringField(obj, "customTitle", customTitleUtf8);
+                        const bool hasTitleMode =
+                            ReadJsonStringField(obj, "titleMode", titleModeUtf8);
                         ReadJsonStringField(obj, "sourceFolderPath", sourceUtf8);
                         ReadJsonStringField(obj, "scriptPath", scriptUtf8);
                         ReadJsonStringField(obj, "activeCategory", activeCategoryUtf8);
@@ -1929,13 +1951,13 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                             }
                             else if (widget.type == DesktopWidgetType::Guide)
                             {
-                                widget.title = L"分页使用指南";
+                                widget.title = _LW("app.guide.title");
                             }
                             else
                             {
-                                widget.title = widget.type == DesktopWidgetType::FileCategories ? L"桌面文件"
-                                    : widget.type == DesktopWidgetType::FolderMapping ? L"文件夹映射"
-                                    : L"集合";
+                                widget.title = widget.type == DesktopWidgetType::FileCategories ? _LW("widget.desktop_files")
+                                    : widget.type == DesktopWidgetType::FolderMapping ? _LW("widget.folder_mapping")
+                                    : _LW("widget.collection");
                             }
                         }
                         else
@@ -1959,10 +1981,74 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                             widget.type == DesktopWidgetType::Guide);
                         ReadJsonBoolField(obj, "showTitle", showTitle);
                         ReadJsonBoolField(obj, "bottomBarHover", bottomBarHover);
-                        ReadJsonBoolField(obj, "userRenamed", userRenamed);
+                        const bool hasUserRenamed =
+                            ReadJsonBoolField(obj, "userRenamed", userRenamed);
                         widget.showTitle = showTitle;
                         widget.bottomBarHover = bottomBarHover;
-                        widget.userRenamed = userRenamed;
+                        if (hasTrustedWidgetTitleMode && hasTitleMode)
+                        {
+                            if (titleModeUtf8 == "custom")
+                            {
+                                widget.customTitle = Utf8ToWide(
+                                    hasCustomTitle ? customTitleUtf8 : titleUtf8);
+                                widget.title = widget.customTitle;
+                            }
+                            else
+                            {
+                                widget.customTitle.clear();
+                            }
+                        }
+                        else if (hasUserRenamed && userRenamed)
+                        {
+                            // Legacy layouts only set this flag reliably when it
+                            // is true. Older versions wrote false even for
+                            // user-named widgets, so false must still go through
+                            // title-content inference below.
+                            widget.customTitle = Utf8ToWide(
+                                hasCustomTitle ? customTitleUtf8 : titleUtf8);
+                            widget.title = widget.customTitle;
+                        }
+                        else if (!widget.title.empty())
+                        {
+                            bool usesDefaultTitle = false;
+                            switch (widget.type)
+                            {
+                            case DesktopWidgetType::Collection:
+                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                                    L10N_KEY("widget.collection"), widget.title);
+                                break;
+                            case DesktopWidgetType::FileCategories:
+                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                                    L10N_KEY("widget.desktop_files"), widget.title);
+                                break;
+                            case DesktopWidgetType::Guide:
+                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                                    L10N_KEY("app.guide.title"), widget.title);
+                                break;
+                            case DesktopWidgetType::LuaScript:
+                                usesDefaultTitle = WidgetEngine::IsWidgetDefaultName(
+                                    widget.scriptPath, widget.title);
+                                break;
+                            case DesktopWidgetType::FolderMapping:
+                            default:
+                                break;
+                            }
+                            if (!usesDefaultTitle)
+                                widget.customTitle = widget.title;
+                            else if (widget.type == DesktopWidgetType::LuaScript &&
+                                widget.title != WidgetEngine::GetWidgetDisplayName(
+                                    widget.scriptPath))
+                                widget.scriptTitle = widget.title;
+                        }
+                        widget.userRenamed = !widget.customTitle.empty();
+                        if (widget.customTitle.empty() &&
+                            widget.type == DesktopWidgetType::LuaScript &&
+                            widget.scriptTitle.empty() && !widget.title.empty() &&
+                            !WidgetEngine::IsWidgetDefaultName(
+                                widget.scriptPath, widget.title))
+                        {
+                            widget.scriptTitle = widget.title;
+                        }
                         widget.scrollOffset = std::max(0, scrollOffset);
 widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
@@ -2186,7 +2272,8 @@ inline void DesktopApp::SaveLayoutSlots()
     std::ofstream file(GetLayoutPath(), std::ios::binary | std::ios::trunc);
     if (!file) return;
 
-    file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
+    file << "{\n  \"widgetTitleSchemaVersion\": 1"
+         << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
          << ",\n  \"itemFontSize\": " << itemFontSize_
@@ -2252,9 +2339,12 @@ inline void DesktopApp::SaveLayoutSlots()
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const DesktopWidget& w = widgets_[i];
+        const bool hasCustomTitle = !w.customTitle.empty();
         file << "    { \"id\": \"" << JsonEscapeUtf8(w.id)
              << "\", \"type\": \"" << JsonEscapeUtf8(WidgetTypeToJson(w.type))
              << "\", \"title\": \"" << JsonEscapeUtf8(w.title)
+             << "\", \"titleMode\": \"" << (hasCustomTitle ? "custom" : "auto")
+             << "\", \"customTitle\": \"" << JsonEscapeUtf8(w.customTitle)
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
              << "\", \"scriptPath\": \"" << JsonEscapeUtf8(w.scriptPath)
              << "\", \"activeCategory\": \"" << JsonEscapeUtf8(w.activeCategoryId)
@@ -2271,7 +2361,7 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
              << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
              << ", \"bottomBarHover\": " << (w.bottomBarHover ? "true" : "false")
-             << ", \"userRenamed\": " << (w.userRenamed ? "true" : "false")
+             << ", \"userRenamed\": " << (hasCustomTitle ? "true" : "false")
              << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
              << ", \"tabScrollOffset\": " << std::max(0, w.tabScrollOffset)
              << ", \"items\": [";
@@ -2519,8 +2609,35 @@ inline LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM w
  */
 inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (systemTaskbarTaskViewStateMsg_ &&
+        msg == systemTaskbarTaskViewStateMsg_)
+    {
+        const bool visible = wp != 0;
+        if (systemTaskbarTaskViewActive_ != visible)
+        {
+            systemTaskbarTaskViewActive_ = visible;
+            systemTaskbarWindowStateChangedTick_.fetch_add(1,
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
     if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
     {
+        NotifySystemTaskbarCreated();
+        systemTaskbarBackdropRefreshTick_ = 0;
+        systemTaskbarTaskViewActive_ = false;
+        systemTaskbarWindows_.clear();
+        RestartSystemTaskbarShellVisibilityDetectors();
+        systemTaskbarWindowStateChangedTick_.fetch_add(1,
+            std::memory_order_relaxed);
+        DWORD currentExplorerProcessId = 0;
+        if (HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr))
+            GetWindowThreadProcessId(taskbar, &currentExplorerProcessId);
+        // Explorer can broadcast TaskbarCreated more than once while its shell
+        // windows settle. Rebuild the desktop pipeline once per Explorer PID.
+        if (!currentExplorerProcessId ||
+            currentExplorerProcessId != desktopHostExplorerProcessId_)
+            explorerDesktopRecreatePending_ = true;
         RecoverDesktopHostAfterExplorerRestart();
         return 0;
     }
@@ -2578,6 +2695,8 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     if (reloading_) return;
     reloading_ = true;
+    dockAppIdentityCache_.clear();
+    dockRunningWindows_.clear();
     BeginIconLoadGeneration();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     if (reloadLayoutFromDisk)
@@ -2598,11 +2717,32 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         }
     }
     LoadDesktopItems();
-    if (FindItemIndexByKey(kDesktopIconClsidRecycleBin) == static_cast<size_t>(-1))
-    {
-        std::erase_if(dockEntries_,
-            [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
-    }
+    // A Shell delete removes the desktop item, but its persisted Dock mapping
+    // otherwise survives and still consumes a slot.  Only prune references
+    // that are confirmed missing on disk: hidden files and temporarily
+    // unenumerated Shell items must remain pinned.
+    std::erase_if(dockEntries_, [this](const DockEntry& entry) {
+        if (entry.type != DockEntryType::DesktopItem)
+            return false;
+        if (IsRecycleBinDockEntry(entry))
+            return FindItemIndexByKey(entry.reference) == static_cast<size_t>(-1);
+
+        const std::wstring& path = entry.reference;
+        const bool driveAbsolute = path.size() >= 3 &&
+            ((path[0] >= L'A' && path[0] <= L'Z') ||
+             (path[0] >= L'a' && path[0] <= L'z')) &&
+            path[1] == L':' && (path[2] == L'\\' || path[2] == L'/');
+        const bool uncAbsolute = path.starts_with(L"\\\\");
+        if (!driveAbsolute && !uncAbsolute)
+            return false;
+
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
+            return false;
+        const DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
+            error == ERROR_INVALID_NAME;
+    });
+    NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
     if (!generalSettings_.dockEnabled && !dockEntries_.empty())
         RestoreDockEntriesToDesktop();
@@ -2798,6 +2938,7 @@ inline void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     SaveLayoutSlots();
     RebuildContainersAndItems();
     reloading_ = false;
+    RefreshDockRunningWindows(false);
     if (widgetEngine_)
         widgetEngine_->NotifyDesktopChanged("reload");
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -3319,6 +3460,13 @@ inline void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
             savedPageRows_[page.id] = std::max(1, page.rows);
         }
     }
+
+    // The pages below are rebuilt from MONITORINFO::rcWork, so their work
+    // areas no longer contain our previous Dock reservation. Discard the old
+    // rectangles before ApplyDockWorkAreaReservation() runs; otherwise it
+    // "restores" that stale reservation into the fresh work area and can
+    // expand it across the Windows taskbar.
+    dockAreas_.clear();
     gridPages_.clear();
 
     MonitorEnumContext ctx{};
@@ -4810,15 +4958,15 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
         for (int i = 1; i < 1000; ++i)
         {
             std::wstring name = i <= 1
-                ? stem + L" - 副本" + ext
-                : stem + L" - 副本 (" + std::to_wstring(i) + L")" + ext;
+                    ? stem + _LW("app.grid.copy_suffix") + ext
+                : stem + _LFW("app.grid.copy_suffix_num", std::to_wstring(i)) + ext;
             wchar_t dst[MAX_PATH]{};
             PathCombineW(dst, desktopPath.c_str(), name.c_str());
             if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES)
                 return std::wstring(dst);
         }
         wchar_t fallback[MAX_PATH]{};
-        PathCombineW(fallback, desktopPath.c_str(), (stem + L" - 副本 (1000)" + ext).c_str());
+        PathCombineW(fallback, desktopPath.c_str(), (stem + _LW("app.grid.copy_suffix_1000") + ext).c_str());
         return std::wstring(fallback);
     };
 
@@ -4827,7 +4975,7 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
         wchar_t stemBuf[MAX_PATH]{};
         wcscpy_s(stemBuf, fileName ? fileName : L"");
         PathRemoveExtensionW(stemBuf);
-        std::wstring stem = stemBuf[0] != L'\0' ? stemBuf : L"快捷方式";
+        std::wstring stem = stemBuf[0] != L'\0' ? stemBuf : _LW("widget.shortcut");
 
         for (int i = 1; i < 1000; ++i)
         {
@@ -5534,6 +5682,8 @@ inline void DesktopApp::RebuildContainersAndItems()
     // destroyed. Clear them before releasing containers and item wrappers.
     mouseDownHit_ = nullptr;
     pendingCtrlToggleWidgetItem_ = nullptr;
+    dockPressedContainer_ = nullptr;
+    widgetDockTargetContainer_ = nullptr;
     popupDragTargetSlot_.reset();
     popupMouseDownItem_.reset();
 
@@ -5579,8 +5729,15 @@ inline void DesktopApp::RebuildContainersAndItems()
         }
     }
 
-    if (generalSettings_.dockEnabled && !IsRectEmptyRect(dockArea_))
-        containers_.push_back(std::make_unique<DockContainer>(this, &dockEntries_, dockArea_));
+    if (generalSettings_.dockEnabled)
+    {
+        for (const RECT& dockArea : dockAreas_)
+        {
+            if (!IsRectEmptyRect(dockArea))
+                containers_.push_back(
+                    std::make_unique<DockContainer>(this, &dockEntries_, dockArea));
+        }
+    }
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {
@@ -5986,7 +6143,7 @@ inline void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
     DesktopWidget w;
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::Collection;
-    w.title = L"集合";
+    w.title = _LW("widget.collection");
     w.showTitle = true;
     w.bottomBarHover = true;
     AddWidgetToGrid(std::move(w), { 1, 1 });
@@ -6003,7 +6160,7 @@ inline void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
     DesktopWidget w;
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::FileCategories;
-    w.title = L"桌面文件";
+    w.title = _LW("widget.desktop_files");
     w.showTitle = true;
     AddWidgetToGrid(std::move(w), { 2, 2 });
     ShowWidgetAddedHint();
@@ -6017,18 +6174,35 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
 
-    // Pick source folder
-    BROWSEINFOW bi{};
-    bi.hwndOwner = hwnd_;
-    bi.lpszTitle = L"选择要映射的文件夹";
-    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
-    if (!pidl) return;
-    wchar_t path[MAX_PATH]{};
-    SHGetPathFromIDListW(pidl, path);
-    CoTaskMemFree(pidl);
-
-    std::wstring folderPath(path);
+    // Pick source folder via modern file-explorer-style dialog
+    std::wstring folderPath;
+    {
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        IFileOpenDialog* pfd = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                        IID_PPV_ARGS(&pfd))))
+        {
+            pfd->SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+            pfd->SetTitle(_LW("app.interact.select_folder"));
+            if (SUCCEEDED(pfd->Show(hwnd_)))
+            {
+                IShellItem* psi = nullptr;
+                if (SUCCEEDED(pfd->GetResult(&psi)))
+                {
+                    PWSTR pszPath = nullptr;
+                    if (SUCCEEDED(psi->GetDisplayName(SIGDN_FILESYSPATH, &pszPath)))
+                    {
+                        folderPath = pszPath;
+                        CoTaskMemFree(pszPath);
+                    }
+                    psi->Release();
+                }
+            }
+            pfd->Release();
+        }
+        CoUninitialize();
+    }
+    if (folderPath.empty()) return;
     std::wstring title = folderPath;
     if (!title.empty() && title.back() == L'\\') title.pop_back();
     size_t lastSep = title.find_last_of(L"\\/");

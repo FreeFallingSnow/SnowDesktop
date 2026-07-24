@@ -216,6 +216,8 @@ inline bool DesktopApp::InitGraphics()
         WriteCrashLogEntry(buf);
     }
     if (FAILED(hr)) return false;
+    d3dDevice_->GetImmediateContext(&d3dImmediateContext_);
+    if (!d3dImmediateContext_) return false;
 
     // D2D
     D2D1_FACTORY_OPTIONS factoryOptions{};
@@ -329,6 +331,7 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     dragRenderCache_.Reset();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
+    acrylicNoiseBrushCache_.clear();
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
     d2dIconCache_.clear();
@@ -337,7 +340,6 @@ inline void DesktopApp::ResetCompositionRenderCaches()
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();
     itemTextEffectContext_.Reset();
-    widgetPanelEffectContext_.Reset();
 }
 
 inline void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
@@ -402,8 +404,24 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         return S_OK;
     }
 
-inline void DesktopApp::OnPaint()
+inline void DesktopApp::OnPaint(const RECT* updateRect)
     {
+        // COM calls made while resolving glass wallpaper sources may dispatch a
+        // nested WM_PAINT on this same UI thread. D2D/DComp drawing is not
+        // re-entrant, so defer that invalidation until the active frame ends.
+        if (compositionPaintInProgress_)
+        {
+            if (hwnd_ && IsWindow(hwnd_))
+                InvalidateRect(hwnd_, updateRect, FALSE);
+            return;
+        }
+        compositionPaintInProgress_ = true;
+        struct PaintScope final
+        {
+            bool& active;
+            ~PaintScope() { active = false; }
+        } paintScope{ compositionPaintInProgress_ };
+
         HRESULT hr = CreateOrResizeCompositionSurface();
         if (FAILED(hr))
         {
@@ -411,9 +429,22 @@ inline void DesktopApp::OnPaint()
             return;
         }
 
+        RECT clientRect{};
+        GetClientRect(hwnd_, &clientRect);
+        RECT clippedUpdate{};
+        const RECT* dcompUpdate = nullptr;
+        if (updateRect && IntersectRect(&clippedUpdate, updateRect, &clientRect) &&
+            !IsRectEmpty(&clippedUpdate))
+            dcompUpdate = &clippedUpdate;
+
+        // Keep the exact surface used by BeginDraw alive locally. Explorer can
+        // synchronously broadcast shell messages from COM calls made during a
+        // frame; a deferred recovery may replace dcompSurface_ before this
+        // function reaches EndDraw.
+        ComPtr<IDCompositionSurface> paintSurface = dcompSurface_;
         ID2D1DeviceContext* rawContext = nullptr;
         POINT updateOffset{};
-        hr = dcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+        hr = paintSurface->BeginDraw(dcompUpdate, __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(&rawContext), &updateOffset);
         if (FAILED(hr))
         {
@@ -425,9 +456,25 @@ inline void DesktopApp::OnPaint()
         context.Attach(rawContext);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
+        const LONG updateTop = dcompUpdate ? dcompUpdate->top : 0;
         context->SetTransform(D2D1::Matrix3x2F::Translation(
-            static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)));
+            static_cast<float>(updateOffset.x - updateLeft),
+            static_cast<float>(updateOffset.y - updateTop)));
         context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+
+        const bool widgetPreviewActive =
+            widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize;
+        const bool desktopMarqueeActive =
+            marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
+        const bool completeGlassCollection = !dragSession_.IsActive() &&
+            !widgetPreviewActive && !desktopMarqueeActive;
+        if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size())
+        {
+            desktopBackdropCompositor_.RemovePanel(
+                GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]));
+        }
+        desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
 
         if (!desktopIconsHidden_)
             RenderFrame(context.Get());
@@ -437,10 +484,21 @@ inline void DesktopApp::OnPaint()
         if (showWidgetAddedHint_)
             DrawWidgetAddedHintOverlay(context.Get());
 
+        desktopBackdropCompositor_.EndFrame();
+        if (!nativeGlassPanelReadyLogged_ &&
+            desktopBackdropCompositor_.IsAvailable() &&
+            desktopBackdropCompositor_.PanelCount() > 0)
+        {
+            std::wstring message = L"Native desktop CompositionBackdropBrush active, panels=";
+            message += std::to_wstring(desktopBackdropCompositor_.PanelCount());
+            WriteCrashLogEntry(message.c_str());
+            nativeGlassPanelReadyLogged_ = true;
+        }
+
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
 
-        hr = dcompSurface_->EndDraw();
+        hr = paintSurface->EndDraw();
         if (FAILED(hr))
         {
             RecoverCompositionRenderFailure(L"EndDraw", hr);
@@ -663,7 +721,7 @@ inline void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rec
 }
 
 inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
-    float effectScale, D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
+    D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
     const PersonalizationSettings* effectSettings)
 {
     if (!ctx || IsRectEmptyRect(frame)) return;
@@ -678,12 +736,8 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
         : (settingsWindow_
             ? settingsWindow_->GetPersonalization()
             : PersonalizationSettings::DarkPreset());
-    effectScale = std::max(0.25f, effectScale);
     radius = std::max(0.0f, radius);
 
-    auto clamp01 = [](float value) {
-        return std::clamp(value, 0.0f, 1.0f);
-    };
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
         const auto key = D2DColorBrushKey(c);
         auto it = brushCache_.find(key);
@@ -696,178 +750,23 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
         return it->second.Get();
     };
 
-    const float shadowAlpha = clamp01(p.shadowAlpha);
-    const float shadowBlur = std::max(0.0f, p.shadowBlur * effectScale);
-    const float shadowOffsetY = p.shadowOffsetY * effectScale;
-    const LONG width = frame.right - frame.left;
-    const LONG height = frame.bottom - frame.top;
-
-    if (shadowAlpha > 0.001f && width > 0 && height > 0 && d2dDevice_)
-    {
-        if (!widgetPanelEffectContext_)
-        {
-            d2dDevice_->CreateDeviceContext(
-                D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &widgetPanelEffectContext_);
-            if (widgetPanelEffectContext_)
-            {
-                widgetPanelEffectContext_->SetDpi(96.0f, 96.0f);
-                widgetPanelEffectContext_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-            }
-        }
-
-        if (widgetPanelEffectContext_)
-        {
-            const float padF = std::ceil(std::max(4.0f, shadowBlur * 3.0f + std::abs(shadowOffsetY) + 4.0f));
-            const UINT pad = static_cast<UINT>(std::min<float>(256.0f, padF));
-            const UINT bitmapW = static_cast<UINT>(std::max<LONG>(1, width)) + pad * 2;
-            const UINT bitmapH = static_cast<UINT>(std::max<LONG>(1, height)) + pad * 2;
-
-            ComPtr<ID2D1CommandList> mask;
-            ComPtr<ID2D1Effect> shadow;
-            ComPtr<ID2D1Bitmap1> shadowBitmap;
-            D2D1_BITMAP_PROPERTIES1 bitmapProps = D2D1::BitmapProperties1(
-                D2D1_BITMAP_OPTIONS_TARGET,
-                D2D1::PixelFormat(
-                    DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-
-            if (SUCCEEDED(widgetPanelEffectContext_->CreateCommandList(&mask)) && mask &&
-                SUCCEEDED(widgetPanelEffectContext_->CreateBitmap(
-                    D2D1::SizeU(bitmapW, bitmapH), nullptr, 0,
-                    &bitmapProps, &shadowBitmap)) && shadowBitmap &&
-                SUCCEEDED(widgetPanelEffectContext_->CreateEffect(CLSID_D2D1Shadow, &shadow)) && shadow)
-            {
-                widgetPanelEffectContext_->SetTarget(mask.Get());
-                widgetPanelEffectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
-                widgetPanelEffectContext_->BeginDraw();
-
-                ComPtr<ID2D1SolidColorBrush> maskBrush;
-                if (SUCCEEDED(widgetPanelEffectContext_->CreateSolidColorBrush(
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &maskBrush)) && maskBrush)
-                {
-                    D2D1_ROUNDED_RECT maskRect = D2D1::RoundedRect(
-                        D2D1::RectF(static_cast<float>(pad), static_cast<float>(pad),
-                            static_cast<float>(pad + width), static_cast<float>(pad + height)),
-                        radius, radius);
-                    widgetPanelEffectContext_->FillRoundedRectangle(maskRect, maskBrush.Get());
-                }
-
-                HRESULT maskHr = widgetPanelEffectContext_->EndDraw();
-                widgetPanelEffectContext_->SetTarget(nullptr);
-                if (SUCCEEDED(maskHr) && SUCCEEDED(mask->Close()))
-                {
-                    shadow->SetInput(0, mask.Get());
-                    shadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, shadowBlur);
-                    shadow->SetValue(D2D1_SHADOW_PROP_COLOR,
-                        D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f, shadowAlpha });
-                    shadow->SetValue(D2D1_SHADOW_PROP_OPTIMIZATION,
-                        D2D1_SHADOW_OPTIMIZATION_QUALITY);
-
-                    widgetPanelEffectContext_->SetTarget(shadowBitmap.Get());
-                    widgetPanelEffectContext_->BeginDraw();
-                    widgetPanelEffectContext_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-                    widgetPanelEffectContext_->DrawImage(shadow.Get());
-                    HRESULT shadowHr = widgetPanelEffectContext_->EndDraw();
-                    widgetPanelEffectContext_->SetTarget(nullptr);
-
-                    if (SUCCEEDED(shadowHr))
-                    {
-                        D2D1_RECT_F dest = D2D1::RectF(
-                            static_cast<float>(frame.left) - pad,
-                            static_cast<float>(frame.top) - pad + shadowOffsetY,
-                            static_cast<float>(frame.left) - pad + bitmapW,
-                            static_cast<float>(frame.top) - pad + shadowOffsetY + bitmapH);
-                        ctx->DrawBitmap(shadowBitmap.Get(), dest, 1.0f,
-                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-                    }
-                }
-            }
-        }
-    }
-
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
+
+    // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
+    if (p.glassEnabled)
+        desktopBackdropCompositor_.AddPanel(frame, radius, p.glassBlurRadius);
+
     if (fill.a > 0.0f)
     {
         if (auto* fillBrush = getBrush(fill))
             ctx->FillRoundedRectangle(rr, fillBrush);
     }
-
-    ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
-    if ((p.highlightAlpha > 0.001f || p.noiseAlpha > 0.001f) && d2dFactory_)
+    if (p.glassEnabled && p.acrylicEnabled)
     {
-        d2dFactory_->CreateRoundedRectangleGeometry(rr, &clipGeo);
-    }
-
-    const float highlightAlpha = clamp01(p.highlightAlpha);
-    if (highlightAlpha > 0.001f)
-    {
-        bool clipped = false;
-        if (clipGeo)
-        {
-            ctx->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
-            clipped = true;
-        }
-
-        ComPtr<ID2D1GradientStopCollection> stops;
-        D2D1_GRADIENT_STOP sd[] = {
-            { 0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, highlightAlpha) },
-            { 1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f) },
-        };
-        if (SUCCEEDED(ctx->CreateGradientStopCollection(sd, 2,
-            D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
-        {
-            ComPtr<ID2D1LinearGradientBrush> brush;
-            const float midY = static_cast<float>(frame.top) +
-                std::max(1.0f, (frame.bottom - frame.top) * 0.45f);
-            if (SUCCEEDED(ctx->CreateLinearGradientBrush(
-                D2D1::LinearGradientBrushProperties(
-                    D2D1::Point2F(0.0f, static_cast<float>(frame.top)),
-                    D2D1::Point2F(0.0f, midY)),
-                stops.Get(), &brush)) && brush)
-            {
-                ctx->FillRectangle(
-                    D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
-                        static_cast<float>(frame.right), midY),
-                    brush.Get());
-            }
-        }
-
-        if (clipped) ctx->PopLayer();
-    }
-
-    const float noiseAlpha = clamp01(p.noiseAlpha);
-    if (noiseAlpha > 0.001f)
-    {
-        bool clipped = false;
-        if (clipGeo)
-        {
-            ctx->PushLayer(D2D1::LayerParameters(ToD2DRect(frame), clipGeo.Get()), nullptr);
-            clipped = true;
-        }
-
-        ID2D1SolidColorBrush* whiteNoise = getBrush(
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, noiseAlpha));
-        ID2D1SolidColorBrush* darkNoise = getBrush(
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, noiseAlpha * 0.45f));
-        const int area = std::max<LONG>(1, width * height);
-        const int count = std::clamp(area / 520, 12, 900);
-        std::uint32_t seed = static_cast<std::uint32_t>(
-            (frame.left * 73856093) ^ (frame.top * 19349663) ^
-            (frame.right * 83492791) ^ (frame.bottom * 2654435761u));
-        for (int i = 0; i < count; ++i)
-        {
-            seed = seed * 1664525u + 1013904223u;
-            LONG x = frame.left + static_cast<LONG>(seed % std::max<LONG>(1, width));
-            seed = seed * 1664525u + 1013904223u;
-            LONG y = frame.top + static_cast<LONG>(seed % std::max<LONG>(1, height));
-            ID2D1SolidColorBrush* brush = (seed & 1u) ? whiteNoise : darkNoise;
-            if (!brush) continue;
-            ctx->FillRectangle(
-                D2D1::RectF(static_cast<float>(x), static_cast<float>(y),
-                    static_cast<float>(x + 1), static_cast<float>(y + 1)),
-                brush);
-        }
-
-        if (clipped) ctx->PopLayer();
+        POINT screenOrigin{};
+        if (hwnd_) ClientToScreen(hwnd_, &screenOrigin);
+        DrawAcrylicNoise(ctx, frame, radius, p.contentTheme == 1,
+            screenOrigin);
     }
 
     D2D1_COLOR_F stroke = selected
@@ -875,8 +774,87 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
         : border;
     if (stroke.a > 0.0f)
     {
-        if (auto* strokeBrush = getBrush(stroke))
-            ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
+        const bool glassDrawn = p.glassEnabled && !selected &&
+            DrawGlassBorder(ctx, frame, radius, stroke, strokeWidth);
+        if (!glassDrawn)
+        {
+            if (auto* strokeBrush = getBrush(stroke))
+                ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
+        }
+    }
+}
+
+inline void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
+    float radius, bool lightTheme, POINT screenOrigin)
+{
+    if (!ctx || IsRectEmptyRect(frame))
+        return;
+
+    constexpr UINT kNoiseSize = 64;
+    const std::uintptr_t contextKey =
+        reinterpret_cast<std::uintptr_t>(ctx) & ~std::uintptr_t{1};
+    const std::uintptr_t cacheKey = contextKey |
+        static_cast<std::uintptr_t>(lightTheme);
+    auto found = acrylicNoiseBrushCache_.find(cacheKey);
+    if (found == acrylicNoiseBrushCache_.end())
+    {
+        if (acrylicNoiseBrushCache_.size() >= 8)
+            acrylicNoiseBrushCache_.clear();
+
+        std::array<std::uint32_t, kNoiseSize * kNoiseSize> pixels{};
+        std::uint32_t state = 0x534E4F57u; // "SNOW", fixed seed.
+        for (std::uint32_t& pixel : pixels)
+        {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            // System acrylic uses a very subtle texture. Keep alpha between
+            // roughly 0.8% and 3.1%, with polarity selected by content theme.
+            const std::uint8_t alpha = static_cast<std::uint8_t>(
+                2u + ((state >> 24) & 0x06u));
+            const std::uint8_t channel = lightTheme ? 0u : alpha;
+            pixel = (static_cast<std::uint32_t>(alpha) << 24) |
+                (static_cast<std::uint32_t>(channel) << 16) |
+                (static_cast<std::uint32_t>(channel) << 8) |
+                static_cast<std::uint32_t>(channel);
+        }
+
+        D2D1_BITMAP_PROPERTIES1 bitmapProperties =
+            D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_NONE,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                    D2D1_ALPHA_MODE_PREMULTIPLIED),
+                96.0f, 96.0f);
+        ComPtr<ID2D1Bitmap1> bitmap;
+        const D2D1_SIZE_U bitmapSize =
+            D2D1::SizeU(kNoiseSize, kNoiseSize);
+        if (FAILED(ctx->CreateBitmap(bitmapSize, pixels.data(),
+                kNoiseSize * sizeof(std::uint32_t), &bitmapProperties,
+                &bitmap)) || !bitmap)
+            return;
+
+        D2D1_BITMAP_BRUSH_PROPERTIES1 brushProperties =
+            D2D1::BitmapBrushProperties1(
+                D2D1_EXTEND_MODE_WRAP, D2D1_EXTEND_MODE_WRAP,
+                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        ComPtr<ID2D1BitmapBrush1> brush;
+        if (FAILED(ctx->CreateBitmapBrush(bitmap.Get(), &brushProperties,
+                nullptr, &brush)) || !brush)
+            return;
+        found = acrylicNoiseBrushCache_.emplace(cacheKey,
+            std::move(brush)).first;
+    }
+
+    if (found->second)
+    {
+        // Keep the tile aligned to physical screen pixels. Redrawing or moving
+        // a panel therefore samples the same noise instead of making the
+        // texture appear to shimmer.
+        found->second->SetTransform(D2D1::Matrix3x2F::Translation(
+            -static_cast<float>(screenOrigin.x),
+            -static_cast<float>(screenOrigin.y)));
+        ctx->FillRoundedRectangle(D2D1::RoundedRect(
+            ToD2DRect(frame), radius, radius), found->second.Get());
     }
 }
 
@@ -1124,7 +1102,8 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     std::wstring layoutKey = L"grid\x1f" + text + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
-        std::to_wstring(scaleKey);
+        std::to_wstring(scaleKey) + L"@" +
+        std::to_wstring(lightTheme ? 1 : 0);
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
@@ -1135,6 +1114,12 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             return;
         const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
         layout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+        if (lightTheme)
+        {
+            const auto w = static_cast<DWRITE_FONT_WEIGHT>(
+                std::max<int>(100, static_cast<int>(itemFontWeight_) - 200));
+            layout->SetFontWeight(w, fullRange);
+        }
         layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
             itemFontSize_ * 7.0f / 6.0f * layoutScale,
             itemFontSize_ * 5.0f / 6.0f * layoutScale);
@@ -1547,7 +1532,7 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
 
     RECT titleRect = MakeRect(popupRect_.left + 22, popupRect_.top + 18,
         popupRect_.right - 22, popupRect_.top + 44);
-    std::wstring title = widget.title.empty() ? L"集合" : widget.title;
+    std::wstring title = widget.title.empty() ? _LW("app.overlay.collection_default") : widget.title;
     DrawD2DText(ctx, title, titleRect, itemTextFormat_.Get(),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
 
@@ -1574,7 +1559,7 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
     int contentHeight = rows * cellH + std::max(0, rows - 1) * kCollectionPopupGapY;
     int visibleHeight = std::max(1, (int)(content.bottom - content.top));
     bool popupHovered = PtInRect(&popupRect_, lastMousePoint_);
-    DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered);
+    DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered, IsLightContentTheme());
 }
 
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
@@ -1599,8 +1584,11 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
             dragSession_.IsMoveAction() && di->selected)
             continue;
 
-        const bool hovered = !mouseOverWidget && PtInRect(&di->bounds, lastMousePoint_) != FALSE;
-        const bool selected = di->selected;
+        const bool desktopMarqueeActive =
+            marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
+        const bool hovered = !desktopMarqueeActive && !mouseOverWidget &&
+            PtInRect(&di->bounds, lastMousePoint_) != FALSE;
+        const bool selected = di->selected && !desktopMarqueeActive;
         int state = selected ? 2 : (hovered ? 1 : 0);
         icon->Draw(ctx, di->bounds, state);
     }
@@ -1643,8 +1631,10 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
     if (suppressDesktopWidgetTargets)
         lastMousePoint_ = interactionMousePoint;
 
-    if (DockContainer* dock = GetDockContainer())
+    for (const auto& container : containers_)
     {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
         dock->DrawChrome(ctx, lastMousePoint_);
         dock->DrawContents(ctx);
     }
@@ -1664,8 +1654,9 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     {
         if (widgetDockTarget_)
         {
-            if (DockContainer* dock = GetDockContainer())
-                dock->DrawInsertionPreview(ctx, widgetDockInsertIndex_);
+            if (widgetDockTargetContainer_)
+                widgetDockTargetContainer_->DrawInsertionPreview(
+                    ctx, widgetDockInsertIndex_);
         }
         else
         {
@@ -1750,6 +1741,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
                 (targetRegion == HitRegion::SortBefore ||
                  targetRegion == HitRegion::SortAfter))
             {
+                if (clipped) { ctx->PopAxisAlignedClip(); clipped = false; }
                 targetSlot->DrawDropIndicator(ctx, targetRegion,
                     static_cast<float>(kCollectionPopupGapX) * 0.5f);
             }
@@ -1784,6 +1776,17 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
     if (marqueeActive_)
     {
+        if (marqueeWidgetIndex_ >= widgets_.size())
+        {
+            for (auto& ooItem : items_oo_)
+            {
+                auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
+                if (!icon) continue;
+                DesktopItem* item = icon->GetDesktopItem();
+                if (!item || !item->selected || IsRectEmptyRect(item->bounds)) continue;
+                icon->Draw(ctx, item->bounds, 2);
+            }
+        }
         if (marqueeWidgetIndex_ < widgets_.size())
         {
             RECT viewport = GetMarqueeViewportRect();
@@ -1815,7 +1818,9 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
     }
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize;
-    if (dragSession_.IsActive() || widgetPreviewActive)
+    const bool desktopMarqueeActive =
+        marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
+    if (dragSession_.IsActive() || widgetPreviewActive || desktopMarqueeActive)
     {
         RECT client{};
         GetClientRect(hwnd_, &client);
@@ -2522,7 +2527,7 @@ inline void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
         }
     }
 
-    const std::wstring hintText = L"双击取消隐藏桌面，可在设置中关闭此功能";
+    const std::wstring hintText = _LW("app.overlay.hide_hint");
 
     ComPtr<IDWriteTextFormat> fmt;
     if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
@@ -2591,7 +2596,7 @@ inline void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
     }
 
     const std::wstring hintText =
-        L"拖动组件底部或在任意位置按住中键可移动组件，拖动右下角圆点可调整大小";
+        _LW("app.overlay.widget_move_hint");
 
     ComPtr<IDWriteTextFormat> fmt;
     if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,

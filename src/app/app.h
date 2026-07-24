@@ -33,35 +33,46 @@
 #include "data_paths.h"
 #include "utils.h"
 #include "widget_engine.h"
+#include "l10n.h"
 #include "types.h"
 #include "constants.h"
 #include "resource.h"
+#include "desktop_backdrop_compositor.h"
+#include "taskbar_dynamic/search_visibility_detector.h"
 
 #include <windowsx.h>
 #include <dbt.h>
 #include <shellapi.h>
+#include <appmodel.h>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <shellscalingapi.h>
+#include <propkey.h>
+#include <propsys.h>
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <d3d11.h>
 #include <dcomp.h>
+#include <dwmapi.h>
 #include <dwrite.h>
 #include <dwrite_3.h>
 #include <dxgi1_2.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <cstdint>
 #include <functional>
 #include <fstream>
+#include <filesystem>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -81,6 +92,60 @@ struct IconLoadTask {
     bool isDesktopItem = true;
     std::wstring folderPath;
     IconLoadPhase phase = IconLoadPhase::Phase1;
+};
+
+struct RecycleBinPollState {
+    std::atomic<int64_t> itemCount{ -1 };
+    std::atomic<bool> queryInFlight{ false };
+    std::atomic<HWND> targetWindow{ nullptr };
+};
+
+enum class DockWindowVisualState
+{
+    Closed,
+    Running,
+    Foreground,
+    Minimized,
+};
+
+enum class DockAppIdentityKind
+{
+    None,
+    Executable,
+    Applications,
+    Steam,
+};
+
+struct DockAppIdentity
+{
+    DockAppIdentityKind kind = DockAppIdentityKind::None;
+    std::wstring sourceParsingName;
+    std::wstring executablePath;
+    std::wstring appUserModelId;
+    std::wstring steamAppId;
+    std::wstring steamInstallDirectory;
+};
+
+struct DockWindowInfo
+{
+    HWND window = nullptr;
+    bool minimized = false;
+    bool running = false;
+    bool foreground = false;
+};
+
+struct DockRunningAppInfo
+{
+    std::wstring identityKey;
+    std::wstring title;
+    std::wstring executablePath;
+    std::wstring appUserModelId;
+    HWND window = nullptr;
+    HBITMAP iconBitmap = nullptr;
+    SIZE iconBitmapSize{};
+    bool minimized = false;
+    bool foreground = false;
+    bool selected = false;
 };
 
 struct IconLoadResult {
@@ -229,6 +294,7 @@ public:
     friend class DockContainer;
     friend class DockEntryItem;
     friend class DockFrequentItem;
+    friend class DockRunningItem;
     friend class Widget;
     friend class WidgetContainer;
     friend class Collection;
@@ -421,7 +487,7 @@ private:
     /** @brief 在 DComp 渲染失败后重置 surface 并安排一次恢复重绘。 */
     void RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr);
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
-    void OnPaint();
+    void OnPaint(const RECT* updateRect = nullptr);
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */
     void RenderFrame(ID2D1DeviceContext* ctx);
     /** @brief 绘制静态背景（桌面项图标、文本、网格等）。 @param ctx D2D 设备上下文 */
@@ -436,11 +502,18 @@ private:
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 绘制添加组件操作提示。 */
     void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
-    /** @brief 绘制组件面板背景效果（玻璃填充、柔化阴影、高光、颗粒、描边）。 */
+    /** @brief 绘制组件面板背景（玻璃填充、色调与描边）。 */
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
-        float effectScale, D2D1_COLOR_F fill, D2D1_COLOR_F border,
-        bool selected, float strokeWidth,
+        D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
         const PersonalizationSettings* effectSettings = nullptr);
+    /** @brief 在圆角区域内绘制稳定平铺的低透明亚克力颗粒。 */
+    void DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame, float radius,
+        bool lightTheme, POINT screenOrigin);
+    /** @brief 绘制液态玻璃边缘（斜向受光、柔亮外缘、暗色内缘）。 @return 成功绘制返回 true */
+    bool DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame, float radius,
+        D2D1_COLOR_F color, float strokeWidth);
+    /** @brief 获取原生毛玻璃后端状态文本。 */
+    std::wstring GetGlassBackendStatusText() const;
     /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
@@ -475,23 +548,44 @@ private:
     void LayoutItems();
     /** @brief 重建容器（网格、部件）和面向对象项列表。 */
     void RebuildContainersAndItems();
-    /** @brief 为首屏 Dock 预留工作区并计算其绘制区域。 */
+    /** @brief 为目标显示器上的 Dock 预留工作区并计算各自绘制区域。 */
     void ApplyDockWorkAreaReservation();
     DockContainer* GetDockContainer() const;
+    DockContainer* GetDockContainerAtPoint(POINT point) const;
+    void InvalidateDockContainers();
+    void InvalidateDockRects(BOOL erase = FALSE) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
-    int GetDockItemIconSize() const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
-        size_t insertIndex, int mods);
+        DockContainer* targetDock, size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
     void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
     bool LaunchDesktopItem(size_t itemIndex);
+    bool ActivateOrToggleDockItem(size_t itemIndex);
+    bool ActivateOrToggleDockWindow(HWND window);
+    bool HandleDockClickRelease(POINT point);
+    void ToggleWindowsStartMenu();
+    DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
+    DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
+    void RefreshDockRunningWindows(bool invalidateChanged = true,
+        HWND preferredWindow = nullptr);
+    void StartDockForegroundMonitor();
+    void StopDockForegroundMonitor();
+    void UpdateSystemTaskbarRevealGuard();
+    bool IsSystemTaskbarHookRequired(const DockSettings& settings) const;
+    PersonalizationSettings ResolveSystemTaskbarDynamicAppearance(
+        const SystemTaskbarDynamicRule& rule) const;
+    void RefreshSystemTaskbarWindowState();
+    void RefreshSystemTaskbarAppearance(bool forceWindowScan = false);
+    void RestartSystemTaskbarShellVisibilityDetectors();
+    static void CALLBACK DockForegroundWinEventProc(HWINEVENTHOOK hook, DWORD event,
+        HWND window, LONG objectId, LONG childId, DWORD eventThread, DWORD eventTime);
     void LoadDockUsageStats();
     void SaveDockUsageStats() const;
     void RecordDockItemUsage(size_t itemIndex);
     bool IsDockUsageEligibleItem(const DesktopItem& item) const;
     bool RemoveDockDragOutItems(const std::vector<Item*>& sourceItems);
-    std::vector<size_t> GetFrequentDockItemIndices() const;
+    std::vector<size_t> GetFrequentDockItemIndices();
     bool SuppressDesktopWidgetDragTargets() const;
     std::wstring GetDockDragOutRemovalHint(POINT point) const;
     bool FindDockReturnCell(std::unordered_set<std::wstring>& usedSlots,
@@ -510,10 +604,39 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    /** @brief 应用软件桌面启用状态，并可选择持久化到通用设置。 */
+    void SetSoftwareDesktopEnabled(bool enabled, bool persist);
+    /** @brief 根据全局继承或快捷搜索覆盖项解析并应用主题。 */
+    void ApplyQuickNavigationAppearance();
     /** @brief 加载 Dock 设置。 */
     void LoadDockSettingsAndApply();
+    PersonalizationSettings ResolveSystemTaskbarAppearance(
+        const DockSettings& settings) const
+    {
+        PersonalizationSettings result = settings.systemTaskbarFollowPersonalization && settingsWindow_
+            ? settingsWindow_->GetPersonalization()
+            : settings.systemTaskbarAppearance;
+        if (settings.systemTaskbarContentTheme >= 0)
+            result.contentTheme = settings.systemTaskbarContentTheme;
+        else if (!settings.systemTaskbarFollowPersonalization &&
+                 settings.systemTaskbarAppearance.backgroundPreset !=
+                     kAppearancePresetCustom)
+            result.contentTheme = MakeAppearancePreset(
+                settings.systemTaskbarAppearance.backgroundPreset)
+                .contentTheme;
+        return result;
+    }
+    /** @brief 当前文字颜色是否为深色(黑字)。contentTheme==1 时为 true。 */
+    bool IsLightContentTheme() const
+    {
+        if (settingsWindow_)
+            return settingsWindow_->GetPersonalization().contentTheme == 1;
+        return false;
+    }
     /** @brief 加载分类设置并刷新分类组件。 */
     void LoadCategorySettingsAndApply();
+    /** @brief 应用语言切换并更新仍使用默认名称的组件。 */
+    void ApplyLanguageChange();
     /** @brief 获取当前分类设置。 */
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
@@ -542,6 +665,8 @@ private:
     void DestroyQuickNavigationWindow();
     /** @brief 计算并设置快速导航窗口的位置。 */
     void PositionQuickNavigationWindow();
+    /** @brief 根据当前主题创建、同步或移除快捷导航原生毛玻璃层。 */
+    void UpdateQuickNavigationBackdrop();
     /** @brief 使快速导航窗口失效并触发重绘。 */
     void InvalidateQuickNavigationWindow();
     /** @brief 创建或调整快捷导航 DComp 表面大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
@@ -781,8 +906,9 @@ private:
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex);
     /** @brief 显示文件夹条目上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
     void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex);
-    /** @brief 显示桌面项上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引 */
-    void ShowItemContextMenu(POINT screenPoint, int itemIndex);
+    /** @brief 显示桌面项上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引 @param dockFrequentItem 是否来自 Dock 常用区 */
+    void ShowItemContextMenu(POINT screenPoint, int itemIndex,
+        bool dockFrequentItem = false);
     /** @brief 显示外壳扩展上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引（可选，-1 表示背景） */
     void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1);
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
@@ -847,6 +973,7 @@ private:
     void SetItemFontSize(float value);
     /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
+    DWRITE_FONT_WEIGHT GetItemFontWeight() const;
     void SetShortcutArrowMode(int mode);
     bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
     /** @brief 设置是否统一图标为圆角底板样式。 */
@@ -1218,7 +1345,10 @@ private:
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
-    bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state);
+    bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
+        bool forceWhiteStyle = false);
+    void DrawDockRunningApp(ID2D1DeviceContext* ctx,
+        const DockRunningAppInfo& app, RECT rect, int state);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
@@ -1561,6 +1691,7 @@ private:
     /** @name D3D / D2D / DComp 图形资源 */
     /** @{ */
     ComPtr<ID3D11Device> d3dDevice_;
+    ComPtr<ID3D11DeviceContext> d3dImmediateContext_;
     ComPtr<ID2D1Factory1> d2dFactory_;
     ID2D1Factory1* GetD2DFactory() const { return d2dFactory_.Get(); }
     IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }
@@ -1568,17 +1699,23 @@ private:
     ComPtr<ID2D1DeviceContext> d2dContext_;
     /** @brief 用于录制标题阴影蒙版的独立 D2D 上下文。 */
     ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
-    /** @brief 用于录制组件背景柔化阴影的独立 D2D 上下文。 */
-    ComPtr<ID2D1DeviceContext> widgetPanelEffectContext_;
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
     ID2D1RenderTarget* brushCacheContext_ = nullptr;
+    /** @brief 每个 D2D 上下文各自缓存深/浅两种平铺亚克力噪点画刷。 */
+    std::unordered_map<std::uintptr_t, ComPtr<ID2D1BitmapBrush1>>
+        acrylicNoiseBrushCache_;
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
     ComPtr<IDCompositionSurface> dcompSurface_;
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
     bool compositionRenderRecoveryPending_ = false;
+    bool compositionPaintInProgress_ = false;
+    /** @brief DWM 原生 backdrop 子窗口。 */
+    DesktopBackdropCompositor desktopBackdropCompositor_;
+    /** @brief 是否已经记录过本次合成目标的首个原生玻璃面板。 */
+    bool nativeGlassPanelReadyLogged_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
@@ -1599,6 +1736,10 @@ private:
     DockSettings dockSettings_;
     CategorySettings categorySettings_ = CategorySettings::Defaults();
     bool quickNavLightTheme_ = false;
+    bool quickNavGlassTheme_ = false;
+    float quickNavBlurRadius_ = 24.0f;
+    PersonalizationSettings quickNavAppearance_ =
+        MakeQuickNavigationAppearancePreset(kAppearancePresetLight);
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
@@ -1625,8 +1766,43 @@ private:
     std::vector<DesktopWidget> widgets_;
     std::vector<DockEntry> dockEntries_;
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
-    RECT dockArea_{};
+    std::unordered_map<std::wstring, DockAppIdentity> dockAppIdentityCache_;
+    std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
+    std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
+    DWORD systemTaskbarBackdropRefreshTick_ = 0;
+    DWORD systemTaskbarBackdropForegroundTick_ = 0;
+    HWINEVENTHOOK dockForegroundEventHook_ = nullptr;
+    std::vector<HWINEVENTHOOK> systemTaskbarWindowEventHooks_;
+    inline static std::atomic<HWND> dockForegroundWindow_{ nullptr };
+    inline static std::atomic<HWND> dockPreviousForegroundWindow_{ nullptr };
+    inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
+    inline static std::atomic<DWORD> systemTaskbarWindowStateChangedTick_{ 0 };
+    DWORD systemTaskbarWindowStateObservedTick_ = 0;
+    struct SystemTaskbarMonitorWindowState
+    {
+        bool visible = false;
+        bool maximized = false;
+    };
+    std::unordered_map<HMONITOR, SystemTaskbarMonitorWindowState>
+        systemTaskbarMonitorWindowStates_;
+    std::vector<HWND> systemTaskbarWindows_;
+    ComPtr<IAppVisibility> taskbarAppVisibility_;
+    bool taskbarAppVisibilityAttempted_ = false;
+    std::unique_ptr<SearchVisibilityDetector> taskbarSearchVisibility_;
+    bool systemTaskbarShellUiActive_ = false;
+    HMONITOR systemTaskbarShellUiMonitor_ = nullptr;
+    bool systemTaskbarTaskViewActive_ = false;
+    UINT systemTaskbarTaskViewStateMsg_ = 0;
+    std::vector<RECT> dockAreas_;
+    DockContainer* dockPressedContainer_ = nullptr;
     size_t dockPressedEntry_ = static_cast<size_t>(-1);
+    size_t dockPressedFrequentItem_ = static_cast<size_t>(-1);
+    std::wstring dockPressedRunningAppKey_;
+    size_t dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+    size_t dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+    DWORD dockPendingDoubleClickTick_ = 0;
+    HWND dockPressedForegroundWindow_ = nullptr;
+    DWORD dockPressedForegroundTick_ = 0;
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
@@ -1675,6 +1851,8 @@ private:
     HWND controlHwnd_ = nullptr;
     HWND inputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
+    /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
+    DesktopBackdropCompositor quickNavBackdropCompositor_;
     HWND quickNavigationSearchEdit_ = nullptr;
     HFONT quickNavigationSearchFont_ = nullptr;
 
@@ -1698,7 +1876,14 @@ private:
     LRESULT HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     HWND navigationHotkeyHwnd_ = nullptr;
     UINT taskbarRestartMsg_ = 0;
+    // Explorer owns the parent of the desktop overlay. Recreate the overlay
+    // and its DirectComposition target after TaskbarCreated instead of
+    // trusting a child HWND that Windows may have reparented automatically.
+    bool explorerDesktopRecreatePending_ = false;
+    DWORD desktopHostExplorerProcessId_ = 0;
     bool exitRequested_ = false;
+    bool startupInitializationComplete_ = false;
+    bool showSettingsPending_ = false;
     bool customDesktopVisible_ = true;
     bool updatingDisplayTopology_ = false;
     std::wstring displayTopologySignature_;
@@ -1761,6 +1946,7 @@ private:
     GridSpan widgetPreviewSpan_{};
     bool widgetPreviewOccupied_ = false;
     bool widgetDockTarget_ = false;
+    DockContainer* widgetDockTargetContainer_ = nullptr;
     size_t widgetDockInsertIndex_ = 0;
     size_t dockHandoffDwellIndex_ = static_cast<size_t>(-1);
     DWORD dockHandoffDwellStartTick_ = 0;
@@ -1801,7 +1987,8 @@ private:
     DWORD ChooseDropEffect(DWORD keyState, DWORD allowed) const;
 
     /** @brief 回收站项计数（用于轮询检测回收站状态变化） */
-    int64_t lastRecycleBinItemCount_ = -1;
+    std::shared_ptr<RecycleBinPollState> recycleBinPollState_ =
+        std::make_shared<RecycleBinPollState>();
 
     /** @brief 剪贴板剪切追踪的路径集合 */
     std::unordered_set<std::wstring> cutPaths_;
@@ -1977,6 +2164,7 @@ private:
 // ── Inline implementations (split into sub-headers) ─────────
 #include "app_run.h"
 #include "app_gfx.h"
+#include "app_glass.h"
 #include "app_dock.h"
 #include "app_quick_navigation.h"
 #include "app_interact.h"

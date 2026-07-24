@@ -14,6 +14,7 @@
 #include "types.h"
 #include "constants.h"
 #include "utils.h"
+#include "../l10n.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -294,19 +295,19 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
         if (hit >= 0 && !(*items_)[hit].selected)
         {
             if (origin)
-                return L"释放：交给「" + (*items_)[hit].name + L"」处理";
+                return _LFW("core.drag.release_handle", (*items_)[hit].name);
             else
-                return L"释放：拖入「" + (*items_)[hit].name + L"」";
+                return _LFW("core.drag.release_drop_into", (*items_)[hit].name);
         }
     }
 
     // External drag — simple hint
     if (!origin)
     {
-        if (altDown)   return L"释放：创建快捷方式";
-        if (shiftDown) return L"释放：移动到桌面";
-        if (ctrlDown)  return L"释放：复制到桌面";
-        return L"释放：放置到桌面";
+        if (altDown)   return _LW("core.drag.release_create_shortcut");
+        if (shiftDown) return _LW("core.drag.release_move_desktop");
+        if (ctrlDown)  return _LW("core.drag.release_copy_desktop");
+        return _LW("core.drag.release_place_desktop");
     }
 
     if (!ctrlDown && !altDown)
@@ -316,12 +317,12 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
         if (originData &&
             originData->type == DesktopWidgetType::FileCategories &&
             originData->autoCollect)
-            return L"自动收集已开启，请先关闭后再移到自由桌面";
+            return _LW("core.drag.auto_collect_off_first");
     }
 
     // Internal drag
-    if (altDown)  return L"释放：创建快捷方式到此空位";
-    if (ctrlDown) return L"释放：复制到此空位";
+    if (altDown)  return _LW("core.drag.release_shortcut_here");
+    if (ctrlDown) return _LW("core.drag.release_copy_here");
 
     GridCell bestCell = app_->FindBestDropCell(
         app_->CellFromPoint(app_->GetDragTargetPoint(dragPoint)));
@@ -331,14 +332,14 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     if (origin != app_->GetDesktopGrid())
     {
         if (app_->IsGridAreaOccupiedByUnselected(bestCell, {1, 1}))
-            return L"释放：当前位置已有图标";
-        return L"释放：移动到此空位";
+            return _LW("core.drag.release_occupied");
+        return _LW("core.drag.release_move_here");
     }
 
     if (app_->BuildSelectedMove(bestCell).empty())
-        return L"释放：当前位置已有图标";
+        return _LW("core.drag.release_occupied");
 
-    return L"释放：移动到此空位";
+    return _LW("core.drag.release_move_here");
 }
 
 /**

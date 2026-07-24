@@ -319,7 +319,8 @@ inline void DesktopApp::LuaSetWidgetTitle(const std::wstring& widgetId, const st
     for (auto& widget : widgets_)
     {
         if (widget.id != widgetId) continue;
-        if (widget.userRenamed) return;
+        widget.scriptTitle = title;
+        if (!widget.customTitle.empty()) return;
         if (widget.title == title) return;
         widget.title = title;
         SaveLayoutSlots();
@@ -467,9 +468,14 @@ inline void DesktopApp::EndDragSession()
 inline void DesktopApp::ShowSettingsWindow()
 {
     if (settingsWindow_)
+    {
+        showSettingsPending_ = false;
         settingsWindow_->Show();
+    }
     else
-        MessageBeep(MB_ICONWARNING);
+    {
+        showSettingsPending_ = true;
+    }
 }
 
 /**
@@ -489,15 +495,68 @@ inline void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    if (std::strcmp(generalSettings_.language, "system") != 0 &&
+        !Locale::Instance().HasLanguage(generalSettings_.language))
+    {
+        std::strncpy(generalSettings_.language, "system",
+            sizeof(generalSettings_.language) - 1);
+        generalSettings_.language[sizeof(generalSettings_.language) - 1] = '\0';
+    }
+    Locale::Instance().SetLanguage(generalSettings_.language);
     generalSettings_.dockEnabled = dockEnabled;
-    quickNavLightTheme_ = (generalSettings_.quickNavTheme == 1);
+    generalSettings_.quickNavTheme = std::clamp(generalSettings_.quickNavTheme, 0, 3);
+    SetSoftwareDesktopEnabled(generalSettings_.softwareDesktopEnabled, false);
+    ApplyQuickNavigationAppearance();
+}
+
+inline void DesktopApp::ApplyQuickNavigationAppearance()
+{
+    PersonalizationSettings globalAppearance;
+    if (settingsWindow_)
+    {
+        globalAppearance = settingsWindow_->GetPersonalization();
+    }
+    else
+    {
+        globalAppearance = PersonalizationSettings::DarkPreset();
+        LoadPersonalization(GetPersonalizationPath().c_str(), globalAppearance);
+    }
+    constexpr int quickNavPresetIds[] = {
+        kAppearancePresetDark, kAppearancePresetLight,
+        kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight
+    };
+    const int presetId = globalAppearance.backgroundPreset == kAppearancePresetCustom
+        ? quickNavPresetIds[std::clamp(generalSettings_.quickNavTheme, 0, 3)]
+        : globalAppearance.backgroundPreset;
+    const PersonalizationSettings appearance =
+        MakeQuickNavigationAppearancePreset(presetId);
+
+    const float luminance = appearance.widgetBgR * 0.2126f +
+        appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
+    quickNavLightTheme_ = (presetId == kAppearancePresetLight ||
+        presetId == kAppearancePresetAcrylicLight) ||
+        luminance >= 0.55f;
+    quickNavGlassTheme_ = appearance.glassEnabled;
+    quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
+    quickNavAppearance_ = appearance;
+    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+        UpdateQuickNavigationBackdrop();
 }
 
 inline void DesktopApp::LoadDockSettingsAndApply()
 {
     DockSettings settings;
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
+    SetSystemTaskbarAutoHideEnabled(settings.systemTaskbarAutoHide);
+    settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
+    SetSystemTaskbarAlignmentCentered(settings.systemTaskbarAlignment == 1);
+    settings.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     dockSettings_ = settings;
+    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+        std::memory_order_relaxed);
+    RefreshSystemTaskbarAppearance(true);
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 inline void DesktopApp::LoadCategorySettingsAndApply()
@@ -515,22 +574,79 @@ inline void DesktopApp::LoadCategorySettingsAndApply()
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+inline void DesktopApp::ApplyLanguageChange()
+{
+    LoadCategorySettingsAndApply();
+    if (settingsWindow_)
+        settingsWindow_->ApplyLanguageChange();
+    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+        SetWindowTextW(quickNavigationHwnd_, _LW("app.interact.snow_nav_title"));
+    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+    {
+        SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
+            reinterpret_cast<LPARAM>(_LW("app.nav.search_hint")));
+    }
+
+    bool titleChanged = false;
+    for (auto& widget : widgets_)
+    {
+        std::wstring defaultTitle;
+        switch (widget.type)
+        {
+        case DesktopWidgetType::Collection:
+            defaultTitle = _LW("widget.collection");
+            break;
+        case DesktopWidgetType::FileCategories:
+            defaultTitle = _LW("widget.desktop_files");
+            break;
+        case DesktopWidgetType::Guide:
+            defaultTitle = _LW("app.guide.title");
+            break;
+        case DesktopWidgetType::LuaScript:
+            if (widgetEngine_ && !widget.scriptPath.empty())
+            {
+                if (!widgetEngine_->ReloadWidget(widget.id))
+                    widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
+                widgetEngine_->NotifyLanguageChanged(widget.id);
+                const auto& runtimeWidgets = widgetEngine_->GetWidgets();
+                auto runtime = std::find_if(runtimeWidgets.begin(), runtimeWidgets.end(),
+                    [&](const LuaWidget& loaded) {
+                        return loaded.widgetId == widget.id;
+                    });
+                if (runtime != runtimeWidgets.end())
+                    defaultTitle = Utf8ToWide(runtime->name);
+            }
+            break;
+        case DesktopWidgetType::FolderMapping:
+        default:
+            break;
+        }
+
+        if (widget.customTitle.empty() &&
+            !defaultTitle.empty() &&
+            (widget.type != DesktopWidgetType::LuaScript ||
+                widget.scriptTitle.empty()) &&
+            widget.title != defaultTitle)
+        {
+            widget.title = std::move(defaultTitle);
+            titleChanged = true;
+        }
+    }
+
+    if (titleChanged)
+        SaveLayoutSlots();
+    if (quickNavigationOpen_)
+        InvalidateQuickNavigationWindow();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
 inline void DesktopApp::ToggleDesktopIconsVisibility()
 {
     desktopIconsHidden_ = !desktopIconsHidden_;
-
-    if (desktopIconsHidden_)
-    {
-        ClearHiddenHint();
-        if (controlHwnd_ && IsWindow(controlHwnd_))
-            KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
-    }
-    else
-    {
-        ClearHiddenHint();
-        if (controlHwnd_ && IsWindow(controlHwnd_))
-            SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
-    }
+    // The control-window timer also maintains the Explorer taskbar hook and
+    // the blurred desktop background. Keep it alive while icons are hidden.
+    ClearHiddenHint();
 
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -917,6 +1033,8 @@ inline void DesktopApp::ClearSelection()
         item.selected = false;
     for (auto& entry : dockEntries_)
         entry.selected = false;
+    for (auto& app : dockUnpinnedRunningApps_)
+        app.selected = false;
     for (auto& widget : widgets_)
     {
         widget.selected = false;
@@ -1188,10 +1306,32 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (renameEdit_ != nullptr) return;
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
-    FocusDesktopInputWindow();
+    POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    DockContainer* pointDock = GetDockContainerAtPoint(pt);
+    const bool pointInDock = pointDock != nullptr;
+    dockPressedContainer_ = pointDock;
+    // Dock is an app switcher: do not move focus away from the current app before
+    // deciding whether this click should minimize or restore it.
+    if (pointInDock)
+    {
+        const HWND foreground = GetForegroundWindow();
+        const DWORD elapsed = GetTickCount() - dockPressedForegroundTick_;
+        const DWORD snapshotLifetime = std::max<DWORD>(1000, GetDoubleClickTime() * 2);
+        if (!dockPressedForegroundWindow_ || elapsed > snapshotLifetime ||
+            !IsDockDesktopActivationWindow(foreground))
+        {
+            dockPressedForegroundWindow_ = foreground;
+            dockPressedForegroundTick_ = GetTickCount();
+        }
+    }
+    else
+    {
+        dockPressedForegroundWindow_ = nullptr;
+        dockPressedForegroundTick_ = 0;
+        FocusDesktopInputWindow();
+    }
     if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
         widgetEngine_->BlurHostInput(false);
-    POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     mouseDown_ = true;
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
@@ -1281,13 +1421,26 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     // ── Dock hit-test（位于普通组件和桌面网格之上）──────────
     dockPressedEntry_ = static_cast<size_t>(-1);
-    if (DockContainer* dock = GetDockContainer())
+    dockPressedFrequentItem_ = static_cast<size_t>(-1);
+    dockPressedRunningAppKey_.clear();
+    if (DockContainer* dock = pointDock)
     {
         RECT dockBounds = dock->GetBounds();
         if (PtInRect(&dockBounds, pt))
         {
+            if (dock->IsWindowsButtonPoint(pt))
+            {
+                dockPressedForegroundWindow_ = nullptr;
+                dockPressedForegroundTick_ = 0;
+                mouseDown_ = false;
+                ToggleWindowsStartMenu();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
             if (dock->IsSearchPoint(pt))
             {
+                dockPressedForegroundWindow_ = nullptr;
+                dockPressedForegroundTick_ = 0;
                 mouseDown_ = false;
                 OpenQuickNavigation();
                 return;
@@ -1302,16 +1455,29 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
+            if (DockRunningItem* runningItem = dock->RunningItemAtPoint(pt))
+            {
+                if (!ctrl) ClearSelection();
+                runningItem->SetSelected(true);
+                dockPressedRunningAppKey_ = runningItem->GetIdentityKey();
+                mouseDownHit_ = runningItem;
+                SetCapture(hwnd_);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
             if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
             {
                 if (!ctrl) ClearSelection();
                 frequentItem->SetSelected(true);
+                dockPressedFrequentItem_ = frequentItem->GetItemIndex();
                 mouseDownHit_ = frequentItem;
                 SetCapture(hwnd_);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
             if (!ctrl) ClearSelection();
+            dockPressedForegroundWindow_ = nullptr;
+            dockPressedForegroundTick_ = 0;
             mouseDown_ = false;
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
@@ -1651,11 +1817,7 @@ inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (quickNavigationOpen_) return;
-    if (DockContainer* dock = GetDockContainer())
-    {
-        RECT dockBounds = dock->GetBounds();
-        if (PtInRect(&dockBounds, pt)) return;
-    }
+    if (GetDockContainerAtPoint(pt)) return;
     if (popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -1730,6 +1892,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    UpdateSystemTaskbarRevealGuard();
 
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
@@ -1750,8 +1913,17 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
     if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected())
     {
-        if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
-            std::abs(current.y - mouseDownPoint_.y) > 3)
+        if (dynamic_cast<DockFrequentItem*>(mouseDownHit_) ||
+            dynamic_cast<DockRunningItem*>(mouseDownHit_))
+            return;
+        const bool dockItem = dynamic_cast<DockContainer*>(
+            mouseDownHit_->GetContainer()) != nullptr;
+        const int thresholdX = dockItem
+            ? std::max(8, GetSystemMetrics(SM_CXDRAG)) : 3;
+        const int thresholdY = dockItem
+            ? std::max(8, GetSystemMetrics(SM_CYDRAG)) : 3;
+        if (std::abs(current.x - mouseDownPoint_.x) > thresholdX ||
+            std::abs(current.y - mouseDownPoint_.y) > thresholdY)
         {
             Container* source = mouseDownHit_->GetContainer();
             std::vector<Item*> sourceItems = source ? source->GetSelectedItems() : std::vector<Item*>{};
@@ -1832,7 +2004,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             widgetPreviewCell_ = cell;
             widgetPreviewSpan_ = span;
         }
-        ShowDragHintWindow(current, L"释放：调整组件大小");
+        ShowDragHintWindow(current, _LW("core.drag.resize_widget"));
         InvalidateRect(hwnd_, nullptr, TRUE);
         return;
     }
@@ -1843,19 +2015,20 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
 
-        DockContainer* dock = GetDockContainer();
-        RECT dockBounds = dock ? dock->GetBounds() : RECT{};
-        const bool canDock = dock && PtInRect(&dockBounds, current) &&
+        DockContainer* dock = GetDockContainerAtPoint(current);
+        const bool canDock = dock &&
             widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection;
         if (canDock)
         {
             widgetDockTarget_ = true;
+            widgetDockTargetContainer_ = dock;
             widgetDockInsertIndex_ = dock->GetInsertIndexAtPoint(current);
-            ShowDragHintWindow(current, L"释放：移动集合到 Dock");
+            ShowDragHintWindow(current, _LW("core.drag.move_collection_dock"));
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
         widgetDockTarget_ = false;
+        widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
 
         // ── 跨页翻页：检测导航按钮悬停 + 自动翻页 ──
@@ -1933,7 +2106,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
             widgetPreviewCell_ = cell;
         }
-        ShowDragHintWindow(current, L"释放：移动组件");
+        ShowDragHintWindow(current, _LW("core.drag.move_widget"));
         InvalidateRect(hwnd_, nullptr, TRUE);
         return;
     }
@@ -2084,7 +2257,6 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
         ShowDragHintWindow(current, hint);
         InvalidateRect(hwnd_, nullptr, FALSE);
-        UpdateWindow(hwnd_);
         return;
     }
 
@@ -2093,8 +2265,12 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
+            if (!marqueeActive_)
+                dragRenderCache_.Reset();
             marqueeActive_ = true;
             UpdateMarqueeSelection(current);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
         }
     }
 
@@ -2150,15 +2326,19 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 return { popupWidget, popupWidget, 2, 0, true };
             }
 
-            if (DockContainer* dock = GetDockContainer())
+            if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
                 RECT dockBounds = dock->GetBounds();
                 if (PtInRect(&dockBounds, point))
                 {
                     if (DockEntryItem* entry = dock->EntryAtPoint(point))
                         return { dock, entry, 8, entry->GetEntryIndex(), false };
+                    if (DockRunningItem* item = dock->RunningItemAtPoint(point))
+                        return { dock, item, 12, item->GetRunningIndex(), false };
                     if (DockFrequentItem* item = dock->FrequentItemAtPoint(point))
                         return { dock, item, 11, item->GetItemIndex(), false };
+                    if (dock->IsWindowsButtonPoint(point))
+                        return { dock, dock, 13, 0, false };
                     if (dock->IsSearchPoint(point))
                         return { dock, dock, 9, 0, false };
                     return { dock, dock, 10, 0, false };
@@ -2245,8 +2425,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const MouseHoverVisual newVisual = findHoverVisual(current);
         const bool hoverChanged = !sameHoverVisual(oldVisual, newVisual);
         const bool dockHoverChanged = hoverChanged &&
-            ((oldVisual.kind >= 8 && oldVisual.kind <= 11) ||
-             (newVisual.kind >= 8 && newVisual.kind <= 11));
+            ((oldVisual.kind >= 8 && oldVisual.kind <= 12) ||
+             (newVisual.kind >= 8 && newVisual.kind <= 12));
         const bool needsContinuousHoverPaint =
             (oldVisual.owner && oldVisual.continuous) ||
             (newVisual.owner && newVisual.continuous);
@@ -2267,6 +2447,142 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     }
 }
 
+inline bool DesktopApp::HandleDockClickRelease(POINT point)
+{
+    DockContainer* dock = dockPressedContainer_;
+    if (!dock) dock = GetDockContainerAtPoint(point);
+    if (!dock) return false;
+
+    DockEntryType entryType = DockEntryType::DesktopItem;
+    std::wstring reference;
+    size_t frequentItemIndex = static_cast<size_t>(-1);
+    std::wstring runningAppKey;
+    const size_t pressedEntryIndex = dockPressedEntry_;
+    const size_t pressedFrequentItemIndex = dockPressedFrequentItem_;
+    if (dockPressedEntry_ < dockEntries_.size())
+    {
+        DockEntryItem* hit = dock->EntryAtPoint(point);
+        const int clickSlopX = std::max(8, GetSystemMetrics(SM_CXDRAG));
+        const int clickSlopY = std::max(8, GetSystemMetrics(SM_CYDRAG));
+        const bool withinClickSlop =
+            std::abs(point.x - mouseDownPoint_.x) <= clickSlopX &&
+            std::abs(point.y - mouseDownPoint_.y) <= clickSlopY;
+        if ((!hit || hit->GetEntryIndex() != dockPressedEntry_) &&
+            (dragSession_.IsActive() || !withinClickSlop))
+            return false;
+        entryType = dockEntries_[dockPressedEntry_].type;
+        reference = dockEntries_[dockPressedEntry_].reference;
+    }
+    else if (!dockPressedRunningAppKey_.empty())
+    {
+        DockRunningItem* hit = dock->RunningItemAtPoint(point);
+        const int clickSlopX = std::max(8, GetSystemMetrics(SM_CXDRAG));
+        const int clickSlopY = std::max(8, GetSystemMetrics(SM_CYDRAG));
+        const bool withinClickSlop =
+            std::abs(point.x - mouseDownPoint_.x) <= clickSlopX &&
+            std::abs(point.y - mouseDownPoint_.y) <= clickSlopY;
+        if ((!hit || hit->GetIdentityKey() != dockPressedRunningAppKey_) &&
+            (dragSession_.IsActive() || !withinClickSlop))
+            return false;
+        runningAppKey = dockPressedRunningAppKey_;
+    }
+    else if (dockPressedFrequentItem_ < items_.size())
+    {
+        DockFrequentItem* hit = dock->FrequentItemAtPoint(point);
+        const int clickSlopX = std::max(8, GetSystemMetrics(SM_CXDRAG));
+        const int clickSlopY = std::max(8, GetSystemMetrics(SM_CYDRAG));
+        const bool withinClickSlop =
+            std::abs(point.x - mouseDownPoint_.x) <= clickSlopX &&
+            std::abs(point.y - mouseDownPoint_.y) <= clickSlopY;
+        if ((!hit || hit->GetItemIndex() != dockPressedFrequentItem_) &&
+            (dragSession_.IsActive() || !withinClickSlop))
+            return false;
+        frequentItemIndex = dockPressedFrequentItem_;
+    }
+    else
+    {
+        return false;
+    }
+
+    size_t appItemIndex = frequentItemIndex;
+    if (appItemIndex >= items_.size() && entryType == DockEntryType::DesktopItem)
+        appItemIndex = FindItemIndexByKey(reference);
+    bool waitForDoubleClick = false;
+    if (appItemIndex < items_.size())
+    {
+        RefreshDockRunningWindows(false);
+        waitForDoubleClick =
+            GetDockWindowVisualState(appItemIndex) == DockWindowVisualState::Closed;
+    }
+
+    // 在激活外部应用前完整结束本次桌面交互，避免鼠标捕获、选择高亮或
+    // 拖拽预览跨到新前台窗口后仍残留。
+    EndDragSession();
+    HideDragHintWindow();
+    if (!waitForDoubleClick)
+        ClearSelection();
+    mouseDown_ = false;
+    mouseDownHit_ = nullptr;
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleWidgetItem_ = nullptr;
+    dockPressedEntry_ = static_cast<size_t>(-1);
+    dockPressedFrequentItem_ = static_cast<size_t>(-1);
+    dockPressedRunningAppKey_.clear();
+    dockPressedContainer_ = nullptr;
+    marqueeActive_ = false;
+    marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    navHoverSide_ = 0;
+    navAutoFlipDir_ = 0;
+    navAutoFlipTick_ = 0;
+    ReleaseCapture();
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        UpdateWindow(hwnd_);
+    }
+
+    if (waitForDoubleClick)
+    {
+        dockPendingDoubleClickEntry_ = pressedEntryIndex;
+        dockPendingDoubleClickFrequentItem_ = pressedFrequentItemIndex;
+        dockPendingDoubleClickTick_ = GetTickCount();
+        return true;
+    }
+
+    dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+    dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+    dockPendingDoubleClickTick_ = 0;
+
+    if (!runningAppKey.empty())
+    {
+        const auto running = std::find_if(dockUnpinnedRunningApps_.begin(),
+            dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& app) {
+                return app.identityKey == runningAppKey;
+            });
+        if (running != dockUnpinnedRunningApps_.end())
+            ActivateOrToggleDockWindow(running->window);
+    }
+    else if (frequentItemIndex < items_.size())
+    {
+        ActivateOrToggleDockItem(frequentItemIndex);
+    }
+    else if (entryType == DockEntryType::Collection)
+    {
+        dockPressedForegroundWindow_ = nullptr;
+        dockPressedForegroundTick_ = 0;
+        const size_t widgetIndex = FindWidgetIndexById(reference);
+        if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, point);
+    }
+    else
+    {
+        const size_t itemIndex = FindItemIndexByKey(reference);
+        if (itemIndex < items_.size()) ActivateOrToggleDockItem(itemIndex);
+    }
+    return true;
+}
+
 /**
  * @brief 处理鼠标左键释放事件
  * @param wp WPARAM
@@ -2285,15 +2601,15 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     {
         if (widgetAction_ == WidgetAction::Move)
         {
-            DockContainer* dock = GetDockContainer();
-            RECT dockBounds = dock ? dock->GetBounds() : RECT{};
-            const bool canDock = dock && PtInRect(&dockBounds, upPoint) &&
+            DockContainer* dock = GetDockContainerAtPoint(upPoint);
+            const bool canDock = dock &&
                 widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection;
             if (canDock)
             {
                 Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
                 int mods = (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
-                CommitDockDrop({ &dockSource }, nullptr, widgetDockInsertIndex_, mods);
+                CommitDockDrop({ &dockSource }, nullptr, dock,
+                    widgetDockInsertIndex_, mods);
                 SaveLayoutSlots();
                 RebuildContainersAndItems();
                 LayoutItems();
@@ -2306,6 +2622,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         // PendingMove/PendingResize: just cancel without displacement
         widgetAction_ = WidgetAction::None;
         widgetDockTarget_ = false;
+        widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
         InvalidateDragStaticScene();
         mouseDown_ = false;
@@ -2318,18 +2635,12 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
     if (!dragSession_.IsActive())
     {
-        if (dockPressedEntry_ < dockEntries_.size())
-        {
-            DockContainer* dock = GetDockContainer();
-            DockEntryItem* hit = dock ? dock->EntryAtPoint(upPoint) : nullptr;
-            if (hit && hit->GetEntryIndex() == dockPressedEntry_ &&
-                dockEntries_[dockPressedEntry_].type == DockEntryType::Collection)
-            {
-                size_t widgetIndex = FindWidgetIndexById(dockEntries_[dockPressedEntry_].reference);
-                if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, upPoint);
-            }
-        }
+        if (HandleDockClickRelease(upPoint))
+            return;
         dockPressedEntry_ = static_cast<size_t>(-1);
+        dockPressedFrequentItem_ = static_cast<size_t>(-1);
+        dockPressedRunningAppKey_.clear();
+        dockPressedContainer_ = nullptr;
         if (mouseDownWidgetIndex_ < widgets_.size() &&
             widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
             HitTestStandaloneWidget(mouseDownWidgetIndex_, upPoint) == WidgetHit::Content &&
@@ -2363,6 +2674,10 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         return;
     }
 
+    // Dock 项轻微拖动后仍落回原项时，按单击处理而不是吞掉本次操作。
+    if (HandleDockClickRelease(upPoint))
+        goto cleanup;
+
     if (!GetDockDragOutRemovalHint(upPoint).empty())
     {
         const bool removed = RemoveDockDragOutItems(dragSession_.Items());
@@ -2378,7 +2693,9 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         goto cleanup;
     }
 
-    if (!dragSession_.TargetContainer() || dragSession_.TargetRegion() == HitRegion::None)
+    if (!dragSession_.TargetContainer() ||
+        dragSession_.TargetRegion() == HitRegion::None ||
+        dragSession_.TargetRegion() == HitRegion::Blocked)
     {
         goto cleanup;
     }
@@ -2392,7 +2709,6 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     mouseDownHit_ = nullptr;
     ReleaseCapture();
     InvalidateRect(hwnd_, nullptr, FALSE);
-    UpdateWindow(hwnd_);
 
     {
         int mods = 0;
@@ -2522,6 +2838,9 @@ cleanup:
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     dockPressedEntry_ = static_cast<size_t>(-1);
+    dockPressedFrequentItem_ = static_cast<size_t>(-1);
+    dockPressedRunningAppKey_.clear();
+    dockPressedContainer_ = nullptr;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     ReleaseCapture();
 }
@@ -2543,18 +2862,21 @@ inline std::wstring DesktopApp::GetDockDragOutRemovalHint(POINT point) const
 {
     const auto* sourceDock = dynamic_cast<DockContainer*>(dragSession_.Source());
     if (!sourceDock) return L"";
+    // A replicated Dock on another monitor is still a valid Dock target, not
+    // a drag-out removal area.
+    if (GetDockContainerAtPoint(point)) return L"";
     RECT sourceBounds = sourceDock->GetBounds();
     if (PtInRect(&sourceBounds, point)) return L"";
 
     for (Item* item : dragSession_.Items())
     {
         if (dynamic_cast<DockFrequentItem*>(item))
-            return L"释放：从常用项目移除";
+            return _LW("core.drag.remove_frequent");
         const auto* dockItem = dynamic_cast<DockEntryItem*>(item);
         const size_t index = dockItem
             ? dockItem->GetEntryIndex() : static_cast<size_t>(-1);
         if (index < dockEntries_.size() && dockEntries_[index].keepOnDesktop)
-            return L"释放：移除 Dock 映射";
+            return _LW("core.drag.remove_dock_map");
     }
     return L"";
 }
@@ -4029,7 +4351,7 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);
 
-    if (DockContainer* dock = GetDockContainer())
+    if (DockContainer* dock = GetDockContainerAtPoint(pt))
     {
         if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
         {
@@ -4080,7 +4402,7 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
                 if (IsProtectedDesktopIcon(items_[itemIndex]))
                     ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
                 else
-                    ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+                    ShowItemContextMenu(screenPt, static_cast<int>(itemIndex), true);
                 return;
             }
         }
@@ -4295,26 +4617,66 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kRecycleBinPollTimerId)
     {
-        SHQUERYRBINFO info{};
-        info.cbSize = sizeof(info);
-        if (SUCCEEDED(SHQueryRecycleBinW(nullptr, &info)))
-        {
-            if (lastRecycleBinItemCount_ >= 0 && info.i64NumItems != lastRecycleBinItemCount_)
+        const auto pollState = recycleBinPollState_;
+        if (pollState->queryInFlight.exchange(true))
+            return;
+        const HWND target = hwnd_;
+        pollState->targetWindow = target;
+        std::thread([target, pollState] {
+            SHQUERYRBINFO info{};
+            info.cbSize = sizeof(info);
+            const HRESULT result = SHQueryRecycleBinW(nullptr, &info);
+            if (SUCCEEDED(result))
             {
-                if (!mouseDown_ && !reloading_)
-                    ReloadItems();
+                const int64_t previousCount = pollState->itemCount.exchange(info.i64NumItems);
+                if (previousCount >= 0 && previousCount != info.i64NumItems &&
+                    pollState->targetWindow.load() == target)
+                    PostMessageW(target, kShellChangeMessage, 0, 0);
             }
-            lastRecycleBinItemCount_ = info.i64NumItems;
-        }
+            pollState->queryInFlight = false;
+        }).detach();
     }
     else if (timerId == kDesktopHostWatchTimerId)
     {
+        // Restore the Explorer-owned desktop host first. Hook injection can
+        // take time while the new taskbar XAML tree is still starting up.
         WatchDesktopHost();
+        const DWORD now = GetTickCount();
+        if (IsSystemTaskbarHookRequired(dockSettings_) &&
+            (systemTaskbarBackdropRefreshTick_ == 0 ||
+                now - systemTaskbarBackdropRefreshTick_ >= 1500))
+        {
+            RefreshSystemTaskbarAppearance(true);
+        }
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
+        RefreshDockRunningWindows();
+    }
+    else if (timerId == kTaskbarRevealGuardTimerId)
+    {
+        UpdateSystemTaskbarRevealGuard();
+        const DWORD now = GetTickCount();
+        const DWORD foregroundTick = dockForegroundChangedTick_.load();
+        const DWORD windowStateTick =
+            systemTaskbarWindowStateChangedTick_.load();
+        const bool foregroundChanged = foregroundTick != 0 &&
+            foregroundTick != systemTaskbarBackdropForegroundTick_;
+        const bool windowStateChanged = windowStateTick !=
+            systemTaskbarWindowStateObservedTick_;
+        const bool foregroundSettling = foregroundTick != 0 &&
+            now - foregroundTick <= 400 &&
+            now - systemTaskbarBackdropRefreshTick_ >= 100;
+        if (IsSystemTaskbarHookRequired(dockSettings_) &&
+            (foregroundChanged || windowStateChanged || foregroundSettling))
+        {
+            RefreshSystemTaskbarAppearance(true);
+            systemTaskbarBackdropForegroundTick_ = foregroundTick;
+            if (hwnd_ && IsWindow(hwnd_))
+                InvalidateRect(hwnd_, nullptr, FALSE);
+        }
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
@@ -4405,7 +4767,7 @@ inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     }
 
     size_t hoveredCollection = static_cast<size_t>(-1);
-    if (DockContainer* dock = GetDockContainer())
+    if (DockContainer* dock = GetDockContainerAtPoint(point))
     {
         if (DockEntryItem* entry = dock->EntryAtPoint(point);
             entry && entry->GetEntryType() == DockEntryType::Collection)
@@ -4500,7 +4862,7 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_ = categoryId;
     popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
-    if (DockContainer* dock = GetDockContainer())
+    if (DockContainer* dock = GetDockContainerAtPoint(anchorPoint))
     {
         RECT dockBounds = dock->GetBounds();
         if (PtInRect(&dockBounds, anchorPoint))
@@ -4640,6 +5002,17 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         RefreshDragTargetAt(pt, currentMods);
         InvalidateDragStaticScene();
     };
+
+    if (DockContainer* dock = GetDockContainerAtPoint(pt))
+    {
+        const int delta = GET_WHEEL_DELTA_WPARAM(wp);
+        if (dock->ScrollByWheelDelta(delta))
+        {
+            refreshDragAfterScroll();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
 
     if (popupWidgetIndex_ < widgets_.size())
     {
@@ -4986,7 +5359,7 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
         if (!renameCommand &&
             GetMenuStringW(menu, command, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
         {
-            renameCommand = StrStrIW(menuText, L"重命名") != nullptr ||
+            renameCommand = StrStrIW(menuText, L"重命名") != nullptr || // l10n-allow: match Chinese Windows shell verb
                 StrStrIW(menuText, L"Rename") != nullptr;
         }
 
@@ -5317,12 +5690,25 @@ inline void DesktopApp::CommitRename(bool cancel)
             if (!newName.empty())
             {
                 widgets_[renameIndex_].title = newName;
+                widgets_[renameIndex_].customTitle = newName;
                 widgets_[renameIndex_].userRenamed = true;
                 SaveLayoutSlots();
             }
-            else if (widgets_[renameIndex_].userRenamed)
+            else if (!widgets_[renameIndex_].customTitle.empty())
             {
+                DesktopWidget& widget = widgets_[renameIndex_];
+                widget.customTitle.clear();
                 widgets_[renameIndex_].userRenamed = false;
+                if (!widget.scriptTitle.empty())
+                    widget.title = widget.scriptTitle;
+                else if (widget.type == DesktopWidgetType::LuaScript)
+                    widget.title = WidgetEngine::GetWidgetDisplayName(widget.scriptPath);
+                else if (widget.type == DesktopWidgetType::FileCategories)
+                    widget.title = _LW("widget.desktop_files");
+                else if (widget.type == DesktopWidgetType::Guide)
+                    widget.title = _LW("app.guide.title");
+                else if (widget.type == DesktopWidgetType::Collection)
+                    widget.title = _LW("widget.collection");
                 SaveLayoutSlots();
             }
         }
@@ -5736,7 +6122,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
             hint = targetContainer->GetDragHint(targetSlot, targetRegion,
                 dragSession_.Items(), dragSession_.Source(), mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
-        *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+        *effect = targetRegion == HitRegion::Blocked
+            ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
         OnPaint();
         return S_OK;
     }
@@ -5800,7 +6187,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     if (targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
-    *effect = ChooseDropEffect(keyState, *effect);
+    *effect = targetRegion == HitRegion::Blocked
+        ? DROPEFFECT_NONE : ChooseDropEffect(keyState, *effect);
     OnPaint();
     return S_OK;
 }
@@ -5874,7 +6262,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
             hint = targetContainer->GetDragHint(targetSlot, targetRegion,
                 dragSession_.Items(), dragSession_.Source(), mods);
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
-        *effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+        *effect = targetRegion == HitRegion::Blocked
+            ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
         OnPaint();
         return S_OK;
     }
@@ -5923,7 +6312,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     if (targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
-    *effect = ChooseDropEffect(keyState, *effect);
+    *effect = targetRegion == HitRegion::Blocked
+        ? DROPEFFECT_NONE : ChooseDropEffect(keyState, *effect);
     OnPaint();
     return S_OK;
 }
@@ -5971,6 +6361,16 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
 
+    if (dragSession_.TargetRegion() == HitRegion::Blocked)
+    {
+        externalDragActive_ = false;
+        externalDropFileCount_ = 0;
+        externalDropHasShortcut_ = false;
+        *effect = DROPEFFECT_NONE;
+        EndDragSession();
+        return S_OK;
+    }
+
     POINT clientPoint = ScreenPointToClient(point);
 
     if (selfDragActive_)
@@ -5983,7 +6383,6 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         dragSession_.DeactivateForDrop();
         dragRenderCache_.Reset();
         InvalidateRect(hwnd_, nullptr, FALSE);
-        UpdateWindow(hwnd_);
 
         if (!GetDockDragOutRemovalHint(clientPoint).empty())
         {
@@ -6122,7 +6521,6 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     dragSession_.DeactivateForDrop();
     dragRenderCache_.Reset();
     InvalidateRect(hwnd_, nullptr, FALSE);
-    UpdateWindow(hwnd_);
 
     std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
     if (dropPaths.empty() && dataObject)
@@ -6383,7 +6781,7 @@ inline std::wstring DesktopApp::HandleUrlContent(const std::wstring& url)
     }
     if (hostName.size() > 4 && _wcsnicmp(hostName.c_str(), L"www.", 4) == 0)
         hostName = hostName.substr(4);
-    if (hostName.empty()) hostName = L"链接";
+    if (hostName.empty()) hostName = _LW("app.interact.link");
 
     wchar_t tempPath[MAX_PATH]{};
     GetTempPathW(MAX_PATH, tempPath);
@@ -6716,8 +7114,12 @@ inline std::wstring DesktopApp::FileNameFromPath(const std::wstring& path)
  */
 inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName)
 {
-    static const std::wstring kShortcutSuffix = L" - 快捷方式";
-    static const std::wstring kCopySuffix = L" - 副本";
+    const std::vector<std::wstring> shortcutSuffixes =
+        Locale::Instance().TranslationValues(
+            L10N_KEY("app.interact.shortcut_suffix"));
+    const std::vector<std::wstring> copySuffixes =
+        Locale::Instance().TranslationValues(
+            L10N_KEY("app.interact.copy_suffix"));
 
     auto stripLnk = [](const std::wstring& s) -> std::wstring {
         if (s.size() > 4 && _wcsicmp(s.c_str() + s.size() - 4, L".lnk") == 0)
@@ -6729,10 +7131,23 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
         if (dot == std::wstring::npos || dot == 0) return s;
         return s.substr(0, dot);
     };
+    auto stripLocalizedSuffix = [](const std::wstring& text,
+        const std::vector<std::wstring>& suffixes) -> std::wstring {
+        for (const std::wstring& suffix : suffixes)
+        {
+            if (!suffix.empty() && text.size() > suffix.size() &&
+                _wcsicmp(text.c_str() + text.size() - suffix.size(),
+                    suffix.c_str()) == 0)
+            {
+                return text.substr(0, text.size() - suffix.size());
+            }
+        }
+        return text;
+    };
     auto stripShortcut = [&](const std::wstring& s) -> std::wstring {
-        if (s.size() > kShortcutSuffix.size() &&
-            s.compare(s.size() - kShortcutSuffix.size(), kShortcutSuffix.size(), kShortcutSuffix) == 0)
-            return s.substr(0, s.size() - kShortcutSuffix.size());
+        std::wstring stripped = stripLocalizedSuffix(s, shortcutSuffixes);
+        if (stripped != s)
+            return stripped;
         return s;
     };
     auto stripCopy = [&](const std::wstring& s) -> std::wstring {
@@ -6740,10 +7155,8 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
         size_t paren = value.rfind(L" (");
         if (paren != std::wstring::npos && value.ends_with(L")"))
             value = value.substr(0, paren);
-        if (value.size() > kCopySuffix.size() &&
-            value.compare(value.size() - kCopySuffix.size(), kCopySuffix.size(), kCopySuffix) == 0)
-            return value.substr(0, value.size() - kCopySuffix.size());
-        return s;
+        std::wstring stripped = stripLocalizedSuffix(value, copySuffixes);
+        return stripped != value ? stripped : s;
     };
     auto eqi = [](const std::wstring& a, const std::wstring& b) -> bool {
         if (a.size() != b.size()) return false;
@@ -6751,7 +7164,6 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
             if (towlower(a[i]) != towlower(b[i])) return false;
         return true;
     };
-
     if (eqi(itemName, srcFileName)) return true;
 
     std::wstring nameNoLnk = stripLnk(itemName);
@@ -7081,40 +7493,40 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
 
     if (widget.type == DesktopWidgetType::Collection)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetOpen, L"打开全部");
+        AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
         displayModeMenu = CreatePopupMenu();
         if (displayModeMenu)
         {
             AppendMenuW(displayModeMenu, MF_STRING | (!widget.scrollContainerMode ? MF_CHECKED : 0),
-                kContextWidgetCollModeLargeFolder, L"大文件夹");
+                kContextWidgetCollModeLargeFolder, _LW("app.interact.large_folder"));
             AppendMenuW(displayModeMenu, MF_STRING | (widget.scrollContainerMode ? MF_CHECKED : 0),
-                kContextWidgetCollModeScrollContainer, L"滚动容器");
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(displayModeMenu), L"显示模式");
+                kContextWidgetCollModeScrollContainer, _LW("app.interact.popup_container"));
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(displayModeMenu), _LW("app.interact.display_mode"));
         }
         if (widget.scrollContainerMode)
         {
             AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
-                widget.listMode ? L"图标显示" : L"列表显示");
+                widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
         }
     }
     else if (widget.type == DesktopWidgetType::FileCategories)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
-        AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
-        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
+        AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, _LW("app.interact.collect_now"));
+        AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, _LW("app.interact.auto_collect"));
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
-            widget.dateHeaders ? L"隐藏日期表头" : L"显示日期表头");
+            widget.dateHeaders ? _LW("app.interact.hide_date_header") : _LW("app.interact.show_date_header"));
     }
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, L"打开文件夹");
-        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
-        AppendMenuW(menu, MF_STRING, kContextNewMenu, L"新建");
-        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+        AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
+        AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
+        AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     }
     else if (widget.type == DesktopWidgetType::LuaScript)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, L"详细设置");
+        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, _LW("app.interact.detailed_settings"));
         if (widgetEngine_)
         {
             widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
@@ -7154,42 +7566,42 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             wNameMenu = CreatePopupMenu();
             if (wNameMenu)
             {
-                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByName, L"正序");
-                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByNameDesc, L"反序");
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wNameMenu), L"名称");
+                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByName, _LW("app.menu.sort_asc"));
+                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByNameDesc, _LW("app.menu.sort_desc"));
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wNameMenu), _LW("app.menu.sort_name"));
             }
             wTypeMenu = CreatePopupMenu();
             if (wTypeMenu)
             {
-                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByType, L"正序");
-                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByTypeDesc, L"反序");
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wTypeMenu), L"类型");
+                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByType, _LW("app.menu.sort_asc"));
+                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByTypeDesc, _LW("app.menu.sort_desc"));
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wTypeMenu), _LW("app.menu.sort_type"));
             }
             wDateMenu = CreatePopupMenu();
             if (wDateMenu)
             {
-                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDate, L"正序");
-                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, L"反序");
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), L"修改日期");
+                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDate, _LW("app.menu.sort_asc"));
+                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, _LW("app.menu.sort_desc"));
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), _LW("app.interact.sort_date"));
             }
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
         }
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (CanRenameWidget(widget))
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
+        AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
     hoverMenu = CreatePopupMenu();
     if (hoverMenu)
     {
         AppendMenuW(hoverMenu, MF_STRING | (widget.showOnHoverOnly ? MF_CHECKED : 0),
-            kContextWidgetShowOnHoverOn, L"开");
+            kContextWidgetShowOnHoverOn, _LW("app.interact.on"));
         AppendMenuW(hoverMenu, MF_STRING | (!widget.showOnHoverOnly ? MF_CHECKED : 0),
-            kContextWidgetShowOnHoverOff, L"关");
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), L"仅在悬停时显示");
+            kContextWidgetShowOnHoverOff, _LW("app.interact.off"));
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), _LW("app.interact.hover_only"));
     }
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
@@ -7199,13 +7611,13 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         if (privacyMenu)
         {
             AppendMenuW(privacyMenu, MF_STRING | (widget.privacyMode ? MF_CHECKED : 0),
-                kContextWidgetPrivacyModeOn, L"开");
+                kContextWidgetPrivacyModeOn, _LW("app.interact.on"));
             AppendMenuW(privacyMenu, MF_STRING | (!widget.privacyMode ? MF_CHECKED : 0),
-                kContextWidgetPrivacyModeOff, L"关");
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(privacyMenu), L"隐私模式");
+                kContextWidgetPrivacyModeOff, _LW("app.interact.off"));
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(privacyMenu), _LW("app.interact.privacy_mode"));
         }
     }
-    AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
+    AppendMenuW(menu, MF_STRING, kContextWidgetDelete, _LW("app.interact.delete_widget"));
 
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
     SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
@@ -7544,11 +7956,11 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     {
         struct IS { UINT cmd; const wchar_t* clsid; const wchar_t* label; };
         const IS items[] = {
-            { kTrayDesktopIconThisPC, kDesktopIconClsidThisPC, L"计算机" },
-            { kTrayDesktopIconUserFiles, kDesktopIconClsidUserFiles, L"用户的文件" },
-            { kTrayDesktopIconNetwork, kDesktopIconClsidNetwork, L"网络" },
-            { kTrayDesktopIconControlPanel, kDesktopIconClsidControlPanel, L"控制面板" },
-            { kTrayDesktopIconRecycleBin, kDesktopIconClsidRecycleBin, L"回收站" },
+            { kTrayDesktopIconThisPC, kDesktopIconClsidThisPC, _LW("app.interact.computer") },
+            { kTrayDesktopIconUserFiles, kDesktopIconClsidUserFiles, _LW("app.interact.user_files") },
+            { kTrayDesktopIconNetwork, kDesktopIconClsidNetwork, _LW("app.interact.network") },
+            { kTrayDesktopIconControlPanel, kDesktopIconClsidControlPanel, _LW("app.interact.control_panel") },
+            { kTrayDesktopIconRecycleBin, kDesktopIconClsidRecycleBin, _LW("app.interact.recycle_bin") },
         };
         for (const auto& s : items)
         {
@@ -7568,22 +7980,23 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
             }
             AppendMenuW(iconMenu, flags, s.cmd, s.label);
         }
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), L"桌面图标设置");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("app.interact.desktop_icon_settings"));
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     {
         bool nativeActive = !customDesktopVisible_;
         AppendMenuW(menu, MF_STRING | (nativeActive ? MF_CHECKED : 0),
-            kTraySwitchNativeCommand, L"切换原生桌面");
+            kTraySwitchNativeCommand, _LW("app.interact.switch_native_desktop"));
         AppendMenuW(menu, MF_STRING | (nativeActive ? 0 : MF_CHECKED),
-            kTraySwitchCustomCommand, L"切换软件桌面");
+            kTraySwitchCustomCommand, _LW("app.interact.switch_software_desktop"));
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
-    AppendMenuW(menu, MF_STRING, kTrayRestartCommand, L"重启软件");
-    AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
+    AppendMenuW(menu, MF_STRING, kTraySettingsCommand, _LW("app.menu.settings"));
+    AppendMenuW(menu, MF_STRING, kTrayRestartExplorerCommand, _LW("app.interact.restart_explorer_menu"));
+    AppendMenuW(menu, MF_STRING, kTrayRestartCommand, _LW("app.interact.restart_app"));
+    AppendMenuW(menu, MF_STRING, kTrayExitCommand, _LW("app.interact.exit_app"));
 
     SetForegroundWindow(controlHwnd_ ? controlHwnd_ : hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -7597,31 +8010,22 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     switch (command)
     {
     case kTraySwitchNativeCommand:
-        customDesktopVisible_ = false;
-        KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
-        SaveLayoutSlots();
-        HideDragHintWindow();
-        RestoreExplorerIcons();
-        ShowWindow(hwnd_, SW_HIDE);
-        if (inputHwnd_ && IsWindow(inputHwnd_))
-            ShowWindow(inputHwnd_, SW_HIDE);
+        SetSoftwareDesktopEnabled(false, true);
         break;
     case kTraySwitchCustomCommand:
-        customDesktopVisible_ = true;
-        desktopIconsHidden_ = false;
-        HideExplorerIcons();
-        ShowWindow(hwnd_, SW_SHOW);
-        if (inputHwnd_ && IsWindow(inputHwnd_))
-            ShowWindow(inputHwnd_, SW_SHOWNA);
-        SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
-        InvalidateRect(hwnd_, nullptr, TRUE);
-        ReloadItems();
+        SetSoftwareDesktopEnabled(true, true);
         break;
     case kTraySettingsCommand:
         ShowSettingsWindow();
         break;
     case kTrayRestartCommand:
         RequestRestart();
+        break;
+    case kTrayRestartExplorerCommand:
+        if (!RestartWindowsExplorer())
+            MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+                _LW("app.interact.restart_explorer_fail"),
+                L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;
     case kTrayExitCommand:
         if (settingsWindow_)

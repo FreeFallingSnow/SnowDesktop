@@ -10,6 +10,17 @@
 #include <d2d1_1.h>
 #include <string>
 
+constexpr int kAppearancePresetDark = 0;
+constexpr int kAppearancePresetLight = 1;
+constexpr int kAppearancePresetGlassDark = 6;
+constexpr int kAppearancePresetGlassLight = 7;
+constexpr int kAppearancePresetCustom = 9;
+constexpr int kAppearancePresetAcrylicDark = 10;
+constexpr int kAppearancePresetAcrylicLight = 11;
+// Reserved for the system taskbar UI; intentionally omitted from global
+// component preset lists.
+constexpr int kAppearancePresetTaskbarTransparent = 12;
+
 /**
  * @brief 个性化设置结构体
  * @details 存储桌面组件的颜色与透明度外观参数，包含预设工厂方法。
@@ -57,15 +68,38 @@ struct PersonalizationSettings
      */
     float gradientEndA = 0.65f;
 
+    /** @brief 独立的组件底栏高度，不属于主题预设。 */
     float barHeight = 24.0f;
 
     int backgroundPreset = 0;
+    /** @brief 独立的组件圆角半径，不属于主题预设。 */
     float cornerRadius = 12.0f;
-    float shadowAlpha = 0.0f;
-    float shadowBlur = 12.0f;
-    float shadowOffsetY = 4.0f;
-    float highlightAlpha = 0.0f;
-    float noiseAlpha = 0.0f;
+
+    /**
+     * @brief 毛玻璃背景开关（苹果 Dock 效果）
+     * @details 开启后由 DWM 原生合成器模糊面板背后的桌面内容，
+     *          填充色作为半透明色调叠加，边框切换为玻璃边缘光渐变描边。
+     */
+    bool glassEnabled = false;
+
+    /**
+     * @brief 毛玻璃模糊半径（像素），取值约 [4.0f, 48.0f]
+     */
+    float glassBlurRadius = 24.0f;
+
+    /**
+     * @brief 亚克力效果开关（在毛玻璃基础上叠加噪点纹理）
+     * @details 开启后为组件和快捷搜索叠加稳定的平铺颗粒，任务栏使用
+     *          系统 AcrylicBrush；仅 glassEnabled=true 时生效。
+     */
+    bool acrylicEnabled = false;
+
+    /**
+     * @brief 文字颜色主题 (0=浅色/白字, 1=深色/黑字)
+     * @details 影响任务栏文字图标、Dock组件标题和右下角图标、Lua组件文字颜色。
+     *          默认浅色（白字），与现有主题预设一致。
+     */
+    int contentTheme = 0;
 
     /**
      * @brief 获取暗色预设
@@ -80,9 +114,18 @@ struct PersonalizationSettings
     static PersonalizationSettings LightPreset();
     static PersonalizationSettings GlassDarkPreset();
     static PersonalizationSettings GlassLightPreset();
-    static PersonalizationSettings FrostedPreset();
-    static PersonalizationSettings HighContrastPreset();
+    static PersonalizationSettings AcrylicDarkPreset();
+    static PersonalizationSettings AcrylicLightPreset();
 };
+
+/** @brief 将旧版或无效预设 ID 映射到现有主题。 */
+int NormalizeAppearancePresetId(int presetId);
+
+/** @brief 根据预设 ID 创建纯色、毛玻璃、亚克力或自定义主题。 */
+PersonalizationSettings MakeAppearancePreset(int presetId);
+
+/** @brief 根据预设 ID 创建针对快捷搜索可读性优化的外观主题。 */
+PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId);
 
 /**
  * @brief 从 JSON 文件加载个性化设置

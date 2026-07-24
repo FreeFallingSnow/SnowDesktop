@@ -4,6 +4,7 @@
  */
 
 #include "data_paths.h"
+#include "deployment_context.h"
 
 #include <windows.h>
 #include <shlwapi.h>
@@ -121,7 +122,13 @@ std::wstring GetExecutableDirectoryPath()
 
 std::wstring GetDataDirectoryPath()
 {
-    std::wstring dataDir = JoinPathLocal(GetExecutableDirectoryPath(), L"data");
+    const std::wstring packageLocalState =
+        snowdesktop::deployment::GetPackageLocalStatePath();
+    std::wstring dataDir;
+    if (!packageLocalState.empty())
+        dataDir = JoinPathLocal(packageLocalState, L"data");
+    else
+        dataDir = JoinPathLocal(GetExecutableDirectoryPath(), L"data");
     EnsureDirectoryLocal(dataDir);
     return dataDir;
 }
@@ -131,9 +138,12 @@ std::wstring GetDataFilePath(const wchar_t* filename)
     if (!LooksLikeBareName(filename))
         return filename ? std::wstring(filename) : std::wstring();
 
-    const std::wstring exeDir = GetExecutableDirectoryPath();
+    std::wstring legacyDir =
+        snowdesktop::deployment::GetPackageLocalStatePath();
+    if (legacyDir.empty())
+        legacyDir = GetExecutableDirectoryPath();
     const std::wstring dataDir = GetDataDirectoryPath();
-    const std::wstring legacyPath = JoinPathLocal(exeDir, filename);
+    const std::wstring legacyPath = JoinPathLocal(legacyDir, filename);
     const std::wstring currentPath = JoinPathLocal(dataDir, filename);
     MigratePathIfNeeded(legacyPath, currentPath);
     return currentPath;
@@ -144,9 +154,12 @@ std::wstring GetDataSubdirectoryPath(const wchar_t* dirname)
     if (!LooksLikeBareName(dirname))
         return dirname ? std::wstring(dirname) : std::wstring();
 
-    const std::wstring exeDir = GetExecutableDirectoryPath();
+    std::wstring legacyDir =
+        snowdesktop::deployment::GetPackageLocalStatePath();
+    if (legacyDir.empty())
+        legacyDir = GetExecutableDirectoryPath();
     const std::wstring dataDir = GetDataDirectoryPath();
-    const std::wstring legacyPath = JoinPathLocal(exeDir, dirname);
+    const std::wstring legacyPath = JoinPathLocal(legacyDir, dirname);
     const std::wstring currentPath = JoinPathLocal(dataDir, dirname);
     MigrateDirectoryPathIfNeeded(legacyPath, currentPath);
     EnsureDirectoryLocal(currentPath);
@@ -162,7 +175,9 @@ void MigrateLegacyDataPaths()
         L"SnowDesktop.navigation.json",
         L"SnowDesktop.categories.json",
         L"SnowDesktop.personalization.json",
+        L"SnowDesktop.dock.json",
         L"SnowDesktop.dock-usage.json",
+        L"SnowDesktop_crash.log",
     };
 
     for (const wchar_t* file : files)

@@ -1,0 +1,109 @@
+// Minimal WindowsUdk projection required to observe Windows 11 Search.
+// Interface and factory identifiers are derived from TranslucentTB's
+// ShellViewCoordinator metadata at commit 322e2b7.
+namespace WindowsUdk.UI.Shell
+{
+    [contractversion(8.0)]
+    apicontract ShellContract
+    {
+    }
+
+    [contract(WindowsUdk.UI.Shell.ShellContract, 1.0)]
+    enum ShellView
+    {
+        ActionCenter = 0,
+        Search = 1,
+        Start = 2,
+        TaskView = 3,
+        Dashboard = 4,
+        MeetNow = 5,
+        ControlCenter = 6,
+        VirtualDesktopSwitcher = 7,
+        InputSwitcher = 8,
+        InputMethodEditorMenu = 9,
+        MiniSearch = 10,
+        PenMenu = 11,
+        PrimaryOnScreenInput = 12,
+        VoiceTyping = 13,
+        EmojiAndMore = 14,
+        VoiceAccess = 15,
+        Taskbar = 16,
+        TaskbarCustomizableDashboardEntryPoint = 17,
+        TaskbarJumpList = 18,
+        SmartActions = 19,
+        SnapAssist = 20,
+        NotificationAreaOverflowFlyout = 21,
+        VirtualTouchpad = 22,
+        NetworkFlyout = 23,
+        HardwareConfirmator = 24,
+        FindInStart = 25
+    };
+
+    [contract(WindowsUdk.UI.Shell.ShellContract, 1.0)]
+    enum ViewVisibility
+    {
+        Visible = 0,
+        Hidden = 1
+    };
+
+    [contract(WindowsUdk.UI.Shell.ShellContract, 2.0)]
+    [exclusiveto(WindowsUdk.UI.Shell.ShellViewCoordinator)]
+    [uuid(BC6FD3A4-3561-5629-ABDD-170AB289EF2F)]
+    interface IShellViewCoordinator : IInspectable
+    {
+        [eventadd] HRESULT ShowRequested(
+            [in] Windows.Foundation.TypedEventHandler<
+                WindowsUdk.UI.Shell.ShellViewCoordinator*,
+                IInspectable*>* handler,
+            [out] [retval] EventRegistrationToken* token);
+        [eventremove] HRESULT ShowRequested(
+            [in] EventRegistrationToken token);
+        [eventadd] HRESULT DismissRequested(
+            [in] Windows.Foundation.TypedEventHandler<
+                WindowsUdk.UI.Shell.ShellViewCoordinator*,
+                IInspectable*>* handler,
+            [out] [retval] EventRegistrationToken* token);
+        [eventremove] HRESULT DismissRequested(
+            [in] EventRegistrationToken token);
+        HRESULT ReportVisibility(
+            [in] WindowsUdk.UI.Shell.ViewVisibility visibility);
+        HRESULT TryShowAsync(
+            [in] IInspectable* options,
+            [out] [retval] IInspectable** operation);
+        HRESULT TryDismissAsync(
+            [in] IInspectable* options,
+            [out] [retval] IInspectable** operation);
+        [eventadd] HRESULT VisibilityChanged(
+            [in] Windows.Foundation.TypedEventHandler<
+                WindowsUdk.UI.Shell.ShellViewCoordinator*,
+                IInspectable*>* handler,
+            [out] [retval] EventRegistrationToken* token);
+        [eventremove] HRESULT VisibilityChanged(
+            [in] EventRegistrationToken token);
+        [propget] HRESULT Visibility(
+            [out] [retval] WindowsUdk.UI.Shell.ViewVisibility* value);
+    }
+
+    [contract(WindowsUdk.UI.Shell.ShellContract, 2.0)]
+    [exclusiveto(WindowsUdk.UI.Shell.ShellViewCoordinator)]
+    [uuid(BB8446E1-05D0-5510-80DD-96E9EBD9E006)]
+    interface IShellViewCoordinatorFactory : IInspectable
+    {
+        HRESULT CreateInstance(
+            [in] WindowsUdk.UI.Shell.ShellView view,
+            [out] [retval]
+                WindowsUdk.UI.Shell.ShellViewCoordinator** value);
+    }
+
+    [activatable(
+        WindowsUdk.UI.Shell.IShellViewCoordinatorFactory,
+        WindowsUdk.UI.Shell.ShellContract, 2.0)]
+    [contract(WindowsUdk.UI.Shell.ShellContract, 2.0)]
+    [marshaling_behavior(agile)]
+    [threading(both)]
+    runtimeclass ShellViewCoordinator
+    {
+        [default] interface
+            WindowsUdk.UI.Shell.IShellViewCoordinator;
+    }
+}

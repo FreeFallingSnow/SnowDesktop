@@ -98,6 +98,7 @@ public:
      * @brief 显示设置窗口（将隐藏窗口设为可见并置前）
      */
     void Show();
+    void ApplyLanguageChange();
 
     /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
     void ShowDockSettings();
@@ -107,6 +108,9 @@ public:
      * @return 窗口已创建且可见时返回 true
      */
     bool IsVisible() const { return hwnd_ != nullptr && IsWindowVisible(hwnd_); }
+
+    /** @brief 设置窗口是否有尚未绘制的界面变化。 */
+    bool NeedsRender() const { return renderRequested_; }
 
     /**
      * @brief 渲染一帧 ImGui 界面
@@ -133,11 +137,17 @@ public:
     void SetExitCallback(std::function<void()> callback) { exitCallback_ = std::move(callback); }
 
     /**
+     * @brief 设置重启应用回调
+     * @param callback 无参回调，在完整数据迁移后触发
+     */
+    void SetRestartCallback(std::function<void()> callback)
+    { restartCallback_ = std::move(callback); }
+
+    /**
      * @brief 设置失效回调（通知主窗口使缓存失效）
      * @param callback 无参回调，在需要刷新缓存时触发
      */
     void SetInvalidateCallback(std::function<void()> callback) { invalidateCallback_ = std::move(callback); }
-
     /**
      * @brief 设置导航设置变更回调
      * @param callback 无参回调，在导航设置被修改后触发
@@ -146,18 +156,28 @@ public:
 
     void SetGeneralSettingsChangedCallback(std::function<void()> callback) { generalSettingsChangedCallback_ = std::move(callback); }
 
+    void SetLanguageChangedCallback(std::function<void()> callback) { languageChangedCallback_ = std::move(callback); }
+
     void SetDockEnabledChangedCallback(std::function<void(bool)> callback)
     { dockEnabledChangedCallback_ = std::move(callback); }
 
     void SetDockSettingsChangedCallback(std::function<void()> callback)
     { dockSettingsChangedCallback_ = std::move(callback); }
 
+    void SetPersonalizationChangedCallback(std::function<void()> callback)
+    { personalizationChangedCallback_ = std::move(callback); }
+
     void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
+    void SyncSoftwareDesktopEnabled(bool enabled)
+    { generalSettings_.softwareDesktopEnabled = enabled; }
     void SyncDockSettings(const DockSettings& settings) { dockSettings_ = settings; }
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
+
+    /** @brief 设置原生毛玻璃状态文本提供者（设置界面只读状态行）。 */
+    void SetGlassStatusProvider(std::function<std::wstring()> provider) { glassStatusProvider_ = std::move(provider); }
 
     void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight,
         int shortcutArrowMode,
@@ -188,7 +208,43 @@ public:
         iconBeautifyBgEndG_ = iconBeautifyBgEndG;
         iconBeautifyBgEndB_ = iconBeautifyBgEndB;
         iconBeautifyGradientDirection_ = std::clamp(iconBeautifyGradientDirection, 0, 3);
-        iconBeautifyBgPreset_ = 0;
+        auto closeEnough = [](float value, float expected) {
+            return value >= expected - 0.001f && value <= expected + 0.001f;
+        };
+        auto matchesPreset = [&](float opacity, bool gradient,
+            float startR, float startG, float startB,
+            float endR, float endG, float endB, int direction) {
+            return closeEnough(iconBeautifyBgOpacity_, opacity) &&
+                iconBeautifyGradientEnabled_ == gradient &&
+                closeEnough(iconBeautifyBgStartR_, startR) &&
+                closeEnough(iconBeautifyBgStartG_, startG) &&
+                closeEnough(iconBeautifyBgStartB_, startB) &&
+                closeEnough(iconBeautifyBgEndR_, endR) &&
+                closeEnough(iconBeautifyBgEndG_, endG) &&
+                closeEnough(iconBeautifyBgEndB_, endB) &&
+                iconBeautifyGradientDirection_ == direction;
+        };
+        if (matchesPreset(0.65f, false,
+            232.0f / 255.0f, 236.0f / 255.0f, 244.0f / 255.0f,
+            222.0f / 255.0f, 228.0f / 255.0f, 240.0f / 255.0f, 0))
+            iconBeautifyBgPreset_ = 1;
+        else if (matchesPreset(0.50f, false,
+            1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0))
+            iconBeautifyBgPreset_ = 2;
+        else if (matchesPreset(0.82f, true,
+            156.0f / 255.0f, 216.0f / 255.0f, 1.0f,
+            74.0f / 255.0f, 128.0f / 255.0f, 1.0f, 2))
+            iconBeautifyBgPreset_ = 3;
+        else if (matchesPreset(0.78f, true,
+            1.0f, 218.0f / 255.0f, 138.0f / 255.0f,
+            1.0f, 122.0f / 255.0f, 164.0f / 255.0f, 3))
+            iconBeautifyBgPreset_ = 4;
+        else if (matchesPreset(0.70f, true,
+            24.0f / 255.0f, 32.0f / 255.0f, 48.0f / 255.0f,
+            87.0f / 255.0f, 105.0f / 255.0f, 135.0f / 255.0f, 1))
+            iconBeautifyBgPreset_ = 5;
+        else
+            iconBeautifyBgPreset_ = 0;
         displaySpacingPct_ = static_cast<int>(std::round(spacingScale * 100.0f));
     }
 
@@ -223,9 +279,10 @@ public:
      */
     const PersonalizationSettings& GetPersonalization() const { return personalization_; }
     const DockSettings& GetDockSettings() const { return dockSettings_; }
-    PersonalizationSettings GetDockAppearance() const
+    PersonalizationSettings GetSystemTaskbarAppearance() const
     {
-        return dockSettings_.followPersonalization ? personalization_ : dockSettings_.appearance;
+        return dockSettings_.systemTaskbarFollowPersonalization
+            ? personalization_ : dockSettings_.systemTaskbarAppearance;
     }
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
@@ -308,6 +365,8 @@ private:
 
     void DrawDockPage();
 
+    void DrawSystemTaskbarPage();
+
     void DrawDisplayPage();
 
     void DrawCategorySettingsPage();
@@ -369,6 +428,11 @@ private:
      * @return 删除成功返回 true
      */
     bool DeleteBackup(const std::wstring& filename);
+
+    /**
+     * @brief 选择携带版目录，将其中全部数据迁移到当前商店版数据目录
+     */
+    void MigratePortableData();
 
     /**
      * @brief 基于当前时间生成唯一的备份文件名
@@ -445,6 +509,12 @@ private:
     /// 是否请求关闭窗口（延迟关闭标记）
     bool pendingClose_ = false;
 
+    /// 设置窗口脏帧标记；避免桌面消息触发无关的 ImGui Present。
+    bool renderRequested_ = false;
+
+    /// 防止尺寸变化消息在当前帧内嵌套进入 ImGui/DX11 渲染。
+    bool renderInProgress_ = false;
+
     /// 是否已解锁调试页面（通过版本号点击彩蛋激活）
     bool debugUnlocked_ = false;
 
@@ -453,12 +523,22 @@ private:
 
     /// 更新检查状态：空字符串=空闲，"checking"=检查中，其余为结果信息
     std::string updateCheckStatus_;
+    /// 更新检查状态对应的翻译键；语言切换时据此重建缓存文案
+    std::string updateCheckStatusKey_;
+    /// 更新检查状态的可选格式化参数（当前用于最新版本号）
+    std::string updateCheckStatusArgument_;
     /// 更新检查返回的最新版本号
     std::string latestVersion_;
     /// 更新检查返回的下载页面 URL
     std::string downloadUrl_;
     /// 是否有可用更新
     bool updateAvailable_ = false;
+
+    /// MSIX StartupTask 状态是否已完成首次查询
+    mutable bool packagedAutoStartStateKnown_ = false;
+
+    /// MSIX StartupTask 最近一次查询或设置后的实际状态
+    mutable bool packagedAutoStartEnabled_ = false;
 
     /// 调试页使用的 Font Awesome 字体
     ImFont* faDebugFont_ = nullptr;
@@ -477,6 +557,9 @@ private:
     /// 退出应用回调
     std::function<void()> exitCallback_;
 
+    /// 完整数据迁移后的重启回调
+    std::function<void()> restartCallback_;
+
     /// 缓存失效回调（设置变更后通知主窗口）
     std::function<void()> invalidateCallback_;
 
@@ -486,15 +569,22 @@ private:
     /// 通用设置变更回调
     std::function<void()> generalSettingsChangedCallback_;
 
+    std::function<void()> languageChangedCallback_;
+
     std::function<void(bool)> dockEnabledChangedCallback_;
 
     std::function<void()> dockSettingsChangedCallback_;
+
+    std::function<void()> personalizationChangedCallback_;
 
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
 
     /// 分类设置变更回调
     std::function<void()> categorySettingsChangedCallback_;
+
+    /// 原生毛玻璃状态文本提供者
+    std::function<std::wstring()> glassStatusProvider_;
 
     /** @} */
 
@@ -573,6 +663,7 @@ private:
         std::wstring id;
         char label[128] = {};
         char extensions[1024] = {};
+        bool usesDefaultLabel = false;
     };
 
     std::vector<CategoryRuleEditBuffer> categoryRuleBuffers_;
