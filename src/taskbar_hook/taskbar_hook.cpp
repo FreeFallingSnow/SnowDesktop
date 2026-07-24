@@ -1,6 +1,4 @@
-// The visual-tree matching and Gaussian composition brush in this file are
-// adapted from TranslucentTB's GPLv3 ExplorerTAP implementation. See
-// third_party/translucenttb-NOTICE.md.
+// Reference implementation: https://github.com/TranslucentTB/TranslucentTB
 
 #include "taskbar_hook_protocol.h"
 #include "taskview_visibility.h"
