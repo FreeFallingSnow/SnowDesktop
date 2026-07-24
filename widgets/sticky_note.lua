@@ -1,5 +1,5 @@
 -- sticky_note.lua - 便签组件
-name = "便签"
+name = l10n.tr("lua_widget.sticky_note.name")
 useCustomStyle = true
 followPersonalizationDefault = true
 showTitle = true
@@ -16,7 +16,7 @@ settings = {
     presets = {
         {
             id = "classic",
-            label = "浅黄",
+            label = l10n.tr("lua_widget.sticky_note.preset_yellow"),
             default = true,
             values = {
                 bg = 0xFFF7D1,
@@ -28,7 +28,7 @@ settings = {
         },
         {
             id = "white",
-            label = "纯白",
+            label = l10n.tr("lua_widget.sticky_note.preset_white"),
             values = {
                 bg = 0xFFFFFF,
                 border = 0xD6D6D6,
@@ -39,7 +39,7 @@ settings = {
         },
         {
             id = "pink",
-            label = "浅粉",
+            label = l10n.tr("lua_widget.sticky_note.preset_pink"),
             values = {
                 bg = 0xFFE1EC,
                 border = 0xE8AFC2,
@@ -50,7 +50,7 @@ settings = {
         },
         {
             id = "blue",
-            label = "浅蓝",
+            label = l10n.tr("lua_widget.sticky_note.preset_blue"),
             values = {
                 bg = 0xDCEBFF,
                 border = 0x9DBBE6,
@@ -61,7 +61,7 @@ settings = {
         },
         {
             id = "green",
-            label = "浅绿",
+            label = l10n.tr("lua_widget.sticky_note.preset_green"),
             values = {
                 bg = 0xDFF7E7,
                 border = 0x9ACDAA,
@@ -72,7 +72,7 @@ settings = {
         },
         {
             id = "purple",
-            label = "浅紫",
+            label = l10n.tr("lua_widget.sticky_note.preset_purple"),
             values = {
                 bg = 0xEDE2FF,
                 border = 0xBFA7E8,
@@ -83,7 +83,7 @@ settings = {
         },
         {
             id = "dark",
-            label = "深色",
+            label = l10n.tr("lua_widget.sticky_note.preset_dark"),
             values = {
                 bg = 0x20242C,
                 border = 0x3E4654,
@@ -94,7 +94,7 @@ settings = {
         }
     },
     fields = {
-        { key = "fontSize", label = "文字字号", type = "int", default = 15, min = 10, max = 24 },
+        { key = "fontSize", label = l10n.tr("lua_widget.common.font_size"), type = "int", default = 15, min = 10, max = 24 },
     }
 }
 
@@ -131,7 +131,7 @@ end
 
 function render()
     loadConfig()
-    widget.setTitle("便签")
+    widget.setTitle(l10n.tr("lua_widget.sticky_note.name"))
 
     local w = layout.width()
     local h = layout.height()
@@ -143,7 +143,7 @@ function render()
     local viewportH = h - pad - bottomBarH
     if viewportH <= 0 then viewportH = 1 end
 
-    local textContent = saved ~= "" and saved or "双击编辑..."
+    local textContent = saved ~= "" and saved or l10n.tr("lua_widget.sticky_note.double_click_edit")
     local textMeasured = draw.measureText(textContent, fontSize, maxWidth)
     local contentH = math.ceil(textMeasured.height) + pad * 2
 
@@ -170,8 +170,8 @@ end
 
 function getContextMenu()
     return {
-        { id = 1, label = "清空便签", icon = "" },
-        { id = 2, label = "恢复便签默认样式", icon = "" },
+        { id = 1, label = l10n.tr("lua_widget.sticky_note.clear"), icon = "" },
+        { id = 2, label = l10n.tr("lua_widget.sticky_note.reset_style"), icon = "" },
     }
 end
 
@@ -184,7 +184,7 @@ function onMenu(id)
 end
 
 function imguiRender()
-    imgui.text("便签内容")
+    imgui.text(l10n.tr("lua_widget.sticky_note.content"))
 
     local text = imgui.input("##note", storage.get("text") or "")
     if text ~= (storage.get("text") or "") then

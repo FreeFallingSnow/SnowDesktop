@@ -1,5 +1,5 @@
 -- analog_clock.lua - 指针时钟
-name = "指针时钟"
+name = l10n.tr("lua_widget.analog_clock.name")
 useCustomStyle = true
 
 bg = 0x000000
@@ -11,7 +11,7 @@ settings = {
     presets = {
         {
             id = "transparent",
-            label = "透明表盘",
+            label = l10n.tr("lua_widget.analog_clock.preset_transparent"),
             default = true,
             values = {
                 bg = 0x000000,
@@ -23,7 +23,7 @@ settings = {
         },
         {
             id = "glass",
-            label = "玻璃表盘",
+            label = l10n.tr("lua_widget.analog_clock.preset_glass"),
             values = {
                 bg = 0xFFFFFF,
                 border = 0xFFFFFF,
@@ -34,8 +34,8 @@ settings = {
         }
     },
     fields = {
-        { key = "showSecondHand", label = "显示秒针", type = "bool", default = true },
-        { key = "showNumbers", label = "显示数字", type = "bool", default = true },
+        { key = "showSecondHand", label = l10n.tr("lua_widget.analog_clock.show_second_hand"), type = "bool", default = true },
+        { key = "showNumbers", label = l10n.tr("lua_widget.analog_clock.show_numbers"), type = "bool", default = true },
     }
 }
 

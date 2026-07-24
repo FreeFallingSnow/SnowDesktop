@@ -1,4 +1,4 @@
-name = "系统状态"
+name = l10n.tr("lua_widget.system_monitor.name")
 useCustomStyle = true
 followPersonalizationDefault = true
 showTitle = true
@@ -55,7 +55,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "标准卡片",
+            label = l10n.tr("lua_widget.system_monitor.preset_standard"),
             default = true,
             values = {
                 bg = 0x0F172A,
@@ -67,12 +67,12 @@ settings = {
         }
     },
     fields = {
-        { key = "show_cpu", label = "显示 CPU", type = "bool", default = true },
-        { key = "show_memory", label = "显示内存", type = "bool", default = true },
-        { key = "show_gpu", label = "显示 GPU", type = "bool", default = true },
-        { key = "show_vram", label = "显示显存", type = "bool", default = true },
-        { key = "show_network", label = "显示网络", type = "bool", default = true },
-        { key = "show_battery", label = "显示电池", type = "bool", default = true },
+        { key = "show_cpu", label = l10n.tr("lua_widget.system_monitor.show_cpu"), type = "bool", default = true },
+        { key = "show_memory", label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = true },
+        { key = "show_gpu", label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = true },
+        { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = true },
+        { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = true },
+        { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = true },
     }
 }
 
@@ -169,7 +169,7 @@ local function drawCard(x, y, w, h, info, pal)
 end
 
 function render()
-    widget.setTitle("系统状态")
+    widget.setTitle(l10n.tr("lua_widget.system_monitor.name"))
 
     local cpu = sys.cpu()
     local memory = sys.memory()
@@ -189,7 +189,8 @@ function render()
             value = string.format("%.0f%%", pct),
             progress = pct / 100,
             color = usageColor(pct, pal),
-            sub = cpu.name ~= "" and cpu.name or (cpu.logicalProcessors and cpu.logicalProcessors > 0 and (cpu.logicalProcessors .. " 线程") or nil),
+            sub = cpu.name ~= "" and cpu.name or (cpu.logicalProcessors and cpu.logicalProcessors > 0 and
+                l10n.tr("lua_widget.system_monitor.threads", cpu.logicalProcessors) or nil),
             rotateLines = true
         })
     end
@@ -197,7 +198,7 @@ function render()
     if showCard("memory") then
         local pct = clamp(memory.usagePercent)
         table.insert(cards, {
-            title = "内存",
+            title = l10n.tr("lua_widget.system_monitor.memory"),
             value = string.format("%.0f%%", pct),
             progress = pct / 100,
             color = usageColor(pct, pal),
@@ -225,7 +226,7 @@ function render()
         local vramTotal = (gpu.vramTotalBytes or 1) / 1024 / 1024 / 1024
         local vramPct = vramTotal > 0 and math.min(100, vramUsed / vramTotal * 100) or 0
         table.insert(cards, {
-            title = "显存",
+            title = l10n.tr("lua_widget.system_monitor.vram"),
             value = string.format("%.0f%%", vramPct),
             progress = vramPct / 100,
             color = usageColor(vramPct, pal),
@@ -235,7 +236,7 @@ function render()
 
     if showCard("network") then
         table.insert(cards, {
-            title = "网络",
+            title = l10n.tr("lua_widget.system_monitor.network"),
             color = pal.netDown,
             lines = {
                 { text = "↓ " .. (network.connected and formatRate(network.downloadBytesPerSec) or "—"),
@@ -249,12 +250,12 @@ function render()
     if showCard("battery") and battery.available then
         local batPct = battery.percent or 100
         local status = nil
-        if battery.charging then status = "充电中"
-        elseif battery.pluggedIn then status = "已接通"
-        elseif batPct <= 20 then status = "电量低"
+        if battery.charging then status = l10n.tr("lua_widget.system_monitor.charging")
+        elseif battery.pluggedIn then status = l10n.tr("lua_widget.system_monitor.plugged_in")
+        elseif batPct <= 20 then status = l10n.tr("lua_widget.system_monitor.low_battery")
         end
         table.insert(cards, {
-            title = "电池",
+            title = l10n.tr("lua_widget.system_monitor.battery"),
             value = string.format("%.0f%%", clamp(batPct)),
             progress = clamp(batPct) / 100,
             color = usageColor(100 - batPct, pal),
@@ -265,7 +266,8 @@ function render()
     local cols = math.max(1, layout.columns())
     local rows = #cards > 0 and math.ceil(#cards / cols) or 0
     if rows == 0 then
-        draw.text(layout.cu(10), layout.cu(10), "无可见卡片", layout.fontCu(12), pal.cardSub)
+        draw.text(layout.cu(10), layout.cu(10), l10n.tr("lua_widget.system_monitor.no_visible_cards"),
+            layout.fontCu(12), pal.cardSub)
         return
     end
 
@@ -323,9 +325,9 @@ end
 
 function getContextMenu()
     return {
-        { id = 1, label = "刷新数据", icon = "" },
+        { id = 1, label = l10n.tr("lua_widget.system_monitor.refresh"), icon = "" },
         { separator = true },
-        { id = 2, label = "恢复默认样式", icon = "" },
+        { id = 2, label = l10n.tr("lua_widget.common.reset_style"), icon = "" },
     }
 end
 

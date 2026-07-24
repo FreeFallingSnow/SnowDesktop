@@ -11,7 +11,7 @@
 struct CategoryRule
 {
     std::wstring id;
-    std::wstring label;
+    std::wstring customLabel;
     std::wstring extensions;
 };
 
@@ -26,6 +26,7 @@ struct CategorySettings
 std::wstring GetCategorySettingsPath();
 bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings);
 bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings);
+bool IsBuiltinCategoryRuleId(const std::wstring& categoryId);
 std::vector<std::wstring> ParseCategoryExtensionList(const std::wstring& text);
 std::wstring NormalizeCategoryExtensionText(const std::wstring& text);
 std::vector<std::wstring> GetCategoryOrder(const CategorySettings& settings);

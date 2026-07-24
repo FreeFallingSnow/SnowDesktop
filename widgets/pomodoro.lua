@@ -1,5 +1,5 @@
 -- pomodoro.lua - 番茄钟
-name = "番茄钟"
+name = l10n.tr("lua_widget.pomodoro.name")
 useCustomStyle = true
 followPersonalizationDefault = true
 bottomBarHover = false
@@ -36,7 +36,7 @@ settings = {
     presets = {
         {
             id = "dark",
-            label = "暗色专注",
+            label = l10n.tr("lua_widget.pomodoro.preset_dark"),
             default = true,
             values = {
                 bg = 0x151A21,
@@ -48,7 +48,7 @@ settings = {
         },
         {
             id = "light",
-            label = "明亮专注",
+            label = l10n.tr("lua_widget.pomodoro.preset_light"),
             values = {
                 bg = 0xFFFFFF,
                 border = 0xD0D0D0,
@@ -59,12 +59,12 @@ settings = {
         },
     },
     fields = {
-        { key = "workMin", label = "专注时长（分钟）", type = "int", default = 25, min = 1, max = 120 },
-        { key = "breakMin", label = "短休息（分钟）", type = "int", default = 5, min = 1, max = 60 },
-        { key = "longBreakMin", label = "长休息（分钟）", type = "int", default = 15, min = 1, max = 120 },
-        { key = "longBreakInterval", label = "长休息间隔（轮）", type = "int", default = 4, min = 1, max = 10 },
-        { key = "workColor", label = "专注颜色", type = "color", default = DEFAULT_WORK_COLOR },
-        { key = "breakColor", label = "休息颜色", type = "color", default = DEFAULT_BREAK_COLOR },
+        { key = "workMin", label = l10n.tr("lua_widget.pomodoro.work_minutes"), type = "int", default = 25, min = 1, max = 120 },
+        { key = "breakMin", label = l10n.tr("lua_widget.pomodoro.short_break_minutes"), type = "int", default = 5, min = 1, max = 60 },
+        { key = "longBreakMin", label = l10n.tr("lua_widget.pomodoro.long_break_minutes"), type = "int", default = 15, min = 1, max = 120 },
+        { key = "longBreakInterval", label = l10n.tr("lua_widget.pomodoro.long_break_interval"), type = "int", default = 4, min = 1, max = 10 },
+        { key = "workColor", label = l10n.tr("lua_widget.pomodoro.work_color"), type = "color", default = DEFAULT_WORK_COLOR },
+        { key = "breakColor", label = l10n.tr("lua_widget.pomodoro.break_color"), type = "color", default = DEFAULT_BREAK_COLOR },
     }
 }
 
@@ -170,6 +170,23 @@ end
 
 function sessionsInSet() return getSessions() % longBreakInterval end
 
+function updateTitleForState()
+    local state = getState()
+    if state == "work" then
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_work"))
+    elseif state == "break" then
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_break"))
+    elseif state == "paused" then
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_paused"))
+    else
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.name"))
+    end
+end
+
+function onLanguageChanged()
+    updateTitleForState()
+end
+
 function checkTransition()
     local s = getState()
     if s == "idle" or s == "paused" then return end
@@ -180,16 +197,16 @@ function checkTransition()
         storage.set("sessions", tostring(sessions))
         storage.set("state", "break")
         storage.set("startTime", tostring(timeNow()))
-        widget.setTitle("番茄钟 - 休息")
-        sys.notify("番茄钟", "专注完成！休息一下吧")
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_break"))
+        sys.notify(l10n.tr("lua_widget.pomodoro.name"), l10n.tr("lua_widget.pomodoro.work_complete"))
     elseif s == "break" then
         if getSessions() >= longBreakInterval then
             storage.set("sessions", "0")
         end
         storage.set("state", "idle")
         storage.set("startTime", "0")
-        widget.setTitle("番茄钟")
-        sys.notify("番茄钟", "休息结束，准备下一轮专注")
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.name"))
+        sys.notify(l10n.tr("lua_widget.pomodoro.name"), l10n.tr("lua_widget.pomodoro.break_complete"))
     end
     updateTickTimer()
 end
@@ -200,7 +217,7 @@ function actionStart()
     storage.set("state", "work")
     storage.set("startTime", tostring(timeNow()))
     storage.set("pausedRemaining", "0")
-    widget.setTitle("番茄钟 - 专注")
+    widget.setTitle(l10n.tr("lua_widget.pomodoro.title_work"))
     updateTickTimer()
 end
 
@@ -208,7 +225,7 @@ function actionPause()
     storage.set("prevState", getState())
     storage.set("pausedRemaining", tostring(remainingSeconds()))
     storage.set("state", "paused")
-    widget.setTitle("番茄钟 - 暂停")
+    widget.setTitle(l10n.tr("lua_widget.pomodoro.title_paused"))
     updateTickTimer()
 end
 
@@ -221,9 +238,9 @@ function actionResume()
     storage.set("pausedRemaining", "0")
     storage.set("prevState", "")
     if prevState == "work" then
-        widget.setTitle("番茄钟 - 专注")
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_work"))
     else
-        widget.setTitle("番茄钟 - 休息")
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_break"))
     end
     updateTickTimer()
 end
@@ -233,7 +250,7 @@ function actionStop()
     storage.set("startTime", "0")
     storage.set("pausedRemaining", "0")
     storage.set("prevState", "")
-    widget.setTitle("番茄钟")
+    widget.setTitle(l10n.tr("lua_widget.pomodoro.name"))
     updateTickTimer()
 end
 
@@ -243,16 +260,16 @@ function actionSkip()
         storage.set("sessions", tostring(getSessions() + 1))
         storage.set("state", "break")
         storage.set("startTime", tostring(timeNow()))
-        widget.setTitle("番茄钟 - 休息")
-        sys.notify("番茄钟", "已跳过专注，开始休息")
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_break"))
+        sys.notify(l10n.tr("lua_widget.pomodoro.name"), l10n.tr("lua_widget.pomodoro.work_skipped"))
     elseif s == "break" then
         if getSessions() >= longBreakInterval then
             storage.set("sessions", "0")
         end
         storage.set("state", "work")
         storage.set("startTime", tostring(timeNow()))
-        widget.setTitle("番茄钟 - 专注")
-        sys.notify("番茄钟", "已跳过休息，开始下一轮专注")
+        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_work"))
+        sys.notify(l10n.tr("lua_widget.pomodoro.name"), l10n.tr("lua_widget.pomodoro.break_skipped"))
     end
     updateTickTimer()
 end
@@ -263,7 +280,7 @@ function actionReset()
     storage.set("pausedRemaining", "0")
     storage.set("sessions", "0")
     storage.set("prevState", "")
-    widget.setTitle("番茄钟")
+    widget.setTitle(l10n.tr("lua_widget.pomodoro.name"))
     updateTickTimer()
 end
 
@@ -332,14 +349,15 @@ end
 
 function stateLabelText()
     local s = getState()
-    if s == "work"   then return "专注中" end
-    if s == "break"  then return "休息"   end
-    if s == "paused" then return "已暂停" end
-    return "就绪"
+    if s == "work"   then return l10n.tr("lua_widget.pomodoro.state_work") end
+    if s == "break"  then return l10n.tr("lua_widget.pomodoro.state_break") end
+    if s == "paused" then return l10n.tr("lua_widget.pomodoro.state_paused") end
+    return l10n.tr("lua_widget.pomodoro.state_idle")
 end
 
 function render()
     loadConfig()
+    updateTitleForState()
     checkTransition()
     btnHit = {}
     local pal = getPalette()
@@ -376,9 +394,9 @@ function render()
 
     local sub = ""
     if s == "work" then
-        sub = " · 第" .. (inSet + 1) .. "/" .. longBreakInterval .. "轮"
+        sub = l10n.tr("lua_widget.pomodoro.round_current", inSet + 1, longBreakInterval)
     elseif s == "break" then
-        sub = " · 已完成" .. inSet .. "/" .. longBreakInterval .. "轮"
+        sub = l10n.tr("lua_widget.pomodoro.round_completed", inSet, longBreakInterval)
     end
     local labelStr = label .. sub
     local lm = draw.measureText(labelStr, labelFont, 0, true)
@@ -472,16 +490,16 @@ function getContextMenu()
     local menu = {}
 
     if s == "idle" then
-        menu[#menu + 1] = { id = 1, label = "开始专注", icon = "" }
+        menu[#menu + 1] = { id = 1, label = l10n.tr("lua_widget.pomodoro.start"), icon = "" }
     elseif s == "paused" then
-        menu[#menu + 1] = { id = 2, label = "继续计时", icon = "" }
-        menu[#menu + 1] = { id = 3, label = "停止计时", icon = "" }
+        menu[#menu + 1] = { id = 2, label = l10n.tr("lua_widget.pomodoro.resume"), icon = "" }
+        menu[#menu + 1] = { id = 3, label = l10n.tr("lua_widget.pomodoro.stop"), icon = "" }
     else
-        menu[#menu + 1] = { id = 5, label = "跳过当前阶段", icon = "" }
-        menu[#menu + 1] = { id = 3, label = "停止计时", icon = "" }
+        menu[#menu + 1] = { id = 5, label = l10n.tr("lua_widget.pomodoro.skip"), icon = "" }
+        menu[#menu + 1] = { id = 3, label = l10n.tr("lua_widget.pomodoro.stop"), icon = "" }
     end
     menu[#menu + 1] = { separator = true }
-    menu[#menu + 1] = { id = 10, label = "重置计数", icon = "" }
+    menu[#menu + 1] = { id = 10, label = l10n.tr("lua_widget.pomodoro.reset_count"), icon = "" }
 
     return menu
 end

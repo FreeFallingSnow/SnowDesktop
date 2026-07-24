@@ -627,7 +627,7 @@ inline int DesktopApp::MaxPageOffset() const
 
 inline std::wstring DesktopApp::GetPageDisplayName(int index) const
 {
-    return L"第" + std::to_wstring(index + 1) + L"页";
+    return _LFW("app.grid.page_label", std::to_wstring(index + 1));
 }
 
 inline void DesktopApp::NavigatePageOffset(int delta)
@@ -1780,6 +1780,10 @@ inline void DesktopApp::LoadLayoutSlots()
     buf << file.rdbuf();
     std::string text = buf.str();
 
+    int widgetTitleSchemaVersion = 0;
+    ReadJsonIntField(text, "widgetTitleSchemaVersion", widgetTitleSchemaVersion);
+    const bool hasTrustedWidgetTitleMode = widgetTitleSchemaVersion >= 1;
+
     std::string firstPageMonitorUtf8;
     if (ReadJsonStringField(text, "firstPageMonitor", firstPageMonitorUtf8))
         firstPageMonitorId_ = Utf8ToWide(firstPageMonitorUtf8);
@@ -1900,7 +1904,9 @@ inline void DesktopApp::LoadLayoutSlots()
                         size_t objectEnd = FindJsonObjectEnd(text, wp);
                         if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
-                        std::string idUtf8, typeUtf8, titleUtf8, sourceUtf8, scriptUtf8, activeCategoryUtf8, pageUtf8;
+                        std::string idUtf8, typeUtf8, titleUtf8, customTitleUtf8,
+                            titleModeUtf8, sourceUtf8, scriptUtf8,
+                            activeCategoryUtf8, pageUtf8;
                         int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0, tabScrollOffset = 0;
                         bool autoCollect = false, listMode = false, dateHeaders = false, showOnHoverOnly = false, privacyMode = false, scrollContainerMode = false, showTitle = false, bottomBarHover = false, userRenamed = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
@@ -1913,6 +1919,10 @@ inline void DesktopApp::LoadLayoutSlots()
                         }
                         ReadJsonStringField(obj, "type", typeUtf8);
                         ReadJsonStringField(obj, "title", titleUtf8);
+                        const bool hasCustomTitle =
+                            ReadJsonStringField(obj, "customTitle", customTitleUtf8);
+                        const bool hasTitleMode =
+                            ReadJsonStringField(obj, "titleMode", titleModeUtf8);
                         ReadJsonStringField(obj, "sourceFolderPath", sourceUtf8);
                         ReadJsonStringField(obj, "scriptPath", scriptUtf8);
                         ReadJsonStringField(obj, "activeCategory", activeCategoryUtf8);
@@ -1971,10 +1981,74 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                             widget.type == DesktopWidgetType::Guide);
                         ReadJsonBoolField(obj, "showTitle", showTitle);
                         ReadJsonBoolField(obj, "bottomBarHover", bottomBarHover);
-                        ReadJsonBoolField(obj, "userRenamed", userRenamed);
+                        const bool hasUserRenamed =
+                            ReadJsonBoolField(obj, "userRenamed", userRenamed);
                         widget.showTitle = showTitle;
                         widget.bottomBarHover = bottomBarHover;
-                        widget.userRenamed = userRenamed;
+                        if (hasTrustedWidgetTitleMode && hasTitleMode)
+                        {
+                            if (titleModeUtf8 == "custom")
+                            {
+                                widget.customTitle = Utf8ToWide(
+                                    hasCustomTitle ? customTitleUtf8 : titleUtf8);
+                                widget.title = widget.customTitle;
+                            }
+                            else
+                            {
+                                widget.customTitle.clear();
+                            }
+                        }
+                        else if (hasUserRenamed && userRenamed)
+                        {
+                            // Legacy layouts only set this flag reliably when it
+                            // is true. Older versions wrote false even for
+                            // user-named widgets, so false must still go through
+                            // title-content inference below.
+                            widget.customTitle = Utf8ToWide(
+                                hasCustomTitle ? customTitleUtf8 : titleUtf8);
+                            widget.title = widget.customTitle;
+                        }
+                        else if (!widget.title.empty())
+                        {
+                            bool usesDefaultTitle = false;
+                            switch (widget.type)
+                            {
+                            case DesktopWidgetType::Collection:
+                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                                    L10N_KEY("widget.collection"), widget.title);
+                                break;
+                            case DesktopWidgetType::FileCategories:
+                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                                    L10N_KEY("widget.desktop_files"), widget.title);
+                                break;
+                            case DesktopWidgetType::Guide:
+                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                                    L10N_KEY("app.guide.title"), widget.title);
+                                break;
+                            case DesktopWidgetType::LuaScript:
+                                usesDefaultTitle = WidgetEngine::IsWidgetDefaultName(
+                                    widget.scriptPath, widget.title);
+                                break;
+                            case DesktopWidgetType::FolderMapping:
+                            default:
+                                break;
+                            }
+                            if (!usesDefaultTitle)
+                                widget.customTitle = widget.title;
+                            else if (widget.type == DesktopWidgetType::LuaScript &&
+                                widget.title != WidgetEngine::GetWidgetDisplayName(
+                                    widget.scriptPath))
+                                widget.scriptTitle = widget.title;
+                        }
+                        widget.userRenamed = !widget.customTitle.empty();
+                        if (widget.customTitle.empty() &&
+                            widget.type == DesktopWidgetType::LuaScript &&
+                            widget.scriptTitle.empty() && !widget.title.empty() &&
+                            !WidgetEngine::IsWidgetDefaultName(
+                                widget.scriptPath, widget.title))
+                        {
+                            widget.scriptTitle = widget.title;
+                        }
                         widget.scrollOffset = std::max(0, scrollOffset);
 widget.tabScrollOffset = std::max(0, tabScrollOffset);
                         widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
@@ -2198,7 +2272,8 @@ inline void DesktopApp::SaveLayoutSlots()
     std::ofstream file(GetLayoutPath(), std::ios::binary | std::ios::trunc);
     if (!file) return;
 
-    file << "{\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
+    file << "{\n  \"widgetTitleSchemaVersion\": 1"
+         << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
          << ",\n  \"itemFontSize\": " << itemFontSize_
@@ -2264,9 +2339,12 @@ inline void DesktopApp::SaveLayoutSlots()
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const DesktopWidget& w = widgets_[i];
+        const bool hasCustomTitle = !w.customTitle.empty();
         file << "    { \"id\": \"" << JsonEscapeUtf8(w.id)
              << "\", \"type\": \"" << JsonEscapeUtf8(WidgetTypeToJson(w.type))
              << "\", \"title\": \"" << JsonEscapeUtf8(w.title)
+             << "\", \"titleMode\": \"" << (hasCustomTitle ? "custom" : "auto")
+             << "\", \"customTitle\": \"" << JsonEscapeUtf8(w.customTitle)
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
              << "\", \"scriptPath\": \"" << JsonEscapeUtf8(w.scriptPath)
              << "\", \"activeCategory\": \"" << JsonEscapeUtf8(w.activeCategoryId)
@@ -2283,7 +2361,7 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
              << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
              << ", \"bottomBarHover\": " << (w.bottomBarHover ? "true" : "false")
-             << ", \"userRenamed\": " << (w.userRenamed ? "true" : "false")
+             << ", \"userRenamed\": " << (hasCustomTitle ? "true" : "false")
              << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
              << ", \"tabScrollOffset\": " << std::max(0, w.tabScrollOffset)
              << ", \"items\": [";
@@ -4857,7 +4935,7 @@ inline bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceLi
         {
             std::wstring name = i <= 1
                     ? stem + _LW("app.grid.copy_suffix") + ext
-                : stem + L" - 副本 (" + std::to_wstring(i) + L")" + ext;
+                : stem + _LFW("app.grid.copy_suffix_num", std::to_wstring(i)) + ext;
             wchar_t dst[MAX_PATH]{};
             PathCombineW(dst, desktopPath.c_str(), name.c_str());
             if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES)

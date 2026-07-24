@@ -64,14 +64,18 @@ inline std::wstring QuickNavigationFormatModifiedTime(const FILETIME& value)
         !FileTimeToSystemTime(&localTime, &systemTime))
         return {};
 
-    wchar_t buffer[32]{};
-    swprintf_s(buffer, ARRAYSIZE(buffer), L"修改 %04u-%02u-%02u %02u:%02u",
-        static_cast<unsigned>(systemTime.wYear),
-        static_cast<unsigned>(systemTime.wMonth),
-        static_cast<unsigned>(systemTime.wDay),
-        static_cast<unsigned>(systemTime.wHour),
-        static_cast<unsigned>(systemTime.wMinute));
-    return buffer;
+    auto padNumber = [](unsigned value, size_t width) {
+        std::wstring text = std::to_wstring(value);
+        if (text.size() < width)
+            text.insert(text.begin(), width - text.size(), L'0');
+        return text;
+    };
+    return _LFW("app.nav.file_modified",
+        padNumber(static_cast<unsigned>(systemTime.wYear), 4),
+        padNumber(static_cast<unsigned>(systemTime.wMonth), 2),
+        padNumber(static_cast<unsigned>(systemTime.wDay), 2),
+        padNumber(static_cast<unsigned>(systemTime.wHour), 2),
+        padNumber(static_cast<unsigned>(systemTime.wMinute), 2));
 }
 }
 
@@ -354,10 +358,10 @@ DesktopApp::FindQuickNavigationEverythingAppEntry() const
 inline std::wstring DesktopApp::GetQuickNavigationEverythingNoticeText() const
 {
     if (!quickNavigationAppsIndexed_)
-        return L"Everything 未运行，正在查找应用...";
+        return _LW("app.interact.everything_not_running");
     return FindQuickNavigationEverythingAppEntry()
-        ? L"Everything 未启动，点击启动"
-        : L"未安装 Everything，点击下载";
+        ? _LW("app.interact.everything_click_start")
+        : _LW("app.nav.everything_download");
 }
 
 inline bool DesktopApp::TryLaunchQuickNavigationEverythingApp() const
@@ -528,7 +532,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
         {
             appendDockDesktopItems();
             for (const auto& key : GetQuickNavigationItemKeys())
-                appendDesktop(FindItemIndexByKey(key), L"集合");
+                appendDesktop(FindItemIndexByKey(key), _LW("widget.collection"));
 
             std::unordered_set<std::wstring> desktopKeys;
             for (const auto& widget : widgets_)
@@ -551,7 +555,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
                 const DesktopItem& item = items_[i];
                 if (desktopKeys.contains(ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey))) continue;
                 if (!isLnkOrUrl(item.parsingName)) continue;
-                appendDesktop(i, L"自由桌面");
+                appendDesktop(i, _LW("app.interact.free_desktop"));
             }
             return result;
         }
@@ -561,7 +565,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
             for (size_t wi = 0; wi < widgets_.size(); ++wi)
             {
                 if (widgets_[wi].type != DesktopWidgetType::FolderMapping) continue;
-                std::wstring source = widgets_[wi].title.empty() ? L"文件夹映射" : widgets_[wi].title;
+                std::wstring source = widgets_[wi].title.empty() ? _LW("widget.folder_mapping") : widgets_[wi].title;
                 for (size_t ei = 0; ei < widgets_[wi].folderEntries.size(); ++ei)
                 {
                     const FolderEntry& entryData = widgets_[wi].folderEntries[ei];
@@ -582,7 +586,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
             widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
         {
             const DesktopWidget& widget = widgets_[quickNavigationActiveWidgetIndex_];
-            std::wstring source = widget.title.empty() ? L"文件夹映射" : widget.title;
+        std::wstring source = widget.title.empty() ? _LW("widget.folder_mapping") : widget.title;
             for (size_t ei = 0; ei < widget.folderEntries.size(); ++ei)
             {
                 const FolderEntry& entryData = widget.folderEntries[ei];
@@ -599,7 +603,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
         }
 
         for (const auto& key : GetQuickNavigationItemKeys())
-            appendDesktop(FindItemIndexByKey(key), L"集合");
+            appendDesktop(FindItemIndexByKey(key), _LW("widget.collection"));
 
         bool isDesktopAll = quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
             (widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection &&
@@ -638,7 +642,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
                 std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
                 if (collectionKeys.contains(key)) continue;
                 if (!isLnkOrUrl(item.parsingName)) continue;
-                appendDesktop(i, L"自由桌面");
+                appendDesktop(i, _LW("app.interact.free_desktop"));
             }
         }
 
@@ -647,13 +651,13 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
 
     appendDockDesktopItems();
     for (size_t i = 0; i < items_.size(); ++i)
-        appendDesktop(i, L"桌面");
+        appendDesktop(i, _LW("app.nav.tab_desktop"));
 
     for (size_t ci : GetQuickNavigationCollectionIndices())
     {
         const DesktopWidget& widget = widgets_[ci];
         if (widget.type == DesktopWidgetType::FolderMapping) continue;
-        std::wstring source = widget.title.empty() ? L"集合" : widget.title;
+        std::wstring source = widget.title.empty() ? _LW("widget.collection") : widget.title;
         for (const auto& key : widget.itemKeys)
             appendDesktop(FindItemIndexByKey(key), source);
     }
@@ -663,7 +667,7 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
         const DesktopWidget& widget = widgets_[wi];
         if (widget.type != DesktopWidgetType::FolderMapping)
             continue;
-        std::wstring source = widget.title.empty() ? L"文件夹映射" : widget.title;
+        std::wstring source = widget.title.empty() ? _LW("widget.folder_mapping") : widget.title;
         for (size_t ei = 0; ei < widget.folderEntries.size(); ++ei)
         {
             const FolderEntry& entryData = widget.folderEntries[ei];
@@ -1443,7 +1447,7 @@ inline bool DesktopApp::CreateQuickNavigationWindow()
     quickNavigationHwnd_ = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
         kQuickNavigationWindowClassName,
-L"SnowDesktop 快捷导航",
+_LW("app.interact.snow_nav_title"),
         WS_POPUP | WS_CLIPCHILDREN,
         0, 0, 1, 1,
         nullptr, nullptr, instance_, this);
@@ -1550,7 +1554,7 @@ inline void DesktopApp::EnsureQuickNavigationSearchEdit()
     SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(QuickNavScale(10), QuickNavScale(10)));
     SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
-        reinterpret_cast<LPARAM>(L"在桌面、应用、Everything中搜索"));
+        reinterpret_cast<LPARAM>(_LW("app.nav.search_hint")));
     SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
 }
@@ -1870,18 +1874,18 @@ inline void DesktopApp::ApplyNavigationHotkey()
  */
 inline std::wstring DesktopApp::GetQuickNavTabLabel(size_t tab) const
 {
-    if (tab == 0) return L"桌面";
-    if (tab == 1) return L"映射";
+    if (tab == 0) return _LW("app.nav.tab_desktop");
+    if (tab == 1) return _LW("app.nav.tab_mapping");
     std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
     if (tab - 2 >= ci.size()) return L"";
     const DesktopWidget& widget = widgets_[ci[tab - 2]];
     if (!widget.title.empty())
         return widget.title;
     if (widget.type == DesktopWidgetType::FileCategories)
-        return L"桌面文件";
+        return _LW("widget.desktop_files");
     if (widget.type == DesktopWidgetType::FolderMapping)
-        return L"文件夹映射";
-    return L"集合" + std::to_wstring(tab - 1);
+        return _LW("widget.folder_mapping");
+    return _LW("widget.collection") + std::to_wstring(tab - 1);
 }
 
 /**
@@ -2291,7 +2295,7 @@ inline std::wstring DesktopApp::SanitizeShortcutFileStem(const std::wstring& nam
     while (!stem.empty() && stem.front() == L' ')
         stem.erase(stem.begin());
     if (stem.empty())
-        stem = L"快捷方式";
+        stem = _LW("widget.shortcut");
     if (stem.size() > 80)
         stem.resize(80);
     return stem;
@@ -2339,7 +2343,7 @@ inline bool DesktopApp::IsApplicationsShellLinkTarget(IShellLinkW* shellLink)
     {
         std::wstring typeName = ToUpperInvariant(info.szTypeName);
         result = typeName == L"APPLICATION" || typeName == L"APPLICATIONS" ||
-            typeName == L"应用" || typeName == L"应用程序";
+            typeName == _LW("app.nav.app_label") || typeName == _LW("app.interact.app_title");
     }
     return result;
 }
@@ -2460,8 +2464,8 @@ inline void DesktopApp::ShowQuickNavigationAppContextMenu(
     if (!menu)
         return;
 
-    AppendMenuW(menu, MF_STRING, kAppOpen, L"打开");
-    AppendMenuW(menu, MF_STRING, kAppCreateShortcut, L"发送快捷方式到桌面");
+    AppendMenuW(menu, MF_STRING, kAppOpen, _LW("app.nav.open"));
+    AppendMenuW(menu, MF_STRING, kAppCreateShortcut, _LW("app.nav.send_to_desktop"));
 
     HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
@@ -2510,11 +2514,10 @@ inline void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     if (!menu)
         return;
 
-    AppendMenuW(menu, MF_STRING, kEverythingOpen, L"打开");
-    AppendMenuW(menu, MF_STRING, kEverythingReveal, L"在资源管理器中显示");
-    AppendMenuW(menu, MF_STRING, kEverythingCreateShortcut, L"发送快捷方式到桌面");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kEverythingCopyPath, L"复制路径");
+    AppendMenuW(menu, MF_STRING, kEverythingOpen, _LW("app.nav.open"));
+    AppendMenuW(menu, MF_STRING, kEverythingReveal, _LW("app.nav.show_in_explorer"));
+    AppendMenuW(menu, MF_STRING, kEverythingCreateShortcut, _LW("app.nav.send_to_desktop"));
+    AppendMenuW(menu, MF_STRING, kEverythingCopyPath, _LW("app.nav.copy_path"));
 
     HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
@@ -2961,8 +2964,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         else
             DrawD2DTextEllipsis(ctx.Get(),
                 !searching
-                    ? (collectionIndices.empty() ? L"暂无集合组件" : L"当前分类暂无项目")
-                    : L"没有匹配结果",
+                ? (collectionIndices.empty() ? _LW("app.nav.empty_collection") : _LW("app.nav.empty_category"))
+                : _LW("app.nav.no_results"),
                 emptyRect, quickNavItemTextFormat_.Get(), ToD2DColor(t.emptyText),
                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, false);
     }
@@ -2975,7 +2978,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 contentApp.top - quickNavigationScrollOffset_,
                 contentApp.right - QuickNavScale(12),
                 contentApp.top + headerH - quickNavigationScrollOffset_);
-            std::wstring desktopLabel = L"桌面结果  " + std::to_wstring(entries.size()) + L" 项";
+            std::wstring desktopLabel = _LFW("app.nav.desktop_results",
+                std::to_wstring(entries.size()));
             DrawD2DTextEllipsis(ctx.Get(), desktopLabel, desktopHeader,
                 quickNavTabTextFormat_.Get(), ToD2DColor(t.headerText),
                 DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -3042,8 +3046,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     appHeaderTop,
                     contentApp.right - QuickNavScale(12),
                     appHeaderTop + headerH);
-                std::wstring appLabel = L"应用  " +
-                    std::to_wstring(quickNavigationAppResultIndices_.size()) + L" 项";
+                std::wstring appLabel = _LFW("app.nav.app_results",
+                    std::to_wstring(quickNavigationAppResultIndices_.size()));
                 DrawD2DTextEllipsis(ctx.Get(), appLabel, appHeader,
                     quickNavTabTextFormat_.Get(), ToD2DColor(t.headerText),
                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -3095,7 +3099,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     DrawD2DTextEllipsis(ctx.Get(), entry.name, nameRect,
                         quickNavItemTextFormat_.Get(), ToD2DColor(t.appNameText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    DrawD2DTextEllipsis(ctx.Get(), L"应用", typeRect,
+                    DrawD2DTextEllipsis(ctx.Get(), _LW("app.nav.app_label"), typeRect,
                         quickNavPathTextFormat_.Get(), ToD2DColor(t.appTypeText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 }
@@ -3111,8 +3115,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE ||
                             IsQuickNavigationKeyboardTarget(
                                 QuickNavigationKeyboardTargetKind::ExpandApps, 0);
-                        std::wstring expandLabel = L"展开全部应用结果（" +
-                            std::to_wstring(quickNavigationAppResultIndices_.size()) + L" 项）";
+                        std::wstring expandLabel = _LFW("app.interact.expand_apps_fmt",
+                            std::to_wstring(quickNavigationAppResultIndices_.size()));
                         DrawD2DTextEllipsis(ctx.Get(), expandLabel, buttonRectApp,
                             quickNavTabTextFormat_.Get(),
                             hovered ? ToD2DColor(t.expandHoverText) : ToD2DColor(t.expandDefaultText),
@@ -3144,7 +3148,9 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     everythingHeaderTop + headerH);
                 std::wstring everythingLabel = L"Everything  " +
                     std::to_wstring(quickNavigationEverythingResults_.size()) +
-                    (quickNavigationEverythingHasMore_ ? L"+ 项" : L" 项");
+                    (quickNavigationEverythingHasMore_
+                        ? _LW("app.interact.plus_items")
+                        : _LW("app.interact.items_suffix"));
                 DrawD2DTextEllipsis(ctx.Get(), everythingLabel, everythingHeader,
                     quickNavTabTextFormat_.Get(), ToD2DColor(t.headerText),
                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -3235,7 +3241,7 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE ||
                             IsQuickNavigationKeyboardTarget(
                                 QuickNavigationKeyboardTargetKind::LoadMoreEverything, 0);
-                        DrawD2DTextEllipsis(ctx.Get(), L"加载更多 Everything 结果", buttonRectApp,
+                        DrawD2DTextEllipsis(ctx.Get(), _LW("app.nav.load_more_everything"), buttonRectApp,
                             quickNavTabTextFormat_.Get(),
                             hovered ? ToD2DColor(t.expandHoverText) : ToD2DColor(t.expandDefaultText),
                             DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);

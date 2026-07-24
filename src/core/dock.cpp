@@ -3,6 +3,7 @@
 #include "app.h"
 #include "constants.h"
 #include "slot.h"
+#include "../l10n.h"
 
 #include <algorithm>
 #include <cmath>
@@ -146,7 +147,7 @@ std::wstring DockEntryItem::GetTitle() const
     }
     auto it = std::find_if(app_->widgets_.begin(), app_->widgets_.end(),
         [&](const DesktopWidget& widget) { return widget.id == entry->reference; });
-    return it != app_->widgets_.end() ? it->title : L"集合";
+    return it != app_->widgets_.end() ? it->title : _LW("widget.collection");
 }
 
 std::wstring DockEntryItem::GetPath() const
@@ -728,7 +729,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         }
         if (hovered && !app_->dragSession_.IsActive())
         {
-            hoveredTitle = L"开始菜单";
+            hoveredTitle = _LW("app.dock.start_menu");
             hoveredBounds = windowsButton;
         }
     }
@@ -897,7 +898,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
 
     if (searchHovered && !app_->dragSession_.IsActive())
     {
-        hoveredTitle = L"快捷搜索";
+        hoveredTitle = _LW("app.dock.quick_search");
         hoveredBounds = search;
     }
 
@@ -1091,13 +1092,13 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
 {
     if (region == HitRegion::Blocked) return L"";
     if (region == HitRegion::Handoff && slot && slot->GetItem())
-        return L"释放：交给「" + slot->GetItem()->GetTitle() + L"」处理";
+        return _LFW("core.drag.release_handle", slot->GetItem()->GetTitle());
     if (origin != this && !HasCapacity(sourceItems.empty() ? 1 : sourceItems.size()))
-        return L"Dock 已满";
-    if (origin == this) return L"释放：调整 Dock 顺序";
+        return _LW("core.drag.dock_full");
+    if (origin == this) return _LW("core.drag.release_adjust_order");
     return (mods & MK_CONTROL)
-        ? L"释放：建立 Dock 映射（保留原入口）"
-        : L"释放：移动到 Dock（按住 Ctrl 可建立映射）";
+        ? _LW("core.dock.release_dock_map_full")
+        : _LW("core.dock.release_move_dock_ctrl");
 }
 
 void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)

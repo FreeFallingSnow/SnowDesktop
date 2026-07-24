@@ -13,8 +13,9 @@ struct GeneralSettings
 {
     bool softwareDesktopEnabled = true;
     bool doubleClickHideDesktop = false;
-    int quickNavTheme = 1; // 全局自定义时：0/1=纯色，2/3=毛玻璃，4/5=亚克力
+    int quickNavTheme = 1;
     bool dockEnabled = false;
+    char language[85] = "system";
 };
 
 std::wstring GetGeneralSettingsPath();

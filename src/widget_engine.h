@@ -77,8 +77,13 @@ struct LuaWidgetManifest
     };
     bool hasManifest = false;          ///< 是否存在清单文件
     std::string name;                  ///< 小部件显示名称
+    std::string nameKey;               ///< 小部件名称翻译键
     std::string version;               ///< 版本号字符串
     std::string description;           ///< 功能描述文本
+    std::string descriptionKey;        ///< 小部件描述翻译键
+    std::vector<std::string> titleKeys; ///< 脚本可管理的本地化标题键
+    std::unordered_map<std::string,
+        std::unordered_map<std::string, std::string>> locales; ///< 组件自带的多语言文本
     int defaultColumns = 1;            ///< 默认占据列数（桌面栅格）
     int defaultRows = 1;               ///< 默认占据行数（桌面栅格）
     int minColumns = 1;                ///< 最少占据列数
@@ -359,6 +364,7 @@ public:
      * @return 重载成功返回 true，否则返回 false
      */
     bool ReloadWidget(const std::wstring& widgetId);
+    void NotifyLanguageChanged(const std::wstring& widgetId);
 
     /**
      * @brief 渲染所有已加载的小部件
@@ -508,6 +514,9 @@ public:
      * @return 显示名称字符串
      */
     static std::wstring GetWidgetDisplayName(const std::wstring& filename);
+    /** @brief 判断标题是否为清单中任一语言的默认组件名。 */
+    static bool IsWidgetDefaultName(const std::wstring& filename,
+        const std::wstring& title);
 
     /**
      * @brief 获取小部件的清单元数据

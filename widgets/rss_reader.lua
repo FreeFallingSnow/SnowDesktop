@@ -1,4 +1,4 @@
-name = "RSS 阅读器"
+name = l10n.tr("lua_widget.rss_reader.name")
 useCustomStyle = true
 followPersonalizationDefault = true
 bottomBarHover = false
@@ -68,7 +68,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "标准列表",
+            label = l10n.tr("lua_widget.rss_reader.preset_standard"),
             default = true,
             values = {
                 bg = 0x0F172A,
@@ -80,11 +80,11 @@ settings = {
         }
     },
     fields = {
-        { key = "url", label = "RSS 地址", type = "text", default = "https://www.ithome.com/rss/" },
-        { key = "interval", label = "刷新间隔（秒）", type = "int", default = 1800, min = 60, max = 3600 },
-        { key = "maxItems", label = "最大条目数", type = "int", default = 30, min = 10, max = 100 },
-        { key = "fontSize", label = "文章字号", type = "int", default = 12, min = 10, max = 24 },
-        { key = "textColor", label = "文字颜色", type = "color", default = 0xFFFFFF },
+        { key = "url", label = l10n.tr("lua_widget.rss_reader.url"), type = "text", default = "https://www.ithome.com/rss/" },
+        { key = "interval", label = l10n.tr("lua_widget.rss_reader.refresh_interval"), type = "int", default = 1800, min = 60, max = 3600 },
+        { key = "maxItems", label = l10n.tr("lua_widget.rss_reader.max_items"), type = "int", default = 30, min = 10, max = 100 },
+        { key = "fontSize", label = l10n.tr("lua_widget.rss_reader.article_font_size"), type = "int", default = 12, min = 10, max = 24 },
+        { key = "textColor", label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF },
     }
 }
 
@@ -161,7 +161,7 @@ local function fetch()
     })
     if not id then
         loading = false
-        lastError = "请求失败，请检查 URL 和网络"
+        lastError = l10n.tr("lua_widget.rss_reader.request_failed")
     end
 end
 
@@ -210,7 +210,7 @@ function onHttpResponse(id, response)
     end
 
     local body = response.body
-    if body == "" then lastError = "响应为空"; return end
+    if body == "" then lastError = l10n.tr("lua_widget.rss_reader.empty_response"); return end
 
     -- Parse feed channel title
     local ft = body:match("<channel>.-<title>(.-)</title>")
@@ -241,12 +241,12 @@ function onHttpResponse(id, response)
     end
 
     articles = parsed
-    lastError = #parsed == 0 and "未解析到文章" or ""
+    lastError = #parsed == 0 and l10n.tr("lua_widget.rss_reader.no_articles_parsed") or ""
 end
 
 function render()
     local cfg = syncConfig(false)
-    widget.setTitle(feedTitle ~= "" and feedTitle or "RSS 阅读器")
+    widget.setTitle(feedTitle ~= "" and feedTitle or l10n.tr("lua_widget.rss_reader.name"))
     local w = layout.width()
     local h = layout.height()
     local padX = layout.cu(14)
@@ -263,19 +263,19 @@ function render()
     local pal = getPalette()
 
     if loading and #articles == 0 then
-        draw.text(padX, h * 0.34, "正在获取订阅…", layout.fontCu(13), pal.loadingText,
+        draw.text(padX, h * 0.34, l10n.tr("lua_widget.rss_reader.loading"), layout.fontCu(13), pal.loadingText,
             w - padX * 2, true, true)
         return
     end
     if lastError ~= "" and #articles == 0 then
         draw.text(padX, h * 0.27, lastError, layout.fontCu(12), pal.errorText,
             w - padX * 2, false, false)
-        draw.text(padX, h * 0.27 + layout.cu(34), "可在\u{201c}详细设置\u{201d}中修改 RSS 地址",
+        draw.text(padX, h * 0.27 + layout.cu(34), l10n.tr("lua_widget.rss_reader.settings_hint"),
             layout.fontCu(11), pal.loadingText, w - padX * 2, false, true)
         return
     end
 
-    local countText = tostring(#articles) .. " 篇"
+    local countText = l10n.tr("lua_widget.rss_reader.article_count", #articles)
     local countFontSize = secondaryFontSize
     local countMetrics = draw.measureText(countText, layout.fontCu(countFontSize), w, false)
     local countW = math.max(layout.cu(52), math.ceil(countMetrics.width))
@@ -316,7 +316,7 @@ function render()
     draw.popClip()
 
     if #articles == 0 then
-        draw.text(padX, listTop + layout.cu(22), "暂无文章，等待刷新…",
+        draw.text(padX, listTop + layout.cu(22), l10n.tr("lua_widget.rss_reader.no_articles"),
             layout.fontCu(12), pal.emptyText, w - padX * 2, true, true)
     end
 end
@@ -344,10 +344,10 @@ end
 
 function imguiRender()
     syncConfig(false)
-    if imgui.button("立即刷新") then fetch() end
+    if imgui.button(l10n.tr("lua_widget.rss_reader.refresh_now")) then fetch() end
 
     imgui.sameLine()
-    if imgui.button("清除缓存") then
+    if imgui.button(l10n.tr("lua_widget.rss_reader.clear_cache")) then
         clearCache()
         fetch()
     end
@@ -355,10 +355,10 @@ end
 
 function getContextMenu()
     return {
-        { id = 1, label = "立即刷新", icon = "" },
-        { id = 2, label = "清除缓存", icon = "" },
+        { id = 1, label = l10n.tr("lua_widget.rss_reader.refresh_now"), icon = "" },
+        { id = 2, label = l10n.tr("lua_widget.rss_reader.clear_cache"), icon = "" },
         { separator = true },
-        { id = 3, label = "打开源地址", icon = "" },
+        { id = 3, label = l10n.tr("lua_widget.rss_reader.open_source"), icon = "" },
     }
 end
 

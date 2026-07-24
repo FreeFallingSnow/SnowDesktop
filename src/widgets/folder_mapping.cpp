@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include "../l10n.h"
 
 static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex);
 
@@ -390,7 +391,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
         IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
         IDWriteTextFormat* lightCentered = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true) : nullptr;
-        app_->DrawD2DText(context, L"空文件夹", empty,
+        app_->DrawD2DText(context, _LW("widget.folder_mapping.empty"), empty,
             (lt && lightCentered) ? lightCentered :
                 (centered ? centered : app_->listItemTextFormat_.Get()),
             lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));

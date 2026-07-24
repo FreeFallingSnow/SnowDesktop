@@ -319,7 +319,8 @@ inline void DesktopApp::LuaSetWidgetTitle(const std::wstring& widgetId, const st
     for (auto& widget : widgets_)
     {
         if (widget.id != widgetId) continue;
-        if (widget.userRenamed) return;
+        widget.scriptTitle = title;
+        if (!widget.customTitle.empty()) return;
         if (widget.title == title) return;
         widget.title = title;
         SaveLayoutSlots();
@@ -494,6 +495,14 @@ inline void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    if (std::strcmp(generalSettings_.language, "system") != 0 &&
+        !Locale::Instance().HasLanguage(generalSettings_.language))
+    {
+        std::strncpy(generalSettings_.language, "system",
+            sizeof(generalSettings_.language) - 1);
+        generalSettings_.language[sizeof(generalSettings_.language) - 1] = '\0';
+    }
+    Locale::Instance().SetLanguage(generalSettings_.language);
     generalSettings_.dockEnabled = dockEnabled;
     generalSettings_.quickNavTheme = std::clamp(generalSettings_.quickNavTheme, 0, 3);
     SetSoftwareDesktopEnabled(generalSettings_.softwareDesktopEnabled, false);
@@ -569,6 +578,73 @@ inline void DesktopApp::LoadCategorySettingsAndApply()
     }
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+inline void DesktopApp::ApplyLanguageChange()
+{
+    LoadCategorySettingsAndApply();
+    if (settingsWindow_)
+        settingsWindow_->ApplyLanguageChange();
+    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+        SetWindowTextW(quickNavigationHwnd_, _LW("app.interact.snow_nav_title"));
+    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+    {
+        SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
+            reinterpret_cast<LPARAM>(_LW("app.nav.search_hint")));
+    }
+
+    bool titleChanged = false;
+    for (auto& widget : widgets_)
+    {
+        std::wstring defaultTitle;
+        switch (widget.type)
+        {
+        case DesktopWidgetType::Collection:
+            defaultTitle = _LW("widget.collection");
+            break;
+        case DesktopWidgetType::FileCategories:
+            defaultTitle = _LW("widget.desktop_files");
+            break;
+        case DesktopWidgetType::Guide:
+            defaultTitle = _LW("app.guide.title");
+            break;
+        case DesktopWidgetType::LuaScript:
+            if (widgetEngine_ && !widget.scriptPath.empty())
+            {
+                if (!widgetEngine_->ReloadWidget(widget.id))
+                    widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
+                widgetEngine_->NotifyLanguageChanged(widget.id);
+                const auto& runtimeWidgets = widgetEngine_->GetWidgets();
+                auto runtime = std::find_if(runtimeWidgets.begin(), runtimeWidgets.end(),
+                    [&](const LuaWidget& loaded) {
+                        return loaded.widgetId == widget.id;
+                    });
+                if (runtime != runtimeWidgets.end())
+                    defaultTitle = Utf8ToWide(runtime->name);
+            }
+            break;
+        case DesktopWidgetType::FolderMapping:
+        default:
+            break;
+        }
+
+        if (widget.customTitle.empty() &&
+            !defaultTitle.empty() &&
+            (widget.type != DesktopWidgetType::LuaScript ||
+                widget.scriptTitle.empty()) &&
+            widget.title != defaultTitle)
+        {
+            widget.title = std::move(defaultTitle);
+            titleChanged = true;
+        }
+    }
+
+    if (titleChanged)
+        SaveLayoutSlots();
+    if (quickNavigationOpen_)
+        InvalidateQuickNavigationWindow();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 inline void DesktopApp::ToggleDesktopIconsVisibility()
@@ -1934,7 +2010,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             widgetPreviewCell_ = cell;
             widgetPreviewSpan_ = span;
         }
-        ShowDragHintWindow(current, L"释放：调整组件大小");
+        ShowDragHintWindow(current, _LW("core.drag.resize_widget"));
         InvalidateRect(hwnd_, nullptr, TRUE);
         return;
     }
@@ -1953,7 +2029,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             widgetDockTarget_ = true;
             widgetDockTargetContainer_ = dock;
             widgetDockInsertIndex_ = dock->GetInsertIndexAtPoint(current);
-            ShowDragHintWindow(current, L"释放：移动集合到 Dock");
+            ShowDragHintWindow(current, _LW("core.drag.move_collection_dock"));
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -2036,7 +2112,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
             widgetPreviewCell_ = cell;
         }
-        ShowDragHintWindow(current, L"释放：移动组件");
+        ShowDragHintWindow(current, _LW("core.drag.move_widget"));
         InvalidateRect(hwnd_, nullptr, TRUE);
         return;
     }
@@ -2801,12 +2877,12 @@ inline std::wstring DesktopApp::GetDockDragOutRemovalHint(POINT point) const
     for (Item* item : dragSession_.Items())
     {
         if (dynamic_cast<DockFrequentItem*>(item))
-            return L"释放：从常用项目移除";
+            return _LW("core.drag.remove_frequent");
         const auto* dockItem = dynamic_cast<DockEntryItem*>(item);
         const size_t index = dockItem
             ? dockItem->GetEntryIndex() : static_cast<size_t>(-1);
         if (index < dockEntries_.size() && dockEntries_[index].keepOnDesktop)
-            return L"释放：移除 Dock 映射";
+            return _LW("core.drag.remove_dock_map");
     }
     return L"";
 }
@@ -5289,7 +5365,7 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
         if (!renameCommand &&
             GetMenuStringW(menu, command, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
         {
-            renameCommand = StrStrIW(menuText, L"重命名") != nullptr ||
+            renameCommand = StrStrIW(menuText, L"重命名") != nullptr || // l10n-allow: match Chinese Windows shell verb
                 StrStrIW(menuText, L"Rename") != nullptr;
         }
 
@@ -5620,12 +5696,25 @@ inline void DesktopApp::CommitRename(bool cancel)
             if (!newName.empty())
             {
                 widgets_[renameIndex_].title = newName;
+                widgets_[renameIndex_].customTitle = newName;
                 widgets_[renameIndex_].userRenamed = true;
                 SaveLayoutSlots();
             }
-            else if (widgets_[renameIndex_].userRenamed)
+            else if (!widgets_[renameIndex_].customTitle.empty())
             {
+                DesktopWidget& widget = widgets_[renameIndex_];
+                widget.customTitle.clear();
                 widgets_[renameIndex_].userRenamed = false;
+                if (!widget.scriptTitle.empty())
+                    widget.title = widget.scriptTitle;
+                else if (widget.type == DesktopWidgetType::LuaScript)
+                    widget.title = WidgetEngine::GetWidgetDisplayName(widget.scriptPath);
+                else if (widget.type == DesktopWidgetType::FileCategories)
+                    widget.title = _LW("widget.desktop_files");
+                else if (widget.type == DesktopWidgetType::Guide)
+                    widget.title = _LW("app.guide.title");
+                else if (widget.type == DesktopWidgetType::Collection)
+                    widget.title = _LW("widget.collection");
                 SaveLayoutSlots();
             }
         }
@@ -6698,7 +6787,7 @@ inline std::wstring DesktopApp::HandleUrlContent(const std::wstring& url)
     }
     if (hostName.size() > 4 && _wcsnicmp(hostName.c_str(), L"www.", 4) == 0)
         hostName = hostName.substr(4);
-    if (hostName.empty()) hostName = L"链接";
+    if (hostName.empty()) hostName = _LW("app.interact.link");
 
     wchar_t tempPath[MAX_PATH]{};
     GetTempPathW(MAX_PATH, tempPath);
@@ -7031,8 +7120,12 @@ inline std::wstring DesktopApp::FileNameFromPath(const std::wstring& path)
  */
 inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName)
 {
-    static const std::wstring kShortcutSuffix = L" - 快捷方式";
-    static const std::wstring kCopySuffix = L" - 副本";
+    const std::vector<std::wstring> shortcutSuffixes =
+        Locale::Instance().TranslationValues(
+            L10N_KEY("app.interact.shortcut_suffix"));
+    const std::vector<std::wstring> copySuffixes =
+        Locale::Instance().TranslationValues(
+            L10N_KEY("app.interact.copy_suffix"));
 
     auto stripLnk = [](const std::wstring& s) -> std::wstring {
         if (s.size() > 4 && _wcsicmp(s.c_str() + s.size() - 4, L".lnk") == 0)
@@ -7044,10 +7137,23 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
         if (dot == std::wstring::npos || dot == 0) return s;
         return s.substr(0, dot);
     };
+    auto stripLocalizedSuffix = [](const std::wstring& text,
+        const std::vector<std::wstring>& suffixes) -> std::wstring {
+        for (const std::wstring& suffix : suffixes)
+        {
+            if (!suffix.empty() && text.size() > suffix.size() &&
+                _wcsicmp(text.c_str() + text.size() - suffix.size(),
+                    suffix.c_str()) == 0)
+            {
+                return text.substr(0, text.size() - suffix.size());
+            }
+        }
+        return text;
+    };
     auto stripShortcut = [&](const std::wstring& s) -> std::wstring {
-        if (s.size() > kShortcutSuffix.size() &&
-            s.compare(s.size() - kShortcutSuffix.size(), kShortcutSuffix.size(), kShortcutSuffix) == 0)
-            return s.substr(0, s.size() - kShortcutSuffix.size());
+        std::wstring stripped = stripLocalizedSuffix(s, shortcutSuffixes);
+        if (stripped != s)
+            return stripped;
         return s;
     };
     auto stripCopy = [&](const std::wstring& s) -> std::wstring {
@@ -7055,10 +7161,8 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
         size_t paren = value.rfind(L" (");
         if (paren != std::wstring::npos && value.ends_with(L")"))
             value = value.substr(0, paren);
-        if (value.size() > kCopySuffix.size() &&
-            value.compare(value.size() - kCopySuffix.size(), kCopySuffix.size(), kCopySuffix) == 0)
-            return value.substr(0, value.size() - kCopySuffix.size());
-        return s;
+        std::wstring stripped = stripLocalizedSuffix(value, copySuffixes);
+        return stripped != value ? stripped : s;
     };
     auto eqi = [](const std::wstring& a, const std::wstring& b) -> bool {
         if (a.size() != b.size()) return false;
@@ -7066,7 +7170,6 @@ inline bool DesktopApp::MatchPendingName(const std::wstring& itemName, const std
             if (towlower(a[i]) != towlower(b[i])) return false;
         return true;
     };
-
     if (eqi(itemName, srcFileName)) return true;
 
     std::wstring nameNoLnk = stripLnk(itemName);
@@ -7396,40 +7499,40 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
 
     if (widget.type == DesktopWidgetType::Collection)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetOpen, L"打开全部");
+        AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
         displayModeMenu = CreatePopupMenu();
         if (displayModeMenu)
         {
             AppendMenuW(displayModeMenu, MF_STRING | (!widget.scrollContainerMode ? MF_CHECKED : 0),
-                kContextWidgetCollModeLargeFolder, L"大文件夹");
+                kContextWidgetCollModeLargeFolder, _LW("app.interact.large_folder"));
             AppendMenuW(displayModeMenu, MF_STRING | (widget.scrollContainerMode ? MF_CHECKED : 0),
-                kContextWidgetCollModeScrollContainer, L"滚动容器");
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(displayModeMenu), L"显示模式");
+                kContextWidgetCollModeScrollContainer, _LW("app.interact.popup_container"));
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(displayModeMenu), _LW("app.interact.display_mode"));
         }
         if (widget.scrollContainerMode)
         {
             AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
-                widget.listMode ? L"图标显示" : L"列表显示");
+                widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
         }
     }
     else if (widget.type == DesktopWidgetType::FileCategories)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, L"立即收集");
-        AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, L"自动收集");
-        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
+        AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, _LW("app.interact.collect_now"));
+        AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, _LW("app.interact.auto_collect"));
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
-            widget.dateHeaders ? L"隐藏日期表头" : L"显示日期表头");
+            widget.dateHeaders ? _LW("app.interact.hide_date_header") : _LW("app.interact.show_date_header"));
     }
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, L"打开文件夹");
-        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? L"图标显示" : L"列表显示");
-        AppendMenuW(menu, MF_STRING, kContextNewMenu, L"新建");
-        AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+        AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
+        AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
+        AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     }
     else if (widget.type == DesktopWidgetType::LuaScript)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, L"详细设置");
+        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, _LW("app.interact.detailed_settings"));
         if (widgetEngine_)
         {
             widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
@@ -7469,42 +7572,42 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             wNameMenu = CreatePopupMenu();
             if (wNameMenu)
             {
-                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByName, L"正序");
-                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByNameDesc, L"反序");
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wNameMenu), L"名称");
+                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByName, _LW("app.menu.sort_asc"));
+                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByNameDesc, _LW("app.menu.sort_desc"));
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wNameMenu), _LW("app.menu.sort_name"));
             }
             wTypeMenu = CreatePopupMenu();
             if (wTypeMenu)
             {
-                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByType, L"正序");
-                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByTypeDesc, L"反序");
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wTypeMenu), L"类型");
+                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByType, _LW("app.menu.sort_asc"));
+                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByTypeDesc, _LW("app.menu.sort_desc"));
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wTypeMenu), _LW("app.menu.sort_type"));
             }
             wDateMenu = CreatePopupMenu();
             if (wDateMenu)
             {
-                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDate, L"正序");
-                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, L"反序");
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), L"修改日期");
+                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDate, _LW("app.menu.sort_asc"));
+                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, _LW("app.menu.sort_desc"));
+                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), _LW("app.interact.sort_date"));
             }
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
         }
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (CanRenameWidget(widget))
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetRename, L"重命名");
+        AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
     hoverMenu = CreatePopupMenu();
     if (hoverMenu)
     {
         AppendMenuW(hoverMenu, MF_STRING | (widget.showOnHoverOnly ? MF_CHECKED : 0),
-            kContextWidgetShowOnHoverOn, L"开");
+            kContextWidgetShowOnHoverOn, _LW("app.interact.on"));
         AppendMenuW(hoverMenu, MF_STRING | (!widget.showOnHoverOnly ? MF_CHECKED : 0),
-            kContextWidgetShowOnHoverOff, L"关");
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), L"仅在悬停时显示");
+            kContextWidgetShowOnHoverOff, _LW("app.interact.off"));
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), _LW("app.interact.hover_only"));
     }
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
@@ -7514,13 +7617,13 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         if (privacyMenu)
         {
             AppendMenuW(privacyMenu, MF_STRING | (widget.privacyMode ? MF_CHECKED : 0),
-                kContextWidgetPrivacyModeOn, L"开");
+                kContextWidgetPrivacyModeOn, _LW("app.interact.on"));
             AppendMenuW(privacyMenu, MF_STRING | (!widget.privacyMode ? MF_CHECKED : 0),
-                kContextWidgetPrivacyModeOff, L"关");
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(privacyMenu), L"隐私模式");
+                kContextWidgetPrivacyModeOff, _LW("app.interact.off"));
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(privacyMenu), _LW("app.interact.privacy_mode"));
         }
     }
-    AppendMenuW(menu, MF_STRING, kContextWidgetDelete, L"删除组件");
+    AppendMenuW(menu, MF_STRING, kContextWidgetDelete, _LW("app.interact.delete_widget"));
 
     SetMenuItemIcon(menu, kContextWidgetOpen, L"");
     SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
@@ -7859,11 +7962,11 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     {
         struct IS { UINT cmd; const wchar_t* clsid; const wchar_t* label; };
         const IS items[] = {
-            { kTrayDesktopIconThisPC, kDesktopIconClsidThisPC, L"计算机" },
-            { kTrayDesktopIconUserFiles, kDesktopIconClsidUserFiles, L"用户的文件" },
-            { kTrayDesktopIconNetwork, kDesktopIconClsidNetwork, L"网络" },
-            { kTrayDesktopIconControlPanel, kDesktopIconClsidControlPanel, L"控制面板" },
-            { kTrayDesktopIconRecycleBin, kDesktopIconClsidRecycleBin, L"回收站" },
+            { kTrayDesktopIconThisPC, kDesktopIconClsidThisPC, _LW("app.interact.computer") },
+            { kTrayDesktopIconUserFiles, kDesktopIconClsidUserFiles, _LW("app.interact.user_files") },
+            { kTrayDesktopIconNetwork, kDesktopIconClsidNetwork, _LW("app.interact.network") },
+            { kTrayDesktopIconControlPanel, kDesktopIconClsidControlPanel, _LW("app.interact.control_panel") },
+            { kTrayDesktopIconRecycleBin, kDesktopIconClsidRecycleBin, _LW("app.interact.recycle_bin") },
         };
         for (const auto& s : items)
         {
@@ -7883,23 +7986,23 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
             }
             AppendMenuW(iconMenu, flags, s.cmd, s.label);
         }
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), L"桌面图标设置");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("app.interact.desktop_icon_settings"));
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     {
         bool nativeActive = !customDesktopVisible_;
         AppendMenuW(menu, MF_STRING | (nativeActive ? MF_CHECKED : 0),
-            kTraySwitchNativeCommand, L"切换原生桌面");
+            kTraySwitchNativeCommand, _LW("app.interact.switch_native_desktop"));
         AppendMenuW(menu, MF_STRING | (nativeActive ? 0 : MF_CHECKED),
-            kTraySwitchCustomCommand, L"切换软件桌面");
+            kTraySwitchCustomCommand, _LW("app.interact.switch_software_desktop"));
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kTraySettingsCommand, L"设置");
-    AppendMenuW(menu, MF_STRING, kTrayRestartExplorerCommand, L"重启文件资源管理器");
-    AppendMenuW(menu, MF_STRING, kTrayRestartCommand, L"重启软件");
-    AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"退出软件");
+    AppendMenuW(menu, MF_STRING, kTraySettingsCommand, _LW("app.menu.settings"));
+    AppendMenuW(menu, MF_STRING, kTrayRestartExplorerCommand, _LW("app.interact.restart_explorer_menu"));
+    AppendMenuW(menu, MF_STRING, kTrayRestartCommand, _LW("app.interact.restart_app"));
+    AppendMenuW(menu, MF_STRING, kTrayExitCommand, _LW("app.interact.exit_app"));
 
     SetForegroundWindow(controlHwnd_ ? controlHwnd_ : hwnd_);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -7927,7 +8030,7 @@ inline void DesktopApp::ShowTrayMenu(POINT screenPoint)
     case kTrayRestartExplorerCommand:
         if (!RestartWindowsExplorer())
             MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
-                L"无法重启文件资源管理器，请稍后重试。",
+                _LW("app.interact.restart_explorer_fail"),
                 L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;
     case kTrayExitCommand:

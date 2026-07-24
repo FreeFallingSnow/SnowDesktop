@@ -50,6 +50,12 @@ xcopy /E /I /Y "widgets" "release\widgets" >nul
 if errorlevel 1 ( echo Failed to copy widgets & pause & exit /b 1 )
 echo   OK
 
+echo Copying lang\ ...
+if exist "release\lang" rd /s /q "release\lang"
+xcopy /E /I /Y "lang" "release\lang" >nul
+if errorlevel 1 ( echo Failed to copy lang & pause & exit /b 1 )
+echo   OK
+
 echo.
 echo [3/4] Changes staged in the release repository for tag %TAG%
 echo.

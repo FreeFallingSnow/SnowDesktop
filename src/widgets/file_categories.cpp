@@ -17,6 +17,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <unordered_set>
+#include "../l10n.h"
 
 static constexpr float kDefaultFileCategoryTabFontCu = 14.0f;
 
@@ -94,15 +95,15 @@ static std::vector<std::wstring> FileCategoryOrderByDate()
  */
 static std::wstring FileCategoryLabelByDate(const std::wstring& id)
 {
-    if (id == L"all") return L"全部";
-    if (id == L"today") return L"今天";
-    if (id == L"yesterday") return L"昨天";
-    if (id == L"this_week") return L"本周";
-    if (id == L"last_week") return L"上周";
-    if (id == L"this_month") return L"本月";
-    if (id == L"last_month") return L"上月";
-    if (id == L"this_year") return L"今年";
-    return L"更早";
+    if (id == L"all") return _LW("widget.categories.all");
+    if (id == L"today") return _LW("widget.categories.today");
+    if (id == L"yesterday") return _LW("widget.categories.yesterday");
+    if (id == L"this_week") return _LW("widget.categories.this_week");
+    if (id == L"last_week") return _LW("widget.categories.last_week");
+    if (id == L"this_month") return _LW("widget.categories.this_month");
+    if (id == L"last_month") return _LW("widget.categories.last_month");
+    if (id == L"this_year") return _LW("widget.categories.this_year");
+    return _LW("widget.categories.earlier");
 }
 
 /**
@@ -1290,7 +1291,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         }
         else
         {
-            app_->DrawD2DText(context, L"  搜索文件...", searchTextRect,
+            app_->DrawD2DText(context, _LW("widget.categories.search_hint"), searchTextRect,
                 (lt && lightSearchFormat) ? lightSearchFormat :
                     (searchFormat ? searchFormat :
                     (app_->fileCategoryTabTextFormat_
@@ -1313,7 +1314,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         {
             RECT empty = GetBodyRect();
             InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
-            app_->DrawD2DText(context, L"没有匹配结果", empty,
+            app_->DrawD2DText(context, _LW("widget.categories.no_results"), empty,
                 (lt && lightHintFormat) ? lightHintFormat :
                     (normalFormat ? normalFormat :
                     (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get())),
@@ -1361,7 +1362,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     {
         RECT empty = GetBodyRect();
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
-        app_->DrawD2DText(context, L"暂无散文件", empty,
+        app_->DrawD2DText(context, _LW("widget.categories.no_scattered_files"), empty,
             (lt && lightHintFormat) ? lightHintFormat :
                 (normalFormat ? normalFormat :
                 (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get())),

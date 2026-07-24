@@ -1,4 +1,4 @@
-name = "快速启动"
+name = l10n.tr("lua_widget.quick_launcher.name")
 useCustomStyle = true
 followPersonalizationDefault = true
 showTitle = true
@@ -64,7 +64,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "深色搜索",
+            label = l10n.tr("lua_widget.quick_launcher.preset_dark"),
             default = true,
             values = {
                 bg = 0x151A21,
@@ -76,9 +76,9 @@ settings = {
         }
     },
     fields = {
-        { key = "query", label = "搜索词", type = "text", default = "" },
-        { key = "fontSize", label = "字号", type = "int", default = 14, min = 10, max = 24 },
-        { key = "textColor", label = "文字颜色", type = "color", default = 0xFFFFFF },
+        { key = "query", label = l10n.tr("lua_widget.quick_launcher.query"), type = "text", default = "" },
+        { key = "fontSize", label = l10n.tr("lua_widget.common.font_size"), type = "int", default = 14, min = 10, max = 24 },
+        { key = "textColor", label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF },
     }
 }
 
@@ -219,7 +219,7 @@ end
 
 function render()
     syncQueryState()
-    widget.setTitle("快速启动")
+    widget.setTitle(l10n.tr("lua_widget.quick_launcher.name"))
     local w = layout.width()
     local pad = layout.cu(12)
     local metrics = pageMetrics()
@@ -230,7 +230,7 @@ function render()
 
     ui.textInput("search", "query", pad, metrics.searchTop,
         w - pad * 2, metrics.searchHeight, {
-            placeholder = "单击输入搜索关键字",
+            placeholder = l10n.tr("lua_widget.quick_launcher.search_placeholder"),
             fontSize = layout.fontCu(metrics.fontSize),
             textColor = pal.inputText,
             placeholderColor = pal.inputPlaceholder,
@@ -262,14 +262,14 @@ function render()
         draw.icon(item, pad + layout.cu(4),
             y + math.max(0, (rowH - metrics.iconSize) / 2 - layout.cu(1)), metrics.iconSize)
         local textX = pad + metrics.iconSize + layout.cu(12)
-        draw.text(textX, y + metrics.itemTextOffsetY, item.title or "(未命名)",
+        draw.text(textX, y + metrics.itemTextOffsetY, item.title or l10n.tr("lua_widget.common.untitled"),
             layout.fontCu(metrics.fontSize), pal.itemText,
             w - pad - textX - layout.cu(6), false, true)
         y = y + rowH
     end
 
     if #items == 0 then
-        draw.text(pad, y, "没有匹配项目", layout.fontCu(metrics.fontSize),
+        draw.text(pad, y, l10n.tr("lua_widget.quick_launcher.no_matches"), layout.fontCu(metrics.fontSize),
             pal.noResult, w - pad * 2, false, true)
     elseif #items > maxRows then
         local barH = math.max(layout.cu(12), math.floor((maxRows / #items) * (maxRows * rowH)))
@@ -337,10 +337,10 @@ end
 
 function getContextMenu()
     return {
-        { id = 4, label = "编辑搜索词", icon = "" },
-        { id = 1, label = "打开当前匹配项", icon = "" },
-        { id = 2, label = "定位当前匹配项", icon = "" },
-        { id = 3, label = "刷新桌面", icon = "" },
+        { id = 4, label = l10n.tr("lua_widget.quick_launcher.edit_query"), icon = "" },
+        { id = 1, label = l10n.tr("lua_widget.quick_launcher.open_match"), icon = "" },
+        { id = 2, label = l10n.tr("lua_widget.quick_launcher.reveal_match"), icon = "" },
+        { id = 3, label = l10n.tr("lua_widget.quick_launcher.refresh_desktop"), icon = "" },
     }
 end
 
@@ -360,10 +360,10 @@ function imguiRender()
     syncQueryState()
 
     local items = matches()
-    imgui.text("匹配项: " .. tostring(#items))
+    imgui.text(l10n.tr("lua_widget.quick_launcher.match_count", #items))
     local top, selected = clampViewport(#items)
     for i = top, math.min(#items, top + 7) do
-        local clicked = imgui.selectable(items[i].title or "(未命名)", i == selectedIndex())
+        local clicked = imgui.selectable(items[i].title or l10n.tr("lua_widget.common.untitled"), i == selectedIndex())
         if clicked then
             setSelectedIndex(i)
         end

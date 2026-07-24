@@ -1,5 +1,5 @@
 -- digital_clock.lua - 数字时钟
-name = "数字时钟"
+name = l10n.tr("lua_widget.digital_clock.name")
 useCustomStyle = true
 
 bg = 0x000000
@@ -17,7 +17,7 @@ settings = {
     presets = {
         {
             id = "transparent",
-            label = "透明时间",
+            label = l10n.tr("lua_widget.digital_clock.preset_transparent"),
             default = true,
             values = {
                 bg = 0x000000,
@@ -30,11 +30,11 @@ settings = {
         }
     },
     fields = {
-        { key = "showWeekday", label = "显示星期", type = "bool", default = true },
-        { key = "showDate", label = "显示日期", type = "bool", default = true },
-        { key = "showSeconds", label = "显示秒", type = "bool", default = true },
-        { key = "textColor", label = "文字颜色", type = "color", default = 0xFFFFFF },
-        { key = "scale", label = "缩放", type = "float", default = 1.0, min = 0.5, max = 3.0 },
+        { key = "showWeekday", label = l10n.tr("lua_widget.digital_clock.show_weekday"), type = "bool", default = true },
+        { key = "showDate", label = l10n.tr("lua_widget.digital_clock.show_date"), type = "bool", default = true },
+        { key = "showSeconds", label = l10n.tr("lua_widget.digital_clock.show_seconds"), type = "bool", default = true },
+        { key = "textColor", label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF },
+        { key = "scale", label = l10n.tr("lua_widget.common.scale"), type = "float", default = 1.0, min = 0.5, max = 3.0 },
     }
 }
 
@@ -72,9 +72,19 @@ function render()
     else
         timeStr = string.format("%02d:%02d", t.hour, t.min)
     end
-    local dateStr = string.format("%d年%02d月%02d日", t.year, t.month, t.day)
-    local weekDays = { "日", "一", "二", "三", "四", "五", "六" }
-    local weekdayStr = "星期" .. weekDays[t.wday or 1]
+    local dateStr = l10n.tr("lua_widget.digital_clock.date_format",
+        tostring(t.year), string.format("%02d", t.month), string.format("%02d", t.day))
+    local weekDays = {
+        l10n.tr("lua_widget.digital_clock.sunday"),
+        l10n.tr("lua_widget.digital_clock.monday"),
+        l10n.tr("lua_widget.digital_clock.tuesday"),
+        l10n.tr("lua_widget.digital_clock.wednesday"),
+        l10n.tr("lua_widget.digital_clock.thursday"),
+        l10n.tr("lua_widget.digital_clock.friday"),
+        l10n.tr("lua_widget.digital_clock.saturday"),
+    }
+    local weekdayStr = l10n.tr("lua_widget.digital_clock.weekday_format",
+        weekDays[t.wday or 1])
 
     local timeBaseSize = layout.fontCu(28)
     local secondaryBaseSize = layout.fontCu(9)

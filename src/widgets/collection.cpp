@@ -18,7 +18,8 @@
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
-#include <unordered_set>
+#include "../l10n.h"
+
 
 static RECT CollectionItemRect(Collection* widget, size_t linearIndex);
 
@@ -466,7 +467,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             }
 
             const std::wstring collectionTitle = data_->title.empty()
-                ? L"集合" : data_->title;
+                ? _LW("widget.collection") : data_->title;
             app_->DrawItemText(context, allRect, collectionTitle, false, 1.0f,
                 app_->IsLightContentTheme());
         }

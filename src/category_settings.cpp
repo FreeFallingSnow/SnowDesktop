@@ -5,6 +5,7 @@
 
 #include "category_settings.h"
 #include "data_paths.h"
+#include "l10n.h"
 #include "utils.h"
 
 #include <windows.h>
@@ -21,7 +22,7 @@ namespace
     struct LegacyRuleDescriptor
     {
         const wchar_t* id;
-        const wchar_t* label;
+        const char* labelKey;
         const char* jsonField;
         const wchar_t* extensions;
     };
@@ -29,11 +30,11 @@ namespace
     const LegacyRuleDescriptor* LegacyRules(size_t& count)
     {
         static const LegacyRuleDescriptor rules[] = {
-            { L"videos", L"视频", "videos", L".MP4 .MOV .AVI .MKV .WMV .WEBM .M4V" },
-            { L"images", L"图片", "images", L".PNG .JPG .JPEG .GIF .BMP .WEBP .HEIC .SVG" },
-            { L"documents", L"文档", "documents", L".TXT .MD .DOC .DOCX .PDF .XLS .XLSX .PPT .PPTX .CSV" },
-            { L"archives", L"压缩包", "archives", L".ZIP .RAR .7Z .TAR .GZ .BZ2 .XZ" },
-            { L"audio", L"音频", "audio", L".MP3 .WAV .FLAC .AAC .M4A .OGG" },
+            { L"videos", L10N_KEY("widget.categories.default_video"), "videos", L".MP4 .MOV .AVI .MKV .WMV .WEBM .M4V" },
+            { L"images", L10N_KEY("widget.categories.default_image"), "images", L".PNG .JPG .JPEG .GIF .BMP .WEBP .HEIC .SVG" },
+            { L"documents", L10N_KEY("widget.categories.default_document"), "documents", L".TXT .MD .DOC .DOCX .PDF .XLS .XLSX .PPT .PPTX .CSV" },
+            { L"archives", L10N_KEY("widget.categories.default_archive"), "archives", L".ZIP .RAR .7Z .TAR .GZ .BZ2 .XZ" },
+            { L"audio", L10N_KEY("widget.categories.default_audio"), "audio", L".MP3 .WAV .FLAC .AAC .M4A .OGG" },
         };
         count = sizeof(rules) / sizeof(rules[0]);
         return rules;
@@ -225,6 +226,16 @@ namespace
             rule.extensions == L".EXE .MSI .BAT .CMD .LNK";
     }
 
+    const LegacyRuleDescriptor* FindBuiltinRule(const std::wstring& id)
+    {
+        size_t count = 0;
+        const LegacyRuleDescriptor* rules = LegacyRules(count);
+        for (size_t index = 0; index < count; ++index)
+            if (id == rules[index].id)
+                return &rules[index];
+        return nullptr;
+    }
+
     void NormalizeRules(CategorySettings& settings)
     {
         std::vector<CategoryRule> normalized;
@@ -234,10 +245,10 @@ namespace
         for (size_t i = 0; i < settings.rules.size(); ++i)
         {
             CategoryRule rule = settings.rules[i];
-            if (rule.label.empty())
-                rule.label = L"未命名";
             if (rule.id.empty() || rule.id == L"all" || rule.id == L"folders" || rule.id == L"others")
                 rule.id = MakeRuleId(i);
+            if (rule.customLabel.empty() && !FindBuiltinRule(rule.id))
+                rule.customLabel = _LW("widget.categories.unnamed");
 
             rule.extensions = NormalizeCategoryExtensionText(rule.extensions);
             if (IsRetiredBuiltinRule(rule))
@@ -267,21 +278,44 @@ namespace
         for (const std::string& objectText : objects)
         {
             std::string idUtf8;
-            std::string labelUtf8;
+            std::string customLabelUtf8;
+            std::string legacyLabelUtf8;
             std::string extensionsUtf8;
             ReadStringField(objectText, "id", idUtf8);
-            ReadStringField(objectText, "label", labelUtf8);
+            const bool hasCustomLabel =
+                ReadStringField(objectText, "customLabel", customLabelUtf8);
+            const bool hasLegacyLabel =
+                ReadStringField(objectText, "label", legacyLabelUtf8);
             ReadStringField(objectText, "extensions", extensionsUtf8);
 
             CategoryRule rule;
             rule.id = Utf8ToWideLocal(idUtf8);
-            rule.label = Utf8ToWideLocal(labelUtf8);
+            if (hasCustomLabel)
+            {
+                rule.customLabel = Utf8ToWideLocal(customLabelUtf8);
+            }
+            else if (hasLegacyLabel)
+            {
+                const std::wstring legacyLabel = Utf8ToWideLocal(legacyLabelUtf8);
+                const LegacyRuleDescriptor* builtin = FindBuiltinRule(rule.id);
+                if (!builtin ||
+                    !Locale::Instance().IsTranslationValue(
+                        builtin->labelKey, legacyLabel))
+                {
+                    rule.customLabel = legacyLabel;
+                }
+            }
             rule.extensions = NormalizeCategoryExtensionText(Utf8ToWideLocal(extensionsUtf8));
-            if (!rule.label.empty())
+            if (!rule.id.empty() || !rule.customLabel.empty())
                 rules.push_back(std::move(rule));
         }
         return true;
     }
+}
+
+bool IsBuiltinCategoryRuleId(const std::wstring& categoryId)
+{
+    return FindBuiltinRule(categoryId) != nullptr;
 }
 
 CategorySettings CategorySettings::Defaults()
@@ -294,7 +328,6 @@ CategorySettings CategorySettings::Defaults()
     {
         CategoryRule rule;
         rule.id = defaults[i].id;
-        rule.label = defaults[i].label;
         rule.extensions = defaults[i].extensions;
         s.rules.push_back(std::move(rule));
     }
@@ -403,7 +436,7 @@ bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
     {
         const CategoryRule& rule = normalized.rules[i];
         file << "    { \"id\": \"" << JsonEscapeUtf8(rule.id)
-             << "\", \"label\": \"" << JsonEscapeUtf8(rule.label)
+             << "\", \"customLabel\": \"" << JsonEscapeUtf8(rule.customLabel)
              << "\", \"extensions\": \"" << JsonEscapeUtf8(rule.extensions)
              << "\" }";
         if (i + 1 < normalized.rules.size())
@@ -430,12 +463,18 @@ std::vector<std::wstring> GetCategoryOrder(const CategorySettings& settings)
 
 std::wstring GetCategoryLabel(const CategorySettings& settings, const std::wstring& categoryId)
 {
-    if (categoryId == L"all") return L"全部";
-    if (categoryId == L"folders") return L"文件夹";
-    if (categoryId == L"others") return L"其他";
+    if (categoryId == L"all") return _LW("widget.categories.all");
+    if (categoryId == L"folders") return _LW("widget.categories.folder");
+    if (categoryId == L"others") return _LW("widget.categories.other");
     auto found = std::find_if(settings.rules.begin(), settings.rules.end(),
         [&](const CategoryRule& rule) { return rule.id == categoryId; });
-    return found != settings.rules.end() ? found->label : L"其他";
+    if (found == settings.rules.end())
+        return _LW("widget.categories.other");
+    if (!found->customLabel.empty())
+        return found->customLabel;
+    if (const LegacyRuleDescriptor* builtin = FindBuiltinRule(found->id))
+        return _LW(builtin->labelKey);
+    return _LW("widget.categories.unnamed");
 }
 
 std::wstring CategoryIdForExtension(const CategorySettings& settings, const std::wstring& extensionUpper)

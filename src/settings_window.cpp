@@ -16,6 +16,7 @@
 
 #include "settings_window.h"
 #include "widget_engine.h"
+#include "l10n.h"
 #include "resource.h"
 #include "crashlog.h"
 #include "data_paths.h"
@@ -120,6 +121,9 @@ float SettingButtonWidth(const char* label)
     return ImGui::CalcTextSize(label, nullptr, true).x +
         ImGui::GetStyle().FramePadding.x * 2.0f;
 }
+
+void CopyWideToUtf8Buffer(
+    const std::wstring& text, char* buffer, size_t bufferSize);
 }
 
 /**
@@ -241,7 +245,7 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     hwnd_ = CreateWindowExW(
         WS_EX_APPWINDOW,
         wc.lpszClassName,
-        L"SnowDesktop 设置",
+        _LW("app.settings.title"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         windowWidth_, windowHeight_,
@@ -269,6 +273,13 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     LoadDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
+    if (std::strcmp(generalSettings_.language, "system") != 0 &&
+        !Locale::Instance().HasLanguage(generalSettings_.language))
+    {
+        std::strncpy(generalSettings_.language, "system",
+            sizeof(generalSettings_.language) - 1);
+        generalSettings_.language[sizeof(generalSettings_.language) - 1] = '\0';
+    }
     categorySettings_ = CategorySettings::Defaults();
     LoadCategorySettings(GetCategorySettingsPath().c_str(), categorySettings_);
     SyncCategoryRuleBuffersFromSettings();
@@ -350,6 +361,35 @@ void SettingsWindow::Show()
     BringWindowToTop(hwnd_);
     SetForegroundWindow(hwnd_);
     SetFocus(hwnd_);
+}
+
+void SettingsWindow::ApplyLanguageChange()
+{
+    if (hwnd_ && IsWindow(hwnd_))
+        SetWindowTextW(hwnd_, _LW("app.settings.title"));
+    if (!updateCheckStatusKey_.empty())
+    {
+        updateCheckStatus_ = updateCheckStatusArgument_.empty()
+            ? Locale::Instance().Tr(updateCheckStatusKey_.c_str())
+            : Locale::Instance().TrFormat(
+                updateCheckStatusKey_.c_str(), { updateCheckStatusArgument_ });
+    }
+    if (!categorySettingsDirty_)
+    {
+        SyncCategoryRuleBuffersFromSettings();
+    }
+    else
+    {
+        for (CategoryRuleEditBuffer& buffer : categoryRuleBuffers_)
+        {
+            if (!buffer.usesDefaultLabel)
+                continue;
+            CopyWideToUtf8Buffer(
+                GetCategoryLabel(categorySettings_, buffer.id),
+                buffer.label, sizeof(buffer.label));
+        }
+    }
+    renderRequested_ = true;
 }
 
 void SettingsWindow::ShowDockSettings()
@@ -547,15 +587,15 @@ void SettingsWindow::Render()
     // Exit confirmation modal
     if (showExitConfirm_)
     {
-        ImGui::OpenPopup("退出确认");
-        if (ImGui::BeginPopupModal("退出确认", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        ImGui::OpenPopup(_L("app.settings.exit_confirm"));
+        if (ImGui::BeginPopupModal(_L("app.settings.exit_confirm"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
-            ImGui::Text("确定要退出 SnowDesktop 吗？");
-            ImGui::Text("退出后将恢复 Windows 原生桌面。");
+            ImGui::Text("%s", _L("app.settings.exit_confirm_text"));
+            ImGui::Text("%s", _L("app.settings.exit_restore_text"));
             ImGui::Spacing();
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            bool okClicked = ImGui::Button("确定退出", ImVec2(120, 0));
+            bool okClicked = ImGui::Button(_L("app.settings.exit_ok"), ImVec2(120, 0));
             ImGui::PopStyleColor();
             if (okClicked)
             {
@@ -566,7 +606,7 @@ void SettingsWindow::Render()
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.55f, 0.60f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            bool cancelClicked = ImGui::Button("取消", ImVec2(80, 0));
+            bool cancelClicked = ImGui::Button(_L("app.settings.cancel"), ImVec2(80, 0));
             ImGui::PopStyleColor(2);
             if (cancelClicked)
             {
@@ -622,13 +662,13 @@ void SettingsWindow::DrawSidebar()
         if (active) ImGui::PopStyleColor(2);
     };
 
-    SideButton(0, "通用");
-    SideButton(1, "外观");
-    SideButton(4, "分类设置");
-    SideButton(5, "布局备份");
-    SideButton(6, "关于");
+    SideButton(0, _L("app.settings.general"));
+    SideButton(1, _L("app.settings.appearance"));
+    SideButton(4, _L("app.settings.category"));
+    SideButton(5, _L("app.settings.backup"));
+    SideButton(6, _L("app.settings.about"));
     if (debugUnlocked_)
-        SideButton(7, "调试");
+        SideButton(7, _L("app.settings.debug"));
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
@@ -772,19 +812,19 @@ void SettingsWindow::DrawBackupPage()
     ImGui::BeginChild("##BackupPageInner", pageSize,
         ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
-    ImGui::SeparatorText("布局备份与恢复");
+    ImGui::SeparatorText(_L("app.settings.backup_page_title"));
     ImGui::Spacing();
 
     const float controlW = kSettingControlWidthDip * dpiScale_;
     const float saveButtonW = 84.0f * dpiScale_;
     const float inputW = std::max(1.0f,
         controlW - ImGui::GetStyle().ItemSpacing.x - saveButtonW);
-    BeginSettingRow("保存当前布局", controlW);
+    BeginSettingRow(_L("app.settings.save_current_layout"), controlW);
     ImGui::SetNextItemWidth(inputW);
-    ImGui::InputTextWithHint("##BackupName", "备份名称（可选）", backupNameBuf_, sizeof(backupNameBuf_));
+    ImGui::InputTextWithHint("##BackupName", _L("app.settings.backup_name_hint"), backupNameBuf_, sizeof(backupNameBuf_));
 
     ImGui::SameLine();
-    if (BlueButton("保存备份", ImVec2(saveButtonW, 0)))
+    if (BlueButton(_L("app.settings.save_backup"), ImVec2(saveButtonW, 0)))
     {
         std::wstring name = Utf8ToWide(backupNameBuf_);
         if (name.empty()) name = MakeBackupTimestampName();
@@ -795,13 +835,13 @@ void SettingsWindow::DrawBackupPage()
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("已保存的备份");
+    ImGui::SeparatorText(_L("app.settings.saved_backups"));
     ImGui::Spacing();
 
     std::vector<LayoutBackup> backups = ListBackups();
     if (backups.empty())
     {
-        ImGui::TextDisabled("暂无备份");
+        ImGui::TextDisabled("%s", _L("app.settings.no_backups"));
     }
     else
     {
@@ -815,13 +855,13 @@ void SettingsWindow::DrawBackupPage()
             const float actionButtonW = 56.0f * dpiScale_;
             const float actionsW = actionButtonW * 2.0f + ImGui::GetStyle().ItemSpacing.x;
             BeginSettingRow(label.c_str(), actionsW);
-            if (BlueButton("恢复", ImVec2(actionButtonW, 0)))
+            if (BlueButton(_L("app.settings.restore"), ImVec2(actionButtonW, 0)))
             {
                 if (RestoreBackup(b.filename) && reloadCallback_)
                     reloadCallback_();
             }
             ImGui::SameLine();
-            if (BlueButton("删除", ImVec2(actionButtonW, 0)))
+            if (BlueButton(_L("app.settings.delete"), ImVec2(actionButtonW, 0)))
             {
                 DeleteBackup(b.filename);
             }
@@ -852,22 +892,59 @@ void SettingsWindow::DrawGeneralPage()
         ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
 
-    ImGui::SeparatorText("通用设置");
+    ImGui::SeparatorText(_L("app.settings.general_settings"));
     ImGui::Spacing();
 
     bool autoStart = IsAutoStartEnabled();
-    if (DrawSettingCheckbox("开机自启", "##AutoStart", &autoStart))
+    if (DrawSettingCheckbox(_L("app.settings.auto_start"), "##AutoStart", &autoStart))
         SetAutoStart(autoStart);
 
-    if (DrawSettingCheckbox("是否启用软件桌面", "##SoftwareDesktopEnabled",
+    if (DrawSettingCheckbox(_L("app.settings.software_desktop"), "##SoftwareDesktopEnabled",
         &generalSettings_.softwareDesktopEnabled))
         generalSettingsDirty_ = true;
 
     ImGui::Spacing();
-    ImGui::SeparatorText("快捷导航");
+
+    {
+        const float controlW = kSettingControlWidthDip * dpiScale_;
+        BeginSettingRow(_L("app.settings.language"), controlW);
+        std::vector<std::string> langNames{ "system" };
+        std::vector<std::string> langLabels{ _L("app.settings.language_system") };
+        for (const LanguageInfo& language :
+            Locale::Instance().GetAvailableLanguages())
+        {
+            langNames.push_back(language.code);
+            langLabels.push_back(language.displayName);
+        }
+        std::vector<const char*> langLabelPointers;
+        langLabelPointers.reserve(langLabels.size());
+        for (const std::string& label : langLabels)
+            langLabelPointers.push_back(label.c_str());
+        int langIdx = 0;
+        for (size_t index = 0; index < langNames.size(); ++index)
+            if (langNames[index] == generalSettings_.language)
+                langIdx = static_cast<int>(index);
+        ImGui::SetNextItemWidth(controlW);
+        if (ImGui::Combo("##Language", &langIdx, langLabelPointers.data(),
+            static_cast<int>(langLabelPointers.size())))
+        {
+            std::strncpy(generalSettings_.language,
+                langNames[static_cast<size_t>(langIdx)].c_str(),
+                sizeof(generalSettings_.language) - 1);
+            generalSettings_.language[sizeof(generalSettings_.language) - 1] = '\0';
+            Locale::Instance().SetLanguage(generalSettings_.language);
+            generalSettingsDirty_ = true;
+            if (languageChangedCallback_)
+                languageChangedCallback_();
+            renderRequested_ = true;
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.quick_navigation"));
     ImGui::Spacing();
 
-    if (DrawSettingCheckbox("启用全局快捷导航", "##NavigationEnabled",
+    if (DrawSettingCheckbox(_L("app.settings.enable_global_navigation"), "##NavigationEnabled",
         &navigationSettings_.enabled))
         navigationSettingsDirty_ = true;
 
@@ -879,7 +956,7 @@ void SettingsWindow::DrawGeneralPage()
     bool win = (navigationSettings_.modifiers & MOD_WIN) != 0;
     bool modifiersChanged = false;
     const float modifierWidth = 244.0f * dpiScale_;
-    BeginSettingRow("修饰键", modifierWidth);
+    BeginSettingRow(_L("app.settings.modifier_keys"), modifierWidth);
     modifiersChanged |= ImGui::Checkbox("Ctrl", &ctrl);
     ImGui::SameLine();
     modifiersChanged |= ImGui::Checkbox("Alt", &alt);
@@ -901,7 +978,7 @@ void SettingsWindow::DrawGeneralPage()
     const HotkeyOption* options = NavigationHotkeyOptions(optionCount);
     int selected = NavigationHotkeyOptionIndex(navigationSettings_.virtualKey);
     const float hotkeyControlW = kSettingControlWidthDip * dpiScale_;
-    BeginSettingRow("主键", hotkeyControlW);
+    BeginSettingRow(_L("app.settings.primary_key"), hotkeyControlW);
     ImGui::SetNextItemWidth(hotkeyControlW);
     if (ImGui::Combo("##NavigationMainKey", &selected,
         [](void* data, int idx, const char** outText) {
@@ -916,20 +993,20 @@ void SettingsWindow::DrawGeneralPage()
 
     std::wstring hotkeyText = FormatNavigationHotkey(navigationSettings_);
     const std::string hotkeyTextUtf8 = WideToUtf8(hotkeyText);
-    DrawSettingValue("当前快捷键", hotkeyTextUtf8.c_str());
+    DrawSettingValue(_L("app.settings.current_hotkey"), hotkeyTextUtf8.c_str());
 
     ImGui::EndDisabled();
 
     ImGui::Spacing();
-    ImGui::SeparatorText("桌面交互");
+    ImGui::SeparatorText(_L("app.settings.desktop_interact"));
     ImGui::Spacing();
 
-    if (DrawSettingCheckbox("双击空白处隐藏桌面", "##DoubleClickHideDesktop",
+    if (DrawSettingCheckbox(_L("app.settings.double_click_hide"), "##DoubleClickHideDesktop",
         &generalSettings_.doubleClickHideDesktop))
         generalSettingsDirty_ = true;
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Dock 栏");
+    ImGui::SeparatorText(_L("app.settings.dock_bar"));
     ImGui::Spacing();
     DrawDockPage();
 
@@ -942,14 +1019,15 @@ void SettingsWindow::DrawGeneralPage()
 void SettingsWindow::DrawDockPage()
 {
     const float controlW = kSettingControlWidthDip * dpiScale_;
-    const char* thicknessResetLabel = "恢复默认##DockThicknessDefault";
-    const float resetW = SettingButtonWidth(thicknessResetLabel);
+    const std::string thicknessResetLabel =
+        std::string(_L("app.settings.restore_default")) + "##DockThicknessDefault";
+    const float resetW = SettingButtonWidth(thicknessResetLabel.c_str());
     const float sliderActionW = controlW;
     const float actionSliderW = std::max(1.0f,
         sliderActionW - ImGui::GetStyle().ItemSpacing.x - resetW);
     auto markChanged = [&]() { dockSettingsDirty_ = true; };
 
-    if (DrawSettingCheckbox("启用 Dock 栏", "##DockEnabled", &dockEnabled_))
+    if (DrawSettingCheckbox(_L("app.dock.enable"), "##DockEnabled", &dockEnabled_))
     {
         if (dockEnabledChangedCallback_)
             dockEnabledChangedCallback_(dockEnabled_);
@@ -957,8 +1035,8 @@ void SettingsWindow::DrawDockPage()
 
     ImGui::BeginDisabled(!dockEnabled_);
     ImGui::Spacing();
-    BeginSettingRow("位置", controlW);
-    const char* positionNames[] = { "底部", "顶部", "左侧", "右侧" };
+    BeginSettingRow(_L("app.settings.dock_position"), controlW);
+    const char* positionNames[] = { _L("app.dock.bottom"), _L("app.dock.top"), _L("app.dock.left"), _L("app.dock.right") };
     int position = std::clamp(static_cast<int>(dockSettings_.position), 0, 3);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##DockPosition", &position, positionNames, IM_ARRAYSIZE(positionNames)))
@@ -967,8 +1045,8 @@ void SettingsWindow::DrawDockPage()
         markChanged();
     }
 
-    BeginSettingRow("显示范围", controlW);
-    const char* monitorScopeNames[] = { "仅首屏", "仅末屏", "所有屏幕" };
+    BeginSettingRow(_L("app.settings.display_scope"), controlW);
+    const char* monitorScopeNames[] = { _L("app.dock.first_screen"), _L("app.dock.last_screen"), _L("app.dock.all_screens") };
     int monitorScope = std::clamp(
         static_cast<int>(dockSettings_.monitorScope), 0, 2);
     ImGui::SetNextItemWidth(controlW);
@@ -978,8 +1056,8 @@ void SettingsWindow::DrawDockPage()
         dockSettings_.monitorScope = static_cast<DockMonitorScope>(monitorScope);
         markChanged();
     }
-    BeginSettingRow("栏体形式", controlW);
-    const char* layoutNames[] = { "岛式", "靠边" };
+    BeginSettingRow(_L("app.dock.layout"), controlW);
+    const char* layoutNames[] = { _L("app.dock.island"), _L("app.dock.edge") };
     int layoutMode = dockSettings_.edgeAttached ? 1 : 0;
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##DockLayoutMode", &layoutMode, layoutNames, IM_ARRAYSIZE(layoutNames)))
@@ -987,8 +1065,8 @@ void SettingsWindow::DrawDockPage()
         dockSettings_.edgeAttached = layoutMode == 1;
         markChanged();
     }
-    BeginSettingRow("栏体粗细", sliderActionW,
-        "同步调节 Dock 栏体与图标大小。");
+    BeginSettingRow(_L("app.settings.dock_thickness"), sliderActionW,
+        _L("app.settings.dock_thickness_hint"));
     ImGui::SetNextItemWidth(actionSliderW);
     int thicknessPercent = static_cast<int>(std::round(
         dockSettings_.thicknessScale * 100.0f));
@@ -998,29 +1076,29 @@ void SettingsWindow::DrawDockPage()
         markChanged();
     }
     ImGui::SameLine();
-    if (BlueButton(thicknessResetLabel, ImVec2(resetW, 0)))
+    if (BlueButton(thicknessResetLabel.c_str(), ImVec2(resetW, 0)))
     {
         dockSettings_.thicknessScale = 1.0f;
         markChanged();
     }
 
-    if (DrawSettingCheckbox("显示 Windows 按钮", "##DockShowWindowsButton",
+    if (DrawSettingCheckbox(_L("app.dock.show_windows_button"), "##DockShowWindowsButton",
         &dockSettings_.showWindowsButton))
         markChanged();
 
-    if (DrawSettingCheckbox("显示运行区", "##DockShowRunningApps",
+    if (DrawSettingCheckbox(_L("app.dock.show_running_area"), "##DockShowRunningApps",
         &dockSettings_.showRunningApps))
         markChanged();
 
-    if (DrawSettingCheckbox("显示常用项目", "##DockShowFrequentItems",
+    if (DrawSettingCheckbox(_L("app.dock.show_frequent_items"), "##DockShowFrequentItems",
         &dockSettings_.showFrequentItems))
         markChanged();
 
     ImGui::BeginDisabled(!dockSettings_.showFrequentItems);
-    BeginSettingRow("显示数量", controlW);
+    BeginSettingRow(_L("app.settings.show_count"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::SliderInt("##DockFrequentItemCount",
-        &dockSettings_.frequentItemCount, 1, 8, "%d 个"))
+        &dockSettings_.frequentItemCount, 1, 8, _L("app.settings.items_unit")))
         markChanged();
     ImGui::EndDisabled();
 
@@ -1036,13 +1114,13 @@ void SettingsWindow::DrawSystemTaskbarPage()
     const float controlW = kSettingControlWidthDip * dpiScale_;
     auto markChanged = [&]() { dockSettingsDirty_ = true; };
 
-    if (DrawSettingCheckbox("自动隐藏系统任务栏", "##SystemTaskbarAutoHide",
+    if (DrawSettingCheckbox(_L("app.settings.auto_hide_taskbar"), "##SystemTaskbarAutoHide",
         &dockSettings_.systemTaskbarAutoHide))
         markChanged();
 
-    BeginSettingRow("任务栏对齐", controlW,
-        "控制 Windows 系统任务栏图标的对齐方式。");
-    const char* alignmentNames[] = { "靠左", "居中" };
+    BeginSettingRow(_L("app.settings.taskbar_alignment"), controlW,
+        _L("app.settings.taskbar_alignment_hint"));
+    const char* alignmentNames[] = { _L("app.settings.taskbar_left"), _L("app.settings.taskbar_center") };
     int alignment = std::clamp(dockSettings_.systemTaskbarAlignment, 0, 1);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##SystemTaskbarAlignment", &alignment,
@@ -1052,15 +1130,17 @@ void SettingsWindow::DrawSystemTaskbarPage()
         markChanged();
     }
 
-    const char* restartExplorerLabel = "重启文件资源管理器##WindowsTheme";
-    const float restartExplorerButtonW = SettingButtonWidth(restartExplorerLabel);
+    const std::string restartExplorerLabel =
+        std::string(_L("app.settings.restart_explorer")) + "##WindowsTheme";
+    const float restartExplorerButtonW =
+        SettingButtonWidth(restartExplorerLabel.c_str());
     const float windowsThemeComboW = std::max(1.0f,
         controlW - ImGui::GetStyle().ItemSpacing.x - restartExplorerButtonW);
-    BeginSettingRow("系统面板样式", controlW,
-        "控制开始菜单、通知中心、系统托盘等系统面板的外观主题，"
-        "切换后需重启文件资源管理器生效。");
+    BeginSettingRow(_L("app.settings.system_panel"), controlW,
+        (std::string(_L("app.settings.system_panel_hint")) + " "
+         + _L("app.settings.system_panel_hint2")).c_str());
     const char* windowsThemeNames[] = {
-        "浅色", "深色"
+        _L("app.settings.light"), _L("app.settings.dark")
     };
     int windowsTheme = IsWindowsSystemLightThemeEnabled() ? 0 : 1;
     ImGui::SetNextItemWidth(windowsThemeComboW);
@@ -1071,10 +1151,10 @@ void SettingsWindow::DrawSystemTaskbarPage()
         dockSettingsDirty_ = true;
     }
     ImGui::SameLine();
-    if (BlueButton(restartExplorerLabel))
+    if (BlueButton(restartExplorerLabel.c_str()))
     {
         if (!RestartWindowsExplorer())
-            MessageBoxW(hwnd_, L"无法重启文件资源管理器，请稍后重试。",
+            MessageBoxW(hwnd_, _LW("app.interact.restart_explorer_fail"),
                 L"SnowDesktop", MB_OK | MB_ICONWARNING);
     }
 }
@@ -1086,7 +1166,6 @@ void SettingsWindow::DrawDisplayPage()
 {
     const float controlW = kSettingControlWidthDip * dpiScale_;
     const float sliderW = controlW;
-    const float colorW = controlW;
     const float resetW = 84.0f * dpiScale_;
     const float sliderActionW = controlW;
     const float actionSliderW = std::max(1.0f,
@@ -1160,7 +1239,7 @@ void SettingsWindow::DrawDisplayPage()
         }
     };
 
-    BeginSettingRow("图标间距", sliderActionW);
+    BeginSettingRow(_L("app.settings.icon_spacing"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderInt("##IconSpacing", &displaySpacingPct_, 50, 200, "%d%%", ImGuiSliderFlags_None))
     {
@@ -1168,31 +1247,34 @@ void SettingsWindow::DrawDisplayPage()
         markChanged();
     }
     ImGui::SameLine();
-    if (BlueButton("恢复默认##IconSpacingDefault", ImVec2(resetW, 0)))
+    if (BlueButton((std::string(_L("app.settings.restore_default")) +
+        "##IconSpacingDefault").c_str(), ImVec2(resetW, 0)))
     {
         displaySpacingPct_ = 100;
         iconSpacingScale_ = 1.0f;
         markChanged();
     }
-    BeginSettingRow("标题字号", sliderActionW);
+    BeginSettingRow(_L("app.settings.title_font_size"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##ItemFontSize", &itemFontSize_,
         10.0f, 24.0f, "%.1f pt"))
         markChanged();
     ImGui::SameLine();
-    if (BlueButton("恢复默认##ItemFontSizeDefault", ImVec2(resetW, 0)))
+    if (BlueButton((std::string(_L("app.settings.restore_default")) +
+        "##ItemFontSizeDefault").c_str(), ImVec2(resetW, 0)))
     {
         itemFontSize_ = 14.0f;
         markChanged();
     }
 
-    BeginSettingRow("标题粗细", sliderActionW);
+    BeginSettingRow(_L("app.settings.title_font_weight"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##ItemFontWeight", &itemFontWeight_,
         100.0f, 900.0f, "%.0f"))
         markChanged();
     ImGui::SameLine();
-    if (BlueButton("恢复默认##ItemFontWeightDefault", ImVec2(resetW, 0)))
+    if (BlueButton((std::string(_L("app.settings.restore_default")) +
+        "##ItemFontWeightDefault").c_str(), ImVec2(resetW, 0)))
     {
         itemFontWeight_ = 600.0f;
         markChanged();
@@ -1200,11 +1282,11 @@ void SettingsWindow::DrawDisplayPage()
 
     ImGui::Spacing();
     const char* shortcutArrowModeNames[] = {
-        "默认（应用隐藏）",
-        "全部隐藏",
-        "全部显示",
+        _L("app.settings.arrow_default"),
+        _L("app.settings.arrow_hide_all"),
+        _L("app.settings.arrow_show_all"),
     };
-    BeginSettingRow("快捷方式角标", controlW);
+    BeginSettingRow(_L("app.settings.shortcut_arrow"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##ShortcutArrowMode", &shortcutArrowMode_,
         shortcutArrowModeNames, static_cast<int>(sizeof(shortcutArrowModeNames) / sizeof(shortcutArrowModeNames[0]))))
@@ -1213,16 +1295,16 @@ void SettingsWindow::DrawDisplayPage()
     }
 
     ImGui::Spacing();
-    if (DrawSettingCheckbox("统一圆角图标", "##IconBeautifyEnabled",
+    if (DrawSettingCheckbox(_L("app.settings.icon_beautify"), "##IconBeautifyEnabled",
         &iconBeautifyEnabled_))
         markChanged();
 
     ImGui::BeginDisabled(!iconBeautifyEnabled_);
     const char* beautifyModeNames[] = {
-        "智能识别",
-        "全部缩小加背景",
+        _L("app.settings.beautify_smart"),
+        _L("app.settings.beautify_shrink_bg"),
     };
-    BeginSettingRow("美化模式", controlW);
+    BeginSettingRow(_L("app.settings.beautify_mode"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##IconBeautifyMode", &iconBeautifyMode_,
         beautifyModeNames, static_cast<int>(sizeof(beautifyModeNames) / sizeof(beautifyModeNames[0]))))
@@ -1231,12 +1313,12 @@ void SettingsWindow::DrawDisplayPage()
     }
 
     const char* presetNames[] = {
-        "默认浅灰",
-        "纯白柔光",
-        "亮蓝渐变",
-        "暖霞渐变",
-        "深色玻璃",
-        "自定义",
+        _L("app.settings.beautify_preset_default_gray"),
+        _L("app.settings.beautify_preset_white_glow"),
+        _L("app.settings.beautify_preset_blue_gradient"),
+        _L("app.settings.beautify_preset_warm_gradient"),
+        _L("app.settings.beautify_preset_dark_glass"),
+        _L("app.settings.custom"),
     };
     constexpr int presetValues[] = { 1, 2, 3, 4, 5, 0 };
     int presetSelection = 0;
@@ -1248,7 +1330,7 @@ void SettingsWindow::DrawDisplayPage()
             break;
         }
     }
-    BeginSettingRow("底色预设", controlW);
+    BeginSettingRow(_L("app.settings.beautify_bg_preset"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##IconBeautifyBgPreset", &presetSelection,
         presetNames, static_cast<int>(sizeof(presetNames) / sizeof(presetNames[0]))))
@@ -1261,7 +1343,7 @@ void SettingsWindow::DrawDisplayPage()
 
     if (iconBeautifyBgPreset_ == 0)
     {
-    BeginSettingRow("默认底色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+    BeginSettingRow(_L("app.settings.default_bg"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float bgStart[3] = { iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_ };
     if (ImGui::ColorEdit3("##IconBeautifyBgStart", bgStart, ImGuiColorEditFlags_NoInputs))
     {
@@ -1272,7 +1354,7 @@ void SettingsWindow::DrawDisplayPage()
         markChanged();
     }
 
-    BeginSettingRow("底色不透明度", sliderW);
+    BeginSettingRow(_L("app.settings.bg_opacity_val"), sliderW);
     ImGui::SetNextItemWidth(sliderW);
     int bgOpacityPercent = static_cast<int>(std::round(iconBeautifyBgOpacity_ * 100.0f));
     if (ImGui::SliderInt("##IconBeautifyBgOpacity", &bgOpacityPercent, 0, 100, "%d%%"))
@@ -1282,14 +1364,14 @@ void SettingsWindow::DrawDisplayPage()
         markChanged();
     }
 
-    if (DrawSettingCheckbox("启用渐变底色", "##IconBeautifyGradient",
+    if (DrawSettingCheckbox(_L("app.settings.enable_gradient_bg"), "##IconBeautifyGradient",
         &iconBeautifyGradientEnabled_))
     {
         iconBeautifyBgPreset_ = 0;
         markChanged();
     }
 
-    BeginSettingRow("渐变结束色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+    BeginSettingRow(_L("app.settings.gradient_end_color"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     ImGui::BeginDisabled(!iconBeautifyGradientEnabled_);
     float bgEnd[3] = { iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_ };
     if (ImGui::ColorEdit3("##IconBeautifyBgEnd", bgEnd, ImGuiColorEditFlags_NoInputs))
@@ -1302,12 +1384,12 @@ void SettingsWindow::DrawDisplayPage()
     }
 
     const char* directionNames[] = {
-        "上下",
-        "左右",
-        "左上到右下",
-        "左下到右上",
+        _L("app.settings.beautify_gradient_updown"),
+        _L("app.settings.beautify_gradient_leftright"),
+        _L("app.settings.beautify_gradient_topleft_bottomright"),
+        _L("app.settings.beautify_gradient_bottomleft_topright"),
     };
-    BeginSettingRow("渐变方向", controlW);
+    BeginSettingRow(_L("app.settings.beautify_gradient_dir"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##IconBeautifyGradientDirection", &iconBeautifyGradientDirection_,
         directionNames, static_cast<int>(sizeof(directionNames) / sizeof(directionNames[0]))))
@@ -1328,7 +1410,10 @@ void SettingsWindow::SyncCategoryRuleBuffersFromSettings()
     {
         CategoryRuleEditBuffer buffer;
         buffer.id = rule.id;
-        CopyWideToUtf8Buffer(rule.label, buffer.label, sizeof(buffer.label));
+        buffer.usesDefaultLabel =
+            rule.customLabel.empty() && IsBuiltinCategoryRuleId(rule.id);
+        CopyWideToUtf8Buffer(GetCategoryLabel(categorySettings_, rule.id),
+            buffer.label, sizeof(buffer.label));
         CopyWideToUtf8Buffer(rule.extensions, buffer.extensions, sizeof(buffer.extensions));
         categoryRuleBuffers_.push_back(std::move(buffer));
     }
@@ -1342,9 +1427,11 @@ void SettingsWindow::NormalizeCategoryRuleBuffers()
     {
         CategoryRule rule;
         rule.id = buffer.id;
-        rule.label = TrimWide(Utf8ToWide(buffer.label));
-        if (rule.label.empty())
-            rule.label = L"未命名";
+        const std::wstring editedLabel = TrimWide(Utf8ToWide(buffer.label));
+        if (!buffer.usesDefaultLabel)
+            rule.customLabel = editedLabel;
+        if (rule.customLabel.empty() && !IsBuiltinCategoryRuleId(rule.id))
+            rule.customLabel = _LW("widget.categories.unnamed");
         rule.extensions = NormalizeCategoryExtensionText(Utf8ToWide(buffer.extensions));
         categorySettings_.rules.push_back(std::move(rule));
     }
@@ -1372,18 +1459,18 @@ void SettingsWindow::DrawCategorySettingsPage()
         categorySettingsSavedTick_ = 0;
     };
 
-    ImGui::SeparatorText("分类设置");
+    ImGui::SeparatorText(_L("app.settings.category_settings"));
     ImGui::Spacing();
 
     const float tabFontWidth = inputW;
-    BeginSettingRow("标签字号", tabFontWidth);
+    BeginSettingRow(_L("app.settings.tab_font_size"), tabFontWidth);
     ImGui::SetNextItemWidth(tabFontWidth);
     if (ImGui::SliderFloat("##CategoryTabFontSize", &categorySettings_.tabFontSize, 10.0f, 22.0f, "%.0f"))
         markChanged();
 
     ImGui::Spacing();
-    DrawSettingSection("分类类型",
-        "扩展名用空格、逗号或分号分隔；可省略点号，保存时会自动规范。");
+    DrawSettingSection(_L("app.settings.category_type"),
+        _L("app.settings.category_hint"));
     ImGui::Spacing();
 
     int deleteIndex = -1;
@@ -1395,16 +1482,19 @@ void SettingsWindow::DrawCategorySettingsPage()
         const float actionWidth = 56.0f * dpiScale_;
         const float nameInputW = std::max(1.0f,
             inputW - actionWidth - ImGui::GetStyle().ItemSpacing.x);
-        BeginSettingRow("名称", inputW);
+        BeginSettingRow(_L("app.settings.category_name"), inputW);
         ImGui::SetNextItemWidth(nameInputW);
         if (ImGui::InputText("##CategoryLabel", buffer.label, sizeof(buffer.label)))
+        {
+            buffer.usesDefaultLabel = false;
             markChanged();
+        }
 
         ImGui::SameLine();
-        if (BlueButton("删除", ImVec2(56.0f * dpiScale_, 0)))
+        if (BlueButton(_L("app.settings.delete"), ImVec2(56.0f * dpiScale_, 0)))
             deleteIndex = static_cast<int>(i);
 
-        BeginSettingRow("扩展名", inputW);
+        BeginSettingRow(_L("app.settings.category_extensions"), inputW);
         ImGui::SetNextItemWidth(inputW);
         if (ImGui::InputText("##CategoryExtensions", buffer.extensions, sizeof(buffer.extensions)))
             markChanged();
@@ -1419,16 +1509,16 @@ void SettingsWindow::DrawCategorySettingsPage()
         markChanged();
     }
 
-    ImGui::SeparatorText("新增分类类型");
+    ImGui::SeparatorText(_L("app.settings.add_category"));
     const float actionWidth = 56.0f * dpiScale_;
     const float nameInputW = std::max(1.0f,
         inputW - actionWidth - ImGui::GetStyle().ItemSpacing.x);
-    BeginSettingRow("名称", inputW);
+    BeginSettingRow(_L("app.settings.category_name"), inputW);
     ImGui::SetNextItemWidth(nameInputW);
     ImGui::InputText("##NewCategoryLabel", newCategoryLabelBuf_, sizeof(newCategoryLabelBuf_));
 
     ImGui::SameLine();
-    if (BlueButton("添加", ImVec2(56.0f * dpiScale_, 0)))
+    if (BlueButton(_L("app.settings.add"), ImVec2(56.0f * dpiScale_, 0)))
     {
         CategoryRuleEditBuffer buffer;
         std::wstring id = L"custom-" + std::to_wstring(GetTickCount64());
@@ -1451,7 +1541,7 @@ void SettingsWindow::DrawCategorySettingsPage()
 
         std::wstring label = TrimWide(Utf8ToWide(newCategoryLabelBuf_));
         if (label.empty())
-            label = L"新分类";
+            label = _LW("app.settings.new_category");
         std::wstring extensions = NormalizeCategoryExtensionText(Utf8ToWide(newCategoryExtensionsBuf_));
         CopyWideToUtf8Buffer(label, buffer.label, sizeof(buffer.label));
         CopyWideToUtf8Buffer(extensions, buffer.extensions, sizeof(buffer.extensions));
@@ -1461,23 +1551,23 @@ void SettingsWindow::DrawCategorySettingsPage()
         markChanged();
     }
 
-    BeginSettingRow("扩展名", inputW);
+    BeginSettingRow(_L("app.settings.category_extensions"), inputW);
     ImGui::SetNextItemWidth(inputW);
     ImGui::InputText("##NewCategoryExtensions", newCategoryExtensionsBuf_, sizeof(newCategoryExtensionsBuf_));
 
     ImGui::Spacing();
-    ImGui::SeparatorText("保存更改");
+    ImGui::SeparatorText(_L("app.settings.save_settings"));
     const float applyButtonW = 80.0f * dpiScale_;
     const float restoreButtonW = 96.0f * dpiScale_;
     const float saveActionsW = applyButtonW + ImGui::GetStyle().ItemSpacing.x + restoreButtonW;
-    BeginSettingRow("分类规则", saveActionsW);
-    if (BlueButton("应用", ImVec2(applyButtonW, 0)))
+    BeginSettingRow(_L("app.settings.category_rules"), saveActionsW);
+    if (BlueButton(_L("app.settings.apply"), ImVec2(applyButtonW, 0)))
     {
         categorySettingsDirty_ = true;
         categorySettingsSaveRequested_ = true;
     }
     ImGui::SameLine();
-    if (BlueButton("恢复默认", ImVec2(restoreButtonW, 0)))
+    if (BlueButton(_L("app.settings.restore_default"), ImVec2(restoreButtonW, 0)))
     {
         categorySettings_ = CategorySettings::Defaults();
         SyncCategoryRuleBuffersFromSettings();
@@ -1487,11 +1577,11 @@ void SettingsWindow::DrawCategorySettingsPage()
 
     if (categorySettingsDirty_)
     {
-        DrawSettingValue("保存状态", "有未保存更改");
+        DrawSettingValue(_L("app.settings.save_status"), _L("app.settings.save_unsaved"));
     }
     else if (categorySettingsSavedTick_ != 0 && GetTickCount() - categorySettingsSavedTick_ < 2500)
     {
-        DrawSettingValue("保存状态", "已保存");
+        DrawSettingValue(_L("app.settings.save_status"), _L("app.settings.saved"));
     }
 
     ImGui::EndChild();
@@ -1524,25 +1614,24 @@ void SettingsWindow::DrawPersonalizationPage()
     };
 
     const float controlW = kSettingControlWidthDip * dpiScale_;
-    const float colorW = controlW;
     const float sliderW = controlW;
     const float resetW = 84.0f * dpiScale_;
     const float sliderActionW = controlW;
     const float actionSliderW = std::max(1.0f,
         controlW - ImGui::GetStyle().ItemSpacing.x - resetW);
-    ImGui::SeparatorText("全局主题");
+    ImGui::SeparatorText(_L("app.settings.global_theme"));
     ImGui::Spacing();
 
     auto presetForId = [](int id) { return MakeAppearancePreset(id); };
 
     const char* presetNames[] = {
-        "深色",
-        "浅色",
-        "深色毛玻璃",
-        "浅色毛玻璃",
-        "深色亚克力",
-        "浅色亚克力",
-        "自定义"
+        _L("app.settings.dark"),
+        _L("app.settings.light"),
+        _L("app.settings.dark_glass"),
+        _L("app.settings.light_glass"),
+        _L("app.settings.dark_acrylic"),
+        _L("app.settings.light_acrylic"),
+        _L("app.settings.custom")
     };
     constexpr int presetIds[] = {
         kAppearancePresetDark, kAppearancePresetLight,
@@ -1559,7 +1648,7 @@ void SettingsWindow::DrawPersonalizationPage()
             break;
         }
     }
-    BeginSettingRow("主题", controlW);
+    BeginSettingRow(_L("app.settings.theme"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##WidgetBackgroundPreset", &presetIndex,
         presetNames, static_cast<int>(sizeof(presetNames) / sizeof(presetNames[0]))))
@@ -1594,15 +1683,15 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::Indent(8.0f * dpiScale_);
 
     const char* quickNavThemeNames[] = {
-        "深色", "浅色", "深色亚克力", "浅色亚克力"
+        _L("app.settings.dark"), _L("app.settings.light"), _L("app.settings.dark_acrylic"), _L("app.settings.light_acrylic")
     };
-    BeginSettingRow("快捷搜索主题", controlW);
+    BeginSettingRow(_L("app.settings.quick_nav_theme"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##QuickNavTheme", &generalSettings_.quickNavTheme,
         quickNavThemeNames, IM_ARRAYSIZE(quickNavThemeNames)))
         generalSettingsDirty_ = true;
 
-    BeginSettingRow("组件背景", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+    BeginSettingRow(_L("app.settings.component_bg"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float bgColor[3] = { personalization_.widgetBgR, personalization_.widgetBgG, personalization_.widgetBgB };
     if (ImGui::ColorEdit3("##WidgetBgColor", bgColor, ImGuiColorEditFlags_NoInputs))
     {
@@ -1613,7 +1702,7 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
 
-    BeginSettingRow("组件边框", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+    BeginSettingRow(_L("app.settings.component_border"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float borderColor[3] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB };
     if (ImGui::ColorEdit3("##WidgetBorderColor", borderColor, ImGuiColorEditFlags_NoInputs))
     {
@@ -1626,7 +1715,7 @@ void SettingsWindow::DrawPersonalizationPage()
 
     ImGui::Spacing();
 
-    BeginSettingRow("背景不透明度", sliderW);
+    BeginSettingRow(_L("app.settings.bg_opacity"), sliderW);
     ImGui::SetNextItemWidth(sliderW);
     int widgetAlphaPercent = static_cast<int>(std::round(personalization_.widgetAlpha * 100.0f));
     if (ImGui::SliderInt("##WidgetAlpha", &widgetAlphaPercent, 0, 100, "%d%%"))
@@ -1637,7 +1726,7 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
 
-    BeginSettingRow("边框不透明度", sliderW);
+    BeginSettingRow(_L("app.settings.border_opacity"), sliderW);
     ImGui::SetNextItemWidth(sliderW);
     int widgetBorderAlphaPercent = static_cast<int>(std::round(
         personalization_.widgetBorderAlpha * 100.0f));
@@ -1650,7 +1739,7 @@ void SettingsWindow::DrawPersonalizationPage()
         personalizationSaveRequested_ = true;
 
     bool gradientToggle = personalization_.gradientEndA > 0.001f;
-    if (DrawSettingCheckbox("启用底部渐变", "##GradientToggle", &gradientToggle))
+    if (DrawSettingCheckbox(_L("app.settings.enable_gradient"), "##GradientToggle", &gradientToggle))
     {
         personalization_.gradientEndA = gradientToggle
             ? presetForId(personalization_.backgroundPreset).gradientEndA
@@ -1659,7 +1748,7 @@ void SettingsWindow::DrawPersonalizationPage()
     }
 
     ImGui::BeginDisabled(!gradientToggle);
-    BeginSettingRow("渐变结束透明度", sliderW);
+    BeginSettingRow(_L("app.settings.gradient_end_alpha"), sliderW);
     ImGui::SetNextItemWidth(sliderW);
     int gradientEndAlphaPercent = static_cast<int>(std::round(
         personalization_.gradientEndA * 100.0f));
@@ -1672,25 +1761,25 @@ void SettingsWindow::DrawPersonalizationPage()
         personalizationSaveRequested_ = true;
     ImGui::EndDisabled();
 
-    if (DrawSettingCheckbox("毛玻璃背景", "##WidgetGlassEnabled",
+    if (DrawSettingCheckbox(_L("app.settings.glass_enabled"), "##WidgetGlassEnabled",
         &personalization_.glassEnabled))
         markChanged(true);
 
     ImGui::BeginDisabled(!personalization_.glassEnabled);
-    BeginSettingRow("模糊半径", controlW);
+    BeginSettingRow(_L("app.settings.blur_radius"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::SliderFloat("##GlassBlurRadius", &personalization_.glassBlurRadius, 4.0f, 48.0f, "%.0f px"))
         markChanged(false);
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
 
-    if (DrawSettingCheckbox("亚克力噪点", "##WidgetAcrylicEnabled",
+    if (DrawSettingCheckbox(_L("app.settings.acrylic_noise"), "##WidgetAcrylicEnabled",
         &personalization_.acrylicEnabled))
         markChanged(true);
     ImGui::EndDisabled();
 
-    BeginSettingRow("文字颜色", controlW);
-    const char* contentThemeNames[] = { "浅色", "深色" };
+    BeginSettingRow(_L("app.settings.text_color"), controlW);
+    const char* contentThemeNames[] = { _L("app.settings.light"), _L("app.settings.dark") };
     int contentTheme = personalization_.contentTheme;
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##ContentTheme", &contentTheme,
@@ -1704,10 +1793,10 @@ void SettingsWindow::DrawPersonalizationPage()
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("组件布局");
+    ImGui::SeparatorText(_L("app.settings.widget_layout"));
     ImGui::Spacing();
 
-    BeginSettingRow("圆角半径", sliderActionW);
+    BeginSettingRow(_L("app.settings.corner_radius"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##WidgetCornerRadius", &personalization_.cornerRadius,
         4.0f, 28.0f, "%.0f cu"))
@@ -1715,13 +1804,14 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
     ImGui::SameLine();
-    if (BlueButton("恢复默认##WidgetCornerRadiusDefault", ImVec2(resetW, 0)))
+    if (BlueButton((std::string(_L("app.settings.restore_default")) +
+        "##WidgetCornerRadiusDefault").c_str(), ImVec2(resetW, 0)))
     {
         personalization_.cornerRadius = 12.0f;
         markChanged(true);
     }
 
-    BeginSettingRow("底栏高度", sliderActionW);
+    BeginSettingRow(_L("app.settings.bar_height"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##BarHeight", &personalization_.barHeight,
         16.0f, 48.0f, "%.0f cu"))
@@ -1729,7 +1819,8 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
     ImGui::SameLine();
-    if (BlueButton("恢复默认##BarHeightDefault", ImVec2(resetW, 0)))
+    if (BlueButton((std::string(_L("app.settings.restore_default")) +
+        "##BarHeightDefault").c_str(), ImVec2(resetW, 0)))
     {
         personalization_.barHeight = 24.0f;
         markChanged(true);
@@ -1748,7 +1839,7 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::Spacing();
         ImGui::Indent(8.0f * dpiScale_);
         float background[3] = { style.widgetBgR, style.widgetBgG, style.widgetBgB };
-            BeginSettingRow("背景颜色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+            BeginSettingRow(_L("app.settings.bg_color"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
             if (ImGui::ColorEdit3("##Background", background, ImGuiColorEditFlags_NoInputs))
             {
                 style.widgetBgR = background[0];
@@ -1758,7 +1849,7 @@ void SettingsWindow::DrawPersonalizationPage()
             }
 
             float border[3] = { style.widgetBorderR, style.widgetBorderG, style.widgetBorderB };
-            BeginSettingRow("边框颜色", ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+            BeginSettingRow(_L("app.settings.border_color"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
             if (ImGui::ColorEdit3("##Border", border, ImGuiColorEditFlags_NoInputs))
             {
                 style.widgetBorderR = border[0];
@@ -1767,7 +1858,7 @@ void SettingsWindow::DrawPersonalizationPage()
                 changed = true;
             }
 
-            BeginSettingRow("背景不透明度", sliderW);
+    BeginSettingRow(_L("app.settings.bg_opacity"), sliderW);
             ImGui::SetNextItemWidth(sliderW);
             int backgroundAlphaPercent = static_cast<int>(std::round(style.widgetAlpha * 100.0f));
             if (ImGui::SliderInt("##BackgroundAlpha", &backgroundAlphaPercent, 0, 100, "%d%%"))
@@ -1776,7 +1867,7 @@ void SettingsWindow::DrawPersonalizationPage()
                 changed = true;
             }
 
-            BeginSettingRow("边框不透明度", sliderW);
+            BeginSettingRow(_L("app.settings.border_opacity"), sliderW);
             ImGui::SetNextItemWidth(sliderW);
             int borderAlphaPercent = static_cast<int>(std::round(
                 style.widgetBorderAlpha * 100.0f));
@@ -1786,18 +1877,18 @@ void SettingsWindow::DrawPersonalizationPage()
                 changed = true;
             }
 
-            if (DrawSettingCheckbox("毛玻璃背景", "##GlassEnabled",
+            if (DrawSettingCheckbox(_L("app.settings.glass_enabled"), "##GlassEnabled",
                 &style.glassEnabled))
                 changed = true;
 
             ImGui::BeginDisabled(!style.glassEnabled);
-            BeginSettingRow("模糊半径", controlW);
+    BeginSettingRow(_L("app.settings.blur_radius"), controlW);
             ImGui::SetNextItemWidth(controlW);
             if (ImGui::SliderFloat("##GlassBlurRadius", &style.glassBlurRadius,
                 4.0f, 48.0f, "%.0f px"))
                 changed = true;
 
-            if (DrawSettingCheckbox("亚克力噪点", "##AcrylicEnabled",
+            if (DrawSettingCheckbox(_L("app.settings.acrylic_noise"), "##AcrylicEnabled",
                 &style.acrylicEnabled))
                 changed = true;
             ImGui::EndDisabled();
@@ -1808,12 +1899,12 @@ void SettingsWindow::DrawPersonalizationPage()
     };
 
     ImGui::Spacing();
-    ImGui::SeparatorText("桌面图标");
+    ImGui::SeparatorText(_L("app.settings.desktop_icons"));
     ImGui::Spacing();
     DrawDisplayPage();
 
     ImGui::Spacing();
-    ImGui::SeparatorText("系统外观");
+    ImGui::SeparatorText(_L("app.settings.system_appearance"));
     ImGui::Spacing();
 
     int taskbarThemeMode;
@@ -1839,12 +1930,12 @@ void SettingsWindow::DrawPersonalizationPage()
         }
     }
 
-    BeginSettingRow("任务栏主题", controlW,
-        "请勿同时运行 TranslucentTB 等任务栏美化工具。");
+    BeginSettingRow(_L("app.settings.taskbar_theme"), controlW,
+        _L("app.settings.taskbar_theme_hint"));
     const char* taskbarThemeNames[] = {
-        "不美化", "跟随全局主题",
-        "深色", "浅色", "深色毛玻璃", "浅色毛玻璃",
-        "深色亚克力", "浅色亚克力", "自定义"
+        _L("app.settings.taskbar_no_beautify"), _L("app.settings.taskbar_follow_global"),
+        _L("app.settings.dark"), _L("app.settings.light"), _L("app.settings.dark_glass"), _L("app.settings.light_glass"),
+        _L("app.settings.dark_acrylic"), _L("app.settings.light_acrylic"), _L("app.settings.custom")
     };
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##TaskbarThemeMode", &taskbarThemeMode,
@@ -1903,15 +1994,13 @@ void SettingsWindow::DrawPersonalizationPage()
         switch (GetSystemTaskbarBackdropRuntimeState())
         {
         case SystemTaskbarBackdropRuntimeState::Loading:
-            taskbarRuntimeStatus = "正在连接 Explorer 任务栏...";
+            taskbarRuntimeStatus = _L("app.settings.taskbar_connecting");
             break;
         case SystemTaskbarBackdropRuntimeState::Unsupported:
-            taskbarRuntimeStatus =
-                "当前系统不支持 Win11 XAML 任务栏个性化方案";
+            taskbarRuntimeStatus = _L("app.settings.taskbar_unsupported");
             break;
         case SystemTaskbarBackdropRuntimeState::Failed:
-            taskbarRuntimeStatus =
-                "Explorer 任务栏个性化连接失败，请重启 Explorer 后重试";
+            taskbarRuntimeStatus = _L("app.settings.taskbar_connect_failed");
             break;
         case SystemTaskbarBackdropRuntimeState::Disabled:
         case SystemTaskbarBackdropRuntimeState::Active:
@@ -1925,10 +2014,10 @@ void SettingsWindow::DrawPersonalizationPage()
                 "%s", taskbarRuntimeStatus);
         }
 
-        BeginSettingRow("文字颜色", controlW);
+    BeginSettingRow(_L("app.settings.widget_content_theme"), controlW);
         if (taskbarThemeMode == 8)
         {
-            const char* ctNames[] = { "浅色", "深色" };
+            const char* ctNames[] = { _L("app.settings.light"), _L("app.settings.dark") };
             int ct = dockSettings_.systemTaskbarContentTheme;
             if (ct < 0)
                 ct = dockSettings_.systemTaskbarAppearance.contentTheme;
@@ -1942,7 +2031,7 @@ void SettingsWindow::DrawPersonalizationPage()
         }
         else
         {
-            const char* ctNames[] = { "跟随主题", "浅色", "深色" };
+            const char* ctNames[] = { _L("app.settings.taskbar_follow_theme"), _L("app.settings.light"), _L("app.settings.dark") };
             int ct = dockSettings_.systemTaskbarContentTheme + 1;
             ImGui::SetNextItemWidth(controlW);
             if (ImGui::Combo("##ContentThemeTaskbar", &ct,
@@ -2028,9 +2117,9 @@ void SettingsWindow::DrawWidgetEditorPage()
     drawList->AddText(ImVec2(backPos.x + 14.0f * dpiScale_, backPos.y + 7.0f * dpiScale_),
         IM_COL32(42, 52, 68, 255), "<");
     drawList->AddText(ImVec2(backPos.x + 34.0f * dpiScale_, backPos.y + 7.0f * dpiScale_),
-        IM_COL32(42, 52, 68, 255), "返回主页面");
+        IM_COL32(42, 52, 68, 255), _L("app.settings.widget_editor_back"));
 
-    std::string title = "组件编辑";
+    std::string title = _L("app.settings.widget_editor");
     std::string name = WideToUtf8(editingWidgetName_);
     if (!name.empty())
         title += " / " + name;
@@ -2093,20 +2182,20 @@ void SettingsWindow::DrawDebugPage()
         ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
 
-    ImGui::Text("调试页");
+    ImGui::Text("%s", _L("app.settings.debug_page"));
     ImGui::Separator();
     ImGui::Spacing();
 
-    if (DrawCollapsingHeaderWithHelp("崩溃测试",
-        "点击下方按钮会立即触发一次访问违规崩溃，用于验证 crash.log 与 crashdumps\\*.dmp 是否正常生成。"))
+    if (DrawCollapsingHeaderWithHelp(_L("app.settings.crash_test"),
+        _L("app.settings.crash_test_desc")))
     {
         ImGui::Spacing();
-        if (BlueButton("触发崩溃 (访问违规)"))
+        if (BlueButton(_L("app.settings.trigger_crash")))
             TriggerCrashForTesting();
         ImGui::Spacing();
     }
 
-    if (BlueButton("打开组件文件夹"))
+    if (BlueButton(_L("app.settings.open_widget_folder")))
     {
         wchar_t exePath[MAX_PATH]{};
         GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
@@ -2119,18 +2208,19 @@ void SettingsWindow::DrawDebugPage()
     if (widgetEngine_)
     {
         const std::string snapshotError = widgetEngine_->GetSystemSnapshotError();
-        if (ImGui::CollapsingHeader("系统与媒体采样"))
+        if (ImGui::CollapsingHeader(_L("app.settings.audio_devices")))
         {
             if (snapshotError.empty())
-                ImGui::TextDisabled("采样服务运行正常。");
+                ImGui::TextDisabled("%s", _L("app.settings.snapshot_service_ok"));
             else
-                ImGui::TextWrapped("最近采样错误:\n%s", snapshotError.c_str());
+                ImGui::TextWrapped(_L("app.settings.snapshot_recent_error"),
+                    snapshotError.c_str());
         }
         ImGui::Spacing();
     }
 
-    if (DrawCollapsingHeaderWithHelp("Font Awesome 图标字符",
-        "点击图标复制字符，可直接粘贴到 Lua 菜单项的 icon 字段。"))
+    if (DrawCollapsingHeaderWithHelp(_L("app.settings.fa_icons"),
+        _L("app.settings.fa_icon_hint")))
     {
         if (faDebugFont_ && faDebugCodepoints_.empty())
         {
@@ -2143,11 +2233,12 @@ void SettingsWindow::DrawDebugPage()
 
         if (!faDebugFont_ || faDebugCodepoints_.empty())
         {
-            ImGui::TextDisabled("未找到可用的 Font Awesome 字形。");
+            ImGui::TextDisabled("%s", _L("app.settings.fa_not_found"));
         }
         else
         {
-            ImGui::Text("可用字符: %d", static_cast<int>(faDebugCodepoints_.size()));
+            ImGui::Text(_L("app.settings.fa_valid_chars"),
+                static_cast<int>(faDebugCodepoints_.size()));
             const float buttonSize = 38.0f * dpiScale_;
             const float spacing = ImGui::GetStyle().ItemSpacing.x;
             const int columns = std::max(1, static_cast<int>(
@@ -2167,7 +2258,7 @@ void SettingsWindow::DrawDebugPage()
                 if (clicked)
                     ImGui::SetClipboardText(glyph.c_str());
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("U+%04X\n点击复制", codepoint);
+                    ImGui::SetTooltip(_L("app.settings.fa_copy_tooltip"), codepoint);
 
                 if ((static_cast<int>(i) + 1) % columns != 0)
                     ImGui::SameLine();
@@ -2182,9 +2273,9 @@ void SettingsWindow::DrawDebugPage()
     std::vector<WidgetErrorEntry> errors;
     if (widgetEngine_)
         errors = widgetEngine_->GetWidgetErrors();
-    ImGui::Text("错误记录: %d", static_cast<int>(errors.size()));
+    ImGui::Text(_L("app.settings.error_count"), static_cast<int>(errors.size()));
     ImGui::SameLine();
-    if (BlueButton("复制全部"))
+    if (BlueButton(_L("app.settings.copy_all")))
     {
         std::string copyText;
         for (const auto& e : errors)
@@ -2196,7 +2287,7 @@ void SettingsWindow::DrawDebugPage()
         ImGui::SetClipboardText(copyText.c_str());
     }
     ImGui::SameLine();
-    if (BlueButton("清空全部"))
+    if (BlueButton(_L("app.settings.clear_all")))
     {
         if (widgetEngine_)
             widgetEngine_->ClearWidgetErrors();
@@ -2207,7 +2298,7 @@ void SettingsWindow::DrawDebugPage()
 
     if (errors.empty())
     {
-        ImGui::TextDisabled("当前没有组件错误记录。");
+        ImGui::TextDisabled("%s", _L("app.settings.no_widget_errors"));
         ImGui::Spacing();
     }
     else
@@ -2219,7 +2310,7 @@ void SettingsWindow::DrawDebugPage()
             if (ImGui::Selectable(itemText.c_str(), false, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 0)))
                 ImGui::SetClipboardText(itemText.c_str());
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("点击复制这一条错误");
+                ImGui::SetTooltip("%s", _L("app.settings.copy_error"));
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
@@ -2229,7 +2320,7 @@ void SettingsWindow::DrawDebugPage()
     }
 
     ImGui::Separator();
-    ImGui::Text("组件诊断");
+    ImGui::Text("%s", _L("app.settings.widget_diagnostic"));
 
     std::vector<WidgetDiagnosticEntry> diagnostics;
     if (widgetEngine_)
@@ -2237,11 +2328,11 @@ void SettingsWindow::DrawDebugPage()
 
     if (diagnostics.empty())
     {
-        ImGui::TextDisabled("当前没有已加载的 Lua 组件。");
+        ImGui::TextDisabled("%s", _L("app.settings.no_widgets_loaded"));
     }
     else
     {
-        if (BlueButton("复制诊断信息"))
+        if (BlueButton(_L("app.settings.copy_diag")))
         {
             std::string text;
             for (const auto& d : diagnostics)
@@ -2271,19 +2362,24 @@ void SettingsWindow::DrawDebugPage()
             std::string header = "[" + WideToUtf8(d.widgetId) + "] " + d.name;
             if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
             {
-                ImGui::Text("脚本: %s", WideToUtf8(d.scriptPath).c_str());
-                ImGui::Text("状态: %s | Manifest: %s", d.valid ? "有效" : "无效",
-                    d.hasManifest ? "是" : "否");
+                ImGui::Text(_L("app.settings.debug_script"),
+                    WideToUtf8(d.scriptPath).c_str());
+                ImGui::Text(_L("app.settings.debug_status_manifest"),
+                    d.valid ? _L("app.settings.valid") : _L("app.settings.invalid"),
+                    d.hasManifest ? _L("app.settings.yes") : _L("app.settings.no"));
                 std::string perms;
                 for (size_t i = 0; i < d.permissions.size(); ++i)
                 {
                     if (i > 0) perms += ", ";
                     perms += d.permissions[i];
                 }
-                ImGui::Text("权限: %s", perms.empty() ? "(无)" : perms.c_str());
+                ImGui::Text(_L("app.settings.debug_permissions"),
+                    perms.empty() ? _L("app.settings.none") : perms.c_str());
                 if (!d.lastError.empty())
-                    ImGui::TextWrapped("最近错误: %s", d.lastError.c_str());
-                if (BlueButton(("重新加载##" + WideToUtf8(d.widgetId)).c_str(), ImVec2(96, 0)))
+                    ImGui::TextWrapped(_L("app.settings.debug_last_error"),
+                        d.lastError.c_str());
+                if (BlueButton((std::string(_L("app.settings.reload")) + "##" +
+                    WideToUtf8(d.widgetId)).c_str(), ImVec2(96, 0)))
                 {
                     if (widgetEngine_)
                         widgetEngine_->ReloadWidget(d.widgetId);
@@ -2292,7 +2388,7 @@ void SettingsWindow::DrawDebugPage()
                 }
                 if (!d.logs.empty())
                 {
-                    ImGui::Text("最近日志");
+                    ImGui::Text("%s", _L("app.settings.recent_logs"));
                     for (const auto& log : d.logs)
                         ImGui::TextWrapped("[%s] %s", log.level.c_str(), log.message.c_str());
                 }
@@ -2314,12 +2410,16 @@ void SettingsWindow::DrawDebugPage()
 void SettingsWindow::PerformUpdateCheck()
 {
     updateCheckStatus_ = "checking";
+    updateCheckStatusKey_.clear();
+    updateCheckStatusArgument_.clear();
+    updateAvailable_ = false;
 
     HINTERNET session = WinHttpOpen(L"SnowDesktop/" SNOWDESKTOP_VERSION,
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
     if (!session)
     {
-        updateCheckStatus_ = "网络连接失败（无法初始化 HTTP）";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.update_http_init_failed");
+        updateCheckStatus_ = _L("app.settings.update_http_init_failed");
         return;
     }
     WinHttpSetTimeouts(session, 8000, 8000, 8000, 8000);
@@ -2333,7 +2433,8 @@ void SettingsWindow::PerformUpdateCheck()
     if (!WinHttpCrackUrl(apiUrl.c_str(), 0, 0, &urlComp))
     {
         WinHttpCloseHandle(session);
-        updateCheckStatus_ = "URL 解析失败";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.update_url_parse_failed");
+        updateCheckStatus_ = _L("app.settings.update_url_parse_failed");
         return;
     }
 
@@ -2343,7 +2444,8 @@ void SettingsWindow::PerformUpdateCheck()
     if (!connect)
     {
         WinHttpCloseHandle(session);
-        updateCheckStatus_ = "连接服务器失败";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.update_connect_failed");
+        updateCheckStatus_ = _L("app.settings.update_connect_failed");
         return;
     }
 
@@ -2354,7 +2456,8 @@ void SettingsWindow::PerformUpdateCheck()
     {
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
-        updateCheckStatus_ = "创建请求失败";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.update_request_failed");
+        updateCheckStatus_ = _L("app.settings.update_request_failed");
         return;
     }
 
@@ -2364,7 +2467,8 @@ void SettingsWindow::PerformUpdateCheck()
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
-        updateCheckStatus_ = "发送请求失败";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.update_send_failed");
+        updateCheckStatus_ = _L("app.settings.update_send_failed");
         return;
     }
 
@@ -2373,7 +2477,8 @@ void SettingsWindow::PerformUpdateCheck()
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
-        updateCheckStatus_ = "接收响应失败";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.update_receive_failed");
+        updateCheckStatus_ = _L("app.settings.update_receive_failed");
         return;
     }
 
@@ -2394,7 +2499,8 @@ void SettingsWindow::PerformUpdateCheck()
 
     if (body.empty())
     {
-        updateCheckStatus_ = "服务器未返回数据";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.update_empty_response");
+        updateCheckStatus_ = _L("app.settings.update_empty_response");
         return;
     }
 
@@ -2411,7 +2517,8 @@ void SettingsWindow::PerformUpdateCheck()
     std::string tag = extractJsonString(body, "tag_name");
     if (tag.empty())
     {
-        updateCheckStatus_ = "无法解析版本信息";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.update_parse_failed");
+        updateCheckStatus_ = _L("app.settings.update_parse_failed");
         return;
     }
 
@@ -2440,12 +2547,15 @@ void SettingsWindow::PerformUpdateCheck()
     if (cmp >= 0)
     {
         updateAvailable_ = false;
-        updateCheckStatus_ = "已是最新版本";
+        updateCheckStatusKey_ = L10N_KEY("app.settings.already_latest");
+        updateCheckStatus_ = _L("app.settings.already_latest");
     }
     else
     {
         updateAvailable_ = true;
-        updateCheckStatus_ = "发现新版本 v" + tag;
+        updateCheckStatusKey_ = L10N_KEY("app.settings.new_version");
+        updateCheckStatusArgument_ = tag;
+        updateCheckStatus_ = _LF("app.settings.new_version", tag);
     }
 }
 
@@ -2460,18 +2570,15 @@ void SettingsWindow::DrawAboutPage()
         ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
 
-    ImGui::SeparatorText("关于 SnowDesktop");
+    ImGui::SeparatorText(_L("app.settings.about_snowdesktop"));
     ImGui::Spacing();
 
-    ImGui::TextWrapped("SnowDesktop 是一款 Windows 桌面增强工具，提供自定义桌面布局、"
-        "图标网格管理、集合组件、桌面文件分类等功能，让桌面更整洁高效。");
+    ImGui::TextWrapped("%s", _L("app.settings.about_description"));
 
     ImGui::Spacing();
-    ImGui::SeparatorText("作者");
+    ImGui::SeparatorText(_L("app.settings.author"));
     ImGui::Spacing();
-    ImGui::Text("    逍遥飘雪（郭云哲）");
-    ImGui::Spacing();
-    ImGui::Text("个人主页：");
+    ImGui::Text("    逍遥飘雪（郭云哲）"); // l10n-allow: author name is intentionally fixed
     ImGui::Spacing();
 
     auto LinkButton = [](const char* label, const char* url) {
@@ -2494,24 +2601,24 @@ void SettingsWindow::DrawAboutPage()
     ImGui::Dummy(ImVec2(0, 2));
     LinkButton("GitHub", "https://github.com/FreeFallingSnow/");
     ImGui::Dummy(ImVec2(0, 2));
-    LinkButton("抖音", "https://www.douyin.com/user/MS4wLjABAAAA-O94bwF3BK2sj9JOwM2R2zRlTOiYf4BbaSyIF9DZPyM");
+    LinkButton(_L("app.settings.douyin"), "https://www.douyin.com/user/MS4wLjABAAAA-O94bwF3BK2sj9JOwM2R2zRlTOiYf4BbaSyIF9DZPyM");
     ImGui::Dummy(ImVec2(0, 2));
-    LinkButton("小红书", "https://www.xiaohongshu.com/user/profile/6819eed7000000000403bf0e");
+    LinkButton(_L("app.settings.xiaohongshu"), "https://www.xiaohongshu.com/user/profile/6819eed7000000000403bf0e");
 
     ImGui::Spacing();
-    ImGui::SeparatorText("项目地址");
+    ImGui::SeparatorText(_L("app.settings.project_url"));
     ImGui::Spacing();
-    LinkButton("SnowDesktop_Release", "https://github.com/FreeFallingSnow/SnowDesktop_Release");
-
-    ImGui::Spacing();
-    ImGui::SeparatorText("用户交流");
-    ImGui::Spacing();
-    ImGui::Text("    QQ 群：976422547");
+    LinkButton("GitHub (Release)", "https://github.com/FreeFallingSnow/SnowDesktop_Release");
     ImGui::Dummy(ImVec2(0, 2));
-    LinkButton("点击加入用户 QQ 群", "https://qm.qq.com/q/HyazkCIRig");
+    LinkButton("GitHub (Source)", "https://github.com/FreeFallingSnow/SnowDesktop");
 
     ImGui::Spacing();
-    ImGui::SeparatorText("版本");
+    ImGui::SeparatorText(_L("app.settings.community"));
+    ImGui::Spacing();
+    LinkButton(_L("app.settings.join_qq"), "https://qm.qq.com/q/HyazkCIRig");
+
+    ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.version"));
     ImGui::TextDisabled("SnowDesktop v" SNOWDESKTOP_VERSION);
     if (ImGui::IsItemClicked())
     {
@@ -2526,45 +2633,16 @@ void SettingsWindow::DrawAboutPage()
         }
     }
 
-    ImGui::Spacing();
-
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-    if (ImGui::Button("检查更新", ImVec2(120 * dpiScale_, 0)))
-    {
-        PerformUpdateCheck();
-    }
-    ImGui::PopStyleColor(4);
-
     if (!updateCheckStatus_.empty())
     {
         ImGui::SameLine();
         if (updateCheckStatus_ == "checking")
         {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "检查中...");
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", _L("app.settings.checking"));
         }
         else if (updateAvailable_)
         {
             ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
-            ImGui::Spacing();
-            ImGui::TextWrapped("请前往项目地址下载最新版本：");
-            ImGui::Spacing();
-            ImGui::Text("    ");
-            ImGui::SameLine();
-            std::string dlLabel = downloadUrl_.empty() ?
-                "https://github.com/FreeFallingSnow/SnowDesktop_Release/releases" : downloadUrl_;
-            ImGui::TextColored(ImVec4(0.30f, 0.60f, 0.95f, 1.00f), "%s", dlLabel.c_str());
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                ImGui::SetTooltip("%s", dlLabel.c_str());
-            }
-            if (ImGui::IsItemClicked())
-            {
-                ShellExecuteW(nullptr, L"open", Utf8ToWide(dlLabel).c_str(), nullptr, nullptr, SW_SHOW);
-            }
         }
         else
         {
@@ -2572,8 +2650,43 @@ void SettingsWindow::DrawAboutPage()
         }
     }
 
+    ImGui::SameLine();
+    float updateButtonW = SettingButtonWidth(_L("app.settings.check_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - updateButtonW);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
+    {
+        PerformUpdateCheck();
+    }
+    ImGui::PopStyleColor(4);
+
+    if (!updateCheckStatus_.empty() &&
+        updateCheckStatus_ != "checking" && updateAvailable_)
+    {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", _L("app.settings.download_latest_hint"));
+        ImGui::Spacing();
+        ImGui::Text("    ");
+        ImGui::SameLine();
+        std::string dlLabel = downloadUrl_.empty() ?
+            "https://github.com/FreeFallingSnow/SnowDesktop_Release/releases" : downloadUrl_;
+        ImGui::TextColored(ImVec4(0.30f, 0.60f, 0.95f, 1.00f), "%s", dlLabel.c_str());
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("%s", dlLabel.c_str());
+        }
+        if (ImGui::IsItemClicked())
+        {
+            ShellExecuteW(nullptr, L"open", Utf8ToWide(dlLabel).c_str(), nullptr, nullptr, SW_SHOW);
+        }
+    }
+
     ImGui::Spacing();
-    ImGui::SeparatorText("第三方开源库");
+    ImGui::SeparatorText(_L("app.settings.third_party_libs"));
     ImGui::Spacing();
 
     ImGui::Text("    Everything SDK");
@@ -2748,7 +2861,8 @@ bool SettingsWindow::RestoreBackup(const std::wstring& filename)
     std::wstring storageBackupPath = GetBackupDir() + L"\\" + storageFilename;
 
     // First save current layout before restoring.
-    SaveBackup(MakeBackupTimestampName() + L"（恢复前备份）");
+    SaveBackup(MakeBackupTimestampName() +
+        _LW("app.settings.backup_before_restore_suffix"));
 
     bool ok = CopyFileW(backupPath.c_str(), layoutPath.c_str(), FALSE) != FALSE;
     if (GetFileAttributesW(storageBackupPath.c_str()) != INVALID_FILE_ATTRIBUTES)

@@ -1,4 +1,4 @@
-name = "媒体控制"
+name = l10n.tr("lua_widget.media_control.name")
 useCustomStyle = true
 followPersonalizationDefault = true
 bottomBarHover = true
@@ -54,7 +54,7 @@ settings = {
     presets = {
         {
             id = "default",
-            label = "深色媒体",
+            label = l10n.tr("lua_widget.media_control.preset_dark"),
             default = true,
             values = {
                 bg = 0x0F172A,
@@ -66,8 +66,8 @@ settings = {
         }
     },
     fields = {
-        { key = "launcher", label = "无播放时启动项", type = "text", default = "" },
-        { key = "textColor", label = "文字颜色", type = "color", default = 0xFFFFFF },
+        { key = "launcher", label = l10n.tr("lua_widget.media_control.launcher"), type = "text", default = "" },
+        { key = "textColor", label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF },
     }
 }
 
@@ -92,10 +92,10 @@ function render()
     local pal = getPalette()
 
     local available = current.available and current.playbackStatus ~= "closed"
-    local title = available and current.title ~= "" and current.title or "未在播放"
+    local title = available and current.title ~= "" and current.title or l10n.tr("lua_widget.media_control.not_playing")
     local artist = available and current.artist ~= "" and current.artist or (available and current.sourceApp or "")
     if not available then
-        artist = "双击打开播放器"
+        artist = l10n.tr("lua_widget.media_control.double_click_player")
     end
 
     local isPlaying = available and current.playbackStatus == "playing"
@@ -160,10 +160,10 @@ end
 
 function imguiRender()
     local cfg = readConfig()
-    imgui.text("从桌面选择启动项")
+    imgui.text(l10n.tr("lua_widget.media_control.select_launcher"))
 
     local items = desktop.items()
-    local labels = { "（不设置）" }
+    local labels = { l10n.tr("lua_widget.media_control.not_set") }
     local selIdx = 1
     for i, item in ipairs(items) do
         labels[#labels + 1] = (item.title or "") .. " (" .. (item.type or "") .. ")"
@@ -185,7 +185,7 @@ end
 
 function getContextMenu()
     return {
-        { id = 1, label = "设置启动项", icon = "" },
+        { id = 1, label = l10n.tr("lua_widget.media_control.configure_launcher"), icon = "" },
     }
 end
 

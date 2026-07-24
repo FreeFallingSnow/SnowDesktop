@@ -10,6 +10,8 @@
 #include <windows.graphics.effects.interop.h>
 #include <windows.ui.composition.interop.h>
 
+#include "l10n.h"
+
 #pragma push_macro("GetCurrentTime")
 #undef GetCurrentTime
 #include <winrt/Windows.Foundation.h>
@@ -224,7 +226,7 @@ struct DesktopBackdropCompositor::Impl
         HMODULE coreMessaging = LoadLibraryW(L"CoreMessaging.dll");
         if (!coreMessaging)
         {
-            SetError(L"加载 CoreMessaging.dll 失败", HRESULT_FROM_WIN32(GetLastError()));
+            SetError(_LW("backdrop.load_core_msg"), HRESULT_FROM_WIN32(GetLastError()));
             return false;
         }
         const auto createController = reinterpret_cast<CreateDispatcherQueueControllerFn>(
@@ -233,7 +235,7 @@ struct DesktopBackdropCompositor::Impl
         {
             const HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
             FreeLibrary(coreMessaging);
-            SetError(L"查找 CreateDispatcherQueueController 失败", hr);
+            SetError(_LW("backdrop.find_dispatch"), hr);
             return false;
         }
 
@@ -246,7 +248,7 @@ struct DesktopBackdropCompositor::Impl
         FreeLibrary(coreMessaging);
         if (FAILED(hr) || !rawController)
         {
-            SetError(L"创建 DispatcherQueue 失败", FAILED(hr) ? hr : E_FAIL);
+            SetError(_LW("backdrop.create_dispatch"), FAILED(hr) ? hr : E_FAIL);
             return false;
         }
         dispatcherController = ws::DispatcherQueueController{
@@ -369,19 +371,19 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
     impl_->lastError.clear();
     if (!contentWindow || !IsWindow(contentWindow))
     {
-        impl_->lastError = L"SnowDesktop 内容窗口无效";
+        impl_->lastError = _LW("backdrop.content_invalid");
         return false;
     }
     HWND parent = popupMode ? nullptr : GetParent(contentWindow);
     if (!popupMode && (!parent || !IsWindow(parent)))
     {
-        impl_->lastError = L"SnowDesktop 桌面宿主窗口无效";
+        impl_->lastError = _LW("backdrop.host_invalid");
         return false;
     }
     if (!impl_->EnsureDispatcherQueue() || !RegisterBackdropWindowClass())
     {
         if (impl_->lastError.empty())
-            impl_->lastError = FormatHresult(L"注册 backdrop 窗口类失败",
+            impl_->lastError = FormatHresult(_LW("backdrop.register_class"),
                 HRESULT_FROM_WIN32(GetLastError()));
         return false;
     }
@@ -393,7 +395,7 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
     impl_->visible = true;
     if (!impl_->QueryContentPlacement(parent, origin, size))
     {
-        impl_->lastError = L"无法读取 SnowDesktop 内容窗口位置";
+        impl_->lastError = _LW("backdrop.read_position");
         impl_->contentWindow = nullptr;
         return false;
     }
@@ -410,7 +412,7 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
         parent, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!impl_->backdropWindow)
     {
-        impl_->lastError = FormatHresult(L"创建 backdrop 桌面窗口失败",
+        impl_->lastError = FormatHresult(_LW("backdrop.create_window"),
             HRESULT_FROM_WIN32(GetLastError()));
         impl_->contentWindow = nullptr;
         return false;
@@ -422,7 +424,7 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
     }
     catch (const winrt::hresult_error& error)
     {
-        impl_->SetError(L"激活 Windows.UI.Composition.Compositor 失败", error.code());
+        impl_->SetError(_LW("backdrop.activate_compositor"), error.code());
         impl_->Reset();
         return false;
     }
@@ -436,14 +438,14 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
                 winrt::put_abi(impl_->target)));
         if (FAILED(hr))
         {
-            impl_->SetError(L"ICompositorDesktopInterop::CreateDesktopWindowTarget 失败", hr);
+            impl_->SetError(_LW("backdrop.create_target"), hr);
             impl_->Reset();
             return false;
         }
     }
     catch (const winrt::hresult_error& error)
     {
-        impl_->SetError(L"获取 ICompositorDesktopInterop 失败", error.code());
+        impl_->SetError(_LW("backdrop.get_interop"), error.code());
         impl_->Reset();
         return false;
     }
@@ -460,7 +462,7 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
     }
     catch (const winrt::hresult_error& error)
     {
-        impl_->SetError(L"设置 CompositionBackdropBrush 根视觉失败", error.code());
+        impl_->SetError(_LW("backdrop.set_root"), error.code());
         impl_->Reset();
         return false;
     }
@@ -552,7 +554,7 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
     }
     catch (const winrt::hresult_error& error)
     {
-        impl_->SetError(L"更新原生 backdrop 面板失败", error.code());
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
         return false;
     }
 }
@@ -576,7 +578,7 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
     }
     catch (const winrt::hresult_error& error)
     {
-        impl_->SetError(L"移除原生 backdrop 面板失败", error.code());
+        impl_->SetError(_LW("backdrop.remove_panel"), error.code());
         return false;
     }
 }

@@ -18,6 +18,9 @@
 #include "app.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
+#include "../l10n.h"
+
+
 #include <algorithm>
 #include <cmath>
 
@@ -453,39 +456,39 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
         }
 
         if (sourceHasShortcut)
-            return L"桌面文件不支持收纳快捷方式";
+            return _LW("widget.desktop.no_shortcut");
         if (action == DropAction::Link)
-            return L"桌面文件不支持创建快捷方式";
+            return _LW("widget.desktop.no_create_shortcut");
 
         if (data_->dateHeaders &&
             origin == this && (region == HitRegion::SortBefore || region == HitRegion::SortAfter))
-            return L"请先关闭日期表头再进行排序";
+            return _LW("widget.desktop.sort_after_date");
     }
 
     auto actionText = [&]() -> std::wstring {
         switch (action)
         {
         case DropAction::Copy:
-            return L"复制";
+            return _LW("widget.base.copy_label");
         case DropAction::Link:
-            return L"创建快捷方式";
+            return _LW("widget.base.create_shortcut");
         case DropAction::Move:
         default:
-            return L"移动";
+            return _LW("widget.base.move");
         }
     };
 
     if (region == HitRegion::SortBefore || region == HitRegion::SortAfter)
     {
         if (origin == this && action == DropAction::Move)
-            return L"释放：重新排序";
-        return L"释放：" + actionText() + L"并插入到此处";
+            return _LW("widget.base.release_reorder");
+        return _LFW("widget.base.release_insert", actionText());
     }
     if (region == HitRegion::Empty)
-        return L"释放：" + actionText() + L"到此处";
+        return _LFW("widget.base.release_move_here", actionText());
     if (slot)
         return slot->GetDropHint(region, sourceItems);
-    return L"释放：" + actionText() + L"到此处";
+    return _LFW("widget.base.release_move_here", actionText());
 }
 
 /**
@@ -646,7 +649,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     if (!app_ || !context || IsRectEmptyRect(rect)) return;
     (void)name;
 
-    const std::wstring label = isDir ? L"文件夹" : L"文件";
+    const std::wstring label = isDir ? _LW("widget.base.folder_type") : _LW("widget.base.file_type");
     const int width = rect.right - rect.left;
     const int height = rect.bottom - rect.top;
 

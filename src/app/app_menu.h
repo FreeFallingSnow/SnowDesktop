@@ -127,30 +127,30 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         return;
     }
 
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionBottom, L"底部");
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionTop, L"顶部");
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionLeft, L"左侧");
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionRight, L"右侧");
+    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionBottom, _LW("app.dock.bottom"));
+    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionTop, _LW("app.dock.top"));
+    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionLeft, _LW("app.dock.left"));
+    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionRight, _LW("app.dock.right"));
     CheckMenuRadioItem(positionMenu,
         kContextDockPositionBottom, kContextDockPositionRight,
         kContextDockPositionBottom + static_cast<UINT>(dockSettings_.position),
         MF_BYCOMMAND);
 
-    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutIsland, L"岛式");
-    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutEdge, L"靠边");
+    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutIsland, _LW("app.dock.island"));
+    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutEdge, _LW("app.dock.edge"));
     CheckMenuRadioItem(layoutMenu,
         kContextDockLayoutIsland, kContextDockLayoutEdge,
         dockSettings_.edgeAttached ? kContextDockLayoutEdge : kContextDockLayoutIsland,
         MF_BYCOMMAND);
 
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), L"Dock 位置");
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"栏体形式");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), _LW("app.dock.position"));
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
         MF_STRING | (dockSettings_.showFrequentItems ? MF_CHECKED : MF_UNCHECKED),
-        kContextDockShowFrequentItems, L"显示常用项目");
+        kContextDockShowFrequentItems, _LW("app.dock.show_frequent"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, L"Dock 详细设置");
+    AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
 
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
@@ -227,12 +227,12 @@ inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCo
         const wchar_t* label;
         float representativeInches;
     };
-    static constexpr MonitorSizeRange kMonitorSizeRanges[] = {
-        { L"13–16 英寸", 15.0f },
-        { L"17–21 英寸", 19.0f },
-        { L"22–25 英寸", 24.0f },
-        { L"26–30 英寸", 27.0f },
-        { L"31 英寸以上", 34.0f },
+    const MonitorSizeRange kMonitorSizeRanges[] = {
+        { _LW("app.menu.monitor_1316"), 15.0f },
+        { _LW("app.menu.monitor_1721"), 19.0f },
+        { _LW("app.menu.monitor_2225"), 24.0f },
+        { _LW("app.menu.monitor_2630"), 27.0f },
+        { _LW("app.menu.monitor_31plus"), 34.0f },
     };
 
     auto isRecommendedCommand = [](UINT value) {
@@ -284,16 +284,16 @@ inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCo
         POINT clientPoint = lastContextMenuScreenPoint_;
         ScreenToClient(hwnd_, &clientPoint);
         const GridPage* page = GridPageFromPoint(clientPoint);
-        wchar_t status[64]{};
-        swprintf_s(status, L"当前：%d列 × %d行",
-            page ? page->columns : 0, page ? page->rows : 0);
+        const std::wstring status = _LFW("app.menu.grid_current",
+            std::to_wstring(page ? page->columns : 0),
+            std::to_wstring(page ? page->rows : 0));
 
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status);
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status.c_str());
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kContextGridAddRow, L"增加行");
-        AppendMenuW(menu, MF_STRING, kContextGridRemoveRow, L"减少行");
-        AppendMenuW(menu, MF_STRING, kContextGridAddColumn, L"增加列");
-        AppendMenuW(menu, MF_STRING, kContextGridRemoveColumn, L"减少列");
+        AppendMenuW(menu, MF_STRING, kContextGridAddRow, _LW("app.menu.add_row"));
+        AppendMenuW(menu, MF_STRING, kContextGridRemoveRow, _LW("app.menu.remove_row"));
+        AppendMenuW(menu, MF_STRING, kContextGridAddColumn, _LW("app.menu.add_col"));
+        AppendMenuW(menu, MF_STRING, kContextGridRemoveColumn, _LW("app.menu.remove_col"));
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
         auto appendRecommendedMenu = [&](HMENU submenu, int aspectHeight, UINT firstCommand) {
@@ -302,17 +302,17 @@ inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCo
             {
                 const GridSpan recommended = CalculateRecommendedGridDimensions(
                     16, aspectHeight, kMonitorSizeRanges[i].representativeInches);
-                wchar_t label[64]{};
-                swprintf_s(label, L"%s → %d列 × %d行",
+                const std::wstring label = _LFW("app.menu.grid_format",
                     kMonitorSizeRanges[i].label,
-                    recommended.columns, recommended.rows);
+                    std::to_wstring(recommended.columns),
+                    std::to_wstring(recommended.rows));
                 UINT flags = MF_STRING;
                 if (page &&
                     page->columns == recommended.columns &&
                     page->rows == recommended.rows)
                     flags |= MF_CHECKED;
                 AppendMenuW(submenu, flags,
-                    firstCommand + static_cast<UINT>(i), label);
+                    firstCommand + static_cast<UINT>(i), label.c_str());
                 SetMenuItemIcon(submenu,
                     firstCommand + static_cast<UINT>(i), L"");
             }
@@ -324,13 +324,13 @@ inline void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCo
         appendRecommendedMenu(recommended1610Menu, 10, kContextGridRecommended1610First);
         if (recommended169Menu)
             AppendMenuW(menu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(recommended169Menu), L"推荐：16:9 显示器");
+                reinterpret_cast<UINT_PTR>(recommended169Menu), _LW("app.menu.recommend_169"));
         if (recommended1610Menu)
             AppendMenuW(menu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(recommended1610Menu), L"推荐：16:10 显示器");
+                reinterpret_cast<UINT_PTR>(recommended1610Menu), _LW("app.menu.recommend_1610"));
 
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kContextGridAdjustmentDone, L"结束调整");
+        AppendMenuW(menu, MF_STRING, kContextGridAdjustmentDone, _LW("app.menu.end_adjust"));
 
         SetMenuItemIcon(menu, kContextGridAddRow, L"");
         SetMenuItemIcon(menu, kContextGridRemoveRow, L"");
@@ -362,11 +362,11 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     ClearMenuIcons();
 
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, kContextPasteCommand, L"粘贴");
-    AppendMenuW(menu, MF_STRING, kContextNewMenu, L"新建");
-    AppendMenuW(menu, MF_STRING, kContextRefreshCommand, L"刷新");
+    AppendMenuW(menu, MF_STRING, kContextPasteCommand, _LW("app.menu.paste"));
+    AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
+    AppendMenuW(menu, MF_STRING, kContextRefreshCommand, _LW("app.menu.refresh"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+    AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     HMENU sortMenu = CreatePopupMenu();
@@ -376,18 +376,18 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         nameSortMenu = CreatePopupMenu();
         if (nameSortMenu)
         {
-            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameCommand, L"正序");
-            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameDescCommand, L"反序");
-            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(nameSortMenu), L"名称");
+            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameCommand,     _LW("app.menu.sort_asc"));
+            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameDescCommand,     _LW("app.menu.sort_desc"));
+            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(nameSortMenu), _LW("app.menu.sort_name"));
         }
         typeSortMenu = CreatePopupMenu();
         if (typeSortMenu)
         {
-            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeCommand, L"正序");
-            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeDescCommand, L"反序");
-            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(typeSortMenu), L"类型");
+            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeCommand, _LW("app.menu.sort_asc"));
+            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeDescCommand, _LW("app.menu.sort_desc"));
+            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(typeSortMenu), _LW("app.menu.sort_type"));
         }
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), L"排序方式");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
     }
 
     POINT clientPoint = screenPoint;
@@ -397,10 +397,11 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     HMENU displaySettingsMenu = CreatePopupMenu();
     if (displaySettingsMenu)
     {
-        wchar_t gridLabel[64]{};
-        swprintf_s(gridLabel, L"行列调整（%d列 × %d行）",
-            gridPage ? gridPage->columns : 0, gridPage ? gridPage->rows : 0);
-        AppendMenuW(displaySettingsMenu, MF_STRING, kContextGridAdjustmentMenu, gridLabel);
+        const std::wstring gridLabel = _LFW("app.menu.grid_adjust",
+            std::to_wstring(gridPage ? gridPage->columns : 0),
+            std::to_wstring(gridPage ? gridPage->rows : 0));
+        AppendMenuW(displaySettingsMenu, MF_STRING, kContextGridAdjustmentMenu,
+            gridLabel.c_str());
 
         HMENU spacingMenu = CreatePopupMenu();
         if (spacingMenu)
@@ -418,12 +419,12 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                     kContextSpacingPresetFirst + static_cast<UINT>(pct), label);
             }
             AppendMenuW(spacingMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, L"增加间距 (+10%)");
-            AppendMenuW(spacingMenu, MF_STRING, kContextSpacingDecrease, L"减少间距 (-10%)");
-            wchar_t spacingLabel[32]{};
-            swprintf_s(spacingLabel, L"图标间距：%d%%", currentSpacingPercent);
+            AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, _LW("app.menu.inc_spacing"));
+            AppendMenuW(spacingMenu, MF_STRING, kContextSpacingDecrease, _LW("app.menu.dec_spacing"));
+            const std::wstring spacingLabel = _LFW("app.menu.icon_spacing_pct",
+                std::to_wstring(currentSpacingPercent));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel);
+                reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel.c_str());
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(spacingMenu), L"");
             SetMenuItemIcon(spacingMenu, kContextSpacingIncrease, L"");
             SetMenuItemIcon(spacingMenu, kContextSpacingDecrease, L"");
@@ -438,13 +439,13 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 if (currentFontSize == size) flags |= MF_CHECKED;
                 AppendMenuW(fontSizeMenu, flags, id, label);
             };
-            addFontSizeItem(kContextFontSizeSmall, L"小 (12pt)", 12);
-            addFontSizeItem(kContextFontSizeMedium, L"中 (14pt)", 14);
-            addFontSizeItem(kContextFontSizeLarge, L"大 (16pt)", 16);
-            wchar_t fontSizeLabel[32]{};
-            swprintf_s(fontSizeLabel, L"标题字号：%dpt", currentFontSize);
+            addFontSizeItem(kContextFontSizeSmall, _LW("app.menu.font_small"), 12);
+            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 14);
+            addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 16);
+            const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_pt",
+                std::to_wstring(currentFontSize));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel);
+                reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel.c_str());
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
         }
 
@@ -456,19 +457,21 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 if (itemFontWeight_ == weight) flags |= MF_CHECKED;
                 AppendMenuW(fontWeightMenu, flags, id, label);
             };
-            addWeightItem(kContextFontWeightBold, L"粗", DWRITE_FONT_WEIGHT_BOLD);
-            addWeightItem(kContextFontWeightMedium, L"中", DWRITE_FONT_WEIGHT_SEMI_BOLD);
-            addWeightItem(kContextFontWeightFine, L"细", DWRITE_FONT_WEIGHT_NORMAL);
-            const wchar_t* weightLabel = L"标题粗细：中";
-            if (itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD) weightLabel = L"标题粗细：粗";
-            else if (itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL) weightLabel = L"标题粗细：细";
+            addWeightItem(kContextFontWeightBold, _LW("app.menu.font_weight_bold_label"), DWRITE_FONT_WEIGHT_BOLD);
+            addWeightItem(kContextFontWeightMedium, _LW("app.menu.font_weight_medium_label"), DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            addWeightItem(kContextFontWeightFine, _LW("app.menu.font_weight_light_label"), DWRITE_FONT_WEIGHT_NORMAL);
+            const wchar_t* weightLabel = _LW("app.menu.font_weight_medium");
+            if (itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD)
+                weightLabel = _LW("app.menu.font_weight_bold");
+            else if (itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL)
+                weightLabel = _LW("app.menu.font_weight_light");
             AppendMenuW(displaySettingsMenu, MF_POPUP,
                 reinterpret_cast<UINT_PTR>(fontWeightMenu), weightLabel);
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontWeightMenu), L"");
         }
 
         AppendMenuW(menu, MF_POPUP,
-            reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"显示设置");
+            reinterpret_cast<UINT_PTR>(displaySettingsMenu), _LW("app.menu.display_settings"));
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"");
         SetMenuItemIcon(displaySettingsMenu, kContextGridAdjustmentMenu, L"");
     }
@@ -477,9 +480,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     HMENU widgetMenu = CreatePopupMenu();
     if (widgetMenu)
     {
-        AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, L"集合");
-        AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, L"桌面文件分类");
-        AppendMenuW(widgetMenu, MF_STRING, kContextAddFolderMappingWidget, L"文件夹映射");
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, _LW("app.menu.collection"));
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, _LW("app.menu.file_categories"));
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddFolderMappingWidget, _LW("app.menu.folder_mapping"));
         if (!luaWidgets.empty())
         {
             AppendMenuW(widgetMenu, MF_SEPARATOR, 0, nullptr);
@@ -491,7 +494,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                     kContextAddLuaWidgetFirst + static_cast<UINT>(i), label.c_str());
             }
         }
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), L"添加组件");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), _LW("app.menu.add_widget"));
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -517,15 +520,15 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             UINT fFlags = MF_STRING;
             if (!firstPageMonitorId_.empty() && firstPageMonitorId_ == clickedMonitorId)
                 fFlags |= MF_CHECKED;
-            AppendMenuW(pinPageMenu, fFlags, kContextPinFirstPage, L"固定此显示器显示首屏");
+            AppendMenuW(pinPageMenu, fFlags, kContextPinFirstPage, _LW("app.menu.page_pin_first"));
 
             UINT lFlags = MF_STRING;
             if (!lastPageMonitorId_.empty() && lastPageMonitorId_ == clickedMonitorId)
                 lFlags |= MF_CHECKED;
-            AppendMenuW(pinPageMenu, lFlags, kContextPinLastPage, L"固定此显示器显示末屏");
+            AppendMenuW(pinPageMenu, lFlags, kContextPinLastPage, _LW("app.menu.page_pin_last"));
 
             AppendMenuW(menu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(pinPageMenu), L"固定显示首页末页");
+                reinterpret_cast<UINT_PTR>(pinPageMenu), _LW("app.menu.page_pin_both"));
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
@@ -542,9 +545,9 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         }
 
         if (pageOffset_ > 0)
-            AppendMenuW(menu, MF_STRING, kContextPagePrev, L"上一页");
+            AppendMenuW(menu, MF_STRING, kContextPagePrev, _LW("app.menu.prev_page"));
         if (pageOffset_ < maxOff)
-            AppendMenuW(menu, MF_STRING, kContextPageNext, L"下一页");
+            AppendMenuW(menu, MF_STRING, kContextPageNext, _LW("app.menu.next_page"));
 
         jumpMenu = CreatePopupMenu();
         if (jumpMenu)
@@ -574,15 +577,15 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 AppendMenuW(jumpMenu, flags,
                     kContextPageJumpFirst + static_cast<UINT>(i), label.c_str());
             }
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(jumpMenu), L"跳转到");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(jumpMenu), _LW("app.menu.goto_page"));
         }
 
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
 
-    AppendMenuW(menu, MF_STRING, kContextPageAdd, L"新增页");
+    AppendMenuW(menu, MF_STRING, kContextPageAdd, _LW("app.menu.add_page"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kContextSettingsCommand, L"设置");
+    AppendMenuW(menu, MF_STRING, kContextSettingsCommand, _LW("app.menu.settings"));
 
     SetMenuItemIcon(menu, kContextNewMenu, L"");
     SetMenuItemIcon(menu, kContextRefreshCommand, L"");
@@ -825,19 +828,19 @@ inline void DesktopApp::ShowItemContextMenu(
     }
 
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, L"打开");
-    AppendMenuW(menu, selectedCount == 1 && canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextRenameCommand, L"重命名");
+    AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
+    AppendMenuW(menu, selectedCount == 1 && canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextRenameCommand, _LW("app.menu.rename"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCutCommand, L"剪切");
-    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCopyCommand, L"复制");
-    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextDeleteCommand, L"删除");
+    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCutCommand, _LW("app.menu.cut"));
+    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCopyCommand, _LW("app.menu.copy"));
+    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextDeleteCommand, _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kContextMoreCommand, L"展开更多选项");
+    AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFrequentItem)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextDockRemoveFrequentItem,
-            L"移出常用项目");
+            _LW("app.dock.remove_frequent"));
     }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
@@ -1020,7 +1023,7 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
         if (!renameCommand &&
             GetMenuStringW(menu, cmd, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
         {
-            renameCommand = StrStrIW(menuText, L"重命名") != nullptr ||
+            renameCommand = StrStrIW(menuText, L"重命名") != nullptr || // l10n-allow: match Chinese Windows shell verb
                 StrStrIW(menuText, L"Rename") != nullptr;
         }
 

@@ -7,6 +7,7 @@
 #include "app.h"
 #include "constants.h"
 #include "utils.h"
+#include "../l10n.h"
 
 #include <sstream>
 #include <algorithm>
@@ -31,62 +32,38 @@ std::wstring GuideWidget::BuildGuideText(const DesktopApp *app)
 
     auto pageLabel = [&](size_t i) -> std::wstring
     {
-        return L"第" + std::to_wstring(i + 1) + L"页";
+        return _LFW("app.guide.page_num", std::to_wstring(i + 1));
     };
 
     std::wostringstream ss;
-    ss << L"SnowDesktop 多屏幕分页系统\n\n";
-
-    // ── 核心概念 ──
-    ss << L"━━━ 核心概念 ━━━\n";
-    ss << L"• 首屏 — 默认在系统主屏，可锁定到任意显示器\n";
-    ss << L"• 末屏 — 默认在最右显示器，可锁定到任意显示器\n";
-    ss << L"• 前 N-1 个显示器各显示一个固定槽位页\n";
-    ss << L"• 末屏可翻页浏览所有溢出页\n";
-    ss << L"• 单屏时该屏同时担首屏与末屏\n\n";
-
-    // ── 基本操作 ──
-    ss << L"━━━ 基本操作 ━━━\n";
-    ss << L"翻页\n";
-    ss << L"  点击末屏左右两侧箭头（悬浮显示）有拖动操作时悬停一段时间也可翻页，或通过右键菜单「上一页」/「下一页」\n\n";
-    ss << L"跳转\n";
-    ss << L"  右键菜单「跳转到」快速定位\n\n";
-    ss << L"新增页\n";
-    ss << L"  右键菜单「新增页」创建空白页\n";
-    ss << L"  自动放置指南组件占位防清理\n\n";
-    ss << L"锁定首屏/末屏\n";
-    ss << L"  右键菜单「固定显示首页末页」>「固定此显示器显示首屏」\n";
-    ss << L"  右键菜单「固定显示首页末页」>「固定此显示器显示末屏」\n";
-    ss << L"  两锁互斥，再次点击可取消\n";
-    ss << L"  锁定持久化，显示器离线不清锁\n\n";
-
-    // ── 提示 ──
-    ss << L"━━━ 提示 ━━━\n";
-    ss << L"• 溢出区空页会被自动清理\n";
-    ss << L"• 本指南组件可手动右键删除\n\n";
+    // The guide is rendered as one continuous document. Keep its static prose
+    // in one message so translators can reorder headings and paragraphs.
+    ss << _LW("guide.content") << L"\n\n";
 
     // ── 状态信息 ──
-    ss << L"━━━ 当前状态 ━━━\n";
-    ss << L"显示器数：" << N << L"\n";
-    ss << L"总页数：" << total << L"\n";
-    ss << L"末屏当前显示：" << pageLabel(static_cast<size_t>(std::max(0, std::min(currentLastIdx, static_cast<int>(total) - 1)))) << L"\n";
+    ss << _LW("guide.status_section") << L"\n";
+    ss << _LFW("guide.monitor_count", std::to_wstring(N)) << L"\n";
+    ss << _LFW("guide.total_pages", std::to_wstring(total)) << L"\n";
+    ss << _LFW("guide.last_screen_shows",
+        pageLabel(static_cast<size_t>(std::max(0,
+            std::min(currentLastIdx, static_cast<int>(total) - 1))))) << L"\n";
     // 首末屏锁定状态
     const std::wstring &firstPin = app->firstPageMonitorId_;
     const std::wstring &lastPin = app->lastPageMonitorId_;
     auto monitorShortName = [&](const std::wstring &id) -> std::wstring
     {
         if (id.empty())
-            return L"（未设置）";
+            return _LW("guide.not_set");
         // 截取友好显示名：去掉 \\.\ 前缀
         std::wstring s = id;
         if (s.starts_with(L"\\.\\"))
             s = s.substr(4);
         return s;
     };
-    ss << L"首屏锁定：" << monitorShortName(firstPin)
-       << (firstPin.empty() ? L"（默认主屏）\n" : L"\n");
-    ss << L"末屏锁定：" << monitorShortName(lastPin)
-       << (lastPin.empty() ? L"（默认最右屏）\n" : L"\n");
+    ss << _LFW("guide.first_locked", monitorShortName(firstPin))
+       << (firstPin.empty() ? _LW("guide.default_primary") : L"") << L"\n";
+    ss << _LFW("guide.last_locked", monitorShortName(lastPin))
+       << (lastPin.empty() ? _LW("guide.default_rightmost") : L"") << L"\n";
     ss << L"\n";
 
     return ss.str();

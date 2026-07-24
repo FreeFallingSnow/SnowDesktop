@@ -33,6 +33,7 @@
 #include "data_paths.h"
 #include "utils.h"
 #include "widget_engine.h"
+#include "l10n.h"
 #include "types.h"
 #include "constants.h"
 #include "resource.h"
@@ -624,6 +625,8 @@ private:
     }
     /** @brief 加载分类设置并刷新分类组件。 */
     void LoadCategorySettingsAndApply();
+    /** @brief 应用语言切换并更新仍使用默认名称的组件。 */
+    void ApplyLanguageChange();
     /** @brief 获取当前分类设置。 */
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */

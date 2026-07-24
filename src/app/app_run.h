@@ -523,7 +523,7 @@ inline void DesktopApp::RequestRestart()
     if (pathLen == 0 || pathLen >= std::size(exePath))
     {
         MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
-            L"无法获取 SnowDesktop 的程序路径。", L"重启失败",
+            _LW("app.run.no_path"), _LW("app.run.restart_failed"),
             MB_OK | MB_ICONERROR);
         return;
     }
@@ -559,10 +559,10 @@ inline void DesktopApp::RequestRestart()
     if (!created)
     {
         const DWORD error = GetLastError();
-        std::wstring message = L"无法启动新的 SnowDesktop 实例。\n错误码：";
-        message += std::to_wstring(error);
+        std::wstring message =
+            _LFW("app.run.restart_error", std::to_wstring(error));
         MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
-            L"重启失败", MB_OK | MB_ICONERROR);
+            _LW("app.run.restart_failed"), MB_OK | MB_ICONERROR);
         return;
     }
 
@@ -820,6 +820,12 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     MigrateLegacyDataPaths();
 
+    {
+        std::wstring langDir = GetExecutableDirectoryPath();
+        langDir += L"\\lang";
+        Locale::Instance().Init(langDir.c_str());
+    }
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };
@@ -1044,6 +1050,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             LoadGeneralSettingsAndApply();
             if (quickNavigationOpen_)
                 InvalidateQuickNavigationWindow();
+        });
+        settingsWindow_->SetLanguageChangedCallback([this]() {
+            ApplyLanguageChange();
         });
         settingsWindow_->SetDockEnabledChangedCallback([this](bool enabled) {
             if (generalSettings_.dockEnabled == enabled) return;

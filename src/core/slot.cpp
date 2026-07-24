@@ -13,6 +13,7 @@
 #include "slot.h"
 #include "container.h"
 #include "item.h"
+#include "l10n.h"
 #include "constants.h"
 #include <wrl/client.h>
 #include <algorithm>
@@ -151,13 +152,13 @@ std::wstring Slot::GetDropHint(HitRegion region, const std::vector<Item*>& sourc
     switch (region)
     {
     case HitRegion::Empty:
-        return L"移动到此空位";
+        return _LW("core.drag.move_to_slot");
     case HitRegion::SortBefore:
     case HitRegion::SortAfter:
-        return L"重新排序";
+        return _LW("core.drag.reorder");
     case HitRegion::Handoff:
-        if (item_) return L"交给「" + item_->GetTitle() + L"」处理";
-        return L"交给此项目处理";
+        if (item_) return _LFW("core.drag.handle", item_->GetTitle());
+        return _LW("core.drag.handle_item");
     default:
         return L"";
     }

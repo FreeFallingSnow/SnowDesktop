@@ -1450,7 +1450,7 @@ inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
 
     RECT titleRect = MakeRect(popupRect_.left + 22, popupRect_.top + 18,
         popupRect_.right - 22, popupRect_.top + 44);
-    std::wstring title = widget.title.empty() ? L"集合" : widget.title;
+    std::wstring title = widget.title.empty() ? _LW("app.overlay.collection_default") : widget.title;
     DrawD2DText(ctx, title, titleRect, itemTextFormat_.Get(),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
 
@@ -2444,7 +2444,7 @@ inline void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
         }
     }
 
-    const std::wstring hintText = L"双击取消隐藏桌面，可在设置中关闭此功能";
+    const std::wstring hintText = _LW("app.overlay.hide_hint");
 
     ComPtr<IDWriteTextFormat> fmt;
     if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
@@ -2513,7 +2513,7 @@ inline void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
     }
 
     const std::wstring hintText =
-        L"拖动组件底部或在任意位置按住中键可移动组件，拖动右下角圆点可调整大小";
+        _LW("app.overlay.widget_move_hint");
 
     ComPtr<IDWriteTextFormat> fmt;
     if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,

@@ -3,6 +3,7 @@
 ## Contents
 
 - [Runtime model](#runtime-model)
+- [Localization](#localization)
 - [Callbacks](#callbacks)
 - [Drawing](#drawing)
 - [Widget and system](#widget-and-system)
@@ -19,7 +20,7 @@ Scripts run in a sandbox containing:
 
 - Base functions: `assert`, `error`, `ipairs`, `next`, `pairs`, `pcall`, `select`, `tonumber`, `tostring`, `type`, `xpcall`.
 - Libraries: `string`, `table`, `math`, `utf8`.
-- Host APIs: `draw`, `sys`, `layout`, `storage`, `widget`, `desktop`,
+- Host APIs: `draw`, `sys`, `layout`, `storage`, `widget`, `desktop`, `l10n`,
   `everything`, `media`, `http`, and `ui`.
 - `imgui` only when the manifest declares `ui.input`.
 - `widgetId`, a unique string for the current component instance.
@@ -61,6 +62,35 @@ state without coupling it to a theme preset.
 
 The host checks the script timestamp and hot-reloads it while rendering. Persistent storage is scoped by component instance ID, so two instances of the same script keep separate values.
 
+## Localization
+
+```lua
+name = l10n.tr("lua_widget.my_widget.name")
+
+local status = l10n.tr("lua_widget.my_widget.item_count", #items)
+local language = l10n.language()
+```
+
+- `l10n.tr(key, arguments...)` reads a string from the active host language
+  resource and replaces `{0}`, `{1}`, and later placeholders with the supplied
+  values. A missing key is returned unchanged so the error remains visible.
+- `l10n.language()` returns the effective language such as `zh-CN` or `en-US`;
+  when the user chooses the system language, it returns the resolved language.
+- Language switching reloads Lua widgets. Compute localized top-level names,
+  settings labels, presets, menus, and other cached strings with `l10n.tr`.
+- Every widget must use literal keys and add the same keys to every language in
+  its own manifest `locales` object. Lua widget strings do not belong in the
+  host `lang/*.json`. Run `check_l10n.bat` to validate missing keys,
+  placeholders, manifest keys, and hard-coded Chinese in Lua strings.
+- Manifests support `nameKey` and `descriptionKey`. Keep `name` and
+  `description` as English fallbacks for hosts that do not contain those keys.
+- If a script uses localized state-dependent titles, list those keys in the
+  manifest's `titleKeys` array and update the title from
+  `onLanguageChanged()`.
+
+The widget's default title follows the active language. Once the user renames
+an instance, later language switches preserve that custom title.
+
 ## Callbacks
 
 All callbacks are optional except `render()` for visible output.
@@ -76,6 +106,7 @@ function onMouseMove(x, y, button, delta) end
 function onMouseUp(x, y, button, delta) end
 function onWheel(x, y, button, delta) end
 function onDesktopChanged(reason) end
+function onLanguageChanged() end
 function onVisible() end
 function onHidden() end
 function onSelected() end
@@ -91,6 +122,9 @@ function onMenu(id) end
 - `onSelected()` runs when the desktop selects the widget.
 - For wheel handling, use the sign of `delta`.
 - `onDesktopChanged(reason)` requires `desktop.read`.
+- `onLanguageChanged()` runs after the widget has been reloaded with its new
+  manifest locale. Use it to refresh state-dependent titles or other runtime
+  text caches.
 - `imguiRender()` requires `ui.input`.
 - Context-menu callbacks require `ui.contextMenu`.
 
@@ -488,9 +522,21 @@ The manifest filename is derived by replacing `.lua` with `.widget.json`.
 
 ```json
 {
-  "name": "示例组件",
+  "name": "Example Widget",
+  "nameKey": "lua_widget.example.name",
   "version": "1.0.0",
-  "description": "示例说明。",
+  "description": "Example description.",
+  "descriptionKey": "lua_widget.example.description",
+  "locales": {
+    "zh-CN": {
+      "lua_widget.example.name": "示例组件",
+      "lua_widget.example.description": "示例说明。"
+    },
+    "en-US": {
+      "lua_widget.example.name": "Example Widget",
+      "lua_widget.example.description": "Example description."
+    }
+  },
   "defaultSize": { "columns": 2, "rows": 1 },
   "minSize": { "columns": 2, "rows": 1 },
   "maxSize": { "columns": 4, "rows": 3 },

@@ -98,6 +98,7 @@ public:
      * @brief 显示设置窗口（将隐藏窗口设为可见并置前）
      */
     void Show();
+    void ApplyLanguageChange();
 
     /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
     void ShowDockSettings();
@@ -147,6 +148,8 @@ public:
     void SetNavigationSettingsChangedCallback(std::function<void()> callback) { navigationSettingsChangedCallback_ = std::move(callback); }
 
     void SetGeneralSettingsChangedCallback(std::function<void()> callback) { generalSettingsChangedCallback_ = std::move(callback); }
+
+    void SetLanguageChangedCallback(std::function<void()> callback) { languageChangedCallback_ = std::move(callback); }
 
     void SetDockEnabledChangedCallback(std::function<void(bool)> callback)
     { dockEnabledChangedCallback_ = std::move(callback); }
@@ -508,6 +511,10 @@ private:
 
     /// 更新检查状态：空字符串=空闲，"checking"=检查中，其余为结果信息
     std::string updateCheckStatus_;
+    /// 更新检查状态对应的翻译键；语言切换时据此重建缓存文案
+    std::string updateCheckStatusKey_;
+    /// 更新检查状态的可选格式化参数（当前用于最新版本号）
+    std::string updateCheckStatusArgument_;
     /// 更新检查返回的最新版本号
     std::string latestVersion_;
     /// 更新检查返回的下载页面 URL
@@ -540,6 +547,8 @@ private:
 
     /// 通用设置变更回调
     std::function<void()> generalSettingsChangedCallback_;
+
+    std::function<void()> languageChangedCallback_;
 
     std::function<void(bool)> dockEnabledChangedCallback_;
 
@@ -633,6 +642,7 @@ private:
         std::wstring id;
         char label[128] = {};
         char extensions[1024] = {};
+        bool usesDefaultLabel = false;
     };
 
     std::vector<CategoryRuleEditBuffer> categoryRuleBuffers_;

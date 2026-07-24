@@ -416,6 +416,8 @@ struct DesktopWidget
     std::wstring id;
     DesktopWidgetType type = DesktopWidgetType::Collection;
     std::wstring title;
+    std::wstring customTitle;
+    std::wstring scriptTitle;
     std::wstring sourceFolderPath;
     GridCell gridCell;
     GridSpan gridSpan;
@@ -435,7 +437,7 @@ struct DesktopWidget
     bool showOnHoverOnly = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
-    bool userRenamed = false;
+    bool userRenamed = false; // Compatibility mirror of !customTitle.empty().
     bool dateHeaders = false;
     std::vector<std::wstring> itemKeys;
     std::vector<FolderEntry> folderEntries;

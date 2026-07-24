@@ -82,14 +82,14 @@ inline std::wstring DesktopApp::GetGlassBackendStatusText() const
 {
     if (desktopBackdropCompositor_.IsAvailable())
     {
-        std::wstring status = L"DWM 原生 CompositionBackdropBrush 已启用";
-        status += L"\n玻璃面板：";
+        std::wstring status = _LW("glass.dwm_enabled");
+        status += _LW("glass.glass_panel");
         status += std::to_wstring(desktopBackdropCompositor_.PanelCount());
-        status += L"；跟随系统合成器实时刷新";
+        status += _LW("glass.syncing");
         return status;
     }
 
-    std::wstring status = L"DWM 原生毛玻璃不可用";
+    std::wstring status = _LW("glass.dwm_unavailable");
     if (!desktopBackdropCompositor_.LastError().empty())
     {
         status += L"：";
