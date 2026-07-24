@@ -128,12 +128,14 @@ PersonalizationSettings PersonalizationSettings::GlassLightPreset()
 PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
 {
     PersonalizationSettings s = DarkPreset();
-    s.widgetBgR = 0.075f; s.widgetBgG = 0.090f; s.widgetBgB = 0.120f;
+    // Match the neutral #202020 tint used by Windows dark shell panels.
+    s.widgetBgR = 0.125f; s.widgetBgG = 0.125f; s.widgetBgB = 0.125f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.75f; s.widgetBorderAlpha = 0.36f;
+    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.10f;
     s.backgroundPreset = kAppearancePresetAcrylicDark;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
+    s.acrylicEnabled = true;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 0;
     return s;
@@ -142,13 +144,15 @@ PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
 PersonalizationSettings PersonalizationSettings::AcrylicLightPreset()
 {
     PersonalizationSettings s = LightPreset();
-    s.widgetBgR = 0.925f; s.widgetBgG = 0.950f; s.widgetBgB = 0.985f;
-    s.widgetBorderR = 0.5f; s.widgetBorderG = 0.5f; s.widgetBorderB = 0.55f;
-    s.widgetAlpha = 0.75f; s.widgetBorderAlpha = 0.48f;
+    // Match the neutral #F3F3F3 tint used by Windows light shell panels.
+    s.widgetBgR = 0.953f; s.widgetBgG = 0.953f; s.widgetBgB = 0.953f;
+    s.widgetBorderR = 0.0f; s.widgetBorderG = 0.0f; s.widgetBorderB = 0.0f;
+    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.08f;
     s.backgroundPreset = kAppearancePresetAcrylicLight;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
-    s.glassBlurRadius = 28.0f;
+    s.acrylicEnabled = true;
+    s.glassBlurRadius = 30.0f;
     s.contentTheme = 1;
     return s;
 }
@@ -164,6 +168,7 @@ int NormalizeAppearancePresetId(int presetId)
     case 9:
     case 10:
     case 11:
+    case 12:
         return presetId;
     case 3:
     case 4:
@@ -297,6 +302,18 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     if (ReadDoubleField(text, "contentTheme", v)) s.contentTheme = std::clamp(static_cast<int>(v), 0, 1);
     bool b2 = false;
     if (ReadBoolField(text, "acrylicEnabled", b2)) s.acrylicEnabled = b2;
+    // Presets are immutable choices in the UI. Refresh persisted acrylic
+    // values so palette refinements and the old placeholder migration are
+    // applied without requiring users to reselect the theme.
+    if (s.backgroundPreset == kAppearancePresetAcrylicDark ||
+        s.backgroundPreset == kAppearancePresetAcrylicLight)
+    {
+        const float cornerRadius = s.cornerRadius;
+        const float barHeight = s.barHeight;
+        s = MakeAppearancePreset(s.backgroundPreset);
+        s.cornerRadius = cornerRadius;
+        s.barHeight = barHeight;
+    }
     return true;
 }
 

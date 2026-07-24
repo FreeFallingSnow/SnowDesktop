@@ -74,6 +74,12 @@
     "app.settings.acrylic_enable": "亚克力背景",
     "app.settings.widget_content_theme": "组件内容主题",
     "app.settings.taskbar_theme": "任务栏主题",
+    "app.settings.taskbar_windows_native": "Windows 原生",
+    "app.settings.taskbar_dynamic_theme": "触发时外观",
+    "app.settings.taskbar_dynamic_visible_window": "有可见窗口时",
+    "app.settings.taskbar_dynamic_maximized_window": "有最大化窗口时",
+    "app.settings.taskbar_dynamic_shell_ui": "任务栏上面板打开时",
+    "app.settings.taskbar_transparent": "全透明",
     "app.settings.taskbar_follow_global": "跟随全局主题",
     "app.settings.auto_hide_taskbar": "自动隐藏系统任务栏",
     "app.settings.taskbar_alignment": "任务栏对齐",
@@ -434,6 +440,5 @@
     "app.settings.widget_editor_back": "返回主页面",
     "app.settings.download_latest_hint": "下载最新版本",
     "app.settings.taskbar_theme_hint": "选择任务栏外观主题",
-    "app.settings.taskbar_no_beautify": "不美化",
     "app.settings.taskbar_follow_theme": "跟随全局主题"
 }

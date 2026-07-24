@@ -53,15 +53,99 @@ bool ReadDoubleField(const std::string& text, const char* field, double& out)
     }
 }
 
+void ReadDynamicRule(const std::string& text, const char* prefix,
+    SystemTaskbarDynamicRule& rule)
+{
+    const std::string base(prefix);
+    const auto key = [&base](const char* suffix) {
+        return base + suffix;
+    };
+    double value = 0.0;
+    ReadBoolField(text, key("Enabled").c_str(), rule.enabled);
+    if (ReadDoubleField(text, key("Mode").c_str(), value))
+    {
+        rule.themeMode = static_cast<SystemTaskbarThemeMode>(
+            std::clamp(static_cast<int>(value), 0, 9));
+    }
+    if (ReadDoubleField(text, key("ContentTheme").c_str(), value))
+        rule.contentTheme = std::clamp(static_cast<int>(value), -1, 1);
+
+    PersonalizationSettings& style = rule.appearance;
+    if (ReadDoubleField(text, key("BackgroundR").c_str(), value))
+        style.widgetBgR = static_cast<float>(value);
+    if (ReadDoubleField(text, key("BackgroundG").c_str(), value))
+        style.widgetBgG = static_cast<float>(value);
+    if (ReadDoubleField(text, key("BackgroundB").c_str(), value))
+        style.widgetBgB = static_cast<float>(value);
+    if (ReadDoubleField(text, key("BorderR").c_str(), value))
+        style.widgetBorderR = static_cast<float>(value);
+    if (ReadDoubleField(text, key("BorderG").c_str(), value))
+        style.widgetBorderG = static_cast<float>(value);
+    if (ReadDoubleField(text, key("BorderB").c_str(), value))
+        style.widgetBorderB = static_cast<float>(value);
+    if (ReadDoubleField(text, key("BackgroundAlpha").c_str(), value))
+        style.widgetAlpha = static_cast<float>(value);
+    if (ReadDoubleField(text, key("BorderAlpha").c_str(), value))
+        style.widgetBorderAlpha = static_cast<float>(value);
+    if (ReadDoubleField(text, key("BlurRadius").c_str(), value))
+        style.glassBlurRadius = static_cast<float>(value);
+    ReadBoolField(text, key("GlassEnabled").c_str(), style.glassEnabled);
+    ReadBoolField(text, key("AcrylicEnabled").c_str(),
+        style.acrylicEnabled);
+    style.backgroundPreset = kAppearancePresetCustom;
+}
+
+void WriteDynamicRule(std::ostream& file, const char* prefix,
+    const SystemTaskbarDynamicRule& rule)
+{
+    const PersonalizationSettings& style = rule.appearance;
+    file << "  \"" << prefix << "Enabled\": "
+         << (rule.enabled ? "true" : "false") << ",\n";
+    file << "  \"" << prefix << "Mode\": "
+         << static_cast<int>(rule.themeMode) << ",\n";
+    file << "  \"" << prefix << "ContentTheme\": "
+         << rule.contentTheme << ",\n";
+    file << "  \"" << prefix << "BackgroundR\": "
+         << style.widgetBgR << ",\n";
+    file << "  \"" << prefix << "BackgroundG\": "
+         << style.widgetBgG << ",\n";
+    file << "  \"" << prefix << "BackgroundB\": "
+         << style.widgetBgB << ",\n";
+    file << "  \"" << prefix << "BorderR\": "
+         << style.widgetBorderR << ",\n";
+    file << "  \"" << prefix << "BorderG\": "
+         << style.widgetBorderG << ",\n";
+    file << "  \"" << prefix << "BorderB\": "
+         << style.widgetBorderB << ",\n";
+    file << "  \"" << prefix << "BackgroundAlpha\": "
+         << style.widgetAlpha << ",\n";
+    file << "  \"" << prefix << "BorderAlpha\": "
+         << style.widgetBorderAlpha << ",\n";
+    file << "  \"" << prefix << "GlassEnabled\": "
+         << (style.glassEnabled ? "true" : "false") << ",\n";
+    file << "  \"" << prefix << "AcrylicEnabled\": "
+         << (style.acrylicEnabled ? "true" : "false") << ",\n";
+    file << "  \"" << prefix << "BlurRadius\": "
+         << style.glassBlurRadius << ",\n";
+}
+
 std::vector<HWND> FindSystemTaskbarWindows()
 {
     std::vector<HWND> taskbars;
+    if (HWND primaryTaskbar = FindWindowW(L"Shell_TrayWnd", nullptr))
+        taskbars.push_back(primaryTaskbar);
     EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
         wchar_t className[64]{};
         GetClassNameW(window, className, static_cast<int>(std::size(className)));
         if (_wcsicmp(className, L"Shell_TrayWnd") == 0 ||
             _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
-            reinterpret_cast<std::vector<HWND>*>(parameter)->push_back(window);
+        {
+            auto& taskbars =
+                *reinterpret_cast<std::vector<HWND>*>(parameter);
+            if (std::find(taskbars.begin(), taskbars.end(), window) ==
+                taskbars.end())
+                taskbars.push_back(window);
+        }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&taskbars));
     return taskbars;
@@ -129,7 +213,9 @@ public:
             ? 0 : GetTickCount64();
     }
 
-    bool Apply(bool enabled, const PersonalizationSettings& appearance)
+    bool Apply(bool hookEnabled, bool defaultEnabled,
+        const PersonalizationSettings& appearance,
+        const std::vector<SystemTaskbarTargetAppearance>& targets)
     {
         // Reap a completed worker before reusing its std::thread object. The
         // actual injection never runs on the UI thread.
@@ -146,7 +232,9 @@ public:
         if (primaryTaskbar)
             GetWindowThreadProcessId(primaryTaskbar, &explorerProcessId);
 
-        state_->enabled = enabled ? TRUE : FALSE;
+        InterlockedIncrement(&state_->generation); // odd: write in progress
+        state_->enabled = hookEnabled ? TRUE : FALSE;
+        state_->defaultEnabled = defaultEnabled ? TRUE : FALSE;
         state_->style = appearance.glassEnabled
             ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
         if (appearance.glassEnabled && appearance.acrylicEnabled)
@@ -164,15 +252,71 @@ public:
         state_->borderGreen = std::clamp(appearance.widgetBorderG, 0.0f, 1.0f);
         state_->borderBlue = std::clamp(appearance.widgetBorderB, 0.0f, 1.0f);
         state_->borderAlpha = std::clamp(appearance.widgetBorderAlpha, 0.0f, 1.0f);
+        const LONG targetCount = static_cast<LONG>(std::min<std::size_t>(
+            targets.size(),
+            snowdesktop::taskbar_hook::kMaximumTaskbarTargets));
+        state_->targetCount = targetCount;
+        for (LONG index = 0; index < targetCount; ++index)
+        {
+            const SystemTaskbarTargetAppearance& source =
+                targets[static_cast<std::size_t>(index)];
+            snowdesktop::taskbar_hook::TargetAppearance& destination =
+                state_->targets[static_cast<std::size_t>(index)];
+            destination.taskbar =
+                reinterpret_cast<std::uintptr_t>(source.taskbar);
+            destination.enabled = source.enabled ? TRUE : FALSE;
+            destination.style = source.appearance.glassEnabled
+                ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
+            if (source.appearance.glassEnabled &&
+                source.appearance.acrylicEnabled)
+            {
+                destination.style |=
+                    snowdesktop::taskbar_hook::kStyleAcrylicBackdrop;
+            }
+            destination.contentTheme = source.appearance.contentTheme;
+            destination.red = std::clamp(source.appearance.widgetBgR,
+                0.0f, 1.0f);
+            destination.green = std::clamp(source.appearance.widgetBgG,
+                0.0f, 1.0f);
+            destination.blue = std::clamp(source.appearance.widgetBgB,
+                0.0f, 1.0f);
+            destination.alpha = std::clamp(source.appearance.widgetAlpha,
+                0.0f, 1.0f);
+            destination.blurAmount = std::clamp(
+                source.appearance.glassBlurRadius, 0.0f, 48.0f);
+            destination.borderRed = std::clamp(
+                source.appearance.widgetBorderR, 0.0f, 1.0f);
+            destination.borderGreen = std::clamp(
+                source.appearance.widgetBorderG, 0.0f, 1.0f);
+            destination.borderBlue = std::clamp(
+                source.appearance.widgetBorderB, 0.0f, 1.0f);
+            destination.borderAlpha = std::clamp(
+                source.appearance.widgetBorderAlpha, 0.0f, 1.0f);
+        }
+        for (std::size_t index = static_cast<std::size_t>(targetCount);
+             index < snowdesktop::taskbar_hook::kMaximumTaskbarTargets;
+             ++index)
+        {
+            state_->targets[index] =
+                snowdesktop::taskbar_hook::TargetAppearance{};
+        }
         MemoryBarrier();
-        InterlockedIncrement(&state_->generation);
+        InterlockedIncrement(&state_->generation); // even: snapshot complete
 
         const UINT applyMessage = RegisterWindowMessageW(
             snowdesktop::taskbar_hook::kApplyMessageName);
-        for (HWND taskbar : FindSystemTaskbarWindows())
+        std::vector<HWND> taskbars = FindSystemTaskbarWindows();
+        for (const SystemTaskbarTargetAppearance& target : targets)
+        {
+            if (target.taskbar && IsWindow(target.taskbar) &&
+                std::find(taskbars.begin(), taskbars.end(), target.taskbar) ==
+                    taskbars.end())
+                taskbars.push_back(target.taskbar);
+        }
+        for (HWND taskbar : taskbars)
             PostMessageW(taskbar, applyMessage, 0, 0);
 
-        if (!enabled)
+        if (!hookEnabled)
         {
             if (injectionCancelEvent_)
                 SetEvent(injectionCancelEvent_);
@@ -542,10 +686,31 @@ void NotifySystemTaskbarCreated()
     GetTaskbarBackdropController().NotifyTaskbarCreated();
 }
 
-bool ApplySystemTaskbarBackdrop(bool enabled,
-    const PersonalizationSettings& appearance)
+bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
+    const PersonalizationSettings& appearance,
+    const std::vector<SystemTaskbarTargetAppearance>& targets)
 {
-    return GetTaskbarBackdropController().Apply(enabled, appearance);
+    return GetTaskbarBackdropController().Apply(hookEnabled, defaultEnabled,
+        appearance, targets);
+}
+
+PersonalizationSettings MakeTransparentTaskbarAppearance()
+{
+    PersonalizationSettings appearance =
+        PersonalizationSettings::DarkPreset();
+    appearance.widgetBgR = 0.0f;
+    appearance.widgetBgG = 0.0f;
+    appearance.widgetBgB = 0.0f;
+    appearance.widgetAlpha = 0.0f;
+    appearance.widgetBorderR = 0.0f;
+    appearance.widgetBorderG = 0.0f;
+    appearance.widgetBorderB = 0.0f;
+    appearance.widgetBorderAlpha = 0.0f;
+    appearance.gradientEndA = 0.0f;
+    appearance.backgroundPreset = kAppearancePresetTaskbarTransparent;
+    appearance.glassEnabled = false;
+    appearance.acrylicEnabled = false;
+    return appearance;
 }
 
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
@@ -610,10 +775,22 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         taskbarStyle.backgroundPreset = NormalizeAppearancePresetId(static_cast<int>(value));
     ReadBoolField(text, "taskbarGlassEnabled", taskbarStyle.glassEnabled);
     ReadBoolField(text, "taskbarAcrylicEnabled", taskbarStyle.acrylicEnabled);
+    if (taskbarStyle.backgroundPreset == kAppearancePresetAcrylicDark ||
+        taskbarStyle.backgroundPreset == kAppearancePresetAcrylicLight)
+    {
+        taskbarStyle = MakeAppearancePreset(
+            taskbarStyle.backgroundPreset);
+    }
     if (ReadDoubleField(text, "taskbarContentTheme", value)) // legacy name
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
     if (ReadDoubleField(text, "systemTaskbarContentTheme", value))
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
+    ReadDynamicRule(text, "systemTaskbarVisibleWindow",
+        settings.systemTaskbarVisibleWindow);
+    ReadDynamicRule(text, "systemTaskbarMaximizedWindow",
+        settings.systemTaskbarMaximizedWindow);
+    ReadDynamicRule(text, "systemTaskbarShellUi",
+        settings.systemTaskbarShellUi);
     return true;
 }
 
@@ -658,7 +835,15 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"taskbarAcrylicEnabled\": "
          << (taskbarStyle.acrylicEnabled ? "true" : "false") << ",\n";
     file << "  \"taskbarGlassBlurRadius\": " << taskbarStyle.glassBlurRadius << ",\n";
-    file << "  \"systemTaskbarContentTheme\": " << settings.systemTaskbarContentTheme << "\n";
+    file << "  \"systemTaskbarContentTheme\": "
+         << settings.systemTaskbarContentTheme << ",\n";
+    WriteDynamicRule(file, "systemTaskbarVisibleWindow",
+        settings.systemTaskbarVisibleWindow);
+    WriteDynamicRule(file, "systemTaskbarMaximizedWindow",
+        settings.systemTaskbarMaximizedWindow);
+    WriteDynamicRule(file, "systemTaskbarShellUi",
+        settings.systemTaskbarShellUi);
+    file << "  \"dynamicTaskbarSchemaVersion\": 1\n";
     file << "}\n";
     return true;
 }

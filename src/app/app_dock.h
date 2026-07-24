@@ -395,15 +395,23 @@ inline bool IsDockDesktopActivationWindow(HWND window)
 }
 
 inline void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
-    DWORD event, HWND window, LONG, LONG, DWORD, DWORD)
+    DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD)
 {
-    if (event != EVENT_SYSTEM_FOREGROUND || !window) return;
-    const HWND previous = dockForegroundWindow_.exchange(window);
-    if (previous != window)
+    if (event == EVENT_SYSTEM_FOREGROUND && window)
     {
-        dockPreviousForegroundWindow_.store(previous);
-        dockForegroundChangedTick_.store(GetTickCount());
+        const HWND previous = dockForegroundWindow_.exchange(window);
+        if (previous != window)
+        {
+            dockPreviousForegroundWindow_.store(previous);
+            dockForegroundChangedTick_.store(GetTickCount());
+        }
     }
+
+    if (event >= EVENT_OBJECT_CREATE &&
+        (objectId != OBJID_WINDOW || childId != CHILDID_SELF))
+        return;
+    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+        std::memory_order_relaxed);
 }
 
 inline void DesktopApp::StartDockForegroundMonitor()
@@ -416,6 +424,33 @@ inline void DesktopApp::StartDockForegroundMonitor()
     dockForegroundEventHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND,
         EVENT_SYSTEM_FOREGROUND, nullptr, &DesktopApp::DockForegroundWinEventProc,
         0, 0, WINEVENT_OUTOFCONTEXT);
+
+    const auto addHook = [this](DWORD first, DWORD last) {
+        if (HWINEVENTHOOK hook = SetWinEventHook(first, last, nullptr,
+            &DesktopApp::DockForegroundWinEventProc, 0, 0,
+            WINEVENT_OUTOFCONTEXT))
+            systemTaskbarWindowEventHooks_.push_back(hook);
+    };
+    addHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND);
+    addHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE);
+    addHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE);
+#ifdef EVENT_OBJECT_CLOAKED
+    addHook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED);
+#endif
+    RestartSystemTaskbarShellVisibilityDetectors();
+    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+        std::memory_order_relaxed);
+}
+
+inline void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
+{
+    taskbarAppVisibility_.Reset();
+    taskbarAppVisibilityAttempted_ = false;
+    taskbarSearchVisibility_.reset();
+    taskbarSearchVisibility_ = std::make_unique<SearchVisibilityDetector>([] {
+        systemTaskbarWindowStateChangedTick_.fetch_add(1,
+            std::memory_order_relaxed);
+    });
 }
 
 inline void DesktopApp::StopDockForegroundMonitor()
@@ -425,9 +460,317 @@ inline void DesktopApp::StopDockForegroundMonitor()
         UnhookWinEvent(dockForegroundEventHook_);
         dockForegroundEventHook_ = nullptr;
     }
+    for (HWINEVENTHOOK hook : systemTaskbarWindowEventHooks_)
+        if (hook) UnhookWinEvent(hook);
+    systemTaskbarWindowEventHooks_.clear();
     dockForegroundWindow_.store(nullptr);
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(0);
+    systemTaskbarWindowStateChangedTick_.store(0);
+    systemTaskbarWindowStateObservedTick_ = 0;
+    systemTaskbarMonitorWindowStates_.clear();
+    systemTaskbarWindows_.clear();
+    taskbarAppVisibility_.Reset();
+    taskbarAppVisibilityAttempted_ = false;
+    taskbarSearchVisibility_.reset();
+}
+
+inline bool DesktopApp::IsSystemTaskbarHookRequired(
+    const DockSettings& settings) const
+{
+    const auto ruleNeedsHook = [](const SystemTaskbarDynamicRule& rule) {
+        return rule.enabled &&
+            rule.themeMode != SystemTaskbarThemeMode::Native;
+    };
+    return settings.systemTaskbarBackdropEnabled ||
+        ruleNeedsHook(settings.systemTaskbarVisibleWindow) ||
+        ruleNeedsHook(settings.systemTaskbarMaximizedWindow) ||
+        ruleNeedsHook(settings.systemTaskbarShellUi);
+}
+
+inline PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
+    const SystemTaskbarDynamicRule& rule) const
+{
+    PersonalizationSettings result;
+    switch (rule.themeMode)
+    {
+    case SystemTaskbarThemeMode::FollowGlobal:
+        if (settingsWindow_)
+            result = settingsWindow_->GetPersonalization();
+        else
+        {
+            result = PersonalizationSettings::DarkPreset();
+            LoadPersonalization(GetPersonalizationPath().c_str(), result);
+        }
+        break;
+    case SystemTaskbarThemeMode::Dark:
+        result = MakeAppearancePreset(kAppearancePresetDark);
+        break;
+    case SystemTaskbarThemeMode::Light:
+        result = MakeAppearancePreset(kAppearancePresetLight);
+        break;
+    case SystemTaskbarThemeMode::GlassDark:
+        result = MakeAppearancePreset(kAppearancePresetGlassDark);
+        break;
+    case SystemTaskbarThemeMode::GlassLight:
+        result = MakeAppearancePreset(kAppearancePresetGlassLight);
+        break;
+    case SystemTaskbarThemeMode::AcrylicDark:
+        result = MakeAppearancePreset(kAppearancePresetAcrylicDark);
+        break;
+    case SystemTaskbarThemeMode::AcrylicLight:
+        result = MakeAppearancePreset(kAppearancePresetAcrylicLight);
+        break;
+    case SystemTaskbarThemeMode::Transparent:
+        result = MakeTransparentTaskbarAppearance();
+        break;
+    case SystemTaskbarThemeMode::Custom:
+        result = rule.appearance;
+        break;
+    case SystemTaskbarThemeMode::Native:
+    default:
+        result = PersonalizationSettings::DarkPreset();
+        break;
+    }
+    if (rule.contentTheme >= 0)
+        result.contentTheme = rule.contentTheme;
+    return result;
+}
+
+inline bool IsSystemTaskbarCandidateWindow(HWND window,
+    IVirtualDesktopManager* virtualDesktopManager)
+{
+    if (!window || GetAncestor(window, GA_ROOT) != window ||
+        !IsWindowVisible(window) || IsIconic(window))
+        return false;
+
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    if (!processId || processId == GetCurrentProcessId())
+        return false;
+
+    wchar_t className[96]{};
+    GetClassNameW(window, className, static_cast<int>(std::size(className)));
+    if (_wcsicmp(className, L"Progman") == 0 ||
+        _wcsicmp(className, L"WorkerW") == 0 ||
+        _wcsicmp(className, L"Shell_TrayWnd") == 0 ||
+        _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
+        return false;
+
+    const LONG_PTR exStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    if ((exStyle & WS_EX_TOOLWINDOW) != 0 ||
+        (GetWindow(window, GW_OWNER) && (exStyle & WS_EX_APPWINDOW) == 0))
+        return false;
+
+    DWORD cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked,
+        sizeof(cloaked))) && cloaked != 0)
+        return false;
+
+    if (virtualDesktopManager)
+    {
+        BOOL onCurrentDesktop = TRUE;
+        if (SUCCEEDED(virtualDesktopManager->IsWindowOnCurrentVirtualDesktop(
+            window, &onCurrentDesktop)) && !onCurrentDesktop)
+            return false;
+    }
+    return true;
+}
+
+inline bool IsSystemTaskbarShellUiWindow(HWND window)
+{
+    if (!window) return false;
+    wchar_t className[96]{};
+    GetClassNameW(window, className, static_cast<int>(std::size(className)));
+    if (_wcsicmp(className, L"ControlCenterWindow") == 0 ||
+        _wcsicmp(className, L"WindowsDashboard") == 0)
+        return true;
+
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    if (!processId) return false;
+
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+        processId);
+    if (!process) return false;
+    wchar_t path[MAX_PATH]{};
+    DWORD pathLength = static_cast<DWORD>(std::size(path));
+    const bool queried = QueryFullProcessImageNameW(process, 0, path,
+        &pathLength) != FALSE;
+    CloseHandle(process);
+    if (!queried) return false;
+
+    const wchar_t* fileName = wcsrchr(path, L'\\');
+    fileName = fileName ? fileName + 1 : path;
+    return _wcsicmp(fileName, L"SearchHost.exe") == 0 ||
+        _wcsicmp(fileName, L"SearchApp.exe") == 0 ||
+        _wcsicmp(fileName, L"WidgetBoard.exe") == 0 ||
+        (_wcsicmp(fileName, L"ShellExperienceHost.exe") == 0 &&
+            _wcsicmp(className, L"Windows.UI.Core.CoreWindow") == 0);
+}
+
+inline void DesktopApp::RefreshSystemTaskbarWindowState()
+{
+    systemTaskbarMonitorWindowStates_.clear();
+
+    ComPtr<IVirtualDesktopManager> virtualDesktopManager;
+    CoCreateInstance(CLSID_VirtualDesktopManager, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&virtualDesktopManager));
+
+    struct EnumerationContext
+    {
+        IVirtualDesktopManager* virtualDesktopManager = nullptr;
+        std::unordered_map<HMONITOR,
+            SystemTaskbarMonitorWindowState>* states = nullptr;
+    } context{ virtualDesktopManager.Get(),
+        &systemTaskbarMonitorWindowStates_ };
+
+    EnumWindows([](HWND window, LPARAM value) -> BOOL {
+        auto* context = reinterpret_cast<EnumerationContext*>(value);
+        if (!IsSystemTaskbarCandidateWindow(window,
+            context->virtualDesktopManager))
+            return TRUE;
+        const HMONITOR monitor = MonitorFromWindow(window,
+            MONITOR_DEFAULTTONULL);
+        if (!monitor) return TRUE;
+        auto& state = (*context->states)[monitor];
+        state.visible = true;
+        if (IsZoomed(window))
+            state.maximized = true;
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&context));
+
+    bool launcherVisible = false;
+    if (!taskbarAppVisibilityAttempted_)
+    {
+        taskbarAppVisibilityAttempted_ = true;
+        CoCreateInstance(CLSID_AppVisibility, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&taskbarAppVisibility_));
+    }
+    if (taskbarAppVisibility_)
+    {
+        BOOL visible = FALSE;
+        if (SUCCEEDED(taskbarAppVisibility_->IsLauncherVisible(&visible)))
+            launcherVisible = visible != FALSE;
+    }
+
+    const HWND foreground = GetForegroundWindow();
+    // ShellViewCoordinator is the preferred event source. On newer Windows
+    // 11 builds it may keep reporting Hidden for Search and the system
+    // sidebars, so retain their foreground identities as a narrow fallback.
+    const bool shellViewVisible =
+        (taskbarSearchVisibility_ &&
+            taskbarSearchVisibility_->IsVisible()) ||
+        IsSystemTaskbarShellUiWindow(foreground);
+    systemTaskbarShellUiActive_ = launcherVisible || shellViewVisible;
+    systemTaskbarShellUiMonitor_ = systemTaskbarShellUiActive_
+        ? MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY)
+        : nullptr;
+    systemTaskbarWindowStateObservedTick_ =
+        systemTaskbarWindowStateChangedTick_.load();
+}
+
+inline void DesktopApp::RefreshSystemTaskbarAppearance(bool forceWindowScan)
+{
+    const bool hookRequired = IsSystemTaskbarHookRequired(dockSettings_);
+    if (!hookRequired)
+    {
+        ApplySystemTaskbarBackdrop(false, false,
+            ResolveSystemTaskbarAppearance(dockSettings_));
+        systemTaskbarBackdropRefreshTick_ = GetTickCount();
+        return;
+    }
+
+    const DWORD changedTick = systemTaskbarWindowStateChangedTick_.load();
+    if (forceWindowScan || changedTick != systemTaskbarWindowStateObservedTick_)
+        RefreshSystemTaskbarWindowState();
+
+    struct TaskbarEnumerationContext
+    {
+        std::vector<HWND> windows;
+    } context;
+    const auto appendTaskbar = [&context](HWND window) {
+        if (!window || !IsWindow(window)) return;
+        wchar_t className[64]{};
+        GetClassNameW(window, className,
+            static_cast<int>(std::size(className)));
+        if (_wcsicmp(className, L"Shell_TrayWnd") != 0 &&
+            _wcsicmp(className, L"Shell_SecondaryTrayWnd") != 0)
+            return;
+        if (std::find(context.windows.begin(), context.windows.end(),
+            window) == context.windows.end())
+            context.windows.push_back(window);
+    };
+    // Keep valid handles discovered before a shell surface temporarily
+    // reparents every taskbar (Task View does this on all monitors).
+    for (HWND taskbar : systemTaskbarWindows_)
+        appendTaskbar(taskbar);
+    // Shell surfaces temporarily reparent the primary taskbar while Start,
+    // Search or Task View is open. It then disappears from EnumWindows even
+    // though Shell_TrayWnd remains valid and visible. Always seed it directly.
+    appendTaskbar(FindWindowW(L"Shell_TrayWnd", nullptr));
+    EnumWindows([](HWND window, LPARAM value) -> BOOL {
+        wchar_t className[64]{};
+        GetClassNameW(window, className, static_cast<int>(std::size(className)));
+        if (_wcsicmp(className, L"Shell_TrayWnd") == 0 ||
+            _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
+        {
+            auto& windows =
+                reinterpret_cast<TaskbarEnumerationContext*>(value)->windows;
+            if (std::find(windows.begin(), windows.end(), window) ==
+                windows.end())
+                windows.push_back(window);
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&context));
+    systemTaskbarWindows_ = context.windows;
+
+    const PersonalizationSettings defaultAppearance =
+        ResolveSystemTaskbarAppearance(dockSettings_);
+    std::vector<SystemTaskbarTargetAppearance> targets;
+    targets.reserve(context.windows.size());
+    for (HWND taskbar : context.windows)
+    {
+        const HMONITOR monitor = MonitorFromWindow(taskbar,
+            MONITOR_DEFAULTTONULL);
+        const auto stateIt = systemTaskbarMonitorWindowStates_.find(monitor);
+        const SystemTaskbarMonitorWindowState state =
+            stateIt == systemTaskbarMonitorWindowStates_.end()
+            ? SystemTaskbarMonitorWindowState{} : stateIt->second;
+
+        const SystemTaskbarDynamicRule* selectedRule = nullptr;
+        if (dockSettings_.systemTaskbarShellUi.enabled &&
+            (systemTaskbarTaskViewActive_ ||
+             (systemTaskbarShellUiActive_ &&
+              monitor == systemTaskbarShellUiMonitor_)))
+            selectedRule = &dockSettings_.systemTaskbarShellUi;
+        else if (dockSettings_.systemTaskbarMaximizedWindow.enabled &&
+            state.maximized)
+            selectedRule = &dockSettings_.systemTaskbarMaximizedWindow;
+        else if (dockSettings_.systemTaskbarVisibleWindow.enabled &&
+            state.visible)
+            selectedRule = &dockSettings_.systemTaskbarVisibleWindow;
+
+        SystemTaskbarTargetAppearance target;
+        target.taskbar = taskbar;
+        if (selectedRule)
+        {
+            target.enabled =
+                selectedRule->themeMode != SystemTaskbarThemeMode::Native;
+            target.appearance =
+                ResolveSystemTaskbarDynamicAppearance(*selectedRule);
+        }
+        else
+        {
+            target.enabled = dockSettings_.systemTaskbarBackdropEnabled;
+            target.appearance = defaultAppearance;
+        }
+        targets.push_back(std::move(target));
+    }
+
+    ApplySystemTaskbarBackdrop(true,
+        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets);
+    systemTaskbarBackdropRefreshTick_ = GetTickCount();
 }
 
 inline void DesktopApp::UpdateSystemTaskbarRevealGuard()

@@ -1926,6 +1926,7 @@ void SettingsWindow::DrawPersonalizationPage()
         case kAppearancePresetGlassLight:  taskbarThemeMode = 5; break;
         case kAppearancePresetAcrylicDark: taskbarThemeMode = 6; break;
         case kAppearancePresetAcrylicLight: taskbarThemeMode = 7; break;
+        case kAppearancePresetTaskbarTransparent: taskbarThemeMode = 9; break;
         default:                            taskbarThemeMode = 2; break;
         }
     }
@@ -1933,9 +1934,10 @@ void SettingsWindow::DrawPersonalizationPage()
     BeginSettingRow(_L("app.settings.taskbar_theme"), controlW,
         _L("app.settings.taskbar_theme_hint"));
     const char* taskbarThemeNames[] = {
-        _L("app.settings.taskbar_no_beautify"), _L("app.settings.taskbar_follow_global"),
+        _L("app.settings.taskbar_windows_native"), _L("app.settings.taskbar_follow_global"),
         _L("app.settings.dark"), _L("app.settings.light"), _L("app.settings.dark_glass"), _L("app.settings.light_glass"),
-        _L("app.settings.dark_acrylic"), _L("app.settings.light_acrylic"), _L("app.settings.custom")
+        _L("app.settings.dark_acrylic"), _L("app.settings.light_acrylic"), _L("app.settings.custom"),
+        _L("app.settings.taskbar_transparent")
     };
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##TaskbarThemeMode", &taskbarThemeMode,
@@ -1984,11 +1986,26 @@ void SettingsWindow::DrawPersonalizationPage()
                 dockSettings_.systemTaskbarContentTheme =
                     dockSettings_.systemTaskbarAppearance.contentTheme;
             break;
+        case 9:
+            dockSettings_.systemTaskbarBackdropEnabled = true;
+            dockSettings_.systemTaskbarFollowPersonalization = false;
+            dockSettings_.systemTaskbarContentTheme = -1;
+            dockSettings_.systemTaskbarAppearance =
+                MakeTransparentTaskbarAppearance();
+            break;
         }
         dockSettingsDirty_ = true;
     }
 
-    if (taskbarThemeMode != 0)
+    const auto dynamicRuleNeedsHook =
+        [](const SystemTaskbarDynamicRule& rule) {
+            return rule.enabled &&
+                rule.themeMode != SystemTaskbarThemeMode::Native;
+        };
+    if (taskbarThemeMode != 0 ||
+        dynamicRuleNeedsHook(dockSettings_.systemTaskbarVisibleWindow) ||
+        dynamicRuleNeedsHook(dockSettings_.systemTaskbarMaximizedWindow) ||
+        dynamicRuleNeedsHook(dockSettings_.systemTaskbarShellUi))
     {
         const char* taskbarRuntimeStatus = nullptr;
         switch (GetSystemTaskbarBackdropRuntimeState())
@@ -2052,6 +2069,89 @@ void SettingsWindow::DrawPersonalizationPage()
             ImGui::Unindent(8.0f * dpiScale_);
         }
     }
+
+    auto drawDynamicTaskbarRule = [&](const char* label, const char* id,
+        SystemTaskbarDynamicRule& rule) {
+        ImGui::PushID(id);
+        ImGui::Spacing();
+        if (DrawSettingCheckbox(label, "##Enabled", &rule.enabled))
+            dockSettingsDirty_ = true;
+
+        if (!rule.enabled)
+        {
+            ImGui::PopID();
+            return;
+        }
+
+        ImGui::Indent(8.0f * dpiScale_);
+        int mode = std::clamp(static_cast<int>(rule.themeMode),
+            static_cast<int>(SystemTaskbarThemeMode::Native),
+            static_cast<int>(SystemTaskbarThemeMode::Transparent));
+        BeginSettingRow(_L("app.settings.taskbar_dynamic_theme"), controlW);
+        ImGui::SetNextItemWidth(controlW);
+        if (ImGui::Combo("##Theme", &mode, taskbarThemeNames,
+            IM_ARRAYSIZE(taskbarThemeNames)))
+        {
+            const SystemTaskbarThemeMode previousMode = rule.themeMode;
+            rule.themeMode = static_cast<SystemTaskbarThemeMode>(mode);
+            if (rule.themeMode == SystemTaskbarThemeMode::Custom)
+            {
+                if (previousMode >= SystemTaskbarThemeMode::Dark &&
+                    previousMode <= SystemTaskbarThemeMode::AcrylicLight)
+                {
+                    constexpr int modeToPreset[] = {
+                        -1, -1,
+                        kAppearancePresetDark,
+                        kAppearancePresetLight,
+                        kAppearancePresetGlassDark,
+                        kAppearancePresetGlassLight,
+                        kAppearancePresetAcrylicDark,
+                        kAppearancePresetAcrylicLight
+                    };
+                    rule.appearance = MakeAppearancePreset(
+                        modeToPreset[static_cast<int>(previousMode)]);
+                }
+                rule.appearance.backgroundPreset = kAppearancePresetCustom;
+            }
+            dockSettingsDirty_ = true;
+        }
+
+        const char* dynamicContentThemeNames[] = {
+            _L("app.settings.taskbar_follow_theme"),
+            _L("app.settings.light"),
+            _L("app.settings.dark")
+        };
+        int contentTheme = std::clamp(rule.contentTheme, -1, 1) + 1;
+        BeginSettingRow(_L("app.settings.widget_content_theme"), controlW);
+        ImGui::SetNextItemWidth(controlW);
+        if (ImGui::Combo("##ContentTheme", &contentTheme,
+            dynamicContentThemeNames,
+            IM_ARRAYSIZE(dynamicContentThemeNames)))
+        {
+            rule.contentTheme = contentTheme - 1;
+            dockSettingsDirty_ = true;
+        }
+
+        if (rule.themeMode == SystemTaskbarThemeMode::Custom &&
+            drawOverrideAdvanced(rule.appearance, "CustomAppearance"))
+        {
+            rule.appearance.backgroundPreset = kAppearancePresetCustom;
+            dockSettingsDirty_ = true;
+        }
+        ImGui::Unindent(8.0f * dpiScale_);
+        ImGui::PopID();
+    };
+
+    drawDynamicTaskbarRule(
+        _L("app.settings.taskbar_dynamic_visible_window"),
+        "VisibleWindow", dockSettings_.systemTaskbarVisibleWindow);
+    drawDynamicTaskbarRule(
+        _L("app.settings.taskbar_dynamic_maximized_window"),
+        "MaximizedWindow", dockSettings_.systemTaskbarMaximizedWindow);
+    drawDynamicTaskbarRule(
+        _L("app.settings.taskbar_dynamic_shell_ui"),
+        "ShellUi", dockSettings_.systemTaskbarShellUi);
+
     ImGui::Spacing();
     DrawSystemTaskbarPage();
 

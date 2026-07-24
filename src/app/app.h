@@ -38,6 +38,7 @@
 #include "constants.h"
 #include "resource.h"
 #include "desktop_backdrop_compositor.h"
+#include "taskbar_dynamic/search_visibility_detector.h"
 
 #include <windowsx.h>
 #include <dbt.h>
@@ -505,6 +506,9 @@ private:
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
         const PersonalizationSettings* effectSettings = nullptr);
+    /** @brief 在圆角区域内绘制稳定平铺的低透明亚克力颗粒。 */
+    void DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame, float radius,
+        bool lightTheme, POINT screenOrigin);
     /** @brief 绘制液态玻璃边缘（斜向受光、柔亮外缘、暗色内缘）。 @return 成功绘制返回 true */
     bool DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame, float radius,
         D2D1_COLOR_F color, float strokeWidth);
@@ -568,6 +572,12 @@ private:
     void StartDockForegroundMonitor();
     void StopDockForegroundMonitor();
     void UpdateSystemTaskbarRevealGuard();
+    bool IsSystemTaskbarHookRequired(const DockSettings& settings) const;
+    PersonalizationSettings ResolveSystemTaskbarDynamicAppearance(
+        const SystemTaskbarDynamicRule& rule) const;
+    void RefreshSystemTaskbarWindowState();
+    void RefreshSystemTaskbarAppearance(bool forceWindowScan = false);
+    void RestartSystemTaskbarShellVisibilityDetectors();
     static void CALLBACK DockForegroundWinEventProc(HWINEVENTHOOK hook, DWORD event,
         HWND window, LONG objectId, LONG childId, DWORD eventThread, DWORD eventTime);
     void LoadDockUsageStats();
@@ -1692,6 +1702,9 @@ private:
     /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
     ID2D1RenderTarget* brushCacheContext_ = nullptr;
+    /** @brief 每个 D2D 上下文各自缓存深/浅两种平铺亚克力噪点画刷。 */
+    std::unordered_map<std::uintptr_t, ComPtr<ID2D1BitmapBrush1>>
+        acrylicNoiseBrushCache_;
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
@@ -1759,9 +1772,27 @@ private:
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
     DWORD systemTaskbarBackdropForegroundTick_ = 0;
     HWINEVENTHOOK dockForegroundEventHook_ = nullptr;
+    std::vector<HWINEVENTHOOK> systemTaskbarWindowEventHooks_;
     inline static std::atomic<HWND> dockForegroundWindow_{ nullptr };
     inline static std::atomic<HWND> dockPreviousForegroundWindow_{ nullptr };
     inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
+    inline static std::atomic<DWORD> systemTaskbarWindowStateChangedTick_{ 0 };
+    DWORD systemTaskbarWindowStateObservedTick_ = 0;
+    struct SystemTaskbarMonitorWindowState
+    {
+        bool visible = false;
+        bool maximized = false;
+    };
+    std::unordered_map<HMONITOR, SystemTaskbarMonitorWindowState>
+        systemTaskbarMonitorWindowStates_;
+    std::vector<HWND> systemTaskbarWindows_;
+    ComPtr<IAppVisibility> taskbarAppVisibility_;
+    bool taskbarAppVisibilityAttempted_ = false;
+    std::unique_ptr<SearchVisibilityDetector> taskbarSearchVisibility_;
+    bool systemTaskbarShellUiActive_ = false;
+    HMONITOR systemTaskbarShellUiMonitor_ = nullptr;
+    bool systemTaskbarTaskViewActive_ = false;
+    UINT systemTaskbarTaskViewStateMsg_ = 0;
     std::vector<RECT> dockAreas_;
     DockContainer* dockPressedContainer_ = nullptr;
     size_t dockPressedEntry_ = static_cast<size_t>(-1);

@@ -25,9 +25,8 @@
  */
 inline DesktopApp::~DesktopApp()
 {
-    if (dockSettings_.systemTaskbarBackdropEnabled)
-        ApplySystemTaskbarBackdrop(false,
-            ResolveSystemTaskbarAppearance(dockSettings_));
+    ApplySystemTaskbarBackdrop(false, false,
+        ResolveSystemTaskbarAppearance(dockSettings_));
     StopQuickNavigationAppIndexing();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
@@ -957,6 +956,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         kControlWindowClassName, L"SnowDesktopControl", WS_POPUP,
         0, 0, 1, 1, nullptr, nullptr, instance, this);
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
+    systemTaskbarTaskViewStateMsg_ = RegisterWindowMessageW(
+        L"SnowDesktop.Taskbar.Dynamic.TaskView.v1");
 
     // Create DComp target and initial surface
     if (FAILED(dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_)))
@@ -1027,12 +1028,14 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             ApplyQuickNavigationAppearance();
             if (quickNavigationOpen_)
                 InvalidateQuickNavigationWindow();
-            if (dockSettings_.systemTaskbarBackdropEnabled &&
-                dockSettings_.systemTaskbarFollowPersonalization)
-            {
-                ApplySystemTaskbarBackdrop(true,
-                    ResolveSystemTaskbarAppearance(dockSettings_));
-            }
+            if (dockSettings_.systemTaskbarFollowPersonalization ||
+                dockSettings_.systemTaskbarVisibleWindow.themeMode ==
+                    SystemTaskbarThemeMode::FollowGlobal ||
+                dockSettings_.systemTaskbarMaximizedWindow.themeMode ==
+                    SystemTaskbarThemeMode::FollowGlobal ||
+                dockSettings_.systemTaskbarShellUi.themeMode ==
+                    SystemTaskbarThemeMode::FollowGlobal)
+                RefreshSystemTaskbarAppearance(false);
             if (hwnd_)
             {
                 InvalidateAllWidgetSlots();
@@ -1100,11 +1103,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         });
         settingsWindow_->SetPersonalizationChangedCallback([this]() {
-            if (dockSettings_.systemTaskbarBackdropEnabled &&
-                dockSettings_.systemTaskbarFollowPersonalization)
-                ApplySystemTaskbarBackdrop(true,
-                    ResolveSystemTaskbarAppearance(dockSettings_));
-            systemTaskbarBackdropRefreshTick_ = GetTickCount();
+            RefreshSystemTaskbarAppearance(false);
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());

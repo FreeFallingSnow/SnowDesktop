@@ -1520,8 +1520,8 @@ if (!quickNavBackdropCompositor_.InitializePopup(quickNavigationHwnd_))
         return;
     const float cornerRadius = static_cast<float>(QuickNavScale(16)) / 2.0f;
     quickNavBackdropCompositor_.BeginFrame(true);
-    quickNavBackdropCompositor_.AddPanel(clientRect, cornerRadius, quickNavBlurRadius_,
-        quickNavAppearance_.acrylicEnabled);
+    quickNavBackdropCompositor_.AddPanel(clientRect, cornerRadius,
+        quickNavBlurRadius_);
     quickNavBackdropCompositor_.EndFrame();
 }
 
@@ -2764,6 +2764,15 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         D2D1::ColorF(quickNavAppearance_.widgetBgR, quickNavAppearance_.widgetBgG,
             quickNavAppearance_.widgetBgB, windowAlpha),
         D2D1::ColorF(0, 0, 0, 0));
+    if (quickNavAppearance_.glassEnabled &&
+        quickNavAppearance_.acrylicEnabled)
+    {
+        POINT screenOrigin{};
+        ClientToScreen(quickNavigationHwnd_, &screenOrigin);
+        DrawAcrylicNoise(ctx.Get(), overlay,
+            static_cast<float>(QuickNavScale(16)) / 2.0f,
+            quickNavAppearance_.contentTheme == 1, screenOrigin);
+    }
     DrawD2DRoundedRectangle(ctx.Get(),
         MakeRect(overlay.left, overlay.top, overlay.right - 1, overlay.bottom - 1),
         static_cast<float>(QuickNavScale(16)) / 2.0f,

@@ -17,6 +17,9 @@ constexpr int kAppearancePresetGlassLight = 7;
 constexpr int kAppearancePresetCustom = 9;
 constexpr int kAppearancePresetAcrylicDark = 10;
 constexpr int kAppearancePresetAcrylicLight = 11;
+// Reserved for the system taskbar UI; intentionally omitted from global
+// component preset lists.
+constexpr int kAppearancePresetTaskbarTransparent = 12;
 
 /**
  * @brief 个性化设置结构体

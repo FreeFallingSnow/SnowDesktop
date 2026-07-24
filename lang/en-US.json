@@ -74,6 +74,12 @@
     "app.settings.acrylic_enable": "Acrylic Background",
     "app.settings.widget_content_theme": "Widget Content Theme",
     "app.settings.taskbar_theme": "Taskbar Theme",
+    "app.settings.taskbar_windows_native": "Windows default",
+    "app.settings.taskbar_dynamic_theme": "Appearance when active",
+    "app.settings.taskbar_dynamic_visible_window": "When a window is visible",
+    "app.settings.taskbar_dynamic_maximized_window": "When a window is maximized",
+    "app.settings.taskbar_dynamic_shell_ui": "When a taskbar panel is open",
+    "app.settings.taskbar_transparent": "Fully transparent",
     "app.settings.taskbar_follow_global": "Follow Global Theme",
     "app.settings.auto_hide_taskbar": "Auto-hide System Taskbar",
     "app.settings.taskbar_alignment": "Taskbar Alignment",
@@ -434,6 +440,5 @@
     "app.settings.widget_editor_back": "Back to Main",
     "app.settings.download_latest_hint": "Download Latest Version",
     "app.settings.taskbar_theme_hint": "Select taskbar appearance theme",
-    "app.settings.taskbar_no_beautify": "No Styling",
     "app.settings.taskbar_follow_theme": "Follow Global Theme"
 }

@@ -3,12 +3,14 @@
 // third_party/translucenttb-NOTICE.md.
 
 #include "taskbar_hook_protocol.h"
+#include "taskview_visibility.h"
 
 #include <windows.h>
 #include <commctrl.h>
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <ocidl.h>
+#include <servprov.h>
 #include <windows.graphics.effects.interop.h>
 #include <windows.ui.xaml.hosting.desktopwindowxamlsource.h>
 #include <xamlOM.h>
@@ -60,6 +62,110 @@ SharedState* g_sharedState = nullptr;
 UINT g_applyMessage = 0;
 std::atomic<DWORD> g_watchedOwnerProcessId{0};
 std::atomic_bool g_forceRestore{false};
+UINT g_taskViewStateMessage = 0;
+
+bool PostTaskViewState(bool visible)
+{
+    if (!g_taskViewStateMessage)
+        g_taskViewStateMessage =
+            RegisterWindowMessageW(kTaskViewStateMessageName);
+    if (const HWND controller = FindWindowW(
+        L"SnowDesktopControlWindow", L"SnowDesktopControl"))
+    {
+        PostMessageW(controller, g_taskViewStateMessage,
+            visible ? TRUE : FALSE, 0);
+        return true;
+    }
+    return false;
+}
+
+struct TaskViewVisibilitySink : winrt::implements<TaskViewVisibilitySink,
+    IMultitaskingViewVisibilityNotification>
+{
+    HRESULT STDMETHODCALLTYPE MultitaskingViewShown(
+        MultitaskingViewType flags) noexcept override
+    {
+        if ((flags & MultitaskingViewTaskView) != 0)
+            PostTaskViewState(true);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE MultitaskingViewDismissed(
+        MultitaskingViewType flags) noexcept override
+    {
+        if ((flags & MultitaskingViewTaskView) != 0)
+            PostTaskViewState(false);
+        return S_OK;
+    }
+};
+
+DWORD WINAPI MonitorTaskView(void*)
+{
+    // The immersive-shell visibility service is an STA service. Its change
+    // notifications are delivered through the apartment's message pump.
+    const HRESULT initialized = CoInitializeEx(nullptr,
+        COINIT_APARTMENTTHREADED);
+    winrt::com_ptr<IServiceProvider> provider;
+    HRESULT result = E_FAIL;
+    for (unsigned attempt = 0; attempt < 20; ++attempt)
+    {
+        result = CoCreateInstance(kImmersiveShellClsid, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(provider.put()));
+        if (SUCCEEDED(result))
+            break;
+        Sleep(500);
+    }
+    if (FAILED(result))
+    {
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return static_cast<DWORD>(result);
+    }
+
+    winrt::com_ptr<IMultitaskingViewVisibilityService> service;
+    for (unsigned attempt = 0; attempt < 20; ++attempt)
+    {
+        result = provider->QueryService(
+            kMultitaskingViewVisibilityServiceSid, service.put());
+        if (SUCCEEDED(result))
+            break;
+        Sleep(500);
+    }
+    if (FAILED(result))
+    {
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return static_cast<DWORD>(result);
+    }
+
+    auto sink = winrt::make_self<TaskViewVisibilitySink>();
+    DWORD cookie = 0;
+    result = service->Register(sink.get(), &cookie);
+    if (FAILED(result))
+    {
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return static_cast<DWORD>(result);
+    }
+
+    MultitaskingViewType visibleFlags = MultitaskingViewNone;
+    if (SUCCEEDED(service->IsViewVisible(MultitaskingViewTaskView,
+        &visibleFlags)))
+    {
+        const bool visible =
+            (visibleFlags & MultitaskingViewTaskView) != 0;
+        for (unsigned attempt = 0;
+             attempt < 60 && !PostTaskViewState(visible); ++attempt)
+            Sleep(500);
+    }
+
+    MSG message{};
+    while (GetMessageW(&message, nullptr, 0, 0) > 0)
+    {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    service->Unregister(cookie);
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    return ERROR_SUCCESS;
+}
 
 bool OpenSharedState()
 {
@@ -106,9 +212,16 @@ bool ReadSnapshot(Snapshot& snapshot)
     for (int attempt = 0; attempt < 4; ++attempt)
     {
         const LONG generation = g_sharedState->generation;
+        if ((generation & 1) != 0)
+        {
+            YieldProcessor();
+            continue;
+        }
         MemoryBarrier();
         snapshot.generation = generation;
         snapshot.enabled = g_sharedState->enabled != FALSE;
+        snapshot.defaultEnabled =
+            g_sharedState->defaultEnabled != FALSE;
         snapshot.style = g_sharedState->style;
         snapshot.contentTheme = g_sharedState->contentTheme;
         snapshot.systemUsesLightTheme = g_sharedState->systemUsesLightTheme;
@@ -122,8 +235,14 @@ bool ReadSnapshot(Snapshot& snapshot)
         snapshot.borderGreen = g_sharedState->borderGreen;
         snapshot.borderBlue = g_sharedState->borderBlue;
         snapshot.borderAlpha = g_sharedState->borderAlpha;
+        snapshot.targetCount = std::clamp<LONG>(
+            static_cast<LONG>(g_sharedState->targetCount), 0,
+            static_cast<LONG>(kMaximumTaskbarTargets));
+        std::copy_n(g_sharedState->targets, snapshot.targetCount,
+            snapshot.targets);
         MemoryBarrier();
-        if (generation == g_sharedState->generation)
+        if (generation == g_sharedState->generation &&
+            (generation & 1) == 0)
             return true;
     }
     return false;
@@ -563,7 +682,8 @@ public:
         const bool ownerAlive = IsProcessAlive(snapshot.ownerProcessId);
         if (snapshot.enabled && ownerAlive)
             WatchOwnerProcess(snapshot.ownerProcessId);
-        const bool enabled = snapshot.enabled && ownerAlive && !g_forceRestore.load();
+        const bool controllerEnabled = snapshot.enabled && ownerAlive &&
+            !g_forceRestore.load();
 
         bool applied = false;
         for (auto& [handle, info] : taskbars_)
@@ -572,26 +692,66 @@ public:
             if (info.taskbar != taskbar)
                 continue;
 
+            Snapshot effective = snapshot;
+            bool targetEnabled = snapshot.defaultEnabled;
+            for (LONG index = 0; index < snapshot.targetCount; ++index)
+            {
+                const TargetAppearance& target =
+                    snapshot.targets[static_cast<std::size_t>(index)];
+                if (reinterpret_cast<HWND>(target.taskbar) != taskbar)
+                    continue;
+                targetEnabled = target.enabled != FALSE;
+                effective.style = target.style;
+                effective.contentTheme = target.contentTheme;
+                effective.red = target.red;
+                effective.green = target.green;
+                effective.blue = target.blue;
+                effective.alpha = target.alpha;
+                effective.blurAmount = target.blurAmount;
+                effective.borderRed = target.borderRed;
+                effective.borderGreen = target.borderGreen;
+                effective.borderBlue = target.borderBlue;
+                effective.borderAlpha = target.borderAlpha;
+                break;
+            }
+            const bool enabled = controllerEnabled && targetEnabled;
+
             // Apply content theme (light/dark text and icons) independently
-            // of the backdrop. contentTheme: 0=深(白字)→Dark, 1=浅(黑字)→Light,
-            // when disabled, fall back to the system theme stored in the snapshot.
-            const int effectiveContentTheme = enabled
-                ? snapshot.contentTheme
-                : snapshot.systemUsesLightTheme;
-            if (info.rootElement &&
-                info.appliedContentTheme != effectiveContentTheme)
+            // of the backdrop. contentTheme: 0=深(白字)→Dark, 1=浅(黑字)→Light.
+            // A native target still needs an explicit system-theme value while
+            // the controller is active for other dynamic rules. Only remove our
+            // local value when the controller itself is disabled or exits.
+            if (info.rootElement && !controllerEnabled &&
+                info.appliedContentTheme >= 0)
             {
                 try
                 {
-                    info.rootElement.RequestedTheme(
-                        effectiveContentTheme != 0
-                            ? wux::ElementTheme::Light
-                            : wux::ElementTheme::Dark);
+                    info.rootElement.ClearValue(
+                        wux::FrameworkElement::RequestedThemeProperty());
                     info.rootElement.InvalidateArrange();
-                    info.appliedContentTheme = effectiveContentTheme;
+                    info.appliedContentTheme = -1;
                 }
-                catch (...)
+                catch (...) {}
+            }
+            else if (info.rootElement && controllerEnabled)
+            {
+                const LONG desiredContentTheme = targetEnabled
+                    ? effective.contentTheme
+                    : snapshot.systemUsesLightTheme;
+                if (info.appliedContentTheme != desiredContentTheme)
                 {
+                    try
+                    {
+                        info.rootElement.RequestedTheme(
+                            desiredContentTheme != 0
+                                ? wux::ElementTheme::Light
+                                : wux::ElementTheme::Dark);
+                        info.rootElement.InvalidateArrange();
+                        info.appliedContentTheme = desiredContentTheme;
+                    }
+                    catch (...)
+                    {
+                    }
                 }
             }
 
@@ -608,14 +768,14 @@ public:
             }
             else
             {
-                ApplyBackdrop(info.background, snapshot);
-                ApplySolidFill(info.border, snapshot.borderRed,
-                    snapshot.borderGreen, snapshot.borderBlue,
-                    snapshot.borderAlpha);
+                ApplyBackdrop(info.background, effective);
+                ApplySolidFill(info.border, effective.borderRed,
+                    effective.borderGreen, effective.borderBlue,
+                    effective.borderAlpha);
             }
             info.appliedGeneration = snapshot.generation;
             info.appliedEnabled = enabled;
-            applied = applied || enabled;
+            applied = true;
         }
         if (applied)
             SetHookStatus(kStatusApplied);
@@ -681,10 +841,25 @@ private:
         };
         if ((backdropStyle & kStyleAcrylicBackdrop) != 0)
         {
-            // AcrylicBrush(BackgroundSource=HostBackdrop) 在 Explorer
-            // XAML 树内无法正确采样桌面背景，实际会回退为纯色。统一走
-            // XamlBlurBrush 提供模糊，噪点由 SnowDesktop 主进程在桌面
-            // DComp 层统一叠加。
+            try
+            {
+                wux::Media::AcrylicBrush acrylic;
+                // TranslucentTB uses Backdrop rather than HostBackdrop for the
+                // taskbar: Explorer's XAML window is transparent, so Backdrop
+                // samples the desktop while keeping the brush active when the
+                // taskbar itself is not the foreground window.
+                acrylic.BackgroundSource(
+                    wux::Media::AcrylicBackgroundSource::Backdrop);
+                acrylic.TintColor(tint);
+                acrylic.FallbackColor(tint);
+                brush = std::move(acrylic);
+            }
+            catch (...)
+            {
+                // Some Windows builds or accessibility configurations reject
+                // AcrylicBrush activation. Preserve the existing composition
+                // blur as a functional fallback.
+            }
         }
         if (!brush && (backdropStyle & kStyleGlassBackdrop) != 0)
         {
@@ -1033,6 +1208,9 @@ DWORD WINAPI InstallTaskbarTap(void*)
         SignalReady();
         return finish(static_cast<DWORD>(result), false);
     }
+    if (HANDLE taskViewThread = CreateThread(nullptr, 0, MonitorTaskView,
+        nullptr, 0, nullptr))
+        CloseHandle(taskViewThread);
     // InitializeXamlDiagnosticsEx pins the TAP module. Keep our explicit
     // reference too so a hook timeout can never unmap code still used by the
     // visual-tree callback or its owner-process watcher.

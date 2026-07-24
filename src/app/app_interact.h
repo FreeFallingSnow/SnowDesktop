@@ -545,22 +545,16 @@ inline void DesktopApp::ApplyQuickNavigationAppearance()
 
 inline void DesktopApp::LoadDockSettingsAndApply()
 {
-    const bool taskbarBackdropWasEnabled =
-        dockSettings_.systemTaskbarBackdropEnabled;
     DockSettings settings;
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
     SetSystemTaskbarAutoHideEnabled(settings.systemTaskbarAutoHide);
     settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
     SetSystemTaskbarAlignmentCentered(settings.systemTaskbarAlignment == 1);
     settings.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
-    if (settings.systemTaskbarBackdropEnabled)
-        ApplySystemTaskbarBackdrop(true,
-            ResolveSystemTaskbarAppearance(settings));
-    else if (taskbarBackdropWasEnabled)
-        ApplySystemTaskbarBackdrop(false,
-            ResolveSystemTaskbarAppearance(settings));
-    systemTaskbarBackdropRefreshTick_ = GetTickCount();
     dockSettings_ = settings;
+    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+        std::memory_order_relaxed);
+    RefreshSystemTaskbarAppearance(true);
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -4648,13 +4642,11 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         // take time while the new taskbar XAML tree is still starting up.
         WatchDesktopHost();
         const DWORD now = GetTickCount();
-        if (dockSettings_.systemTaskbarBackdropEnabled &&
+        if (IsSystemTaskbarHookRequired(dockSettings_) &&
             (systemTaskbarBackdropRefreshTick_ == 0 ||
                 now - systemTaskbarBackdropRefreshTick_ >= 1500))
         {
-            ApplySystemTaskbarBackdrop(true,
-                ResolveSystemTaskbarAppearance(dockSettings_));
-            systemTaskbarBackdropRefreshTick_ = now;
+            RefreshSystemTaskbarAppearance(true);
         }
     }
     else if (timerId == kWidgetRefreshTimerId)
@@ -4668,17 +4660,19 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         UpdateSystemTaskbarRevealGuard();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick = dockForegroundChangedTick_.load();
+        const DWORD windowStateTick =
+            systemTaskbarWindowStateChangedTick_.load();
         const bool foregroundChanged = foregroundTick != 0 &&
             foregroundTick != systemTaskbarBackdropForegroundTick_;
+        const bool windowStateChanged = windowStateTick !=
+            systemTaskbarWindowStateObservedTick_;
         const bool foregroundSettling = foregroundTick != 0 &&
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
-        if (dockSettings_.systemTaskbarBackdropEnabled &&
-            (foregroundChanged || foregroundSettling))
+        if (IsSystemTaskbarHookRequired(dockSettings_) &&
+            (foregroundChanged || windowStateChanged || foregroundSettling))
         {
-            ApplySystemTaskbarBackdrop(true,
-                ResolveSystemTaskbarAppearance(dockSettings_));
-            systemTaskbarBackdropRefreshTick_ = now;
+            RefreshSystemTaskbarAppearance(true);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
             if (hwnd_ && IsWindow(hwnd_))
                 InvalidateRect(hwnd_, nullptr, FALSE);

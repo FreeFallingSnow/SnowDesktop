@@ -191,7 +191,6 @@ struct DesktopBackdropCompositor::Impl
         RECT frame{};
         int cornerRadius = 0;
         int blurRadius = 0;
-        bool acrylicEnabled = false;
         wuc::SpriteVisual visual{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
         wuc::CompositionGeometricClip clip{nullptr};
@@ -504,7 +503,7 @@ void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
 }
 
 bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
-    float blurRadius, bool acrylicEnabled)
+    float blurRadius)
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
@@ -523,7 +522,6 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
             panel.frame = frame;
             panel.cornerRadius = cornerKey;
             panel.blurRadius = blurKey;
-            panel.acrylicEnabled = acrylicEnabled;
             panel.visual = impl_->compositor.CreateSpriteVisual();
             panel.geometry = impl_->compositor.CreateRoundedRectangleGeometry();
             panel.clip = impl_->compositor.CreateGeometricClip(panel.geometry);
@@ -539,7 +537,6 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
             existing->visual.Brush(impl_->GetBlurBrush(blurKey));
         }
         existing->cornerRadius = cornerKey;
-        existing->acrylicEnabled = acrylicEnabled;
         existing->visual.Offset(wfn::float3{
             static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f });
         const wfn::float2 panelSize{

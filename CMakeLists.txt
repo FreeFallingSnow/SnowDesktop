@@ -10,6 +10,7 @@ set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
     src/app/desktop_backdrop_compositor.cpp
+    src/taskbar_dynamic/search_visibility_detector.cpp
     src/core/item.cpp
     src/core/dock.cpp
     src/core/slot.cpp
@@ -124,6 +125,10 @@ if (MSVC)
     endif()
     list(GET CPPWINRT_CANDIDATES 0 CPPWINRT_EXECUTABLE)
     get_filename_component(CPPWINRT_ARCH_DIR "${CPPWINRT_EXECUTABLE}" DIRECTORY)
+    set(MIDLRT_EXECUTABLE "${CPPWINRT_ARCH_DIR}/midlrt.exe")
+    if (NOT EXISTS "${MIDLRT_EXECUTABLE}")
+        message(FATAL_ERROR "midlrt.exe was not found next to cppwinrt.exe")
+    endif()
     get_filename_component(CPPWINRT_VERSION_DIR "${CPPWINRT_ARCH_DIR}" DIRECTORY)
     get_filename_component(CPPWINRT_SDK_VERSION "${CPPWINRT_VERSION_DIR}" NAME)
     set(WINDOWS_WINMD
@@ -133,24 +138,56 @@ if (MSVC)
     endif()
 
     set(CPPWINRT_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated/cppwinrt")
+    set(SHELLVIEW_WINMD_DIR "${CMAKE_BINARY_DIR}/generated/winmd")
+    set(SHELLVIEW_WINMD "${SHELLVIEW_WINMD_DIR}/WindowsUdk.winmd")
+    file(TO_NATIVE_PATH
+        "${WINDOWS_KITS_ROOT}/Include/${CPPWINRT_SDK_VERSION}/winrt"
+        MIDLRT_INCLUDE_DIR)
+    file(TO_NATIVE_PATH
+        "${WINDOWS_KITS_ROOT}/UnionMetadata/${CPPWINRT_SDK_VERSION}"
+        MIDLRT_METADATA_DIR)
+    file(TO_NATIVE_PATH "${WINDOWS_WINMD}" MIDLRT_WINDOWS_WINMD)
+    file(TO_NATIVE_PATH "${SHELLVIEW_WINMD_DIR}" MIDLRT_OUTPUT_DIR)
+    add_custom_command(
+        OUTPUT "${SHELLVIEW_WINMD}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHELLVIEW_WINMD_DIR}"
+        COMMAND "${MIDLRT_EXECUTABLE}"
+            /winrt /nomidl /no_cpp
+            /I "${MIDLRT_INCLUDE_DIR}"
+            /metadata_dir "${MIDLRT_METADATA_DIR}"
+            /reference "${MIDLRT_WINDOWS_WINMD}"
+            /out "${MIDLRT_OUTPUT_DIR}"
+            /winmd WindowsUdk.winmd
+            "ShellViewCoordinator.idl"
+        DEPENDS
+            "${CMAKE_SOURCE_DIR}/src/taskbar_dynamic/ShellViewCoordinator.idl"
+            "${WINDOWS_WINMD}"
+        COMMENT "Compiling the ShellViewCoordinator WinMD..."
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/src/taskbar_dynamic"
+        VERBATIM)
     add_custom_command(
         OUTPUT
             "${CPPWINRT_OUTPUT_DIR}/winrt/base.h"
             "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.h"
             "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h"
+            "${CPPWINRT_OUTPUT_DIR}/winrt/WindowsUdk.UI.Shell.h"
         COMMAND "${CPPWINRT_EXECUTABLE}"
-            -in "${WINDOWS_WINMD}" -out "${CPPWINRT_OUTPUT_DIR}"
-        DEPENDS "${WINDOWS_WINMD}"
+            -in "${WINDOWS_WINMD}"
+            -in "${SHELLVIEW_WINMD}"
+            -out "${CPPWINRT_OUTPUT_DIR}"
+        DEPENDS "${WINDOWS_WINMD}" "${SHELLVIEW_WINMD}"
         COMMENT "Generating C++/WinRT projections for the taskbar XAML hook..."
         VERBATIM)
     add_custom_target(SnowDesktopCppWinRT DEPENDS
         "${CPPWINRT_OUTPUT_DIR}/winrt/base.h"
         "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.h"
-        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h")
+        "${CPPWINRT_OUTPUT_DIR}/winrt/Windows.UI.Xaml.Shapes.h"
+        "${CPPWINRT_OUTPUT_DIR}/winrt/WindowsUdk.UI.Shell.h")
 
     add_library(SnowDesktopTaskbarHook SHARED
         src/taskbar_hook/taskbar_hook.cpp
         src/taskbar_hook/taskbar_hook_protocol.h
+        src/taskbar_hook/taskview_visibility.h
         src/taskbar_hook/taskbar_hook.def
     )
     add_dependencies(SnowDesktopTaskbarHook SnowDesktopCppWinRT)

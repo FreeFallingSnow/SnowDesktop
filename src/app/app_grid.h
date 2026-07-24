@@ -2609,10 +2609,27 @@ inline LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM w
  */
 inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (systemTaskbarTaskViewStateMsg_ &&
+        msg == systemTaskbarTaskViewStateMsg_)
+    {
+        const bool visible = wp != 0;
+        if (systemTaskbarTaskViewActive_ != visible)
+        {
+            systemTaskbarTaskViewActive_ = visible;
+            systemTaskbarWindowStateChangedTick_.fetch_add(1,
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
     if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
     {
         NotifySystemTaskbarCreated();
         systemTaskbarBackdropRefreshTick_ = 0;
+        systemTaskbarTaskViewActive_ = false;
+        systemTaskbarWindows_.clear();
+        RestartSystemTaskbarShellVisibilityDetectors();
+        systemTaskbarWindowStateChangedTick_.fetch_add(1,
+            std::memory_order_relaxed);
         DWORD currentExplorerProcessId = 0;
         if (HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr))
             GetWindowThreadProcessId(taskbar, &currentExplorerProcessId);
