@@ -619,9 +619,9 @@ function Invoke-LocalSquash {
     try {
         $env:SNOWDESKTOP_RELEASE_APPROVED = "1"
         $env:SNOWDESKTOP_RELEASE_MESSAGE = $commitMessage
-        & cmd.exe /d /c "call `"$squashScript`"" 2>&1 |
-            Tee-Object -FilePath $logPath
-        $exitCode = $LASTEXITCODE
+        $exitCode = Invoke-BatchWithLiveLog `
+            -BatchPath $squashScript `
+            -LogPath $logPath
         if ($exitCode -ne 0) {
             throw "Local squash failed with exit code $exitCode. See $logPath"
         }
