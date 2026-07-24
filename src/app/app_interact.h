@@ -6300,7 +6300,6 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         dragSession_.DeactivateForDrop();
         dragRenderCache_.Reset();
         InvalidateRect(hwnd_, nullptr, FALSE);
-        UpdateWindow(hwnd_);
 
         if (!GetDockDragOutRemovalHint(clientPoint).empty())
         {
@@ -6439,7 +6438,6 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     dragSession_.DeactivateForDrop();
     dragRenderCache_.Reset();
     InvalidateRect(hwnd_, nullptr, FALSE);
-    UpdateWindow(hwnd_);
 
     std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
     if (dropPaths.empty() && dataObject)
