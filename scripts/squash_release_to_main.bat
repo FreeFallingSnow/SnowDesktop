@@ -1,6 +1,10 @@
 @echo off
 setlocal
-cd /d "%~dp0.."
+if defined SNOWDESKTOP_REPOSITORY_ROOT (
+    cd /d "%SNOWDESKTOP_REPOSITORY_ROOT%"
+) else (
+    cd /d "%~dp0.."
+)
 
 for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "(Get-Content version.json | ConvertFrom-Json).version"`) do set VERSION=%%v
 if "%VERSION%"=="" (

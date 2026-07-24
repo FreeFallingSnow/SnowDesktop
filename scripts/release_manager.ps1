@@ -614,13 +614,23 @@ function Invoke-LocalSquash {
     $logsDirectory = Get-LogsDirectory -Context $context
     $logPath = Join-Path $logsDirectory `
         "squash-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+    $temporarySquashScript = Join-Path `
+        ([System.IO.Path]::GetTempPath()) `
+        ("SnowDesktop-squash-{0}-{1}.bat" -f `
+            $PID, [guid]::NewGuid().ToString("N"))
+    Copy-Item `
+        -LiteralPath $squashScript `
+        -Destination $temporarySquashScript `
+        -Force
     $previousApproval = $env:SNOWDESKTOP_RELEASE_APPROVED
     $previousMessage = $env:SNOWDESKTOP_RELEASE_MESSAGE
+    $previousRepositoryRoot = $env:SNOWDESKTOP_REPOSITORY_ROOT
     try {
         $env:SNOWDESKTOP_RELEASE_APPROVED = "1"
         $env:SNOWDESKTOP_RELEASE_MESSAGE = $commitMessage
+        $env:SNOWDESKTOP_REPOSITORY_ROOT = $repositoryRoot
         $exitCode = Invoke-BatchWithLiveLog `
-            -BatchPath $squashScript `
+            -BatchPath $temporarySquashScript `
             -LogPath $logPath
         if ($exitCode -ne 0) {
             throw "Local squash failed with exit code $exitCode. See $logPath"
@@ -629,6 +639,10 @@ function Invoke-LocalSquash {
     finally {
         $env:SNOWDESKTOP_RELEASE_APPROVED = $previousApproval
         $env:SNOWDESKTOP_RELEASE_MESSAGE = $previousMessage
+        $env:SNOWDESKTOP_REPOSITORY_ROOT = $previousRepositoryRoot
+        if (Test-Path -LiteralPath $temporarySquashScript) {
+            Remove-Item -LiteralPath $temporarySquashScript -Force
+        }
     }
 
     Set-ReleaseState `
