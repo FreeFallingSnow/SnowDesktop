@@ -13,7 +13,6 @@ local articles = {}
 local feedTitle = ""
 local loading = false
 local lastError = ""
-local visibleRange = { first = 0, last = 0, offset = 0 }
 local lastUrl = nil
 local lastInterval = nil
 local lastMaxItems = nil
@@ -111,11 +110,32 @@ local function headerLayout(fontSize)
     return headerFontSize, headerHeight, listTop
 end
 
+local function articleListGeometry(fontSize)
+    local w = layout.width()
+    local h = layout.height()
+    local padX = layout.cu(14)
+    local _, _, listTopCu = headerLayout(fontSize)
+    local itemHeightCu = articleLayout(fontSize)
+    local listTop = layout.cu(listTopCu)
+    -- The host reserves this area for moving/resizing the widget. Keeping the
+    -- list above it makes the visible rows and their clickable area identical.
+    local listBottom = h - layout.cu(layout.barHeight() + 2)
+    return padX, listTop, w - padX, listBottom, layout.cu(itemHeightCu)
+end
+
+local function currentArticleRange(fontSize)
+    local listLeft, listTop, listRight, listBottom, itemH =
+        articleListGeometry(fontSize)
+    local range = ui.virtualList("articles", listLeft, listTop,
+        math.max(1, listRight - listLeft),
+        math.max(1, listBottom - listTop), itemH, #articles)
+    return range, listLeft, listTop, listRight, listBottom, itemH
+end
+
 local function clearCache()
     articles = {}
     feedTitle = ""
     lastError = ""
-    visibleRange = { first = 0, last = 0, offset = 0 }
 end
 
 local function parseItem(itemXml)
@@ -251,12 +271,10 @@ function render()
     local h = layout.height()
     local padX = layout.cu(14)
     local headerTop = layout.cu(11)
-    local headerFontSize, headerHeightCu, listTopCu = headerLayout(cfg.fontSize)
+    local headerFontSize, headerHeightCu = headerLayout(cfg.fontSize)
     local headerHeight = layout.cu(headerHeightCu)
-    local listTop = layout.cu(listTopCu)
-    local listBottom = h - layout.cu(16)
-    local itemHeightCu, secondaryFontSize, secondaryTopCu = articleLayout(cfg.fontSize)
-    local itemH = layout.cu(itemHeightCu)
+    local _, listTop, _, listBottom, itemH = articleListGeometry(cfg.fontSize)
+    local _, secondaryFontSize, secondaryTopCu = articleLayout(cfg.fontSize)
     local numberW = layout.cu(20)
     local textX = padX + numberW + layout.cu(5)
     local textW = math.max(layout.cu(40), w - textX - padX)
@@ -288,9 +306,7 @@ function render()
     draw.line(padX, headerTop + headerHeight, w - padX,
         headerTop + headerHeight, layout.cu(1), pal.divColor, 0.10)
 
-    local visible = ui.virtualList("articles", padX, listTop,
-        w - padX * 2, math.max(1, listBottom - listTop), itemH, #articles)
-    visibleRange = visible
+    local visible = currentArticleRange(cfg.fontSize)
 
     draw.pushClip(padX, listTop, w - padX * 2, math.max(1, listBottom - listTop))
     for i = visible.first, visible.last do
@@ -323,22 +339,28 @@ end
 
 function onDoubleClick(x, y)
     local cfg = readConfig()
-    local itemHeightCu = articleLayout(cfg.fontSize)
-    local itemH = layout.cu(itemHeightCu)
-    local _, _, listTopCu = headerLayout(cfg.fontSize)
-    local listTop = layout.cu(listTopCu)
-    local listBottom = layout.height() - layout.cu(16)
+    local range, listLeft, listTop, listRight, listBottom, itemH =
+        currentArticleRange(cfg.fontSize)
+    if x < listLeft or x >= listRight or
+        y < listTop or y >= listBottom or itemH <= 0 then
+        return
+    end
 
-    if y < listTop or y >= listBottom then return end
-    for i = visibleRange.first, visibleRange.last do
-        local itemY = listTop + (i - 1) * itemH - visibleRange.offset
-        if y >= itemY and y < itemY + itemH then
-            local a = articles[i]
-            if a and a.link ~= "" then
-                desktop.open(a.link)
-            end
-            return
-        end
+    local offset = tonumber(range.offset) or 0
+    local index = math.floor((y - listTop + offset) / itemH) + 1
+    if index < (range.first or 1) or
+        index > (range.last or 0) then
+        return
+    end
+
+    local itemTop = listTop + (index - 1) * itemH - offset
+    if y < itemTop or y >= math.min(itemTop + itemH, listBottom) then
+        return
+    end
+
+    local article = articles[index]
+    if article and article.link ~= "" then
+        desktop.open(article.link)
     end
 end
 
