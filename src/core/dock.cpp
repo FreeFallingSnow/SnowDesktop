@@ -2,6 +2,7 @@
 
 #include "app.h"
 #include "constants.h"
+#include "../dock_magnification.h"
 #include "slot.h"
 #include "../l10n.h"
 
@@ -37,14 +38,14 @@ void DockRunningItem::SetBounds(RECT bounds) { bounds_ = bounds; }
 
 bool DockRunningItem::IsSelected() const
 {
-    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size() &&
-        app_->dockUnpinnedRunningApps_[runningIndex_].selected;
+    return false;
 }
 
 void DockRunningItem::SetSelected(bool selected)
 {
     if (app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size())
-        app_->dockUnpinnedRunningApps_[runningIndex_].selected = selected;
+        app_->dockUnpinnedRunningApps_[runningIndex_].selected = false;
+    (void)selected;
 }
 
 Container* DockRunningItem::GetContainer() const { return container_; }
@@ -89,13 +90,20 @@ void DockFrequentItem::SetBounds(RECT bounds) { bounds_ = bounds; }
 
 bool DockFrequentItem::IsSelected() const
 {
-    return app_ && itemIndex_ < app_->items_.size() && app_->items_[itemIndex_].selected;
+    return app_ && itemIndex_ < app_->items_.size() &&
+        app_->GetDockWindowVisualState(itemIndex_) ==
+            DockWindowVisualState::Closed &&
+        app_->items_[itemIndex_].selected;
 }
 
 void DockFrequentItem::SetSelected(bool selected)
 {
-    if (app_ && itemIndex_ < app_->items_.size())
-        app_->items_[itemIndex_].selected = selected;
+    if (!app_ || itemIndex_ >= app_->items_.size())
+        return;
+    app_->items_[itemIndex_].selected =
+        selected &&
+        app_->GetDockWindowVisualState(itemIndex_) ==
+            DockWindowVisualState::Closed;
 }
 
 Container* DockFrequentItem::GetContainer() const { return container_; }
@@ -172,13 +180,37 @@ void DockEntryItem::SetBounds(RECT bounds) { bounds_ = bounds; }
 bool DockEntryItem::IsSelected() const
 {
     const DockEntry* entry = Entry();
-    return entry && entry->selected;
+    if (!entry || !app_)
+        return false;
+    if (entry->type == DockEntryType::DesktopItem)
+    {
+        const size_t itemIndex =
+            app_->FindItemIndexByKey(entry->reference);
+        if (itemIndex < app_->items_.size() &&
+            app_->GetDockWindowVisualState(itemIndex) !=
+                DockWindowVisualState::Closed)
+            return false;
+    }
+    return entry->selected;
 }
 
 void DockEntryItem::SetSelected(bool selected)
 {
     if (!app_ || entryIndex_ >= app_->dockEntries_.size()) return;
-    app_->dockEntries_[entryIndex_].selected = selected;
+    DockEntry& entry = app_->dockEntries_[entryIndex_];
+    if (selected && entry.type == DockEntryType::DesktopItem)
+    {
+        const size_t itemIndex =
+            app_->FindItemIndexByKey(entry.reference);
+        if (itemIndex < app_->items_.size() &&
+            app_->GetDockWindowVisualState(itemIndex) !=
+                DockWindowVisualState::Closed)
+        {
+            entry.selected = false;
+            return;
+        }
+    }
+    entry.selected = selected;
 }
 
 Container* DockEntryItem::GetContainer() const { return container_; }
@@ -344,6 +376,346 @@ RECT DockContainer::GetBounds() const
     return RECT{ left, top, left + length, top + thickness };
 }
 
+std::vector<RECT> DockContainer::GetLeadingMagnificationRects() const
+{
+    std::vector<RECT> candidates;
+    const RECT windowsButton = GetWindowsButtonRect();
+    if (!IsRectEmpty(&windowsButton))
+        candidates.push_back(windowsButton);
+
+    const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
+    const size_t fixedCount = SortableEntryCount();
+    candidates.reserve(candidates.size() + fixedCount +
+        runningItems_.size() + frequentItems_.size());
+    for (size_t index = 0;
+        index < fixedCount && index < slots.size(); ++index)
+    {
+        if (!slots[index]) continue;
+        const RECT bounds = slots[index]->GetBounds();
+        if (!IsRectEmpty(&bounds))
+            candidates.push_back(bounds);
+    }
+    for (const auto& item : runningItems_)
+    {
+        if (!item) continue;
+        const RECT bounds = item->GetBounds();
+        if (!IsRectEmpty(&bounds))
+            candidates.push_back(bounds);
+    }
+    for (const auto& item : frequentItems_)
+    {
+        if (!item) continue;
+        const RECT bounds = item->GetBounds();
+        if (!IsRectEmpty(&bounds))
+            candidates.push_back(bounds);
+    }
+    return candidates;
+}
+
+std::vector<RECT> DockContainer::GetTrailingMagnificationRects() const
+{
+    std::vector<RECT> candidates;
+    const RECT search = GetSearchRect();
+    if (!IsRectEmpty(&search))
+        candidates.push_back(search);
+
+    const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
+    const size_t count = entries_ ? entries_->size() : 0;
+    const size_t fixedCount = SortableEntryCount();
+    if (fixedCount < count && fixedCount < slots.size() &&
+        slots[fixedCount])
+    {
+        const RECT recycleBin = slots[fixedCount]->GetBounds();
+        if (!IsRectEmpty(&recycleBin))
+            candidates.push_back(recycleBin);
+    }
+    return candidates;
+}
+
+DockContainer::MagnificationZone
+DockContainer::GetMagnificationZone(const RECT& baseRect) const
+{
+    for (const RECT& candidate : GetLeadingMagnificationRects())
+    {
+        if (EqualRect(&candidate, &baseRect))
+            return MagnificationZone::Leading;
+    }
+    for (const RECT& candidate : GetTrailingMagnificationRects())
+    {
+        if (EqualRect(&candidate, &baseRect))
+            return MagnificationZone::Trailing;
+    }
+    return MagnificationZone::None;
+}
+
+std::vector<RECT> DockContainer::GetElementBaseRects() const
+{
+    std::vector<RECT> candidates =
+        GetLeadingMagnificationRects();
+    std::vector<RECT> trailing =
+        GetTrailingMagnificationRects();
+    candidates.insert(candidates.end(),
+        trailing.begin(), trailing.end());
+    return candidates;
+}
+
+RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
+{
+    if (!app_ || app_->dragSession_.IsActive())
+        return RECT{};
+
+    const std::vector<RECT> candidates = GetElementBaseRects();
+
+    auto centerDistanceSquared = [&](const RECT& rect) {
+        const long long dx = static_cast<long long>(pointer.x) -
+            (static_cast<long long>(rect.left) + rect.right) / 2;
+        const long long dy = static_cast<long long>(pointer.y) -
+            (static_cast<long long>(rect.top) + rect.bottom) / 2;
+        return dx * dx + dy * dy;
+    };
+    RECT best{};
+    long long bestDistance = std::numeric_limits<long long>::max();
+    for (const RECT& candidate : candidates)
+    {
+        if (!PtInRect(&candidate, pointer))
+            continue;
+        const long long distance = centerDistanceSquared(candidate);
+        if (distance < bestDistance)
+        {
+            best = candidate;
+            bestDistance = distance;
+        }
+    }
+    if (!IsRectEmpty(&best))
+        return best;
+
+    const RECT dockBounds = GetBounds();
+    if (PtInRect(&dockBounds, pointer))
+    {
+        RECT nearest{};
+        long long nearestDistance =
+            std::numeric_limits<long long>::max();
+        int nearestAxisDistance =
+            std::numeric_limits<int>::max();
+        for (const RECT& candidate : candidates)
+        {
+            const int candidateAxisCenter =
+                IsVertical()
+                    ? (candidate.top +
+                        candidate.bottom) / 2
+                    : (candidate.left +
+                        candidate.right) / 2;
+            const int axisDistance = std::abs(
+                candidateAxisCenter -
+                (IsVertical()
+                    ? pointer.y : pointer.x));
+            const long long distance =
+                centerDistanceSquared(candidate);
+            if (distance < nearestDistance)
+            {
+                nearest = candidate;
+                nearestDistance = distance;
+                nearestAxisDistance =
+                    axisDistance;
+            }
+        }
+        const int separatorReach =
+            ItemPitch() / 2 +
+            ScaledSeparatorGap();
+        if (!IsRectEmpty(&nearest) &&
+            (!IsEdgeAttached() ||
+                nearestAxisDistance <=
+                    separatorReach))
+        {
+            return nearest;
+        }
+    }
+
+    const RECT interactive = snowdesktop::dock_magnification::
+        ExpandInteractionBounds(GetBounds(), app_->dockSettings_.position,
+            ItemIconSize());
+    if (!PtInRect(&interactive, pointer))
+        return RECT{};
+
+    for (const RECT& candidate : candidates)
+    {
+        const RECT magnified = snowdesktop::dock_magnification::MagnifyRect(
+            candidate, app_->dockSettings_.position,
+            GetMagnificationScale(
+                candidate, candidate, pointer),
+            ItemIconSize(),
+            GetMagnificationAxisShift(
+                candidate, candidate, pointer));
+        if (!PtInRect(&magnified, pointer))
+            continue;
+        const long long distance = centerDistanceSquared(candidate);
+        if (distance < bestDistance)
+        {
+            best = candidate;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+float DockContainer::GetMagnificationScale(
+    const RECT& baseRect, const RECT& focusRect,
+    POINT pointer) const
+{
+    if (!app_ || IsRectEmpty(&focusRect))
+        return 1.0f;
+    if (IsEdgeAttached())
+    {
+        const MagnificationZone baseZone =
+            GetMagnificationZone(baseRect);
+        const MagnificationZone focusZone =
+            GetMagnificationZone(focusRect);
+        if (baseZone == MagnificationZone::None ||
+            baseZone != focusZone)
+            return 1.0f;
+    }
+    const int baseCenter = IsVertical()
+        ? (baseRect.top + baseRect.bottom) / 2
+        : (baseRect.left + baseRect.right) / 2;
+    return snowdesktop::dock_magnification::ScaleForAxisDistance(
+        static_cast<float>(
+            baseCenter -
+            (IsVertical()
+                ? pointer.y : pointer.x)),
+        ItemPitch());
+}
+
+int DockContainer::GetMagnificationAxisShift(
+    const RECT& baseRect, const RECT& focusRect,
+    POINT pointer) const
+{
+    if (!app_ || IsRectEmpty(&focusRect))
+        return 0;
+    if (IsEdgeAttached())
+    {
+        const MagnificationZone baseZone =
+            GetMagnificationZone(baseRect);
+        const MagnificationZone focusZone =
+            GetMagnificationZone(focusRect);
+        if (baseZone == MagnificationZone::None ||
+            baseZone != focusZone)
+            return 0;
+
+        const std::vector<RECT> zoneRects =
+            baseZone == MagnificationZone::Leading
+            ? GetLeadingMagnificationRects()
+            : GetTrailingMagnificationRects();
+        const auto baseIt = std::find_if(
+            zoneRects.begin(), zoneRects.end(),
+            [&](const RECT& candidate) {
+                return EqualRect(&candidate, &baseRect) != FALSE;
+            });
+        if (baseIt == zoneRects.end())
+            return 0;
+
+        const int pointerAxis =
+            IsVertical() ? pointer.y : pointer.x;
+        std::vector<float> scales;
+        scales.reserve(zoneRects.size());
+        for (const RECT& candidate : zoneRects)
+        {
+            const int candidateCenter = IsVertical()
+                ? (candidate.top + candidate.bottom) / 2
+                : (candidate.left + candidate.right) / 2;
+            scales.push_back(
+                snowdesktop::dock_magnification::
+                    ScaleForAxisDistance(
+                        static_cast<float>(
+                            candidateCenter -
+                            pointerAxis),
+                        ItemPitch()));
+        }
+        return snowdesktop::dock_magnification::PackedAxisShift(
+            scales,
+            static_cast<size_t>(
+                std::distance(zoneRects.begin(), baseIt)),
+            ItemIconSize(),
+            baseZone == MagnificationZone::Leading);
+    }
+    const int baseCenter = IsVertical()
+        ? (baseRect.top + baseRect.bottom) / 2
+        : (baseRect.left + baseRect.right) / 2;
+    return snowdesktop::dock_magnification::AxisShiftForDistance(
+        baseCenter -
+            (IsVertical()
+                ? pointer.y : pointer.x),
+        ItemPitch(), ItemIconSize());
+}
+
+RECT DockContainer::GetElementVisualRect(
+    RECT baseRect, POINT pointer) const
+{
+    if (!app_)
+        return baseRect;
+    const RECT focus = ResolveMagnificationFocusRect(pointer);
+    return snowdesktop::dock_magnification::MagnifyRect(
+        baseRect, app_->dockSettings_.position,
+        GetMagnificationScale(
+            baseRect, focus, pointer),
+        ItemIconSize(),
+        GetMagnificationAxisShift(
+            baseRect, focus, pointer));
+}
+
+RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
+{
+    RECT panel = GetBounds();
+    if (!app_ || app_->dragSession_.IsActive())
+        return panel;
+
+    const RECT focus = ResolveMagnificationFocusRect(pointer);
+    if (IsRectEmpty(&focus))
+        return panel;
+
+    for (const RECT& candidate : GetElementBaseRects())
+    {
+        const RECT visual = snowdesktop::dock_magnification::MagnifyRect(
+            candidate, app_->dockSettings_.position,
+            GetMagnificationScale(
+                candidate, focus, pointer),
+            ItemIconSize(),
+            GetMagnificationAxisShift(
+                candidate, focus, pointer));
+        panel = snowdesktop::dock_magnification::
+            ExtendPanelAlongDockAxis(
+                panel, visual, app_->dockSettings_.position,
+                ScaledSpacing() / 2);
+    }
+    return panel;
+}
+
+bool DockContainer::IsFocusedElementRect(
+    const RECT& baseRect, POINT pointer) const
+{
+    const RECT focus = ResolveMagnificationFocusRect(pointer);
+    if (IsRectEmpty(&focus))
+        return PtInRect(&baseRect, pointer) != FALSE;
+    if (EqualRect(&baseRect, &focus) == FALSE)
+        return false;
+    const RECT visualRect = GetElementVisualRect(baseRect, pointer);
+    return PtInRect(&visualRect, pointer) != FALSE;
+}
+
+bool DockContainer::ContainsInteractivePoint(POINT pt) const
+{
+    const RECT bounds = GetInteractiveBounds();
+    return PtInRect(&bounds, pt) != FALSE;
+}
+
+RECT DockContainer::GetInteractiveBounds() const
+{
+    const RECT bounds = GetBounds();
+    if (!app_ || app_->dragSession_.IsActive())
+        return bounds;
+    return snowdesktop::dock_magnification::ExpandInteractionBounds(
+        bounds, app_->dockSettings_.position, ItemIconSize());
+}
+
 RECT DockContainer::GetScrollViewport(const RECT& bounds) const
 {
     RECT viewport = bounds;
@@ -399,7 +771,13 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
 
 bool DockContainer::IsPointInScrollViewport(POINT point) const
 {
-    const RECT viewport = GetScrollViewport(GetBounds());
+    RECT viewport = GetScrollViewport(GetBounds());
+    if (app_ && !app_->dragSession_.IsActive())
+    {
+        viewport = snowdesktop::dock_magnification::
+            ExpandPerpendicularBounds(viewport,
+                app_->dockSettings_.position, ItemIconSize());
+    }
     return PtInRect(&viewport, point) != FALSE;
 }
 
@@ -615,9 +993,8 @@ void DockContainer::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
 
 void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
-    (void)mousePt;
     if (!context) return;
-    RECT bounds = GetBounds();
+    RECT bounds = GetVisualPanelBounds(mousePt);
     PersonalizationSettings p = PersonalizationSettings::DarkPreset();
     if (app_ && app_->settingsWindow_)
         p = app_->settingsWindow_->GetPersonalization();
@@ -692,19 +1069,46 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const bool lt = app_->IsLightContentTheme();
     std::wstring hoveredTitle;
     RECT hoveredBounds{};
+    const RECT magnificationFocus =
+        ResolveMagnificationFocusRect(app_->lastMousePoint_);
+    auto isFocused = [&](const RECT& rect) {
+        return !IsRectEmpty(&magnificationFocus) &&
+            EqualRect(&rect, &magnificationFocus) != FALSE;
+    };
+    auto visualRectFor = [&](const RECT& rect) {
+        return snowdesktop::dock_magnification::MagnifyRect(
+            rect, app_->dockSettings_.position,
+            GetMagnificationScale(
+                rect, magnificationFocus,
+                app_->lastMousePoint_),
+            ItemIconSize(),
+            GetMagnificationAxisShift(
+                rect, magnificationFocus,
+                app_->lastMousePoint_));
+    };
 
     const RECT windowsButton = GetWindowsButtonRect();
     if (!IsRectEmpty(&windowsButton))
     {
-        const bool hovered = PtInRect(&windowsButton, app_->lastMousePoint_) != FALSE;
-        const int backgroundSize = ItemIconSize();
+        const bool hovered = isFocused(windowsButton);
+        const RECT windowsVisual = visualRectFor(windowsButton);
+        const int backgroundSize = std::max(1, static_cast<int>(std::round(
+            ItemIconSize() *
+            GetMagnificationScale(
+                windowsButton,
+                magnificationFocus,
+                app_->lastMousePoint_))));
         RECT background{
-            windowsButton.left + (windowsButton.right - windowsButton.left - backgroundSize) / 2,
-            windowsButton.top + (windowsButton.bottom - windowsButton.top - backgroundSize) / 2,
-            windowsButton.left + (windowsButton.right - windowsButton.left + backgroundSize) / 2,
-            windowsButton.top + (windowsButton.bottom - windowsButton.top + backgroundSize) / 2
+            windowsVisual.left +
+                (windowsVisual.right - windowsVisual.left - backgroundSize) / 2,
+            windowsVisual.top +
+                (windowsVisual.bottom - windowsVisual.top - backgroundSize) / 2,
+            windowsVisual.left +
+                (windowsVisual.right - windowsVisual.left + backgroundSize) / 2,
+            windowsVisual.top +
+                (windowsVisual.bottom - windowsVisual.top + backgroundSize) / 2
         };
-        app_->DrawDockControlBackground(context, background, hovered ? 1 : 0, !lt);
+        app_->DrawDockControlBackground(context, background, 0, !lt);
 
         const float logoSize = std::max(20.0f, backgroundSize * 0.58f);
         const float paneGap = std::max(1.5f, logoSize * 0.09f);
@@ -713,7 +1117,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         const float logoTop = (background.top + background.bottom - logoSize) * 0.5f;
         ComPtr<ID2D1SolidColorBrush> windowsBrush;
         context->CreateSolidColorBrush(
-            D2D1::ColorF(0.0f, 0.47f, 0.84f, hovered ? 1.0f : 0.94f),
+            D2D1::ColorF(0.0f, 0.47f, 0.84f, 0.94f),
             &windowsBrush);
         if (windowsBrush)
         {
@@ -730,110 +1134,332 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         if (hovered && !app_->dragSession_.IsActive())
         {
             hoveredTitle = _LW("app.dock.start_menu");
-            hoveredBounds = windowsButton;
+            hoveredBounds = windowsVisual;
         }
     }
 
-    const RECT scrollViewport = GetScrollViewport(GetBounds());
-    context->PushAxisAlignedClip(
-        D2D1::RectF(static_cast<float>(scrollViewport.left),
-            static_cast<float>(scrollViewport.top),
-            static_cast<float>(scrollViewport.right),
-            static_cast<float>(scrollViewport.bottom)),
-        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const RECT search = GetSearchRect();
+    const int maxScrollOffset = GetMaxScrollOffset(GetBounds());
+    const bool hasOverflow = maxScrollOffset > 0;
+    RECT scrollViewport = GetScrollViewport(GetBounds());
+    if (hasOverflow)
+    {
+        RECT firstScrollable{};
+        RECT lastScrollable{};
+        auto includeScrollable = [&](const RECT& bounds) {
+            if (IsRectEmpty(&bounds))
+                return;
+            if (IsRectEmpty(&firstScrollable))
+                firstScrollable = bounds;
+            lastScrollable = bounds;
+        };
+        for (size_t index = 0;
+            index < fixedCount && index < slots.size(); ++index)
+        {
+            if (slots[index])
+                includeScrollable(slots[index]->GetBounds());
+        }
+        for (const auto& item : runningItems_)
+        {
+            if (item)
+                includeScrollable(item->GetBounds());
+        }
+        for (const auto& item : frequentItems_)
+        {
+            if (item)
+                includeScrollable(item->GetBounds());
+        }
+
+        const MagnificationZone focusZone =
+            GetMagnificationZone(magnificationFocus);
+        const bool scrollWaveControlsViewport =
+            !IsEdgeAttached() ||
+            focusZone == MagnificationZone::Leading;
+        if (scrollWaveControlsViewport &&
+            !IsRectEmpty(&firstScrollable) &&
+            !IsRectEmpty(&lastScrollable))
+        {
+            scrollViewport = snowdesktop::dock_magnification::
+                MoveOverflowViewportWithScrollableVisuals(
+                    scrollViewport, app_->dockSettings_.position,
+                    firstScrollable,
+                    visualRectFor(firstScrollable),
+                    lastScrollable,
+                    visualRectFor(lastScrollable));
+        }
+        else
+        {
+            const RECT leadingVisual =
+                IsRectEmpty(&windowsButton)
+                ? RECT{}
+                : visualRectFor(windowsButton);
+            const RECT trailingVisual =
+                visualRectFor(search);
+            scrollViewport = snowdesktop::dock_magnification::
+                FitOverflowViewportToFixedVisuals(
+                    scrollViewport,
+                    app_->dockSettings_.position,
+                    leadingVisual, trailingVisual,
+                    ScaledSeparatorGap());
+        }
+    }
+    const RECT scrollVisualViewport = snowdesktop::dock_magnification::
+        ExpandPerpendicularBounds(scrollViewport, app_->dockSettings_.position,
+            ItemIconSize());
+    const D2D1_RECT_F scrollVisualViewportF = D2D1::RectF(
+        static_cast<float>(scrollVisualViewport.left),
+        static_cast<float>(scrollVisualViewport.top),
+        static_cast<float>(scrollVisualViewport.right),
+        static_cast<float>(scrollVisualViewport.bottom));
+    bool scrollClipPushed = false;
+    if (hasOverflow)
+    {
+        context->PushAxisAlignedClip(
+            scrollVisualViewportF,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        scrollClipPushed = true;
+    }
+
+    const bool hasLeadingOverflow =
+        hasOverflow && scrollOffset_ > 0;
+    const bool hasTrailingOverflow =
+        hasOverflow && scrollOffset_ < maxScrollOffset;
+    ComPtr<ID2D1LinearGradientBrush> overflowMask;
+    bool overflowMaskPushed = false;
+    if (hasLeadingOverflow || hasTrailingOverflow)
+    {
+        const int viewportExtent = std::max(0, IsVertical()
+            ? static_cast<int>(
+                scrollViewport.bottom - scrollViewport.top)
+            : static_cast<int>(
+                scrollViewport.right - scrollViewport.left));
+        const int fadeLength = std::min(
+            std::clamp(ItemIconSize() / 3, 12, 28),
+            viewportExtent / 2);
+        if (fadeLength > 0 && viewportExtent > 0)
+        {
+            const float fadeFraction =
+                static_cast<float>(fadeLength) /
+                static_cast<float>(viewportExtent);
+            D2D1_GRADIENT_STOP opacityStops[4]{};
+            UINT32 stopCount = 0;
+            opacityStops[stopCount++] = {
+                0.0f,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f,
+                    hasLeadingOverflow ? 0.0f : 1.0f)
+            };
+            if (hasLeadingOverflow)
+            {
+                opacityStops[stopCount++] = {
+                    fadeFraction,
+                    D2D1::ColorF(
+                        1.0f, 1.0f, 1.0f, 1.0f)
+                };
+            }
+            if (hasTrailingOverflow)
+            {
+                opacityStops[stopCount++] = {
+                    1.0f - fadeFraction,
+                    D2D1::ColorF(
+                        1.0f, 1.0f, 1.0f, 1.0f)
+                };
+            }
+            opacityStops[stopCount++] = {
+                1.0f,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f,
+                    hasTrailingOverflow ? 0.0f : 1.0f)
+            };
+
+            ComPtr<ID2D1GradientStopCollection> stopCollection;
+            if (SUCCEEDED(context->CreateGradientStopCollection(
+                    opacityStops, stopCount, D2D1_GAMMA_2_2,
+                    D2D1_EXTEND_MODE_CLAMP, &stopCollection)) &&
+                stopCollection)
+            {
+                const D2D1_POINT_2F start = D2D1::Point2F(
+                    static_cast<float>(scrollViewport.left),
+                    static_cast<float>(scrollViewport.top));
+                const D2D1_POINT_2F end = IsVertical()
+                    ? D2D1::Point2F(
+                        static_cast<float>(scrollViewport.left),
+                        static_cast<float>(scrollViewport.bottom))
+                    : D2D1::Point2F(
+                        static_cast<float>(scrollViewport.right),
+                        static_cast<float>(scrollViewport.top));
+                if (SUCCEEDED(context->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(start, end),
+                        stopCollection.Get(), &overflowMask)) &&
+                    overflowMask)
+                {
+                    context->PushLayer(D2D1::LayerParameters(
+                        scrollVisualViewportF, nullptr,
+                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                        D2D1::Matrix3x2F::Identity(), 1.0f,
+                        overflowMask.Get()), nullptr);
+                    overflowMaskPushed = true;
+                }
+            }
+        }
+    }
     auto isVisibleInViewport = [&](const RECT& rect) {
         RECT intersection{};
         return IntersectRect(&intersection, &rect, &scrollViewport) != FALSE;
     };
-    const bool mouseInScrollViewport =
-        PtInRect(&scrollViewport, app_->lastMousePoint_) != FALSE;
-
-    for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
-    {
-        Item* item = slots[i]->GetItem();
-        if (!item) continue;
-        RECT slotBounds = slots[i]->GetBounds();
-        if (!isVisibleInViewport(slotBounds)) continue;
-        const bool hovered = mouseInScrollViewport &&
-            PtInRect(&slotBounds, app_->lastMousePoint_) != FALSE;
-        item->Draw(context, slotBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
+    auto drawScrollableItem = [&](Item* item, const RECT& itemBounds,
+        bool focusedPass) {
+        if (!item || !isVisibleInViewport(itemBounds))
+            return;
+        const bool hovered = isFocused(itemBounds);
+        if (hovered != focusedPass)
+            return;
+        const RECT visualBounds = visualRectFor(itemBounds);
+        item->Draw(context, visualBounds, item->IsSelected() ? 2 : 0);
         if (hovered && !app_->dragSession_.IsActive())
         {
             hoveredTitle = item->GetTitle();
-            hoveredBounds = slotBounds;
+            hoveredBounds = visualBounds;
         }
-    }
+    };
+    auto drawScrollablePass = [&](bool focusedPass) {
+        for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
+            drawScrollableItem(
+                slots[i]->GetItem(), slots[i]->GetBounds(), focusedPass);
+        for (const auto& item : runningItems_)
+            if (item)
+                drawScrollableItem(
+                    item.get(), item->GetBounds(), focusedPass);
+        for (const auto& item : frequentItems_)
+            if (item)
+                drawScrollableItem(
+                    item.get(), item->GetBounds(), focusedPass);
+    };
+    drawScrollablePass(false);
+    drawScrollablePass(true);
 
-    for (const auto& item : runningItems_)
-    {
-        if (!item) continue;
-        const RECT itemBounds = item->GetBounds();
-        if (!isVisibleInViewport(itemBounds)) continue;
-        const bool hovered = mouseInScrollViewport &&
-            PtInRect(&itemBounds, app_->lastMousePoint_) != FALSE;
-        item->Draw(context, itemBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
-        if (hovered && !app_->dragSession_.IsActive())
-        {
-            hoveredTitle = item->GetTitle();
-            hoveredBounds = itemBounds;
-        }
-    }
-
-    for (const auto& item : frequentItems_)
-    {
-        if (!item) continue;
-        const RECT itemBounds = item->GetBounds();
-        if (!isVisibleInViewport(itemBounds)) continue;
-        const bool hovered = mouseInScrollViewport &&
-            PtInRect(&itemBounds, app_->lastMousePoint_) != FALSE;
-        item->Draw(context, itemBounds, item->IsSelected() ? 2 : (hovered ? 1 : 0));
-        if (hovered && !app_->dragSession_.IsActive())
-        {
-            hoveredTitle = item->GetTitle();
-            hoveredBounds = itemBounds;
-        }
-    }
-
-    auto drawSeparatorBefore = [&](const RECT& followingBounds) {
+    auto drawSeparatorBetween = [&](
+        const RECT& precedingBounds,
+        const RECT& followingBounds) {
+        if (IsRectEmpty(&precedingBounds) ||
+            IsRectEmpty(&followingBounds))
+            return;
+        const RECT precedingVisual =
+            visualRectFor(precedingBounds);
+        const RECT followingVisual = visualRectFor(followingBounds);
         ComPtr<ID2D1SolidColorBrush> separatorBrush;
         context->CreateSolidColorBrush(
             lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f), &separatorBrush);
         if (!separatorBrush) return;
         if (IsVertical())
         {
-            const float y = static_cast<float>(followingBounds.top) -
-                static_cast<float>(ScaledSeparatorGap()) * 0.5f;
-            const float centerX = (followingBounds.left + followingBounds.right) / 2.0f;
+            const float y =
+                (static_cast<float>(
+                    precedingVisual.bottom) +
+                    static_cast<float>(
+                        followingVisual.top)) *
+                0.5f;
+            const float centerX =
+                (followingBounds.left + followingBounds.right) / 2.0f;
             context->DrawLine(D2D1::Point2F(centerX - 14.0f, y),
                 D2D1::Point2F(centerX + 14.0f, y), separatorBrush.Get(), 1.0f);
         }
         else
         {
-            const float x = static_cast<float>(followingBounds.left) -
-                static_cast<float>(ScaledSeparatorGap()) * 0.5f;
-            const float centerY = (followingBounds.top + followingBounds.bottom) / 2.0f;
+            const float x =
+                (static_cast<float>(
+                    precedingVisual.right) +
+                    static_cast<float>(
+                        followingVisual.left)) *
+                0.5f;
+            const float centerY =
+                (followingBounds.top + followingBounds.bottom) / 2.0f;
             context->DrawLine(D2D1::Point2F(x, centerY - 14.0f),
                 D2D1::Point2F(x, centerY + 14.0f), separatorBrush.Get(), 1.0f);
         }
     };
 
-    RECT search = GetSearchRect();
     if (fixedCount > 0 && !runningItems_.empty())
-        drawSeparatorBefore(runningItems_.front()->GetBounds());
+        drawSeparatorBetween(
+            slots[fixedCount - 1]->GetBounds(),
+            runningItems_.front()->GetBounds());
     if ((fixedCount > 0 || !runningItems_.empty()) && !frequentItems_.empty())
-        drawSeparatorBefore(frequentItems_.front()->GetBounds());
+    {
+        const RECT preceding =
+            !runningItems_.empty()
+                ? runningItems_.back()->GetBounds()
+                : slots[fixedCount - 1]->GetBounds();
+        drawSeparatorBetween(
+            preceding,
+            frequentItems_.front()->GetBounds());
+    }
 
-    context->PopAxisAlignedClip();
+    if (overflowMaskPushed)
+        context->PopLayer();
+    if (scrollClipPushed)
+        context->PopAxisAlignedClip();
 
     const bool hasScrollableItems = fixedCount > 0 ||
         !runningItems_.empty() || !frequentItems_.empty();
     if (!IsRectEmpty(&windowsButton))
     {
-        RECT following = hasScrollableItems ? scrollViewport : search;
-        drawSeparatorBefore(following);
+        RECT following = search;
+        if (fixedCount > 0 && !slots.empty() && slots[0])
+            following = slots[0]->GetBounds();
+        else if (!runningItems_.empty() && runningItems_.front())
+            following = runningItems_.front()->GetBounds();
+        else if (!frequentItems_.empty() && frequentItems_.front())
+            following = frequentItems_.front()->GetBounds();
+        drawSeparatorBetween(
+            windowsButton, following);
     }
     if (hasScrollableItems)
-        drawSeparatorBefore(search);
+    {
+        const RECT followingVisual = visualRectFor(search);
+        ComPtr<ID2D1SolidColorBrush> separatorBrush;
+        context->CreateSolidColorBrush(
+            lt ? D2D1::ColorF(
+                0.0f, 0.0f, 0.0f, 0.18f)
+               : D2D1::ColorF(
+                1.0f, 1.0f, 1.0f, 0.28f),
+            &separatorBrush);
+        if (separatorBrush)
+        {
+            const float halfSeparatorGap =
+                static_cast<float>(
+                    ScaledSeparatorGap()) * 0.5f;
+            if (IsVertical())
+            {
+                const float y =
+                    static_cast<float>(
+                        followingVisual.top) -
+                    halfSeparatorGap;
+                const float centerX =
+                    (search.left + search.right) /
+                    2.0f;
+                context->DrawLine(
+                    D2D1::Point2F(
+                        centerX - 14.0f, y),
+                    D2D1::Point2F(
+                        centerX + 14.0f, y),
+                    separatorBrush.Get(), 1.0f);
+            }
+            else
+            {
+                const float x =
+                    static_cast<float>(
+                        followingVisual.left) -
+                    halfSeparatorGap;
+                const float centerY =
+                    (search.top + search.bottom) /
+                    2.0f;
+                context->DrawLine(
+                    D2D1::Point2F(
+                        x, centerY - 14.0f),
+                    D2D1::Point2F(
+                        x, centerY + 14.0f),
+                    separatorBrush.Get(), 1.0f);
+            }
+        }
+    }
 
     if (hasRecycleBin && fixedCount < slots.size())
     {
@@ -841,34 +1467,43 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         if (recycleBin)
         {
             const RECT recycleBounds = slots[fixedCount]->GetBounds();
-            const bool hovered = PtInRect(
-                &recycleBounds, app_->lastMousePoint_) != FALSE;
-            recycleBin->Draw(context, recycleBounds,
-                recycleBin->IsSelected() ? 2 : (hovered ? 1 : 0));
+            const bool hovered = isFocused(recycleBounds);
+            const RECT recycleVisual = visualRectFor(recycleBounds);
+            recycleBin->Draw(context, recycleVisual,
+                recycleBin->IsSelected() ? 2 : 0);
             if (hovered && !app_->dragSession_.IsActive())
             {
                 hoveredTitle = recycleBin->GetTitle();
-                hoveredBounds = recycleBounds;
+                hoveredBounds = recycleVisual;
             }
         }
     }
 
-    const bool searchHovered = PtInRect(&search, app_->lastMousePoint_) != FALSE;
-    const int backgroundSize = ItemIconSize();
+    const bool searchHovered = isFocused(search);
+    const RECT searchVisual = visualRectFor(search);
+    const int backgroundSize = std::max(1, static_cast<int>(std::round(
+        ItemIconSize() *
+        GetMagnificationScale(
+            search, magnificationFocus,
+            app_->lastMousePoint_))));
     const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
     RECT searchBackground{
-        search.left + (search.right - search.left - backgroundSize) / 2,
-        search.top + (search.bottom - search.top - backgroundSize) / 2,
-        search.left + (search.right - search.left + backgroundSize) / 2,
-        search.top + (search.bottom - search.top + backgroundSize) / 2
+        searchVisual.left +
+            (searchVisual.right - searchVisual.left - backgroundSize) / 2,
+        searchVisual.top +
+            (searchVisual.bottom - searchVisual.top - backgroundSize) / 2,
+        searchVisual.left +
+            (searchVisual.right - searchVisual.left + backgroundSize) / 2,
+        searchVisual.top +
+            (searchVisual.bottom - searchVisual.top + backgroundSize) / 2
     };
     app_->DrawDockControlBackground(
-        context, searchBackground, searchHovered ? 1 : 0, !lt);
+        context, searchBackground, 0, !lt);
 
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(
-        lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, searchHovered ? 0.88f : 0.72f)
-           : D2D1::ColorF(1.0f, 1.0f, 1.0f, searchHovered ? 1.0f : 0.92f), &brush);
+        lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
+           : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f), &brush);
     if (brush)
     {
         ComPtr<ID2D1Factory> factory;
@@ -899,7 +1534,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (searchHovered && !app_->dragSession_.IsActive())
     {
         hoveredTitle = _LW("app.dock.quick_search");
-        hoveredBounds = search;
+        hoveredBounds = searchVisual;
     }
 
     if (!hoveredTitle.empty() && app_->dwriteFactory_)
@@ -1144,13 +1779,13 @@ RECT DockContainer::GetWindowsButtonRect() const
 bool DockContainer::IsWindowsButtonPoint(POINT pt) const
 {
     const RECT rect = GetWindowsButtonRect();
-    return !IsRectEmpty(&rect) && PtInRect(&rect, pt) != FALSE;
+    return !IsRectEmpty(&rect) && IsFocusedElementRect(rect, pt);
 }
 
 bool DockContainer::IsSearchPoint(POINT pt) const
 {
     RECT rect = GetSearchRect();
-    return PtInRect(&rect, pt) != FALSE;
+    return IsFocusedElementRect(rect, pt);
 }
 
 DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
@@ -1163,14 +1798,14 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
         for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
         {
             RECT bounds = slots[i]->GetBounds();
-            if (PtInRect(&bounds, pt))
+            if (IsFocusedElementRect(bounds, pt))
                 return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
         }
     }
     if (fixedCount < count && fixedCount < slots.size())
     {
         RECT bounds = slots[fixedCount]->GetBounds();
-        if (PtInRect(&bounds, pt))
+        if (IsFocusedElementRect(bounds, pt))
             return dynamic_cast<DockEntryItem*>(slots[fixedCount]->GetItem());
     }
     return nullptr;
@@ -1184,7 +1819,7 @@ DockRunningItem* DockContainer::RunningItemAtPoint(POINT pt) const
     {
         if (!item) continue;
         RECT bounds = item->GetBounds();
-        if (PtInRect(&bounds, pt)) return item.get();
+        if (IsFocusedElementRect(bounds, pt)) return item.get();
     }
     return nullptr;
 }
@@ -1197,7 +1832,7 @@ DockFrequentItem* DockContainer::FrequentItemAtPoint(POINT pt) const
     {
         if (!item) continue;
         RECT bounds = item->GetBounds();
-        if (PtInRect(&bounds, pt)) return item.get();
+        if (IsFocusedElementRect(bounds, pt)) return item.get();
     }
     return nullptr;
 }

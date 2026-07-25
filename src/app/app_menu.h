@@ -818,10 +818,27 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
  */
 inline void DesktopApp::ShowItemContextMenu(
     POINT screenPoint, int itemIndex, bool dockFrequentItem,
-    bool keepQuickNavigationOpen)
+    bool keepQuickNavigationOpen,
+    std::optional<RECT> dockRenameAnchor,
+    std::optional<size_t> dockMappingEntryIndex)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
     ClearMenuIcons();
+
+    const bool dockMapping =
+        dockMappingEntryIndex &&
+        *dockMappingEntryIndex < dockEntries_.size() &&
+        snowdesktop::
+            desktop_item_reference_migration::
+                IsDockMapping(
+                    dockEntries_[*dockMappingEntryIndex]) &&
+        snowdesktop::
+            desktop_item_reference_migration::
+                KeysEqual(
+                    dockEntries_[*dockMappingEntryIndex].
+                        reference,
+                    items_[static_cast<size_t>(
+                        itemIndex)].layoutKey);
 
     int selectedCount = 0;
     for (const auto& item : items_) if (item.selected) ++selectedCount;
@@ -847,7 +864,14 @@ inline void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCutCommand, _LW("app.menu.cut"));
     AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCopyCommand, _LW("app.menu.copy"));
-    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextDeleteCommand, _LW("app.settings.delete"));
+    AppendMenuW(menu,
+        (canFile || dockMapping)
+            ? MF_STRING
+            : MF_STRING | MF_GRAYED,
+        kContextDeleteCommand,
+        dockMapping
+            ? _LW("app.dock.remove_mapping")
+            : _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFrequentItem)
@@ -900,7 +924,7 @@ inline void DesktopApp::ShowItemContextMenu(
             BeginQuickNavigationDesktopItemRename(
                 static_cast<size_t>(itemIndex));
         else
-            BeginRenameSelected();
+            BeginRenameSelected(dockRenameAnchor);
         break;
     case kContextCutCommand:
     case kContextCopyCommand:
@@ -959,6 +983,12 @@ inline void DesktopApp::ShowItemContextMenu(
     }
     case kContextDeleteCommand:
     {
+        if (dockMapping &&
+            RemoveDockMappingAt(
+                *dockMappingEntryIndex))
+        {
+            break;
+        }
         cutPaths_.clear();
         for (const auto& item : items_)
         {
@@ -983,7 +1013,11 @@ inline void DesktopApp::ShowItemContextMenu(
     case kContextMoreCommand:
         ShowShellContextMenu(
             screenPoint, itemIndex,
-            keepQuickNavigationOpen);
+            keepQuickNavigationOpen,
+            dockRenameAnchor,
+            dockMapping
+                ? dockMappingEntryIndex
+                : std::nullopt);
         break;
     case kContextDockRemoveFrequentItem:
     {
@@ -1012,7 +1046,9 @@ inline void DesktopApp::ShowItemContextMenu(
  */
 inline void DesktopApp::ShowShellContextMenu(
     POINT screenPoint, int itemIndex,
-    bool keepQuickNavigationOpen)
+    bool keepQuickNavigationOpen,
+    std::optional<RECT> dockRenameAnchor,
+    std::optional<size_t> dockMappingEntryIndex)
 {
     std::vector<LPCITEMIDLIST> pidls;
     if (itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size())
@@ -1058,11 +1094,16 @@ inline void DesktopApp::ShowShellContextMenu(
         UINT commandOffset = cmd - kFirstCmd;
         wchar_t menuText[128]{};
         bool renameCommand = IsShellRenameCommand(ctxMenu.Get(), commandOffset);
+        bool deleteCommand = IsShellDeleteCommand(
+            ctxMenu.Get(), commandOffset);
         if (!renameCommand &&
             GetMenuStringW(menu, cmd, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
         {
             renameCommand = StrStrIW(menuText, L"重命名") != nullptr || // l10n-allow: match Chinese Windows shell verb
                 StrStrIW(menuText, L"Rename") != nullptr;
+            deleteCommand = deleteCommand ||
+                StrStrIW(menuText, L"删除") != nullptr || // l10n-allow: match Chinese Windows shell verb
+                StrStrIW(menuText, L"Delete") != nullptr;
         }
 
         if (renameCommand)
@@ -1074,7 +1115,17 @@ inline void DesktopApp::ShowShellContextMenu(
                     static_cast<size_t>(
                         itemIndex));
             else
-                BeginRenameSelected();
+                BeginRenameSelected(dockRenameAnchor);
+            return;
+        }
+
+        if (deleteCommand &&
+            dockMappingEntryIndex &&
+            RemoveDockMappingAt(
+                *dockMappingEntryIndex))
+        {
+            DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
             return;
         }
 

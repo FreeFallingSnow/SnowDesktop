@@ -126,12 +126,23 @@ public:
     DockFrequentItem* FrequentItemAtPoint(POINT pt) const;
     RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
+    RECT GetInteractiveBounds() const;
+    bool ContainsInteractivePoint(POINT pt) const;
+    RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
+    RECT GetVisualPanelBounds(POINT pointer) const;
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
     void DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const;
 
 private:
+    enum class MagnificationZone
+    {
+        None,
+        Leading,
+        Trailing,
+    };
+
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     size_t SortableEntryCount() const;
@@ -140,6 +151,19 @@ private:
     int ScaledSpacing() const;
     int ScaledSeparatorGap() const;
     int EdgeMargin() const;
+    std::vector<RECT> GetLeadingMagnificationRects() const;
+    std::vector<RECT> GetTrailingMagnificationRects() const;
+    MagnificationZone GetMagnificationZone(
+        const RECT& baseRect) const;
+    std::vector<RECT> GetElementBaseRects() const;
+    RECT ResolveMagnificationFocusRect(POINT pointer) const;
+    float GetMagnificationScale(
+        const RECT& baseRect, const RECT& focusRect,
+        POINT pointer) const;
+    int GetMagnificationAxisShift(
+        const RECT& baseRect, const RECT& focusRect,
+        POINT pointer) const;
+    bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
     int GetMaxScrollOffset(const RECT& bounds) const;
     bool IsPointInScrollViewport(POINT point) const;

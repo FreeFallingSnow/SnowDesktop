@@ -565,6 +565,8 @@ inline void DesktopApp::EndDragSession()
     cachedDropPreviewPoint_ = { -1, -1 };
     cachedDropPreviewTarget_ = nullptr;
     cachedDropPreviewSlot_ = nullptr;
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 /**
@@ -1631,25 +1633,10 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     const bool pointInDock = pointDock != nullptr;
     dockPressedContainer_ = pointDock;
     // Dock is an app switcher: do not move focus away from the current app before
-    // deciding whether this click should minimize or restore it.
-    if (pointInDock)
-    {
-        const HWND foreground = GetForegroundWindow();
-        const DWORD elapsed = GetTickCount() - dockPressedForegroundTick_;
-        const DWORD snapshotLifetime = std::max<DWORD>(1000, GetDoubleClickTime() * 2);
-        if (!dockPressedForegroundWindow_ || elapsed > snapshotLifetime ||
-            !IsDockDesktopActivationWindow(foreground))
-        {
-            dockPressedForegroundWindow_ = foreground;
-            dockPressedForegroundTick_ = GetTickCount();
-        }
-    }
-    else
-    {
-        dockPressedForegroundWindow_ = nullptr;
-        dockPressedForegroundTick_ = 0;
+    // deciding whether this click should minimize or restore it. The decision
+    // itself is captured from the indicator state during hit testing below.
+    if (!pointInDock)
         FocusDesktopInputWindow();
-    }
     if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
         widgetEngine_->BlurHostInput(false);
     mouseDown_ = true;
@@ -1743,15 +1730,15 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
+    dockPressedWindowAction_ =
+        snowdesktop::dock_window_rules::DockClickAction::None;
+    dockPressedTargetWindow_ = nullptr;
     if (DockContainer* dock = pointDock)
     {
-        RECT dockBounds = dock->GetBounds();
-        if (PtInRect(&dockBounds, pt))
+        if (dock->ContainsInteractivePoint(pt))
         {
             if (dock->IsWindowsButtonPoint(pt))
             {
-                dockPressedForegroundWindow_ = nullptr;
-                dockPressedForegroundTick_ = 0;
                 mouseDown_ = false;
                 ToggleWindowsStartMenu();
                 InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1759,8 +1746,6 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             if (dock->IsSearchPoint(pt))
             {
-                dockPressedForegroundWindow_ = nullptr;
-                dockPressedForegroundTick_ = 0;
                 mouseDown_ = false;
                 OpenQuickNavigation();
                 return;
@@ -1770,6 +1755,30 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (!ctrl) ClearSelection();
                 dockItem->SetSelected(true);
                 dockPressedEntry_ = dockItem->GetEntryIndex();
+                if (dockPressedEntry_ < dockEntries_.size() &&
+                    dockEntries_[dockPressedEntry_].type ==
+                        DockEntryType::DesktopItem)
+                {
+                    const size_t itemIndex = FindItemIndexByKey(
+                        dockEntries_[dockPressedEntry_].reference);
+                    if (itemIndex < items_.size())
+                    {
+                        const DockWindowVisualState state =
+                            GetDockWindowVisualState(itemIndex);
+                        dockPressedWindowAction_ =
+                            snowdesktop::dock_window_rules::
+                                ResolveDockClickAction(
+                                    state != DockWindowVisualState::Closed,
+                                    state == DockWindowVisualState::Minimized,
+                                    state == DockWindowVisualState::Foreground);
+                        const auto running = dockRunningWindows_.find(
+                            DockItemWindowKey(items_[itemIndex]));
+                        if (running != dockRunningWindows_.end() &&
+                            IsWindow(running->second.window))
+                            dockPressedTargetWindow_ =
+                                running->second.window;
+                    }
+                }
                 mouseDownHit_ = dockItem;
                 SetCapture(hwnd_);
                 InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1780,6 +1789,24 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (!ctrl) ClearSelection();
                 runningItem->SetSelected(true);
                 dockPressedRunningAppKey_ = runningItem->GetIdentityKey();
+                const auto running = std::find_if(
+                    dockUnpinnedRunningApps_.begin(),
+                    dockUnpinnedRunningApps_.end(),
+                    [&](const DockRunningAppInfo& app) {
+                        return app.identityKey ==
+                            dockPressedRunningAppKey_;
+                    });
+                if (running != dockUnpinnedRunningApps_.end())
+                {
+                    dockPressedWindowAction_ =
+                        snowdesktop::dock_window_rules::
+                            ResolveDockClickAction(
+                                true, running->minimized,
+                                running->foreground);
+                    if (IsWindow(running->window))
+                        dockPressedTargetWindow_ =
+                            running->window;
+                }
                 mouseDownHit_ = runningItem;
                 SetCapture(hwnd_);
                 InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1790,14 +1817,31 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (!ctrl) ClearSelection();
                 frequentItem->SetSelected(true);
                 dockPressedFrequentItem_ = frequentItem->GetItemIndex();
+                if (dockPressedFrequentItem_ < items_.size())
+                {
+                    const DockWindowVisualState state =
+                        GetDockWindowVisualState(
+                            dockPressedFrequentItem_);
+                    dockPressedWindowAction_ =
+                        snowdesktop::dock_window_rules::
+                            ResolveDockClickAction(
+                                state != DockWindowVisualState::Closed,
+                                state == DockWindowVisualState::Minimized,
+                                state == DockWindowVisualState::Foreground);
+                    const auto running = dockRunningWindows_.find(
+                        DockItemWindowKey(
+                            items_[dockPressedFrequentItem_]));
+                    if (running != dockRunningWindows_.end() &&
+                        IsWindow(running->second.window))
+                        dockPressedTargetWindow_ =
+                            running->second.window;
+                }
                 mouseDownHit_ = frequentItem;
                 SetCapture(hwnd_);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
             if (!ctrl) ClearSelection();
-            dockPressedForegroundWindow_ = nullptr;
-            dockPressedForegroundTick_ = 0;
             mouseDown_ = false;
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
@@ -2308,10 +2352,17 @@ inline void DesktopApp::OnMiddleButtonUp(WPARAM wp, LPARAM lp)
 inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 {
     (void)wp;
+    TRACKMOUSEEVENT mouseTrack{};
+    mouseTrack.cbSize = sizeof(mouseTrack);
+    mouseTrack.dwFlags = TME_LEAVE;
+    mouseTrack.hwndTrack = hwnd_;
+    TrackMouseEvent(&mouseTrack);
+
     POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
     UpdateSystemTaskbarRevealGuard();
+    UpdateDockWindowPreview(current);
 
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
@@ -2330,7 +2381,13 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         }
     }
 
-    if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected())
+    const bool pressedDockEntryWithoutSelection =
+        mouseDownHit_ &&
+        dynamic_cast<DockEntryItem*>(mouseDownHit_) &&
+        dockPressedEntry_ < dockEntries_.size();
+    if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ &&
+        (mouseDownHit_->IsSelected() ||
+            pressedDockEntryWithoutSelection))
     {
         if (dynamic_cast<DockFrequentItem*>(mouseDownHit_) ||
             dynamic_cast<DockRunningItem*>(mouseDownHit_))
@@ -2346,11 +2403,17 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         {
             Container* source = mouseDownHit_->GetContainer();
             std::vector<Item*> sourceItems = source ? source->GetSelectedItems() : std::vector<Item*>{};
+            if (sourceItems.empty() &&
+                pressedDockEntryWithoutSelection)
+            {
+                sourceItems.push_back(mouseDownHit_);
+            }
             DragSourceList sourceList = BuildDragSourceList(sourceItems, source);
             if (sourceItems.empty())
             {
                 return;
             }
+            ClearDockBackdropForDragTransition(oldMouse, current);
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
             // From this point the drag session owns the logical interaction.
@@ -2837,20 +2900,19 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
             if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
-                RECT dockBounds = dock->GetBounds();
-                if (PtInRect(&dockBounds, point))
+                if (dock->ContainsInteractivePoint(point))
                 {
                     if (DockEntryItem* entry = dock->EntryAtPoint(point))
-                        return { dock, entry, 8, entry->GetEntryIndex(), false };
+                        return { dock, entry, 8, entry->GetEntryIndex(), true };
                     if (DockRunningItem* item = dock->RunningItemAtPoint(point))
-                        return { dock, item, 12, item->GetRunningIndex(), false };
+                        return { dock, item, 12, item->GetRunningIndex(), true };
                     if (DockFrequentItem* item = dock->FrequentItemAtPoint(point))
-                        return { dock, item, 11, item->GetItemIndex(), false };
+                        return { dock, item, 11, item->GetItemIndex(), true };
                     if (dock->IsWindowsButtonPoint(point))
-                        return { dock, dock, 13, 0, false };
+                        return { dock, dock, 13, 0, true };
                     if (dock->IsSearchPoint(point))
-                        return { dock, dock, 9, 0, false };
-                    return { dock, dock, 10, 0, false };
+                        return { dock, dock, 9, 0, true };
+                    return { dock, dock, 10, 0, true };
                 }
             }
 
@@ -2934,8 +2996,8 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const MouseHoverVisual newVisual = findHoverVisual(current);
         const bool hoverChanged = !sameHoverVisual(oldVisual, newVisual);
         const bool dockHoverChanged = hoverChanged &&
-            ((oldVisual.kind >= 8 && oldVisual.kind <= 12) ||
-             (newVisual.kind >= 8 && newVisual.kind <= 12));
+            ((oldVisual.kind >= 8 && oldVisual.kind <= 13) ||
+             (newVisual.kind >= 8 && newVisual.kind <= 13));
         const bool needsContinuousHoverPaint =
             (oldVisual.owner && oldVisual.continuous) ||
             (newVisual.owner && newVisual.continuous);
@@ -2956,6 +3018,51 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     }
 }
 
+inline void DesktopApp::OnMouseLeave()
+{
+    POINT cursorScreen{};
+    GetCursorPos(&cursorScreen);
+    const bool pointerStillInteractsWithDockPreview =
+        dockWindowPreview_ &&
+        dockWindowPreview_->ContainsInteractionPoint(cursorScreen);
+    if (pointerStillInteractsWithDockPreview)
+        dockWindowPreview_->ScheduleHide();
+    else
+        HideDockWindowPreview();
+    navHoverSide_ = 0;
+    navAutoFlipDir_ = 0;
+    navAutoFlipTick_ = 0;
+
+    popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+    popupDwellTick_ = 0;
+    collectionGroupTabDwellWidgetIndex_ =
+        static_cast<size_t>(-1);
+    collectionGroupTabDwellId_.clear();
+    collectionGroupTabDwellTick_ = 0;
+    dockHandoffDwellIndex_ = static_cast<size_t>(-1);
+    dockHandoffDwellStartTick_ = 0;
+    dockHandoffDwellReady_ = false;
+    if (hwnd_)
+    {
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        KillTimer(hwnd_, kDockHandoffDwellTimerId);
+    }
+
+    // Capture-based dragging continues to receive coordinates outside the
+    // window. Preserve that pointer state, but clear passive hover immediately.
+    // The preview owns its independent screen-space transition triangle, so
+    // Dock magnification can still be reset while the preview stays reachable.
+    if (GetCapture() != hwnd_ && !mouseDown_ &&
+        !dragSession_.IsActive() &&
+        widgetAction_ == WidgetAction::None)
+    {
+        lastMousePoint_ = { LONG_MIN, LONG_MIN };
+    }
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 inline bool DesktopApp::HandleDockClickRelease(POINT point)
 {
     DockContainer* dock = dockPressedContainer_;
@@ -2968,6 +3075,21 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     std::wstring runningAppKey;
     const size_t pressedEntryIndex = dockPressedEntry_;
     const size_t pressedFrequentItemIndex = dockPressedFrequentItem_;
+    const auto pressedWindowAction = dockPressedWindowAction_;
+    const HWND pressedTargetWindow = dockPressedTargetWindow_;
+    std::optional<RECT> pressedAnchorScreen;
+    if (mouseDownHit_ && hwnd_)
+    {
+        RECT anchor = dock->GetElementVisualRect(
+            mouseDownHit_->GetBounds(), mouseDownPoint_);
+        if (!IsRectEmpty(&anchor))
+        {
+            MapWindowPoints(
+                hwnd_, nullptr,
+                reinterpret_cast<POINT*>(&anchor), 2);
+            pressedAnchorScreen = anchor;
+        }
+    }
     if (dockPressedEntry_ < dockEntries_.size())
     {
         DockEntryItem* hit = dock->EntryAtPoint(point);
@@ -3018,11 +3140,9 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
         appItemIndex = FindItemIndexByKey(reference);
     bool waitForDoubleClick = false;
     if (appItemIndex < items_.size())
-    {
-        RefreshDockRunningWindows(false);
         waitForDoubleClick =
-            GetDockWindowVisualState(appItemIndex) == DockWindowVisualState::Closed;
-    }
+            pressedWindowAction ==
+                snowdesktop::dock_window_rules::DockClickAction::Launch;
 
     // 在激活外部应用前完整结束本次桌面交互，避免鼠标捕获、选择高亮或
     // 拖拽预览跨到新前台窗口后仍残留。
@@ -3038,6 +3158,9 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
+    dockPressedWindowAction_ =
+        snowdesktop::dock_window_rules::DockClickAction::None;
+    dockPressedTargetWindow_ = nullptr;
     dockPressedContainer_ = nullptr;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
@@ -3071,23 +3194,31 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
                 return app.identityKey == runningAppKey;
             });
         if (running != dockUnpinnedRunningApps_.end())
-            ActivateOrToggleDockWindow(running->window);
+            ActivateOrToggleDockWindow(
+                running->window, pressedWindowAction,
+                pressedTargetWindow,
+                pressedAnchorScreen);
     }
     else if (frequentItemIndex < items_.size())
     {
-        ActivateOrToggleDockItem(frequentItemIndex);
+        ActivateOrToggleDockItem(
+            frequentItemIndex, pressedWindowAction,
+            pressedTargetWindow,
+            pressedAnchorScreen);
     }
     else if (entryType == DockEntryType::Collection)
     {
-        dockPressedForegroundWindow_ = nullptr;
-        dockPressedForegroundTick_ = 0;
         const size_t widgetIndex = FindWidgetIndexById(reference);
         if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, point);
     }
     else
     {
         const size_t itemIndex = FindItemIndexByKey(reference);
-        if (itemIndex < items_.size()) ActivateOrToggleDockItem(itemIndex);
+        if (itemIndex < items_.size())
+            ActivateOrToggleDockItem(
+                itemIndex, pressedWindowAction,
+                pressedTargetWindow,
+                pressedAnchorScreen);
     }
     return true;
 }
@@ -3203,6 +3334,9 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         dockPressedEntry_ = static_cast<size_t>(-1);
         dockPressedFrequentItem_ = static_cast<size_t>(-1);
         dockPressedRunningAppKey_.clear();
+        dockPressedWindowAction_ =
+            snowdesktop::dock_window_rules::DockClickAction::None;
+        dockPressedTargetWindow_ = nullptr;
         dockPressedContainer_ = nullptr;
         if (mouseDownWidgetIndex_ < widgets_.size() &&
             widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
@@ -3285,6 +3419,26 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             Item* targetItem = dragSession_.TargetSlot()->GetItem();
             if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
             {
+                const size_t targetEntryIndex =
+                    dockTarget->GetEntryIndex();
+                if (dynamic_cast<DockContainer*>(
+                        dragSession_.Source()) &&
+                    targetEntryIndex <
+                        dockEntries_.size() &&
+                    IsRecycleBinDockEntry(
+                        dockEntries_[targetEntryIndex]) &&
+                    RemoveDockDragOutItems(
+                        dragSession_.Items()))
+                {
+                    ClearSelection();
+                    EndDragSession();
+                    SaveLayoutSlots();
+                    RebuildContainersAndItems();
+                    LayoutItems();
+                    InvalidateRect(
+                        hwnd_, nullptr, FALSE);
+                    goto cleanup;
+                }
                 if (dockTarget->GetEntryType() == DockEntryType::Collection)
                 {
                     const bool executed = DropItemsIntoDockCollection(
@@ -3403,6 +3557,9 @@ cleanup:
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
+    dockPressedWindowAction_ =
+        snowdesktop::dock_window_rules::DockClickAction::None;
+    dockPressedTargetWindow_ = nullptr;
     dockPressedContainer_ = nullptr;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     ReleaseCapture();
@@ -5782,20 +5939,33 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (entryIndex < dockEntries_.size())
             {
                 ClearSelection();
-                dockEntries_[entryIndex].selected = true;
-                const RECT dockItemBounds = dockItem->GetBounds();
+                dockItem->SetSelected(true);
+                const RECT dockItemBounds = dock->GetElementVisualRect(
+                    dockItem->GetBounds(), pt);
                 if (dockItem->GetEntryType() == DockEntryType::DesktopItem)
                 {
                     size_t itemIndex = FindItemIndexByKey(dockItem->GetReference());
                     if (itemIndex < items_.size())
                     {
-                        items_[itemIndex].selected = true;
+                        items_[itemIndex].selected =
+                            dockItem->IsSelected();
                         items_[itemIndex].bounds = dockItemBounds;
                         InvalidateRect(hwnd_, nullptr, FALSE);
                         if (IsProtectedDesktopIcon(items_[itemIndex]))
-                            ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
+                            ShowShellContextMenu(
+                                screenPt,
+                                static_cast<int>(itemIndex),
+                                false, dockItemBounds);
                         else
-                            ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+                            ShowItemContextMenu(
+                                screenPt,
+                                static_cast<int>(itemIndex),
+                                false, false, dockItemBounds,
+                                dockEntries_[entryIndex].
+                                        keepOnDesktop
+                                    ? std::optional<size_t>(
+                                          entryIndex)
+                                    : std::nullopt);
                     }
                 }
                 else
@@ -5803,10 +5973,13 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
                     size_t widgetIndex = FindWidgetIndexById(dockItem->GetReference());
                     if (widgetIndex < widgets_.size())
                     {
-                        widgets_[widgetIndex].selected = true;
+                        widgets_[widgetIndex].selected =
+                            dockItem->IsSelected();
                         widgets_[widgetIndex].bounds = dockItemBounds;
                         InvalidateRect(hwnd_, nullptr, FALSE);
-                        ShowWidgetContextMenu(screenPt, widgetIndex);
+                        ShowWidgetContextMenu(
+                            screenPt, widgetIndex,
+                            dockItemBounds);
                     }
                 }
                 return;
@@ -5819,19 +5992,28 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (itemIndex < items_.size())
             {
                 ClearSelection();
-                items_[itemIndex].selected = true;
-                items_[itemIndex].bounds = frequentItem->GetBounds();
+                frequentItem->SetSelected(true);
+                items_[itemIndex].bounds = dock->GetElementVisualRect(
+                    frequentItem->GetBounds(), pt);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 if (IsProtectedDesktopIcon(items_[itemIndex]))
-                    ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
+                    ShowShellContextMenu(
+                        screenPt,
+                        static_cast<int>(itemIndex),
+                        false, dock->GetElementVisualRect(
+                            frequentItem->GetBounds(), pt));
                 else
-                    ShowItemContextMenu(screenPt, static_cast<int>(itemIndex), true);
+                    ShowItemContextMenu(
+                        screenPt,
+                        static_cast<int>(itemIndex),
+                        true, false,
+                        dock->GetElementVisualRect(
+                            frequentItem->GetBounds(), pt));
                 return;
             }
         }
 
-        RECT dockBounds = dock->GetBounds();
-        if (PtInRect(&dockBounds, pt))
+        if (dock->ContainsInteractivePoint(pt))
         {
             ClearSelection();
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -6185,6 +6367,14 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
         RefreshDockRunningWindows();
+    }
+    else if (timerId == kDockWindowPreviewHoverTimerId)
+    {
+        OnDockWindowPreviewHoverTimer();
+    }
+    else if (timerId == kDockLaunchBounceTimerId)
+    {
+        OnDockLaunchBounceTimer();
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
@@ -6687,8 +6877,8 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     }
     if (DockContainer* dock = GetDockContainerAtPoint(anchorPoint))
     {
-        RECT dockBounds = dock->GetBounds();
-        if (PtInRect(&dockBounds, anchorPoint))
+        RECT dockBounds = dock->GetInteractiveBounds();
+        if (dock->ContainsInteractivePoint(anchorPoint))
         {
             const POINT dockCenter{
                 (dockBounds.left + dockBounds.right) / 2,
@@ -6709,7 +6899,8 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
                 dockItem && dockItem->GetEntryType() == DockEntryType::Collection &&
                 dockItem->GetReference() == widgets_[widgetIndex].id)
             {
-                RECT itemBounds = dockItem->GetBounds();
+                RECT itemBounds = dock->GetElementVisualRect(
+                    dockItem->GetBounds(), anchorPoint);
                 popupDockPosition_ = dockSettings_.position;
                 popupAnchoredToDock_ = true;
                 switch (popupDockPosition_)
@@ -7183,6 +7374,34 @@ inline bool DesktopApp::IsShellRenameCommand(IContextMenu* contextMenu, UINT com
     return false;
 }
 
+inline bool DesktopApp::IsShellDeleteCommand(
+    IContextMenu* contextMenu,
+    UINT commandOffset) const
+{
+    if (!contextMenu) return false;
+
+    wchar_t verbW[128]{};
+    if (SUCCEEDED(contextMenu->GetCommandString(
+            commandOffset, GCS_VERBW, nullptr,
+            reinterpret_cast<LPSTR>(verbW),
+            static_cast<UINT>(_countof(verbW)))) &&
+        lstrcmpiW(verbW, L"delete") == 0)
+    {
+        return true;
+    }
+
+    char verbA[128]{};
+    if (SUCCEEDED(contextMenu->GetCommandString(
+            commandOffset, GCS_VERBA, nullptr,
+            verbA,
+            static_cast<UINT>(_countof(verbA)))) &&
+        lstrcmpiA(verbA, "delete") == 0)
+    {
+        return true;
+    }
+    return false;
+}
+
 /**
  * @brief 显示文件夹条目的 Shell 上下文菜单
  * @param screenPoint 屏幕坐标点
@@ -7424,7 +7643,101 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
 /**
  * @brief 开始重命名选中的元素（小部件、文件夹条目或桌面项）
  */
-inline void DesktopApp::BeginRenameSelected()
+inline bool DesktopApp::BeginDockAnchoredRename(
+    const std::wstring& text, RECT anchorClient,
+    int selectionEnd)
+{
+    RECT anchorScreen = anchorClient;
+    MapWindowPoints(hwnd_, nullptr,
+        reinterpret_cast<POINT*>(&anchorScreen), 2);
+    const POINT anchorCenter{
+        (anchorScreen.left + anchorScreen.right) / 2,
+        (anchorScreen.top + anchorScreen.bottom) / 2
+    };
+    const HMONITOR monitor = MonitorFromPoint(
+        anchorCenter, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+    if (!GetMonitorInfoW(monitor, &monitorInfo))
+    {
+        monitorInfo.rcWork = {
+            virtualLeft_, virtualTop_,
+            virtualLeft_ + virtualWidth_,
+            virtualTop_ + virtualHeight_
+        };
+    }
+
+    UINT dpiX = 96;
+    UINT dpiY = 96;
+    if (FAILED(GetDpiForMonitor(
+            monitor, MDT_EFFECTIVE_DPI,
+            &dpiX, &dpiY)))
+        dpiX = 96;
+    const int desiredWidth =
+        std::max(150, MulDiv(180, static_cast<int>(dpiX), 96));
+    const int desiredHeight =
+        std::max(26, MulDiv(30, static_cast<int>(dpiX), 96));
+    const int gap =
+        std::max(3, MulDiv(6, static_cast<int>(dpiX), 96));
+    const int monitorMargin =
+        std::max(3, MulDiv(5, static_cast<int>(dpiX), 96));
+    const RECT screenRect =
+        snowdesktop::dock_rename_layout::
+            CalculateAdjacentEditRect(
+                anchorScreen, monitorInfo.rcWork,
+                dockSettings_.position,
+                desiredWidth, desiredHeight,
+                gap, monitorMargin);
+
+    renameEdit_ = CreateWindowExW(
+        WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"EDIT", text.c_str(),
+        WS_POPUP | WS_VISIBLE |
+            ES_CENTER | ES_AUTOHSCROLL,
+        screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left,
+        screenRect.bottom - screenRect.top,
+        hwnd_, nullptr, instance_, nullptr);
+    if (!renameEdit_)
+        return false;
+
+    if (renameFont_)
+        DeleteObject(renameFont_);
+    const int fontHeight = std::max(
+        12, MulDiv(
+            static_cast<int>(std::round(itemFontSize_)),
+            static_cast<int>(dpiX), 96));
+    renameFont_ = CreateFontW(
+        -fontHeight, 0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(renameEdit_, WM_SETFONT,
+        reinterpret_cast<WPARAM>(
+            renameFont_ ? renameFont_
+                : GetStockObject(DEFAULT_GUI_FONT)),
+        TRUE);
+    const int editMargin = std::max(
+        3, MulDiv(5, static_cast<int>(dpiX), 96));
+    SendMessageW(renameEdit_, EM_SETMARGINS,
+        EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELPARAM(editMargin, editMargin));
+    SetWindowSubclass(renameEdit_,
+        &DesktopApp::RenameEditSubclassProc, 1,
+        reinterpret_cast<DWORD_PTR>(this));
+    SetWindowPos(renameEdit_, HWND_TOPMOST,
+        screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left,
+        screenRect.bottom - screenRect.top,
+        SWP_SHOWWINDOW);
+    SendMessageW(renameEdit_, EM_SETSEL,
+        0, selectionEnd);
+    SetFocus(renameEdit_);
+    return true;
+}
+
+inline void DesktopApp::BeginRenameSelected(
+    std::optional<RECT> dockRenameAnchor)
 {
     if (renameEdit_ != nullptr) return;
     renameCommitPending_ = false;
@@ -7445,6 +7758,17 @@ inline void DesktopApp::BeginRenameSelected()
 
         renamingWidget_ = true;
         renameIndex_ = selectedWidgetIndex;
+        if (dockRenameAnchor)
+        {
+            if (!BeginDockAnchoredRename(
+                    widgets_[selectedWidgetIndex].title,
+                    *dockRenameAnchor, -1))
+            {
+                renamingWidget_ = false;
+                renameIndex_ = static_cast<size_t>(-1);
+            }
+            return;
+        }
 
         RECT frame = widgets_[selectedWidgetIndex].bounds;
         RECT handle = frame;
@@ -7616,6 +7940,19 @@ inline void DesktopApp::BeginRenameSelected()
         (fileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
     renameIndex_ = static_cast<size_t>(selectedIndex);
+    if (dockRenameAnchor)
+    {
+        if (!BeginDockAnchoredRename(
+                items_[selectedIndex].name,
+                *dockRenameAnchor,
+                GetRenameInitialSelectionEnd(
+                    items_[selectedIndex].name,
+                    isDirectory)))
+        {
+            renameIndex_ = static_cast<size_t>(-1);
+        }
+        return;
+    }
     RECT itemBounds = GetVisibleCollectionItemBounds(renameIndex_);
     if (IsRectEmptyRect(itemBounds))
         itemBounds = items_[selectedIndex].bounds;
@@ -7746,6 +8083,7 @@ inline void DesktopApp::CommitRename(bool cancel)
     }
 
     bool keepLayoutSlots = false;
+    bool dockUsageKeyMigrated = false;
     if (!cancel && renameIndex_ < items_.size() && !newName.empty() && newName != items_[renameIndex_].name)
     {
         std::wstring oldLayoutKey = items_[renameIndex_].layoutKey;
@@ -7764,19 +8102,48 @@ inline void DesktopApp::CommitRename(bool cancel)
                 std::wstring newParsingName = StrRetToString(desktopFolder_.Get(), newChild, SHGDN_FORPARSING);
                 if (newAbsolute)
                 {
-                    std::wstring newLayoutKey = GetStableLayoutKey(newAbsolute, newParsingName);
+                    const std::wstring oldNormalizedKey =
+                        ToUpperInvariant(oldLayoutKey);
+                    const std::wstring newLayoutKey =
+                        ToUpperInvariant(GetStableLayoutKey(
+                            newAbsolute, newParsingName));
                     LayoutRecord record;
                     record.cell = items_[renameIndex_].gridCell;
                     record.span = items_[renameIndex_].gridSpan;
                     record.hasGrid = true;
                     record.legacySlot = items_[renameIndex_].slot;
+                    if (oldNormalizedKey != newLayoutKey)
+                        layoutRecords_.erase(oldNormalizedKey);
                     layoutRecords_[newLayoutKey] = record;
-                    for (auto& widget : widgets_)
+
+                    snowdesktop::
+                        desktop_item_reference_migration::
+                            MigrateReferences(
+                                widgets_, dockEntries_,
+                                oldLayoutKey, newLayoutKey);
+
+                    if (oldNormalizedKey != newLayoutKey)
                     {
-                        for (auto& key : widget.itemKeys)
+                        auto oldUsage =
+                            dockUsageStats_.find(
+                                oldNormalizedKey);
+                        if (oldUsage !=
+                            dockUsageStats_.end())
                         {
-                            if (ToUpperInvariant(key) == ToUpperInvariant(oldLayoutKey))
-                                key = newLayoutKey;
+                            const DockUsageRecord migrated =
+                                oldUsage->second;
+                            dockUsageStats_.erase(oldUsage);
+                            DockUsageRecord& destination =
+                                dockUsageStats_[newLayoutKey];
+                            destination.launchCount =
+                                std::max(
+                                    destination.launchCount,
+                                    migrated.launchCount);
+                            destination.lastUsed =
+                                std::max(
+                                    destination.lastUsed,
+                                    migrated.lastUsed);
+                            dockUsageKeyMigrated = true;
                         }
                     }
                     keepLayoutSlots = true;
@@ -7793,6 +8160,8 @@ inline void DesktopApp::CommitRename(bool cancel)
 
     renameIndex_ = static_cast<size_t>(-1);
     ReloadItems(!keepLayoutSlots);
+    if (dockUsageKeyMigrated)
+        SaveDockUsageStats();
     if (quickNavigationRename)
         InvalidateQuickNavigationWindow();
 }
@@ -8194,7 +8563,11 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     externalDragActive_ = true;
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
+    {
+        ClearDockBackdropForDragTransition(
+            lastMousePoint_, client);
         dragSession_.Begin(nullptr, {}, {}, client, client);
+    }
     else
         dragSession_.UpdatePoint(client);
     if (!UpdateDragPageNavigation(client))
@@ -8349,7 +8722,11 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     externalDragActive_ = true;
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
+    {
+        ClearDockBackdropForDragTransition(
+            lastMousePoint_, client);
         dragSession_.Begin(nullptr, {}, {}, client, client);
+    }
     else
         dragSession_.UpdatePoint(client);
     if (!UpdateDragPageNavigation(client))
@@ -9685,7 +10062,9 @@ inline void DesktopApp::ShowFileGroupSourceTabContextMenu(
     }
 }
 
-inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex)
+inline void DesktopApp::ShowWidgetContextMenu(
+    POINT screenPoint, size_t widgetIndex,
+    std::optional<RECT> dockRenameAnchor)
 {
     if (widgetIndex >= widgets_.size()) return;
     ClearMenuIcons();
@@ -10152,7 +10531,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         if (CanRenameWidget(widgets_[widgetIndex]))
         {
             SelectWidgetOnly(widgetIndex);
-            BeginRenameSelected();
+            BeginRenameSelected(dockRenameAnchor);
         }
         break;
     case kContextWidgetEdit:

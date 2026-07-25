@@ -164,6 +164,13 @@ public:
     void SetDockSettingsChangedCallback(std::function<void()> callback)
     { dockSettingsChangedCallback_ = std::move(callback); }
 
+    void SetDockSettingsPreviewChangedCallback(
+        std::function<void(const DockSettings&)> callback)
+    {
+        dockSettingsPreviewChangedCallback_ =
+            std::move(callback);
+    }
+
     void SetPersonalizationChangedCallback(std::function<void()> callback)
     { personalizationChangedCallback_ = std::move(callback); }
 
@@ -577,6 +584,9 @@ private:
 
     std::function<void()> dockSettingsChangedCallback_;
 
+    std::function<void(const DockSettings&)>
+        dockSettingsPreviewChangedCallback_;
+
     std::function<void()> personalizationChangedCallback_;
 
     /// 显示设置变更回调
@@ -619,6 +629,8 @@ private:
     DockSettings dockSettings_;
 
     bool dockSettingsDirty_ = false;
+    bool dockSettingsPreviewDirty_ = false;
+    bool dockSettingsSaveRequested_ = false;
 
     /// 通用设置是否已修改（需要保存）
     bool generalSettingsDirty_ = false;

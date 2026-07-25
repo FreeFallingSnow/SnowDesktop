@@ -748,6 +748,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
+    ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
@@ -810,6 +811,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
     file << "  \"showRunningApps\": "
          << (settings.showRunningApps ? "true" : "false") << ",\n";
+    file << "  \"showWindowPreviews\": "
+         << (settings.showWindowPreviews ? "true" : "false") << ",\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";

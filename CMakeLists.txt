@@ -84,6 +84,8 @@ set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
     src/app/desktop_backdrop_compositor.cpp
+    src/dock_window_preview.cpp
+    src/dock_window_transition.cpp
     src/taskbar_dynamic/search_visibility_detector.cpp
     src/core/item.cpp
     src/core/dock.cpp
@@ -516,6 +518,39 @@ if (BUILD_TESTING)
     add_test(
         NAME item_location
         COMMAND SnowDesktopItemLocationTests)
+
+    add_executable(
+        SnowDesktopDockWindowRulesTests
+        tests/dock_window_rules_tests.cpp
+        src/dock_window_preview.cpp
+        src/dock_window_transition.cpp)
+    target_compile_features(
+        SnowDesktopDockWindowRulesTests PRIVATE cxx_std_20)
+    target_include_directories(
+        SnowDesktopDockWindowRulesTests PRIVATE src)
+    target_link_libraries(
+        SnowDesktopDockWindowRulesTests PRIVATE
+        dwmapi gdi32 shcore user32)
+    if (MSVC)
+        set_property(
+            TARGET SnowDesktopDockWindowRulesTests
+            PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(
+            SnowDesktopDockWindowRulesTests PRIVATE
+            /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(
+            SnowDesktopDockWindowRulesTests PRIVATE
+            _UNICODE UNICODE NOMINMAX
+                WIN32_LEAN_AND_MEAN)
+    else()
+        target_compile_options(
+            SnowDesktopDockWindowRulesTests PRIVATE
+            -Wall -Wextra -pedantic)
+    endif()
+    add_test(
+        NAME dock_window_rules
+        COMMAND SnowDesktopDockWindowRulesTests)
 endif()
 
 

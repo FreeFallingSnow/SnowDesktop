@@ -355,6 +355,34 @@ inline bool DockWindowsShareActivationGroup(HWND first, HWND second)
         firstOwner == secondRoot || firstOwner == secondOwner;
 }
 
+inline bool DockWindowsShareApplicationIdentity(
+    HWND first, HWND second)
+{
+    if (!first || !second || !IsWindow(first) || !IsWindow(second))
+        return false;
+    first = GetAncestor(first, GA_ROOT);
+    second = GetAncestor(second, GA_ROOT);
+    if (first == second)
+        return true;
+
+    const std::wstring firstAppUserModelId =
+        QueryDockWindowAppUserModelId(first);
+    const std::wstring secondAppUserModelId =
+        QueryDockWindowAppUserModelId(second);
+    if (!firstAppUserModelId.empty() &&
+        !secondAppUserModelId.empty())
+    {
+        return firstAppUserModelId ==
+            secondAppUserModelId;
+    }
+
+    const std::wstring firstExecutable =
+        QueryDockWindowExecutablePath(first);
+    return !firstExecutable.empty() &&
+        firstExecutable ==
+            QueryDockWindowExecutablePath(second);
+}
+
 inline bool IsDockTaskWindow(HWND window)
 {
     if (!window || GetAncestor(window, GA_ROOT) != window)
@@ -369,29 +397,282 @@ inline bool IsDockTaskWindow(HWND window)
         _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
         return false;
     const LONG_PTR exStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
-    if ((exStyle & WS_EX_TOOLWINDOW) != 0 && (exStyle & WS_EX_APPWINDOW) == 0)
-        return false;
-    if (GetWindow(window, GW_OWNER) && (exStyle & WS_EX_APPWINDOW) == 0)
+    if (!snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
+            exStyle, GetWindow(window, GW_OWNER) != nullptr))
         return false;
     return true;
+}
+
+inline std::wstring DockWindowPreviewIdentityKey(
+    const DockAppIdentity& identity)
+{
+    switch (identity.kind)
+    {
+    case DockAppIdentityKind::Executable:
+        return identity.executablePath.empty()
+            ? std::wstring{} : L"EXE:" + identity.executablePath;
+    case DockAppIdentityKind::Applications:
+        return identity.appUserModelId.empty()
+            ? std::wstring{} : L"AUMID:" + identity.appUserModelId;
+    case DockAppIdentityKind::Steam:
+        if (!identity.steamAppId.empty())
+            return L"STEAM:" + identity.steamAppId;
+        return identity.steamInstallDirectory.empty()
+            ? std::wstring{}
+            : L"STEAM_PATH:" + identity.steamInstallDirectory;
+    default:
+        return {};
+    }
+}
+
+inline std::wstring DockWindowPreviewTargetToken(
+    const std::wstring& identityKey, const RECT& anchorScreen)
+{
+    if (identityKey.empty())
+        return {};
+    return identityKey + L"@" +
+        std::to_wstring(anchorScreen.left) + L"," +
+        std::to_wstring(anchorScreen.top) + L"," +
+        std::to_wstring(anchorScreen.right) + L"," +
+        std::to_wstring(anchorScreen.bottom);
+}
+
+inline UINT QueryDockWindowPreviewHoverTime()
+{
+    UINT hoverTime = kDockWindowPreviewHoverFallbackMs;
+    if (!SystemParametersInfoW(
+            SPI_GETMOUSEHOVERTIME, 0, &hoverTime, 0))
+        hoverTime = kDockWindowPreviewHoverFallbackMs;
+    return std::max<UINT>(1, hoverTime);
+}
+
+inline std::vector<DockWindowPreviewItem>
+DesktopApp::CollectDockWindowPreviewItems(
+    const DockAppIdentity& identity)
+{
+    struct PreviewEnumerationContext
+    {
+        const DockAppIdentity* identity = nullptr;
+        std::vector<DockWindowPreviewItem>* items = nullptr;
+    } context{ &identity, nullptr };
+
+    std::vector<DockWindowPreviewItem> items;
+    context.items = &items;
+    EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+        auto* context = reinterpret_cast<
+            PreviewEnumerationContext*>(parameter);
+        if (!context || !context->identity || !context->items ||
+            !IsDockTaskWindow(window))
+            return TRUE;
+
+        DWORD processId = 0;
+        GetWindowThreadProcessId(window, &processId);
+        if (!processId || processId == GetCurrentProcessId())
+            return TRUE;
+
+        DWORD cloaked = 0;
+        if (SUCCEEDED(DwmGetWindowAttribute(
+                window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
+            cloaked != 0)
+            return TRUE;
+        if (!DockWindowMatchesAppIdentity(window, *context->identity))
+            return TRUE;
+
+        wchar_t titleBuffer[512]{};
+        GetWindowTextW(window, titleBuffer,
+            static_cast<int>(std::size(titleBuffer)));
+        std::wstring title = titleBuffer;
+        if (title.empty())
+        {
+            const std::wstring executablePath =
+                QueryDockWindowExecutablePath(window);
+            title = PathFindFileNameW(executablePath.c_str());
+        }
+        context->items->push_back({ window, std::move(title) });
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&context));
+    return items;
+}
+
+inline bool DesktopApp::ResolveDockWindowPreviewTarget(
+    POINT clientPoint, DockWindowPreviewTarget& target)
+{
+    target = {};
+
+    DockContainer* dock = GetDockContainerAtPoint(clientPoint);
+    if (!dock || !dock->ContainsInteractivePoint(clientPoint))
+        return false;
+
+    RECT anchor{};
+    bool found = false;
+    if (DockRunningItem* running = dock->RunningItemAtPoint(clientPoint))
+    {
+        const size_t index = running->GetRunningIndex();
+        if (index < dockUnpinnedRunningApps_.size())
+        {
+            const DockRunningAppInfo& app =
+                dockUnpinnedRunningApps_[index];
+            target.identity.executablePath = app.executablePath;
+            target.identity.appUserModelId = app.appUserModelId;
+            target.identity.kind =
+                !target.identity.appUserModelId.empty()
+                ? DockAppIdentityKind::Applications
+                : DockAppIdentityKind::Executable;
+            anchor = running->GetBounds();
+            found = true;
+        }
+    }
+    else if (DockEntryItem* entry = dock->EntryAtPoint(clientPoint))
+    {
+        const size_t entryIndex = entry->GetEntryIndex();
+        if (entryIndex < dockEntries_.size() &&
+            dockEntries_[entryIndex].type ==
+                DockEntryType::DesktopItem)
+        {
+            const size_t itemIndex = FindItemIndexByKey(
+                dockEntries_[entryIndex].reference);
+            if (itemIndex < items_.size() &&
+                GetDockWindowVisualState(itemIndex) !=
+                    DockWindowVisualState::Closed)
+            {
+                target.identity = ResolveDockAppIdentity(itemIndex);
+                anchor = entry->GetBounds();
+                found = target.identity.kind !=
+                    DockAppIdentityKind::None;
+            }
+        }
+    }
+    else if (DockFrequentItem* frequent =
+        dock->FrequentItemAtPoint(clientPoint))
+    {
+        const size_t itemIndex = frequent->GetItemIndex();
+        if (itemIndex < items_.size() &&
+            GetDockWindowVisualState(itemIndex) !=
+                DockWindowVisualState::Closed)
+        {
+            target.identity = ResolveDockAppIdentity(itemIndex);
+            anchor = frequent->GetBounds();
+            found = target.identity.kind !=
+                DockAppIdentityKind::None;
+        }
+    }
+
+    if (!found)
+        return false;
+    anchor = dock->GetElementVisualRect(anchor, clientPoint);
+    target.identityKey =
+        DockWindowPreviewIdentityKey(target.identity);
+    if (target.identityKey.empty())
+        return false;
+
+    target.anchorScreen = anchor;
+    MapWindowPoints(hwnd_, nullptr,
+        reinterpret_cast<POINT*>(&target.anchorScreen), 2);
+    target.targetToken = DockWindowPreviewTargetToken(
+        target.identityKey, target.anchorScreen);
+    return !target.targetToken.empty();
+}
+
+inline void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
+{
+    if (!dockWindowPreview_)
+        return;
+    if (!dockSettings_.showWindowPreviews ||
+        !generalSettings_.dockEnabled || dragSession_.IsActive())
+    {
+        HideDockWindowPreview();
+        return;
+    }
+
+    DockWindowPreviewTarget target;
+    const bool hasTarget =
+        ResolveDockWindowPreviewTarget(clientPoint, target);
+    const bool previewVisible =
+        dockWindowPreview_->IsVisible();
+    const bool previewMatchesTarget =
+        hasTarget && dockWindowPreviewKey_ == target.targetToken;
+    const DockPreviewHoverTransition transition =
+        dockWindowPreviewHover_.UpdateTarget(
+            hasTarget ? target.targetToken : std::wstring{},
+            previewVisible, previewMatchesTarget);
+
+    if (transition.cancelTimer && hwnd_)
+        KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
+    if (transition.keepPreviewVisible)
+        dockWindowPreview_->KeepVisible();
+    if (transition.schedulePreviewHide)
+        dockWindowPreview_->ScheduleHide();
+    if (transition.armTimer && hwnd_)
+    {
+        SetTimer(hwnd_, kDockWindowPreviewHoverTimerId,
+            QueryDockWindowPreviewHoverTime(), nullptr);
+    }
+}
+
+inline void DesktopApp::OnDockWindowPreviewHoverTimer()
+{
+    if (!hwnd_ || !dockWindowPreview_)
+        return;
+    KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
+
+    POINT cursorScreen{};
+    GetCursorPos(&cursorScreen);
+    POINT cursorClient = cursorScreen;
+    ScreenToClient(hwnd_, &cursorClient);
+
+    DockWindowPreviewTarget target;
+    const bool hasTarget =
+        dockSettings_.showWindowPreviews &&
+        generalSettings_.dockEnabled &&
+        !dragSession_.IsActive() &&
+        ResolveDockWindowPreviewTarget(cursorClient, target);
+    const std::wstring observedToken =
+        hasTarget ? target.targetToken : std::wstring{};
+    if (!dockWindowPreviewHover_.ConsumeTimer(observedToken))
+    {
+        UpdateDockWindowPreview(cursorClient);
+        return;
+    }
+
+    std::vector<DockWindowPreviewItem> previewItems =
+        CollectDockWindowPreviewItems(target.identity);
+    if (previewItems.empty())
+        return;
+    dockWindowPreviewKey_ = target.targetToken;
+    dockWindowPreviewAnchorScreen_ = target.anchorScreen;
+    dockWindowPreview_->Show(
+        previewItems, target.anchorScreen, dockSettings_.position,
+        IsLightContentTheme());
+    if (dockWindowPreview_->IsVisible())
+        dockWindowPreviewHover_.MarkPreviewShown(
+            target.targetToken);
+}
+
+inline void DesktopApp::HideDockWindowPreview()
+{
+    if (hwnd_)
+        KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
+    if (dockWindowPreview_)
+        dockWindowPreview_->Hide();
+    dockWindowPreviewHover_.Reset();
+    dockWindowPreviewKey_.clear();
+    dockWindowPreviewAnchorScreen_ = {};
+}
+
+inline void DesktopApp::DismissDockWindowPreviewUntilLeave()
+{
+    if (hwnd_)
+        KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
+    dockWindowPreviewHover_.SuppressForActivation();
+    if (dockWindowPreview_)
+        dockWindowPreview_->Hide();
+    dockWindowPreviewKey_.clear();
+    dockWindowPreviewAnchorScreen_ = {};
 }
 
 inline std::wstring DockItemWindowKey(const DesktopItem& item)
 {
     return ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
-}
-
-inline bool IsDockDesktopActivationWindow(HWND window)
-{
-    if (!window) return false;
-    DWORD processId = 0;
-    GetWindowThreadProcessId(window, &processId);
-    if (processId == GetCurrentProcessId()) return true;
-    wchar_t className[64]{};
-    GetClassNameW(window, className, static_cast<int>(std::size(className)));
-    return _wcsicmp(className, L"Progman") == 0 ||
-        _wcsicmp(className, L"WorkerW") == 0 ||
-        _wcsicmp(className, L"Shell_TrayWnd") == 0;
 }
 
 inline void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
@@ -1028,6 +1309,29 @@ inline bool DesktopApp::RemoveDockDragOutItems(const std::vector<Item*>& sourceI
     return true;
 }
 
+inline bool DesktopApp::RemoveDockMappingAt(
+    size_t entryIndex)
+{
+    if (!snowdesktop::
+            desktop_item_reference_migration::
+                RemoveDockMappingAt(
+                    dockEntries_, entryIndex))
+    {
+        return false;
+    }
+
+    NormalizeDockRecycleBinPosition();
+    RefreshCollectedKeysCache();
+    ClearSelection();
+    SaveLayoutSlots();
+    RebuildContainersAndItems();
+    LayoutItems();
+    InvalidateDragStaticScene();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    return true;
+}
+
 inline void DesktopApp::RecordDockItemUsage(size_t itemIndex)
 {
     if (itemIndex >= items_.size()) return;
@@ -1124,15 +1428,141 @@ inline std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
     return result;
 }
 
-inline bool DesktopApp::LaunchDesktopItem(size_t itemIndex)
+inline bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
+{
+    if (!hwnd_ || !IsWindow(hwnd_) ||
+        itemIndex >= items_.size() ||
+        !generalSettings_.dockEnabled ||
+        !snowdesktop::dock_launch_animation::
+            SystemAnimationsEnabled())
+        return false;
+
+    const std::wstring key =
+        DockItemWindowKey(items_[itemIndex]);
+    if (key.empty())
+        return false;
+
+    const bool fixed =
+        std::any_of(dockEntries_.begin(), dockEntries_.end(),
+            [&](const DockEntry& entry) {
+                return entry.type ==
+                        DockEntryType::DesktopItem &&
+                    ToUpperInvariant(entry.reference) == key;
+            });
+    bool frequent = false;
+    if (!fixed)
+    {
+        const std::vector<size_t> frequentItems =
+            GetFrequentDockItemIndices();
+        frequent = std::find(
+            frequentItems.begin(), frequentItems.end(),
+            itemIndex) != frequentItems.end();
+    }
+    if (!fixed && !frequent)
+        return false;
+
+    dockLaunchBounces_[key] = {
+        GetTickCount64(), false
+    };
+    if (!SetTimer(
+            hwnd_, kDockLaunchBounceTimerId,
+            snowdesktop::dock_launch_animation::
+                kFrameIntervalMs, nullptr))
+    {
+        dockLaunchBounces_.erase(key);
+        return false;
+    }
+    InvalidateDockRects(FALSE);
+    return true;
+}
+
+inline int DesktopApp::GetDockLaunchBounceOffset(
+    size_t itemIndex, int iconSize) const
+{
+    if (itemIndex >= items_.size())
+        return 0;
+    const auto found = dockLaunchBounces_.find(
+        DockItemWindowKey(items_[itemIndex]));
+    if (found == dockLaunchBounces_.end())
+        return 0;
+    return snowdesktop::dock_launch_animation::
+        OffsetPixels(
+            GetTickCount64() - found->second.startTick,
+            iconSize);
+}
+
+inline void DesktopApp::OnDockLaunchBounceTimer()
+{
+    if (dockLaunchBounces_.empty())
+    {
+        if (hwnd_)
+            KillTimer(hwnd_, kDockLaunchBounceTimerId);
+        return;
+    }
+
+    const ULONGLONG now = GetTickCount64();
+    if (now - dockLaunchBounceLastWindowPollTick_ >= 250)
+    {
+        dockLaunchBounceLastWindowPollTick_ = now;
+        RefreshDockRunningWindows(false);
+    }
+
+    for (auto bounce = dockLaunchBounces_.begin();
+        bounce != dockLaunchBounces_.end();)
+    {
+        const size_t itemIndex =
+            FindItemIndexByKey(bounce->first);
+        const ULONGLONG elapsed =
+            now - bounce->second.startTick;
+        if (itemIndex >= items_.size() ||
+            elapsed >=
+                snowdesktop::dock_launch_animation::
+                    kMaximumDurationMs)
+        {
+            bounce = dockLaunchBounces_.erase(bounce);
+            continue;
+        }
+
+        if (elapsed >=
+                snowdesktop::dock_launch_animation::
+                    kMinimumDurationMs &&
+            GetDockWindowVisualState(itemIndex) !=
+                DockWindowVisualState::Closed)
+        {
+            bounce->second.stopRequested = true;
+        }
+        if (bounce->second.stopRequested &&
+            snowdesktop::dock_launch_animation::
+                IsRestingPoint(elapsed))
+        {
+            bounce = dockLaunchBounces_.erase(bounce);
+            continue;
+        }
+        ++bounce;
+    }
+
+    InvalidateDockRects(FALSE);
+    if (dockLaunchBounces_.empty() && hwnd_)
+        KillTimer(hwnd_, kDockLaunchBounceTimerId);
+}
+
+inline bool DesktopApp::LaunchDesktopItem(
+    size_t itemIndex, bool animateDockLaunch)
 {
     if (itemIndex >= items_.size() || items_[itemIndex].parsingName.empty())
         return false;
+    if (animateDockLaunch)
+        DismissDockWindowPreviewUntilLeave();
+    const bool wasClosed =
+        GetDockWindowVisualState(itemIndex) ==
+            DockWindowVisualState::Closed;
     HINSTANCE result = ShellExecuteW(hwnd_, L"open", items_[itemIndex].parsingName.c_str(),
         nullptr, nullptr, SW_SHOWNORMAL);
     if (reinterpret_cast<INT_PTR>(result) <= 32)
         return false;
     RecordDockItemUsage(itemIndex);
+    if (animateDockLaunch && wasClosed)
+        StartDockLaunchBounce(itemIndex);
     return true;
 }
 
@@ -1576,69 +2006,94 @@ inline void DesktopApp::RefreshDockRunningWindows(
     }
 }
 
-inline bool DesktopApp::ActivateOrToggleDockItem(size_t itemIndex)
+inline bool DesktopApp::ActivateOrToggleDockItem(
+    size_t itemIndex,
+    std::optional<snowdesktop::dock_window_rules::DockClickAction>
+        pressedAction,
+    HWND pressedTarget,
+    std::optional<RECT> pressedAnchorScreen)
 {
+    DismissDockWindowPreviewUntilLeave();
     if (itemIndex >= items_.size()) return false;
-    const HWND pressedForeground = dockPressedForegroundWindow_;
-    dockPressedForegroundWindow_ = nullptr;
-    dockPressedForegroundTick_ = 0;
     const DockAppIdentity identity = ResolveDockAppIdentity(itemIndex);
     if (identity.kind == DockAppIdentityKind::None)
         return LaunchDesktopItem(itemIndex);
 
-    const HWND foreground = GetForegroundWindow();
-    const HWND observedForeground = dockForegroundWindow_.load();
-    const HWND previousForeground = dockPreviousForegroundWindow_.load();
-    const DWORD foregroundElapsed = GetTickCount() - dockForegroundChangedTick_.load();
-    const DWORD activationGrace = std::max<DWORD>(1000, GetDoubleClickTime() * 2);
-    HWND preferredWindow = nullptr;
-    auto choosePreferredWindow = [&](HWND candidate) {
-        if (!preferredWindow && DockWindowMatchesAppIdentity(candidate, identity))
-            preferredWindow = GetAncestor(candidate, GA_ROOT);
-    };
-    choosePreferredWindow(pressedForeground);
-    choosePreferredWindow(foreground);
-    choosePreferredWindow(observedForeground);
-    if (foregroundElapsed <= activationGrace)
-        choosePreferredWindow(previousForeground);
+    using snowdesktop::dock_window_rules::DockClickAction;
+    DockClickAction action =
+        pressedAction.value_or(DockClickAction::None);
+    if (action == DockClickAction::Launch)
+        return LaunchDesktopItem(itemIndex);
 
-    // Refresh must rank the window that was in front before the Dock click highest.
-    // Otherwise a multi-window application may activate a sibling window first and
-    // only minimize on the next click.
+    HWND preferredWindow = nullptr;
+    if (pressedTarget && IsWindow(pressedTarget) &&
+        DockWindowMatchesAppIdentity(pressedTarget, identity))
+    {
+        preferredWindow = GetAncestor(pressedTarget, GA_ROOT);
+        if (!preferredWindow)
+            preferredWindow = pressedTarget;
+    }
+
     RefreshDockRunningWindows(false, preferredWindow);
     const std::wstring key = DockItemWindowKey(items_[itemIndex]);
     auto found = dockRunningWindows_.find(key);
     if (found == dockRunningWindows_.end() || !IsWindow(found->second.window))
-        return LaunchDesktopItem(itemIndex);
-
-    HWND target = found->second.window;
-    if (preferredWindow && IsWindow(preferredWindow))
     {
-        target = preferredWindow;
-        found->second.window = target;
-        found->second.minimized = IsIconic(target) != FALSE;
+        if (action == DockClickAction::Minimize)
+            return false;
+        return LaunchDesktopItem(itemIndex);
     }
 
-    const bool targetWasForeground = found->second.foreground ||
-        DockWindowsShareActivationGroup(target, pressedForeground) ||
-        DockWindowsShareActivationGroup(target, foreground) ||
-        DockWindowsShareActivationGroup(target, observedForeground) ||
-        (foregroundElapsed <= activationGrace &&
-            DockWindowsShareActivationGroup(target, previousForeground));
-
-    // Match Windows taskbar behavior: a background window is activated first;
-    // clicking it again while it is foreground minimizes it.
-    if (targetWasForeground && !IsIconic(target))
+    HWND target = preferredWindow
+        ? preferredWindow : found->second.window;
+    found->second.window = target;
+    found->second.minimized = IsIconic(target) != FALSE;
+    if (action == DockClickAction::None)
     {
-        PostMessageW(target, WM_SYSCOMMAND, SC_MINIMIZE, 0);
-        ShowWindowAsync(target, SW_MINIMIZE);
+        action =
+            snowdesktop::dock_window_rules::ResolveDockClickAction(
+                found->second.running,
+                found->second.minimized,
+                found->second.foreground);
+    }
+
+    // The action comes from the indicator under the pointer at button-down.
+    // Do not infer it again from GetForegroundWindow() during button-up.
+    if (action == DockClickAction::Minimize)
+    {
+        if (!IsIconic(target) &&
+            dockWindowTransition_ &&
+            pressedAnchorScreen)
+        {
+            dockWindowTransition_->StartMinimize(
+                target, *pressedAnchorScreen);
+        }
+        if (!IsIconic(target))
+        {
+            PostMessageW(target, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+            ShowWindowAsync(target, SW_MINIMIZE);
+        }
         found->second.minimized = true;
         found->second.foreground = false;
     }
     else
     {
         const bool minimized = IsIconic(target) != FALSE;
-        if (minimized)
+        if (action == DockClickAction::Restore &&
+            minimized &&
+            dockWindowTransition_ &&
+            pressedAnchorScreen &&
+            dockWindowTransition_->StartRestore(
+                target, *pressedAnchorScreen,
+                [this](HWND restoreTarget) {
+                    ActivateDockWindowFromPreview(
+                        restoreTarget);
+                }))
+        {
+            InvalidateDockRects();
+            return true;
+        }
+        if (action == DockClickAction::Restore || minimized)
         {
             OpenIcon(target);
             PostMessageW(target, WM_SYSCOMMAND, SC_RESTORE, 0);
@@ -1648,7 +2103,9 @@ inline bool DesktopApp::ActivateOrToggleDockItem(size_t itemIndex)
         {
             ShowWindowAsync(target, SW_SHOW);
         }
-        const HWND activationTarget = GetLastActivePopup(target);
+        HWND activationTarget = GetLastActivePopup(target);
+        if (!activationTarget || !IsWindow(activationTarget))
+            activationTarget = target;
         SwitchToThisWindow(target, TRUE);
         if (activationTarget != target)
             SwitchToThisWindow(activationTarget, TRUE);
@@ -1662,39 +2119,70 @@ inline bool DesktopApp::ActivateOrToggleDockItem(size_t itemIndex)
     return true;
 }
 
-inline bool DesktopApp::ActivateOrToggleDockWindow(HWND window)
+inline bool DesktopApp::ActivateOrToggleDockWindow(
+    HWND window,
+    std::optional<snowdesktop::dock_window_rules::DockClickAction>
+        pressedAction,
+    HWND pressedTarget,
+    std::optional<RECT> pressedAnchorScreen)
 {
-    if (!window || !IsWindow(window)) return false;
-    HWND target = GetAncestor(window, GA_ROOT);
-    if (!target) target = window;
+    DismissDockWindowPreviewUntilLeave();
+    HWND requestedTarget =
+        pressedTarget && IsWindow(pressedTarget)
+            ? pressedTarget : window;
+    if (!requestedTarget || !IsWindow(requestedTarget))
+        return false;
+    HWND target = GetAncestor(requestedTarget, GA_ROOT);
+    if (!target) target = requestedTarget;
 
-    const HWND pressedForeground = dockPressedForegroundWindow_;
-    dockPressedForegroundWindow_ = nullptr;
-    dockPressedForegroundTick_ = 0;
-    const HWND foreground = GetForegroundWindow();
-    const HWND observedForeground = dockForegroundWindow_.load();
-    const HWND previousForeground = dockPreviousForegroundWindow_.load();
-    const DWORD elapsed = GetTickCount() - dockForegroundChangedTick_.load();
-    const DWORD activationGrace = std::max<DWORD>(1000, GetDoubleClickTime() * 2);
-    const bool wasForeground =
-        DockWindowsShareActivationGroup(target, pressedForeground) ||
-        DockWindowsShareActivationGroup(target, foreground) ||
-        DockWindowsShareActivationGroup(target, observedForeground) ||
-        (elapsed <= activationGrace &&
-            DockWindowsShareActivationGroup(target, previousForeground));
-
+    using snowdesktop::dock_window_rules::DockClickAction;
     const bool minimized = IsIconic(target) != FALSE;
+    DockClickAction action =
+        pressedAction.value_or(DockClickAction::None);
+    if (action == DockClickAction::None)
+    {
+        const HWND foreground = GetForegroundWindow();
+        action =
+            snowdesktop::dock_window_rules::ResolveDockClickAction(
+                true, minimized,
+                DockWindowsShareApplicationIdentity(
+                    target, foreground));
+    }
     bool nowMinimized = false;
     bool nowForeground = false;
-    if (wasForeground && !minimized)
+    if (action == DockClickAction::Minimize)
     {
-        PostMessageW(target, WM_SYSCOMMAND, SC_MINIMIZE, 0);
-        ShowWindowAsync(target, SW_MINIMIZE);
+        if (!minimized &&
+            dockWindowTransition_ &&
+            pressedAnchorScreen)
+        {
+            dockWindowTransition_->StartMinimize(
+                target, *pressedAnchorScreen);
+        }
+        if (!minimized)
+        {
+            PostMessageW(target, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+            ShowWindowAsync(target, SW_MINIMIZE);
+        }
         nowMinimized = true;
     }
     else
     {
-        if (minimized)
+        if (action == DockClickAction::Restore &&
+            minimized &&
+            dockWindowTransition_ &&
+            pressedAnchorScreen &&
+            dockWindowTransition_->StartRestore(
+                target, *pressedAnchorScreen,
+                [this](HWND restoreTarget) {
+                    ActivateDockWindowFromPreview(
+                        restoreTarget);
+                }))
+        {
+            InvalidateDockRects();
+            return true;
+        }
+        if (action == DockClickAction::Restore || minimized)
         {
             OpenIcon(target);
             PostMessageW(target, WM_SYSCOMMAND, SC_RESTORE, 0);
@@ -1704,7 +2192,9 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(HWND window)
         {
             ShowWindowAsync(target, SW_SHOW);
         }
-        const HWND activationTarget = GetLastActivePopup(target);
+        HWND activationTarget = GetLastActivePopup(target);
+        if (!activationTarget || !IsWindow(activationTarget))
+            activationTarget = target;
         SwitchToThisWindow(target, TRUE);
         if (activationTarget != target)
             SwitchToThisWindow(activationTarget, TRUE);
@@ -1715,7 +2205,9 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(HWND window)
 
     for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
     {
-        const bool matchesTarget = DockWindowsShareActivationGroup(app.window, target);
+        const bool matchesTarget =
+            DockWindowsShareApplicationIdentity(
+                app.window, target);
         if (nowForeground) app.foreground = matchesTarget;
         if (matchesTarget)
         {
@@ -1725,6 +2217,36 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(HWND window)
     }
     InvalidateDockRects();
     return true;
+}
+
+inline void DesktopApp::ActivateDockWindowFromPreview(HWND window)
+{
+    DismissDockWindowPreviewUntilLeave();
+    if (!window || !IsWindow(window))
+        return;
+    HWND target = GetAncestor(window, GA_ROOT);
+    if (!target)
+        target = window;
+
+    if (IsIconic(target))
+    {
+        OpenIcon(target);
+        ShowWindowAsync(target, SW_RESTORE);
+    }
+    else
+    {
+        ShowWindowAsync(target, SW_SHOW);
+    }
+    HWND activationTarget = GetLastActivePopup(target);
+    if (!activationTarget || !IsWindow(activationTarget))
+        activationTarget = target;
+    SwitchToThisWindow(target, TRUE);
+    if (activationTarget != target)
+        SwitchToThisWindow(activationTarget, TRUE);
+    BringWindowToTop(activationTarget);
+    SetForegroundWindow(activationTarget);
+    RefreshDockRunningWindows(false, target);
+    InvalidateDockRects();
 }
 
 inline DockContainer* DesktopApp::GetDockContainer() const
@@ -1740,8 +2262,7 @@ inline DockContainer* DesktopApp::GetDockContainerAtPoint(POINT point) const
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock) continue;
-        const RECT bounds = dock->GetBounds();
-        if (PtInRect(&bounds, point)) return dock;
+        if (dock->ContainsInteractivePoint(point)) return dock;
     }
     return nullptr;
 }
@@ -1762,8 +2283,26 @@ inline void DesktopApp::InvalidateDockRects(BOOL erase) const
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock) continue;
-        const RECT bounds = dock->GetBounds();
+        const RECT bounds = dock->GetInteractiveBounds();
         InvalidateRect(hwnd_, &bounds, erase);
+    }
+}
+
+inline void DesktopApp::ClearDockBackdropForDragTransition(
+    POINT previousPointer, POINT currentPointer)
+{
+    for (const auto& container : containers_)
+    {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
+
+        const RECT previousPanel =
+            dock->GetVisualPanelBounds(previousPointer);
+        const RECT currentPanel =
+            dock->GetVisualPanelBounds(currentPointer);
+        desktopBackdropCompositor_.RemovePanel(previousPanel);
+        if (!EqualRect(&previousPanel, &currentPanel))
+            desktopBackdropCompositor_.RemovePanel(currentPanel);
     }
 }
 
@@ -2302,6 +2841,84 @@ inline bool DesktopApp::DrawDockControlBackground(
     return lightSurface;
 }
 
+inline void DesktopApp::DrawDockSelectionIndicator(
+    ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme)
+{
+    if (!ctx || IsRectEmptyRect(iconRect))
+        return;
+
+    const float iconSize = static_cast<float>(std::max<LONG>(1, std::min(
+        iconRect.right - iconRect.left,
+        iconRect.bottom - iconRect.top)));
+    const float halfSize = std::clamp(iconSize * 0.06f, 3.0f, 5.0f);
+    const float gap = std::max(3.0f, iconSize * 0.06f);
+    const float centerX = (iconRect.left + iconRect.right) * 0.5f;
+    const float centerY = (iconRect.top + iconRect.bottom) * 0.5f;
+    D2D1_POINT_2F tip{};
+    D2D1_POINT_2F baseA{};
+    D2D1_POINT_2F baseB{};
+    switch (dockSettings_.position)
+    {
+    case DockPosition::Top:
+    {
+        const float y = static_cast<float>(iconRect.top) - gap;
+        tip = D2D1::Point2F(centerX, y + halfSize);
+        baseA = D2D1::Point2F(centerX - halfSize, y - halfSize);
+        baseB = D2D1::Point2F(centerX + halfSize, y - halfSize);
+        break;
+    }
+    case DockPosition::Left:
+    {
+        const float x = static_cast<float>(iconRect.left) - gap;
+        tip = D2D1::Point2F(x + halfSize, centerY);
+        baseA = D2D1::Point2F(x - halfSize, centerY - halfSize);
+        baseB = D2D1::Point2F(x - halfSize, centerY + halfSize);
+        break;
+    }
+    case DockPosition::Right:
+    {
+        const float x = static_cast<float>(iconRect.right) + gap;
+        tip = D2D1::Point2F(x - halfSize, centerY);
+        baseA = D2D1::Point2F(x + halfSize, centerY - halfSize);
+        baseB = D2D1::Point2F(x + halfSize, centerY + halfSize);
+        break;
+    }
+    case DockPosition::Bottom:
+    default:
+    {
+        const float y = static_cast<float>(iconRect.bottom) + gap;
+        tip = D2D1::Point2F(centerX, y - halfSize);
+        baseA = D2D1::Point2F(centerX - halfSize, y + halfSize);
+        baseB = D2D1::Point2F(centerX + halfSize, y + halfSize);
+        break;
+    }
+    }
+
+    ComPtr<ID2D1Factory> factory;
+    ctx->GetFactory(&factory);
+    if (!factory)
+        return;
+    ComPtr<ID2D1PathGeometry> geometry;
+    if (FAILED(factory->CreatePathGeometry(&geometry)) || !geometry)
+        return;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geometry->Open(&sink)) || !sink)
+        return;
+    sink->BeginFigure(tip, D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(baseA);
+    sink->AddLine(baseB);
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    if (FAILED(sink->Close()))
+        return;
+
+    ComPtr<ID2D1SolidColorBrush> brush;
+    const D2D1_COLOR_F color = lightTheme
+        ? D2D1::ColorF(0.08f, 0.42f, 0.94f, 0.96f)
+        : D2D1::ColorF(0.35f, 0.68f, 1.0f, 1.0f);
+    if (SUCCEEDED(ctx->CreateSolidColorBrush(color, &brush)) && brush)
+        ctx->FillGeometry(geometry.Get(), brush.Get());
+}
+
 inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DockEntry& entry, RECT rect, int state)
 {
@@ -2316,40 +2933,16 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         rect.left + (rect.right - rect.left + iconSize) / 2,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
-    bool recycleBinEntry = false;
-    if (entry.type == DockEntryType::DesktopItem)
-    {
-        const size_t itemIndex = FindItemIndexByKey(entry.reference);
-        recycleBinEntry = itemIndex < items_.size() &&
-            _wcsicmp(items_[itemIndex].desktopIconClsid.c_str(),
-                kDesktopIconClsidRecycleBin) == 0;
-    }
-
+    const RECT indicatorIconRect = iconRect;
     const bool lt = IsLightContentTheme();
 
-    // Hover/selected feedback belongs to the whole Dock slot, not just the bitmap.
-    // Keep a small inset so adjacent items remain visually separated.
-    if (state > 0 && !recycleBinEntry)
-    {
-        RECT feedbackRect = rect;
-        InflateRect(&feedbackRect, -2, -2);
-        DrawD2DRoundedRectangle(ctx, feedbackRect, 12.0f,
-            state == 2
-                ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.28f)
-                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f)),
-            state == 2
-                ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.82f)
-                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f)),
-            state == 2 ? 1.6f : 1.0f);
-    }
-
-    auto drawDesktopItem = [&](const DesktopItem& item, RECT target, int visualState) {
+    auto drawDesktopItem = [&](const DesktopItem& item, RECT target) {
         RECT bitmapTarget = target;
         const bool recycleBin = _wcsicmp(item.desktopIconClsid.c_str(),
             kDesktopIconClsidRecycleBin) == 0;
         if (recycleBin)
         {
-            DrawDockControlBackground(ctx, target, visualState, !lt);
+            DrawDockControlBackground(ctx, target, 0, !lt);
             const int shortSide = std::max(1, static_cast<int>(std::min(
                 target.right - target.left, target.bottom - target.top)));
             const int inset = std::max(1, static_cast<int>(std::round(shortSide * 0.16f)));
@@ -2374,10 +2967,30 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     {
         size_t index = FindItemIndexByKey(entry.reference);
         if (index >= items_.size()) return;
-        drawDesktopItem(items_[index], iconRect, state);
+        const int launchOffset =
+            GetDockLaunchBounceOffset(index, iconSize);
+        switch (dockSettings_.position)
+        {
+        case DockPosition::Top:
+            OffsetRect(&iconRect, 0, launchOffset);
+            break;
+        case DockPosition::Left:
+            OffsetRect(&iconRect, launchOffset, 0);
+            break;
+        case DockPosition::Right:
+            OffsetRect(&iconRect, -launchOffset, 0);
+            break;
+        case DockPosition::Bottom:
+        default:
+            OffsetRect(&iconRect, 0, -launchOffset);
+            break;
+        }
+        drawDesktopItem(items_[index], iconRect);
+        if (state == 2)
+            DrawDockSelectionIndicator(ctx, iconRect, lt);
 
         const DockWindowVisualState windowState = GetDockWindowVisualState(index);
-        if (windowState != DockWindowVisualState::Closed)
+        if (windowState != DockWindowVisualState::Closed && state != 2)
         {
             const bool minimized = windowState == DockWindowVisualState::Minimized;
             const bool foreground = windowState == DockWindowVisualState::Foreground;
@@ -2390,20 +3003,20 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             {
             case DockPosition::Top:
                 center = D2D1::Point2F((rect.left + rect.right) * 0.5f,
-                    static_cast<float>(iconRect.top) - indicatorGap);
+                    static_cast<float>(indicatorIconRect.top) - indicatorGap);
                 break;
             case DockPosition::Left:
-                center = D2D1::Point2F(static_cast<float>(iconRect.left) - indicatorGap,
+                center = D2D1::Point2F(static_cast<float>(indicatorIconRect.left) - indicatorGap,
                     (rect.top + rect.bottom) * 0.5f);
                 break;
             case DockPosition::Right:
-                center = D2D1::Point2F(static_cast<float>(iconRect.right) + indicatorGap,
+                center = D2D1::Point2F(static_cast<float>(indicatorIconRect.right) + indicatorGap,
                     (rect.top + rect.bottom) * 0.5f);
                 break;
             case DockPosition::Bottom:
             default:
                 center = D2D1::Point2F((rect.left + rect.right) * 0.5f,
-                    static_cast<float>(iconRect.bottom) + indicatorGap);
+                    static_cast<float>(indicatorIconRect.bottom) + indicatorGap);
                 break;
             }
 
@@ -2464,8 +3077,10 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         const int left = groupLeft + col * (smallIconSize + collectionGap);
         const int top = groupTop + row * (smallIconSize + collectionGap);
         RECT cell{ left, top, left + smallIconSize, top + smallIconSize };
-        drawDesktopItem(items_[itemIndex], cell, 0);
+        drawDesktopItem(items_[itemIndex], cell);
     }
+    if (state == 2)
+        DrawDockSelectionIndicator(ctx, iconRect, lt);
 }
 
 inline void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
@@ -2483,24 +3098,16 @@ inline void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
     const bool lt = IsLightContentTheme();
-    if (state > 0)
-    {
-        RECT feedbackRect = rect;
-        InflateRect(&feedbackRect, -2, -2);
-        DrawD2DRoundedRectangle(ctx, feedbackRect, 12.0f,
-            state == 2
-                ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.28f)
-                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f)),
-            state == 2
-                ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.82f)
-                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f)),
-            state == 2 ? 1.6f : 1.0f);
-    }
     if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
         ctx->DrawBitmap(bitmap, ToD2DRect(iconRect), 1.0f,
             D2D1_INTERPOLATION_MODE_LINEAR);
     else
         DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);
+    if (state == 2)
+    {
+        DrawDockSelectionIndicator(ctx, iconRect, lt);
+        return;
+    }
 
     const bool verticalDock = dockSettings_.position == DockPosition::Left ||
         dockSettings_.position == DockPosition::Right;

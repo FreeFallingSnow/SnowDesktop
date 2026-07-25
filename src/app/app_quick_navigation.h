@@ -367,23 +367,11 @@ inline std::wstring DesktopApp::GetQuickNavigationEverythingNoticeText() const
         : _LW("app.nav.everything_download");
 }
 
-inline bool DesktopApp::TryLaunchQuickNavigationEverythingApp() const
+inline bool DesktopApp::TryLaunchQuickNavigationEverythingApp()
 {
     const QuickNavigationAppEntry* entry = FindQuickNavigationEverythingAppEntry();
-    if (!entry || !entry->absolutePidl.get())
-        return false;
-
-    Pidl launchPidl;
-    launchPidl.reset(ILClone(entry->absolutePidl.get()));
-    if (!launchPidl.get())
-        return false;
-
-    SHELLEXECUTEINFOW sei{};
-    sei.cbSize = sizeof(sei);
-    sei.fMask = SEE_MASK_IDLIST;
-    sei.lpIDList = launchPidl.get();
-    sei.nShow = SW_SHOWNORMAL;
-    return ShellExecuteExW(&sei) != FALSE;
+    return entry &&
+        LaunchQuickNavigationAppEntry(*entry);
 }
 
 inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
@@ -1638,6 +1626,131 @@ inline bool DesktopApp::TryGetQuickNavigationAppEntryAtPoint(
     return false;
 }
 
+inline size_t DesktopApp::FindDockItemIndexForQuickNavigationApp(
+    const QuickNavigationAppEntry& entry)
+{
+    const std::wstring parsingKey =
+        ToUpperInvariant(entry.parsingName);
+    if (!parsingKey.empty())
+    {
+        const size_t direct =
+            FindItemIndexByKey(parsingKey);
+        if (direct < items_.size())
+            return direct;
+        for (size_t i = 0; i < items_.size(); ++i)
+        {
+            if (ToUpperInvariant(items_[i].parsingName) ==
+                parsingKey)
+                return i;
+        }
+    }
+
+    std::wstring appUserModelId = parsingKey;
+    constexpr std::wstring_view appsFolderMarker =
+        L"APPSFOLDER\\";
+    const size_t appsFolder =
+        appUserModelId.rfind(appsFolderMarker);
+    if (appsFolder != std::wstring::npos)
+    {
+        appUserModelId = appUserModelId.substr(
+            appsFolder + appsFolderMarker.size());
+    }
+
+    std::vector<size_t> candidates;
+    candidates.reserve(
+        dockEntries_.size() +
+        static_cast<size_t>(
+            std::max(
+                0,
+                dockSettings_.frequentItemCount)));
+    for (const DockEntry& dockEntry : dockEntries_)
+    {
+        if (dockEntry.type !=
+            DockEntryType::DesktopItem)
+            continue;
+        const size_t itemIndex =
+            FindItemIndexByKey(
+                dockEntry.reference);
+        if (itemIndex < items_.size())
+            candidates.push_back(itemIndex);
+    }
+    for (const size_t itemIndex :
+        GetFrequentDockItemIndices())
+    {
+        if (std::find(
+                candidates.begin(),
+                candidates.end(),
+                itemIndex) == candidates.end())
+            candidates.push_back(itemIndex);
+    }
+
+    size_t nameMatch = static_cast<size_t>(-1);
+    bool nameMatchAmbiguous = false;
+    for (const size_t i : candidates)
+    {
+        const DockAppIdentity identity =
+            ResolveDockAppIdentity(i);
+        if (identity.kind ==
+                DockAppIdentityKind::Applications &&
+            !appUserModelId.empty() &&
+            identity.appUserModelId ==
+                appUserModelId)
+        {
+            return i;
+        }
+        if (identity.kind != DockAppIdentityKind::None &&
+            !entry.name.empty() &&
+            _wcsicmp(
+                items_[i].name.c_str(),
+                entry.name.c_str()) == 0)
+        {
+            if (nameMatch !=
+                static_cast<size_t>(-1))
+                nameMatchAmbiguous = true;
+            nameMatch = i;
+        }
+    }
+    return nameMatchAmbiguous
+        ? static_cast<size_t>(-1)
+        : nameMatch;
+}
+
+inline bool DesktopApp::LaunchQuickNavigationAppEntry(
+    const QuickNavigationAppEntry& entry)
+{
+    if (!entry.absolutePidl.get())
+        return false;
+
+    Pidl launchPidl;
+    launchPidl.reset(
+        ILClone(entry.absolutePidl.get()));
+    if (!launchPidl.get())
+        return false;
+
+    const size_t dockItemIndex =
+        FindDockItemIndexForQuickNavigationApp(entry);
+    const bool wasClosed =
+        dockItemIndex < items_.size() &&
+        GetDockWindowVisualState(dockItemIndex) ==
+            DockWindowVisualState::Closed;
+
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_IDLIST;
+    sei.lpIDList = launchPidl.get();
+    sei.nShow = SW_SHOWNORMAL;
+    if (!ShellExecuteExW(&sei))
+        return false;
+
+    if (dockItemIndex < items_.size())
+    {
+        RecordDockItemUsage(dockItemIndex);
+        if (wasClosed)
+            StartDockLaunchBounce(dockItemIndex);
+    }
+    return true;
+}
+
 inline size_t DesktopApp::GetQuickNavigationVisibleAppResultCount() const
 {
     if (quickNavigationAppsExpanded_)
@@ -2690,8 +2803,14 @@ inline void DesktopApp::OpenQuickNavigation()
     PositionQuickNavigationWindow();
     if (quickNavigationSearchEdit_)
         SetWindowTextW(quickNavigationSearchEdit_, L"");
-    ShowWindow(quickNavigationHwnd_, SW_SHOWNA);
-    AnimateWindow(quickNavigationHwnd_, 160, AW_BLEND);
+    if (!snowdesktop::dock_launch_animation::
+            SystemAnimationsEnabled() ||
+        !AnimateWindow(
+            quickNavigationHwnd_, 160, AW_BLEND))
+    {
+        ShowWindow(
+            quickNavigationHwnd_, SW_SHOWNA);
+    }
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
         ShowWindow(quickNavigationSearchEdit_, SW_SHOWNOACTIVATE);
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
@@ -2735,7 +2854,15 @@ inline void DesktopApp::CloseQuickNavigation()
     {
         if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
             ShowWindow(quickNavigationSearchEdit_, SW_HIDE);
-        AnimateWindow(quickNavigationHwnd_, 120, AW_BLEND | AW_HIDE);
+        if (!snowdesktop::dock_launch_animation::
+                SystemAnimationsEnabled() ||
+            !AnimateWindow(
+                quickNavigationHwnd_, 120,
+                AW_BLEND | AW_HIDE))
+        {
+            ShowWindow(
+                quickNavigationHwnd_, SW_HIDE);
+        }
     }
     DestroyQuickNavigationWindow();
     if (customDesktopVisible_)
@@ -3061,8 +3188,8 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
             const bool hasEverythingApp = FindQuickNavigationEverythingAppEntry() != nullptr;
             if (hasEverythingApp)
             {
-                TryLaunchQuickNavigationEverythingApp();
                 CloseQuickNavigation();
+                TryLaunchQuickNavigationEverythingApp();
             }
             else
             {
@@ -3085,18 +3212,8 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (TryGetQuickNavigationAppEntryAtPoint(point, appEntry) &&
         appEntry && appEntry->absolutePidl.get())
     {
-        Pidl launchPidl;
-        launchPidl.reset(ILClone(appEntry->absolutePidl.get()));
         CloseQuickNavigation();
-        if (launchPidl.get())
-        {
-            SHELLEXECUTEINFOW sei{};
-            sei.cbSize = sizeof(sei);
-            sei.fMask = SEE_MASK_IDLIST;
-            sei.lpIDList = launchPidl.get();
-            sei.nShow = SW_SHOWNORMAL;
-            ShellExecuteExW(&sei);
-        }
+        LaunchQuickNavigationAppEntry(*appEntry);
         return true;
     }
 
@@ -3124,7 +3241,7 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
-            LaunchDesktopItem(entry.itemIndex);
+            LaunchDesktopItem(entry.itemIndex, true);
         }
         else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
         {
@@ -3475,12 +3592,8 @@ inline void DesktopApp::ShowQuickNavigationAppContextMenu(
     {
     case kAppOpen:
     {
-        SHELLEXECUTEINFOW sei{};
-        sei.cbSize = sizeof(sei);
-        sei.fMask = SEE_MASK_IDLIST;
-        sei.lpIDList = entry.absolutePidl.get();
-        sei.nShow = SW_SHOWNORMAL;
-        ShellExecuteExW(&sei);
+        CloseQuickNavigation();
+        LaunchQuickNavigationAppEntry(entry);
         break;
     }
     case kAppCreateShortcut:

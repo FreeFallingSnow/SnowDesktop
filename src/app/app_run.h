@@ -27,6 +27,8 @@ inline DesktopApp::~DesktopApp()
 {
     ApplySystemTaskbarBackdrop(false, false,
         ResolveSystemTaskbarAppearance(dockSettings_));
+    dockWindowTransition_.reset();
+    dockWindowPreview_.reset();
     StopQuickNavigationAppIndexing();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
@@ -123,6 +125,8 @@ inline void DesktopApp::RegisterOleDropTarget()
 inline void DesktopApp::ResetDesktopWindowResources()
 {
     desktopBackdropCompositor_.Reset();
+    if (dockWindowTransition_)
+        dockWindowTransition_->Cancel();
     nativeGlassPanelReadyLogged_ = false;
     recycleBinPollState_->targetWindow = nullptr;
     if (hwnd_ && IsWindow(hwnd_))
@@ -135,6 +139,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
+        KillTimer(hwnd_, kDockLaunchBounceTimerId);
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             KillTimer(hwnd_, timerId);
@@ -143,6 +148,8 @@ inline void DesktopApp::ResetDesktopWindowResources()
     }
     StopDockForegroundMonitor();
     widgetTimerIds_.clear();
+    dockLaunchBounces_.clear();
+    dockLaunchBounceLastWindowPollTick_ = 0;
     nextWidgetTimerId_ = kWidgetTimerIdBase;
     dropTargetRegistered_ = false;
 
@@ -927,6 +934,15 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         nullptr, nullptr, instance, this);
     if (!hwnd_) { WriteCrashLogEntry(L"CreateWindow FAILED"); return __LINE__; }
     AttachWindowToDesktopHost(parent);
+    dockWindowPreview_ = std::make_unique<DockWindowPreview>();
+    if (!dockWindowPreview_->Initialize(instance_, [this](HWND window) {
+            ActivateDockWindowFromPreview(window);
+        }))
+        dockWindowPreview_.reset();
+    dockWindowTransition_ =
+        std::make_unique<DockWindowTransition>();
+    if (!dockWindowTransition_->Initialize(instance_))
+        dockWindowTransition_.reset();
     if (!CreateDesktopInputWindow(parent))
     {
         WriteCrashLogEntry(L"CreateInputWindow FAILED");
@@ -1070,12 +1086,72 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             InvalidateDragStaticScene();
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         });
+        settingsWindow_->SetDockSettingsPreviewChangedCallback(
+            [this](const DockSettings& settings) {
+                std::vector<RECT> previousDockRects;
+                for (const auto& container : containers_)
+                {
+                    if (const auto* dock =
+                            dynamic_cast<DockContainer*>(
+                                container.get()))
+                    {
+                        previousDockRects.push_back(
+                            dock->GetInteractiveBounds());
+                    }
+                }
+                const bool layoutChanged =
+                    settings.position != dockSettings_.position ||
+                    settings.edgeAttached != dockSettings_.edgeAttached ||
+                    settings.monitorScope != dockSettings_.monitorScope ||
+                    settings.showWindowsButton !=
+                        dockSettings_.showWindowsButton ||
+                    settings.showRunningApps !=
+                        dockSettings_.showRunningApps ||
+                    settings.showFrequentItems !=
+                        dockSettings_.showFrequentItems ||
+                    settings.frequentItemCount !=
+                        dockSettings_.frequentItemCount ||
+                    std::abs(
+                        settings.thicknessScale -
+                        dockSettings_.thicknessScale) > 0.0001f;
+                const bool runningAppsChanged =
+                    settings.showRunningApps !=
+                        dockSettings_.showRunningApps;
+                const bool previewsDisabled =
+                    dockSettings_.showWindowPreviews &&
+                    !settings.showWindowPreviews;
+
+                dockSettings_ = settings;
+                dockSettingsLayoutCommitPending_ =
+                    dockSettingsLayoutCommitPending_ ||
+                    layoutChanged;
+                if (previewsDisabled)
+                    HideDockWindowPreview();
+                if (runningAppsChanged)
+                    RefreshDockRunningWindows(false);
+                if (layoutChanged)
+                {
+                    InvalidateDockContainers();
+                    if (hwnd_)
+                    {
+                        for (const RECT& rect :
+                            previousDockRects)
+                        {
+                            InvalidateRect(
+                                hwnd_, &rect, TRUE);
+                        }
+                        InvalidateDockRects(TRUE);
+                    }
+                }
+            });
         settingsWindow_->SetDockSettingsChangedCallback([this]() {
             const DockPosition previousPosition = dockSettings_.position;
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
             const DockMonitorScope previousMonitorScope = dockSettings_.monitorScope;
             const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
             const bool previousShowRunningApps = dockSettings_.showRunningApps;
+            const bool previousShowWindowPreviews =
+                dockSettings_.showWindowPreviews;
             const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
             const int previousFrequentItemCount = dockSettings_.frequentItemCount;
             const float previousThicknessScale = dockSettings_.thicknessScale;
@@ -1084,7 +1160,11 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const int previousSystemTaskbarAlignment =
                 dockSettings_.systemTaskbarAlignment;
             LoadDockSettingsAndApply();
-            if (dockSettings_.position != previousPosition ||
+            if (previousShowWindowPreviews &&
+                !dockSettings_.showWindowPreviews)
+                HideDockWindowPreview();
+            if (dockSettingsLayoutCommitPending_ ||
+                dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
                 dockSettings_.monitorScope != previousMonitorScope ||
                 dockSettings_.showWindowsButton != previousShowWindowsButton ||
@@ -1102,6 +1182,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 SaveLayoutSlots();
                 InvalidateDragStaticScene();
             }
+            dockSettingsLayoutCommitPending_ = false;
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         });
         settingsWindow_->SetPersonalizationChangedCallback([this]() {
@@ -1490,13 +1571,8 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             ScreenToClient(hwnd_, &point);
             if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
-                const RECT dockBounds = dock->GetBounds();
-                if (PtInRect(&dockBounds, point))
-                {
-                    dockPressedForegroundWindow_ = GetForegroundWindow();
-                    dockPressedForegroundTick_ = GetTickCount();
+                if (dock->ContainsInteractivePoint(point))
                     return MA_NOACTIVATE;
-                }
             }
         }
         break;
@@ -1556,6 +1632,9 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (desktopIconsHidden_) return 0;
         OnMouseMove(wp, lp);
         return 0;
+    case WM_MOUSELEAVE:
+        OnMouseLeave();
+        return 0;
     case WM_LBUTTONUP:
         if (desktopIconsHidden_) return 0;
         OnLeftButtonUp(wp, lp);
@@ -1590,8 +1669,8 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
         if (DockContainer* dock = GetDockContainerAtPoint(pt))
         {
-            RECT dockBounds = dock->GetBounds();
-            if (PtInRect(&dockBounds, pt))
+            RECT dockBounds = dock->GetInteractiveBounds();
+            if (dock->ContainsInteractivePoint(pt))
             {
                 if (dock->IsSearchPoint(pt))
                 {
@@ -1615,7 +1694,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                             const size_t itemIndex =
                                 FindItemIndexByKey(dockEntries_[entryIndex].reference);
                             if (itemIndex < items_.size())
-                                ActivateOrToggleDockItem(itemIndex);
+                                LaunchDesktopItem(itemIndex, true);
                         }
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
                     }
@@ -1638,7 +1717,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                         dockPendingDoubleClickTick_ = 0;
                         ClearSelection();
                         if (itemIndex < items_.size())
-                            ActivateOrToggleDockItem(itemIndex);
+                            LaunchDesktopItem(itemIndex, true);
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
                     }
                     return 0;

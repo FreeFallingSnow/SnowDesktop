@@ -565,6 +565,8 @@ void SettingsWindow::Shutdown()
     {
         SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
         dockSettingsDirty_ = false;
+        dockSettingsPreviewDirty_ = false;
+        dockSettingsSaveRequested_ = false;
         if (dockSettingsChangedCallback_)
             dockSettingsChangedCallback_();
     }
@@ -672,6 +674,8 @@ void SettingsWindow::RequestClose()
         editingWidgetIndex_ = static_cast<size_t>(-1);
     if (personalizationDirty_)
         personalizationSaveRequested_ = true;
+    if (dockSettingsDirty_)
+        dockSettingsSaveRequested_ = true;
     if (categorySettingsDirty_)
         categorySettingsSaveRequested_ = true;
     pendingClose_ = true;
@@ -798,10 +802,18 @@ void SettingsWindow::Render()
             personalizationChangedCallback_();
     }
 
-    if (dockSettingsDirty_)
+    if (dockSettingsPreviewDirty_)
+    {
+        dockSettingsPreviewDirty_ = false;
+        if (dockSettingsPreviewChangedCallback_)
+            dockSettingsPreviewChangedCallback_(dockSettings_);
+    }
+
+    if (dockSettingsSaveRequested_ && dockSettingsDirty_)
     {
         SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
         dockSettingsDirty_ = false;
+        dockSettingsSaveRequested_ = false;
         if (dockSettingsChangedCallback_)
             dockSettingsChangedCallback_();
     }
@@ -1345,7 +1357,12 @@ void SettingsWindow::DrawDockPage()
     const float sliderActionW = controlW;
     const float actionSliderW = std::max(1.0f,
         sliderActionW - ImGui::GetStyle().ItemSpacing.x - resetW);
-    auto markChanged = [&]() { dockSettingsDirty_ = true; };
+    auto markChanged = [&](bool saveImmediately) {
+        dockSettingsDirty_ = true;
+        dockSettingsPreviewDirty_ = true;
+        if (saveImmediately)
+            dockSettingsSaveRequested_ = true;
+    };
 
     if (DrawSettingCheckbox(_L("app.dock.enable"), "##DockEnabled", &dockEnabled_))
     {
@@ -1362,7 +1379,7 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::Combo("##DockPosition", &position, positionNames, IM_ARRAYSIZE(positionNames)))
     {
         dockSettings_.position = static_cast<DockPosition>(position);
-        markChanged();
+        markChanged(true);
     }
 
     BeginSettingRow(_L("app.settings.display_scope"), controlW);
@@ -1374,7 +1391,7 @@ void SettingsWindow::DrawDockPage()
         monitorScopeNames, IM_ARRAYSIZE(monitorScopeNames)))
     {
         dockSettings_.monitorScope = static_cast<DockMonitorScope>(monitorScope);
-        markChanged();
+        markChanged(true);
     }
     BeginSettingRow(_L("app.dock.layout"), controlW);
     const char* layoutNames[] = { _L("app.dock.island"), _L("app.dock.edge") };
@@ -1383,7 +1400,7 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::Combo("##DockLayoutMode", &layoutMode, layoutNames, IM_ARRAYSIZE(layoutNames)))
     {
         dockSettings_.edgeAttached = layoutMode == 1;
-        markChanged();
+        markChanged(true);
     }
     BeginSettingRow(_L("app.settings.dock_thickness"), sliderActionW,
         _L("app.settings.dock_thickness_hint"));
@@ -1393,33 +1410,43 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::SliderInt("##DockThickness", &thicknessPercent, 50, 100, "%d%%"))
     {
         dockSettings_.thicknessScale = thicknessPercent / 100.0f;
-        markChanged();
+        markChanged(false);
     }
+    if (ImGui::IsItemDeactivatedAfterEdit() &&
+        dockSettingsDirty_)
+        dockSettingsSaveRequested_ = true;
     ImGui::SameLine();
     if (BlueButton(thicknessResetLabel.c_str(), ImVec2(resetW, 0)))
     {
         dockSettings_.thicknessScale = 1.0f;
-        markChanged();
+        markChanged(true);
     }
 
     if (DrawSettingCheckbox(_L("app.dock.show_windows_button"), "##DockShowWindowsButton",
         &dockSettings_.showWindowsButton))
-        markChanged();
+        markChanged(true);
 
     if (DrawSettingCheckbox(_L("app.dock.show_running_area"), "##DockShowRunningApps",
         &dockSettings_.showRunningApps))
-        markChanged();
+        markChanged(true);
+
+    if (DrawSettingCheckbox(_L("app.dock.show_window_previews"),
+        "##DockShowWindowPreviews", &dockSettings_.showWindowPreviews))
+        markChanged(true);
 
     if (DrawSettingCheckbox(_L("app.dock.show_frequent_items"), "##DockShowFrequentItems",
         &dockSettings_.showFrequentItems))
-        markChanged();
+        markChanged(true);
 
     ImGui::BeginDisabled(!dockSettings_.showFrequentItems);
     BeginSettingRow(_L("app.settings.show_count"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::SliderInt("##DockFrequentItemCount",
         &dockSettings_.frequentItemCount, 1, 8, _L("app.settings.items_unit")))
-        markChanged();
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() &&
+        dockSettingsDirty_)
+        dockSettingsSaveRequested_ = true;
     ImGui::EndDisabled();
 
     ImGui::EndDisabled();
@@ -1432,7 +1459,11 @@ void SettingsWindow::DrawDockPage()
 void SettingsWindow::DrawSystemTaskbarPage()
 {
     const float controlW = kSettingControlWidthDip * dpiScale_;
-    auto markChanged = [&]() { dockSettingsDirty_ = true; };
+    auto markChanged = [&]() {
+        dockSettingsDirty_ = true;
+        dockSettingsPreviewDirty_ = true;
+        dockSettingsSaveRequested_ = true;
+    };
 
     if (DrawSettingCheckbox(_L("app.settings.auto_hide_taskbar"), "##SystemTaskbarAutoHide",
         &dockSettings_.systemTaskbarAutoHide))
@@ -1469,6 +1500,8 @@ void SettingsWindow::DrawSystemTaskbarPage()
     {
         SetWindowsSystemLightThemeEnabled(windowsTheme == 0);
         dockSettingsDirty_ = true;
+        dockSettingsPreviewDirty_ = true;
+        dockSettingsSaveRequested_ = true;
     }
     ImGui::SameLine();
     if (BlueButton(restartExplorerLabel.c_str()))
@@ -2353,6 +2386,8 @@ void SettingsWindow::DrawPersonalizationPage()
             break;
         }
         dockSettingsDirty_ = true;
+        dockSettingsPreviewDirty_ = true;
+        dockSettingsSaveRequested_ = true;
     }
 
     const auto dynamicRuleNeedsHook =
@@ -2402,6 +2437,8 @@ void SettingsWindow::DrawPersonalizationPage()
             {
                 dockSettings_.systemTaskbarContentTheme = ct;
                 dockSettingsDirty_ = true;
+                dockSettingsPreviewDirty_ = true;
+                dockSettingsSaveRequested_ = true;
             }
         }
         else
@@ -2414,6 +2451,8 @@ void SettingsWindow::DrawPersonalizationPage()
             {
                 dockSettings_.systemTaskbarContentTheme = ct - 1;
                 dockSettingsDirty_ = true;
+                dockSettingsPreviewDirty_ = true;
+                dockSettingsSaveRequested_ = true;
             }
         }
 
@@ -2423,7 +2462,11 @@ void SettingsWindow::DrawPersonalizationPage()
             if (drawOverrideAdvanced(
                 dockSettings_.systemTaskbarAppearance,
                 "OverrideAdvanced"))
+            {
                 dockSettingsDirty_ = true;
+                dockSettingsPreviewDirty_ = true;
+                dockSettingsSaveRequested_ = true;
+            }
             ImGui::Unindent(8.0f * dpiScale_);
         }
     }
@@ -2433,7 +2476,11 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::PushID(id);
         ImGui::Spacing();
         if (DrawSettingCheckbox(label, "##Enabled", &rule.enabled))
+        {
             dockSettingsDirty_ = true;
+            dockSettingsPreviewDirty_ = true;
+            dockSettingsSaveRequested_ = true;
+        }
 
         if (!rule.enabled)
         {
@@ -2472,6 +2519,8 @@ void SettingsWindow::DrawPersonalizationPage()
                 rule.appearance.backgroundPreset = kAppearancePresetCustom;
             }
             dockSettingsDirty_ = true;
+            dockSettingsPreviewDirty_ = true;
+            dockSettingsSaveRequested_ = true;
         }
 
         const char* dynamicContentThemeNames[] = {
@@ -2488,6 +2537,8 @@ void SettingsWindow::DrawPersonalizationPage()
         {
             rule.contentTheme = contentTheme - 1;
             dockSettingsDirty_ = true;
+            dockSettingsPreviewDirty_ = true;
+            dockSettingsSaveRequested_ = true;
         }
 
         if (rule.themeMode == SystemTaskbarThemeMode::Custom &&
@@ -2495,6 +2546,8 @@ void SettingsWindow::DrawPersonalizationPage()
         {
             rule.appearance.backgroundPreset = kAppearancePresetCustom;
             dockSettingsDirty_ = true;
+            dockSettingsPreviewDirty_ = true;
+            dockSettingsSaveRequested_ = true;
         }
         ImGui::Unindent(8.0f * dpiScale_);
         ImGui::PopID();
@@ -3384,6 +3437,8 @@ void SettingsWindow::MigratePortableData()
     personalizationPreviewDirty_ = false;
     personalizationSaveRequested_ = false;
     dockSettingsDirty_ = false;
+    dockSettingsPreviewDirty_ = false;
+    dockSettingsSaveRequested_ = false;
     navigationSettingsDirty_ = false;
     generalSettingsDirty_ = false;
     categorySettingsDirty_ = false;

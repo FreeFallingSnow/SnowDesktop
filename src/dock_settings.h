@@ -78,6 +78,7 @@ struct DockSettings
     DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
     bool showRunningApps = true;
+    bool showWindowPreviews = true;
     bool showFrequentItems = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;

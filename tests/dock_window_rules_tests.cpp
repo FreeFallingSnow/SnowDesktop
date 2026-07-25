@@ -1,0 +1,602 @@
+#include "dock_magnification.h"
+#include "dock_launch_animation.h"
+#include "dock_rename_layout.h"
+#include "dock_window_rules.h"
+#include "dock_window_preview.h"
+#include "dock_window_transition.h"
+#include "desktop_item_reference_migration.h"
+
+#include <iostream>
+
+namespace rules = snowdesktop::dock_window_rules;
+
+namespace
+{
+
+int failures = 0;
+
+void Check(bool condition, const char* message)
+{
+    if (condition) return;
+    ++failures;
+    std::cerr << "FAILED: " << message << '\n';
+}
+
+void CheckRowMargins(
+    const DockWindowPreviewGrid& grid,
+    const std::vector<RECT>& cards,
+    size_t rowStart,
+    size_t rowCount,
+    const char* message)
+{
+    if (rowCount == 0 || rowStart + rowCount > cards.size())
+    {
+        Check(false, message);
+        return;
+    }
+    const int leftMargin = cards[rowStart].left;
+    const int rightMargin =
+        grid.panelWidth - cards[rowStart + rowCount - 1].right;
+    Check(std::abs(leftMargin - rightMargin) <= 1, message);
+}
+
+} // namespace
+
+int main()
+{
+    Check(rules::IsTaskWindowStyleEligible(0, false),
+        "ordinary unowned windows must remain eligible");
+    Check(!rules::IsTaskWindowStyleEligible(WS_EX_TOOLWINDOW, false),
+        "tool windows must be excluded");
+    Check(!rules::IsTaskWindowStyleEligible(WS_EX_NOACTIVATE, false),
+        "no-activate windows must be excluded");
+    Check(!rules::IsTaskWindowStyleEligible(0, true),
+        "owned windows must be excluded");
+
+    Check(rules::IsTaskWindowStyleEligible(
+            WS_EX_APPWINDOW | WS_EX_TOOLWINDOW, false),
+        "app windows must override tool-window exclusion");
+    Check(rules::IsTaskWindowStyleEligible(
+            WS_EX_APPWINDOW | WS_EX_NOACTIVATE, false),
+        "app windows must override no-activate exclusion");
+    Check(rules::IsTaskWindowStyleEligible(WS_EX_APPWINDOW, true),
+        "app windows must override owner exclusion");
+
+    Check(rules::ResolveDockClickAction(false, false, false) ==
+            rules::DockClickAction::Launch,
+        "a closed application must keep the existing launch gesture");
+    Check(rules::ResolveDockClickAction(true, false, false) ==
+            rules::DockClickAction::Activate,
+        "a short running indicator must activate the application");
+    Check(rules::ResolveDockClickAction(true, false, true) ==
+            rules::DockClickAction::Minimize,
+        "a long foreground indicator must minimize the application");
+    Check(rules::ResolveDockClickAction(true, true, false) ==
+            rules::DockClickAction::Restore,
+        "a minimized indicator must restore the application");
+    Check(rules::ResolveDockClickAction(true, true, true) ==
+            rules::DockClickAction::Restore,
+        "minimized state must take precedence over stale foreground state");
+
+    Check(EaseDockWindowTransition(-1.0) == 0.0 &&
+            EaseDockWindowTransition(2.0) == 1.0,
+        "window transition easing must clamp its input");
+    Check(EaseDockWindowTransition(0.25) < 0.25 &&
+            EaseDockWindowTransition(0.75) > 0.75 &&
+            EaseDockWindowTransition(0.5) == 0.5,
+        "window transition easing must accelerate and decelerate smoothly");
+    const RECT transitionFrom{ 100, 100, 900, 700 };
+    const RECT transitionTo{ 460, 1000, 540, 1080 };
+    const RECT transitionStart =
+        InterpolateDockWindowTransitionRect(
+            transitionFrom, transitionTo, 0.0);
+    const RECT transitionEnd =
+        InterpolateDockWindowTransitionRect(
+            transitionFrom, transitionTo, 1.0);
+    Check(EqualRect(
+            &transitionStart, &transitionFrom),
+        "window transition must begin at the source rectangle");
+    Check(EqualRect(
+            &transitionEnd, &transitionTo),
+        "window transition must end at the Dock icon rectangle");
+
+    namespace launchAnimation =
+        snowdesktop::dock_launch_animation;
+    Check(launchAnimation::NormalizedOffset(0) == 0.0 &&
+            launchAnimation::NormalizedOffset(
+                launchAnimation::kMaximumDurationMs) == 0.0,
+        "Dock launch bounce must begin and end at rest");
+    Check(launchAnimation::NormalizedOffset(
+            launchAnimation::kBouncePeriodMs / 2) >
+            launchAnimation::NormalizedOffset(
+                launchAnimation::kBouncePeriodMs +
+                launchAnimation::kBouncePeriodMs / 2),
+        "Dock launch bounce must decay after each cycle");
+    Check(launchAnimation::OffsetPixels(
+            launchAnimation::kBouncePeriodMs / 2, 64) > 0,
+        "Dock launch bounce must move a visible icon");
+    Check(!launchAnimation::IsRestingPoint(
+            launchAnimation::kBouncePeriodMs) &&
+            launchAnimation::IsRestingPoint(
+                launchAnimation::kMinimumDurationMs),
+        "Dock launch bounce must complete at least two cycles");
+
+    namespace magnification = snowdesktop::dock_magnification;
+    Check(std::abs(
+            magnification::ScaleForAxisDistance(0, 76) -
+            magnification::kFocusScale) < 0.001f,
+        "the focused Dock element must receive the maximum scale");
+    Check(std::abs(
+            magnification::ScaleForAxisDistance(76, 76) -
+            magnification::kFirstNeighborScale) < 0.001f,
+        "the first Dock neighbor must receive the medium scale");
+    Check(std::abs(
+            magnification::ScaleForAxisDistance(152, 76) -
+            magnification::kSecondNeighborScale) < 0.001f,
+        "the second Dock neighbor must receive the subtle scale");
+    Check(magnification::ScaleForAxisDistance(228, 76) == 1.0f,
+        "distant Dock elements must retain their normal scale");
+    const float quarterScale =
+        magnification::ScaleForAxisDistance(19, 76);
+    const float halfScale =
+        magnification::ScaleForAxisDistance(38, 76);
+    const float threeQuarterScale =
+        magnification::ScaleForAxisDistance(57, 76);
+    Check(quarterScale < magnification::kFocusScale &&
+            quarterScale > halfScale &&
+            halfScale > threeQuarterScale &&
+            threeQuarterScale >
+                magnification::kFirstNeighborScale,
+        "Dock magnification must vary continuously inside each icon pitch");
+    Check(magnification::AxisShiftForDistance(19, 76, 64) <
+            magnification::AxisShiftForDistance(38, 76, 64) &&
+            magnification::AxisShiftForDistance(38, 76, 64) <
+            magnification::AxisShiftForDistance(57, 76, 64),
+        "Dock displacement must grow continuously with pointer distance");
+    const int firstNeighborShift =
+        magnification::AxisShiftForDistance(76, 76, 64);
+    const int secondNeighborShift =
+        magnification::AxisShiftForDistance(152, 76, 64);
+    const int tailShift =
+        magnification::AxisShiftForDistance(228, 76, 64);
+    Check(firstNeighborShift > 0 &&
+            secondNeighborShift > firstNeighborShift &&
+            tailShift > secondNeighborShift,
+        "Dock neighbors and the remaining tail must be pushed outward");
+    Check(magnification::AxisShiftForDistance(-76, 76, 64) ==
+            -firstNeighborShift,
+        "Dock displacement must be symmetric around the focused element");
+
+    const std::vector<float> leadingZoneScales{
+        magnification::kFocusScale,
+        magnification::kFirstNeighborScale,
+        magnification::kSecondNeighborScale,
+        1.0f
+    };
+    const int leadingFocusShift =
+        magnification::PackedAxisShift(
+            leadingZoneScales, 0, 64, true);
+    const int leadingNeighborShift =
+        magnification::PackedAxisShift(
+            leadingZoneScales, 1, 64, true);
+    Check(leadingFocusShift > 0 &&
+            leadingNeighborShift > leadingFocusShift,
+        "edge-attached leading zone must accumulate growth toward center");
+
+    const RECT baseDockElement{ 100, 200, 176, 288 };
+    const RECT bottomMagnified = magnification::MagnifyRect(
+        baseDockElement, DockPosition::Bottom,
+        magnification::kFocusScale, 64);
+    Check(bottomMagnified.top < baseDockElement.top &&
+            bottomMagnified.bottom == baseDockElement.bottom,
+        "bottom Dock magnification must grow toward the desktop");
+    Check(bottomMagnified.left < baseDockElement.left &&
+            bottomMagnified.right > baseDockElement.right,
+        "horizontal Dock magnification must remain centered on its slot");
+
+    const RECT leftMagnified = magnification::MagnifyRect(
+        baseDockElement, DockPosition::Left,
+        magnification::kFocusScale, 64);
+    Check(leftMagnified.left == baseDockElement.left &&
+            leftMagnified.right > baseDockElement.right,
+        "left Dock magnification must grow toward the desktop");
+
+    const RECT neighborDockElement{ 176, 200, 252, 288 };
+    const RECT shiftedNeighbor = magnification::MagnifyRect(
+        neighborDockElement, DockPosition::Bottom,
+        magnification::kFirstNeighborScale, 64, firstNeighborShift);
+    Check(shiftedNeighbor.left >= bottomMagnified.right,
+        "neighbor displacement must preserve spacing beside the magnified focus");
+
+    const RECT leadingPackedFocus =
+        magnification::MagnifyRect(
+            baseDockElement, DockPosition::Bottom,
+            leadingZoneScales[0], 64, leadingFocusShift);
+    const RECT leadingPackedNeighbor =
+        magnification::MagnifyRect(
+            neighborDockElement, DockPosition::Bottom,
+            leadingZoneScales[1], 64, leadingNeighborShift);
+    Check(leadingPackedFocus.left == baseDockElement.left,
+        "edge-attached leading zone must preserve its outer boundary");
+    Check(leadingPackedNeighbor.left >= leadingPackedFocus.right,
+        "edge-attached leading zone must keep icon spacing while packing inward");
+
+    const std::vector<float> trailingZoneScales{
+        magnification::kFirstNeighborScale,
+        magnification::kFocusScale
+    };
+    const int trailingInnerShift =
+        magnification::PackedAxisShift(
+            trailingZoneScales, 0, 64, false);
+    const int trailingFocusShift =
+        magnification::PackedAxisShift(
+            trailingZoneScales, 1, 64, false);
+    const RECT trailingSearchBase{ 100, 200, 176, 288 };
+    const RECT trailingRecycleBase{ 176, 200, 252, 288 };
+    const RECT trailingPackedInner =
+        magnification::MagnifyRect(
+            trailingSearchBase, DockPosition::Bottom,
+            trailingZoneScales[0], 64, trailingInnerShift);
+    const RECT trailingPackedFocus =
+        magnification::MagnifyRect(
+            trailingRecycleBase, DockPosition::Bottom,
+            trailingZoneScales[1], 64, trailingFocusShift);
+    Check(trailingFocusShift < 0 &&
+            trailingPackedFocus.right == trailingRecycleBase.right,
+        "edge-attached trailing zone must preserve its outer boundary");
+    Check(trailingPackedInner.right == trailingPackedFocus.left,
+        "search and recycle bin must remain packed in physical order");
+    const RECT trailingSearchVertical{ 100, 200, 188, 276 };
+    const RECT trailingRecycleVertical{ 100, 276, 188, 352 };
+    const RECT trailingPackedSearchVertical =
+        magnification::MagnifyRect(
+            trailingSearchVertical, DockPosition::Left,
+            trailingZoneScales[0], 64, trailingInnerShift);
+    const RECT trailingPackedRecycleVertical =
+        magnification::MagnifyRect(
+            trailingRecycleVertical, DockPosition::Left,
+            trailingZoneScales[1], 64, trailingFocusShift);
+    Check(trailingPackedRecycleVertical.bottom ==
+            trailingRecycleVertical.bottom &&
+            trailingPackedSearchVertical.bottom ==
+            trailingPackedRecycleVertical.top,
+        "vertical edge-attached trailing controls must pack upward from the edge");
+
+    const RECT baseIsland{ 80, 190, 300, 300 };
+    const RECT expandedIsland = magnification::ExpandInteractionBounds(
+        baseIsland, DockPosition::Bottom, 64);
+    Check(expandedIsland.left < baseIsland.left &&
+            expandedIsland.right > baseIsland.right &&
+            expandedIsland.top < baseIsland.top,
+        "the Dock island interaction area must cover the expanded wave");
+    const RECT bottomViewport =
+        magnification::ExpandPerpendicularBounds(
+            baseIsland, DockPosition::Bottom, 64);
+    Check(bottomViewport.left == baseIsland.left &&
+            bottomViewport.right == baseIsland.right &&
+            bottomViewport.top < baseIsland.top &&
+            bottomViewport.bottom == baseIsland.bottom,
+        "horizontal overflow clipping must preserve its Dock-axis boundaries");
+    const RECT leftViewport =
+        magnification::ExpandPerpendicularBounds(
+            baseIsland, DockPosition::Left, 64);
+    Check(leftViewport.left == baseIsland.left &&
+            leftViewport.right > baseIsland.right &&
+            leftViewport.top == baseIsland.top &&
+            leftViewport.bottom == baseIsland.bottom,
+        "vertical overflow clipping must preserve its Dock-axis boundaries");
+    const RECT horizontalOverflowViewport{ 80, 190, 300, 300 };
+    const RECT leadingVisual{ 20, 190, 92, 300 };
+    const RECT trailingVisual{ 260, 190, 340, 300 };
+    const RECT fittedHorizontalViewport =
+        magnification::FitOverflowViewportToFixedVisuals(
+            horizontalOverflowViewport, DockPosition::Bottom,
+            leadingVisual, trailingVisual, 12);
+    Check(fittedHorizontalViewport.left == 104 &&
+            fittedHorizontalViewport.right == 248,
+        "horizontal overflow clipping must follow magnified fixed controls");
+    const RECT verticalOverflowViewport{ 80, 190, 300, 500 };
+    const RECT topVisual{ 80, 120, 300, 215 };
+    const RECT bottomVisual{ 80, 450, 300, 560 };
+    const RECT fittedVerticalViewport =
+        magnification::FitOverflowViewportToFixedVisuals(
+            verticalOverflowViewport, DockPosition::Left,
+            topVisual, bottomVisual, 12);
+    Check(fittedVerticalViewport.top == 227 &&
+            fittedVerticalViewport.bottom == 438,
+        "vertical overflow clipping must follow magnified fixed controls");
+    const RECT scrollWaveViewport{ 80, 190, 300, 500 };
+    const RECT firstScrollableBase{ 80, 200, 160, 276 };
+    const RECT firstScrollableVisual{ 80, 209, 176, 294 };
+    const RECT lastScrollableBase{ 80, 400, 160, 476 };
+    const RECT lastScrollableVisual{ 80, 428, 176, 508 };
+    const RECT movedScrollWaveViewport =
+        magnification::MoveOverflowViewportWithScrollableVisuals(
+            scrollWaveViewport, DockPosition::Left,
+            firstScrollableBase, firstScrollableVisual,
+            lastScrollableBase, lastScrollableVisual);
+    Check(movedScrollWaveViewport.top == 199 &&
+            movedScrollWaveViewport.bottom == 532,
+        "overflow clipping must move with the expanded scrollable wave");
+    const RECT horizontalScrollWaveViewport{ 80, 190, 400, 300 };
+    const RECT firstHorizontalBase{ 100, 190, 176, 300 };
+    const RECT firstHorizontalVisual{ 82, 176, 167, 300 };
+    const RECT lastHorizontalBase{ 300, 190, 376, 300 };
+    const RECT lastHorizontalVisual{ 324, 176, 409, 300 };
+    const RECT movedHorizontalScrollWaveViewport =
+        magnification::MoveOverflowViewportWithScrollableVisuals(
+            horizontalScrollWaveViewport, DockPosition::Bottom,
+            firstHorizontalBase, firstHorizontalVisual,
+            lastHorizontalBase, lastHorizontalVisual);
+    Check(movedHorizontalScrollWaveViewport.left == 62 &&
+            movedHorizontalScrollWaveViewport.right == 433,
+        "island overflow clipping must follow both ends of the hover wave");
+    const RECT waveBounds{ 50, 150, 330, 330 };
+    const RECT horizontalIsland =
+        magnification::ExtendPanelAlongDockAxis(
+            baseIsland, waveBounds, DockPosition::Bottom, 6);
+    Check(horizontalIsland.left == waveBounds.left - 6 &&
+            horizontalIsland.right == waveBounds.right + 6 &&
+            horizontalIsland.top == baseIsland.top &&
+            horizontalIsland.bottom == baseIsland.bottom,
+        "horizontal Dock islands must preserve their end padding");
+    const RECT verticalIsland =
+        magnification::ExtendPanelAlongDockAxis(
+            baseIsland, waveBounds, DockPosition::Left, 6);
+    Check(verticalIsland.top == waveBounds.top - 6 &&
+            verticalIsland.bottom == waveBounds.bottom + 6 &&
+            verticalIsland.left == baseIsland.left &&
+            verticalIsland.right == baseIsland.right,
+        "vertical Dock islands must preserve their end padding");
+
+    const DockWindowPreviewGrid single =
+        CalculateDockWindowPreviewGrid(1, 1200, 700, 96);
+    Check(single.columns == 1 && single.rows == 1,
+        "a single window preview must use one card");
+    Check(single.panelWidth <= 1200 && single.panelHeight <= 700,
+        "single preview layout must stay inside the available area");
+    const std::vector<RECT> singleCards =
+        CalculateDockWindowPreviewCardRects(1, single, 96);
+    Check(singleCards.size() == 1,
+        "single preview layout must return one card rectangle");
+    CheckRowMargins(single, singleCards, 0, 1,
+        "single preview must have equal left and right margins");
+
+    const DockWindowPreviewGrid multi =
+        CalculateDockWindowPreviewGrid(2, 1200, 700, 96);
+    Check(multi.columns >= 2 && multi.rows >= 1,
+        "multiple windows must be arranged as a preview grid");
+    Check(multi.columns * multi.rows >= 2,
+        "preview grid must allocate a card for every window");
+    Check(multi.panelWidth <= 1200 && multi.panelHeight <= 700,
+        "multi-window preview layout must stay inside the available area");
+    Check(multi.cardWidth <= 210 && multi.cardHeight <= 156,
+        "default preview cards must use the compact dimensions");
+    const std::vector<RECT> multiCards =
+        CalculateDockWindowPreviewCardRects(2, multi, 96);
+    CheckRowMargins(multi, multiCards, 0, 2,
+        "two-window preview must have equal outer margins");
+
+    const DockWindowPreviewGrid constrained =
+        CalculateDockWindowPreviewGrid(5, 700, 420, 96);
+    Check(constrained.rows > 1,
+        "constrained multi-window previews must wrap to multiple rows");
+    Check(constrained.panelWidth <= 700 &&
+            constrained.panelHeight <= 420,
+        "wrapped preview layout must stay inside the available area");
+    const std::vector<RECT> constrainedCards =
+        CalculateDockWindowPreviewCardRects(5, constrained, 96);
+    CheckRowMargins(constrained, constrainedCards, 0,
+        static_cast<size_t>(constrained.columns),
+        "full preview row must have equal outer margins");
+    const size_t finalRowStart =
+        static_cast<size_t>(constrained.columns);
+    CheckRowMargins(constrained, constrainedCards, finalRowStart,
+        constrainedCards.size() - finalRowStart,
+        "incomplete preview row must be centered");
+
+    const DockWindowPreviewGrid highDpi =
+        CalculateDockWindowPreviewGrid(5, 1050, 630, 144);
+    const std::vector<RECT> highDpiCards =
+        CalculateDockWindowPreviewCardRects(5, highDpi, 144);
+    const size_t highDpiFinalRowStart =
+        static_cast<size_t>(highDpi.columns);
+    Check(highDpi.panelWidth <= 1050 &&
+            highDpi.panelHeight <= 630,
+        "high-DPI preview layout must stay inside the available area");
+    CheckRowMargins(highDpi, highDpiCards,
+        highDpiFinalRowStart,
+        highDpiCards.size() - highDpiFinalRowStart,
+        "high-DPI incomplete row must be centered");
+
+    namespace renameLayout =
+        snowdesktop::dock_rename_layout;
+    const RECT renameWorkArea{ 0, 0, 1920, 1080 };
+    const RECT bottomRename =
+        renameLayout::CalculateAdjacentEditRect(
+            { 900, 1000, 980, 1080 },
+            renameWorkArea, DockPosition::Bottom,
+            180, 30, 6, 5);
+    Check(bottomRename.bottom <= 994 &&
+            bottomRename.right - bottomRename.left == 180 &&
+            bottomRename.bottom - bottomRename.top == 30 &&
+            (bottomRename.left + bottomRename.right) / 2 == 940,
+        "bottom Dock rename editor must use the compact size above its icon");
+    const RECT topRename =
+        renameLayout::CalculateAdjacentEditRect(
+            { 900, 0, 980, 80 },
+            renameWorkArea, DockPosition::Top,
+            180, 30, 6, 5);
+    Check(topRename.top >= 86,
+        "top Dock rename editor must appear below its icon");
+    const RECT leftRename =
+        renameLayout::CalculateAdjacentEditRect(
+            { 0, 500, 80, 580 },
+            renameWorkArea, DockPosition::Left,
+            180, 30, 6, 5);
+    Check(leftRename.left >= 86,
+        "left Dock rename editor must appear to the icon's right");
+    const RECT rightRename =
+        renameLayout::CalculateAdjacentEditRect(
+            { 1840, 500, 1920, 580 },
+            renameWorkArea, DockPosition::Right,
+            180, 30, 6, 5);
+    Check(rightRename.right <= 1834,
+        "right Dock rename editor must appear to the icon's left");
+    const RECT clampedRename =
+        renameLayout::CalculateAdjacentEditRect(
+            { 0, 0, 40, 40 },
+            renameWorkArea, DockPosition::Bottom,
+            4000, 2000, 6, 5);
+    Check(clampedRename.left >= renameWorkArea.left + 5 &&
+            clampedRename.top >= renameWorkArea.top + 5 &&
+            clampedRename.right <= renameWorkArea.right - 5 &&
+            clampedRename.bottom <= renameWorkArea.bottom - 5,
+        "Dock rename editor must remain inside the monitor work area");
+
+    namespace keyMigration =
+        snowdesktop::desktop_item_reference_migration;
+    std::vector<DesktopWidget> mappedWidgets(2);
+    mappedWidgets[0].itemKeys = {
+        L"C:\\Users\\Test\\Desktop\\OLD.LNK",
+        L"C:\\Users\\Test\\Desktop\\Other.lnk"
+    };
+    mappedWidgets[1].itemKeys = {
+        L"c:\\users\\test\\desktop\\old.lnk"
+    };
+    std::vector<DockEntry> mappedDockEntries{
+        { DockEntryType::DesktopItem,
+            L"C:\\Users\\Test\\Desktop\\Old.lnk", false },
+        { DockEntryType::Collection,
+            L"C:\\Users\\Test\\Desktop\\Old.lnk", false }
+    };
+    const auto migratedReferences =
+        keyMigration::MigrateReferences(
+            mappedWidgets, mappedDockEntries,
+            L"C:\\Users\\Test\\Desktop\\old.lnk",
+            L"C:\\Users\\Test\\Desktop\\Renamed.lnk");
+    Check(migratedReferences.widgetReferences == 2 &&
+            migratedReferences.dockReferences == 1,
+        "desktop rename must migrate every widget and Dock item reference");
+    Check(mappedWidgets[0].itemKeys[0].ends_with(L"Renamed.lnk") &&
+            mappedWidgets[1].itemKeys[0].ends_with(L"Renamed.lnk") &&
+            mappedDockEntries[0].reference.ends_with(L"Renamed.lnk"),
+        "desktop rename migration must write the new stable key");
+    Check(mappedWidgets[0].itemKeys[1].ends_with(L"Other.lnk") &&
+            mappedDockEntries[1].reference.ends_with(L"Old.lnk"),
+        "desktop rename migration must preserve unrelated and collection references");
+
+    std::vector<DockEntry> removableMappings{
+        { DockEntryType::DesktopItem,
+            L"C:\\Desktop\\Mapped.lnk", true },
+        { DockEntryType::DesktopItem,
+            L"C:\\Desktop\\Exclusive.lnk", false },
+        { DockEntryType::Collection,
+            L"collection-id", true }
+    };
+    Check(keyMigration::RemoveDockMappingAt(
+            removableMappings, 0),
+        "mapped Dock items must be removable without touching their source");
+    Check(removableMappings.size() == 2 &&
+            removableMappings[0].reference.ends_with(
+                L"Exclusive.lnk"),
+        "removing a Dock mapping must only erase the mapping entry");
+    Check(!keyMigration::RemoveDockMappingAt(
+            removableMappings, 0) &&
+            !keyMigration::RemoveDockMappingAt(
+                removableMappings, 1),
+        "exclusive Dock items and collections must not use mapping removal");
+
+    const RECT bottomAnchor{ 100, 300, 180, 380 };
+    const RECT bottomPreview{ 20, 100, 300, 250 };
+    Check(IsPointInDockPreviewTransitionRegion(
+            { 140, 275 }, { 140, 340 }, bottomAnchor, bottomPreview,
+            DockPosition::Bottom, 4),
+        "bottom Dock preview must keep a triangular pointer path open");
+    Check(!IsPointInDockPreviewTransitionRegion(
+            { 10, 275 }, { 140, 340 }, bottomAnchor, bottomPreview,
+            DockPosition::Bottom, 4),
+        "bottom Dock preview triangle must reject distant side points");
+    Check(IsPointInDockPreviewTransitionRegion(
+            { 80, 275 }, { 105, 305 }, bottomAnchor, bottomPreview,
+            DockPosition::Bottom, 12),
+        "bottom Dock preview triangle must follow the actual icon exit point");
+
+    const RECT topAnchor{ 100, 100, 180, 180 };
+    const RECT topPreview{ 20, 230, 300, 380 };
+    Check(IsPointInDockPreviewTransitionRegion(
+            { 140, 205 }, { 140, 140 }, topAnchor, topPreview,
+            DockPosition::Top, 4),
+        "top Dock preview must keep a triangular pointer path open");
+
+    const RECT leftAnchor{ 100, 100, 180, 180 };
+    const RECT leftPreview{ 230, 20, 430, 300 };
+    Check(IsPointInDockPreviewTransitionRegion(
+            { 205, 140 }, { 140, 140 }, leftAnchor, leftPreview,
+            DockPosition::Left, 4),
+        "left Dock preview must keep a triangular pointer path open");
+    Check(IsPointInDockPreviewTransitionRegion(
+            { 205, 225 }, { 180, 100 }, leftAnchor, leftPreview,
+            DockPosition::Left, 12),
+        "left Dock preview must cover the complete icon-facing edge");
+    Check(!IsPointInDockPreviewTransitionRegion(
+            { 205, 10 }, { 140, 140 }, leftAnchor, leftPreview,
+            DockPosition::Left, 4),
+        "left Dock preview triangle must reject distant side points");
+
+    const RECT rightAnchor{ 300, 100, 380, 180 };
+    const RECT rightPreview{ 50, 20, 250, 300 };
+    Check(IsPointInDockPreviewTransitionRegion(
+            { 275, 140 }, { 340, 140 }, rightAnchor, rightPreview,
+            DockPosition::Right, 4),
+        "right Dock preview must keep a triangular pointer path open");
+
+    DockPreviewHoverController hover;
+    DockPreviewHoverTransition transition =
+        hover.UpdateTarget(L"WORD@PRIMARY", false, false);
+    Check(transition.armTimer && hover.TimerArmed(),
+        "entering a preview target must arm the hover timer");
+    transition = hover.UpdateTarget(
+        L"WORD@PRIMARY", false, false);
+    Check(!transition.armTimer,
+        "moving inside the same icon must not restart the timer");
+    Check(hover.ConsumeTimer(L"WORD@PRIMARY"),
+        "matching hover timer must be accepted");
+    hover.MarkPreviewShown(L"WORD@PRIMARY");
+    transition = hover.UpdateTarget(
+        L"WORD@PRIMARY", true, true);
+    Check(transition.keepPreviewVisible,
+        "matching visible preview must be kept open");
+
+    Check(!hover.SuppressForActivation(),
+        "activation after a shown preview must not report a pending timer");
+    transition = hover.UpdateTarget(
+        L"WORD@PRIMARY", false, false);
+    Check(!transition.armTimer &&
+            hover.SuppressedTarget() == L"WORD@PRIMARY",
+        "activation must suppress reopening while pointer remains");
+    hover.UpdateTarget(L"", false, false);
+    Check(hover.SuppressedTarget().empty(),
+        "leaving the icon must clear activation suppression");
+    transition = hover.UpdateTarget(
+        L"WORD@PRIMARY", false, false);
+    Check(transition.armTimer,
+        "re-entering after leave must arm a fresh hover timer");
+
+    hover.Reset();
+    hover.UpdateTarget(L"WORD@PRIMARY", false, false);
+    transition = hover.UpdateTarget(
+        L"EDGE@PRIMARY", false, false);
+    Check(transition.cancelTimer && transition.armTimer,
+        "switching icons must cancel and replace the hover timer");
+    Check(hover.SuppressForActivation(),
+        "activation while pending must cancel the hover timer");
+    transition = hover.UpdateTarget(
+        L"EDGE@PRIMARY", false, false);
+    Check(!transition.armTimer,
+        "pending activation suppression must block immediate reopening");
+
+    if (failures == 0)
+        std::cout << "All dock window preview tests passed.\n";
+    return failures == 0 ? 0 : 1;
+}
