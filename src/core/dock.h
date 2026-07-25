@@ -97,6 +97,12 @@ public:
     DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area);
 
     std::wstring GetTitle() const override { return L"Dock"; }
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SlotSurfaceKind::Dock;
+    }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;

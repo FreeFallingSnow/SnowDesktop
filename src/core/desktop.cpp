@@ -246,6 +246,17 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
 {
     outSlot = nullptr;
     HitRegion region = HitTestAtPoint(pt, outSlot);
+    if (app_ && app_->dragSession_.IsActive() &&
+        (app_->dragSession_.SourceList().
+                hasCollectionGroupEntries ||
+            app_->dragSession_.SourceList().
+                hasFileGroupEntries))
+    {
+        outSlot = nullptr;
+        return region == HitRegion::None
+            ? HitRegion::None
+            : HitRegion::Empty;
+    }
     if (region == HitRegion::SortBefore && app_)
     {
         // Check for Handoff: mouse on an unselected icon
@@ -310,6 +321,23 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
         return _LW("core.drag.release_place_desktop");
     }
 
+    const DragSourceList& sourceList =
+        app_->dragSession_.SourceList();
+    if (sourceList.hasCollectionGroupEntries ||
+        sourceList.hasFileGroupEntries)
+    {
+        DropPreviewList preview =
+            app_->BuildDropPreviewList(
+                sourceList,
+                const_cast<DesktopGrid*>(this),
+                nullptr, HitRegion::Empty, 0,
+                dragPoint);
+        return preview.landings.size() ==
+                sourceList.entries.size()
+            ? _LW("core.drag.release_move_here")
+            : _LW("core.drag.release_occupied");
+    }
+
     if (!ctrlDown && !altDown)
     {
         auto* originWidget = dynamic_cast<WidgetContainer*>(origin);
@@ -324,8 +352,19 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     if (altDown)  return _LW("core.drag.release_shortcut_here");
     if (ctrlDown) return _LW("core.drag.release_copy_here");
 
+    auto* originWidget =
+        dynamic_cast<WidgetContainer*>(origin);
+    DesktopWidget* originData = originWidget
+        ? originWidget->GetWidgetData()
+        : nullptr;
+    const POINT targetPoint =
+        originData &&
+        originData->type ==
+            DesktopWidgetType::CollectionGroup
+            ? dragPoint
+            : app_->GetDragTargetPoint(dragPoint);
     GridCell bestCell = app_->FindBestDropCell(
-        app_->CellFromPoint(app_->GetDragTargetPoint(dragPoint)));
+        app_->CellFromPointForDrag(targetPoint));
 
     // When dragging from a widget (not from desktop itself), the selected items
     // are not in the desktop items_ — check cell occupancy directly instead.
@@ -379,7 +418,8 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
 
             std::unordered_set<std::wstring> usedSlots;
             for (const auto& widget : app_->widgets_)
-                if (widget.gridCell.pageId != kDockPageId)
+                if (!app_->IsGroupedWidget(widget) &&
+                    widget.gridCell.pageId != kDockPageId)
                     app_->MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
             for (const auto& item : app_->items_)
                 if (!item.name.empty() && item.gridCell.pageId != kDockPageId &&
@@ -440,6 +480,51 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         hasItemDrag ? app_->dragSession_.SourceList() : DragSourceList{},
         this, slot, region, mods, dragPoint);
     app_->DrawDesktopDropPreviewList(ctx, preview);
+    if (hasItemDrag &&
+        (app_->dragSession_.SourceList().
+                hasCollectionGroupEntries ||
+            app_->dragSession_.SourceList().
+                hasFileGroupEntries) &&
+        preview.Empty())
+    {
+        const auto& entries =
+            app_->dragSession_.SourceList().entries;
+        if (!entries.empty())
+        {
+            GridSpan span{
+                std::max(1,
+                    entries.front().originalSpan.columns),
+                std::max(1,
+                    entries.front().originalSpan.rows)
+            };
+            GridCell cell =
+                app_->CellFromPointForDrag(dragPoint);
+            if (const GridPage* page =
+                    FindGridPage(app_->gridPages_,
+                        cell.pageId))
+            {
+                span.columns = std::min(
+                    span.columns, page->columns);
+                span.rows = std::min(
+                    span.rows, page->rows);
+                cell.column = std::clamp(
+                    cell.column, 0,
+                    page->columns - span.columns);
+                cell.row = std::clamp(
+                    cell.row, 0,
+                    page->rows - span.rows);
+                RECT bounds = GetGridRect(
+                    app_->gridPages_, cell, span);
+                app_->DrawD2DRoundedRectangle(
+                    ctx, bounds, 8.0f,
+                    D2D1::ColorF(
+                        1.0f, 0.30f, 0.30f, 0.18f),
+                    D2D1::ColorF(
+                        1.0f, 0.25f, 0.25f, 0.85f),
+                    2.0f);
+            }
+        }
+    }
 }
 
 /**

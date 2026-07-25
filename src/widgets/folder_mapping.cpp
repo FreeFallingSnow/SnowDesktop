@@ -13,13 +13,130 @@
 #include "item.h"
 #include "types.h"
 #include "app.h"
+#include "collection_group_rules.h"
 #include "drop_model.h"
+#include "search_match.h"
+#include "../category_settings.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <unordered_set>
 #include "../l10n.h"
 
 static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex);
+
+static std::wstring FolderEntryCategoryId(
+    const FolderEntry& entry, const CategorySettings& settings)
+{
+    if (entry.isDirectory)
+        return L"folders";
+    std::wstring categoryId =
+        CategoryIdForExtension(settings, ToUpperInvariant(PathFindExtensionW(entry.name.c_str())));
+    return categoryId.empty() ? L"others" : categoryId;
+}
+
+static const std::vector<std::wstring>& FolderEntryDateGroupOrder()
+{
+    static const std::vector<std::wstring> order = {
+        L"today", L"yesterday", L"this_week", L"last_week",
+        L"this_month", L"last_month", L"this_year", L"older",
+    };
+    return order;
+}
+
+static std::wstring FolderEntryDateGroupLabel(const std::wstring& id)
+{
+    if (id == L"today") return _LW("widget.categories.today");
+    if (id == L"yesterday") return _LW("widget.categories.yesterday");
+    if (id == L"this_week") return _LW("widget.categories.this_week");
+    if (id == L"last_week") return _LW("widget.categories.last_week");
+    if (id == L"this_month") return _LW("widget.categories.this_month");
+    if (id == L"last_month") return _LW("widget.categories.last_month");
+    if (id == L"this_year") return _LW("widget.categories.this_year");
+    return _LW("widget.categories.earlier");
+}
+
+static int FolderEntryDayDiff(const SYSTEMTIME& newer, const SYSTEMTIME& older)
+{
+    FILETIME newerFileTime{}, olderFileTime{};
+    SystemTimeToFileTime(&newer, &newerFileTime);
+    SystemTimeToFileTime(&older, &olderFileTime);
+    ULARGE_INTEGER newerValue{}, olderValue{};
+    newerValue.LowPart = newerFileTime.dwLowDateTime;
+    newerValue.HighPart = newerFileTime.dwHighDateTime;
+    olderValue.LowPart = olderFileTime.dwLowDateTime;
+    olderValue.HighPart = olderFileTime.dwHighDateTime;
+    if (newerValue.QuadPart < olderValue.QuadPart)
+        return -1;
+    return static_cast<int>(
+        (newerValue.QuadPart - olderValue.QuadPart) / 864000000000ULL);
+}
+
+static std::wstring FolderEntryDateGroupId(const FolderEntry& entry)
+{
+    FILETIME localFileTime{};
+    SYSTEMTIME fileTime{}, nowTime{};
+    if (!FileTimeToLocalFileTime(&entry.lastWriteTime, &localFileTime) ||
+        !FileTimeToSystemTime(&localFileTime, &fileTime))
+        return L"older";
+    GetLocalTime(&nowTime);
+
+    SYSTEMTIME todayStart = nowTime;
+    todayStart.wHour = 0;
+    todayStart.wMinute = 0;
+    todayStart.wSecond = 0;
+    todayStart.wMilliseconds = 0;
+    SYSTEMTIME fileDayStart = fileTime;
+    fileDayStart.wHour = 0;
+    fileDayStart.wMinute = 0;
+    fileDayStart.wSecond = 0;
+    fileDayStart.wMilliseconds = 0;
+    int daysFromToday = FolderEntryDayDiff(todayStart, fileDayStart);
+
+    if (daysFromToday <= 0) return L"today";
+    if (daysFromToday == 1) return L"yesterday";
+    int todayDayOfWeek =
+        nowTime.wDayOfWeek == 0 ? 7 : static_cast<int>(nowTime.wDayOfWeek);
+    if (daysFromToday < todayDayOfWeek) return L"this_week";
+    if (daysFromToday < todayDayOfWeek + 7) return L"last_week";
+    if (fileTime.wYear == nowTime.wYear &&
+        fileTime.wMonth == nowTime.wMonth)
+        return L"this_month";
+
+    int previousMonth = nowTime.wMonth == 1 ? 12 : nowTime.wMonth - 1;
+    int previousMonthYear = nowTime.wMonth == 1
+        ? nowTime.wYear - 1
+        : nowTime.wYear;
+    if (fileTime.wYear == previousMonthYear &&
+        fileTime.wMonth == previousMonth)
+        return L"last_month";
+    if (fileTime.wYear == nowTime.wYear) return L"this_year";
+    return L"older";
+}
+
+static size_t FolderEntryDateGroupRank(const FolderEntry& entry)
+{
+    const auto& order = FolderEntryDateGroupOrder();
+    auto it = std::find(order.begin(), order.end(), FolderEntryDateGroupId(entry));
+    return it == order.end()
+        ? order.size()
+        : static_cast<size_t>(std::distance(order.begin(), it));
+}
+
+RECT FolderMapping::GetSearchBoxRect() const
+{
+    return GetCategorizedSearchBoxRect(
+        data_ && app_ && data_->showSearchBox);
+}
+
+static RECT FolderMappingTabsRect(FolderMapping* widget)
+{
+    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+    return widget
+        ? widget->GetCategorizedTabsRect(
+            data && data->showFileCategories)
+        : RECT{};
+}
 
 /**
  * @brief 计算映射文件夹内容区域的矩形
@@ -31,7 +148,270 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    if (IsRectEmptyRect(body)) return {};
+    RECT tabs = FolderMappingTabsRect(widget);
+    if (!IsRectEmptyRect(tabs))
+        body.top = std::min<LONG>(body.bottom, tabs.bottom + widget->Cu(8.0f));
+    else
+    {
+        RECT search = widget->GetSearchBoxRect();
+        if (!IsRectEmptyRect(search))
+            body.top = std::min<LONG>(
+                body.bottom,
+                search.bottom + widget->Cu(4.0f) +
+                    widget->GetCategorizedTabRowOffset() *
+                        widget->Cu(38.0f));
+        else if (widget->GetCategorizedTabRowOffset() > 0)
+            body.top = std::min<LONG>(
+                body.bottom,
+                body.top +
+                    widget->GetCategorizedTabRowOffset() *
+                        widget->Cu(38.0f));
+    }
     return body;
+}
+
+void FolderMapping::EnsureCategorySnapshot() const
+{
+    if (!data_ || !app_) return;
+
+    std::vector<std::wstring> currentPaths;
+    currentPaths.reserve(data_->folderEntries.size());
+    for (const auto& entry : data_->folderEntries)
+        currentPaths.push_back(ToUpperInvariant(entry.fullPath));
+    if (categorySnapshotValid_ && currentPaths == categorySnapshotPaths_)
+        return;
+
+    categorySnapshotPaths_ = std::move(currentPaths);
+    entryIndicesByCategory_.clear();
+    visibleCategoryIds_.clear();
+    visibleEntryIndices_.clear();
+    visibleEntriesCategory_.clear();
+    visibleEntriesSearch_.clear();
+    visibleEntriesDateHeaders_ = false;
+    dateLayoutCache_.clear();
+    dateLayoutSource_.clear();
+
+    auto& allEntries = entryIndicesByCategory_[L"all"];
+    allEntries.reserve(data_->folderEntries.size());
+    for (size_t i = 0; i < data_->folderEntries.size(); ++i)
+    {
+        allEntries.push_back(i);
+        entryIndicesByCategory_[FolderEntryCategoryId(
+            data_->folderEntries[i], app_->GetCategorySettings())].push_back(i);
+    }
+
+    for (const auto& categoryId : GetCategoryOrder(app_->GetCategorySettings()))
+    {
+        auto it = entryIndicesByCategory_.find(categoryId);
+        if (it != entryIndicesByCategory_.end() && !it->second.empty())
+            visibleCategoryIds_.push_back(categoryId);
+    }
+    categorySnapshotValid_ = true;
+}
+
+void FolderMapping::InvalidateFilterCache()
+{
+    categorySnapshotValid_ = false;
+    categorySnapshotPaths_.clear();
+    entryIndicesByCategory_.clear();
+    visibleCategoryIds_.clear();
+    visibleEntryIndices_.clear();
+    visibleEntriesCategory_.clear();
+    visibleEntriesSearch_.clear();
+    visibleEntriesDateHeaders_ = false;
+    dateLayoutCache_.clear();
+    dateLayoutSource_.clear();
+    InvalidateSlots();
+}
+
+std::wstring FolderMapping::CachedActiveCategoryId() const
+{
+    if (!data_) return L"";
+    EnsureCategorySnapshot();
+    if (data_->showFileCategories &&
+        std::find(visibleCategoryIds_.begin(), visibleCategoryIds_.end(),
+            data_->activeCategoryId) != visibleCategoryIds_.end())
+        return data_->activeCategoryId;
+    return visibleCategoryIds_.empty() ? L"" : visibleCategoryIds_.front();
+}
+
+const std::vector<size_t>& FolderMapping::GetVisibleEntryIndices() const
+{
+    static const std::vector<size_t> empty;
+    if (!data_ || !app_) return empty;
+    EnsureCategorySnapshot();
+
+    const std::wstring categoryId =
+        SearchAllCategories() && IsSearchActive()
+            ? L"all"
+            : (data_->showFileCategories
+                ? CachedActiveCategoryId()
+                : L"all");
+    const std::wstring query = data_->showSearchBox ? searchText_ : L"";
+    if (categoryId == visibleEntriesCategory_ &&
+        query == visibleEntriesSearch_ &&
+        data_->dateHeaders == visibleEntriesDateHeaders_)
+        return visibleEntryIndices_;
+
+    visibleEntryIndices_.clear();
+    visibleEntriesCategory_ = categoryId;
+    visibleEntriesSearch_ = query;
+    visibleEntriesDateHeaders_ = data_->dateHeaders;
+
+    auto it = entryIndicesByCategory_.find(categoryId.empty() ? L"all" : categoryId);
+    if (it == entryIndicesByCategory_.end())
+        return visibleEntryIndices_;
+    for (size_t entryIndex : it->second)
+    {
+        if (entryIndex >= data_->folderEntries.size()) continue;
+        if (query.empty() ||
+            NameMatchesQuery(data_->folderEntries[entryIndex].name, query))
+            visibleEntryIndices_.push_back(entryIndex);
+    }
+    if (data_->dateHeaders && query.empty())
+    {
+        std::stable_sort(visibleEntryIndices_.begin(), visibleEntryIndices_.end(),
+            [this](size_t lhs, size_t rhs)
+            {
+                if (lhs >= data_->folderEntries.size() ||
+                    rhs >= data_->folderEntries.size())
+                    return lhs < rhs;
+                const FolderEntry& left = data_->folderEntries[lhs];
+                const FolderEntry& right = data_->folderEntries[rhs];
+                size_t leftRank = FolderEntryDateGroupRank(left);
+                size_t rightRank = FolderEntryDateGroupRank(right);
+                if (leftRank != rightRank) return leftRank < rightRank;
+                return _wcsicmp(left.name.c_str(), right.name.c_str()) < 0;
+            });
+    }
+    return visibleEntryIndices_;
+}
+
+const std::vector<std::wstring>&
+FolderMapping::GetVisibleCategoryIds() const
+{
+    static const std::vector<std::wstring> empty;
+    if (!data_ || !app_) return empty;
+    EnsureCategorySnapshot();
+    return visibleCategoryIds_;
+}
+
+const CategorySettings& FolderMapping::GetCategorySettingsForDisplay() const
+{
+    return app_->GetCategorySettings();
+}
+
+static std::wstring FolderMappingTabDisplayText(
+    FolderMapping* widget, const std::wstring& categoryId)
+{
+    if (!widget || !widget->GetApp()) return categoryId;
+    widget->GetVisibleEntryIndices();
+    DesktopWidget* data = widget->GetWidgetData();
+    size_t count = 0;
+    if (data)
+    {
+        const CategorySettings& settings =
+            widget->GetCategorySettingsForDisplay();
+        for (const auto& entry : data->folderEntries)
+        {
+            if (categoryId == L"all" ||
+                FolderEntryCategoryId(entry, settings) == categoryId)
+                ++count;
+        }
+    }
+    return GetCategoryLabel(widget->GetCategorySettingsForDisplay(), categoryId) +
+        L" " + std::to_wstring(count);
+}
+
+static std::vector<int> FolderMappingTabWidths(
+    FolderMapping* widget, int availableWidth)
+{
+    if (!widget) return {};
+    widget->GetVisibleEntryIndices();
+    DesktopWidget* data = widget->GetWidgetData();
+    if (!data) return {};
+
+    const CategorySettings& settings =
+        widget->GetCategorySettingsForDisplay();
+    std::unordered_map<std::wstring, size_t> counts;
+    counts[L"all"] = data->folderEntries.size();
+    for (const auto& entry : data->folderEntries)
+        ++counts[FolderEntryCategoryId(entry, settings)];
+
+    const std::vector<std::wstring> order = GetCategoryOrder(settings);
+    std::vector<std::wstring> labels;
+    for (const auto& categoryId : order)
+    {
+        auto countIt = counts.find(categoryId);
+        if (countIt == counts.end() || countIt->second == 0) continue;
+        labels.push_back(
+            GetCategoryLabel(settings, categoryId) +
+            L" " +
+            std::to_wstring(countIt->second));
+    }
+    return widget->BuildCategorizedTabWidths(
+        labels, availableWidth);
+}
+
+static int FolderMappingTabTotalWidth(const std::vector<int>& widths)
+{
+    int total = 0;
+    for (int width : widths)
+        total += width;
+    return total;
+}
+
+static RECT FolderMappingTabRect(FolderMapping* widget, size_t index)
+{
+    if (!widget) return {};
+    widget->GetVisibleEntryIndices();
+    DesktopWidget* data = widget->GetWidgetData();
+    if (!data) return {};
+
+    std::vector<std::wstring> categories;
+    const CategorySettings& settings =
+        widget->GetCategorySettingsForDisplay();
+    std::unordered_set<std::wstring> present;
+    present.insert(L"all");
+    for (const auto& entry : data->folderEntries)
+        present.insert(FolderEntryCategoryId(entry, settings));
+    for (const auto& categoryId : GetCategoryOrder(settings))
+        if (present.contains(categoryId))
+            categories.push_back(categoryId);
+    if (index >= categories.size()) return {};
+
+    RECT tabsRect = FolderMappingTabsRect(widget);
+    if (IsRectEmptyRect(tabsRect)) return {};
+    std::vector<int> widths =
+        FolderMappingTabWidths(widget, tabsRect.right - tabsRect.left);
+    if (index >= widths.size()) return {};
+    int maxScroll = std::max(0,
+        FolderMappingTabTotalWidth(widths) -
+        static_cast<int>(tabsRect.right - tabsRect.left));
+    int startX = tabsRect.left -
+        std::clamp(data->tabScrollOffset, 0, maxScroll);
+    for (size_t i = 0; i < index; ++i)
+        startX += widths[i];
+    RECT rect = MakeRect(startX, tabsRect.top,
+        startX + widths[index], tabsRect.bottom);
+    InflateRect(&rect, -widget->Cu(2.0f), -widget->Cu(2.0f));
+    const auto clipped =
+        snowdesktop::collection_group_rules::
+            ClipToViewport(
+                {
+                    rect.left, rect.top,
+                    rect.right, rect.bottom
+                },
+                {
+                    tabsRect.left, tabsRect.top,
+                    tabsRect.right, tabsRect.bottom
+                });
+    return clipped
+        ? MakeRect(
+            clipped->left, clipped->top,
+            clipped->right, clipped->bottom)
+        : RECT{};
 }
 
 RECT FolderMapping::GetContentViewportRect() const
@@ -44,12 +424,19 @@ void FolderMapping::ApplyMarqueeSelection(const RECT& contentRect)
     if (!data_)
         return;
 
+    for (auto& entry : data_->folderEntries)
+        entry.selected = false;
+
+    const auto& visibleEntries = GetVisibleEntryIndices();
     const int scroll = GetScrollOffset();
-    for (size_t i = 0; i < data_->folderEntries.size(); ++i)
+    for (size_t i = 0; i < visibleEntries.size(); ++i)
     {
         RECT itemRect = FolderMappingItemRect(this, i);
         OffsetRect(&itemRect, 0, scroll);
-        data_->folderEntries[i].selected = RectsIntersect(itemRect, contentRect);
+        size_t entryIndex = visibleEntries[i];
+        if (entryIndex < data_->folderEntries.size())
+            data_->folderEntries[entryIndex].selected =
+                RectsIntersect(itemRect, contentRect);
     }
 }
 
@@ -102,6 +489,78 @@ static int FolderMappingAdaptiveGapY(FolderMapping* widget)
     return gapY;
 }
 
+void FolderMapping::EnsureDateLayout() const
+{
+    if (!data_ || !data_->dateHeaders || IsSearchActive())
+    {
+        dateLayoutCache_.clear();
+        dateLayoutSource_.clear();
+        return;
+    }
+
+    const auto& visibleEntries = GetVisibleEntryIndices();
+    if (dateLayoutSource_ == visibleEntries &&
+        dateLayoutListMode_ == data_->listMode &&
+        !dateLayoutCache_.empty())
+        return;
+
+    dateLayoutCache_.clear();
+    dateLayoutSource_ = visibleEntries;
+    dateLayoutListMode_ = data_->listMode;
+    if (visibleEntries.empty()) return;
+
+    const int headerHeight = data_->listMode ? Cu(28.0f) : Cu(36.0f);
+    const int itemHeight = data_->listMode
+        ? Cu(38.0f)
+        : FolderMappingCellHeight(const_cast<FolderMapping*>(this));
+    const int columns = data_->listMode
+        ? 1
+        : std::max(1, data_->gridSpan.columns);
+
+    LONG y = 0;
+    size_t groupStart = 0;
+    std::wstring previousGroup;
+    for (size_t i = 0; i <= visibleEntries.size(); ++i)
+    {
+        std::wstring currentGroup;
+        if (i < visibleEntries.size() &&
+            visibleEntries[i] < data_->folderEntries.size())
+            currentGroup =
+                FolderEntryDateGroupId(data_->folderEntries[visibleEntries[i]]);
+
+        if (i == visibleEntries.size() ||
+            (i > groupStart && currentGroup != previousGroup))
+        {
+            size_t groupCount = i - groupStart;
+            if (groupCount > 0)
+            {
+                DateLayoutSegment header;
+                header.isHeader = true;
+                header.label = FolderEntryDateGroupLabel(previousGroup);
+                header.y = y;
+                header.height = headerHeight;
+                dateLayoutCache_.push_back(header);
+                y += headerHeight;
+
+                DateLayoutSegment items;
+                items.firstItemIndex = groupStart;
+                items.itemCount = groupCount;
+                items.y = y;
+                items.height = data_->listMode
+                    ? static_cast<LONG>(groupCount) * itemHeight
+                    : static_cast<LONG>(
+                        (groupCount + static_cast<size_t>(columns) - 1) /
+                        static_cast<size_t>(columns)) * itemHeight;
+                dateLayoutCache_.push_back(items);
+                y += items.height;
+            }
+            groupStart = i;
+        }
+        if (i < visibleEntries.size())
+            previousGroup = currentGroup;
+    }
+}
+
 /**
  * @brief 计算映射文件夹所有条目占用的总内容高度
  * @param widget    FolderMapping 组件指针
@@ -113,6 +572,14 @@ static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data) return 0;
+    if (data->dateHeaders && !widget->IsSearchActive())
+    {
+        widget->EnsureDateLayout();
+        const auto& segments = widget->GetDateLayoutCache();
+        return segments.empty()
+            ? 0
+            : static_cast<int>(segments.back().y + segments.back().height);
+    }
     if (data->listMode)
         return static_cast<int>(itemCount) * widget->Cu(38.0f);
     int columns = std::max(1, data->gridSpan.columns);
@@ -134,7 +601,8 @@ static int FolderMappingMaxScrollOffset(FolderMapping* widget)
     if (!data) return 0;
     RECT content = FolderMappingContentRect(widget);
     int contentHeight = std::max<int>(1, content.bottom - content.top);
-    return std::max(0, FolderMappingContentHeight(widget, data->folderEntries.size()) -
+    return std::max(0, FolderMappingContentHeight(
+        widget, widget->GetVisibleEntryIndices().size()) -
         contentHeight + widget->Cu(kMinCellHeight / 2.0f));
 }
 
@@ -151,6 +619,66 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
     if (!data) return {};
     RECT content = FolderMappingContentRect(widget);
     int scroll = std::clamp(data->scrollOffset, 0, FolderMappingMaxScrollOffset(widget));
+    if (data->dateHeaders && !widget->IsSearchActive())
+    {
+        widget->EnsureDateLayout();
+        const auto& segments = widget->GetDateLayoutCache();
+        const FolderMapping::DateLayoutSegment* itemSegment = nullptr;
+        for (const auto& segment : segments)
+        {
+            if (segment.isHeader) continue;
+            if (linearIndex >= segment.firstItemIndex &&
+                linearIndex < segment.firstItemIndex + segment.itemCount)
+            {
+                itemSegment = &segment;
+                break;
+            }
+        }
+        if (!itemSegment && linearIndex == widget->GetVisibleEntryIndices().size())
+        {
+            for (auto it = segments.rbegin(); it != segments.rend(); ++it)
+            {
+                if (!it->isHeader)
+                {
+                    itemSegment = &*it;
+                    break;
+                }
+            }
+        }
+        if (itemSegment)
+        {
+            size_t localIndex = linearIndex - itemSegment->firstItemIndex;
+            if (data->listMode)
+            {
+                const int itemHeight = widget->Cu(38.0f);
+                RECT rect = MakeRect(content.left,
+                    content.top + itemSegment->y +
+                        static_cast<LONG>(localIndex * itemHeight) - scroll,
+                    content.right,
+                    content.top + itemSegment->y +
+                        static_cast<LONG>((localIndex + 1) * itemHeight) - scroll);
+                InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
+                return rect;
+            }
+
+            int columns = std::max(1, data->gridSpan.columns);
+            int col = static_cast<int>(
+                localIndex % static_cast<size_t>(columns));
+            int row = static_cast<int>(
+                localIndex / static_cast<size_t>(columns));
+            int itemWidth = std::max<int>(
+                1, (content.right - content.left) / columns);
+            int cellHeight = FolderMappingCellHeight(widget);
+            return MakeRect(
+                content.left + col * itemWidth,
+                content.top + itemSegment->y + row * cellHeight - scroll,
+                col + 1 == columns
+                    ? content.right
+                    : content.left + (col + 1) * itemWidth,
+                content.top + itemSegment->y +
+                    (row + 1) * cellHeight - scroll);
+        }
+    }
     if (data->listMode)
     {
         const int itemHeight = widget->Cu(38.0f);
@@ -208,15 +736,18 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
     std::vector<std::unique_ptr<Slot>> slots;
     if (!data_ || !app_) return slots;
 
+    const auto& visibleEntries = GetVisibleEntryIndices();
     size_t total = IncludeTrailingEmptySlot()
-        ? data_->folderEntries.size() + 1
-        : data_->folderEntries.size();
+        ? visibleEntries.size() + 1
+        : visibleEntries.size();
     for (size_t idx = 0; idx < total; ++idx)
     {
         RECT cell = FolderMappingItemRect(this, idx);
         if (IsRectEmptyRect(cell)) continue;
         auto slot = std::make_unique<Slot>(this, cell, idx);
-        Item* item = GetSlotItem(idx);
+        Item* item = idx < visibleEntries.size()
+            ? GetSlotItem(visibleEntries[idx])
+            : nullptr;
         if (item) item->SetBounds(cell);
         slot->SetItem(item);
         slots.push_back(std::move(slot));
@@ -266,6 +797,7 @@ std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
 void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
     if (!data_) return;
+    if (data_->dateHeaders) return;
     std::vector<FolderEntry> moving;
     for (auto it = indices.rbegin(); it != indices.rend(); ++it)
     {
@@ -286,13 +818,25 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
     InvalidateSlots();
 }
 
+size_t FolderMapping::GetDropInsertIndex(
+    Slot* targetSlot, HitRegion region) const
+{
+    const auto& visibleEntries = GetVisibleEntryIndices();
+    size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : visibleEntries.size();
+    if (targetSlot && region == HitRegion::SortAfter)
+        ++visibleInsert;
+    if (visibleInsert < visibleEntries.size())
+        return visibleEntries[visibleInsert];
+    return data_ ? data_->folderEntries.size() : 0;
+}
+
 /**
  * @brief 获取文件夹条目总数
  * @return 条目数量
  */
 size_t FolderMapping::GetSlotCount() const
 {
-    return data_ ? data_->folderEntries.size() : 0;
+    return data_ ? GetVisibleEntryIndices().size() : 0;
 }
 
 /**
@@ -334,7 +878,8 @@ int FolderMapping::GetMaxScrollOffset() const
  */
 int FolderMapping::GetTotalContentHeight() const
 {
-    return FolderMappingContentHeight(const_cast<FolderMapping*>(this), data_ ? data_->folderEntries.size() : 0);
+    return FolderMappingContentHeight(const_cast<FolderMapping*>(this),
+        data_ ? GetVisibleEntryIndices().size() : 0);
 }
 
 /**
@@ -385,6 +930,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
     const bool lt = app_->IsLightContentTheme();
 
+    DrawSearchBox(context);
+
     if (data_->folderEntries.empty())
     {
         RECT empty = GetBodyRect();
@@ -398,15 +945,97 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         return;
     }
 
+    EnsureCategorySnapshot();
+    if (data_->showFileCategories)
+    {
+        const std::wstring activeCategory = CachedActiveCategoryId();
+        RECT tabsRect = FolderMappingTabsRect(this);
+        if (!IsRectEmptyRect(tabsRect))
+        {
+            context->PushAxisAlignedClip(
+                app_->ToD2DRect(tabsRect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            for (size_t i = 0; i < visibleCategoryIds_.size(); ++i)
+            {
+                RECT tab = FolderMappingTabRect(this, i);
+                if (IsRectEmptyRect(tab)) continue;
+                bool active = visibleCategoryIds_[i] == activeCategory;
+                bool hovered = PtInRect(&tab, app_->lastMousePoint_) != FALSE;
+                DrawCategorizedTab(
+                    context, tab,
+                    FolderMappingTabDisplayText(this, visibleCategoryIds_[i]),
+                    active, hovered);
+            }
+            context->PopAxisAlignedClip();
+        }
+    }
+
+    const auto& visibleEntries = GetVisibleEntryIndices();
+    if (visibleEntries.empty())
+    {
+        RECT empty = FolderMappingContentRect(this);
+        IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
+        IDWriteTextFormat* lightCentered = lt
+            ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true)
+            : nullptr;
+        app_->DrawD2DText(context, _LW("widget.categories.no_results"), empty,
+            (lt && lightCentered) ? lightCentered :
+                (centered ? centered : app_->listItemTextFormat_.Get()),
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f)
+               : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+        return;
+    }
+
     auto& slots = GetSlots();
     RECT content = FolderMappingContentRect(this);
     bool listMode = data_->listMode;
 
     context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    for (size_t i = 0; i < slots.size() && i < data_->folderEntries.size(); ++i)
+    if (data_->dateHeaders && !IsSearchActive())
     {
-        const FolderEntry& entry = data_->folderEntries[i];
-        RECT cell = slots[i]->GetBounds();
+        EnsureDateLayout();
+        IDWriteTextFormat* headerFormat =
+            GetCuTextFormat(13.0f, false, false);
+        IDWriteTextFormat* lightHeaderFormat = lt
+            ? GetCuTextFormatWeight(
+                13.0f, DWRITE_FONT_WEIGHT_LIGHT, false)
+            : nullptr;
+        int scroll = std::clamp(
+            data_->scrollOffset, 0, FolderMappingMaxScrollOffset(this));
+        for (const auto& segment : dateLayoutCache_)
+        {
+            if (!segment.isHeader) continue;
+            RECT headerRect = MakeRect(
+                content.left,
+                std::max<LONG>(
+                    content.top, content.top + segment.y - scroll),
+                content.right,
+                std::min<LONG>(
+                    content.bottom,
+                    content.top + segment.y + segment.height - scroll));
+            if (headerRect.top >= headerRect.bottom) continue;
+            RECT labelRect = headerRect;
+            labelRect.left += Cu(8.0f);
+            InflateRect(&labelRect, 0, -Cu(8.0f));
+            app_->DrawD2DText(context, segment.label, labelRect,
+                (lt && lightHeaderFormat)
+                    ? lightHeaderFormat
+                    : (headerFormat
+                        ? headerFormat
+                        : app_->listItemTextFormat_.Get()),
+                lt
+                    ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.52f));
+        }
+    }
+    for (const auto& slot : slots)
+    {
+        if (!slot) continue;
+        size_t visibleIndex = slot->GetIndex();
+        if (visibleIndex >= visibleEntries.size()) continue;
+        size_t entryIndex = visibleEntries[visibleIndex];
+        if (entryIndex >= data_->folderEntries.size()) continue;
+        const FolderEntry& entry = data_->folderEntries[entryIndex];
+        RECT cell = slot->GetBounds();
         if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
 
         if (!listMode)
@@ -439,7 +1068,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
  * @param handleRect 标题栏矩形
  * @param hovered    标题栏是否处于悬停状态（当前未使用）
  *
- * 在标题栏右侧绘制两个按钮：
+ * 在标题栏右侧绘制三个按钮：
+ * - 日期按钮：开启或关闭按修改日期分组
  * - 切换按钮：在图标模式（网格）和列表模式之间切换
  * - 打开文件夹按钮：打开当前映射的磁盘文件夹
  * 按钮使用 Font Awesome 图标，并具有悬停高亮效果。
@@ -461,6 +1091,12 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
         handleRect.right - resizeReserve - gap - btnSize - gapBetween,
         handleRect.top + (h + btnSize) / 2
     };
+    RECT dateBtn = {
+        toggleBtn.left - gapBetween - btnSize,
+        handleRect.top + (h - btnSize) / 2,
+        toggleBtn.left - gapBetween,
+        handleRect.top + (h + btnSize) / 2
+    };
     RECT openBtn = {
         handleRect.right - resizeReserve - gap - btnSize,
         handleRect.top + (h - btnSize) / 2,
@@ -470,18 +1106,27 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
 
     IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f * bs);
 
-    auto drawFaButton = [&](RECT rect, const std::wstring& glyph) {
+    auto drawFaButton = [&](RECT rect, const std::wstring& glyph, bool active) {
         bool hot = PtInRect(&rect, app_->lastMousePoint_) != FALSE;
         app_->DrawD2DText(context, glyph, rect,
             faFormat ? faFormat :
                 (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
             lt
-            ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
-            : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f)));
+                ? (active
+                    ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f)
+                           : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
+                    : (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.45f)
+                           : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.25f)))
+                : (active
+                    ? (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f)
+                           : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f))
+                    : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f)
+                           : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f))));
     };
 
-    drawFaButton(toggleBtn, data_->listMode ? L"" : L"");
-    drawFaButton(openBtn, L"");
+    drawFaButton(dateBtn, L"", data_->dateHeaders);
+    drawFaButton(toggleBtn, data_->listMode ? L"" : L"", true);
+    drawFaButton(openBtn, L"", true);
     (void)hovered;
 }
 
@@ -491,10 +1136,46 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
  * @return 命中类型。若命中了标题栏，进一步判断是否命中
  *         视图切换按钮或打开文件夹按钮
  */
+std::wstring FolderMapping::CategoryIdAtPoint(POINT pt) const
+{
+    if (!data_ || !data_->showFileCategories) return L"";
+    EnsureCategorySnapshot();
+    for (size_t i = 0; i < visibleCategoryIds_.size(); ++i)
+    {
+        RECT tab = FolderMappingTabRect(const_cast<FolderMapping*>(this), i);
+        if (PtInRect(&tab, pt))
+            return visibleCategoryIds_[i];
+    }
+    return L"";
+}
+
+bool FolderMapping::TryScrollTabs(POINT pt, int delta)
+{
+    if (!data_ || !app_ || !data_->showFileCategories) return false;
+    RECT tabs = FolderMappingTabsRect(this);
+    if (IsRectEmptyRect(tabs) || !PtInRect(&tabs, pt)) return false;
+    std::vector<int> widths =
+        FolderMappingTabWidths(this, tabs.right - tabs.left);
+    int maxScroll = std::max(0,
+        FolderMappingTabTotalWidth(widths) -
+        static_cast<int>(tabs.right - tabs.left));
+    if (maxScroll <= 0) return false;
+    data_->tabScrollOffset =
+        std::clamp(data_->tabScrollOffset - delta / 2, 0, maxScroll);
+    return true;
+}
+
 WidgetHit FolderMapping::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
-    if (base != WidgetHit::MoveHandle || !data_) return base;
+    if (base == WidgetHit::None || !data_) return base;
+
+    if (!CategoryIdAtPoint(pt).empty())
+        return WidgetHit::CategoryTab;
+    RECT searchRect = GetSearchBoxRect();
+    if (!IsRectEmptyRect(searchRect) && PtInRect(&searchRect, pt))
+        return WidgetHit::SearchBox;
+    if (base != WidgetHit::MoveHandle) return base;
 
     RECT handle = GetMoveHandleRect();
     const float bs = GetBarScale();
@@ -509,12 +1190,19 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
         handle.right - resizeReserve - gap - btnSize - gapBetween,
         handle.top + (h + btnSize) / 2
     };
+    RECT dateBtn = {
+        toggleBtn.left - gapBetween - btnSize,
+        handle.top + (h - btnSize) / 2,
+        toggleBtn.left - gapBetween,
+        handle.top + (h + btnSize) / 2
+    };
     RECT openBtn = {
         handle.right - resizeReserve - gap - btnSize,
         handle.top + (h - btnSize) / 2,
         handle.right - resizeReserve - gap,
         handle.top + (h + btnSize) / 2
     };
+    if (PtInRect(&dateBtn, pt)) return WidgetHit::DateHeaderToggleBtn;
     if (PtInRect(&toggleBtn, pt)) return WidgetHit::ListToggleBtn;
     if (PtInRect(&openBtn, pt)) return WidgetHit::OpenFolderBtn;
     return base;

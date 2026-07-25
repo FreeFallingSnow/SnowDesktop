@@ -34,6 +34,7 @@
 #include "utils.h"
 #include "widget_engine.h"
 #include "l10n.h"
+#include "item_location.h"
 #include "types.h"
 #include "constants.h"
 #include "resource.h"
@@ -298,6 +299,10 @@ public:
     friend class Widget;
     friend class WidgetContainer;
     friend class Collection;
+    friend class CollectionGroup;
+    friend class CollectionGroupEntryItem;
+    friend class FileGroup;
+    friend class FileGroupEntryItem;
     friend class FileCategories;
     friend class FolderMapping;
     friend class ScrollingItemWidget;
@@ -331,6 +336,24 @@ public:
         std::wstring name;           /**< 显示名称 */
         std::wstring path;           /**< 完整路径 */
         std::wstring source;         /**< 来源标识 */
+    };
+
+    struct QuickNavigationSection
+    {
+        std::wstring label;
+        size_t firstEntryIndex = 0;
+        size_t entryCount = 0;
+    };
+
+    struct QuickNavigationContentModel
+    {
+        std::vector<QuickNavigationEntry> entries;
+        std::vector<QuickNavigationSection> sections;
+
+        bool IsSectioned() const
+        {
+            return !sections.empty();
+        }
     };
 
     struct QuickNavigationEverythingEntry
@@ -595,6 +618,10 @@ private:
         Container* origin, DockEntryItem* targetItem, int mods);
     bool IsDockExclusiveItemKey(const std::wstring& key) const;
     bool IsDockExclusiveWidgetId(const std::wstring& id) const;
+    bool IsGroupedCollection(const DesktopWidget& widget) const;
+    bool IsGroupedWidget(const DesktopWidget& widget) const;
+    size_t FindCollectionGroupIndexForChild(const std::wstring& childId) const;
+    size_t FindFileGroupIndexForChild(const std::wstring& childId) const;
     bool IsRecycleBinDockEntry(const DockEntry& entry) const;
     void NormalizeDockRecycleBinPosition();
     size_t FindWidgetIndexById(const std::wstring& id) const;
@@ -639,6 +666,16 @@ private:
     void ApplyLanguageChange();
     /** @brief 获取当前分类设置。 */
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
+    /** @brief 获取三类滚动分类组件共用的标签字号。 */
+    float GetCategorizedWidgetTabFontSize() const
+    {
+        return settingsWindow_
+            ? std::clamp(
+                settingsWindow_->GetPersonalization().
+                    categorizedTabFontSize,
+                10.0f, 22.0f)
+            : 14.0f;
+    }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility();
     /** @brief 显示隐藏状态提示文字。 */
@@ -719,6 +756,28 @@ private:
         PIDLIST_ABSOLUTE targetPidl, const std::wstring& targetPath, const std::wstring& workingDirectory);
     static std::wstring SanitizeShortcutFileStem(const std::wstring& name);
     static bool IsApplicationsShellLinkTarget(IShellLinkW* shellLink);
+    QuickNavigationContentModel BuildQuickNavigationContentModel() const;
+    RECT GetQuickNavigationSectionHeaderRect(
+        const RECT& overlay, size_t sectionIndex,
+        const QuickNavigationContentModel& model) const;
+    RECT GetQuickNavigationViewModeButtonRect(
+        const RECT& overlay) const;
+    int GetQuickNavigationTabsStart(
+        const RECT& overlay) const;
+    bool TrySetQuickNavigationDesktopViewModeAtPoint(
+        POINT point);
+    void SetQuickNavigationDesktopViewMode(
+        QuickNavigationDesktopViewMode mode);
+    RECT GetQuickNavigationInitialJumpBackRect(
+        const RECT& overlay) const;
+    RECT GetQuickNavigationInitialJumpCellRect(
+        const RECT& overlay, size_t bucketIndex) const;
+    bool HandleQuickNavigationInitialJumpClick(
+        POINT point);
+    bool HandleQuickNavigationInitialJumpKeyboardInput(
+        WPARAM key);
+    bool ActivateQuickNavigationInitialJumpBucket(
+        size_t bucketIndex);
     /** @brief 计算快捷导航标签页的宽度。 */
     int GetQuickNavigationTabWidth() const;
     /** @brief 获取指定标签页的显示名称。 */
@@ -818,6 +877,10 @@ private:
     void OnTimer(WPARAM timerId);
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */
     void UpdateCollectionPopupDwell(POINT point);
+    /** @brief 拖动条目时更新集合组标签的悬停切换计时。 */
+    void UpdateCollectionGroupTabDwell(POINT point);
+    /** @brief 尝试切换到当前悬停的集合组标签。 */
+    bool TryActivateCollectionGroupTab(DWORD now);
     /**
      * @brief 尝试打开悬停停留后的集合弹出面板。
      * @param now 当前时间（毫秒）
@@ -904,13 +967,23 @@ private:
     void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex);
+    /** @brief 显示集合组标签上下文菜单。 */
+    void ShowCollectionGroupTabContextMenu(
+        POINT screenPoint, size_t groupIndex,
+        const std::wstring& collectionId);
+    void ShowFileGroupSourceTabContextMenu(
+        POINT screenPoint, size_t groupIndex,
+        const std::wstring& childId);
     /** @brief 显示文件夹条目上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
-    void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex);
+    void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex,
+        size_t memberIndex, bool keepQuickNavigationOpen = false);
     /** @brief 显示桌面项上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引 @param dockFrequentItem 是否来自 Dock 常用区 */
     void ShowItemContextMenu(POINT screenPoint, int itemIndex,
-        bool dockFrequentItem = false);
+        bool dockFrequentItem = false,
+        bool keepQuickNavigationOpen = false);
     /** @brief 显示外壳扩展上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引（可选，-1 表示背景） */
-    void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1);
+    void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1,
+        bool keepQuickNavigationOpen = false);
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir);
     /** @brief 显示桌面背景的专用上下文菜单（含新建、显示设置等）。 @param screenPoint 屏幕坐标 */
@@ -1494,6 +1567,9 @@ private:
     void AddWidgetToGrid(DesktopWidget&& widget, GridSpan span);
     /** @brief 在指定屏幕位置创建集合部件。 @param screenPoint 屏幕坐标 */
     void AddCollectionWidgetAt(POINT screenPoint);
+    /** @brief 在指定屏幕位置创建集合组部件。 @param screenPoint 屏幕坐标 */
+    void AddCollectionGroupWidgetAt(POINT screenPoint);
+    void AddFileGroupWidgetAt(POINT screenPoint);
     /** @brief 在指定屏幕位置创建文件分类部件。 @param screenPoint 屏幕坐标 */
     void AddFileCategoryWidgetAt(POINT screenPoint);
     /** @brief 在指定屏幕位置创建文件夹映射部件。 @param screenPoint 屏幕坐标 */
@@ -1508,6 +1584,20 @@ private:
      * @param isMove 是否为移动操作
      */
     void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove = false);
+    bool AddCollectionToGroup(size_t collectionIndex, size_t groupIndex,
+        size_t insertIndex = static_cast<size_t>(-1));
+    bool ReleaseCollectionFromGroup(const std::wstring& collectionId,
+        GridCell preferredCell);
+    void ReleaseCollectionGroupChildren(size_t groupIndex);
+    size_t HitTestCollectionGroupIndex(POINT point,
+        size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
+    bool AddWidgetToFileGroup(size_t childIndex, size_t groupIndex,
+        size_t insertIndex = static_cast<size_t>(-1));
+    bool ReleaseWidgetFromFileGroup(const std::wstring& childId,
+        GridCell preferredCell);
+    void ReleaseFileGroupChildren(size_t groupIndex);
+    size_t HitTestFileGroupIndex(POINT point,
+        size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
     /** @brief 枚举文件夹映射部件中的条目。 @param widget 部件引用 */
     void EnumerateFolderMappingEntries(DesktopWidget& widget);
     /** @brief 刷新文件夹映射部件的内容。 @param widgetIndex 部件索引 */
@@ -1833,6 +1923,8 @@ private:
     bool keyboardNavInsideWidget_ = false;
     size_t keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     int keyboardNavMemberIndex_ = -1;
+    bool keyboardNavCollectionGroupTabs_ = false;
+    bool keyboardNavFileGroupCategoryTabs_ = false;
     int navHoverSide_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
@@ -1867,6 +1959,7 @@ private:
     ComPtr<IDWriteTextFormat> quickNavTabTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
+    ComPtr<IDWriteTextFormat> quickNavFaTextFormat_;
     /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按 sysIconIndex）。 */
     std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
     std::vector<int> quickNavTabWidths_;
@@ -1948,6 +2041,8 @@ private:
     bool widgetDockTarget_ = false;
     DockContainer* widgetDockTargetContainer_ = nullptr;
     size_t widgetDockInsertIndex_ = 0;
+    size_t widgetCollectionGroupTargetIndex_ = static_cast<size_t>(-1);
+    size_t widgetCollectionGroupInsertIndex_ = static_cast<size_t>(-1);
     size_t dockHandoffDwellIndex_ = static_cast<size_t>(-1);
     DWORD dockHandoffDwellStartTick_ = 0;
     bool dockHandoffDwellReady_ = false;
@@ -2001,6 +2096,7 @@ private:
     bool renameCommitPending_ = false;
     bool renamingWidget_ = false;
     bool renamingFolderEntry_ = false;
+    bool renamingQuickNavigationItem_ = false;
     size_t renameFolderWidgetIndex_ = static_cast<size_t>(-1);
     size_t renameFolderEntryIndex_ = static_cast<size_t>(-1);
     /** @brief 开始重命名选中的项。 */
@@ -2076,15 +2172,22 @@ private:
     /** @brief 悬停打开：拖拽中悬停在集合"全部"按钮上 */
     size_t popupDwellWidgetIndex_ = static_cast<size_t>(-1);
     DWORD popupDwellTick_ = 0;
+    size_t collectionGroupTabDwellWidgetIndex_ =
+        static_cast<size_t>(-1);
+    std::wstring collectionGroupTabDwellId_;
+    DWORD collectionGroupTabDwellTick_ = 0;
     std::unique_ptr<Slot> popupDragTargetSlot_;
     /** @} */
 
     /** @name 快速导航 */
     /** @{ */
     bool quickNavigationOpen_ = false;
+    RECT quickNavigationRenameItemRect_{};
     size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
     int quickNavigationScrollOffset_ = 0;
     int quickNavigationTabScrollOffset_ = 0;
+    bool quickNavigationInitialJumpOpen_ = false;
+    size_t quickNavigationInitialJumpSelection_ = 0;
     POINT quickNavigationOpenPoint_{};
     RECT quickNavigationRect_{};
     std::wstring quickNavigationSearchText_;
@@ -2123,6 +2226,11 @@ private:
     mutable bool everythingSearchAvailable_ = true;
 
     int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
+    void BeginQuickNavigationDesktopItemRename(size_t itemIndex);
+    void BeginQuickNavigationFolderEntryRename(
+        size_t widgetIndex, size_t entryIndex);
+    void BeginQuickNavigationItemRename(
+        const std::wstring& name, bool isDirectory);
     /** @} */
 
     /** @name 面向对象系统 */

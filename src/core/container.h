@@ -17,6 +17,9 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstdint>
+
+#include "slot_contract.h"
 
 class Item;
 class Slot;
@@ -50,9 +53,28 @@ public:
     /// 返回容器标题，用于标识或调试
     virtual std::wstring GetTitle() const = 0;
 
+    /**
+     * @brief 返回集中式槽位契约中的面类型。
+     *
+     * 新增具体 Container 时必须显式选择已有语义，或在 slot_contract.h
+     * 中增加新面及其测试矩阵。
+     */
+    virtual snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const = 0;
+
     // Build and cache slots. Returns stable references valid until InvalidateSlots.
     const std::vector<std::unique_ptr<Slot>>& GetSlots();
-    void InvalidateSlots() { slotsValid_ = false; }
+    void InvalidateSlots()
+    {
+        slotsValid_ = false;
+        ++slotGeneration_;
+        if (slotGeneration_ == 0)
+            slotGeneration_ = 1;
+    }
+    std::uint64_t GetSlotGeneration() const
+    {
+        return slotGeneration_;
+    }
 
     /** @brief 构建插槽列表。由 GetSlots() 在缓存失效时调用，派生类必须实现 */
     virtual std::vector<std::unique_ptr<Slot>> BuildSlots() = 0;
@@ -128,6 +150,8 @@ protected:
     std::vector<std::unique_ptr<Slot>> cachedSlots_;
     /** 缓存有效性标志；false 时 GetSlots() 将调用 BuildSlots() 重建 */
     bool slotsValid_ = false;
+    /** 槽位缓存代次；失效后旧 Slot 裸指针不得继续使用。 */
+    std::uint64_t slotGeneration_ = 1;
 };
 
 /**

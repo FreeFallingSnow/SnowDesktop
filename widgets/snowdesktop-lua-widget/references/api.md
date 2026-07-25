@@ -165,12 +165,13 @@ Colors use `0xRRGGBB`.
 ### `draw.text`
 
 ```lua
-draw.text(x, y, text, size?, color?, maxWidth?, bold?, singleLine?, maxHeight?)
+draw.text(x, y, text, size?, color?, maxWidth?, bold?, singleLine?, maxHeight?, alpha?)
 ```
 
 - Defaults: `size=14`, `color=0xFFFFFF`, `maxWidth=0`.
 - `maxWidth > 0` enables wrapping.
 - `singleLine=true` disables wrapping and adds character ellipsis trimming.
+- `alpha` controls text opacity from `0.0` (transparent) to `1.0` (opaque).
 
 ### `draw.measureText`
 

@@ -16,6 +16,7 @@
 #include "constants.h"
 #include "utils.h"
 #include "app.h"
+#include "collection_group_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -243,6 +244,10 @@ std::vector<std::unique_ptr<Slot>> WidgetContainer::BuildSlots()
 RECT WidgetContainer::GetFrameRect() const
 {
     if (!data_) return {};
+    if (hostedFrameActive_)
+        return hostedFrame_;
+    if (app_ && app_->IsGroupedWidget(*data_))
+        return {};
     RECT rect = data_->bounds;
 
     // Absorb half the grid gap on all four sides so widget frames have
@@ -325,7 +330,7 @@ RECT WidgetContainer::GetTitleRect() const
     RECT handle = GetMoveHandleRect();
     LONG left = handle.left + Cu(4.0f);
     const float bh = GetBarHeight();
-    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? bh * 2.5f : bh * 1.08f);
+    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? bh * 3.4f : bh * 1.08f);
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
     return { left, handle.top + Cu(bh * 0.083f), right, handle.bottom - Cu(bh * 0.083f) };
 }
@@ -545,6 +550,297 @@ int ScrollingItemWidget::GetScrollOffset() const
 BarStyle ScrollingItemWidget::GetInsertionStyle() const
 {
     return data_ && data_->listMode ? BarStyle::HBar : BarStyle::VBar;
+}
+
+void WidgetContainer::SetHostedFrame(const RECT* frame)
+{
+    hostedFrameActive_ = frame != nullptr;
+    hostedFrame_ = frame ? *frame : RECT{};
+    InvalidateSlots();
+}
+
+RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
+    bool visible) const
+{
+    if (categorizedSearchVisibilityOverrideActive_)
+        visible = categorizedSearchVisible_;
+    if (!visible) return {};
+    RECT body = GetBodyRect();
+    InflateRect(&body, -Cu(10.0f), -Cu(12.0f));
+    if (IsRectEmptyRect(body)) return {};
+    InflateRect(&body, -Cu(2.0f), 0);
+    if (IsRectEmptyRect(body)) return {};
+    const LONG bottom = std::min<LONG>(
+        body.bottom, body.top + Cu(30.0f));
+    return bottom > body.top
+        ? MakeRect(
+            body.left, body.top,
+            body.right, bottom)
+        : RECT{};
+}
+
+RECT ScrollingItemWidget::GetCategorizedTabsRect(
+    bool visible) const
+{
+    if (categorizedTabsVisibilityOverrideActive_)
+        visible = categorizedTabsVisible_;
+    if (!visible) return {};
+    RECT body = GetBodyRect();
+    InflateRect(&body, -Cu(10.0f), -Cu(8.0f));
+    if (IsRectEmptyRect(body)) return {};
+    const RECT search = GetSearchBoxRect();
+    LONG top = IsRectEmptyRect(search)
+        ? body.top
+        : search.bottom + Cu(5.0f);
+    top += categorizedTabRowOffset_ * Cu(38.0f);
+    const LONG bottom = std::min<LONG>(
+        body.bottom, top + Cu(34.0f));
+    return bottom > top
+        ? MakeRect(body.left, top, body.right, bottom)
+        : RECT{};
+}
+
+void ScrollingItemWidget::SetCategorizedHostOptions(
+    int tabRowOffset,
+    bool searchVisibilityOverrideActive,
+    bool searchVisible,
+    bool tabsVisibilityOverrideActive,
+    bool tabsVisible,
+    bool searchAllCategories)
+{
+    categorizedTabRowOffset_ = std::max(0, tabRowOffset);
+    categorizedSearchVisibilityOverrideActive_ =
+        searchVisibilityOverrideActive;
+    categorizedSearchVisible_ = searchVisible;
+    categorizedTabsVisibilityOverrideActive_ =
+        tabsVisibilityOverrideActive;
+    categorizedTabsVisible_ = tabsVisible;
+    categorizedSearchAllCategories_ = searchAllCategories;
+    InvalidateSlots();
+}
+
+void ScrollingItemWidget::ClearCategorizedHostOptions()
+{
+    categorizedTabRowOffset_ = 0;
+    categorizedSearchVisibilityOverrideActive_ = false;
+    categorizedSearchVisible_ = false;
+    categorizedTabsVisibilityOverrideActive_ = false;
+    categorizedTabsVisible_ = false;
+    categorizedSearchAllCategories_ = false;
+    InvalidateSlots();
+}
+
+float ScrollingItemWidget::
+    GetCategorizedTabFontSize() const
+{
+    return app_
+        ? app_->GetCategorizedWidgetTabFontSize()
+        : 14.0f;
+}
+
+std::vector<int>
+ScrollingItemWidget::BuildCategorizedTabWidths(
+    const std::vector<std::wstring>& labels,
+    int availableWidth) const
+{
+    std::vector<int> widths;
+    widths.reserve(labels.size());
+    IDWriteTextFormat* format =
+        GetCuTextFormat(
+            GetCategorizedTabFontSize(),
+            true, true);
+    IDWriteFactory* dwrite =
+        app_ ? app_->GetDWriteFactory() : nullptr;
+    for (const auto& label : labels)
+    {
+        int measured = 0;
+        if (dwrite && format && !label.empty())
+        {
+            Microsoft::WRL::ComPtr<
+                IDWriteTextLayout> layout;
+            if (SUCCEEDED(dwrite->CreateTextLayout(
+                    label.c_str(),
+                    static_cast<UINT32>(label.size()),
+                    format, 4096.0f, FontCu(24.0f),
+                    &layout)) &&
+                layout)
+            {
+                DWRITE_TEXT_METRICS metrics{};
+                if (SUCCEEDED(
+                        layout->GetMetrics(&metrics)))
+                    measured = static_cast<int>(
+                        std::max(
+                            metrics.width,
+                            metrics.
+                                widthIncludingTrailingWhitespace) +
+                        1.0f);
+            }
+        }
+        if (measured <= 0)
+            measured =
+                static_cast<int>(label.size()) *
+                Cu(8.0f);
+        const int width = std::max(
+            Cu(76.0f), measured + Cu(24.0f));
+        widths.push_back(width);
+    }
+
+    return snowdesktop::collection_group_rules::
+        DistributeWidthsToFill(
+            std::move(widths), availableWidth);
+}
+
+void ScrollingItemWidget::DrawCategorizedTab(
+    ID2D1DeviceContext* context,
+    RECT tabRect,
+    const std::wstring& label,
+    bool active,
+    bool hovered) const
+{
+    if (!context || !app_ ||
+        IsRectEmptyRect(tabRect))
+        return;
+    const bool light = app_->IsLightContentTheme();
+    app_->DrawD2DRoundedRectangle(
+        context, tabRect,
+        static_cast<float>(Cu(8.0f)),
+        active
+            ? (light
+                ? D2D1::ColorF(
+                    0.0f, 0.0f, 0.0f, 0.12f)
+                : D2D1::ColorF(
+                    1.0f, 1.0f, 1.0f, 0.22f))
+            : (hovered
+                ? (light
+                    ? D2D1::ColorF(
+                        0.0f, 0.0f, 0.0f, 0.08f)
+                    : D2D1::ColorF(
+                        1.0f, 1.0f, 1.0f, 0.13f))
+                : (light
+                    ? D2D1::ColorF(
+                        0.0f, 0.0f, 0.0f, 0.04f)
+                    : D2D1::ColorF(
+                        1.0f, 1.0f, 1.0f, 0.06f))),
+        active
+            ? D2D1::ColorF(
+                0.39f, 0.66f, 1.0f, 0.78f)
+            : (light
+                ? D2D1::ColorF(
+                    0.0f, 0.0f, 0.0f, 0.14f)
+                : D2D1::ColorF(
+                    1.0f, 1.0f, 1.0f, 0.20f)));
+
+    RECT textRect = tabRect;
+    InflateRect(&textRect, -Cu(7.0f), 0);
+    IDWriteTextFormat* tabFormat =
+        GetCuTextFormat(
+            GetCategorizedTabFontSize(),
+            true, true);
+    app_->DrawD2DText(
+        context, label, textRect,
+        tabFormat
+            ? tabFormat
+            : (app_->fileCategoryTabTextFormat_
+                ? app_->fileCategoryTabTextFormat_.Get()
+                : app_->listItemTextFormat_.Get()),
+        light
+            ? D2D1::ColorF(
+                0.0f, 0.0f, 0.0f,
+                active ? 0.88f : 0.74f)
+            : D2D1::ColorF(
+                1.0f, 1.0f, 1.0f,
+                active ? 0.98f : 0.78f));
+}
+
+/**
+ * @brief 绘制可滚动组件共用的搜索框。
+ */
+void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
+{
+    if (!context || !app_) return;
+    RECT searchRect = GetSearchBoxRect();
+    if (IsRectEmptyRect(searchRect)) return;
+
+    const bool lt = app_->IsLightContentTheme();
+    const bool searching = !searchText_.empty();
+    const bool searchHovered = PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
+    // 与下方分类标签共用同一套视觉状态，避免搜索框看起来像独立控件。
+    app_->DrawD2DRoundedRectangle(context, searchRect, static_cast<float>(Cu(8.0f)),
+        searchFocused_
+            ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f))
+            : (searchHovered ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.13f))
+                             : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.04f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f))),
+        searchFocused_
+            ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f)
+            : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f)));
+
+    IDWriteTextFormat* searchFormat = GetCuTextFormat(13.0f, false, false);
+    IDWriteTextFormat* lightSearchFormat = lt
+        ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, false)
+        : nullptr;
+    RECT searchTextRect = MakeRect(searchRect.left + Cu(8.0f), searchRect.top,
+        searchRect.right - Cu(8.0f), searchRect.bottom);
+
+    if (searching || searchFocused_)
+    {
+        app_->DrawD2DText(context, searchText_, searchTextRect,
+            searchFormat ? searchFormat :
+                (app_->fileCategoryTabTextFormat_
+                    ? app_->fileCategoryTabTextFormat_.Get()
+                    : app_->listItemTextFormat_.Get()),
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f)
+               : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f));
+
+        if (searchFocused_)
+        {
+            float cursorX = static_cast<float>(searchTextRect.left) + Cu(2.0f);
+            if (searchCursorPos_ > 0)
+            {
+                std::wstring textBefore = searchText_.substr(0, searchCursorPos_);
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> measureLayout;
+                IDWriteFactory* dwrite = app_->GetDWriteFactory();
+                if (dwrite && searchFormat)
+                {
+                    float maxW = static_cast<float>(searchTextRect.right - searchTextRect.left);
+                    float maxH = static_cast<float>(searchTextRect.bottom - searchTextRect.top);
+                    if (SUCCEEDED(dwrite->CreateTextLayout(
+                        textBefore.c_str(), static_cast<UINT32>(textBefore.size()),
+                        searchFormat, maxW, maxH, &measureLayout)) && measureLayout)
+                    {
+                        DWRITE_TEXT_METRICS metrics{};
+                        measureLayout->GetMetrics(&metrics);
+                        cursorX = static_cast<float>(searchTextRect.left) + metrics.width + Cu(1.0f);
+                    }
+                }
+            }
+
+            const float cursorHeight = static_cast<float>(Cu(14.0f));
+            const float cursorTop = static_cast<float>(searchRect.top) +
+                (static_cast<float>(searchRect.bottom - searchRect.top) - cursorHeight) * 0.5f;
+            const float cursorWidth = static_cast<float>(Cu(1.5f));
+            RECT cursorRect = {
+                static_cast<LONG>(cursorX),
+                static_cast<LONG>(cursorTop),
+                static_cast<LONG>(cursorX + cursorWidth),
+                static_cast<LONG>(cursorTop + cursorHeight)
+            };
+            app_->DrawD2DFilledRectangle(context, cursorRect,
+                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f)
+                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f),
+                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+        }
+    }
+    else
+    {
+        app_->DrawD2DText(context, _LW("widget.categories.search_hint"), searchTextRect,
+            (lt && lightSearchFormat) ? lightSearchFormat :
+                (searchFormat ? searchFormat :
+                    (app_->fileCategoryTabTextFormat_
+                        ? app_->fileCategoryTabTextFormat_.Get()
+                        : app_->listItemTextFormat_.Get())),
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.42f)
+               : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.70f));
+    }
 }
 
 void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
@@ -886,6 +1182,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const bool persistentBottomBar = tinyCollection ||
         data_->type == DesktopWidgetType::FileCategories ||
         data_->type == DesktopWidgetType::FolderMapping ||
+        data_->type == DesktopWidgetType::CollectionGroup ||
+        data_->type == DesktopWidgetType::FileGroup ||
         data_->type == DesktopWidgetType::Guide ||
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
@@ -1026,6 +1324,10 @@ std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app)
     {
     case DesktopWidgetType::Collection:
         return std::make_unique<Collection>(data, app);
+    case DesktopWidgetType::CollectionGroup:
+        return std::make_unique<CollectionGroup>(data, app);
+    case DesktopWidgetType::FileGroup:
+        return std::make_unique<FileGroup>(data, app);
     case DesktopWidgetType::FileCategories:
         return std::make_unique<FileCategories>(data, app);
     case DesktopWidgetType::FolderMapping:

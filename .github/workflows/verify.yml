@@ -1,0 +1,30 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "release/**"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B .build -S . -DBUILD_TESTING=ON
+
+      - name: Build behavior tests
+        run: cmake --build .build --config Release --target SnowDesktopSlotContractTests SnowDesktopSlotRuntimeTests SnowDesktopCollectionGroupRulesTests SnowDesktopQuickNavigationRulesTests --parallel
+
+      - name: Run behavior tests
+        run: ctest --test-dir .build -C Release --output-on-failure
+
+      - name: Check localization
+        run: python scripts/check_l10n.py
+
+      - name: Build Release application
+        run: cmake --build .build --config Release --target SnowDesktop --parallel

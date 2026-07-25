@@ -62,6 +62,24 @@ namespace
         return true;
     }
 
+    bool ReadStringField(
+        const std::string& text, const char* field,
+        std::string& out)
+    {
+        const std::string marker =
+            "\"" + std::string(field) + "\"";
+        size_t p = text.find(marker);
+        if (p == std::string::npos) return false;
+        p = text.find(':', p);
+        if (p == std::string::npos) return false;
+        p = text.find('"', p + 1);
+        if (p == std::string::npos) return false;
+        const size_t end = text.find('"', p + 1);
+        if (end == std::string::npos) return false;
+        out = text.substr(p + 1, end - p - 1);
+        return true;
+    }
+
     /**
      * @brief 将虚拟键码转换为可读的键名
      * @details 将 Windows 虚拟键码映射为对应的文本表示。
@@ -123,12 +141,22 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
     bool enabled = false;
     int modifiers = 0;
     int virtualKey = 0;
+    std::string desktopViewMode;
+    settings.desktopViewMode =
+        QuickNavigationDesktopViewMode::Tile;
     if (ReadBoolField(text, "enabled", enabled))
         settings.enabled = enabled;
     if (ReadIntField(text, "modifiers", modifiers))
         settings.modifiers = static_cast<UINT>(modifiers);
     if (ReadIntField(text, "virtualKey", virtualKey) && virtualKey > 0)
         settings.virtualKey = static_cast<UINT>(virtualKey);
+    QuickNavigationDesktopViewMode parsedMode{};
+    if (ReadStringField(
+            text, "desktopViewMode",
+            desktopViewMode) &&
+        QuickNavigationDesktopViewModeFromJson(
+            desktopViewMode, parsedMode))
+        settings.desktopViewMode = parsedMode;
     return true;
 }
 
@@ -149,7 +177,11 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     file << "{\n";
     file << "  \"enabled\": " << (settings.enabled ? "true" : "false") << ",\n";
     file << "  \"modifiers\": " << settings.modifiers << ",\n";
-    file << "  \"virtualKey\": " << settings.virtualKey << "\n";
+    file << "  \"virtualKey\": " << settings.virtualKey << ",\n";
+    file << "  \"desktopViewMode\": \""
+         << QuickNavigationDesktopViewModeToJson(
+                settings.desktopViewMode)
+         << "\"\n";
     file << "}\n";
     return true;
 }

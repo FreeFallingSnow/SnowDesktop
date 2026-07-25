@@ -71,6 +71,12 @@ struct PersonalizationSettings
     /** @brief 独立的组件底栏高度，不属于主题预设。 */
     float barHeight = 24.0f;
 
+    /**
+     * @brief 桌面文件、映射文件夹与集合组共用的分类标签字号。
+     * @details 属于组件布局，不随主题预设切换。
+     */
+    float categorizedTabFontSize = 14.0f;
+
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */
     float cornerRadius = 12.0f;
@@ -134,7 +140,10 @@ PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId);
  * @return true  加载成功
  * @return false 加载失败（文件不存在或解析出错）
  */
-bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s);
+bool LoadPersonalization(
+    const wchar_t* path,
+    PersonalizationSettings& s,
+    bool* categorizedTabFontSizeLoaded = nullptr);
 
 /**
  * @brief 将个性化设置保存到 JSON 文件

@@ -30,6 +30,16 @@
 构建脚本会自动终止已在运行的 SnowDesktop.exe，并为释放任务栏 Hook DLL
 短暂重启 Explorer。
 
+## 测试
+
+```bat
+.\test.bat
+```
+
+该入口会构建并运行 CTest 行为测试，同时检查本地化引用，不会清理
+`.build\Release\data\`。滚动分类组件的交互、拖放和测试要求见
+[滚动分类组件设计与测试契约](./docs/scrolling_categorized_widget_contract.md)。
+
 ## 打包
 
 ```bat

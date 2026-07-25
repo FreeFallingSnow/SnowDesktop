@@ -173,6 +173,8 @@ enum class DropSourceKind
     FolderEntry,    ///< 来自文件夹视图内部的条目
     ExternalFile,   ///< 来自桌面外部（如资源管理器拖入）的文件
     Widget,         ///< 来自 Widget 组件自身
+    CollectionGroupEntry, ///< 来自集合组中的集合标签
+    FileGroupEntry, ///< 来自文件组中的来源标签
     Unknown,        ///< 来源未知
 };
 
@@ -232,6 +234,7 @@ struct DragSourceEntry
     std::wstring filePath;
     std::wstring displayName;
     std::wstring dockReference;
+    std::wstring widgetId;
     DockEntryType dockEntryType = DockEntryType::DesktopItem;
     bool fromDock = false;
     GridCell originalCell;
@@ -263,6 +266,8 @@ struct DragSourceList
     bool hasFolderEntries = false;
     bool hasExternalFiles = false;
     bool hasWidgets = false;
+    bool hasCollectionGroupEntries = false;
+    bool hasFileGroupEntries = false;
 
     bool Empty() const { return entries.empty(); }
 
@@ -306,6 +311,7 @@ struct DropLanding
     DropLandingKind kind = DropLandingKind::None;
     size_t sourceIndex = 0;
     GridCell cell;
+    GridSpan span{1, 1};
     size_t insertIndex = 0;
     DesktopWidget* widget = nullptr;
     std::wstring widgetId;

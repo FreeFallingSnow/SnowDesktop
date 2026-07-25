@@ -107,10 +107,13 @@ struct PendingWidgetMove
 enum class DesktopWidgetType
 {
     Collection,      /**< 集合组件 */
+    CollectionGroup, /**< 集合组组件 */
+    FileGroup,       /**< 文件组组件 */
     FileCategories,  /**< 文件分类组件 */
     FolderMapping,   /**< 文件夹映射组件 */
     LuaScript,       /**< Lua 脚本组件 */
     Guide,           /**< 分页指南组件 */
+    Count,           /**< 组件类型注册表边界；不得用于持久化 */
 };
 
 // ── PIDL Wrapper ───────────────────────────
@@ -268,6 +271,7 @@ struct FolderEntry
     std::wstring name;
     std::wstring fullPath;
     bool isDirectory = false;
+    FILETIME lastWriteTime{};
     int sysIconIndex = -1;
     HBITMAP iconBitmap = nullptr;
     SIZE iconBitmapSize{};
@@ -284,6 +288,7 @@ struct FolderEntry
         : name(other.name),
           fullPath(other.fullPath),
           isDirectory(other.isDirectory),
+          lastWriteTime(other.lastWriteTime),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(nullptr),
           iconBitmapSize(other.iconBitmapSize),
@@ -313,6 +318,7 @@ struct FolderEntry
             name = other.name;
             fullPath = other.fullPath;
             isDirectory = other.isDirectory;
+            lastWriteTime = other.lastWriteTime;
             sysIconIndex = other.sysIconIndex;
             iconBitmapSize = other.iconBitmapSize;
             selected = other.selected;
@@ -365,6 +371,7 @@ public:
         : name(std::move(other.name)),
           fullPath(std::move(other.fullPath)),
           isDirectory(other.isDirectory),
+          lastWriteTime(other.lastWriteTime),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(other.iconBitmap),
           iconBitmapSize(other.iconBitmapSize),
@@ -390,6 +397,7 @@ public:
             name = std::move(other.name);
             fullPath = std::move(other.fullPath);
             isDirectory = other.isDirectory;
+            lastWriteTime = other.lastWriteTime;
             sysIconIndex = other.sysIconIndex;
             iconBitmap = other.iconBitmap;
             iconBitmapSize = other.iconBitmapSize;
@@ -439,7 +447,10 @@ struct DesktopWidget
     bool scrollContainerMode = false;
     bool userRenamed = false; // Compatibility mirror of !customTitle.empty().
     bool dateHeaders = false;
+    bool showFileCategories = false;
+    bool showSearchBox = false;
     std::vector<std::wstring> itemKeys;
+    std::vector<std::wstring> childWidgetIds;
     std::vector<FolderEntry> folderEntries;
 };
 

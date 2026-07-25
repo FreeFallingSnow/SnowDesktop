@@ -133,6 +133,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
@@ -1189,9 +1190,10 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetHostInputFocusCallback([this]() {
             for (auto& container : containers_)
             {
-                auto* fileCategories = dynamic_cast<FileCategories*>(container.get());
-                if (fileCategories)
-                    fileCategories->SetSearchFocused(false);
+                auto* searchable =
+                    dynamic_cast<ScrollingItemWidget*>(container.get());
+                if (searchable)
+                    searchable->SetSearchFocused(false);
             }
             FocusDesktopInputWindow();
         });
@@ -1380,10 +1382,10 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
         {
             for (auto& c : containers_)
             {
-                auto* fc = dynamic_cast<FileCategories*>(c.get());
-                if (fc && fc->IsSearchFocused())
+                auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+                if (searchable && searchable->IsSearchFocused())
                 {
-                    fc->AppendSearchChar(ch);
+                    searchable->AppendSearchChar(ch);
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     break;
                 }
@@ -1696,6 +1698,17 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 RECT slotBounds = slot->GetBounds();
                 if (!PtInRect(&slotBounds, pt)) continue;
                 if (!PtInRect(&bodyRect, pt)) continue;
+                if (auto* groupEntry =
+                    dynamic_cast<CollectionGroupEntryItem*>(
+                        slot->GetItem()))
+                {
+                    const size_t collectionIndex =
+                        FindWidgetIndexById(
+                            groupEntry->GetCollectionId());
+                    if (collectionIndex < widgets_.size())
+                        OpenCollectionPopupAt(collectionIndex, pt);
+                    return 0;
+                }
                 if (auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem()))
                 {
                     DesktopItem* item = icon->GetDesktopItem();

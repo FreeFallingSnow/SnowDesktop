@@ -271,8 +271,13 @@ std::wstring GetPersonalizationPath()
  * @return true  加载成功（文件存在且非空）
  * @return false 文件打开失败或内容为空
  */
-bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
+bool LoadPersonalization(
+    const wchar_t* path,
+    PersonalizationSettings& s,
+    bool* categorizedTabFontSizeLoaded)
 {
+    if (categorizedTabFontSizeLoaded)
+        *categorizedTabFontSizeLoaded = false;
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
     std::ostringstream ss;
@@ -291,6 +296,13 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     if (ReadDoubleField(text, "widgetBorderAlpha", v)) s.widgetBorderAlpha = (float)v;
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
+    if (ReadDoubleField(text, "categorizedTabFontSize", v))
+    {
+        s.categorizedTabFontSize =
+            std::clamp(static_cast<float>(v), 10.0f, 22.0f);
+        if (categorizedTabFontSizeLoaded)
+            *categorizedTabFontSizeLoaded = true;
+    }
     if (ReadDoubleField(text, "backgroundPreset", v))
     {
         s.backgroundPreset = NormalizeAppearancePresetId((int)v);
@@ -310,9 +322,13 @@ bool LoadPersonalization(const wchar_t* path, PersonalizationSettings& s)
     {
         const float cornerRadius = s.cornerRadius;
         const float barHeight = s.barHeight;
+        const float categorizedTabFontSize =
+            s.categorizedTabFontSize;
         s = MakeAppearancePreset(s.backgroundPreset);
         s.cornerRadius = cornerRadius;
         s.barHeight = barHeight;
+        s.categorizedTabFontSize =
+            categorizedTabFontSize;
     }
     return true;
 }
@@ -343,6 +359,11 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"widgetBorderAlpha\": " << s.widgetBorderAlpha << ",\n";
     file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
     file << "  \"barHeight\": " << s.barHeight << ",\n";
+    file << "  \"categorizedTabFontSize\": "
+         << std::clamp(
+                s.categorizedTabFontSize,
+                10.0f, 22.0f)
+         << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";

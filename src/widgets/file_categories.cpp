@@ -11,6 +11,7 @@
 #include "slot.h"
 #include "types.h"
 #include "app.h"
+#include "collection_group_rules.h"
 #include "drop_model.h"
 #include "search_match.h"
 #include <algorithm>
@@ -18,8 +19,6 @@
 #include <shlwapi.h>
 #include <unordered_set>
 #include "../l10n.h"
-
-static constexpr float kDefaultFileCategoryTabFontCu = 14.0f;
 
 static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex);
 static int  FileCategoryCellHeight(FileCategories* widget);
@@ -411,28 +410,6 @@ const std::vector<std::wstring>& FileCategories::GetSearchResultKeys() const
     return searchResultCache_;
 }
 
-int FileCategories::MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) const
-{
-    if (!app_ || !app_->dwriteFactory_ || !format || text.empty()) return 0;
-
-    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(app_->dwriteFactory_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
-        format, 4096.0f, FontCu(24.0f), &layout)) || !layout)
-        return 0;
-
-    DWRITE_TEXT_METRICS metrics{};
-    if (FAILED(layout->GetMetrics(&metrics)))
-        return 0;
-    return static_cast<int>(std::max(metrics.width, metrics.widthIncludingTrailingWhitespace) + 1.0f);
-}
-
-float FileCategories::GetCategoryTabFontSize() const
-{
-    if (!app_)
-        return kDefaultFileCategoryTabFontCu;
-    return std::clamp(app_->GetCategorySettings().tabFontSize, 10.0f, 22.0f);
-}
-
 std::wstring FileCategories::GetCategoryDisplayLabel(const std::wstring& categoryId) const
 {
     if (!app_)
@@ -508,16 +485,8 @@ bool FileCategories::PruneUncollectableItems()
  */
 RECT FileCategories::GetSearchBoxRect() const
 {
-    if (!data_ || !app_) return {};
-    RECT body = GetBodyRect();
-    InflateRect(&body, -Cu(10.0f), -Cu(12.0f));
-    if (IsRectEmptyRect(body)) return {};
-    InflateRect(&body, -Cu(2.0f), 0);
-    if (IsRectEmptyRect(body)) return {};
-    LONG top = body.top;
-    LONG bottom = std::min<LONG>(body.bottom, top + Cu(26.0f));
-    if (bottom <= top) return {};
-    return MakeRect(body.left, top, body.right, bottom);
+    return GetCategorizedSearchBoxRect(
+        data_ && app_);
 }
 
 /**
@@ -527,15 +496,9 @@ RECT FileCategories::GetSearchBoxRect() const
  */
 static RECT FileCategoryTabsRect(FileCategories* widget)
 {
-    if (!widget) return {};
-    RECT body = widget->GetBodyRect();
-    InflateRect(&body, -widget->Cu(10.0f), -widget->Cu(8.0f));
-    if (IsRectEmptyRect(body)) return {};
-    RECT search = widget->GetSearchBoxRect();
-    LONG top = IsRectEmptyRect(search) ? body.top : search.bottom + widget->Cu(5.0f);
-    LONG bottom = std::min<LONG>(body.bottom, top + widget->Cu(34.0f));
-    if (bottom <= top) return {};
-    return MakeRect(body.left, top, body.right, bottom);
+    return widget
+        ? widget->GetCategorizedTabsRect(true)
+        : RECT{};
 }
 
 /**
@@ -553,12 +516,22 @@ static RECT FileCategoryContentRect(FileCategories* widget)
     {
         RECT search = widget->GetSearchBoxRect();
         if (!IsRectEmptyRect(search))
-            body.top = std::min<LONG>(body.bottom, search.bottom + widget->Cu(4.0f));
+            body.top = std::min<LONG>(
+                body.bottom,
+                search.bottom + widget->Cu(4.0f) +
+                    widget->GetCategorizedTabRowOffset() *
+                        widget->Cu(38.0f));
         return body;
     }
     RECT tabs = FileCategoryTabsRect(widget);
     if (!IsRectEmptyRect(tabs))
         body.top = std::min<LONG>(body.bottom, tabs.bottom + widget->Cu(8.0f));
+    else if (widget->GetCategorizedTabRowOffset() > 0)
+        body.top = std::min<LONG>(
+            body.bottom,
+            body.top +
+                widget->GetCategorizedTabRowOffset() *
+                    widget->Cu(38.0f));
     return body;
 }
 
@@ -569,54 +542,18 @@ static std::wstring FileCategoryTabDisplayText(FileCategories* widget, const std
         std::to_wstring(widget->CachedCategoryKeys(categoryId).size());
 }
 
-static float FileCategoryTabFontCu(FileCategories* widget)
-{
-    if (!widget)
-        return kDefaultFileCategoryTabFontCu;
-    return widget->GetCategoryTabFontSize();
-}
-
-static int FileCategoryMeasureTextWidth(FileCategories* widget, const std::wstring& text,
-    IDWriteTextFormat* format)
-{
-    return widget ? widget->MeasureTextWidth(text, format) : 0;
-}
-
-static int FileCategoryPreferredTabWidth(FileCategories* widget, const std::wstring& categoryId)
-{
-    if (!widget) return 0;
-    IDWriteTextFormat* tabFormat = widget->GetCuTextFormat(FileCategoryTabFontCu(widget), true, true);
-    const std::wstring text = FileCategoryTabDisplayText(widget, categoryId);
-    int measured = FileCategoryMeasureTextWidth(widget, text, tabFormat);
-    if (measured <= 0)
-        measured = static_cast<int>(text.size()) * widget->Cu(8.0f);
-    return std::max(widget->Cu(76.0f), measured + widget->Cu(24.0f));
-}
-
 static std::vector<int> FileCategoryTabWidths(FileCategories* widget, int availableWidth)
 {
-    std::vector<int> widths;
-    if (!widget) return widths;
-
+    if (!widget) return {};
     const auto& tabs = widget->CachedVisibleCategoryIds();
-    widths.reserve(tabs.size());
-    int totalWidth = 0;
+    std::vector<std::wstring> labels;
+    labels.reserve(tabs.size());
     for (const auto& categoryId : tabs)
-    {
-        int width = FileCategoryPreferredTabWidth(widget, categoryId);
-        widths.push_back(width);
-        totalWidth += width;
-    }
-
-    if (!widths.empty() && totalWidth < availableWidth)
-    {
-        int extra = availableWidth - totalWidth;
-        int perTab = extra / static_cast<int>(widths.size());
-        int remainder = extra % static_cast<int>(widths.size());
-        for (size_t i = 0; i < widths.size(); ++i)
-            widths[i] += perTab + (static_cast<int>(i) < remainder ? 1 : 0);
-    }
-    return widths;
+        labels.push_back(
+            FileCategoryTabDisplayText(
+                widget, categoryId));
+    return widget->BuildCategorizedTabWidths(
+        labels, availableWidth);
 }
 
 static int FileCategoryTabTotalWidth(const std::vector<int>& widths)
@@ -689,7 +626,22 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
         startX + tabLeftOffset + widths[index],
         tabsRect.bottom);
     InflateRect(&rect, -widget->Cu(2.0f), -widget->Cu(2.0f));
-    return rect;
+    const auto clipped =
+        snowdesktop::collection_group_rules::
+            ClipToViewport(
+                {
+                    rect.left, rect.top,
+                    rect.right, rect.bottom
+                },
+                {
+                    tabsRect.left, tabsRect.top,
+                    tabsRect.right, tabsRect.bottom
+                });
+    return clipped
+        ? MakeRect(
+            clipped->left, clipped->top,
+            clipped->right, clipped->bottom)
+        : RECT{};
 }
 
 /**
@@ -1221,85 +1173,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     const auto& categoryIds = CachedVisibleCategoryIds();
     IDWriteTextFormat* normalFormat = GetCuTextFormat(13.0f, false, true);
     IDWriteTextFormat* lightHintFormat = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true) : nullptr;
-    IDWriteTextFormat* tabFormat = GetCuTextFormat(FileCategoryTabFontCu(this), true, true);
     bool searching = !searchText_.empty();
 
-    RECT searchRect = GetSearchBoxRect();
-    if (!IsRectEmptyRect(searchRect))
-    {
-        bool searchHovered = PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
-        app_->DrawD2DRoundedRectangle(context, searchRect, static_cast<float>(Cu(7.0f)),
-            searchFocused_
-                ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f))
-                : (searchHovered ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f))
-                                 : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.04f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f))),
-            searchFocused_
-                ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.70f)
-                : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f)));
-
-        IDWriteTextFormat* searchFormat = GetCuTextFormat(13.0f, false, false);
-        IDWriteTextFormat* lightSearchFormat = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, false) : nullptr;
-        RECT searchTextRect = MakeRect(searchRect.left + Cu(8.0f), searchRect.top,
-            searchRect.right - Cu(8.0f), searchRect.bottom);
-
-        if (searching || searchFocused_)
-        {
-            app_->DrawD2DText(context, searchText_, searchTextRect,
-                searchFormat ? searchFormat :
-                    (app_->fileCategoryTabTextFormat_
-                        ? app_->fileCategoryTabTextFormat_.Get()
-                        : app_->listItemTextFormat_.Get()),
-                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f));
-
-            if (searchFocused_)
-            {
-                float cursorX = static_cast<float>(searchTextRect.left) + Cu(2.0f);
-                if (searchCursorPos_ > 0)
-                {
-                    std::wstring textBefore = searchText_.substr(0, searchCursorPos_);
-                    Microsoft::WRL::ComPtr<IDWriteTextLayout> measureLayout;
-                    IDWriteFactory* dwrite = app_->GetDWriteFactory();
-                    if (dwrite && searchFormat)
-                    {
-                        float maxW = static_cast<float>(searchTextRect.right - searchTextRect.left);
-                        float maxH = static_cast<float>(searchTextRect.bottom - searchTextRect.top);
-                        if (SUCCEEDED(dwrite->CreateTextLayout(
-                            textBefore.c_str(), static_cast<UINT32>(textBefore.size()),
-                            searchFormat, maxW, maxH, &measureLayout)) && measureLayout)
-                        {
-                            DWRITE_TEXT_METRICS metrics{};
-                            measureLayout->GetMetrics(&metrics);
-                            cursorX = static_cast<float>(searchTextRect.left) + metrics.width + Cu(1.0f);
-                        }
-                    }
-                }
-
-                float cursorHeight = static_cast<float>(Cu(14.0f));
-                float cursorTop = static_cast<float>(searchRect.top) +
-                    (static_cast<float>(searchRect.bottom - searchRect.top) - cursorHeight) * 0.5f;
-                float cursorWidth = static_cast<float>(Cu(1.5f));
-                RECT cursorRect = {
-                    static_cast<LONG>(cursorX),
-                    static_cast<LONG>(cursorTop),
-                    static_cast<LONG>(cursorX + cursorWidth),
-                    static_cast<LONG>(cursorTop + cursorHeight)
-                };
-                app_->DrawD2DFilledRectangle(context, cursorRect,
-                    lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f),
-                    D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-            }
-        }
-        else
-        {
-            app_->DrawD2DText(context, _LW("widget.categories.search_hint"), searchTextRect,
-                (lt && lightSearchFormat) ? lightSearchFormat :
-                    (searchFormat ? searchFormat :
-                    (app_->fileCategoryTabTextFormat_
-                        ? app_->fileCategoryTabTextFormat_.Get()
-                        : app_->listItemTextFormat_.Get())),
-                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.42f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.70f));
-        }
-    }
+    DrawSearchBox(context);
 
     if (searching)
     {
@@ -1382,32 +1258,12 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             bool active = categoryIds[i] == activeCategory;
             bool hovered = PtInRect(&tab, app_->lastMousePoint_) != FALSE;
-            app_->DrawD2DRoundedRectangle(context, tab, static_cast<float>(Cu(8.0f)),
-                active ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f))
-                       : (hovered ? (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.13f))
-                                  : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.04f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f))),
-                active ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f)
-                       : (lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f)));
-
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
-            RECT textRect = MakeRect(tab.left + Cu(7.0f), tab.top,
-                tab.right - Cu(7.0f), tab.bottom);
-
-            app_->DrawD2DText(context, label, textRect,
-                tabFormat ? tabFormat :
-                    (app_->fileCategoryTabTextFormat_
-                        ? app_->fileCategoryTabTextFormat_.Get()
-                        : app_->listItemTextFormat_.Get()),
-                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, active ? 0.88f : 0.74f)
-                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.98f : 0.78f));
+            DrawCategorizedTab(
+                context, tab, label,
+                active, hovered);
         }
         context->PopAxisAlignedClip();
-
-        RECT line = MakeRect(tabsRect.left, tabsRect.bottom + Cu(2.0f),
-            tabsRect.right, tabsRect.bottom + Cu(3.0f));
-        app_->DrawD2DFilledRectangle(context, line,
-            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f));
     }
 
     const auto& keys = CachedCategoryKeys(activeCategory);

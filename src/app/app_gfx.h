@@ -2,6 +2,8 @@
 // Inline implementations for DesktopApp — Graphics & Rendering.
 // This file is included by app_oo.h after the class definition.
 
+#include "../widgets/collection_group_rules.h"
+
 // ── Quick Navigation Theme Colors ───────────────────────────
 
 struct QuickNavTheme {
@@ -1652,7 +1654,46 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     // Widget drag/resize preview
     if ((widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize) && mouseDownWidgetIndex_ < widgets_.size())
     {
-        if (widgetDockTarget_)
+        if (widgetAction_ == WidgetAction::Move &&
+            widgetCollectionGroupTargetIndex_ <
+                widgets_.size() &&
+            (widgets_[widgetCollectionGroupTargetIndex_].type ==
+                 DesktopWidgetType::CollectionGroup ||
+             widgets_[widgetCollectionGroupTargetIndex_].type ==
+                 DesktopWidgetType::FileGroup))
+        {
+            RECT target =
+                widgets_[widgetCollectionGroupTargetIndex_].bounds;
+            for (const auto& container : containers_)
+            {
+                auto* group =
+                    dynamic_cast<WidgetContainer*>(
+                        container.get());
+                if (group &&
+                    group->GetWidgetData() ==
+                        &widgets_[widgetCollectionGroupTargetIndex_])
+                {
+                    target = group->GetFrameRect();
+                    break;
+                }
+            }
+            const float cellScale =
+                widgets_[widgetCollectionGroupTargetIndex_]
+                    .cellScale;
+            const int targetPadding =
+                ScaleWidgetCu(3.0f, cellScale);
+            InflateRect(
+                &target, targetPadding, targetPadding);
+            DrawD2DRoundedRectangle(
+                ctx, target,
+                static_cast<float>(
+                    ScaleWidgetCu(10.0f, cellScale)),
+                D2D1::ColorF(1.0f, 0.72f, 0.12f, 0.14f),
+                D2D1::ColorF(1.0f, 0.72f, 0.12f, 0.92f),
+                static_cast<float>(
+                    ScaleWidgetCu(2.5f, cellScale)));
+        }
+        else if (widgetDockTarget_)
         {
             if (widgetDockTargetContainer_)
                 widgetDockTargetContainer_->DrawInsertionPreview(
@@ -1669,6 +1710,10 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         {
             if (i == mouseDownWidgetIndex_) continue;
             const auto& ow = widgets_[i];
+            if (!snowdesktop::collection_group_rules::
+                    ShouldOccupyDesktopGrid(
+                        IsGroupedWidget(ow)))
+                continue;
             if (ow.gridCell.pageId != cell.pageId) continue;
             if (cell.column + span.columns <= ow.gridCell.column) continue;
             if (ow.gridCell.column + ow.gridSpan.columns <= cell.column) continue;
@@ -1700,7 +1745,15 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         const bool popupTarget = wc && popupWidgetIndex_ < widgets_.size() &&
             wc->GetWidgetData() == &widgets_[popupWidgetIndex_] &&
             targetSlot == popupDragTargetSlot_.get();
-        if (wc)
+        const bool groupEntryTarget =
+            wc &&
+            ((dragSession_.SourceList().
+                    hasCollectionGroupEntries &&
+                dynamic_cast<CollectionGroup*>(wc)) ||
+             (dragSession_.SourceList().
+                    hasFileGroupEntries &&
+                dynamic_cast<FileGroup*>(wc)));
+        if (wc && !groupEntryTarget)
         {
             RECT bodyRect = wc->GetBodyRect();
             if (popupTarget)

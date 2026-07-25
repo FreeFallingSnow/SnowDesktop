@@ -171,6 +171,8 @@ public:
     void SyncSoftwareDesktopEnabled(bool enabled)
     { generalSettings_.softwareDesktopEnabled = enabled; }
     void SyncDockSettings(const DockSettings& settings) { dockSettings_ = settings; }
+    void SyncNavigationSettings(const NavigationSettings& settings)
+    { navigationSettings_ = settings; }
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 

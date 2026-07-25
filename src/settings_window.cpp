@@ -499,7 +499,11 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 
     SetupFonts();
 
-    LoadPersonalization(GetPersonalizationPath().c_str(), personalization_);
+    bool categorizedTabFontSizeLoaded = false;
+    LoadPersonalization(
+        GetPersonalizationPath().c_str(),
+        personalization_,
+        &categorizedTabFontSizeLoaded);
     LoadDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
@@ -512,6 +516,18 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     }
     categorySettings_ = CategorySettings::Defaults();
     LoadCategorySettings(GetCategorySettingsPath().c_str(), categorySettings_);
+    if (!categorizedTabFontSizeLoaded)
+    {
+        // 1.0.1.0 之前该值保存在分类设置中。迁移一次后由外观设置持有，
+        // 避免重置分类规则时意外重置三类组件的共同外观。
+        personalization_.categorizedTabFontSize =
+            std::clamp(
+                categorySettings_.tabFontSize,
+                10.0f, 22.0f);
+        SavePersonalization(
+            GetPersonalizationPath().c_str(),
+            personalization_);
+    }
     SyncCategoryRuleBuffersFromSettings();
 
     g_settingsWindow = this;
@@ -1763,18 +1779,19 @@ void SettingsWindow::DrawCategorySettingsPage()
         categorySettingsSavedTick_ = 0;
     };
 
+    const float subsectionContentIndent = 16.0f * dpiScale_;
+    auto drawSubsectionLabel = [](const char* label, const char* description) {
+        ImGui::TextUnformatted(label);
+        if (description && description[0])
+            DrawHelpMarker(description);
+    };
+
     ImGui::SeparatorText(_L("app.settings.category_settings"));
     ImGui::Spacing();
 
-    const float tabFontWidth = inputW;
-    BeginSettingRow(_L("app.settings.tab_font_size"), tabFontWidth);
-    ImGui::SetNextItemWidth(tabFontWidth);
-    if (ImGui::SliderFloat("##CategoryTabFontSize", &categorySettings_.tabFontSize, 10.0f, 22.0f, "%.0f"))
-        markChanged();
-
-    ImGui::Spacing();
-    DrawSettingSection(_L("app.settings.category_type"),
+    drawSubsectionLabel(_L("app.settings.category_type"),
         _L("app.settings.category_hint"));
+    ImGui::Indent(subsectionContentIndent);
     ImGui::Spacing();
 
     int deleteIndex = -1;
@@ -1813,7 +1830,12 @@ void SettingsWindow::DrawCategorySettingsPage()
         markChanged();
     }
 
-    ImGui::SeparatorText(_L("app.settings.add_category"));
+    ImGui::Unindent(subsectionContentIndent);
+    ImGui::Spacing();
+    drawSubsectionLabel(_L("app.settings.add_category"), nullptr);
+    ImGui::Indent(subsectionContentIndent);
+    ImGui::Spacing();
+
     const float actionWidth = 56.0f * dpiScale_;
     const float nameInputW = std::max(1.0f,
         inputW - actionWidth - ImGui::GetStyle().ItemSpacing.x);
@@ -1859,8 +1881,12 @@ void SettingsWindow::DrawCategorySettingsPage()
     ImGui::SetNextItemWidth(inputW);
     ImGui::InputText("##NewCategoryExtensions", newCategoryExtensionsBuf_, sizeof(newCategoryExtensionsBuf_));
 
+    ImGui::Unindent(subsectionContentIndent);
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.save_settings"));
+    drawSubsectionLabel(_L("app.settings.save_settings"), nullptr);
+    ImGui::Indent(subsectionContentIndent);
+    ImGui::Spacing();
+
     const float applyButtonW = 80.0f * dpiScale_;
     const float restoreButtonW = 96.0f * dpiScale_;
     const float saveActionsW = applyButtonW + ImGui::GetStyle().ItemSpacing.x + restoreButtonW;
@@ -1888,6 +1914,7 @@ void SettingsWindow::DrawCategorySettingsPage()
         DrawSettingValue(_L("app.settings.save_status"), _L("app.settings.saved"));
     }
 
+    ImGui::Unindent(subsectionContentIndent);
     ImGui::EndChild();
 }
 
@@ -1960,6 +1987,8 @@ void SettingsWindow::DrawPersonalizationPage()
         const int previousPreset = personalization_.backgroundPreset;
         const float cornerRadius = personalization_.cornerRadius;
         const float barHeight = personalization_.barHeight;
+        const float categorizedTabFontSize =
+            personalization_.categorizedTabFontSize;
         if (presetIds[presetIndex] == kAppearancePresetCustom)
         {
             switch (NormalizeAppearancePresetId(previousPreset))
@@ -1978,6 +2007,8 @@ void SettingsWindow::DrawPersonalizationPage()
         }
         personalization_.cornerRadius = cornerRadius;
         personalization_.barHeight = barHeight;
+        personalization_.categorizedTabFontSize =
+            categorizedTabFontSize;
         markChanged(true);
     }
 
@@ -2127,6 +2158,29 @@ void SettingsWindow::DrawPersonalizationPage()
         "##BarHeightDefault").c_str(), ImVec2(resetW, 0)))
     {
         personalization_.barHeight = 24.0f;
+        markChanged(true);
+    }
+
+    BeginSettingRow(
+        _L("app.settings.tab_font_size"),
+        sliderActionW);
+    ImGui::SetNextItemWidth(actionSliderW);
+    if (ImGui::SliderFloat(
+            "##CategorizedTabFontSize",
+            &personalization_.categorizedTabFontSize,
+            10.0f, 22.0f, "%.0f cu"))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() &&
+        personalizationDirty_)
+        personalizationSaveRequested_ = true;
+    ImGui::SameLine();
+    if (BlueButton(
+            (std::string(
+                _L("app.settings.restore_default")) +
+                "##CategorizedTabFontSizeDefault").c_str(),
+            ImVec2(resetW, 0)))
+    {
+        personalization_.categorizedTabFontSize = 14.0f;
         markChanged(true);
     }
 

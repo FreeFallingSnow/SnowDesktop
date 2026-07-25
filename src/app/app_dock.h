@@ -861,6 +861,52 @@ inline bool DesktopApp::IsDockExclusiveWidgetId(const std::wstring& id) const
     });
 }
 
+inline size_t DesktopApp::FindCollectionGroupIndexForChild(
+    const std::wstring& childId) const
+{
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const DesktopWidget& widget = widgets_[i];
+        if (widget.type != DesktopWidgetType::CollectionGroup) continue;
+        if (std::find(widget.childWidgetIds.begin(),
+            widget.childWidgetIds.end(), childId) !=
+            widget.childWidgetIds.end())
+            return i;
+    }
+    return static_cast<size_t>(-1);
+}
+
+inline bool DesktopApp::IsGroupedCollection(
+    const DesktopWidget& widget) const
+{
+    return widget.type == DesktopWidgetType::Collection &&
+        FindCollectionGroupIndexForChild(widget.id) < widgets_.size();
+}
+
+inline size_t DesktopApp::FindFileGroupIndexForChild(
+    const std::wstring& childId) const
+{
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const DesktopWidget& widget = widgets_[i];
+        if (widget.type != DesktopWidgetType::FileGroup) continue;
+        if (std::find(widget.childWidgetIds.begin(),
+                widget.childWidgetIds.end(), childId) !=
+            widget.childWidgetIds.end())
+            return i;
+    }
+    return static_cast<size_t>(-1);
+}
+
+inline bool DesktopApp::IsGroupedWidget(
+    const DesktopWidget& widget) const
+{
+    if (IsGroupedCollection(widget)) return true;
+    return (widget.type == DesktopWidgetType::FileCategories ||
+            widget.type == DesktopWidgetType::FolderMapping) &&
+        FindFileGroupIndexForChild(widget.id) < widgets_.size();
+}
+
 inline bool DesktopApp::IsRecycleBinDockEntry(const DockEntry& entry) const
 {
     return entry.type == DockEntryType::DesktopItem &&
@@ -2133,7 +2179,8 @@ inline void DesktopApp::MoveDockItemsToDesktop(
 
     std::unordered_set<std::wstring> usedSlots;
     for (const auto& widget : widgets_)
-        if (widget.gridCell.pageId != kDockPageId)
+        if (!IsGroupedWidget(widget) &&
+            widget.gridCell.pageId != kDockPageId)
             MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
     for (const auto& item : items_)
         if (!item.name.empty() && item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item))
@@ -2182,7 +2229,8 @@ inline void DesktopApp::RestoreDockEntriesToDesktop()
     const std::wstring preferredPage = first ? first->id : L"";
     std::unordered_set<std::wstring> usedSlots;
     for (const auto& widget : widgets_)
-        if (widget.gridCell.pageId != kDockPageId)
+        if (!IsGroupedWidget(widget) &&
+            widget.gridCell.pageId != kDockPageId)
             MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
     for (const auto& item : items_)
         if (!item.name.empty() && item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item))

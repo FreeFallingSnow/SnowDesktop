@@ -12,6 +12,9 @@
 
 #include <dwmapi.h>
 #include <imm.h>
+#include <array>
+#include <iterator>
+#include "quick_navigation_rules.h"
 #include "search_match.h"
 
 // ── Quick Navigation ───────────────────────────────────────
@@ -390,31 +393,20 @@ inline std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() con
                t == DesktopWidgetType::FileCategories ||
                t == DesktopWidgetType::FolderMapping;
     };
-    std::vector<size_t> result;
-    std::unordered_set<size_t> seen;
-
-    for (const auto& id : navTabOrder_)
-    {
-        for (size_t i = 0; i < widgets_.size(); ++i)
-        {
-            if (isTabWidget(widgets_[i].type) &&
-                widgets_[i].id == id && !seen.count(i))
-            {
-                result.push_back(i);
-                seen.insert(i);
-                break;
-            }
-        }
-    }
+    std::vector<std::wstring> widgetIds;
+    std::vector<bool> eligible;
+    widgetIds.reserve(widgets_.size());
+    eligible.reserve(widgets_.size());
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
-        if (isTabWidget(widgets_[i].type) && !seen.count(i))
-        {
-            result.push_back(i);
-            seen.insert(i);
-        }
+        widgetIds.push_back(widgets_[i].id);
+        eligible.push_back(
+            isTabWidget(widgets_[i].type) &&
+            !IsGroupedCollection(widgets_[i]));
     }
-    return result;
+    return snowdesktop::quick_navigation_rules::
+        OrderIndicesByTabIds(
+            navTabOrder_, widgetIds, eligible);
 }
 
 inline std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
@@ -487,9 +479,10 @@ inline std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
     return result;
 }
 
-inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigationEntries() const
+inline DesktopApp::QuickNavigationContentModel
+DesktopApp::BuildQuickNavigationContentModel() const
 {
-    std::vector<QuickNavigationEntry> result;
+    QuickNavigationContentModel model;
     std::unordered_set<std::wstring> seenDesktop;
     std::unordered_set<std::wstring> dockDesktopKeys;
     for (const DockEntry& dockEntry : dockEntries_)
@@ -501,7 +494,9 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
     auto matches = [&](const std::wstring& name) {
         return query.empty() || NameMatchesQuery(name, query);
     };
-    auto appendDesktop = [&](size_t itemIndex, const std::wstring& source) {
+    auto appendDesktop = [&](
+        std::vector<QuickNavigationEntry>& destination,
+        size_t itemIndex, const std::wstring& source) {
         if (itemIndex >= items_.size()) return;
         const DesktopItem& item = items_[itemIndex];
         std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
@@ -515,57 +510,316 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
         entry.name = item.name;
         entry.path = item.parsingName;
         entry.source = source;
-        result.push_back(std::move(entry));
+        destination.push_back(std::move(entry));
     };
-    auto appendDockDesktopItems = [&]() {
+    auto appendDockDesktopItems =
+        [&](std::vector<QuickNavigationEntry>& destination) {
         for (const DockEntry& dockEntry : dockEntries_)
         {
             if (dockEntry.type != DockEntryType::DesktopItem)
                 continue;
-            appendDesktop(FindItemIndexByKey(dockEntry.reference), L"Dock");
+            appendDesktop(
+                destination,
+                FindItemIndexByKey(dockEntry.reference),
+                _LW("app.nav.source_dock"));
         }
+    };
+    auto appendSection = [&](
+        const std::wstring& label,
+        std::vector<QuickNavigationEntry>& entries) {
+        if (entries.empty()) return;
+        const size_t first = model.entries.size();
+        model.entries.insert(
+            model.entries.end(),
+            std::make_move_iterator(entries.begin()),
+            std::make_move_iterator(entries.end()));
+        model.sections.push_back(
+            {label, first, model.entries.size() - first});
+    };
+    auto widgetTitle = [&](const DesktopWidget& widget) {
+        if (!widget.title.empty()) return widget.title;
+        if (widget.type ==
+            DesktopWidgetType::FileCategories)
+            return std::wstring(
+                _LW("widget.desktop_files"));
+        if (widget.type ==
+            DesktopWidgetType::FolderMapping)
+            return std::wstring(
+                _LW("widget.folder_mapping"));
+        return std::wstring(_LW("widget.collection"));
+    };
+    auto orderedWidgetIndices =
+        [&](auto predicate) {
+        std::vector<std::wstring> widgetIds;
+        std::vector<bool> eligible;
+        widgetIds.reserve(widgets_.size());
+        eligible.reserve(widgets_.size());
+        for (const auto& widget : widgets_)
+        {
+            widgetIds.push_back(widget.id);
+            eligible.push_back(predicate(widget));
+        }
+        return snowdesktop::quick_navigation_rules::
+            OrderIndicesByTabIds(
+                navTabOrder_, widgetIds, eligible);
     };
 
     if (query.empty())
     {
         if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
         {
-            appendDockDesktopItems();
-            for (const auto& key : GetQuickNavigationItemKeys())
-                appendDesktop(FindItemIndexByKey(key), _LW("widget.collection"));
+            if (navigationSettings_.desktopViewMode ==
+                QuickNavigationDesktopViewMode::Source)
+            {
+                const auto sourceWidgets =
+                    orderedWidgetIndices(
+                        [](const DesktopWidget& widget) {
+                            return widget.type ==
+                                    DesktopWidgetType::Collection ||
+                                widget.type ==
+                                    DesktopWidgetType::FileCategories;
+                        });
 
-            std::unordered_set<std::wstring> desktopKeys;
+                std::vector<std::wstring>
+                    desktopKeys;
+                desktopKeys.reserve(items_.size());
+                for (const auto& item : items_)
+                    desktopKeys.push_back(
+                        ToUpperInvariant(
+                            item.layoutKey.empty()
+                            ? item.parsingName
+                            : item.layoutKey));
+                std::vector<std::vector<
+                    std::wstring>> sourceKeys(
+                        sourceWidgets.size() + 1);
+                for (const DockEntry& dockEntry :
+                    dockEntries_)
+                {
+                    if (dockEntry.type ==
+                        DockEntryType::DesktopItem)
+                        sourceKeys[0].push_back(
+                            ToUpperInvariant(
+                                dockEntry.reference));
+                }
+                for (size_t sourceIndex = 0;
+                    sourceIndex <
+                        sourceWidgets.size();
+                    ++sourceIndex)
+                {
+                    for (const auto& key :
+                        widgets_[
+                            sourceWidgets[
+                                sourceIndex]].
+                            itemKeys)
+                        sourceKeys[
+                            sourceIndex + 1].
+                            push_back(
+                                ToUpperInvariant(
+                                    key));
+                }
+                const std::vector<int> owners =
+                    snowdesktop::
+                        quick_navigation_rules::
+                            AssignSourceOwners(
+                                desktopKeys,
+                                sourceKeys);
+
+                std::vector<QuickNavigationEntry>
+                    dockEntries;
+                for (const DockEntry& dockEntry :
+                    dockEntries_)
+                {
+                    if (dockEntry.type !=
+                        DockEntryType::DesktopItem)
+                        continue;
+                    const size_t itemIndex =
+                        FindItemIndexByKey(
+                            dockEntry.reference);
+                    if (itemIndex < owners.size() &&
+                        owners[itemIndex] == 0)
+                        appendDesktop(
+                            dockEntries, itemIndex,
+                            _LW(
+                                "app.nav.source_dock"));
+                }
+                appendSection(
+                    _LW("app.nav.source_dock"),
+                    dockEntries);
+
+                for (size_t sourceIndex = 0;
+                    sourceIndex <
+                        sourceWidgets.size();
+                    ++sourceIndex)
+                {
+                    const size_t widgetIndex =
+                        sourceWidgets[sourceIndex];
+                    const DesktopWidget& widget =
+                        widgets_[widgetIndex];
+                    std::vector<
+                        QuickNavigationEntry>
+                        entries;
+                    for (const auto& key :
+                        widget.itemKeys)
+                    {
+                        const size_t itemIndex =
+                            FindItemIndexByKey(key);
+                        if (itemIndex <
+                                owners.size() &&
+                            owners[itemIndex] ==
+                                static_cast<int>(
+                                    sourceIndex + 1))
+                            appendDesktop(
+                                entries, itemIndex,
+                                widgetTitle(widget));
+                    }
+                    appendSection(
+                        widgetTitle(widget),
+                        entries);
+                }
+
+                std::vector<QuickNavigationEntry>
+                    looseEntries;
+                for (size_t i = 0;
+                    i < items_.size(); ++i)
+                {
+                    if (i < owners.size() &&
+                        owners[i] < 0)
+                        appendDesktop(
+                            looseEntries, i,
+                            _LW(
+                                "app.interact.free_desktop"));
+                }
+                appendSection(
+                    _LW("app.interact.free_desktop"),
+                    looseEntries);
+                return model;
+            }
+
+            if (navigationSettings_.desktopViewMode ==
+                QuickNavigationDesktopViewMode::Initial)
+            {
+                std::vector<QuickNavigationEntry> all;
+                for (size_t i = 0;
+                    i < items_.size(); ++i)
+                    appendDesktop(
+                        all, i,
+                        _LW("app.nav.tab_desktop"));
+                std::array<std::vector<
+                    QuickNavigationEntry>, 27>
+                    buckets;
+                for (auto& entry : all)
+                {
+                    const wchar_t bucket =
+                        snowdesktop::
+                            quick_navigation_rules::
+                                InitialBucket(
+                                    entry.name);
+                    const size_t bucketIndex =
+                        bucket >= L'A' &&
+                            bucket <= L'Z'
+                        ? static_cast<size_t>(
+                            bucket - L'A')
+                        : 26;
+                    buckets[bucketIndex].
+                        push_back(
+                            std::move(entry));
+                }
+                for (size_t i = 0;
+                    i < buckets.size(); ++i)
+                {
+                    auto& bucket = buckets[i];
+                    std::stable_sort(
+                        bucket.begin(), bucket.end(),
+                        [](const auto& lhs,
+                            const auto& rhs) {
+                            return snowdesktop::
+                                quick_navigation_rules::
+                                    InitialNameLess(
+                                        lhs.name,
+                                        rhs.name);
+                        });
+                    const std::wstring label =
+                        i < 26
+                        ? std::wstring(
+                            1, static_cast<wchar_t>(
+                                L'A' + i))
+                        : L"#";
+                    appendSection(
+                        label, bucket);
+                }
+                return model;
+            }
+
+            appendDockDesktopItems(model.entries);
+            for (const auto& key :
+                GetQuickNavigationItemKeys())
+                appendDesktop(
+                    model.entries,
+                    FindItemIndexByKey(key),
+                    _LW("widget.collection"));
+
+            std::unordered_set<std::wstring>
+                desktopKeys;
             for (const auto& widget : widgets_)
             {
-                if (widget.type != DesktopWidgetType::Collection &&
-                    widget.type != DesktopWidgetType::FileCategories) continue;
-                for (const auto& key : widget.itemKeys)
-                    desktopKeys.insert(ToUpperInvariant(key));
+                if (widget.type !=
+                        DesktopWidgetType::Collection &&
+                    widget.type !=
+                        DesktopWidgetType::FileCategories)
+                    continue;
+                for (const auto& key :
+                    widget.itemKeys)
+                    desktopKeys.insert(
+                        ToUpperInvariant(key));
             }
 
-            auto isLnkOrUrl = [](const std::wstring& path) -> bool {
-                if (path.size() < 4) return false;
-                std::wstring ext = path.substr(path.size() - 4);
-                for (auto& c : ext) c = static_cast<wchar_t>(towupper(c));
-                return ext == L".LNK" || ext == L".URL";
+            auto isLnkOrUrl =
+                [](const std::wstring& path) {
+                if (path.size() < 4)
+                    return false;
+                std::wstring ext =
+                    path.substr(path.size() - 4);
+                for (auto& c : ext)
+                    c = static_cast<wchar_t>(
+                        towupper(c));
+                return ext == L".LNK" ||
+                    ext == L".URL";
             };
-
-            for (size_t i = 0; i < items_.size(); ++i)
+            for (size_t i = 0;
+                i < items_.size(); ++i)
             {
                 const DesktopItem& item = items_[i];
-                if (desktopKeys.contains(ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey))) continue;
-                if (!isLnkOrUrl(item.parsingName)) continue;
-                appendDesktop(i, _LW("app.interact.free_desktop"));
+                const std::wstring key =
+                    ToUpperInvariant(
+                        item.layoutKey.empty()
+                        ? item.parsingName
+                        : item.layoutKey);
+                if (desktopKeys.contains(key) ||
+                    !isLnkOrUrl(
+                        item.parsingName))
+                    continue;
+                appendDesktop(
+                    model.entries, i,
+                    _LW("app.interact.free_desktop"));
             }
-            return result;
+            return model;
         }
 
         if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
         {
-            for (size_t wi = 0; wi < widgets_.size(); ++wi)
+            const auto mappingWidgets =
+                orderedWidgetIndices(
+                    [](const DesktopWidget& widget) {
+                        return widget.type ==
+                            DesktopWidgetType::
+                                FolderMapping;
+                    });
+            for (size_t wi : mappingWidgets)
             {
-                if (widgets_[wi].type != DesktopWidgetType::FolderMapping) continue;
-                std::wstring source = widgets_[wi].title.empty() ? _LW("widget.folder_mapping") : widgets_[wi].title;
+                std::vector<QuickNavigationEntry>
+                    entries;
+                const std::wstring source =
+                    widgetTitle(widgets_[wi]);
                 for (size_t ei = 0; ei < widgets_[wi].folderEntries.size(); ++ei)
                 {
                     const FolderEntry& entryData = widgets_[wi].folderEntries[ei];
@@ -576,10 +830,12 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
                     entry.name = entryData.name;
                     entry.path = entryData.fullPath;
                     entry.source = source;
-                    result.push_back(std::move(entry));
+                    entries.push_back(
+                        std::move(entry));
                 }
+                appendSection(source, entries);
             }
-            return result;
+            return model;
         }
 
         if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
@@ -597,61 +853,25 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
                 entry.name = entryData.name;
                 entry.path = entryData.fullPath;
                 entry.source = source;
-                result.push_back(std::move(entry));
+                model.entries.push_back(
+                    std::move(entry));
             }
-            return result;
+            return model;
         }
 
         for (const auto& key : GetQuickNavigationItemKeys())
-            appendDesktop(FindItemIndexByKey(key), _LW("widget.collection"));
-
-        bool isDesktopAll = quickNavigationActiveWidgetIndex_ >= widgets_.size() ||
-            (widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::Collection &&
-             widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FileCategories &&
-             widgets_[quickNavigationActiveWidgetIndex_].type != DesktopWidgetType::FolderMapping);
-        if (isDesktopAll)
-        {
-            std::unordered_set<std::wstring> collectionKeys;
-            for (const auto& widget : widgets_)
-            {
-                if (widget.type != DesktopWidgetType::Collection &&
-                    widget.type != DesktopWidgetType::FileCategories &&
-                    widget.type != DesktopWidgetType::FolderMapping) continue;
-                if (widget.type == DesktopWidgetType::FolderMapping)
-                {
-                    for (const auto& fe : widget.folderEntries)
-                        collectionKeys.insert(ToUpperInvariant(fe.fullPath));
-                }
-                else
-                {
-                    for (const auto& key : widget.itemKeys)
-                        collectionKeys.insert(ToUpperInvariant(key));
-                }
-            }
-
-            auto isLnkOrUrl = [](const std::wstring& path) -> bool {
-                if (path.size() < 4) return false;
-                std::wstring ext = path.substr(path.size() - 4);
-                for (auto& c : ext) c = static_cast<wchar_t>(towupper(c));
-                return ext == L".LNK" || ext == L".URL";
-            };
-
-            for (size_t i = 0; i < items_.size(); ++i)
-            {
-                const DesktopItem& item = items_[i];
-                std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
-                if (collectionKeys.contains(key)) continue;
-                if (!isLnkOrUrl(item.parsingName)) continue;
-                appendDesktop(i, _LW("app.interact.free_desktop"));
-            }
-        }
-
-        return result;
+            appendDesktop(
+                model.entries,
+                FindItemIndexByKey(key),
+                _LW("widget.collection"));
+        return model;
     }
 
-    appendDockDesktopItems();
+    appendDockDesktopItems(model.entries);
     for (size_t i = 0; i < items_.size(); ++i)
-        appendDesktop(i, _LW("app.nav.tab_desktop"));
+        appendDesktop(
+            model.entries, i,
+            _LW("app.nav.tab_desktop"));
 
     for (size_t ci : GetQuickNavigationCollectionIndices())
     {
@@ -659,7 +879,9 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
         if (widget.type == DesktopWidgetType::FolderMapping) continue;
         std::wstring source = widget.title.empty() ? _LW("widget.collection") : widget.title;
         for (const auto& key : widget.itemKeys)
-            appendDesktop(FindItemIndexByKey(key), source);
+            appendDesktop(
+                model.entries,
+                FindItemIndexByKey(key), source);
     }
 
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
@@ -681,11 +903,14 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
             entry.name = entryData.name;
             entry.path = entryData.fullPath;
             entry.source = source;
-            result.push_back(std::move(entry));
+            model.entries.push_back(
+                std::move(entry));
         }
     }
 
-    std::stable_sort(result.begin(), result.end(),
+    std::stable_sort(
+        model.entries.begin(),
+        model.entries.end(),
         [&](const QuickNavigationEntry& a, const QuickNavigationEntry& b) {
             auto isDockEntry = [&](const QuickNavigationEntry& entry) {
                 if (entry.kind != QuickNavigationEntry::Kind::DesktopItem ||
@@ -704,7 +929,14 @@ inline std::vector<DesktopApp::QuickNavigationEntry> DesktopApp::GetQuickNavigat
             return NameSearchMatchRank(a.name, query) <
                 NameSearchMatchRank(b.name, query);
         });
-    return result;
+    return model;
+}
+
+inline std::vector<DesktopApp::QuickNavigationEntry>
+DesktopApp::GetQuickNavigationEntries() const
+{
+    return BuildQuickNavigationContentModel().
+        entries;
 }
 
 inline RECT DesktopApp::GetQuickNavigationRect() const
@@ -777,6 +1009,88 @@ inline RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
         overlay.right - QuickNavScale(16), overlay.top + QuickNavScale(88));
 }
 
+inline RECT DesktopApp::GetQuickNavigationViewModeButtonRect(
+    const RECT& overlay) const
+{
+    if (!GetQuickNavigationEffectiveSearchText().empty() ||
+        quickNavigationActiveWidgetIndex_ !=
+            static_cast<size_t>(-1))
+        return MakeRect(0, 0, 0, 0);
+
+    const RECT tabs =
+        GetQuickNavigationTabsRect(overlay);
+    const int buttonSize = QuickNavScale(28);
+    const int top = tabs.top +
+        std::max(0,
+            static_cast<int>(
+                tabs.bottom - tabs.top -
+                buttonSize)) / 2;
+    return MakeRect(
+        tabs.left, top,
+        tabs.left + buttonSize,
+        top + buttonSize);
+}
+
+inline int DesktopApp::GetQuickNavigationTabsStart(
+    const RECT& overlay) const
+{
+    const RECT tabs =
+        GetQuickNavigationTabsRect(overlay);
+    const RECT button =
+        GetQuickNavigationViewModeButtonRect(
+            overlay);
+    return snowdesktop::
+        quick_navigation_rules::
+            TabStripLabelStart(
+                tabs.left,
+                !IsRectEmpty(&button),
+                QuickNavScale(28),
+                QuickNavScale(8));
+}
+
+inline void DesktopApp::SetQuickNavigationDesktopViewMode(
+    QuickNavigationDesktopViewMode mode)
+{
+    if (navigationSettings_.desktopViewMode == mode)
+        return;
+    navigationSettings_.desktopViewMode = mode;
+    SaveNavigationSettings(
+        GetNavigationSettingsPath().c_str(),
+        navigationSettings_);
+    if (settingsWindow_)
+        settingsWindow_->SyncNavigationSettings(
+            navigationSettings_);
+    quickNavigationScrollOffset_ = 0;
+    quickNavigationInitialJumpOpen_ = false;
+    ResetQuickNavigationKeyboardTarget();
+    InvalidateQuickNavigationWindow();
+}
+
+inline bool DesktopApp::
+TrySetQuickNavigationDesktopViewModeAtPoint(
+    POINT point)
+{
+    if (!GetQuickNavigationEffectiveSearchText().empty() ||
+        quickNavigationActiveWidgetIndex_ !=
+            static_cast<size_t>(-1))
+        return false;
+
+    const RECT button =
+        GetQuickNavigationViewModeButtonRect(
+            quickNavigationRect_);
+    if (PtInRect(&button, point))
+    {
+        SetQuickNavigationDesktopViewMode(
+            snowdesktop::
+                quick_navigation_rules::
+                    NextQuickNavigationDesktopViewMode(
+                        navigationSettings_.
+                            desktopViewMode));
+        return true;
+    }
+    return false;
+}
+
 inline RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
 {
     if (!GetQuickNavigationEffectiveSearchText().empty())
@@ -800,15 +1114,23 @@ inline int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& /*over
 inline int DesktopApp::GetQuickNavigationMaxTabScrollOffset(const RECT& overlay) const
 {
     RECT tabs = GetQuickNavigationTabsRect(overlay);
+    const int tabsStart =
+        GetQuickNavigationTabsStart(overlay);
     const auto& tw = quickNavTabWidths_;
     const int gap = QuickNavScale(8);
     const int sepGap = QuickNavScale(6);
     // 可滚动区起始于固定标签（0:桌面, 1:映射）+ 分隔线之后。
     const int fixedWidth = (tw.size() >= 2) ? (tw[0] + gap + tw[1]) : 0;
     const int scrollPad = sepGap + QuickNavScale(1) + gap;
-    const int scrollLeft = tabs.left + fixedWidth + scrollPad;
-    const int available = std::max(1, static_cast<int>(tabs.right - scrollLeft));
-    return std::max(0, GetQuickNavigationTabStripContentWidth(overlay) - available);
+    const int scrollLeft =
+        tabsStart + fixedWidth + scrollPad;
+    return snowdesktop::
+        quick_navigation_rules::
+            TabStripMaxScrollOffset(
+                GetQuickNavigationTabStripContentWidth(
+                    overlay),
+                scrollLeft,
+                tabs.right);
 }
 
 inline int DesktopApp::GetQuickNavigationTabWidth() const
@@ -828,7 +1150,9 @@ inline void DesktopApp::EnsureNavTabOrder()
     std::unordered_set<std::wstring> orderSet(navTabOrder_.begin(), navTabOrder_.end());
     for (const auto& w : widgets_)
     {
-        if (isTabWidget(w.type) && !orderSet.count(w.id))
+        if (isTabWidget(w.type) &&
+            !IsGroupedCollection(w) &&
+            !orderSet.count(w.id))
         {
             navTabOrder_.push_back(w.id);
             orderSet.insert(w.id);
@@ -838,7 +1162,10 @@ inline void DesktopApp::EnsureNavTabOrder()
         std::remove_if(navTabOrder_.begin(), navTabOrder_.end(),
             [this, &isTabWidget](const std::wstring& id) {
                 for (const auto& w : widgets_)
-                    if (isTabWidget(w.type) && w.id == id) return false;
+                    if (isTabWidget(w.type) &&
+                        !IsGroupedCollection(w) &&
+                        w.id == id)
+                        return false;
                 return true;
             }),
         navTabOrder_.end());
@@ -847,15 +1174,20 @@ inline void DesktopApp::EnsureNavTabOrder()
 inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex) const
 {
     RECT tabs = GetQuickNavigationTabsRect(overlay);
+    const int tabsStart =
+        GetQuickNavigationTabsStart(overlay);
     const int gap = QuickNavScale(8);
     const int sepGap = QuickNavScale(6);
     const int scrollPad = sepGap + QuickNavScale(1) + gap; // separator + gap after
 
     const size_t n = quickNavTabWidths_.size();
     if (n == 0)
-        return MakeRect(tabs.left, tabs.top, tabs.left + QuickNavScale(72), tabs.bottom);
+        return MakeRect(
+            tabsStart, tabs.top,
+            tabsStart + QuickNavScale(72),
+            tabs.bottom);
 
-    int left = tabs.left;
+    int left = tabsStart;
     int width = QuickNavScale(72);
     if (tabIndex == 0)
     {
@@ -865,15 +1197,19 @@ inline RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t ta
     {
         if (n > 1)
         {
-            left = tabs.left + quickNavTabWidths_[0] + gap;
+            left = tabsStart +
+                quickNavTabWidths_[0] + gap;
             width = quickNavTabWidths_[1];
         }
     }
     else if (tabIndex >= 2)
     {
-        left = tabs.left;
+        left = tabsStart;
         if (n > 1)
-            left = tabs.left + quickNavTabWidths_[0] + gap + quickNavTabWidths_[1] + scrollPad;
+            left = tabsStart +
+                quickNavTabWidths_[0] + gap +
+                quickNavTabWidths_[1] +
+                scrollPad;
         for (size_t i = 2; i < tabIndex && i < n; ++i)
             left += quickNavTabWidths_[i] + gap;
         left -= quickNavigationTabScrollOffset_;
@@ -918,18 +1254,341 @@ inline RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t l
     const int rowGap = QuickNavScale(kQuickNavigationItemRowGap);
     const int rowPitch = cellH + rowGap;
     const int columns = GetQuickNavigationColumnCount(overlay);
-    const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
-    const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
+    int col = static_cast<int>(
+        linearIndex %
+        static_cast<size_t>(columns));
+    int row = static_cast<int>(
+        linearIndex /
+        static_cast<size_t>(columns));
+    int itemTop = content.top;
+    if (GetQuickNavigationEffectiveSearchText().empty())
+    {
+        const QuickNavigationContentModel model =
+            BuildQuickNavigationContentModel();
+        if (model.IsSectioned())
+        {
+            std::vector<size_t> counts;
+            counts.reserve(model.sections.size());
+            for (const auto& section : model.sections)
+                counts.push_back(section.entryCount);
+            const auto layouts =
+                snowdesktop::quick_navigation_rules::
+                    BuildSectionLayouts(
+                        counts, columns, cellH, rowGap,
+                        QuickNavScale(28),
+                        QuickNavScale(8),
+                        QuickNavScale(12));
+            snowdesktop::quick_navigation_rules::
+                SectionItemCell cell;
+            if (
+                snowdesktop::quick_navigation_rules::
+                    TryGetSectionItemCell(
+                        layouts, linearIndex,
+                        columns, cellH, rowGap,
+                        cell))
+            {
+                col = cell.column;
+                row = cell.row;
+                itemTop = content.top +
+                    cell.top - row * rowPitch;
+            }
+        }
+    }
+    else
+    {
+        itemTop +=
+            QuickNavScale(28) +
+            QuickNavScale(8);
+    }
     const int gap = GetQuickNavigationGap(overlay);
     int halfPad = gap / 2;
-    const int top = content.top + (GetQuickNavigationEffectiveSearchText().empty()
-        ? 0
-        : QuickNavScale(28) + QuickNavScale(8));
     return MakeRect(
         content.left + halfPad + col * (cellW + gap),
-        top + row * rowPitch - quickNavigationScrollOffset_,
+        itemTop + row * rowPitch - quickNavigationScrollOffset_,
         content.left + halfPad + col * (cellW + gap) + cellW,
-        top + row * rowPitch + cellH - quickNavigationScrollOffset_);
+        itemTop + row * rowPitch + cellH - quickNavigationScrollOffset_);
+}
+
+inline RECT DesktopApp::GetQuickNavigationSectionHeaderRect(
+    const RECT& overlay, size_t sectionIndex,
+    const QuickNavigationContentModel& model) const
+{
+    const RECT content =
+        GetQuickNavigationContentRect(overlay);
+    if (sectionIndex >= model.sections.size())
+        return MakeRect(0, 0, 0, 0);
+
+    std::vector<size_t> counts;
+    counts.reserve(model.sections.size());
+    for (const auto& section : model.sections)
+        counts.push_back(section.entryCount);
+    const auto layouts =
+        snowdesktop::quick_navigation_rules::
+            BuildSectionLayouts(
+                counts,
+                GetQuickNavigationColumnCount(overlay),
+                QuickNavScale(
+                    kQuickNavigationCellHeight),
+                QuickNavScale(
+                    kQuickNavigationItemRowGap),
+                QuickNavScale(28),
+                QuickNavScale(8),
+                QuickNavScale(12));
+    if (sectionIndex >= layouts.size())
+        return MakeRect(0, 0, 0, 0);
+
+    const int top = content.top +
+        layouts[sectionIndex].headerTop -
+        quickNavigationScrollOffset_;
+    return MakeRect(
+        content.left + QuickNavScale(8), top,
+        content.right - QuickNavScale(12),
+        top + QuickNavScale(28));
+}
+
+inline RECT DesktopApp::
+GetQuickNavigationInitialJumpBackRect(
+    const RECT& overlay) const
+{
+    const RECT content =
+        GetQuickNavigationContentRect(overlay);
+    return MakeRect(
+        content.right - QuickNavScale(88),
+        content.top,
+        content.right - QuickNavScale(8),
+        content.top + QuickNavScale(30));
+}
+
+inline RECT DesktopApp::
+GetQuickNavigationInitialJumpCellRect(
+    const RECT& overlay,
+    size_t bucketIndex) const
+{
+    if (bucketIndex >= 27)
+        return MakeRect(0, 0, 0, 0);
+    const RECT content =
+        GetQuickNavigationContentRect(overlay);
+    const int gridTop =
+        content.top + QuickNavScale(38);
+    const int availableHeight =
+        std::max(1,
+            static_cast<int>(
+                content.bottom - gridTop -
+                QuickNavScale(8)));
+    const int columns =
+        availableHeight >= QuickNavScale(252)
+        ? 4
+        : 7;
+    const int rows =
+        (27 + columns - 1) / columns;
+    const int availableWidth =
+        std::max(
+            1,
+            static_cast<int>(
+                content.right - content.left -
+                QuickNavScale(32)));
+    const int gridWidth = std::min(
+        availableWidth,
+        QuickNavScale(columns * 68));
+    const int cellWidth =
+        std::max(1, gridWidth / columns);
+    const int cellHeight = std::clamp(
+        availableHeight / rows,
+        QuickNavScale(28),
+        QuickNavScale(44));
+    const int gridLeft = content.left +
+        (static_cast<int>(
+            content.right - content.left) -
+            cellWidth * columns) / 2;
+    const int column =
+        static_cast<int>(
+            bucketIndex %
+            static_cast<size_t>(columns));
+    const int row =
+        static_cast<int>(
+            bucketIndex /
+            static_cast<size_t>(columns));
+    return MakeRect(
+        gridLeft + column * cellWidth,
+        gridTop + row * cellHeight,
+        gridLeft + (column + 1) * cellWidth,
+        gridTop + (row + 1) * cellHeight);
+}
+
+inline bool DesktopApp::
+ActivateQuickNavigationInitialJumpBucket(
+    size_t bucketIndex)
+{
+    if (bucketIndex >= 27)
+        return false;
+    const wchar_t bucket =
+        snowdesktop::quick_navigation_rules::
+            InitialJumpBucketAt(bucketIndex);
+    const std::wstring label(1, bucket);
+    const QuickNavigationContentModel model =
+        BuildQuickNavigationContentModel();
+    for (size_t sectionIndex = 0;
+        sectionIndex < model.sections.size();
+        ++sectionIndex)
+    {
+        if (model.sections[sectionIndex].label !=
+            label)
+            continue;
+        const RECT header =
+            GetQuickNavigationSectionHeaderRect(
+                quickNavigationRect_,
+                sectionIndex, model);
+        const RECT content =
+            GetQuickNavigationContentRect(
+                quickNavigationRect_);
+        quickNavigationScrollOffset_ =
+            std::clamp(
+                quickNavigationScrollOffset_ +
+                    static_cast<int>(
+                        header.top - content.top),
+                0,
+                GetQuickNavigationMaxScrollOffset(
+                    quickNavigationRect_));
+        quickNavigationInitialJumpOpen_ = false;
+        quickNavigationInitialJumpSelection_ =
+            bucketIndex;
+        ResetQuickNavigationKeyboardTarget();
+        InvalidateQuickNavigationWindow();
+        return true;
+    }
+    return false;
+}
+
+inline bool DesktopApp::
+HandleQuickNavigationInitialJumpClick(
+    POINT point)
+{
+    if (!quickNavigationInitialJumpOpen_)
+        return false;
+    const RECT back =
+        GetQuickNavigationInitialJumpBackRect(
+            quickNavigationRect_);
+    if (PtInRect(&back, point))
+    {
+        quickNavigationInitialJumpOpen_ = false;
+        InvalidateQuickNavigationWindow();
+        return true;
+    }
+    for (size_t bucketIndex = 0;
+        bucketIndex < 27; ++bucketIndex)
+    {
+        const RECT cell =
+            GetQuickNavigationInitialJumpCellRect(
+                quickNavigationRect_,
+                bucketIndex);
+        if (!PtInRect(&cell, point))
+            continue;
+        ActivateQuickNavigationInitialJumpBucket(
+            bucketIndex);
+        return true;
+    }
+    const RECT content =
+        GetQuickNavigationContentRect(
+            quickNavigationRect_);
+    return PtInRect(&content, point) != FALSE;
+}
+
+inline bool DesktopApp::
+HandleQuickNavigationInitialJumpKeyboardInput(
+    WPARAM key)
+{
+    if (!quickNavigationInitialJumpOpen_)
+        return false;
+    if (key == VK_ESCAPE)
+    {
+        quickNavigationInitialJumpOpen_ = false;
+        InvalidateQuickNavigationWindow();
+        return true;
+    }
+
+    const QuickNavigationContentModel model =
+        BuildQuickNavigationContentModel();
+    std::array<bool, 27> available{};
+    for (const auto& section : model.sections)
+    {
+        if (section.label.size() != 1)
+            continue;
+        available[
+            snowdesktop::quick_navigation_rules::
+                InitialJumpBucketIndex(
+                    section.label.front())] = true;
+    }
+    if (key == VK_RETURN)
+        return ActivateQuickNavigationInitialJumpBucket(
+            quickNavigationInitialJumpSelection_);
+    if (key != VK_LEFT && key != VK_RIGHT &&
+        key != VK_UP && key != VK_DOWN)
+        return false;
+
+    const RECT currentRect =
+        GetQuickNavigationInitialJumpCellRect(
+            quickNavigationRect_,
+            quickNavigationInitialJumpSelection_);
+    const long long currentX =
+        (static_cast<long long>(currentRect.left) +
+            currentRect.right) / 2;
+    const long long currentY =
+        (static_cast<long long>(currentRect.top) +
+            currentRect.bottom) / 2;
+    long long bestScore =
+        std::numeric_limits<long long>::max();
+    size_t best = static_cast<size_t>(-1);
+    for (size_t bucketIndex = 0;
+        bucketIndex < available.size();
+        ++bucketIndex)
+    {
+        if (!available[bucketIndex] ||
+            bucketIndex ==
+                quickNavigationInitialJumpSelection_)
+            continue;
+        const RECT candidate =
+            GetQuickNavigationInitialJumpCellRect(
+                quickNavigationRect_,
+                bucketIndex);
+        const long long x =
+            (static_cast<long long>(
+                candidate.left) +
+                candidate.right) / 2;
+        const long long y =
+            (static_cast<long long>(
+                candidate.top) +
+                candidate.bottom) / 2;
+        const long long dx = x - currentX;
+        const long long dy = y - currentY;
+        const bool inDirection =
+            (key == VK_LEFT && dx < 0) ||
+            (key == VK_RIGHT && dx > 0) ||
+            (key == VK_UP && dy < 0) ||
+            (key == VK_DOWN && dy > 0);
+        if (!inDirection) continue;
+        const long long primary =
+            key == VK_LEFT || key == VK_RIGHT
+            ? std::abs(dx)
+            : std::abs(dy);
+        const long long secondary =
+            key == VK_LEFT || key == VK_RIGHT
+            ? std::abs(dy)
+            : std::abs(dx);
+        const long long score =
+            primary * 4 + secondary;
+        if (score < bestScore)
+        {
+            bestScore = score;
+            best = bucketIndex;
+        }
+    }
+    if (best < available.size())
+    {
+        quickNavigationInitialJumpSelection_ =
+            best;
+        InvalidateQuickNavigationWindow();
+    }
+    return true;
 }
 
 inline bool DesktopApp::TryGetQuickNavigationAppEntryAtPoint(
@@ -1260,6 +1919,10 @@ inline void DesktopApp::EnsureQuickNavigationKeyboardTargetVisible(
 
 inline bool DesktopApp::HandleQuickNavigationKeyboardInput(WPARAM key)
 {
+    if (quickNavigationInitialJumpOpen_)
+        return
+            HandleQuickNavigationInitialJumpKeyboardInput(
+                key);
     const bool directionKey = key == VK_LEFT || key == VK_RIGHT ||
         key == VK_UP || key == VK_DOWN;
     if (!quickNavigationOpen_ || (!directionKey && key != VK_RETURN))
@@ -1359,10 +2022,38 @@ inline int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) cons
 {
     RECT content = GetQuickNavigationContentRect(overlay);
     const int columns = GetQuickNavigationColumnCount(overlay);
-    const int desktopCount = static_cast<int>(GetQuickNavigationEntries().size());
+    const QuickNavigationContentModel model =
+        BuildQuickNavigationContentModel();
+    const int desktopCount =
+        static_cast<int>(model.entries.size());
     const int desktopRows = desktopCount == 0 ? 0 : (desktopCount + columns - 1) / columns;
     if (GetQuickNavigationEffectiveSearchText().empty())
     {
+        if (model.IsSectioned())
+        {
+            std::vector<size_t> counts;
+            counts.reserve(model.sections.size());
+            for (const auto& section :
+                model.sections)
+                counts.push_back(
+                    section.entryCount);
+            const auto layouts =
+                snowdesktop::quick_navigation_rules::
+                    BuildSectionLayouts(
+                        counts, columns,
+                        QuickNavScale(
+                            kQuickNavigationCellHeight),
+                        QuickNavScale(
+                            kQuickNavigationItemRowGap),
+                        QuickNavScale(28),
+                        QuickNavScale(8),
+                        QuickNavScale(12));
+            return snowdesktop::
+                quick_navigation_rules::
+                    SectionedContentHeight(
+                        layouts,
+                        QuickNavScale(12));
+        }
         const int rows = desktopCount == 0 ? 1 : desktopRows;
         return QuickNavigationRowsHeight(rows, QuickNavScale(kQuickNavigationCellHeight),
             QuickNavScale(kQuickNavigationItemRowGap));
@@ -1594,6 +2285,7 @@ inline void DesktopApp::RefreshQuickNavigationSearchCompositionText(HWND editHwn
     quickNavigationSearchCompositionText_ = QuickNavigationReadImeCompositionString(editHwnd);
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
     {
+        quickNavigationInitialJumpOpen_ = false;
         ResetQuickNavigationKeyboardTarget();
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
@@ -1611,6 +2303,7 @@ inline void DesktopApp::ClearQuickNavigationSearchCompositionText()
     quickNavigationSearchCompositionText_.clear();
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
     {
+        quickNavigationInitialJumpOpen_ = false;
         ResetQuickNavigationKeyboardTarget();
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
@@ -1625,6 +2318,7 @@ inline void DesktopApp::ClearQuickNavigationSearchCompositionText()
 inline void DesktopApp::RefreshQuickNavigationSearchText()
 {
     ResetQuickNavigationKeyboardTarget();
+    quickNavigationInitialJumpOpen_ = false;
     std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
     quickNavigationSearchText_.clear();
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
@@ -1981,6 +2675,7 @@ inline void DesktopApp::OpenQuickNavigation()
     }
     quickNavigationScrollOffset_ = 0;
     quickNavigationTabScrollOffset_ = 0;
+    quickNavigationInitialJumpOpen_ = false;
     ResetQuickNavigationKeyboardTarget();
     quickNavigationSearchText_.clear();
     quickNavigationSearchCompositionText_.clear();
@@ -2021,9 +2716,13 @@ inline void DesktopApp::OpenQuickNavigation()
 inline void DesktopApp::CloseQuickNavigation()
 {
     if (!quickNavigationOpen_) return;
+    if (renamingQuickNavigationItem_ &&
+        renameEdit_ && IsWindow(renameEdit_))
+        CommitRename(false);
     quickNavigationOpen_ = false;
     quickNavigationScrollOffset_ = 0;
     quickNavigationTabScrollOffset_ = 0;
+    quickNavigationInitialJumpOpen_ = false;
     ResetQuickNavigationKeyboardTarget();
     quickNavigationSearchText_.clear();
     quickNavigationSearchCompositionText_.clear();
@@ -2043,6 +2742,177 @@ inline void DesktopApp::CloseQuickNavigation()
         FocusDesktopInputWindow();
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::BeginQuickNavigationItemRename(
+    const std::wstring& name, bool isDirectory)
+{
+    if (renameEdit_ || name.empty() ||
+        !quickNavigationOpen_ ||
+        !quickNavigationHwnd_ ||
+        !IsWindow(quickNavigationHwnd_) ||
+        IsRectEmptyRect(
+            quickNavigationRenameItemRect_))
+        return;
+
+    const RECT itemRect =
+        quickNavigationRenameItemRect_;
+    const RECT iconRect =
+        GetQuickNavItemIconRect(itemRect);
+    const int horizontalPad = QuickNavScale(3);
+    const int textTop = std::max<LONG>(
+        itemRect.top,
+        iconRect.bottom +
+            std::max(1, QuickNavScale(2)));
+    RECT editRect = MakeRect(
+        itemRect.left + horizontalPad,
+        textTop,
+        itemRect.right - horizontalPad,
+        std::min<LONG>(
+            itemRect.bottom,
+            textTop + QuickNavScale(32)));
+    if (IsRectEmptyRect(editRect))
+        return;
+
+    renameCommitPending_ = false;
+    renamingQuickNavigationItem_ = true;
+    // The no-redirection DComp host cannot reliably display GDI child
+    // controls. Match the search box: use an owned popup positioned over the
+    // item's name area so the editor remains visually inside the panel.
+    renameEdit_ = CreateWindowExW(
+        WS_EX_CLIENTEDGE |
+            WS_EX_TOOLWINDOW |
+            WS_EX_TOPMOST,
+        L"EDIT", name.c_str(),
+        WS_POPUP |
+            ES_CENTER | ES_AUTOHSCROLL,
+        editRect.left + virtualLeft_,
+        editRect.top + virtualTop_,
+        editRect.right - editRect.left,
+        editRect.bottom - editRect.top,
+        quickNavigationHwnd_, nullptr,
+        instance_, nullptr);
+    if (!renameEdit_)
+    {
+        renamingQuickNavigationItem_ = false;
+        return;
+    }
+
+    if (renameFont_)
+        DeleteObject(renameFont_);
+    renameFont_ = CreateFontW(
+        -std::max(1, QuickNavScale(13)),
+        0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE,
+        L"Segoe UI");
+    SendMessageW(
+        renameEdit_, WM_SETFONT,
+        reinterpret_cast<WPARAM>(
+            renameFont_
+                ? renameFont_
+                : GetStockObject(
+                    DEFAULT_GUI_FONT)),
+        TRUE);
+    SendMessageW(
+        renameEdit_, EM_SETMARGINS,
+        EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELPARAM(
+            std::max(1, QuickNavScale(4)),
+            std::max(1, QuickNavScale(4))));
+    SetWindowSubclass(
+        renameEdit_,
+        &DesktopApp::RenameEditSubclassProc,
+        1,
+        reinterpret_cast<DWORD_PTR>(this));
+    SetWindowPos(
+        renameEdit_, HWND_TOPMOST,
+        editRect.left + virtualLeft_,
+        editRect.top + virtualTop_,
+        editRect.right - editRect.left,
+        editRect.bottom - editRect.top,
+        SWP_SHOWWINDOW);
+
+    int selectionEnd = -1;
+    if (!isDirectory)
+    {
+        const size_t dot =
+            name.find_last_of(L'.');
+        if (dot != std::wstring::npos &&
+            dot > 0 && dot + 1 < name.size())
+            selectionEnd =
+                static_cast<int>(dot);
+    }
+    SendMessageW(
+        renameEdit_, EM_SETSEL,
+        0, selectionEnd);
+    SetFocus(renameEdit_);
+}
+
+inline void DesktopApp::
+BeginQuickNavigationDesktopItemRename(
+    size_t itemIndex)
+{
+    if (itemIndex >= items_.size() ||
+        !items_[itemIndex].
+            desktopIconClsid.empty())
+        return;
+
+    wchar_t path[MAX_PATH]{};
+    if (!SHGetPathFromIDListW(
+            items_[itemIndex].
+                absolutePidl.get(),
+            path))
+        return;
+    const DWORD attributes =
+        GetFileAttributesW(path);
+    const bool isDirectory =
+        attributes !=
+            INVALID_FILE_ATTRIBUTES &&
+        (attributes &
+            FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+    renameIndex_ = itemIndex;
+    renamingFolderEntry_ = false;
+    BeginQuickNavigationItemRename(
+        items_[itemIndex].name,
+        isDirectory);
+    if (!renamingQuickNavigationItem_)
+        renameIndex_ =
+            static_cast<size_t>(-1);
+}
+
+inline void DesktopApp::
+BeginQuickNavigationFolderEntryRename(
+    size_t widgetIndex, size_t entryIndex)
+{
+    if (widgetIndex >= widgets_.size() ||
+        widgets_[widgetIndex].type !=
+            DesktopWidgetType::FolderMapping ||
+        entryIndex >=
+            widgets_[widgetIndex].
+                folderEntries.size())
+        return;
+
+    const FolderEntry& entry =
+        widgets_[widgetIndex].
+            folderEntries[entryIndex];
+    renamingFolderEntry_ = true;
+    renameFolderWidgetIndex_ = widgetIndex;
+    renameFolderEntryIndex_ = entryIndex;
+    BeginQuickNavigationItemRename(
+        entry.name, entry.isDirectory);
+    if (!renamingQuickNavigationItem_)
+    {
+        renamingFolderEntry_ = false;
+        renameFolderWidgetIndex_ =
+            static_cast<size_t>(-1);
+        renameFolderEntryIndex_ =
+            static_cast<size_t>(-1);
+    }
 }
 
 /**
@@ -2078,11 +2948,16 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     if (!searching)
     {
+        if (TrySetQuickNavigationDesktopViewModeAtPoint(
+                point))
+            return true;
+
         RECT tab0Rect = GetQuickNavigationTabRect(overlay, 0);
         if (PtInRect(&tab0Rect, point))
         {
             quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
             quickNavigationScrollOffset_ = 0;
+            quickNavigationInitialJumpOpen_ = false;
             InvalidateQuickNavigationWindow();
             return true;
         }
@@ -2091,6 +2966,7 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
         {
             quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-2);
             quickNavigationScrollOffset_ = 0;
+            quickNavigationInitialJumpOpen_ = false;
             InvalidateQuickNavigationWindow();
             return true;
         }
@@ -2099,6 +2975,46 @@ inline bool DesktopApp::HandleQuickNavigationClick(POINT point)
     RECT content = GetQuickNavigationContentRect(overlay);
     if (!PtInRect(&content, point))
         return true;
+
+    if (HandleQuickNavigationInitialJumpClick(
+            point))
+        return true;
+
+    if (!searching &&
+        quickNavigationActiveWidgetIndex_ ==
+            static_cast<size_t>(-1) &&
+        navigationSettings_.desktopViewMode ==
+            QuickNavigationDesktopViewMode::Initial)
+    {
+        const QuickNavigationContentModel model =
+            BuildQuickNavigationContentModel();
+        for (size_t sectionIndex = 0;
+            sectionIndex < model.sections.size();
+            ++sectionIndex)
+        {
+            const RECT header =
+                GetQuickNavigationSectionHeaderRect(
+                    overlay, sectionIndex,
+                    model);
+            if (!PtInRect(&header, point))
+                continue;
+            const std::wstring& label =
+                model.sections[sectionIndex].label;
+            if (label.size() == 1)
+            {
+                quickNavigationInitialJumpSelection_ =
+                    snowdesktop::
+                        quick_navigation_rules::
+                            InitialJumpBucketIndex(
+                                label.front());
+                quickNavigationInitialJumpOpen_ =
+                    true;
+                ResetQuickNavigationKeyboardTarget();
+                InvalidateQuickNavigationWindow();
+            }
+            return true;
+        }
+    }
 
     if (!everythingSearchAvailable_ && searching)
     {
@@ -2233,11 +3149,84 @@ inline bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT scree
     }
 
     QuickNavigationEverythingEntry entry;
-    if (!TryGetQuickNavigationEverythingEntryAtPoint(point, entry))
+    if (TryGetQuickNavigationEverythingEntryAtPoint(point, entry))
+    {
+        ShowQuickNavigationEverythingContextMenu(entry, screenPoint);
+        return true;
+    }
+
+    const RECT overlay = quickNavigationRect_;
+    const RECT content = GetQuickNavigationContentRect(overlay);
+    if (!PtInRect(&content, point))
         return false;
 
-    ShowQuickNavigationEverythingContextMenu(entry, screenPoint);
-    return true;
+    std::vector<QuickNavigationEntry> entries =
+        GetQuickNavigationEntries();
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+        RECT itemRect =
+            GetQuickNavigationItemRect(overlay, i);
+        RECT clipped = itemRect;
+        clipped.top =
+            std::max(clipped.top, content.top);
+        clipped.bottom =
+            std::min(clipped.bottom, content.bottom);
+        if (clipped.bottom <= clipped.top ||
+            !PtInRect(&clipped, point))
+            continue;
+
+        const QuickNavigationEntry selectedEntry =
+            std::move(entries[i]);
+        quickNavigationRenameItemRect_ =
+            itemRect;
+
+        if (selectedEntry.kind ==
+                QuickNavigationEntry::Kind::DesktopItem &&
+            selectedEntry.itemIndex < items_.size())
+        {
+            SelectOnly(static_cast<int>(
+                selectedEntry.itemIndex));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (IsProtectedDesktopIcon(
+                    items_[selectedEntry.itemIndex]))
+                ShowShellContextMenu(
+                    screenPoint,
+                    static_cast<int>(
+                        selectedEntry.itemIndex),
+                    true);
+            else
+                ShowItemContextMenu(
+                    screenPoint,
+                    static_cast<int>(
+                        selectedEntry.itemIndex),
+                    false, true);
+            return true;
+        }
+
+        if (selectedEntry.kind ==
+                QuickNavigationEntry::Kind::FolderEntry &&
+            selectedEntry.widgetIndex < widgets_.size() &&
+            selectedEntry.folderEntryIndex <
+                widgets_[selectedEntry.widgetIndex].
+                    folderEntries.size())
+        {
+            ClearSelection();
+            widgets_[selectedEntry.widgetIndex].
+                folderEntries[
+                    selectedEntry.folderEntryIndex].
+                selected = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            ShowFolderEntryContextMenu(
+                screenPoint,
+                selectedEntry.widgetIndex,
+                selectedEntry.folderEntryIndex,
+                true);
+            return true;
+        }
+        return true;
+    }
+
+    return false;
 }
 
 inline bool DesktopApp::CopyTextToClipboard(const std::wstring& text)
@@ -2458,6 +3447,7 @@ inline void DesktopApp::ShowQuickNavigationAppContextMenu(
     {
         kAppOpen = 1,
         kAppCreateShortcut = 2,
+        kAppReveal = 3,
     };
 
     HMENU menu = CreatePopupMenu();
@@ -2465,6 +3455,11 @@ inline void DesktopApp::ShowQuickNavigationAppContextMenu(
         return;
 
     AppendMenuW(menu, MF_STRING, kAppOpen, _LW("app.nav.open"));
+    AppendMenuW(menu,
+        snowdesktop::item_location::CanReveal(entry.parsingName)
+            ? MF_STRING
+            : MF_STRING | MF_GRAYED,
+        kAppReveal, _LW("app.menu.open_file_location"));
     AppendMenuW(menu, MF_STRING, kAppCreateShortcut, _LW("app.nav.send_to_desktop"));
 
     HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
@@ -2491,6 +3486,10 @@ inline void DesktopApp::ShowQuickNavigationAppContextMenu(
     case kAppCreateShortcut:
         CreateDesktopShortcutForApp(entry);
         break;
+    case kAppReveal:
+        snowdesktop::item_location::Reveal(
+            hwnd_, entry.parsingName);
+        break;
     default:
         break;
     }
@@ -2515,7 +3514,12 @@ inline void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         return;
 
     AppendMenuW(menu, MF_STRING, kEverythingOpen, _LW("app.nav.open"));
-    AppendMenuW(menu, MF_STRING, kEverythingReveal, _LW("app.nav.show_in_explorer"));
+    AppendMenuW(menu,
+        snowdesktop::item_location::CanReveal(entry.path)
+            ? MF_STRING
+            : MF_STRING | MF_GRAYED,
+        kEverythingReveal,
+        _LW("app.menu.open_file_location"));
     AppendMenuW(menu, MF_STRING, kEverythingCreateShortcut, _LW("app.nav.send_to_desktop"));
     AppendMenuW(menu, MF_STRING, kEverythingCopyPath, _LW("app.nav.copy_path"));
 
@@ -2534,11 +3538,9 @@ inline void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         ShellExecuteW(nullptr, L"open", entry.path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         break;
     case kEverythingReveal:
-    {
-        std::wstring params = L"/select,\"" + entry.path + L"\"";
-        ShellExecuteW(nullptr, L"open", L"explorer.exe", params.c_str(), nullptr, SW_SHOWNORMAL);
+        snowdesktop::item_location::Reveal(
+            hwnd_, entry.path);
         break;
-    }
     case kEverythingCopyPath:
         CopyTextToClipboard(entry.path);
         break;
@@ -2589,6 +3591,30 @@ inline void DesktopApp::EnsureQuickNavTextFormats()
     createOrRecreate(quickNavTabTextFormat_, L"Segoe UI", tabSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     createOrRecreate(quickNavItemTextFormat_, L"Segoe UI Variable", itemSize, itemWeight, DWRITE_TEXT_ALIGNMENT_LEADING);
     createOrRecreate(quickNavPathTextFormat_, L"Segoe UI", pathSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
+    if (!quickNavFaTextFormat_ ||
+        std::abs(
+            quickNavFaTextFormat_->GetFontSize() -
+                tabSize) > 0.01f)
+    {
+        quickNavFaTextFormat_.Reset();
+        quickNavFaTextFormat_ =
+            ComPtr<IDWriteTextFormat>(
+                CreateFaTextFormat(
+                    dwriteFactory_.Get(),
+                    tabSize));
+        if (quickNavFaTextFormat_)
+        {
+            quickNavFaTextFormat_->
+                SetTextAlignment(
+                    DWRITE_TEXT_ALIGNMENT_CENTER);
+            quickNavFaTextFormat_->
+                SetParagraphAlignment(
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            quickNavFaTextFormat_->
+                SetWordWrapping(
+                    DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+    }
 
     ComPtr<IDWriteTextFormat3> itemFormat3;
     if (quickNavItemTextFormat_ && SUCCEEDED(quickNavItemTextFormat_.As(&itemFormat3)) && itemFormat3)
@@ -2783,7 +3809,10 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
-    std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
+    QuickNavigationContentModel contentModel =
+        BuildQuickNavigationContentModel();
+    const std::vector<QuickNavigationEntry>& entries =
+        contentModel.entries;
     quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
         GetQuickNavigationMaxTabScrollOffset(overlay));
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
@@ -2798,11 +3827,16 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     if (!searching)
     {
         RECT tabs = GetQuickNavigationTabsRect(overlay);
-        const int tabClipRight = searchRect.right;
+        const int tabsStart =
+            GetQuickNavigationTabsStart(overlay);
+        const int tabClipRight = tabs.right;
         // 左侧外扩一圈避免固定标签圆角 AA 被截断；右侧与搜索框右边界对齐。
         const int clipPad = QuickNavScale(8);
         ctx->PushAxisAlignedClip(
-            ToD2DRect(MakeRect(tabs.left - clipPad, tabs.top, tabClipRight, tabs.bottom)),
+            ToD2DRect(MakeRect(
+                tabsStart - clipPad,
+                tabs.top, tabClipRight,
+                tabs.bottom)),
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         const size_t tabCount = collectionIndices.size() + 2;
@@ -2813,9 +3847,9 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         const int fixedWidth = (tabWidths.size() >= 2 ? tabWidths[0] + gap + tabWidths[1] : 0);
         const int scrollPad = sepGap + QuickNavScale(1) + gap; // separator + gap after
         auto calcTabPosX = [&](size_t tabIdx) -> int {
-            if (tabIdx == 0) return tabs.left;
-            if (tabIdx == 1) return tabs.left + tabWidths[0] + gap;
-            int x = tabs.left + fixedWidth + scrollPad;
+            if (tabIdx == 0) return tabsStart;
+            if (tabIdx == 1) return tabsStart + tabWidths[0] + gap;
+            int x = tabsStart + fixedWidth + scrollPad;
             for (size_t i = 2; i < tabIdx && i < tabWidths.size(); ++i)
                 x += tabWidths[i] + gap;
             return x - quickNavigationTabScrollOffset_;
@@ -2835,13 +3869,23 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             RECT tabRect = MakeRect(posX, tabs.top + tabInsetY, posX + tw, tabs.bottom - tabInsetY);
             if (tab >= 2)
             {
-                int scrollStart = tabs.left + fixedWidth + scrollPad;
+                int scrollStart =
+                    tabsStart + fixedWidth +
+                    scrollPad;
                 if (tabRect.right <= scrollStart || tabRect.left >= tabClipRight) return;
             }
             else if (tab <= 1)
             {
-                if (tabRect.right <= tabs.left || tabRect.left >= tabs.left + fixedWidth + sepGap) return;
-                tabRect.right = std::min(tabRect.right, tabs.left + fixedWidth + sepGap);
+                if (tabRect.right <= tabsStart ||
+                    tabRect.left >=
+                        tabsStart + fixedWidth +
+                            sepGap)
+                    return;
+                tabRect.right = std::min<LONG>(
+                    tabRect.right,
+                    static_cast<LONG>(
+                        tabsStart + fixedWidth +
+                        sepGap));
             }
             const bool active = (tab == 0 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
                 || (tab == 1 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
@@ -2877,7 +3921,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         };
 
         // 分隔线：固定在 "映射" 标签右侧
-        int sepX = tabs.left + fixedWidth + sepGap;
+        int sepX =
+            tabsStart + fixedWidth + sepGap;
         RECT sepRect = MakeRect(sepX, tabs.top + QuickNavScale(8),
             sepX + QuickNavScale(1), tabs.bottom - QuickNavScale(8));
         DrawD2DSeparator(ctx.Get(), sepRect, ToD2DColor(t.tabSeparator));
@@ -2902,7 +3947,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         }
 
         // Clip to scrollable area for remaining tabs
-        int scrollLeft = tabs.left + fixedWidth + scrollPad;
+        int scrollLeft =
+            tabsStart + fixedWidth + scrollPad;
         ctx->PopAxisAlignedClip();
         ctx->PushAxisAlignedClip(
             ToD2DRect(MakeRect(scrollLeft - clipPad, tabs.top, tabClipRight, tabs.bottom)),
@@ -2932,7 +3978,10 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             int dragTw = tabWidths[quickNavTabDragIndex_];
             int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
             RECT tabRect = MakeRect(posX, tabs.top + tabInsetY, posX + dragTw, tabs.bottom - tabInsetY);
-            tabRect.left = std::max(tabRect.left, tabs.left);
+            tabRect.left = std::max(
+                tabRect.left,
+                static_cast<LONG>(
+                    tabsStart));
             tabRect.right = std::min<LONG>(tabRect.right, static_cast<LONG>(tabClipRight));
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(14)) / 2.0f,
@@ -2957,11 +4006,155 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         }
 
         ctx->PopAxisAlignedClip();
+
+        const RECT modeButton =
+            GetQuickNavigationViewModeButtonRect(
+                overlay);
+        if (!IsRectEmpty(&modeButton))
+        {
+            const bool hovered =
+                PtInRect(
+                    &modeButton,
+                    lastMousePoint_) != FALSE;
+            const D2D1_COLOR_F fill =
+                hovered
+                    ? ToD2DColor(
+                        t.tabHoverFill, 0.82f)
+                    : ToD2DColor(
+                        t.tabActiveFill, 0.72f);
+            const D2D1_COLOR_F stroke =
+                hovered
+                ? ToD2DColor(
+                    t.tabActiveStroke, 0.92f)
+                : ToD2DColor(
+                    t.tabDefaultStroke, 0.76f);
+            DrawD2DRoundedRectangle(
+                ctx.Get(), modeButton,
+                static_cast<float>(
+                    QuickNavScale(14)) / 2.0f,
+                fill, stroke);
+            const std::wstring_view glyph =
+                snowdesktop::
+                    quick_navigation_rules::
+                        QuickNavigationDesktopViewModeGlyph(
+                            navigationSettings_.
+                                desktopViewMode);
+            DrawD2DText(
+                ctx.Get(),
+                std::wstring(glyph),
+                modeButton,
+                quickNavFaTextFormat_
+                ? quickNavFaTextFormat_.Get()
+                : (faTextFormat_
+                    ? faTextFormat_.Get()
+                    : quickNavTabTextFormat_.Get()),
+                ToD2DColor(t.tabText));
+        }
     }
 
     RECT contentApp = GetQuickNavigationContentRect(overlay);
     ctx->PushAxisAlignedClip(ToD2DRect(contentApp), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (entries.empty() && quickNavigationAppResultIndices_.empty() &&
+    if (quickNavigationInitialJumpOpen_)
+    {
+        RECT titleRect = MakeRect(
+            contentApp.left + QuickNavScale(8),
+            contentApp.top,
+            contentApp.right - QuickNavScale(96),
+            contentApp.top + QuickNavScale(30));
+        DrawD2DTextEllipsis(
+            ctx.Get(),
+            _LW("app.nav.initial_jump_title"),
+            titleRect,
+            quickNavTabTextFormat_.Get(),
+            ToD2DColor(t.headerText),
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        const RECT backRect =
+            GetQuickNavigationInitialJumpBackRect(
+                overlay);
+        const bool backHovered =
+            PtInRect(&backRect,
+                lastMousePoint_) != FALSE;
+        if (backHovered)
+            DrawD2DRoundedRectangle(
+                ctx.Get(), backRect,
+                static_cast<float>(
+                    QuickNavScale(10)) / 2.0f,
+                ToD2DColor(
+                    t.tabHoverFill, 0.72f),
+                ToD2DColor(
+                    t.tabDefaultStroke, 0.72f));
+        DrawD2DTextEllipsis(
+            ctx.Get(),
+            _LW("app.nav.initial_jump_back"),
+            backRect,
+            quickNavTabTextFormat_.Get(),
+            ToD2DColor(t.tabText),
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        std::array<bool, 27> available{};
+        for (const auto& section :
+            contentModel.sections)
+        {
+            if (section.label.size() != 1)
+                continue;
+            available[
+                snowdesktop::
+                    quick_navigation_rules::
+                        InitialJumpBucketIndex(
+                            section.label.front())] =
+                                true;
+        }
+        for (size_t bucketIndex = 0;
+            bucketIndex < available.size();
+            ++bucketIndex)
+        {
+            const RECT cell =
+                GetQuickNavigationInitialJumpCellRect(
+                    overlay, bucketIndex);
+            const bool hovered =
+                PtInRect(
+                    &cell,
+                    lastMousePoint_) != FALSE;
+            const bool selected =
+                bucketIndex ==
+                    quickNavigationInitialJumpSelection_;
+            if (available[bucketIndex] &&
+                (hovered || selected))
+                DrawD2DRoundedRectangle(
+                    ctx.Get(), cell,
+                    static_cast<float>(
+                        QuickNavScale(10)) / 2.0f,
+                    ToD2DColor(
+                        selected
+                        ? t.tabActiveFill
+                        : t.tabHoverFill,
+                        0.78f),
+                    ToD2DColor(
+                        selected
+                        ? t.tabActiveStroke
+                        : t.tabDefaultStroke,
+                        0.76f));
+            const std::wstring label(
+                1,
+                snowdesktop::
+                    quick_navigation_rules::
+                        InitialJumpBucketAt(
+                            bucketIndex));
+            DrawD2DTextEllipsis(
+                ctx.Get(), label, cell,
+                quickNavTabTextFormat_.Get(),
+                ToD2DColor(
+                    available[bucketIndex]
+                    ? t.tabText
+                    : t.emptyText),
+                DWRITE_TEXT_ALIGNMENT_CENTER,
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+    else if (entries.empty() && quickNavigationAppResultIndices_.empty() &&
         (!searching || quickNavigationEverythingResults_.empty()))
     {
         RECT emptyRect = contentApp;
@@ -2997,6 +4190,65 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 desktopHeader.bottom - QuickNavScale(1),
                 desktopHeader.right, desktopHeader.bottom);
             DrawD2DSeparator(ctx.Get(), desktopSep, ToD2DColor(t.headerSeparator));
+        }
+        else if (contentModel.IsSectioned())
+        {
+            for (size_t sectionIndex = 0;
+                sectionIndex <
+                    contentModel.sections.size();
+                ++sectionIndex)
+            {
+                const auto& section =
+                    contentModel.sections[
+                        sectionIndex];
+                const RECT header =
+                    GetQuickNavigationSectionHeaderRect(
+                        overlay, sectionIndex,
+                        contentModel);
+                if (header.bottom <= contentApp.top ||
+                    header.top >= contentApp.bottom)
+                    continue;
+                const bool initialJumpHeader =
+                    quickNavigationActiveWidgetIndex_ ==
+                        static_cast<size_t>(-1) &&
+                    navigationSettings_.desktopViewMode ==
+                        QuickNavigationDesktopViewMode::
+                            Initial;
+                if (initialJumpHeader &&
+                    PtInRect(
+                        &header,
+                        lastMousePoint_) != FALSE)
+                    DrawD2DRoundedRectangle(
+                        ctx.Get(), header,
+                        static_cast<float>(
+                            QuickNavScale(8)) / 2.0f,
+                        ToD2DColor(
+                            t.tabHoverFill, 0.58f),
+                        ToD2DColor(
+                            t.tabDefaultStroke,
+                            0.62f));
+                const std::wstring label = _LFW(
+                    "app.nav.section_header",
+                    section.label,
+                    std::to_wstring(
+                        section.entryCount));
+                DrawD2DTextEllipsis(
+                    ctx.Get(), label, header,
+                    quickNavTabTextFormat_.Get(),
+                    ToD2DColor(t.headerText),
+                    DWRITE_TEXT_ALIGNMENT_LEADING,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                const RECT separator = MakeRect(
+                    header.left,
+                    header.bottom -
+                        QuickNavScale(1),
+                    header.right,
+                    header.bottom);
+                DrawD2DSeparator(
+                    ctx.Get(), separator,
+                    ToD2DColor(
+                        t.headerSeparator));
+            }
         }
 
         // 桌面项直接走 D2D（ctx 为 ID2D1DeviceContext，与桌面共享 d2dDevice_ 缓存）
@@ -3263,7 +4515,8 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
     RECT track{}, thumb{};
     int maxScroll = 0, contentHeight = 0;
-    if (GetQuickNavigationScrollbarGeometry(overlay,
+    if (!quickNavigationInitialJumpOpen_ &&
+        GetQuickNavigationScrollbarGeometry(overlay,
         track, thumb, maxScroll, contentHeight))
     {
         const int trackW = QuickNavScale(5);
@@ -3273,6 +4526,85 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             ? t.scrollThumbHover : t.scrollThumbDefault;
         DrawD2DRoundedRectangle(ctx.Get(), thumb, static_cast<float>(trackW) / 2.0f,
             ToD2DColor(thumbColor), ToD2DColor(thumbColor));
+    }
+
+    const RECT modeButton =
+        GetQuickNavigationViewModeButtonRect(
+            overlay);
+    if (!IsRectEmpty(&modeButton) &&
+        PtInRect(
+            &modeButton,
+            lastMousePoint_) != FALSE)
+    {
+        auto modeLabel = [](
+            QuickNavigationDesktopViewMode mode) {
+            return mode ==
+                QuickNavigationDesktopViewMode::Source
+                ? std::wstring(
+                    _LW("app.nav.view_source"))
+                : (mode ==
+                    QuickNavigationDesktopViewMode::Initial
+                    ? std::wstring(
+                        _LW("app.nav.view_initial"))
+                    : std::wstring(
+                        _LW("app.nav.view_tile")));
+        };
+        const auto nextMode =
+            snowdesktop::quick_navigation_rules::
+                NextQuickNavigationDesktopViewMode(
+                    navigationSettings_.
+                        desktopViewMode);
+        const std::wstring tooltip = _LFW(
+            "app.nav.view_mode_tooltip",
+            modeLabel(
+                navigationSettings_.
+                    desktopViewMode),
+            modeLabel(nextMode));
+        const int tooltipWidth =
+            QuickNavScale(240);
+        const int tooltipHeight =
+            QuickNavScale(28);
+        const int tooltipLeft =
+            std::clamp(
+                static_cast<int>(
+                    modeButton.left),
+                static_cast<int>(
+                    overlay.left +
+                    QuickNavScale(8)),
+                std::max(
+                    static_cast<int>(
+                        overlay.left +
+                        QuickNavScale(8)),
+                    static_cast<int>(
+                        overlay.right -
+                        QuickNavScale(8) -
+                        tooltipWidth)));
+        const RECT tooltipRect = MakeRect(
+            tooltipLeft,
+            modeButton.bottom +
+                QuickNavScale(4),
+            tooltipLeft + tooltipWidth,
+            modeButton.bottom +
+                QuickNavScale(4) +
+                tooltipHeight);
+        DrawD2DRoundedRectangle(
+            ctx.Get(), tooltipRect,
+            static_cast<float>(
+                QuickNavScale(10)) / 2.0f,
+            t.popupBg,
+            t.popupBorder);
+        RECT tooltipTextRect = tooltipRect;
+        tooltipTextRect.left +=
+            QuickNavScale(8);
+        tooltipTextRect.right -=
+            QuickNavScale(8);
+        DrawD2DTextEllipsis(
+            ctx.Get(), tooltip,
+            tooltipTextRect,
+            quickNavPathTextFormat_.Get(),
+            t.popupTitle,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -3309,6 +4641,23 @@ inline void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
  */
 inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    // Shell context menus send owner-draw and submenu messages to the
+    // TrackPopupMenu owner. Quick Navigation owns menus opened from its
+    // entries so it can stay active while the menu is visible.
+    if (activeContextMenu3_)
+    {
+        LRESULT result = 0;
+        if (SUCCEEDED(activeContextMenu3_->
+                HandleMenuMsg2(msg, wp, lp, &result)))
+            return result;
+    }
+    else if (activeContextMenu2_)
+    {
+        if (SUCCEEDED(activeContextMenu2_->
+                HandleMenuMsg(msg, wp, lp)))
+            return 0;
+    }
+
     switch (msg)
     {
     case WM_PAINT:
@@ -3338,7 +4687,8 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
             const int trackW = QuickNavScale(5);
             RECT scrollCol = MakeRect(content.right - trackW - QuickNavScale(4), content.top,
                 content.right, content.bottom);
-            if (PtInRect(&scrollCol, appPoint))
+            if (!quickNavigationInitialJumpOpen_ &&
+                PtInRect(&scrollCol, appPoint))
             {
                 RECT track{}, thumb{};
                 int maxScroll = 0, contentHeight = 0;
@@ -3377,10 +4727,28 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
         {
             RECT overlay = quickNavigationRect_;
             std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
+            RECT tabs = GetQuickNavigationTabsRect(overlay);
+            const int gap = QuickNavScale(8);
+            const int sepGap = QuickNavScale(6);
+            const int fixedWidth = quickNavTabWidths_.size() >= 2
+                ? quickNavTabWidths_[0] + gap + quickNavTabWidths_[1]
+                : 0;
+            const int scrollPad = sepGap + QuickNavScale(1) + gap;
+            const int tabsStart =
+                GetQuickNavigationTabsStart(
+                    overlay);
+            RECT scrollHitBounds = MakeRect(
+                tabsStart + fixedWidth +
+                    scrollPad,
+                tabs.top,
+                tabs.right,
+                tabs.bottom);
             for (size_t tab = 2; tab < ci.size() + 2; ++tab)
             {
                 RECT tabRect = GetQuickNavigationTabRect(overlay, tab);
-                if (PtInRect(&tabRect, appPoint))
+                RECT visibleTabRect{};
+                if (IntersectRect(&visibleTabRect, &tabRect, &scrollHitBounds) &&
+                    PtInRect(&visibleTabRect, appPoint))
                 {
                     quickNavTabDragIndex_ = tab;
                     quickNavTabDragStartPoint_ = appPoint;
@@ -3484,7 +4852,8 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
             const int trackW = QuickNavScale(5);
             RECT scrollCol = MakeRect(content.right - trackW - QuickNavScale(4), content.top,
                 content.right, content.bottom);
-            if (PtInRect(&scrollCol, appPoint))
+            if (!quickNavigationInitialJumpOpen_ &&
+                PtInRect(&scrollCol, appPoint))
             {
                 if (GetQuickNavigationContentHeight(quickNavigationRect_) >
                     static_cast<int>(content.bottom - content.top))
@@ -3547,6 +4916,7 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
                         navTabOrder_.insert(navTabOrder_.begin() + dstIdx, id);
                         quickNavigationActiveWidgetIndex_ = ci[srcIdx];
                         quickNavigationScrollOffset_ = 0;
+                        quickNavigationInitialJumpOpen_ = false;
                         SaveLayoutSlots();
                     }
                 }
@@ -3558,6 +4928,7 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
                 {
                     quickNavigationActiveWidgetIndex_ = ci[dragTab - 2];
                     quickNavigationScrollOffset_ = 0;
+                    quickNavigationInitialJumpOpen_ = false;
                 }
             }
 
@@ -3612,6 +4983,8 @@ inline LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPA
         {
             const HWND activatedWindow = reinterpret_cast<HWND>(lp);
             if (activatedWindow == quickNavigationSearchEdit_ ||
+                (renamingQuickNavigationItem_ &&
+                    activatedWindow == renameEdit_) ||
                 quickNavBackdropCompositor_.IsBackdropWindow(activatedWindow))
                 return 0;
             if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
@@ -3666,6 +5039,10 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
 
     if (message == WM_KEYDOWN && wParam == VK_ESCAPE)
     {
+        if (app->
+            HandleQuickNavigationInitialJumpKeyboardInput(
+                wParam))
+            return 0;
         app->CloseQuickNavigation();
         return 0;
     }

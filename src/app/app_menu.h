@@ -481,6 +481,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (widgetMenu)
     {
         AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, _LW("app.menu.collection"));
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionGroupWidget, _LW("app.menu.collection_group"));
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddFileGroupWidget, _LW("app.menu.file_group"));
         AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, _LW("app.menu.file_categories"));
         AppendMenuW(widgetMenu, MF_STRING, kContextAddFolderMappingWidget, _LW("app.menu.folder_mapping"));
         if (!luaWidgets.empty())
@@ -611,6 +613,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu), L"");
         SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget, L"");
+        SetMenuItemIcon(widgetMenu, kContextAddCollectionGroupWidget, L"");
+        SetMenuItemIcon(widgetMenu, kContextAddFileGroupWidget, L"");
         SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, L"");
         SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, L"");
     }
@@ -695,6 +699,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextPinFirstPage: ToggleFirstPagePin(screenPoint); break;
     case kContextPinLastPage:  ToggleLastPagePin(screenPoint);  break;
     case kContextAddCollectionWidget: AddCollectionWidgetAt(screenPoint); break;
+    case kContextAddCollectionGroupWidget: AddCollectionGroupWidgetAt(screenPoint); break;
+    case kContextAddFileGroupWidget: AddFileGroupWidgetAt(screenPoint); break;
     case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;
     case kContextAddFolderMappingWidget: AddFolderMappingWidgetAt(screenPoint); break;
     case kContextNewMenu:
@@ -811,7 +817,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
  * @param itemIndex   当前右键点击的桌面项索引。
  */
 inline void DesktopApp::ShowItemContextMenu(
-    POINT screenPoint, int itemIndex, bool dockFrequentItem)
+    POINT screenPoint, int itemIndex, bool dockFrequentItem,
+    bool keepQuickNavigationOpen)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
     ClearMenuIcons();
@@ -820,15 +827,22 @@ inline void DesktopApp::ShowItemContextMenu(
     for (const auto& item : items_) if (item.selected) ++selectedCount;
 
     bool canFile = !items_[itemIndex].desktopIconClsid.empty() ? false : true;
+    std::wstring itemPath;
     if (canFile)
     {
         wchar_t path[MAX_PATH]{};
         if (!SHGetPathFromIDListW(items_[itemIndex].absolutePidl.get(), path))
             canFile = false;
+        else
+            itemPath = path;
     }
+    const bool canReveal = selectedCount == 1 && canFile &&
+        snowdesktop::item_location::CanReveal(itemPath);
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
+    AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
     AppendMenuW(menu, selectedCount == 1 && canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextRenameCommand, _LW("app.menu.rename"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCutCommand, _LW("app.menu.cut"));
@@ -844,6 +858,7 @@ inline void DesktopApp::ShowItemContextMenu(
     }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
+    SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
     SetMenuItemIcon(menu, kContextRenameCommand, L"");
     SetMenuItemIcon(menu, kContextCutCommand, L"");
     SetMenuItemIcon(menu, kContextCopyCommand, L"");
@@ -852,10 +867,16 @@ inline void DesktopApp::ShowItemContextMenu(
     if (dockFrequentItem)
         SetMenuItemIcon(menu, kContextDockRemoveFrequentItem, L"");
 
-    SetForegroundWindow(hwnd_);
+    HWND menuOwner = keepQuickNavigationOpen &&
+        quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_
+        : hwnd_;
+    SetForegroundWindow(menuOwner);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
-    FocusDesktopInputWindow();
+        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    if (!keepQuickNavigationOpen)
+        FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
@@ -871,8 +892,15 @@ inline void DesktopApp::ShowItemContextMenu(
         }
         break;
     }
+    case kContextRevealLocationCommand:
+        snowdesktop::item_location::Reveal(hwnd_, itemPath);
+        break;
     case kContextRenameCommand:
-        BeginRenameSelected();
+        if (keepQuickNavigationOpen)
+            BeginQuickNavigationDesktopItemRename(
+                static_cast<size_t>(itemIndex));
+        else
+            BeginRenameSelected();
         break;
     case kContextCutCommand:
     case kContextCopyCommand:
@@ -953,7 +981,9 @@ inline void DesktopApp::ShowItemContextMenu(
         break;
     }
     case kContextMoreCommand:
-        ShowShellContextMenu(screenPoint, itemIndex);
+        ShowShellContextMenu(
+            screenPoint, itemIndex,
+            keepQuickNavigationOpen);
         break;
     case kContextDockRemoveFrequentItem:
     {
@@ -980,7 +1010,9 @@ inline void DesktopApp::ShowItemContextMenu(
  * @param screenPoint 菜单弹出的屏幕坐标。
  * @param itemIndex   当前右键点击的项索引（用于确定 PIDL 列表的锚点）。
  */
-inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
+inline void DesktopApp::ShowShellContextMenu(
+    POINT screenPoint, int itemIndex,
+    bool keepQuickNavigationOpen)
 {
     std::vector<LPCITEMIDLIST> pidls;
     if (itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size())
@@ -1007,10 +1039,16 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
     ctxMenu.As(&activeContextMenu2_);
     ctxMenu.As(&activeContextMenu3_);
 
-    SetForegroundWindow(hwnd_);
+    HWND menuOwner = keepQuickNavigationOpen &&
+        quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_
+        : hwnd_;
+    SetForegroundWindow(menuOwner);
     UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
-    FocusDesktopInputWindow();
+        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    if (!keepQuickNavigationOpen)
+        FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -1031,7 +1069,12 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
         {
             DestroyMenu(menu);
             RestoreDesktopWindowLayer();
-            BeginRenameSelected();
+            if (keepQuickNavigationOpen)
+                BeginQuickNavigationDesktopItemRename(
+                    static_cast<size_t>(
+                        itemIndex));
+            else
+                BeginRenameSelected();
             return;
         }
 

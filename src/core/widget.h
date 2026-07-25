@@ -24,12 +24,14 @@
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <memory>
 
 struct DesktopWidget;
+struct CategorySettings;
 class DesktopApp;
 struct GridPage;
 
@@ -47,8 +49,9 @@ enum class WidgetHit {
     ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
     DateHeaderToggleBtn, ///< FileCategories：日期表头开关按钮
     OpenFolderBtn,      ///< FolderMapping：打开源文件夹按钮
-    CategoryTab,        ///< FileCategories：分类标签页
-    SearchBox,          ///< FileCategories：搜索框
+    SourceTab,          ///< FileGroup：来源组件标签
+    CategoryTab,        ///< FileCategories / FolderMapping：分类标签页
+    SearchBox,          ///< FileCategories / FolderMapping：搜索框
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
 };
 
@@ -185,6 +188,8 @@ public:
     virtual int  GetTotalContentHeight() const { return 0; }
     virtual int  GetVisibleContentHeight() const { return 0; }
     virtual void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const;
+    void SetHostedFrame(const RECT* frame);
+    bool IsHosted() const { return hostedFrameActive_; }
 
 protected:
     mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
@@ -194,6 +199,8 @@ protected:
     Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> cachedClipGeometry_;
     RECT cachedClipFrame_{ -1, -1, -1, -1 };
     float cachedClipRadius_ = 0.0f;
+    RECT hostedFrame_{};
+    bool hostedFrameActive_ = false;
 
     /** @brief 获取或创建圆角矩形裁剪几何体，frame/radius 不变时跨帧复用。 */
     ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
@@ -229,11 +236,78 @@ public:
     void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
         const std::wstring& name, bool isDir, bool showLabel = true) const;
 
+    const std::wstring& GetSearchText() const { return searchText_; }
+    void SetSearchText(const std::wstring& text) { searchText_ = text; searchCursorPos_ = searchText_.size(); InvalidateSlots(); }
+    void AppendSearchChar(wchar_t ch) { searchText_.insert(searchCursorPos_, 1, ch); ++searchCursorPos_; InvalidateSlots(); }
+    void BackspaceSearchText() { if (searchCursorPos_ > 0) { searchText_.erase(searchCursorPos_ - 1, 1); --searchCursorPos_; InvalidateSlots(); } }
+    void DeleteSearchText() { if (searchCursorPos_ < searchText_.size()) { searchText_.erase(searchCursorPos_, 1); InvalidateSlots(); } }
+    void ClearSearchText() { searchText_.clear(); searchCursorPos_ = 0; searchFocused_ = false; InvalidateSlots(); }
+    bool IsSearchFocused() const { return searchFocused_; }
+    void SetSearchFocused(bool focused) { searchFocused_ = focused; if (focused) searchCursorPos_ = searchText_.size(); }
+    size_t GetSearchCursorPosition() const { return searchCursorPos_; }
+    void SetSearchCursorPosition(size_t position)
+    {
+        searchCursorPos_ = std::min(position, searchText_.size());
+    }
+    void MoveCursorLeft() { if (searchCursorPos_ > 0) --searchCursorPos_; }
+    void MoveCursorRight() { if (searchCursorPos_ < searchText_.size()) ++searchCursorPos_; }
+    void MoveCursorHome() { searchCursorPos_ = 0; }
+    void MoveCursorEnd() { searchCursorPos_ = searchText_.size(); }
+    virtual RECT GetSearchBoxRect() const { return {}; }
+    bool IsSearchActive() const { return !searchText_.empty(); }
+    void DrawSearchBox(ID2D1DeviceContext* context);
+    /** @brief 三类分类滚动组件共用的搜索框布局。 */
+    RECT GetCategorizedSearchBoxRect(bool visible) const;
+    /** @brief 三类分类滚动组件共用的标签区布局。 */
+    RECT GetCategorizedTabsRect(bool visible) const;
+    /** @brief 三类分类滚动组件共用的标签字号。 */
+    float GetCategorizedTabFontSize() const;
+    /** @brief 按共同字号测量并分配标签宽度。 */
+    std::vector<int> BuildCategorizedTabWidths(
+        const std::vector<std::wstring>& labels,
+        int availableWidth) const;
+    /** @brief 绘制统一样式的单个分类标签。 */
+    void DrawCategorizedTab(
+        ID2D1DeviceContext* context,
+        RECT tabRect,
+        const std::wstring& label,
+        bool active,
+        bool hovered) const;
+    void SetCategorizedHostOptions(
+        int tabRowOffset,
+        bool searchVisibilityOverrideActive,
+        bool searchVisible,
+        bool tabsVisibilityOverrideActive,
+        bool tabsVisible,
+        bool searchAllCategories);
+    void ClearCategorizedHostOptions();
+    bool SearchAllCategories() const
+    {
+        return categorizedSearchAllCategories_;
+    }
+    int GetCategorizedTabRowOffset() const
+    {
+        return categorizedTabRowOffset_;
+    }
+    virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
+    virtual bool TryScrollTabs(POINT pt, int delta) { (void)pt; (void)delta; return false; }
+
     BarStyle GetInsertionStyle() const override;
+
+protected:
+    std::wstring searchText_;
+    size_t searchCursorPos_ = 0;
+    bool searchFocused_ = false;
 
 private:
     void DrawListItemTitle(ID2D1DeviceContext* context, RECT cell,
         RECT iconRect, const std::wstring& title) const;
+    int categorizedTabRowOffset_ = 0;
+    bool categorizedSearchVisibilityOverrideActive_ = false;
+    bool categorizedSearchVisible_ = false;
+    bool categorizedTabsVisibilityOverrideActive_ = false;
+    bool categorizedTabsVisible_ = false;
+    bool categorizedSearchAllCategories_ = false;
 };
 
 /**
@@ -255,6 +329,13 @@ class Collection : public ScrollingItemWidget
 {
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SurfaceForWidgetType(
+                DesktopWidgetType::Collection);
+    }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
@@ -262,7 +343,6 @@ public:
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
-    std::wstring CategoryIdAtPoint(POINT pt) const;
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
     Item* GetMemberItem(size_t idx) const override;
@@ -309,6 +389,13 @@ class FileCategories : public ScrollingItemWidget
 {
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SurfaceForWidgetType(
+                DesktopWidgetType::FileCategories);
+    }
     bool CollectTopLevelDesktopItems();
     bool PruneUncollectableItems();
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
@@ -317,11 +404,9 @@ public:
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     WidgetHit HitTestWidget(POINT pt) const override;
-    std::wstring CategoryIdAtPoint(POINT pt) const;
+    std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool IsPointInTabsRect(POINT pt) const;
-    bool TryScrollTabs(POINT pt, int delta);
-    int MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) const;
-    float GetCategoryTabFontSize() const;
+    bool TryScrollTabs(POINT pt, int delta) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
     void InvalidateCategoryCache();
     std::vector<Item*> GetSelectedItems() const override;
@@ -360,20 +445,7 @@ public:
     const std::vector<std::wstring>& CachedVisibleCategoryIds() const;
     std::wstring CachedActiveCategoryId() const;
 
-    const std::wstring& GetSearchText() const { return searchText_; }
-    void SetSearchText(const std::wstring& text) { searchText_ = text; searchCursorPos_ = searchText_.size(); InvalidateSlots(); }
-    void AppendSearchChar(wchar_t ch) { searchText_.insert(searchCursorPos_, 1, ch); ++searchCursorPos_; InvalidateSlots(); }
-    void BackspaceSearchText() { if (searchCursorPos_ > 0) { searchText_.erase(searchCursorPos_ - 1, 1); --searchCursorPos_; InvalidateSlots(); } }
-    void DeleteSearchText() { if (searchCursorPos_ < searchText_.size()) { searchText_.erase(searchCursorPos_, 1); InvalidateSlots(); } }
-    void ClearSearchText() { searchText_.clear(); searchCursorPos_ = 0; searchFocused_ = false; InvalidateSlots(); }
-    bool IsSearchFocused() const { return searchFocused_; }
-    void SetSearchFocused(bool focused) { searchFocused_ = focused; if (focused) searchCursorPos_ = searchText_.size(); }
-    void MoveCursorLeft() { if (searchCursorPos_ > 0) --searchCursorPos_; }
-    void MoveCursorRight() { if (searchCursorPos_ < searchText_.size()) ++searchCursorPos_; }
-    void MoveCursorHome() { searchCursorPos_ = 0; }
-    void MoveCursorEnd() { searchCursorPos_ = searchText_.size(); }
-    RECT GetSearchBoxRect() const;
-    bool IsSearchActive() const { return !searchText_.empty(); }
+    RECT GetSearchBoxRect() const override;
     const std::vector<std::wstring>& GetSearchResultKeys() const;
 
 private:
@@ -393,9 +465,6 @@ private:
     mutable std::vector<LayoutSegment> layoutCache_;
     mutable std::wstring layoutCacheCategory_;
     mutable bool layoutCacheListMode_ = false;
-    std::wstring searchText_;
-    size_t searchCursorPos_ = 0;
-    bool searchFocused_ = false;
     mutable std::vector<std::wstring> searchResultCache_;
 };
 
@@ -417,6 +486,13 @@ class FolderMapping : public ScrollingItemWidget
 {
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SurfaceForWidgetType(
+                DesktopWidgetType::FolderMapping);
+    }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
@@ -427,6 +503,7 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
@@ -440,6 +517,268 @@ public:
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
+    RECT GetSearchBoxRect() const override;
+    std::wstring CategoryIdAtPoint(POINT pt) const override;
+    bool TryScrollTabs(POINT pt, int delta) override;
+    const std::vector<size_t>& GetVisibleEntryIndices() const;
+    const std::vector<std::wstring>& GetVisibleCategoryIds() const;
+    void InvalidateFilterCache();
+    const CategorySettings& GetCategorySettingsForDisplay() const;
+
+    struct DateLayoutSegment
+    {
+        bool isHeader = false;
+        std::wstring label;
+        size_t firstItemIndex = 0;
+        size_t itemCount = 0;
+        LONG y = 0;
+        LONG height = 0;
+    };
+
+    void EnsureDateLayout() const;
+    const std::vector<DateLayoutSegment>& GetDateLayoutCache() const
+    {
+        return dateLayoutCache_;
+    }
+
+private:
+    void EnsureCategorySnapshot() const;
+    std::wstring CachedActiveCategoryId() const;
+
+    mutable std::vector<std::wstring> categorySnapshotPaths_;
+    mutable std::unordered_map<std::wstring, std::vector<size_t>> entryIndicesByCategory_;
+    mutable std::vector<std::wstring> visibleCategoryIds_;
+    mutable std::vector<size_t> visibleEntryIndices_;
+    mutable std::wstring visibleEntriesCategory_;
+    mutable std::wstring visibleEntriesSearch_;
+    mutable bool visibleEntriesDateHeaders_ = false;
+    mutable bool categorySnapshotValid_ = false;
+    mutable std::vector<DateLayoutSegment> dateLayoutCache_;
+    mutable std::vector<size_t> dateLayoutSource_;
+    mutable bool dateLayoutListMode_ = false;
+};
+
+/**
+ * @brief 集合组中的集合标签项。
+ *
+ * 该适配器不拥有集合数据，只把被收纳的 Collection 组件暴露为可选择、
+ * 可拖拽的列表项。
+ */
+class CollectionGroupEntryItem : public Item
+{
+public:
+    CollectionGroupEntryItem(DesktopWidget* collection, Container* container,
+        DesktopApp* app);
+    std::wstring GetTitle() const override;
+    std::wstring GetPath() const override;
+    HBITMAP GetIconBitmap() const override;
+    RECT GetBounds() const override;
+    void SetBounds(RECT bounds) override;
+    bool IsSelected() const override;
+    void SetSelected(bool selected) override;
+    Container* GetContainer() const override;
+    void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    ComPtr<IDataObject> CreateDataObject() override;
+    const std::wstring& GetCollectionId() const;
+
+private:
+    DesktopWidget* collection_ = nullptr;
+    Container* container_ = nullptr;
+    DesktopApp* app_ = nullptr;
+    RECT bounds_{};
+};
+
+/**
+ * @brief 集合组组件，以可拖拽标签和可滚动图标区组织多个 Collection 组件。
+ */
+class CollectionGroup : public ScrollingItemWidget
+{
+public:
+    using ScrollingItemWidget::ScrollingItemWidget;
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SurfaceForWidgetType(
+                DesktopWidgetType::CollectionGroup);
+    }
+
+    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
+    void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
+        Slot* targetSlot, HitRegion region, int mods) override;
+    void DrawContent(ID2D1DeviceContext* context, RECT body) override;
+    void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    WidgetHit HitTestWidget(POINT pt) const override;
+    HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
+    void DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot,
+        HitRegion region) override;
+    std::wstring GetDragHint(Slot* slot, HitRegion region,
+        const std::vector<Item*>& sourceItems, Container* origin, int mods) const override;
+    std::vector<Item*> GetSelectedItems() const override;
+    Item* GetMemberItem(size_t idx) const override;
+    std::vector<size_t> GetSelectedMemberIndices() const override;
+    void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
+    size_t GetSlotCount() const override;
+    int GetItemHeight() const override;
+    int GetItemWidth() const override;
+    Item* GetSlotItem(size_t idx) const override;
+    bool SingleColumn() const override;
+    bool NeedsShellReloadAfterDrop() const override { return false; }
+    int GetMaxScrollOffset() const override;
+    int GetTotalContentHeight() const override;
+    int GetVisibleContentHeight() const override;
+    RECT GetContentViewportRect() const override;
+    RECT GetSearchBoxRect() const override;
+    std::wstring CategoryIdAtPoint(POINT pt) const override;
+    bool TryScrollTabs(POINT pt, int delta) override;
+    void ApplyMarqueeSelection(const RECT& contentRect) override;
+    const std::vector<std::wstring>& GetVisibleCollectionIds() const;
+    const std::vector<std::wstring>& GetVisibleItemKeys() const;
+    std::wstring GetActiveCollectionId() const;
+    CollectionGroupEntryItem* GetTabItemAtPoint(POINT pt) const;
+    RECT GetTabRectById(const std::wstring& collectionId) const;
+    void EnsureTabVisible(size_t tabIndex);
+    void InvalidateFilterCache();
+
+private:
+    mutable std::vector<std::wstring> visibleCollectionIds_;
+    mutable std::vector<std::wstring> visibleItemKeys_;
+    mutable std::wstring visibleSearchText_;
+    mutable std::wstring visibleCategoryId_;
+    mutable std::unique_ptr<CollectionGroupEntryItem> tabItemCache_;
+    mutable std::unique_ptr<Slot> tabDropSlot_;
+};
+
+/**
+ * @brief 文件组中的来源组件标签项。
+ *
+ * 标签只引用 FileCategories 或 FolderMapping 组件，不拥有或复制文件数据。
+ */
+class FileGroupEntryItem : public Item
+{
+public:
+    FileGroupEntryItem(DesktopWidget* child, Container* container,
+        DesktopApp* app);
+    std::wstring GetTitle() const override;
+    std::wstring GetPath() const override;
+    HBITMAP GetIconBitmap() const override;
+    RECT GetBounds() const override;
+    void SetBounds(RECT bounds) override;
+    bool IsSelected() const override;
+    void SetSelected(bool selected) override;
+    Container* GetContainer() const override;
+    void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    ComPtr<IDataObject> CreateDataObject() override;
+    const std::wstring& GetChildWidgetId() const;
+
+private:
+    DesktopWidget* child_ = nullptr;
+    Container* container_ = nullptr;
+    DesktopApp* app_ = nullptr;
+    RECT bounds_{};
+};
+
+/**
+ * @brief 文件组组件，以来源标签托管桌面文件分类与映射文件夹。
+ */
+class FileGroup : public ScrollingItemWidget
+{
+public:
+    using ScrollingItemWidget::ScrollingItemWidget;
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SurfaceForWidgetType(
+                DesktopWidgetType::FileGroup);
+    }
+
+    std::vector<std::unique_ptr<Slot>> BuildSlots() override;
+    void OnItemsDropped(const std::vector<Item*>& sourceItems,
+        Container* origin, Slot* targetSlot, HitRegion region,
+        int mods) override;
+    void DrawContent(ID2D1DeviceContext* context, RECT body) override;
+    void DrawButtons(ID2D1DeviceContext* context, RECT handleRect,
+        bool hovered) override;
+    WidgetHit HitTestWidget(POINT pt) const override;
+    HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
+    void DrawDropPreview(ID2D1DeviceContext* context, Slot* slot,
+        HitRegion region) override;
+    std::wstring GetDragHint(Slot* slot, HitRegion region,
+        const std::vector<Item*>& sourceItems, Container* origin,
+        int mods) const override;
+    std::vector<Item*> GetSelectedItems() const override;
+    Item* GetMemberItem(size_t idx) const override;
+    std::vector<size_t> GetSelectedMemberIndices() const override;
+    void ReorderMembers(const std::vector<size_t>& indices,
+        size_t insertBefore) override;
+    size_t GetDropInsertIndex(Slot* targetSlot,
+        HitRegion region) const override;
+    size_t GetSlotCount() const override;
+    int GetItemHeight() const override;
+    int GetItemWidth() const override;
+    Item* GetSlotItem(size_t idx) const override;
+    bool SingleColumn() const override;
+    bool NeedsShellReloadAfterDrop() const override { return false; }
+    int GetMaxScrollOffset() const override;
+    int GetTotalContentHeight() const override;
+    int GetVisibleContentHeight() const override;
+    RECT GetContentViewportRect() const override;
+    RECT GetSearchBoxRect() const override;
+    std::wstring CategoryIdAtPoint(POINT pt) const override;
+    bool TryScrollTabs(POINT pt, int delta) override;
+    void ApplyMarqueeSelection(const RECT& contentRect) override;
+
+    const std::vector<std::wstring>& GetVisibleSourceIds() const;
+    std::wstring GetActiveSourceId() const;
+    std::wstring SourceIdAtPoint(POINT pt) const;
+    FileGroupEntryItem* GetSourceTabItemAtPoint(POINT pt) const;
+    RECT GetSourceTabRectById(const std::wstring& childId) const;
+    void EnsureSourceTabVisible(size_t tabIndex);
+    void InvalidateHostedView();
+    ScrollingItemWidget* GetActiveSourceContainer() const;
+    ScrollingItemWidget* GetSourceContainerById(
+        const std::wstring& childId) const;
+    std::vector<Item*> GetHostedSelectedItemsForSource(
+        const std::wstring& childId) const;
+    std::vector<std::wstring> GetHostedVisibleCategoryIds() const;
+    std::vector<std::wstring> GetHostedVisibleItemKeys() const;
+    std::vector<size_t> GetHostedVisibleFolderIndices() const;
+    bool IsGroupSearchActive() const;
+    ScrollingItemWidget* GetSourceContainerForItem(
+        const Item* item) const;
+
+private:
+    struct SearchResultRef
+    {
+        std::wstring sourceId;
+        bool folderMapping = false;
+        std::wstring desktopKey;
+        size_t folderEntryIndex = static_cast<size_t>(-1);
+    };
+
+    const std::vector<SearchResultRef>&
+        GetGroupSearchResults() const;
+    Item* CreateGroupSearchItem(
+        size_t index, bool dragCache) const;
+
+    mutable std::vector<std::wstring> visibleSourceIds_;
+    mutable std::unique_ptr<FileGroupEntryItem> sourceTabItemCache_;
+    mutable std::unique_ptr<Slot> sourceTabDropSlot_;
+    mutable std::unique_ptr<Slot> hostedDropSlot_;
+    mutable std::unique_ptr<Item> hostedDropItem_;
+    mutable RECT dropPreviewBounds_{};
+    mutable size_t dropPreviewIndex_ = 0;
+    mutable bool dropPreviewValid_ = false;
+    mutable bool dropPreviewSourceTab_ = false;
+    mutable std::vector<SearchResultRef> groupSearchResults_;
+    mutable std::wstring groupSearchCacheQuery_;
+    mutable bool groupSearchCacheValid_ = false;
+    mutable std::unordered_map<
+        std::wstring,
+        std::unique_ptr<ScrollingItemWidget>>
+        hostedSourceCache_;
 };
 
 /**
@@ -455,6 +794,13 @@ class GuideWidget : public WidgetContainer
 public:
     using WidgetContainer::WidgetContainer;
 
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SurfaceForWidgetType(
+                DesktopWidgetType::Guide);
+    }
     size_t GetSlotCount() const override { return 0; }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override { return {}; }
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;

@@ -10,6 +10,7 @@
 #pragma once
 
 #include "drop_model.h"
+#include "container.h"
 
 #include <cstdint>
 #include <utility>
@@ -59,10 +60,20 @@ public:
     Container* TargetContainer() const { return targetContainer_; }
 
     /** @brief 获取目标插槽指针 */
-    Slot* TargetSlot() const { return targetSlot_; }
+    Slot* TargetSlot() const
+    {
+        return TargetSlotGenerationIsCurrent()
+            ? targetSlot_
+            : nullptr;
+    }
 
     /** @brief 获取目标命中区域 */
-    HitRegion TargetRegion() const { return targetRegion_; }
+    HitRegion TargetRegion() const
+    {
+        return TargetSlotGenerationIsCurrent()
+            ? targetRegion_
+            : HitRegion::None;
+    }
 
     /** @brief 获取当前静态场景修订版本号，用于缓存一致性判断 */
     std::uint64_t StaticSceneRevision() const { return staticSceneRevision_; }
@@ -89,6 +100,7 @@ public:
         action_ = DropAction::Move;
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
+        targetSlotGeneration_ = 0;
         targetRegion_ = HitRegion::None;
         InvalidateStaticScene();
     }
@@ -139,6 +151,10 @@ public:
     {
         targetContainer_ = targetContainer;
         targetSlot_ = targetSlot;
+        targetSlotGeneration_ =
+            targetContainer && targetSlot
+                ? targetContainer->GetSlotGeneration()
+                : 0;
         targetRegion_ = targetRegion;
     }
 
@@ -157,6 +173,7 @@ public:
         sourceList_ = std::move(sourceList);
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
+        targetSlotGeneration_ = 0;
         targetRegion_ = HitRegion::None;
         InvalidateStaticScene();
     }
@@ -178,6 +195,7 @@ public:
             entry.item = nullptr;
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
+        targetSlotGeneration_ = 0;
         targetRegion_ = HitRegion::None;
         InvalidateStaticScene();
     }
@@ -221,6 +239,7 @@ public:
         sourceList_ = {};
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
+        targetSlotGeneration_ = 0;
         targetRegion_ = HitRegion::None;
         action_ = DropAction::Move;
         mouseDownPoint_ = {};
@@ -229,6 +248,15 @@ public:
     }
 
 private:
+    bool TargetSlotGenerationIsCurrent() const
+    {
+        if (!targetSlot_)
+            return true;
+        return targetContainer_ &&
+            targetContainer_->GetSlotGeneration() ==
+                targetSlotGeneration_;
+    }
+
     bool active_ = false;                    /**< 拖拽会话是否处于激活状态 */
     Container* source_ = nullptr;            /**< 拖拽源容器指针 */
     std::vector<Item*> items_;              /**< 被拖拽的 Item 指针列表 */
@@ -238,6 +266,7 @@ private:
     DropAction action_ = DropAction::Move;   /**< 当前拖拽动作类型，默认为 Move */
     Container* targetContainer_ = nullptr;   /**< 目标容器指针 */
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */
+    std::uint64_t targetSlotGeneration_ = 0; /**< 目标插槽所属缓存代次 */
     HitRegion targetRegion_ = HitRegion::None; /**< 目标命中区域类型 */
     std::uint64_t staticSceneRevision_ = 1;  /**< 静态场景修订版本号，用于拖拽缓存一致性判断 */
 };

@@ -708,6 +708,7 @@ static int lua_DrawText(lua_State* L)
     bool bold = lua_toboolean(L, 7) != 0;
     bool singleLine = lua_toboolean(L, 8) != 0;
     float requestedHeight = static_cast<float>(luaL_optnumber(L, 9, 0));
+    float alpha = static_cast<float>(luaL_optnumber(L, 10, 1.0));
 
     auto* s = GetD2D(L);
     if (!s || !s->ctx || !s->dwrite) return 0;
@@ -723,7 +724,7 @@ static int lua_DrawText(lua_State* L)
     std::wstring wtext(wlen, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext.data(), wlen);
 
-    ID2D1SolidColorBrush* brush = GetCachedBrush(s, color);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(s, color, alpha);
     if (!brush) return 0;
 
     float bx = x + s->widgetRect.left;
