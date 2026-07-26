@@ -292,6 +292,32 @@ void TestFileGroupRules()
         "each tab row must clamp its own scroll offset");
 
     Check(
+        rules::ResolveCategorizedContentTop(
+            108, 500,
+            false, 0,
+            true, 142,
+            1, 38,
+            8, 4) == 184,
+        "hidden inner categories must reserve the search box "
+        "and the file-group source row");
+    Check(
+        rules::ResolveCategorizedContentTop(
+            108, 500,
+            false, 180,
+            true, 142,
+            0, 38,
+            8, 4) == 146,
+        "active search must skip the category row");
+    Check(
+        rules::ResolveCategorizedContentTop(
+            108, 500,
+            true, 180,
+            true, 142,
+            1, 38,
+            8, 4) == 188,
+        "visible inner categories already include all preceding rows");
+
+    Check(
         rules::SelectDragSource(true, true) ==
             rules::DragSourceSelection::Captured &&
         rules::SelectDragSource(true, false) ==

@@ -272,6 +272,33 @@ constexpr int ClampIndependentTabScroll(
         std::max(0, contentWidth - viewportWidth));
 }
 
+/**
+ * @brief 计算分类组件内容区顶部，依次避让可见标签、搜索框和宿主标签行。
+ *
+ * 标签矩形已包含搜索框与宿主行偏移，因此可见时直接以标签底部为准。
+ * 标签隐藏时，仍需从搜索框底部继续预留宿主标签行，避免内容与外层
+ * 文件组标签重叠。
+ */
+constexpr int ResolveCategorizedContentTop(
+    int bodyTop, int bodyBottom,
+    bool tabsVisible, int tabsBottom,
+    bool searchVisible, int searchBottom,
+    int hostedTabRows, int tabRowStride,
+    int tabsGap, int searchGap)
+{
+    int contentTop = bodyTop;
+    if (tabsVisible)
+        contentTop = tabsBottom + tabsGap;
+    else if (searchVisible)
+        contentTop = searchBottom + searchGap +
+            std::max(0, hostedTabRows) *
+                std::max(0, tabRowStride);
+    else
+        contentTop += std::max(0, hostedTabRows) *
+            std::max(0, tabRowStride);
+    return std::clamp(contentTop, bodyTop, bodyBottom);
+}
+
 enum class DragSourceSelection
 {
     Captured,

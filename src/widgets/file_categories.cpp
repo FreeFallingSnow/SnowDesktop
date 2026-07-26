@@ -512,26 +512,20 @@ static RECT FileCategoryContentRect(FileCategories* widget)
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
     if (IsRectEmptyRect(body)) return {};
-    if (widget->IsSearchActive())
-    {
-        RECT search = widget->GetSearchBoxRect();
-        if (!IsRectEmptyRect(search))
-            body.top = std::min<LONG>(
-                body.bottom,
-                search.bottom + widget->Cu(4.0f) +
-                    widget->GetCategorizedTabRowOffset() *
-                        widget->Cu(38.0f));
-        return body;
-    }
     RECT tabs = FileCategoryTabsRect(widget);
-    if (!IsRectEmptyRect(tabs))
-        body.top = std::min<LONG>(body.bottom, tabs.bottom + widget->Cu(8.0f));
-    else if (widget->GetCategorizedTabRowOffset() > 0)
-        body.top = std::min<LONG>(
-            body.bottom,
-            body.top +
-                widget->GetCategorizedTabRowOffset() *
-                    widget->Cu(38.0f));
+    RECT search = widget->GetSearchBoxRect();
+    body.top = static_cast<LONG>(
+        snowdesktop::collection_group_rules::
+            ResolveCategorizedContentTop(
+                body.top, body.bottom,
+                !widget->IsSearchActive() &&
+                    !IsRectEmptyRect(tabs),
+                tabs.bottom,
+                !IsRectEmptyRect(search), search.bottom,
+                widget->GetCategorizedTabRowOffset(),
+                widget->Cu(38.0f),
+                widget->Cu(8.0f),
+                widget->Cu(4.0f)));
     return body;
 }
 
