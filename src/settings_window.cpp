@@ -1372,6 +1372,123 @@ void SettingsWindow::DrawDockPage()
 
     ImGui::BeginDisabled(!dockEnabled_);
     ImGui::Spacing();
+    if (DrawSettingCheckbox(_L("app.dock.floating_shortcut_mode"),
+        "##DockFloatingShortcutMode",
+        &dockSettings_.floatingShortcutMode))
+        markChanged(true);
+    if (dockSettings_.floatingShortcutMode)
+        ImGui::TextDisabled("%s", _L("app.dock.floating_shortcut_hint"));
+
+    ImGui::BeginDisabled(
+        !dockSettings_.floatingShortcutMode);
+    ImGui::Spacing();
+    ImGui::SeparatorText(
+        _L("app.dock.floating_triggers"));
+
+    bool floatingCtrl =
+        (dockSettings_.floatingHotkeyModifiers &
+            MOD_CONTROL) != 0;
+    bool floatingAlt =
+        (dockSettings_.floatingHotkeyModifiers &
+            MOD_ALT) != 0;
+    bool floatingShift =
+        (dockSettings_.floatingHotkeyModifiers &
+            MOD_SHIFT) != 0;
+    bool floatingWin =
+        (dockSettings_.floatingHotkeyModifiers &
+            MOD_WIN) != 0;
+    bool floatingModifiersChanged = false;
+    const float modifierWidth = 244.0f * dpiScale_;
+    BeginSettingRow(
+        _L("app.settings.modifier_keys"),
+        modifierWidth);
+    floatingModifiersChanged |=
+        ImGui::Checkbox(
+            "Ctrl##FloatingDockHotkey", &floatingCtrl);
+    ImGui::SameLine();
+    floatingModifiersChanged |=
+        ImGui::Checkbox(
+            "Alt##FloatingDockHotkey", &floatingAlt);
+    ImGui::SameLine();
+    floatingModifiersChanged |=
+        ImGui::Checkbox(
+            "Shift##FloatingDockHotkey", &floatingShift);
+    ImGui::SameLine();
+    floatingModifiersChanged |=
+        ImGui::Checkbox(
+            "Win##FloatingDockHotkey", &floatingWin);
+    if (floatingModifiersChanged)
+    {
+        dockSettings_.floatingHotkeyModifiers = 0;
+        if (floatingCtrl)
+            dockSettings_.floatingHotkeyModifiers |=
+                MOD_CONTROL;
+        if (floatingAlt)
+            dockSettings_.floatingHotkeyModifiers |=
+                MOD_ALT;
+        if (floatingShift)
+            dockSettings_.floatingHotkeyModifiers |=
+                MOD_SHIFT;
+        if (floatingWin)
+            dockSettings_.floatingHotkeyModifiers |=
+                MOD_WIN;
+        markChanged(true);
+    }
+
+    size_t floatingOptionCount = 0;
+    const HotkeyOption* floatingOptions =
+        NavigationHotkeyOptions(floatingOptionCount);
+    int floatingSelected =
+        NavigationHotkeyOptionIndex(
+            dockSettings_.floatingHotkeyVirtualKey);
+    BeginSettingRow(
+        _L("app.settings.primary_key"), controlW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo(
+            "##FloatingDockMainKey",
+            &floatingSelected,
+            [](void* data, int index,
+                const char** outText) {
+                auto* options =
+                    static_cast<const HotkeyOption*>(data);
+                *outText = options[index].label;
+                return true;
+            },
+            const_cast<HotkeyOption*>(floatingOptions),
+            static_cast<int>(floatingOptionCount)))
+    {
+        dockSettings_.floatingHotkeyVirtualKey =
+            floatingOptions[floatingSelected].virtualKey;
+        markChanged(true);
+    }
+
+    NavigationSettings floatingHotkeyText;
+    floatingHotkeyText.modifiers =
+        dockSettings_.floatingHotkeyModifiers;
+    floatingHotkeyText.virtualKey =
+        dockSettings_.floatingHotkeyVirtualKey;
+    const std::string floatingHotkeyTextUtf8 =
+        WideToUtf8(
+            FormatNavigationHotkey(
+                floatingHotkeyText));
+    DrawSettingValue(
+        _L("app.settings.current_hotkey"),
+        floatingHotkeyTextUtf8.c_str());
+
+    if (DrawSettingCheckbox(
+            _L("app.dock.floating_edge_swipe"),
+            "##DockFloatingEdgeSwipe",
+            &dockSettings_.floatingEdgeSwipeEnabled))
+        markChanged(true);
+    if (dockSettings_.floatingEdgeSwipeEnabled)
+    {
+        ImGui::TextDisabled(
+            "%s",
+            _L("app.dock.floating_edge_swipe_hint"));
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
     BeginSettingRow(_L("app.settings.dock_position"), controlW);
     const char* positionNames[] = { _L("app.dock.bottom"), _L("app.dock.top"), _L("app.dock.left"), _L("app.dock.right") };
     int position = std::clamp(static_cast<int>(dockSettings_.position), 0, 3);

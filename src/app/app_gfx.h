@@ -756,7 +756,17 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
 
     // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
     if (p.glassEnabled)
-        desktopBackdropCompositor_.AddPanel(frame, radius, p.glassBlurRadius);
+    {
+        if (renderingFloatingDock_)
+            floatingDockBackdropCompositor_.AddPanel(
+                snowdesktop::floating_dock_rules::
+                    DesktopRectToWindowRect(
+                        frame, floatingDockSourceRect_),
+                radius, p.glassBlurRadius);
+        else
+            desktopBackdropCompositor_.AddPanel(
+                frame, radius, p.glassBlurRadius);
+    }
 
     if (fill.a > 0.0f)
     {
@@ -766,7 +776,12 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
     if (p.glassEnabled && p.acrylicEnabled)
     {
         POINT screenOrigin{};
-        if (hwnd_) ClientToScreen(hwnd_, &screenOrigin);
+        // Both render paths use desktop-client coordinates. Anchor the acrylic
+        // texture to that common coordinate space so the Dock does not appear
+        // to change border/noise treatment when moved to the floating host.
+        HWND renderWindow = hwnd_;
+        if (renderWindow)
+            ClientToScreen(renderWindow, &screenOrigin);
         DrawAcrylicNoise(ctx, frame, radius, p.contentTheme == 1,
             screenOrigin);
     }
@@ -1598,6 +1613,13 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
     // Widgets
     for (auto& widgetData : widgets_)
     {
+        // Dock-exclusive and grouped collections deliberately keep an empty
+        // desktop rectangle while retaining a runtime WidgetContainer for
+        // popup interaction. Never let an empty rectangle reach widget
+        // drawing: rounded geometry APIs can turn it into a visible 1x1
+        // artifact at the desktop origin.
+        if (IsRectEmptyRect(widgetData.bounds))
+            continue;
         if (widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize)
         {
             if (mouseDownWidgetIndex_ < widgets_.size() &&
@@ -1635,15 +1657,25 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
 
     for (const auto& container : containers_)
     {
-        auto* dock = dynamic_cast<DockContainer*>(container.get());
-        if (!dock) continue;
+        auto* dock = dynamic_cast<DockContainer*>(
+            container.get());
+        if (!dock ||
+            !snowdesktop::floating_dock_rules::
+                ShouldRenderDesktopDock(
+                    floatingDockVisible_,
+                    dock ==
+                        floatingDockContainer_))
+            continue;
         dock->DrawChrome(ctx, lastMousePoint_);
         dock->DrawContents(ctx);
     }
 
     if (suppressDesktopWidgetTargets)
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
-    DrawCollectionPopup(ctx);
+    if (!(dockSettings_.floatingShortcutMode &&
+            popupAnchoredToDock_ &&
+            floatingDockVisible_))
+        DrawCollectionPopup(ctx);
     if (suppressDesktopWidgetTargets)
         lastMousePoint_ = interactionMousePoint;
 }
@@ -1858,8 +1890,11 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         }
     }
 
-    DrawPageNavButtons(ctx);
-    DrawPageNotify(ctx);
+    if (!renderingFloatingDock_)
+    {
+        DrawPageNavButtons(ctx);
+        DrawPageNotify(ctx);
+    }
 }
 
 inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)

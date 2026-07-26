@@ -730,6 +730,24 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "position", value))
         settings.position = static_cast<DockPosition>(std::clamp(static_cast<int>(value), 0, 3));
     ReadBoolField(text, "edgeAttached", settings.edgeAttached);
+    ReadBoolField(text, "floatingShortcutMode", settings.floatingShortcutMode);
+    if (ReadDoubleField(text, "floatingHotkeyModifiers", value))
+    {
+        constexpr UINT allowedModifiers =
+            MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
+        settings.floatingHotkeyModifiers =
+            static_cast<UINT>(
+                std::max(0, static_cast<int>(value))) &
+            allowedModifiers;
+    }
+    if (ReadDoubleField(text, "floatingHotkeyVirtualKey", value) &&
+        value > 0.0 && value <= 0xFF)
+    {
+        settings.floatingHotkeyVirtualKey =
+            static_cast<UINT>(value);
+    }
+    ReadBoolField(text, "floatingEdgeSwipeEnabled",
+        settings.floatingEdgeSwipeEnabled);
     if (ReadDoubleField(text, "monitorScope", value))
     {
         settings.monitorScope = static_cast<DockMonitorScope>(
@@ -805,6 +823,15 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"position\": " << static_cast<int>(settings.position) << ",\n";
     file << "  \"edgeAttached\": "
          << (settings.edgeAttached ? "true" : "false") << ",\n";
+    file << "  \"floatingShortcutMode\": "
+         << (settings.floatingShortcutMode ? "true" : "false") << ",\n";
+    file << "  \"floatingHotkeyModifiers\": "
+         << settings.floatingHotkeyModifiers << ",\n";
+    file << "  \"floatingHotkeyVirtualKey\": "
+         << settings.floatingHotkeyVirtualKey << ",\n";
+    file << "  \"floatingEdgeSwipeEnabled\": "
+         << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
+         << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "

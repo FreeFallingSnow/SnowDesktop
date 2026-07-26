@@ -388,7 +388,7 @@ bool DockWindowPreview::EnsureWindow()
         return false;
 
     hwnd_ = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         kDockWindowPreviewClassName, L"Dock Window Preview",
         WS_POPUP | WS_CLIPCHILDREN,
         0, 0, 1, 1, nullptr, nullptr, instance_, this);
@@ -397,7 +397,8 @@ bool DockWindowPreview::EnsureWindow()
 
 void DockWindowPreview::Show(
     const std::vector<DockWindowPreviewItem>& items,
-    RECT anchorScreen, DockPosition dockPosition, bool lightTheme)
+    RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
+    HWND dockLayerOwner)
 {
     if (!EnsureWindow())
         return;
@@ -492,16 +493,46 @@ void DockWindowPreview::Show(
     DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE,
         &corner, sizeof(corner));
 
-    SetWindowPos(hwnd_, HWND_TOPMOST, left, top, panelWidth, panelHeight,
-        SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    const bool wasVisible = IsWindowVisible(hwnd_) != FALSE;
+    const bool useDockLayer =
+        dockLayerOwner &&
+        IsWindow(dockLayerOwner);
+    SetWindowLongPtrW(
+        hwnd_, GWLP_HWNDPARENT,
+        reinterpret_cast<LONG_PTR>(
+            useDockLayer
+                ? dockLayerOwner : nullptr));
+
+    // Prepare the complete preview while it is still hidden. Showing the
+    // HWND before applying its region and registering the DWM thumbnails
+    // exposes one empty rectangular frame; the floating Dock made that frame
+    // especially noticeable because it also performed a second visible
+    // Z-order transition.
+    SetWindowPos(
+        hwnd_,
+        useDockLayer ? HWND_NOTOPMOST : HWND_TOPMOST,
+        left, top, panelWidth, panelHeight,
+        SWP_NOACTIVATE |
+            (wasVisible ? 0 : SWP_NOREDRAW));
     HRGN region = CreateRoundRectRgn(
         0, 0, panelWidth + 1, panelHeight + 1,
         ScaleForDpi(14, dpi_), ScaleForDpi(14, dpi_));
     if (region)
-        SetWindowRgn(hwnd_, region, TRUE);
+        SetWindowRgn(hwnd_, region, wasVisible ? TRUE : FALSE);
 
     RegisterThumbnails();
     InvalidateRect(hwnd_, nullptr, TRUE);
+    if (!wasVisible)
+    {
+        // Ownership already keeps the preview above the floating Dock. Reveal
+        // it without another Z-order mutation so the Dock and preview enter
+        // the compositor as one stable layer pair.
+        SetWindowPos(
+            hwnd_, nullptr,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
     UpdateWindow(hwnd_);
 }
 

@@ -359,8 +359,10 @@ RECT DockContainer::GetBounds() const
             return RECT{ area_.left, area_.bottom - thickness, area_.right, area_.bottom };
         }
     }
-    const int edgeDistance = std::max(spacing, EdgeMargin());
-    const int innerGap = edgeDistance - EdgeMargin();
+    const int edgeDistance =
+        std::max(spacing, EdgeMargin());
+    const int innerGap =
+        edgeDistance - EdgeMargin();
     if (vertical)
     {
         const int left = app_ && app_->dockSettings_.position == DockPosition::Left
@@ -689,6 +691,168 @@ RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
     return panel;
 }
 
+RECT DockContainer::CalculateTitleTooltipBounds(
+    const std::wstring& title,
+    const RECT& hoveredBounds,
+    IDWriteTextFormat* measurementFormat) const
+{
+    if (!app_ || title.empty() ||
+        !app_->dwriteFactory_)
+        return RECT{};
+
+    ComPtr<IDWriteTextFormat> tooltipFormat;
+    if (!measurementFormat)
+    {
+        app_->dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr,
+            app_->IsLightContentTheme()
+                ? DWRITE_FONT_WEIGHT_LIGHT
+                : DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            13.0f, L"zh-CN", &tooltipFormat);
+        measurementFormat = tooltipFormat.Get();
+    }
+    if (!measurementFormat)
+        return RECT{};
+
+    ComPtr<IDWriteTextLayout> layout;
+    DWRITE_TEXT_METRICS metrics{};
+    if (SUCCEEDED(app_->dwriteFactory_->
+            CreateTextLayout(
+                title.c_str(),
+                static_cast<UINT32>(title.size()),
+                measurementFormat,
+                240.0f, 28.0f, &layout)) &&
+        layout)
+    {
+        layout->GetMetrics(&metrics);
+    }
+
+    const int tooltipWidth = std::clamp(
+        static_cast<int>(std::ceil(
+            metrics.widthIncludingTrailingWhitespace)) + 20,
+        48, 260);
+    constexpr int tooltipHeight = 30;
+    constexpr int tooltipGap = 8;
+    RECT tooltip{};
+    switch (app_->dockSettings_.position)
+    {
+    case DockPosition::Top:
+        tooltip.left =
+            (hoveredBounds.left + hoveredBounds.right -
+                tooltipWidth) / 2;
+        tooltip.top =
+            hoveredBounds.bottom + tooltipGap;
+        break;
+    case DockPosition::Left:
+        tooltip.left =
+            hoveredBounds.right + tooltipGap;
+        tooltip.top =
+            (hoveredBounds.top + hoveredBounds.bottom -
+                tooltipHeight) / 2;
+        break;
+    case DockPosition::Right:
+        tooltip.left =
+            hoveredBounds.left - tooltipGap -
+                tooltipWidth;
+        tooltip.top =
+            (hoveredBounds.top + hoveredBounds.bottom -
+                tooltipHeight) / 2;
+        break;
+    case DockPosition::Bottom:
+    default:
+        tooltip.left =
+            (hoveredBounds.left + hoveredBounds.right -
+                tooltipWidth) / 2;
+        tooltip.top =
+            hoveredBounds.top - tooltipGap -
+                tooltipHeight;
+        break;
+    }
+    tooltip.right = tooltip.left + tooltipWidth;
+    tooltip.bottom = tooltip.top + tooltipHeight;
+
+    POINT dockCenter{
+        (hoveredBounds.left + hoveredBounds.right) / 2,
+        (hoveredBounds.top + hoveredBounds.bottom) / 2
+    };
+    for (const auto& page : app_->gridPages_)
+    {
+        if (!PtInRect(&page.bounds, dockCenter))
+            continue;
+        const int minLeft =
+            static_cast<int>(page.bounds.left + 6);
+        const int maxLeft = static_cast<int>(
+            std::max<LONG>(
+                page.bounds.left + 6,
+                page.bounds.right -
+                    tooltipWidth - 6));
+        const int minTop =
+            static_cast<int>(page.bounds.top + 6);
+        const int maxTop = static_cast<int>(
+            std::max<LONG>(
+                page.bounds.top + 6,
+                page.bounds.bottom -
+                    tooltipHeight - 6));
+        tooltip.left = std::clamp(
+            static_cast<int>(tooltip.left),
+            minLeft, maxLeft);
+        tooltip.top = std::clamp(
+            static_cast<int>(tooltip.top),
+            minTop, maxTop);
+        tooltip.right =
+            tooltip.left + tooltipWidth;
+        tooltip.bottom =
+            tooltip.top + tooltipHeight;
+        break;
+    }
+    return tooltip;
+}
+
+RECT DockContainer::GetHoveredTitleBounds(
+    POINT pointer) const
+{
+    if (!app_ || app_->dragSession_.IsActive())
+        return RECT{};
+
+    std::wstring title;
+    RECT baseBounds{};
+    if (DockEntryItem* entry = EntryAtPoint(pointer))
+    {
+        title = entry->GetTitle();
+        baseBounds = entry->GetBounds();
+    }
+    else if (DockRunningItem* running =
+        RunningItemAtPoint(pointer))
+    {
+        title = running->GetTitle();
+        baseBounds = running->GetBounds();
+    }
+    else if (DockFrequentItem* frequent =
+        FrequentItemAtPoint(pointer))
+    {
+        title = frequent->GetTitle();
+        baseBounds = frequent->GetBounds();
+    }
+    else if (IsWindowsButtonPoint(pointer))
+    {
+        title = _LW("app.dock.start_menu");
+        baseBounds = GetWindowsButtonRect();
+    }
+    else if (IsSearchPoint(pointer))
+    {
+        title = _LW("app.dock.quick_search");
+        baseBounds = GetSearchRect();
+    }
+    if (title.empty() || IsRectEmpty(&baseBounds))
+        return RECT{};
+
+    return CalculateTitleTooltipBounds(
+        title,
+        GetElementVisualRect(baseBounds, pointer));
+}
+
 bool DockContainer::IsFocusedElementRect(
     const RECT& baseRect, POINT pointer) const
 {
@@ -998,6 +1162,8 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     PersonalizationSettings p = PersonalizationSettings::DarkPreset();
     if (app_ && app_->settingsWindow_)
         p = app_->settingsWindow_->GetPersonalization();
+    else if (app_ && app_->renderingFloatingDock_)
+        p = app_->floatingDockPersonalization_;
     else
         LoadPersonalization(GetPersonalizationPath().c_str(), p);
     const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
@@ -1547,61 +1713,12 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         {
             tooltipFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             tooltipFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            ComPtr<IDWriteTextLayout> layout;
-            DWRITE_TEXT_METRICS metrics{};
-            if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
-                hoveredTitle.c_str(), static_cast<UINT32>(hoveredTitle.size()),
-                tooltipFormat.Get(), 240.0f, 28.0f, &layout)) && layout)
-                layout->GetMetrics(&metrics);
-
-            const int tooltipWidth = std::clamp(
-                static_cast<int>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + 20,
-                48, 260);
-            constexpr int tooltipHeight = 30;
-            constexpr int tooltipGap = 8;
-            RECT tooltip{};
-            switch (app_->dockSettings_.position)
-            {
-            case DockPosition::Top:
-                tooltip.left = (hoveredBounds.left + hoveredBounds.right - tooltipWidth) / 2;
-                tooltip.top = hoveredBounds.bottom + tooltipGap;
-                break;
-            case DockPosition::Left:
-                tooltip.left = hoveredBounds.right + tooltipGap;
-                tooltip.top = (hoveredBounds.top + hoveredBounds.bottom - tooltipHeight) / 2;
-                break;
-            case DockPosition::Right:
-                tooltip.left = hoveredBounds.left - tooltipGap - tooltipWidth;
-                tooltip.top = (hoveredBounds.top + hoveredBounds.bottom - tooltipHeight) / 2;
-                break;
-            case DockPosition::Bottom:
-            default:
-                tooltip.left = (hoveredBounds.left + hoveredBounds.right - tooltipWidth) / 2;
-                tooltip.top = hoveredBounds.top - tooltipGap - tooltipHeight;
-                break;
-            }
-            tooltip.right = tooltip.left + tooltipWidth;
-            tooltip.bottom = tooltip.top + tooltipHeight;
-
-            POINT dockCenter{
-                (hoveredBounds.left + hoveredBounds.right) / 2,
-                (hoveredBounds.top + hoveredBounds.bottom) / 2
-            };
-            for (const auto& page : app_->gridPages_)
-            {
-                if (!PtInRect(&page.bounds, dockCenter)) continue;
-                const int minLeft = static_cast<int>(page.bounds.left + 6);
-                const int maxLeft = static_cast<int>(std::max<LONG>(
-                    page.bounds.left + 6, page.bounds.right - tooltipWidth - 6));
-                const int minTop = static_cast<int>(page.bounds.top + 6);
-                const int maxTop = static_cast<int>(std::max<LONG>(
-                    page.bounds.top + 6, page.bounds.bottom - tooltipHeight - 6));
-                tooltip.left = std::clamp(static_cast<int>(tooltip.left), minLeft, maxLeft);
-                tooltip.top = std::clamp(static_cast<int>(tooltip.top), minTop, maxTop);
-                tooltip.right = tooltip.left + tooltipWidth;
-                tooltip.bottom = tooltip.top + tooltipHeight;
-                break;
-            }
+            const RECT tooltip =
+                CalculateTitleTooltipBounds(
+                    hoveredTitle, hoveredBounds,
+                    tooltipFormat.Get());
+            if (IsRectEmpty(&tooltip))
+                return;
 
             app_->DrawD2DRoundedRectangle(context, tooltip, 7.0f,
                 lt ? D2D1::ColorF(0.94f, 0.95f, 0.97f, 0.94f) : D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.94f),

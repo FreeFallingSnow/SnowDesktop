@@ -14,6 +14,7 @@ constexpr wchar_t kControlWindowClassName[] = L"SnowDesktopControlWindow";
 constexpr wchar_t kInputWindowClassName[] = L"SnowDesktopInputWindow";
 constexpr wchar_t kHintWindowClassName[] = L"SnowDesktopDragHintWindow";
 constexpr wchar_t kQuickNavigationWindowClassName[] = L"SnowDesktopQuickNavigationWindow";
+constexpr wchar_t kFloatingDockWindowClassName[] = L"SnowDesktopFloatingDockWindow";
 constexpr wchar_t kHiddenBySnowDesktopProp[] = L"SnowDesktop.HiddenExplorerIconLayer";
 
 // ── 透明色键值 ────────────────────────────────
@@ -209,6 +210,9 @@ constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
 
 // ── 快捷导航 ──────────────────────────────────
 constexpr int kQuickNavigationHotkeyId = 101;
+constexpr int kFloatingDockHotkeyId = 102;
+constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
+constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;
 
 // ── 集合弹出面板布局 ──────────────────────────

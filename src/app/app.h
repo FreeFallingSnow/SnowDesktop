@@ -33,6 +33,7 @@
 #include "dock_window_transition.h"
 #include "dock_launch_animation.h"
 #include "dock_rename_layout.h"
+#include "floating_dock_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "everything_search.h"
@@ -140,6 +141,7 @@ struct DockWindowPreviewTarget
     std::wstring identityKey;
     std::wstring targetToken;
     RECT anchorScreen{};
+    bool floatingLayer = false;
 };
 
 struct DockWindowInfo
@@ -455,6 +457,7 @@ private:
      * @return 消息处理结果
      */
     static LRESULT CALLBACK QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    static LRESULT CALLBACK FloatingDockWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /**
      * @brief 主窗口消息分发处理。
      * @param hwnd 窗口句柄
@@ -473,6 +476,7 @@ private:
      * @return 消息处理结果
      */
     LRESULT HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    LRESULT HandleFloatingDockMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /** @brief 创建桌面覆盖窗口，挂载到 Explorer 桌面上层。 @return 成功返回 true */
     bool CreateDesktopOverlayWindow();
     /** @brief 重置桌面窗口相关的 D2D/DComp 资源（窗口尺寸变化或设备丢失时调用）。 */
@@ -594,6 +598,26 @@ private:
     void InvalidateDockRects(BOOL erase = FALSE) const;
     void ClearDockBackdropForDragTransition(
         POINT previousPointer, POINT currentPointer);
+    bool CreateFloatingDockWindow();
+    void DestroyFloatingDockWindow();
+    void ShowFloatingDock();
+    void CloseFloatingDock(bool closeDockPopup = true);
+    void ToggleFloatingDock();
+    void ApplyFloatingDockHotkey();
+    void UnregisterFloatingDockHotkey();
+    void UpdateFloatingDockEdgeSwipe();
+    DockContainer* SelectFloatingDockContainerAtCursor() const;
+    DockContainer* SelectFloatingDockContainerForMonitor(
+        HMONITOR monitor) const;
+    RECT CalculateFloatingDockStableSourceRect() const;
+    void UpdateFloatingDockWindowBounds();
+    void InvalidateFloatingDockWindow(bool immediate = false) const;
+    HRESULT CreateOrResizeFloatingDockCompositionSurface();
+    void ResetFloatingDockCompositionResources();
+    void RecoverFloatingDockCompositionFailure(
+        const wchar_t* stage, HRESULT hr);
+    void PaintFloatingDockWindow(HWND hwnd);
+    POINT FloatingDockClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods);
@@ -1896,6 +1920,7 @@ private:
     bool showWidgetAddedHint_ = false;
     DWORD widgetAddedHintStartTick_ = 0;
     bool navigationHotkeyRegistered_ = false;
+    bool floatingDockHotkeyRegistered_ = false;
     /** @} */
 
     /** @name Shell 外壳相关 */
@@ -1958,6 +1983,9 @@ private:
     bool systemTaskbarTaskViewActive_ = false;
     UINT systemTaskbarTaskViewStateMsg_ = 0;
     std::vector<RECT> dockAreas_;
+    bool dockWorkAreaReservationApplied_ = false;
+    DockPosition dockWorkAreaReservationPosition_ =
+        DockPosition::Bottom;
     DockContainer* dockPressedContainer_ = nullptr;
     size_t dockPressedEntry_ = static_cast<size_t>(-1);
     size_t dockPressedFrequentItem_ = static_cast<size_t>(-1);
@@ -2019,6 +2047,33 @@ private:
     HWND controlHwnd_ = nullptr;
     HWND inputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
+    HWND floatingDockHwnd_ = nullptr;
+    HWND floatingDockHotkeyHwnd_ = nullptr;
+    HWND floatingDockEdgeSwipeHwnd_ = nullptr;
+    snowdesktop::floating_dock_rules::EdgeSwipeDetector
+        floatingDockEdgeSwipeDetector_;
+    UINT floatingDockPointerButtonsDown_ = 0;
+    DockContainer* floatingDockContainer_ = nullptr;
+    HMONITOR floatingDockMonitor_ = nullptr;
+    RECT floatingDockSourceRect_{};
+    RECT floatingDockRect_{};
+    RECT floatingDockPopupRect_{};
+    RECT floatingDockTooltipRect_{};
+    bool floatingDockVisible_ = false;
+    bool floatingDockRevealPending_ = false;
+    bool renderingFloatingDock_ = false;
+    bool handlingFloatingDockInput_ = false;
+    PersonalizationSettings floatingDockPersonalization_ =
+        PersonalizationSettings::DarkPreset();
+    DesktopBackdropCompositor floatingDockBackdropCompositor_;
+    ComPtr<IDCompositionTarget> floatingDockDcompTarget_;
+    ComPtr<IDCompositionVisual2> floatingDockDcompVisual_;
+    ComPtr<IDCompositionSurface> floatingDockDcompSurface_;
+    UINT floatingDockCompWidth_ = 0;
+    UINT floatingDockCompHeight_ = 0;
+    bool floatingDockCompositionRenderRecoveryPending_ = false;
+    bool floatingDockCompositionPaintInProgress_ = false;
+    bool floatingDockDropTargetRegistered_ = false;
     /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
     DesktopBackdropCompositor quickNavBackdropCompositor_;
     HWND quickNavigationSearchEdit_ = nullptr;
@@ -2354,6 +2409,7 @@ private:
 #include "app_gfx.h"
 #include "app_glass.h"
 #include "app_dock.h"
+#include "app_floating_dock.h"
 #include "app_quick_navigation.h"
 #include "app_interact.h"
 #include "app_menu.h"

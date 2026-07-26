@@ -130,6 +130,7 @@ public:
     bool ContainsInteractivePoint(POINT pt) const;
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
     RECT GetVisualPanelBounds(POINT pointer) const;
+    RECT GetHoveredTitleBounds(POINT pointer) const;
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
@@ -163,6 +164,11 @@ private:
     int GetMagnificationAxisShift(
         const RECT& baseRect, const RECT& focusRect,
         POINT pointer) const;
+    RECT CalculateTitleTooltipBounds(
+        const std::wstring& title,
+        const RECT& hoveredBounds,
+        IDWriteTextFormat* measurementFormat =
+            nullptr) const;
     bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
     int GetMaxScrollOffset(const RECT& bounds) const;

@@ -87,7 +87,8 @@ public:
 
     bool Initialize(HINSTANCE instance, ActivateCallback activateCallback);
     void Show(const std::vector<DockWindowPreviewItem>& items,
-        RECT anchorScreen, DockPosition dockPosition, bool lightTheme);
+        RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
+        HWND dockLayerOwner = nullptr);
     void Hide();
     void ScheduleHide();
     void KeepVisible();

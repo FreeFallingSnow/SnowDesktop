@@ -75,6 +75,13 @@ struct DockSettings
 {
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
+    // Shortcut-summoned compact popup. This is intentionally the default for
+    // both new and upgraded configurations: the Dock no longer reserves the
+    // desktop work area or permanently participates in the system Z order.
+    bool floatingShortcutMode = true;
+    UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
+    UINT floatingHotkeyVirtualKey = 'D';
+    bool floatingEdgeSwipeEnabled = true;
     DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
     bool showRunningApps = true;

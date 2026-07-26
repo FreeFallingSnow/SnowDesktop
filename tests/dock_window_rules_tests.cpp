@@ -5,6 +5,7 @@
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
 #include "desktop_item_reference_migration.h"
+#include "floating_dock_rules.h"
 
 #include <iostream>
 
@@ -44,6 +45,245 @@ void CheckRowMargins(
 
 int main()
 {
+    namespace floatingDock =
+        snowdesktop::floating_dock_rules;
+    Check((floatingDock::kWindowExStyle & WS_EX_TOPMOST) == 0,
+        "the floating Dock must never use permanent topmost style");
+    Check((floatingDock::kWindowExStyle & WS_EX_NOACTIVATE) != 0,
+        "the floating Dock must not steal foreground activation");
+    const RECT floatingDockRect{ 100, 900, 700, 980 };
+    const RECT floatingPopupRect{ 240, 500, 560, 892 };
+    const RECT floatingHostRect =
+        floatingDock::UnionNonEmptyRects(
+            floatingDockRect, floatingPopupRect);
+    Check(floatingHostRect.left == 100 &&
+            floatingHostRect.top == 500 &&
+            floatingHostRect.right == 700 &&
+            floatingHostRect.bottom == 980,
+        "the compact host must contain both Dock and collection popup");
+    const RECT bottomTitleHost =
+        floatingDock::ExpandHostForTitleLayer(
+            floatingDockRect,
+            DockPosition::Bottom);
+    Check(bottomTitleHost.left < floatingDockRect.left &&
+            bottomTitleHost.right > floatingDockRect.right &&
+            bottomTitleHost.top < floatingDockRect.top &&
+            bottomTitleHost.bottom ==
+                floatingDockRect.bottom,
+        "the bottom floating host must reserve its Dock-level title layer");
+    const RECT leftTitleHost =
+        floatingDock::ExpandHostForTitleLayer(
+            floatingDockRect,
+            DockPosition::Left);
+    Check(leftTitleHost.top < floatingDockRect.top &&
+            leftTitleHost.bottom > floatingDockRect.bottom &&
+            leftTitleHost.left ==
+                floatingDockRect.left &&
+            leftTitleHost.right >
+                floatingDockRect.right,
+        "the left floating host must reserve its Dock-level title layer");
+    const RECT floatingBorderOverdraw =
+        floatingDock::ExpandForBorderOverdraw(
+            floatingDockRect);
+    Check(floatingBorderOverdraw.left ==
+            floatingDockRect.left - 2 &&
+            floatingBorderOverdraw.top ==
+                floatingDockRect.top - 2 &&
+            floatingBorderOverdraw.right ==
+                floatingDockRect.right + 2 &&
+            floatingBorderOverdraw.bottom ==
+                floatingDockRect.bottom + 2,
+        "floating layers must preserve the desktop glass-border overdraw");
+    const RECT popupReserveWork{
+        0, 0, 1920, 1080
+    };
+    const SIZE popupReserveSize{
+        560, 420
+    };
+    const RECT bottomPopupReserve =
+        floatingDock::
+            ReserveCollectionPopupEnvelope(
+                floatingDockRect,
+                popupReserveWork,
+                DockPosition::Bottom,
+                popupReserveSize);
+    Check(bottomPopupReserve.top <
+            floatingDockRect.top &&
+            bottomPopupReserve.left <
+                floatingDockRect.left &&
+            bottomPopupReserve.right >
+                floatingDockRect.right,
+        "the stable bottom host must reserve popup capacity above the Dock");
+    const RECT rightPopupReserve =
+        floatingDock::
+            ReserveCollectionPopupEnvelope(
+                floatingDockRect,
+                popupReserveWork,
+                DockPosition::Right,
+                popupReserveSize);
+    Check(rightPopupReserve.left <
+            floatingDockRect.left &&
+            rightPopupReserve.top <
+                floatingDockRect.top &&
+            rightPopupReserve.bottom >
+                floatingDockRect.bottom,
+        "the stable right host must reserve popup capacity before the Dock");
+    const POINT mappedFloatingPoint =
+        floatingDock::WindowPointToDesktopPoint(
+            POINT{ 12, 34 }, floatingHostRect);
+    Check(mappedFloatingPoint.x == 112 &&
+            mappedFloatingPoint.y == 534,
+        "floating-window input must map back to desktop coordinates");
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            false, POINT{ 150, 930 },
+            floatingDockRect, floatingPopupRect),
+        "a click in the Dock must keep the floating host open");
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            false, POINT{ 300, 600 },
+            floatingDockRect, floatingPopupRect),
+        "a click in the collection popup must keep the host open");
+    Check(floatingDock::ShouldDismissForPointerDown(
+            false, POINT{ 20, 20 },
+            floatingDockRect, floatingPopupRect),
+        "an external click must dismiss the floating host");
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            true, POINT{ 20, 20 },
+            floatingDockRect, floatingPopupRect),
+        "active drags must suspend floating-host auto dismissal");
+    Check(floatingDock::HasNewPointerButtonPress(
+            1, 0, 0),
+        "a sampled pointer down edge must dismiss an external click");
+    Check(floatingDock::HasNewPointerButtonPress(
+            0, 0, 1),
+        "a fast press released between samples must still be observed");
+    Check(!floatingDock::HasNewPointerButtonPress(
+            1, 1, 0),
+        "a held pointer button must not repeatedly dismiss");
+    Check(floatingDock::IsPointInVisibleLayer(
+            POINT{ 150, 930 },
+            floatingDockRect,
+            floatingPopupRect,
+            RECT{}),
+        "the Dock remains hovered while its window region changes");
+    Check(!floatingDock::IsPointInVisibleLayer(
+            POINT{ 20, 20 },
+            floatingDockRect,
+            floatingPopupRect,
+            RECT{}),
+        "points outside every visible floating layer are genuine leaves");
+    Check(!floatingDock::ShouldRenderDesktopDock(
+            true, true),
+        "only the Dock mirrored by the floating host must be hidden");
+    Check(floatingDock::ShouldRenderDesktopDock(
+            true, false),
+        "Docks on other monitors must remain visible");
+    Check(floatingDock::ShouldCloseCollectionPopup(
+            3, 3),
+        "clicking the collection that owns the open popup must close it");
+    Check(!floatingDock::ShouldCloseCollectionPopup(
+            3, 4),
+        "clicking a different collection must replace the open popup");
+    Check(!floatingDock::
+            ShouldCloseCollectionPopupOnPointerDown(
+                3, 3, false),
+        "the owning collection button must defer closing until release");
+    Check(floatingDock::
+            ShouldCloseCollectionPopupOnPointerDown(
+                3, 4, false),
+        "a different collection button may close the old popup on press");
+    Check(!floatingDock::
+            ShouldCloseCollectionPopupOnPointerDown(
+                3, static_cast<std::size_t>(-1), true),
+        "a click inside the collection popup must keep it open");
+    Check(floatingDock::
+            ShouldCloseCollectionPopupOnPointerDown(
+                3, static_cast<std::size_t>(-1), false),
+        "an unrelated external press must close the collection popup");
+
+    Check(floatingDock::ScaleEdgeSwipeDip(4, 144) == 6 &&
+            floatingDock::ScaleEdgeSwipeDip(72, 144) == 108,
+        "edge swipe thresholds must scale with monitor DPI");
+    const RECT negativeBottomMonitor{
+        -1920, 0, 0, 1080
+    };
+    Check(floatingDock::IsPointOnDockScreenEdge(
+            POINT{ -1200, 1079 },
+            negativeBottomMonitor,
+            DockPosition::Bottom, 4),
+        "negative-coordinate monitors must expose their Dock-facing edge");
+    Check(!floatingDock::IsPointOnDockScreenEdge(
+            POINT{ -1200, 1070 },
+            negativeBottomMonitor,
+            DockPosition::Bottom, 4),
+        "an inward pointer must not count as an along-edge swipe");
+
+    floatingDock::EdgeSwipeDetector bottomSwipe;
+    Check(!bottomSwipe.Update(
+            POINT{ -1500, 1079 },
+            negativeBottomMonitor,
+            DockPosition::Bottom,
+            100, 4, 72),
+        "touching a Dock-facing edge must only arm the swipe");
+    Check(bottomSwipe.Update(
+            POINT{ -1420, 1078 },
+            negativeBottomMonitor,
+            DockPosition::Bottom,
+            240, 4, 72),
+        "a quick horizontal stroke along the bottom edge must trigger");
+    Check(bottomSwipe.IsAwaitingEdgeLeave(),
+        "a completed edge swipe must latch until the pointer leaves");
+    Check(!bottomSwipe.Update(
+            POINT{ -1320, 1079 },
+            negativeBottomMonitor,
+            DockPosition::Bottom,
+            300, 4, 72),
+        "one continuous edge stroke must not trigger repeatedly");
+    Check(!bottomSwipe.Update(
+            POINT{ -1320, 1060 },
+            negativeBottomMonitor,
+            DockPosition::Bottom,
+            320, 4, 72),
+        "leaving the edge must reset the completed swipe");
+    Check(!bottomSwipe.Update(
+            POINT{ -1320, 1079 },
+            negativeBottomMonitor,
+            DockPosition::Bottom,
+            340, 4, 72),
+        "returning to the edge must arm a fresh swipe");
+    Check(bottomSwipe.Update(
+            POINT{ -1400, 1079 },
+            negativeBottomMonitor,
+            DockPosition::Bottom,
+            430, 4, 72),
+        "along-edge swipes must work in either direction");
+
+    floatingDock::EdgeSwipeDetector timedOutSwipe;
+    Check(!timedOutSwipe.Update(
+            POINT{ -1700, 1079 },
+            negativeBottomMonitor,
+            DockPosition::Bottom,
+            100, 4, 72),
+        "the timeout test must arm normally");
+    Check(!timedOutSwipe.Update(
+            POINT{ -1600, 1079 },
+            negativeBottomMonitor,
+            DockPosition::Bottom,
+            700, 4, 72),
+        "slow edge movement must restart instead of triggering");
+
+    const RECT rightMonitor{ 0, 0, 2560, 1440 };
+    floatingDock::EdgeSwipeDetector rightSwipe;
+    Check(!rightSwipe.Update(
+            POINT{ 2559, 500 }, rightMonitor,
+            DockPosition::Right,
+            10, 6, 108),
+        "a vertical edge swipe must arm on the right edge");
+    Check(rightSwipe.Update(
+            POINT{ 2558, 620 }, rightMonitor,
+            DockPosition::Right,
+            180, 6, 108),
+        "left/right Docks must recognize vertical along-edge travel");
+
     Check(rules::IsTaskWindowStyleEligible(0, false),
         "ordinary unowned windows must remain eligible");
     Check(!rules::IsTaskWindowStyleEligible(WS_EX_TOOLWINDOW, false),
@@ -77,6 +317,16 @@ int main()
     Check(rules::ResolveDockClickAction(true, true, true) ==
             rules::DockClickAction::Restore,
         "minimized state must take precedence over stale foreground state");
+    Check(rules::ResolveDockRestoreShowCommand(
+            WPF_RESTORETOMAXIMIZED,
+            SW_SHOWMINIMIZED) == SW_SHOWMAXIMIZED,
+        "a window minimized from maximized must return to maximized");
+    Check(rules::ResolveDockRestoreShowCommand(
+            0, SW_SHOWMAXIMIZED) == SW_SHOWMAXIMIZED,
+        "an explicitly maximized placement must remain maximized");
+    Check(rules::ResolveDockRestoreShowCommand(
+            0, SW_SHOWMINIMIZED) == SW_RESTORE,
+        "an ordinary minimized window must restore to its normal rectangle");
 
     Check(EaseDockWindowTransition(-1.0) == 0.0 &&
             EaseDockWindowTransition(2.0) == 1.0,

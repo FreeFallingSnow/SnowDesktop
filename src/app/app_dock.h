@@ -403,6 +403,18 @@ inline bool IsDockTaskWindow(HWND window)
     return true;
 }
 
+inline int DockRestoreShowCommand(HWND window)
+{
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    if (!window ||
+        !GetWindowPlacement(window, &placement))
+        return SW_RESTORE;
+    return snowdesktop::dock_window_rules::
+        ResolveDockRestoreShowCommand(
+            placement.flags, placement.showCmd);
+}
+
 inline std::wstring DockWindowPreviewIdentityKey(
     const DockAppIdentity& identity)
 {
@@ -502,6 +514,9 @@ inline bool DesktopApp::ResolveDockWindowPreviewTarget(
     DockContainer* dock = GetDockContainerAtPoint(clientPoint);
     if (!dock || !dock->ContainsInteractivePoint(clientPoint))
         return false;
+    target.floatingLayer =
+        floatingDockVisible_ &&
+        dock == floatingDockContainer_;
 
     RECT anchor{};
     bool found = false;
@@ -642,7 +657,9 @@ inline void DesktopApp::OnDockWindowPreviewHoverTimer()
     dockWindowPreviewAnchorScreen_ = target.anchorScreen;
     dockWindowPreview_->Show(
         previewItems, target.anchorScreen, dockSettings_.position,
-        IsLightContentTheme());
+        IsLightContentTheme(),
+        target.floatingLayer
+            ? floatingDockHwnd_ : nullptr);
     if (dockWindowPreview_->IsVisible())
         dockWindowPreviewHover_.MarkPreviewShown(
             target.targetToken);
@@ -2070,7 +2087,6 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
         }
         if (!IsIconic(target))
         {
-            PostMessageW(target, WM_SYSCOMMAND, SC_MINIMIZE, 0);
             ShowWindowAsync(target, SW_MINIMIZE);
         }
         found->second.minimized = true;
@@ -2093,11 +2109,11 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
             InvalidateDockRects();
             return true;
         }
-        if (action == DockClickAction::Restore || minimized)
+        if (minimized)
         {
-            OpenIcon(target);
-            PostMessageW(target, WM_SYSCOMMAND, SC_RESTORE, 0);
-            ShowWindowAsync(target, SW_RESTORE);
+            ShowWindowAsync(
+                target,
+                DockRestoreShowCommand(target));
         }
         else
         {
@@ -2106,9 +2122,13 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
         HWND activationTarget = GetLastActivePopup(target);
         if (!activationTarget || !IsWindow(activationTarget))
             activationTarget = target;
-        SwitchToThisWindow(target, TRUE);
-        if (activationTarget != target)
-            SwitchToThisWindow(activationTarget, TRUE);
+        if (!minimized)
+        {
+            SwitchToThisWindow(target, TRUE);
+            if (activationTarget != target)
+                SwitchToThisWindow(
+                    activationTarget, TRUE);
+        }
         BringWindowToTop(activationTarget);
         SetForegroundWindow(activationTarget);
         found->second.minimized = false;
@@ -2161,7 +2181,6 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
         }
         if (!minimized)
         {
-            PostMessageW(target, WM_SYSCOMMAND, SC_MINIMIZE, 0);
             ShowWindowAsync(target, SW_MINIMIZE);
         }
         nowMinimized = true;
@@ -2182,11 +2201,11 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
             InvalidateDockRects();
             return true;
         }
-        if (action == DockClickAction::Restore || minimized)
+        if (minimized)
         {
-            OpenIcon(target);
-            PostMessageW(target, WM_SYSCOMMAND, SC_RESTORE, 0);
-            ShowWindowAsync(target, SW_RESTORE);
+            ShowWindowAsync(
+                target,
+                DockRestoreShowCommand(target));
         }
         else
         {
@@ -2195,9 +2214,13 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
         HWND activationTarget = GetLastActivePopup(target);
         if (!activationTarget || !IsWindow(activationTarget))
             activationTarget = target;
-        SwitchToThisWindow(target, TRUE);
-        if (activationTarget != target)
-            SwitchToThisWindow(activationTarget, TRUE);
+        if (!minimized)
+        {
+            SwitchToThisWindow(target, TRUE);
+            if (activationTarget != target)
+                SwitchToThisWindow(
+                    activationTarget, TRUE);
+        }
         BringWindowToTop(activationTarget);
         SetForegroundWindow(activationTarget);
         nowForeground = true;
@@ -2228,10 +2251,12 @@ inline void DesktopApp::ActivateDockWindowFromPreview(HWND window)
     if (!target)
         target = window;
 
-    if (IsIconic(target))
+    const bool minimized = IsIconic(target) != FALSE;
+    if (minimized)
     {
-        OpenIcon(target);
-        ShowWindowAsync(target, SW_RESTORE);
+        ShowWindowAsync(
+            target,
+            DockRestoreShowCommand(target));
     }
     else
     {
@@ -2240,9 +2265,14 @@ inline void DesktopApp::ActivateDockWindowFromPreview(HWND window)
     HWND activationTarget = GetLastActivePopup(target);
     if (!activationTarget || !IsWindow(activationTarget))
         activationTarget = target;
-    SwitchToThisWindow(target, TRUE);
-    if (activationTarget != target)
-        SwitchToThisWindow(activationTarget, TRUE);
+    if (!minimized)
+    {
+        SwitchToThisWindow(target, TRUE);
+        if (activationTarget != target)
+            SwitchToThisWindow(activationTarget, TRUE);
+    }
+    if (floatingDockVisible_)
+        CloseFloatingDock();
     BringWindowToTop(activationTarget);
     SetForegroundWindow(activationTarget);
     RefreshDockRunningWindows(false, target);
@@ -2278,11 +2308,19 @@ inline void DesktopApp::InvalidateDockContainers()
 
 inline void DesktopApp::InvalidateDockRects(BOOL erase) const
 {
+    if (floatingDockVisible_)
+        InvalidateFloatingDockWindow(true);
     if (!hwnd_) return;
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
-        if (!dock) continue;
+        if (!dock ||
+            !snowdesktop::floating_dock_rules::
+                ShouldRenderDesktopDock(
+                    floatingDockVisible_,
+                    dock ==
+                        floatingDockContainer_))
+            continue;
         const RECT bounds = dock->GetInteractiveBounds();
         InvalidateRect(hwnd_, &bounds, erase);
     }
@@ -2331,37 +2369,56 @@ inline int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
 
 inline void DesktopApp::ApplyDockWorkAreaReservation()
 {
-    for (const RECT& dockArea : dockAreas_)
+    if (dockWorkAreaReservationApplied_)
     {
-        for (auto& page : gridPages_)
+        for (const RECT& dockArea : dockAreas_)
         {
-            RECT intersect;
-            if (!IntersectRect(&intersect, &dockArea, &page.bounds)) continue;
-            int reserved;
-            switch (dockSettings_.position)
+            for (auto& page : gridPages_)
             {
-            case DockPosition::Top:
-                reserved = dockArea.bottom - dockArea.top;
-                page.workArea.top = std::max(page.bounds.top, page.workArea.top - reserved);
-                break;
-            case DockPosition::Bottom:
-                reserved = dockArea.bottom - dockArea.top;
-                page.workArea.bottom = std::min(page.bounds.bottom, page.workArea.bottom + reserved);
-                break;
-            case DockPosition::Left:
-                reserved = dockArea.right - dockArea.left;
-                page.workArea.left = std::max(page.bounds.left, page.workArea.left - reserved);
-                break;
-            case DockPosition::Right:
-                reserved = dockArea.right - dockArea.left;
-                page.workArea.right = std::min(page.bounds.right, page.workArea.right + reserved);
+                RECT intersect;
+                if (!IntersectRect(
+                        &intersect, &dockArea,
+                        &page.bounds))
+                    continue;
+                int reserved;
+                switch (dockWorkAreaReservationPosition_)
+                {
+                case DockPosition::Top:
+                    reserved = dockArea.bottom -
+                        dockArea.top;
+                    page.workArea.top = std::max(
+                        page.bounds.top,
+                        page.workArea.top - reserved);
+                    break;
+                case DockPosition::Bottom:
+                    reserved = dockArea.bottom -
+                        dockArea.top;
+                    page.workArea.bottom = std::min(
+                        page.bounds.bottom,
+                        page.workArea.bottom + reserved);
+                    break;
+                case DockPosition::Left:
+                    reserved = dockArea.right -
+                        dockArea.left;
+                    page.workArea.left = std::max(
+                        page.bounds.left,
+                        page.workArea.left - reserved);
+                    break;
+                case DockPosition::Right:
+                    reserved = dockArea.right -
+                        dockArea.left;
+                    page.workArea.right = std::min(
+                        page.bounds.right,
+                        page.workArea.right + reserved);
+                    break;
+                }
                 break;
             }
-            break;
         }
     }
 
     dockAreas_.clear();
+    dockWorkAreaReservationApplied_ = false;
     if (!generalSettings_.dockEnabled || gridPages_.empty()) return;
 
     std::vector<size_t> targetPages = BuildMonitorRenderOrder();
@@ -2446,8 +2503,11 @@ inline void DesktopApp::ApplyDockWorkAreaReservation()
                 GetGridPageItemIconSize(candidate) * dockScale)));
             const int scaledSpacing = std::max(1, static_cast<int>(std::round(
                 kDockSpacing * dockScale)));
-            const int edgeDistance = std::max(scaledSpacing, componentMargin);
-            const int innerGap = edgeDistance - componentMargin;
+            const int edgeDistance =
+                std::max(
+                    scaledSpacing, componentMargin);
+            const int innerGap =
+                edgeDistance - componentMargin;
             const int panelThickness = scaledIconSize + scaledSpacing * 2;
             const int desiredReservation = dockSettings_.edgeAttached
                 ? panelThickness + innerGap
@@ -2468,6 +2528,11 @@ inline void DesktopApp::ApplyDockWorkAreaReservation()
         ApplyIconSpacingToPage(targetPage);
         if (!IsRectEmptyRect(dockArea)) dockAreas_.push_back(dockArea);
     }
+    dockWorkAreaReservationApplied_ =
+        !dockAreas_.empty();
+    if (dockWorkAreaReservationApplied_)
+        dockWorkAreaReservationPosition_ =
+            dockSettings_.position;
 }
 
 inline void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,

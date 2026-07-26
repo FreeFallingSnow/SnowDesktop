@@ -29,6 +29,8 @@ inline DesktopApp::~DesktopApp()
         ResolveSystemTaskbarAppearance(dockSettings_));
     dockWindowTransition_.reset();
     dockWindowPreview_.reset();
+    UnregisterFloatingDockHotkey();
+    DestroyFloatingDockWindow();
     StopQuickNavigationAppIndexing();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
@@ -132,6 +134,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
     if (hwnd_ && IsWindow(hwnd_))
     {
         UnregisterNavigationHotkey();
+        UnregisterFloatingDockHotkey();
         KillTimer(hwnd_, kShellChangeTimerId);
         KillTimer(hwnd_, kDisplayTopologyRefreshTimerId);
         KillTimer(hwnd_, kRecycleBinPollTimerId);
@@ -160,6 +163,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
     }
 
     DestroyDragHintWindow();
+    DestroyFloatingDockWindow();
     DestroyQuickNavigationWindow();
     if (inputHwnd_ && IsWindow(inputHwnd_))
         DestroyWindow(inputHwnd_);
@@ -342,6 +346,7 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
 
     RegisterOleDropTarget();
     ApplyNavigationHotkey();
+    ApplyFloatingDockHotkey();
     RegisterShellChangeNotifications();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
@@ -927,6 +932,19 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         nav.lpszClassName = kQuickNavigationWindowClassName;
         RegisterClassExW(&nav);
     }
+    {
+        WNDCLASSEXW dock{};
+        dock.cbSize = sizeof(dock);
+        dock.style = CS_DBLCLKS;
+        dock.lpfnWndProc = FloatingDockWndProc;
+        dock.hInstance = instance;
+        dock.hCursor =
+            LoadCursorW(nullptr, IDC_ARROW);
+        dock.hbrBackground = nullptr;
+        dock.lpszClassName =
+            kFloatingDockWindowClassName;
+        RegisterClassExW(&dock);
+    }
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         wc.lpszClassName, L"SnowDesktop",
@@ -1023,6 +1041,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     RegisterShellChangeNotifications();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
+    ApplyFloatingDockHotkey();
 
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
@@ -1078,6 +1097,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetDockEnabledChangedCallback([this](bool enabled) {
             if (generalSettings_.dockEnabled == enabled) return;
             generalSettings_.dockEnabled = enabled;
+            ApplyFloatingDockHotkey();
             UpdateLayoutWorkArea();
             if (!enabled)
                 RestoreDockEntriesToDesktop();
@@ -1102,6 +1122,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 const bool layoutChanged =
                     settings.position != dockSettings_.position ||
                     settings.edgeAttached != dockSettings_.edgeAttached ||
+                    settings.floatingShortcutMode !=
+                        dockSettings_.floatingShortcutMode ||
                     settings.monitorScope != dockSettings_.monitorScope ||
                     settings.showWindowsButton !=
                         dockSettings_.showWindowsButton ||
@@ -1122,6 +1144,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     !settings.showWindowPreviews;
 
                 dockSettings_ = settings;
+                ApplyFloatingDockHotkey();
                 dockSettingsLayoutCommitPending_ =
                     dockSettingsLayoutCommitPending_ ||
                     layoutChanged;
@@ -1147,6 +1170,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetDockSettingsChangedCallback([this]() {
             const DockPosition previousPosition = dockSettings_.position;
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
+            const bool previousFloatingShortcutMode =
+                dockSettings_.floatingShortcutMode;
             const DockMonitorScope previousMonitorScope = dockSettings_.monitorScope;
             const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
             const bool previousShowRunningApps = dockSettings_.showRunningApps;
@@ -1166,6 +1191,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (dockSettingsLayoutCommitPending_ ||
                 dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
+                dockSettings_.floatingShortcutMode !=
+                    previousFloatingShortcutMode ||
                 dockSettings_.monitorScope != previousMonitorScope ||
                 dockSettings_.showWindowsButton != previousShowWindowsButton ||
                 dockSettings_.showRunningApps != previousShowRunningApps ||
@@ -1412,6 +1439,30 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, 
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+inline LRESULT CALLBACK DesktopApp::FloatingDockWndProc(
+    HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    DesktopApp* app = nullptr;
+    if (msg == WM_NCCREATE)
+    {
+        auto* create =
+            reinterpret_cast<CREATESTRUCTW*>(lp);
+        app = static_cast<DesktopApp*>(
+            create->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(app));
+    }
+    else
+    {
+        app = reinterpret_cast<DesktopApp*>(
+            GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+    if (app)
+        return app->HandleFloatingDockMessage(
+            hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 /**
  * @brief 独立键盘输入窗口的静态窗口过程。
  */
@@ -1483,12 +1534,28 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
             ToggleQuickNavigation();
             return 0;
         }
+        if (static_cast<int>(wp) ==
+            kFloatingDockHotkeyId)
+        {
+            ToggleFloatingDock();
+            return 0;
+        }
         break;
     case WM_DESTROY:
         if (navigationHotkeyHwnd_ == hwnd)
         {
             navigationHotkeyHwnd_ = nullptr;
             navigationHotkeyRegistered_ = false;
+        }
+        if (floatingDockHotkeyHwnd_ == hwnd)
+        {
+            floatingDockHotkeyHwnd_ = nullptr;
+            floatingDockHotkeyRegistered_ = false;
+        }
+        if (floatingDockEdgeSwipeHwnd_ == hwnd)
+        {
+            floatingDockEdgeSwipeHwnd_ = nullptr;
+            floatingDockEdgeSwipeDetector_.Reset();
         }
         if (inputHwnd_ == hwnd)
             inputHwnd_ = nullptr;
@@ -1631,13 +1698,41 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_MOUSEMOVE:
         if (desktopIconsHidden_) return 0;
         OnMouseMove(wp, lp);
+        // Internal Dock drags capture the desktop HWND, so their subsequent
+        // mouse moves arrive here rather than at the floating host.
+        InvalidateFloatingDockWindow(true);
         return 0;
     case WM_MOUSELEAVE:
+        if (floatingDockVisible_)
+        {
+            POINT cursor{};
+            if (GetCursorPos(&cursor))
+            {
+                ScreenToClient(hwnd_, &cursor);
+                const bool inFloatingLayer =
+                    PtInRect(
+                        &floatingDockRect_,
+                        cursor) ||
+                    (!IsRectEmpty(
+                            &floatingDockPopupRect_) &&
+                        PtInRect(
+                            &floatingDockPopupRect_,
+                            cursor)) ||
+                    (!IsRectEmpty(
+                            &floatingDockTooltipRect_) &&
+                        PtInRect(
+                            &floatingDockTooltipRect_,
+                            cursor));
+                if (inFloatingLayer)
+                    return 0;
+            }
+        }
         OnMouseLeave();
         return 0;
     case WM_LBUTTONUP:
         if (desktopIconsHidden_) return 0;
         OnLeftButtonUp(wp, lp);
+        InvalidateFloatingDockWindow(true);
         return 0;
     case WM_MBUTTONUP:
         if (desktopIconsHidden_) return 0;
@@ -1854,6 +1949,12 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             ToggleQuickNavigation();
             return 0;
         }
+        if (static_cast<int>(wp) ==
+            kFloatingDockHotkeyId)
+        {
+            ToggleFloatingDock();
+            return 0;
+        }
         break;
     case WM_KEYUP:
         RefreshDragHintFromKeyboard();
@@ -1895,6 +1996,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (luaInlineEdit_)
             CommitLuaInlineTextEdit(false);
         UnregisterNavigationHotkey();
+        UnregisterFloatingDockHotkey();
         if (!exitRequested_)
         {
             ResetDesktopWindowResources();

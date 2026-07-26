@@ -659,6 +659,7 @@ inline void DesktopApp::LoadDockSettingsAndApply()
     SetSystemTaskbarAlignmentCentered(settings.systemTaskbarAlignment == 1);
     settings.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     dockSettings_ = settings;
+    ApplyFloatingDockHotkey();
     systemTaskbarWindowStateChangedTick_.fetch_add(1,
         std::memory_order_relaxed);
     RefreshSystemTaskbarAppearance(true);
@@ -869,6 +870,7 @@ inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion,
             dragSession_.Items(), dragSession_.Source(), mods);
     ShowDragHintWindow(clientPoint, hint);
+    InvalidateFloatingDockWindow(true);
 }
 
 /**
@@ -1631,6 +1633,32 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     DockContainer* pointDock = GetDockContainerAtPoint(pt);
     const bool pointInDock = pointDock != nullptr;
+    size_t pressedDockCollectionWidgetIndex =
+        static_cast<size_t>(-1);
+    if (pointDock)
+    {
+        if (DockEntryItem* pressedDockItem =
+                pointDock->EntryAtPoint(pt);
+            pressedDockItem &&
+            pressedDockItem->GetEntryType() ==
+                DockEntryType::Collection)
+        {
+            pressedDockCollectionWidgetIndex =
+                FindWidgetIndexById(
+                    pressedDockItem->GetReference());
+        }
+    }
+    const bool pressedOpenPopupDockToggle =
+        snowdesktop::floating_dock_rules::
+            ShouldCloseCollectionPopup(
+                popupWidgetIndex_,
+                pressedDockCollectionWidgetIndex);
+    HWND interactionCaptureHwnd = hwnd_;
+    if (handlingFloatingDockInput_ &&
+        floatingDockHwnd_ &&
+        IsWindow(floatingDockHwnd_))
+        interactionCaptureHwnd =
+            floatingDockHwnd_;
     dockPressedContainer_ = pointDock;
     // Dock is an app switcher: do not move focus away from the current app before
     // deciding whether this click should minimize or restore it. The decision
@@ -1653,7 +1681,11 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-        if (!PtInRect(&popup, pt))
+        if (snowdesktop::floating_dock_rules::
+                ShouldCloseCollectionPopupOnPointerDown(
+                    popupWidgetIndex_,
+                    pressedDockCollectionWidgetIndex,
+                    PtInRect(&popup, pt) != FALSE))
             CloseCollectionPopup();
     }
 
@@ -1667,7 +1699,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     bool ctrl = (wp & MK_CONTROL) != 0;
 
-    if (popupWidgetIndex_ < widgets_.size())
+    if (popupWidgetIndex_ < widgets_.size() &&
+        !pressedOpenPopupDockToggle)
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
 
@@ -1720,7 +1753,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         marqueeWidgetIndex_ = popupWidgetIndex_;
         marqueeInitialScrollOffset_ = popupScrollOffset_;
         mouseDownWidgetIndex_ = popupWidgetIndex_;
-        SetCapture(hwnd_);
+        SetCapture(interactionCaptureHwnd);
         InvalidateRect(hwnd_, nullptr, FALSE);
         SyncKeyboardNavFromSelection();
         return;
@@ -1741,6 +1774,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             {
                 mouseDown_ = false;
                 ToggleWindowsStartMenu();
+                if (floatingDockVisible_)
+                    CloseFloatingDock();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -1748,6 +1783,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             {
                 mouseDown_ = false;
                 OpenQuickNavigation();
+                if (floatingDockVisible_)
+                    CloseFloatingDock();
                 return;
             }
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
@@ -1780,7 +1817,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     }
                 }
                 mouseDownHit_ = dockItem;
-                SetCapture(hwnd_);
+                SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -1808,7 +1845,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             running->window;
                 }
                 mouseDownHit_ = runningItem;
-                SetCapture(hwnd_);
+                SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -1837,7 +1874,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             running->second.window;
                 }
                 mouseDownHit_ = frequentItem;
-                SetCapture(hwnd_);
+                SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -2352,11 +2389,14 @@ inline void DesktopApp::OnMiddleButtonUp(WPARAM wp, LPARAM lp)
 inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 {
     (void)wp;
-    TRACKMOUSEEVENT mouseTrack{};
-    mouseTrack.cbSize = sizeof(mouseTrack);
-    mouseTrack.dwFlags = TME_LEAVE;
-    mouseTrack.hwndTrack = hwnd_;
-    TrackMouseEvent(&mouseTrack);
+    if (!handlingFloatingDockInput_)
+    {
+        TRACKMOUSEEVENT mouseTrack{};
+        mouseTrack.cbSize = sizeof(mouseTrack);
+        mouseTrack.dwFlags = TME_LEAVE;
+        mouseTrack.hwndTrack = hwnd_;
+        TrackMouseEvent(&mouseTrack);
+    }
 
     POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT oldMouse = lastMousePoint_;
@@ -3053,7 +3093,11 @@ inline void DesktopApp::OnMouseLeave()
     // window. Preserve that pointer state, but clear passive hover immediately.
     // The preview owns its independent screen-space transition triangle, so
     // Dock magnification can still be reset while the preview stays reachable.
-    if (GetCapture() != hwnd_ && !mouseDown_ &&
+    const HWND captureWindow = GetCapture();
+    const bool ownsInteractionCapture =
+        captureWindow == hwnd_ ||
+        captureWindow == floatingDockHwnd_;
+    if (!ownsInteractionCapture && !mouseDown_ &&
         !dragSession_.IsActive() &&
         widgetAction_ == WidgetAction::None)
     {
@@ -3169,10 +3213,20 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     navAutoFlipTick_ = 0;
     ReleaseCapture();
     InvalidateDragStaticScene();
-    if (hwnd_)
+    const bool collectionOnFloatingDock =
+        entryType == DockEntryType::Collection &&
+        floatingDockVisible_ &&
+        dock == floatingDockContainer_;
+    if (hwnd_ && !collectionOnFloatingDock)
     {
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        UpdateWindow(hwnd_);
+        if (floatingDockVisible_ &&
+            dock == floatingDockContainer_)
+            InvalidateFloatingDockWindow(true);
+        else
+        {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            UpdateWindow(hwnd_);
+        }
     }
 
     if (waitForDoubleClick)
@@ -3198,6 +3252,8 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
                 running->window, pressedWindowAction,
                 pressedTargetWindow,
                 pressedAnchorScreen);
+        if (floatingDockVisible_)
+            CloseFloatingDock();
     }
     else if (frequentItemIndex < items_.size())
     {
@@ -3205,11 +3261,23 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
             frequentItemIndex, pressedWindowAction,
             pressedTargetWindow,
             pressedAnchorScreen);
+        if (floatingDockVisible_)
+            CloseFloatingDock();
     }
     else if (entryType == DockEntryType::Collection)
     {
         const size_t widgetIndex = FindWidgetIndexById(reference);
-        if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, point);
+        if (widgetIndex < widgets_.size())
+        {
+            if (snowdesktop::floating_dock_rules::
+                    ShouldCloseCollectionPopup(
+                        popupWidgetIndex_,
+                        widgetIndex))
+                CloseCollectionPopup();
+            else
+                OpenCollectionPopupAt(
+                    widgetIndex, point);
+        }
     }
     else
     {
@@ -3219,6 +3287,8 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
                 itemIndex, pressedWindowAction,
                 pressedTargetWindow,
                 pressedAnchorScreen);
+        if (floatingDockVisible_)
+            CloseFloatingDock();
     }
     return true;
 }
@@ -4246,6 +4316,7 @@ inline void DesktopApp::RefreshDragHintFromKeyboard()
         ClientToScreen(hwnd_, &screenPoint);
         ShowDragHintWindowScreen(screenPoint, hint);
         OnPaint();
+        InvalidateFloatingDockWindow(true);
     }
     else
     {
@@ -5975,7 +6046,6 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
                     {
                         widgets_[widgetIndex].selected =
                             dockItem->IsSelected();
-                        widgets_[widgetIndex].bounds = dockItemBounds;
                         InvalidateRect(hwnd_, nullptr, FALSE);
                         ShowWidgetContextMenu(
                             screenPt, widgetIndex,
@@ -6376,6 +6446,10 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     {
         OnDockLaunchBounceTimer();
     }
+    else if (timerId == kFloatingDockEdgeSwipeTimerId)
+    {
+        UpdateFloatingDockEdgeSwipe();
+    }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
         UpdateSystemTaskbarRevealGuard();
@@ -6414,6 +6488,7 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         {
             KillTimer(hwnd_, kCollectionPopupDwellTimerId);
             OnMouseMove(0, MAKELPARAM(lastMousePoint_.x, lastMousePoint_.y));
+            InvalidateFloatingDockWindow(true);
         }
     }
     else if (timerId == kCollectionGroupTabDwellTimerId)
@@ -6439,6 +6514,7 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
                 0, MAKELPARAM(
                     lastMousePoint_.x,
                     lastMousePoint_.y));
+            InvalidateFloatingDockWindow(true);
         }
     }
     else if (timerId == kDockHandoffDwellTimerId)
@@ -6457,6 +6533,7 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
                 OnMouseMove(0, MAKELPARAM(
                     dragSession_.CurrentPoint().x, dragSession_.CurrentPoint().y));
             InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidateFloatingDockWindow(true);
         }
     }
     else if (timerId == kPageNotifyTimerId)
@@ -6870,10 +6947,6 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     if (groupIndex < widgets_.size())
     {
         popupPageId_ = widgets_[groupIndex].gridCell.pageId;
-        // Grouped collections are omitted from the normal runtime tree to
-        // prevent their empty desktop bounds from rendering at (0, 0).
-        // Recreate only the collection currently backing the popup.
-        RebuildContainersAndItems();
     }
     if (DockContainer* dock = GetDockContainerAtPoint(anchorPoint))
     {
@@ -6930,6 +7003,17 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+    if (floatingDockVisible_)
+    {
+        floatingDockContainer_ =
+            GetDockContainerAtPoint(anchorPoint);
+        if (!floatingDockContainer_)
+            floatingDockContainer_ =
+                SelectFloatingDockContainerForMonitor(
+                    floatingDockMonitor_);
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -6940,9 +7024,6 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
 inline void DesktopApp::CloseCollectionPopup()
 {
     if (popupWidgetIndex_ == static_cast<size_t>(-1)) return;
-    const bool groupedPopup =
-        popupWidgetIndex_ < widgets_.size() &&
-        IsGroupedCollection(widgets_[popupWidgetIndex_]);
     ClearSelection();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     popupScrollOffset_ = 0;
@@ -6952,8 +7033,14 @@ inline void DesktopApp::CloseCollectionPopup()
     popupPageId_.clear();
     popupCategoryId_.clear();
     popupRect_ = {};
-    if (groupedPopup)
-        RebuildContainersAndItems();
+    if (floatingDockVisible_)
+    {
+        floatingDockContainer_ =
+            SelectFloatingDockContainerForMonitor(
+                floatingDockMonitor_);
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -8505,6 +8592,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         {
             *effect = DROPEFFECT_NONE;
             OnPaint();
+            InvalidateFloatingDockWindow(true);
             return S_OK;
         }
 
@@ -8557,6 +8645,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         *effect = targetRegion == HitRegion::Blocked
             ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
 
@@ -8574,6 +8663,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     {
         *effect = DROPEFFECT_NONE;
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
 
@@ -8629,6 +8719,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     *effect = targetRegion == HitRegion::Blocked
         ? DROPEFFECT_NONE : ChooseDropEffect(keyState, *effect);
     OnPaint();
+    InvalidateFloatingDockWindow(true);
     return S_OK;
 }
 
@@ -8664,6 +8755,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         {
             *effect = DROPEFFECT_NONE;
             OnPaint();
+            InvalidateFloatingDockWindow(true);
             return S_OK;
         }
 
@@ -8716,6 +8808,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         *effect = targetRegion == HitRegion::Blocked
             ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
 
@@ -8733,6 +8826,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     {
         *effect = DROPEFFECT_NONE;
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
 
@@ -8773,6 +8867,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     *effect = targetRegion == HitRegion::Blocked
         ? DROPEFFECT_NONE : ChooseDropEffect(keyState, *effect);
     OnPaint();
+    InvalidateFloatingDockWindow(true);
     return S_OK;
 }
 
@@ -8798,6 +8893,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
         HideDragHintWindow();
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
     externalDragActive_ = false;
@@ -8806,6 +8902,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
     EndDragSession();
     HideDragHintWindow();
     OnPaint();
+    InvalidateFloatingDockWindow(true);
     return S_OK;
 }
 

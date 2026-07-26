@@ -34,6 +34,23 @@ constexpr DockClickAction ResolveDockClickAction(
 }
 
 /**
+ * @brief Selects the one show command used to restore a minimized window.
+ *
+ * Windows marks a window minimized from a maximized state with
+ * WPF_RESTORETOMAXIMIZED. Issuing multiple generic restore commands can first
+ * honor that flag and then immediately restore the maximized window to its
+ * normal rectangle, so callers must send only the returned command once.
+ */
+constexpr int ResolveDockRestoreShowCommand(
+    UINT placementFlags, UINT placementShowCommand) noexcept
+{
+    return (placementFlags & WPF_RESTORETOMAXIMIZED) != 0 ||
+            placementShowCommand == SW_SHOWMAXIMIZED
+        ? SW_SHOWMAXIMIZED
+        : SW_RESTORE;
+}
+
+/**
  * @brief 判断顶层窗口的扩展样式与 Owner 关系是否允许显示在任务栏/Dock。
  *
  * Windows 默认不在任务栏显示工具窗口、有 Owner 的窗口和

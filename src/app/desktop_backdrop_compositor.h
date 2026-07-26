@@ -30,8 +30,13 @@ public:
 
     /** @brief 为指定 SnowDesktop 内容窗口创建原生 backdrop 合成窗口。 */
     bool Initialize(HWND contentWindow);
-    /** @brief 为指定顶层弹出窗口创建原生 backdrop 合成窗口。 */
-    bool InitializePopup(HWND contentWindow);
+    /**
+     * @brief 为指定顶层弹出窗口创建原生 backdrop 合成窗口。
+     * @param topmost 辅助窗口是否加入 TOPMOST 带；必须与内容窗口策略一致。
+     */
+    bool InitializePopup(
+        HWND contentWindow, bool topmost = true,
+        bool initiallyVisible = true);
     /** @brief 内容窗口更换桌面宿主后，同步 backdrop 窗口的 parent 和层级。 */
     void Reattach(HWND contentWindow);
     /** @brief 显示或隐藏独立的 backdrop 辅助窗口。 */
@@ -54,7 +59,10 @@ public:
     const std::wstring& LastError() const;
 
 private:
-    bool InitializeInternal(HWND contentWindow, bool popupMode);
+    bool InitializeInternal(
+        HWND contentWindow, bool popupMode,
+        bool popupTopmost = false,
+        bool initiallyVisible = true);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

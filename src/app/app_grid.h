@@ -2799,6 +2799,12 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
             ToggleQuickNavigation();
             return 0;
         }
+        if (static_cast<int>(wp) ==
+            kFloatingDockHotkeyId)
+        {
+            ToggleFloatingDock();
+            return 0;
+        }
         break;
     case WM_COMMAND:
         return 0;
@@ -2807,6 +2813,16 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, kDisplayTopologyRefreshTimerId);
+        if (floatingDockHotkeyHwnd_ == hwnd)
+        {
+            floatingDockHotkeyHwnd_ = nullptr;
+            floatingDockHotkeyRegistered_ = false;
+        }
+        if (floatingDockEdgeSwipeHwnd_ == hwnd)
+        {
+            floatingDockEdgeSwipeHwnd_ = nullptr;
+            floatingDockEdgeSwipeDetector_.Reset();
+        }
         controlHwnd_ = nullptr;
         PostQuitMessage(0);
         return 0;
@@ -6498,9 +6514,12 @@ inline void DesktopApp::RebuildContainersAndItems()
     // Widgets
     for (auto& w : widgets_)
     {
+        // Collection popups need their WidgetContainer for selection, sorting
+        // and drops. Keep grouped collections in the runtime tree at all
+        // times; their empty model bounds keep them off the desktop. Other
+        // grouped source widgets remain hosted exclusively by their group.
         if (IsGroupedWidget(w) &&
-            (popupWidgetIndex_ >= widgets_.size() ||
-             widgets_[popupWidgetIndex_].id != w.id))
+            w.type != DesktopWidgetType::Collection)
             continue;
         const bool dockExclusive = IsDockExclusiveWidgetId(w.id);
         auto widget = CreateWidget(&w, this);
@@ -6529,6 +6548,16 @@ inline void DesktopApp::RebuildContainersAndItems()
                 containers_.push_back(
                     std::make_unique<DockContainer>(this, &dockEntries_, dockArea));
         }
+    }
+    if (floatingDockVisible_)
+    {
+        floatingDockContainer_ =
+            SelectFloatingDockContainerForMonitor(
+                floatingDockMonitor_);
+        if (floatingDockContainer_)
+            UpdateFloatingDockWindowBounds();
+        else
+            CloseFloatingDock();
     }
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
