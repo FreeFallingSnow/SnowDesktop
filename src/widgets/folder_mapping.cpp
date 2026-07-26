@@ -941,7 +941,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         app_->DrawD2DText(context, _LW("widget.folder_mapping.empty"), empty,
             (lt && lightCentered) ? lightCentered :
                 (centered ? centered : app_->listItemTextFormat_.Get()),
-            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f),
+            DWRITE_WORD_WRAPPING_WRAP);
         return;
     }
 
@@ -981,7 +982,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             (lt && lightCentered) ? lightCentered :
                 (centered ? centered : app_->listItemTextFormat_.Get()),
             lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f)
-               : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+               : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f),
+            DWRITE_WORD_WRAPPING_WRAP);
         return;
     }
 

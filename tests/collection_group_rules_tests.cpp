@@ -1,4 +1,5 @@
 #include "widgets/collection_group_rules.h"
+#include "widget_visibility_rules.h"
 
 #include <algorithm>
 #include <iostream>
@@ -9,6 +10,8 @@
 
 namespace rules =
     snowdesktop::collection_group_rules;
+namespace visibilityRules =
+    snowdesktop::widget_visibility_rules;
 
 namespace
 {
@@ -444,6 +447,30 @@ void TestGridPlacementInvariants()
             "multiple placements must preserve spans without overlap");
     }
 }
+
+void TestHoverOnlyWidgetVisibility()
+{
+    Check(
+        visibilityRules::ShouldRenderWidget(
+            false, false, false, false, false, false),
+        "regular widget remains visible while idle");
+    Check(
+        !visibilityRules::ShouldRenderWidget(
+            true, false, false, false, false, false),
+        "hover-only widget remains hidden while idle");
+    Check(
+        visibilityRules::ShouldRenderWidget(
+            true, true, false, false, false, false),
+        "item drag reveals hover-only widget");
+    Check(
+        visibilityRules::ShouldRenderWidget(
+            true, false, false, true, false, false),
+        "widget move reveals hover-only widget");
+    Check(
+        visibilityRules::ShouldRenderWidget(
+            true, false, false, false, false, true),
+        "pointer hover reveals hover-only widget");
+}
 }
 
 int main()
@@ -456,6 +483,7 @@ int main()
     TestCollectionLabelTargetMatrix();
     TestFileGroupRules();
     TestGridPlacementInvariants();
+    TestHoverOnlyWidgetVisibility();
     if (failures != 0)
     {
         std::cerr << failures

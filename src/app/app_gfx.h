@@ -3,6 +3,7 @@
 // This file is included by app_oo.h after the class definition.
 
 #include "../widgets/collection_group_rules.h"
+#include "../widget_visibility_rules.h"
 
 // ── Quick Navigation Theme Colors ───────────────────────────
 
@@ -1277,7 +1278,8 @@ inline void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds
 }
 
 inline void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
-    RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color)
+    RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
+    DWRITE_WORD_WRAPPING wordWrapping)
 {
     if (!ctx || !format || text.empty() || IsRectEmptyRect(rect)) return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
@@ -1292,6 +1294,27 @@ inline void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& 
         ComPtr<ID2D1SolidColorBrush> brush;
         if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
         it = brushCache_.emplace(key, std::move(brush)).first;
+    }
+    if (wordWrapping != DWRITE_WORD_WRAPPING_NO_WRAP && dwriteFactory_)
+    {
+        const float width = static_cast<float>(
+            std::max<LONG>(1, rect.right - rect.left));
+        const float height = static_cast<float>(
+            std::max<LONG>(1, rect.bottom - rect.top));
+        ComPtr<IDWriteTextLayout> layout;
+        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                text.c_str(), static_cast<UINT32>(text.size()),
+                format, width, height, &layout)) && layout)
+        {
+            layout->SetWordWrapping(wordWrapping);
+            ctx->DrawTextLayout(
+                D2D1::Point2F(
+                    static_cast<float>(rect.left),
+                    static_cast<float>(rect.top)),
+                layout.Get(), it->second.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            return;
+        }
     }
     ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
         ToD2DRect(rect), it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -1627,9 +1650,16 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
                 continue;
         }
 
-        if (widgetData.showOnHoverOnly && !dragSession_.IsActive() && !externalDragActive_
-            && !(popupWidgetIndex_ < widgets_.size() && &widgetData == &widgets_[popupWidgetIndex_])
-            && !PtInRect(&widgetData.bounds, lastMousePoint_))
+        const bool popupOpen =
+            popupWidgetIndex_ < widgets_.size() &&
+            &widgetData == &widgets_[popupWidgetIndex_];
+        if (!snowdesktop::widget_visibility_rules::ShouldRenderWidget(
+                widgetData.showOnHoverOnly,
+                dragSession_.IsActive(),
+                externalDragActive_,
+                widgetAction_ == WidgetAction::Move,
+                popupOpen,
+                PtInRect(&widgetData.bounds, lastMousePoint_) != FALSE))
             continue;
 
         bool drawn = false;

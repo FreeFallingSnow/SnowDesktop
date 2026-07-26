@@ -1476,9 +1476,11 @@ private:
      * @param rect 绘制矩形
      * @param format 文字格式
      * @param color 文字颜色
+     * @param wordWrapping 换行模式，默认保持单行
      */
     void DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
-        RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color);
+        RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
+        DWRITE_WORD_WRAPPING wordWrapping = DWRITE_WORD_WRAPPING_NO_WRAP);
     /**
      * @brief 绘制带省略号（可选）的单行文本，覆盖对齐方式。
      * @param ctx D2D 上下文

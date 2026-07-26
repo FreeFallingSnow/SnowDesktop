@@ -1699,7 +1699,8 @@ void FileGroup::DrawContent(
                     ? D2D1::ColorF(
                         0.0f, 0.0f, 0.0f, 0.68f)
                     : D2D1::ColorF(
-                        1.0f, 1.0f, 1.0f, 0.66f));
+                        1.0f, 1.0f, 1.0f, 0.66f),
+                DWRITE_WORD_WRAPPING_WRAP);
             return;
         }
 
@@ -1795,7 +1796,8 @@ void FileGroup::DrawContent(
                 app_->listItemTextFormat_.Get(),
             app_->IsLightContentTheme()
                 ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.68f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.66f));
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.66f),
+            DWRITE_WORD_WRAPPING_WRAP);
     }
 
     const auto& sources = GetVisibleSourceIds();

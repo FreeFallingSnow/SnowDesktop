@@ -1188,7 +1188,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 (lt && lightHintFormat) ? lightHintFormat :
                     (normalFormat ? normalFormat :
                     (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get())),
-                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f),
+                DWRITE_WORD_WRAPPING_WRAP);
             return;
         }
 
@@ -1236,7 +1237,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             (lt && lightHintFormat) ? lightHintFormat :
                 (normalFormat ? normalFormat :
                 (app_->navTabTextFormat_ ? app_->navTabTextFormat_.Get() : app_->listItemTextFormat_.Get())),
-            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f));
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f),
+            DWRITE_WORD_WRAPPING_WRAP);
         return;
     }
 
