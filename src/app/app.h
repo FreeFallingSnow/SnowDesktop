@@ -28,6 +28,7 @@
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "dock_settings.h"
+#include "dock_drop_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"

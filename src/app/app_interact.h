@@ -8710,14 +8710,30 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
     if (keyState & MK_ALT)     mods |= MK_ALT;
     if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-    dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
+    const bool externalDockMapping =
+        dynamic_cast<DockContainer*>(targetContainer) &&
+        targetRegion != HitRegion::Handoff &&
+        targetRegion != HitRegion::Blocked;
+    if (externalDockMapping)
+        dragSession_.UpdateActionFromMods(
+            DropActionToMods(
+                snowdesktop::dock_drop_rules::
+                    ExternalMappingAction()),
+            snowdesktop::dock_drop_rules::
+                ExternalMappingAction());
+    else
+        dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
     std::wstring hint;
     if (targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = targetRegion == HitRegion::Blocked
-        ? DROPEFFECT_NONE : ChooseDropEffect(keyState, *effect);
+        ? DROPEFFECT_NONE
+        : (externalDockMapping
+            ? snowdesktop::dock_drop_rules::
+                ChooseExternalMappingEffect(*effect)
+            : ChooseDropEffect(keyState, *effect));
     OnPaint();
     InvalidateFloatingDockWindow(true);
     return S_OK;
@@ -8858,14 +8874,30 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
     if (keyState & MK_ALT)     mods |= MK_ALT;
     if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-    dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
+    const bool externalDockMapping =
+        dynamic_cast<DockContainer*>(targetContainer) &&
+        targetRegion != HitRegion::Handoff &&
+        targetRegion != HitRegion::Blocked;
+    if (externalDockMapping)
+        dragSession_.UpdateActionFromMods(
+            DropActionToMods(
+                snowdesktop::dock_drop_rules::
+                    ExternalMappingAction()),
+            snowdesktop::dock_drop_rules::
+                ExternalMappingAction());
+    else
+        dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
     std::wstring hint;
     if (targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = targetRegion == HitRegion::Blocked
-        ? DROPEFFECT_NONE : ChooseDropEffect(keyState, *effect);
+        ? DROPEFFECT_NONE
+        : (externalDockMapping
+            ? snowdesktop::dock_drop_rules::
+                ChooseExternalMappingEffect(*effect)
+            : ChooseDropEffect(keyState, *effect));
     OnPaint();
     InvalidateFloatingDockWindow(true);
     return S_OK;
@@ -9149,11 +9181,22 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         Container* target = dragSession_.TargetContainer() ? dragSession_.TargetContainer() : GetDesktopGrid();
         HitRegion targetRegion = dragSession_.TargetRegion() != HitRegion::None ? dragSession_.TargetRegion() : HitRegion::Empty;
 
-        if (auto* dock = dynamic_cast<DockContainer*>(target))
+        if (auto* dock = dynamic_cast<DockContainer*>(target);
+            dock && targetRegion != HitRegion::Handoff)
         {
             if (!dock->HasCapacity(sourceItems.size()))
             {
                 MessageBeep(MB_ICONWARNING);
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
+
+            const DWORD mappingEffect =
+                snowdesktop::dock_drop_rules::
+                    ChooseExternalMappingEffect(*effect);
+            if (mappingEffect == DROPEFFECT_NONE)
+            {
                 *effect = DROPEFFECT_NONE;
                 EndDragSession();
                 return S_OK;
@@ -9164,6 +9207,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             const auto existingKeys = SnapshotDesktopKeys();
             DropPreviewList desktopPreview = BuildDropPreviewList(sourceList, GetDesktopGrid(),
                 nullptr, HitRegion::Empty, mods, clientPoint);
+            desktopPreview.action =
+                snowdesktop::dock_drop_rules::
+                    ExternalMappingAction();
             bool executed = ExecuteDropPipeline(sourceList, desktopPreview);
             if (executed)
             {
@@ -9171,7 +9217,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 SaveLayoutSlots();
                 EndDragSession();
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                *effect = ChooseDropEffect(keyState, *effect);
+                *effect = mappingEffect;
                 return S_OK;
             }
         }

@@ -1,6 +1,7 @@
 #include "dock_magnification.h"
 #include "dock_launch_animation.h"
 #include "dock_rename_layout.h"
+#include "dock_drop_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
@@ -45,8 +46,30 @@ void CheckRowMargins(
 
 int main()
 {
+    namespace dockDrop =
+        snowdesktop::dock_drop_rules;
     namespace floatingDock =
         snowdesktop::floating_dock_rules;
+    Check(dockDrop::ExternalMappingAction() ==
+            DropAction::Link,
+        "external resources dropped on Dock must create a link mapping");
+    Check(dockDrop::ChooseExternalMappingEffect(
+            DROPEFFECT_COPY | DROPEFFECT_MOVE |
+                DROPEFFECT_LINK) == DROPEFFECT_LINK,
+        "Dock mapping must prefer the native link drop effect");
+    Check(dockDrop::ChooseExternalMappingEffect(
+            DROPEFFECT_COPY | DROPEFFECT_MOVE) ==
+            DROPEFFECT_COPY,
+        "Dock mapping must fall back to copy without allowing source deletion");
+    Check(dockDrop::ChooseExternalMappingEffect(
+            DROPEFFECT_MOVE) == DROPEFFECT_NONE,
+        "move-only external sources must be rejected by Dock mapping");
+    Check(!dockDrop::ShouldDrawSortableInsertionIndicator(
+            true),
+        "fixed-position Dock items must not show a sortable insertion indicator");
+    Check(dockDrop::ShouldDrawSortableInsertionIndicator(
+            false),
+        "regular Dock items must retain the sortable insertion indicator");
     Check((floatingDock::kWindowExStyle & WS_EX_TOPMOST) == 0,
         "the floating Dock must never use permanent topmost style");
     Check((floatingDock::kWindowExStyle & WS_EX_NOACTIVATE) != 0,

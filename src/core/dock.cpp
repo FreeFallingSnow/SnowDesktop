@@ -253,6 +253,36 @@ size_t DockContainer::SortableEntryCount() const
         : count;
 }
 
+bool DockContainer::HasOnlyRecycleBinDragSource() const
+{
+    if (!app_)
+        return false;
+
+    const auto& sourceItems = app_->dragSession_.Items();
+    if (sourceItems.empty())
+        return false;
+
+    return std::all_of(sourceItems.begin(), sourceItems.end(),
+        [&](Item* source) {
+            if (auto* icon = dynamic_cast<DesktopIcon*>(source))
+            {
+                const DesktopItem* item = icon->GetDesktopItem();
+                return item &&
+                    _wcsicmp(item->desktopIconClsid.c_str(),
+                        kDesktopIconClsidRecycleBin) == 0;
+            }
+
+            if (auto* dockItem = dynamic_cast<DockEntryItem*>(source))
+            {
+                const size_t index = dockItem->GetEntryIndex();
+                return index < app_->dockEntries_.size() &&
+                    app_->IsRecycleBinDockEntry(
+                        app_->dockEntries_[index]);
+            }
+            return false;
+        });
+}
+
 int DockContainer::ItemIconSize() const
 {
     if (!app_) return kIconSize;
@@ -1848,6 +1878,8 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
     if (origin != this && !HasCapacity(sourceItems.empty() ? 1 : sourceItems.size()))
         return _LW("core.drag.dock_full");
     if (origin == this) return _LW("core.drag.release_adjust_order");
+    if (app_ && app_->externalDragActive_)
+        return _LW("core.dock.release_dock_map_full");
     return (mods & MK_CONTROL)
         ? _LW("core.dock.release_dock_map_full")
         : _LW("core.dock.release_move_dock_ctrl");
@@ -1856,6 +1888,11 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
 void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
     if (!slot || !ctx || region == HitRegion::Blocked) return;
+    if (region != HitRegion::Handoff &&
+        !snowdesktop::dock_drop_rules::
+            ShouldDrawSortableInsertionIndicator(
+                HasOnlyRecycleBinDragSource()))
+        return;
     const auto& slots = GetSlots();
     if (!slots.empty() && slot == slots.back().get())
     {

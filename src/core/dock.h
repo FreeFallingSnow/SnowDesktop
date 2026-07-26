@@ -147,6 +147,7 @@ private:
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     size_t SortableEntryCount() const;
+    bool HasOnlyRecycleBinDragSource() const;
     int ItemIconSize() const;
     int ItemPitch() const;
     int ScaledSpacing() const;

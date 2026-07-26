@@ -8,7 +8,7 @@ if %ERRORLEVEL% NEQ 0 exit /b 1
 
 echo.
 echo === Building behavior tests ===
-cmake --build .build --config Release --target SnowDesktopSlotContractTests SnowDesktopSlotRuntimeTests SnowDesktopCollectionGroupRulesTests SnowDesktopQuickNavigationRulesTests SnowDesktopItemLocationTests --parallel
+cmake --build .build --config Release --target SnowDesktopSlotContractTests SnowDesktopSlotRuntimeTests SnowDesktopCollectionGroupRulesTests SnowDesktopQuickNavigationRulesTests SnowDesktopItemLocationTests SnowDesktopDockWindowRulesTests --parallel
 if %ERRORLEVEL% NEQ 0 exit /b 1
 
 echo.
