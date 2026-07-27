@@ -100,6 +100,7 @@ void TestEveryDirectedPairAndPayload()
     std::array<std::array<bool, surfaceCount>,
         surfaceCount> pairCovered{};
     std::array<bool, payloadCount> payloadCovered{};
+    std::size_t evaluatedCases = 0;
 
     for (std::size_t sourceIndex = 0;
         sourceIndex < surfaceCount;
@@ -135,6 +136,7 @@ void TestEveryDirectedPairAndPayload()
                         contract::EvaluateSlotDrop(
                             source, payload,
                             target, relation);
+                    ++evaluatedCases;
                     pairCovered[sourceIndex][targetIndex] =
                         true;
                     payloadCovered[payloadIndex] = true;
@@ -171,6 +173,11 @@ void TestEveryDirectedPairAndPayload()
     for (bool covered : payloadCovered)
         Check(covered,
             "every payload kind must be exercised");
+    Check(
+        evaluatedCases ==
+            surfaceCount * surfaceCount *
+                payloadCount * 2,
+        "adding a container surface must expand the complete directed drag matrix");
 }
 
 void TestPayloadClassificationIsExclusive()
@@ -223,6 +230,19 @@ void TestPayloadClassificationIsExclusive()
                 Payload::CollectionWidget) ==
                 (active == 1 && widgets),
             "collection-widget classification must require an exclusive widget payload");
+
+        const auto folderMappingWidget =
+            contract::ClassifyPayload({
+                desktop, folder, external,
+                widgets, false,
+                collectionLabel, fileLabel,
+                true,
+            });
+        Check(
+            (folderMappingWidget ==
+                Payload::FolderMappingWidget) ==
+                (active == 1 && widgets),
+            "folder-mapping classification must require an exclusive widget payload");
     }
 }
 
@@ -309,12 +329,13 @@ void TestTypeIsolationRules()
     }
 
     Check(
-        !contract::AcceptsSlotDrop(
+        contract::EvaluateSlotDrop(
             Surface::FolderMapping,
             Payload::FolderEntry,
             Surface::Dock,
-            Relation::CrossSurface),
-        "folder entries must not reuse Dock desktop-entry slots");
+            Relation::CrossSurface) ==
+            contract::DropRoute::AddToDock,
+        "folder entries dragged to Dock must be materialized as safe shortcut mappings");
     Check(
         contract::AcceptsSlotDrop(
             Surface::Desktop,
@@ -339,6 +360,52 @@ void TestTypeIsolationRules()
             Surface::CollectionGroup,
             Relation::CrossSurface),
         "file-source widgets must only enter file groups");
+
+    Check(
+        contract::AcceptsSlotDrop(
+            Surface::Desktop,
+            Payload::FolderMappingWidget,
+            Surface::Dock,
+            Relation::CrossSurface) &&
+        contract::AcceptsSlotDrop(
+            Surface::FileGroup,
+            Payload::FolderMappingWidget,
+            Surface::Dock,
+            Relation::CrossSurface) &&
+        contract::EvaluateSlotDrop(
+            Surface::Dock,
+            Payload::FolderMappingWidget,
+            Surface::Dock,
+            Relation::SameInstance) ==
+            contract::DropRoute::ReorderWithinContainer,
+        "folder mappings must enter and reorder within the Dock");
+    Check(
+        contract::EvaluateSlotDrop(
+            Surface::FileGroup,
+            Payload::FolderMappingWidget,
+            Surface::Desktop,
+            Relation::CrossSurface) ==
+            contract::DropRoute::PlaceOnDesktop &&
+        contract::EvaluateSlotDrop(
+            Surface::Dock,
+            Payload::FolderMappingWidget,
+            Surface::FileGroup,
+            Relation::CrossSurface) ==
+            contract::DropRoute::MoveFileSourceIntoGroup &&
+        contract::EvaluateSlotDrop(
+            Surface::FileGroup,
+            Payload::FolderMappingWidget,
+            Surface::FileGroup,
+            Relation::SameInstance) ==
+            contract::DropRoute::MoveFileSourceIntoGroup,
+        "folder mappings must move between Desktop, Dock, and FileGroup without changing payload family");
+    Check(
+        !contract::AcceptsSlotDrop(
+            Surface::Desktop,
+            Payload::FolderMappingWidget,
+            Surface::CollectionGroup,
+            Relation::CrossSurface),
+        "folder mappings must not enter collection groups");
 }
 
 void TestExternalIngressAndEgress()

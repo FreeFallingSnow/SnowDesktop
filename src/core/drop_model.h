@@ -17,6 +17,7 @@
 #pragma once
 
 #include "item.h"
+#include "slot_contract.h"
 #include "widget.h"
 #include "types.h"
 #include "utils.h"
@@ -259,6 +260,9 @@ struct DragSourceList
 {
     std::vector<DragSourceEntry> entries;
     Container* origin = nullptr;
+    snowdesktop::slot_contract::SlotSurfaceKind originSurface =
+        snowdesktop::slot_contract::SlotSurfaceKind::Desktop;
+    bool hasOriginSurface = false;
     bool hasOriginWidget = false;
     std::wstring originWidgetId;
     DesktopWidgetType originWidgetType = DesktopWidgetType::Collection;
@@ -270,6 +274,24 @@ struct DragSourceList
     bool hasFileGroupEntries = false;
 
     bool Empty() const { return entries.empty(); }
+
+    /**
+     * @brief 获取不依赖运行时容器生命周期的来源面类型。
+     *
+     * 内部拖拽在建立 DragSourceList 时记录来源面。容器树或临时弹窗
+     * 重建后，即使 origin 已解除绑定，命中规则仍可安全使用该稳定元数据。
+     */
+    snowdesktop::slot_contract::SlotSurfaceKind
+        SourceSurfaceKind() const
+    {
+        if (hasOriginSurface)
+            return originSurface;
+        return hasExternalFiles
+            ? snowdesktop::slot_contract::
+                SlotSurfaceKind::External
+            : snowdesktop::slot_contract::
+                SlotSurfaceKind::Desktop;
+    }
 
     /**
      * @brief 获取所有条目的文件路径

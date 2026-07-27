@@ -25,9 +25,11 @@ inline snowdesktop::slot_contract::DragPayloadKind
 ClassifySlotDragPayload(const DragSourceList& sourceList)
 {
     bool collectionWidgetsOnly = false;
+    bool folderMappingWidgetsOnly = false;
     if (sourceList.hasWidgets)
     {
         collectionWidgetsOnly = true;
+        folderMappingWidgetsOnly = true;
         bool sawWidget = false;
         for (const auto& entry : sourceList.entries)
         {
@@ -40,6 +42,16 @@ ClassifySlotDragPayload(const DragSourceList& sourceList)
                     collectionWidgetsOnly &&
                     entry.dockEntryType ==
                         DockEntryType::Collection;
+                folderMappingWidgetsOnly =
+                    folderMappingWidgetsOnly &&
+                    entry.dockEntryType ==
+                        DockEntryType::FolderMapping;
+                continue;
+            }
+            if (entry.dockEntryType ==
+                    DockEntryType::FolderMapping)
+            {
+                collectionWidgetsOnly = false;
                 continue;
             }
             auto* widget =
@@ -50,9 +62,15 @@ ClassifySlotDragPayload(const DragSourceList& sourceList)
                 collectionWidgetsOnly && data &&
                 data->type ==
                     DesktopWidgetType::Collection;
+            folderMappingWidgetsOnly =
+                folderMappingWidgetsOnly && data &&
+                data->type ==
+                    DesktopWidgetType::FolderMapping;
         }
         collectionWidgetsOnly =
             sawWidget && collectionWidgetsOnly;
+        folderMappingWidgetsOnly =
+            sawWidget && folderMappingWidgetsOnly;
     }
     return snowdesktop::slot_contract::
         ClassifyPayload({
@@ -63,6 +81,7 @@ ClassifySlotDragPayload(const DragSourceList& sourceList)
             collectionWidgetsOnly,
             sourceList.hasCollectionGroupEntries,
             sourceList.hasFileGroupEntries,
+            folderMappingWidgetsOnly,
         });
 }
 
@@ -87,12 +106,7 @@ inline bool AcceptsSlotSurfaceDrop(
         contract::DragPayloadKind::Count)
         return false;
     const auto sourceSurface =
-        sourceList.origin
-            ? sourceList.origin->
-                GetSlotSurfaceKind()
-            : (sourceList.hasExternalFiles
-                ? contract::SlotSurfaceKind::External
-                : contract::SlotSurfaceKind::Desktop);
+        sourceList.SourceSurfaceKind();
     const auto targetSurface =
         container->GetSlotSurfaceKind();
     const auto relation =
@@ -541,6 +555,30 @@ inline void DesktopApp::InvalidateDragStaticScene()
 }
 
 /**
+ * @brief 同步提交快速拖动帧，避免连续 WM_MOUSEMOVE 让 WM_PAINT 饥饿。
+ */
+inline void DesktopApp::PresentPointerInteractionFrame()
+{
+    const bool widgetPreviewActive =
+        widgetAction_ == WidgetAction::Move ||
+        widgetAction_ == WidgetAction::Resize;
+    const bool immediateDesktopPresent =
+        snowdesktop::floating_dock_rules::
+            NeedsImmediatePointerPresent(
+                dragSession_.IsActive(),
+                widgetPreviewActive,
+                marqueeActive_);
+    if (immediateDesktopPresent &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (!compositionPaintInProgress_)
+            UpdateWindow(hwnd_);
+    }
+    InvalidateFloatingDockWindow(true);
+}
+
+/**
  * @brief 结束当前拖拽会话，重置拖拽渲染缓存
  */
 inline void DesktopApp::EndDragSession()
@@ -559,6 +597,7 @@ inline void DesktopApp::EndDragSession()
     collectionGroupTabDwellId_.clear();
     collectionGroupTabDwellTick_ = 0;
     dragSession_.End();
+    ClearDockFolderPopupDragSourceSnapshot();
     dragRenderCache_.Reset();
     // 清除拖放预览缓存
     cachedDropPreview_ = {};
@@ -567,6 +606,45 @@ inline void DesktopApp::EndDragSession()
     cachedDropPreviewSlot_ = nullptr;
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+inline void DesktopApp::CommitDragVisualEndBeforeShellOperation()
+{
+    dragRenderCache_.Reset();
+    for (size_t widgetIndex = 0;
+         widgetIndex < widgets_.size();
+         ++widgetIndex)
+    {
+        const DesktopWidget& widget = widgets_[widgetIndex];
+        if (IsRectEmptyRect(widget.bounds))
+            continue;
+        const bool popupOpen =
+            popupWidgetIndex_ == widgetIndex;
+        const bool pointerInside =
+            PtInRect(
+                &widget.bounds,
+                lastMousePoint_) != FALSE;
+        if (snowdesktop::widget_visibility_rules::
+                ShouldRetainBackdropAfterDrag(
+                    widget.showOnHoverOnly,
+                    popupOpen,
+                    pointerInside))
+            continue;
+        desktopBackdropCompositor_.RemovePanel(
+            GetStandaloneWidgetFrameRect(widget));
+    }
+
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (!compositionPaintInProgress_)
+            UpdateWindow(hwnd_);
+    }
+    // The backdrop uses a separate composition tree. Flush it before a Shell
+    // drop handler can enter a nested progress loop, otherwise its stale panel
+    // can remain visible while the main content frame has already disappeared.
+    DwmFlush();
+    InvalidateFloatingDockWindow(true);
 }
 
 /**
@@ -654,6 +732,7 @@ inline void DesktopApp::LoadDockSettingsAndApply()
 {
     DockSettings settings;
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
+    NormalizeDockSettings(settings);
     SetSystemTaskbarAutoHideEnabled(settings.systemTaskbarAutoHide);
     settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
     SetSystemTaskbarAlignmentCentered(settings.systemTaskbarAlignment == 1);
@@ -959,6 +1038,184 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
 inline bool DesktopApp::HitTestPopupForDrag(POINT client,
     Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion)
 {
+    if (dockFolderPopupOpen_ &&
+        dockFolderPopupContainer_)
+    {
+        const RECT popup = GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+        if (!PtInRect(&popup, client))
+            return false;
+
+        const RECT content =
+            GetCollectionPopupContentRect(popup);
+        targetContainer =
+            dockFolderPopupContainer_.get();
+        targetSlot = nullptr;
+        targetRegion = HitRegion::None;
+        if (!PtInRect(&content, client))
+            return true;
+
+        if (dockFolderPopupWidget_.
+                folderEntries.empty())
+        {
+            RECT virtualItem =
+                GetCollectionPopupItemRect(
+                    popup, 0);
+            RECT visibleItem{};
+            if (!IntersectRect(
+                    &visibleItem,
+                    &virtualItem,
+                    &content))
+                visibleItem = content;
+            popupDragTargetSlot_ =
+                std::make_unique<Slot>(
+                    targetContainer,
+                    visibleItem, 0);
+            targetSlot =
+                popupDragTargetSlot_.get();
+            targetRegion =
+                HitRegion::SortBefore;
+            return true;
+        }
+
+        for (size_t i = 0;
+             i < dockFolderPopupWidget_.
+                folderEntries.size(); ++i)
+        {
+            RECT itemRect =
+                GetCollectionPopupItemRect(popup, i);
+            RECT clipped{};
+            if (!IntersectRect(
+                    &clipped, &itemRect, &content) ||
+                !PtInRect(&clipped, client))
+                continue;
+
+            FolderEntry& entry =
+                dockFolderPopupWidget_.folderEntries[i];
+            RECT handoffRect =
+                GetItemIconRect(itemRect);
+            InflateRect(&handoffRect, -4, -4);
+            if (entry.isDirectory &&
+                PtInRect(&handoffRect, client))
+            {
+                RECT handoffVisual =
+                    GetItemIconRect(itemRect);
+                InflateRect(
+                    &handoffVisual, 4, 4);
+                RECT clippedVisual{};
+                if (IntersectRect(
+                        &clippedVisual,
+                        &handoffVisual,
+                        &content))
+                    handoffVisual =
+                        clippedVisual;
+                popupDragTargetSlot_ =
+                    std::make_unique<Slot>(
+                        targetContainer,
+                        handoffVisual, i);
+                popupDragTargetSlot_->SetItem(
+                    dockFolderPopupContainer_->
+                        GetMemberItem(i));
+                targetSlot =
+                    popupDragTargetSlot_.get();
+                targetRegion = HitRegion::Handoff;
+                return true;
+            }
+
+            popupDragTargetSlot_ =
+                std::make_unique<Slot>(
+                    targetContainer,
+                    itemRect, i);
+            targetSlot =
+                popupDragTargetSlot_.get();
+            targetRegion =
+                client.x <
+                    itemRect.left +
+                        (itemRect.right -
+                         itemRect.left) / 2
+                ? HitRegion::SortBefore
+                : HitRegion::SortAfter;
+            return true;
+        }
+
+        long long bestDistanceSquared =
+            std::numeric_limits<
+                long long>::max();
+        size_t nearestIndex = 0;
+        RECT nearestBounds{};
+        HitRegion nearestRegion =
+            HitRegion::SortAfter;
+        for (size_t i = 0;
+            i < dockFolderPopupWidget_.
+                folderEntries.size(); ++i)
+        {
+            const RECT itemRect =
+                GetCollectionPopupItemRect(
+                    popup, i);
+            RECT clipped{};
+            if (!IntersectRect(
+                    &clipped, &itemRect,
+                    &content))
+                continue;
+            const LONG edgeXs[] = {
+                itemRect.left -
+                    kCollectionPopupGapX / 2,
+                itemRect.right +
+                    kCollectionPopupGapX / 2,
+            };
+            const HitRegion edgeRegions[] = {
+                HitRegion::SortBefore,
+                HitRegion::SortAfter,
+            };
+            for (size_t edge = 0;
+                edge < 2; ++edge)
+            {
+                const long long dx =
+                    static_cast<long long>(
+                        client.x) -
+                    edgeXs[edge];
+                long long dy = 0;
+                if (client.y < clipped.top)
+                    dy =
+                        static_cast<long long>(
+                            clipped.top) -
+                        client.y;
+                else if (client.y >=
+                    clipped.bottom)
+                    dy =
+                        static_cast<long long>(
+                            client.y) -
+                        clipped.bottom + 1;
+                const long long distance =
+                    dx * dx + dy * dy;
+                if (distance >=
+                    bestDistanceSquared)
+                    continue;
+                bestDistanceSquared =
+                    distance;
+                nearestIndex = i;
+                nearestBounds = itemRect;
+                nearestRegion =
+                    edgeRegions[edge];
+            }
+        }
+        if (bestDistanceSquared !=
+            std::numeric_limits<
+                long long>::max())
+        {
+            popupDragTargetSlot_ =
+                std::make_unique<Slot>(
+                    targetContainer,
+                    nearestBounds,
+                    nearestIndex);
+            targetSlot =
+                popupDragTargetSlot_.get();
+            targetRegion =
+                nearestRegion;
+        }
+        return true;
+    }
+
     if (popupWidgetIndex_ >= widgets_.size()) return false;
 
     RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -989,9 +1246,22 @@ inline bool DesktopApp::HitTestPopupForDrag(POINT client,
 
     if (popupKeys.empty())
     {
-        popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, content, 0);
+        RECT virtualItem =
+            GetCollectionPopupItemRect(
+                popup, 0);
+        RECT visibleItem{};
+        if (!IntersectRect(
+                &visibleItem,
+                &virtualItem,
+                &content))
+            visibleItem = content;
+        popupDragTargetSlot_ =
+            std::make_unique<Slot>(
+                popupContainer,
+                visibleItem, 0);
         targetSlot = popupDragTargetSlot_.get();
-        targetRegion = HitRegion::Empty;
+        targetRegion =
+            HitRegion::SortBefore;
         return true;
     }
 
@@ -1013,11 +1283,19 @@ inline bool DesktopApp::HitTestPopupForDrag(POINT client,
             {
                 region = HitRegion::Handoff;
                 handoffItem = popupContainer->GetMemberItem(i);
+                RECT clippedHandoff{};
+                if (IntersectRect(
+                        &clippedHandoff,
+                        &handoffRect,
+                        &content))
+                    slotBounds =
+                        clippedHandoff;
             }
         }
 
         slotIndex = i;
-        slotBounds = itemRect;
+        if (region != HitRegion::Handoff)
+            slotBounds = itemRect;
         if (region != HitRegion::Handoff)
         {
             region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
@@ -1487,6 +1765,9 @@ inline void DesktopApp::ToggleSelection(int index)
 
 inline int DesktopApp::GetMarqueeScrollOffset() const
 {
+    if (marqueeDockFolderPopup_ &&
+        dockFolderPopupOpen_)
+        return popupScrollOffset_;
     if (marqueeWidgetIndex_ >= widgets_.size())
         return 0;
     if (popupWidgetIndex_ == marqueeWidgetIndex_)
@@ -1506,6 +1787,13 @@ inline int DesktopApp::GetMarqueeScrollOffset() const
 
 inline RECT DesktopApp::GetMarqueeViewportRect() const
 {
+    if (marqueeDockFolderPopup_ &&
+        dockFolderPopupOpen_)
+    {
+        return GetCollectionPopupContentRect(
+            GetCollectionPopupRect(
+                dockFolderPopupWidget_));
+    }
     if (marqueeWidgetIndex_ >= widgets_.size())
     {
         RECT client{};
@@ -1533,6 +1821,64 @@ inline RECT DesktopApp::GetMarqueeViewportRect() const
 
 inline void DesktopApp::UpdateMarqueeSelection(POINT current)
 {
+    if (marqueeDockFolderPopup_ &&
+        dockFolderPopupOpen_)
+    {
+        const int currentScroll =
+            popupScrollOffset_;
+        const RECT popup =
+            GetCollectionPopupRect(
+                dockFolderPopupWidget_);
+        const RECT viewport =
+            GetCollectionPopupContentRect(popup);
+        const POINT contentAnchor{
+            marqueeAnchorPoint_.x,
+            marqueeAnchorPoint_.y +
+                marqueeInitialScrollOffset_
+        };
+        const POINT contentCurrent{
+            std::clamp<LONG>(
+                current.x,
+                viewport.left,
+                viewport.right),
+            std::clamp<LONG>(
+                current.y,
+                viewport.top,
+                viewport.bottom) +
+                currentScroll
+        };
+        const RECT contentSelectionRect =
+            NormalizeRect(
+                contentAnchor,
+                contentCurrent);
+
+        marqueeRect_ = contentSelectionRect;
+        OffsetRect(
+            &marqueeRect_, 0,
+            -currentScroll);
+        for (size_t i = 0;
+            i < dockFolderPopupWidget_.
+                folderEntries.size(); ++i)
+        {
+            RECT itemRect =
+                GetCollectionPopupItemRect(
+                    popup, i);
+            OffsetRect(
+                &itemRect, 0,
+                currentScroll);
+            dockFolderPopupWidget_.
+                folderEntries[i].selected =
+                (i <
+                    dockFolderPopupMarqueeInitialSelection_.
+                        size() &&
+                 dockFolderPopupMarqueeInitialSelection_[i]) ||
+                RectsIntersect(
+                    itemRect,
+                    contentSelectionRect);
+        }
+        return;
+    }
+
     if (marqueeWidgetIndex_ < widgets_.size())
     {
         const int currentScroll = GetMarqueeScrollOffset();
@@ -1635,17 +1981,35 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     const bool pointInDock = pointDock != nullptr;
     size_t pressedDockCollectionWidgetIndex =
         static_cast<size_t>(-1);
+    bool pressedOpenPopupFolderToggle = false;
     if (pointDock)
     {
         if (DockEntryItem* pressedDockItem =
                 pointDock->EntryAtPoint(pt);
-            pressedDockItem &&
-            pressedDockItem->GetEntryType() ==
-                DockEntryType::Collection)
+            pressedDockItem)
         {
-            pressedDockCollectionWidgetIndex =
-                FindWidgetIndexById(
-                    pressedDockItem->GetReference());
+            if (pressedDockItem->GetEntryType() ==
+                    DockEntryType::Collection)
+            {
+                pressedDockCollectionWidgetIndex =
+                    FindWidgetIndexById(
+                        pressedDockItem->GetReference());
+            }
+            if (pressedDockItem->GetEntryIndex() <
+                    dockEntries_.size() &&
+                IsFolderDockEntry(dockEntries_[
+                    pressedDockItem->GetEntryIndex()]))
+            {
+                const DockEntry& entry = dockEntries_[
+                    pressedDockItem->GetEntryIndex()];
+                const std::wstring sourceId =
+                    std::to_wstring(
+                        static_cast<int>(entry.type)) +
+                    L":" + ToUpperInvariant(entry.reference);
+                pressedOpenPopupFolderToggle =
+                    dockFolderPopupOpen_ &&
+                    dockFolderPopupSourceId_ == sourceId;
+            }
         }
     }
     const bool pressedOpenPopupDockToggle =
@@ -1671,6 +2035,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
+    dockFolderPopupMarqueeInitialSelection_.clear();
     marqueeAnchorPoint_ = pt;
     marqueeInitialScrollOffset_ = 0;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
@@ -1688,6 +2054,15 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     PtInRect(&popup, pt) != FALSE))
             CloseCollectionPopup();
     }
+    else if (dockFolderPopupOpen_)
+    {
+        const RECT popup =
+            GetCollectionPopupRect(
+                dockFolderPopupWidget_);
+        if (!PtInRect(&popup, pt) &&
+            !pressedOpenPopupFolderToggle)
+            CloseCollectionPopup();
+    }
 
     if (HandleQuickNavigationClick(pt))
     {
@@ -1698,6 +2073,119 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (HandlePageNavClick(pt)) return;
 
     bool ctrl = (wp & MK_CONTROL) != 0;
+
+    if (dockFolderPopupOpen_ &&
+        !pressedOpenPopupFolderToggle)
+    {
+        const RECT popup = GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+        if (PtInRect(&popup, pt))
+        {
+            const RECT sortButton =
+                GetDockFolderPopupSortButtonRect(
+                    popup);
+            if (PtInRect(&sortButton, pt))
+            {
+                mouseDown_ = false;
+                mouseDownHit_ = nullptr;
+                marqueeActive_ = false;
+                marqueeDockFolderPopup_ = false;
+                POINT screenPoint = pt;
+                ClientToScreen(
+                    hwnd_, &screenPoint);
+                ShowDockFolderPopupSortMenu(
+                    screenPoint);
+                return;
+            }
+
+            const RECT content =
+                GetCollectionPopupContentRect(popup);
+            bool clickedPopupItem = false;
+            for (size_t i = 0;
+                 i < dockFolderPopupWidget_.
+                    folderEntries.size(); ++i)
+            {
+                RECT itemRect =
+                    GetCollectionPopupItemRect(popup, i);
+                RECT clipped = itemRect;
+                clipped.top =
+                    std::max(clipped.top, content.top);
+                clipped.bottom =
+                    std::min(clipped.bottom, content.bottom);
+                if (clipped.bottom <= clipped.top ||
+                    !PtInRect(&clipped, pt))
+                    continue;
+
+                auto& entries =
+                    dockFolderPopupWidget_.folderEntries;
+                ClearSelection();
+                if (ctrl)
+                {
+                    entries[i].selected =
+                        !entries[i].selected;
+                }
+                else if (!entries[i].selected)
+                {
+                    for (auto& entry : entries)
+                        entry.selected = false;
+                    entries[i].selected = true;
+                }
+                popupMouseDownItem_ =
+                    std::make_unique<FolderEntryIcon>(
+                        &entries[i],
+                        dockFolderPopupContainer_.get(),
+                        this);
+                popupMouseDownItem_->SetBounds(itemRect);
+                mouseDownHit_ =
+                    popupMouseDownItem_.get();
+                clickedPopupItem = true;
+                break;
+            }
+            const bool clickedPopupContent =
+                PtInRect(&content, pt) != FALSE;
+            if (!clickedPopupItem && !ctrl)
+                for (auto& entry :
+                     dockFolderPopupWidget_.folderEntries)
+                    entry.selected = false;
+            if (!clickedPopupItem &&
+                !clickedPopupContent)
+            {
+                mouseDown_ = false;
+                mouseDownHit_ = nullptr;
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                return;
+            }
+            dockFolderPopupMarqueeInitialSelection_.
+                clear();
+            if (!clickedPopupItem)
+            {
+                dockFolderPopupMarqueeInitialSelection_.
+                    reserve(
+                        dockFolderPopupWidget_.
+                            folderEntries.size());
+                for (const auto& entry :
+                     dockFolderPopupWidget_.
+                        folderEntries)
+                {
+                    dockFolderPopupMarqueeInitialSelection_.
+                        push_back(entry.selected);
+                }
+                mouseDownHit_ = nullptr;
+            }
+            marqueeWidgetIndex_ =
+                static_cast<size_t>(-1);
+            marqueeDockFolderPopup_ =
+                !clickedPopupItem;
+            marqueeInitialScrollOffset_ =
+                popupScrollOffset_;
+            mouseDownWidgetIndex_ =
+                static_cast<size_t>(-1);
+            SetCapture(interactionCaptureHwnd);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
 
     if (popupWidgetIndex_ < widgets_.size() &&
         !pressedOpenPopupDockToggle)
@@ -2358,6 +2846,7 @@ inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     mouseDownWidgetIndex_ = widgetIndex;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     widgetAction_ = WidgetAction::PendingMove;
@@ -2442,7 +2931,13 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             std::abs(current.y - mouseDownPoint_.y) > thresholdY)
         {
             Container* source = mouseDownHit_->GetContainer();
-            std::vector<Item*> sourceItems = source ? source->GetSelectedItems() : std::vector<Item*>{};
+            std::vector<Item*> sourceItems =
+                source ==
+                    dockFolderPopupContainer_.get()
+                ? GetDockFolderPopupSelectedItems()
+                : (source
+                    ? source->GetSelectedItems()
+                    : std::vector<Item*>{});
             if (sourceItems.empty() &&
                 pressedDockEntryWithoutSelection)
             {
@@ -2463,6 +2958,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             pendingCtrlToggleWidgetItem_ = nullptr;
             marqueeActive_ = false;
             marqueeWidgetIndex_ = static_cast<size_t>(-1);
+            marqueeDockFolderPopup_ = false;
             if (source == GetDesktopGrid())
             {
                 UpdateDragGroupOrigin();
@@ -2730,6 +3226,10 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {
+                const bool dockFolderPopupSource =
+                    dockFolderPopupOpen_ &&
+                    dragSession_.Source() ==
+                        dockFolderPopupContainer_.get();
                 auto* sourceWidget = dynamic_cast<WidgetContainer*>(dragSession_.Source());
                 DesktopWidget* sourceWidgetData = sourceWidget ? sourceWidget->GetWidgetData() : nullptr;
 
@@ -2795,6 +3295,9 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     ClearSelection();
                     EndDragSession();
                     ReloadItems();
+                    if (dockFolderPopupSource &&
+                        dockFolderPopupOpen_)
+                        RefreshDockFolderPopup();
                 }
                 else
                 {
@@ -2918,15 +3421,19 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 a.index == b.index;
         };
         auto findHoverVisual = [&](POINT point) -> MouseHoverVisual {
-            if (popupWidgetIndex_ < widgets_.size() &&
-                !IsRectEmptyRect(popupRect_) && PtInRect(&popupRect_, point))
+            if (const DesktopWidget* popupWidget =
+                    GetOpenPopupWidget();
+                popupWidget &&
+                !IsRectEmptyRect(popupRect_) &&
+                PtInRect(&popupRect_, point))
             {
-                const DesktopWidget* popupWidget = &widgets_[popupWidgetIndex_];
                 RECT content = GetCollectionPopupContentRect(popupRect_);
                 if (PtInRect(&content, point))
                 {
-                    const std::vector<std::wstring> popupKeys = GetPopupItemKeys(*popupWidget);
-                    for (size_t i = 0; i < popupKeys.size(); ++i)
+                    const size_t popupItemCount =
+                        GetPopupItemCount(*popupWidget);
+                    for (size_t i = 0;
+                         i < popupItemCount; ++i)
                     {
                         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
                         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom)
@@ -3041,18 +3548,40 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const bool needsContinuousHoverPaint =
             (oldVisual.owner && oldVisual.continuous) ||
             (newVisual.owner && newVisual.continuous);
-        if (marqueeActive_ || hoverChanged || needsContinuousHoverPaint)
+        const bool invalidateDesktopHover =
+            snowdesktop::floating_dock_rules::
+                ShouldInvalidateDesktopHover(
+                    handlingFloatingDockInput_);
+        if (invalidateDesktopHover &&
+            (marqueeActive_ || hoverChanged ||
+                needsContinuousHoverPaint))
             InvalidateRect(hwnd_, nullptr, FALSE);
-        if (dockHoverChanged && hwnd_ && IsWindow(hwnd_))
+        const bool dockHoverActive =
+            (oldVisual.kind >= 8 &&
+                oldVisual.kind <= 13) ||
+            (newVisual.kind >= 8 &&
+                newVisual.kind <= 13);
+        if (invalidateDesktopHover &&
+            dockHoverActive &&
+            (dockHoverChanged ||
+                needsContinuousHoverPaint) &&
+            hwnd_ && IsWindow(hwnd_) &&
+            !compositionPaintInProgress_)
             UpdateWindow(hwnd_);
 
-        for (auto& w : widgets_)
+        if (invalidateDesktopHover)
         {
-            if (!w.showOnHoverOnly) continue;
-            if (PtInRect(&w.bounds, oldMouse) != PtInRect(&w.bounds, current))
+            for (auto& w : widgets_)
             {
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                break;
+                if (!w.showOnHoverOnly)
+                    continue;
+                if (PtInRect(&w.bounds, oldMouse) !=
+                    PtInRect(&w.bounds, current))
+                {
+                    InvalidateRect(
+                        hwnd_, nullptr, FALSE);
+                    break;
+                }
             }
         }
     }
@@ -3178,12 +3707,15 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     {
         return false;
     }
+    const bool folderEntry =
+        pressedEntryIndex < dockEntries_.size() &&
+        IsFolderDockEntry(dockEntries_[pressedEntryIndex]);
 
     size_t appItemIndex = frequentItemIndex;
     if (appItemIndex >= items_.size() && entryType == DockEntryType::DesktopItem)
         appItemIndex = FindItemIndexByKey(reference);
     bool waitForDoubleClick = false;
-    if (appItemIndex < items_.size())
+    if (appItemIndex < items_.size() && !folderEntry)
         waitForDoubleClick =
             pressedWindowAction ==
                 snowdesktop::dock_window_rules::DockClickAction::Launch;
@@ -3208,16 +3740,18 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     dockPressedContainer_ = nullptr;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     ReleaseCapture();
     InvalidateDragStaticScene();
-    const bool collectionOnFloatingDock =
-        entryType == DockEntryType::Collection &&
+    const bool popupEntryOnFloatingDock =
+        (entryType == DockEntryType::Collection ||
+         folderEntry) &&
         floatingDockVisible_ &&
         dock == floatingDockContainer_;
-    if (hwnd_ && !collectionOnFloatingDock)
+    if (hwnd_ && !popupEntryOnFloatingDock)
     {
         if (floatingDockVisible_ &&
             dock == floatingDockContainer_)
@@ -3241,28 +3775,51 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
     dockPendingDoubleClickTick_ = 0;
 
+    if (snowdesktop::dock_window_rules::
+            ShouldSuppressDockClickRelease(
+                pressedEntryIndex,
+                dockSuppressClickReleaseEntry_))
+    {
+        dockSuppressClickReleaseEntry_ =
+            static_cast<size_t>(-1);
+        return true;
+    }
+
+    const auto prepareFloatingDockForWindowCommand =
+        [&]() {
+            if (!snowdesktop::dock_window_rules::
+                    MustCloseFloatingDockBeforeWindowCommand(
+                        floatingDockVisible_,
+                        pressedWindowAction))
+                return;
+            CloseFloatingDock();
+            // ShowWindow(SW_HIDE) 与 DComp 提交不在同一个时序域。等待
+            // 顶层 Dock 真正退出合成场景后再抓屏，避免快照残留 Dock。
+            DwmFlush();
+        };
+
     if (!runningAppKey.empty())
     {
+        prepareFloatingDockForWindowCommand();
         const auto running = std::find_if(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& app) {
                 return app.identityKey == runningAppKey;
             });
         if (running != dockUnpinnedRunningApps_.end())
+        {
             ActivateOrToggleDockWindow(
                 running->window, pressedWindowAction,
                 pressedTargetWindow,
                 pressedAnchorScreen);
-        if (floatingDockVisible_)
-            CloseFloatingDock();
+        }
     }
     else if (frequentItemIndex < items_.size())
     {
+        prepareFloatingDockForWindowCommand();
         ActivateOrToggleDockItem(
             frequentItemIndex, pressedWindowAction,
             pressedTargetWindow,
             pressedAnchorScreen);
-        if (floatingDockVisible_)
-            CloseFloatingDock();
     }
     else if (entryType == DockEntryType::Collection)
     {
@@ -3279,16 +3836,33 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
                     widgetIndex, point);
         }
     }
+    else if (folderEntry)
+    {
+        const std::wstring sourceId =
+            std::to_wstring(static_cast<int>(entryType)) +
+            L":" + ToUpperInvariant(reference);
+        if (dockFolderPopupOpen_ &&
+            dockFolderPopupSourceId_ == sourceId)
+            CloseCollectionPopup();
+        else
+            OpenDockFolderPopupAt(
+                pressedEntryIndex, point);
+        dockPendingDoubleClickEntry_ =
+            pressedEntryIndex;
+        dockPendingDoubleClickTick_ =
+            GetTickCount();
+    }
     else
     {
+        prepareFloatingDockForWindowCommand();
         const size_t itemIndex = FindItemIndexByKey(reference);
         if (itemIndex < items_.size())
+        {
             ActivateOrToggleDockItem(
                 itemIndex, pressedWindowAction,
                 pressedTargetWindow,
                 pressedAnchorScreen);
-        if (floatingDockVisible_)
-            CloseFloatingDock();
+        }
     }
     return true;
 }
@@ -3432,6 +4006,8 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         mouseDown_ = false;
         marqueeActive_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
+        marqueeDockFolderPopup_ = false;
+        dockFolderPopupMarqueeInitialSelection_.clear();
         navHoverSide_ = 0;
         navAutoFlipDir_ = 0;
         mouseDownHit_ = nullptr;
@@ -3471,11 +4047,10 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     // interactive/visual phase before entering them, while retaining the
     // source and target context until EndDragSession() performs final cleanup.
     dragSession_.DeactivateForDrop();
-    dragRenderCache_.Reset();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     ReleaseCapture();
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    CommitDragVisualEndBeforeShellOperation();
 
     {
         int mods = 0;
@@ -3487,10 +4062,22 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             && dragSession_.TargetSlot()->GetItem())
         {
             Item* targetItem = dragSession_.TargetSlot()->GetItem();
+            const bool dockFolderPopupTarget =
+                dockFolderPopupOpen_ &&
+                targetItem->GetContainer() ==
+                    dockFolderPopupContainer_.get();
+            bool explicitDockFolderTarget =
+                dockFolderPopupTarget;
             if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
             {
                 const size_t targetEntryIndex =
                     dockTarget->GetEntryIndex();
+                explicitDockFolderTarget =
+                    targetEntryIndex <
+                        dockEntries_.size() &&
+                    IsFolderDockEntry(
+                        dockEntries_[
+                            targetEntryIndex]);
                 if (dynamic_cast<DockContainer*>(
                         dragSession_.Source()) &&
                     targetEntryIndex <
@@ -3573,6 +4160,10 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
                     if (mods & MK_CONTROL) keyState |= MK_CONTROL;
                     if (mods & MK_ALT)     keyState |= MK_ALT;
                     if (mods & MK_SHIFT)   keyState |= MK_SHIFT;
+                    if (explicitDockFolderTarget &&
+                        (mods & (MK_CONTROL |
+                            MK_ALT | MK_SHIFT)) == 0)
+                        keyState |= MK_SHIFT;
                     if (SUCCEEDED(dropTarget->DragEnter(dataObj.Get(), keyState, spl, &effect)))
                     {
                         dropTarget->DragOver(keyState, spl, &effect);
@@ -3583,18 +4174,31 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             SaveLayoutSlots();
             ClearSelection();
             EndDragSession();
+            if (dockFolderPopupTarget)
+                RefreshDockFolderPopup();
             ReloadItems();
             goto cleanup;
         }
 
         Container* targetContainer = dragSession_.TargetContainer();
         bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
+        const bool dockFolderPopupTarget =
+            dockFolderPopupOpen_ &&
+            targetContainer ==
+                dockFolderPopupContainer_.get();
+        const bool dockFolderPopupSource =
+            dockFolderPopupOpen_ &&
+            dragSession_.Source() ==
+                dockFolderPopupContainer_.get();
         targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
             dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
 
         SaveLayoutSlots();
         ClearSelection();
         EndDragSession();
+        if (dockFolderPopupTarget ||
+            dockFolderPopupSource)
+            RefreshDockFolderPopup();
         if (needsReload)
         {
             RebuildContainersAndItems();
@@ -3615,6 +4219,8 @@ cleanup:
     EndDragSession();
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
@@ -3632,6 +4238,7 @@ cleanup:
     dockPressedTargetWindow_ = nullptr;
     dockPressedContainer_ = nullptr;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
     ReleaseCapture();
 }
 
@@ -3680,6 +4287,21 @@ inline std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t*
 {
     if (firstWidgetIndex)
         *firstWidgetIndex = static_cast<size_t>(-1);
+
+    if (dockFolderPopupOpen_)
+    {
+        std::vector<std::wstring> paths;
+        for (const auto& entry :
+             dockFolderPopupWidget_.
+                folderEntries)
+        {
+            if (entry.selected &&
+                !entry.fullPath.empty())
+                paths.push_back(
+                    entry.fullPath);
+        }
+        return paths;
+    }
 
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
@@ -3851,6 +4473,8 @@ inline bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
         if (widgets_[i].type == DesktopWidgetType::FolderMapping)
             RefreshFolderMappingWidget(i);
     ReloadItems(false);
+    if (dockFolderPopupOpen_)
+        RefreshDockFolderPopup();
     return true;
 }
 
@@ -3864,6 +4488,23 @@ inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
     if (widgetIndex >= widgets_.size()) return false;
     DesktopWidget& widget = widgets_[widgetIndex];
     if (widget.type != DesktopWidgetType::FolderMapping || widget.sourceFolderPath.empty())
+        return false;
+    return PasteClipboardToFolderPath(
+        widget.sourceFolderPath);
+}
+
+inline bool DesktopApp::PasteClipboardToFolderPath(
+    const std::wstring& targetFolderPath)
+{
+    if (targetFolderPath.empty())
+        return false;
+    const DWORD attributes =
+        GetFileAttributesW(
+            targetFolderPath.c_str());
+    if (attributes ==
+            INVALID_FILE_ATTRIBUTES ||
+        (attributes &
+            FILE_ATTRIBUTE_DIRECTORY) == 0)
         return false;
 
     ComPtr<IDataObject> clipObj;
@@ -3919,7 +4560,9 @@ inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
         sourceList.entries.push_back(std::move(entry));
     }
 
-    if (!MaterializeFilesToFolder(sourceList, widget.sourceFolderPath, action))
+    if (!MaterializeFilesToFolder(
+            sourceList, targetFolderPath,
+            action))
         return true;
 
     if (action == DropAction::Move)
@@ -3936,6 +4579,8 @@ inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
         if (widgets_[i].type == DesktopWidgetType::FolderMapping)
             RefreshFolderMappingWidget(i);
     ReloadItems(false);
+    if (dockFolderPopupOpen_)
+        RefreshDockFolderPopup();
     return true;
 }
 
@@ -4147,6 +4792,12 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     case 'V':
         if (!ctrl) break;
     {
+        if (dockFolderPopupOpen_ &&
+            dockFolderPopupAvailable_ &&
+            PasteClipboardToFolderPath(
+                dockFolderPopupWidget_.
+                    sourceFolderPath))
+            break;
         if (PasteClipboardToFolderMapping(FindFolderMappingShortcutTarget()))
             break;
 
@@ -4230,6 +4881,17 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     case 'A':
         if (!ctrl) break;
     {
+        if (dockFolderPopupOpen_)
+        {
+            ClearSelection();
+            for (auto& entry :
+                 dockFolderPopupWidget_.
+                    folderEntries)
+                entry.selected = true;
+            InvalidateRect(
+                hwnd_, nullptr, FALSE);
+            break;
+        }
         ClearSelection();
         for (auto& oo : items_oo_)
         {
@@ -6036,7 +6698,8 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
                                         keepOnDesktop
                                     ? std::optional<size_t>(
                                           entryIndex)
-                                    : std::nullopt);
+                                    : std::nullopt,
+                                true);
                     }
                 }
                 else
@@ -6078,7 +6741,26 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
                         static_cast<int>(itemIndex),
                         true, false,
                         dock->GetElementVisualRect(
-                            frequentItem->GetBounds(), pt));
+                            frequentItem->GetBounds(), pt),
+                        std::nullopt, true);
+                return;
+            }
+        }
+
+        if (DockRunningItem* runningItem =
+                dock->RunningItemAtPoint(pt))
+        {
+            const size_t runningIndex =
+                runningItem->GetRunningIndex();
+            if (runningIndex <
+                dockUnpinnedRunningApps_.size())
+            {
+                ClearSelection();
+                DismissDockWindowPreviewUntilLeave();
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                ShowDockRunningAppContextMenu(
+                    screenPt, runningIndex);
                 return;
             }
         }
@@ -6092,7 +6774,52 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         }
     }
 
-    if (popupWidgetIndex_ < widgets_.size())
+    if (dockFolderPopupOpen_)
+    {
+        RECT popup = GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+        if (PtInRect(&popup, pt))
+        {
+            RECT content =
+                GetCollectionPopupContentRect(popup);
+            for (size_t i = 0;
+                 i < dockFolderPopupWidget_.
+                    folderEntries.size(); ++i)
+            {
+                RECT itemRect =
+                    GetCollectionPopupItemRect(popup, i);
+                RECT clipped = itemRect;
+                clipped.top =
+                    std::max(clipped.top, content.top);
+                clipped.bottom =
+                    std::min(clipped.bottom, content.bottom);
+                if (clipped.bottom <= clipped.top ||
+                    !PtInRect(&clipped, pt))
+                    continue;
+                ClearSelection();
+                if (!dockFolderPopupWidget_.
+                        folderEntries[i].selected)
+                {
+                    for (auto& entry :
+                         dockFolderPopupWidget_.
+                            folderEntries)
+                        entry.selected = false;
+                    dockFolderPopupWidget_.
+                        folderEntries[i].
+                            selected = true;
+                }
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                ShowDockFolderPopupContextMenu(
+                    screenPt, i);
+                return;
+            }
+            ShowDockFolderPopupContextMenu(
+                screenPt);
+            return;
+        }
+    }
+    else if (popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
         if (PtInRect(&popup, pt))
@@ -6527,6 +7254,48 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         }
         if (GetTickCount() - dockHandoffDwellStartTick_ >= kDockHandoffDwellDelayMs)
         {
+            const POINT dwellPoint =
+                dragSession_.CurrentPoint();
+            DockContainer* dock =
+                GetDockContainerAtPoint(
+                    dwellPoint);
+            DockEntryItem* dockItem =
+                dock
+                    ? dock->EntryAtPoint(
+                        dwellPoint)
+                    : nullptr;
+            const size_t entryIndex =
+                dockItem
+                    ? dockItem->
+                        GetEntryIndex()
+                    : static_cast<size_t>(-1);
+            if (entryIndex <
+                    dockEntries_.size() &&
+                IsFolderDockEntry(
+                    dockEntries_[entryIndex]))
+            {
+                dockHandoffDwellIndex_ =
+                    static_cast<size_t>(-1);
+                dockHandoffDwellStartTick_ = 0;
+                dockHandoffDwellReady_ = false;
+                KillTimer(
+                    hwnd_,
+                    kDockHandoffDwellTimerId);
+                OpenDockFolderPopupAt(
+                    entryIndex, dwellPoint);
+                if (!externalDragActive_)
+                    OnMouseMove(
+                        0,
+                        MAKELPARAM(
+                            dwellPoint.x,
+                            dwellPoint.y));
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                InvalidateFloatingDockWindow(
+                    true);
+                return;
+            }
+
             dockHandoffDwellReady_ = true;
             KillTimer(hwnd_, kDockHandoffDwellTimerId);
             if (!externalDragActive_)
@@ -6922,6 +7691,135 @@ inline bool DesktopApp::TryActivateCollectionGroupTab(
 // ── Collection popup ─────────────────────────────────────────
 
 /**
+ * @brief 在替换 Dock 文件夹弹窗前，将活动拖拽来源提升为稳定快照。
+ *
+ * Dock 文件夹弹窗使用临时 Widget、Container 和 Item 包装器。悬停打开
+ * 另一个 Dock 弹窗时这些对象会被销毁，因此必须先复制被拖拽条目并一次性
+ * 重绑定 DragSession 中的全部运行时指针。
+ */
+inline bool DesktopApp::
+PreserveDockFolderPopupDragSourceForTransition()
+{
+    if (!dragSession_.IsActive() ||
+        !dockFolderPopupContainer_ ||
+        dragSession_.Source() !=
+            dockFolderPopupContainer_.get())
+        return false;
+
+    DesktopWidget snapshot;
+    snapshot.id = dockFolderPopupWidget_.id;
+    snapshot.type = DesktopWidgetType::FolderMapping;
+    snapshot.title = dockFolderPopupWidget_.title;
+    snapshot.customTitle =
+        dockFolderPopupWidget_.customTitle;
+    snapshot.sourceFolderPath =
+        dockFolderPopupWidget_.sourceFolderPath;
+    snapshot.gridCell =
+        dockFolderPopupWidget_.gridCell;
+    snapshot.gridSpan =
+        dockFolderPopupWidget_.gridSpan;
+    snapshot.bounds =
+        dockFolderPopupWidget_.bounds;
+    snapshot.cellScale =
+        dockFolderPopupWidget_.cellScale;
+    snapshot.folderSortMode =
+        dockFolderPopupWidget_.folderSortMode;
+    snapshot.folderSortAscending =
+        dockFolderPopupWidget_.
+            folderSortAscending;
+    snapshot.itemKeys =
+        dockFolderPopupWidget_.itemKeys;
+
+    std::vector<RECT> itemBounds;
+    for (Item* sourceItem :
+         dragSession_.Items())
+    {
+        if (!sourceItem ||
+            !dynamic_cast<FolderEntryIcon*>(
+                sourceItem))
+            continue;
+        const std::wstring path =
+            sourceItem->GetPath();
+        auto entry = std::find_if(
+            dockFolderPopupWidget_.
+                folderEntries.begin(),
+            dockFolderPopupWidget_.
+                folderEntries.end(),
+            [&](const FolderEntry& candidate) {
+                return PathsEqualInsensitive(
+                    candidate.fullPath, path);
+            });
+        if (entry ==
+            dockFolderPopupWidget_.
+                folderEntries.end())
+            continue;
+        snapshot.folderEntries.push_back(*entry);
+        snapshot.folderEntries.back().selected =
+            true;
+        itemBounds.push_back(
+            sourceItem->GetBounds());
+    }
+    if (snapshot.folderEntries.empty())
+    {
+        EndDragSession();
+        return true;
+    }
+
+    dockFolderPopupDragSourceItems_.clear();
+    dockFolderPopupDragSourceContainer_.reset();
+    dockFolderPopupDragSourceWidget_ =
+        std::move(snapshot);
+    dockFolderPopupDragSourceContainer_ =
+        std::make_unique<FolderMapping>(
+            &dockFolderPopupDragSourceWidget_,
+            this);
+
+    std::vector<Item*> reboundItems;
+    reboundItems.reserve(
+        dockFolderPopupDragSourceWidget_.
+            folderEntries.size());
+    dockFolderPopupDragSourceItems_.reserve(
+        dockFolderPopupDragSourceWidget_.
+            folderEntries.size());
+    for (size_t i = 0;
+        i < dockFolderPopupDragSourceWidget_.
+            folderEntries.size(); ++i)
+    {
+        auto item =
+            std::make_unique<FolderEntryIcon>(
+                &dockFolderPopupDragSourceWidget_.
+                    folderEntries[i],
+                dockFolderPopupDragSourceContainer_.
+                    get(),
+                this);
+        item->SetBounds(itemBounds[i]);
+        reboundItems.push_back(item.get());
+        dockFolderPopupDragSourceItems_.
+            push_back(std::move(item));
+    }
+
+    DragSourceList sourceList =
+        BuildDragSourceList(
+            reboundItems,
+            dockFolderPopupDragSourceContainer_.
+                get());
+    dragSession_.RebindSource(
+        dockFolderPopupDragSourceContainer_.get(),
+        std::move(reboundItems),
+        std::move(sourceList));
+    return true;
+}
+
+inline void DesktopApp::
+ClearDockFolderPopupDragSourceSnapshot()
+{
+    dockFolderPopupDragSourceItems_.clear();
+    dockFolderPopupDragSourceContainer_.reset();
+    dockFolderPopupDragSourceWidget_ =
+        DesktopWidget{};
+}
+
+/**
  * @brief 在指定位置打开集合弹窗
  * @param widgetIndex 集合小部件索引
  * @param anchorPoint 锚点位置
@@ -6934,6 +7832,15 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
         widgets_[widgetIndex].type != DesktopWidgetType::Collection)
         return;
 
+    PreserveDockFolderPopupDragSourceForTransition();
+    dockFolderPopupOpen_ = false;
+    dockFolderPopupAvailable_ = false;
+    dockFolderPopupContainer_.reset();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
+    dockFolderPopupSourceId_.clear();
+    dockFolderPopupMappingWidgetId_.clear();
+    dockFolderPopupWidget_.folderEntries.clear();
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
@@ -7018,14 +7925,910 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+inline void DesktopApp::RefreshDockFolderPopup()
+{
+    if (!dockFolderPopupOpen_) return;
+    PreserveDockFolderPopupDragSourceForTransition();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
+    for (auto& entry : dockFolderPopupWidget_.folderEntries)
+        entry.selected = false;
+    if (!dockFolderPopupMappingWidgetId_.empty())
+    {
+        const size_t widgetIndex =
+            FindWidgetIndexById(
+                dockFolderPopupMappingWidgetId_);
+        if (widgetIndex < widgets_.size() &&
+            widgets_[widgetIndex].type ==
+                DesktopWidgetType::FolderMapping)
+        {
+            const DesktopWidget& source =
+                widgets_[widgetIndex];
+            dockFolderPopupWidget_.
+                sourceFolderPath =
+                    source.sourceFolderPath;
+            dockFolderPopupWidget_.
+                folderSortMode =
+                    source.folderSortMode;
+            dockFolderPopupWidget_.
+                folderSortAscending =
+                    source.folderSortAscending;
+            dockFolderPopupWidget_.itemKeys =
+                source.itemKeys;
+        }
+        else
+        {
+            dockFolderPopupMappingWidgetId_.
+                clear();
+        }
+    }
+    if (dockFolderPopupAvailable_)
+    {
+        EnumerateFolderMappingEntries(
+            dockFolderPopupWidget_, false);
+        for (auto& entry :
+             dockFolderPopupWidget_.folderEntries)
+        {
+            const wchar_t* extension =
+                PathFindExtensionW(
+                    entry.fullPath.c_str());
+            entry.isShortcut =
+                extension &&
+                _wcsicmp(
+                    extension, L".lnk") == 0;
+            // The transient popup is not part of widgets_; use the system
+            // image-list icon immediately instead of waiting for an async
+            // callback keyed to a persistent widget id.
+            entry.iconState =
+                IconState::IconReady;
+        }
+    }
+    else
+        dockFolderPopupWidget_.folderEntries.clear();
+    dockFolderPopupContainer_ =
+        std::make_unique<FolderMapping>(
+            &dockFolderPopupWidget_, this);
+    dockFolderPopupContainer_->InvalidateFilterCache();
+}
+
+inline void DesktopApp::
+CommitDockFolderPopupOrderToMapping()
+{
+    if (!dockFolderPopupOpen_ ||
+        dockFolderPopupMappingWidgetId_.empty())
+        return;
+    const size_t sourceIndex =
+        FindWidgetIndexById(
+            dockFolderPopupMappingWidgetId_);
+    if (sourceIndex >= widgets_.size() ||
+        widgets_[sourceIndex].type !=
+            DesktopWidgetType::FolderMapping)
+        return;
+
+    DesktopWidget& source =
+        widgets_[sourceIndex];
+    source.folderSortMode =
+        snowdesktop::folder_sort_rules::kManual;
+    source.itemKeys =
+        dockFolderPopupWidget_.itemKeys;
+    RefreshFolderMappingWidget(sourceIndex);
+}
+
+inline void DesktopApp::SortDockFolderPopupContents(
+    int mode, bool ascending)
+{
+    if (!dockFolderPopupOpen_) return;
+    PreserveDockFolderPopupDragSourceForTransition();
+    mode =
+        snowdesktop::folder_sort_rules::
+            NormalizeMode(mode);
+    if (mode ==
+        snowdesktop::folder_sort_rules::kManual)
+        return;
+
+    const size_t sourceIndex =
+        dockFolderPopupMappingWidgetId_.empty()
+            ? static_cast<size_t>(-1)
+            : FindWidgetIndexById(
+                dockFolderPopupMappingWidgetId_);
+    if (sourceIndex < widgets_.size() &&
+        widgets_[sourceIndex].type ==
+            DesktopWidgetType::FolderMapping)
+    {
+        // The mapping widget is the single source of truth, regardless of
+        // whether it is hosted on the desktop, in a FileGroup or in Dock.
+        SortWidgetContents(
+            sourceIndex, mode, ascending);
+        RefreshDockFolderPopup();
+    }
+    else
+    {
+        dockFolderPopupMappingWidgetId_.clear();
+        dockFolderPopupWidget_.folderSortMode =
+            mode;
+        dockFolderPopupWidget_.
+            folderSortAscending = ascending;
+        snowdesktop::folder_sort_rules::
+            StableSort(
+                dockFolderPopupWidget_.
+                    folderEntries,
+                mode, ascending);
+        snowdesktop::folder_sort_rules::
+            RewriteOrderKeys(
+                dockFolderPopupWidget_.
+                    folderEntries,
+                dockFolderPopupWidget_.
+                    itemKeys);
+        if (dockFolderPopupContainer_)
+            dockFolderPopupContainer_->
+                InvalidateFilterCache();
+    }
+
+    popupScrollOffset_ = 0;
+    popupRect_ =
+        GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+    dockFolderPopupWidget_.bounds =
+        popupRect_;
+    InvalidateDragStaticScene();
+    if (floatingDockVisible_)
+    {
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::ShowDockFolderPopupSortMenu(
+    POINT screenPoint)
+{
+    if (!dockFolderPopupOpen_) return;
+
+    HMENU menu = CreatePopupMenu();
+    HMENU nameMenu = CreatePopupMenu();
+    HMENU typeMenu = CreatePopupMenu();
+    HMENU dateMenu = CreatePopupMenu();
+    if (!menu || !nameMenu ||
+        !typeMenu || !dateMenu)
+    {
+        if (menu) DestroyMenu(menu);
+        if (nameMenu) DestroyMenu(nameMenu);
+        if (typeMenu) DestroyMenu(typeMenu);
+        if (dateMenu) DestroyMenu(dateMenu);
+        return;
+    }
+
+    auto appendDirectionMenu = [](
+        HMENU parent, HMENU child,
+        UINT ascendingCommand,
+        UINT descendingCommand,
+        const wchar_t* label) {
+        AppendMenuW(
+            child, MF_STRING,
+            ascendingCommand,
+            _LW("app.menu.sort_asc"));
+        AppendMenuW(
+            child, MF_STRING,
+            descendingCommand,
+            _LW("app.menu.sort_desc"));
+        AppendMenuW(
+            parent, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(
+                child),
+            label);
+    };
+    appendDirectionMenu(
+        menu, nameMenu,
+        kContextWidgetSortByName,
+        kContextWidgetSortByNameDesc,
+        _LW("app.menu.sort_name"));
+    appendDirectionMenu(
+        menu, typeMenu,
+        kContextWidgetSortByType,
+        kContextWidgetSortByTypeDesc,
+        _LW("app.menu.sort_type"));
+    appendDirectionMenu(
+        menu, dateMenu,
+        kContextWidgetSortByDate,
+        kContextWidgetSortByDateDesc,
+        _LW("app.interact.sort_date"));
+
+    const int mode =
+        snowdesktop::folder_sort_rules::
+            NormalizeMode(
+                dockFolderPopupWidget_.
+                    folderSortMode);
+    HMENU checkedMenu = nullptr;
+    UINT checkedCommand = 0;
+    if (mode ==
+        snowdesktop::folder_sort_rules::kName)
+    {
+        checkedMenu = nameMenu;
+        checkedCommand =
+            dockFolderPopupWidget_.
+                    folderSortAscending
+                ? kContextWidgetSortByName
+                : kContextWidgetSortByNameDesc;
+    }
+    else if (mode ==
+        snowdesktop::folder_sort_rules::kType)
+    {
+        checkedMenu = typeMenu;
+        checkedCommand =
+            dockFolderPopupWidget_.
+                    folderSortAscending
+                ? kContextWidgetSortByType
+                : kContextWidgetSortByTypeDesc;
+    }
+    else if (mode ==
+        snowdesktop::folder_sort_rules::
+            kModified)
+    {
+        checkedMenu = dateMenu;
+        checkedCommand =
+            dockFolderPopupWidget_.
+                    folderSortAscending
+                ? kContextWidgetSortByDate
+                : kContextWidgetSortByDateDesc;
+    }
+    if (checkedMenu && checkedCommand != 0)
+        CheckMenuItem(
+            checkedMenu, checkedCommand,
+            MF_BYCOMMAND | MF_CHECKED);
+
+    SetMenuItemIcon(
+        menu,
+        reinterpret_cast<UINT_PTR>(
+            nameMenu), L"");
+    SetMenuItemIcon(
+        menu,
+        reinterpret_cast<UINT_PTR>(
+            typeMenu), L"");
+    SetMenuItemIcon(
+        menu,
+        reinterpret_cast<UINT_PTR>(
+            dateMenu), L"");
+    SetForegroundWindow(hwnd_);
+    const UINT command = TrackPopupMenuEx(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y,
+        hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+
+    switch (command)
+    {
+    case kContextWidgetSortByName:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kName, true);
+        break;
+    case kContextWidgetSortByNameDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kName, false);
+        break;
+    case kContextWidgetSortByType:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kType, true);
+        break;
+    case kContextWidgetSortByTypeDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kType, false);
+        break;
+    case kContextWidgetSortByDate:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kModified, true);
+        break;
+    case kContextWidgetSortByDateDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kModified, false);
+        break;
+    default:
+        break;
+    }
+}
+
+inline void DesktopApp::
+ShowDockFolderPopupContextMenu(
+    POINT screenPoint,
+    std::optional<size_t> memberIndex)
+{
+    if (!dockFolderPopupOpen_) return;
+
+    const bool itemMenu =
+        memberIndex &&
+        *memberIndex <
+            dockFolderPopupWidget_.
+                folderEntries.size();
+    const std::vector<std::wstring>
+        selectedPaths =
+            GetSelectedFolderEntryPaths();
+    const bool singleSelection =
+        selectedPaths.size() == 1;
+    const bool hasSelection =
+        !selectedPaths.empty();
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    HMENU sortMenu = nullptr;
+    HMENU nameMenu = nullptr;
+    HMENU typeMenu = nullptr;
+    HMENU dateMenu = nullptr;
+
+    if (itemMenu)
+    {
+        AppendMenuW(
+            menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextOpenCommand,
+            _LW("app.menu.open"));
+        AppendMenuW(
+            menu,
+            singleSelection &&
+                    snowdesktop::
+                        item_location::
+                            CanReveal(
+                                selectedPaths.front())
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextRevealLocationCommand,
+            _LW(
+                "app.menu.open_file_location"));
+        AppendMenuW(
+            menu,
+            singleSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextRenameCommand,
+            _LW("app.menu.rename"));
+        AppendMenuW(
+            menu, MF_SEPARATOR,
+            0, nullptr);
+        AppendMenuW(
+            menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextCutCommand,
+            _LW("app.menu.cut"));
+        AppendMenuW(
+            menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextCopyCommand,
+            _LW("app.menu.copy"));
+        AppendMenuW(
+            menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextDeleteCommand,
+            _LW("app.settings.delete"));
+        AppendMenuW(
+            menu, MF_SEPARATOR,
+            0, nullptr);
+        AppendMenuW(
+            menu,
+            singleSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextMoreCommand,
+            _LW(
+                "app.menu.more_options"));
+    }
+    else
+    {
+        ComPtr<IDataObject> clipObject;
+        bool canPaste = false;
+        if (dockFolderPopupAvailable_ &&
+            SUCCEEDED(
+                OleGetClipboard(
+                    &clipObject)) &&
+            clipObject)
+        {
+            FORMATETC format{
+                CF_HDROP, nullptr,
+                DVASPECT_CONTENT, -1,
+                TYMED_HGLOBAL
+            };
+            canPaste = SUCCEEDED(
+                clipObject->
+                    QueryGetData(&format));
+        }
+        AppendMenuW(
+            menu,
+            canPaste
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextPasteCommand,
+            _LW("app.menu.paste"));
+        AppendMenuW(
+            menu,
+            dockFolderPopupAvailable_
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextNewMenu,
+            _LW("app.menu.new"));
+        AppendMenuW(
+            menu,
+            dockFolderPopupAvailable_
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextMoreCommand,
+            _LW("app.menu.more_options"));
+        AppendMenuW(
+            menu, MF_SEPARATOR,
+            0, nullptr);
+
+        sortMenu = CreatePopupMenu();
+        nameMenu = CreatePopupMenu();
+        typeMenu = CreatePopupMenu();
+        dateMenu = CreatePopupMenu();
+        if (sortMenu && nameMenu &&
+            typeMenu && dateMenu)
+        {
+            auto addDirections = [](
+                HMENU parent,
+                HMENU child,
+                UINT ascendingCommand,
+                UINT descendingCommand,
+                const wchar_t* label) {
+                AppendMenuW(
+                    child, MF_STRING,
+                    ascendingCommand,
+                    _LW(
+                        "app.menu.sort_asc"));
+                AppendMenuW(
+                    child, MF_STRING,
+                    descendingCommand,
+                    _LW(
+                        "app.menu.sort_desc"));
+                AppendMenuW(
+                    parent, MF_POPUP,
+                    reinterpret_cast<
+                        UINT_PTR>(child),
+                    label);
+            };
+            addDirections(
+                sortMenu, nameMenu,
+                kContextWidgetSortByName,
+                kContextWidgetSortByNameDesc,
+                _LW("app.menu.sort_name"));
+            addDirections(
+                sortMenu, typeMenu,
+                kContextWidgetSortByType,
+                kContextWidgetSortByTypeDesc,
+                _LW("app.menu.sort_type"));
+            addDirections(
+                sortMenu, dateMenu,
+                kContextWidgetSortByDate,
+                kContextWidgetSortByDateDesc,
+                _LW(
+                    "app.interact.sort_date"));
+            AppendMenuW(
+                menu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(
+                    sortMenu),
+                _LW("app.menu.sort_by"));
+        }
+        else
+        {
+            if (sortMenu)
+                DestroyMenu(sortMenu);
+            if (nameMenu)
+                DestroyMenu(nameMenu);
+            if (typeMenu)
+                DestroyMenu(typeMenu);
+            if (dateMenu)
+                DestroyMenu(dateMenu);
+            sortMenu = nullptr;
+            nameMenu = nullptr;
+            typeMenu = nullptr;
+            dateMenu = nullptr;
+        }
+    }
+
+    SetMenuItemIcon(
+        menu, kContextOpenCommand,
+        L"");
+    SetMenuItemIcon(
+        menu,
+        kContextRevealLocationCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextRenameCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextCutCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextCopyCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextDeleteCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextPasteCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextNewMenu,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextMoreCommand,
+        L"");
+    if (sortMenu)
+        SetMenuItemIcon(
+            menu,
+            reinterpret_cast<UINT_PTR>(
+                sortMenu),
+            L"");
+
+    SetForegroundWindow(hwnd_);
+    const UINT command =
+        TrackPopupMenuEx(
+            menu,
+            TPM_RETURNCMD |
+                TPM_RIGHTBUTTON,
+            screenPoint.x,
+            screenPoint.y,
+            hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+
+    switch (command)
+    {
+    case kContextOpenCommand:
+        for (const auto& path :
+             GetSelectedFolderEntryPaths())
+            ShellExecuteW(
+                hwnd_, L"open",
+                path.c_str(),
+                nullptr, nullptr,
+                SW_SHOWNORMAL);
+        break;
+    case kContextRevealLocationCommand:
+        if (selectedPaths.size() == 1)
+            snowdesktop::item_location::
+                Reveal(
+                    hwnd_,
+                    selectedPaths.front());
+        break;
+    case kContextRenameCommand:
+        if (singleSelection)
+        {
+            size_t selectedIndex =
+                static_cast<size_t>(-1);
+            for (size_t i = 0;
+                i <
+                    dockFolderPopupWidget_.
+                        folderEntries.size();
+                ++i)
+            {
+                if (dockFolderPopupWidget_.
+                        folderEntries[i].
+                            selected)
+                {
+                    selectedIndex = i;
+                    break;
+                }
+            }
+            if (selectedIndex <
+                dockFolderPopupWidget_.
+                    folderEntries.size())
+                BeginRenameDockFolderPopupEntry(
+                    selectedIndex);
+        }
+        break;
+    case kContextCutCommand:
+        CopyCutSelectedFolderEntries(
+            true);
+        break;
+    case kContextCopyCommand:
+        CopyCutSelectedFolderEntries(
+            false);
+        break;
+    case kContextDeleteCommand:
+        DeleteSelectedFolderEntries(
+            false);
+        break;
+    case kContextMoreCommand:
+        if (itemMenu &&
+            selectedPaths.size() == 1)
+        {
+            ShowShellItemContextMenuForPath(
+                selectedPaths.front(),
+                screenPoint);
+            break;
+        }
+        ShowShellContextMenuForPath(
+            dockFolderPopupWidget_.
+                sourceFolderPath,
+            screenPoint);
+        RefreshDockFolderPopup();
+        break;
+    case kContextPasteCommand:
+        PasteClipboardToFolderPath(
+            dockFolderPopupWidget_.
+                sourceFolderPath);
+        break;
+    case kContextNewMenu:
+        ShowNewMenuAndInvoke(
+            screenPoint,
+            dockFolderPopupWidget_.
+                sourceFolderPath);
+        for (size_t i = 0;
+            i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].type ==
+                DesktopWidgetType::
+                    FolderMapping)
+                RefreshFolderMappingWidget(
+                    i);
+        }
+        RefreshDockFolderPopup();
+        break;
+    case kContextWidgetSortByName:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::kName,
+            true);
+        break;
+    case kContextWidgetSortByNameDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::kName,
+            false);
+        break;
+    case kContextWidgetSortByType:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::kType,
+            true);
+        break;
+    case kContextWidgetSortByTypeDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::kType,
+            false);
+        break;
+    case kContextWidgetSortByDate:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::
+                    kModified,
+            true);
+        break;
+    case kContextWidgetSortByDateDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::
+                    kModified,
+            false);
+        break;
+    default:
+        break;
+    }
+}
+
+inline std::vector<Item*>
+DesktopApp::GetDockFolderPopupSelectedItems()
+{
+    dockFolderPopupDragItems_.clear();
+    std::vector<Item*> selected;
+    if (!dockFolderPopupOpen_ ||
+        !dockFolderPopupContainer_)
+        return selected;
+
+    const RECT popup =
+        GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+    for (size_t i = 0;
+        i < dockFolderPopupWidget_.
+            folderEntries.size(); ++i)
+    {
+        FolderEntry& entry =
+            dockFolderPopupWidget_.
+                folderEntries[i];
+        if (!entry.selected)
+            continue;
+        auto item =
+            std::make_unique<FolderEntryIcon>(
+                &entry,
+                dockFolderPopupContainer_.get(),
+                this);
+        item->SetBounds(
+            GetCollectionPopupItemRect(
+                popup, i));
+        selected.push_back(item.get());
+        dockFolderPopupDragItems_.push_back(
+            std::move(item));
+    }
+    return selected;
+}
+
+inline void DesktopApp::OpenDockFolderPopupAt(
+    size_t entryIndex, POINT anchorPoint)
+{
+    if (entryIndex >= dockEntries_.size() ||
+        !IsFolderDockEntry(dockEntries_[entryIndex]))
+        return;
+
+    PreserveDockFolderPopupDragSourceForTransition();
+    const DockEntry entry = dockEntries_[entryIndex];
+    const auto target = ResolveDockFolderTarget(entry);
+    dockFolderPopupOpen_ = true;
+    dockFolderPopupAvailable_ = target.available;
+    dockFolderPopupSourceId_ =
+        std::to_wstring(static_cast<int>(entry.type)) +
+        L":" + ToUpperInvariant(entry.reference);
+    dockFolderPopupMappingWidgetId_.clear();
+    popupWidgetIndex_ = static_cast<size_t>(-1);
+    popupScrollOffset_ = 0;
+    popupHasAnchor_ = true;
+    popupAnchoredToDock_ = false;
+    popupAnchorPoint_ = anchorPoint;
+    popupCategoryId_.clear();
+
+    dockFolderPopupWidget_ = DesktopWidget{};
+    dockFolderPopupWidget_.type =
+        DesktopWidgetType::FolderMapping;
+    dockFolderPopupWidget_.id =
+        L"__dock_folder_popup__";
+    dockFolderPopupWidget_.sourceFolderPath =
+        target.path;
+    dockFolderPopupWidget_.folderSortMode =
+        snowdesktop::folder_sort_rules::kName;
+    dockFolderPopupWidget_.
+        folderSortAscending = true;
+    dockFolderPopupWidget_.gridCell =
+        { kDockPageId, 0, 0 };
+    if (entry.type == DockEntryType::FolderMapping)
+    {
+        const size_t widgetIndex =
+            FindWidgetIndexById(entry.reference);
+        if (widgetIndex < widgets_.size())
+        {
+            dockFolderPopupMappingWidgetId_ =
+                widgets_[widgetIndex].id;
+            dockFolderPopupWidget_.title =
+                widgets_[widgetIndex].title;
+            dockFolderPopupWidget_.
+                folderSortMode =
+                    widgets_[widgetIndex].
+                        folderSortMode;
+            dockFolderPopupWidget_.
+                folderSortAscending =
+                    widgets_[widgetIndex].
+                        folderSortAscending;
+            dockFolderPopupWidget_.itemKeys =
+                widgets_[widgetIndex].
+                    itemKeys;
+        }
+    }
+    else
+    {
+        const size_t itemIndex =
+            FindItemIndexByKey(entry.reference);
+        if (itemIndex < items_.size())
+            dockFolderPopupWidget_.title =
+                items_[itemIndex].name;
+    }
+    if (dockFolderPopupWidget_.title.empty())
+        dockFolderPopupWidget_.title =
+            _LW("widget.folder_mapping");
+
+    const GridPage* dockPage = nullptr;
+    if (DockContainer* dock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        const RECT dockBounds =
+            dock->GetInteractiveBounds();
+        const POINT dockCenter{
+            (dockBounds.left + dockBounds.right) / 2,
+            (dockBounds.top + dockBounds.bottom) / 2
+        };
+        for (const auto& page : gridPages_)
+        {
+            if (PtInRect(&page.bounds, dockCenter))
+            {
+                dockPage = &page;
+                break;
+            }
+        }
+        if (DockEntryItem* dockItem =
+                dock->EntryAtPoint(anchorPoint);
+            dockItem &&
+            dockItem->GetEntryIndex() == entryIndex)
+        {
+            const RECT itemBounds =
+                dock->GetElementVisualRect(
+                    dockItem->GetBounds(), anchorPoint);
+            popupDockPosition_ = dockSettings_.position;
+            popupAnchoredToDock_ = true;
+            switch (popupDockPosition_)
+            {
+            case DockPosition::Top:
+                popupAnchorPoint_ = {
+                    (itemBounds.left + itemBounds.right) / 2,
+                    itemBounds.bottom };
+                break;
+            case DockPosition::Left:
+                popupAnchorPoint_ = {
+                    itemBounds.right,
+                    (itemBounds.top + itemBounds.bottom) / 2 };
+                break;
+            case DockPosition::Right:
+                popupAnchorPoint_ = {
+                    itemBounds.left,
+                    (itemBounds.top + itemBounds.bottom) / 2 };
+                break;
+            case DockPosition::Bottom:
+            default:
+                popupAnchorPoint_ = {
+                    (itemBounds.left + itemBounds.right) / 2,
+                    itemBounds.top };
+                break;
+            }
+        }
+    }
+    if (!dockPage)
+        dockPage = GetFirstPageGridPage();
+    if (dockPage) popupPageId_ = dockPage->id;
+
+    RefreshDockFolderPopup();
+    popupRect_ =
+        GetCollectionPopupRect(dockFolderPopupWidget_);
+    dockFolderPopupWidget_.bounds = popupRect_;
+    popupScrollOffset_ = std::clamp(
+        popupScrollOffset_, 0,
+        GetCollectionPopupMaxScrollOffset(
+            dockFolderPopupWidget_, popupRect_));
+    if (floatingDockVisible_)
+    {
+        floatingDockContainer_ =
+            GetDockContainerAtPoint(anchorPoint);
+        if (!floatingDockContainer_)
+            floatingDockContainer_ =
+                SelectFloatingDockContainerForMonitor(
+                    floatingDockMonitor_);
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
+    InvalidateDragStaticScene();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
 /**
  * @brief 关闭当前打开的集合弹窗
  */
 inline void DesktopApp::CloseCollectionPopup()
 {
-    if (popupWidgetIndex_ == static_cast<size_t>(-1)) return;
+    if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
+        !dockFolderPopupOpen_)
+        return;
+    PreserveDockFolderPopupDragSourceForTransition();
     ClearSelection();
     popupWidgetIndex_ = static_cast<size_t>(-1);
+    dockFolderPopupOpen_ = false;
+    dockFolderPopupAvailable_ = false;
+    dockFolderPopupSourceId_.clear();
+    dockFolderPopupMappingWidgetId_.clear();
+    dockFolderPopupContainer_.reset();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
+    dockFolderPopupWidget_.folderEntries.clear();
+    marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = false;
     popupAnchoredToDock_ = false;
@@ -7128,7 +8931,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     if (DockContainer* dock = GetDockContainerAtPoint(pt))
     {
         const int delta = GET_WHEEL_DELTA_WPARAM(wp);
-        if (dock->ScrollByWheelDelta(delta))
+        if (dock->ScrollByWheelDelta(pt, delta))
         {
             refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -7136,15 +8939,24 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         }
     }
 
-    if (popupWidgetIndex_ < widgets_.size())
+    if (DesktopWidget* popupWidget =
+            GetOpenPopupWidget())
     {
-        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        RECT popup =
+            GetCollectionPopupRect(*popupWidget);
         if (PtInRect(&popup, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
-            int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
+            int maxScroll =
+                GetCollectionPopupMaxScrollOffset(
+                    *popupWidget, popup);
             popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
-            if (marqueeActive_ && marqueeWidgetIndex_ == popupWidgetIndex_)
+            if (marqueeActive_ &&
+                ((dockFolderPopupOpen_ &&
+                  marqueeDockFolderPopup_) ||
+                 (!dockFolderPopupOpen_ &&
+                  marqueeWidgetIndex_ ==
+                    popupWidgetIndex_)))
                 UpdateMarqueeSelection(pt);
             refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -7436,6 +9248,146 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
     SetFocus(renameEdit_);
 }
 
+inline void DesktopApp::
+BeginRenameDockFolderPopupEntry(
+    size_t memberIndex)
+{
+    if (renameEdit_ != nullptr ||
+        !dockFolderPopupOpen_ ||
+        memberIndex >=
+            dockFolderPopupWidget_.
+                folderEntries.size())
+        return;
+
+    ClearSelection();
+    for (auto& entry :
+         dockFolderPopupWidget_.folderEntries)
+        entry.selected = false;
+    FolderEntry& entry =
+        dockFolderPopupWidget_.
+            folderEntries[memberIndex];
+    entry.selected = true;
+    renameCommitPending_ = false;
+    renamingFolderEntry_ = true;
+    renamingDockFolderPopupEntry_ = true;
+    renameFolderWidgetIndex_ =
+        static_cast<size_t>(-1);
+    renameFolderEntryIndex_ = memberIndex;
+
+    const RECT popup =
+        GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+    RECT itemRect =
+        GetCollectionPopupItemRect(
+            popup, memberIndex);
+    RECT rect =
+        GetItemTextRect(itemRect, true);
+    if (IsRectEmptyRect(rect))
+    {
+        renamingFolderEntry_ = false;
+        renamingDockFolderPopupEntry_ =
+            false;
+        renameFolderEntryIndex_ =
+            static_cast<size_t>(-1);
+        return;
+    }
+    InflateRect(&rect, 2, 2);
+    RECT screenRect = rect;
+    MapWindowPoints(
+        hwnd_, nullptr,
+        reinterpret_cast<POINT*>(
+            &screenRect), 2);
+
+    const DWORD style =
+        WS_POPUP | WS_VISIBLE |
+        ES_AUTOVSCROLL |
+        ES_MULTILINE | ES_CENTER |
+        ES_WANTRETURN;
+    renameEdit_ = CreateWindowExW(
+        WS_EX_CLIENTEDGE |
+            WS_EX_TOOLWINDOW |
+            WS_EX_TOPMOST,
+        L"EDIT", entry.name.c_str(),
+        style,
+        screenRect.left,
+        screenRect.top,
+        screenRect.right -
+            screenRect.left,
+        screenRect.bottom -
+            screenRect.top,
+        hwnd_, nullptr, instance_, nullptr);
+    if (!renameEdit_)
+    {
+        renamingFolderEntry_ = false;
+        renamingDockFolderPopupEntry_ =
+            false;
+        renameFolderEntryIndex_ =
+            static_cast<size_t>(-1);
+        return;
+    }
+
+    if (renameFont_)
+        DeleteObject(renameFont_);
+    const float renameScale =
+        GetItemLayoutScale(itemRect);
+    renameFont_ = CreateFontW(
+        -std::max(
+            1, static_cast<int>(
+                std::round(
+                    itemFontSize_ *
+                    renameScale))),
+        0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE,
+        L"Segoe UI");
+    SendMessageW(
+        renameEdit_, WM_SETFONT,
+        reinterpret_cast<WPARAM>(
+            renameFont_
+                ? renameFont_
+                : GetStockObject(
+                    DEFAULT_GUI_FONT)),
+        TRUE);
+    const int renameMargin =
+        std::max(
+            1, static_cast<int>(
+                std::round(
+                    6.0f * renameScale)));
+    SendMessageW(
+        renameEdit_, EM_SETMARGINS,
+        EC_LEFTMARGIN |
+            EC_RIGHTMARGIN,
+        MAKELPARAM(
+            renameMargin,
+            renameMargin));
+    SetWindowSubclass(
+        renameEdit_,
+        &DesktopApp::
+            RenameEditSubclassProc,
+        1,
+        reinterpret_cast<DWORD_PTR>(
+            this));
+    SetWindowPos(
+        renameEdit_, HWND_TOPMOST,
+        screenRect.left,
+        screenRect.top,
+        screenRect.right -
+            screenRect.left,
+        screenRect.bottom -
+            screenRect.top,
+        SWP_SHOWWINDOW);
+    SendMessageW(
+        renameEdit_, EM_SETSEL, 0,
+        GetRenameInitialSelectionEnd(
+            entry.name,
+            entry.isDirectory));
+    SetFocus(renameEdit_);
+}
+
 /**
  * @brief 判断 Shell 上下文菜单命令是否为重命名命令
  * @param contextMenu Shell 上下文菜单接口
@@ -7676,22 +9628,48 @@ static std::wstring MakeUniqueFileName(const std::wstring& folderPath, const std
  */
 inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cancel)
 {
-    size_t widgetIndex = renameFolderWidgetIndex_;
-    size_t memberIndex = renameFolderEntryIndex_;
+    const size_t widgetIndex =
+        renameFolderWidgetIndex_;
+    const size_t memberIndex =
+        renameFolderEntryIndex_;
+    const bool dockPopupEntry =
+        renamingDockFolderPopupEntry_;
     renamingFolderEntry_ = false;
+    renamingDockFolderPopupEntry_ = false;
     renameFolderWidgetIndex_ = static_cast<size_t>(-1);
     renameFolderEntryIndex_ = static_cast<size_t>(-1);
 
-    if (cancel ||
-        widgetIndex >= widgets_.size() ||
-        widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
-        memberIndex >= widgets_[widgetIndex].folderEntries.size() ||
+    const FolderEntry* sourceEntry = nullptr;
+    if (dockPopupEntry)
+    {
+        if (dockFolderPopupOpen_ &&
+            memberIndex <
+                dockFolderPopupWidget_.
+                    folderEntries.size())
+            sourceEntry =
+                &dockFolderPopupWidget_.
+                    folderEntries[memberIndex];
+    }
+    else if (widgetIndex < widgets_.size() &&
+        widgets_[widgetIndex].type ==
+            DesktopWidgetType::FolderMapping &&
+        memberIndex <
+            widgets_[widgetIndex].
+                folderEntries.size())
+    {
+        sourceEntry =
+            &widgets_[widgetIndex].
+                folderEntries[memberIndex];
+    }
+
+    if (cancel || !sourceEntry ||
         newName.empty() ||
-        newName == widgets_[widgetIndex].folderEntries[memberIndex].name)
+        newName == sourceEntry->name)
         return;
 
     PIDLIST_ABSOLUTE pidl = nullptr;
-    const std::wstring oldPath = widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
+    const std::wstring oldPath =
+        sourceEntry->fullPath;
     if (FAILED(SHParseDisplayName(oldPath.c_str(), nullptr, &pidl, 0, nullptr)))
     {
         MessageBeep(MB_ICONWARNING);
@@ -7702,12 +9680,19 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
     PCUITEMID_CHILD child = nullptr;
     HRESULT hr = SHBindToParent(pidl, IID_IShellFolder,
         reinterpret_cast<void**>(&parentFolder), &child);
+    std::wstring renamedPath;
     if (SUCCEEDED(hr) && parentFolder)
     {
         wchar_t dirBuf[MAX_PATH]{};
         wcscpy_s(dirBuf, oldPath.c_str());
         PathRemoveFileSpecW(dirBuf);
         std::wstring uniqueName = MakeUniqueFileName(dirBuf, newName);
+        wchar_t renamedPathBuffer[MAX_PATH]{};
+        if (PathCombineW(
+                renamedPathBuffer,
+                dirBuf,
+                uniqueName.c_str()))
+            renamedPath = renamedPathBuffer;
         PITEMID_CHILD newChild = nullptr;
         hr = parentFolder->SetNameOf(ShellDialogOwnerHwnd(), child, uniqueName.c_str(), SHGDN_NORMAL, &newChild);
         if (newChild) ILFree(newChild);
@@ -7721,7 +9706,39 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
         return;
     }
 
-    RefreshFolderMappingWidget(widgetIndex);
+    if (!renamedPath.empty())
+    {
+        auto replaceOrderKey =
+            [&](std::vector<std::wstring>& keys) {
+                for (auto& key : keys)
+                {
+                    if (PathsEqualInsensitive(
+                            key, oldPath))
+                        key = renamedPath;
+                }
+            };
+        for (auto& widget : widgets_)
+        {
+            if (widget.type ==
+                DesktopWidgetType::
+                    FolderMapping)
+                replaceOrderKey(
+                    widget.itemKeys);
+        }
+        replaceOrderKey(
+            dockFolderPopupWidget_.
+                itemKeys);
+    }
+    for (size_t i = 0;
+        i < widgets_.size(); ++i)
+    {
+        if (widgets_[i].type ==
+            DesktopWidgetType::FolderMapping)
+            RefreshFolderMappingWidget(i);
+    }
+    ReloadItems(false);
+    if (dockFolderPopupOpen_)
+        RefreshDockFolderPopup();
     RebuildContainersAndItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -7828,6 +9845,30 @@ inline void DesktopApp::BeginRenameSelected(
 {
     if (renameEdit_ != nullptr) return;
     renameCommitPending_ = false;
+
+    if (dockFolderPopupOpen_)
+    {
+        size_t selectedMember =
+            static_cast<size_t>(-1);
+        int selectedCount = 0;
+        for (size_t i = 0;
+            i < dockFolderPopupWidget_.
+                folderEntries.size(); ++i)
+        {
+            if (!dockFolderPopupWidget_.
+                    folderEntries[i].
+                        selected)
+                continue;
+            selectedMember = i;
+            ++selectedCount;
+        }
+        if (selectedCount == 1)
+        {
+            BeginRenameDockFolderPopupEntry(
+                selectedMember);
+            return;
+        }
+    }
 
     int selectedWidgetCount = 0;
     size_t selectedWidgetIndex = static_cast<size_t>(-1);
@@ -8650,6 +10691,42 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     }
 
     externalDragActive_ = true;
+    externalDropHasShortcut_ = false;
+    externalDropFoldersOnly_ = false;
+    if (dataObject)
+    {
+        const std::vector<std::wstring> paths =
+            GetDropPaths(dataObject);
+        externalDropFileCount_ =
+            static_cast<int>(paths.size());
+        externalDropHasShortcut_ =
+            std::any_of(
+                paths.begin(), paths.end(),
+                [](const std::wstring& path) {
+                    return _wcsicmp(
+                        PathFindExtensionW(
+                            path.c_str()),
+                        L".lnk") == 0;
+                });
+        externalDropFoldersOnly_ =
+            !paths.empty() &&
+            std::all_of(
+                paths.begin(), paths.end(),
+                [](const std::wstring& path) {
+                    return snowdesktop::
+                        item_location::
+                            ResolveFolderTarget(
+                                path).kind !=
+                        snowdesktop::
+                            item_location::
+                                FolderTargetKind::
+                                    None;
+                });
+    }
+    else
+    {
+        externalDropFileCount_ = 1;
+    }
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
     {
@@ -8690,21 +10767,6 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         }
     }
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
-
-    externalDropHasShortcut_ = false;
-    if (dataObject)
-    {
-        std::vector<std::wstring> paths = GetDropPaths(dataObject);
-        externalDropFileCount_ = static_cast<int>(paths.size());
-        externalDropHasShortcut_ = std::any_of(paths.begin(), paths.end(),
-            [](const std::wstring& path) {
-                return _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-            });
-    }
-    else
-    {
-        externalDropFileCount_ = 1;
-    }
 
     int mods = 0;
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
@@ -8931,6 +10993,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
     externalDropHasShortcut_ = false;
+    externalDropFoldersOnly_ = false;
     EndDragSession();
     HideDragHintWindow();
     OnPaint();
@@ -8959,6 +11022,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         externalDragActive_ = false;
         externalDropFileCount_ = 0;
         externalDropHasShortcut_ = false;
+        externalDropFoldersOnly_ = false;
         *effect = DROPEFFECT_NONE;
         EndDragSession();
         return S_OK;
@@ -8968,14 +11032,28 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
     if (selfDragActive_)
     {
+        const bool dockFolderPopupSource =
+            dockFolderPopupOpen_ &&
+            dragSession_.Source() ==
+                dockFolderPopupContainer_.get();
+        const bool dockFolderPopupTarget =
+            dockFolderPopupOpen_ &&
+            dragSession_.TargetContainer() ==
+                dockFolderPopupContainer_.get();
+        auto refreshDockFolderPopup =
+            [&]() {
+                if ((dockFolderPopupSource ||
+                     dockFolderPopupTarget) &&
+                    dockFolderPopupOpen_)
+                    RefreshDockFolderPopup();
+            };
         selfDragActive_ = false;
         selfDragReturned_ = true;
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         ReleaseCapture();
         dragSession_.DeactivateForDrop();
-        dragRenderCache_.Reset();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        CommitDragVisualEndBeforeShellOperation();
 
         if (!GetDockDragOutRemovalHint(clientPoint).empty())
         {
@@ -9014,6 +11092,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                     {
                         RebuildContainersAndItems();
                         LayoutItems();
+                        refreshDockFolderPopup();
                         InvalidateRect(hwnd_, nullptr, FALSE);
                     }
                     *effect = executed ? DROPEFFECT_MOVE : DROPEFFECT_NONE;
@@ -9038,6 +11117,20 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             if (dataObj && targetItem)
             {
                 ComPtr<IDropTarget> dt;
+                bool explicitFolderTarget =
+                    dockFolderPopupTarget;
+                if (auto* dockTarget =
+                        dynamic_cast<DockEntryItem*>(
+                            targetItem))
+                {
+                    const size_t entryIndex =
+                        dockTarget->GetEntryIndex();
+                    explicitFolderTarget =
+                        entryIndex <
+                            dockEntries_.size() &&
+                        IsFolderDockEntry(
+                            dockEntries_[entryIndex]);
+                }
                 if (auto* icon = dynamic_cast<DesktopIcon*>(targetItem))
                 {
                     DesktopItem* di = icon->GetDesktopItem();
@@ -9060,15 +11153,30 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 if (dt)
                 {
                     POINTL spl{ point.x, point.y };
-                    DWORD le = DROPEFFECT_COPY | DROPEFFECT_MOVE;
-                    dt->DragEnter(dataObj.Get(), keyState, spl, &le);
-                    dt->DragOver(keyState, spl, &le);
-                    dt->Drop(dataObj.Get(), keyState, spl, &le);
+                    DWORD shellKeyState = keyState;
+                    if (explicitFolderTarget &&
+                        (shellKeyState &
+                            (MK_CONTROL |
+                             MK_ALT |
+                             MK_SHIFT)) == 0)
+                        shellKeyState |= MK_SHIFT;
+                    DWORD le = DROPEFFECT_COPY |
+                        DROPEFFECT_MOVE |
+                        DROPEFFECT_LINK;
+                    dt->DragEnter(
+                        dataObj.Get(),
+                        shellKeyState, spl, &le);
+                    dt->DragOver(
+                        shellKeyState, spl, &le);
+                    dt->Drop(
+                        dataObj.Get(),
+                        shellKeyState, spl, &le);
                 }
             }
             ClearSelection();
             EndDragSession();
             ReloadItems();
+            refreshDockFolderPopup();
             *effect = DROPEFFECT_MOVE;
             return S_OK;
         }
@@ -9099,8 +11207,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 ApplyPageMapping();
                 RebuildContainersAndItems();
                 LayoutItems();
-                InvalidateRect(hwnd_, nullptr, FALSE);
             }
+            refreshDockFolderPopup();
+            InvalidateRect(hwnd_, nullptr, FALSE);
         }
         *effect = DROPEFFECT_MOVE;
         EndDragSession();
@@ -9111,9 +11220,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
     externalDropHasShortcut_ = false;
+    externalDropFoldersOnly_ = false;
     dragSession_.DeactivateForDrop();
-    dragRenderCache_.Reset();
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    CommitDragVisualEndBeforeShellOperation();
 
     std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
     if (dropPaths.empty() && dataObject)
@@ -9149,6 +11258,11 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
         if (dt)
         {
+            const bool dockFolderPopupTarget =
+                dockFolderPopupOpen_ &&
+                targetItem &&
+                targetItem->GetContainer() ==
+                    dockFolderPopupContainer_.get();
             DWORD le = *effect;
             POINTL spl{ point.x, point.y };
             dt->DragEnter(dataObject, keyState, spl, &le);
@@ -9156,8 +11270,57 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             dt->Drop(dataObject, keyState, spl, &le);
             *effect = le;
             EndDragSession();
+            if (dockFolderPopupTarget)
+                RefreshDockFolderPopup();
             ReloadItems(false);
             return S_OK;
+        }
+    }
+
+    if (dataObject &&
+        dockFolderPopupOpen_ &&
+        dragSession_.TargetContainer() ==
+            dockFolderPopupContainer_.get() &&
+        dragSession_.TargetRegion() !=
+            HitRegion::Blocked)
+    {
+        ComPtr<IShellItem> folderItem;
+        ComPtr<IDropTarget> folderDropTarget;
+        if (dockFolderPopupAvailable_ &&
+            SUCCEEDED(SHCreateItemFromParsingName(
+                dockFolderPopupWidget_.
+                    sourceFolderPath.c_str(),
+                nullptr,
+                IID_PPV_ARGS(&folderItem))) &&
+            folderItem)
+        {
+            folderItem->BindToHandler(
+                nullptr, BHID_SFUIObject,
+                IID_PPV_ARGS(&folderDropTarget));
+        }
+        if (folderDropTarget)
+        {
+            DWORD shellEffect = *effect;
+            POINTL screenPoint{
+                point.x, point.y };
+            if (SUCCEEDED(
+                    folderDropTarget->DragEnter(
+                        dataObject, keyState,
+                        screenPoint,
+                        &shellEffect)))
+            {
+                folderDropTarget->DragOver(
+                    keyState, screenPoint,
+                    &shellEffect);
+                folderDropTarget->Drop(
+                    dataObject, keyState,
+                    screenPoint,
+                    &shellEffect);
+                *effect = shellEffect;
+                EndDragSession();
+                RefreshDockFolderPopup();
+                return S_OK;
+            }
         }
     }
 
@@ -9224,9 +11387,24 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
         DropPreviewList preview = BuildDropPreviewList(sourceList, target,
             dragSession_.TargetContainer() ? dragSession_.TargetSlot() : nullptr, targetRegion, mods, clientPoint);
+        const bool dockFolderPopupTarget =
+            dockFolderPopupOpen_ &&
+            target ==
+                dockFolderPopupContainer_.get();
+        if (dockFolderPopupTarget)
+        {
+            if ((*effect & DROPEFFECT_MOVE) != 0)
+                preview.action = DropAction::Move;
+            else if ((*effect & DROPEFFECT_LINK) != 0)
+                preview.action = DropAction::Link;
+            else
+                preview.action = DropAction::Copy;
+        }
         bool executed = ExecuteDropPipeline(sourceList, preview);
         if (executed)
         {
+            if (dockFolderPopupTarget)
+                RefreshDockFolderPopup();
             SaveLayoutSlots();
             EndDragSession();
             RebuildContainersAndItems();
@@ -10721,7 +12899,8 @@ inline void DesktopApp::ShowWidgetContextMenu(
         // Move widget's itemKeys back to desktop by just removing the widget
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
         std::erase_if(dockEntries_, [&](const DockEntry& entry) {
-            return entry.type == DockEntryType::Collection &&
+            return (entry.type == DockEntryType::Collection ||
+                    entry.type == DockEntryType::FolderMapping) &&
                 entry.reference == deletedWidgetId;
         });
         EnsureNavTabOrder();

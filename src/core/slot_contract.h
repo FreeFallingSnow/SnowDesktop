@@ -43,6 +43,7 @@ enum class DragPayloadKind : std::uint8_t
     FolderEntry,
     ExternalFile,
     CollectionWidget,
+    FolderMappingWidget,
     FileSourceWidget,
     OtherWidget,
     CollectionGroupLabel,
@@ -85,6 +86,7 @@ struct DragPayloadFlags
     bool collectionWidgetsOnly = false;
     bool collectionGroupLabels = false;
     bool fileGroupLabels = false;
+    bool folderMappingWidgetsOnly = false;
 };
 
 constexpr DragPayloadKind ClassifyPayload(
@@ -106,9 +108,13 @@ constexpr DragPayloadKind ClassifyPayload(
     if (flags.fileGroupLabels)
         return DragPayloadKind::FileGroupLabel;
     if (flags.widgets)
-        return flags.collectionWidgetsOnly
-            ? DragPayloadKind::CollectionWidget
-            : DragPayloadKind::OtherWidget;
+    {
+        if (flags.collectionWidgetsOnly)
+            return DragPayloadKind::CollectionWidget;
+        if (flags.folderMappingWidgetsOnly)
+            return DragPayloadKind::FolderMappingWidget;
+        return DragPayloadKind::OtherWidget;
+    }
     if (flags.folderEntries)
         return DragPayloadKind::FolderEntry;
     if (flags.externalFiles)
@@ -150,16 +156,19 @@ inline constexpr std::array<
         false,
         PayloadBit(DragPayloadKind::DesktopItem) |
             PayloadBit(DragPayloadKind::CollectionWidget) |
+            PayloadBit(DragPayloadKind::FolderMappingWidget) |
             PayloadBit(DragPayloadKind::FileSourceWidget) |
             PayloadBit(DragPayloadKind::OtherWidget),
     },
-    {
-        SlotSurfaceKind::Dock,
-        "dock",
-        true,
-        false,
-        PayloadBit(DragPayloadKind::DesktopItem) |
-            PayloadBit(DragPayloadKind::CollectionWidget),
+        {
+            SlotSurfaceKind::Dock,
+            "dock",
+            true,
+            false,
+            PayloadBit(DragPayloadKind::DesktopItem) |
+                PayloadBit(DragPayloadKind::CollectionWidget) |
+                PayloadBit(DragPayloadKind::FolderMappingWidget) |
+                PayloadBit(DragPayloadKind::FolderEntry),
     },
     {
         SlotSurfaceKind::Collection,
@@ -196,6 +205,7 @@ inline constexpr std::array<
         true,
         false,
         PayloadBit(DragPayloadKind::DesktopItem) |
+            PayloadBit(DragPayloadKind::FolderMappingWidget) |
             PayloadBit(DragPayloadKind::FolderEntry) |
             PayloadBit(DragPayloadKind::FileGroupLabel),
     },
@@ -273,7 +283,7 @@ inline constexpr std::array<
             "folder_mapping",
             WidgetContainerRole::SlotContainer,
             SlotSurfaceKind::FolderMapping,
-            DragPayloadKind::FileSourceWidget,
+            DragPayloadKind::FolderMappingWidget,
         },
         {
             DesktopWidgetType::LuaScript,
@@ -455,6 +465,20 @@ constexpr DropRoute EvaluateSlotDrop(
         return DropRoute::Reject;
     }
 
+    if (payload == DragPayloadKind::FolderMappingWidget)
+    {
+        if (relation == DragRelation::SameInstance &&
+            target == SlotSurfaceKind::Dock)
+            return DropRoute::ReorderWithinContainer;
+        if (target == SlotSurfaceKind::Desktop)
+            return DropRoute::PlaceOnDesktop;
+        if (target == SlotSurfaceKind::Dock)
+            return DropRoute::AddToDock;
+        if (target == SlotSurfaceKind::FileGroup)
+            return DropRoute::MoveFileSourceIntoGroup;
+        return DropRoute::Reject;
+    }
+
     if (payload == DragPayloadKind::FileSourceWidget)
     {
         if (target == SlotSurfaceKind::Desktop)
@@ -497,6 +521,8 @@ constexpr DropRoute EvaluateSlotDrop(
     {
         if (target == SlotSurfaceKind::Desktop)
             return DropRoute::TransferFile;
+        if (target == SlotSurfaceKind::Dock)
+            return DropRoute::AddToDock;
         if (target == SlotSurfaceKind::FolderMapping)
             return relation == DragRelation::SameInstance
                 ? DropRoute::ReorderWithinContainer

@@ -1377,13 +1377,16 @@ void SettingsWindow::DrawDockPage()
         &dockSettings_.floatingShortcutMode))
         markChanged(true);
     if (dockSettings_.floatingShortcutMode)
+    {
+        ImGui::Indent();
         ImGui::TextDisabled("%s", _L("app.dock.floating_shortcut_hint"));
+        ImGui::Unindent();
+    }
 
     ImGui::BeginDisabled(
         !dockSettings_.floatingShortcutMode);
     ImGui::Spacing();
-    ImGui::SeparatorText(
-        _L("app.dock.floating_triggers"));
+    ImGui::Indent();
 
     bool floatingCtrl =
         (dockSettings_.floatingHotkeyModifiers &
@@ -1475,6 +1478,10 @@ void SettingsWindow::DrawDockPage()
         _L("app.settings.current_hotkey"),
         floatingHotkeyTextUtf8.c_str());
 
+    ImGui::Unindent();
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
     if (DrawSettingCheckbox(
             _L("app.dock.floating_edge_swipe"),
             "##DockFloatingEdgeSwipe",
@@ -1486,7 +1493,6 @@ void SettingsWindow::DrawDockPage()
             "%s",
             _L("app.dock.floating_edge_swipe_hint"));
     }
-    ImGui::EndDisabled();
 
     ImGui::Spacing();
     BeginSettingRow(_L("app.settings.dock_position"), controlW);
@@ -1541,14 +1547,6 @@ void SettingsWindow::DrawDockPage()
 
     if (DrawSettingCheckbox(_L("app.dock.show_windows_button"), "##DockShowWindowsButton",
         &dockSettings_.showWindowsButton))
-        markChanged(true);
-
-    if (DrawSettingCheckbox(_L("app.dock.show_running_area"), "##DockShowRunningApps",
-        &dockSettings_.showRunningApps))
-        markChanged(true);
-
-    if (DrawSettingCheckbox(_L("app.dock.show_window_previews"),
-        "##DockShowWindowPreviews", &dockSettings_.showWindowPreviews))
         markChanged(true);
 
     if (DrawSettingCheckbox(_L("app.dock.show_frequent_items"), "##DockShowFrequentItems",

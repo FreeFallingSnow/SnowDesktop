@@ -96,6 +96,35 @@ std::wstring ResolveRevealPath(const std::wstring& path)
     return path;
 }
 
+FolderTarget ResolveFolderTarget(const std::wstring& path)
+{
+    if (path.empty())
+        return {};
+
+    const bool shortcut = HasLinkExtension(path);
+    const std::wstring candidate = shortcut
+        ? ResolveShellLinkTarget(path)
+        : path;
+    if (candidate.empty())
+        return {};
+
+    const DWORD attributes = GetFileAttributesW(candidate.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES &&
+        !shortcut)
+        return {};
+    if (attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+        return {};
+
+    return {
+        candidate,
+        shortcut
+            ? FolderTargetKind::Shortcut
+            : FolderTargetKind::Directory,
+        attributes != INVALID_FILE_ATTRIBUTES,
+    };
+}
+
 bool CanReveal(const std::wstring& path)
 {
     const std::wstring resolved = ResolveRevealPath(path);

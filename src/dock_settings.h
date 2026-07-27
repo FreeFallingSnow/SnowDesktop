@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dock_settings_rules.h"
 #include "personalization.h"
 
 #include <windows.h>
@@ -75,15 +76,16 @@ struct DockSettings
 {
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
-    // Shortcut-summoned compact popup. This is intentionally the default for
-    // both new and upgraded configurations: the Dock no longer reserves the
-    // desktop work area or permanently participates in the system Z order.
+    // Legacy field name retained in the persisted format. This now controls
+    // only the hotkey trigger; edge-swipe invocation is independently enabled.
     bool floatingShortcutMode = true;
     UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
     DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
+    // Legacy persisted fields kept for layout compatibility. Running
+    // applications and hover previews are now unconditional Dock features.
     bool showRunningApps = true;
     bool showWindowPreviews = true;
     bool showFrequentItems = false;
@@ -100,6 +102,13 @@ struct DockSettings
     SystemTaskbarDynamicRule systemTaskbarMaximizedWindow;
     SystemTaskbarDynamicRule systemTaskbarShellUi;
 };
+
+inline void NormalizeDockSettings(DockSettings& settings) noexcept
+{
+    snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
+        settings.showRunningApps,
+        settings.showWindowPreviews);
+}
 
 std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();

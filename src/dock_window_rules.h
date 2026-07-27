@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <windows.h>
 
 namespace snowdesktop::dock_window_rules
@@ -13,6 +14,76 @@ enum class DockClickAction
     Minimize,
     Restore,
 };
+
+enum class DockWindowIconSource
+{
+    None,
+    AppUserModel,
+    Executable,
+    Window,
+    GenericExecutable,
+};
+
+struct DockRunningIndicatorColor
+{
+    float red = 0.0f;
+    float green = 0.0f;
+    float blue = 0.0f;
+    float alpha = 1.0f;
+};
+
+/**
+ * @brief 根据文字明暗和窗口状态选择运行指示器颜色。
+ *
+ * 浅色文字通常位于深色或毛玻璃背景上，灰白指示器容易与文字和高光
+ * 混在一起，因此统一使用高饱和蓝色。深色文字分支继续使用深灰色。
+ */
+constexpr DockRunningIndicatorColor ResolveDockRunningIndicatorColor(
+    bool darkText,
+    bool foreground,
+    bool minimized) noexcept
+{
+    if (darkText)
+    {
+        return foreground
+            ? DockRunningIndicatorColor{
+                0.14f, 0.16f, 0.22f, 1.0f }
+            : DockRunningIndicatorColor{
+                0.24f, 0.26f, 0.32f,
+                minimized ? 0.82f : 0.90f };
+    }
+    return foreground
+        ? DockRunningIndicatorColor{
+            0.12f, 0.56f, 1.0f, 1.0f }
+        : DockRunningIndicatorColor{
+            0.28f, 0.64f, 1.0f,
+            minimized ? 0.82f : 0.90f };
+}
+
+/**
+ * @brief 选择运行区应用图标来源。
+ *
+ * AUMID 和带专用图标的可执行文件提供稳定的高清应用标识，应优先
+ * 使用。传统 Win32 程序的宿主 EXE 可能只返回系统通用图标；此时
+ * 窗口通过 WM_GETICON 暴露的图标比通用占位图更准确。
+ */
+constexpr DockWindowIconSource ResolveDockWindowIconSource(
+    bool appUserModelIconAvailable,
+    bool executableIconAvailable,
+    bool executableIconIsGeneric,
+    bool windowIconAvailable) noexcept
+{
+    if (appUserModelIconAvailable)
+        return DockWindowIconSource::AppUserModel;
+    if (executableIconAvailable &&
+        !executableIconIsGeneric)
+        return DockWindowIconSource::Executable;
+    if (windowIconAvailable)
+        return DockWindowIconSource::Window;
+    if (executableIconAvailable)
+        return DockWindowIconSource::GenericExecutable;
+    return DockWindowIconSource::None;
+}
 
 /**
  * @brief 将按下瞬间的 Dock 指示状态转换为唯一的点击动作。
@@ -31,6 +102,75 @@ constexpr DockClickAction ResolveDockClickAction(
     if (foreground)
         return DockClickAction::Minimize;
     return DockClickAction::Activate;
+}
+
+/**
+ * @brief 仅吞掉一个真实、明确匹配的固定 Dock 条目释放事件。
+ *
+ * 运行区和常用区没有固定条目索引，两者都使用 size_t(-1)。不能把
+ * 两个“无索引”哨兵误判为同一条目，否则窗口最小化、恢复和激活
+ * 都会在命令分发前被提前返回。
+ */
+constexpr bool ShouldSuppressDockClickRelease(
+    std::size_t pressedEntryIndex,
+    std::size_t suppressedEntryIndex) noexcept
+{
+    constexpr std::size_t noEntry =
+        static_cast<std::size_t>(-1);
+    return pressedEntryIndex != noEntry &&
+        pressedEntryIndex == suppressedEntryIndex;
+}
+
+/**
+ * @brief 普通异步最小化被系统拒绝时，改由默认窗口过程执行系统命令。
+ *
+ * 管理员权限窗口会通过 UIPI 拒绝来自普通完整性进程的
+ * ShowWindowAsync，但 DefWindowProc(SC_MINIMIZE) 仍可执行与系统
+ * 任务栏一致的默认最小化行为。
+ */
+constexpr bool NeedsDockMinimizeSystemCommandFallback(
+    bool showWindowAccepted) noexcept
+{
+    return !showWindowAccepted;
+}
+
+/**
+ * @brief 普通关闭消息被 UIPI 等系统策略拒绝时使用系统关闭命令回退。
+ */
+constexpr bool NeedsDockCloseSystemCommandFallback(
+    bool closeMessageAccepted) noexcept
+{
+    return !closeMessageAccepted;
+}
+
+/**
+ * @brief 判断显示请求后是否还需通过窗口切换器恢复或置前。
+ *
+ * 非最小化窗口始终需要切到前台；最小化窗口仅在普通显示请求被拒绝
+ * 时使用 SwitchToThisWindow，避免对正常窗口重复发送恢复操作。
+ */
+constexpr bool NeedsDockWindowSwitchFallback(
+    bool wasMinimized,
+    bool showWindowAccepted) noexcept
+{
+    return !wasMinimized || !showWindowAccepted;
+}
+
+/**
+ * @brief 顶层浮动 Dock 必须在窗口命令和抓帧之前退出合成场景。
+ *
+ * 最小化会立即捕获目标窗口所在的屏幕区域。如果浮动 Dock 仍在顶层，
+ * 它会作为覆盖层被写入快照。关闭并同步合成后再执行窗口命令，才能
+ * 捕获被 Dock 遮挡位置下方的真实窗口内容。
+ */
+constexpr bool MustCloseFloatingDockBeforeWindowCommand(
+    bool floatingDockVisible,
+    DockClickAction action) noexcept
+{
+    return floatingDockVisible &&
+        (action == DockClickAction::Activate ||
+         action == DockClickAction::Minimize ||
+         action == DockClickAction::Restore);
 }
 
 /**

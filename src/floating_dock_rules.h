@@ -18,6 +18,12 @@ inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
 
+inline bool HasAnySummonTrigger(
+    bool hotkeyEnabled, bool edgeSwipeEnabled)
+{
+    return hotkeyEnabled || edgeSwipeEnabled;
+}
+
 inline int ScaleEdgeSwipeDip(int value, UINT dpi)
 {
     return std::max(1, MulDiv(
@@ -275,6 +281,41 @@ inline bool ShouldRenderDesktopDock(
 {
     return !floatingDockVisible ||
         !selectedForFloatingHost;
+}
+
+/**
+ * @brief 浮动层接收鼠标时，其 hover 帧只应提交到浮动窗口。
+ *
+ * 顶层 Dock 已替代对应的桌面 Dock；继续让每个浮动 WM_MOUSEMOVE 排队
+ * 重绘桌面层会挤占 UI 线程，并让快速扫过时的放大效果落后于指针。
+ */
+inline bool ShouldInvalidateDesktopHover(
+    bool handlingFloatingDockInput)
+{
+    return !handlingFloatingDockInput;
+}
+
+/**
+ * @brief 需要在当前指针消息结束前同步提交的交互状态。
+ */
+inline bool NeedsImmediatePointerPresent(
+    bool itemDragActive,
+    bool widgetPreviewActive,
+    bool marqueeActive)
+{
+    return itemDragActive ||
+        widgetPreviewActive ||
+        marqueeActive;
+}
+
+/**
+ * @brief Dock 在桌面层和顶层窗口之间切换会改变拖动静态帧内容。
+ */
+inline bool FloatingVisibilityChangesStaticScene(
+    bool wasVisible,
+    bool isVisible)
+{
+    return wasVisible != isVisible;
 }
 
 inline bool ShouldCloseCollectionPopup(

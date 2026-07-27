@@ -215,6 +215,57 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+inline void DesktopApp::ShowDockRunningAppContextMenu(
+    POINT screenPoint, size_t runningIndex)
+{
+    if (runningIndex >=
+        dockUnpinnedRunningApps_.size())
+        return;
+
+    const DockRunningAppInfo& running =
+        dockUnpinnedRunningApps_[runningIndex];
+    DockAppIdentity identity;
+    identity.executablePath =
+        running.executablePath;
+    identity.appUserModelId =
+        running.appUserModelId;
+    identity.kind =
+        !identity.appUserModelId.empty()
+        ? DockAppIdentityKind::Applications
+        : DockAppIdentityKind::Executable;
+    if (identity.kind ==
+            DockAppIdentityKind::Executable &&
+        identity.executablePath.empty())
+        return;
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+    AppendMenuW(
+        menu, MF_STRING,
+        kContextDockCloseApplication,
+        _LW("app.dock.close_application"));
+    SetMenuItemIcon(
+        menu, kContextDockCloseApplication,
+        L"");
+
+    DismissDockWindowPreviewUntilLeave();
+    SetForegroundWindow(hwnd_);
+    const UINT command = TrackPopupMenuEx(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y,
+        hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+
+    if (command ==
+        kContextDockCloseApplication)
+        CloseDockApplicationWindows(identity);
+}
+
 /**
  * @brief 连续显示行列调整菜单。
  * @details 标准 Win32 菜单执行命令后会结束。这里在每次调整完成后立即按
@@ -820,7 +871,8 @@ inline void DesktopApp::ShowItemContextMenu(
     POINT screenPoint, int itemIndex, bool dockFrequentItem,
     bool keepQuickNavigationOpen,
     std::optional<RECT> dockRenameAnchor,
-    std::optional<size_t> dockMappingEntryIndex)
+    std::optional<size_t> dockMappingEntryIndex,
+    bool dockApplicationItem)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
     ClearMenuIcons();
@@ -855,6 +907,11 @@ inline void DesktopApp::ShowItemContextMenu(
     }
     const bool canReveal = selectedCount == 1 && canFile &&
         snowdesktop::item_location::CanReveal(itemPath);
+    const bool canCloseDockApplication =
+        dockApplicationItem &&
+        GetDockWindowVisualState(
+            static_cast<size_t>(itemIndex)) !=
+            DockWindowVisualState::Closed;
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
@@ -880,6 +937,14 @@ inline void DesktopApp::ShowItemContextMenu(
         AppendMenuW(menu, MF_STRING, kContextDockRemoveFrequentItem,
             _LW("app.dock.remove_frequent"));
     }
+    if (canCloseDockApplication)
+    {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(
+            menu, MF_STRING,
+            kContextDockCloseApplication,
+            _LW("app.dock.close_application"));
+    }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
     SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
@@ -890,6 +955,10 @@ inline void DesktopApp::ShowItemContextMenu(
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
     if (dockFrequentItem)
         SetMenuItemIcon(menu, kContextDockRemoveFrequentItem, L"");
+    if (canCloseDockApplication)
+        SetMenuItemIcon(
+            menu, kContextDockCloseApplication,
+            L"");
 
     HWND menuOwner = keepQuickNavigationOpen &&
         quickNavigationHwnd_ &&
@@ -1034,6 +1103,12 @@ inline void DesktopApp::ShowItemContextMenu(
         if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     }
+    case kContextDockCloseApplication:
+        CloseDockApplicationWindows(
+            ResolveDockAppIdentity(
+                static_cast<size_t>(
+                    itemIndex)));
+        break;
     }
 }
 
@@ -1366,6 +1441,128 @@ inline void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPa
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         ReloadItems();
+    }
+
+    DestroyMenu(menu);
+    RestoreDesktopWindowLayer();
+    ILFree(pidl);
+}
+
+inline void DesktopApp::
+ShowShellItemContextMenuForPath(
+    const std::wstring& itemPath,
+    POINT screenPoint)
+{
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHParseDisplayName(
+            itemPath.c_str(), nullptr,
+            &pidl, 0, nullptr)) ||
+        !pidl)
+        return;
+
+    IShellFolder* parentFolder = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    if (FAILED(SHBindToParent(
+            pidl, IID_IShellFolder,
+            reinterpret_cast<void**>(
+                &parentFolder),
+            &child)) ||
+        !parentFolder)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    ComPtr<IContextMenu> contextMenu;
+    const HRESULT hr =
+        parentFolder->GetUIObjectOf(
+            hwnd_, 1, &child,
+            IID_IContextMenu, nullptr,
+            reinterpret_cast<void**>(
+                contextMenu.
+                    GetAddressOf()));
+    parentFolder->Release();
+    if (FAILED(hr) || !contextMenu)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+    {
+        ILFree(pidl);
+        return;
+    }
+    constexpr UINT kFirstCmd = 1;
+    constexpr UINT kLastCmd = 0x7FFF;
+    if (FAILED(
+            contextMenu->QueryContextMenu(
+                menu, 0, kFirstCmd,
+                kLastCmd,
+                CMF_NORMAL |
+                    CMF_EXPLORE |
+                    CMF_CANRENAME)))
+    {
+        DestroyMenu(menu);
+        ILFree(pidl);
+        return;
+    }
+
+    contextMenu.As(
+        &activeContextMenu2_);
+    contextMenu.As(
+        &activeContextMenu3_);
+    SetForegroundWindow(hwnd_);
+    const UINT command =
+        TrackPopupMenuEx(
+            menu,
+            TPM_RETURNCMD |
+                TPM_RIGHTBUTTON,
+            screenPoint.x,
+            screenPoint.y,
+            hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    activeContextMenu2_.Reset();
+    activeContextMenu3_.Reset();
+
+    if (command >= kFirstCmd &&
+        command <= kLastCmd)
+    {
+        const UINT commandOffset =
+            command - kFirstCmd;
+        CMINVOKECOMMANDINFOEX invoke{};
+        invoke.cbSize = sizeof(invoke);
+        invoke.fMask =
+            CMIC_MASK_UNICODE |
+            CMIC_MASK_PTINVOKE;
+        invoke.hwnd =
+            ShellDialogOwnerHwnd();
+        invoke.lpVerb =
+            MAKEINTRESOURCEA(
+                commandOffset);
+        invoke.lpVerbW =
+            MAKEINTRESOURCEW(
+                commandOffset);
+        invoke.nShow = SW_SHOWNORMAL;
+        invoke.ptInvoke = screenPoint;
+        SafeInvokeCommand(
+            contextMenu.Get(),
+            reinterpret_cast<
+                LPCMINVOKECOMMANDINFO>(
+                    &invoke));
+        for (size_t i = 0;
+            i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].type ==
+                DesktopWidgetType::
+                    FolderMapping)
+                RefreshFolderMappingWidget(
+                    i);
+        }
+        ReloadItems(false);
+        if (dockFolderPopupOpen_)
+            RefreshDockFolderPopup();
     }
 
     DestroyMenu(menu);

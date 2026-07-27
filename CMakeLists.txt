@@ -530,7 +530,7 @@ if (BUILD_TESTING)
         SnowDesktopDockWindowRulesTests PRIVATE src)
     target_link_libraries(
         SnowDesktopDockWindowRulesTests PRIVATE
-        dwmapi gdi32 shcore user32)
+        d2d1 dwrite dwmapi gdi32 shcore user32)
     if (MSVC)
         set_property(
             TARGET SnowDesktopDockWindowRulesTests

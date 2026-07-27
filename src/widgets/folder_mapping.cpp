@@ -815,6 +815,8 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
     data_->itemKeys.reserve(data_->folderEntries.size());
     for (const auto& entry : data_->folderEntries)
         data_->itemKeys.push_back(entry.fullPath);
+    data_->folderSortMode =
+        snowdesktop::folder_sort_rules::kManual;
     InvalidateSlots();
 }
 

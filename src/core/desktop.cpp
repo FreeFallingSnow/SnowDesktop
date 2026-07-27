@@ -190,6 +190,51 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
         return;
     }
 
+    if (dynamic_cast<FileGroup*>(origin))
+    {
+        std::vector<std::wstring> mappingIds;
+        bool folderMappingsOnly =
+            !sourceItems.empty();
+        for (Item* source : sourceItems)
+        {
+            auto* groupEntry =
+                dynamic_cast<
+                    FileGroupEntryItem*>(
+                    source);
+            const std::wstring id =
+                groupEntry
+                ? groupEntry->
+                    GetChildWidgetId()
+                : L"";
+            const size_t childIndex =
+                app_->FindWidgetIndexById(id);
+            if (childIndex >=
+                    app_->widgets_.size() ||
+                app_->widgets_[childIndex].
+                    type !=
+                    DesktopWidgetType::
+                        FolderMapping)
+            {
+                folderMappingsOnly = false;
+                break;
+            }
+            mappingIds.push_back(id);
+        }
+        if (folderMappingsOnly)
+        {
+            const GridCell target =
+                app_->CellFromPointForDrag(
+                    app_->dragSession_.
+                        CurrentPoint());
+            for (const auto& id :
+                mappingIds)
+                app_->
+                    ReleaseWidgetFromFileGroup(
+                        id, target);
+            return;
+        }
+    }
+
     // Handoff: delegate to shell via DropSelectedItemsOnTarget
     if (region == HitRegion::Handoff)
     {
@@ -405,12 +450,14 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
     // 按真实顺序和原始跨度复现 MoveDockItemsToDesktop 的可见页面落位计算。
     if (hasItemDrag && dynamic_cast<DockContainer*>(app_->dragSession_.Source()))
     {
-        const bool hasCollection = std::any_of(app_->dragSession_.Items().begin(),
+        const bool hasWidgetEntry = std::any_of(app_->dragSession_.Items().begin(),
             app_->dragSession_.Items().end(), [](Item* item) {
                 auto* dockItem = dynamic_cast<DockEntryItem*>(item);
-                return dockItem && dockItem->GetEntryType() == DockEntryType::Collection;
+                return dockItem &&
+                    (dockItem->GetEntryType() == DockEntryType::Collection ||
+                     dockItem->GetEntryType() == DockEntryType::FolderMapping);
         });
-        if (hasCollection)
+        if (hasWidgetEntry)
         {
             GridCell requested = app_->CellFromPointForDrag(dragPoint);
             const GridPage* targetPage = FindGridPage(app_->gridPages_, requested.pageId);
@@ -439,7 +486,8 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
             for (DockEntryItem* dockItem : dockItems)
             {
                 GridSpan span{ 1, 1 };
-                if (dockItem->GetEntryType() == DockEntryType::Collection)
+                if (dockItem->GetEntryType() == DockEntryType::Collection ||
+                    dockItem->GetEntryType() == DockEntryType::FolderMapping)
                 {
                     size_t widgetIndex = app_->FindWidgetIndexById(dockItem->GetReference());
                     if (widgetIndex < app_->widgets_.size())

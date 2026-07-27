@@ -2,11 +2,21 @@
 #include "dock_launch_animation.h"
 #include "dock_rename_layout.h"
 #include "dock_drop_rules.h"
+#include "dock_folder_rules.h"
+#include "dock_collection_icon_rules.h"
+#include "folder_sort_rules.h"
+#include "shell_item_visibility.h"
+#include "popup_drag_rules.h"
+#include "item_layout_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
+#include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "floating_dock_rules.h"
+
+#include <dwrite.h>
+#include <wrl/client.h>
 
 #include <iostream>
 
@@ -50,6 +60,416 @@ int main()
         snowdesktop::dock_drop_rules;
     namespace floatingDock =
         snowdesktop::floating_dock_rules;
+    namespace folderRules =
+        snowdesktop::dock_folder_rules;
+    namespace folderSort =
+        snowdesktop::folder_sort_rules;
+    namespace shellVisibility =
+        snowdesktop::shell_item_visibility;
+    namespace popupDrag =
+        snowdesktop::popup_drag_rules;
+    namespace itemLayout =
+        snowdesktop::item_layout_rules;
+
+    Check(floatingDock::HasAnySummonTrigger(true, false),
+        "the floating Dock hotkey must work without edge swipe");
+    Check(floatingDock::HasAnySummonTrigger(false, true),
+        "the floating Dock edge swipe must work without the hotkey");
+    Check(!floatingDock::HasAnySummonTrigger(false, false),
+        "the floating Dock must stop its trigger sampler when both triggers are disabled");
+
+    bool showRunningApps = false;
+    bool showWindowPreviews = false;
+    snowdesktop::dock_settings_rules::
+        NormalizeAlwaysEnabledFeatures(
+            showRunningApps, showWindowPreviews);
+    Check(showRunningApps,
+        "the Dock running area must remain enabled after settings normalization");
+    Check(showWindowPreviews,
+        "Dock window previews must remain enabled after settings normalization");
+
+    constexpr float standardLineHeight =
+        14.0f * 7.0f / 6.0f;
+    constexpr int standardTextHeight =
+        itemLayout::CollapsedTextHeight(
+            standardLineHeight);
+    constexpr int standardTitleGap =
+        itemLayout::TitleGap(1.0f);
+    Check(
+        standardTextHeight >= 34,
+        "two-line item titles must reserve both line boxes and anti-aliasing clearance");
+    Check(
+        standardTitleGap == 4,
+        "item icons and titles must retain a readable four-pixel gap at 100% scale");
+    Check(
+        itemLayout::AvailableIconHeight(
+            116, 2, standardTitleGap,
+            standardTextHeight) +
+                2 + standardTitleGap +
+                standardTextHeight ==
+            116,
+        "item icon sizing must reserve the complete title band without overflowing its cell");
+    constexpr RECT collectionIconBounds{
+        0, 0, 52, 52
+    };
+    constexpr auto collectionIconLayout =
+        snowdesktop::dock_collection_icon_rules::
+            CalculateLayout(
+                collectionIconBounds);
+    Check(EqualRect(
+            &collectionIconLayout.background,
+            &collectionIconBounds),
+        "Dock collections must retain the full control-style background frame");
+    Check(collectionIconLayout.content.left == 8 &&
+            collectionIconLayout.content.top == 8 &&
+            collectionIconLayout.content.right == 44 &&
+            collectionIconLayout.content.bottom == 44 &&
+            collectionIconLayout.gap == 2 &&
+            collectionIconLayout.cellSize == 17,
+        "a standard Dock collection must inset its four icons inside the control frame");
+    constexpr RECT collectionFirstCell =
+        snowdesktop::dock_collection_icon_rules::
+            CellRect(
+                collectionIconLayout, 0, 0);
+    constexpr RECT collectionLastCell =
+        snowdesktop::dock_collection_icon_rules::
+            CellRect(
+                collectionIconLayout, 1, 1);
+    Check(collectionFirstCell.left >=
+                collectionIconLayout.content.left &&
+            collectionFirstCell.top >=
+                collectionIconLayout.content.top &&
+            collectionLastCell.right <=
+                collectionIconLayout.content.right &&
+            collectionLastCell.bottom <=
+                collectionIconLayout.content.bottom,
+        "all four collection cells must stay inside the inset content area");
+    constexpr float compactScale =
+        92.0f / 116.0f;
+    Check(
+        itemLayout::TitleGap(
+            compactScale) >= 3 &&
+            itemLayout::CollapsedTextHeight(
+                standardLineHeight *
+                    compactScale) >= 27,
+        "compact popup cells must preserve scaled title spacing and two complete Chinese lines");
+
+    struct TestLineMetric
+    {
+        unsigned length;
+        unsigned newlineLength;
+    };
+    constexpr TestLineMetric wrappedLines[]{
+        { 5, 0 },
+        { 6, 0 },
+        { 4, 0 }
+    };
+    Check(
+        itemLayout::
+            VisibleTextLengthForLineLimit(
+                wrappedLines, 3, 2, 15) ==
+            11,
+        "collapsed item layout must remove all text belonging to the third visual line");
+    constexpr TestLineMetric explicitLines[]{
+        { 6, 1 },
+        { 7, 1 },
+        { 3, 0 }
+    };
+    Check(
+        itemLayout::
+            VisibleTextLengthForLineLimit(
+                explicitLines, 3, 2, 16) ==
+            12,
+        "collapsed item layout must remove the second-line newline to avoid creating an empty third line");
+
+    Microsoft::WRL::ComPtr<
+        IDWriteFactory> dwriteFactory;
+    const HRESULT factoryResult =
+        DWriteCreateFactory(
+            DWRITE_FACTORY_TYPE_ISOLATED,
+            __uuidof(IDWriteFactory),
+            &dwriteFactory);
+    Check(
+        SUCCEEDED(factoryResult) &&
+            dwriteFactory,
+        "DirectWrite factory must be available for the collapsed-title layout regression");
+    if (dwriteFactory)
+    {
+        Microsoft::WRL::ComPtr<
+            IDWriteTextFormat> format;
+        dwriteFactory->CreateTextFormat(
+            L"Segoe UI", nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            14.0f, L"zh-CN",
+            &format);
+        Check(
+            format != nullptr,
+            "DirectWrite title format must be created");
+        if (format)
+        {
+            format->SetWordWrapping(
+                DWRITE_WORD_WRAPPING_WRAP);
+            format->SetLineSpacing(
+                DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                standardLineHeight,
+                14.0f * 5.0f / 6.0f);
+            const std::wstring longChineseTitle =
+                L"一二三四五六七八九十"
+                L"一二三四五六七八九十";
+            Microsoft::WRL::ComPtr<
+                IDWriteTextLayout>
+                measuredLayout;
+            dwriteFactory->CreateTextLayout(
+                longChineseTitle.c_str(),
+                static_cast<UINT32>(
+                    longChineseTitle.size()),
+                format.Get(), 48.0f,
+                10000.0f,
+                &measuredLayout);
+            UINT32 measuredLineCount = 0;
+            if (measuredLayout)
+            {
+                measuredLayout->GetLineMetrics(
+                    nullptr, 0,
+                    &measuredLineCount);
+            }
+            Check(
+                measuredLineCount > 2,
+                "regression title must wrap to more than two DirectWrite visual lines");
+            if (measuredLineCount > 2)
+            {
+                std::vector<
+                    DWRITE_LINE_METRICS>
+                    measuredLines(
+                        measuredLineCount);
+                UINT32 actualLineCount = 0;
+                const HRESULT lineResult =
+                    measuredLayout->
+                        GetLineMetrics(
+                            measuredLines.data(),
+                            measuredLineCount,
+                            &actualLineCount);
+                Check(
+                    SUCCEEDED(lineResult),
+                    "DirectWrite visual line metrics must be readable");
+                if (SUCCEEDED(lineResult))
+                {
+                    const std::size_t
+                        visibleLength =
+                            itemLayout::
+                                VisibleTextLengthForLineLimit(
+                                    measuredLines.data(),
+                                    actualLineCount,
+                                    2,
+                                    longChineseTitle.
+                                        size());
+                    const std::wstring
+                        visibleTitle =
+                            longChineseTitle.substr(
+                                0,
+                                visibleLength);
+                    Microsoft::WRL::ComPtr<
+                        IDWriteTextLayout>
+                        collapsedLayout;
+                    dwriteFactory->
+                        CreateTextLayout(
+                            visibleTitle.c_str(),
+                            static_cast<UINT32>(
+                                visibleTitle.size()),
+                            format.Get(), 48.0f,
+                            static_cast<float>(
+                                standardTextHeight),
+                            &collapsedLayout);
+                    DWRITE_TEXT_METRICS
+                        collapsedMetrics{};
+                    if (collapsedLayout)
+                    {
+                        collapsedLayout->
+                            GetMetrics(
+                                &collapsedMetrics);
+                    }
+                    Check(
+                        collapsedLayout &&
+                            collapsedMetrics.
+                                lineCount == 2,
+                        "collapsed DirectWrite title must contain exactly two visual lines");
+                }
+            }
+        }
+    }
+
+    const RECT popupBounds{
+        0, 0, 320, 220 };
+    const RECT popupContent{
+        18, 54, 302, 202 };
+    const RECT insertionClip =
+        popupDrag::
+            ExpandInsertionClipHorizontally(
+                popupContent,
+                popupBounds, 7);
+    Check(
+        insertionClip.left == 11 &&
+            insertionClip.right == 309,
+        "popup insertion clipping must reserve both left and right indicator gutters");
+    Check(
+        insertionClip.top ==
+                popupContent.top &&
+            insertionClip.bottom ==
+                popupContent.bottom,
+        "popup insertion clipping must preserve vertical scroll boundaries");
+    constexpr float indicatorWidth = 3.0f;
+    constexpr float itemPad = 5.0f;
+    const float firstIndicatorLeft =
+        static_cast<float>(
+            popupContent.left) -
+        itemPad - indicatorWidth / 2.0f;
+    const float lastIndicatorRight =
+        static_cast<float>(
+            popupContent.right) +
+        itemPad + indicatorWidth / 2.0f;
+    Check(
+        firstIndicatorLeft >=
+                static_cast<float>(
+                    insertionClip.left) &&
+            lastIndicatorRight <=
+                static_cast<float>(
+                    insertionClip.right),
+        "first-column and last-column popup insertion bars must remain fully visible");
+
+    Check(
+        shellVisibility::IsAlwaysHidden(
+            L"desktop.ini") &&
+            shellVisibility::IsAlwaysHidden(
+                L"C:\\Users\\Test\\Desktop.INI") &&
+            shellVisibility::IsAlwaysHidden(
+                L"C:/Mapped/Desktop.ini"),
+        "desktop.ini must stay hidden regardless of path or case");
+    Check(
+        !shellVisibility::IsAlwaysHidden(
+            L"desktop.ini.lnk") &&
+            !shellVisibility::IsAlwaysHidden(
+                L"desktop.json"),
+        "desktop.ini filtering must not hide similarly named files");
+
+    struct SortEntry
+    {
+        std::wstring name;
+        std::wstring fullPath;
+        bool isDirectory = false;
+        FILETIME lastWriteTime{};
+    };
+    auto makeSortEntry = [](
+        const wchar_t* name,
+        bool directory,
+        std::uint64_t modified) {
+        SortEntry entry;
+        entry.name = name;
+        entry.fullPath =
+            std::wstring(L"C:\\stack\\") +
+            name;
+        entry.isDirectory = directory;
+        entry.lastWriteTime.dwLowDateTime =
+            static_cast<DWORD>(modified);
+        entry.lastWriteTime.dwHighDateTime =
+            static_cast<DWORD>(
+                modified >> 32);
+        return entry;
+    };
+    std::vector<SortEntry> sortEntries{
+        makeSortEntry(
+            L"zeta.txt", false, 20),
+        makeSortEntry(
+            L"alpha.png", false, 30),
+        makeSortEntry(
+            L"folder-b", true, 40),
+        makeSortEntry(
+            L"folder-a", true, 10),
+    };
+    folderSort::StableSort(
+        sortEntries,
+        folderSort::kName, true);
+    Check(
+        sortEntries[0].name == L"folder-a" &&
+            sortEntries[1].name ==
+                L"folder-b" &&
+            sortEntries[2].name ==
+                L"alpha.png" &&
+            sortEntries[3].name ==
+                L"zeta.txt",
+        "folder popup name sort must keep directories first");
+    folderSort::StableSort(
+        sortEntries,
+        folderSort::kModified, false);
+    Check(
+        sortEntries[0].name == L"folder-b" &&
+            sortEntries[1].name ==
+                L"folder-a" &&
+            sortEntries[2].name ==
+                L"alpha.png" &&
+            sortEntries[3].name ==
+                L"zeta.txt",
+        "folder popup date sort must use cached times and preserve directory grouping");
+    folderSort::StableSort(
+        sortEntries,
+        folderSort::kType, true);
+    Check(
+        sortEntries[0].isDirectory &&
+            sortEntries[1].isDirectory &&
+            sortEntries[2].name ==
+                L"alpha.png" &&
+            sortEntries[3].name ==
+                L"zeta.txt",
+        "folder popup type sort must compare extensions within the file group");
+    Check(
+        folderSort::NormalizeMode(99) ==
+            folderSort::kManual,
+        "invalid persisted folder sort modes must fall back to manual order");
+
+    struct GroupedEntry
+    {
+        int id;
+        folderRules::EntryGroup group;
+    };
+    std::vector<GroupedEntry> groupedEntries{
+        { 1, folderRules::EntryGroup::Folder },
+        { 2, folderRules::EntryGroup::Main },
+        { 3, folderRules::EntryGroup::Recycle },
+        { 4, folderRules::EntryGroup::Folder },
+        { 5, folderRules::EntryGroup::Main },
+    };
+    folderRules::StableNormalize(
+        groupedEntries,
+        [](const GroupedEntry& entry) {
+            return entry.group;
+        });
+    Check(groupedEntries[0].id == 2 &&
+            groupedEntries[1].id == 5 &&
+            groupedEntries[2].id == 1 &&
+            groupedEntries[3].id == 4 &&
+            groupedEntries[4].id == 3,
+        "Dock normalization must preserve order inside main/folder/recycle groups");
+
+    const auto mainRange =
+        folderRules::GroupInsertRange(
+            false, 3, 5);
+    const auto folderRange =
+        folderRules::GroupInsertRange(
+            true, 3, 5);
+    Check(mainRange.begin == 0 &&
+            mainRange.end == 3 &&
+            folderRange.begin == 3 &&
+            folderRange.end == 8,
+        "Dock insertion ranges must isolate main and folder ordering");
+    Check(folderRules::SharedScrollableExtent(
+            2, 1, 1, 3, 80, 18) ==
+            7 * 80 + 3 * 18,
+        "folders must contribute to the same Dock scroll extent as main entries");
+    Check(folderRules::SharedScrollableExtent(
+            0, 0, 0, 3, 80, 18) ==
+            3 * 80,
+        "folder-only Dock content must not reserve a phantom group separator");
     Check(dockDrop::ExternalMappingAction() ==
             DropAction::Link,
         "external resources dropped on Dock must create a link mapping");
@@ -200,6 +620,34 @@ int main()
     Check(floatingDock::ShouldRenderDesktopDock(
             true, false),
         "Docks on other monitors must remain visible");
+    Check(!floatingDock::
+            ShouldInvalidateDesktopHover(true) &&
+            floatingDock::
+                ShouldInvalidateDesktopHover(false),
+        "floating Dock hover must repaint only its top-level host instead of queueing desktop frames");
+    Check(floatingDock::
+            NeedsImmediatePointerPresent(
+                true, false, false) &&
+            floatingDock::
+                NeedsImmediatePointerPresent(
+                    false, true, false) &&
+            floatingDock::
+                NeedsImmediatePointerPresent(
+                    false, false, true) &&
+            !floatingDock::
+                NeedsImmediatePointerPresent(
+                    false, false, false),
+        "item drags, widget previews and marquees must synchronously present pointer frames");
+    Check(floatingDock::
+            FloatingVisibilityChangesStaticScene(
+                false, true) &&
+            floatingDock::
+                FloatingVisibilityChangesStaticScene(
+                    true, false) &&
+            !floatingDock::
+                FloatingVisibilityChangesStaticScene(
+                    true, true),
+        "switching a Dock between desktop and floating layers must invalidate the drag static scene");
     Check(floatingDock::ShouldCloseCollectionPopup(
             3, 3),
         "clicking the collection that owns the open popup must close it");
@@ -340,6 +788,61 @@ int main()
     Check(rules::ResolveDockClickAction(true, true, true) ==
             rules::DockClickAction::Restore,
         "minimized state must take precedence over stale foreground state");
+    constexpr auto lightTextForegroundIndicator =
+        rules::ResolveDockRunningIndicatorColor(
+            false, true, false);
+    Check(lightTextForegroundIndicator.blue == 1.0f &&
+            lightTextForegroundIndicator.blue >
+                lightTextForegroundIndicator.green &&
+            lightTextForegroundIndicator.green >
+                lightTextForegroundIndicator.red,
+        "light Dock text must use a saturated blue foreground indicator");
+    constexpr auto lightTextMinimizedIndicator =
+        rules::ResolveDockRunningIndicatorColor(
+            false, false, true);
+    Check(lightTextMinimizedIndicator.blue == 1.0f &&
+            lightTextMinimizedIndicator.alpha == 0.82f,
+        "light Dock text must keep minimized indicators blue with reduced opacity");
+    constexpr auto darkTextForegroundIndicator =
+        rules::ResolveDockRunningIndicatorColor(
+            true, true, false);
+    Check(darkTextForegroundIndicator.red == 0.14f &&
+            darkTextForegroundIndicator.blue == 0.22f,
+        "dark Dock text must retain its high-contrast neutral indicator");
+    constexpr std::size_t noDockEntry =
+        static_cast<std::size_t>(-1);
+    Check(!rules::ShouldSuppressDockClickRelease(
+            noDockEntry, noDockEntry),
+        "running and frequent areas must not suppress clicks when both "
+        "entry indices are sentinel values");
+    Check(rules::ShouldSuppressDockClickRelease(4, 4),
+        "a matching fixed dock entry must suppress the deferred release");
+    Check(!rules::ShouldSuppressDockClickRelease(4, 5),
+        "a different fixed dock entry must not suppress the release");
+    Check(rules::NeedsDockMinimizeSystemCommandFallback(false) &&
+            !rules::NeedsDockMinimizeSystemCommandFallback(true),
+        "a rejected asynchronous minimize must use the system-command fallback");
+    Check(rules::NeedsDockCloseSystemCommandFallback(false) &&
+            !rules::NeedsDockCloseSystemCommandFallback(true),
+        "a rejected graceful close must use the system-command fallback");
+    Check(rules::NeedsDockWindowSwitchFallback(false, true),
+        "a visible background window must always switch to the foreground");
+    Check(rules::NeedsDockWindowSwitchFallback(true, false),
+        "a minimized elevated window must switch when its restore request is rejected");
+    Check(!rules::NeedsDockWindowSwitchFallback(true, true),
+        "an accepted minimized-window restore must not be issued twice");
+    Check(rules::MustCloseFloatingDockBeforeWindowCommand(
+            true, rules::DockClickAction::Minimize) &&
+            rules::MustCloseFloatingDockBeforeWindowCommand(
+                true, rules::DockClickAction::Restore) &&
+            rules::MustCloseFloatingDockBeforeWindowCommand(
+                true, rules::DockClickAction::Activate),
+        "the top-level Dock must leave composition before any running-window command");
+    Check(!rules::MustCloseFloatingDockBeforeWindowCommand(
+            false, rules::DockClickAction::Minimize) &&
+            !rules::MustCloseFloatingDockBeforeWindowCommand(
+                true, rules::DockClickAction::Launch),
+        "desktop-layer Docks and application launches must not add a capture synchronization");
     Check(rules::ResolveDockRestoreShowCommand(
             WPF_RESTORETOMAXIMIZED,
             SW_SHOWMINIMIZED) == SW_SHOWMAXIMIZED,
@@ -372,6 +875,92 @@ int main()
     Check(EqualRect(
             &transitionEnd, &transitionTo),
         "window transition must end at the Dock icon rectangle");
+    const RECT snapshotHost =
+        ResolveDockWindowSnapshotHostRect(
+            transitionFrom, transitionTo);
+    Check(snapshotHost.left == 100 &&
+            snapshotHost.top == 100 &&
+            snapshotHost.right == 900 &&
+            snapshotHost.bottom == 1080,
+        "snapshot animation must use one fixed host surface covering both endpoints");
+    const SIZE fullHdSnapshot =
+        ConstrainDockWindowSnapshotSize(
+            { 1920, 1080 });
+    Check(fullHdSnapshot.cx == 1920 &&
+            fullHdSnapshot.cy == 1080,
+        "ordinary high-resolution windows must retain native snapshot detail");
+    const SIZE portraitSnapshot =
+        ConstrainDockWindowSnapshotSize(
+            { 2160, 3840 });
+    Check(portraitSnapshot.cx == 2160 &&
+            portraitSnapshot.cy == 3840,
+        "portrait windows up to 4K must retain native snapshot detail");
+    const SIZE eightKSnapshot =
+        ConstrainDockWindowSnapshotSize(
+            { 7680, 4320 });
+    Check(eightKSnapshot.cx == 4096 &&
+            eightKSnapshot.cy == 2304,
+        "extreme snapshots must remain bounded while preserving aspect ratio");
+    const SIZE compactSnapshot =
+        ConstrainDockWindowSnapshotSize(
+            { 800, 600 });
+    Check(compactSnapshot.cx == 800 &&
+            compactSnapshot.cy == 600,
+        "small window snapshots must not be enlarged");
+    Check(kDockWindowSnapshotRenderDpi == 96.0f,
+        "snapshot render coordinates must remain physical pixels at every monitor DPI");
+    Check(kDockWindowTransitionCornerPreference ==
+                DWMWCP_DONOTROUND &&
+            kDockWindowTransitionNcRenderingPolicy ==
+                DWMNCRP_DISABLED &&
+            kDockWindowTransitionBorderColor ==
+                DWMWA_COLOR_NONE,
+        "the transition host must not draw a DWM frame, shadow, or rounded border");
+    Check((kDockWindowTransitionExStyle &
+                WS_EX_LAYERED) != 0 &&
+            (kDockWindowTransitionExStyle &
+                WS_EX_TRANSPARENT) != 0 &&
+            (kDockWindowTransitionExStyle &
+                WS_EX_NOACTIVATE) != 0,
+        "the transition host must use a non-activating layered surface without a DWM shadow");
+    Check(ResolveDockWindowTransitionSurface(
+            true, true) ==
+            DockWindowTransitionSurface::Snapshot,
+        "a captured frame must be preferred over a live DWM thumbnail");
+    Check(ResolveDockWindowTransitionSurface(
+            false, true) ==
+            DockWindowTransitionSurface::LiveThumbnail,
+        "live DWM rendering must remain available when no snapshot exists");
+    Check(ResolveDockWindowTransitionSurface(
+            false, false) ==
+            DockWindowTransitionSurface::None,
+        "a transition must stop safely when neither rendering surface is available");
+    Check(rules::ResolveDockWindowIconSource(
+            true, true, false, true) ==
+            rules::DockWindowIconSource::AppUserModel,
+        "packaged applications must retain their stable AppUserModel icon");
+    Check(rules::ResolveDockWindowIconSource(
+            false, true, false, true) ==
+            rules::DockWindowIconSource::Executable,
+        "a dedicated executable icon must take precedence over a window icon");
+    Check(rules::ResolveDockWindowIconSource(
+            false, true, true, true) ==
+            rules::DockWindowIconSource::Window,
+        "a valid window icon must replace the generic executable icon");
+    Check(rules::ResolveDockWindowIconSource(
+            false, true, true, false) ==
+            rules::DockWindowIconSource::GenericExecutable,
+        "the generic executable icon must remain the final fallback");
+    Check(rules::ResolveDockWindowIconSource(
+            false, false, false, false) ==
+            rules::DockWindowIconSource::None,
+        "icon resolution must fail safely when no source is available");
+    Check(RequiresDockWindowTransitionCompositionBarrier(
+            DockWindowTransitionDirection::Minimize),
+        "snapshot minimize must commit disabled native transitions before changing window state");
+    Check(!RequiresDockWindowTransitionCompositionBarrier(
+            DockWindowTransitionDirection::Restore),
+        "snapshot restore changes the native window state only after its custom animation");
 
     namespace launchAnimation =
         snowdesktop::dock_launch_animation;
@@ -634,6 +1223,36 @@ int main()
         "single preview layout must return one card rectangle");
     CheckRowMargins(single, singleCards, 0, 1,
         "single preview must have equal left and right margins");
+    const RECT previewCloseButton =
+        CalculateDockWindowPreviewCloseButtonRect(
+            singleCards.front(), 96);
+    Check(!IsRectEmpty(&previewCloseButton) &&
+            previewCloseButton.left >
+                singleCards.front().left &&
+            previewCloseButton.right <
+                singleCards.front().right &&
+            previewCloseButton.top >=
+                singleCards.front().top &&
+            previewCloseButton.bottom <
+                singleCards.front().bottom,
+        "the preview close button must stay inside the title area at 100% DPI");
+    const POINT previewCloseCenter{
+        (previewCloseButton.left +
+            previewCloseButton.right) / 2,
+        (previewCloseButton.top +
+            previewCloseButton.bottom) / 2
+    };
+    Check(IsPointInDockWindowPreviewCloseButton(
+            previewCloseCenter,
+            singleCards.front(), 96),
+        "the close glyph center must use the dedicated close hit target");
+    Check(!IsPointInDockWindowPreviewCloseButton(
+            POINT{
+                singleCards.front().left + 2,
+                singleCards.front().bottom - 2
+            },
+            singleCards.front(), 96),
+        "thumbnail content must not be mistaken for the close button");
 
     const DockWindowPreviewGrid multi =
         CalculateDockWindowPreviewGrid(2, 1200, 700, 96);
@@ -681,6 +1300,14 @@ int main()
         highDpiFinalRowStart,
         highDpiCards.size() - highDpiFinalRowStart,
         "high-DPI incomplete row must be centered");
+    const RECT highDpiCloseButton =
+        CalculateDockWindowPreviewCloseButtonRect(
+            highDpiCards.front(), 144);
+    Check(highDpiCloseButton.right -
+                highDpiCloseButton.left >
+            previewCloseButton.right -
+                previewCloseButton.left,
+        "the preview close target must scale with monitor DPI");
 
     namespace renameLayout =
         snowdesktop::dock_rename_layout;

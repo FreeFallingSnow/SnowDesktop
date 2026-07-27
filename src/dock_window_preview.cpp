@@ -168,6 +168,60 @@ std::vector<RECT> CalculateDockWindowPreviewCardRects(
     return cards;
 }
 
+RECT CalculateDockWindowPreviewCloseButtonRect(
+    const RECT& cardRect, UINT dpi)
+{
+    const int width = std::max(
+        0L, cardRect.right - cardRect.left);
+    const int height = std::max(
+        0L, cardRect.bottom - cardRect.top);
+    if (width <= 0 || height <= 0)
+        return {};
+
+    const int titleHeight = std::min(
+        ScaleForDpi(34, dpi),
+        std::max(1, height / 3));
+    const int inset = std::min(
+        std::max(1, ScaleForDpi(6, dpi)),
+        std::max(1, width / 4));
+    const int verticalPadding =
+        std::max(1, ScaleForDpi(6, dpi));
+    const int buttonSize = std::max(
+        1, std::min({
+            ScaleForDpi(20, dpi),
+            std::max(1, titleHeight -
+                verticalPadding * 2),
+            std::max(1, width - inset * 2)
+        }));
+    const int right =
+        static_cast<int>(cardRect.right) - inset;
+    const int left = std::max(
+        static_cast<int>(cardRect.left) + inset,
+        right - buttonSize);
+    const int top =
+        static_cast<int>(cardRect.top) +
+        std::max(0, (titleHeight - buttonSize) / 2);
+    return {
+        left, top,
+        std::min(
+            static_cast<int>(cardRect.right),
+            left + buttonSize),
+        std::min(
+            static_cast<int>(cardRect.bottom),
+            top + buttonSize)
+    };
+}
+
+bool IsPointInDockWindowPreviewCloseButton(
+    POINT point, const RECT& cardRect, UINT dpi)
+{
+    const RECT closeButton =
+        CalculateDockWindowPreviewCloseButtonRect(
+            cardRect, dpi);
+    return !IsRectEmpty(&closeButton) &&
+        PtInRect(&closeButton, point) != FALSE;
+}
+
 bool IsPointInDockPreviewTransitionRegion(
     POINT screenPoint, POINT transitionOriginScreen,
     const RECT& anchorScreen,
@@ -363,10 +417,13 @@ DockWindowPreview::~DockWindowPreview()
 }
 
 bool DockWindowPreview::Initialize(
-    HINSTANCE instance, ActivateCallback activateCallback)
+    HINSTANCE instance,
+    ActivateCallback activateCallback,
+    CloseCallback closeCallback)
 {
     instance_ = instance;
     activateCallback_ = std::move(activateCallback);
+    closeCallback_ = std::move(closeCallback);
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
@@ -423,6 +480,7 @@ void DockWindowPreview::Show(
     dockPosition_ = dockPosition;
     lightTheme_ = lightTheme;
     hoveredIndex_ = -1;
+    hoveredCloseIndex_ = -1;
     const POINT anchorCenter{
         (anchorScreen.left + anchorScreen.right) / 2,
         (anchorScreen.top + anchorScreen.bottom) / 2
@@ -626,6 +684,7 @@ void DockWindowPreview::Hide()
     thumbnailRects_.clear();
     panelSize_ = {};
     hoveredIndex_ = -1;
+    hoveredCloseIndex_ = -1;
     trackingMouse_ = false;
     hasTransitionOrigin_ = false;
 }
@@ -711,6 +770,9 @@ void DockWindowPreview::Paint()
         ? RGB(190, 197, 208) : RGB(84, 89, 99);
     const COLORREF text = lightTheme_
         ? RGB(28, 31, 36) : RGB(246, 247, 249);
+    const COLORREF closeIdle = lightTheme_
+        ? RGB(92, 98, 108) : RGB(202, 207, 216);
+    const COLORREF closeHovered = RGB(221, 62, 72);
 
     HBRUSH backgroundBrush = CreateSolidBrush(background);
     FillRect(dc, &client, backgroundBrush);
@@ -749,9 +811,72 @@ void DockWindowPreview::Paint()
             bounds.right - titleInset,
             std::min(bounds.bottom, bounds.top + titleHeight)
         };
+        const RECT closeRect =
+            CalculateDockWindowPreviewCloseButtonRect(
+                bounds, dpi_);
+        titleRect.right = std::max(
+            titleRect.left,
+            closeRect.left -
+                std::max(2, ScaleForDpi(4, dpi_)));
         DrawTextW(dc, items_[index].title.c_str(), -1, &titleRect,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS |
             DT_NOPREFIX);
+
+        const bool closeHoveredForItem =
+            static_cast<int>(index) ==
+                hoveredCloseIndex_;
+        if (closeHoveredForItem)
+        {
+            HBRUSH closeFill =
+                CreateSolidBrush(closeHovered);
+            HGDIOBJ oldCloseBrush =
+                SelectObject(dc, closeFill);
+            HGDIOBJ oldClosePen =
+                SelectObject(dc, GetStockObject(NULL_PEN));
+            RoundRect(
+                dc, closeRect.left, closeRect.top,
+                closeRect.right, closeRect.bottom,
+                std::max(2, ScaleForDpi(5, dpi_)),
+                std::max(2, ScaleForDpi(5, dpi_)));
+            SelectObject(dc, oldClosePen);
+            SelectObject(dc, oldCloseBrush);
+            DeleteObject(closeFill);
+        }
+
+        const COLORREF closeColor =
+            closeHoveredForItem
+            ? RGB(255, 255, 255)
+            : closeIdle;
+        HPEN closePen = CreatePen(
+            PS_SOLID,
+            std::max(1, ScaleForDpi(2, dpi_)),
+            closeColor);
+        HGDIOBJ oldClosePen =
+            SelectObject(dc, closePen);
+        const int crossInset = std::max(
+            2, static_cast<int>(
+                closeRect.right -
+                closeRect.left) / 3);
+        MoveToEx(
+            dc,
+            closeRect.left + crossInset,
+            closeRect.top + crossInset,
+            nullptr);
+        LineTo(
+            dc,
+            closeRect.right - crossInset,
+            closeRect.bottom - crossInset);
+        MoveToEx(
+            dc,
+            closeRect.right - crossInset - 1,
+            closeRect.top + crossInset,
+            nullptr);
+        LineTo(
+            dc,
+            closeRect.left + crossInset - 1,
+            closeRect.bottom - crossInset);
+        SelectObject(dc, oldClosePen);
+        DeleteObject(closePen);
     }
 
     SelectObject(dc, oldFont);
@@ -767,6 +892,19 @@ int DockWindowPreview::CardIndexAtPoint(POINT point) const
     return -1;
 }
 
+int DockWindowPreview::CloseButtonIndexAtPoint(
+    POINT point) const
+{
+    for (size_t index = 0;
+         index < cardRects_.size(); ++index)
+    {
+        if (IsPointInDockWindowPreviewCloseButton(
+                point, cardRects_[index], dpi_))
+            return static_cast<int>(index);
+    }
+    return -1;
+}
+
 void DockWindowPreview::OnMouseMove(POINT point)
 {
     KeepVisible();
@@ -779,9 +917,13 @@ void DockWindowPreview::OnMouseMove(POINT point)
         trackingMouse_ = true;
     }
     const int hovered = CardIndexAtPoint(point);
-    if (hovered != hoveredIndex_)
+    const int hoveredClose =
+        CloseButtonIndexAtPoint(point);
+    if (hovered != hoveredIndex_ ||
+        hoveredClose != hoveredCloseIndex_)
     {
         hoveredIndex_ = hovered;
+        hoveredCloseIndex_ = hoveredClose;
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 }
@@ -790,12 +932,28 @@ void DockWindowPreview::OnMouseLeave()
 {
     trackingMouse_ = false;
     hoveredIndex_ = -1;
+    hoveredCloseIndex_ = -1;
     InvalidateRect(hwnd_, nullptr, FALSE);
     ScheduleHide();
 }
 
 void DockWindowPreview::OnLeftButtonUp(POINT point)
 {
+    const int closeIndex =
+        CloseButtonIndexAtPoint(point);
+    if (closeIndex >= 0 &&
+        static_cast<size_t>(closeIndex) <
+            items_.size())
+    {
+        const HWND target =
+            items_[closeIndex].window;
+        Hide();
+        if (closeCallback_ && target &&
+            IsWindow(target))
+            closeCallback_(target);
+        return;
+    }
+
     const int index = CardIndexAtPoint(point);
     if (index < 0 || static_cast<size_t>(index) >= items_.size())
         return;

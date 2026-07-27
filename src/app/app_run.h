@@ -953,9 +953,14 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (!hwnd_) { WriteCrashLogEntry(L"CreateWindow FAILED"); return __LINE__; }
     AttachWindowToDesktopHost(parent);
     dockWindowPreview_ = std::make_unique<DockWindowPreview>();
-    if (!dockWindowPreview_->Initialize(instance_, [this](HWND window) {
-            ActivateDockWindowFromPreview(window);
-        }))
+    if (!dockWindowPreview_->Initialize(
+            instance_,
+            [this](HWND window) {
+                ActivateDockWindowFromPreview(window);
+            },
+            [this](HWND window) {
+                CloseDockWindowFromPreview(window);
+            }))
         dockWindowPreview_.reset();
     dockWindowTransition_ =
         std::make_unique<DockWindowTransition>();
@@ -1108,6 +1113,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetDockSettingsPreviewChangedCallback(
             [this](const DockSettings& settings) {
+                DockSettings normalizedSettings = settings;
+                NormalizeDockSettings(normalizedSettings);
                 std::vector<RECT> previousDockRects;
                 for (const auto& container : containers_)
                 {
@@ -1120,38 +1127,26 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     }
                 }
                 const bool layoutChanged =
-                    settings.position != dockSettings_.position ||
-                    settings.edgeAttached != dockSettings_.edgeAttached ||
-                    settings.floatingShortcutMode !=
+                    normalizedSettings.position != dockSettings_.position ||
+                    normalizedSettings.edgeAttached != dockSettings_.edgeAttached ||
+                    normalizedSettings.floatingShortcutMode !=
                         dockSettings_.floatingShortcutMode ||
-                    settings.monitorScope != dockSettings_.monitorScope ||
-                    settings.showWindowsButton !=
+                    normalizedSettings.monitorScope != dockSettings_.monitorScope ||
+                    normalizedSettings.showWindowsButton !=
                         dockSettings_.showWindowsButton ||
-                    settings.showRunningApps !=
-                        dockSettings_.showRunningApps ||
-                    settings.showFrequentItems !=
+                    normalizedSettings.showFrequentItems !=
                         dockSettings_.showFrequentItems ||
-                    settings.frequentItemCount !=
+                    normalizedSettings.frequentItemCount !=
                         dockSettings_.frequentItemCount ||
                     std::abs(
-                        settings.thicknessScale -
+                        normalizedSettings.thicknessScale -
                         dockSettings_.thicknessScale) > 0.0001f;
-                const bool runningAppsChanged =
-                    settings.showRunningApps !=
-                        dockSettings_.showRunningApps;
-                const bool previewsDisabled =
-                    dockSettings_.showWindowPreviews &&
-                    !settings.showWindowPreviews;
 
-                dockSettings_ = settings;
+                dockSettings_ = normalizedSettings;
                 ApplyFloatingDockHotkey();
                 dockSettingsLayoutCommitPending_ =
                     dockSettingsLayoutCommitPending_ ||
                     layoutChanged;
-                if (previewsDisabled)
-                    HideDockWindowPreview();
-                if (runningAppsChanged)
-                    RefreshDockRunningWindows(false);
                 if (layoutChanged)
                 {
                     InvalidateDockContainers();
@@ -1174,9 +1169,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 dockSettings_.floatingShortcutMode;
             const DockMonitorScope previousMonitorScope = dockSettings_.monitorScope;
             const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
-            const bool previousShowRunningApps = dockSettings_.showRunningApps;
-            const bool previousShowWindowPreviews =
-                dockSettings_.showWindowPreviews;
             const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
             const int previousFrequentItemCount = dockSettings_.frequentItemCount;
             const float previousThicknessScale = dockSettings_.thicknessScale;
@@ -1185,9 +1177,6 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const int previousSystemTaskbarAlignment =
                 dockSettings_.systemTaskbarAlignment;
             LoadDockSettingsAndApply();
-            if (previousShowWindowPreviews &&
-                !dockSettings_.showWindowPreviews)
-                HideDockWindowPreview();
             if (dockSettingsLayoutCommitPending_ ||
                 dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
@@ -1195,15 +1184,12 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     previousFloatingShortcutMode ||
                 dockSettings_.monitorScope != previousMonitorScope ||
                 dockSettings_.showWindowsButton != previousShowWindowsButton ||
-                dockSettings_.showRunningApps != previousShowRunningApps ||
                 dockSettings_.showFrequentItems != previousShowFrequentItems ||
                 dockSettings_.frequentItemCount != previousFrequentItemCount ||
                 std::abs(dockSettings_.thicknessScale - previousThicknessScale) > 0.0001f ||
                 dockSettings_.systemTaskbarAutoHide != previousSystemTaskbarAutoHide ||
                 dockSettings_.systemTaskbarAlignment != previousSystemTaskbarAlignment)
             {
-                if (dockSettings_.showRunningApps != previousShowRunningApps)
-                    RefreshDockRunningWindows(false);
                 UpdateLayoutWorkArea();
                 LayoutItems();
                 SaveLayoutSlots();
@@ -1698,9 +1684,9 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_MOUSEMOVE:
         if (desktopIconsHidden_) return 0;
         OnMouseMove(wp, lp);
-        // Internal Dock drags capture the desktop HWND, so their subsequent
-        // mouse moves arrive here rather than at the floating host.
-        InvalidateFloatingDockWindow(true);
+        // Internal drags capture this HWND. Commit the cheap cached drag frame
+        // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
+        PresentPointerInteractionFrame();
         return 0;
     case WM_MOUSELEAVE:
         if (floatingDockVisible_)
@@ -1775,11 +1761,44 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
                 {
                     const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
-                    if (dockItem->GetEntryType() == DockEntryType::DesktopItem &&
+                    const size_t entryIndex =
+                        dockItem->GetEntryIndex();
+                    if (entryIndex < dockEntries_.size() &&
+                        IsFolderDockEntry(
+                            dockEntries_[entryIndex]) &&
+                        dockPendingDoubleClickEntry_ ==
+                            entryIndex &&
+                        elapsed <= GetDoubleClickTime())
+                    {
+                        const auto target =
+                            ResolveDockFolderTarget(
+                                dockEntries_[entryIndex]);
+                        dockSuppressClickReleaseEntry_ =
+                            entryIndex;
+                        dockPressedContainer_ = dock;
+                        dockPressedEntry_ = entryIndex;
+                        mouseDownPoint_ = pt;
+                        mouseDown_ = true;
+                        dockPendingDoubleClickEntry_ =
+                            static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ =
+                            static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        CloseCollectionPopup();
+                        ClearSelection();
+                        if (target.available)
+                            ShellExecuteW(
+                                hwnd_, L"open",
+                                target.path.c_str(),
+                                nullptr, nullptr,
+                                SW_SHOWNORMAL);
+                        InvalidateRect(
+                            hwnd_, &dockBounds, FALSE);
+                    }
+                    else if (dockItem->GetEntryType() == DockEntryType::DesktopItem &&
                         dockPendingDoubleClickEntry_ == dockItem->GetEntryIndex() &&
                         elapsed <= GetDoubleClickTime())
                     {
-                        const size_t entryIndex = dockItem->GetEntryIndex();
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
@@ -1821,7 +1840,42 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             }
         }
 
-        if (popupWidgetIndex_ < widgets_.size())
+        if (dockFolderPopupOpen_)
+        {
+            RECT popup = GetCollectionPopupRect(
+                dockFolderPopupWidget_);
+            if (PtInRect(&popup, pt))
+            {
+                RECT content =
+                    GetCollectionPopupContentRect(popup);
+                for (size_t i = 0;
+                     i < dockFolderPopupWidget_.
+                        folderEntries.size(); ++i)
+                {
+                    RECT itemRect =
+                        GetCollectionPopupItemRect(
+                            popup, i);
+                    RECT clipped = itemRect;
+                    clipped.top = std::max(
+                        clipped.top, content.top);
+                    clipped.bottom = std::min(
+                        clipped.bottom,
+                        content.bottom);
+                    if (clipped.bottom <= clipped.top ||
+                        !PtInRect(&clipped, pt))
+                        continue;
+                    const std::wstring path =
+                        dockFolderPopupWidget_.
+                            folderEntries[i].fullPath;
+                    ShellExecuteW(
+                        hwnd_, L"open", path.c_str(),
+                        nullptr, nullptr, SW_SHOWNORMAL);
+                    CloseCollectionPopup();
+                    return 0;
+                }
+            }
+        }
+        else if (popupWidgetIndex_ < widgets_.size())
         {
             RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
             if (PtInRect(&popup, pt))

@@ -17,4 +17,18 @@ constexpr bool ShouldRenderWidget(
         popupOpen ||
         pointerInside;
 }
+
+constexpr bool ShouldRetainBackdropAfterDrag(
+    bool showOnHoverOnly,
+    bool popupOpen,
+    bool pointerInside)
+{
+    return ShouldRenderWidget(
+        showOnHoverOnly,
+        false,
+        false,
+        false,
+        popupOpen,
+        pointerInside);
+}
 }

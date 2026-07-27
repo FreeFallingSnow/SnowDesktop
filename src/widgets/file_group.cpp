@@ -1598,6 +1598,63 @@ void FileGroup::OnItemsDropped(
     HitRegion region, int mods)
 {
     if (!app_ || !data_ || sourceItems.empty()) return;
+    const bool allFolderMappings =
+        std::all_of(
+            sourceItems.begin(),
+            sourceItems.end(),
+            [&](Item* item) {
+                std::wstring id;
+                if (auto* dockItem =
+                        dynamic_cast<
+                            DockEntryItem*>(item))
+                {
+                    if (dockItem->GetEntryType() !=
+                            DockEntryType::
+                                FolderMapping)
+                        return false;
+                    id = dockItem->GetReference();
+                }
+                else if (auto* groupEntry =
+                             dynamic_cast<
+                                 FileGroupEntryItem*>(
+                                 item))
+                {
+                    id =
+                        groupEntry->
+                            GetChildWidgetId();
+                }
+                else
+                {
+                    return false;
+                }
+                const size_t childIndex =
+                    app_->FindWidgetIndexById(id);
+                return childIndex <
+                        app_->widgets_.size() &&
+                    app_->widgets_[childIndex].
+                        type ==
+                        DesktopWidgetType::
+                            FolderMapping;
+            });
+    if (allFolderMappings)
+    {
+        size_t insertIndex =
+            GetDropInsertIndex(
+                targetSlot, region);
+        if (SourceIdAtPoint(
+                app_->dragSession_.
+                    CurrentPoint()).empty())
+            insertIndex =
+                data_->childWidgetIds.size();
+        const size_t groupIndex =
+            app_->FindWidgetIndexById(
+                data_->id);
+        app_->MoveFolderMappingsToFileGroup(
+            sourceItems, groupIndex,
+            insertIndex);
+        return;
+    }
+
     const bool allSources = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {

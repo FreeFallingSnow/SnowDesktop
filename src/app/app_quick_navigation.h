@@ -2568,6 +2568,12 @@ inline void DesktopApp::RefreshQuickNavigationEverythingResults()
     auto appendResult = [&](const EverythingSearchResult& result) {
         if (result.path.empty())
             return;
+        if (snowdesktop::shell_item_visibility::
+                IsAlwaysHidden(
+                    result.name.empty()
+                        ? result.path
+                        : result.name))
+            return;
         std::wstring normalizedPath = ToUpperInvariant(result.path);
         if (seenPaths.contains(normalizedPath))
             return;

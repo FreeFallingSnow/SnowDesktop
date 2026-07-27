@@ -261,8 +261,11 @@ inline std::wstring QueryDockWindowAppUserModelId(HWND window)
 }
 
 inline HBITMAP CreateDockShellIconBitmap(
-    const std::wstring& parsingName, SIZE& bitmapSize)
+    const std::wstring& parsingName, SIZE& bitmapSize,
+    int* systemIconIndex = nullptr)
 {
+    if (systemIconIndex)
+        *systemIconIndex = -1;
     if (parsingName.empty()) return nullptr;
 
     PIDLIST_ABSOLUTE pidl = nullptr;
@@ -276,6 +279,8 @@ inline HBITMAP CreateDockShellIconBitmap(
     if (SHGetFileInfoW(reinterpret_cast<LPCWSTR>(pidl), 0, &info,
             sizeof(info), SHGFI_PIDL | SHGFI_SYSICONINDEX))
         fallbackIndex = info.iIcon;
+    if (systemIconIndex)
+        *systemIconIndex = fallbackIndex;
 
     HBITMAP bitmap = GetHighResolutionShellIconBitmap(
         pidl, fallbackIndex, bitmapSize, false);
@@ -283,39 +288,119 @@ inline HBITMAP CreateDockShellIconBitmap(
     return bitmap;
 }
 
-inline HBITMAP CreateDockWindowIconBitmap(
-    HWND window, const std::wstring& executablePath,
-    const std::wstring& appUserModelId, SIZE& bitmapSize)
+inline int QueryDockGenericExecutableIconIndex()
 {
-    // The window icon often describes the current document or Explorer
-    // location (for example "This PC") and is commonly only 16/32 px. Resolve
-    // the application identity through the Shell first so the running area
-    // receives the stable high-resolution application icon.
-    if (!appUserModelId.empty())
-    {
-        if (HBITMAP bitmap = CreateDockShellIconBitmap(
-                L"shell:AppsFolder\\" + appUserModelId, bitmapSize))
-            return bitmap;
-    }
-    if (HBITMAP bitmap = CreateDockShellIconBitmap(executablePath, bitmapSize))
-        return bitmap;
+    static const int iconIndex = [] {
+        SHFILEINFOW info{};
+        if (SHGetFileInfoW(
+                L"SnowDesktop.GenericExecutable.exe",
+                FILE_ATTRIBUTE_NORMAL, &info,
+                sizeof(info),
+                SHGFI_SYSICONINDEX |
+                    SHGFI_USEFILEATTRIBUTES))
+            return info.iIcon;
+        return -1;
+    }();
+    return iconIndex;
+}
+
+inline HBITMAP CreateDockWindowProvidedIconBitmap(
+    HWND window, SIZE& bitmapSize)
+{
+    if (!window || !IsWindow(window))
+        return nullptr;
 
     HICON icon = nullptr;
     DWORD_PTR iconResult = 0;
     if (SendMessageTimeoutW(window, WM_GETICON, ICON_BIG, 0,
             SMTO_ABORTIFHUNG | SMTO_BLOCK, 80, &iconResult))
         icon = reinterpret_cast<HICON>(iconResult);
-    if (!icon && SendMessageTimeoutW(window, WM_GETICON, ICON_SMALL, 0,
+    if (!icon && SendMessageTimeoutW(
+            window, WM_GETICON, ICON_SMALL2, 0,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK, 80, &iconResult))
+        icon = reinterpret_cast<HICON>(iconResult);
+    if (!icon && SendMessageTimeoutW(
+            window, WM_GETICON, ICON_SMALL, 0,
             SMTO_ABORTIFHUNG | SMTO_BLOCK, 80, &iconResult))
         icon = reinterpret_cast<HICON>(iconResult);
     if (!icon)
-        icon = reinterpret_cast<HICON>(GetClassLongPtrW(window, GCLP_HICON));
+        icon = reinterpret_cast<HICON>(
+            GetClassLongPtrW(window, GCLP_HICON));
     if (!icon)
-        icon = reinterpret_cast<HICON>(GetClassLongPtrW(window, GCLP_HICONSM));
-    if (icon)
-        return CreateAlphaBitmapFromIcon(
-            icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
+        icon = reinterpret_cast<HICON>(
+            GetClassLongPtrW(window, GCLP_HICONSM));
+    if (!icon)
+        return nullptr;
+    return CreateAlphaBitmapFromIcon(
+        icon, kIconBitmapSize, kIconBitmapSize,
+        bitmapSize);
+}
 
+inline HBITMAP CreateDockWindowIconBitmap(
+    HWND window, const std::wstring& executablePath,
+    const std::wstring& appUserModelId, SIZE& bitmapSize)
+{
+    // Prefer stable high-resolution application identity icons. Some classic
+    // Win32 hosts (for example Creo's xtop.exe) expose only the generic
+    // executable icon through the Shell, so that result is allowed to fall
+    // through to the window-provided icon below.
+    if (!appUserModelId.empty())
+    {
+        if (HBITMAP bitmap = CreateDockShellIconBitmap(
+                L"shell:AppsFolder\\" + appUserModelId, bitmapSize))
+            return bitmap;
+    }
+
+    int executableIconIndex = -1;
+    SIZE executableBitmapSize{};
+    HBITMAP executableBitmap =
+        CreateDockShellIconBitmap(
+            executablePath, executableBitmapSize,
+            &executableIconIndex);
+    const int genericExecutableIconIndex =
+        QueryDockGenericExecutableIconIndex();
+    const bool executableIconIsGeneric =
+        executableIconIndex >= 0 &&
+        genericExecutableIconIndex >= 0 &&
+        executableIconIndex ==
+            genericExecutableIconIndex;
+    if (snowdesktop::dock_window_rules::
+            ResolveDockWindowIconSource(
+                false, executableBitmap != nullptr,
+                executableIconIsGeneric, false) ==
+        snowdesktop::dock_window_rules::
+            DockWindowIconSource::Executable)
+    {
+        bitmapSize = executableBitmapSize;
+        return executableBitmap;
+    }
+
+    SIZE windowBitmapSize{};
+    HBITMAP windowBitmap =
+        CreateDockWindowProvidedIconBitmap(
+            window, windowBitmapSize);
+    const auto source =
+        snowdesktop::dock_window_rules::
+            ResolveDockWindowIconSource(
+                false, executableBitmap != nullptr,
+                executableIconIsGeneric,
+                windowBitmap != nullptr);
+    if (source ==
+        snowdesktop::dock_window_rules::
+            DockWindowIconSource::Window)
+    {
+        if (executableBitmap)
+            DeleteObject(executableBitmap);
+        bitmapSize = windowBitmapSize;
+        return windowBitmap;
+    }
+    if (windowBitmap)
+        DeleteObject(windowBitmap);
+    if (executableBitmap)
+    {
+        bitmapSize = executableBitmapSize;
+        return executableBitmap;
+    }
     return nullptr;
 }
 
@@ -415,6 +500,48 @@ inline int DockRestoreShowCommand(HWND window)
             placement.flags, placement.showCmd);
 }
 
+/**
+ * @brief 请求最小化窗口，并为高完整性窗口提供默认系统命令回退。
+ */
+inline bool RequestDockWindowMinimize(HWND window)
+{
+    if (!window || !IsWindow(window))
+        return false;
+    const BOOL accepted =
+        ShowWindowAsync(window, SW_MINIMIZE);
+    if (snowdesktop::dock_window_rules::
+            NeedsDockMinimizeSystemCommandFallback(
+                accepted != FALSE))
+    {
+        DefWindowProcW(
+            window, WM_SYSCOMMAND,
+            SC_MINIMIZE, 0);
+    }
+    return accepted != FALSE ||
+        IsIconic(window) != FALSE;
+}
+
+/**
+ * @brief 请求窗口正常关闭，保留应用自己的保存确认与退出处理。
+ */
+inline bool RequestDockWindowClose(HWND window)
+{
+    if (!window || !IsWindow(window))
+        return false;
+    const BOOL accepted =
+        PostMessageW(window, WM_CLOSE, 0, 0);
+    if (snowdesktop::dock_window_rules::
+            NeedsDockCloseSystemCommandFallback(
+                accepted != FALSE))
+    {
+        DefWindowProcW(
+            window, WM_SYSCOMMAND,
+            SC_CLOSE, 0);
+    }
+    return accepted != FALSE ||
+        !IsWindow(window);
+}
+
 inline std::wstring DockWindowPreviewIdentityKey(
     const DockAppIdentity& identity)
 {
@@ -460,13 +587,15 @@ inline UINT QueryDockWindowPreviewHoverTime()
 
 inline std::vector<DockWindowPreviewItem>
 DesktopApp::CollectDockWindowPreviewItems(
-    const DockAppIdentity& identity)
+    const DockAppIdentity& identity,
+    bool includeCloaked)
 {
     struct PreviewEnumerationContext
     {
         const DockAppIdentity* identity = nullptr;
         std::vector<DockWindowPreviewItem>* items = nullptr;
-    } context{ &identity, nullptr };
+        bool includeCloaked = false;
+    } context{ &identity, nullptr, includeCloaked };
 
     std::vector<DockWindowPreviewItem> items;
     context.items = &items;
@@ -485,7 +614,8 @@ DesktopApp::CollectDockWindowPreviewItems(
         DWORD cloaked = 0;
         if (SUCCEEDED(DwmGetWindowAttribute(
                 window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
-            cloaked != 0)
+            cloaked != 0 &&
+            !context->includeCloaked)
             return TRUE;
         if (!DockWindowMatchesAppIdentity(window, *context->identity))
             return TRUE;
@@ -504,6 +634,24 @@ DesktopApp::CollectDockWindowPreviewItems(
         return TRUE;
     }, reinterpret_cast<LPARAM>(&context));
     return items;
+}
+
+inline void DesktopApp::CloseDockWindowFromPreview(
+    HWND window)
+{
+    DismissDockWindowPreviewUntilLeave();
+    RequestDockWindowClose(window);
+}
+
+inline void DesktopApp::CloseDockApplicationWindows(
+    const DockAppIdentity& identity)
+{
+    DismissDockWindowPreviewUntilLeave();
+    const std::vector<DockWindowPreviewItem> windows =
+        CollectDockWindowPreviewItems(
+            identity, true);
+    for (const DockWindowPreviewItem& item : windows)
+        RequestDockWindowClose(item.window);
 }
 
 inline bool DesktopApp::ResolveDockWindowPreviewTarget(
@@ -592,8 +740,7 @@ inline void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
 {
     if (!dockWindowPreview_)
         return;
-    if (!dockSettings_.showWindowPreviews ||
-        !generalSettings_.dockEnabled || dragSession_.IsActive())
+    if (!generalSettings_.dockEnabled || dragSession_.IsActive())
     {
         HideDockWindowPreview();
         return;
@@ -637,7 +784,6 @@ inline void DesktopApp::OnDockWindowPreviewHoverTimer()
 
     DockWindowPreviewTarget target;
     const bool hasTarget =
-        dockSettings_.showWindowPreviews &&
         generalSettings_.dockEnabled &&
         !dragSession_.IsActive() &&
         ResolveDockWindowPreviewTarget(cursorClient, target);
@@ -1155,8 +1301,94 @@ inline bool DesktopApp::IsDockExclusiveItemKey(const std::wstring& key) const
 inline bool DesktopApp::IsDockExclusiveWidgetId(const std::wstring& id) const
 {
     return std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const DockEntry& entry) {
-        return entry.type == DockEntryType::Collection && entry.reference == id;
+        return (entry.type == DockEntryType::Collection ||
+                entry.type == DockEntryType::FolderMapping) &&
+            entry.reference == id;
     });
+}
+
+inline snowdesktop::item_location::FolderTarget
+DesktopApp::ResolveDockFolderTarget(const DockEntry& entry) const
+{
+    std::wstring sourcePath;
+    if (entry.type == DockEntryType::FolderMapping)
+    {
+        std::wstring cacheKey =
+            L"M:" + ToUpperInvariant(entry.reference);
+        if (const auto cached = dockFolderTargetCache_.find(cacheKey);
+            cached != dockFolderTargetCache_.end())
+            return cached->second;
+
+        const size_t widgetIndex = FindWidgetIndexById(entry.reference);
+        if (widgetIndex >= widgets_.size() ||
+            widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping)
+            return {};
+        sourcePath = widgets_[widgetIndex].sourceFolderPath;
+        auto target =
+            snowdesktop::item_location::ResolveFolderTarget(
+                sourcePath);
+        if (target.kind ==
+                snowdesktop::item_location::
+                    FolderTargetKind::None &&
+            !sourcePath.empty())
+        {
+            target.path = sourcePath;
+            target.kind =
+                snowdesktop::item_location::
+                    FolderTargetKind::Directory;
+            target.available = false;
+        }
+        dockFolderTargetCache_.insert_or_assign(
+            std::move(cacheKey), target);
+        return target;
+    }
+    if (entry.type != DockEntryType::DesktopItem ||
+        IsRecycleBinDockEntry(entry))
+        return {};
+
+    std::wstring cacheKey =
+        L"I:" + ToUpperInvariant(entry.reference);
+    if (const auto cached = dockFolderTargetCache_.find(cacheKey);
+        cached != dockFolderTargetCache_.end())
+        return cached->second;
+
+    const size_t itemIndex = FindItemIndexByKey(entry.reference);
+    const std::wstring& path = itemIndex < items_.size() &&
+            !items_[itemIndex].parsingName.empty()
+        ? items_[itemIndex].parsingName
+        : entry.reference;
+    auto target =
+        snowdesktop::item_location::ResolveFolderTarget(path);
+    dockFolderTargetCache_.insert_or_assign(
+        std::move(cacheKey), target);
+    return target;
+}
+
+inline bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const
+{
+    return entry.type == DockEntryType::FolderMapping ||
+        ResolveDockFolderTarget(entry).kind !=
+            snowdesktop::item_location::FolderTargetKind::None;
+}
+
+inline size_t DesktopApp::DockMainEntryCount() const
+{
+    return static_cast<size_t>(std::count_if(
+        dockEntries_.begin(), dockEntries_.end(),
+        [this](const DockEntry& entry) {
+            return !IsRecycleBinDockEntry(entry) &&
+                !IsFolderDockEntry(entry);
+        }));
+}
+
+inline size_t DesktopApp::DockFolderEntryCount() const
+{
+    return static_cast<size_t>(std::count_if(
+        dockEntries_.begin(), dockEntries_.end(),
+        [this](const DockEntry& entry) {
+            return !IsRecycleBinDockEntry(entry) &&
+                IsFolderDockEntry(entry);
+        }));
 }
 
 inline size_t DesktopApp::FindCollectionGroupIndexForChild(
@@ -1213,8 +1445,18 @@ inline bool DesktopApp::IsRecycleBinDockEntry(const DockEntry& entry) const
 
 inline void DesktopApp::NormalizeDockRecycleBinPosition()
 {
-    std::stable_partition(dockEntries_.begin(), dockEntries_.end(),
-        [this](const DockEntry& entry) { return !IsRecycleBinDockEntry(entry); });
+    snowdesktop::dock_folder_rules::StableNormalize(
+        dockEntries_,
+        [this](const DockEntry& entry) {
+            if (IsRecycleBinDockEntry(entry))
+                return snowdesktop::dock_folder_rules::
+                    EntryGroup::Recycle;
+            return IsFolderDockEntry(entry)
+                ? snowdesktop::dock_folder_rules::
+                    EntryGroup::Folder
+                : snowdesktop::dock_folder_rules::
+                    EntryGroup::Main;
+        });
 }
 
 inline void DesktopApp::LoadDockUsageStats()
@@ -1418,7 +1660,7 @@ inline std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
     for (const Candidate& candidate : candidates)
     {
         const DockAppIdentity identity = ResolveDockAppIdentity(candidate.itemIndex);
-        const bool isShownAsRunning = dockSettings_.showRunningApps &&
+        const bool isShownAsRunning =
             std::any_of(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& running) {
                 switch (identity.kind)
@@ -1929,9 +2171,6 @@ inline void DesktopApp::RefreshDockRunningWindows(
     }
     dockRunningWindows_ = std::move(updated);
 
-    if (!dockSettings_.showRunningApps)
-        runningCandidates.clear();
-
     // EnumWindows does not promise a stable order. Keep surviving applications
     // in their existing Dock positions and append only genuinely new ones.
     if (runningCandidates.size() > 1 && !dockUnpinnedRunningApps_.empty())
@@ -2087,7 +2326,7 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
         }
         if (!IsIconic(target))
         {
-            ShowWindowAsync(target, SW_MINIMIZE);
+            RequestDockWindowMinimize(target);
         }
         found->second.minimized = true;
         found->second.foreground = false;
@@ -2109,20 +2348,25 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
             InvalidateDockRects();
             return true;
         }
+        BOOL showAccepted = FALSE;
         if (minimized)
         {
-            ShowWindowAsync(
+            showAccepted = ShowWindowAsync(
                 target,
                 DockRestoreShowCommand(target));
         }
         else
         {
-            ShowWindowAsync(target, SW_SHOW);
+            showAccepted =
+                ShowWindowAsync(target, SW_SHOW);
         }
         HWND activationTarget = GetLastActivePopup(target);
         if (!activationTarget || !IsWindow(activationTarget))
             activationTarget = target;
-        if (!minimized)
+        if (snowdesktop::dock_window_rules::
+                NeedsDockWindowSwitchFallback(
+                    minimized,
+                    showAccepted != FALSE))
         {
             SwitchToThisWindow(target, TRUE);
             if (activationTarget != target)
@@ -2181,7 +2425,7 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
         }
         if (!minimized)
         {
-            ShowWindowAsync(target, SW_MINIMIZE);
+            RequestDockWindowMinimize(target);
         }
         nowMinimized = true;
     }
@@ -2201,20 +2445,25 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
             InvalidateDockRects();
             return true;
         }
+        BOOL showAccepted = FALSE;
         if (minimized)
         {
-            ShowWindowAsync(
+            showAccepted = ShowWindowAsync(
                 target,
                 DockRestoreShowCommand(target));
         }
         else
         {
-            ShowWindowAsync(target, SW_SHOW);
+            showAccepted =
+                ShowWindowAsync(target, SW_SHOW);
         }
         HWND activationTarget = GetLastActivePopup(target);
         if (!activationTarget || !IsWindow(activationTarget))
             activationTarget = target;
-        if (!minimized)
+        if (snowdesktop::dock_window_rules::
+                NeedsDockWindowSwitchFallback(
+                    minimized,
+                    showAccepted != FALSE))
         {
             SwitchToThisWindow(target, TRUE);
             if (activationTarget != target)
@@ -2252,20 +2501,25 @@ inline void DesktopApp::ActivateDockWindowFromPreview(HWND window)
         target = window;
 
     const bool minimized = IsIconic(target) != FALSE;
+    BOOL showAccepted = FALSE;
     if (minimized)
     {
-        ShowWindowAsync(
+        showAccepted = ShowWindowAsync(
             target,
             DockRestoreShowCommand(target));
     }
     else
     {
-        ShowWindowAsync(target, SW_SHOW);
+        showAccepted =
+            ShowWindowAsync(target, SW_SHOW);
     }
     HWND activationTarget = GetLastActivePopup(target);
     if (!activationTarget || !IsWindow(activationTarget))
         activationTarget = target;
-    if (!minimized)
+    if (snowdesktop::dock_window_rules::
+            NeedsDockWindowSwitchFallback(
+                minimized,
+                showAccepted != FALSE))
     {
         SwitchToThisWindow(target, TRUE);
         if (activationTarget != target)
@@ -2558,19 +2812,66 @@ inline void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         std::vector<DockEntry> moving;
         for (size_t index : indices)
             if (index < dockEntries_.size()) moving.push_back(dockEntries_[index]);
+        const bool movingFolders = std::all_of(
+            moving.begin(), moving.end(),
+            [this](const DockEntry& entry) {
+                return IsFolderDockEntry(entry);
+            });
+        const bool movingMain = std::all_of(
+            moving.begin(), moving.end(),
+            [this](const DockEntry& entry) {
+                return !IsFolderDockEntry(entry);
+            });
+        if (!movingFolders && !movingMain)
+        {
+            MessageBeep(MB_ICONWARNING);
+            return;
+        }
         for (auto it = indices.rbegin(); it != indices.rend(); ++it)
         {
             if (*it < insertIndex) --insertIndex;
             dockEntries_.erase(dockEntries_.begin() + static_cast<std::ptrdiff_t>(*it));
         }
-        auto recycleBin = std::find_if(dockEntries_.begin(), dockEntries_.end(),
-            [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
-        insertIndex = std::min(insertIndex,
-            static_cast<size_t>(std::distance(dockEntries_.begin(), recycleBin)));
+        const size_t mainEnd = DockMainEntryCount();
+        const size_t folderEnd =
+            mainEnd + DockFolderEntryCount();
+        insertIndex = movingFolders
+            ? std::clamp(insertIndex, mainEnd, folderEnd)
+            : std::min(insertIndex, mainEnd);
         dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(insertIndex),
             moving.begin(), moving.end());
         NormalizeDockRecycleBinPosition();
         InvalidateDockContainers();
+        return;
+    }
+
+    const bool folderEntriesOnly =
+        std::all_of(
+            sourceItems.begin(), sourceItems.end(),
+            [](Item* source) {
+                return dynamic_cast<FolderEntryIcon*>(
+                    source) != nullptr;
+            });
+    if (folderEntriesOnly)
+    {
+        DragSourceList sourceList =
+            BuildDragSourceList(sourceItems, origin);
+        const auto existingKeys =
+            SnapshotDesktopKeys();
+        DropPreviewList preview =
+            BuildDropPreviewList(
+                sourceList, GetDesktopGrid(),
+                nullptr, HitRegion::Empty,
+                mods, dragSession_.CurrentPoint());
+        preview.action = DropAction::Link;
+        if (ExecuteDropPipeline(
+                sourceList, preview))
+        {
+            AddExternalItemsToDock(
+                NewDesktopKeysSince(existingKeys),
+                insertIndex);
+            SaveLayoutSlots();
+        }
         return;
     }
 
@@ -2591,6 +2892,24 @@ inline void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
         if (data && data->type == DesktopWidgetType::Collection)
             additions.push_back({ DockEntryType::Collection, data->id, false });
+        else if (data && data->type == DesktopWidgetType::FolderMapping)
+            additions.push_back({ DockEntryType::FolderMapping, data->id, false });
+        else if (auto* groupEntry =
+                     dynamic_cast<FileGroupEntryItem*>(source))
+        {
+            const size_t widgetIndex =
+                FindWidgetIndexById(
+                    groupEntry->GetChildWidgetId());
+            if (widgetIndex < widgets_.size() &&
+                widgets_[widgetIndex].type ==
+                    DesktopWidgetType::FolderMapping)
+            {
+                additions.push_back({
+                    DockEntryType::FolderMapping,
+                    widgets_[widgetIndex].id,
+                    false });
+            }
+        }
     }
     if (additions.empty()) return;
 
@@ -2621,12 +2940,28 @@ inline void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         {
             const bool becomingExclusive = existing->keepOnDesktop && !addition.keepOnDesktop;
             existing->keepOnDesktop = addition.keepOnDesktop;
-            if (addition.type == DockEntryType::Collection)
+            if (addition.type == DockEntryType::Collection ||
+                addition.type == DockEntryType::FolderMapping)
             {
                 existing->keepOnDesktop = false;
                 size_t widgetIndex = FindWidgetIndexById(addition.reference);
                 if (widgetIndex < widgets_.size())
+                {
+                    if (addition.type == DockEntryType::FolderMapping)
+                    {
+                        for (auto& group : widgets_)
+                        {
+                            if (group.type != DesktopWidgetType::FileGroup) continue;
+                            std::erase(group.childWidgetIds, addition.reference);
+                            group.activeCategoryId =
+                                snowdesktop::collection_group_rules::
+                                    ResolveActiveItem(
+                                        group.childWidgetIds,
+                                        group.activeCategoryId);
+                        }
+                    }
                     widgets_[widgetIndex].gridCell = { kDockPageId, 0, 0 };
+                }
                 continue;
             }
             if (becomingExclusive)
@@ -2659,7 +2994,23 @@ inline void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         else
         {
             size_t widgetIndex = FindWidgetIndexById(addition.reference);
-            if (widgetIndex < widgets_.size()) widgets_[widgetIndex].gridCell = { kDockPageId, 0, 0 };
+            if (widgetIndex < widgets_.size())
+            {
+                if (addition.type == DockEntryType::FolderMapping)
+                {
+                    for (auto& group : widgets_)
+                    {
+                        if (group.type != DesktopWidgetType::FileGroup) continue;
+                        std::erase(group.childWidgetIds, addition.reference);
+                        group.activeCategoryId =
+                            snowdesktop::collection_group_rules::
+                                ResolveActiveItem(
+                                    group.childWidgetIds,
+                                    group.activeCategoryId);
+                    }
+                }
+                widgets_[widgetIndex].gridCell = { kDockPageId, 0, 0 };
+            }
         }
     }
     NormalizeDockRecycleBinPosition();
@@ -2683,7 +3034,11 @@ inline void DesktopApp::AddExternalItemsToDock(
     for (const std::wstring& key : newKeys)
     {
         const std::wstring upper = ToUpperInvariant(key);
-        if (upper.empty()) continue;
+        if (upper.empty() ||
+            snowdesktop::
+                shell_item_visibility::
+                    IsAlwaysHidden(upper))
+            continue;
         bool exists = std::any_of(dockEntries_.begin(), dockEntries_.end(),
             [&](const DockEntry& entry) {
                 return entry.type == DockEntryType::DesktopItem &&
@@ -2777,9 +3132,12 @@ inline void DesktopApp::MoveDockItemsToDesktop(
     indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
     if (indices.empty()) return;
 
-    std::vector<DockEntry> moving;
+    std::vector<std::pair<size_t, DockEntry>> moving;
     for (size_t index : indices)
-        if (index < dockEntries_.size()) moving.push_back(dockEntries_[index]);
+    {
+        if (index < dockEntries_.size())
+            moving.emplace_back(index, dockEntries_[index]);
+    }
 
     std::unordered_set<std::wstring> usedSlots;
     for (const auto& widget : widgets_)
@@ -2792,11 +3150,19 @@ inline void DesktopApp::MoveDockItemsToDesktop(
 
     const GridPage* targetPage = FindGridPage(gridPages_, targetCell.pageId);
     int startSlot = targetPage ? SlotFromCell(gridPages_, targetCell) : 0;
-    for (const DockEntry& entry : moving)
+    std::vector<size_t> restoredIndices;
+    for (size_t movingIndex = 0;
+        movingIndex < moving.size();
+        ++movingIndex)
     {
+        const size_t entryIndex =
+            moving[movingIndex].first;
+        const DockEntry& entry =
+            moving[movingIndex].second;
         if (entry.keepOnDesktop) continue;
         GridSpan span{ 1, 1 };
-        if (entry.type == DockEntryType::Collection)
+        if (entry.type == DockEntryType::Collection ||
+            entry.type == DockEntryType::FolderMapping)
         {
             size_t widgetIndex = FindWidgetIndexById(entry.reference);
             if (widgetIndex < widgets_.size()) span = widgets_[widgetIndex].gridSpan;
@@ -2806,20 +3172,33 @@ inline void DesktopApp::MoveDockItemsToDesktop(
             continue;
         MarkGridArea(usedSlots, freeCell, span);
         ++startSlot;
+        bool restored = false;
         if (entry.type == DockEntryType::DesktopItem)
         {
             size_t itemIndex = FindItemIndexByKey(entry.reference);
-            if (itemIndex < items_.size()) items_[itemIndex].gridCell = freeCell;
+            if (itemIndex < items_.size())
+            {
+                items_[itemIndex].gridCell = freeCell;
+                restored = true;
+            }
         }
         else
         {
             size_t widgetIndex = FindWidgetIndexById(entry.reference);
-            if (widgetIndex < widgets_.size()) widgets_[widgetIndex].gridCell = freeCell;
+            if (widgetIndex < widgets_.size())
+            {
+                widgets_[widgetIndex].gridCell = freeCell;
+                restored = true;
+            }
         }
+        if (restored)
+            restoredIndices.push_back(entryIndex);
     }
 
-    for (auto it = indices.rbegin(); it != indices.rend(); ++it)
+    for (auto it = restoredIndices.rbegin();
+        it != restoredIndices.rend(); ++it)
         dockEntries_.erase(dockEntries_.begin() + static_cast<std::ptrdiff_t>(*it));
+    NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
     RebuildContainersAndItems();
     LayoutItems();
@@ -2845,7 +3224,8 @@ inline void DesktopApp::RestoreDockEntriesToDesktop()
     {
         if (entry.keepOnDesktop) continue;
         GridSpan span{ 1, 1 };
-        if (entry.type == DockEntryType::Collection)
+        if (entry.type == DockEntryType::Collection ||
+            entry.type == DockEntryType::FolderMapping)
         {
             size_t widgetIndex = FindWidgetIndexById(entry.reference);
             if (widgetIndex < widgets_.size()) span = widgets_[widgetIndex].gridSpan;
@@ -3086,13 +3466,16 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             }
 
             ComPtr<ID2D1SolidColorBrush> indicatorBrush;
-            const D2D1_COLOR_F indicatorColor = lt
-                ? (foreground
-                    ? D2D1::ColorF(0.14f, 0.16f, 0.22f, 1.0f)
-                    : D2D1::ColorF(0.24f, 0.26f, 0.32f, minimized ? 0.82f : 0.90f))
-                : (foreground
-                    ? D2D1::ColorF(0.86f, 0.88f, 0.92f, 1.0f)
-                    : D2D1::ColorF(0.72f, 0.75f, 0.80f, minimized ? 0.82f : 0.90f));
+            const auto indicator =
+                snowdesktop::dock_window_rules::
+                    ResolveDockRunningIndicatorColor(
+                        lt, foreground, minimized);
+            const D2D1_COLOR_F indicatorColor =
+                D2D1::ColorF(
+                    indicator.red,
+                    indicator.green,
+                    indicator.blue,
+                    indicator.alpha);
             if (SUCCEEDED(ctx->CreateSolidColorBrush(indicatorColor, &indicatorBrush)) &&
                 indicatorBrush)
             {
@@ -3125,23 +3508,58 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     size_t widgetIndex = FindWidgetIndexById(entry.reference);
     if (widgetIndex >= widgets_.size()) return;
     const DesktopWidget& widget = widgets_[widgetIndex];
-    const int innerSize = std::max(1, static_cast<int>(
-        std::min(iconRect.right - iconRect.left, iconRect.bottom - iconRect.top)));
-    const int collectionGap = std::clamp(static_cast<int>(std::round(
-        innerSize * 0.04f)), 2, 4);
-    const int smallIconSize = std::max(1, (innerSize - collectionGap) / 2);
-    const int groupSize = smallIconSize * 2 + collectionGap;
-    const int groupLeft = iconRect.left + (innerSize - groupSize) / 2;
-    const int groupTop = iconRect.top + (innerSize - groupSize) / 2;
+    if (entry.type == DockEntryType::FolderMapping)
+    {
+        int sysIconIndex = -1;
+        const std::wstring iconCacheKey =
+            ToUpperInvariant(entry.reference);
+        if (const auto cached =
+                dockFolderIconIndexCache_.find(
+                    iconCacheKey);
+            cached !=
+                dockFolderIconIndexCache_.end())
+        {
+            sysIconIndex = cached->second;
+        }
+        else
+        {
+            SHFILEINFOW info{};
+            if (!widget.sourceFolderPath.empty() &&
+                SHGetFileInfoW(
+                    widget.sourceFolderPath.c_str(), 0,
+                    &info, sizeof(info),
+                    SHGFI_SYSICONINDEX) != 0)
+                sysIconIndex = info.iIcon;
+            dockFolderIconIndexCache_.emplace(
+                iconCacheKey, sysIconIndex);
+        }
+        DrawPlaceholderIcon(
+            ctx, sysIconIndex, iconRect, 1.0f, true);
+        if (ShouldDrawShortcutArrow(true, false))
+            DrawShortcutArrowOverlay(
+                ctx, iconRect, 1.0f);
+        if (state == 2)
+            DrawDockSelectionIndicator(
+                ctx, iconRect, lt);
+        return;
+    }
+    const auto collectionLayout =
+        snowdesktop::dock_collection_icon_rules::
+            CalculateLayout(iconRect);
+    DrawDockControlBackground(
+        ctx, collectionLayout.background,
+        0, !lt);
     for (size_t i = 0; i < std::min<size_t>(4, widget.itemKeys.size()); ++i)
     {
         size_t itemIndex = FindItemIndexByKey(widget.itemKeys[i]);
         if (itemIndex >= items_.size()) continue;
         int col = static_cast<int>(i % 2);
         int row = static_cast<int>(i / 2);
-        const int left = groupLeft + col * (smallIconSize + collectionGap);
-        const int top = groupTop + row * (smallIconSize + collectionGap);
-        RECT cell{ left, top, left + smallIconSize, top + smallIconSize };
+        const RECT cell =
+            snowdesktop::dock_collection_icon_rules::
+                CellRect(
+                    collectionLayout,
+                    col, row);
         drawDesktopItem(items_[itemIndex], cell);
     }
     if (state == 2)
@@ -3201,13 +3619,16 @@ inline void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     }
 
     ComPtr<ID2D1SolidColorBrush> brush;
-    const D2D1_COLOR_F color = lt
-        ? (app.foreground
-            ? D2D1::ColorF(0.14f, 0.16f, 0.22f, 1.0f)
-            : D2D1::ColorF(0.24f, 0.26f, 0.32f, app.minimized ? 0.82f : 0.90f))
-        : (app.foreground
-            ? D2D1::ColorF(0.86f, 0.88f, 0.92f, 1.0f)
-            : D2D1::ColorF(0.72f, 0.75f, 0.80f, app.minimized ? 0.82f : 0.90f));
+    const auto indicator =
+        snowdesktop::dock_window_rules::
+            ResolveDockRunningIndicatorColor(
+                lt, app.foreground, app.minimized);
+    const D2D1_COLOR_F color =
+        D2D1::ColorF(
+            indicator.red,
+            indicator.green,
+            indicator.blue,
+            indicator.alpha);
     if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
     if (app.minimized)
     {

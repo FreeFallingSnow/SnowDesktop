@@ -30,6 +30,10 @@ DockWindowPreviewGrid CalculateDockWindowPreviewGrid(
     size_t itemCount, int maximumWidth, int maximumHeight, UINT dpi);
 std::vector<RECT> CalculateDockWindowPreviewCardRects(
     size_t itemCount, const DockWindowPreviewGrid& grid, UINT dpi);
+RECT CalculateDockWindowPreviewCloseButtonRect(
+    const RECT& cardRect, UINT dpi);
+bool IsPointInDockWindowPreviewCloseButton(
+    POINT point, const RECT& cardRect, UINT dpi);
 bool IsPointInDockPreviewTransitionRegion(
     POINT screenPoint, POINT transitionOriginScreen,
     const RECT& anchorScreen,
@@ -78,6 +82,7 @@ class DockWindowPreview
 {
 public:
     using ActivateCallback = std::function<void(HWND)>;
+    using CloseCallback = std::function<void(HWND)>;
 
     DockWindowPreview() = default;
     ~DockWindowPreview();
@@ -85,7 +90,10 @@ public:
     DockWindowPreview(const DockWindowPreview&) = delete;
     DockWindowPreview& operator=(const DockWindowPreview&) = delete;
 
-    bool Initialize(HINSTANCE instance, ActivateCallback activateCallback);
+    bool Initialize(
+        HINSTANCE instance,
+        ActivateCallback activateCallback,
+        CloseCallback closeCallback);
     void Show(const std::vector<DockWindowPreviewItem>& items,
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
         HWND dockLayerOwner = nullptr);
@@ -115,10 +123,12 @@ private:
     void HideIfPointerOutside();
     bool IsPointerInTransitionRegion(POINT screenPoint) const;
     int CardIndexAtPoint(POINT point) const;
+    int CloseButtonIndexAtPoint(POINT point) const;
 
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
     ActivateCallback activateCallback_;
+    CloseCallback closeCallback_;
     std::vector<DockWindowPreviewItem> items_;
     std::vector<RECT> cardRects_;
     std::vector<RECT> thumbnailRects_;
@@ -129,6 +139,7 @@ private:
     bool lightTheme_ = false;
     bool trackingMouse_ = false;
     int hoveredIndex_ = -1;
+    int hoveredCloseIndex_ = -1;
     UINT dpi_ = 96;
     POINT transitionOriginScreen_{};
     bool hasTransitionOrigin_ = false;

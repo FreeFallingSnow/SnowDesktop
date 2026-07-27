@@ -31,7 +31,10 @@ inline void DesktopApp::ApplyFloatingDockHotkey()
 {
     UnregisterFloatingDockHotkey();
     if (!generalSettings_.dockEnabled ||
-        !dockSettings_.floatingShortcutMode)
+        !snowdesktop::floating_dock_rules::
+            HasAnySummonTrigger(
+                dockSettings_.floatingShortcutMode,
+                dockSettings_.floatingEdgeSwipeEnabled))
     {
         CloseFloatingDock();
         return;
@@ -49,34 +52,37 @@ inline void DesktopApp::ApplyFloatingDockHotkey()
     if (!target)
         return;
 
-    const UINT hotkeyModifiers =
-        dockSettings_.floatingHotkeyModifiers |
-        MOD_NOREPEAT;
-    floatingDockHotkeyRegistered_ =
-        RegisterHotKey(target, kFloatingDockHotkeyId,
-            hotkeyModifiers,
-            dockSettings_.floatingHotkeyVirtualKey) != FALSE;
-    NavigationSettings hotkeyTextSettings;
-    hotkeyTextSettings.modifiers =
-        dockSettings_.floatingHotkeyModifiers;
-    hotkeyTextSettings.virtualKey =
-        dockSettings_.floatingHotkeyVirtualKey;
-    const std::wstring hotkeyText =
-        FormatNavigationHotkey(hotkeyTextSettings);
-    if (floatingDockHotkeyRegistered_)
+    if (dockSettings_.floatingShortcutMode)
     {
-        floatingDockHotkeyHwnd_ = target;
-        const std::wstring message =
-            L"Floating Dock hotkey " + hotkeyText +
-            L" registered";
-        WriteCrashLogEntry(message.c_str());
-    }
-    else
-    {
-        const std::wstring message =
-            L"Floating Dock hotkey " + hotkeyText +
-            L" registration failed";
-        WriteCrashLogEntry(message.c_str());
+        const UINT hotkeyModifiers =
+            dockSettings_.floatingHotkeyModifiers |
+            MOD_NOREPEAT;
+        floatingDockHotkeyRegistered_ =
+            RegisterHotKey(target, kFloatingDockHotkeyId,
+                hotkeyModifiers,
+                dockSettings_.floatingHotkeyVirtualKey) != FALSE;
+        NavigationSettings hotkeyTextSettings;
+        hotkeyTextSettings.modifiers =
+            dockSettings_.floatingHotkeyModifiers;
+        hotkeyTextSettings.virtualKey =
+            dockSettings_.floatingHotkeyVirtualKey;
+        const std::wstring hotkeyText =
+            FormatNavigationHotkey(hotkeyTextSettings);
+        if (floatingDockHotkeyRegistered_)
+        {
+            floatingDockHotkeyHwnd_ = target;
+            const std::wstring message =
+                L"Floating Dock hotkey " + hotkeyText +
+                L" registered";
+            WriteCrashLogEntry(message.c_str());
+        }
+        else
+        {
+            const std::wstring message =
+                L"Floating Dock hotkey " + hotkeyText +
+                L" registration failed";
+            WriteCrashLogEntry(message.c_str());
+        }
     }
 
     // This lightweight control timer serves both optional edge-swipe
@@ -151,7 +157,6 @@ inline void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
 
     if (!generalSettings_.dockEnabled ||
-        !dockSettings_.floatingShortcutMode ||
         !dockSettings_.floatingEdgeSwipeEnabled ||
         dragSession_.IsActive() ||
         buttonsDown != 0)
@@ -380,18 +385,37 @@ CalculateFloatingDockStableSourceRect() const
     SIZE maximumPopupSize{};
     for (const DockEntry& entry : dockEntries_)
     {
-        if (entry.type !=
+        const bool folderEntry =
+            IsFolderDockEntry(entry);
+        int itemCount = 0;
+        if (entry.type ==
                 DockEntryType::Collection)
+        {
+            const size_t widgetIndex =
+                FindWidgetIndexById(entry.reference);
+            if (widgetIndex >= widgets_.size())
+                continue;
+            itemCount = std::max(
+                1, static_cast<int>(
+                    GetPopupItemKeys(
+                        widgets_[widgetIndex]).size()));
+        }
+        else if (folderEntry)
+        {
+            // A folder stack is re-enumerated on open. Reserve the full
+            // clamped popup envelope so a large directory cannot resize or
+            // clip the floating Dock host after it becomes visible.
+            maximumPopupSize.cx = std::max(
+                maximumPopupSize.cx,
+                static_cast<LONG>(maxWidth));
+            maximumPopupSize.cy = std::max(
+                maximumPopupSize.cy,
+                static_cast<LONG>(maxHeight));
             continue;
-        const size_t widgetIndex =
-            FindWidgetIndexById(entry.reference);
-        if (widgetIndex >= widgets_.size())
+        }
+        else
             continue;
 
-        const int itemCount = std::max(
-            1, static_cast<int>(
-                GetPopupItemKeys(
-                    widgets_[widgetIndex]).size()));
         int columns = std::clamp(
             std::min(itemCount, 5),
             1, maxColumns);
@@ -466,12 +490,12 @@ inline void DesktopApp::UpdateFloatingDockWindowBounds()
             GetHoveredTitleBounds(
                 lastMousePoint_);
     RECT nextPopupRect{};
-    if (popupAnchoredToDock_ &&
-        popupWidgetIndex_ < widgets_.size())
+    if (popupAnchoredToDock_)
     {
-        nextPopupRect =
-            GetCollectionPopupRect(
-                widgets_[popupWidgetIndex_]);
+        if (const DesktopWidget* popupWidget =
+                GetOpenPopupWidget())
+            nextPopupRect =
+                GetCollectionPopupRect(*popupWidget);
     }
     if (IsRectEmpty(&floatingDockSourceRect_))
         floatingDockSourceRect_ =
@@ -659,8 +683,7 @@ inline void DesktopApp::ShowFloatingDock()
 {
     WriteCrashLogEntry(
         L"Floating Dock shortcut received");
-    if (!generalSettings_.dockEnabled ||
-        !dockSettings_.floatingShortcutMode)
+    if (!generalSettings_.dockEnabled)
     {
         WriteCrashLogEntry(
             L"Floating Dock shortcut ignored: feature disabled");
@@ -702,6 +725,10 @@ inline void DesktopApp::ShowFloatingDock()
     const RECT desktopDockRect =
         floatingDockContainer_->
             GetInteractiveBounds();
+    const RECT desktopDockPanelRect =
+        floatingDockContainer_->
+            GetVisualPanelBounds(
+                lastMousePoint_);
     floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();
     if (settingsWindow_)
@@ -711,7 +738,21 @@ inline void DesktopApp::ShowFloatingDock()
         LoadPersonalization(
             GetPersonalizationPath().c_str(),
             floatingDockPersonalization_);
+    const bool wasFloatingDockVisible =
+        floatingDockVisible_;
     floatingDockVisible_ = true;
+    if (snowdesktop::floating_dock_rules::
+            FloatingVisibilityChangesStaticScene(
+                wasFloatingDockVisible,
+                floatingDockVisible_))
+    {
+        // A drag frame caches the desktop Dock as part of its static layer.
+        // Remove both that bitmap and its independent backdrop panel before
+        // presenting the top-level copy, otherwise both Docks remain visible.
+        InvalidateDragStaticScene();
+        desktopBackdropCompositor_.RemovePanel(
+            desktopDockPanelRect);
+    }
     floatingDockRevealPending_ = true;
     UpdateFloatingDockWindowBounds();
     // Commit the floating copy before removing the corresponding desktop
@@ -745,7 +786,7 @@ inline void DesktopApp::CloseFloatingDock(
         return;
     HideDockWindowPreview();
     if (closeDockPopup && popupAnchoredToDock_ &&
-        popupWidgetIndex_ < widgets_.size())
+        GetOpenPopupWidget())
     {
         // Clear the popup state directly through the shared close path, while
         // keeping this host marked visible until that path has rebuilt any
@@ -759,7 +800,16 @@ inline void DesktopApp::CloseFloatingDock(
             : floatingDockRect_;
     // Restore the desktop copy first, then hide the floating copy. This keeps
     // the hand-off free of a transparent intermediate frame.
+    const bool wasFloatingDockVisible =
+        floatingDockVisible_;
     floatingDockVisible_ = false;
+    if (snowdesktop::floating_dock_rules::
+            FloatingVisibilityChangesStaticScene(
+                wasFloatingDockVisible,
+                floatingDockVisible_))
+    {
+        InvalidateDragStaticScene();
+    }
     floatingDockRevealPending_ = false;
     if (hwnd_)
     {
@@ -978,7 +1028,7 @@ inline void DesktopApp::PaintFloatingDockWindow(
             context.Get());
     }
     if (popupAnchoredToDock_ &&
-        popupWidgetIndex_ < widgets_.size())
+        GetOpenPopupWidget())
         DrawCollectionPopup(context.Get());
     DrawDynamicOverlays(context.Get());
     floatingDockBackdropCompositor_.EndFrame();
@@ -1042,7 +1092,7 @@ inline LRESULT DesktopApp::HandleFloatingDockMessage(
         OnMouseMove(wp, desktopLParam());
         handlingFloatingDockInput_ = false;
         UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
+        PresentPointerInteractionFrame();
         return 0;
     }
     case WM_MOUSELEAVE:

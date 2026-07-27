@@ -177,7 +177,11 @@ public:
     void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
     void SyncSoftwareDesktopEnabled(bool enabled)
     { generalSettings_.softwareDesktopEnabled = enabled; }
-    void SyncDockSettings(const DockSettings& settings) { dockSettings_ = settings; }
+    void SyncDockSettings(const DockSettings& settings)
+    {
+        dockSettings_ = settings;
+        NormalizeDockSettings(dockSettings_);
+    }
     void SyncNavigationSettings(const NavigationSettings& settings)
     { navigationSettings_ = settings; }
 

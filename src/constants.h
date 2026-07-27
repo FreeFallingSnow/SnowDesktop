@@ -158,6 +158,7 @@ constexpr UINT kContextDockLayoutEdge = 41805;
 constexpr UINT kContextDockDetailedSettings = 41807;
 constexpr UINT kContextDockShowFrequentItems = 41808;
 constexpr UINT kContextDockRemoveFrequentItem = 41809;
+constexpr UINT kContextDockCloseApplication = 41810;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;

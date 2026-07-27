@@ -67,6 +67,39 @@ RECT InterpolateDockWindowTransitionRect(
     return result;
 }
 
+RECT ResolveDockWindowSnapshotHostRect(
+    const RECT& from, const RECT& to) noexcept
+{
+    return {
+        std::min(from.left, to.left),
+        std::min(from.top, to.top),
+        std::max(from.right, to.right),
+        std::max(from.bottom, to.bottom)
+    };
+}
+
+SIZE ConstrainDockWindowSnapshotSize(
+    SIZE source, LONG maximumWidth,
+    LONG maximumHeight) noexcept
+{
+    if (source.cx <= 0 || source.cy <= 0 ||
+        maximumWidth <= 0 || maximumHeight <= 0)
+        return {};
+    const double scale = std::min({
+        1.0,
+        static_cast<double>(maximumWidth) /
+            static_cast<double>(source.cx),
+        static_cast<double>(maximumHeight) /
+            static_cast<double>(source.cy)
+    });
+    return {
+        std::max<LONG>(1, static_cast<LONG>(
+            std::lround(source.cx * scale))),
+        std::max<LONG>(1, static_cast<LONG>(
+            std::lround(source.cy * scale)))
+    };
+}
+
 DockWindowTransition::~DockWindowTransition()
 {
     Cancel();
@@ -101,8 +134,7 @@ bool DockWindowTransition::EnsureWindow()
         return false;
 
     hwnd_ = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
-            WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+        kDockWindowTransitionExStyle,
         kDockWindowTransitionClassName,
         L"Dock Window Transition",
         WS_POPUP | WS_CLIPCHILDREN,
@@ -110,12 +142,34 @@ bool DockWindowTransition::EnsureWindow()
         nullptr, nullptr, instance_, this);
     if (!hwnd_)
         return false;
+    if (!SetLayeredWindowAttributes(
+            hwnd_, 0, 255, LWA_ALPHA))
+    {
+        DestroyWindow(hwnd_);
+        hwnd_ = nullptr;
+        return false;
+    }
 
     const DWM_WINDOW_CORNER_PREFERENCE corner =
-        DWMWCP_ROUND;
+        kDockWindowTransitionCornerPreference;
     DwmSetWindowAttribute(
         hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE,
         &corner, sizeof(corner));
+    const DWMNCRENDERINGPOLICY ncRendering =
+        kDockWindowTransitionNcRenderingPolicy;
+    DwmSetWindowAttribute(
+        hwnd_, DWMWA_NCRENDERING_POLICY,
+        &ncRendering, sizeof(ncRendering));
+    const COLORREF borderColor =
+        kDockWindowTransitionBorderColor;
+    DwmSetWindowAttribute(
+        hwnd_, DWMWA_BORDER_COLOR,
+        &borderColor, sizeof(borderColor));
+    const BOOL disableTransitions = TRUE;
+    DwmSetWindowAttribute(
+        hwnd_, DWMWA_TRANSITIONS_FORCEDISABLED,
+        &disableTransitions,
+        sizeof(disableTransitions));
     return true;
 }
 
@@ -148,7 +202,7 @@ bool DockWindowTransition::Start(
     Cancel();
     if (!SystemWindowAnimationsEnabled() ||
         !sourceWindow || !IsWindow(sourceWindow) ||
-        !IsUsableRect(dockRect) || !EnsureWindow())
+        !IsUsableRect(dockRect))
         return false;
 
     HWND root = GetAncestor(sourceWindow, GA_ROOT);
@@ -179,23 +233,61 @@ bool DockWindowTransition::Start(
         toRect_ = windowRect;
     }
 
-    const int initialWidth =
-        std::max(1L, fromRect_.right - fromRect_.left);
-    const int initialHeight =
-        std::max(1L, fromRect_.bottom - fromRect_.top);
-    SetWindowPos(
-        hwnd_, HWND_TOPMOST,
-        fromRect_.left, fromRect_.top,
-        initialWidth, initialHeight,
-        SWP_NOACTIVATE | SWP_SHOWWINDOW);
-
-    if (FAILED(DwmRegisterThumbnail(
-            hwnd_, sourceWindow_, &thumbnail_)) ||
-        !thumbnail_)
+    const CachedSnapshot* snapshot =
+        PrepareSnapshot(
+            sourceWindow_, windowRect,
+            direction_);
+    if (!EnsureWindow())
     {
         Cancel();
         return false;
     }
+
+    bool snapshotAvailable = false;
+    if (snapshot &&
+        EnsureSnapshotRenderer())
+    {
+        snapshotAvailable =
+            CreateActiveSnapshotBitmap(*snapshot);
+    }
+
+    bool liveThumbnailAvailable = false;
+    if (!snapshotAvailable)
+    {
+        liveThumbnailAvailable =
+            SUCCEEDED(DwmRegisterThumbnail(
+                hwnd_, sourceWindow_, &thumbnail_)) &&
+            thumbnail_;
+    }
+    surface_ =
+        ResolveDockWindowTransitionSurface(
+            snapshotAvailable,
+            liveThumbnailAvailable);
+    if (surface_ ==
+        DockWindowTransitionSurface::None)
+    {
+        Cancel();
+        return false;
+    }
+
+    snapshotHostRect_ =
+        surface_ ==
+            DockWindowTransitionSurface::Snapshot
+        ? ResolveDockWindowSnapshotHostRect(
+            fromRect_, toRect_)
+        : fromRect_;
+    const int hostWidth = std::max(
+        1L, snapshotHostRect_.right -
+            snapshotHostRect_.left);
+    const int hostHeight = std::max(
+        1L, snapshotHostRect_.bottom -
+            snapshotHostRect_.top);
+    SetWindowPos(
+        hwnd_, HWND_TOPMOST,
+        snapshotHostRect_.left,
+        snapshotHostRect_.top,
+        hostWidth, hostHeight,
+        SWP_NOACTIVATE);
 
     if (!ApplyFrame(0.0))
     {
@@ -214,8 +306,14 @@ bool DockWindowTransition::Start(
         return false;
     }
     nativeTransitionsDisabled_ = true;
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     UpdateWindow(hwnd_);
-    DwmFlush();
+    if (RequiresDockWindowTransitionCompositionBarrier(direction_) &&
+        FAILED(DwmFlush()))
+    {
+        Cancel();
+        return false;
+    }
 
     animationStartTick_ = GetTickCount64();
     awaitingRestoreVisibility_ = false;
@@ -275,9 +373,349 @@ bool DockWindowTransition::ResolveRestoreWindowRect(
     return IsUsableRect(rect);
 }
 
+bool DockWindowTransition::CaptureSnapshot(
+    HWND window, const RECT& sourceRect,
+    CachedSnapshot& snapshot) const
+{
+    if (!window || !IsWindow(window) ||
+        !IsUsableRect(sourceRect))
+        return false;
+
+    const SIZE sourceSize{
+        sourceRect.right - sourceRect.left,
+        sourceRect.bottom - sourceRect.top
+    };
+    const SIZE pixelSize =
+        ConstrainDockWindowSnapshotSize(sourceSize);
+    if (pixelSize.cx <= 0 || pixelSize.cy <= 0)
+        return false;
+
+    HDC screenDc = GetDC(nullptr);
+    if (!screenDc)
+        return false;
+    HDC snapshotDc = CreateCompatibleDC(screenDc);
+    if (!snapshotDc)
+    {
+        ReleaseDC(nullptr, screenDc);
+        return false;
+    }
+
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize =
+        sizeof(bitmapInfo.bmiHeader);
+    bitmapInfo.bmiHeader.biWidth =
+        pixelSize.cx;
+    bitmapInfo.bmiHeader.biHeight =
+        -pixelSize.cy;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+    void* bitmapBits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(
+        screenDc, &bitmapInfo,
+        DIB_RGB_COLORS, &bitmapBits,
+        nullptr, 0);
+    if (!bitmap || !bitmapBits)
+    {
+        if (bitmap)
+            DeleteObject(bitmap);
+        DeleteDC(snapshotDc);
+        ReleaseDC(nullptr, screenDc);
+        return false;
+    }
+
+    HGDIOBJ previousBitmap =
+        SelectObject(snapshotDc, bitmap);
+    SetStretchBltMode(snapshotDc, HALFTONE);
+    SetBrushOrgEx(snapshotDc, 0, 0, nullptr);
+    const BOOL captured = StretchBlt(
+        snapshotDc,
+        0, 0, pixelSize.cx, pixelSize.cy,
+        screenDc,
+        sourceRect.left, sourceRect.top,
+        sourceSize.cx, sourceSize.cy,
+        SRCCOPY | CAPTUREBLT);
+    GdiFlush();
+
+    if (previousBitmap)
+        SelectObject(snapshotDc, previousBitmap);
+    if (captured)
+    {
+        DWORD processId = 0;
+        GetWindowThreadProcessId(
+            window, &processId);
+        snapshot.processId = processId;
+        snapshot.pixelSize = pixelSize;
+        snapshot.sourceRect = sourceRect;
+        snapshot.lastUsedTick =
+            GetTickCount64();
+        const auto* firstPixel =
+            static_cast<const std::uint32_t*>(
+                bitmapBits);
+        snapshot.pixels.assign(
+            firstPixel,
+            firstPixel +
+                static_cast<std::size_t>(
+                    pixelSize.cx) *
+                static_cast<std::size_t>(
+                    pixelSize.cy));
+    }
+
+    DeleteObject(bitmap);
+    DeleteDC(snapshotDc);
+    ReleaseDC(nullptr, screenDc);
+    return captured != FALSE &&
+        !snapshot.pixels.empty();
+}
+
+void DockWindowTransition::PurgeSnapshotCache()
+{
+    for (auto iterator = snapshotCache_.begin();
+         iterator != snapshotCache_.end();)
+    {
+        DWORD processId = 0;
+        if (!IsWindow(iterator->first))
+        {
+            lastVisibleRects_.erase(iterator->first);
+            iterator = snapshotCache_.erase(iterator);
+            continue;
+        }
+        GetWindowThreadProcessId(
+            iterator->first, &processId);
+        if (!processId ||
+            processId != iterator->second.processId)
+        {
+            lastVisibleRects_.erase(iterator->first);
+            iterator = snapshotCache_.erase(iterator);
+            continue;
+        }
+        ++iterator;
+    }
+}
+
+const DockWindowTransition::CachedSnapshot*
+DockWindowTransition::PrepareSnapshot(
+    HWND window, const RECT& sourceRect,
+    DockWindowTransitionDirection direction)
+{
+    PurgeSnapshotCache();
+    if (direction ==
+        DockWindowTransitionDirection::Minimize)
+    {
+        CachedSnapshot captured;
+        if (!CaptureSnapshot(
+                window, sourceRect, captured))
+            return nullptr;
+
+        std::size_t cachedBytes = 0;
+        for (const auto& [cachedWindow, entry] :
+             snapshotCache_)
+        {
+            if (cachedWindow != window)
+                cachedBytes +=
+                    entry.pixels.size() *
+                    sizeof(std::uint32_t);
+        }
+        const std::size_t capturedBytes =
+            captured.pixels.size() *
+            sizeof(std::uint32_t);
+        while (!snapshotCache_.empty() &&
+            ((!snapshotCache_.contains(window) &&
+              snapshotCache_.size() >=
+                  kMaximumCachedSnapshots) ||
+             cachedBytes + capturedBytes >
+                 kMaximumCachedSnapshotBytes))
+        {
+            auto oldest =
+                snapshotCache_.end();
+            for (auto iterator =
+                     snapshotCache_.begin();
+                 iterator !=
+                     snapshotCache_.end();
+                 ++iterator)
+            {
+                if (iterator->first == window)
+                    continue;
+                if (oldest ==
+                        snapshotCache_.end() ||
+                    iterator->second.
+                            lastUsedTick <
+                        oldest->second.
+                            lastUsedTick)
+                    oldest = iterator;
+            }
+            if (oldest == snapshotCache_.end())
+                break;
+            cachedBytes -=
+                oldest->second.pixels.size() *
+                sizeof(std::uint32_t);
+            lastVisibleRects_.erase(
+                oldest->first);
+            snapshotCache_.erase(oldest);
+        }
+        auto [iterator, inserted] =
+            snapshotCache_.insert_or_assign(
+                window, std::move(captured));
+        (void)inserted;
+        return &iterator->second;
+    }
+
+    const auto cached =
+        snapshotCache_.find(window);
+    if (cached == snapshotCache_.end() ||
+        cached->second.pixels.empty())
+        return nullptr;
+    cached->second.lastUsedTick =
+        GetTickCount64();
+    return &cached->second;
+}
+
+bool DockWindowTransition::EnsureSnapshotRenderer()
+{
+    if (!hwnd_ || !IsWindow(hwnd_))
+        return false;
+    if (!d2dFactory_)
+    {
+        if (FAILED(D2D1CreateFactory(
+                D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                d2dFactory_.ReleaseAndGetAddressOf())))
+            return false;
+    }
+    if (snapshotRenderTarget_)
+        return true;
+
+    const D2D1_RENDER_TARGET_PROPERTIES
+        renderProperties =
+            D2D1::RenderTargetProperties(
+                D2D1_RENDER_TARGET_TYPE_HARDWARE,
+                D2D1::PixelFormat(
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    D2D1_ALPHA_MODE_IGNORE));
+    const D2D1_HWND_RENDER_TARGET_PROPERTIES
+        windowProperties =
+            D2D1::HwndRenderTargetProperties(
+                hwnd_, D2D1::SizeU(1, 1),
+                D2D1_PRESENT_OPTIONS_IMMEDIATELY);
+    HRESULT result =
+        d2dFactory_->CreateHwndRenderTarget(
+            renderProperties,
+            windowProperties,
+            snapshotRenderTarget_.
+                ReleaseAndGetAddressOf());
+    if (FAILED(result))
+    {
+        const auto fallbackProperties =
+            D2D1::RenderTargetProperties(
+                D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                D2D1::PixelFormat(
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    D2D1_ALPHA_MODE_IGNORE));
+        result =
+            d2dFactory_->CreateHwndRenderTarget(
+                fallbackProperties,
+                windowProperties,
+                snapshotRenderTarget_.
+                    ReleaseAndGetAddressOf());
+    }
+    if (SUCCEEDED(result) &&
+        snapshotRenderTarget_)
+    {
+        snapshotRenderTarget_->SetDpi(
+            kDockWindowSnapshotRenderDpi,
+            kDockWindowSnapshotRenderDpi);
+        return true;
+    }
+    return false;
+}
+
+bool DockWindowTransition::CreateActiveSnapshotBitmap(
+    const CachedSnapshot& snapshot)
+{
+    activeSnapshotBitmap_.Reset();
+    if (!snapshotRenderTarget_ ||
+        snapshot.pixelSize.cx <= 0 ||
+        snapshot.pixelSize.cy <= 0 ||
+        snapshot.pixels.empty())
+        return false;
+
+    const D2D1_BITMAP_PROPERTIES properties =
+        D2D1::BitmapProperties(
+            D2D1::PixelFormat(
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                D2D1_ALPHA_MODE_IGNORE),
+            kDockWindowSnapshotRenderDpi,
+            kDockWindowSnapshotRenderDpi);
+    return SUCCEEDED(
+        snapshotRenderTarget_->CreateBitmap(
+            D2D1::SizeU(
+                static_cast<UINT32>(
+                    snapshot.pixelSize.cx),
+                static_cast<UINT32>(
+                    snapshot.pixelSize.cy)),
+            snapshot.pixels.data(),
+            static_cast<UINT32>(
+                snapshot.pixelSize.cx *
+                sizeof(std::uint32_t)),
+            properties,
+            activeSnapshotBitmap_.
+                ReleaseAndGetAddressOf())) &&
+        activeSnapshotBitmap_;
+}
+
+bool DockWindowTransition::DrawSnapshotFrame(
+    const RECT& destinationRect)
+{
+    if (!snapshotRenderTarget_ ||
+        !activeSnapshotBitmap_ ||
+        !hwnd_ || !IsWindow(hwnd_))
+        return false;
+    RECT client{};
+    if (!GetClientRect(hwnd_, &client))
+        return false;
+    const UINT32 width = static_cast<UINT32>(
+        std::max(1L, client.right - client.left));
+    const UINT32 height = static_cast<UINT32>(
+        std::max(1L, client.bottom - client.top));
+    const D2D1_SIZE_U currentSize =
+        snapshotRenderTarget_->GetPixelSize();
+    if ((currentSize.width != width ||
+            currentSize.height != height) &&
+        FAILED(snapshotRenderTarget_->Resize(
+            D2D1::SizeU(width, height))))
+        return false;
+
+    snapshotRenderTarget_->BeginDraw();
+    snapshotRenderTarget_->SetTransform(
+        D2D1::Matrix3x2F::Identity());
+    snapshotRenderTarget_->DrawBitmap(
+        activeSnapshotBitmap_.Get(),
+        D2D1::RectF(
+            static_cast<float>(
+                destinationRect.left),
+            static_cast<float>(
+                destinationRect.top),
+            static_cast<float>(
+                destinationRect.right),
+            static_cast<float>(
+                destinationRect.bottom)),
+        1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    const HRESULT result =
+        snapshotRenderTarget_->EndDraw();
+    ValidateRect(hwnd_, nullptr);
+    if (result == D2DERR_RECREATE_TARGET)
+    {
+        activeSnapshotBitmap_.Reset();
+        snapshotRenderTarget_.Reset();
+    }
+    return SUCCEEDED(result);
+}
+
 bool DockWindowTransition::ApplyFrame(double progress)
 {
-    if (!hwnd_ || !thumbnail_)
+    if (!hwnd_ ||
+        surface_ ==
+            DockWindowTransitionSurface::None)
         return false;
 
     const RECT frame = InterpolateDockWindowTransitionRect(
@@ -298,32 +736,66 @@ bool DockWindowTransition::ApplyFrame(double progress)
     const bool opacityChanged =
         !hasLastFrame_ ||
         frameOpacity != lastFrameOpacity_;
-    if (!geometryChanged && !opacityChanged)
+    if (!geometryChanged &&
+        (surface_ ==
+                DockWindowTransitionSurface::Snapshot ||
+            !opacityChanged))
         return true;
 
-    if (geometryChanged)
+    if (surface_ ==
+        DockWindowTransitionSurface::Snapshot)
     {
-        SetWindowPos(
-            hwnd_, nullptr,
-            frame.left, frame.top, width, height,
-            SWP_NOACTIVATE | SWP_NOOWNERZORDER |
-                SWP_NOZORDER | SWP_NOSENDCHANGING |
-                SWP_NOCOPYBITS);
+        RECT localFrame = frame;
+        OffsetRect(
+            &localFrame,
+            -snapshotHostRect_.left,
+            -snapshotHostRect_.top);
+        HRGN visibleRegion = CreateRectRgn(
+            localFrame.left, localFrame.top,
+            localFrame.right, localFrame.bottom);
+        if (!visibleRegion)
+            return false;
+        if (!SetWindowRgn(
+                hwnd_, visibleRegion, FALSE))
+        {
+            DeleteObject(visibleRegion);
+            return false;
+        }
+        if (!DrawSnapshotFrame(localFrame))
+            return false;
     }
-
-    DWM_THUMBNAIL_PROPERTIES properties{};
-    properties.dwFlags =
-        DWM_TNP_RECTDESTINATION |
-        DWM_TNP_VISIBLE |
-        DWM_TNP_OPACITY |
-        DWM_TNP_SOURCECLIENTAREAONLY;
-    properties.rcDestination = { 0, 0, width, height };
-    properties.opacity = frameOpacity;
-    properties.fVisible = TRUE;
-    properties.fSourceClientAreaOnly = FALSE;
-    if (FAILED(DwmUpdateThumbnailProperties(
-            thumbnail_, &properties)))
-        return false;
+    else
+    {
+        if (!thumbnail_)
+            return false;
+        if (geometryChanged)
+        {
+            SetWindowPos(
+                hwnd_, nullptr,
+                frame.left, frame.top,
+                width, height,
+                SWP_NOACTIVATE |
+                    SWP_NOOWNERZORDER |
+                    SWP_NOZORDER |
+                    SWP_NOSENDCHANGING |
+                    SWP_NOCOPYBITS);
+        }
+        DWM_THUMBNAIL_PROPERTIES properties{};
+        properties.dwFlags =
+            DWM_TNP_RECTDESTINATION |
+            DWM_TNP_VISIBLE |
+            DWM_TNP_OPACITY |
+            DWM_TNP_SOURCECLIENTAREAONLY;
+        properties.rcDestination =
+            { 0, 0, width, height };
+        properties.opacity = frameOpacity;
+        properties.fVisible = TRUE;
+        properties.fSourceClientAreaOnly =
+            FALSE;
+        if (FAILED(DwmUpdateThumbnailProperties(
+                thumbnail_, &properties)))
+            return false;
+    }
     lastFrameRect_ = frame;
     lastFrameOpacity_ = frameOpacity;
     hasLastFrame_ = true;
@@ -353,6 +825,7 @@ void DockWindowTransition::OnTimer()
             static_cast<double>(kAnimationDurationMs));
     if (!ApplyFrame(progress))
     {
+        CompleteRestoreAfterRenderFailure();
         Finish();
         return;
     }
@@ -371,6 +844,20 @@ void DockWindowTransition::OnTimer()
         return;
     }
     Finish();
+}
+
+void DockWindowTransition::
+CompleteRestoreAfterRenderFailure()
+{
+    if (direction_ !=
+            DockWindowTransitionDirection::Restore ||
+        !restoreCallback_ ||
+        !sourceWindow_ ||
+        !IsWindow(sourceWindow_))
+        return;
+    RestoreCallback callback =
+        std::move(restoreCallback_);
+    callback(sourceWindow_);
 }
 
 void DockWindowTransition::SetNativeTransitionsDisabled(
@@ -398,15 +885,30 @@ void DockWindowTransition::UnregisterThumbnail()
 
 void DockWindowTransition::Finish()
 {
-    if (hwnd_)
+    HWND transitionWindow = hwnd_;
+    if (transitionWindow)
     {
-        KillTimer(hwnd_, kAnimationTimerId);
-        ShowWindow(hwnd_, SW_HIDE);
+        KillTimer(
+            transitionWindow,
+            kAnimationTimerId);
+        ShowWindow(
+            transitionWindow, SW_HIDE);
     }
     UnregisterThumbnail();
+    activeSnapshotBitmap_.Reset();
+    snapshotRenderTarget_.Reset();
     if (nativeTransitionsDisabled_)
+    {
+        // Keep native transitions disabled until DWM has committed the
+        // real minimized/restored state. Re-enabling too early lets the
+        // system animation trail the snapshot as a dark second window.
+        DwmFlush();
         SetNativeTransitionsDisabled(false);
+    }
     sourceWindow_ = nullptr;
+    surface_ =
+        DockWindowTransitionSurface::None;
+    snapshotHostRect_ = {};
     lastFrameRect_ = {};
     lastFrameOpacity_ = 0;
     hasLastFrame_ = false;
@@ -414,6 +916,11 @@ void DockWindowTransition::Finish()
     restoreCleanupDeadline_ = 0;
     awaitingRestoreVisibility_ = false;
     restoreCallback_ = {};
+    if (transitionWindow &&
+        IsWindow(transitionWindow))
+        DestroyWindow(transitionWindow);
+    if (hwnd_ == transitionWindow)
+        hwnd_ = nullptr;
 }
 
 void DockWindowTransition::Cancel()
@@ -424,7 +931,8 @@ void DockWindowTransition::Cancel()
 bool DockWindowTransition::IsActive() const
 {
     return sourceWindow_ != nullptr &&
-        thumbnail_ != nullptr;
+        surface_ !=
+            DockWindowTransitionSurface::None;
 }
 
 LRESULT CALLBACK DockWindowTransition::WindowProc(
@@ -463,6 +971,20 @@ LRESULT CALLBACK DockWindowTransition::WindowProc(
     {
         PAINTSTRUCT paint{};
         BeginPaint(window, &paint);
+        if (self &&
+            self->surface_ ==
+                DockWindowTransitionSurface::Snapshot &&
+            self->hasLastFrame_)
+        {
+            RECT localFrame =
+                self->lastFrameRect_;
+            OffsetRect(
+                &localFrame,
+                -self->snapshotHostRect_.left,
+                -self->snapshotHostRect_.top);
+            self->DrawSnapshotFrame(
+                localFrame);
+        }
         EndPaint(window, &paint);
         return 0;
     }

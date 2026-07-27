@@ -470,6 +470,18 @@ void TestHoverOnlyWidgetVisibility()
         visibilityRules::ShouldRenderWidget(
             true, false, false, false, false, true),
         "pointer hover reveals hover-only widget");
+    Check(
+        !visibilityRules::ShouldRetainBackdropAfterDrag(
+            true, false, false),
+        "hover-only widget backdrop must be removed as soon as drag ends");
+    Check(
+        visibilityRules::ShouldRetainBackdropAfterDrag(
+            true, true, false),
+        "an open popup must retain its hover-only widget backdrop after drag");
+    Check(
+        visibilityRules::ShouldRetainBackdropAfterDrag(
+            true, false, true),
+        "a hovered widget must retain its backdrop after drag");
 }
 }
 

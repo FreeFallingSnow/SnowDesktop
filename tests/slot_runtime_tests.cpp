@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -23,8 +24,14 @@ void Check(bool condition, const std::string& message)
 class ContractContainer final : public Container
 {
 public:
-    explicit ContractContainer(BarStyle style)
-        : style_(style)
+    explicit ContractContainer(
+        BarStyle style,
+        snowdesktop::slot_contract::
+            SlotSurfaceKind surface =
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::Collection)
+        : style_(style),
+          surface_(surface)
     {
     }
 
@@ -36,8 +43,7 @@ public:
     snowdesktop::slot_contract::SlotSurfaceKind
         GetSlotSurfaceKind() const override
     {
-        return snowdesktop::slot_contract::
-            SlotSurfaceKind::Collection;
+        return surface_;
     }
 
     std::vector<std::unique_ptr<Slot>>
@@ -104,6 +110,8 @@ public:
 
 private:
     BarStyle style_;
+    snowdesktop::slot_contract::
+        SlotSurfaceKind surface_;
 };
 
 Item* NonOwningItemToken()
@@ -250,9 +258,18 @@ void TestDragSessionRejectsInvalidatedSlots()
 {
     ContractContainer container(BarStyle::VBar);
     Slot* slot = container.GetSlots().front().get();
+    DragSourceList sourceList;
+    sourceList.origin = &container;
+    sourceList.originSurface =
+        container.GetSlotSurfaceKind();
+    sourceList.hasOriginSurface = true;
+    DragSourceEntry sourceEntry;
+    sourceEntry.item = NonOwningItemToken();
+    sourceList.entries.push_back(sourceEntry);
     DragSession session;
     session.Begin(
-        &container, {}, {},
+        &container, {NonOwningItemToken()},
+        std::move(sourceList),
         POINT{}, POINT{});
     session.UpdateTarget(
         &container, slot,
@@ -278,11 +295,125 @@ void TestDragSessionRejectsInvalidatedSlots()
         "a rebuilt slot can be rebound explicitly");
 
     session.DetachRuntimeBindings();
+    Check(session.Source() == nullptr &&
+            session.Items().empty() &&
+            session.SourceList().origin == nullptr &&
+            session.SourceList().entries.size() == 1 &&
+            session.SourceList().entries[0].item == nullptr,
+        "container tree rebuilds must detach every source binding");
+    Check(session.SourceList().
+            SourceSurfaceKind() ==
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::Collection,
+        "detaching runtime pointers must preserve stable source-surface metadata");
     Check(session.TargetContainer() == nullptr &&
             session.TargetSlot() == nullptr &&
             session.TargetRegion() ==
                 HitRegion::None,
         "container tree rebuilds must detach every target binding");
+}
+
+void TestEverySurfaceRetainsStableDragMetadata()
+{
+    using Surface =
+        snowdesktop::slot_contract::
+            SlotSurfaceKind;
+    const auto surfaceCount =
+        snowdesktop::slot_contract::
+            ToIndex(Surface::Count);
+    for (std::size_t index = 0;
+        index < surfaceCount; ++index)
+    {
+        const auto surface =
+            static_cast<Surface>(index);
+        ContractContainer source(
+            BarStyle::VBar, surface);
+        DragSourceList sourceList;
+        sourceList.origin = &source;
+        sourceList.originSurface = surface;
+        sourceList.hasOriginSurface = true;
+        DragSourceEntry entry;
+        entry.item = NonOwningItemToken();
+        sourceList.entries.push_back(entry);
+
+        DragSession session;
+        session.Begin(
+            &source, {NonOwningItemToken()},
+            std::move(sourceList),
+            POINT{}, POINT{});
+        session.DetachRuntimeBindings();
+
+        Check(
+            session.SourceList().
+                SourceSurfaceKind() == surface,
+            "every registered container surface must survive runtime-source detachment");
+    }
+
+    DragSourceList external;
+    external.hasExternalFiles = true;
+    Check(
+        external.SourceSurfaceKind() ==
+            Surface::External,
+        "external drags without a runtime container must retain the external surface fallback");
+}
+
+void TestTransientSourceReplacementRebindsBeforeDestroy()
+{
+    using Surface =
+        snowdesktop::slot_contract::
+            SlotSurfaceKind;
+    auto oldPopup =
+        std::make_unique<ContractContainer>(
+            BarStyle::VBar,
+            Surface::FolderMapping);
+    DragSourceList initial;
+    initial.origin = oldPopup.get();
+    initial.originSurface =
+        Surface::FolderMapping;
+    initial.hasOriginSurface = true;
+    DragSourceEntry initialEntry;
+    initialEntry.item = NonOwningItemToken();
+    initial.entries.push_back(initialEntry);
+
+    DragSession session;
+    session.Begin(
+        oldPopup.get(), {NonOwningItemToken()},
+        std::move(initial),
+        POINT{}, POINT{});
+
+    auto stableSnapshot =
+        std::make_unique<ContractContainer>(
+            BarStyle::VBar,
+            Surface::FolderMapping);
+    DragSourceList rebound;
+    rebound.origin = stableSnapshot.get();
+    rebound.originSurface =
+        Surface::FolderMapping;
+    rebound.hasOriginSurface = true;
+    DragSourceEntry reboundEntry;
+    reboundEntry.item = NonOwningItemToken();
+    rebound.entries.push_back(reboundEntry);
+    session.RebindSource(
+        stableSnapshot.get(),
+        {NonOwningItemToken()},
+        std::move(rebound));
+
+    oldPopup.reset();
+    Check(
+        session.Source() ==
+            stableSnapshot.get() &&
+            session.SourceList().origin ==
+                stableSnapshot.get() &&
+            session.SourceList().
+                SourceSurfaceKind() ==
+                    Surface::FolderMapping,
+        "replacing a transient popup must rebind every runtime source pointer before destruction");
+    Check(
+        session.Source() &&
+            session.Source()->
+                GetSlotSurfaceKind() ==
+                    Surface::FolderMapping,
+        "the next drag hit-test must use the stable replacement container");
 }
 
 void TestDropActionModifiers()
@@ -320,6 +451,8 @@ int main()
     TestHitRegionsUseContainerOrientation();
     TestExecuteDropDelegatesOnce();
     TestDragSessionRejectsInvalidatedSlots();
+    TestEverySurfaceRetainsStableDragMetadata();
+    TestTransientSourceReplacementRebindsBeforeDestroy();
     TestDropActionModifiers();
     if (failures != 0)
     {

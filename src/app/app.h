@@ -29,6 +29,12 @@
 #include "general_settings.h"
 #include "dock_settings.h"
 #include "dock_drop_rules.h"
+#include "dock_folder_rules.h"
+#include "dock_collection_icon_rules.h"
+#include "folder_sort_rules.h"
+#include "shell_item_visibility.h"
+#include "popup_drag_rules.h"
+#include "item_layout_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
@@ -565,6 +571,8 @@ private:
     void InvalidateDragStaticScene();
     /** @brief 结束当前拖拽会话，清理拖拽状态。 */
     void EndDragSession();
+    /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */
+    void CommitDragVisualEndBeforeShellOperation();
     /** @brief 在控件重建后重新绑定拖拽源。 */
     void RebindDragSourceAfterRebuild();
     /**
@@ -597,6 +605,8 @@ private:
     DockContainer* GetDockContainerAtPoint(POINT point) const;
     void InvalidateDockContainers();
     void InvalidateDockRects(BOOL erase = FALSE) const;
+    /** @brief 在当前指针消息结束前提交拖动帧，并同步刷新浮动 Dock。 */
+    void PresentPointerInteractionFrame();
     void ClearDockBackdropForDragTransition(
         POINT previousPointer, POINT currentPointer);
     bool CreateFloatingDockWindow();
@@ -651,6 +661,10 @@ private:
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
     std::vector<DockWindowPreviewItem> CollectDockWindowPreviewItems(
+        const DockAppIdentity& identity,
+        bool includeCloaked = false);
+    void CloseDockWindowFromPreview(HWND window);
+    void CloseDockApplicationWindows(
         const DockAppIdentity& identity);
     bool ResolveDockWindowPreviewTarget(
         POINT clientPoint, DockWindowPreviewTarget& target);
@@ -685,6 +699,11 @@ private:
         Container* origin, DockEntryItem* targetItem, int mods);
     bool IsDockExclusiveItemKey(const std::wstring& key) const;
     bool IsDockExclusiveWidgetId(const std::wstring& id) const;
+    snowdesktop::item_location::FolderTarget ResolveDockFolderTarget(
+        const DockEntry& entry) const;
+    bool IsFolderDockEntry(const DockEntry& entry) const;
+    size_t DockMainEntryCount() const;
+    size_t DockFolderEntryCount() const;
     bool IsGroupedCollection(const DesktopWidget& widget) const;
     bool IsGroupedWidget(const DesktopWidget& widget) const;
     size_t FindCollectionGroupIndexForChild(const std::wstring& childId) const;
@@ -930,6 +949,8 @@ private:
      * @return 操作是否成功
      */
     bool PasteClipboardToFolderMapping(size_t widgetIndex);
+    bool PasteClipboardToFolderPath(
+        const std::wstring& targetFolderPath);
     /** @brief 根据方向键在桌面网格上进行 2D 空间导航。 @param arrowKey 方向键的虚拟键码 */
     void NavigateDesktopGrid(WPARAM arrowKey);
     /** @brief 在组件内部导航成员项。 @param arrowKey 方向键的虚拟键码 */
@@ -1036,6 +1057,9 @@ private:
     void ShowBackgroundContextMenu(POINT screenPoint);
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint);
+    /** @brief 显示 Dock 运行区应用上下文菜单。 */
+    void ShowDockRunningAppContextMenu(
+        POINT screenPoint, size_t runningIndex);
     /** @brief 连续显示行列调整菜单，直到用户取消。 */
     void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
@@ -1057,7 +1081,8 @@ private:
         bool keepQuickNavigationOpen = false,
         std::optional<RECT> dockRenameAnchor = std::nullopt,
         std::optional<size_t> dockMappingEntryIndex =
-            std::nullopt);
+            std::nullopt,
+        bool dockApplicationItem = false);
     /** @brief 显示外壳扩展上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引（可选，-1 表示背景） */
     void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1,
         bool keepQuickNavigationOpen = false,
@@ -1070,6 +1095,9 @@ private:
     void ShowDesktopBackgroundContextMenu(POINT screenPoint);
     /** @brief 为指定路径显示外壳扩展上下文菜单。 @param folderPath 文件夹路径 @param screenPoint 屏幕坐标 */
     void ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint);
+    void ShowShellItemContextMenuForPath(
+        const std::wstring& itemPath,
+        POINT screenPoint);
     /**
      * @brief 创建用于菜单图标的位图（包含文本渲染）。
      * @param text 图标文字
@@ -1679,13 +1707,18 @@ private:
         size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
     bool AddWidgetToFileGroup(size_t childIndex, size_t groupIndex,
         size_t insertIndex = static_cast<size_t>(-1));
+    bool MoveFolderMappingsToFileGroup(
+        const std::vector<Item*>& sourceItems,
+        size_t groupIndex, size_t insertIndex);
     bool ReleaseWidgetFromFileGroup(const std::wstring& childId,
         GridCell preferredCell);
     void ReleaseFileGroupChildren(size_t groupIndex);
     size_t HitTestFileGroupIndex(POINT point,
         size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
     /** @brief 枚举文件夹映射部件中的条目。 @param widget 部件引用 */
-    void EnumerateFolderMappingEntries(DesktopWidget& widget);
+    void EnumerateFolderMappingEntries(
+        DesktopWidget& widget,
+        bool enqueueIconLoads = true);
     /** @brief 刷新文件夹映射部件的内容。 @param widgetIndex 部件索引 */
     void RefreshFolderMappingWidget(size_t widgetIndex);
     /**
@@ -1706,6 +1739,31 @@ private:
      * @param categoryId 可选的分类 ID
      */
     void OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint, const std::wstring& categoryId = L"");
+    void OpenDockFolderPopupAt(size_t entryIndex, POINT anchorPoint);
+    bool IsDockFolderPopupOpen() const
+    {
+        return dockFolderPopupOpen_;
+    }
+    DesktopWidget* GetOpenPopupWidget();
+    const DesktopWidget* GetOpenPopupWidget() const;
+    size_t GetPopupItemCount(const DesktopWidget& widget) const;
+    std::vector<Item*>
+        GetDockFolderPopupSelectedItems();
+    /**
+     * @brief 在替换 Dock 文件夹弹窗运行时对象前保存活动拖拽来源。
+     * @return 当前拖拽来源来自该弹窗且已完成稳定重绑定或安全结束时返回 true。
+     */
+    bool PreserveDockFolderPopupDragSourceForTransition();
+    /** @brief 释放拖拽期间保存的 Dock 文件夹弹窗来源快照。 */
+    void ClearDockFolderPopupDragSourceSnapshot();
+    void RefreshDockFolderPopup();
+    void CommitDockFolderPopupOrderToMapping();
+    void SortDockFolderPopupContents(int mode, bool ascending);
+    void ShowDockFolderPopupSortMenu(POINT screenPoint);
+    void ShowDockFolderPopupContextMenu(
+        POINT screenPoint,
+        std::optional<size_t> memberIndex =
+            std::nullopt);
     /** @brief 关闭集合弹出面板。 */
     void CloseCollectionPopup();
     /**
@@ -1759,6 +1817,7 @@ private:
     bool CopyTextToClipboard(const std::wstring& text);
     /** @brief 获取集合弹出面板的矩形。 @param widget 部件引用 @return 面板矩形 */
     RECT GetCollectionPopupRect(const DesktopWidget& widget) const;
+    RECT GetDockFolderPopupSortButtonRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容区域的矩形。 @param popup 面板矩形 @return 内容矩形 */
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
@@ -1853,6 +1912,7 @@ private:
     RECT GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const;
     /** @brief 开始重命名文件夹条目。 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
     void BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex);
+    void BeginRenameDockFolderPopupEntry(size_t memberIndex);
     /** @brief 提交或取消文件夹条目重命名。 @param newName 新名称 @param cancel true 取消 */
     void CommitFolderEntryRename(const std::wstring& newName, bool cancel);
 
@@ -1943,6 +2003,16 @@ private:
     std::vector<GridPage> gridPages_;
     std::vector<DesktopWidget> widgets_;
     std::vector<DockEntry> dockEntries_;
+    // Folder classification participates in Dock layout, hit-testing and
+    // painting. Resolving a .lnk uses Shell COM and querying a system folder
+    // icon can touch the Shell namespace, so neither operation may run once
+    // per frame.
+    mutable std::unordered_map<
+        std::wstring,
+        snowdesktop::item_location::FolderTarget>
+        dockFolderTargetCache_;
+    mutable std::unordered_map<std::wstring, int>
+        dockFolderIconIndexCache_;
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
     std::unordered_map<std::wstring, DockAppIdentity> dockAppIdentityCache_;
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
@@ -2000,6 +2070,8 @@ private:
     size_t dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
     size_t dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
     DWORD dockPendingDoubleClickTick_ = 0;
+    size_t dockSuppressClickReleaseEntry_ =
+        static_cast<size_t>(-1);
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
@@ -2135,6 +2207,7 @@ private:
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
     size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    bool marqueeDockFolderPopup_ = false;
     POINT marqueeAnchorPoint_{};
     int marqueeInitialScrollOffset_ = 0;
     size_t pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
@@ -2191,6 +2264,7 @@ private:
     bool externalDragActive_ = false;
     int externalDropFileCount_ = 0;
     bool externalDropHasShortcut_ = false;
+    bool externalDropFoldersOnly_ = false;
     bool dropTargetRegistered_ = false;
     /** @} */
 
@@ -2230,6 +2304,7 @@ private:
     bool renameCommitPending_ = false;
     bool renamingWidget_ = false;
     bool renamingFolderEntry_ = false;
+    bool renamingDockFolderPopupEntry_ = false;
     bool renamingQuickNavigationItem_ = false;
     size_t renameFolderWidgetIndex_ = static_cast<size_t>(-1);
     size_t renameFolderEntryIndex_ = static_cast<size_t>(-1);
@@ -2306,7 +2381,22 @@ private:
     POINT popupAnchorPoint_{};
     std::wstring popupPageId_;
     std::wstring popupCategoryId_;
-    std::unique_ptr<DesktopIcon> popupMouseDownItem_;
+    std::unique_ptr<Item> popupMouseDownItem_;
+    bool dockFolderPopupOpen_ = false;
+    bool dockFolderPopupAvailable_ = false;
+    std::wstring dockFolderPopupSourceId_;
+    std::wstring dockFolderPopupMappingWidgetId_;
+    DesktopWidget dockFolderPopupWidget_;
+    std::unique_ptr<FolderMapping> dockFolderPopupContainer_;
+    std::vector<std::unique_ptr<Item>>
+        dockFolderPopupDragItems_;
+    DesktopWidget dockFolderPopupDragSourceWidget_;
+    std::unique_ptr<FolderMapping>
+        dockFolderPopupDragSourceContainer_;
+    std::vector<std::unique_ptr<Item>>
+        dockFolderPopupDragSourceItems_;
+    std::vector<bool>
+        dockFolderPopupMarqueeInitialSelection_;
     /** @brief 悬停打开：拖拽中悬停在集合"全部"按钮上 */
     size_t popupDwellWidgetIndex_ = static_cast<size_t>(-1);
     DWORD popupDwellTick_ = 0;

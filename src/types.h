@@ -440,6 +440,10 @@ struct DesktopWidget
     bool bottomBarHover = true;
     int scrollOffset = 0;
     int tabScrollOffset = 0;
+    // Folder mappings share this order across their desktop, FileGroup and
+    // Dock-popup hosts. -1 preserves an explicitly dragged/manual order.
+    int folderSortMode = -1;
+    bool folderSortAscending = true;
     std::wstring activeCategoryId;
     std::wstring scriptPath;
     bool showOnHoverOnly = false;
@@ -459,13 +463,14 @@ enum class DockEntryType
 {
     DesktopItem,
     Collection,
+    FolderMapping,
 };
 
 /**
  * @brief 主屏 Dock 条目。
- * @details DesktopItem 使用 layoutKey，Collection 使用 widget id。
+ * @details DesktopItem 使用 layoutKey，Collection/FolderMapping 使用 widget id。
  *          DesktopItem 的 keepOnDesktop=true 表示 Ctrl“假复制”；
- *          Collection 始终是唯一实例，进入 Dock 后不会保留桌面入口。
+ *          Collection/FolderMapping 始终是唯一实例，进入 Dock 后不会保留桌面入口。
  */
 struct DockEntry
 {

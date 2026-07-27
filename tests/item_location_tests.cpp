@@ -90,6 +90,15 @@ int wmain()
 
     const std::wstring targetPath = JoinPath(directory, L"target.txt");
     const std::wstring shortcutPath = JoinPath(directory, L"target.lnk");
+    const std::wstring targetDirectory =
+        JoinPath(directory, L"folder-target");
+    const std::wstring folderShortcutPath =
+        JoinPath(directory, L"folder-target.lnk");
+    const std::wstring missingFolderShortcutPath =
+        JoinPath(directory, L"missing-folder.lnk");
+    const std::wstring missingDirectory =
+        JoinPath(directory, L"missing-folder");
+    CreateDirectoryW(targetDirectory.c_str(), nullptr);
     FILE* targetFile = nullptr;
     _wfopen_s(&targetFile, targetPath.c_str(), L"wb");
     Expect(targetFile != nullptr, "target file is created");
@@ -101,6 +110,12 @@ int wmain()
 
     Expect(CreateShortcut(shortcutPath, targetPath),
         "test shortcut is created");
+    Expect(CreateShortcut(
+        folderShortcutPath, targetDirectory),
+        "folder shortcut is created");
+    Expect(CreateShortcut(
+        missingFolderShortcutPath, missingDirectory),
+        "unavailable folder shortcut is created");
     Expect(SamePath(
         snowdesktop::item_location::ResolveRevealPath(targetPath),
         targetPath),
@@ -121,8 +136,53 @@ int wmain()
     Expect(!snowdesktop::item_location::CanReveal(missingPath),
         "missing item cannot be revealed");
 
+    using snowdesktop::item_location::FolderTargetKind;
+    const auto directFolder =
+        snowdesktop::item_location::ResolveFolderTarget(
+            targetDirectory);
+    Expect(directFolder.available &&
+        directFolder.kind == FolderTargetKind::Directory &&
+        SamePath(directFolder.path, targetDirectory),
+        "real directory resolves as an available directory");
+
+    const auto shortcutFolder =
+        snowdesktop::item_location::ResolveFolderTarget(
+            folderShortcutPath);
+    Expect(shortcutFolder.available &&
+        shortcutFolder.kind == FolderTargetKind::Shortcut &&
+        SamePath(shortcutFolder.path, targetDirectory),
+        "folder shortcut resolves to its file-system directory");
+
+    const auto fileShortcut =
+        snowdesktop::item_location::ResolveFolderTarget(
+            shortcutPath);
+    Expect(fileShortcut.kind == FolderTargetKind::None,
+        "file shortcut is not classified as a folder target");
+
+    const auto unavailableShortcut =
+        snowdesktop::item_location::ResolveFolderTarget(
+            missingFolderShortcutPath);
+    Expect(!unavailableShortcut.available &&
+        unavailableShortcut.kind ==
+            FolderTargetKind::Shortcut &&
+        SamePath(
+            unavailableShortcut.path,
+            missingDirectory),
+        "unavailable folder shortcut retains a disabled target");
+
+    const auto unavailableFolder =
+        snowdesktop::item_location::ResolveFolderTarget(
+            missingDirectory);
+    Expect(!unavailableFolder.available &&
+        unavailableFolder.kind ==
+            FolderTargetKind::None,
+        "unavailable direct paths are not guessed to be folders");
+
+    DeleteFileW(folderShortcutPath.c_str());
+    DeleteFileW(missingFolderShortcutPath.c_str());
     DeleteFileW(shortcutPath.c_str());
     DeleteFileW(targetPath.c_str());
+    RemoveDirectoryW(targetDirectory.c_str());
     RemoveDirectoryW(directory.c_str());
     if (SUCCEEDED(comResult))
         CoUninitialize();

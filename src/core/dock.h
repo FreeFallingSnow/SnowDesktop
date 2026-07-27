@@ -118,7 +118,7 @@ public:
 
     size_t Capacity() const;
     bool HasCapacity(size_t additional) const;
-    bool ScrollByWheelDelta(int wheelDelta);
+    bool ScrollByWheelDelta(POINT pointer, int wheelDelta);
     bool IsWindowsButtonPoint(POINT pt) const;
     bool IsSearchPoint(POINT pt) const;
     DockEntryItem* EntryAtPoint(POINT pt) const;
@@ -146,8 +146,12 @@ private:
 
     bool IsVertical() const;
     bool IsEdgeAttached() const;
+    void RefreshEntryGroupCounts() const;
     size_t SortableEntryCount() const;
+    size_t FolderEntryCount() const;
+    size_t FolderEntryBegin() const;
     bool HasOnlyRecycleBinDragSource() const;
+    bool HasOnlyFolderDragSource() const;
     int ItemIconSize() const;
     int ItemPitch() const;
     int ScaledSpacing() const;
@@ -172,6 +176,8 @@ private:
             nullptr) const;
     bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
+    // Folder entries share the Dock's single scroll viewport/offset. These
+    // accessors keep the semantic group boundary explicit for hit testing.
     int GetMaxScrollOffset(const RECT& bounds) const;
     bool IsPointInScrollViewport(POINT point) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
@@ -182,5 +188,16 @@ private:
     mutable std::vector<std::unique_ptr<DockEntryItem>> entryItems_;
     mutable std::vector<std::unique_ptr<DockRunningItem>> runningItems_;
     mutable std::vector<std::unique_ptr<DockFrequentItem>> frequentItems_;
+    mutable std::uint64_t entryGroupCountGeneration_ = 0;
+    mutable size_t mainEntryCount_ = 0;
+    mutable size_t folderEntryCount_ = 0;
     mutable int scrollOffset_ = 0;
+    // Tooltip anchors are stable slot rectangles. Cache the measured chip
+    // bounds so rapid pointer scans do not create a DirectWrite layout for
+    // every individual WM_MOUSEMOVE.
+    mutable std::wstring hoveredTitleBoundsCacheText_;
+    mutable RECT hoveredTitleBoundsCacheAnchor_{};
+    mutable RECT hoveredTitleBoundsCache_{};
+    mutable int hoveredTitleBoundsCachePosition_ = -1;
+    mutable bool hoveredTitleBoundsCacheLightTheme_ = false;
 };

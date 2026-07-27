@@ -715,6 +715,7 @@ PersonalizationSettings MakeTransparentTaskbarAppearance()
 
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
 {
+    NormalizeDockSettings(settings);
     // Older configuration files do not contain this system setting. Start
     // from the current Windows state so upgrading never changes it silently.
     settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
@@ -810,6 +811,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     ReadDynamicRule(text, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
+    NormalizeDockSettings(settings);
     return true;
 }
 
@@ -836,10 +838,10 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
-    file << "  \"showRunningApps\": "
-         << (settings.showRunningApps ? "true" : "false") << ",\n";
-    file << "  \"showWindowPreviews\": "
-         << (settings.showWindowPreviews ? "true" : "false") << ",\n";
+    // Preserve the legacy keys for downgrade compatibility while migrating
+    // every saved configuration to the unconditional feature behavior.
+    file << "  \"showRunningApps\": true,\n";
+    file << "  \"showWindowPreviews\": true,\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
