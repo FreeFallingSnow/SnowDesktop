@@ -38,12 +38,90 @@ bool SystemWindowAnimationsEnabled()
     return true;
 }
 
+double MonotonicTimeMilliseconds() noexcept
+{
+    LARGE_INTEGER counter{};
+    static const double ticksPerMillisecond = [] {
+        LARGE_INTEGER frequency{};
+        if (!QueryPerformanceFrequency(&frequency) ||
+            frequency.QuadPart <= 0)
+            return 0.0;
+        return static_cast<double>(
+            frequency.QuadPart) / 1000.0;
+    }();
+    if (!QueryPerformanceCounter(&counter) ||
+        ticksPerMillisecond <= 0.0)
+    {
+        return static_cast<double>(GetTickCount64());
+    }
+    return static_cast<double>(
+        counter.QuadPart) / ticksPerMillisecond;
+}
+
+HRGN CreateDockWindowTransitionRegion(
+    const RECT& bounds, int cornerRadius)
+{
+    if (cornerRadius <= 0)
+    {
+        return CreateRectRgn(
+            bounds.left, bounds.top,
+            bounds.right, bounds.bottom);
+    }
+    const int diameter = cornerRadius * 2;
+    return CreateRoundRectRgn(
+        bounds.left, bounds.top,
+        bounds.right, bounds.bottom,
+        diameter, diameter);
+}
+
 } // namespace
 
 double EaseDockWindowTransition(double progress) noexcept
 {
     progress = std::clamp(progress, 0.0, 1.0);
     return progress * progress * (3.0 - 2.0 * progress);
+}
+
+BYTE ResolveDockWindowTransitionOpacity(
+    DockWindowTransitionDirection direction,
+    double progress) noexcept
+{
+    const double eased =
+        EaseDockWindowTransition(progress);
+    const double opacity =
+        direction ==
+            DockWindowTransitionDirection::Minimize
+        ? 255.0 * (1.0 - eased)
+        : 255.0 * eased;
+    return static_cast<BYTE>(std::clamp(
+        static_cast<int>(std::lround(opacity)),
+        0, 255));
+}
+
+int ResolveDockWindowTransitionCornerRadius(
+    const RECT& frame,
+    const RECT& dockRect) noexcept
+{
+    const int frameShortSide = std::min(
+        std::max(0L, frame.right - frame.left),
+        std::max(0L, frame.bottom - frame.top));
+    const int dockShortSide = std::min(
+        std::max(0L, dockRect.right - dockRect.left),
+        std::max(0L, dockRect.bottom - dockRect.top));
+    if (frameShortSide <= 1 ||
+        dockShortSide <= 1)
+        return 0;
+
+    // Deriving the radius from the Dock target makes the mask naturally follow
+    // the monitor DPI because Dock geometry is already expressed in physical
+    // pixels. Keep tiny targets useful and guard against malformed giant ones.
+    const int desiredRadius = std::clamp(
+        static_cast<int>(std::lround(
+            dockShortSide * 0.18)),
+        4, 48);
+    return std::min(
+        desiredRadius,
+        frameShortSide / 2);
 }
 
 RECT InterpolateDockWindowTransitionRect(
@@ -103,6 +181,9 @@ SIZE ConstrainDockWindowSnapshotSize(
 DockWindowTransition::~DockWindowTransition()
 {
     Cancel();
+    activeSnapshotBitmap_.Reset();
+    snapshotRenderTarget_.Reset();
+    d2dFactory_.Reset();
     if (hwnd_)
         DestroyWindow(hwnd_);
     hwnd_ = nullptr;
@@ -122,8 +203,12 @@ bool DockWindowTransition::Initialize(HINSTANCE instance)
     windowClass.hbrBackground = nullptr;
     windowClass.lpszClassName =
         kDockWindowTransitionClassName;
-    return RegisterClassExW(&windowClass) != 0 ||
+    const bool registered =
+        RegisterClassExW(&windowClass) != 0 ||
         GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+    if (registered && EnsureWindow())
+        EnsureSnapshotRenderer();
+    return registered;
 }
 
 bool DockWindowTransition::EnsureWindow()
@@ -182,6 +267,27 @@ bool DockWindowTransition::StartMinimize(
         {});
 }
 
+bool DockWindowTransition::PrimeMinimizeSnapshot(
+    HWND sourceWindow)
+{
+    if (IsActive() ||
+        !SystemWindowAnimationsEnabled() ||
+        !sourceWindow || !IsWindow(sourceWindow))
+        return false;
+
+    HWND root = GetAncestor(sourceWindow, GA_ROOT);
+    sourceWindow = root ? root : sourceWindow;
+    RECT windowRect{};
+    if (!ResolveVisibleWindowRect(
+            sourceWindow, windowRect))
+        return false;
+    lastVisibleRects_[sourceWindow] = windowRect;
+    return PrepareSnapshot(
+        sourceWindow, windowRect,
+        DockWindowTransitionDirection::Minimize,
+        false) != nullptr;
+}
+
 bool DockWindowTransition::StartRestore(
     HWND sourceWindow, RECT dockRect,
     RestoreCallback restoreCallback)
@@ -199,14 +305,40 @@ bool DockWindowTransition::Start(
     DockWindowTransitionDirection direction,
     RestoreCallback restoreCallback)
 {
-    Cancel();
     if (!SystemWindowAnimationsEnabled() ||
         !sourceWindow || !IsWindow(sourceWindow) ||
         !IsUsableRect(dockRect))
         return false;
 
     HWND root = GetAncestor(sourceWindow, GA_ROOT);
-    sourceWindow_ = root ? root : sourceWindow;
+    sourceWindow = root ? root : sourceWindow;
+    const auto startAction =
+        ResolveDockWindowTransitionStartAction(
+            IsActive(),
+            sourceWindow_ == sourceWindow,
+            direction_ == direction);
+    if (startAction ==
+        DockWindowTransitionStartAction::ContinueActive)
+    {
+        if (direction ==
+                DockWindowTransitionDirection::Restore &&
+            restoreCallback)
+        {
+            restoreCallback_ =
+                std::move(restoreCallback);
+        }
+        return true;
+    }
+    if (startAction ==
+        DockWindowTransitionStartAction::ReverseActive)
+    {
+        return Reverse(
+            direction,
+            std::move(restoreCallback));
+    }
+
+    Cancel();
+    sourceWindow_ = sourceWindow;
     direction_ = direction;
     restoreCallback_ = std::move(restoreCallback);
 
@@ -219,8 +351,6 @@ bool DockWindowTransition::Start(
             return false;
         }
         lastVisibleRects_[sourceWindow_] = windowRect;
-        fromRect_ = windowRect;
-        toRect_ = dockRect;
     }
     else
     {
@@ -229,14 +359,29 @@ bool DockWindowTransition::Start(
             Cancel();
             return false;
         }
-        fromRect_ = dockRect;
-        toRect_ = windowRect;
     }
+    windowRect_ = windowRect;
+    dockRect_ = dockRect;
+    fromRect_ = direction_ ==
+            DockWindowTransitionDirection::Minimize
+        ? windowRect_ : dockRect_;
+    toRect_ = direction_ ==
+            DockWindowTransitionDirection::Minimize
+        ? dockRect_ : windowRect_;
+    animationFromOpacity_ =
+        ResolveDockWindowTransitionOpacity(
+            direction_, 0.0);
+    animationToOpacity_ =
+        ResolveDockWindowTransitionOpacity(
+            direction_, 1.0);
+    animationDurationMs_ =
+        static_cast<double>(
+            kAnimationDurationMs);
 
     const CachedSnapshot* snapshot =
         PrepareSnapshot(
             sourceWindow_, windowRect,
-            direction_);
+            direction_, true);
     if (!EnsureWindow())
     {
         Cancel();
@@ -315,9 +460,10 @@ bool DockWindowTransition::Start(
         return false;
     }
 
-    animationStartTick_ = GetTickCount64();
+    animationStartTimeMs_ =
+        MonotonicTimeMilliseconds();
     awaitingRestoreVisibility_ = false;
-    restoreCleanupDeadline_ = 0;
+    restoreCleanupDeadlineMs_ = 0.0;
     if (!SetCoalescableTimer(
             hwnd_, kAnimationTimerId,
             kAnimationTimerIntervalMs, nullptr,
@@ -326,6 +472,81 @@ bool DockWindowTransition::Start(
         Cancel();
         return false;
     }
+    return true;
+}
+
+bool DockWindowTransition::Reverse(
+    DockWindowTransitionDirection direction,
+    RestoreCallback restoreCallback)
+{
+    if (!IsActive() ||
+        !hasLastFrame_ ||
+        awaitingRestoreVisibility_)
+        return false;
+
+    const RECT currentFrame = lastFrameRect_;
+    const RECT targetFrame =
+        direction ==
+            DockWindowTransitionDirection::Minimize
+        ? dockRect_ : windowRect_;
+    const auto maximumEdgeDistance =
+        [](const RECT& first,
+            const RECT& second) {
+            return std::max({
+                std::abs(
+                    static_cast<double>(
+                        first.left) -
+                    static_cast<double>(
+                        second.left)),
+                std::abs(
+                    static_cast<double>(
+                        first.top) -
+                    static_cast<double>(
+                        second.top)),
+                std::abs(
+                    static_cast<double>(
+                        first.right) -
+                    static_cast<double>(
+                        second.right)),
+                std::abs(
+                    static_cast<double>(
+                        first.bottom) -
+                    static_cast<double>(
+                        second.bottom))
+            });
+        };
+    const double fullDistance = std::max(
+        1.0,
+        maximumEdgeDistance(
+            windowRect_, dockRect_));
+    const double remainingRatio = std::clamp(
+        maximumEdgeDistance(
+            currentFrame, targetFrame) /
+            fullDistance,
+        0.0, 1.0);
+
+    direction_ = direction;
+    fromRect_ = currentFrame;
+    toRect_ = targetFrame;
+    animationFromOpacity_ =
+        lastFrameOpacity_;
+    animationToOpacity_ =
+        ResolveDockWindowTransitionOpacity(
+            direction_, 1.0);
+    animationDurationMs_ = std::clamp(
+        static_cast<double>(
+            kAnimationDurationMs) *
+            remainingRatio,
+        static_cast<double>(
+            kMinimumReverseDurationMs),
+        static_cast<double>(
+            kAnimationDurationMs));
+    restoreCallback_ =
+        std::move(restoreCallback);
+    animationStartTimeMs_ =
+        MonotonicTimeMilliseconds();
+    restoreCleanupDeadlineMs_ = 0.0;
+    awaitingRestoreVisibility_ = false;
     return true;
 }
 
@@ -447,8 +668,10 @@ bool DockWindowTransition::CaptureSnapshot(
         snapshot.processId = processId;
         snapshot.pixelSize = pixelSize;
         snapshot.sourceRect = sourceRect;
-        snapshot.lastUsedTick =
+        snapshot.capturedTick =
             GetTickCount64();
+        snapshot.lastUsedTick =
+            snapshot.capturedTick;
         const auto* firstPixel =
             static_cast<const std::uint32_t*>(
                 bitmapBits);
@@ -496,12 +719,30 @@ void DockWindowTransition::PurgeSnapshotCache()
 const DockWindowTransition::CachedSnapshot*
 DockWindowTransition::PrepareSnapshot(
     HWND window, const RECT& sourceRect,
-    DockWindowTransitionDirection direction)
+    DockWindowTransitionDirection direction,
+    bool allowFreshMinimizeSnapshot)
 {
     PurgeSnapshotCache();
     if (direction ==
         DockWindowTransitionDirection::Minimize)
     {
+        const ULONGLONG now = GetTickCount64();
+        const auto primed =
+            snapshotCache_.find(window);
+        if (allowFreshMinimizeSnapshot &&
+            primed != snapshotCache_.end() &&
+            !primed->second.pixels.empty() &&
+            EqualRect(
+                &primed->second.sourceRect,
+                &sourceRect) != FALSE &&
+            now >= primed->second.capturedTick &&
+            now - primed->second.capturedTick <=
+                kPrimedSnapshotLifetimeMs)
+        {
+            primed->second.lastUsedTick = now;
+            return &primed->second;
+        }
+
         CachedSnapshot captured;
         if (!CaptureSnapshot(
                 window, sourceRect, captured))
@@ -595,7 +836,7 @@ bool DockWindowTransition::EnsureSnapshotRenderer()
         windowProperties =
             D2D1::HwndRenderTargetProperties(
                 hwnd_, D2D1::SizeU(1, 1),
-                D2D1_PRESENT_OPTIONS_IMMEDIATELY);
+                kDockWindowSnapshotPresentOptions);
     HRESULT result =
         d2dFactory_->CreateHwndRenderTarget(
             renderProperties,
@@ -723,46 +964,60 @@ bool DockWindowTransition::ApplyFrame(double progress)
     const int width = std::max(1L, frame.right - frame.left);
     const int height =
         std::max(1L, frame.bottom - frame.top);
-    const double eased = EaseDockWindowTransition(progress);
-    const double opacity =
-        direction_ == DockWindowTransitionDirection::Minimize
-            ? 255.0 * (1.0 - eased)
-            : 255.0 * eased;
-    const BYTE frameOpacity = static_cast<BYTE>(std::clamp(
-        static_cast<int>(std::lround(opacity)), 0, 255));
+    const double eased =
+        EaseDockWindowTransition(progress);
+    const BYTE frameOpacity =
+        static_cast<BYTE>(std::clamp(
+            static_cast<int>(std::lround(
+                static_cast<double>(
+                    animationFromOpacity_) +
+                (static_cast<double>(
+                    animationToOpacity_) -
+                    static_cast<double>(
+                        animationFromOpacity_)) *
+                    eased)),
+            0, 255));
+    const int cornerRadius =
+        ResolveDockWindowTransitionCornerRadius(
+            frame, dockRect_);
     const bool geometryChanged =
         !hasLastFrame_ ||
         EqualRect(&frame, &lastFrameRect_) == FALSE;
     const bool opacityChanged =
         !hasLastFrame_ ||
         frameOpacity != lastFrameOpacity_;
-    if (!geometryChanged &&
-        (surface_ ==
-                DockWindowTransitionSurface::Snapshot ||
-            !opacityChanged))
+    if (!geometryChanged && !opacityChanged)
         return true;
 
     if (surface_ ==
         DockWindowTransitionSurface::Snapshot)
     {
-        RECT localFrame = frame;
-        OffsetRect(
-            &localFrame,
-            -snapshotHostRect_.left,
-            -snapshotHostRect_.top);
-        HRGN visibleRegion = CreateRectRgn(
-            localFrame.left, localFrame.top,
-            localFrame.right, localFrame.bottom);
-        if (!visibleRegion)
+        if (opacityChanged &&
+            !SetLayeredWindowAttributes(
+                hwnd_, 0, frameOpacity,
+                LWA_ALPHA))
             return false;
-        if (!SetWindowRgn(
-                hwnd_, visibleRegion, FALSE))
+        if (geometryChanged)
         {
-            DeleteObject(visibleRegion);
-            return false;
+            RECT localFrame = frame;
+            OffsetRect(
+                &localFrame,
+                -snapshotHostRect_.left,
+                -snapshotHostRect_.top);
+            HRGN visibleRegion =
+                CreateDockWindowTransitionRegion(
+                    localFrame, cornerRadius);
+            if (!visibleRegion)
+                return false;
+            if (!SetWindowRgn(
+                    hwnd_, visibleRegion, FALSE))
+            {
+                DeleteObject(visibleRegion);
+                return false;
+            }
+            if (!DrawSnapshotFrame(localFrame))
+                return false;
         }
-        if (!DrawSnapshotFrame(localFrame))
-            return false;
     }
     else
     {
@@ -779,6 +1034,20 @@ bool DockWindowTransition::ApplyFrame(double progress)
                     SWP_NOZORDER |
                     SWP_NOSENDCHANGING |
                     SWP_NOCOPYBITS);
+            const RECT localFrame{
+                0, 0, width, height
+            };
+            HRGN visibleRegion =
+                CreateDockWindowTransitionRegion(
+                    localFrame, cornerRadius);
+            if (!visibleRegion)
+                return false;
+            if (!SetWindowRgn(
+                    hwnd_, visibleRegion, FALSE))
+            {
+                DeleteObject(visibleRegion);
+                return false;
+            }
         }
         DWM_THUMBNAIL_PROPERTIES properties{};
         properties.dwFlags =
@@ -810,19 +1079,20 @@ void DockWindowTransition::OnTimer()
         return;
     }
 
-    const ULONGLONG now = GetTickCount64();
+    const double now =
+        MonotonicTimeMilliseconds();
     if (awaitingRestoreVisibility_)
     {
         if (!IsIconic(sourceWindow_) ||
-            now >= restoreCleanupDeadline_)
+            now >= restoreCleanupDeadlineMs_)
             Finish();
         return;
     }
 
     const double progress = std::min(
         1.0,
-        static_cast<double>(now - animationStartTick_) /
-            static_cast<double>(kAnimationDurationMs));
+        (now - animationStartTimeMs_) /
+            std::max(1.0, animationDurationMs_));
     if (!ApplyFrame(progress))
     {
         CompleteRestoreAfterRenderFailure();
@@ -839,8 +1109,9 @@ void DockWindowTransition::OnTimer()
             std::move(restoreCallback_);
         callback(sourceWindow_);
         awaitingRestoreVisibility_ = true;
-        restoreCleanupDeadline_ =
-            now + kRestoreCleanupTimeoutMs;
+        restoreCleanupDeadlineMs_ =
+            now + static_cast<double>(
+                kRestoreCleanupTimeoutMs);
         return;
     }
     Finish();
@@ -893,10 +1164,14 @@ void DockWindowTransition::Finish()
             kAnimationTimerId);
         ShowWindow(
             transitionWindow, SW_HIDE);
+        SetWindowRgn(
+            transitionWindow, nullptr, FALSE);
+        SetLayeredWindowAttributes(
+            transitionWindow, 0, 255,
+            LWA_ALPHA);
     }
     UnregisterThumbnail();
     activeSnapshotBitmap_.Reset();
-    snapshotRenderTarget_.Reset();
     if (nativeTransitionsDisabled_)
     {
         // Keep native transitions disabled until DWM has committed the
@@ -908,19 +1183,23 @@ void DockWindowTransition::Finish()
     sourceWindow_ = nullptr;
     surface_ =
         DockWindowTransitionSurface::None;
+    fromRect_ = {};
+    toRect_ = {};
+    windowRect_ = {};
+    dockRect_ = {};
     snapshotHostRect_ = {};
     lastFrameRect_ = {};
     lastFrameOpacity_ = 0;
     hasLastFrame_ = false;
-    animationStartTick_ = 0;
-    restoreCleanupDeadline_ = 0;
+    animationStartTimeMs_ = 0.0;
+    animationDurationMs_ =
+        static_cast<double>(
+            kAnimationDurationMs);
+    restoreCleanupDeadlineMs_ = 0.0;
+    animationFromOpacity_ = 255;
+    animationToOpacity_ = 0;
     awaitingRestoreVisibility_ = false;
     restoreCallback_ = {};
-    if (transitionWindow &&
-        IsWindow(transitionWindow))
-        DestroyWindow(transitionWindow);
-    if (hwnd_ == transitionWindow)
-        hwnd_ = nullptr;
 }
 
 void DockWindowTransition::Cancel()
@@ -933,6 +1212,25 @@ bool DockWindowTransition::IsActive() const
     return sourceWindow_ != nullptr &&
         surface_ !=
             DockWindowTransitionSurface::None;
+}
+
+bool DockWindowTransition::IsActiveFor(
+    HWND window) const
+{
+    if (!IsActive() ||
+        !window ||
+        !IsWindow(window))
+        return false;
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root)
+        root = window;
+    return sourceWindow_ == root;
+}
+
+DockWindowTransitionDirection
+DockWindowTransition::GetDirection() const
+{
+    return direction_;
 }
 
 LRESULT CALLBACK DockWindowTransition::WindowProc(

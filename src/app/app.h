@@ -652,7 +652,7 @@ private:
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false);
     bool StartDockLaunchBounce(size_t itemIndex);
-    int GetDockLaunchBounceOffset(
+    float GetDockLaunchBounceOffset(
         size_t itemIndex, int iconSize) const;
     void OnDockLaunchBounceTimer();
     bool ActivateOrToggleDockItem(size_t itemIndex,
@@ -2058,12 +2058,12 @@ private:
         dockWindowTransition_;
     struct DockLaunchBounceState
     {
-        ULONGLONG startTick = 0;
+        double startTimeMs = 0.0;
         bool stopRequested = false;
+        HWND observedForeground = nullptr;
     };
     std::unordered_map<std::wstring, DockLaunchBounceState>
         dockLaunchBounces_;
-    ULONGLONG dockLaunchBounceLastWindowPollTick_ = 0;
     DockPreviewHoverController dockWindowPreviewHover_;
     std::wstring dockWindowPreviewKey_;
     RECT dockWindowPreviewAnchorScreen_{};

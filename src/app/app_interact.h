@@ -2267,6 +2267,24 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     {
         if (dock->ContainsInteractivePoint(pt))
         {
+            const auto primeDockMinimizeSnapshot =
+                [this]() {
+                    if (floatingDockVisible_ ||
+                        dockPressedWindowAction_ !=
+                            snowdesktop::dock_window_rules::
+                                DockClickAction::Minimize ||
+                        !dockPressedTargetWindow_ ||
+                        !dockWindowTransition_)
+                        return;
+
+                    // Paint the pressed state before snapshot capture blocks
+                    // this UI thread, then overlap capture with the natural
+                    // button-down/button-up interval.
+                    UpdateWindow(hwnd_);
+                    dockWindowTransition_->
+                        PrimeMinimizeSnapshot(
+                            dockPressedTargetWindow_);
+                };
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;
@@ -2316,6 +2334,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = dockItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                primeDockMinimizeSnapshot();
                 return;
             }
             if (DockRunningItem* runningItem = dock->RunningItemAtPoint(pt))
@@ -2344,6 +2363,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = runningItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                primeDockMinimizeSnapshot();
                 return;
             }
             if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
@@ -2373,6 +2393,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = frequentItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                primeDockMinimizeSnapshot();
                 return;
             }
             if (!ctrl) ClearSelection();

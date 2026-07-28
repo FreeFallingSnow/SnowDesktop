@@ -8,7 +8,10 @@
 namespace snowdesktop::dock_launch_animation
 {
 
-constexpr UINT kFrameIntervalMs = 16;
+// Request frames faster than a 60 Hz refresh cycle. The animation is driven by
+// the performance counter, so coalesced/skipped frames advance to the correct
+// position instead of slowing the bounce down.
+constexpr UINT kFrameIntervalMs = 8;
 constexpr ULONGLONG kBouncePeriodMs = 340;
 constexpr ULONGLONG kMinimumDurationMs = kBouncePeriodMs * 2;
 constexpr ULONGLONG kMaximumDurationMs = kBouncePeriodMs * 5;
@@ -32,32 +35,59 @@ inline bool SystemAnimationsEnabled() noexcept
     return true;
 }
 
-inline double NormalizedOffset(ULONGLONG elapsedMs) noexcept
+inline double MonotonicTimeMilliseconds() noexcept
 {
-    if (elapsedMs >= kMaximumDurationMs)
-        return 0.0;
-
-    const ULONGLONG cycle = elapsedMs / kBouncePeriodMs;
-    const double phase = static_cast<double>(
-        elapsedMs % kBouncePeriodMs) /
-        static_cast<double>(kBouncePeriodMs);
-    constexpr double pi = 3.14159265358979323846;
-    return std::sin(pi * phase) *
-        std::pow(kCycleDamping, static_cast<double>(cycle));
+    LARGE_INTEGER counter{};
+    static const double ticksPerMillisecond = [] {
+        LARGE_INTEGER frequency{};
+        if (!QueryPerformanceFrequency(&frequency) ||
+            frequency.QuadPart <= 0)
+            return 0.0;
+        return static_cast<double>(
+            frequency.QuadPart) / 1000.0;
+    }();
+    if (!QueryPerformanceCounter(&counter) ||
+        ticksPerMillisecond <= 0.0)
+    {
+        return static_cast<double>(GetTickCount64());
+    }
+    return static_cast<double>(
+        counter.QuadPart) / ticksPerMillisecond;
 }
 
-inline int OffsetPixels(
-    ULONGLONG elapsedMs, int iconSize) noexcept
+inline double NormalizedOffset(double elapsedMs) noexcept
+{
+    if (elapsedMs < 0.0 ||
+        elapsedMs >= static_cast<double>(kMaximumDurationMs))
+        return 0.0;
+
+    const double period =
+        static_cast<double>(kBouncePeriodMs);
+    const double cycle = std::floor(elapsedMs / period);
+    const double phase =
+        (elapsedMs - cycle * period) / period;
+    constexpr double pi = 3.14159265358979323846;
+    const double arc = std::sin(pi * phase);
+    // Squaring the arc gives every take-off and landing zero velocity. This
+    // removes the visible direction snap at cycle boundaries while retaining
+    // the familiar damped bounce silhouette.
+    return arc * arc *
+        std::pow(kCycleDamping, cycle);
+}
+
+inline float OffsetPixels(
+    double elapsedMs, int iconSize) noexcept
 {
     const double amplitude =
         std::max(6.0, static_cast<double>(iconSize) * 0.38);
-    return std::max(0, static_cast<int>(std::lround(
-        amplitude * NormalizedOffset(elapsedMs))));
+    return static_cast<float>(std::max(
+        0.0, amplitude * NormalizedOffset(elapsedMs)));
 }
 
-inline bool IsRestingPoint(ULONGLONG elapsedMs) noexcept
+inline bool IsRestingPoint(double elapsedMs) noexcept
 {
-    if (elapsedMs < kMinimumDurationMs)
+    if (elapsedMs <
+        static_cast<double>(kMinimumDurationMs))
         return false;
     return NormalizedOffset(elapsedMs) <= 0.035;
 }

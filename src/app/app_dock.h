@@ -1721,12 +1721,16 @@ inline bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
         return false;
 
     dockLaunchBounces_[key] = {
-        GetTickCount64(), false
+        snowdesktop::dock_launch_animation::
+            MonotonicTimeMilliseconds(),
+        false,
+        nullptr
     };
-    if (!SetTimer(
+    if (!SetCoalescableTimer(
             hwnd_, kDockLaunchBounceTimerId,
             snowdesktop::dock_launch_animation::
-                kFrameIntervalMs, nullptr))
+                kFrameIntervalMs, nullptr,
+            TIMERV_NO_COALESCING))
     {
         dockLaunchBounces_.erase(key);
         return false;
@@ -1735,18 +1739,20 @@ inline bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
     return true;
 }
 
-inline int DesktopApp::GetDockLaunchBounceOffset(
+inline float DesktopApp::GetDockLaunchBounceOffset(
     size_t itemIndex, int iconSize) const
 {
     if (itemIndex >= items_.size())
-        return 0;
+        return 0.0f;
     const auto found = dockLaunchBounces_.find(
         DockItemWindowKey(items_[itemIndex]));
     if (found == dockLaunchBounces_.end())
-        return 0;
+        return 0.0f;
     return snowdesktop::dock_launch_animation::
         OffsetPixels(
-            GetTickCount64() - found->second.startTick,
+            snowdesktop::dock_launch_animation::
+                MonotonicTimeMilliseconds() -
+                found->second.startTimeMs,
             iconSize);
 }
 
@@ -1759,36 +1765,56 @@ inline void DesktopApp::OnDockLaunchBounceTimer()
         return;
     }
 
-    const ULONGLONG now = GetTickCount64();
-    if (now - dockLaunchBounceLastWindowPollTick_ >= 250)
-    {
-        dockLaunchBounceLastWindowPollTick_ = now;
-        RefreshDockRunningWindows(false);
-    }
+    const double now =
+        snowdesktop::dock_launch_animation::
+            MonotonicTimeMilliseconds();
 
     for (auto bounce = dockLaunchBounces_.begin();
         bounce != dockLaunchBounces_.end();)
     {
         const size_t itemIndex =
             FindItemIndexByKey(bounce->first);
-        const ULONGLONG elapsed =
-            now - bounce->second.startTick;
+        const double elapsed =
+            now - bounce->second.startTimeMs;
         if (itemIndex >= items_.size() ||
             elapsed >=
-                snowdesktop::dock_launch_animation::
-                    kMaximumDurationMs)
+                static_cast<double>(
+                    snowdesktop::dock_launch_animation::
+                        kMaximumDurationMs))
         {
             bounce = dockLaunchBounces_.erase(bounce);
             continue;
         }
 
         if (elapsed >=
-                snowdesktop::dock_launch_animation::
-                    kMinimumDurationMs &&
-            GetDockWindowVisualState(itemIndex) !=
-                DockWindowVisualState::Closed)
+                static_cast<double>(
+                    snowdesktop::dock_launch_animation::
+                        kMinimumDurationMs))
         {
-            bounce->second.stopRequested = true;
+            const bool knownRunning =
+                GetDockWindowVisualState(itemIndex) !=
+                    DockWindowVisualState::Closed;
+            HWND foreground = GetAncestor(
+                GetForegroundWindow(), GA_ROOT);
+            bool launchedWindowIsForeground = false;
+            if (!knownRunning &&
+                foreground &&
+                foreground !=
+                    bounce->second.observedForeground)
+            {
+                bounce->second.observedForeground =
+                    foreground;
+                launchedWindowIsForeground =
+                    DockWindowMatchesAppIdentity(
+                        foreground,
+                        ResolveDockAppIdentity(
+                            itemIndex));
+            }
+            if (knownRunning ||
+                launchedWindowIsForeground)
+            {
+                bounce->second.stopRequested = true;
+            }
         }
         if (bounce->second.stopRequested &&
             snowdesktop::dock_launch_animation::
@@ -1810,6 +1836,11 @@ inline bool DesktopApp::LaunchDesktopItem(
 {
     if (itemIndex >= items_.size() || items_[itemIndex].parsingName.empty())
         return false;
+    if (dockWindowTransition_ &&
+        dockWindowTransition_->IsActive())
+    {
+        dockWindowTransition_->Cancel();
+    }
     if (animateDockLaunch)
         DismissDockWindowPreviewUntilLeave();
     const bool wasClosed =
@@ -2271,9 +2302,6 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
 {
     DismissDockWindowPreviewUntilLeave();
     if (itemIndex >= items_.size()) return false;
-    const DockAppIdentity identity = ResolveDockAppIdentity(itemIndex);
-    if (identity.kind == DockAppIdentityKind::None)
-        return LaunchDesktopItem(itemIndex);
 
     using snowdesktop::dock_window_rules::DockClickAction;
     DockClickAction action =
@@ -2282,17 +2310,48 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
         return LaunchDesktopItem(itemIndex);
 
     HWND preferredWindow = nullptr;
-    if (pressedTarget && IsWindow(pressedTarget) &&
-        DockWindowMatchesAppIdentity(pressedTarget, identity))
+    if (pressedTarget && IsWindow(pressedTarget))
     {
         preferredWindow = GetAncestor(pressedTarget, GA_ROOT);
         if (!preferredWindow)
             preferredWindow = pressedTarget;
     }
+    if (!preferredWindow)
+    {
+        const DockAppIdentity identity =
+            ResolveDockAppIdentity(itemIndex);
+        if (identity.kind == DockAppIdentityKind::None)
+            return LaunchDesktopItem(itemIndex);
+    }
 
-    RefreshDockRunningWindows(false, preferredWindow);
     const std::wstring key = DockItemWindowKey(items_[itemIndex]);
     auto found = dockRunningWindows_.find(key);
+    if (preferredWindow)
+    {
+        if (found == dockRunningWindows_.end())
+        {
+            found = dockRunningWindows_.emplace(
+                key, DockWindowInfo{
+                    preferredWindow,
+                    IsIconic(preferredWindow) != FALSE,
+                    true,
+                    false }).first;
+        }
+        else
+        {
+            found->second.window = preferredWindow;
+            found->second.running = true;
+        }
+    }
+    else if (found == dockRunningWindows_.end() ||
+        !IsWindow(found->second.window))
+    {
+        // Button-down already records the exact window for normal Dock
+        // clicks. Only fall back to the expensive all-window scan when that
+        // cached target is genuinely unavailable or stale.
+        RefreshDockRunningWindows(false);
+        found = dockRunningWindows_.find(key);
+    }
     if (found == dockRunningWindows_.end() || !IsWindow(found->second.window))
     {
         if (action == DockClickAction::Minimize)
@@ -2302,6 +2361,13 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
 
     HWND target = preferredWindow
         ? preferredWindow : found->second.window;
+    if (dockWindowTransition_ &&
+        dockWindowTransition_->IsActive() &&
+        !dockWindowTransition_->IsActiveFor(
+            target))
+    {
+        dockWindowTransition_->Cancel();
+    }
     found->second.window = target;
     found->second.minimized = IsIconic(target) != FALSE;
     if (action == DockClickAction::None)
@@ -2312,19 +2378,40 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
                 found->second.minimized,
                 found->second.foreground);
     }
+    const bool transitionActiveForTarget =
+        dockWindowTransition_ &&
+        dockWindowTransition_->IsActiveFor(
+            target);
+    const auto activeTransitionDirection =
+        transitionActiveForTarget
+        ? dockWindowTransition_->GetDirection()
+        : DockWindowTransitionDirection::Minimize;
+    if (transitionActiveForTarget)
+    {
+        action = activeTransitionDirection ==
+                DockWindowTransitionDirection::Minimize
+            ? DockClickAction::Restore
+            : DockClickAction::Minimize;
+    }
 
     // The action comes from the indicator under the pointer at button-down.
     // Do not infer it again from GetForegroundWindow() during button-up.
     if (action == DockClickAction::Minimize)
     {
-        if (!IsIconic(target) &&
+        const bool reverseRestore =
+            transitionActiveForTarget &&
+            activeTransitionDirection ==
+                DockWindowTransitionDirection::Restore;
+        if ((!IsIconic(target) ||
+                reverseRestore) &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
             dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen);
         }
-        if (!IsIconic(target))
+        if (!IsIconic(target) ||
+            reverseRestore)
         {
             RequestDockWindowMinimize(target);
         }
@@ -2334,8 +2421,12 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
     else
     {
         const bool minimized = IsIconic(target) != FALSE;
+        const bool reverseMinimize =
+            transitionActiveForTarget &&
+            activeTransitionDirection ==
+                DockWindowTransitionDirection::Minimize;
         if (action == DockClickAction::Restore &&
-            minimized &&
+            (minimized || reverseMinimize) &&
             dockWindowTransition_ &&
             pressedAnchorScreen &&
             dockWindowTransition_->StartRestore(
@@ -2398,6 +2489,13 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
         return false;
     HWND target = GetAncestor(requestedTarget, GA_ROOT);
     if (!target) target = requestedTarget;
+    if (dockWindowTransition_ &&
+        dockWindowTransition_->IsActive() &&
+        !dockWindowTransition_->IsActiveFor(
+            target))
+    {
+        dockWindowTransition_->Cancel();
+    }
 
     using snowdesktop::dock_window_rules::DockClickAction;
     const bool minimized = IsIconic(target) != FALSE;
@@ -2412,18 +2510,38 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
                 DockWindowsShareApplicationIdentity(
                     target, foreground));
     }
+    const bool transitionActiveForTarget =
+        dockWindowTransition_ &&
+        dockWindowTransition_->IsActiveFor(
+            target);
+    const auto activeTransitionDirection =
+        transitionActiveForTarget
+        ? dockWindowTransition_->GetDirection()
+        : DockWindowTransitionDirection::Minimize;
+    if (transitionActiveForTarget)
+    {
+        action = activeTransitionDirection ==
+                DockWindowTransitionDirection::Minimize
+            ? DockClickAction::Restore
+            : DockClickAction::Minimize;
+    }
     bool nowMinimized = false;
     bool nowForeground = false;
     if (action == DockClickAction::Minimize)
     {
-        if (!minimized &&
+        const bool reverseRestore =
+            transitionActiveForTarget &&
+            activeTransitionDirection ==
+                DockWindowTransitionDirection::Restore;
+        if ((!minimized || reverseRestore) &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
             dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen);
         }
-        if (!minimized)
+        if (!minimized ||
+            reverseRestore)
         {
             RequestDockWindowMinimize(target);
         }
@@ -2431,8 +2549,12 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
     }
     else
     {
+        const bool reverseMinimize =
+            transitionActiveForTarget &&
+            activeTransitionDirection ==
+                DockWindowTransitionDirection::Minimize;
         if (action == DockClickAction::Restore &&
-            minimized &&
+            (minimized || reverseMinimize) &&
             dockWindowTransition_ &&
             pressedAnchorScreen &&
             dockWindowTransition_->StartRestore(
@@ -3412,27 +3534,44 @@ inline void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     {
         size_t index = FindItemIndexByKey(entry.reference);
         if (index >= items_.size()) return;
-        const int launchOffset =
+        const float launchOffset =
             GetDockLaunchBounceOffset(index, iconSize);
+        float launchOffsetX = 0.0f;
+        float launchOffsetY = 0.0f;
         switch (dockSettings_.position)
         {
         case DockPosition::Top:
-            OffsetRect(&iconRect, 0, launchOffset);
+            launchOffsetY = launchOffset;
             break;
         case DockPosition::Left:
-            OffsetRect(&iconRect, launchOffset, 0);
+            launchOffsetX = launchOffset;
             break;
         case DockPosition::Right:
-            OffsetRect(&iconRect, -launchOffset, 0);
+            launchOffsetX = -launchOffset;
             break;
         case DockPosition::Bottom:
         default:
-            OffsetRect(&iconRect, 0, -launchOffset);
+            launchOffsetY = -launchOffset;
             break;
+        }
+        D2D1_MATRIX_3X2_F previousTransform{};
+        ctx->GetTransform(&previousTransform);
+        const bool launchTransformApplied =
+            std::abs(launchOffsetX) > 0.001f ||
+            std::abs(launchOffsetY) > 0.001f;
+        if (launchTransformApplied)
+        {
+            ctx->SetTransform(
+                D2D1::Matrix3x2F::Translation(
+                    launchOffsetX,
+                    launchOffsetY) *
+                previousTransform);
         }
         drawDesktopItem(items_[index], iconRect);
         if (state == 2)
             DrawDockSelectionIndicator(ctx, iconRect, lt);
+        if (launchTransformApplied)
+            ctx->SetTransform(previousTransform);
 
         const DockWindowVisualState windowState = GetDockWindowVisualState(index);
         if (windowState != DockWindowVisualState::Closed && state != 2)

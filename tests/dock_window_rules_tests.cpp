@@ -861,8 +861,45 @@ int main()
             EaseDockWindowTransition(0.75) > 0.75 &&
             EaseDockWindowTransition(0.5) == 0.5,
         "window transition easing must accelerate and decelerate smoothly");
+    Check(ResolveDockWindowTransitionOpacity(
+            DockWindowTransitionDirection::Minimize,
+            0.0) == 255 &&
+            ResolveDockWindowTransitionOpacity(
+                DockWindowTransitionDirection::Minimize,
+                1.0) == 0,
+        "minimize transition opacity must fade the snapshot into the Dock");
+    Check(ResolveDockWindowTransitionOpacity(
+            DockWindowTransitionDirection::Restore,
+            0.0) == 0 &&
+            ResolveDockWindowTransitionOpacity(
+                DockWindowTransitionDirection::Restore,
+                1.0) == 255,
+        "restore transition opacity must reveal the snapshot before handoff");
     const RECT transitionFrom{ 100, 100, 900, 700 };
     const RECT transitionTo{ 460, 1000, 540, 1080 };
+    const int transitionCornerRadius =
+        ResolveDockWindowTransitionCornerRadius(
+            transitionFrom, transitionTo);
+    Check(transitionCornerRadius > 0 &&
+            transitionCornerRadius <
+                (transitionTo.right -
+                    transitionTo.left) / 2,
+        "window transitions must retain a rounded mask sized from the Dock target");
+    const RECT highDpiDockTarget{
+        400, 900, 560, 1060
+    };
+    Check(ResolveDockWindowTransitionCornerRadius(
+            transitionFrom,
+            highDpiDockTarget) >
+            transitionCornerRadius,
+        "window transition corner rounding must scale with Dock DPI geometry");
+    const RECT tinyTransitionFrame{
+        0, 0, 10, 8
+    };
+    Check(ResolveDockWindowTransitionCornerRadius(
+            tinyTransitionFrame,
+            transitionTo) <= 4,
+        "rounded transition masks must remain valid near their smallest frame");
     const RECT transitionStart =
         InterpolateDockWindowTransitionRect(
             transitionFrom, transitionTo, 0.0);
@@ -909,6 +946,9 @@ int main()
         "small window snapshots must not be enlarged");
     Check(kDockWindowSnapshotRenderDpi == 96.0f,
         "snapshot render coordinates must remain physical pixels at every monitor DPI");
+    Check(kDockWindowSnapshotPresentOptions ==
+            D2D1_PRESENT_OPTIONS_NONE,
+        "snapshot frames must synchronize presentation to the display refresh");
     Check(kDockWindowTransitionCornerPreference ==
                 DWMWCP_DONOTROUND &&
             kDockWindowTransitionNcRenderingPolicy ==
@@ -961,6 +1001,21 @@ int main()
     Check(!RequiresDockWindowTransitionCompositionBarrier(
             DockWindowTransitionDirection::Restore),
         "snapshot restore changes the native window state only after its custom animation");
+    Check(ResolveDockWindowTransitionStartAction(
+            false, false, false) ==
+            DockWindowTransitionStartAction::StartNew &&
+            ResolveDockWindowTransitionStartAction(
+                true, false, false) ==
+                DockWindowTransitionStartAction::StartNew,
+        "inactive or different-window requests must start a new transition");
+    Check(ResolveDockWindowTransitionStartAction(
+            true, true, true) ==
+            DockWindowTransitionStartAction::ContinueActive,
+        "a repeated same-direction request must not restart its transition");
+    Check(ResolveDockWindowTransitionStartAction(
+            true, true, false) ==
+            DockWindowTransitionStartAction::ReverseActive,
+        "an opposite request for the active window must reverse in place");
 
     namespace launchAnimation =
         snowdesktop::dock_launch_animation;
@@ -977,6 +1032,20 @@ int main()
     Check(launchAnimation::OffsetPixels(
             launchAnimation::kBouncePeriodMs / 2, 64) > 0,
         "Dock launch bounce must move a visible icon");
+    const double nearTakeoff =
+        launchAnimation::NormalizedOffset(1.0);
+    const double quarterStep =
+        launchAnimation::NormalizedOffset(
+            launchAnimation::kBouncePeriodMs / 4.0 + 1.0) -
+        launchAnimation::NormalizedOffset(
+            launchAnimation::kBouncePeriodMs / 4.0);
+    Check(nearTakeoff < quarterStep,
+        "Dock launch bounce must ease smoothly away from rest");
+    Check(launchAnimation::OffsetPixels(
+            launchAnimation::kBouncePeriodMs / 7.0, 64) !=
+            std::round(launchAnimation::OffsetPixels(
+                launchAnimation::kBouncePeriodMs / 7.0, 64)),
+        "Dock launch bounce must preserve subpixel motion");
     Check(!launchAnimation::IsRestingPoint(
             launchAnimation::kBouncePeriodMs) &&
             launchAnimation::IsRestingPoint(

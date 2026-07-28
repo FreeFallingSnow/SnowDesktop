@@ -16,6 +16,26 @@ enum class DockWindowTransitionDirection
     Restore,
 };
 
+enum class DockWindowTransitionStartAction
+{
+    StartNew,
+    ContinueActive,
+    ReverseActive,
+};
+
+constexpr DockWindowTransitionStartAction
+ResolveDockWindowTransitionStartAction(
+    bool active,
+    bool sameWindow,
+    bool sameDirection) noexcept
+{
+    if (!active || !sameWindow)
+        return DockWindowTransitionStartAction::StartNew;
+    return sameDirection
+        ? DockWindowTransitionStartAction::ContinueActive
+        : DockWindowTransitionStartAction::ReverseActive;
+}
+
 constexpr bool RequiresDockWindowTransitionCompositionBarrier(
     DockWindowTransitionDirection direction) noexcept
 {
@@ -24,6 +44,12 @@ constexpr bool RequiresDockWindowTransitionCompositionBarrier(
 }
 
 double EaseDockWindowTransition(double progress) noexcept;
+BYTE ResolveDockWindowTransitionOpacity(
+    DockWindowTransitionDirection direction,
+    double progress) noexcept;
+int ResolveDockWindowTransitionCornerRadius(
+    const RECT& frame,
+    const RECT& dockRect) noexcept;
 RECT InterpolateDockWindowTransitionRect(
     const RECT& from, const RECT& to, double progress) noexcept;
 RECT ResolveDockWindowSnapshotHostRect(
@@ -32,6 +58,9 @@ RECT ResolveDockWindowSnapshotHostRect(
 inline constexpr LONG kDockWindowSnapshotMaxWidth = 4096;
 inline constexpr LONG kDockWindowSnapshotMaxHeight = 4096;
 inline constexpr FLOAT kDockWindowSnapshotRenderDpi = 96.0f;
+inline constexpr D2D1_PRESENT_OPTIONS
+    kDockWindowSnapshotPresentOptions =
+        D2D1_PRESENT_OPTIONS_NONE;
 inline constexpr DWORD kDockWindowTransitionExStyle =
     WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
     WS_EX_NOACTIVATE | WS_EX_TRANSPARENT |
@@ -88,17 +117,24 @@ public:
     DockWindowTransition& operator=(const DockWindowTransition&) = delete;
 
     bool Initialize(HINSTANCE instance);
+    bool PrimeMinimizeSnapshot(HWND sourceWindow);
     bool StartMinimize(HWND sourceWindow, RECT dockRect);
     bool StartRestore(
         HWND sourceWindow, RECT dockRect,
         RestoreCallback restoreCallback);
     void Cancel();
     bool IsActive() const;
+    bool IsActiveFor(HWND window) const;
+    DockWindowTransitionDirection GetDirection() const;
 
 private:
     static constexpr UINT_PTR kAnimationTimerId = 1;
-    static constexpr UINT kAnimationTimerIntervalMs = 16;
+    static constexpr UINT kAnimationTimerIntervalMs = 8;
     static constexpr ULONGLONG kAnimationDurationMs = 240;
+    static constexpr ULONGLONG
+        kMinimumReverseDurationMs = 80;
+    static constexpr ULONGLONG
+        kPrimedSnapshotLifetimeMs = 500;
     static constexpr ULONGLONG kRestoreCleanupTimeoutMs = 240;
     static constexpr std::size_t kMaximumCachedSnapshots = 3;
     static constexpr std::size_t
@@ -110,6 +146,7 @@ private:
         DWORD processId = 0;
         SIZE pixelSize{};
         RECT sourceRect{};
+        ULONGLONG capturedTick = 0;
         ULONGLONG lastUsedTick = 0;
         std::vector<std::uint32_t> pixels;
     };
@@ -122,6 +159,9 @@ private:
         HWND sourceWindow, RECT dockRect,
         DockWindowTransitionDirection direction,
         RestoreCallback restoreCallback);
+    bool Reverse(
+        DockWindowTransitionDirection direction,
+        RestoreCallback restoreCallback);
     bool ResolveVisibleWindowRect(HWND window, RECT& rect) const;
     bool ResolveRestoreWindowRect(HWND window, RECT& rect) const;
     bool CaptureSnapshot(
@@ -129,7 +169,8 @@ private:
         CachedSnapshot& snapshot) const;
     const CachedSnapshot* PrepareSnapshot(
         HWND window, const RECT& sourceRect,
-        DockWindowTransitionDirection direction);
+        DockWindowTransitionDirection direction,
+        bool allowFreshMinimizeSnapshot);
     void PurgeSnapshotCache();
     bool EnsureSnapshotRenderer();
     bool CreateActiveSnapshotBitmap(
@@ -158,12 +199,18 @@ private:
         DockWindowTransitionDirection::Minimize;
     RECT fromRect_{};
     RECT toRect_{};
+    RECT windowRect_{};
+    RECT dockRect_{};
     RECT snapshotHostRect_{};
     RECT lastFrameRect_{};
     BYTE lastFrameOpacity_ = 0;
     bool hasLastFrame_ = false;
-    ULONGLONG animationStartTick_ = 0;
-    ULONGLONG restoreCleanupDeadline_ = 0;
+    double animationStartTimeMs_ = 0.0;
+    double animationDurationMs_ =
+        static_cast<double>(kAnimationDurationMs);
+    double restoreCleanupDeadlineMs_ = 0.0;
+    BYTE animationFromOpacity_ = 255;
+    BYTE animationToOpacity_ = 0;
     bool awaitingRestoreVisibility_ = false;
     bool nativeTransitionsDisabled_ = false;
     RestoreCallback restoreCallback_;

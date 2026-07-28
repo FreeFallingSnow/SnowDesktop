@@ -160,7 +160,6 @@ inline void DesktopApp::ResetDesktopWindowResources()
     StopDockForegroundMonitor();
     widgetTimerIds_.clear();
     dockLaunchBounces_.clear();
-    dockLaunchBounceLastWindowPollTick_ = 0;
     nextWidgetTimerId_ = kWidgetTimerIdBase;
     dropTargetRegistered_ = false;
 
