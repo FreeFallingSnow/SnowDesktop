@@ -1,0 +1,163 @@
+#pragma once
+
+#include <algorithm>
+#include <cstdint>
+
+namespace snowdesktop::popup_animation_rules
+{
+constexpr std::uint64_t kOpenDurationMs = 90;
+constexpr std::uint64_t kCloseDurationMs = 90;
+// Request frames faster than a 60 Hz refresh cycle. Win32 may coalesce timer
+// messages, but the animation remains time-based and therefore never slows
+// down when a frame is skipped.
+constexpr unsigned int kFrameIntervalMs = 8;
+constexpr float kMinimumScale = 0.18f;
+
+inline float ClampUnit(float value)
+{
+    return std::clamp(value, 0.0f, 1.0f);
+}
+
+inline float EaseInOutSmooth(float progress)
+{
+    const float value = ClampUnit(progress);
+    return value * value *
+        (3.0f - 2.0f * value);
+}
+
+struct Visual
+{
+    float progress = 0.0f;
+    float scale = kMinimumScale;
+    bool visible = false;
+};
+
+enum class ExistingSourceAction
+{
+    OpenAtRequestedAnchor,
+    CloseExisting,
+    KeepClosing,
+};
+
+inline ExistingSourceAction ResolveExistingSourceAction(
+    bool sameSource,
+    bool interactive)
+{
+    if (!sameSource)
+        return ExistingSourceAction::
+            OpenAtRequestedAnchor;
+    return interactive
+        ? ExistingSourceAction::CloseExisting
+        : ExistingSourceAction::KeepClosing;
+}
+
+inline bool ShouldUsePopupItemBounds(
+    bool popupSourceExists,
+    bool popupInteractive)
+{
+    return popupSourceExists && popupInteractive;
+}
+
+class State
+{
+public:
+    void Open(std::uint64_t now)
+    {
+        Advance(now);
+        targetVisible_ = true;
+        animating_ = progress_ < 1.0f;
+        lastTick_ = now;
+    }
+
+    void Close(std::uint64_t now)
+    {
+        Advance(now);
+        targetVisible_ = false;
+        animating_ = progress_ > 0.0f;
+        lastTick_ = now;
+    }
+
+    bool Advance(std::uint64_t now)
+    {
+        if (!animating_)
+        {
+            lastTick_ = now;
+            return false;
+        }
+
+        const std::uint64_t elapsed =
+            now >= lastTick_ ? now - lastTick_ : 0;
+        lastTick_ = now;
+        if (elapsed == 0)
+            return false;
+
+        const float duration = static_cast<float>(
+            targetVisible_ ? kOpenDurationMs : kCloseDurationMs);
+        const float delta =
+            static_cast<float>(elapsed) / duration;
+        const float previous = progress_;
+        progress_ = ClampUnit(
+            progress_ + (targetVisible_ ? delta : -delta));
+        if ((targetVisible_ && progress_ >= 1.0f) ||
+            (!targetVisible_ && progress_ <= 0.0f))
+        {
+            animating_ = false;
+        }
+        return progress_ != previous;
+    }
+
+    void ResetHidden()
+    {
+        progress_ = 0.0f;
+        targetVisible_ = false;
+        animating_ = false;
+        lastTick_ = 0;
+    }
+
+    void ShowImmediately()
+    {
+        progress_ = 1.0f;
+        targetVisible_ = true;
+        animating_ = false;
+        lastTick_ = 0;
+    }
+
+    [[nodiscard]] Visual GetVisual() const
+    {
+        const float easedScale =
+            EaseInOutSmooth(progress_);
+        return {
+            progress_,
+            kMinimumScale +
+                (1.0f - kMinimumScale) * easedScale,
+            progress_ > 0.0f
+        };
+    }
+
+    [[nodiscard]] bool IsAnimating() const
+    {
+        return animating_;
+    }
+
+    [[nodiscard]] bool IsInteractive() const
+    {
+        return targetVisible_;
+    }
+
+    [[nodiscard]] bool IsClosing() const
+    {
+        return !targetVisible_ && progress_ > 0.0f;
+    }
+
+    [[nodiscard]] bool IsHidden() const
+    {
+        return progress_ <= 0.0f;
+    }
+
+private:
+    float progress_ = 0.0f;
+    bool targetVisible_ = false;
+    bool animating_ = false;
+    std::uint64_t lastTick_ = 0;
+};
+}

@@ -792,6 +792,10 @@ inline void DesktopApp::CloseFloatingDock(
         // keeping this host marked visible until that path has rebuilt any
         // grouped runtime container.
         CloseCollectionPopup();
+        // The floating host is hidden in this same call, so it cannot present
+        // the remaining close frames. Finalize here instead of letting those
+        // frames leak onto the desktop-hosted Dock copy.
+        FinalizeCloseCollectionPopup();
     }
     const RECT desktopDockRect =
         floatingDockContainer_
@@ -1027,9 +1031,6 @@ inline void DesktopApp::PaintFloatingDockWindow(
         floatingDockContainer_->DrawContents(
             context.Get());
     }
-    if (popupAnchoredToDock_ &&
-        GetOpenPopupWidget())
-        DrawCollectionPopup(context.Get());
     DrawDynamicOverlays(context.Get());
     floatingDockBackdropCompositor_.EndFrame();
     renderingFloatingDock_ = false;

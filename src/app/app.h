@@ -34,6 +34,7 @@
 #include "folder_sort_rules.h"
 #include "shell_item_visibility.h"
 #include "popup_drag_rules.h"
+#include "popup_animation_rules.h"
 #include "item_layout_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
@@ -214,6 +215,15 @@ public:
 
     /** @brief 将缓存的静态场景绘制到指定设备上下文中。 @param ctx D2D 设备上下文 */
     void Draw(ID2D1DeviceContext* ctx) const;
+    /**
+     * @brief 将缓存绘制到指定坐标。
+     * @return 缓存存在并完成绘制时返回 true。
+     */
+    bool DrawAt(
+        ID2D1DeviceContext* ctx,
+        D2D1_POINT_2F destination,
+        D2D1_INTERPOLATION_MODE interpolation =
+            D2D1_INTERPOLATION_MODE_LINEAR) const;
 
 private:
     ComPtr<ID2D1Bitmap1> bitmap_;      /**< 缓存的静态场景位图 */
@@ -538,9 +548,13 @@ private:
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
     void OnPaint(const RECT* updateRect = nullptr);
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */
-    void RenderFrame(ID2D1DeviceContext* ctx);
+    void RenderFrame(
+        ID2D1DeviceContext* ctx,
+        const RECT* updateRect = nullptr);
     /** @brief 绘制静态背景（桌面项图标、文本、网格等）。 @param ctx D2D 设备上下文 */
-    void DrawStaticBackground(ID2D1DeviceContext* ctx);
+    void DrawStaticBackground(
+        ID2D1DeviceContext* ctx,
+        const RECT* updateRect = nullptr);
     /** @brief 绘制动态叠加层（拖拽图标、放置预览、选择框等）。 @param ctx D2D 设备上下文 */
     void DrawDynamicOverlays(ID2D1DeviceContext* ctx);
     /** @brief 绘制翻页导航按钮（左右箭头）。 @param ctx D2D 设备上下文 */
@@ -1523,8 +1537,18 @@ private:
     void DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
         DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis = true);
-    /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
-    void DrawCollectionPopup(ID2D1DeviceContext* ctx);
+    /**
+     * @brief 绘制集合弹出面板内容。
+     * @param ctx D2D 上下文
+     * @param applyAnimation 是否应用当前缩放动画
+     */
+    void DrawCollectionPopup(
+        ID2D1DeviceContext* ctx,
+        bool applyAnimation = true);
+    /** @brief 在动画开始前将完整弹窗录制到 GPU 位图。 */
+    void PrepareCollectionPopupAnimationCache();
+    /** @brief 释放弹窗动画位图。 */
+    void ResetCollectionPopupAnimationCache();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
     static float GetBeautifiedIconCornerRadius(int width, int height);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
@@ -1742,7 +1766,13 @@ private:
     void OpenDockFolderPopupAt(size_t entryIndex, POINT anchorPoint);
     bool IsDockFolderPopupOpen() const
     {
-        return dockFolderPopupOpen_;
+        return dockFolderPopupOpen_ &&
+            popupAnimation_.IsInteractive();
+    }
+    bool IsCollectionPopupInteractive() const
+    {
+        return GetOpenPopupWidget() != nullptr &&
+            popupAnimation_.IsInteractive();
     }
     DesktopWidget* GetOpenPopupWidget();
     const DesktopWidget* GetOpenPopupWidget() const;
@@ -1765,7 +1795,13 @@ private:
         std::optional<size_t> memberIndex =
             std::nullopt);
     /** @brief 关闭集合弹出面板。 */
-    void CloseCollectionPopup();
+    void CloseCollectionPopup(
+        bool clearSelection = true);
+    void FinalizeCloseCollectionPopup();
+    void StartCollectionPopupAnimation(
+        bool reverseClosingAnimation = false);
+    void InvalidateCollectionPopupAnimation(
+        bool invalidateStaticScene = false);
     /**
      * @brief 判断坐标点是否位于当前打开的弹出面板内。
      * @param point 客户端坐标
@@ -2373,6 +2409,10 @@ private:
     /** @name 集合弹出面板 */
     /** @{ */
     size_t popupWidgetIndex_ = static_cast<size_t>(-1);
+    snowdesktop::popup_animation_rules::State
+        popupAnimation_;
+    DragRenderCache popupAnimationRenderCache_;
+    RECT popupAnimationCacheRect_{};
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
     bool popupHasAnchor_ = false;

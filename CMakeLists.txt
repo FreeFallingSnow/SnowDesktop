@@ -551,6 +551,34 @@ if (BUILD_TESTING)
     add_test(
         NAME dock_window_rules
         COMMAND SnowDesktopDockWindowRulesTests)
+
+    add_executable(
+        SnowDesktopPopupAnimationRulesTests
+        tests/popup_animation_rules_tests.cpp)
+    target_compile_features(
+        SnowDesktopPopupAnimationRulesTests PRIVATE cxx_std_20)
+    target_include_directories(
+        SnowDesktopPopupAnimationRulesTests PRIVATE src)
+    if (MSVC)
+        set_property(
+            TARGET SnowDesktopPopupAnimationRulesTests
+            PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(
+            SnowDesktopPopupAnimationRulesTests PRIVATE
+            /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(
+            SnowDesktopPopupAnimationRulesTests PRIVATE
+            _UNICODE UNICODE NOMINMAX
+                WIN32_LEAN_AND_MEAN)
+    else()
+        target_compile_options(
+            SnowDesktopPopupAnimationRulesTests PRIVATE
+            -Wall -Wextra -pedantic)
+    endif()
+    add_test(
+        NAME popup_animation_rules
+        COMMAND SnowDesktopPopupAnimationRulesTests)
 endif()
 
 

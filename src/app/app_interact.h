@@ -1038,6 +1038,9 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
 inline bool DesktopApp::HitTestPopupForDrag(POINT client,
     Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion)
 {
+    if (!IsCollectionPopupInteractive())
+        return false;
+
     if (dockFolderPopupOpen_ &&
         dockFolderPopupContainer_)
     {
@@ -2007,12 +2010,14 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                         static_cast<int>(entry.type)) +
                     L":" + ToUpperInvariant(entry.reference);
                 pressedOpenPopupFolderToggle =
+                    IsCollectionPopupInteractive() &&
                     dockFolderPopupOpen_ &&
                     dockFolderPopupSourceId_ == sourceId;
             }
         }
     }
     const bool pressedOpenPopupDockToggle =
+        IsCollectionPopupInteractive() &&
         snowdesktop::floating_dock_rules::
             ShouldCloseCollectionPopup(
                 popupWidgetIndex_,
@@ -2044,7 +2049,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
     // 外部点击先关闭集合弹窗，但保留本次按下事件，继续命中弹窗下方的真实目标。
-    if (popupWidgetIndex_ < widgets_.size())
+    if (IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
         if (snowdesktop::floating_dock_rules::
@@ -2054,7 +2060,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     PtInRect(&popup, pt) != FALSE))
             CloseCollectionPopup();
     }
-    else if (dockFolderPopupOpen_)
+    else if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
     {
         const RECT popup =
             GetCollectionPopupRect(
@@ -2074,7 +2081,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     bool ctrl = (wp & MK_CONTROL) != 0;
 
-    if (dockFolderPopupOpen_ &&
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_ &&
         !pressedOpenPopupFolderToggle)
     {
         const RECT popup = GetCollectionPopupRect(
@@ -2187,7 +2195,8 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
     }
 
-    if (popupWidgetIndex_ < widgets_.size() &&
+    if (IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size() &&
         !pressedOpenPopupDockToggle)
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -2806,7 +2815,8 @@ inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (quickNavigationOpen_) return;
     if (GetDockContainerAtPoint(pt)) return;
-    if (popupWidgetIndex_ < widgets_.size())
+    if (IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
         if (PtInRect(&popup, pt)) return;
@@ -3423,6 +3433,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         auto findHoverVisual = [&](POINT point) -> MouseHoverVisual {
             if (const DesktopWidget* popupWidget =
                     GetOpenPopupWidget();
+                IsCollectionPopupInteractive() &&
                 popupWidget &&
                 !IsRectEmptyRect(popupRect_) &&
                 PtInRect(&popupRect_, point))
@@ -3826,7 +3837,8 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
         const size_t widgetIndex = FindWidgetIndexById(reference);
         if (widgetIndex < widgets_.size())
         {
-            if (snowdesktop::floating_dock_rules::
+            if (IsCollectionPopupInteractive() &&
+                snowdesktop::floating_dock_rules::
                     ShouldCloseCollectionPopup(
                         popupWidgetIndex_,
                         widgetIndex))
@@ -3841,7 +3853,8 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
         const std::wstring sourceId =
             std::to_wstring(static_cast<int>(entryType)) +
             L":" + ToUpperInvariant(reference);
-        if (dockFolderPopupOpen_ &&
+        if (IsCollectionPopupInteractive() &&
+            dockFolderPopupOpen_ &&
             dockFolderPopupSourceId_ == sourceId)
             CloseCollectionPopup();
         else
@@ -4288,7 +4301,8 @@ inline std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t*
     if (firstWidgetIndex)
         *firstWidgetIndex = static_cast<size_t>(-1);
 
-    if (dockFolderPopupOpen_)
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
     {
         std::vector<std::wstring> paths;
         for (const auto& entry :
@@ -4473,7 +4487,8 @@ inline bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
         if (widgets_[i].type == DesktopWidgetType::FolderMapping)
             RefreshFolderMappingWidget(i);
     ReloadItems(false);
-    if (dockFolderPopupOpen_)
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
         RefreshDockFolderPopup();
     return true;
 }
@@ -4881,7 +4896,8 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     case 'A':
         if (!ctrl) break;
     {
-        if (dockFolderPopupOpen_)
+        if (IsCollectionPopupInteractive() &&
+            dockFolderPopupOpen_)
         {
             ClearSelection();
             for (auto& entry :
@@ -4928,7 +4944,9 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
             OpenSelectedDesktopItem();
         break;
     case VK_ESCAPE:
-        if (keyboardNavInsideWidget_)
+        if (IsCollectionPopupInteractive())
+            CloseCollectionPopup();
+        else if (keyboardNavInsideWidget_)
             ExitWidget();
         else
         {
@@ -6056,16 +6074,8 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         else if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
             (cols > 1 || rows > 1))   // 紧凑模式保持弹窗常开
         {
-            // 退回内联区域：关闭弹窗（不调用 CloseCollectionPopup，
-            // 因为它会 ClearSelection 清除刚导航选中的成员项）
-            popupWidgetIndex_ = static_cast<size_t>(-1);
-            popupScrollOffset_ = 0;
-            popupHasAnchor_ = false;
-            popupAnchoredToDock_ = false;
-            popupAnchorPoint_ = {};
-            popupPageId_.clear();
-            popupCategoryId_.clear();
-            popupRect_ = {};
+            // 退回内联区域时保留刚导航选中的成员项，但仍播放关闭动画。
+            CloseCollectionPopup(false);
         }
     }
 
@@ -6774,7 +6784,8 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         }
     }
 
-    if (dockFolderPopupOpen_)
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
     {
         RECT popup = GetCollectionPopupRect(
             dockFolderPopupWidget_);
@@ -6819,7 +6830,8 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
             return;
         }
     }
-    else if (popupWidgetIndex_ < widgets_.size())
+    else if (IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
         if (PtInRect(&popup, pt))
@@ -7199,6 +7211,23 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
             if (hwnd_ && IsWindow(hwnd_))
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }
+    }
+    else if (timerId ==
+        kCollectionPopupAnimationTimerId)
+    {
+        popupAnimation_.Advance(GetTickCount64());
+        if (!popupAnimation_.IsAnimating())
+        {
+            KillTimer(
+                hwnd_,
+                kCollectionPopupAnimationTimerId);
+            if (popupAnimation_.IsHidden())
+            {
+                FinalizeCloseCollectionPopup();
+                return;
+            }
+        }
+        InvalidateCollectionPopupAnimation();
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
@@ -7832,6 +7861,27 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
         widgets_[widgetIndex].type != DesktopWidgetType::Collection)
         return;
 
+    const bool samePopupSource =
+        !dockFolderPopupOpen_ &&
+        popupWidgetIndex_ == widgetIndex;
+    switch (snowdesktop::popup_animation_rules::
+        ResolveExistingSourceAction(
+            samePopupSource,
+            popupAnimation_.IsInteractive()))
+    {
+    case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::CloseExisting:
+        CloseCollectionPopup();
+        return;
+    case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::KeepClosing:
+        return;
+    case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::OpenAtRequestedAnchor:
+    default:
+        break;
+    }
+
     PreserveDockFolderPopupDragSourceForTransition();
     dockFolderPopupOpen_ = false;
     dockFolderPopupAvailable_ = false;
@@ -7910,6 +7960,7 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+    StartCollectionPopupAnimation();
     if (floatingDockVisible_)
     {
         floatingDockContainer_ =
@@ -8667,11 +8718,16 @@ inline void DesktopApp::OpenDockFolderPopupAt(
     PreserveDockFolderPopupDragSourceForTransition();
     const DockEntry entry = dockEntries_[entryIndex];
     const auto target = ResolveDockFolderTarget(entry);
-    dockFolderPopupOpen_ = true;
-    dockFolderPopupAvailable_ = target.available;
-    dockFolderPopupSourceId_ =
+    const std::wstring sourceId =
         std::to_wstring(static_cast<int>(entry.type)) +
         L":" + ToUpperInvariant(entry.reference);
+    const bool reverseClosingAnimation =
+        popupAnimation_.IsClosing() &&
+        dockFolderPopupOpen_ &&
+        dockFolderPopupSourceId_ == sourceId;
+    dockFolderPopupOpen_ = true;
+    dockFolderPopupAvailable_ = target.available;
+    dockFolderPopupSourceId_ = sourceId;
     dockFolderPopupMappingWidgetId_.clear();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     popupScrollOffset_ = 0;
@@ -8794,6 +8850,8 @@ inline void DesktopApp::OpenDockFolderPopupAt(
         popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(
             dockFolderPopupWidget_, popupRect_));
+    StartCollectionPopupAnimation(
+        reverseClosingAnimation);
     if (floatingDockVisible_)
     {
         floatingDockContainer_ =
@@ -8810,15 +8868,69 @@ inline void DesktopApp::OpenDockFolderPopupAt(
 }
 
 /**
- * @brief 关闭当前打开的集合弹窗
+ * @brief 启动集合弹窗的打开动画。
  */
-inline void DesktopApp::CloseCollectionPopup()
+inline void DesktopApp::StartCollectionPopupAnimation(
+    bool reverseClosingAnimation)
 {
+    if (!reverseClosingAnimation)
+        popupAnimation_.ResetHidden();
+    PrepareCollectionPopupAnimationCache();
+    popupAnimation_.Open(GetTickCount64());
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(
+            hwnd_,
+            kCollectionPopupAnimationTimerId,
+            snowdesktop::popup_animation_rules::
+                kFrameIntervalMs,
+            nullptr);
+    }
+}
+
+inline void DesktopApp::InvalidateCollectionPopupAnimation(
+    bool invalidateStaticScene)
+{
+    if (invalidateStaticScene)
+        InvalidateDragStaticScene();
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        if (invalidateStaticScene)
+        {
+            InvalidateRect(
+                hwnd_, nullptr, FALSE);
+        }
+        else if (!(popupAnchoredToDock_ &&
+                   floatingDockVisible_) &&
+                 !IsRectEmptyRect(popupRect_))
+        {
+            RECT dirty = popupRect_;
+            InflateRect(&dirty, 4, 4);
+            InvalidateRect(
+                hwnd_, &dirty, FALSE);
+        }
+    }
+    // Animation frames may be coalesced when the UI thread is busy. Forcing
+    // UpdateWindow here would make every timer tick synchronously redraw the
+    // complete floating Dock surface and is the main source of frame stalls.
+    InvalidateFloatingDockWindow(
+        invalidateStaticScene);
+}
+
+/**
+ * @brief 完成关闭并释放当前弹窗的数据源。
+ */
+inline void DesktopApp::FinalizeCloseCollectionPopup()
+{
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(
+            hwnd_,
+            kCollectionPopupAnimationTimerId);
+    popupAnimation_.ResetHidden();
+    ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
         !dockFolderPopupOpen_)
         return;
-    PreserveDockFolderPopupDragSourceForTransition();
-    ClearSelection();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     dockFolderPopupOpen_ = false;
     dockFolderPopupAvailable_ = false;
@@ -8846,6 +8958,51 @@ inline void DesktopApp::CloseCollectionPopup()
     }
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+/**
+ * @brief 关闭当前打开的集合弹窗
+ */
+inline void DesktopApp::CloseCollectionPopup(
+    bool clearSelection)
+{
+    if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
+        !dockFolderPopupOpen_)
+        return;
+    if (popupAnimation_.IsClosing())
+        return;
+
+    PreserveDockFolderPopupDragSourceForTransition();
+    if (clearSelection)
+    {
+        ClearSelection();
+        for (auto& entry :
+             dockFolderPopupWidget_.folderEntries)
+            entry.selected = false;
+    }
+    popupMouseDownItem_.reset();
+    popupDragTargetSlot_.reset();
+    marqueeActive_ = false;
+    marqueeDockFolderPopup_ = false;
+    dockFolderPopupMarqueeInitialSelection_.clear();
+
+    PrepareCollectionPopupAnimationCache();
+    popupAnimation_.Close(GetTickCount64());
+    if (popupAnimation_.IsHidden())
+    {
+        FinalizeCloseCollectionPopup();
+        return;
+    }
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(
+            hwnd_,
+            kCollectionPopupAnimationTimerId,
+            snowdesktop::popup_animation_rules::
+                kFrameIntervalMs,
+            nullptr);
+    }
+    InvalidateCollectionPopupAnimation(true);
 }
 
 /**
@@ -8940,7 +9097,9 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     }
 
     if (DesktopWidget* popupWidget =
-            GetOpenPopupWidget())
+            GetOpenPopupWidget();
+        IsCollectionPopupInteractive() &&
+        popupWidget)
     {
         RECT popup =
             GetCollectionPopupRect(*popupWidget);
@@ -9031,7 +9190,10 @@ inline RECT DesktopApp::GetVisibleCollectionItemBounds(size_t itemIndex) const
     if (itemIndex >= items_.size()) return {};
     std::wstring key = ToUpperInvariant(items_[itemIndex].layoutKey);
 
-    if (popupWidgetIndex_ < widgets_.size())
+    if (snowdesktop::popup_animation_rules::
+            ShouldUsePopupItemBounds(
+                popupWidgetIndex_ < widgets_.size(),
+                IsCollectionPopupInteractive()))
     {
         const DesktopWidget& widget = widgets_[popupWidgetIndex_];
         std::vector<std::wstring> keys = GetPopupItemKeys(widget);
@@ -9846,7 +10008,8 @@ inline void DesktopApp::BeginRenameSelected(
     if (renameEdit_ != nullptr) return;
     renameCommitPending_ = false;
 
-    if (dockFolderPopupOpen_)
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
     {
         size_t selectedMember =
             static_cast<size_t>(-1);
@@ -12860,6 +13023,13 @@ inline void DesktopApp::ShowWidgetContextMenu(
         break;
     case kContextWidgetDelete:
     {
+        // widgets_ 的下标会在删除后整体移动，不能让关闭动画继续引用
+        // 即将失效的弹窗数据源。
+        if (GetOpenPopupWidget())
+        {
+            CloseCollectionPopup();
+            FinalizeCloseCollectionPopup();
+        }
         const std::wstring deletedWidgetId = widgets_[widgetIndex].id;
         if (widgets_[widgetIndex].type == DesktopWidgetType::CollectionGroup)
         {

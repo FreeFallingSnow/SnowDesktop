@@ -141,11 +141,19 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        KillTimer(hwnd_, kCollectionPopupAnimationTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
         KillTimer(hwnd_, kDockLaunchBounceTimerId);
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             KillTimer(hwnd_, timerId);
+        if (popupAnimation_.IsClosing())
+            FinalizeCloseCollectionPopup();
+        else if (popupWidgetIndex_ < widgets_.size() ||
+                 dockFolderPopupOpen_)
+            popupAnimation_.ShowImmediately();
+        else
+            popupAnimation_.ResetHidden();
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }
@@ -169,6 +177,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
         DestroyWindow(inputHwnd_);
     inputHwnd_ = nullptr;
     dragRenderCache_.Reset();
+    ResetCollectionPopupAnimationCache();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
@@ -1840,7 +1849,8 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             }
         }
 
-        if (dockFolderPopupOpen_)
+        if (IsCollectionPopupInteractive() &&
+            dockFolderPopupOpen_)
         {
             RECT popup = GetCollectionPopupRect(
                 dockFolderPopupWidget_);
@@ -1875,7 +1885,8 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 }
             }
         }
-        else if (popupWidgetIndex_ < widgets_.size())
+        else if (IsCollectionPopupInteractive() &&
+            popupWidgetIndex_ < widgets_.size())
         {
             RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
             if (PtInRect(&popup, pt))
