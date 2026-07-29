@@ -783,13 +783,15 @@ int main()
         "app windows must override no-activate exclusion");
     Check(rules::IsTaskWindowStyleEligible(WS_EX_APPWINDOW, true),
         "app windows must override owner exclusion");
-
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");
     Check(rules::ResolveDockClickAction(true, false, false) ==
             rules::DockClickAction::Activate,
         "a short running indicator must activate the application");
+    Check(rules::ShouldSuppressDockWindowCommand(true) &&
+            !rules::ShouldSuppressDockWindowCommand(false),
+        "a pending close must win over Dock activation, restore, and launch commands");
     Check(rules::ResolveDockClickAction(true, false, true) ==
             rules::DockClickAction::Minimize,
         "a long foreground indicator must minimize the application");

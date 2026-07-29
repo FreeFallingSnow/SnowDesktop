@@ -585,17 +585,78 @@ inline UINT QueryDockWindowPreviewHoverTime()
     return std::max<UINT>(1, hoverTime);
 }
 
+inline void DesktopApp::PruneDockPendingCloseWindows()
+{
+    const ULONGLONG now = GetTickCount64();
+    std::erase_if(dockPendingCloseWindows_,
+        [now](const auto& entry) {
+            return !entry.first ||
+                !IsWindow(entry.first) ||
+                now - entry.second >=
+                    kDockWindowClosePendingTimeoutMs;
+        });
+}
+
+inline bool DesktopApp::IsDockWindowClosePending(HWND window)
+{
+    PruneDockPendingCloseWindows();
+    if (!window)
+        return false;
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root)
+        root = window;
+    return dockPendingCloseWindows_.contains(root);
+}
+
+inline bool DesktopApp::IsDockAppClosePending(
+    const DockAppIdentity& identity)
+{
+    if (identity.kind == DockAppIdentityKind::None)
+        return false;
+    PruneDockPendingCloseWindows();
+    return std::any_of(
+        dockPendingCloseWindows_.begin(),
+        dockPendingCloseWindows_.end(),
+        [&identity](const auto& entry) {
+            return DockWindowMatchesAppIdentity(
+                entry.first, identity);
+        });
+}
+
+inline bool DesktopApp::RequestTrackedDockWindowClose(
+    HWND window)
+{
+    if (!window || !IsWindow(window))
+        return false;
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root)
+        root = window;
+
+    dockPendingCloseWindows_[root] = GetTickCount64();
+    if (RequestDockWindowClose(root))
+        return true;
+
+    dockPendingCloseWindows_.erase(root);
+    return false;
+}
+
 inline std::vector<DockWindowPreviewItem>
 DesktopApp::CollectDockWindowPreviewItems(
     const DockAppIdentity& identity,
     bool includeCloaked)
 {
+    PruneDockPendingCloseWindows();
     struct PreviewEnumerationContext
     {
         const DockAppIdentity* identity = nullptr;
         std::vector<DockWindowPreviewItem>* items = nullptr;
+        const std::unordered_map<HWND, ULONGLONG>*
+            pendingCloseWindows = nullptr;
         bool includeCloaked = false;
-    } context{ &identity, nullptr, includeCloaked };
+    } context{
+        &identity, nullptr, &dockPendingCloseWindows_,
+        includeCloaked
+    };
 
     std::vector<DockWindowPreviewItem> items;
     context.items = &items;
@@ -603,7 +664,9 @@ DesktopApp::CollectDockWindowPreviewItems(
         auto* context = reinterpret_cast<
             PreviewEnumerationContext*>(parameter);
         if (!context || !context->identity || !context->items ||
-            !IsDockTaskWindow(window))
+            !IsDockTaskWindow(window) ||
+            (context->pendingCloseWindows &&
+             context->pendingCloseWindows->contains(window)))
             return TRUE;
 
         DWORD processId = 0;
@@ -640,7 +703,8 @@ inline void DesktopApp::CloseDockWindowFromPreview(
     HWND window)
 {
     DismissDockWindowPreviewUntilLeave();
-    RequestDockWindowClose(window);
+    RequestTrackedDockWindowClose(window);
+    RefreshDockRunningWindows();
 }
 
 inline void DesktopApp::CloseDockApplicationWindows(
@@ -651,7 +715,8 @@ inline void DesktopApp::CloseDockApplicationWindows(
         CollectDockWindowPreviewItems(
             identity, true);
     for (const DockWindowPreviewItem& item : windows)
-        RequestDockWindowClose(item.window);
+        RequestTrackedDockWindowClose(item.window);
+    RefreshDockRunningWindows();
 }
 
 inline bool DesktopApp::ResolveDockWindowPreviewTarget(
@@ -1836,6 +1901,15 @@ inline bool DesktopApp::LaunchDesktopItem(
 {
     if (itemIndex >= items_.size() || items_[itemIndex].parsingName.empty())
         return false;
+    if (animateDockLaunch)
+    {
+        const DockAppIdentity identity =
+            ResolveDockAppIdentity(itemIndex);
+        if (snowdesktop::dock_window_rules::
+                ShouldSuppressDockWindowCommand(
+                    IsDockAppClosePending(identity)))
+            return false;
+    }
     if (dockWindowTransition_ &&
         dockWindowTransition_->IsActive())
     {
@@ -1999,6 +2073,7 @@ inline DockWindowVisualState DesktopApp::GetDockWindowVisualState(size_t itemInd
 inline void DesktopApp::RefreshDockRunningWindows(
     bool invalidateChanged, HWND preferredWindow)
 {
+    PruneDockPendingCloseWindows();
     struct DockWindowTarget
     {
         std::wstring key;
@@ -2063,15 +2138,21 @@ inline void DesktopApp::RefreshDockRunningWindows(
         const std::vector<DockAppIdentity>* fixedIdentities;
         std::vector<RunningWindowCandidate>* runningCandidates;
         std::unordered_map<std::wstring, size_t>* runningCandidateIndices;
+        const std::unordered_map<HWND, ULONGLONG>*
+            pendingCloseWindows;
         std::unordered_map<DWORD, std::wstring> processPaths;
     } context{ &targets, scoringForeground, actualForeground, &fixedIdentities,
-        &runningCandidates, &runningCandidateIndices };
+        &runningCandidates, &runningCandidateIndices,
+        &dockPendingCloseWindows_ };
 
     if (generalSettings_.dockEnabled)
     {
         EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
             auto* context = reinterpret_cast<EnumContext*>(parameter);
-            if (!IsDockTaskWindow(window)) return TRUE;
+            if (!IsDockTaskWindow(window) ||
+                (context->pendingCloseWindows &&
+                 context->pendingCloseWindows->contains(window)))
+                return TRUE;
 
             DWORD processId = 0;
             GetWindowThreadProcessId(window, &processId);
@@ -2306,6 +2387,12 @@ inline bool DesktopApp::ActivateOrToggleDockItem(
 {
     DismissDockWindowPreviewUntilLeave();
     if (itemIndex >= items_.size()) return false;
+    const DockAppIdentity requestedIdentity =
+        ResolveDockAppIdentity(itemIndex);
+    if (snowdesktop::dock_window_rules::
+            ShouldSuppressDockWindowCommand(
+                IsDockAppClosePending(requestedIdentity)))
+        return true;
 
     using snowdesktop::dock_window_rules::DockClickAction;
     DockClickAction action =
@@ -2491,6 +2578,10 @@ inline bool DesktopApp::ActivateOrToggleDockWindow(
             ? pressedTarget : window;
     if (!requestedTarget || !IsWindow(requestedTarget))
         return false;
+    if (snowdesktop::dock_window_rules::
+            ShouldSuppressDockWindowCommand(
+                IsDockWindowClosePending(requestedTarget)))
+        return true;
     HWND target = GetAncestor(requestedTarget, GA_ROOT);
     if (!target) target = requestedTarget;
     if (dockWindowTransition_ &&
@@ -2621,6 +2712,10 @@ inline void DesktopApp::ActivateDockWindowFromPreview(HWND window)
 {
     DismissDockWindowPreviewUntilLeave();
     if (!window || !IsWindow(window))
+        return;
+    if (snowdesktop::dock_window_rules::
+            ShouldSuppressDockWindowCommand(
+                IsDockWindowClosePending(window)))
         return;
     HWND target = GetAncestor(window, GA_ROOT);
     if (!target)

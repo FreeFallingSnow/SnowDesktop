@@ -105,6 +105,18 @@ constexpr DockClickAction ResolveDockClickAction(
 }
 
 /**
+ * @brief 关闭请求尚未完成时，禁止 Dock 再向同一窗口或应用分发命令。
+ *
+ * WM_CLOSE 是异步消息；目标窗口在真正销毁前仍会通过 IsWindow 检查。
+ * 关闭动作必须在这段竞态窗口内优先于激活、恢复和再次启动。
+ */
+constexpr bool ShouldSuppressDockWindowCommand(
+    bool closePending) noexcept
+{
+    return closePending;
+}
+
+/**
  * @brief 仅吞掉一个真实、明确匹配的固定 Dock 条目释放事件。
  *
  * 运行区和常用区没有固定条目索引，两者都使用 size_t(-1)。不能把

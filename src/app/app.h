@@ -677,6 +677,10 @@ private:
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
+    void PruneDockPendingCloseWindows();
+    bool IsDockWindowClosePending(HWND window);
+    bool IsDockAppClosePending(const DockAppIdentity& identity);
+    bool RequestTrackedDockWindowClose(HWND window);
     std::vector<DockWindowPreviewItem> CollectDockWindowPreviewItems(
         const DockAppIdentity& identity,
         bool includeCloaked = false);
@@ -2063,6 +2067,7 @@ private:
     std::unordered_map<std::wstring, DockAppIdentity> dockAppIdentityCache_;
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
     std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
+    std::unordered_map<HWND, ULONGLONG> dockPendingCloseWindows_;
     std::unique_ptr<DockWindowPreview> dockWindowPreview_;
     std::unique_ptr<DockWindowTransition>
         dockWindowTransition_;

@@ -196,6 +196,7 @@ constexpr UINT kCollectionGroupTabDwellIntervalMs = 40;
 constexpr DWORD kCollectionGroupTabDwellDelayMs = 420;
 constexpr UINT_PTR kDockWindowPreviewHoverTimerId = 13;
 constexpr UINT kDockWindowPreviewHoverFallbackMs = 400;
+constexpr ULONGLONG kDockWindowClosePendingTimeoutMs = 3000;
 constexpr UINT_PTR kDockLaunchBounceTimerId = 14;
 constexpr UINT_PTR kTaskbarRevealGuardTimerId = 15;
 constexpr UINT kTaskbarRevealGuardIntervalMs = 50;
