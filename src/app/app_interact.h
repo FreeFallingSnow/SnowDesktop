@@ -2022,6 +2022,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             ShouldCloseCollectionPopup(
                 popupWidgetIndex_,
                 pressedDockCollectionWidgetIndex);
+    bool collectionPopupClosedByPointerDown = false;
     HWND interactionCaptureHwnd = hwnd_;
     if (handlingFloatingDockInput_ &&
         floatingDockHwnd_ &&
@@ -2058,7 +2059,10 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     popupWidgetIndex_,
                     pressedDockCollectionWidgetIndex,
                     PtInRect(&popup, pt) != FALSE))
+        {
             CloseCollectionPopup();
+            collectionPopupClosedByPointerDown = true;
+        }
     }
     else if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_)
@@ -2351,12 +2355,18 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     });
                 if (running != dockUnpinnedRunningApps_.end())
                 {
+                    const bool hasLiveWindow =
+                        IsWindow(running->window) != FALSE;
+                    const bool minimized =
+                        hasLiveWindow
+                        ? IsIconic(running->window) != FALSE
+                        : running->minimized;
                     dockPressedWindowAction_ =
                         snowdesktop::dock_window_rules::
                             ResolveDockClickAction(
-                                true, running->minimized,
+                                true, minimized,
                                 running->foreground);
-                    if (IsWindow(running->window))
+                    if (hasLiveWindow)
                         dockPressedTargetWindow_ =
                             running->window;
                 }
@@ -2599,7 +2609,9 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::CollectionOpenBtn)
         {
             SelectWidgetOnly(wi);
-            OpenCollectionPopupAt(wi, pt);
+            OpenCollectionPopupAt(
+                wi, pt, L"",
+                collectionPopupClosedByPointerDown);
             mouseDown_ = false;
             mouseDownWidgetIndex_ = static_cast<size_t>(-1);
             mouseDownHit_ = nullptr;
@@ -7875,8 +7887,9 @@ ClearDockFolderPopupDragSourceSnapshot()
  * @param anchorPoint 锚点位置
  * @param categoryId 可选的分类 ID
  */
-inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint,
-    const std::wstring& categoryId)
+inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
+    POINT anchorPoint, const std::wstring& categoryId,
+    bool closingStartedByCurrentPress)
 {
     if (widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::Collection)
@@ -7888,7 +7901,8 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     switch (snowdesktop::popup_animation_rules::
         ResolveExistingSourceAction(
             samePopupSource,
-            popupAnimation_.IsInteractive()))
+            popupAnimation_.IsInteractive(),
+            closingStartedByCurrentPress))
     {
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::CloseExisting:
@@ -7896,6 +7910,11 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
         return;
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::KeepClosing:
+        return;
+    case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::ReopenExisting:
+        StartCollectionPopupAnimation(true);
+        InvalidateCollectionPopupAnimation(true);
         return;
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::OpenAtRequestedAnchor:

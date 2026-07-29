@@ -122,6 +122,19 @@ constexpr bool ShouldSuppressDockClickRelease(
 }
 
 /**
+ * @brief 未执行专用双击动作时，把 WM_LBUTTONDBLCLK 重放为第二次按下。
+ *
+ * Windows 会用 WM_LBUTTONDBLCLK 替代第二个 WM_LBUTTONDOWN。若正在运行
+ * 的应用在这里直接返回，后续 WM_LBUTTONUP 就没有对应的按下状态，动画
+ * 期间的第二次点击也会被吞掉。
+ */
+constexpr bool ShouldDispatchDockDoubleClickPress(
+    bool specialDoubleClickHandled) noexcept
+{
+    return !specialDoubleClickHandled;
+}
+
+/**
  * @brief 普通异步最小化被系统拒绝时，改由默认窗口过程执行系统命令。
  *
  * 管理员权限窗口会通过 UIPI 拒绝来自普通完整性进程的

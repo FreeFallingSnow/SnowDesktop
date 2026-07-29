@@ -819,6 +819,10 @@ int main()
         "a matching fixed dock entry must suppress the deferred release");
     Check(!rules::ShouldSuppressDockClickRelease(4, 5),
         "a different fixed dock entry must not suppress the release");
+    Check(rules::ShouldDispatchDockDoubleClickPress(false) &&
+            !rules::ShouldDispatchDockDoubleClickPress(true),
+        "running-app double clicks must replay the missing second press while "
+        "launch and folder double-click actions remain single-purpose");
     Check(rules::NeedsDockMinimizeSystemCommandFallback(false) &&
             !rules::NeedsDockMinimizeSystemCommandFallback(true),
         "a rejected asynchronous minimize must use the system-command fallback");
@@ -1016,6 +1020,16 @@ int main()
             true, true, false) ==
             DockWindowTransitionStartAction::ReverseActive,
         "an opposite request for the active window must reverse in place");
+    Check(ResolveDockWindowTransitionStartAction(
+            true, true, false, true) ==
+            DockWindowTransitionStartAction::
+                InterruptRestoreHandoff,
+        "an opposite request during restore handoff must release the old "
+        "transition immediately");
+    Check(ResolveDockWindowTransitionStartAction(
+            true, true, true, true) ==
+            DockWindowTransitionStartAction::ContinueActive,
+        "a repeated restore request must keep waiting for its real window");
 
     namespace launchAnimation =
         snowdesktop::dock_launch_animation;

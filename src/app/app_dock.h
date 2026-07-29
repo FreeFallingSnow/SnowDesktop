@@ -1984,8 +1984,12 @@ inline DockWindowVisualState DesktopApp::GetDockWindowVisualState(size_t itemInd
         return DockWindowVisualState::Closed;
     if (found->second.window && IsWindow(found->second.window))
     {
-        if (found->second.minimized)
+        if (IsIconic(found->second.window))
             return DockWindowVisualState::Minimized;
+        // A click on a non-maximized window can move foreground ownership to
+        // the desktop/Dock before this handler runs. Keep using the indicator
+        // state captured by the window refresh instead of reclassifying that
+        // click as Activate.
         if (found->second.foreground)
             return DockWindowVisualState::Foreground;
     }
@@ -2651,7 +2655,44 @@ inline void DesktopApp::ActivateDockWindowFromPreview(HWND window)
         CloseFloatingDock();
     BringWindowToTop(activationTarget);
     SetForegroundWindow(activationTarget);
-    RefreshDockRunningWindows(false, target);
+
+    // ShowWindowAsync has not necessarily updated IsIconic yet. Update the
+    // known target optimistically instead of doing a synchronous EnumWindows
+    // scan that can both block the animation handoff and write the old state
+    // straight back into the cache.
+    for (auto& [key, state] : dockRunningWindows_)
+    {
+        (void)key;
+        if (!state.window || !IsWindow(state.window))
+            continue;
+        const bool matchesTarget =
+            state.window == target ||
+            DockWindowsShareApplicationIdentity(
+                state.window, target);
+        state.foreground = matchesTarget;
+        if (matchesTarget)
+        {
+            state.window = target;
+            state.running = true;
+            state.minimized = false;
+        }
+    }
+    for (DockRunningAppInfo& app :
+         dockUnpinnedRunningApps_)
+    {
+        if (!app.window || !IsWindow(app.window))
+            continue;
+        const bool matchesTarget =
+            app.window == target ||
+            DockWindowsShareApplicationIdentity(
+                app.window, target);
+        app.foreground = matchesTarget;
+        if (matchesTarget)
+        {
+            app.window = target;
+            app.minimized = false;
+        }
+    }
     InvalidateDockRects();
 }
 

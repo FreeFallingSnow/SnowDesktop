@@ -105,8 +105,17 @@ int main()
             ExistingSourceAction::CloseExisting,
         "clicking an open collection from another anchor closes it");
     Check(ResolveExistingSourceAction(true, false) ==
+            ExistingSourceAction::ReopenExisting,
+        "clicking the same collection while closing reverses it immediately");
+    Check(ResolveExistingSourceAction(true, false, true) ==
             ExistingSourceAction::KeepClosing,
-        "clicking the same collection while closing cannot relocate it");
+        "the pointer press that started closing does not reopen the popup");
+    Check(ShouldDispatchCollectionDoubleClickPress(true, false),
+        "a collection toggle double click replays the second press");
+    Check(!ShouldDispatchCollectionDoubleClickPress(true, true),
+        "an interactive popup keeps ownership of double clicks inside it");
+    Check(!ShouldDispatchCollectionDoubleClickPress(false, false),
+        "unrelated desktop double clicks retain their existing behavior");
 
     std::cout << "popup animation rules tests passed\n";
     return 0;

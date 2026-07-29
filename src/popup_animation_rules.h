@@ -37,18 +37,37 @@ enum class ExistingSourceAction
     OpenAtRequestedAnchor,
     CloseExisting,
     KeepClosing,
+    ReopenExisting,
 };
 
 inline ExistingSourceAction ResolveExistingSourceAction(
     bool sameSource,
-    bool interactive)
+    bool interactive,
+    bool closingStartedByCurrentPress = false)
 {
     if (!sameSource)
         return ExistingSourceAction::
             OpenAtRequestedAnchor;
-    return interactive
-        ? ExistingSourceAction::CloseExisting
-        : ExistingSourceAction::KeepClosing;
+    if (interactive)
+        return ExistingSourceAction::CloseExisting;
+    return closingStartedByCurrentPress
+        ? ExistingSourceAction::KeepClosing
+        : ExistingSourceAction::ReopenExisting;
+}
+
+/**
+ * @brief 判断集合按钮的双击消息是否应重放为第二次普通按下。
+ *
+ * Windows 会用 WM_LBUTTONDBLCLK 替代第二个 WM_LBUTTONDOWN。集合开关需要
+ * 收到这次按下才能在关闭动画中立即反向；若点位由已打开弹窗占用，则仍交给
+ * 弹窗原有的双击处理。
+ */
+constexpr bool ShouldDispatchCollectionDoubleClickPress(
+    bool collectionOpenButtonHit,
+    bool pointerInsideInteractivePopup)
+{
+    return collectionOpenButtonHit &&
+        !pointerInsideInteractivePopup;
 }
 
 inline bool ShouldUsePopupItemBounds(

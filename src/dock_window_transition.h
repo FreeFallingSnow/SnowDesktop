@@ -21,18 +21,23 @@ enum class DockWindowTransitionStartAction
     StartNew,
     ContinueActive,
     ReverseActive,
+    InterruptRestoreHandoff,
 };
 
 constexpr DockWindowTransitionStartAction
 ResolveDockWindowTransitionStartAction(
     bool active,
     bool sameWindow,
-    bool sameDirection) noexcept
+    bool sameDirection,
+    bool awaitingRestoreVisibility = false) noexcept
 {
     if (!active || !sameWindow)
         return DockWindowTransitionStartAction::StartNew;
-    return sameDirection
-        ? DockWindowTransitionStartAction::ContinueActive
+    if (sameDirection)
+        return DockWindowTransitionStartAction::ContinueActive;
+    return awaitingRestoreVisibility
+        ? DockWindowTransitionStartAction::
+            InterruptRestoreHandoff
         : DockWindowTransitionStartAction::ReverseActive;
 }
 

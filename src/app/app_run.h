@@ -1771,6 +1771,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
                     const size_t entryIndex =
                         dockItem->GetEntryIndex();
+                    bool specialDoubleClickHandled = false;
                     if (entryIndex < dockEntries_.size() &&
                         IsFolderDockEntry(
                             dockEntries_[entryIndex]) &&
@@ -1802,6 +1803,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                                 SW_SHOWNORMAL);
                         InvalidateRect(
                             hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
                     }
                     else if (dockItem->GetEntryType() == DockEntryType::DesktopItem &&
                         dockPendingDoubleClickEntry_ == dockItem->GetEntryIndex() &&
@@ -1819,18 +1821,28 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                                 LaunchDesktopItem(itemIndex, true);
                         }
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
+                    }
+                    if (snowdesktop::dock_window_rules::
+                            ShouldDispatchDockDoubleClickPress(
+                                specialDoubleClickHandled))
+                    {
+                        OnLeftButtonDown(wp, lp);
                     }
                     return 0;
                 }
                 if (dock->RunningItemAtPoint(pt))
                 {
-                    // Dynamic running apps already react on the first click.
+                    // WM_LBUTTONDBLCLK replaces the second button-down. Replay
+                    // it so the following button-up can reverse an animation.
+                    OnLeftButtonDown(wp, lp);
                     return 0;
                 }
                 if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
                 {
                     const size_t itemIndex = frequentItem->GetItemIndex();
                     const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
+                    bool specialDoubleClickHandled = false;
                     if (dockPendingDoubleClickFrequentItem_ == itemIndex &&
                         elapsed <= GetDoubleClickTime())
                     {
@@ -1841,11 +1853,61 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                         if (itemIndex < items_.size())
                             LaunchDesktopItem(itemIndex, true);
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
+                    }
+                    if (snowdesktop::dock_window_rules::
+                            ShouldDispatchDockDoubleClickPress(
+                                specialDoubleClickHandled))
+                    {
+                        OnLeftButtonDown(wp, lp);
                     }
                     return 0;
                 }
                 return 0;
             }
+        }
+
+        bool collectionOpenButtonHit = false;
+        for (const auto& container : containers_)
+        {
+            auto* widgetContainer =
+                dynamic_cast<WidgetContainer*>(
+                    container.get());
+            const DesktopWidget* widget =
+                widgetContainer
+                ? widgetContainer->GetWidgetData()
+                : nullptr;
+            if (widget &&
+                widget->type ==
+                    DesktopWidgetType::Collection &&
+                widgetContainer->HitTestWidget(pt) ==
+                    WidgetHit::CollectionOpenBtn)
+            {
+                collectionOpenButtonHit = true;
+                break;
+            }
+        }
+        bool pointerInsideInteractivePopup = false;
+        if (IsCollectionPopupInteractive())
+        {
+            if (const DesktopWidget* popupWidget =
+                    GetOpenPopupWidget())
+            {
+                const RECT popup =
+                    GetCollectionPopupRect(*popupWidget);
+                pointerInsideInteractivePopup =
+                    PtInRect(&popup, pt) != FALSE;
+            }
+        }
+        if (snowdesktop::popup_animation_rules::
+                ShouldDispatchCollectionDoubleClickPress(
+                    collectionOpenButtonHit,
+                    pointerInsideInteractivePopup))
+        {
+            // Restore the second button-down so a rapid third click can
+            // reverse a close animation before its 90 ms duration ends.
+            OnLeftButtonDown(wp, lp);
+            return 0;
         }
 
         if (IsCollectionPopupInteractive() &&

@@ -1762,7 +1762,9 @@ private:
      * @param anchorPoint 锚点坐标
      * @param categoryId 可选的分类 ID
      */
-    void OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint, const std::wstring& categoryId = L"");
+    void OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint,
+        const std::wstring& categoryId = L"",
+        bool closingStartedByCurrentPress = false);
     void OpenDockFolderPopupAt(size_t entryIndex, POINT anchorPoint);
     bool IsDockFolderPopupOpen() const
     {

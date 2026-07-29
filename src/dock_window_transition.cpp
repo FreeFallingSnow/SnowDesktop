@@ -316,7 +316,8 @@ bool DockWindowTransition::Start(
         ResolveDockWindowTransitionStartAction(
             IsActive(),
             sourceWindow_ == sourceWindow,
-            direction_ == direction);
+            direction_ == direction,
+            awaitingRestoreVisibility_);
     if (startAction ==
         DockWindowTransitionStartAction::ContinueActive)
     {
@@ -335,6 +336,22 @@ bool DockWindowTransition::Start(
         return Reverse(
             direction,
             std::move(restoreCallback));
+    }
+    if (startAction ==
+        DockWindowTransitionStartAction::
+            InterruptRestoreHandoff)
+    {
+        // The restore image has already reached its destination and the real
+        // window is only waiting for the asynchronous SW_RESTORE to settle.
+        // A new minimize request must remove that old image immediately;
+        // otherwise it can mask the new native request for the entire cleanup
+        // timeout. Start a fresh custom transition only when the real window
+        // is already available to capture.
+        Finish();
+        if (direction ==
+                DockWindowTransitionDirection::Minimize &&
+            IsIconic(sourceWindow))
+            return false;
     }
 
     Cancel();
