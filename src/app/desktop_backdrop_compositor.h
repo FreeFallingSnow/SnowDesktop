@@ -41,6 +41,10 @@ public:
     void Reattach(HWND contentWindow);
     /** @brief 显示或隐藏独立的 backdrop 辅助窗口。 */
     void SetVisible(bool visible);
+    /** @brief 同步根视觉围绕指定内容坐标的缩放与透明度。 */
+    void SetVisualTransform(
+        float scale, float opacity,
+        float anchorX, float anchorY);
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
     /** @brief 注册或更新一个圆角玻璃面板。 */

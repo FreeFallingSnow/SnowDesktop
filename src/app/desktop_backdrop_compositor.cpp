@@ -563,6 +563,31 @@ void DesktopBackdropCompositor::SetVisible(bool visible)
         ShowWindow(impl_->backdropWindow, SW_HIDE);
 }
 
+void DesktopBackdropCompositor::SetVisualTransform(
+    float scale, float opacity,
+    float anchorX, float anchorY)
+{
+    if (!impl_ || !impl_->available || !impl_->root ||
+        !impl_->contentWindow || !IsWindow(impl_->contentWindow))
+        return;
+
+    const float clampedScale = std::clamp(scale, 0.01f, 1.0f);
+    const float clampedOpacity = std::clamp(opacity, 0.0f, 1.0f);
+
+    try
+    {
+        impl_->root.CenterPoint(wfn::float3{
+            anchorX, anchorY, 0.0f });
+        impl_->root.Scale(wfn::float3{
+            clampedScale, clampedScale, 1.0f });
+        impl_->root.Opacity(clampedOpacity);
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
+}
+
 void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
 {
     if (!impl_->available)

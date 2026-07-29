@@ -35,6 +35,7 @@
 #include "shell_item_visibility.h"
 #include "popup_drag_rules.h"
 #include "popup_animation_rules.h"
+#include "quick_navigation_animation_rules.h"
 #include "item_layout_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
@@ -78,6 +79,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <functional>
@@ -794,9 +796,14 @@ private:
     /** @brief 切换快速导航面板的打开/关闭状态。 */
     void ToggleQuickNavigation();
     /** @brief 打开快速导航面板。 */
-    void OpenQuickNavigation();
+    void OpenQuickNavigation(
+        bool fromDockSearch = false);
     /** @brief 关闭快速导航面板。 */
     void CloseQuickNavigation();
+    /** @brief 将快速导航动画的当前视觉状态同步到内容、毛玻璃和搜索框。 */
+    void ApplyQuickNavigationAnimationFrame();
+    /** @brief 动画结束后释放快速导航窗口和临时数据。 */
+    void FinalizeCloseQuickNavigation();
     /** @brief 创建快速导航窗口。 @return 成功返回 true */
     bool CreateQuickNavigationWindow();
     /** @brief 销毁快速导航窗口。 */
@@ -2197,6 +2204,7 @@ private:
     // 快捷导航 DComp 渲染资源（与桌面共享 d2dDevice_ / dcompDevice_）
     ComPtr<IDCompositionTarget> quickNavDcompTarget_;
     ComPtr<IDCompositionVisual2> quickNavDcompVisual_;
+    ComPtr<IDCompositionEffectGroup> quickNavDcompEffect_;
     ComPtr<IDCompositionSurface> quickNavDcompSurface_;
     UINT quickNavCompWidth_ = 0;
     UINT quickNavCompHeight_ = 0;
@@ -2454,6 +2462,13 @@ private:
     /** @name 快速导航 */
     /** @{ */
     bool quickNavigationOpen_ = false;
+    snowdesktop::quick_navigation_animation_rules::State
+        quickNavigationAnimation_;
+    snowdesktop::quick_navigation_animation_rules::AnchorMode
+        quickNavigationAnimationAnchorMode_ =
+            snowdesktop::
+                quick_navigation_animation_rules::
+                    AnchorMode::Pointer;
     RECT quickNavigationRenameItemRect_{};
     size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
     int quickNavigationScrollOffset_ = 0;
@@ -2461,7 +2476,11 @@ private:
     bool quickNavigationInitialJumpOpen_ = false;
     size_t quickNavigationInitialJumpSelection_ = 0;
     POINT quickNavigationOpenPoint_{};
+    /** @brief 快速导航缩放动画锚点（app 坐标，通常为 Dock 搜索图标中心）。 */
+    POINT quickNavigationAnimationAnchorPoint_{};
     RECT quickNavigationRect_{};
+    /** @brief 快速导航合成宿主范围，覆盖目标面板与 Dock 动画锚点。 */
+    RECT quickNavigationHostRect_{};
     std::wstring quickNavigationSearchText_;
     std::wstring quickNavigationSearchCompositionText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;

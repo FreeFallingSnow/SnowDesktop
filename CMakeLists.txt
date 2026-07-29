@@ -579,6 +579,34 @@ if (BUILD_TESTING)
     add_test(
         NAME popup_animation_rules
         COMMAND SnowDesktopPopupAnimationRulesTests)
+
+    add_executable(
+        SnowDesktopQuickNavigationAnimationRulesTests
+        tests/quick_navigation_animation_rules_tests.cpp)
+    target_compile_features(
+        SnowDesktopQuickNavigationAnimationRulesTests PRIVATE cxx_std_20)
+    target_include_directories(
+        SnowDesktopQuickNavigationAnimationRulesTests PRIVATE src)
+    if (MSVC)
+        set_property(
+            TARGET SnowDesktopQuickNavigationAnimationRulesTests
+            PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(
+            SnowDesktopQuickNavigationAnimationRulesTests PRIVATE
+            /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(
+            SnowDesktopQuickNavigationAnimationRulesTests PRIVATE
+            _UNICODE UNICODE NOMINMAX
+                WIN32_LEAN_AND_MEAN)
+    else()
+        target_compile_options(
+            SnowDesktopQuickNavigationAnimationRulesTests PRIVATE
+            -Wall -Wextra -pedantic)
+    endif()
+    add_test(
+        NAME quick_navigation_animation_rules
+        COMMAND SnowDesktopQuickNavigationAnimationRulesTests)
 endif()
 
 

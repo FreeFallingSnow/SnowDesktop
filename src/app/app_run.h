@@ -1763,7 +1763,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             {
                 if (dock->IsSearchPoint(pt))
                 {
-                    OpenQuickNavigation();
+                    OpenQuickNavigation(true);
                     return 0;
                 }
                 if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))

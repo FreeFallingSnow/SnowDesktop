@@ -200,6 +200,7 @@ constexpr UINT_PTR kDockLaunchBounceTimerId = 14;
 constexpr UINT_PTR kTaskbarRevealGuardTimerId = 15;
 constexpr UINT kTaskbarRevealGuardIntervalMs = 50;
 constexpr UINT_PTR kCollectionPopupAnimationTimerId = 17;
+constexpr UINT_PTR kQuickNavigationAnimationTimerId = 18;
 constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 

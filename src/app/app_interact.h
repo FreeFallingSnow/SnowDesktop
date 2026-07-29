@@ -2313,7 +2313,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (dock->IsSearchPoint(pt))
             {
                 mouseDown_ = false;
-                OpenQuickNavigation();
+                OpenQuickNavigation(true);
                 if (floatingDockVisible_)
                     CloseFloatingDock();
                 return;
