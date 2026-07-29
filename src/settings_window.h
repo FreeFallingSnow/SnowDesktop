@@ -30,6 +30,7 @@
 using Microsoft::WRL::ComPtr;
 
 struct ImFont;
+class AsyncHttpService;
 
 /**
  * @brief 布局备份条目结构体
@@ -404,6 +405,11 @@ private:
      */
     void PerformUpdateCheck();
 
+    /**
+     * @brief 轮询并应用后台更新检查结果
+     */
+    void PollUpdateCheck();
+
     /** @} */
 
     /** @name 布局备份辅助方法
@@ -546,6 +552,10 @@ private:
     std::string downloadUrl_;
     /// 是否有可用更新
     bool updateAvailable_ = false;
+    /// 携带版更新检查使用的异步 HTTP 服务
+    std::unique_ptr<AsyncHttpService> updateHttpService_;
+    /// 当前更新检查请求 ID；0 表示没有进行中的请求
+    int updateCheckRequestId_ = 0;
 
     /// MSIX StartupTask 状态是否已完成首次查询
     mutable bool packagedAutoStartStateKnown_ = false;

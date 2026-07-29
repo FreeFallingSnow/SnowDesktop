@@ -21,6 +21,7 @@
 #include "crashlog.h"
 #include "data_paths.h"
 #include "deployment_context.h"
+#include "http_runtime.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -30,7 +31,6 @@
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <wbemidl.h>
-#include <winhttp.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -716,6 +716,7 @@ void SettingsWindow::Render()
     } renderScope{ renderInProgress_ };
 
     renderRequested_ = false;
+    PollUpdateCheck();
 
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -3038,10 +3039,15 @@ void SettingsWindow::DrawDebugPage()
  */
 void SettingsWindow::PerformUpdateCheck()
 {
+    if (updateCheckRequestId_ != 0)
+        return;
+
     updateCheckStatus_ = "checking";
     updateCheckStatusKey_.clear();
     updateCheckStatusArgument_.clear();
     updateAvailable_ = false;
+    latestVersion_.clear();
+    downloadUrl_.clear();
 
     if (snowdesktop::deployment::IsPackaged())
     {
@@ -3059,148 +3065,142 @@ void SettingsWindow::PerformUpdateCheck()
         return;
     }
 
-    HINTERNET session = WinHttpOpen(L"SnowDesktop/" SNOWDESKTOP_VERSION,
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
-    if (!session)
+    if (!updateHttpService_)
+        updateHttpService_ = std::make_unique<AsyncHttpService>();
+
+    HttpRequestOptions options;
+    options.widgetId = L"SnowDesktop.UpdateCheck";
+    options.url =
+        L"https://api.github.com/repos/FreeFallingSnow/"
+        L"SnowDesktop_Release/releases/latest";
+    options.headers =
+        L"Accept: application/vnd.github+json\r\n"
+        L"X-GitHub-Api-Version: 2022-11-28\r\n";
+    options.timeoutMs = 8000;
+    options.allowedDomains = { "api.github.com" };
+    updateCheckRequestId_ = updateHttpService_->Submit(std::move(options));
+    if (updateCheckRequestId_ == 0)
     {
         updateCheckStatusKey_ = L10N_KEY("app.settings.update_http_init_failed");
         updateCheckStatus_ = _L("app.settings.update_http_init_failed");
+    }
+}
+
+void SettingsWindow::PollUpdateCheck()
+{
+    if (!updateHttpService_ || updateCheckRequestId_ == 0)
         return;
-    }
-    WinHttpSetTimeouts(session, 8000, 8000, 8000, 8000);
 
-    URL_COMPONENTS urlComp{};
-    urlComp.dwStructSize = sizeof(urlComp);
-    urlComp.dwSchemeLength   = (DWORD)-1;
-    urlComp.dwHostNameLength = (DWORD)-1;
-    urlComp.dwUrlPathLength  = (DWORD)-1;
-    std::wstring apiUrl = L"https://api.github.com/repos/FreeFallingSnow/SnowDesktop_Release/releases/latest";
-    if (!WinHttpCrackUrl(apiUrl.c_str(), 0, 0, &urlComp))
+    for (HttpResponse& response : updateHttpService_->Drain())
     {
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_url_parse_failed");
-        updateCheckStatus_ = _L("app.settings.update_url_parse_failed");
-        return;
-    }
+        if (response.id != updateCheckRequestId_)
+            continue;
 
-    HINTERNET connect = WinHttpConnect(session,
-        std::wstring(urlComp.lpszHostName, urlComp.dwHostNameLength).c_str(),
-        INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!connect)
-    {
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_connect_failed");
-        updateCheckStatus_ = _L("app.settings.update_connect_failed");
-        return;
-    }
-
-    HINTERNET request = WinHttpOpenRequest(connect, L"GET",
-        std::wstring(urlComp.lpszUrlPath, urlComp.dwUrlPathLength).c_str(),
-        nullptr, nullptr, nullptr, WINHTTP_FLAG_SECURE);
-    if (!request)
-    {
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_request_failed");
-        updateCheckStatus_ = _L("app.settings.update_request_failed");
-        return;
-    }
-
-    const wchar_t* headers = L"Accept: application/vnd.github+json\r\nUser-Agent: SnowDesktop\r\n";
-    if (!WinHttpSendRequest(request, headers, (DWORD)wcslen(headers), nullptr, 0, 0, 0))
-    {
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_send_failed");
-        updateCheckStatus_ = _L("app.settings.update_send_failed");
-        return;
-    }
-
-    if (!WinHttpReceiveResponse(request, nullptr))
-    {
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_receive_failed");
-        updateCheckStatus_ = _L("app.settings.update_receive_failed");
-        return;
-    }
-
-    std::string body;
-    DWORD available = 0;
-    while (WinHttpQueryDataAvailable(request, &available) && available > 0)
-    {
-        std::vector<char> chunk(available + 1);
-        DWORD read = 0;
-        if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
-        body.append(chunk.data(), read);
-        if (body.size() > 128 * 1024) break;
-    }
-
-    WinHttpCloseHandle(request);
-    WinHttpCloseHandle(connect);
-    WinHttpCloseHandle(session);
-
-    if (body.empty())
-    {
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_empty_response");
-        updateCheckStatus_ = _L("app.settings.update_empty_response");
-        return;
-    }
-
-    auto extractJsonString = [](const std::string& json, const char* field) -> std::string {
-        std::string key = "\"" + std::string(field) + "\":\"";
-        size_t pos = json.find(key);
-        if (pos == std::string::npos) return {};
-        pos += key.size();
-        size_t end = json.find('"', pos);
-        if (end == std::string::npos) return {};
-        return json.substr(pos, end - pos);
-    };
-
-    std::string tag = extractJsonString(body, "tag_name");
-    if (tag.empty())
-    {
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_parse_failed");
-        updateCheckStatus_ = _L("app.settings.update_parse_failed");
-        return;
-    }
-
-    if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V'))
-        tag = tag.substr(1);
-
-    std::string htmlUrl = extractJsonString(body, "html_url");
-
-    auto compareVersion = [](const std::string& a, const std::string& b) -> int {
-        std::istringstream sa(a), sb(b);
-        std::string pa, pb;
-        for (int i = 0; i < 4; ++i)
+        updateCheckRequestId_ = 0;
+        if (!response.error.empty() || response.status < 200 ||
+            response.status >= 300)
         {
-            int va = 0, vb = 0;
-            if (std::getline(sa, pa, '.')) va = std::atoi(pa.c_str());
-            if (std::getline(sb, pb, '.')) vb = std::atoi(pb.c_str());
-            if (va != vb) return va < vb ? -1 : 1;
+            if (response.error.find("WinHttpOpen") != std::string::npos)
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_http_init_failed");
+            else if (response.error.find("WinHttpConnect") !=
+                std::string::npos)
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_connect_failed");
+            else if (response.error.find("Invalid URL") !=
+                std::string::npos)
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_url_parse_failed");
+            else
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_receive_failed");
+            updateCheckStatus_ =
+                Locale::Instance().Tr(updateCheckStatusKey_.c_str());
+            return;
         }
-        return 0;
-    };
 
-    latestVersion_ = tag;
-    downloadUrl_ = htmlUrl;
+        if (response.body.empty())
+        {
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.update_empty_response");
+            updateCheckStatus_ =
+                _L("app.settings.update_empty_response");
+            return;
+        }
 
-    int cmp = compareVersion(SNOWDESKTOP_VERSION, tag);
-    if (cmp >= 0)
-    {
-        updateAvailable_ = false;
-        updateCheckStatusKey_ = L10N_KEY("app.settings.already_latest");
-        updateCheckStatus_ = _L("app.settings.already_latest");
-    }
-    else
-    {
-        updateAvailable_ = true;
-        updateCheckStatusKey_ = L10N_KEY("app.settings.new_version");
-        updateCheckStatusArgument_ = tag;
-        updateCheckStatus_ = _LF("app.settings.new_version", tag);
+        auto extractJsonString = [](const std::string& json,
+                                     const char* field) -> std::string {
+            const std::string key = "\"" + std::string(field) + "\"";
+            size_t pos = json.find(key);
+            if (pos == std::string::npos) return {};
+            pos += key.size();
+            pos = json.find(':', pos);
+            if (pos == std::string::npos) return {};
+            ++pos;
+            while (pos < json.size() &&
+                (json[pos] == ' ' || json[pos] == '\t' ||
+                 json[pos] == '\r' || json[pos] == '\n'))
+                ++pos;
+            if (pos >= json.size() || json[pos] != '"') return {};
+            ++pos;
+            size_t end = json.find('"', pos);
+            if (end == std::string::npos) return {};
+            return json.substr(pos, end - pos);
+        };
+
+        std::string tag =
+            extractJsonString(response.body, "tag_name");
+        if (tag.empty())
+        {
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.update_parse_failed");
+            updateCheckStatus_ =
+                _L("app.settings.update_parse_failed");
+            return;
+        }
+
+        if (tag[0] == 'v' || tag[0] == 'V')
+            tag.erase(0, 1);
+
+        const std::string htmlUrl =
+            extractJsonString(response.body, "html_url");
+
+        auto compareVersion = [](const std::string& a,
+                                  const std::string& b) -> int {
+            std::istringstream sa(a), sb(b);
+            std::string pa, pb;
+            for (int i = 0; i < 4; ++i)
+            {
+                int va = 0, vb = 0;
+                if (std::getline(sa, pa, '.')) va = std::atoi(pa.c_str());
+                if (std::getline(sb, pb, '.')) vb = std::atoi(pb.c_str());
+                if (va != vb) return va < vb ? -1 : 1;
+            }
+            return 0;
+        };
+
+        latestVersion_ = tag;
+        downloadUrl_ = htmlUrl;
+
+        if (compareVersion(SNOWDESKTOP_VERSION, tag) >= 0)
+        {
+            updateAvailable_ = false;
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.already_latest");
+            updateCheckStatusArgument_.clear();
+            updateCheckStatus_ =
+                _L("app.settings.already_latest");
+        }
+        else
+        {
+            updateAvailable_ = true;
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.new_version");
+            updateCheckStatusArgument_ = tag;
+            updateCheckStatus_ =
+                _LF("app.settings.new_version", tag);
+        }
+        return;
     }
 }
 
@@ -3309,10 +3309,12 @@ void SettingsWindow::DrawAboutPage()
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    ImGui::BeginDisabled(updateCheckRequestId_ != 0);
     if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
     {
         PerformUpdateCheck();
     }
+    ImGui::EndDisabled();
     ImGui::PopStyleColor(4);
 
     if (!updateCheckStatus_.empty() &&
