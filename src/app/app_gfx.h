@@ -1552,10 +1552,16 @@ inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) cons
     const int maxColumns = std::max(1,
         (popupContentWidth + kCollectionPopupGapX) /
         std::max(1, cellW + kCollectionPopupGapX));
-    const int itemCount = std::max(
-        1, static_cast<int>(GetPopupItemCount(widget)));
-    int columns = std::clamp(std::min(itemCount, 5), 1, maxColumns);
-    int rows = (itemCount + columns - 1) / columns;
+    const size_t itemCount =
+        GetPopupItemCount(widget);
+    int columns =
+        snowdesktop::collection_popup_layout::
+            PreferredColumnCount(
+                itemCount, maxColumns);
+    int rows =
+        snowdesktop::collection_popup_layout::
+            RequiredRowCount(
+                itemCount, columns);
     const int maxHeight = std::max(1, workHeight - 24);
     auto popupWidthForColumns = [&](int columnCount) {
         return kCollectionPopupPaddingX * 2 + columnCount * cellW +
@@ -1568,10 +1574,15 @@ inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) cons
     };
     int width = popupWidthForColumns(columns);
     int height = popupHeightForRows(rows);
-    if (height > maxHeight && columns < maxColumns)
+    if (itemCount > 0 &&
+        height > maxHeight &&
+        columns < maxColumns)
     {
         columns = maxColumns;
-        rows = (itemCount + columns - 1) / columns;
+        rows =
+            snowdesktop::collection_popup_layout::
+                RequiredRowCount(
+                    itemCount, columns);
         width = popupWidthForColumns(columns);
         height = popupHeightForRows(rows);
     }

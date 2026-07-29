@@ -4,6 +4,7 @@
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
 #include "dock_collection_icon_rules.h"
+#include "collection_popup_layout.h"
 #include "folder_sort_rules.h"
 #include "shell_item_visibility.h"
 #include "popup_drag_rules.h"
@@ -64,12 +65,33 @@ int main()
         snowdesktop::dock_folder_rules;
     namespace folderSort =
         snowdesktop::folder_sort_rules;
+    namespace popupLayout =
+        snowdesktop::collection_popup_layout;
     namespace shellVisibility =
         snowdesktop::shell_item_visibility;
     namespace popupDrag =
         snowdesktop::popup_drag_rules;
     namespace itemLayout =
         snowdesktop::item_layout_rules;
+
+    Check(
+        popupLayout::PreferredColumnCount(
+            0, 5) == 3 &&
+            popupLayout::RequiredRowCount(
+                0, 3) == 2,
+        "empty collection popups must reserve a comfortable 3x2 content area");
+    Check(
+        popupLayout::PreferredColumnCount(
+            0, 2) == 2 &&
+            popupLayout::RequiredRowCount(
+                0, 2) == 2,
+        "empty collection popups must shrink horizontally on narrow work areas");
+    Check(
+        popupLayout::PreferredColumnCount(
+            1, 5) == 1 &&
+            popupLayout::RequiredRowCount(
+                1, 1) == 1,
+        "non-empty collection popups must retain their content-driven size");
 
     Check(floatingDock::HasAnySummonTrigger(true, false),
         "the floating Dock hotkey must work without edge swipe");

@@ -395,10 +395,9 @@ CalculateFloatingDockStableSourceRect() const
                 FindWidgetIndexById(entry.reference);
             if (widgetIndex >= widgets_.size())
                 continue;
-            itemCount = std::max(
-                1, static_cast<int>(
-                    GetPopupItemKeys(
-                        widgets_[widgetIndex]).size()));
+            itemCount = static_cast<int>(
+                GetPopupItemKeys(
+                    widgets_[widgetIndex]).size());
         }
         else if (folderEntry)
         {
@@ -416,12 +415,20 @@ CalculateFloatingDockStableSourceRect() const
         else
             continue;
 
-        int columns = std::clamp(
-            std::min(itemCount, 5),
-            1, maxColumns);
+        int columns =
+            snowdesktop::
+                collection_popup_layout::
+                    PreferredColumnCount(
+                        static_cast<size_t>(
+                            itemCount),
+                        maxColumns);
         int rows =
-            (itemCount + columns - 1) /
-            columns;
+            snowdesktop::
+                collection_popup_layout::
+                    RequiredRowCount(
+                        static_cast<size_t>(
+                            itemCount),
+                        columns);
         auto widthForColumns =
             [&](int count) {
                 return
@@ -443,13 +450,18 @@ CalculateFloatingDockStableSourceRect() const
             widthForColumns(columns);
         int height =
             heightForRows(rows);
-        if (height > maxHeight &&
+        if (itemCount > 0 &&
+            height > maxHeight &&
             columns < maxColumns)
         {
             columns = maxColumns;
             rows =
-                (itemCount + columns - 1) /
-                columns;
+                snowdesktop::
+                    collection_popup_layout::
+                        RequiredRowCount(
+                            static_cast<size_t>(
+                                itemCount),
+                            columns);
             width =
                 widthForColumns(columns);
             height =

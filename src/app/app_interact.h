@@ -8095,26 +8095,65 @@ inline void DesktopApp::RefreshDockFolderPopup()
 }
 
 inline void DesktopApp::
-CommitDockFolderPopupOrderToMapping()
+CommitDockFolderPopupStateToSource()
 {
-    if (!dockFolderPopupOpen_ ||
-        dockFolderPopupMappingWidgetId_.empty())
-        return;
-    const size_t sourceIndex =
-        FindWidgetIndexById(
-            dockFolderPopupMappingWidgetId_);
-    if (sourceIndex >= widgets_.size() ||
-        widgets_[sourceIndex].type !=
-            DesktopWidgetType::FolderMapping)
+    if (!dockFolderPopupOpen_)
         return;
 
-    DesktopWidget& source =
-        widgets_[sourceIndex];
-    source.folderSortMode =
-        snowdesktop::folder_sort_rules::kManual;
-    source.itemKeys =
-        dockFolderPopupWidget_.itemKeys;
-    RefreshFolderMappingWidget(sourceIndex);
+    if (!dockFolderPopupMappingWidgetId_.empty())
+    {
+        const size_t sourceIndex =
+            FindWidgetIndexById(
+                dockFolderPopupMappingWidgetId_);
+        if (sourceIndex < widgets_.size() &&
+            widgets_[sourceIndex].type ==
+                DesktopWidgetType::FolderMapping)
+        {
+            DesktopWidget& source =
+                widgets_[sourceIndex];
+            source.folderSortMode =
+                snowdesktop::folder_sort_rules::
+                    NormalizeMode(
+                        dockFolderPopupWidget_.
+                            folderSortMode);
+            source.folderSortAscending =
+                dockFolderPopupWidget_.
+                    folderSortAscending;
+            source.itemKeys =
+                dockFolderPopupWidget_.itemKeys;
+            RefreshFolderMappingWidget(
+                sourceIndex);
+            SaveLayoutSlots();
+            return;
+        }
+        dockFolderPopupMappingWidgetId_.clear();
+    }
+
+    for (DockEntry& entry : dockEntries_)
+    {
+        const std::wstring sourceId =
+            std::to_wstring(
+                static_cast<int>(entry.type)) +
+            L":" +
+            ToUpperInvariant(entry.reference);
+        if (sourceId !=
+                dockFolderPopupSourceId_ ||
+            !IsFolderDockEntry(entry))
+            continue;
+
+        entry.folderSortMode =
+            snowdesktop::folder_sort_rules::
+                NormalizeMode(
+                    dockFolderPopupWidget_.
+                        folderSortMode);
+        entry.folderSortAscending =
+            dockFolderPopupWidget_.
+                folderSortAscending;
+        entry.folderItemKeys =
+            dockFolderPopupWidget_.itemKeys;
+        SaveLayoutSlots();
+        return;
+    }
 }
 
 inline void DesktopApp::SortDockFolderPopupContents(
@@ -8165,6 +8204,7 @@ inline void DesktopApp::SortDockFolderPopupContents(
         if (dockFolderPopupContainer_)
             dockFolderPopupContainer_->
                 InvalidateFilterCache();
+        CommitDockFolderPopupStateToSource();
     }
 
     popupScrollOffset_ = 0;
@@ -8796,9 +8836,14 @@ inline void DesktopApp::OpenDockFolderPopupAt(
     dockFolderPopupWidget_.sourceFolderPath =
         target.path;
     dockFolderPopupWidget_.folderSortMode =
-        snowdesktop::folder_sort_rules::kName;
+        snowdesktop::folder_sort_rules::
+            NormalizeMode(
+                entry.folderSortMode);
     dockFolderPopupWidget_.
-        folderSortAscending = true;
+        folderSortAscending =
+            entry.folderSortAscending;
+    dockFolderPopupWidget_.itemKeys =
+        entry.folderItemKeys;
     dockFolderPopupWidget_.gridCell =
         { kDockPageId, 0, 0 };
     if (entry.type == DockEntryType::FolderMapping)

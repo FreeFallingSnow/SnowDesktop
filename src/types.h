@@ -9,6 +9,7 @@
 #include <shlobj.h>
 
 #include "constants.h"
+#include "folder_sort_rules.h"
 
 #include <string>
 #include <vector>
@@ -478,6 +479,12 @@ struct DockEntry
     std::wstring reference;
     bool keepOnDesktop = false;
     bool selected = false;
+    // Direct folder items and folder shortcuts have no persistent
+    // FolderMapping widget, so their popup order belongs to the Dock entry.
+    int folderSortMode =
+        snowdesktop::folder_sort_rules::kName;
+    bool folderSortAscending = true;
+    std::vector<std::wstring> folderItemKeys;
 };
 
 struct DockUsageRecord

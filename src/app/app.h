@@ -31,6 +31,7 @@
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
 #include "dock_collection_icon_rules.h"
+#include "collection_popup_layout.h"
 #include "folder_sort_rules.h"
 #include "shell_item_visibility.h"
 #include "popup_drag_rules.h"
@@ -1801,7 +1802,7 @@ private:
     /** @brief 释放拖拽期间保存的 Dock 文件夹弹窗来源快照。 */
     void ClearDockFolderPopupDragSourceSnapshot();
     void RefreshDockFolderPopup();
-    void CommitDockFolderPopupOrderToMapping();
+    void CommitDockFolderPopupStateToSource();
     void SortDockFolderPopupContents(int mode, bool ascending);
     void ShowDockFolderPopupSortMenu(POINT screenPoint);
     void ShowDockFolderPopupContextMenu(

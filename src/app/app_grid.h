@@ -2263,10 +2263,23 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                 std::string object = text.substr(dp, objectEnd - dp + 1);
                 std::string typeUtf8, referenceUtf8;
                 bool keepOnDesktop = false;
+                bool folderSortAscending = true;
+                int folderSortMode =
+                    snowdesktop::folder_sort_rules::kName;
+                std::vector<std::wstring> folderItemKeys;
                 if (ReadJsonStringField(object, "type", typeUtf8) &&
                     ReadJsonStringField(object, "ref", referenceUtf8))
                 {
                     ReadJsonBoolField(object, "keepOnDesktop", keepOnDesktop);
+                    ReadJsonIntField(
+                        object, "folderSortMode",
+                        folderSortMode);
+                    ReadJsonBoolField(
+                        object, "folderSortAscending",
+                        folderSortAscending);
+                    ReadJsonStringArrayField(
+                        object, "folderItems",
+                        folderItemKeys);
                     DockEntry entry;
                     if (typeUtf8 == "collection")
                         entry.type = DockEntryType::Collection;
@@ -2278,6 +2291,14 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                     if (entry.type == DockEntryType::DesktopItem)
                         entry.reference = ToUpperInvariant(entry.reference);
                     entry.keepOnDesktop = keepOnDesktop;
+                    entry.folderSortMode =
+                        snowdesktop::folder_sort_rules::
+                            NormalizeMode(
+                                folderSortMode);
+                    entry.folderSortAscending =
+                        folderSortAscending;
+                    entry.folderItemKeys =
+                        std::move(folderItemKeys);
                     if (!entry.reference.empty() &&
                         !(entry.type ==
                                 DockEntryType::
@@ -2579,7 +2600,28 @@ inline void DesktopApp::SaveLayoutSlots()
                         ? "folderMapping" : "item"))
              << "\", \"ref\": \"" << JsonEscapeUtf8(entry.reference)
              << "\", \"keepOnDesktop\": " << (entry.keepOnDesktop ? "true" : "false")
-             << " }" << (i + 1 == dockEntries_.size() ? "\n" : ",\n");
+             << ", \"folderSortMode\": "
+             << snowdesktop::folder_sort_rules::
+                    NormalizeMode(
+                        entry.folderSortMode)
+             << ", \"folderSortAscending\": "
+             << (entry.folderSortAscending
+                    ? "true" : "false")
+             << ", \"folderItems\": [";
+        for (size_t j = 0;
+            j < entry.folderItemKeys.size(); ++j)
+        {
+            file << "\""
+                 << JsonEscapeUtf8(
+                        entry.folderItemKeys[j])
+                 << "\"";
+            if (j + 1 !=
+                entry.folderItemKeys.size())
+                file << ", ";
+        }
+        file << "] }"
+             << (i + 1 == dockEntries_.size()
+                    ? "\n" : ",\n");
     }
     file << "  ],\n  \"navTabOrder\": [";
     for (size_t i = 0; i < navTabOrder_.size(); ++i)
@@ -5726,7 +5768,7 @@ inline bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList
             targetWidget->ReorderMembers(indices, preview.insertIndex);
             if (targetWidget ==
                 dockFolderPopupContainer_.get())
-                CommitDockFolderPopupOrderToMapping();
+                CommitDockFolderPopupStateToSource();
             targetWidget->InvalidateSlots();
             return true;
         }
@@ -5784,7 +5826,7 @@ inline bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList
         targetWidget->ReorderMembers(indices, preview.insertIndex);
         if (targetWidget ==
             dockFolderPopupContainer_.get())
-            CommitDockFolderPopupOrderToMapping();
+            CommitDockFolderPopupStateToSource();
         return true;
     }
 
