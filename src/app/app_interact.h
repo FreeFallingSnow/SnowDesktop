@@ -575,7 +575,19 @@ inline void DesktopApp::PresentPointerInteractionFrame()
         if (!compositionPaintInProgress_)
             UpdateWindow(hwnd_);
     }
-    InvalidateFloatingDockWindow(true);
+    if (floatingDockVisible_)
+    {
+        const ULONGLONG now = GetTickCount64();
+        const bool presentNow =
+            snowdesktop::floating_dock_rules::
+                ShouldPresentPointerFrame(
+                    now,
+                    floatingDockLastPointerPresentTick_,
+                    immediateDesktopPresent);
+        if (presentNow)
+            floatingDockLastPointerPresentTick_ = now;
+        InvalidateFloatingDockWindow(presentNow);
+    }
 }
 
 /**

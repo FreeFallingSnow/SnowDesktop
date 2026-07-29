@@ -638,6 +638,17 @@ int main()
                 NeedsImmediatePointerPresent(
                     false, false, false),
         "item drags, widget previews and marquees must synchronously present pointer frames");
+    Check(floatingDock::ShouldPresentPointerFrame(
+            100, 0, false) &&
+            !floatingDock::ShouldPresentPointerFrame(
+                104, 100, false) &&
+            floatingDock::ShouldPresentPointerFrame(
+                108, 100, false) &&
+            floatingDock::ShouldPresentPointerFrame(
+                104, 100, true) &&
+            floatingDock::ShouldPresentPointerFrame(
+                2, 100, false),
+        "passive Dock hover frames are throttled while drag frames and clock resets present immediately");
     Check(floatingDock::
             FloatingVisibilityChangesStaticScene(
                 false, true) &&

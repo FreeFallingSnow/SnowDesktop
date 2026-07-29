@@ -619,7 +619,7 @@ private:
     DockContainer* GetDockContainerAtPoint(POINT point) const;
     void InvalidateDockContainers();
     void InvalidateDockRects(BOOL erase = FALSE) const;
-    /** @brief 在当前指针消息结束前提交拖动帧，并同步刷新浮动 Dock。 */
+    /** @brief 提交拖动帧，并按刷新间隔合并浮动 Dock 的被动 hover 帧。 */
     void PresentPointerInteractionFrame();
     void ClearDockBackdropForDragTransition(
         POINT previousPointer, POINT currentPointer);
@@ -635,7 +635,8 @@ private:
     DockContainer* SelectFloatingDockContainerForMonitor(
         HMONITOR monitor) const;
     RECT CalculateFloatingDockStableSourceRect() const;
-    void UpdateFloatingDockWindowBounds();
+    void UpdateFloatingDockWindowBounds(
+        bool immediatePresent = true);
     void InvalidateFloatingDockWindow(bool immediate = false) const;
     HRESULT CreateOrResizeFloatingDockCompositionSurface();
     void ResetFloatingDockCompositionResources();
@@ -2176,6 +2177,7 @@ private:
     bool floatingDockRevealPending_ = false;
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
+    ULONGLONG floatingDockLastPointerPresentTick_ = 0;
     PersonalizationSettings floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();
     DesktopBackdropCompositor floatingDockBackdropCompositor_;

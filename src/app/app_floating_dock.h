@@ -476,7 +476,8 @@ CalculateFloatingDockStableSourceRect() const
             sourceRect, popupEnvelope);
 }
 
-inline void DesktopApp::UpdateFloatingDockWindowBounds()
+inline void DesktopApp::UpdateFloatingDockWindowBounds(
+    bool immediatePresent)
 {
     if (!floatingDockVisible_ || !floatingDockHwnd_ ||
         !IsWindow(floatingDockHwnd_) ||
@@ -600,7 +601,8 @@ inline void DesktopApp::UpdateFloatingDockWindowBounds()
     if (!dockGeometryChanged &&
         IsWindowVisible(floatingDockHwnd_))
     {
-        InvalidateFloatingDockWindow(true);
+        InvalidateFloatingDockWindow(
+            immediatePresent);
         return;
     }
 
@@ -676,7 +678,8 @@ inline void DesktopApp::UpdateFloatingDockWindowBounds()
             floatingDockHwnd_, GWL_EXSTYLE) &
             WS_EX_TOPMOST) != 0);
     WriteCrashLogEntry(message);
-    InvalidateFloatingDockWindow(true);
+    InvalidateFloatingDockWindow(
+        immediatePresent);
 }
 
 inline void DesktopApp::ShowFloatingDock()
@@ -741,6 +744,7 @@ inline void DesktopApp::ShowFloatingDock()
     const bool wasFloatingDockVisible =
         floatingDockVisible_;
     floatingDockVisible_ = true;
+    floatingDockLastPointerPresentTick_ = 0;
     if (snowdesktop::floating_dock_rules::
             FloatingVisibilityChangesStaticScene(
                 wasFloatingDockVisible,
@@ -769,6 +773,7 @@ inline void DesktopApp::ShowFloatingDock()
     floatingDockBackdropCompositor_.
         Reattach(floatingDockHwnd_);
     floatingDockRevealPending_ = false;
+    floatingDockLastPointerPresentTick_ = 0;
     if (hwnd_)
     {
         InvalidateRect(
@@ -815,6 +820,7 @@ inline void DesktopApp::CloseFloatingDock(
         InvalidateDragStaticScene();
     }
     floatingDockRevealPending_ = false;
+    floatingDockLastPointerPresentTick_ = 0;
     if (hwnd_)
     {
         InvalidateRect(
@@ -869,6 +875,15 @@ inline void DesktopApp::InvalidateFloatingDockWindow(
 inline POINT DesktopApp::FloatingDockClientToDesktop(
     POINT point) const
 {
+    if (floatingDockHwnd_ &&
+        IsWindow(floatingDockHwnd_) &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        MapWindowPoints(
+            floatingDockHwnd_, hwnd_,
+            &point, 1);
+        return point;
+    }
     return snowdesktop::floating_dock_rules::
         WindowPointToDesktopPoint(
             point, floatingDockSourceRect_);
@@ -1071,6 +1086,16 @@ inline LRESULT DesktopApp::HandleFloatingDockMessage(
                 GET_Y_LPARAM(lp) });
         return MAKELPARAM(point.x, point.y);
     };
+    auto latestDesktopPointerLParam = [&]() {
+        POINT point{};
+        if (GetCursorPos(&point) &&
+            hwnd_ && IsWindow(hwnd_))
+        {
+            ScreenToClient(hwnd_, &point);
+            return MAKELPARAM(point.x, point.y);
+        }
+        return desktopLParam();
+    };
 
     switch (msg)
     {
@@ -1090,9 +1115,12 @@ inline LRESULT DesktopApp::HandleFloatingDockMessage(
         tracking.hwndTrack = hwnd;
         TrackMouseEvent(&tracking);
         handlingFloatingDockInput_ = true;
-        OnMouseMove(wp, desktopLParam());
+        OnMouseMove(wp,
+            latestDesktopPointerLParam());
         handlingFloatingDockInput_ = false;
-        UpdateFloatingDockWindowBounds();
+        // Passive hover is presented once below. Updating the title/input
+        // region must not synchronously redraw the same large DComp surface.
+        UpdateFloatingDockWindowBounds(false);
         PresentPointerInteractionFrame();
         return 0;
     }
