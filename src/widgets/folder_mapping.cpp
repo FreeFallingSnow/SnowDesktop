@@ -740,7 +740,143 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
     size_t total = IncludeTrailingEmptySlot()
         ? visibleEntries.size() + 1
         : visibleEntries.size();
-    for (size_t idx = 0; idx < total; ++idx)
+
+    const RECT content = FolderMappingContentRect(this);
+    const int visibleHeight = std::max<int>(
+        1, content.bottom - content.top);
+    const int scroll = std::clamp(
+        data_->scrollOffset, 0,
+        FolderMappingMaxScrollOffset(this));
+
+    std::vector<size_t> visibleSlotIndices;
+    if (data_->dateHeaders && !IsSearchActive())
+    {
+        EnsureDateLayout();
+        const LONG visibleTop = scroll;
+        const LONG visibleBottom = scroll + visibleHeight;
+        const int columns = data_->listMode
+            ? 1 : std::max(1, data_->gridSpan.columns);
+        const int itemHeight = data_->listMode
+            ? std::max(1, Cu(38.0f))
+            : std::max(1, FolderMappingCellHeight(this));
+
+        for (const auto& segment : dateLayoutCache_)
+        {
+            if (segment.isHeader ||
+                segment.y + segment.height <= visibleTop ||
+                segment.y >= visibleBottom)
+                continue;
+
+            size_t firstInSegment = 0;
+            size_t lastInSegment = segment.itemCount;
+            if (data_->listMode)
+            {
+                firstInSegment = static_cast<size_t>(
+                    std::max<LONG>(
+                        0, (visibleTop - segment.y) /
+                            itemHeight));
+                lastInSegment = std::min(
+                    segment.itemCount,
+                    static_cast<size_t>(std::max<LONG>(
+                        1, (visibleBottom - segment.y +
+                            itemHeight - 1) / itemHeight)));
+            }
+            else
+            {
+                const size_t firstRow =
+                    static_cast<size_t>(std::max<LONG>(
+                        0, (visibleTop - segment.y) /
+                            itemHeight));
+                const size_t lastRow = std::min(
+                    (segment.itemCount +
+                        static_cast<size_t>(columns) - 1) /
+                        static_cast<size_t>(columns),
+                    static_cast<size_t>(std::max<LONG>(
+                        1, (visibleBottom - segment.y +
+                            itemHeight - 1) / itemHeight)));
+                firstInSegment = std::min(
+                    segment.itemCount,
+                    firstRow * static_cast<size_t>(columns));
+                lastInSegment = std::min(
+                    segment.itemCount,
+                    lastRow * static_cast<size_t>(columns));
+            }
+
+            if (firstInSegment > 0)
+                firstInSegment = data_->listMode
+                    ? firstInSegment - 1
+                    : firstInSegment >=
+                        static_cast<size_t>(columns)
+                        ? firstInSegment -
+                            static_cast<size_t>(columns)
+                        : 0;
+            lastInSegment = std::min(
+                segment.itemCount,
+                lastInSegment +
+                    static_cast<size_t>(columns));
+            for (size_t localIndex = firstInSegment;
+                localIndex < lastInSegment; ++localIndex)
+            {
+                visibleSlotIndices.push_back(
+                    segment.firstItemIndex + localIndex);
+            }
+        }
+
+        if (IncludeTrailingEmptySlot() && total > 0)
+        {
+            RECT trailing = FolderMappingItemRect(
+                this, total - 1);
+            if (trailing.bottom > content.top &&
+                trailing.top < content.bottom)
+                visibleSlotIndices.push_back(total - 1);
+        }
+    }
+    else if (total > 0)
+    {
+        size_t firstIndex = 0;
+        size_t lastIndex = total;
+        if (data_->listMode)
+        {
+            const int itemHeight =
+                std::max(1, Cu(38.0f));
+            const int firstRow = std::max(
+                0, scroll / itemHeight - 1);
+            const int lastRow =
+                (scroll + visibleHeight + itemHeight - 1) /
+                    itemHeight + 1;
+            firstIndex = std::min(
+                total, static_cast<size_t>(firstRow));
+            lastIndex = std::min(
+                total, static_cast<size_t>(
+                    std::max(firstRow, lastRow)));
+        }
+        else
+        {
+            const int columns =
+                std::max(1, data_->gridSpan.columns);
+            const int rowStep = std::max(
+                1, FolderMappingCellHeight(this) +
+                    FolderMappingAdaptiveGapY(this));
+            const int firstRow = std::max(
+                0, scroll / rowStep - 1);
+            const int lastRow =
+                (scroll + visibleHeight + rowStep - 1) /
+                    rowStep + 1;
+            firstIndex = std::min(
+                total, static_cast<size_t>(firstRow) *
+                    static_cast<size_t>(columns));
+            lastIndex = std::min(
+                total, static_cast<size_t>(
+                    std::max(firstRow, lastRow)) *
+                        static_cast<size_t>(columns));
+        }
+        visibleSlotIndices.reserve(lastIndex - firstIndex);
+        for (size_t idx = firstIndex; idx < lastIndex; ++idx)
+            visibleSlotIndices.push_back(idx);
+    }
+
+    slots.reserve(visibleSlotIndices.size());
+    for (size_t idx : visibleSlotIndices)
     {
         RECT cell = FolderMappingItemRect(this, idx);
         if (IsRectEmptyRect(cell)) continue;

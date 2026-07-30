@@ -11,6 +11,13 @@ borderAlpha = 0.22
 gradientEndA = 0.32
 textColor = 0xFFFFFF
 local lastQuery = nil
+local cachedQuery = nil
+local cachedItems = {}
+local cachedRows = {}
+local resultsDirty = true
+local searchPending = false
+local searchDelayMs = 140
+local desktopResultLimit = 160
 
 local function resolveTextColor()
     local tc = tonumber(storage.get("textColor")) or textColor
@@ -32,7 +39,6 @@ local palettes = {
         inputText  = 0xFFFFFF,
         inputPlaceholder = 0xFFFFFF,
         inputBg    = 0xFFFFFF,
-        scrollBar  = 0xFFFFFF,
         selBg      = 0xFFFFFF,
         selBorder  = 0xFFFFFF,
         inputBorder = 0xFFFFFF,
@@ -47,7 +53,6 @@ local palettes = {
         inputText  = 0x000000,
         inputPlaceholder = 0x000000,
         inputBg    = 0x000000,
-        scrollBar  = 0x000000,
         selBg      = 0x000000,
         selBorder  = 0x000000,
         inputBorder = 0x000000,
@@ -103,44 +108,21 @@ function selectedIndex()
     return tonumber(storage.get("selectedIndex")) or 1
 end
 
-function topIndex()
-    return tonumber(storage.get("topIndex")) or 1
-end
-
 function setSelectedIndex(value)
-    storage.set("selectedIndex", tostring(math.max(1, value)))
+    local nextValue = math.max(1, value)
+    if selectedIndex() ~= nextValue then
+        storage.set("selectedIndex", tostring(nextValue))
+    end
 end
 
-function setTopIndex(value)
-    storage.set("topIndex", tostring(math.max(1, value)))
-end
-
-function listMetrics(metrics)
+function listGeometry(metrics)
     metrics = metrics or pageMetrics()
     local y = metrics.listTop
     local rowH = metrics.rowHeight
     local h = layout.height()
     local bottomBarH = layout.cu(layout.barHeight())
-    local maxRows = math.max(1, math.floor((h - y - bottomBarH - layout.cu(8)) / rowH))
-    return y, rowH, maxRows
-end
-
-function clampViewport(count, metrics)
-    local listY, rowH, maxRows = listMetrics(metrics)
-    local maxTop = math.max(1, count - maxRows + 1)
-    local top = math.min(topIndex(), maxTop)
-    setTopIndex(top)
-    local selected = math.min(math.max(1, selectedIndex()), math.max(1, count))
-    if count > 0 then
-        if selected < top then
-            selected = top
-            setSelectedIndex(selected)
-        elseif selected >= top + maxRows then
-            selected = top + maxRows - 1
-            setSelectedIndex(selected)
-        end
-    end
-    return top, selected, listY, rowH, maxRows
+    local bottom = math.max(y + 1, h - bottomBarH - layout.cu(8))
+    return y, rowH, bottom - y
 end
 
 function matchRank(item, query)
@@ -155,37 +137,103 @@ function matchRank(item, query)
     return 3
 end
 
-function sortMatches(results, query)
-    table.sort(results, function(a, b)
-        local ar = matchRank(a, query)
-        local br = matchRank(b, query)
-        if ar ~= br then return ar < br end
-        return string.lower(a.title or "") < string.lower(b.title or "")
-    end)
+function orderMatches(results, query)
+    local buckets = { {}, {}, {}, {} }
+    for _, item in ipairs(results) do
+        local rank = math.max(0, math.min(3, matchRank(item, query)))
+        local bucket = buckets[rank + 1]
+        bucket[#bucket + 1] = item
+    end
+
+    local ordered = {}
+    for _, bucket in ipairs(buckets) do
+        for _, item in ipairs(bucket) do
+            ordered[#ordered + 1] = item
+        end
+    end
+    return ordered
+end
+
+function appendResultSection(results, rows, items, title)
+    if #items == 0 then return end
+    rows[#rows + 1] = {
+        kind = "header",
+        title = title,
+    }
+    for _, item in ipairs(items) do
+        results[#results + 1] = item
+        rows[#rows + 1] = {
+            kind = "item",
+            item = item,
+            itemIndex = #results,
+        }
+    end
+end
+
+function refreshMatches(query)
+    query = query or currentQuery()
+    local results = {}
+    local rows = {}
+    if query ~= "" then
+        local desktopResults = orderMatches(
+            desktop.find(query, desktopResultLimit), query)
+        local applicationResults = {}
+        if desktop.findApplications then
+            applicationResults = orderMatches(
+                desktop.findApplications(query, 40),
+                query)
+        end
+        local everythingResults = {}
+        local seen = {}
+        for _, item in ipairs(desktopResults) do
+            seen[string.lower(item.path or item.id or "")] = true
+        end
+        for _, item in ipairs(applicationResults) do
+            local key = string.lower(
+                item.path or item.id or "")
+            if key ~= "" then seen[key] = true end
+        end
+        if everything and everything.search then
+            for _, item in ipairs(everything.search(query, 40)) do
+                local key = string.lower(item.path or item.id or "")
+                if key ~= "" and not seen[key] then
+                    everythingResults[#everythingResults + 1] = item
+                    seen[key] = true
+                end
+            end
+        end
+        everythingResults = orderMatches(everythingResults, query)
+        appendResultSection(results, rows, desktopResults,
+            l10n.tr(
+                "lua_widget.quick_launcher.desktop_results",
+                #desktopResults))
+        appendResultSection(results, rows, applicationResults,
+            l10n.tr(
+                "lua_widget.quick_launcher.application_results",
+                #applicationResults))
+        appendResultSection(results, rows, everythingResults,
+            l10n.tr(
+                "lua_widget.quick_launcher.everything_results",
+                #everythingResults))
+    end
+
+    cachedQuery = query
+    cachedItems = results
+    cachedRows = rows
+    resultsDirty = false
+    return cachedItems, cachedRows
 end
 
 function matches()
     local query = currentQuery()
-    if query == "" then
-        return desktop.items()
+    if not resultsDirty and cachedQuery == query then
+        return cachedItems, cachedRows
     end
-    local results = desktop.find(query)
-    if everything and everything.search then
-        local extra = everything.search(query, 40)
-        local seen = {}
-        for _, item in ipairs(results) do
-            seen[string.lower(item.path or item.id or "")] = true
-        end
-        for _, item in ipairs(extra) do
-            local key = string.lower(item.path or item.id or "")
-            if key ~= "" and not seen[key] then
-                table.insert(results, item)
-                seen[key] = true
-            end
-        end
+    if searchPending and cachedQuery ~= nil and
+        cachedQuery ~= query then
+        return cachedItems, cachedRows
     end
-    sortMatches(results, query)
-    return results
+    return refreshMatches(query)
 end
 
 function syncQueryState()
@@ -196,17 +244,18 @@ function syncQueryState()
     end
     if query ~= lastQuery then
         setSelectedIndex(1)
-        setTopIndex(1)
+        ui.setScrollOffset("results", 0)
+        resultsDirty = true
+        if query == "" then
+            widget.cancelTimer("search")
+            searchPending = false
+            refreshMatches("")
+        else
+            searchPending = true
+            widget.setTimer("search", searchDelayMs, false)
+        end
         lastQuery = query
     end
-end
-
-function currentTheme()
-    local theme = widget.theme()
-    theme.bg = theme.bg or 0x151A21
-    theme.border = theme.border or 0xFFFFFF
-    theme.alpha = theme.alpha or 0.36
-    return theme
 end
 
 function render()
@@ -215,9 +264,10 @@ function render()
     local w = layout.width()
     local pad = layout.cu(12)
     local metrics = pageMetrics()
-    local items = matches()
-    local top, selected, listY, rowH, maxRows = clampViewport(#items, metrics)
-    local theme = currentTheme()
+    local items, rows = matches()
+    local selected = math.min(
+        math.max(1, selectedIndex()), math.max(1, #items))
+    local listY, rowH, viewportH = listGeometry(metrics)
     local pal = getPalette()
 
     ui.textInput("search", "query", pad, metrics.searchTop,
@@ -240,37 +290,88 @@ function render()
             liveUpdate = true,
         })
 
-    local y = listY
-    for row = 0, math.min(#items - top + 1, maxRows) - 1 do
-        local i = top + row
-        local item = items[i]
-        local isSelected = i == selected
-        if isSelected then
-            draw.rect(pad, y - layout.cu(2), w - pad * 2, rowH - layout.cu(2),
-                pal.selBg, layout.cu(6), 0.28)
-            draw.strokeRect(pad, y - layout.cu(2), w - pad * 2, rowH - layout.cu(2),
-                pal.selBorder, layout.cu(6), layout.cu(1.0), 0.65)
+    local range = ui.virtualList(
+        "results", pad, listY, w - pad * 2,
+        viewportH, rowH, #rows)
+
+    if #rows > 0 then
+        draw.pushClip(pad, listY, w - pad * 2, viewportH)
+        for rowIndex = range.first, range.last do
+            local row = rows[rowIndex]
+            local y = listY + (rowIndex - 1) * rowH -
+                range.offset
+            if row.kind == "header" then
+                draw.text(pad + layout.cu(4),
+                    y + metrics.itemTextOffsetY, row.title,
+                    layout.fontCu(metrics.fontSize),
+                    pal.itemText,
+                    w - pad * 2 - layout.cu(8),
+                    true, true, nil, 0.72)
+                draw.line(pad + layout.cu(4),
+                    y + rowH - layout.cu(5),
+                    w - pad - layout.cu(4),
+                    y + rowH - layout.cu(5),
+                    layout.cu(1), pal.itemText, 0.16)
+            else
+                local item = row.item
+                local isSelected =
+                    row.itemIndex == selected
+                if isSelected then
+                    draw.rect(pad, y - layout.cu(2),
+                        w - pad * 2,
+                        rowH - layout.cu(2),
+                        pal.selBg, layout.cu(6), 0.28)
+                    draw.strokeRect(
+                        pad, y - layout.cu(2),
+                        w - pad * 2,
+                        rowH - layout.cu(2),
+                        pal.selBorder, layout.cu(6),
+                        layout.cu(1.0), 0.65)
+                end
+                draw.icon(item, pad + layout.cu(4),
+                    y + math.max(0,
+                        (rowH - metrics.iconSize) / 2 -
+                            layout.cu(1)),
+                    metrics.iconSize)
+                local textX =
+                    pad + metrics.iconSize +
+                    layout.cu(12)
+                draw.text(textX,
+                    y + metrics.itemTextOffsetY,
+                    item.title or
+                        l10n.tr(
+                            "lua_widget.common.untitled"),
+                    layout.fontCu(metrics.fontSize),
+                    pal.itemText,
+                    w - pad - textX - layout.cu(12),
+                    false, true)
+            end
         end
-        draw.icon(item, pad + layout.cu(4),
-            y + math.max(0, (rowH - metrics.iconSize) / 2 - layout.cu(1)), metrics.iconSize)
-        local textX = pad + metrics.iconSize + layout.cu(12)
-        draw.text(textX, y + metrics.itemTextOffsetY, item.title or l10n.tr("lua_widget.common.untitled"),
-            layout.fontCu(metrics.fontSize), pal.itemText,
-            w - pad - textX - layout.cu(6), false, true)
-        y = y + rowH
+        draw.popClip()
     end
 
-    if #items == 0 then
-        draw.text(pad, y, l10n.tr("lua_widget.quick_launcher.no_matches"), layout.fontCu(metrics.fontSize),
-            pal.noResult, w - pad * 2, false, true)
-    elseif #items > maxRows then
-        local barH = math.max(layout.cu(12), math.floor((maxRows / #items) * (maxRows * rowH)))
-        local barY = listY + math.floor(((top - 1) / math.max(1, #items - maxRows)) * (maxRows * rowH - barH))
-        draw.rect(w - pad - layout.cu(4), barY, layout.cu(3), barH, pal.scrollBar, layout.cu(2), 0.82)
+    if #rows == 0 then
+        local emptyText = currentQuery() == ""
+            and l10n.tr(
+                "lua_widget.quick_launcher.empty_prompt")
+            or l10n.tr(
+                "lua_widget.quick_launcher.no_matches")
+        local emptyMetrics = draw.measureText(
+            emptyText, layout.fontCu(metrics.fontSize),
+            w - pad * 2, false)
+        local emptyX = pad + math.max(
+            0, (w - pad * 2 - emptyMetrics.width) / 2)
+        local emptyY = listY + math.max(
+            0, (viewportH - emptyMetrics.height) / 2)
+        draw.text(emptyX, emptyY, emptyText,
+            layout.fontCu(metrics.fontSize),
+            pal.noResult, w - pad * 2,
+            false, true, nil, 0.72)
     end
 end
 
 function openSelected(reveal)
+    if cachedQuery ~= currentQuery() then return end
     local items = matches()
     if #items == 0 then return end
     local selected = math.min(selectedIndex(), #items)
@@ -281,31 +382,28 @@ function openSelected(reveal)
     end
 end
 
-function onWheel(x, y, button, delta)
-    local items = matches()
-    local count = #items
-    if count == 0 then return end
-    local top, selected, listY, rowH, maxRows = clampViewport(count)
-    local step = delta > 0 and -1 or 1
-    local maxTop = math.max(1, count - maxRows + 1)
-    local newTop = math.min(maxTop, math.max(1, top + step))
-    setTopIndex(newTop)
-    if selected < newTop then
-        setSelectedIndex(newTop)
-    elseif selected >= newTop + maxRows then
-        setSelectedIndex(newTop + maxRows - 1)
-    end
-end
-
 function itemIndexAtPoint(x, y)
-    local items = matches()
+    if cachedQuery ~= currentQuery() then return nil end
+    local items, rows = matches()
     if #items == 0 then return nil end
-    local top, selected, listY, rowH, maxRows = clampViewport(#items)
-    if y < listY or y >= listY + maxRows * rowH then return nil end
-    local row = math.floor((y - listY) / rowH)
-    local idx = top + row
-    if idx < 1 or idx > #items then return nil end
-    return idx
+    local pad = layout.cu(12)
+    local listY, rowH, viewportH = listGeometry()
+    if x < pad or x >= layout.width() - pad or
+        y < listY or y >= listY + viewportH then
+        return nil
+    end
+    local range = ui.virtualList(
+        "results", pad, listY, layout.width() - pad * 2,
+        viewportH, rowH, #rows)
+    local rowIndex =
+        math.floor((y - listY + range.offset) / rowH) + 1
+    if rowIndex < range.first or rowIndex > range.last or
+        rowIndex > #rows then
+        return nil
+    end
+    local row = rows[rowIndex]
+    return row and row.kind == "item"
+        and row.itemIndex or nil
 end
 
 function onClick(x, y)
@@ -317,6 +415,22 @@ end
 
 function onSelected()
     ui.focusInput("search")
+end
+
+function onDesktopChanged(reason)
+    if currentQuery() == "" then
+        refreshMatches("")
+    else
+        resultsDirty = true
+        widget.invalidate()
+    end
+end
+
+function onTimer(timerName)
+    if timerName ~= "search" then return end
+    searchPending = false
+    resultsDirty = true
+    refreshMatches(currentQuery())
 end
 
 function onDoubleClick(x, y)
@@ -344,6 +458,7 @@ function onMenu(id)
     elseif id == 2 then
         openSelected(true)
     elseif id == 3 then
+        resultsDirty = true
         desktop.refresh()
     end
 end
@@ -353,9 +468,12 @@ function imguiRender()
 
     local items = matches()
     imgui.text(l10n.tr("lua_widget.quick_launcher.match_count", #items))
-    local top, selected = clampViewport(#items)
-    for i = top, math.min(#items, top + 7) do
-        local clicked = imgui.selectable(items[i].title or l10n.tr("lua_widget.common.untitled"), i == selectedIndex())
+    local selected = math.min(
+        math.max(1, selectedIndex()), math.max(1, #items))
+    for i = 1, math.min(#items, 8) do
+        local clicked = imgui.selectable(
+            items[i].title or l10n.tr("lua_widget.common.untitled"),
+            i == selected)
         if clicked then
             setSelectedIndex(i)
         end

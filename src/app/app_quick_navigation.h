@@ -296,6 +296,8 @@ inline void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM l
         quickNavigationSystemImageListSmall_ = result->systemImageListSmall;
     quickNavigationAppsIndexed_ = true;
     quickNavigationAppsExpanded_ = false;
+    if (widgetEngine_)
+        widgetEngine_->NotifyDesktopChanged("applications");
 
     if (!GetQuickNavigationEffectiveSearchText().empty())
     {

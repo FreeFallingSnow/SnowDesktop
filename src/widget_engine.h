@@ -293,6 +293,7 @@ struct LuaWidget
     std::uint32_t notificationsInWindow = 0;
     std::chrono::steady_clock::time_point lastRenderTime{};
     UINT_PTR refreshTimerId = 0;        ///< 宿主分配的独立 Win32 定时器 ID（0 = 未开）
+    UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒 ID
     struct Timer
     {
         std::string name;
@@ -344,6 +345,7 @@ public:
     void Shutdown();
 
     using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
+    using ApplicationSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
     using EverythingSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
     using WidgetSelectedProvider = std::function<bool(const std::wstring&)>;
     using WidgetTitleCallback = std::function<void(const std::wstring&, const std::wstring&)>;
@@ -362,6 +364,7 @@ public:
     void SetSelectionProvider(DesktopSnapshotProvider provider) { selectionProvider_ = std::move(provider); }
     /** @brief 设置组件选中状态提供者回调 */
     void SetWidgetSelectedProvider(WidgetSelectedProvider provider) { widgetSelectedProvider_ = std::move(provider); }
+    void SetApplicationSearchProvider(ApplicationSearchProvider provider) { applicationSearchProvider_ = std::move(provider); }
     void SetEverythingSearchProvider(EverythingSearchProvider provider) { everythingSearchProvider_ = std::move(provider); }
     /** @brief 设置小部件标题变更回调 */
     void SetWidgetTitleCallback(WidgetTitleCallback callback) { setWidgetTitleCallback_ = std::move(callback); }
@@ -426,14 +429,14 @@ public:
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
     void TickRuntime();
     /**
-     * @brief 处理宿主转发的组件独立刷新定时器到期
+     * @brief 处理宿主转发的组件独立定时器到期
      * @param widgetId 触发刷新的小部件实例 ID
+     * @param timerId 宿主触发的 Win32 定时器 ID
      *
-     * 由 manifest 的 refreshIntervalMs 声明驱动：宿主为该 widget 单独开 Win32 timer，
-     * 到期时调用本方法，触发该 widget 的 onTimer("refresh") 回调（若定义）并 invalidate 自身。
-     * 与全局 TickRuntime 解耦，高刷新组件不影响其他组件。
+     * 同时处理 manifest.refreshIntervalMs 的周期刷新和 widget.setTimer 命名定时器。
+     * 命名定时器只为最近一次到期时间申请单次宿主唤醒，避免全局轮询全部组件。
      */
-    void OnWidgetTimer(const std::wstring& widgetId);
+    void OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId);
 
     /**
      * @brief 查询指定小部件是否启用了自定义主题样式
@@ -676,6 +679,7 @@ public:
      * @return 选中项信息列表
      */
     std::vector<LuaDesktopItemInfo> RuntimeDesktopSelection() const;
+    std::vector<LuaDesktopItemInfo> RuntimeApplicationSearch(const std::string& query, int maxResults) const;
     std::vector<LuaDesktopItemInfo> RuntimeEverythingSearch(const std::string& query, int maxResults) const;
 
     /**
@@ -839,6 +843,7 @@ private:
     int FindWidget(const std::wstring& widgetId) const;
     void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
     void EnsureSystemSnapshotServiceStarted();
+    void RescheduleNamedTimer(LuaWidget& widget);
 
     lua_State* L_ = nullptr;                           ///< 全局 Lua 状态机指针
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
@@ -848,6 +853,7 @@ private:
     DesktopSnapshotProvider desktopSnapshotProvider_;  ///< 桌面快照提供者回调
     DesktopSnapshotProvider selectionProvider_;        ///< 当前选中项提供者回调
     WidgetSelectedProvider widgetSelectedProvider_;    ///< 当前组件选中状态提供者回调
+    ApplicationSearchProvider applicationSearchProvider_; ///< Windows 应用搜索提供者回调
     EverythingSearchProvider everythingSearchProvider_; ///< Everything 搜索提供者回调
     WidgetTitleCallback setWidgetTitleCallback_;       ///< 设置小部件标题的回调
     WidgetTitleCallback openWidgetSettingsCallback_;   ///< 打开小部件设置面板的回调

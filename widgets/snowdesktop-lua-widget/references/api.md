@@ -227,6 +227,9 @@ draw.icon(pathOrDesktopItem, x, y, size?, alpha?)
 - `draw.image` accepts only a path relative to the root executable `widgets` directory.
 - Supported image decoding is provided by Windows Imaging Component.
 - `draw.icon` resolves a Windows shell icon and requires `desktop.read`.
+- Resolved shell icons are cached across frames and refreshed after desktop
+  changes; large result sets should still use `ui.virtualList` so only visible
+  icons are drawn.
 - `pathOrDesktopItem` may be a path string or an item table returned by `desktop`.
 
 ## Widget and system
@@ -381,6 +384,7 @@ ui.progress(x, y, width, height, value0To1, color?)
 local offset = ui.scrollArea(id, x, y, width, height, contentHeight)
 local range = ui.virtualList(id, x, y, width, height, itemHeight, itemCount)
 -- range.first, range.last, range.offset
+ui.setScrollOffset(id, offset)
 
 function onUiAction(id, value)
 end
@@ -389,7 +393,9 @@ end
 Buttons and toggles use host hit-testing. Scroll areas and virtual lists consume
 the mouse wheel while the pointer is inside their bounds. The host automatically
 draws a scrollbar at the right edge of the widget frame when the content height
-exceeds the viewport height.
+exceeds the viewport height. Scroll offsets are clamped automatically when the
+viewport or content shrinks. Use `ui.setScrollOffset(id, 0)` when replacing a
+list with a new data set that should start at the top.
 
 `ui.textInput` draws a persistent, transparent single-line input field entirely
 through Direct2D and saves the edited value under `storageKey`. It uses the
@@ -445,12 +451,23 @@ Reading requires `desktop.read`:
 ```lua
 local all = desktop.items()
 local selected = desktop.selection()
-local matches = desktop.find("query")
+local matches = desktop.find("query", 200) -- optional result limit
+local apps = desktop.findApplications("query", 40)
 ```
 
 `desktop.find` matches item titles by normal text, pinyin initials, and compact
 full pinyin for Chinese titles. For example, `"wx"` and `"weixin"` can match
-`"微信"`.
+`"微信"`. Its optional result limit is clamped to 1–1000; omit it or pass a
+non-positive value for all matches. Search widgets should use a practical limit
+and debounce live input so large folder-backed components do not create a large
+Lua table for every keystroke.
+
+`desktop.findApplications` searches the Windows `shell:AppsFolder` application
+index used by SnowDesktop's native search popup. It returns the same item shape
+with `source = "Applications"` and `type = "application"`, requires
+`desktop.read`, and accepts a result limit clamped to 1–200. The first call can
+start background indexing; widgets receive `onDesktopChanged("applications")`
+when the index becomes available and should refresh a non-empty search then.
 
 Each item contains:
 

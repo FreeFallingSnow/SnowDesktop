@@ -1350,6 +1350,11 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         return widget.selected;
                 return false;
             });
+        widgetEngine_->SetApplicationSearchProvider(
+            [this](const std::string& query, int maxResults) {
+                return BuildLuaApplicationSearch(
+                    query, maxResults);
+            });
         widgetEngine_->SetEverythingSearchProvider([this](const std::string& query, int maxResults) {
             return BuildLuaEverythingSearch(query, maxResults);
         });

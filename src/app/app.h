@@ -89,6 +89,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -702,8 +703,10 @@ private:
     bool IsSystemTaskbarHookRequired(const DockSettings& settings) const;
     PersonalizationSettings ResolveSystemTaskbarDynamicAppearance(
         const SystemTaskbarDynamicRule& rule) const;
-    void RefreshSystemTaskbarWindowState();
-    void RefreshSystemTaskbarAppearance(bool forceWindowScan = false);
+    bool RefreshSystemTaskbarWindowState();
+    bool RefreshSystemTaskbarAppearance(
+        bool forceWindowScan = false,
+        bool skipUnchangedWindowState = false);
     void RestartSystemTaskbarShellVisibilityDetectors();
     static void CALLBACK DockForegroundWinEventProc(HWINEVENTHOOK hook, DWORD event,
         HWND window, LONG objectId, LONG childId, DWORD eventThread, DWORD eventTime);
@@ -1933,6 +1936,8 @@ private:
      * @return Lua 桌面项信息列表
      */
     std::vector<LuaDesktopItemInfo> BuildLuaDesktopSnapshot(bool selectedOnly) const;
+    std::vector<LuaDesktopItemInfo> BuildLuaApplicationSearch(
+        const std::string& query, int maxResults);
     std::vector<LuaDesktopItemInfo> BuildLuaEverythingSearch(const std::string& query, int maxResults) const;
     std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
     /** @brief 通过 Lua 脚本打开指定路径。 @param path 要打开的路径 @return 操作是否成功 */
@@ -2088,6 +2093,7 @@ private:
     std::wstring dockWindowPreviewKey_;
     RECT dockWindowPreviewAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
+    DWORD systemTaskbarWindowScanTick_ = 0;
     DWORD systemTaskbarBackdropForegroundTick_ = 0;
     HWINEVENTHOOK dockForegroundEventHook_ = nullptr;
     std::vector<HWINEVENTHOOK> systemTaskbarWindowEventHooks_;
@@ -2095,7 +2101,20 @@ private:
     inline static std::atomic<HWND> dockPreviousForegroundWindow_{ nullptr };
     inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
     inline static std::atomic<DWORD> systemTaskbarWindowStateChangedTick_{ 0 };
+    inline static std::atomic<DWORD> dockWindowListChangedTick_{ 0 };
+    struct SystemTaskbarWindowObservation
+    {
+        HMONITOR monitor = nullptr;
+        bool maximized = false;
+    };
+    inline static std::mutex systemTaskbarWindowObservationMutex_;
+    inline static std::unordered_map<HWND,
+        SystemTaskbarWindowObservation>
+        systemTaskbarWindowObservations_;
     DWORD systemTaskbarWindowStateObservedTick_ = 0;
+    DWORD dockRunningWindowsForegroundTick_ = 0;
+    DWORD dockRunningWindowsStateTick_ = 0;
+    DWORD dockRunningWindowsRefreshTick_ = 0;
     struct SystemTaskbarMonitorWindowState
     {
         bool visible = false;
@@ -2257,7 +2276,7 @@ private:
     /** @name 鼠标/交互状态 */
     /** @{ */
     POINT lastMousePoint_{};
-    // per-widget 独立刷新定时器：timerId -> widgetId（manifest refreshIntervalMs 驱动）
+    // per-widget 独立定时器：timerId -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
     UINT_PTR nextWidgetTimerId_ = kWidgetTimerIdBase;
     bool mouseDown_ = false;

@@ -369,6 +369,90 @@ inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaDesktopSnapshot(bool 
     return result;
 }
 
+inline std::vector<LuaDesktopItemInfo>
+DesktopApp::BuildLuaApplicationSearch(
+    const std::string& query, int maxResults)
+{
+    std::vector<LuaDesktopItemInfo> result;
+    const std::wstring queryWide =
+        LuaWidgetUtf8ToWide(query);
+    if (queryWide.empty() || maxResults <= 0)
+        return result;
+
+    StartQuickNavigationAppIndexing();
+    if (!quickNavigationAppsIndexed_)
+        return result;
+
+    const size_t resultLimit = static_cast<size_t>(
+        std::clamp(maxResults, 1, 200));
+    std::array<std::vector<size_t>,
+        kNameSearchNoMatchRank> buckets;
+    for (size_t index = 0;
+        index < quickNavigationAppEntries_.size();
+        ++index)
+    {
+        const int rank = NameSearchMatchRank(
+            quickNavigationAppEntries_[index].name,
+            queryWide);
+        if (rank >= 0 &&
+            rank < kNameSearchNoMatchRank)
+        {
+            buckets[static_cast<size_t>(rank)]
+                .push_back(index);
+        }
+    }
+
+    result.reserve(std::min(
+        resultLimit,
+        quickNavigationAppEntries_.size()));
+    for (const auto& bucket : buckets)
+    {
+        for (const size_t index : bucket)
+        {
+            const QuickNavigationAppEntry& entry =
+                quickNavigationAppEntries_[index];
+            if (entry.parsingName.empty())
+                continue;
+            std::wstring launchPath =
+                entry.parsingName;
+            const bool hasShellPrefix =
+                launchPath.size() >= 6 &&
+                _wcsnicmp(
+                    launchPath.c_str(),
+                    L"shell:", 6) == 0;
+            const bool hasNamespacePrefix =
+                launchPath.starts_with(L"::");
+            const bool hasDrivePrefix =
+                launchPath.size() >= 2 &&
+                launchPath[1] == L':';
+            const bool hasUncPrefix =
+                launchPath.starts_with(L"\\\\");
+            if (!hasShellPrefix &&
+                !hasNamespacePrefix &&
+                !hasDrivePrefix &&
+                !hasUncPrefix)
+            {
+                launchPath =
+                    L"shell:AppsFolder\\" +
+                    launchPath;
+            }
+            LuaDesktopItemInfo info;
+            info.id = LuaWidgetWideToUtf8(
+                entry.parsingName);
+            info.title = LuaWidgetWideToUtf8(
+                entry.name);
+            info.path = LuaWidgetWideToUtf8(
+                launchPath);
+            info.source = "Applications";
+            info.type = "application";
+            result.push_back(std::move(info));
+            if (result.size() >= resultLimit)
+                return result;
+        }
+    }
+    return result;
+}
+
 inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(const std::string& query, int maxResults) const
 {
     std::vector<LuaDesktopItemInfo> result;
@@ -404,6 +488,27 @@ inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(cons
 inline bool DesktopApp::LuaOpenPath(const std::wstring& path)
 {
     if (path.empty()) return false;
+    if (path.size() >= 6 &&
+        _wcsnicmp(path.c_str(), L"shell:", 6) == 0)
+    {
+        PIDLIST_ABSOLUTE rawPidl = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(
+                path.c_str(), nullptr, &rawPidl,
+                0, nullptr)) &&
+            rawPidl)
+        {
+            Pidl pidl;
+            pidl.reset(rawPidl);
+            SHELLEXECUTEINFOW executeInfo{};
+            executeInfo.cbSize = sizeof(executeInfo);
+            executeInfo.fMask = SEE_MASK_IDLIST;
+            executeInfo.hwnd = hwnd_;
+            executeInfo.lpIDList = pidl.get();
+            executeInfo.nShow = SW_SHOWNORMAL;
+            if (ShellExecuteExW(&executeInfo))
+                return true;
+        }
+    }
     HINSTANCE result = ShellExecuteW(hwnd_, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     return reinterpret_cast<INT_PTR>(result) > 32;
 }
@@ -7214,7 +7319,8 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         if (it != widgetTimerIds_.end())
         {
             if (widgetEngine_)
-                widgetEngine_->OnWidgetTimer(it->second);
+                widgetEngine_->OnWidgetTimer(
+                    it->second, static_cast<UINT_PTR>(timerId));
             return;
         }
     }
@@ -7271,7 +7377,20 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     {
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
-        RefreshDockRunningWindows();
+        const DWORD now = GetTickCount();
+        const DWORD foregroundTick =
+            dockForegroundChangedTick_.load();
+        const DWORD windowStateTick =
+            dockWindowListChangedTick_.load();
+        const bool dockStateChanged =
+            foregroundTick != dockRunningWindowsForegroundTick_ ||
+            windowStateTick != dockRunningWindowsStateTick_;
+        const bool fallbackRefreshDue =
+            dockRunningWindowsRefreshTick_ == 0 ||
+            now - dockRunningWindowsRefreshTick_ >= 10000;
+        if (generalSettings_.dockEnabled &&
+            (dockStateChanged || fallbackRefreshDue))
+            RefreshDockRunningWindows();
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
     {
@@ -7296,15 +7415,22 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
             foregroundTick != systemTaskbarBackdropForegroundTick_;
         const bool windowStateChanged = windowStateTick !=
             systemTaskbarWindowStateObservedTick_;
+        const bool windowStateRefreshDue =
+            windowStateChanged &&
+            (systemTaskbarWindowScanTick_ == 0 ||
+                now - systemTaskbarWindowScanTick_ >= 250);
         const bool foregroundSettling = foregroundTick != 0 &&
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
         if (IsSystemTaskbarHookRequired(dockSettings_) &&
-            (foregroundChanged || windowStateChanged || foregroundSettling))
+            (foregroundChanged || windowStateRefreshDue ||
+                foregroundSettling))
         {
-            RefreshSystemTaskbarAppearance(true);
+            const bool taskbarAppearanceApplied =
+                RefreshSystemTaskbarAppearance(true, true);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
-            if (hwnd_ && IsWindow(hwnd_))
+            if (taskbarAppearanceApplied &&
+                hwnd_ && IsWindow(hwnd_))
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }

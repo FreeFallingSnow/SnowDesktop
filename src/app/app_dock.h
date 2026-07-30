@@ -919,8 +919,62 @@ inline void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     if (event >= EVENT_OBJECT_CREATE &&
         (objectId != OBJID_WINDOW || childId != CHILDID_SELF))
         return;
+    if (event == EVENT_OBJECT_LOCATIONCHANGE)
+    {
+        if (!window || GetAncestor(window, GA_ROOT) != window)
+            return;
+        DWORD processId = 0;
+        GetWindowThreadProcessId(window, &processId);
+        if (!processId || processId == GetCurrentProcessId())
+            return;
+        wchar_t className[96]{};
+        GetClassNameW(window, className,
+            static_cast<int>(std::size(className)));
+        if (_wcsicmp(className, L"Progman") == 0 ||
+            _wcsicmp(className, L"WorkerW") == 0 ||
+            _wcsicmp(className, L"Shell_TrayWnd") == 0 ||
+            _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
+            return;
+        const LONG_PTR exStyle =
+            GetWindowLongPtrW(window, GWL_EXSTYLE);
+        if ((exStyle & WS_EX_TOOLWINDOW) != 0 ||
+            (GetWindow(window, GW_OWNER) &&
+                (exStyle & WS_EX_APPWINDOW) == 0))
+            return;
+        if (!IsWindowVisible(window) || IsIconic(window))
+            return;
+
+        const SystemTaskbarWindowObservation observation{
+            MonitorFromWindow(window, MONITOR_DEFAULTTONULL),
+            IsZoomed(window) != FALSE
+        };
+        std::scoped_lock lock(
+            systemTaskbarWindowObservationMutex_);
+        const auto found =
+            systemTaskbarWindowObservations_.find(window);
+        if (found !=
+                systemTaskbarWindowObservations_.end() &&
+            found->second.monitor == observation.monitor &&
+            found->second.maximized == observation.maximized)
+            return;
+        systemTaskbarWindowObservations_[window] = observation;
+    }
     systemTaskbarWindowStateChangedTick_.fetch_add(1,
         std::memory_order_relaxed);
+    bool dockWindowListChanged =
+        event == EVENT_SYSTEM_FOREGROUND ||
+        event == EVENT_SYSTEM_MINIMIZESTART ||
+        event == EVENT_SYSTEM_MINIMIZEEND ||
+        (event >= EVENT_OBJECT_CREATE &&
+            event <= EVENT_OBJECT_HIDE);
+#ifdef EVENT_OBJECT_CLOAKED
+    dockWindowListChanged = dockWindowListChanged ||
+        event == EVENT_OBJECT_CLOAKED ||
+        event == EVENT_OBJECT_UNCLOAKED;
+#endif
+    if (dockWindowListChanged)
+        dockWindowListChangedTick_.fetch_add(
+            1, std::memory_order_relaxed);
 }
 
 inline void DesktopApp::StartDockForegroundMonitor()
@@ -949,6 +1003,8 @@ inline void DesktopApp::StartDockForegroundMonitor()
     RestartSystemTaskbarShellVisibilityDetectors();
     systemTaskbarWindowStateChangedTick_.fetch_add(1,
         std::memory_order_relaxed);
+    dockWindowListChangedTick_.fetch_add(
+        1, std::memory_order_relaxed);
 }
 
 inline void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
@@ -976,7 +1032,17 @@ inline void DesktopApp::StopDockForegroundMonitor()
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(0);
     systemTaskbarWindowStateChangedTick_.store(0);
+    dockWindowListChangedTick_.store(0);
     systemTaskbarWindowStateObservedTick_ = 0;
+    systemTaskbarWindowScanTick_ = 0;
+    {
+        std::scoped_lock lock(
+            systemTaskbarWindowObservationMutex_);
+        systemTaskbarWindowObservations_.clear();
+    }
+    dockRunningWindowsForegroundTick_ = 0;
+    dockRunningWindowsStateTick_ = 0;
+    dockRunningWindowsRefreshTick_ = 0;
     systemTaskbarMonitorWindowStates_.clear();
     systemTaskbarWindows_.clear();
     taskbarAppVisibility_.Reset();
@@ -1118,8 +1184,13 @@ inline bool IsSystemTaskbarShellUiWindow(HWND window)
             _wcsicmp(className, L"Windows.UI.Core.CoreWindow") == 0);
 }
 
-inline void DesktopApp::RefreshSystemTaskbarWindowState()
+inline bool DesktopApp::RefreshSystemTaskbarWindowState()
 {
+    const auto previousStates = systemTaskbarMonitorWindowStates_;
+    const bool previousShellUiActive =
+        systemTaskbarShellUiActive_;
+    const HMONITOR previousShellUiMonitor =
+        systemTaskbarShellUiMonitor_;
     systemTaskbarMonitorWindowStates_.clear();
 
     ComPtr<IVirtualDesktopManager> virtualDesktopManager;
@@ -1131,8 +1202,13 @@ inline void DesktopApp::RefreshSystemTaskbarWindowState()
         IVirtualDesktopManager* virtualDesktopManager = nullptr;
         std::unordered_map<HMONITOR,
             SystemTaskbarMonitorWindowState>* states = nullptr;
+        std::unordered_map<HWND,
+            SystemTaskbarWindowObservation>* observations = nullptr;
     } context{ virtualDesktopManager.Get(),
         &systemTaskbarMonitorWindowStates_ };
+    std::unordered_map<HWND,
+        SystemTaskbarWindowObservation> observations;
+    context.observations = &observations;
 
     EnumWindows([](HWND window, LPARAM value) -> BOOL {
         auto* context = reinterpret_cast<EnumerationContext*>(value);
@@ -1142,12 +1218,21 @@ inline void DesktopApp::RefreshSystemTaskbarWindowState()
         const HMONITOR monitor = MonitorFromWindow(window,
             MONITOR_DEFAULTTONULL);
         if (!monitor) return TRUE;
+        (*context->observations)[window] = {
+            monitor, IsZoomed(window) != FALSE
+        };
         auto& state = (*context->states)[monitor];
         state.visible = true;
         if (IsZoomed(window))
             state.maximized = true;
         return TRUE;
     }, reinterpret_cast<LPARAM>(&context));
+    {
+        std::scoped_lock lock(
+            systemTaskbarWindowObservationMutex_);
+        systemTaskbarWindowObservations_ =
+            std::move(observations);
+    }
 
     bool launcherVisible = false;
     if (!taskbarAppVisibilityAttempted_)
@@ -1177,9 +1262,29 @@ inline void DesktopApp::RefreshSystemTaskbarWindowState()
         : nullptr;
     systemTaskbarWindowStateObservedTick_ =
         systemTaskbarWindowStateChangedTick_.load();
+
+    const bool statesEqual =
+        previousStates.size() ==
+            systemTaskbarMonitorWindowStates_.size() &&
+        std::all_of(previousStates.begin(), previousStates.end(),
+            [this](const auto& entry) {
+                const auto found =
+                    systemTaskbarMonitorWindowStates_.find(
+                        entry.first);
+                return found !=
+                        systemTaskbarMonitorWindowStates_.end() &&
+                    found->second.visible ==
+                        entry.second.visible &&
+                    found->second.maximized ==
+                        entry.second.maximized;
+            });
+    return !statesEqual ||
+        previousShellUiActive != systemTaskbarShellUiActive_ ||
+        previousShellUiMonitor != systemTaskbarShellUiMonitor_;
 }
 
-inline void DesktopApp::RefreshSystemTaskbarAppearance(bool forceWindowScan)
+inline bool DesktopApp::RefreshSystemTaskbarAppearance(
+    bool forceWindowScan, bool skipUnchangedWindowState)
 {
     const bool hookRequired = IsSystemTaskbarHookRequired(dockSettings_);
     if (!hookRequired)
@@ -1187,12 +1292,19 @@ inline void DesktopApp::RefreshSystemTaskbarAppearance(bool forceWindowScan)
         ApplySystemTaskbarBackdrop(false, false,
             ResolveSystemTaskbarAppearance(dockSettings_));
         systemTaskbarBackdropRefreshTick_ = GetTickCount();
-        return;
+        return true;
     }
 
     const DWORD changedTick = systemTaskbarWindowStateChangedTick_.load();
     if (forceWindowScan || changedTick != systemTaskbarWindowStateObservedTick_)
-        RefreshSystemTaskbarWindowState();
+    {
+        const bool windowStateChanged =
+            RefreshSystemTaskbarWindowState();
+        systemTaskbarWindowScanTick_ = GetTickCount();
+        if (skipUnchangedWindowState &&
+            !windowStateChanged)
+            return false;
+    }
 
     struct TaskbarEnumerationContext
     {
@@ -1280,14 +1392,30 @@ inline void DesktopApp::RefreshSystemTaskbarAppearance(bool forceWindowScan)
     ApplySystemTaskbarBackdrop(true,
         dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets);
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
+    return true;
 }
 
 inline void DesktopApp::UpdateSystemTaskbarRevealGuard()
 {
     if (!generalSettings_.dockEnabled || !dockSettings_.systemTaskbarAutoHide ||
         dockSettings_.edgeAttached ||
-        dockSettings_.position != DockPosition::Bottom ||
-        !IsSystemTaskbarAutoHideEnabled())
+        dockSettings_.position != DockPosition::Bottom)
+        return;
+
+    constexpr int kRevealGuardPixels = 6;
+    POINT cursor{};
+    if (!GetCursorPos(&cursor)) return;
+    const HMONITOR cursorMonitor =
+        MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO cursorMonitorInfo{};
+    cursorMonitorInfo.cbSize = sizeof(cursorMonitorInfo);
+    if (!cursorMonitor ||
+        !GetMonitorInfoW(cursorMonitor, &cursorMonitorInfo) ||
+        cursor.y < cursorMonitorInfo.rcMonitor.bottom -
+            kRevealGuardPixels)
+        return;
+
+    if (!IsSystemTaskbarAutoHideEnabled())
         return;
 
     APPBARDATA taskbarPosition{};
@@ -1298,8 +1426,6 @@ inline void DesktopApp::UpdateSystemTaskbarRevealGuard()
 
     if (!hwnd_) return;
 
-    POINT cursor{};
-    if (!GetCursorPos(&cursor)) return;
     RECT screen{};
     bool foundProtectedDock = false;
     for (const auto& container : containers_)
@@ -1320,7 +1446,9 @@ inline void DesktopApp::UpdateSystemTaskbarRevealGuard()
         MONITORINFO monitorInfo{};
         monitorInfo.cbSize = sizeof(monitorInfo);
         const HMONITOR monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
-        if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo)) continue;
+        if (!monitor || monitor != cursorMonitor ||
+            !GetMonitorInfoW(monitor, &monitorInfo))
+            continue;
         if (cursor.x < candidate.left || cursor.x >= candidate.right ||
             cursor.y < candidate.top || cursor.y >= monitorInfo.rcMonitor.bottom)
             continue;
@@ -1330,7 +1458,6 @@ inline void DesktopApp::UpdateSystemTaskbarRevealGuard()
     }
     if (!foundProtectedDock) return;
 
-    constexpr int kRevealGuardPixels = 6;
     const int guardedEdgeTop = screen.bottom - kRevealGuardPixels;
     if (cursor.y >= guardedEdgeTop)
         SetCursorPos(cursor.x, guardedEdgeTop - 1);
@@ -2376,6 +2503,11 @@ inline void DesktopApp::RefreshDockRunningWindows(
     {
         InvalidateRect(hwnd_, nullptr, runningLayoutChanged ? TRUE : FALSE);
     }
+    dockRunningWindowsForegroundTick_ =
+        dockForegroundChangedTick_.load();
+    dockRunningWindowsStateTick_ =
+        dockWindowListChangedTick_.load();
+    dockRunningWindowsRefreshTick_ = GetTickCount();
 }
 
 inline bool DesktopApp::ActivateOrToggleDockItem(

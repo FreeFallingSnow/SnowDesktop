@@ -33,16 +33,20 @@
 #include <wincodec.h>
 #include <bcrypt.h>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <mutex>
 #include <set>
 #include <cstdlib>
 #include <sstream>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -459,6 +463,121 @@ static bool EndsWithLastError(const std::string& key)
 }
 
 // ── Drawing API ──────────────────────────────────────────────────
+class AsyncShellIconLoader
+{
+public:
+    struct Result
+    {
+        std::wstring path;
+        HBITMAP bitmap = nullptr;
+    };
+
+    using ReadyCallback = std::function<void(const std::wstring&)>;
+
+    explicit AsyncShellIconLoader(ReadyCallback readyCallback)
+        : readyCallback_(std::move(readyCallback)),
+          worker_([this](std::stop_token stopToken) {
+              Run(stopToken);
+          })
+    {
+    }
+
+    ~AsyncShellIconLoader()
+    {
+        worker_.request_stop();
+        condition_.notify_all();
+        if (worker_.joinable())
+            worker_.join();
+        for (auto& result : completed_)
+            if (result.bitmap)
+                DeleteObject(result.bitmap);
+    }
+
+    void Request(const std::wstring& path, const std::wstring& widgetId)
+    {
+        if (path.empty()) return;
+        {
+            std::scoped_lock lock(mutex_);
+            if (pending_.contains(path) || requests_.size() >= 128)
+                return;
+            pending_.insert(path);
+            requests_.push_back({ path, widgetId });
+        }
+        condition_.notify_one();
+    }
+
+    std::vector<Result> Drain()
+    {
+        std::vector<Result> results;
+        std::scoped_lock lock(mutex_);
+        results.reserve(completed_.size());
+        while (!completed_.empty())
+        {
+            pending_.erase(completed_.front().path);
+            results.push_back(std::move(completed_.front()));
+            completed_.pop_front();
+        }
+        return results;
+    }
+
+private:
+    struct RequestEntry
+    {
+        std::wstring path;
+        std::wstring widgetId;
+    };
+
+    void Run(std::stop_token stopToken)
+    {
+        const HRESULT comResult = CoInitializeEx(
+            nullptr, COINIT_APARTMENTTHREADED);
+        while (!stopToken.stop_requested())
+        {
+            RequestEntry request;
+            {
+                std::unique_lock lock(mutex_);
+                condition_.wait(lock, [&] {
+                    return stopToken.stop_requested() ||
+                        !requests_.empty();
+                });
+                if (stopToken.stop_requested())
+                    break;
+                request = std::move(requests_.back());
+                requests_.pop_back();
+            }
+
+            HBITMAP bitmap = nullptr;
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            if (SUCCEEDED(SHParseDisplayName(
+                request.path.c_str(), nullptr, &pidl, 0, nullptr)) &&
+                pidl)
+            {
+                SIZE bitmapSize{};
+                bitmap = GetHighResolutionShellIconBitmap(
+                    pidl, 0, bitmapSize);
+                CoTaskMemFree(pidl);
+            }
+
+            {
+                std::scoped_lock lock(mutex_);
+                completed_.push_back({ request.path, bitmap });
+            }
+            if (readyCallback_)
+                readyCallback_(request.widgetId);
+        }
+        if (SUCCEEDED(comResult))
+            CoUninitialize();
+    }
+
+    ReadyCallback readyCallback_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::deque<RequestEntry> requests_;
+    std::deque<Result> completed_;
+    std::unordered_set<std::wstring> pending_;
+    std::jthread worker_;
+};
+
 struct D2DState
 {
     ID2D1DeviceContext* ctx = nullptr;
@@ -476,7 +595,11 @@ struct D2DState
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     float itemFontSizeScale = 1.0f;
     int widgetClipDepth = 0;
+    ComPtr<ID2D1Device> bitmapDevice;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
+    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> shellIconCache;
+    std::unordered_set<std::wstring> shellIconFailures;
+    std::unique_ptr<AsyncShellIconLoader> shellIconLoader;
     ID2D1DeviceContext* brushContext = nullptr;
     std::unordered_map<std::uint32_t, ComPtr<ID2D1SolidColorBrush>> brushCache;
     std::unordered_map<std::uint64_t, ComPtr<IDWriteTextFormat>> textFormatCache;
@@ -2257,6 +2380,11 @@ static int lua_UiScrollArea(lua_State* L)
     }
     int offset = s && s->engine
         ? s->engine->RuntimeGetScrollOffset(BoundWidgetId(L), id) : 0;
+    if (s && s->engine)
+    {
+        s->engine->RuntimeSetScrollOffset(BoundWidgetId(L), id, offset);
+        offset = s->engine->RuntimeGetScrollOffset(BoundWidgetId(L), id);
+    }
     lua_pushinteger(L, offset);
     return 1;
 }
@@ -2285,6 +2413,11 @@ static int lua_UiVirtualList(lua_State* L)
     }
     int offset = s && s->engine
         ? s->engine->RuntimeGetScrollOffset(BoundWidgetId(L), id) : 0;
+    if (s && s->engine)
+    {
+        s->engine->RuntimeSetScrollOffset(BoundWidgetId(L), id, offset);
+        offset = s->engine->RuntimeGetScrollOffset(BoundWidgetId(L), id);
+    }
     int first = count == 0 ? 0 : offset / itemHeight + 1;
     int last = count == 0 ? 0 : std::min(count,
         (offset + viewportHeight + itemHeight - 1) / itemHeight);
@@ -2293,6 +2426,18 @@ static int lua_UiVirtualList(lua_State* L)
     lua_pushinteger(L, last); lua_setfield(L, -2, "last");
     lua_pushinteger(L, offset); lua_setfield(L, -2, "offset");
     return 1;
+}
+
+static int lua_UiSetScrollOffset(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    const int offset = std::max(
+        0, static_cast<int>(luaL_checkinteger(L, 2)));
+    auto* s = GetD2D(L);
+    if (s && s->engine)
+        s->engine->RuntimeSetScrollOffset(
+            BoundWidgetId(L), id ? id : "", offset);
+    return 0;
 }
 
 static bool RequirePermission(lua_State* L, const char* permission)
@@ -2466,28 +2611,77 @@ static int lua_DesktopFind(lua_State* L)
     if (!RequirePermission(L, "desktop.read")) return 0;
     const char* queryRaw = luaL_optstring(L, 1, "");
     std::wstring query = Utf8ToWideLocal(queryRaw ? queryRaw : "");
+    const int requestedLimit = static_cast<int>(
+        luaL_optinteger(L, 2, 0));
+    const size_t resultLimit = requestedLimit <= 0
+        ? std::numeric_limits<size_t>::max()
+        : static_cast<size_t>(std::clamp(requestedLimit, 1, 1000));
 
     auto* s = GetD2D(L);
     std::vector<LuaDesktopItemInfo> items = s->engine->RuntimeDesktopItems();
-    auto rankItem = [&](const LuaDesktopItemInfo& item) {
-        return NameSearchMatchRank(Utf8ToWideLocal(item.title), query);
-    };
-    if (!query.empty())
+    if (query.empty())
     {
-        std::stable_sort(items.begin(), items.end(),
-            [&](const LuaDesktopItemInfo& a, const LuaDesktopItemInfo& b) {
-                return rankItem(a) < rankItem(b);
-            });
-    }
-    lua_newtable(L);
-    int i = 1;
-    for (const auto& item : items)
-    {
-        if (query.empty() || NameMatchesQuery(Utf8ToWideLocal(item.title), query))
+        const size_t count = std::min(items.size(), resultLimit);
+        lua_createtable(L, static_cast<int>(count), 0);
+        for (size_t index = 0; index < count; ++index)
         {
+            PushDesktopItem(L, items[index]);
+            lua_rawseti(L, -2, static_cast<int>(index + 1));
+        }
+        return 1;
+    }
+
+    std::array<std::vector<LuaDesktopItemInfo>,
+        kNameSearchNoMatchRank> buckets;
+    for (auto& item : items)
+    {
+        const int rank = NameSearchMatchRank(
+            Utf8ToWideLocal(item.title), query);
+        if (rank >= 0 && rank < kNameSearchNoMatchRank)
+            buckets[static_cast<size_t>(rank)].push_back(
+                std::move(item));
+    }
+
+    size_t resultCount = 0;
+    for (const auto& bucket : buckets)
+        resultCount += bucket.size();
+    resultCount = std::min(resultCount, resultLimit);
+    lua_createtable(L, static_cast<int>(resultCount), 0);
+    int i = 1;
+    for (const auto& bucket : buckets)
+    {
+        for (const auto& item : bucket)
+        {
+            if (static_cast<size_t>(i) > resultCount)
+                return 1;
             PushDesktopItem(L, item);
             lua_rawseti(L, -2, i++);
         }
+    }
+    return 1;
+}
+
+static int lua_DesktopFindApplications(lua_State* L)
+{
+    if (!RequirePermission(L, "desktop.read")) return 0;
+    const char* queryRaw = luaL_optstring(L, 1, "");
+    const std::string query = queryRaw ? queryRaw : "";
+    int maxResults = static_cast<int>(
+        luaL_optinteger(L, 2, 40));
+    maxResults = std::clamp(maxResults, 1, 200);
+
+    auto* s = GetD2D(L);
+    std::vector<LuaDesktopItemInfo> items = s && s->engine
+        ? s->engine->RuntimeApplicationSearch(
+            query, maxResults)
+        : std::vector<LuaDesktopItemInfo>{};
+    lua_createtable(
+        L, static_cast<int>(items.size()), 0);
+    int index = 1;
+    for (const auto& item : items)
+    {
+        PushDesktopItem(L, item);
+        lua_rawseti(L, -2, index++);
     }
     return 1;
 }
@@ -2562,9 +2756,22 @@ static int lua_DrawStrokeRect(lua_State* L)
     return 0;
 }
 
+static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
+{
+    if (!state || !state->ctx) return;
+    ComPtr<ID2D1Device> device;
+    state->ctx->GetDevice(&device);
+    if (state->bitmapDevice.Get() == device.Get()) return;
+    state->bitmapDevice = std::move(device);
+    state->imageCache.clear();
+    state->shellIconCache.clear();
+    state->shellIconFailures.clear();
+}
+
 static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
 {
     if (!s || !s->ctx || path.empty()) return nullptr;
+    EnsureBitmapCachesForCurrentDevice(s);
     auto it = s->imageCache.find(path);
     if (it != s->imageCache.end()) return it->second.Get();
 
@@ -2632,6 +2839,33 @@ static ComPtr<ID2D1Bitmap1> BitmapFromHBitmap(ID2D1DeviceContext* ctx, HBITMAP h
     return result;
 }
 
+static void DrainShellIconResults(D2DState* state)
+{
+    if (!state || !state->ctx || !state->shellIconLoader)
+        return;
+    EnsureBitmapCachesForCurrentDevice(state);
+    for (auto& result : state->shellIconLoader->Drain())
+    {
+        if (!result.bitmap)
+        {
+            state->shellIconFailures.insert(result.path);
+            continue;
+        }
+        ComPtr<ID2D1Bitmap1> bitmap =
+            BitmapFromHBitmap(state->ctx, result.bitmap);
+        DeleteObject(result.bitmap);
+        result.bitmap = nullptr;
+        if (!bitmap)
+        {
+            state->shellIconFailures.insert(result.path);
+            continue;
+        }
+        if (state->shellIconCache.size() >= 512)
+            state->shellIconCache.clear();
+        state->shellIconCache[result.path] = std::move(bitmap);
+    }
+}
+
 static int lua_DrawIcon(lua_State* L)
 {
     if (!RequirePermission(L, "desktop.read")) return 0;
@@ -2643,19 +2877,22 @@ static int lua_DrawIcon(lua_State* L)
     auto* s = GetD2D(L);
     if (!s || !s->ctx || path.empty()) return 0;
 
-    PIDLIST_ABSOLUTE pidl = nullptr;
-    if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) || !pidl)
+    EnsureBitmapCachesForCurrentDevice(s);
+    if (s->shellIconFailures.contains(path))
         return 0;
-    SIZE bitmapSize{};
-    HBITMAP hbm = GetHighResolutionShellIconBitmap(pidl, 0, bitmapSize);
-    CoTaskMemFree(pidl);
-    if (!hbm) return 0;
-    ComPtr<ID2D1Bitmap1> bmp = BitmapFromHBitmap(s->ctx, hbm);
-    DeleteObject(hbm);
-    if (!bmp) return 0;
+    auto cached = s->shellIconCache.find(path);
+    if (cached == s->shellIconCache.end())
+    {
+        if (s->shellIconLoader)
+            s->shellIconLoader->Request(
+                path, BoundWidgetId(L));
+        return 0;
+    }
     D2D1_RECT_F dst = D2D1::RectF(x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + size, y + s->widgetRect.top + size);
-    s->ctx->DrawBitmap(bmp.Get(), dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+    s->ctx->DrawBitmap(
+        cached->second.Get(), dst, alpha,
+        D2D1_INTERPOLATION_MODE_LINEAR);
     return 0;
 }
 
@@ -2756,6 +2993,11 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     d2dState_ = new D2DState{};
     d2dState_->dwrite = dwriteFactory_.Get();
     d2dState_->engine = this;
+    d2dState_->shellIconLoader =
+        std::make_unique<AsyncShellIconLoader>(
+            [this](const std::wstring& widgetId) {
+                RuntimeInvalidateHost(widgetId);
+            });
 
     // Initialize the package registry before loading layouts or menus.
     (void)GetWidgetPackageManager();
@@ -2771,12 +3013,16 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
 void WidgetEngine::Shutdown()
 {
     focusedHostInput_ = {};
+    if (d2dState_)
+        d2dState_->shellIconLoader.reset();
     for (auto& widget : widgets_)
     {
         if (widget.valid && widget.hostVisible)
             InvokeSimpleCallback(widget, "onHidden");
         if (widget.refreshTimerId && widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.refreshTimerId);
+        if (widget.namedTimerId && widgetTimerKillCallback_)
+            widgetTimerKillCallback_(widget.namedTimerId);
     }
     if (systemSnapshotService_)
     {
@@ -2812,6 +3058,8 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
     if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
+    if (widgets_[idx].namedTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(widgets_[idx].namedTimerId);
     if (httpService_) httpService_->CancelWidget(widgetId);
     L_ = widgets_[idx].state;
     if (L_)
@@ -3723,6 +3971,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     if (!found->valid) return;
 
     d2dState_->ctx = context;
+    DrainShellIconResults(d2dState_);
     SetWidgetExecutionContext(d2dState_, widgetId);
     found->lastBounds = bounds;
     d2dState_->gridColumns = std::max(1, columns);
@@ -3911,73 +4160,93 @@ void WidgetEngine::TickRuntime()
             InvokeSimpleCallback(widget, "onHidden");
         }
 
-        std::vector<std::string> dueNames;
-        for (const auto& [name, timer] : widget.timers)
-            if (now >= timer.due) dueNames.push_back(name);
-        for (const auto& name : dueNames)
-        {
-            auto it = widget.timers.find(name);
-            if (it == widget.timers.end()) continue;
-            const auto timer = it->second;
-            if (timer.repeat)
-            {
-                auto nextDue = timer.due + std::chrono::milliseconds(timer.intervalMs);
-                while (nextDue <= now)
-                    nextDue += std::chrono::milliseconds(timer.intervalMs);
-                it->second.due = nextDue;
-            }
-            else
-                widget.timers.erase(it);
-
-            SetWidgetExecutionContext(d2dState_, widget.widgetId);
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-            if (lua_istable(L_, -1))
-            {
-                lua_getfield(L_, -1, "onTimer");
-                if (lua_isfunction(L_, -1))
-                {
-                    lua_pushstring(L_, name.c_str());
-                    if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
-                    {
-                        const char* error = lua_tostring(L_, -1);
-                        RuntimeRecordError(widget.widgetId, error ? error : "(onTimer error)");
-                        lua_pop(L_, 1);
-                    }
-                    RuntimeInvalidateHost(widget.widgetId);
-                }
-                else
-                    lua_pop(L_, 1);
-            }
-            lua_pop(L_, 1);
-        }
     }
 }
 
-void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId)
+void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     auto& widget = widgets_[idx];
-    SetWidgetExecutionContext(d2dState_, widget.widgetId);
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-    if (lua_istable(L_, -1))
+
+    if (timerId == widget.refreshTimerId)
     {
-        lua_getfield(L_, -1, "onTimer");
-        if (lua_isfunction(L_, -1))
+        SetWidgetExecutionContext(d2dState_, widget.widgetId);
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+        if (lua_istable(L_, -1))
         {
-            lua_pushstring(L_, "refresh");
-            if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+            lua_getfield(L_, -1, "onTimer");
+            if (lua_isfunction(L_, -1))
             {
-                const char* error = lua_tostring(L_, -1);
-                RuntimeRecordError(widget.widgetId, error ? error : "(onTimer refresh error)");
-                lua_pop(L_, 1);
+                lua_pushstring(L_, "refresh");
+                if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+                {
+                    const char* error = lua_tostring(L_, -1);
+                    RuntimeRecordError(widget.widgetId, error ? error : "(onTimer refresh error)");
+                    lua_pop(L_, 1);
+                }
             }
+            else
+                lua_pop(L_, 1);
+        }
+        lua_pop(L_, 1);
+        RuntimeInvalidateHost(widget.widgetId);
+        return;
+    }
+
+    if (timerId != widget.namedTimerId)
+        return;
+
+    if (widget.namedTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(widget.namedTimerId);
+    widget.namedTimerId = 0;
+
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<std::string> dueNames;
+    for (const auto& [name, timer] : widget.timers)
+        if (now >= timer.due) dueNames.push_back(name);
+
+    bool invoked = false;
+    for (const auto& name : dueNames)
+    {
+        auto it = widget.timers.find(name);
+        if (it == widget.timers.end()) continue;
+        const auto timer = it->second;
+        if (timer.repeat)
+        {
+            auto nextDue = timer.due + std::chrono::milliseconds(timer.intervalMs);
+            while (nextDue <= now)
+                nextDue += std::chrono::milliseconds(timer.intervalMs);
+            it->second.due = nextDue;
         }
         else
-            lua_pop(L_, 1);
+            widget.timers.erase(it);
+
+        SetWidgetExecutionContext(d2dState_, widget.widgetId);
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+        if (lua_istable(L_, -1))
+        {
+            lua_getfield(L_, -1, "onTimer");
+            if (lua_isfunction(L_, -1))
+            {
+                lua_pushstring(L_, name.c_str());
+                if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+                {
+                    const char* error = lua_tostring(L_, -1);
+                    RuntimeRecordError(widget.widgetId, error ? error : "(onTimer error)");
+                    lua_pop(L_, 1);
+                }
+                invoked = true;
+            }
+            else
+                lua_pop(L_, 1);
+        }
+        lua_pop(L_, 1);
     }
-    lua_pop(L_, 1);
-    RuntimeInvalidateHost(widget.widgetId);
+
+    RescheduleNamedTimer(widget);
+    if (invoked)
+        RuntimeInvalidateHost(widget.widgetId);
 }
 
 // ── Check if widget uses custom style ────────────────────────────
@@ -4148,6 +4417,11 @@ void WidgetEngine::InvokeMenu(const std::wstring& widgetId, int menuId)
 
 void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
 {
+    if (d2dState_)
+    {
+        d2dState_->shellIconCache.clear();
+        d2dState_->shellIconFailures.clear();
+    }
     for (const auto& widget : widgets_)
     {
         if (!widget.valid || !RuntimeHasPermission(widget.widgetId, "desktop.read"))
@@ -4321,6 +4595,8 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
         InvokeSimpleCallback(old, "onHidden");
     if (old.refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(old.refreshTimerId);
+    if (old.namedTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(old.namedTimerId);
     if (httpService_) httpService_->CancelWidget(widgetId);
     if (old.state)
     {
@@ -4388,6 +4664,14 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopItems() const
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopSelection() const
 {
     return selectionProvider_ ? selectionProvider_() : std::vector<LuaDesktopItemInfo>{};
+}
+
+std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeApplicationSearch(
+    const std::string& query, int maxResults) const
+{
+    return applicationSearchProvider_
+        ? applicationSearchProvider_(query, maxResults)
+        : std::vector<LuaDesktopItemInfo>{};
 }
 
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeEverythingSearch(const std::string& query, int maxResults) const
@@ -4593,13 +4877,42 @@ bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::stri
     timer.repeat = repeat;
     timer.due = std::chrono::steady_clock::now() + std::chrono::milliseconds(intervalMs);
     widgets_[index].timers[name] = std::move(timer);
+    RescheduleNamedTimer(widgets_[index]);
     return true;
 }
 
 bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name)
 {
     int index = FindWidget(widgetId);
-    return index >= 0 && widgets_[index].timers.erase(name) > 0;
+    if (index < 0) return false;
+    const bool removed = widgets_[index].timers.erase(name) > 0;
+    if (removed)
+        RescheduleNamedTimer(widgets_[index]);
+    return removed;
+}
+
+void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
+{
+    if (widget.namedTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(widget.namedTimerId);
+    widget.namedTimerId = 0;
+
+    if (widget.timers.empty() || !widgetTimerRequestCallback_)
+        return;
+
+    auto nextDue = widget.timers.begin()->second.due;
+    for (const auto& [_, timer] : widget.timers)
+        nextDue = std::min(nextDue, timer.due);
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto remaining = nextDue > now ? nextDue - now :
+        std::chrono::steady_clock::duration::zero();
+    auto delayMs = std::chrono::duration_cast<std::chrono::milliseconds>(remaining).count();
+    if (remaining > std::chrono::milliseconds(delayMs))
+        ++delayMs;
+    delayMs = std::clamp<std::int64_t>(delayMs, 100, 86400000);
+    widget.namedTimerId = widgetTimerRequestCallback_(
+        widget.widgetId, static_cast<UINT>(delayMs));
 }
 
 int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options)
@@ -6863,12 +7176,14 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_UiProgress); lua_setfield(L, -2, "progress");
     lua_pushcfunction(L, lua_UiScrollArea); lua_setfield(L, -2, "scrollArea");
     lua_pushcfunction(L, lua_UiVirtualList); lua_setfield(L, -2, "virtualList");
+    lua_pushcfunction(L, lua_UiSetScrollOffset); lua_setfield(L, -2, "setScrollOffset");
     lua_setglobal(L, "ui");
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_DesktopItems); lua_setfield(L, -2, "items");
     lua_pushcfunction(L, lua_DesktopSelection); lua_setfield(L, -2, "selection");
     lua_pushcfunction(L, lua_DesktopFind); lua_setfield(L, -2, "find");
+    lua_pushcfunction(L, lua_DesktopFindApplications); lua_setfield(L, -2, "findApplications");
     lua_pushcfunction(L, lua_DesktopOpen); lua_setfield(L, -2, "open");
     lua_pushcfunction(L, lua_DesktopReveal); lua_setfield(L, -2, "reveal");
     lua_pushcfunction(L, lua_DesktopRefresh); lua_setfield(L, -2, "refresh");
