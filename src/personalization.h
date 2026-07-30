@@ -75,7 +75,7 @@ struct PersonalizationSettings
      * @brief 桌面文件、映射文件夹与集合组共用的分类标签字号。
      * @details 属于组件布局，不随主题预设切换。
      */
-    float categorizedTabFontSize = 14.0f;
+    float categorizedTabFontSize = 15.0f;
 
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */

@@ -14,6 +14,7 @@
 // This file is included by app_oo.h after the class definition.
 
 #include <commoncontrols.h>
+#include <imm.h>
 
 // ── Inline implementations ──────────────────────────────────
 
@@ -284,6 +285,71 @@ inline void DesktopApp::FocusDesktopInputWindow()
         SetFocus(inputHwnd_);
     else if (hwnd_ && IsWindow(hwnd_))
         SetFocus(hwnd_);
+}
+
+/**
+ * @brief 将隐藏输入窗口和 IMM 窗口锚定到宿主绘制的文本光标。
+ *
+ * 输入窗口平时位于屏幕外。宿主输入框获得焦点时，将这个 1x1 窗口移到
+ * DirectWrite 光标位置，兼容依赖焦点窗口原点的输入法；同时显式设置组合
+ * 窗口和候选窗口坐标，避免输入法回退到桌面左上角。
+ */
+inline void DesktopApp::UpdateHostInputImePosition()
+{
+    if (!inputHwnd_ || !IsWindow(inputHwnd_))
+        return;
+
+    RECT caret{};
+    bool hasCaret = widgetEngine_ &&
+        widgetEngine_->GetFocusedHostInputCaretRect(caret);
+    if (!hasCaret)
+    {
+        for (const auto& container : containers_)
+        {
+            const auto* searchable =
+                dynamic_cast<const ScrollingItemWidget*>(
+                    container.get());
+            if (searchable &&
+                searchable->GetSearchCaretRect(caret))
+            {
+                hasCaret = true;
+                break;
+            }
+        }
+    }
+    if (!hasCaret || !hwnd_ || !IsWindow(hwnd_))
+    {
+        SetWindowPos(inputHwnd_, nullptr, -32000, -32000, 1, 1,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+        return;
+    }
+
+    POINT origin{ caret.left, caret.top };
+    ClientToScreen(hwnd_, &origin);
+    HWND parent = GetParent(inputHwnd_);
+    if (parent && IsWindow(parent))
+        ScreenToClient(parent, &origin);
+
+    SetWindowPos(inputHwnd_, HWND_TOP, origin.x, origin.y, 1, 1,
+        SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+    const LONG caretHeight = std::max<LONG>(
+        1, caret.bottom - caret.top);
+    HIMC context = ImmGetContext(inputHwnd_);
+    if (!context)
+        return;
+
+    COMPOSITIONFORM composition{};
+    composition.dwStyle = CFS_POINT;
+    composition.ptCurrentPos = { 0, 0 };
+    ImmSetCompositionWindow(context, &composition);
+
+    CANDIDATEFORM candidate{};
+    candidate.dwIndex = 0;
+    candidate.dwStyle = CFS_CANDIDATEPOS;
+    candidate.ptCurrentPos = { 0, caretHeight };
+    ImmSetCandidateWindow(context, &candidate);
+    ImmReleaseContext(inputHwnd_, context);
 }
 
 inline HWND DesktopApp::ShellDialogOwnerHwnd() const
@@ -1276,6 +1342,14 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetSelectionProvider([this]() {
             return BuildLuaDesktopSnapshot(true);
         });
+        widgetEngine_->SetWidgetSelectedProvider(
+            [this](const std::wstring& widgetId) {
+                for (const auto& widget : widgets_)
+                    if (widget.id == widgetId &&
+                        widget.type == DesktopWidgetType::LuaScript)
+                        return widget.selected;
+                return false;
+            });
         widgetEngine_->SetEverythingSearchProvider([this](const std::string& query, int maxResults) {
             return BuildLuaEverythingSearch(query, maxResults);
         });
@@ -1321,6 +1395,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     searchable->SetSearchFocused(false);
             }
             FocusDesktopInputWindow();
+            UpdateHostInputImePosition();
         });
         widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
             ShowBalloonNotification(title, message);
@@ -1511,23 +1586,168 @@ inline LRESULT CALLBACK DesktopApp::InputWndProc(HWND hwnd, UINT msg, WPARAM wp,
  */
 inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    auto focusedSearchWidget =
+        [this]() -> ScrollingItemWidget* {
+        for (auto& container : containers_)
+        {
+            auto* searchable =
+                dynamic_cast<ScrollingItemWidget*>(
+                    container.get());
+            if (searchable &&
+                searchable->IsSearchFocused())
+                return searchable;
+        }
+        return nullptr;
+    };
+
     switch (msg)
     {
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
+    case WM_NCHITTEST:
+        return HTTRANSPARENT;
+    case WM_IME_STARTCOMPOSITION:
+        if (widgetEngine_ &&
+            widgetEngine_->HasFocusedHostInput())
+        {
+            widgetEngine_->ClearHostInputComposition();
+            UpdateHostInputImePosition();
+            return 0;
+        }
+        if (auto* searchable = focusedSearchWidget())
+        {
+            searchable->ClearSearchComposition();
+            UpdateHostInputImePosition();
+            return 0;
+        }
+        break;
+    case WM_IME_COMPOSITION:
+    {
+        const bool hostInputFocused =
+            widgetEngine_ &&
+            widgetEngine_->HasFocusedHostInput();
+        ScrollingItemWidget* searchable =
+            hostInputFocused
+                ? nullptr : focusedSearchWidget();
+        if (hostInputFocused || searchable)
+        {
+            HIMC context = ImmGetContext(hwnd);
+            if (context)
+            {
+                auto readCompositionString =
+                    [&](DWORD index) {
+                        std::wstring result;
+                        const LONG byteCount =
+                            ImmGetCompositionStringW(
+                                context, index, nullptr, 0);
+                        if (byteCount <= 0)
+                            return result;
+                        result.resize(static_cast<size_t>(
+                            byteCount) / sizeof(wchar_t));
+                        const LONG copied =
+                            ImmGetCompositionStringW(
+                                context, index, result.data(),
+                                static_cast<DWORD>(byteCount));
+                        if (copied >= 0)
+                        {
+                            result.resize(static_cast<size_t>(
+                                copied) / sizeof(wchar_t));
+                        }
+                        else
+                        {
+                            result.clear();
+                        }
+                        return result;
+                    };
+
+                if ((lp & GCS_RESULTSTR) != 0)
+                {
+                    const std::wstring result =
+                        readCompositionString(GCS_RESULTSTR);
+                    if (hostInputFocused)
+                    {
+                        widgetEngine_->
+                            CommitHostInputComposition(result);
+                    }
+                    else
+                        searchable->
+                            CommitSearchComposition(result);
+                }
+                if ((lp & (GCS_COMPSTR | GCS_CURSORPOS)) != 0)
+                {
+                    const std::wstring composition =
+                        readCompositionString(GCS_COMPSTR);
+                    const LONG imeCursor =
+                        ImmGetCompositionStringW(
+                            context, GCS_CURSORPOS, nullptr, 0);
+                    const size_t cursor =
+                        imeCursor >= 0
+                            ? static_cast<size_t>(imeCursor)
+                            : composition.size();
+                    if (hostInputFocused)
+                    {
+                        widgetEngine_->
+                            SetHostInputComposition(
+                                composition, cursor);
+                    }
+                    else
+                    {
+                        searchable->SetSearchComposition(
+                            composition, cursor);
+                    }
+                }
+                else if (lp == 0)
+                {
+                    if (hostInputFocused)
+                    {
+                        widgetEngine_->
+                            ClearHostInputComposition();
+                    }
+                    else
+                        searchable->
+                            ClearSearchComposition();
+                }
+                ImmReleaseContext(hwnd, context);
+            }
+            UpdateHostInputImePosition();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        break;
+    }
+    case WM_IME_ENDCOMPOSITION:
+        if (widgetEngine_ &&
+            widgetEngine_->HasFocusedHostInput())
+        {
+            widgetEngine_->ClearHostInputComposition();
+            UpdateHostInputImePosition();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        if (auto* searchable = focusedSearchWidget())
+        {
+            searchable->ClearSearchComposition();
+            UpdateHostInputImePosition();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        break;
     case WM_KEYDOWN:
         if (widgetEngine_ && widgetEngine_->HandleHostInputKey(wp))
         {
+            UpdateHostInputImePosition();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
         OnKeyDown(wp);
+        UpdateHostInputImePosition();
         return 0;
     case WM_CHAR:
     {
         wchar_t ch = static_cast<wchar_t>(wp);
         if (widgetEngine_ && widgetEngine_->HandleHostInputChar(ch))
         {
+            UpdateHostInputImePosition();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
@@ -1539,6 +1759,7 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
                 if (searchable && searchable->IsSearchFocused())
                 {
                     searchable->AppendSearchChar(ch);
+                    UpdateHostInputImePosition();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     break;
                 }

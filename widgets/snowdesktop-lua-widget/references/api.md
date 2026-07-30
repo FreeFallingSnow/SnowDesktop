@@ -233,7 +233,7 @@ draw.icon(pathOrDesktopItem, x, y, size?, alpha?)
 
 ```lua
 local info = widget.info()
--- info.id, info.width, info.height
+-- info.id, info.width, info.height, info.selected
 
 widget.setTitle("新标题")
 widget.invalidate()
@@ -253,7 +253,9 @@ widget.openSettings()
 instance. Call this from `onDoubleClick` or `onMenu` to let the user configure
 the widget without using the right-click menu.
 
-`widget.editText` opens a host edit control and saves the result to `storage` under `key`. Defaults:
+`widget.editText` is a legacy compatibility API that opens the old system-style
+editor and saves the result to `storage` under `key`. It is not recommended for
+new or updated widgets; use `ui.textInput` or `ui.textArea` instead. Defaults:
 
 - `initialText`: current stored value.
 - `selectAll`: `true`.
@@ -289,7 +291,7 @@ local cellH = layout.cellHeight()    -- grid cell height (DPI-aware, px)
 local gapY = layout.cellGap()        -- grid vertical gap (DPI-aware, px)
 local barH = layout.barHeight()      -- bottom bar height in cu (default 24, range 16-48)
 local scale = layout.cellScale()     -- min(cellW / 92, cellH / 116)
-local fontSize = layout.cu(14)       -- 14 design units converted to px
+local fontSize = layout.cu(15)       -- 15 design units converted to px
 ```
 
 `cellWidth` and `cellHeight` return the current monitor's DPI-scaled grid cell
@@ -300,7 +302,7 @@ between 16 and 48 in settings. Use `layout.cu(layout.barHeight())` to get the
 pixel height for layout calculations.
 `cellScale` returns the component scale relative to the standard `92 x 116`
 grid cell. `cu(value)` converts a design value to current pixels. Existing
-`draw.text` sizes remain pixel values, so use `draw.text(..., layout.cu(14))`
+`draw.text` sizes remain pixel values, so use `draw.text(..., layout.cu(15))`
 when a widget should scale with its grid cell.
 
 Cached system snapshots require `system.read`:
@@ -373,6 +375,7 @@ still match `networkDomains`, and `response.ok` is true only for HTTP 2xx.
 ui.button(id, label, x, y, width, height, enabled?)
 ui.toggle(id, label, x, y, width, height, value)
 local value = ui.textInput(id, storageKey, x, y, width, height, options?)
+local text = ui.textArea(id, storageKey, x, y, width, height, options?)
 local focused = ui.focusInput(id)
 ui.progress(x, y, width, height, value0To1, color?)
 local offset = ui.scrollArea(id, x, y, width, height, contentHeight)
@@ -391,16 +394,30 @@ exceeds the viewport height.
 `ui.textInput` draws a persistent, transparent single-line input field entirely
 through Direct2D and saves the edited value under `storageKey`. It uses the
 desktop's hidden keyboard input window, so focusing it never creates an opaque
-native control over the widget. Clicking the field focuses it;
+native control over the widget. Clicking the field focuses it and places the
+caret at the pointed character; dragging selects an arbitrary text range.
 `ui.focusInput(id)` does the same programmatically. Supported options are
-`placeholder`, `fontSize` (pixels), `textColor`, `placeholderColor`,
+`placeholder`, `fontSize` (pixels, default `15`), `textColor`, `placeholderColor`,
 `backgroundColor`, `borderColor`, `focusedBorderColor`, `backgroundAlpha`,
 `focusedBackgroundAlpha`, `borderAlpha`, `focusedBorderAlpha`, `radius`,
 `padding`, `borderThickness`, `selectAll`, and `liveUpdate`. The transparency
-defaults match the desktop file search field: 0.05 at rest and 0.12 while
-focused. Pass `layout.fontCu(...)` as `fontSize` to match other widget text.
+default to 0.05 at rest and 0.12 while focused. Pass `layout.fontCu(...)` as
+`fontSize` to match other widget text.
 `liveUpdate` defaults to `true`; pressing Escape restores the value from before
 editing.
+
+`ui.textArea` uses the same Direct2D-rendered input path and option set, but
+wraps text across multiple lines and scrolls with the mouse wheel when its
+content exceeds the viewport. It also accepts `placeholderWhenWhitespace`;
+when `true`, text containing only whitespace is treated as empty for the
+unfocused placeholder. Enter inserts a newline, Ctrl+Enter commits and leaves
+the field, and Escape restores the value from before editing. Both input types
+highlight mouse-drag or Shift+arrow selections. Typing, Backspace, Delete,
+cutting, or pasting replaces the selected range; Ctrl+A/C/X/V use the standard
+selection and clipboard behavior. Windows IME composition text and candidate
+windows follow the rendered caret, including the scroll offset inside a
+multiline field. Uncommitted IME text is rendered inline with an underline and
+does not enter widget storage until the IME commits it.
 
 ## Storage
 

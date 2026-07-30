@@ -1938,7 +1938,7 @@ void SettingsWindow::DrawDisplayPage()
     if (BlueButton((std::string(_L("app.settings.restore_default")) +
         "##ItemFontSizeDefault").c_str(), ImVec2(resetW, 0)))
     {
-        itemFontSize_ = 14.0f;
+        itemFontSize_ = 15.0f;
         markChanged();
     }
 
@@ -2535,7 +2535,7 @@ void SettingsWindow::DrawPersonalizationPage()
                 "##CategorizedTabFontSizeDefault").c_str(),
             ImVec2(resetW, 0)))
     {
-        personalization_.categorizedTabFontSize = 14.0f;
+        personalization_.categorizedTabFontSize = 15.0f;
         markChanged(true);
     }
 

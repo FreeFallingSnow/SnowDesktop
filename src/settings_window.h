@@ -700,7 +700,7 @@ private:
     float iconSpacingScale_ = 1.0f;
 
     /// 当前桌面项目字号
-    float itemFontSize_ = 14.0f;
+    float itemFontSize_ = 15.0f;
 
     /// 当前桌面项目字体粗细 (DWRITE_FONT_WEIGHT)
     float itemFontWeight_ = 600.0f;

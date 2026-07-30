@@ -28,27 +28,33 @@ end
 local palettes = {
     dark = {
         itemText   = 0xFFFFFF,
-        noResult   = 0xF1F5F9,
-        inputText  = 0xD7FFFA,
-        inputPlaceholder = 0xF1F5F9,
+        noResult   = 0xFFFFFF,
+        inputText  = 0xFFFFFF,
+        inputPlaceholder = 0xFFFFFF,
         inputBg    = 0xFFFFFF,
         scrollBar  = 0xFFFFFF,
         selBg      = 0xFFFFFF,
         selBorder  = 0xFFFFFF,
         inputBorder = 0xFFFFFF,
-        inputFocusBorder = 0x64A8FF,
+        inputFocusBorder = 0xFFFFFF,
+        inputBorderAlpha = 0.20,
+        inputFocusBorderAlpha = 0.62,
+        inputFocusBgAlpha = 0.12,
     },
     light = {
-        itemText   = 0x1E293B,
-        noResult   = 0x334155,
-        inputText  = 0x0F172A,
-        inputPlaceholder = 0x334155,
+        itemText   = 0x000000,
+        noResult   = 0x000000,
+        inputText  = 0x000000,
+        inputPlaceholder = 0x000000,
         inputBg    = 0x000000,
-        scrollBar  = 0x334155,
+        scrollBar  = 0x000000,
         selBg      = 0x000000,
         selBorder  = 0x000000,
         inputBorder = 0x000000,
-        inputFocusBorder = 0x2563EB,
+        inputFocusBorder = 0x000000,
+        inputBorderAlpha = 0.14,
+        inputFocusBorderAlpha = 0.52,
+        inputFocusBgAlpha = 0.10,
     },
 }
 
@@ -61,23 +67,9 @@ local function getPalette()
 end
 
 settings = {
-    presets = {
-        {
-            id = "default",
-            label = l10n.tr("lua_widget.quick_launcher.preset_dark"),
-            default = true,
-            values = {
-                bg = 0x151A21,
-                border = 0xFFFFFF,
-                alpha = 0.40,
-                borderAlpha = 0.22,
-                gradientEndA = 0.32,
-            }
-        }
-    },
     fields = {
         { key = "query", label = l10n.tr("lua_widget.quick_launcher.query"), type = "text", default = "" },
-        { key = "fontSize", label = l10n.tr("lua_widget.common.font_size"), type = "int", default = 14, min = 10, max = 24 },
+        { key = "fontSize", label = l10n.tr("lua_widget.common.font_size"), type = "int", default = 15, min = 10, max = 24 },
         { key = "textColor", label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF },
     }
 }
@@ -87,13 +79,13 @@ function currentQuery()
 end
 
 function currentFontSize()
-    return math.max(10, math.min(24, tonumber(storage.get("fontSize")) or 14))
+    return math.max(10, math.min(24, tonumber(storage.get("fontSize")) or 15))
 end
 
 function pageMetrics()
     local fontSize = currentFontSize()
     local searchTopCu = 12
-    local searchHeightCu = math.max(28, fontSize + 16)
+    local searchHeightCu = 31
     local listTopCu = searchTopCu + searchHeightCu + 12
     local rowHeightCu = math.max(34, fontSize + 20)
     return {
@@ -231,19 +223,19 @@ function render()
     ui.textInput("search", "query", pad, metrics.searchTop,
         w - pad * 2, metrics.searchHeight, {
             placeholder = l10n.tr("lua_widget.quick_launcher.search_placeholder"),
-            fontSize = layout.fontCu(metrics.fontSize),
+            fontSize = layout.fontCu(15),
             textColor = pal.inputText,
             placeholderColor = pal.inputPlaceholder,
             backgroundColor = pal.inputBg,
             borderColor = pal.inputBorder,
             focusedBorderColor = pal.inputFocusBorder,
-            backgroundAlpha = 0.05,
-            focusedBackgroundAlpha = 0.12,
-            borderAlpha = 0.12,
-            focusedBorderAlpha = 0.70,
-            radius = layout.cu(7),
-            padding = layout.cu(8),
-            borderThickness = layout.cu(1.2),
+            backgroundAlpha = 0.04,
+            focusedBackgroundAlpha = pal.inputFocusBgAlpha,
+            borderAlpha = pal.inputBorderAlpha,
+            focusedBorderAlpha = pal.inputFocusBorderAlpha,
+            radius = layout.cu(8),
+            padding = layout.cu(10),
+            borderThickness = layout.cu(1),
             selectAll = false,
             liveUpdate = true,
         })

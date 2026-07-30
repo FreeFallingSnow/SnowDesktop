@@ -491,7 +491,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 AppendMenuW(fontSizeMenu, flags, id, label);
             };
             addFontSizeItem(kContextFontSizeSmall, _LW("app.menu.font_small"), 12);
-            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 14);
+            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 15);
             addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 16);
             const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_pt",
                 std::to_wstring(currentFontSize));
@@ -847,7 +847,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         break;
     case kContextSettingsCommand: ShowSettingsWindow(); break;
     case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
-    case kContextFontSizeMedium: SetItemFontSize(14.0f); break;
+    case kContextFontSizeMedium: SetItemFontSize(15.0f); break;
     case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
     case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
     case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;

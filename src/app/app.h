@@ -509,6 +509,8 @@ private:
     void AttachInputWindowToDesktopHost(HWND host);
     /** @brief 将键盘焦点交给独立输入窗口。 */
     void FocusDesktopInputWindow();
+    /** @brief 将输入法组合文本和候选窗口定位到自绘输入框光标。 */
+    void UpdateHostInputImePosition();
     /** @brief 获取 Shell 弹窗/命令使用的顶层 owner，避免使用挂在 Explorer 下的子窗口。 */
     HWND ShellDialogOwnerHwnd() const;
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */

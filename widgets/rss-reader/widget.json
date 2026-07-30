@@ -17,7 +17,6 @@
     "zh-CN": {
       "lua_widget.rss_reader.name": "RSS 阅读器",
       "lua_widget.rss_reader.description": "订阅 RSS 与 Atom 源，列出标题和日期，并可双击打开文章。",
-      "lua_widget.rss_reader.preset_standard": "标准列表",
       "lua_widget.rss_reader.url": "RSS 地址",
       "lua_widget.rss_reader.refresh_interval": "刷新间隔（秒）",
       "lua_widget.rss_reader.max_items": "最大条目数",
@@ -37,7 +36,6 @@
     "en-US": {
       "lua_widget.rss_reader.name": "RSS Reader",
       "lua_widget.rss_reader.description": "Subscribes to RSS and Atom feeds, lists headlines and dates, and opens articles on double-click.",
-      "lua_widget.rss_reader.preset_standard": "Standard List",
       "lua_widget.rss_reader.url": "RSS URL",
       "lua_widget.rss_reader.refresh_interval": "Refresh Interval (Seconds)",
       "lua_widget.rss_reader.max_items": "Maximum Items",

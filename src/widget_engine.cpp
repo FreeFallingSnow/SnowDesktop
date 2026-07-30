@@ -1531,36 +1531,168 @@ static void DrawHostStrokeRect(D2DState* state, float x, float y, float width, f
         state->ctx->DrawRectangle(rect, brush, thickness);
 }
 
-static void DrawHostTextPixels(D2DState* state, const std::wstring& text,
-    float x, float y, float width, float height, float size, int color)
+static ComPtr<IDWriteTextLayout> CreateHostSingleLineTextLayout(
+    D2DState* state, const std::wstring& text, float size,
+    float width, float height)
 {
-    if (!state || !state->ctx || !state->dwrite || text.empty()) return;
-    IDWriteTextFormat* format = GetCachedTextFormat(state, std::max(9.0f, size),
-        DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
-    ID2D1SolidColorBrush* brush = GetCachedBrush(state, color);
-    if (!format || !brush) return;
-    state->ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
-        D2D1::RectF(state->widgetRect.left + x, state->widgetRect.top + y,
-            state->widgetRect.left + x + width, state->widgetRect.top + y + height),
-        brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    ComPtr<IDWriteTextLayout> layout;
+    if (!state || !state->dwrite)
+        return layout;
+    IDWriteTextFormat* format = GetCachedTextFormat(state,
+        std::max(9.0f, size), DWRITE_FONT_WEIGHT_NORMAL, false,
+        DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
+    if (!format)
+        return layout;
+    const std::wstring layoutText = text.empty() ? L" " : text;
+    if (FAILED(state->dwrite->CreateTextLayout(layoutText.c_str(),
+        static_cast<UINT32>(layoutText.size()), format,
+        std::max(1.0f, width), std::max(1.0f, height),
+        &layout)))
+        layout.Reset();
+    return layout;
 }
 
-static float MeasureHostTextWidthPixels(D2DState* state, const std::wstring& text,
-    float size, float height)
+static ComPtr<IDWriteTextLayout> CreateHostMultilineTextLayout(
+    D2DState* state, const std::wstring& text, float size, float width)
 {
-    if (!state || !state->dwrite || text.empty()) return 0.0f;
-    IDWriteTextFormat* format = GetCachedTextFormat(state, std::max(9.0f, size),
-        DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
-    if (!format) return 0.0f;
-
     ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(state->dwrite->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
-        format, 100000.0f, std::max(1.0f, height), &layout)) || !layout)
-        return 0.0f;
+    if (!state || !state->dwrite)
+        return layout;
+    IDWriteTextFormat* format = GetCachedTextFormat(state,
+        std::max(9.0f, size), DWRITE_FONT_WEIGHT_NORMAL, false,
+        DWRITE_WORD_WRAPPING_WRAP, false, false);
+    if (!format)
+        return layout;
+    // DirectWrite does not expose an empty final line for a trailing
+    // newline. Keep a layout-only space there so the caret can occupy it.
+    std::wstring layoutText = text;
+    if (layoutText.empty() ||
+        layoutText.back() == L'\n' ||
+        layoutText.back() == L'\r')
+        layoutText.push_back(L' ');
+    if (FAILED(state->dwrite->CreateTextLayout(layoutText.c_str(),
+        static_cast<UINT32>(layoutText.size()), format,
+        std::max(1.0f, width), 100000.0f, &layout)))
+        layout.Reset();
+    return layout;
+}
 
-    DWRITE_TEXT_METRICS metrics{};
-    return SUCCEEDED(layout->GetMetrics(&metrics))
-        ? metrics.widthIncludingTrailingWhitespace : 0.0f;
+static bool HostTextIsWhitespaceOnly(const std::wstring& text)
+{
+    return std::all_of(text.begin(), text.end(), [](wchar_t ch) {
+        return ch == L' ' || ch == L'\t' || ch == L'\r' ||
+            ch == L'\n' || ch == L'\v' || ch == L'\f';
+    });
+}
+
+static void DrawHostTextSelection(D2DState* state,
+    IDWriteTextLayout* textLayout, size_t selectionStart,
+    size_t selectionEnd, float originX, float originY,
+    int color)
+{
+    if (!state || !textLayout ||
+        selectionStart >= selectionEnd ||
+        selectionStart >
+            static_cast<size_t>(std::numeric_limits<UINT32>::max()))
+        return;
+    const UINT32 start = static_cast<UINT32>(selectionStart);
+    const size_t boundedLength = std::min(
+        selectionEnd - selectionStart,
+        static_cast<size_t>(
+            std::numeric_limits<UINT32>::max() - start));
+    if (boundedLength == 0)
+        return;
+
+    UINT32 count = 0;
+    textLayout->HitTestTextRange(start,
+        static_cast<UINT32>(boundedLength), 0.0f, 0.0f,
+        nullptr, 0, &count);
+    if (count == 0)
+        return;
+    std::vector<DWRITE_HIT_TEST_METRICS> metrics(count);
+    if (FAILED(textLayout->HitTestTextRange(start,
+        static_cast<UINT32>(boundedLength), 0.0f, 0.0f,
+        metrics.data(), count, &count)))
+        return;
+    for (UINT32 i = 0; i < count; ++i)
+    {
+        const auto& hit = metrics[i];
+        DrawHostRect(state, originX + hit.left,
+            originY + hit.top, std::max(1.5f, hit.width),
+            std::max(1.0f, hit.height), color, 1.5f, 0.32f);
+    }
+}
+
+struct HostInputDisplayText
+{
+    std::wstring text;
+    size_t cursor = 0;
+    size_t compositionStart = 0;
+    size_t compositionLength = 0;
+};
+
+static HostInputDisplayText BuildHostInputDisplayText(
+    const std::wstring& text, size_t cursor,
+    size_t selectionAnchor, const std::wstring& compositionText,
+    size_t compositionCursor)
+{
+    HostInputDisplayText result;
+    result.text = text;
+    result.cursor = std::min(cursor, result.text.size());
+    if (compositionText.empty())
+        return result;
+
+    const size_t anchor = std::min(
+        selectionAnchor, result.text.size());
+    const size_t selectionStart = std::min(result.cursor, anchor);
+    const size_t selectionEnd = std::max(result.cursor, anchor);
+    result.text.erase(
+        selectionStart, selectionEnd - selectionStart);
+    result.text.insert(selectionStart, compositionText);
+    result.compositionStart = selectionStart;
+    result.compositionLength = compositionText.size();
+    result.cursor = selectionStart + std::min(
+        compositionCursor, compositionText.size());
+    return result;
+}
+
+static void DrawHostCompositionUnderline(D2DState* state,
+    IDWriteTextLayout* textLayout, size_t compositionStart,
+    size_t compositionLength, float originX, float originY,
+    int color)
+{
+    if (!state || !textLayout || compositionLength == 0 ||
+        compositionStart >
+            static_cast<size_t>(std::numeric_limits<UINT32>::max()))
+        return;
+    const UINT32 start =
+        static_cast<UINT32>(compositionStart);
+    const size_t boundedLength = std::min(
+        compositionLength,
+        static_cast<size_t>(
+            std::numeric_limits<UINT32>::max() - start));
+    if (boundedLength == 0)
+        return;
+
+    UINT32 count = 0;
+    textLayout->HitTestTextRange(start,
+        static_cast<UINT32>(boundedLength), 0.0f, 0.0f,
+        nullptr, 0, &count);
+    if (count == 0)
+        return;
+    std::vector<DWRITE_HIT_TEST_METRICS> metrics(count);
+    if (FAILED(textLayout->HitTestTextRange(start,
+            static_cast<UINT32>(boundedLength), 0.0f, 0.0f,
+            metrics.data(), count, &count)))
+        return;
+    for (UINT32 i = 0; i < count; ++i)
+    {
+        const auto& hit = metrics[i];
+        DrawHostRect(state, originX + hit.left,
+            originY + hit.top + std::max(1.0f, hit.height - 1.5f),
+            std::max(1.5f, hit.width), 1.5f,
+            color, 0.0f, 0.92f);
+    }
 }
 
 static int lua_UiTextInput(lua_State* L)
@@ -1599,7 +1731,7 @@ static int lua_UiTextInput(lua_State* L)
     };
 
     const std::string placeholder = stringOption("placeholder", "");
-    const float fontSize = std::clamp(static_cast<float>(numberOption("fontSize", 14.0)), 9.0f, 96.0f);
+    const float fontSize = std::clamp(static_cast<float>(numberOption("fontSize", 15.0)), 9.0f, 96.0f);
     const int textColor = integerOption("textColor", 0xFFFFFF);
     const int placeholderColor = integerOption("placeholderColor", 0x94A3B8);
     const int backgroundColor = integerOption("backgroundColor", 0xFFFFFF);
@@ -1626,16 +1758,24 @@ static int lua_UiTextInput(lua_State* L)
         value = s->engine->RuntimeGetStorageValue(BoundWidgetId(L), storageKey);
 
     bool focused = false;
-    bool focusedSelectAll = false;
     size_t cursor = 0;
+    size_t selectionAnchor = 0;
     std::wstring focusedText;
+    std::wstring compositionText;
+    size_t compositionCursor = 0;
     if (s && s->engine && id && *id)
     {
         focused = s->engine->RuntimeGetFocusedHostInput(
-            BoundWidgetId(L), id, focusedText, cursor, focusedSelectAll);
+            BoundWidgetId(L), id, focusedText, cursor,
+            selectionAnchor, compositionText,
+            compositionCursor);
         if (focused)
             value = WidgetWideToUtf8(focusedText);
     }
+    const HostInputDisplayText focusedDisplay =
+        BuildHostInputDisplayText(focusedText, cursor,
+            selectionAnchor, compositionText,
+            compositionCursor);
 
     DrawHostRect(s, x, y, width, height, backgroundColor, radius,
         focused ? focusedBackgroundAlpha : backgroundAlpha);
@@ -1643,31 +1783,87 @@ static int lua_UiTextInput(lua_State* L)
         focused ? focusedBorderColor : borderColor, radius, borderThickness,
         focused ? focusedBorderAlpha : borderAlpha);
     const bool showingPlaceholder = value.empty() && !focused;
-    const std::wstring displayText = Utf8ToWideLocal(showingPlaceholder ? placeholder : value);
-    if (focused && focusedSelectAll && !focusedText.empty())
+    const std::wstring displayText = focused
+        ? focusedDisplay.text
+        : Utf8ToWideLocal(showingPlaceholder ? placeholder : value);
+    const float innerWidth =
+        std::max(1.0f, width - padding * 2.0f);
+    ComPtr<IDWriteTextLayout> textLayout =
+        CreateHostSingleLineTextLayout(s, displayText,
+            fontSize, innerWidth, height);
+    if (s && s->ctx)
     {
-        const float selectionWidth = std::min(std::max(1.0f, width - padding * 2.0f),
-            MeasureHostTextWidthPixels(s, focusedText, fontSize, height));
-        const float selectionHeight = std::min(height, std::max(fontSize * 1.35f, 12.0f));
-        DrawHostRect(s, x + padding, y + (height - selectionHeight) * 0.5f,
-            selectionWidth, selectionHeight, focusedBorderColor, 2.0f, 0.35f);
-    }
-    DrawHostTextPixels(s, displayText,
-        x + padding, y, std::max(1.0f, width - padding * 2.0f), height,
-        fontSize, showingPlaceholder ? placeholderColor : textColor);
+        const D2D1_RECT_F clip = D2D1::RectF(
+            s->widgetRect.left + x + padding,
+            s->widgetRect.top + y,
+            s->widgetRect.left + x + width - padding,
+            s->widgetRect.top + y + height);
+        s->ctx->PushAxisAlignedClip(
+            clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        if (focused && compositionText.empty() &&
+            selectionAnchor != cursor &&
+            textLayout)
+        {
+            DrawHostTextSelection(s, textLayout.Get(),
+                std::min(selectionAnchor, cursor),
+                std::max(selectionAnchor, cursor),
+                x + padding, y, focusedBorderColor);
+        }
+        ID2D1SolidColorBrush* textBrush = GetCachedBrush(
+            s, showingPlaceholder
+                ? placeholderColor : textColor);
+        if (textBrush && textLayout)
+        {
+            s->ctx->DrawTextLayout(
+                D2D1::Point2F(
+                    s->widgetRect.left + x + padding,
+                    s->widgetRect.top + y),
+                textLayout.Get(), textBrush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+        if (focused && focusedDisplay.compositionLength > 0 &&
+            textLayout)
+        {
+            DrawHostCompositionUnderline(s, textLayout.Get(),
+                focusedDisplay.compositionStart,
+                focusedDisplay.compositionLength,
+                x + padding, y, textColor);
+        }
 
-    if (focused)
-    {
-        const size_t safeCursor = std::min(cursor, focusedText.size());
-        const std::wstring beforeCursor = focusedText.substr(0, safeCursor);
-        const float cursorOffset = MeasureHostTextWidthPixels(s, beforeCursor, fontSize, height);
-        const float cursorX = std::clamp(x + padding + cursorOffset + 1.0f,
-            x + padding, x + std::max(padding, width - padding - 1.5f));
-        const float cursorHeight = std::min(height, std::max(fontSize, 12.0f));
-        DrawHostRect(s, cursorX, y + (height - cursorHeight) * 0.5f,
-            1.5f, cursorHeight, textColor, 0.0f, 0.98f);
+        if (focused && textLayout)
+        {
+            const size_t safeCursor =
+                std::min(focusedDisplay.cursor,
+                    focusedDisplay.text.size());
+            UINT32 hitPosition = 0;
+            BOOL trailing = FALSE;
+            if (!focusedDisplay.text.empty())
+            {
+                if (safeCursor >= focusedDisplay.text.size())
+                {
+                    hitPosition = static_cast<UINT32>(
+                        focusedDisplay.text.size() - 1);
+                    trailing = TRUE;
+                }
+                else
+                    hitPosition =
+                        static_cast<UINT32>(safeCursor);
+            }
+            float caretX = 0.0f;
+            float caretY = 0.0f;
+            DWRITE_HIT_TEST_METRICS caretMetrics{};
+            if (SUCCEEDED(textLayout->HitTestTextPosition(
+                hitPosition, trailing, &caretX, &caretY,
+                &caretMetrics)))
+            {
+                DrawHostRect(s, x + padding + caretX,
+                    y + caretY, 1.5f,
+                    std::max(caretMetrics.height, fontSize),
+                    textColor, 0.0f, 0.98f);
+            }
+        }
+        s->ctx->PopAxisAlignedClip();
     }
-
     if (s && s->engine && id && *id && storageKey && *storageKey)
     {
         LuaWidget::HostControl control;
@@ -1678,7 +1874,286 @@ static int lua_UiTextInput(lua_State* L)
             static_cast<LONG>(std::lround(x + width)), static_cast<LONG>(std::lround(y + height)) };
         control.selectAll = selectAll;
         control.liveUpdate = liveUpdate;
+        control.fontSize = fontSize;
+        control.padding = padding;
         s->engine->RuntimeRegisterHostControl(BoundWidgetId(L), std::move(control));
+    }
+
+    lua_pushlstring(L, value.data(), value.size());
+    return 1;
+}
+
+static int lua_UiTextArea(lua_State* L)
+{
+    const char* id = luaL_checkstring(L, 1);
+    const char* storageKey = luaL_checkstring(L, 2);
+    const float x = static_cast<float>(luaL_checknumber(L, 3));
+    const float y = static_cast<float>(luaL_checknumber(L, 4));
+    const float width = static_cast<float>(luaL_checknumber(L, 5));
+    const float height = static_cast<float>(luaL_checknumber(L, 6));
+    const int options = lua_istable(L, 7) ? lua_absindex(L, 7) : 0;
+
+    auto numberOption = [&](const char* key, double fallback) {
+        if (!options) return fallback;
+        lua_getfield(L, options, key);
+        const double result = lua_isnumber(L, -1)
+            ? lua_tonumber(L, -1) : fallback;
+        lua_pop(L, 1);
+        return result;
+    };
+    auto integerOption = [&](const char* key, int fallback) {
+        return static_cast<int>(numberOption(key, fallback));
+    };
+    auto boolOption = [&](const char* key, bool fallback) {
+        if (!options) return fallback;
+        lua_getfield(L, options, key);
+        const bool result = lua_isnil(L, -1)
+            ? fallback : lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return result;
+    };
+    auto stringOption = [&](const char* key, const char* fallback) {
+        if (!options) return std::string(fallback);
+        lua_getfield(L, options, key);
+        const std::string result = lua_isstring(L, -1)
+            ? lua_tostring(L, -1) : fallback;
+        lua_pop(L, 1);
+        return result;
+    };
+
+    const std::string placeholder = stringOption("placeholder", "");
+    const float fontSize = std::clamp(static_cast<float>(
+        numberOption("fontSize", 15.0)), 9.0f, 96.0f);
+    const int textColor = integerOption("textColor", 0xFFFFFF);
+    const int placeholderColor =
+        integerOption("placeholderColor", 0x94A3B8);
+    const int backgroundColor =
+        integerOption("backgroundColor", 0xFFFFFF);
+    const int borderColor = integerOption("borderColor", 0xFFFFFF);
+    const int focusedBorderColor =
+        integerOption("focusedBorderColor", 0x64A8FF);
+    const float backgroundAlpha = std::clamp(static_cast<float>(
+        numberOption("backgroundAlpha", 0.05)), 0.0f, 1.0f);
+    const float focusedBackgroundAlpha = std::clamp(static_cast<float>(
+        numberOption("focusedBackgroundAlpha", 0.08)), 0.0f, 1.0f);
+    const float borderAlpha = std::clamp(static_cast<float>(
+        numberOption("borderAlpha", 0.0)), 0.0f, 1.0f);
+    const float focusedBorderAlpha = std::clamp(static_cast<float>(
+        numberOption("focusedBorderAlpha", 0.35)), 0.0f, 1.0f);
+    const float radius = std::max(0.0f,
+        static_cast<float>(numberOption("radius", 6.0)));
+    const float padding = std::max(0.0f,
+        static_cast<float>(numberOption("padding", 8.0)));
+    const float borderThickness = std::max(0.5f,
+        static_cast<float>(numberOption("borderThickness", 1.0)));
+    const bool selectAll = boolOption("selectAll", false);
+    const bool liveUpdate = boolOption("liveUpdate", true);
+    const bool placeholderWhenWhitespace =
+        boolOption("placeholderWhenWhitespace", false);
+
+    auto* s = GetD2D(L);
+    std::string value;
+    if (s && s->engine && storageKey && *storageKey)
+        value = s->engine->RuntimeGetStorageValue(
+            BoundWidgetId(L), storageKey);
+
+    bool focused = false;
+    size_t cursor = 0;
+    size_t selectionAnchor = 0;
+    std::wstring focusedText;
+    std::wstring compositionText;
+    size_t compositionCursor = 0;
+    if (s && s->engine && id && *id)
+    {
+        focused = s->engine->RuntimeGetFocusedHostInput(
+            BoundWidgetId(L), id, focusedText, cursor,
+            selectionAnchor, compositionText,
+            compositionCursor);
+        if (focused)
+            value = WidgetWideToUtf8(focusedText);
+    }
+    const HostInputDisplayText focusedDisplay =
+        BuildHostInputDisplayText(focusedText, cursor,
+            selectionAnchor, compositionText,
+            compositionCursor);
+
+    DrawHostRect(s, x, y, width, height, backgroundColor, radius,
+        focused ? focusedBackgroundAlpha : backgroundAlpha);
+    DrawHostStrokeRect(s, x, y, width, height,
+        focused ? focusedBorderColor : borderColor, radius,
+        borderThickness,
+        focused ? focusedBorderAlpha : borderAlpha);
+
+    const std::wstring valueText = focused
+        ? focusedDisplay.text : Utf8ToWideLocal(value);
+    const bool semanticallyEmpty = valueText.empty() ||
+        (placeholderWhenWhitespace &&
+            HostTextIsWhitespaceOnly(valueText));
+    const bool showingPlaceholder = semanticallyEmpty && !focused;
+    const std::wstring displayText = showingPlaceholder
+        ? Utf8ToWideLocal(placeholder) : valueText;
+    const float scrollbarReserve = 8.0f;
+    const float innerWidth = std::max(1.0f,
+        width - padding * 2.0f - scrollbarReserve);
+    ComPtr<IDWriteTextLayout> textLayout =
+        CreateHostMultilineTextLayout(s, displayText, fontSize,
+            innerWidth);
+    DWRITE_TEXT_METRICS textMetrics{};
+    if (textLayout)
+        textLayout->GetMetrics(&textMetrics);
+    const int contentHeight = std::max(
+        static_cast<int>(std::ceil(textMetrics.height + padding * 2.0f)),
+        static_cast<int>(std::ceil(height)));
+
+    if (s && s->engine && id && *id &&
+        storageKey && *storageKey)
+    {
+        LuaWidget::HostControl control;
+        control.type = LuaWidget::HostControl::Type::Input;
+        control.id = id;
+        control.storageKey = storageKey;
+        control.rect = {
+            static_cast<LONG>(std::lround(x)),
+            static_cast<LONG>(std::lround(y)),
+            static_cast<LONG>(std::lround(x + width)),
+            static_cast<LONG>(std::lround(y + height))
+        };
+        control.selectAll = selectAll;
+        control.liveUpdate = liveUpdate;
+        control.multiline = true;
+        control.fontSize = fontSize;
+        control.padding = padding;
+        control.contentHeight = contentHeight;
+        control.viewportHeight =
+            std::max(1, static_cast<int>(std::lround(height)));
+        s->engine->RuntimeRegisterHostControl(
+            BoundWidgetId(L), std::move(control));
+    }
+
+    int scrollOffset = s && s->engine
+        ? s->engine->RuntimeGetScrollOffset(
+            BoundWidgetId(L), id) : 0;
+    ComPtr<IDWriteTextLayout> focusedLayout;
+    DWRITE_HIT_TEST_METRICS caretMetrics{};
+    float caretX = 0.0f;
+    float caretY = 0.0f;
+    bool hasCaret = false;
+    if (focused)
+    {
+        focusedLayout = CreateHostMultilineTextLayout(s,
+            focusedDisplay.text, fontSize, innerWidth);
+        if (focusedLayout)
+        {
+            const size_t safeCursor =
+                std::min(focusedDisplay.cursor,
+                    focusedDisplay.text.size());
+            UINT32 hitPosition = 0;
+            BOOL trailing = FALSE;
+            if (!focusedDisplay.text.empty())
+            {
+                if (safeCursor >= focusedDisplay.text.size() &&
+                    (focusedDisplay.text.back() == L'\n' ||
+                        focusedDisplay.text.back() == L'\r'))
+                {
+                    hitPosition = static_cast<UINT32>(
+                        focusedDisplay.text.size());
+                    trailing = FALSE;
+                }
+                else if (safeCursor >=
+                    focusedDisplay.text.size())
+                {
+                    hitPosition = static_cast<UINT32>(
+                        focusedDisplay.text.size() - 1);
+                    trailing = TRUE;
+                }
+                else
+                    hitPosition =
+                        static_cast<UINT32>(safeCursor);
+            }
+            hasCaret = SUCCEEDED(
+                focusedLayout->HitTestTextPosition(
+                    hitPosition, trailing, &caretX, &caretY,
+                    &caretMetrics));
+            if (hasCaret && s && s->engine)
+            {
+                const float caretTop = padding + caretY;
+                const float caretBottom = caretTop +
+                    std::max(caretMetrics.height, fontSize);
+                const float visibleHeight =
+                    std::max(1.0f, height - padding * 2.0f);
+                int desiredOffset = scrollOffset;
+                if (caretTop < scrollOffset)
+                    desiredOffset =
+                        static_cast<int>(std::floor(caretTop));
+                else if (caretBottom >
+                    scrollOffset + visibleHeight)
+                    desiredOffset = static_cast<int>(std::ceil(
+                        caretBottom - visibleHeight));
+                s->engine->RuntimeSetScrollOffset(
+                    BoundWidgetId(L), id, desiredOffset);
+                scrollOffset =
+                    s->engine->RuntimeGetScrollOffset(
+                        BoundWidgetId(L), id);
+            }
+        }
+    }
+
+    if (s && s->ctx)
+    {
+        const D2D1_RECT_F clip = D2D1::RectF(
+            s->widgetRect.left + x + padding,
+            s->widgetRect.top + y + padding,
+            s->widgetRect.left + x + width -
+                padding - scrollbarReserve,
+            s->widgetRect.top + y + height - padding);
+        s->ctx->PushAxisAlignedClip(
+            clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        if (focused && compositionText.empty() &&
+            selectionAnchor != cursor &&
+            focusedLayout)
+        {
+            DrawHostTextSelection(s, focusedLayout.Get(),
+                std::min(selectionAnchor, cursor),
+                std::max(selectionAnchor, cursor),
+                x + padding, y + padding - scrollOffset,
+                focusedBorderColor);
+        }
+        ID2D1SolidColorBrush* textBrush = GetCachedBrush(
+            s, showingPlaceholder
+                ? placeholderColor : textColor);
+        IDWriteTextLayout* layoutToDraw = focused &&
+            focusedLayout ? focusedLayout.Get() :
+            textLayout.Get();
+        if (textBrush && layoutToDraw)
+        {
+            s->ctx->DrawTextLayout(
+                D2D1::Point2F(
+                    s->widgetRect.left + x + padding,
+                    s->widgetRect.top + y + padding -
+                        scrollOffset),
+                layoutToDraw, textBrush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+        if (focused && focusedDisplay.compositionLength > 0 &&
+            focusedLayout)
+        {
+            DrawHostCompositionUnderline(s,
+                focusedLayout.Get(),
+                focusedDisplay.compositionStart,
+                focusedDisplay.compositionLength,
+                x + padding, y + padding - scrollOffset,
+                textColor);
+        }
+        if (focused && hasCaret)
+        {
+            const float cursorHeight = std::max(
+                caretMetrics.height, fontSize);
+            DrawHostRect(s,
+                x + padding + caretX,
+                y + padding + caretY - scrollOffset,
+                1.5f, cursorHeight, textColor, 0.0f, 0.98f);
+        }
+        s->ctx->PopAxisAlignedClip();
     }
 
     lua_pushlstring(L, value.data(), value.size());
@@ -1860,12 +2335,15 @@ static std::wstring ReadLuaPathArg(lua_State* L, int index)
 static int lua_WidgetInfo(lua_State* L)
 {
     auto* s = GetD2D(L);
-    lua_createtable(L, 0, 5);
+    lua_createtable(L, 0, 4);
     if (!s)
         return 1;
     lua_pushstring(L, WidgetWideToUtf8(BoundWidgetId(L)).c_str()); lua_setfield(L, -2, "id");
     lua_pushnumber(L, s->widgetRect.right - s->widgetRect.left); lua_setfield(L, -2, "width");
     lua_pushnumber(L, s->widgetRect.bottom - s->widgetRect.top); lua_setfield(L, -2, "height");
+    lua_pushboolean(L, s->engine &&
+        s->engine->RuntimeIsWidgetSelected(BoundWidgetId(L)));
+    lua_setfield(L, -2, "selected");
     return 1;
 }
 
@@ -3321,7 +3799,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 if (d2dState_->dwrite)
                 {
                     ComPtr<IDWriteTextFormat> format;
-                    const float errFontSize = std::max(9.0f, 14.0f * CalculateWidgetCellScale(
+                    const float errFontSize = std::max(9.0f, 15.0f * CalculateWidgetCellScale(
                         d2dState_->gridCellW, d2dState_->gridCellH));
                     d2dState_->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
                         DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
@@ -4148,7 +4626,9 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
     int index = FindWidget(widgetId);
     if (index < 0) return;
     if (widgets_[index].hostControls.size() >= 128) return;
-    if (control.type == LuaWidget::HostControl::Type::Scroll)
+    if (control.type == LuaWidget::HostControl::Type::Scroll ||
+        (control.type == LuaWidget::HostControl::Type::Input &&
+            control.multiline))
     {
         const int maximum = std::max(0, control.contentHeight - control.viewportHeight);
         int& offset = widgets_[index].scrollOffsets[control.id];
@@ -4170,6 +4650,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId &&
         focusedHostInput_.id == id)
     {
+        focusedHostInput_.multiline = found->multiline;
         if (hostInputFocusCallback_)
             hostInputFocusCallback_();
         return true;
@@ -4184,8 +4665,10 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std
         RuntimeGetStorageValue(widgetId, found->storageKey));
     focusedHostInput_.originalText = focusedHostInput_.text;
     focusedHostInput_.cursor = focusedHostInput_.text.size();
-    focusedHostInput_.selectAll = found->selectAll;
+    focusedHostInput_.selectionAnchor = found->selectAll
+        ? 0 : focusedHostInput_.cursor;
     focusedHostInput_.liveUpdate = found->liveUpdate;
+    focusedHostInput_.multiline = found->multiline;
     if (hostInputFocusCallback_)
         hostInputFocusCallback_();
     RuntimeInvalidateHost(widgetId);
@@ -4193,20 +4676,276 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std
 }
 
 bool WidgetEngine::RuntimeGetFocusedHostInput(const std::wstring& widgetId,
-    const std::string& id, std::wstring& text, size_t& cursor, bool& selectAll) const
+    const std::string& id, std::wstring& text, size_t& cursor,
+    size_t& selectionAnchor, std::wstring& compositionText,
+    size_t& compositionCursor) const
 {
     if (!focusedHostInput_.active || focusedHostInput_.widgetId != widgetId ||
         focusedHostInput_.id != id)
         return false;
     text = focusedHostInput_.text;
     cursor = focusedHostInput_.cursor;
-    selectAll = focusedHostInput_.selectAll;
+    selectionAnchor = focusedHostInput_.selectionAnchor;
+    compositionText = focusedHostInput_.compositionText;
+    compositionCursor = focusedHostInput_.compositionCursor;
     return true;
+}
+
+size_t WidgetEngine::HitTestHostInputPosition(
+    const LuaWidget::HostControl& control,
+    const std::wstring& widgetId, int x, int y) const
+{
+    if (!d2dState_ || control.type !=
+        LuaWidget::HostControl::Type::Input)
+        return 0;
+    const std::wstring& text = focusedHostInput_.text;
+    const float width = static_cast<float>(
+        control.rect.right - control.rect.left);
+    const float height = static_cast<float>(
+        control.rect.bottom - control.rect.top);
+    ComPtr<IDWriteTextLayout> layout;
+    float localX = static_cast<float>(
+        x - control.rect.left) - control.padding;
+    float localY = static_cast<float>(
+        y - control.rect.top);
+    if (control.multiline)
+    {
+        const float scrollbarReserve = 8.0f;
+        const float innerWidth = std::max(1.0f,
+            width - control.padding * 2.0f -
+                scrollbarReserve);
+        layout = CreateHostMultilineTextLayout(d2dState_,
+            text, control.fontSize, innerWidth);
+        localY = localY - control.padding +
+            RuntimeGetScrollOffset(widgetId, control.id);
+    }
+    else
+    {
+        const float innerWidth = std::max(1.0f,
+            width - control.padding * 2.0f);
+        layout = CreateHostSingleLineTextLayout(d2dState_,
+            text, control.fontSize, innerWidth, height);
+    }
+    if (!layout)
+        return std::min(focusedHostInput_.cursor,
+            focusedHostInput_.text.size());
+
+    BOOL trailing = FALSE;
+    BOOL inside = FALSE;
+    DWRITE_HIT_TEST_METRICS metrics{};
+    if (FAILED(layout->HitTestPoint(localX, localY,
+        &trailing, &inside, &metrics)))
+        return std::min(focusedHostInput_.cursor,
+            focusedHostInput_.text.size());
+    const size_t position =
+        static_cast<size_t>(metrics.textPosition) +
+        (trailing
+            ? static_cast<size_t>(metrics.length) : 0);
+    return std::min(position, text.size());
+}
+
+bool WidgetEngine::IsFocusedHostInputAt(
+    const std::wstring& widgetId, int x, int y) const
+{
+    if (!focusedHostInput_.active ||
+        focusedHostInput_.widgetId != widgetId)
+        return false;
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return false;
+    const POINT point{ x, y };
+    for (auto it = widgets_[index].hostControls.rbegin();
+        it != widgets_[index].hostControls.rend(); ++it)
+    {
+        if (it->type == LuaWidget::HostControl::Type::Input &&
+            it->id == focusedHostInput_.id)
+            return PtInRect(&it->rect, point) != FALSE;
+    }
+    return false;
+}
+
+bool WidgetEngine::HandleHostInputPointerMove(
+    const std::wstring& widgetId, int x, int y)
+{
+    if (!focusedHostInput_.active ||
+        !focusedHostInput_.pointerSelecting ||
+        focusedHostInput_.widgetId != widgetId)
+        return false;
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return false;
+    auto& widget = widgets_[index];
+    auto control = std::find_if(
+        widget.hostControls.rbegin(),
+        widget.hostControls.rend(), [&](const auto& item) {
+            return item.type ==
+                LuaWidget::HostControl::Type::Input &&
+                item.id == focusedHostInput_.id;
+        });
+    if (control == widget.hostControls.rend())
+        return false;
+    if (control->multiline)
+    {
+        int offset = RuntimeGetScrollOffset(
+            widgetId, control->id);
+        if (y < control->rect.top +
+            static_cast<int>(std::lround(control->padding)))
+            offset -= 24;
+        else if (y > control->rect.bottom -
+            static_cast<int>(std::lround(control->padding)))
+            offset += 24;
+        RuntimeSetScrollOffset(widgetId,
+            control->id, offset);
+    }
+    focusedHostInput_.cursor = HitTestHostInputPosition(
+        *control, widgetId, x, y);
+    RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
+bool WidgetEngine::HandleHostInputPointerUp(
+    const std::wstring& widgetId, int x, int y)
+{
+    if (!focusedHostInput_.active ||
+        !focusedHostInput_.pointerSelecting ||
+        focusedHostInput_.widgetId != widgetId)
+        return false;
+    const int index = FindWidget(widgetId);
+    if (index >= 0)
+    {
+        auto& controls = widgets_[index].hostControls;
+        auto control = std::find_if(controls.rbegin(),
+            controls.rend(), [&](const auto& item) {
+                return item.type ==
+                    LuaWidget::HostControl::Type::Input &&
+                    item.id == focusedHostInput_.id;
+            });
+        if (control != controls.rend())
+            focusedHostInput_.cursor =
+                HitTestHostInputPosition(
+                    *control, widgetId, x, y);
+    }
+    focusedHostInput_.pointerSelecting = false;
+    RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
+bool WidgetEngine::RuntimeIsWidgetSelected(
+    const std::wstring& widgetId) const
+{
+    return widgetSelectedProvider_ &&
+        widgetSelectedProvider_(widgetId);
 }
 
 bool WidgetEngine::HasFocusedHostInput() const
 {
     return focusedHostInput_.active;
+}
+
+bool WidgetEngine::GetFocusedHostInputCaretRect(RECT& rect) const
+{
+    rect = {};
+    if (!focusedHostInput_.active || !d2dState_)
+        return false;
+
+    const int index = FindWidget(focusedHostInput_.widgetId);
+    if (index < 0)
+        return false;
+    const LuaWidget& widget = widgets_[index];
+    const auto control = std::find_if(
+        widget.hostControls.rbegin(),
+        widget.hostControls.rend(), [&](const auto& item) {
+            return item.type == LuaWidget::HostControl::Type::Input &&
+                item.id == focusedHostInput_.id;
+        });
+    if (control == widget.hostControls.rend())
+        return false;
+    const HostInputDisplayText display =
+        BuildHostInputDisplayText(focusedHostInput_.text,
+            focusedHostInput_.cursor,
+            focusedHostInput_.selectionAnchor,
+            focusedHostInput_.compositionText,
+            focusedHostInput_.compositionCursor);
+
+    const float width = static_cast<float>(
+        control->rect.right - control->rect.left);
+    const float height = static_cast<float>(
+        control->rect.bottom - control->rect.top);
+    ComPtr<IDWriteTextLayout> layout;
+    int scrollOffset = 0;
+    if (control->multiline)
+    {
+        constexpr float scrollbarReserve = 8.0f;
+        const float innerWidth = std::max(1.0f,
+            width - control->padding * 2.0f -
+                scrollbarReserve);
+        layout = CreateHostMultilineTextLayout(d2dState_,
+            display.text, control->fontSize,
+            innerWidth);
+        scrollOffset = RuntimeGetScrollOffset(
+            focusedHostInput_.widgetId, control->id);
+    }
+    else
+    {
+        const float innerWidth = std::max(1.0f,
+            width - control->padding * 2.0f);
+        layout = CreateHostSingleLineTextLayout(d2dState_,
+            display.text, control->fontSize,
+            innerWidth, height);
+    }
+    if (!layout)
+        return false;
+
+    const size_t safeCursor = std::min(
+        display.cursor, display.text.size());
+    UINT32 hitPosition = 0;
+    BOOL trailing = FALSE;
+    if (!display.text.empty())
+    {
+        if (control->multiline &&
+            safeCursor >= display.text.size() &&
+            (display.text.back() == L'\n' ||
+                display.text.back() == L'\r'))
+        {
+            hitPosition = static_cast<UINT32>(
+                display.text.size());
+        }
+        else if (safeCursor >= display.text.size())
+        {
+            hitPosition = static_cast<UINT32>(
+                display.text.size() - 1);
+            trailing = TRUE;
+        }
+        else
+        {
+            hitPosition = static_cast<UINT32>(safeCursor);
+        }
+    }
+
+    float caretX = 0.0f;
+    float caretY = 0.0f;
+    DWRITE_HIT_TEST_METRICS metrics{};
+    if (FAILED(layout->HitTestTextPosition(
+            hitPosition, trailing, &caretX, &caretY,
+            &metrics)))
+        return false;
+
+    const float localX = static_cast<float>(control->rect.left) +
+        control->padding + caretX;
+    const float localY = static_cast<float>(control->rect.top) +
+        (control->multiline ? control->padding : 0.0f) +
+        caretY - static_cast<float>(scrollOffset);
+    const float caretHeight = std::max(
+        metrics.height, control->fontSize);
+    rect.left = widget.lastBounds.left +
+        static_cast<LONG>(std::lround(localX));
+    rect.top = widget.lastBounds.top +
+        static_cast<LONG>(std::lround(localY));
+    rect.right = rect.left + 1;
+    rect.bottom = rect.top +
+        std::max<LONG>(1,
+            static_cast<LONG>(std::lround(caretHeight)));
+    return true;
 }
 
 void WidgetEngine::BlurHostInput(bool cancel)
@@ -4229,21 +4968,94 @@ void WidgetEngine::BlurHostInput(bool cancel)
     RuntimeInvalidateHost(widgetId);
 }
 
+bool WidgetEngine::SetHostInputComposition(
+    const std::wstring& text, size_t cursor)
+{
+    if (!focusedHostInput_.active)
+        return false;
+    focusedHostInput_.compositionText = text;
+    focusedHostInput_.compositionCursor =
+        std::min(cursor, text.size());
+    RuntimeInvalidateHost(focusedHostInput_.widgetId);
+    return true;
+}
+
+bool WidgetEngine::CommitHostInputComposition(
+    const std::wstring& text)
+{
+    if (!focusedHostInput_.active)
+        return false;
+
+    focusedHostInput_.cursor = std::min(
+        focusedHostInput_.cursor, focusedHostInput_.text.size());
+    focusedHostInput_.selectionAnchor = std::min(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.text.size());
+    const size_t selectionStart = std::min(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.cursor);
+    const size_t selectionEnd = std::max(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.cursor);
+    focusedHostInput_.text.erase(
+        selectionStart, selectionEnd - selectionStart);
+    focusedHostInput_.text.insert(selectionStart, text);
+    focusedHostInput_.cursor = selectionStart + text.size();
+    focusedHostInput_.selectionAnchor =
+        focusedHostInput_.cursor;
+    focusedHostInput_.compositionText.clear();
+    focusedHostInput_.compositionCursor = 0;
+    if (focusedHostInput_.liveUpdate)
+    {
+        RuntimeSetStorageValue(focusedHostInput_.widgetId,
+            focusedHostInput_.storageKey,
+            WidgetWideToUtf8(focusedHostInput_.text));
+    }
+    RuntimeInvalidateHost(focusedHostInput_.widgetId);
+    return true;
+}
+
+void WidgetEngine::ClearHostInputComposition()
+{
+    if (!focusedHostInput_.active ||
+        focusedHostInput_.compositionText.empty())
+        return;
+    focusedHostInput_.compositionText.clear();
+    focusedHostInput_.compositionCursor = 0;
+    RuntimeInvalidateHost(focusedHostInput_.widgetId);
+}
+
 bool WidgetEngine::HandleHostInputChar(wchar_t ch)
 {
     if (!focusedHostInput_.active || ch < 0x20 || ch == 0x7F)
         return false;
+    focusedHostInput_.compositionText.clear();
+    focusedHostInput_.compositionCursor = 0;
 
-    if (focusedHostInput_.selectAll)
-    {
-        focusedHostInput_.text.clear();
-        focusedHostInput_.cursor = 0;
-        focusedHostInput_.selectAll = false;
-    }
     focusedHostInput_.cursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
+    focusedHostInput_.selectionAnchor = std::min(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.text.size());
+    if (focusedHostInput_.selectionAnchor !=
+        focusedHostInput_.cursor)
+    {
+        const size_t selectionStart = std::min(
+            focusedHostInput_.selectionAnchor,
+            focusedHostInput_.cursor);
+        const size_t selectionEnd = std::max(
+            focusedHostInput_.selectionAnchor,
+            focusedHostInput_.cursor);
+        focusedHostInput_.text.erase(selectionStart,
+            selectionEnd - selectionStart);
+        focusedHostInput_.cursor = selectionStart;
+    }
+    focusedHostInput_.selectionAnchor =
+        focusedHostInput_.cursor;
     focusedHostInput_.text.insert(focusedHostInput_.cursor, 1, ch);
     ++focusedHostInput_.cursor;
+    focusedHostInput_.selectionAnchor =
+        focusedHostInput_.cursor;
     if (focusedHostInput_.liveUpdate)
         RuntimeSetStorageValue(focusedHostInput_.widgetId, focusedHostInput_.storageKey,
             WidgetWideToUtf8(focusedHostInput_.text));
@@ -4256,6 +5068,45 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     if (!focusedHostInput_.active) return false;
 
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    focusedHostInput_.cursor = std::min(
+        focusedHostInput_.cursor, focusedHostInput_.text.size());
+    focusedHostInput_.selectionAnchor = std::min(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.text.size());
+    focusedHostInput_.pointerSelecting = false;
+    auto hasSelection = [&]() {
+        return focusedHostInput_.selectionAnchor !=
+            focusedHostInput_.cursor;
+    };
+    auto selectionStart = [&]() {
+        return std::min(focusedHostInput_.selectionAnchor,
+            focusedHostInput_.cursor);
+    };
+    auto selectionEnd = [&]() {
+        return std::max(focusedHostInput_.selectionAnchor,
+            focusedHostInput_.cursor);
+    };
+    auto eraseSelection = [&]() {
+        if (!hasSelection())
+            return false;
+        const size_t start = selectionStart();
+        const size_t end = selectionEnd();
+        focusedHostInput_.text.erase(start, end - start);
+        focusedHostInput_.cursor = start;
+        focusedHostInput_.selectionAnchor = start;
+        return true;
+    };
+    auto finishMovement = [&](size_t nextCursor) {
+        focusedHostInput_.cursor = std::min(
+            nextCursor, focusedHostInput_.text.size());
+        if (!shift)
+            focusedHostInput_.selectionAnchor =
+                focusedHostInput_.cursor;
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+        return true;
+    };
+
     bool changed = false;
     if (key == VK_ESCAPE)
     {
@@ -4264,44 +5115,57 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     }
     if (key == VK_RETURN)
     {
-        BlurHostInput(false);
-        return true;
+        if (!focusedHostInput_.multiline || ctrl)
+        {
+            BlurHostInput(false);
+            return true;
+        }
+        eraseSelection();
+        focusedHostInput_.text.insert(
+            focusedHostInput_.cursor, 1, L'\n');
+        ++focusedHostInput_.cursor;
+        focusedHostInput_.selectionAnchor =
+            focusedHostInput_.cursor;
+        changed = true;
     }
-    if (ctrl && key == 'A')
+    else if (ctrl && key == 'A')
     {
-        focusedHostInput_.selectAll = !focusedHostInput_.text.empty();
+        focusedHostInput_.selectionAnchor = 0;
         focusedHostInput_.cursor = focusedHostInput_.text.size();
         RuntimeInvalidateHost(focusedHostInput_.widgetId);
         return true;
     }
-    if (ctrl && (key == 'C' || key == 'X'))
+    else if (ctrl && (key == 'C' || key == 'X'))
     {
-        if (focusedHostInput_.selectAll && !focusedHostInput_.text.empty() && OpenClipboard(nullptr))
+        bool copied = false;
+        if (hasSelection() && OpenClipboard(nullptr))
         {
             EmptyClipboard();
-            const SIZE_T bytes = (focusedHostInput_.text.size() + 1) * sizeof(wchar_t);
+            const std::wstring selectedText =
+                focusedHostInput_.text.substr(
+                    selectionStart(),
+                    selectionEnd() - selectionStart());
+            const SIZE_T bytes =
+                (selectedText.size() + 1) * sizeof(wchar_t);
             HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
             if (memory)
             {
                 if (void* target = GlobalLock(memory))
                 {
-                    memcpy(target, focusedHostInput_.text.c_str(), bytes);
+                    memcpy(target, selectedText.c_str(), bytes);
                     GlobalUnlock(memory);
-                    if (!SetClipboardData(CF_UNICODETEXT, memory))
+                    if (SetClipboardData(CF_UNICODETEXT, memory))
+                        copied = true;
+                    else
                         GlobalFree(memory);
                 }
                 else
                     GlobalFree(memory);
             }
             CloseClipboard();
-            if (key == 'X')
-            {
-                focusedHostInput_.text.clear();
-                focusedHostInput_.cursor = 0;
-                focusedHostInput_.selectAll = false;
-                changed = true;
-            }
         }
+        if (key == 'X' && copied)
+            changed = eraseSelection();
     }
     else if (ctrl && key == 'V')
     {
@@ -4315,7 +5179,16 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
                     for (; *source; ++source)
                     {
                         if (*source == L'\r') continue;
-                        pasted.push_back((*source == L'\n' || *source == L'\t') ? L' ' : *source);
+                        if (*source == L'\n')
+                            pasted.push_back(
+                                focusedHostInput_.multiline
+                                    ? L'\n' : L' ');
+                        else if (*source == L'\t')
+                            pasted.append(
+                                focusedHostInput_.multiline
+                                    ? L"    " : L" ");
+                        else
+                            pasted.push_back(*source);
                     }
                     GlobalUnlock(data);
                 }
@@ -4324,65 +5197,137 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         }
         if (!pasted.empty())
         {
-            if (focusedHostInput_.selectAll)
-            {
-                focusedHostInput_.text.clear();
-                focusedHostInput_.cursor = 0;
-                focusedHostInput_.selectAll = false;
-            }
-            focusedHostInput_.cursor = std::min(
-                focusedHostInput_.cursor, focusedHostInput_.text.size());
+            eraseSelection();
             focusedHostInput_.text.insert(focusedHostInput_.cursor, pasted);
             focusedHostInput_.cursor += pasted.size();
+            focusedHostInput_.selectionAnchor =
+                focusedHostInput_.cursor;
             changed = true;
         }
     }
     else if (key == VK_BACK)
     {
-        if (focusedHostInput_.selectAll)
-        {
-            focusedHostInput_.text.clear();
-            focusedHostInput_.cursor = 0;
-            focusedHostInput_.selectAll = false;
-            changed = true;
-        }
-        else if (focusedHostInput_.cursor > 0)
+        changed = eraseSelection();
+        if (!changed && focusedHostInput_.cursor > 0)
         {
             focusedHostInput_.text.erase(--focusedHostInput_.cursor, 1);
+            focusedHostInput_.selectionAnchor =
+                focusedHostInput_.cursor;
             changed = true;
         }
     }
     else if (key == VK_DELETE)
     {
-        if (focusedHostInput_.selectAll)
-        {
-            focusedHostInput_.text.clear();
-            focusedHostInput_.cursor = 0;
-            focusedHostInput_.selectAll = false;
-            changed = true;
-        }
-        else if (focusedHostInput_.cursor < focusedHostInput_.text.size())
+        changed = eraseSelection();
+        if (!changed &&
+            focusedHostInput_.cursor < focusedHostInput_.text.size())
         {
             focusedHostInput_.text.erase(focusedHostInput_.cursor, 1);
+            focusedHostInput_.selectionAnchor =
+                focusedHostInput_.cursor;
             changed = true;
         }
+    }
+    else if (focusedHostInput_.multiline &&
+        (key == VK_UP || key == VK_DOWN))
+    {
+        const size_t textSize = focusedHostInput_.text.size();
+        const size_t cursor = std::min(
+            focusedHostInput_.cursor, textSize);
+        const size_t currentLineStart = cursor == 0
+            ? 0
+            : [&]() {
+                const size_t newline =
+                    focusedHostInput_.text.rfind(
+                        L'\n', cursor - 1);
+                return newline == std::wstring::npos
+                    ? size_t{0} : newline + 1;
+            }();
+        const size_t column = cursor - currentLineStart;
+        if (key == VK_UP && currentLineStart > 0)
+        {
+            const size_t previousLineEnd =
+                currentLineStart - 1;
+            const size_t previousLineStart =
+                previousLineEnd == 0
+                ? 0
+                : [&]() {
+                    const size_t newline =
+                        focusedHostInput_.text.rfind(
+                            L'\n', previousLineEnd - 1);
+                    return newline == std::wstring::npos
+                        ? size_t{0} : newline + 1;
+                }();
+            focusedHostInput_.cursor = std::min(
+                previousLineStart + column,
+                previousLineEnd);
+        }
+        else if (key == VK_DOWN)
+        {
+            const size_t currentLineEnd =
+                focusedHostInput_.text.find(
+                    L'\n', cursor);
+            if (currentLineEnd != std::wstring::npos)
+            {
+                const size_t nextLineStart =
+                    currentLineEnd + 1;
+                const size_t nextLineEnd =
+                    focusedHostInput_.text.find(
+                        L'\n', nextLineStart);
+                focusedHostInput_.cursor = std::min(
+                    nextLineStart + column,
+                    nextLineEnd == std::wstring::npos
+                        ? textSize : nextLineEnd);
+            }
+        }
+        return finishMovement(focusedHostInput_.cursor);
     }
     else if (key == VK_LEFT || key == VK_HOME)
     {
-        focusedHostInput_.cursor = focusedHostInput_.selectAll || key == VK_HOME
-            ? 0 : (focusedHostInput_.cursor > 0 ? focusedHostInput_.cursor - 1 : 0);
-        focusedHostInput_.selectAll = false;
-        RuntimeInvalidateHost(focusedHostInput_.widgetId);
-        return true;
+        if (!shift && hasSelection() && key == VK_LEFT)
+            return finishMovement(selectionStart());
+        else if (key == VK_HOME &&
+            focusedHostInput_.multiline && !ctrl)
+        {
+            if (focusedHostInput_.cursor == 0)
+                focusedHostInput_.cursor = 0;
+            else
+            {
+                const size_t newline =
+                    focusedHostInput_.text.rfind(
+                        L'\n',
+                        focusedHostInput_.cursor - 1);
+                focusedHostInput_.cursor =
+                    newline == std::wstring::npos
+                    ? 0 : newline + 1;
+            }
+        }
+        else
+            focusedHostInput_.cursor = key == VK_HOME
+                ? 0 : (focusedHostInput_.cursor > 0
+                    ? focusedHostInput_.cursor - 1 : 0);
+        return finishMovement(focusedHostInput_.cursor);
     }
     else if (key == VK_RIGHT || key == VK_END)
     {
-        focusedHostInput_.cursor = focusedHostInput_.selectAll || key == VK_END
-            ? focusedHostInput_.text.size()
-            : std::min(focusedHostInput_.cursor + 1, focusedHostInput_.text.size());
-        focusedHostInput_.selectAll = false;
-        RuntimeInvalidateHost(focusedHostInput_.widgetId);
-        return true;
+        if (!shift && hasSelection() && key == VK_RIGHT)
+            return finishMovement(selectionEnd());
+        else if (key == VK_END &&
+            focusedHostInput_.multiline && !ctrl)
+        {
+            const size_t newline =
+                focusedHostInput_.text.find(
+                    L'\n', focusedHostInput_.cursor);
+            focusedHostInput_.cursor =
+                newline == std::wstring::npos
+                ? focusedHostInput_.text.size() : newline;
+        }
+        else
+            focusedHostInput_.cursor = key == VK_END
+                ? focusedHostInput_.text.size()
+                : std::min(focusedHostInput_.cursor + 1,
+                    focusedHostInput_.text.size());
+        return finishMovement(focusedHostInput_.cursor);
     }
     else if (key == VK_CONTROL || key == VK_SHIFT || key == VK_MENU ||
         key == VK_CAPITAL || key == VK_TAB)
@@ -4414,6 +5359,30 @@ int WidgetEngine::RuntimeGetScrollOffset(const std::wstring& widgetId, const std
     return it == widgets_[index].scrollOffsets.end() ? 0 : it->second;
 }
 
+void WidgetEngine::RuntimeSetScrollOffset(
+    const std::wstring& widgetId, const std::string& id,
+    int offset)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || id.empty()) return;
+    auto& widget = widgets_[index];
+    int maximum = 0;
+    for (auto it = widget.hostControls.rbegin();
+        it != widget.hostControls.rend(); ++it)
+    {
+        if (it->id != id) continue;
+        if (it->type != LuaWidget::HostControl::Type::Scroll &&
+            !(it->type == LuaWidget::HostControl::Type::Input &&
+                it->multiline))
+            continue;
+        maximum = std::max(
+            0, it->contentHeight - it->viewportHeight);
+        break;
+    }
+    widget.scrollOffsets[id] =
+        std::clamp(offset, 0, maximum);
+}
+
 std::vector<LuaWidget::HostControl> WidgetEngine::GetScrollControls(const std::wstring& widgetId) const
 {
     int index = FindWidget(widgetId);
@@ -4421,7 +5390,9 @@ std::vector<LuaWidget::HostControl> WidgetEngine::GetScrollControls(const std::w
     std::vector<LuaWidget::HostControl> results;
     for (const auto& ctrl : widgets_[index].hostControls)
     {
-        if (ctrl.type == LuaWidget::HostControl::Type::Scroll)
+        if (ctrl.type == LuaWidget::HostControl::Type::Scroll ||
+            (ctrl.type == LuaWidget::HostControl::Type::Input &&
+                ctrl.multiline))
             results.push_back(ctrl);
     }
     return results;
@@ -4437,7 +5408,11 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
     for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
     {
         if (!PtInRect(&it->rect, point)) continue;
-        if (wheel && it->type == LuaWidget::HostControl::Type::Scroll)
+        if (wheel &&
+            (it->type == LuaWidget::HostControl::Type::Scroll ||
+                (it->type ==
+                    LuaWidget::HostControl::Type::Input &&
+                    it->multiline)))
         {
             int maximum = std::max(0, it->contentHeight - it->viewportHeight);
             int& offset = widget.scrollOffsets[it->id];
@@ -4448,7 +5423,19 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
         if (wheel) continue;
         if (it->type == LuaWidget::HostControl::Type::Input)
         {
-            RuntimeFocusHostInput(widgetId, it->id);
+            if (RuntimeFocusHostInput(widgetId, it->id) &&
+                focusedHostInput_.active &&
+                focusedHostInput_.widgetId == widgetId &&
+                focusedHostInput_.id == it->id)
+            {
+                focusedHostInput_.cursor =
+                    HitTestHostInputPosition(
+                        *it, widgetId, x, y);
+                focusedHostInput_.selectionAnchor =
+                    focusedHostInput_.cursor;
+                focusedHostInput_.pointerSelecting = true;
+                RuntimeInvalidateHost(widgetId);
+            }
             return true;
         }
         if (it->type == LuaWidget::HostControl::Type::Button ||
@@ -5869,6 +6856,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_UiTextInput); lua_setfield(L, -2, "textInput");
+    lua_pushcfunction(L, lua_UiTextArea); lua_setfield(L, -2, "textArea");
     lua_pushcfunction(L, lua_UiFocusInput); lua_setfield(L, -2, "focusInput");
     lua_pushcfunction(L, lua_UiButton); lua_setfield(L, -2, "button");
     lua_pushcfunction(L, lua_UiToggle); lua_setfield(L, -2, "toggle");

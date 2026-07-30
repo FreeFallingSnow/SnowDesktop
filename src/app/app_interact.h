@@ -2048,7 +2048,29 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (!pointInDock)
         FocusDesktopInputWindow();
     if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
-        widgetEngine_->BlurHostInput(false);
+    {
+        bool keepFocusedInput = false;
+        for (size_t n = widgets_.size(); n > 0; --n)
+        {
+            const size_t wi = n - 1;
+            if (widgets_[wi].type != DesktopWidgetType::LuaScript ||
+                HitTestStandaloneWidget(wi, pt) != WidgetHit::Content)
+                continue;
+            const RECT frame =
+                GetStandaloneWidgetFrameRect(widgets_[wi]);
+            keepFocusedInput =
+                widgetEngine_->IsFocusedHostInputAt(
+                    widgets_[wi].id,
+                    pt.x - frame.left,
+                    pt.y - frame.top);
+            break;
+        }
+        if (!keepFocusedInput)
+        {
+            widgetEngine_->BlurHostInput(false);
+            UpdateHostInputImePosition();
+        }
+    }
     mouseDown_ = true;
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
@@ -2510,9 +2532,12 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetEngine_->EnsureWidgetLoaded(widgets_[wi].id, widgets_[wi].packageId);
             int localX = pt.x - frame.left;
             int localY = pt.y - frame.top;
-            if (!widgetEngine_->HandleHostUiPointer(widgets_[wi].id, localX, localY, 0, false))
+            if (!widgetEngine_->HandleHostUiPointer(
+                    widgets_[wi].id, localX, localY, 0, false))
                 widgetEngine_->InvokeMouseEvent(widgets_[wi].id, "onMouseDown",
                     localX, localY, 1, 0);
+            else
+                UpdateHostInputImePosition();
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -2786,9 +2811,18 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             for (auto& c : containers_)
             {
                 auto* other = dynamic_cast<ScrollingItemWidget*>(c.get());
-                if (other) other->SetSearchFocused(false);
+                if (other && other != searchable)
+                    other->SetSearchFocused(false);
             }
-            if (searchable) searchable->SetSearchFocused(true);
+            if (searchable)
+            {
+                searchable->BeginSearchPointerSelection(
+                    pt, (wp & MK_SHIFT) != 0);
+                mouseDownWidgetIndex_ = wi;
+                mouseDownHit_ = nullptr;
+                SetCapture(hwnd_);
+                UpdateHostInputImePosition();
+            }
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -2948,17 +2982,40 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     UpdateSystemTaskbarRevealGuard();
     UpdateDockWindowPreview(current);
 
+    for (auto& container : containers_)
+    {
+        auto* searchable =
+            dynamic_cast<ScrollingItemWidget*>(container.get());
+        if (!searchable ||
+            !searchable->IsSearchPointerSelecting())
+            continue;
+        searchable->UpdateSearchPointerSelection(current);
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
         widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
         widgetEngine_)
     {
         WidgetHit hit = HitTestStandaloneWidget(mouseDownWidgetIndex_, current);
-        if (hit == WidgetHit::Content)
+        RECT frame =
+            GetStandaloneWidgetFrameRect(
+                widgets_[mouseDownWidgetIndex_]);
+        widgetEngine_->EnsureWidgetLoaded(
+            widgets_[mouseDownWidgetIndex_].id,
+            widgets_[mouseDownWidgetIndex_].packageId);
+        const bool hostInputHandled =
+            widgetEngine_->HandleHostInputPointerMove(
+                widgets_[mouseDownWidgetIndex_].id,
+                current.x - frame.left,
+                current.y - frame.top);
+        if (hostInputHandled)
+            UpdateHostInputImePosition();
+        if (!hostInputHandled && hit == WidgetHit::Content)
         {
-            RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
-            widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
-                widgets_[mouseDownWidgetIndex_].packageId);
             widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseMove",
                 current.x - frame.left, current.y - frame.top,
                 (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
@@ -3938,6 +3995,25 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     POINT upPoint{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     HideDragHintWindow();
 
+    for (auto& container : containers_)
+    {
+        auto* searchable =
+            dynamic_cast<ScrollingItemWidget*>(container.get());
+        if (!searchable ||
+            !searchable->IsSearchPointerSelecting())
+            continue;
+        searchable->UpdateSearchPointerSelection(upPoint);
+        searchable->EndSearchPointerSelection();
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ =
+            static_cast<size_t>(-1);
+        ReleaseCapture();
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
     // ── Widget action completion ────────────────────────────
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {
@@ -4041,17 +4117,33 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         dockPressedTargetWindow_ = nullptr;
         dockPressedContainer_ = nullptr;
         if (mouseDownWidgetIndex_ < widgets_.size() &&
-            widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
-            HitTestStandaloneWidget(mouseDownWidgetIndex_, upPoint) == WidgetHit::Content &&
+            widgets_[mouseDownWidgetIndex_].type ==
+                DesktopWidgetType::LuaScript &&
             widgetEngine_)
         {
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
             widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
                 widgets_[mouseDownWidgetIndex_].packageId);
-            widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseUp",
-                upPoint.x - frame.left, upPoint.y - frame.top, 1, 0);
-            widgetEngine_->InvokeClick(widgets_[mouseDownWidgetIndex_].id,
-                upPoint.x - frame.left, upPoint.y - frame.top);
+            const bool hostInputHandled =
+                widgetEngine_->HandleHostInputPointerUp(
+                    widgets_[mouseDownWidgetIndex_].id,
+                    upPoint.x - frame.left,
+                    upPoint.y - frame.top);
+            if (hostInputHandled)
+                UpdateHostInputImePosition();
+            if (!hostInputHandled &&
+                HitTestStandaloneWidget(mouseDownWidgetIndex_,
+                    upPoint) == WidgetHit::Content)
+            {
+                widgetEngine_->InvokeMouseEvent(
+                    widgets_[mouseDownWidgetIndex_].id,
+                    "onMouseUp", upPoint.x - frame.left,
+                    upPoint.y - frame.top, 1, 0);
+                widgetEngine_->InvokeClick(
+                    widgets_[mouseDownWidgetIndex_].id,
+                    upPoint.x - frame.left,
+                    upPoint.y - frame.top);
+            }
         }
         if (pendingCtrlToggleDesktopIndex_ < items_.size())
             items_[pendingCtrlToggleDesktopIndex_].selected = false;
@@ -4665,45 +4757,8 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
             if (searchable && searchable->IsSearchFocused())
             {
-                if (key == VK_ESCAPE)
+                if (searchable->HandleSearchKey(key))
                 {
-                    searchable->ClearSearchText();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_BACK)
-                {
-                    searchable->BackspaceSearchText();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_DELETE)
-                {
-                    searchable->DeleteSearchText();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_LEFT)
-                {
-                    searchable->MoveCursorLeft();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_RIGHT)
-                {
-                    searchable->MoveCursorRight();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_HOME)
-                {
-                    searchable->MoveCursorHome();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_END)
-                {
-                    searchable->MoveCursorEnd();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return;
                 }
@@ -9168,9 +9223,13 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].packageId);
         int localX = pt.x - frame.left;
         int localY = pt.y - frame.top;
-        if (!widgetEngine_->HandleHostUiPointer(widgets_[luaWidget].id, localX, localY, delta, true))
+        if (!widgetEngine_->HandleHostUiPointer(
+                widgets_[luaWidget].id, localX, localY,
+                delta, true))
             widgetEngine_->InvokeMouseEvent(widgets_[luaWidget].id, "onWheel",
                 localX, localY, 0, delta);
+        else
+            UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }

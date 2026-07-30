@@ -36,8 +36,12 @@ Installed and development packages live under `data\widgets\installed` and
 8. Declare every privileged API in the manifest. Keep unused permissions out.
 9. Store persistent values as strings and parse them with `tonumber` or explicit boolean conversion.
 10. Test at multiple widget spans. Derive layout from `layout.width()` and `layout.height()` instead of assuming pixels.
-11. Run `snowwidget validate <directory>` and `snowwidget pack <directory> <name.snowwidget>`.
-12. Check transactional hot reload after saving; a failed reload keeps the last-known-good VM.
+11. For repository development, run `widget-dev.bat widgets\my-widget`.
+    The first run syncs the package into `.build\<Config>\data\widgets\dev`,
+    activates the development override, and then watches source files. Later
+    saves update the live package without rebuilding the host.
+12. Run `snowwidget validate <directory>` and `snowwidget pack <directory> <name.snowwidget>`.
+13. Check transactional hot reload after saving; a failed reload keeps the last-known-good VM.
 
 Read [references/api.md](references/api.md) whenever using callbacks, permissions, drawing arguments, desktop integration, settings controls, or troubleshooting.
 
@@ -52,7 +56,7 @@ function render()
     local w = layout.width()
     local pad = layout.cu(12)
     draw.text(pad, pad, l10n.tr("lua_widget.my_widget.hello"),
-        layout.cu(14), 0xFFFFFF, w - pad * 2)
+        layout.cu(15), 0xFFFFFF, w - pad * 2)
 end
 ```
 
@@ -62,6 +66,10 @@ Use these optional top-level flags and appearance globals:
   host's unified **外观** settings panel for this widget.
 - `followPersonalizationDefault = true`: make a new instance follow the global
   appearance until the user explicitly changes its follow state.
+- When `followPersonalizationDefault = true`, omit `settings.presets` that only
+  repeat the global default, dark/light, transparent, or standard appearance.
+  Keep presets only when they provide a component-specific visual mode, such
+  as sticky-note paper colors or a materially different clock face.
 - `showTitle = true`: show the host title and enable host rename actions. When
   false or omitted, the host hides **重命名** and ignores F2 for the widget.
 - `bottomBarHover = false`: keep the bottom bar from using the default hover-only behavior.
@@ -138,7 +146,7 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 
 ## Implementation rules
 
-- SnowDesktop uses a **design unit** system where `layout.cu(14)` converts grid-cell-relative
+- SnowDesktop uses a **design unit** system where `layout.cu(15)` converts grid-cell-relative
   design values to DPI-scaled pixels. Prefer `layout.cu()` over hardcoded pixel values so widgets
   scale correctly across monitors and DPI settings. See [references/api.md](references/api.md) for the full layout API.
 - Treat `render()` as a hot path. Do not write storage or perform desktop queries repeatedly unless necessary.
@@ -180,10 +188,17 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
   `layout.barHeight()` only when alignment requires it.
 - Use `widget.setTimer()` instead of frame-count timing. Stop unnecessary timers
   in `onHidden()` and restart them in `onVisible()`.
-- Use `ui.button`, `ui.toggle`, `ui.textInput`, `ui.progress`, `ui.scrollArea`,
-  and `ui.virtualList` when host-managed interaction or scrolling is sufficient.
-  `ui.textInput` is Direct2D-rendered and transparent like the desktop file
-  search field; do not layer a native text editor over it.
+- Use `ui.button`, `ui.toggle`, `ui.textInput`, `ui.textArea`, `ui.progress`,
+  `ui.scrollArea`, and `ui.virtualList` when host-managed interaction or
+  scrolling is sufficient. `ui.textInput` and `ui.textArea` are
+  Direct2D-rendered and transparent like the desktop file search field; do not
+  layer a native text editor over them. `ui.textArea` provides wrapped
+  multiline input and wheel scrolling. Both controls provide host-managed
+  caret placement, mouse-drag text selection, selection highlighting, and
+  standard keyboard/clipboard replacement behavior.
+- Treat `widget.editText` as a legacy compatibility API. It opens the old
+  system-style editor and is not recommended for new or updated widgets. Use
+  `ui.textInput` for one line and `ui.textArea` for multiple lines.
 - Use `onSelected()` when a widget should react as soon as the desktop selects
   it. For search-oriented widgets, call `ui.focusInput(id)` there so the
   host-rendered input is ready for typing immediately.
@@ -200,11 +215,20 @@ For repository development:
 
 1. Save the package directory under the source `widgets` directory.
 2. Run `scripts/check_l10n.bat` to catch untranslated Lua strings and missing keys.
-3. Run `build.bat`; CMake copies the complete directory recursively to `.build\Release\widgets`.
-4. Run `.build\Release\snowwidget.exe validate widgets\my-widget`.
-5. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
-5. Exercise click, double-click, wheel, editor, context-menu, and language-switch behavior as applicable.
-6. Build Release before delivery. The release process copies the complete built `widgets` tree, including this skill and its resources, into `release\widgets`.
+3. Build the host once, then run `widget-dev.bat widgets\my-widget`.
+   It validates and mirrors the source package into the active development
+   directory. When the override is first created, SnowDesktop restarts once to
+   discover it; subsequent `main.lua`, manifest, locale, module, and asset saves
+   are synced and trigger the host's transactional Lua hot reload.
+4. Use `-Once` for a one-time sync or `-RestartHost` when package discovery
+   needs to be forced. Stop watch mode with `Ctrl+C`; the development override
+   remains available for the next session.
+5. Run `.build\Release\snowwidget.exe validate widgets\my-widget`.
+6. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
+7. Exercise click, double-click, wheel, editor, context-menu, and language-switch behavior as applicable.
+8. Run `build.bat` only for final delivery verification. The release process
+   copies the complete built `widgets` tree, including this skill and its
+   resources, into `release\widgets`.
 
 Before finishing, verify:
 

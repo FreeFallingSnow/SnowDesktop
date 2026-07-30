@@ -257,6 +257,9 @@ struct LuaWidget
         bool value = false;
         bool selectAll = true;
         bool liveUpdate = false;
+        bool multiline = false;
+        float fontSize = 15.0f;
+        float padding = 8.0f;
         int contentHeight = 0;
         int viewportHeight = 0;
     };
@@ -342,6 +345,7 @@ public:
 
     using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
     using EverythingSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
+    using WidgetSelectedProvider = std::function<bool(const std::wstring&)>;
     using WidgetTitleCallback = std::function<void(const std::wstring&, const std::wstring&)>;
     using InvalidateCallback = std::function<void(const std::wstring&)>;
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
@@ -356,6 +360,8 @@ public:
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
     /** @brief 设置选中项提供者回调 */
     void SetSelectionProvider(DesktopSnapshotProvider provider) { selectionProvider_ = std::move(provider); }
+    /** @brief 设置组件选中状态提供者回调 */
+    void SetWidgetSelectedProvider(WidgetSelectedProvider provider) { widgetSelectedProvider_ = std::move(provider); }
     void SetEverythingSearchProvider(EverythingSearchProvider provider) { everythingSearchProvider_ = std::move(provider); }
     /** @brief 设置小部件标题变更回调 */
     void SetWidgetTitleCallback(WidgetTitleCallback callback) { setWidgetTitleCallback_ = std::move(callback); }
@@ -776,12 +782,24 @@ public:
     void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
     bool RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id);
     bool RuntimeGetFocusedHostInput(const std::wstring& widgetId, const std::string& id,
-        std::wstring& text, size_t& cursor, bool& selectAll) const;
+        std::wstring& text, size_t& cursor, size_t& selectionAnchor,
+        std::wstring& compositionText, size_t& compositionCursor) const;
+    bool RuntimeIsWidgetSelected(const std::wstring& widgetId) const;
     bool HandleHostInputKey(WPARAM key);
     bool HandleHostInputChar(wchar_t ch);
+    bool SetHostInputComposition(
+        const std::wstring& text, size_t cursor);
+    bool CommitHostInputComposition(const std::wstring& text);
+    void ClearHostInputComposition();
     bool HasFocusedHostInput() const;
+    bool GetFocusedHostInputCaretRect(RECT& rect) const;
+    bool IsFocusedHostInputAt(const std::wstring& widgetId, int x, int y) const;
+    bool HandleHostInputPointerMove(const std::wstring& widgetId, int x, int y);
+    bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y);
     void BlurHostInput(bool cancel = false);
     int RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const;
+    void RuntimeSetScrollOffset(const std::wstring& widgetId,
+        const std::string& id, int offset);
     bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y, int delta, bool wheel);
     std::vector<LuaWidget::HostControl> GetScrollControls(const std::wstring& widgetId) const;
 
@@ -789,6 +807,8 @@ private:
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
         std::wstring& error);
+    size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
+        const std::wstring& widgetId, int x, int y) const;
 
     /**
      * @brief 内部加载小部件脚本到沙箱
@@ -827,6 +847,7 @@ private:
     std::vector<LuaWidget> widgets_;                   ///< 已加载的小部件实例列表
     DesktopSnapshotProvider desktopSnapshotProvider_;  ///< 桌面快照提供者回调
     DesktopSnapshotProvider selectionProvider_;        ///< 当前选中项提供者回调
+    WidgetSelectedProvider widgetSelectedProvider_;    ///< 当前组件选中状态提供者回调
     EverythingSearchProvider everythingSearchProvider_; ///< Everything 搜索提供者回调
     WidgetTitleCallback setWidgetTitleCallback_;       ///< 设置小部件标题的回调
     WidgetTitleCallback openWidgetSettingsCallback_;   ///< 打开小部件设置面板的回调
@@ -853,8 +874,12 @@ private:
         std::wstring text;
         std::wstring originalText;
         size_t cursor = 0;
-        bool selectAll = false;
+        size_t selectionAnchor = 0;
+        std::wstring compositionText;
+        size_t compositionCursor = 0;
+        bool pointerSelecting = false;
         bool liveUpdate = true;
+        bool multiline = false;
     };
     FocusedHostInput focusedHostInput_;
 };

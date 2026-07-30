@@ -64,25 +64,11 @@ local function getPalette()
 end
 
 settings = {
-    presets = {
-        {
-            id = "default",
-            label = l10n.tr("lua_widget.rss_reader.preset_standard"),
-            default = true,
-            values = {
-                bg = 0x0F172A,
-                border = 0xFFFFFF,
-                alpha = 0.38,
-                borderAlpha = 0.16,
-                gradientEndA = 0.28,
-            }
-        }
-    },
     fields = {
         { key = "url", label = l10n.tr("lua_widget.rss_reader.url"), type = "text", default = "https://www.ithome.com/rss/" },
         { key = "interval", label = l10n.tr("lua_widget.rss_reader.refresh_interval"), type = "int", default = 1800, min = 60, max = 3600 },
         { key = "maxItems", label = l10n.tr("lua_widget.rss_reader.max_items"), type = "int", default = 30, min = 10, max = 100 },
-        { key = "fontSize", label = l10n.tr("lua_widget.rss_reader.article_font_size"), type = "int", default = 12, min = 10, max = 24 },
+        { key = "fontSize", label = l10n.tr("lua_widget.rss_reader.article_font_size"), type = "int", default = 15, min = 10, max = 24 },
         { key = "textColor", label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF },
     }
 }
@@ -92,7 +78,7 @@ local function readConfig()
         url = storage.get("url") or "https://www.ithome.com/rss/",
         interval = tonumber(storage.get("interval")) or 1800,
         maxItems = tonumber(storage.get("maxItems")) or 30,
-        fontSize = math.max(10, math.min(24, tonumber(storage.get("fontSize")) or 12)),
+        fontSize = math.max(10, math.min(24, tonumber(storage.get("fontSize")) or 15)),
     }
 end
 

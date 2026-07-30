@@ -237,30 +237,59 @@ public:
         const std::wstring& name, bool isDir, bool showLabel = true) const;
 
     const std::wstring& GetSearchText() const { return searchText_; }
-    void SetSearchText(const std::wstring& text) { searchText_ = text; searchCursorPos_ = searchText_.size(); InvalidateSlots(); }
-    void AppendSearchChar(wchar_t ch) { searchText_.insert(searchCursorPos_, 1, ch); ++searchCursorPos_; InvalidateSlots(); }
-    void BackspaceSearchText() { if (searchCursorPos_ > 0) { searchText_.erase(searchCursorPos_ - 1, 1); --searchCursorPos_; InvalidateSlots(); } }
-    void DeleteSearchText() { if (searchCursorPos_ < searchText_.size()) { searchText_.erase(searchCursorPos_, 1); InvalidateSlots(); } }
-    void ClearSearchText() { searchText_.clear(); searchCursorPos_ = 0; searchFocused_ = false; InvalidateSlots(); }
+    void SetSearchText(const std::wstring& text);
+    void AppendSearchChar(wchar_t ch);
+    void BackspaceSearchText();
+    void DeleteSearchText();
+    void ClearSearchText();
     bool IsSearchFocused() const { return searchFocused_; }
-    void SetSearchFocused(bool focused) { searchFocused_ = focused; if (focused) searchCursorPos_ = searchText_.size(); }
+    void SetSearchFocused(bool focused);
     size_t GetSearchCursorPosition() const { return searchCursorPos_; }
-    void SetSearchCursorPosition(size_t position)
+    size_t GetSearchSelectionAnchor() const
     {
-        searchCursorPos_ = std::min(position, searchText_.size());
+        return searchSelectionAnchor_;
     }
-    void MoveCursorLeft() { if (searchCursorPos_ > 0) --searchCursorPos_; }
-    void MoveCursorRight() { if (searchCursorPos_ < searchText_.size()) ++searchCursorPos_; }
-    void MoveCursorHome() { searchCursorPos_ = 0; }
-    void MoveCursorEnd() { searchCursorPos_ = searchText_.size(); }
+    const std::wstring& GetSearchCompositionText() const
+    {
+        return searchCompositionText_;
+    }
+    size_t GetSearchCompositionCursor() const
+    {
+        return searchCompositionCursor_;
+    }
+    void SetSearchCursorPosition(size_t position);
+    void SetSearchEditingState(
+        size_t cursor,
+        size_t selectionAnchor,
+        const std::wstring& compositionText,
+        size_t compositionCursor);
+    void MoveCursorLeft(bool extendSelection = false);
+    void MoveCursorRight(bool extendSelection = false);
+    void MoveCursorHome(bool extendSelection = false);
+    void MoveCursorEnd(bool extendSelection = false);
+    bool HandleSearchKey(WPARAM key);
+    void BeginSearchPointerSelection(
+        POINT point, bool extendSelection);
+    void UpdateSearchPointerSelection(POINT point);
+    void EndSearchPointerSelection();
+    bool IsSearchPointerSelecting() const
+    {
+        return searchPointerSelecting_;
+    }
+    void SetSearchComposition(
+        const std::wstring& text, size_t cursor);
+    void CommitSearchComposition(
+        const std::wstring& text);
+    void ClearSearchComposition();
+    bool GetSearchCaretRect(RECT& rect) const;
     virtual RECT GetSearchBoxRect() const { return {}; }
     bool IsSearchActive() const { return !searchText_.empty(); }
     void DrawSearchBox(ID2D1DeviceContext* context);
-    /** @brief 三类分类滚动组件共用的搜索框布局。 */
+    /** @brief 分类滚动组件共用的搜索框布局。 */
     RECT GetCategorizedSearchBoxRect(bool visible) const;
-    /** @brief 三类分类滚动组件共用的标签区布局。 */
+    /** @brief 分类滚动组件共用的标签区布局。 */
     RECT GetCategorizedTabsRect(bool visible) const;
-    /** @brief 三类分类滚动组件共用的标签字号。 */
+    /** @brief 分类滚动组件共用的标签字号。 */
     float GetCategorizedTabFontSize() const;
     /** @brief 按共同字号测量并分配标签宽度。 */
     std::vector<int> BuildCategorizedTabWidths(
@@ -297,9 +326,23 @@ public:
 protected:
     std::wstring searchText_;
     size_t searchCursorPos_ = 0;
+    size_t searchSelectionAnchor_ = 0;
+    std::wstring searchCompositionText_;
+    size_t searchCompositionCursor_ = 0;
     bool searchFocused_ = false;
+    bool searchPointerSelecting_ = false;
 
 private:
+    size_t GetSearchSelectionStart() const;
+    size_t GetSearchSelectionEnd() const;
+    bool HasSearchSelection() const;
+    bool EraseSearchSelection();
+    void ReplaceSearchSelection(const std::wstring& text);
+    size_t HitTestSearchTextPosition(POINT point) const;
+    std::wstring BuildSearchDisplayText(
+        size_t& displayCursor,
+        size_t& compositionStart,
+        size_t& compositionLength) const;
     void DrawListItemTitle(ID2D1DeviceContext* context, RECT cell,
         RECT iconRect, const std::wstring& title) const;
     int categorizedTabRowOffset_ = 0;

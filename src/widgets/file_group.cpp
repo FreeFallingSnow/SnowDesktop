@@ -217,6 +217,12 @@ public:
         savedSearchFocused_ = source_->IsSearchFocused();
         savedSearchCursor_ =
             source_->GetSearchCursorPosition();
+        savedSearchSelectionAnchor_ =
+            source_->GetSearchSelectionAnchor();
+        savedSearchComposition_ =
+            source_->GetSearchCompositionText();
+        savedSearchCompositionCursor_ =
+            source_->GetSearchCompositionCursor();
 
         sourceData_->gridSpan = groupData_->gridSpan;
         sourceData_->bounds = groupData_->bounds;
@@ -236,8 +242,11 @@ public:
         }
         source_->SetSearchFocused(
             group_->IsSearchFocused());
-        source_->SetSearchCursorPosition(
-            group_->GetSearchCursorPosition());
+        source_->SetSearchEditingState(
+            group_->GetSearchCursorPosition(),
+            group_->GetSearchSelectionAnchor(),
+            group_->GetSearchCompositionText(),
+            group_->GetSearchCompositionCursor());
 
         RECT frame = group_->GetFrameRect();
         source_->SetHostedFrame(&frame);
@@ -276,8 +285,11 @@ public:
         if (searchTextChanged_)
             source_->SetSearchText(savedSearchText_);
         source_->SetSearchFocused(savedSearchFocused_);
-        source_->SetSearchCursorPosition(
-            savedSearchCursor_);
+        source_->SetSearchEditingState(
+            savedSearchCursor_,
+            savedSearchSelectionAnchor_,
+            savedSearchComposition_,
+            savedSearchCompositionCursor_);
     }
 
     explicit operator bool() const { return active_; }
@@ -298,6 +310,9 @@ private:
     int savedScrollOffset_ = 0;
     std::wstring savedSearchText_;
     size_t savedSearchCursor_ = 0;
+    size_t savedSearchSelectionAnchor_ = 0;
+    std::wstring savedSearchComposition_;
+    size_t savedSearchCompositionCursor_ = 0;
     bool savedSearchFocused_ = false;
     bool searchTextChanged_ = false;
     bool active_ = false;
