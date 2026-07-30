@@ -5,7 +5,7 @@
  * 负责单实例管理、异常崩溃处理以及 DesktopApp 的启动。
  * 启动流程：
  *   1. 检测命令行特殊开关（例如 --restore-explorer-icons）
- *   2. 关闭已存在的同名进程实例（单实例保证）
+ *   2. 取得跨安装位置共享的单实例锁
  *   3. 注册全局未处理异常过滤器和崩溃日志处理器
  *   4. 注册应用程序重启回调
  *   5. 创建 DesktopApp 对象并进入消息循环
@@ -13,8 +13,187 @@
 
 #include "app.h"
 #include "crashlog.h"
+#include "data_paths.h"
+#include "general_settings.h"
+#include "l10n.h"
+#include "single_instance.h"
 
-#include <tlhelp32.h>
+#include <commctrl.h>
+
+#include <filesystem>
+
+#define SNOWDESKTOP_WIDEN_INNER(value) L##value
+#define SNOWDESKTOP_WIDEN(value) SNOWDESKTOP_WIDEN_INNER(value)
+
+namespace
+{
+constexpr wchar_t kCurrentVersion[] =
+    SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
+
+enum class ExistingInstanceResolution
+{
+    ExitNewInstance,
+    RetryLaunch
+};
+
+enum class VersionConflictChoice
+{
+    Switch,
+    KeepRunning,
+    Cancel
+};
+
+void InitializeStartupLocale()
+{
+    std::filesystem::path languageDirectory =
+        GetExecutableDirectoryPath();
+    languageDirectory /= L"lang";
+    Locale::Instance().Init(languageDirectory.c_str());
+
+    GeneralSettings settings;
+    const std::filesystem::path settingsPath =
+        std::filesystem::path(GetDataDirectoryPath()) /
+        L"SnowDesktop.general.json";
+    if (LoadGeneralSettings(settingsPath.c_str(), settings))
+        Locale::Instance().SetLanguage(settings.language);
+}
+
+std::wstring DisplayDataDirectory(const std::wstring& path)
+{
+    return path.empty()
+        ? std::wstring(_LW("app.run.other_version_unknown_path"))
+        : path;
+}
+
+std::wstring DeploymentName(
+    const snowdesktop::single_instance::InstanceInfo& instance)
+{
+    return instance.packaged
+        ? std::wstring(_LW("app.run.other_version_installed"))
+        : std::wstring(_LW("app.run.other_version_portable"));
+}
+
+VersionConflictChoice ShowVersionConflictPrompt(
+    const snowdesktop::single_instance::InstanceInfo& running,
+    const snowdesktop::single_instance::InstanceInfo& requested)
+{
+    InitializeStartupLocale();
+
+    const bool sharedData =
+        snowdesktop::single_instance::DataDirectoriesMatch(
+            running.dataDirectory, requested.dataDirectory);
+    std::wstring content = _LFW(
+        "app.run.other_version_details",
+        running.version,
+        DeploymentName(running),
+        DisplayDataDirectory(running.dataDirectory),
+        requested.version,
+        DeploymentName(requested),
+        DisplayDataDirectory(requested.dataDirectory));
+    content += L"\n\n";
+    content += sharedData
+        ? _LW("app.run.other_version_shared_data")
+        : _LW("app.run.other_version_separate_data");
+
+    const std::wstring instruction = _LFW(
+        "app.run.other_version_instruction",
+        running.version,
+        DeploymentName(running));
+    const std::wstring switchButton = _LFW(
+        "app.run.other_version_switch",
+        requested.version,
+        DeploymentName(requested));
+    const std::wstring keepButton = _LFW(
+        "app.run.other_version_keep",
+        running.version,
+        DeploymentName(running));
+    const TASKDIALOG_BUTTON buttons[] = {
+        { 100, switchButton.c_str() },
+        { 101, keepButton.c_str() },
+    };
+
+    TASKDIALOGCONFIG dialog{};
+    dialog.cbSize = sizeof(dialog);
+    dialog.dwFlags =
+        TDF_ALLOW_DIALOG_CANCELLATION |
+        TDF_SIZE_TO_CONTENT |
+        TDF_USE_COMMAND_LINKS;
+    dialog.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    dialog.pszWindowTitle =
+        _LW("app.run.other_version_title");
+    dialog.pszMainIcon = TD_WARNING_ICON;
+    dialog.pszMainInstruction = instruction.c_str();
+    dialog.pszContent = content.c_str();
+    dialog.cButtons = static_cast<UINT>(std::size(buttons));
+    dialog.pButtons = buttons;
+    dialog.nDefaultButton = 101;
+
+    int selectedButton = IDCANCEL;
+    if (SUCCEEDED(TaskDialogIndirect(
+            &dialog, &selectedButton, nullptr, nullptr)))
+    {
+        if (selectedButton == 100)
+            return VersionConflictChoice::Switch;
+        if (selectedButton == 101)
+            return VersionConflictChoice::KeepRunning;
+        return VersionConflictChoice::Cancel;
+    }
+
+    const int fallback = MessageBoxW(
+        nullptr, content.c_str(), instruction.c_str(),
+        MB_YESNOCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+    if (fallback == IDYES)
+        return VersionConflictChoice::Switch;
+    if (fallback == IDNO)
+        return VersionConflictChoice::KeepRunning;
+    return VersionConflictChoice::Cancel;
+}
+
+ExistingInstanceResolution ResolveExistingInstance(
+    const snowdesktop::single_instance::InstanceInfo& running,
+    const snowdesktop::single_instance::InstanceInfo& requested)
+{
+    const bool versionsMatch =
+        running.version.empty() || requested.version.empty() ||
+        snowdesktop::single_instance::VersionsMatch(
+            running.version, requested.version);
+    const bool knownDataDirectoriesDiffer =
+        !running.dataDirectory.empty() &&
+        !requested.dataDirectory.empty() &&
+        !snowdesktop::single_instance::DataDirectoriesMatch(
+            running.dataDirectory, requested.dataDirectory);
+    if (versionsMatch && !knownDataDirectoriesDiffer)
+    {
+        snowdesktop::single_instance::NotifyExistingInstance(running);
+        return ExistingInstanceResolution::ExitNewInstance;
+    }
+
+    const VersionConflictChoice choice =
+        ShowVersionConflictPrompt(running, requested);
+    if (choice == VersionConflictChoice::KeepRunning)
+    {
+        snowdesktop::single_instance::NotifyExistingInstance(running);
+        return ExistingInstanceResolution::ExitNewInstance;
+    }
+    if (choice != VersionConflictChoice::Switch)
+        return ExistingInstanceResolution::ExitNewInstance;
+
+    if (snowdesktop::single_instance::RequestExistingInstanceExit(
+            running, 30000))
+    {
+        return ExistingInstanceResolution::RetryLaunch;
+    }
+
+    const std::wstring message = _LFW(
+        "app.run.other_version_switch_failed",
+        running.version,
+        DeploymentName(running));
+    MessageBoxW(nullptr, message.c_str(),
+        _LW("app.run.other_version_title"),
+        MB_OK | MB_ICONERROR);
+    return ExistingInstanceResolution::ExitNewInstance;
+}
+}
 
 /*
  * 崩溃计数器：记录最近崩溃的时间戳（tick），存储在注册表中。
@@ -76,58 +255,13 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
     {
         wchar_t selfPath[MAX_PATH]{};
         GetModuleFileNameW(nullptr, selfPath, MAX_PATH);
-        ShellExecuteW(nullptr, L"open", selfPath, nullptr, nullptr, SW_SHOWNORMAL);
+        wchar_t parameters[64]{};
+        swprintf_s(parameters, L"--wait-for-pid=%lu",
+            GetCurrentProcessId());
+        ShellExecuteW(nullptr, L"open", selfPath, parameters,
+            nullptr, SW_SHOWNORMAL);
     }
     return EXCEPTION_EXECUTE_HANDLER;
-}
-
-static void CloseExistingInstances()
-{
-    wchar_t selfPath[MAX_PATH * 4]{};
-    DWORD selfPathLength = GetModuleFileNameW(nullptr, selfPath, static_cast<DWORD>(std::size(selfPath)));
-    if (selfPathLength == 0) return;
-
-    const DWORD selfProcessId = GetCurrentProcessId();
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return;
-
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-    if (!Process32FirstW(snapshot, &entry)) { CloseHandle(snapshot); return; }
-
-    do
-    {
-        if (entry.th32ProcessID == selfProcessId || _wcsicmp(entry.szExeFile, L"SnowDesktop.exe") != 0)
-            continue;
-
-        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
-        if (process == nullptr) continue;
-
-        std::wstring imagePath;
-        wchar_t buffer[MAX_PATH * 4]{};
-        DWORD size = static_cast<DWORD>(std::size(buffer));
-        if (QueryFullProcessImageNameW(process, 0, buffer, &size))
-            imagePath.assign(buffer, size);
-
-        if (CompareStringOrdinal(imagePath.c_str(), -1, selfPath, -1, TRUE) == CSTR_EQUAL)
-        {
-            DWORD windowProcessId = entry.th32ProcessID;
-            EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
-                DWORD pid = 0;
-                GetWindowThreadProcessId(hwnd, &pid);
-                if (pid == static_cast<DWORD>(lp)) PostMessageW(hwnd, WM_CLOSE, 0, 0);
-                return TRUE;
-            }, reinterpret_cast<LPARAM>(&windowProcessId));
-            if (WaitForSingleObject(process, 1500) == WAIT_TIMEOUT)
-            {
-                TerminateProcess(process, 0);
-                WaitForSingleObject(process, 3000);
-            }
-        }
-        CloseHandle(process);
-    } while (Process32NextW(snapshot, &entry));
-
-    CloseHandle(snapshot);
 }
 
 /**
@@ -146,8 +280,79 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         return 0;
     }
 
-    /* 关闭已存在的同名实例，确保单实例运行 */
-    CloseExistingInstances();
+    const DWORD predecessor =
+        snowdesktop::single_instance::
+            ParseRestartPredecessorProcessId(
+                commandLine ? commandLine : L"");
+    if (predecessor &&
+        !snowdesktop::single_instance::WaitForRestartPredecessor(
+            predecessor, 30000))
+    {
+        return ERROR_TIMEOUT;
+    }
+
+    snowdesktop::single_instance::Guard singleInstance;
+    const auto requestedInstance =
+        snowdesktop::single_instance::DescribeCurrentInstance(
+            kCurrentVersion);
+    auto acquisition =
+        snowdesktop::single_instance::AcquireResult::Existing;
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        // Older builds do not own the mutex but do expose the stable control
+        // window. Inspect that window first so cross-version launches can
+        // explain and offer a controlled switch.
+        if (const auto running =
+                snowdesktop::single_instance::
+                    FindExistingInstance(0))
+        {
+            if (ResolveExistingInstance(
+                    *running, requestedInstance) ==
+                ExistingInstanceResolution::ExitNewInstance)
+            {
+                return 0;
+            }
+            // The user chose to close the running version. Retry the
+            // stable lock after its process has fully exited.
+            continue;
+        }
+
+        acquisition = singleInstance.Acquire();
+        if (acquisition ==
+            snowdesktop::single_instance::AcquireResult::Primary)
+        {
+            break;
+        }
+        if (acquisition ==
+            snowdesktop::single_instance::AcquireResult::Error)
+        {
+            break;
+        }
+
+        // The owner can acquire the mutex before its control window exists.
+        // Give startup time to publish the window, then resolve it on the
+        // next pass with full version information.
+        if (!snowdesktop::single_instance::
+                FindExistingInstance(5000))
+        {
+            continue;
+        }
+    }
+    if (acquisition ==
+        snowdesktop::single_instance::AcquireResult::Error)
+    {
+        wchar_t diagnostic[160]{};
+        swprintf_s(diagnostic,
+            L"SnowDesktop: single-instance lock failed (error %lu).\n",
+            singleInstance.LastError());
+        OutputDebugStringW(diagnostic);
+        return static_cast<int>(singleInstance.LastError());
+    }
+    if (acquisition !=
+        snowdesktop::single_instance::AcquireResult::Primary)
+    {
+        return 0;
+    }
 
     /* 注册全局未处理异常过滤器与崩溃日志处理器 */
     SetUnhandledExceptionFilter(UnhandledFilter);

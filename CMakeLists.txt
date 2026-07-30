@@ -93,6 +93,9 @@ set(SNOWDESKTOP_SOURCES
     src/core/container.cpp
     src/core/desktop.cpp
     src/data_paths.cpp
+    src/full_data_backup.cpp
+    src/portable_data_migration.cpp
+    src/single_instance.cpp
     src/deployment_context.cpp
     src/utils.cpp
     src/settings_window.cpp
@@ -361,7 +364,7 @@ target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
     advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
-    wbemuuid
+    version wbemuuid
 )
 
 add_custom_command(TARGET SnowDesktop PRE_BUILD
@@ -402,13 +405,17 @@ include(CTest)
 if (BUILD_TESTING)
     add_executable(SnowDesktopWidgetPackageTests
         tests/widget_package_tests.cpp
-        src/widget_package.cpp)
+        src/full_data_backup.cpp
+        src/widget_package.cpp
+        src/portable_data_migration.cpp
+        src/single_instance.cpp)
     target_compile_features(
         SnowDesktopWidgetPackageTests PRIVATE cxx_std_20)
     target_include_directories(
         SnowDesktopWidgetPackageTests PRIVATE src)
     target_link_libraries(
-        SnowDesktopWidgetPackageTests PRIVATE bcrypt ole32)
+        SnowDesktopWidgetPackageTests PRIVATE
+        bcrypt ole32 shell32 user32 version)
     if (MSVC)
         set_property(
             TARGET SnowDesktopWidgetPackageTests

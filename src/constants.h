@@ -47,6 +47,7 @@ constexpr int kRenameEditId = 1001;
 
 // ── 系统托盘通知 ──────────────────────────────
 constexpr UINT kTrayCallbackMessage = WM_APP + 1;
+constexpr UINT kActivateExistingInstanceMessage = WM_APP + 6;
 constexpr UINT_PTR kTrayIconId = 1;
 
 // ── 托盘右键菜单命令 ──────────────────────────

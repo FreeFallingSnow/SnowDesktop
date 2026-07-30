@@ -550,7 +550,8 @@ inline void DesktopApp::RequestRestart()
 
     std::wstring commandLine = L"\"";
     commandLine.append(exePath, pathLen);
-    commandLine.push_back(L'"');
+    commandLine += L"\" --wait-for-pid=";
+    commandLine += std::to_wstring(GetCurrentProcessId());
     std::vector<wchar_t> commandLineBuffer(commandLine.begin(), commandLine.end());
     commandLineBuffer.push_back(L'\0');
 
@@ -836,9 +837,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
 
-    WriteCrashLogEntry(L"Run start");
-
     MigrateLegacyDataPaths();
+    WriteCrashLogEntry(L"Run start");
 
     {
         std::wstring langDir = GetExecutableDirectoryPath();

@@ -2907,6 +2907,9 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
     }
     switch (msg)
     {
+    case kActivateExistingInstanceMessage:
+        ShowSettingsWindow();
+        return 0;
     case WM_DISPLAYCHANGE:
         ScheduleDisplayTopologyRefresh();
         return 0;

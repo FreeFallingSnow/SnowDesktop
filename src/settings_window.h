@@ -20,6 +20,7 @@
 #include "dock_settings.h"
 #include "navigation_settings.h"
 #include "category_settings.h"
+#include "full_data_backup.h"
 #include "widget_package.h"
 
 #include <algorithm>
@@ -454,9 +455,19 @@ private:
     bool DeleteBackup(const std::wstring& filename);
 
     /**
-     * @brief 选择携带版目录，将其中全部数据迁移到当前商店版数据目录
+     * @brief 选择其他 SnowDesktop 数据目录并迁入当前版本
      */
-    void MigratePortableData();
+    void MigrateAllData();
+
+    void CreateFullDataBackup();
+    void ImportFullDataBackup();
+    void ExportFullDataBackup(
+        const snowdesktop::backup::BackupInfo& backup);
+    void RestoreFullDataBackup(
+        const snowdesktop::backup::BackupInfo& backup);
+    void DeleteFullDataBackup(
+        const snowdesktop::backup::BackupInfo& backup);
+    void RestartAfterDataReplacement(const char* successMessageKey);
 
     /**
      * @brief 基于当前时间生成唯一的备份文件名

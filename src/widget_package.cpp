@@ -771,6 +771,107 @@ PackageManifest LocalizePackageManifest(PackageManifest manifest,
     return LocalizedManifest(std::move(manifest), requestedLocale);
 }
 
+LegacyLooseImportResult ImportLegacyLooseWidgetPairs(
+    const std::filesystem::path& sourceWidgets,
+    const std::filesystem::path& destinationWidgets)
+{
+    LegacyLooseImportResult result;
+    std::error_code ec;
+    if (!std::filesystem::exists(sourceWidgets, ec))
+    {
+        result.ok = !ec;
+        if (ec) result.error = "cannot inspect legacy component directory: " +
+            ec.message();
+        return result;
+    }
+    if (ec || !std::filesystem::is_directory(sourceWidgets, ec) ||
+        HasReparsePoint(sourceWidgets))
+    {
+        result.error = ec
+            ? "cannot inspect legacy component directory: " + ec.message()
+            : "legacy component source is not a safe directory";
+        return result;
+    }
+
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> pairs;
+    for (std::filesystem::directory_iterator it(sourceWidgets, ec), end;
+        !ec && it != end; it.increment(ec))
+    {
+        const auto script = it->path();
+        if (Lower(script.extension().string()) != ".lua")
+            continue;
+        const auto scriptStatus = it->symlink_status(ec);
+        if (ec)
+            break;
+        if (!std::filesystem::is_regular_file(scriptStatus) ||
+            HasReparsePoint(script))
+        {
+            result.error = "legacy component script is not a safe file: " +
+                PathUtf8(script.filename());
+            return result;
+        }
+
+        const auto manifest = script.parent_path() /
+            (script.stem().wstring() + L".widget.json");
+        const auto manifestStatus = std::filesystem::symlink_status(manifest, ec);
+        if (ec)
+        {
+            ec.clear();
+            continue;
+        }
+        if (!std::filesystem::exists(manifestStatus))
+            continue;
+        if (!std::filesystem::is_regular_file(manifestStatus) ||
+            HasReparsePoint(manifest))
+        {
+            result.error = "legacy component manifest is not a safe file: " +
+                PathUtf8(manifest.filename());
+            return result;
+        }
+        pairs.emplace_back(script, manifest);
+    }
+    if (ec)
+    {
+        result.error = "cannot enumerate legacy component directory: " +
+            ec.message();
+        return result;
+    }
+    if (pairs.empty())
+    {
+        result.ok = true;
+        return result;
+    }
+
+    std::filesystem::create_directories(destinationWidgets, ec);
+    if (ec)
+    {
+        result.error = "cannot create legacy component destination: " +
+            ec.message();
+        return result;
+    }
+    for (const auto& [script, manifest] : pairs)
+    {
+        std::filesystem::copy_file(script,
+            destinationWidgets / script.filename(),
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec)
+        {
+            std::filesystem::copy_file(manifest,
+                destinationWidgets / manifest.filename(),
+                std::filesystem::copy_options::overwrite_existing, ec);
+        }
+        if (ec)
+        {
+            result.error = "cannot copy legacy component pair: " +
+                PathUtf8(script.filename()) + ": " + ec.message();
+            return result;
+        }
+        ++result.copiedPairs;
+    }
+    result.ok = true;
+    return result;
+}
+
 bool ValidationReport::Ok() const
 {
     return std::none_of(issues.begin(), issues.end(), [](const auto& issue) {

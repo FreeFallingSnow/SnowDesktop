@@ -5,6 +5,7 @@
 
 #include "data_paths.h"
 #include "deployment_context.h"
+#include "portable_data_migration.h"
 
 #include <windows.h>
 #include <shlwapi.h>
@@ -168,6 +169,18 @@ std::wstring GetDataSubdirectoryPath(const wchar_t* dirname)
 
 void MigrateLegacyDataPaths()
 {
+    std::filesystem::path stateRoot =
+        snowdesktop::deployment::GetPackageLocalStatePath();
+    if (stateRoot.empty())
+        stateRoot = GetExecutableDirectoryPath();
+    const auto portableMigration =
+        snowdesktop::migration::ApplyPending(stateRoot);
+    if (!portableMigration.ok)
+    {
+        OutputDebugStringA(("SnowDesktop: pending portable data migration "
+            "failed: " + portableMigration.error + "\n").c_str());
+    }
+
     static const wchar_t* files[] = {
         L"SnowDesktop.layout.json",
         L"SnowDesktop.storage.json",

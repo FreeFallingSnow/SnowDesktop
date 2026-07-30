@@ -21,7 +21,9 @@
 #include "crashlog.h"
 #include "data_paths.h"
 #include "deployment_context.h"
+#include "full_data_backup.h"
 #include "http_runtime.h"
+#include "portable_data_migration.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -39,6 +41,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <vector>
@@ -87,6 +90,90 @@ std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
     std::filesystem::path result(selected);
     CoTaskMemFree(selected);
     return result;
+}
+
+std::optional<std::filesystem::path> SaveSettingsFile(HWND owner,
+    const wchar_t* title, const wchar_t* defaultName,
+    const wchar_t* defaultExtension,
+    const COMDLG_FILTERSPEC* filters, UINT filterCount)
+{
+    ComPtr<IFileSaveDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+    {
+        return std::nullopt;
+    }
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+    {
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM |
+            FOS_PATHMUSTEXIST | FOS_OVERWRITEPROMPT);
+    }
+    dialog->SetTitle(title);
+    if (defaultName && *defaultName)
+        dialog->SetFileName(defaultName);
+    if (defaultExtension && *defaultExtension)
+        dialog->SetDefaultExtension(defaultExtension);
+    if (filters && filterCount > 0)
+        dialog->SetFileTypes(filterCount, filters);
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED) || FAILED(shown))
+        return std::nullopt;
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item)) || !item)
+        return std::nullopt;
+    PWSTR selected = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &selected)) ||
+        !selected)
+    {
+        if (selected)
+            CoTaskMemFree(selected);
+        return std::nullopt;
+    }
+    std::filesystem::path result(selected);
+    CoTaskMemFree(selected);
+    return result;
+}
+
+std::filesystem::path FullBackupStateRoot()
+{
+    std::filesystem::path stateRoot =
+        snowdesktop::deployment::GetPackageLocalStatePath();
+    if (stateRoot.empty())
+        stateRoot = GetExecutableDirectoryPath();
+    return stateRoot;
+}
+
+snowdesktop::backup::FullDataBackupManager MakeFullBackupManager()
+{
+    return snowdesktop::backup::FullDataBackupManager(
+        FullBackupStateRoot(),
+        GetDataDirectoryPath(),
+        SNOWDESKTOP_VERSION,
+        snowdesktop::deployment::IsPackaged()
+            ? "installed" : "portable");
+}
+
+std::string FormatBackupSize(std::uint64_t bytes)
+{
+    static constexpr const char* units[] = {
+        "B", "KiB", "MiB", "GiB"
+    };
+    double value = static_cast<double>(bytes);
+    std::size_t unit = 0;
+    while (value >= 1024.0 && unit + 1 < std::size(units))
+    {
+        value /= 1024.0;
+        ++unit;
+    }
+    char buffer[64]{};
+    if (unit == 0)
+        std::snprintf(buffer, sizeof(buffer), "%llu %s",
+            static_cast<unsigned long long>(bytes), units[unit]);
+    else
+        std::snprintf(buffer, sizeof(buffer), "%.1f %s",
+            value, units[unit]);
+    return buffer;
 }
 
 std::wstring QueryPortableAutoStartCommandViaWmi()
@@ -261,55 +348,8 @@ bool PathsOverlap(const std::filesystem::path& first,
 bool CopyDirectoryContents(const std::filesystem::path& source,
     const std::filesystem::path& destination)
 {
-    std::error_code error;
-    std::filesystem::create_directories(destination, error);
-    if (error)
-        return false;
-
-    std::filesystem::recursive_directory_iterator entry(source, error);
-    const std::filesystem::recursive_directory_iterator end;
-    if (error)
-        return false;
-
-    while (entry != end)
-    {
-        const std::filesystem::file_status status =
-            entry->symlink_status(error);
-        if (error || std::filesystem::is_symlink(status))
-            return false;
-
-        const std::filesystem::path relative =
-            entry->path().lexically_relative(source);
-        if (relative.empty() || relative.native().starts_with(L".."))
-            return false;
-        const std::filesystem::path target = destination / relative;
-
-        if (std::filesystem::is_directory(status))
-        {
-            std::filesystem::create_directories(target, error);
-            if (error)
-                return false;
-        }
-        else if (std::filesystem::is_regular_file(status))
-        {
-            std::filesystem::create_directories(target.parent_path(), error);
-            if (error)
-                return false;
-            std::filesystem::copy_file(entry->path(), target,
-                std::filesystem::copy_options::overwrite_existing, error);
-            if (error)
-                return false;
-        }
-        else
-        {
-            return false;
-        }
-
-        entry.increment(error);
-        if (error)
-            return false;
-    }
-    return true;
+    return snowdesktop::migration::CopyDataTree(
+        source, destination).ok;
 }
 
 void DrawHelpTooltip(const char* description)
@@ -1132,7 +1172,7 @@ void SettingsWindow::DrawBackupPage()
     ImGui::BeginChild("##BackupPageInner", pageSize,
         ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
-    ImGui::SeparatorText(_L("app.settings.backup_page_title"));
+    ImGui::SeparatorText(_L("app.settings.layout_backups"));
     ImGui::Spacing();
 
     const char* saveBackupLabel = _L("app.settings.save_backup");
@@ -1166,18 +1206,16 @@ void SettingsWindow::DrawBackupPage()
             nullptr, nullptr, SW_SHOW);
     }
 
-    ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.saved_backups"));
-    ImGui::Spacing();
-
     std::vector<LayoutBackup> backups = ListBackups();
-    const float migrationAreaHeight =
-        ImGui::GetTextLineHeightWithSpacing() +
-        ImGui::GetFrameHeightWithSpacing() + 32.0f * dpiScale_;
-    const float backupListHeight = std::max(
-        100.0f * dpiScale_,
-        ImGui::GetContentRegionAvail().y - migrationAreaHeight);
-    ImGui::BeginChild("##BackupList", ImVec2(0, backupListHeight), true);
+    ImGui::Spacing();
+    const float layoutBackupListHeight = backups.empty()
+        ? 48.0f * dpiScale_
+        : (std::min)(132.0f * dpiScale_,
+            18.0f * dpiScale_ +
+                static_cast<float>(backups.size()) *
+                    ImGui::GetFrameHeightWithSpacing());
+    ImGui::BeginChild("##BackupList",
+        ImVec2(0, layoutBackupListHeight), true);
     if (backups.empty())
     {
         ImGui::TextDisabled("%s", _L("app.settings.no_backups"));
@@ -1208,10 +1246,120 @@ void SettingsWindow::DrawBackupPage()
     ImGui::EndChild();
 
     ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.full_data_backups"));
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s",
+        _L("app.settings.full_data_backup_description"));
+    ImGui::Spacing();
+
+    const char* createFullLabel =
+        _L("app.settings.create_full_backup");
+    const char* importFullLabel =
+        _L("app.settings.restore_from_backup_file");
+    const char* openFullLabel =
+        _L("app.settings.open_full_backup_folder");
+    if (BlueButton(createFullLabel,
+            ImVec2(SettingButtonWidth(createFullLabel), 0)))
+    {
+        CreateFullDataBackup();
+    }
+    ImGui::SameLine();
+    if (BlueButton(importFullLabel,
+            ImVec2(SettingButtonWidth(importFullLabel), 0)))
+    {
+        ImportFullDataBackup();
+    }
+    ImGui::SameLine();
+    if (BlueButton(openFullLabel,
+            ImVec2(SettingButtonWidth(openFullLabel), 0)))
+    {
+        auto manager = MakeFullBackupManager();
+        std::error_code error;
+        std::filesystem::create_directories(
+            manager.BackupRoot(), error);
+        ShellExecuteW(nullptr, L"open",
+            manager.BackupRoot().c_str(), nullptr, nullptr, SW_SHOW);
+    }
+
+    const auto fullBackups = MakeFullBackupManager().List();
+    ImGui::Spacing();
+    const float fullBackupListHeight = fullBackups.empty()
+        ? 48.0f * dpiScale_
+        : (std::min)(172.0f * dpiScale_,
+            18.0f * dpiScale_ +
+                static_cast<float>(fullBackups.size()) *
+                    ImGui::GetFrameHeightWithSpacing());
+    ImGui::BeginChild("##FullBackupList",
+        ImVec2(0, fullBackupListHeight), true);
+    if (fullBackups.empty())
+    {
+        ImGui::TextDisabled("%s",
+            _L("app.settings.no_full_data_backups"));
+    }
+    else
+    {
+        for (std::size_t index = 0;
+            index < fullBackups.size(); ++index)
+        {
+            const auto& backup = fullBackups[index];
+            ImGui::PushID(
+                static_cast<int>(index) + 10000);
+            const std::string timestamp = backup.createdAt.empty()
+                ? _L("app.settings.full_backup_unknown_time")
+                : backup.createdAt;
+            const std::string label = backup.migrationRollback
+                ? _LF("app.settings.migration_backup_item", timestamp)
+                : _LF("app.settings.full_backup_item",
+                    timestamp,
+                    std::to_string(backup.fileCount),
+                    FormatBackupSize(backup.totalBytes));
+            const char* restoreLabel =
+                _L("app.settings.restore");
+            const char* exportLabel =
+                _L("app.settings.export_backup");
+            const char* openLabel =
+                _L("app.settings.open");
+            const char* deleteLabel =
+                _L("app.settings.delete");
+            const float restoreW =
+                SettingButtonWidth(restoreLabel);
+            const float exportW =
+                SettingButtonWidth(exportLabel);
+            const float openW =
+                SettingButtonWidth(openLabel);
+            const float deleteW =
+                SettingButtonWidth(deleteLabel);
+            const float actionsW =
+                restoreW + exportW + openW + deleteW +
+                ImGui::GetStyle().ItemSpacing.x * 3.0f;
+            BeginSettingRow(label.c_str(), actionsW);
+            if (BlueButton(restoreLabel, ImVec2(restoreW, 0)))
+                RestoreFullDataBackup(backup);
+            ImGui::SameLine();
+            if (BlueButton(exportLabel, ImVec2(exportW, 0)))
+                ExportFullDataBackup(backup);
+            ImGui::SameLine();
+            if (BlueButton(openLabel, ImVec2(openW, 0)))
+            {
+                ShellExecuteW(nullptr, L"open",
+                    backup.root.c_str(), nullptr, nullptr, SW_SHOW);
+            }
+            ImGui::SameLine();
+            if (BlueButton(deleteLabel, ImVec2(deleteW, 0)))
+                DeleteFullDataBackup(backup);
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.data_migration"));
     ImGui::Spacing();
-    if (BlueButton(_L("app.settings.migrate_portable_data")))
-        MigratePortableData();
+    ImGui::TextWrapped("%s",
+        _L("app.settings.data_migration_description"));
+    ImGui::Spacing();
+    if (BlueButton(_L("app.settings.migrate_all_data")))
+        MigrateAllData();
 
     ImGui::EndChild();
 }
@@ -4303,17 +4451,195 @@ void SettingsWindow::DrawAboutPage()
 }
 
 // ════════════════════════════════════════════════════════════════
-//  布局备份：目录、列举、保存、恢复、删除
+//  布局备份、完整数据备份与数据迁移
 // ════════════════════════════════════════════════════════════════
 
 /**
- * @brief 从用户选择的携带版目录迁移全部 SnowDesktop 数据。
- *
- * 用户既可选择携带版程序目录，也可直接选择其中的 data 目录。迁移时先把
- * 来源完整复制到 LocalState\TempState 下的暂存目录，再将当前 data 原子移动
- * 为完整备份并替换为暂存数据，成功后重载布局并重启应用。
+ * @brief 清除当前设置页的待写状态并重启，以应用已排队的数据替换。
  */
-void SettingsWindow::MigratePortableData()
+void SettingsWindow::RestartAfterDataReplacement(
+    const char* successMessageKey)
+{
+    // Prevent the current settings frame from writing old values over the
+    // replacement data while the application is restarting.
+    personalizationDirty_ = false;
+    personalizationPreviewDirty_ = false;
+    personalizationSaveRequested_ = false;
+    dockSettingsDirty_ = false;
+    dockSettingsPreviewDirty_ = false;
+    dockSettingsSaveRequested_ = false;
+    navigationSettingsDirty_ = false;
+    generalSettingsDirty_ = false;
+    categorySettingsDirty_ = false;
+    categorySettingsSaveRequested_ = false;
+
+    MessageBoxW(hwnd_, _LW(successMessageKey),
+        _LW("app.settings.full_data_backups"),
+        MB_OK | MB_ICONINFORMATION);
+    if (restartCallback_)
+        restartCallback_();
+}
+
+void SettingsWindow::CreateFullDataBackup()
+{
+    auto manager = MakeFullBackupManager();
+    const auto result = manager.Create();
+    if (!result.ok)
+    {
+        std::wstring message =
+            _LW("app.settings.create_full_backup_failed");
+        if (!result.error.empty())
+            message += L"\n\n" + Utf8ToWide(result.error);
+        MessageBoxW(hwnd_, message.c_str(),
+            _LW("app.settings.full_data_backups"),
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    MessageBoxW(hwnd_,
+        _LW("app.settings.create_full_backup_success"),
+        _LW("app.settings.full_data_backups"),
+        MB_OK | MB_ICONINFORMATION);
+}
+
+void SettingsWindow::ExportFullDataBackup(
+    const snowdesktop::backup::BackupInfo& backup)
+{
+    const COMDLG_FILTERSPEC filters[] = {
+        {
+            _LW("app.settings.snowbackup_file_type"),
+            L"*.snowbackup",
+        },
+        {
+            _LW("app.settings.zip_file_type"),
+            L"*.zip",
+        },
+    };
+    std::wstring defaultName = L"SnowDesktop-";
+    defaultName += backup.id.empty() ? L"Backup" : backup.id;
+    defaultName += L".snowbackup";
+    const auto selected = SaveSettingsFile(hwnd_,
+        _LW("app.settings.export_backup"),
+        defaultName.c_str(), L"snowbackup",
+        filters, static_cast<UINT>(std::size(filters)));
+    if (!selected)
+        return;
+
+    const auto result =
+        MakeFullBackupManager().Export(backup, *selected);
+    if (!result.ok)
+    {
+        std::wstring message =
+            _LW("app.settings.export_backup_failed");
+        if (!result.error.empty())
+            message += L"\n\n" + Utf8ToWide(result.error);
+        MessageBoxW(hwnd_, message.c_str(),
+            _LW("app.settings.full_data_backups"),
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    MessageBoxW(hwnd_,
+        _LW("app.settings.export_backup_success"),
+        _LW("app.settings.full_data_backups"),
+        MB_OK | MB_ICONINFORMATION);
+}
+
+void SettingsWindow::ImportFullDataBackup()
+{
+    const COMDLG_FILTERSPEC filters[] = {
+        {
+            _LW("app.settings.backup_archive_file_type"),
+            L"*.snowbackup;*.zip",
+        },
+    };
+    const auto selected = PickSettingsFile(hwnd_,
+        _LW("app.settings.restore_from_backup_file"),
+        filters, static_cast<UINT>(std::size(filters)));
+    if (!selected)
+        return;
+    if (MessageBoxW(hwnd_,
+            _LW("app.settings.restore_backup_file_confirm"),
+            _LW("app.settings.full_data_backups"),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    {
+        return;
+    }
+
+    const auto result =
+        MakeFullBackupManager().ImportAndQueue(*selected);
+    if (!result.ok)
+    {
+        std::wstring message =
+            _LW("app.settings.restore_backup_file_failed");
+        if (!result.error.empty())
+            message += L"\n\n" + Utf8ToWide(result.error);
+        MessageBoxW(hwnd_, message.c_str(),
+            _LW("app.settings.full_data_backups"),
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    RestartAfterDataReplacement(
+        L10N_KEY("app.settings.restore_backup_file_success"));
+}
+
+void SettingsWindow::RestoreFullDataBackup(
+    const snowdesktop::backup::BackupInfo& backup)
+{
+    if (MessageBoxW(hwnd_,
+            _LW("app.settings.restore_full_backup_confirm"),
+            _LW("app.settings.full_data_backups"),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    {
+        return;
+    }
+    const auto result =
+        MakeFullBackupManager().QueueRestore(backup);
+    if (!result.ok)
+    {
+        std::wstring message =
+            _LW("app.settings.restore_full_backup_failed");
+        if (!result.error.empty())
+            message += L"\n\n" + Utf8ToWide(result.error);
+        MessageBoxW(hwnd_, message.c_str(),
+            _LW("app.settings.full_data_backups"),
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    RestartAfterDataReplacement(
+        L10N_KEY("app.settings.restore_full_backup_success"));
+}
+
+void SettingsWindow::DeleteFullDataBackup(
+    const snowdesktop::backup::BackupInfo& backup)
+{
+    if (MessageBoxW(hwnd_,
+            _LW("app.settings.delete_full_backup_confirm"),
+            _LW("app.settings.full_data_backups"),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    {
+        return;
+    }
+    const auto result =
+        MakeFullBackupManager().Delete(backup);
+    if (result.ok)
+        return;
+
+    std::wstring message =
+        _LW("app.settings.delete_full_backup_failed");
+    if (!result.error.empty())
+        message += L"\n\n" + Utf8ToWide(result.error);
+    MessageBoxW(hwnd_, message.c_str(),
+        _LW("app.settings.full_data_backups"),
+        MB_OK | MB_ICONERROR);
+}
+
+/**
+ * @brief 从用户选择的其他 SnowDesktop 目录迁入全部数据。
+ *
+ * 用户既可选择 SnowDesktop 程序目录，也可直接选择其中的 data 目录。迁移
+ * 时先把来源完整复制到当前状态目录的暂存目录，发布待处理事务后重启。
+ * 新进程会在打开任何数据文件前将当前 data 原子备份并换入暂存数据。
+ */
+void SettingsWindow::MigrateAllData()
 {
     const wchar_t* title = _LW("app.settings.data_migration");
 
@@ -4322,7 +4648,7 @@ void SettingsWindow::MigratePortableData()
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
     if (FAILED(result))
     {
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_failed"),
             title, MB_OK | MB_ICONERROR);
         return;
     }
@@ -4333,14 +4659,14 @@ void SettingsWindow::MigratePortableData()
         dialog->SetOptions(options | FOS_PICKFOLDERS |
             FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
     }
-    dialog->SetTitle(_LW("app.settings.select_portable_data"));
+    dialog->SetTitle(_LW("app.settings.select_migration_data"));
 
     result = dialog->Show(hwnd_);
     if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED))
         return;
     if (FAILED(result))
     {
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_failed"),
             title, MB_OK | MB_ICONERROR);
         return;
     }
@@ -4348,7 +4674,7 @@ void SettingsWindow::MigratePortableData()
     ComPtr<IShellItem> selectedItem;
     if (FAILED(dialog->GetResult(&selectedItem)) || !selectedItem)
     {
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_failed"),
             title, MB_OK | MB_ICONERROR);
         return;
     }
@@ -4359,7 +4685,7 @@ void SettingsWindow::MigratePortableData()
     {
         if (selectedPath)
             CoTaskMemFree(selectedPath);
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_failed"),
             title, MB_OK | MB_ICONERROR);
         return;
     }
@@ -4368,38 +4694,40 @@ void SettingsWindow::MigratePortableData()
     CoTaskMemFree(selectedPath);
 
     std::filesystem::path sourceData = selectedDirectory;
-    std::filesystem::path sourceWidgets;
+    std::filesystem::path sourceLegacyWidgets;
     const std::filesystem::path nestedData =
         selectedDirectory / L"data";
     if (LooksLikeSnowDesktopDataDirectory(nestedData))
     {
         sourceData = nestedData;
-        sourceWidgets = selectedDirectory / L"widgets";
+        sourceLegacyWidgets = selectedDirectory / L"widgets";
     }
     else if (_wcsicmp(
                  selectedDirectory.filename().c_str(), L"data") == 0)
     {
-        sourceWidgets = selectedDirectory.parent_path() / L"widgets";
+        sourceLegacyWidgets =
+            selectedDirectory.parent_path() / L"widgets";
     }
 
     std::error_code sourceWidgetsError;
     if (!std::filesystem::is_directory(
-            sourceWidgets, sourceWidgetsError))
+            sourceLegacyWidgets, sourceWidgetsError))
     {
-        sourceWidgets.clear();
+        sourceLegacyWidgets.clear();
     }
 
     const std::filesystem::path targetData(GetDataDirectoryPath());
     if (!LooksLikeSnowDesktopDataDirectory(sourceData) ||
         PathsOverlap(sourceData, targetData) ||
-        (!sourceWidgets.empty() && PathsOverlap(sourceWidgets, targetData)))
+        (!sourceLegacyWidgets.empty() &&
+            PathsOverlap(sourceLegacyWidgets, targetData)))
     {
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_invalid"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_invalid"),
             title, MB_OK | MB_ICONWARNING);
         return;
     }
 
-    if (MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_confirm"),
+    if (MessageBoxW(hwnd_, _LW("app.settings.migrate_data_confirm"),
             title, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
     {
         return;
@@ -4423,73 +4751,66 @@ void SettingsWindow::MigratePortableData()
         stateRoot / L"TempState" / L"PortableMigration";
     const std::filesystem::path stagingData =
         migrationRoot / (std::wstring(L"staging-") + token);
-    const std::filesystem::path backupData =
-        migrationRoot / (std::wstring(L"backup-") + token);
 
-    std::error_code error;
-    std::filesystem::create_directories(migrationRoot, error);
-    bool staged = !error &&
-        CopyDirectoryContents(sourceData, stagingData);
-    if (staged && !sourceWidgets.empty())
+    const auto copyResult =
+        snowdesktop::migration::CopyDataTree(sourceData, stagingData);
+    bool staged = copyResult.ok;
+    std::string stageError = copyResult.error;
+    if (staged && !sourceLegacyWidgets.empty())
     {
-        // Portable widgets live next to the executable. Copy them after data
-        // so they replace any stale duplicate left by an earlier build.
-        staged = CopyDirectoryContents(
-            sourceWidgets, stagingData / L"widgets");
+        // Current folder packages and authoring tools beside the executable
+        // are application files, not user data. Only old loose pairs need to
+        // enter the writable migration root; built-ins are rebound to the
+        // installed copy and user-authored pairs remain explicit migrations.
+        const auto legacyImport =
+            snowdesktop::widget::ImportLegacyLooseWidgetPairs(
+                sourceLegacyWidgets, stagingData / L"widgets");
+        staged = legacyImport.ok;
+        if (!staged)
+        {
+            stageError = legacyImport.error.empty()
+                ? "legacy component import failed"
+                : legacyImport.error;
+            OutputDebugStringA(("SnowDesktop: legacy component "
+                "import failed: " + stageError + "\n").c_str());
+        }
     }
     if (!staged ||
         !LooksLikeSnowDesktopDataDirectory(stagingData))
     {
-        error.clear();
-        std::filesystem::remove_all(stagingData, error);
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
-            title, MB_OK | MB_ICONERROR);
+        if (staged && stageError.empty())
+            stageError = "staged data validation failed";
+        OutputDebugStringA(("SnowDesktop: data migration staging failed: " +
+            stageError + "\n").c_str());
+        std::error_code cleanupError;
+        std::filesystem::remove_all(stagingData, cleanupError);
+        std::wstring message =
+            _LW("app.settings.migrate_data_failed");
+        if (!stageError.empty())
+            message += L"\n\n" + Utf8ToWide(stageError);
+        MessageBoxW(hwnd_, message.c_str(), title,
+            MB_OK | MB_ICONERROR);
         return;
     }
 
-    error.clear();
-    std::filesystem::rename(targetData, backupData, error);
-    if (error)
+    std::string queueError;
+    if (!snowdesktop::migration::Queue(
+            stateRoot, token, queueError))
     {
-        error.clear();
-        std::filesystem::remove_all(stagingData, error);
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
-            title, MB_OK | MB_ICONERROR);
+        OutputDebugStringA(("SnowDesktop: cannot queue data "
+            "migration: " + queueError + "\n").c_str());
+        std::error_code cleanupError;
+        std::filesystem::remove_all(stagingData, cleanupError);
+        std::wstring message =
+            _LW("app.settings.migrate_data_failed");
+        message += L"\n\n" + Utf8ToWide(queueError);
+        MessageBoxW(hwnd_, message.c_str(), title,
+            MB_OK | MB_ICONERROR);
         return;
     }
 
-    error.clear();
-    std::filesystem::rename(stagingData, targetData, error);
-    if (error)
-    {
-        std::error_code rollbackError;
-        std::filesystem::rename(backupData, targetData, rollbackError);
-        std::filesystem::remove_all(stagingData, rollbackError);
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
-            title, MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    // Prevent the current settings frame from writing pre-migration values
-    // over the imported files while the application is restarting.
-    personalizationDirty_ = false;
-    personalizationPreviewDirty_ = false;
-    personalizationSaveRequested_ = false;
-    dockSettingsDirty_ = false;
-    dockSettingsPreviewDirty_ = false;
-    dockSettingsSaveRequested_ = false;
-    navigationSettingsDirty_ = false;
-    generalSettingsDirty_ = false;
-    categorySettingsDirty_ = false;
-    categorySettingsSaveRequested_ = false;
-
-    if (reloadCallback_)
-        reloadCallback_();
-
-    MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_success"),
-        title, MB_OK | MB_ICONINFORMATION);
-    if (restartCallback_)
-        restartCallback_();
+    RestartAfterDataReplacement(
+        L10N_KEY("app.settings.migrate_data_success"));
 }
 
 /**

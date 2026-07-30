@@ -1,4 +1,7 @@
+#include "full_data_backup.h"
 #include "widget_package.h"
+#include "portable_data_migration.h"
+#include "single_instance.h"
 
 #include <windows.h>
 
@@ -28,6 +31,38 @@ void Write(const std::filesystem::path& path, const std::string& text)
     std::filesystem::create_directories(path.parent_path());
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     file << text;
+}
+
+std::string Read(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return std::string(
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+}
+
+bool CorruptArchivePayload(const std::filesystem::path& path,
+    const std::string& payload)
+{
+    std::fstream file(path,
+        std::ios::binary | std::ios::in | std::ios::out);
+    if (!file)
+        return false;
+    std::vector<char> bytes;
+    bytes.assign(std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+    const auto found = std::search(
+        bytes.begin(), bytes.end(), payload.begin(), payload.end());
+    if (found == bytes.end())
+        return false;
+    const auto position =
+        static_cast<std::streamoff>(found - bytes.begin());
+    file.clear();
+    file.seekp(position);
+    const char replacement =
+        payload.front() == 'X' ? 'Y' : 'X';
+    file.write(&replacement, 1);
+    return static_cast<bool>(file);
 }
 
 void Write16(std::ofstream& output, std::uint16_t value)
@@ -111,6 +146,52 @@ int main()
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
+
+    Expect(snowdesktop::single_instance::
+            ParseRestartPredecessorProcessId(
+                L"\"C:\\Apps\\SnowDesktop.exe\" --wait-for-pid=4321") ==
+            4321,
+        "restart predecessor PID is parsed from the internal command line");
+    Expect(snowdesktop::single_instance::
+            ParseRestartPredecessorProcessId(
+                L"\"C:\\Apps\\SnowDesktop.exe\" --wait-for-pid=0") == 0 &&
+        snowdesktop::single_instance::
+            ParseRestartPredecessorProcessId(
+                L"\"C:\\Apps\\SnowDesktop.exe\" x--wait-for-pid=42") == 0,
+        "invalid or embedded restart predecessor arguments are rejected");
+    Expect(snowdesktop::single_instance::VersionsMatch(
+            L"1.0.1", L"1.0.1.0") &&
+        !snowdesktop::single_instance::VersionsMatch(
+            L"1.0.1.0", L"1.0.2.0") &&
+        !snowdesktop::single_instance::VersionsMatch(
+            L"1.0.1.", L"1.0.1.0"),
+        "instance versions compare normalized numeric parts");
+    Expect(snowdesktop::single_instance::DataDirectoriesMatch(
+            L"C:\\SnowDesktop\\data\\",
+            L"c:/snowdesktop/data") &&
+        !snowdesktop::single_instance::DataDirectoriesMatch(
+            L"C:\\SnowDesktop\\data",
+            L"D:\\SnowDesktop\\data"),
+        "instance data directories compare canonical path spelling");
+    const std::wstring testMutexName =
+        L"Local\\SnowDesktop.SingleInstance.Test." +
+        std::to_wstring(GetCurrentProcessId());
+    {
+        snowdesktop::single_instance::Guard firstInstance;
+        snowdesktop::single_instance::Guard secondInstance;
+        Expect(firstInstance.Acquire(testMutexName.c_str()) ==
+                snowdesktop::single_instance::AcquireResult::Primary,
+            "the first executable location owns the shared instance lock");
+        Expect(secondInstance.Acquire(testMutexName.c_str()) ==
+                snowdesktop::single_instance::AcquireResult::Existing,
+            "a second executable location sees the existing instance");
+    }
+    {
+        snowdesktop::single_instance::Guard replacementInstance;
+        Expect(replacementInstance.Acquire(testMutexName.c_str()) ==
+                snowdesktop::single_instance::AcquireResult::Primary,
+            "the shared instance lock is released when the owner exits");
+    }
 
     const auto sourceV1 = root / L"source-v1";
     MakePackage(sourceV1, "1.0.0");
@@ -320,6 +401,305 @@ int main()
         "package manager installs through the source contract");
     Expect(catalogInstalled.manifest.version == "1.2.0",
         "source installation activates the requested version");
+
+    const auto portableWidgets = root / L"portable-widget-import" / L"widgets";
+    Write(portableWidgets / L"my_legacy.lua",
+        "function render() end\n");
+    Write(portableWidgets / L"my_legacy.widget.json",
+        "{ \"name\": \"My Legacy Widget\", \"version\": \"1.0.0\" }\n");
+    Write(portableWidgets / L"orphan.lua",
+        "function render() end\n");
+    MakePackage(portableWidgets / L"folder-package", "1.0.0");
+    Write(portableWidgets / L"snowdesktop-lua-widget" / L"SKILL.md",
+        "# Authoring tool\n");
+    Write(portableWidgets / L"README.txt", "not component data\n");
+    const auto importedPortableWidgets =
+        root / L"portable-widget-import" / L"staging-data" / L"widgets";
+    const auto portableImport = ImportLegacyLooseWidgetPairs(
+        portableWidgets, importedPortableWidgets);
+    Expect(portableImport.ok && portableImport.copiedPairs == 1,
+        "portable migration imports only complete legacy loose pairs");
+    Expect(std::filesystem::is_regular_file(
+        importedPortableWidgets / L"my_legacy.lua") &&
+        std::filesystem::is_regular_file(
+            importedPortableWidgets / L"my_legacy.widget.json"),
+        "portable migration preserves the user-authored legacy pair");
+    Expect(!std::filesystem::exists(
+        importedPortableWidgets / L"orphan.lua"),
+        "portable migration ignores orphaned Lua files");
+    Expect(!std::filesystem::exists(
+        importedPortableWidgets / L"folder-package") &&
+        !std::filesystem::exists(
+            importedPortableWidgets / L"snowdesktop-lua-widget") &&
+        !std::filesystem::exists(
+            importedPortableWidgets / L"README.txt"),
+        "portable migration does not copy folder packages or authoring files");
+    const auto missingPortableImport = ImportLegacyLooseWidgetPairs(
+        root / L"portable-widget-import" / L"missing",
+        importedPortableWidgets);
+    Expect(missingPortableImport.ok &&
+        missingPortableImport.copiedPairs == 0,
+        "portable migration accepts a missing legacy widgets directory");
+
+    const auto longPathSource =
+        root / L"portable-long-path-source";
+    std::filesystem::path longRelative;
+    for (int i = 0; i < 5; ++i)
+    {
+        longRelative /=
+            std::wstring(24, static_cast<wchar_t>(L'a' + i));
+    }
+    Write(longPathSource / longRelative /
+            L"SnowDesktop.layout.json",
+        "{ \"source\": \"portable-long-path\" }\n");
+    const auto longPathDestination =
+        root / L"portable-long-path-destination" /
+        std::wstring(72, L'd');
+    const auto longCopy = snowdesktop::migration::CopyDataTree(
+        longPathSource, longPathDestination);
+    const auto longCopiedFile = std::filesystem::absolute(
+        longPathDestination / longRelative /
+            L"SnowDesktop.layout.json");
+    const std::wstring extendedLongCopiedFile =
+        std::wstring(LR"(\\?\)") + longCopiedFile.wstring();
+    Expect(longCopiedFile.wstring().size() > MAX_PATH,
+        "portable migration long-path test exceeds legacy MAX_PATH");
+    Expect(longCopy.ok && longCopy.files == 1,
+        "portable migration copies data through extended-length paths");
+    Expect(GetFileAttributesW(extendedLongCopiedFile.c_str()) !=
+            INVALID_FILE_ATTRIBUTES,
+        "portable migration creates the long destination file");
+
+    const auto portableState =
+        root / L"restart-safe-portable-migration";
+    Write(portableState / L"data" / L"SnowDesktop.layout.json",
+        "{ \"source\": \"installed\" }\n");
+    const std::wstring portableToken = L"20260730-120000-42-100";
+    const auto portableStage = portableState / L"TempState" /
+        L"PortableMigration" / (L"staging-" + portableToken);
+    Write(portableStage / L"SnowDesktop.layout.json",
+        "{ \"source\": \"portable\" }\n");
+    Write(portableStage / L"widgets" / L"packages.json",
+        "{ \"schemaVersion\": 1, \"packages\": [] }\n");
+    error.clear();
+    Expect(snowdesktop::migration::Queue(
+        portableState, portableToken, error),
+        "portable data replacement is queued for the next startup");
+    const auto pendingApply =
+        snowdesktop::migration::ApplyPending(portableState);
+    Expect(pendingApply.ok && pendingApply.pending &&
+        pendingApply.applied,
+        "queued portable data is applied before runtime initialization");
+    Expect(std::filesystem::is_regular_file(
+        portableState / L"data" / L"widgets" / L"packages.json"),
+        "portable data becomes the active data directory");
+    Expect(std::filesystem::is_regular_file(
+        pendingApply.backup / L"SnowDesktop.layout.json"),
+        "the previous installed data is retained as a complete backup");
+    Expect(!std::filesystem::exists(
+        portableState / L"TempState" / L"PortableMigration" /
+            L"pending.txt"),
+        "the pending marker is retired after a successful exchange");
+    const auto noPendingApply =
+        snowdesktop::migration::ApplyPending(portableState);
+    Expect(noPendingApply.ok && !noPendingApply.pending &&
+        !noPendingApply.applied,
+        "completed portable migration is not repeated");
+
+    const auto invalidPortableState =
+        root / L"invalid-restart-safe-portable-migration";
+    const std::wstring invalidToken = L"20260730-120100-42-200";
+    std::filesystem::create_directories(invalidPortableState / L"data");
+    std::filesystem::create_directories(invalidPortableState /
+        L"TempState" / L"PortableMigration" /
+        (L"staging-" + invalidToken));
+    error.clear();
+    Expect(!snowdesktop::migration::Queue(
+        invalidPortableState, invalidToken, error),
+        "invalid staged data is rejected before active data is touched");
+    Expect(std::filesystem::is_directory(
+        invalidPortableState / L"data"),
+        "failed queue validation preserves current installed data");
+
+    const auto fullBackupState =
+        root / L"complete-data-backup";
+    const auto fullBackupData =
+        fullBackupState / L"data";
+    const std::string originalLayout =
+        "{ \"source\": \"complete-backup-original\" }\n";
+    const std::string modifiedLayout =
+        "{ \"source\": \"complete-backup-modified\" }\n";
+    Write(fullBackupData / L"SnowDesktop.layout.json",
+        originalLayout);
+    Write(fullBackupData / L"SnowDesktop.general.json",
+        "{ \"language\": \"zh-CN\" }\n");
+    Write(fullBackupData / L"widgets" / L"installed" /
+        L"package-id" / L"1.0.0" / L"main.lua",
+        "function render() end\n");
+    Write(fullBackupData / L"widgets" / L"storage" /
+        L"package-id" / L"instance-id.json",
+        "{ \"counter\": 27 }\n");
+    Write(fullBackupData / L"SnowDesktop_crash.log",
+        "excluded log\n");
+    Write(fullBackupData / L"crashdumps" / L"test.dmp",
+        "excluded dump\n");
+    Write(fullBackupData / L"widgets" / L"staging" /
+        L"temporary.txt", "excluded staging\n");
+    Write(fullBackupData / L"widgets" / L"quarantine" /
+        L"bad.txt", "excluded quarantine\n");
+    std::filesystem::path longBackupRelative;
+    for (int index = 0; index < 4; ++index)
+    {
+        longBackupRelative /=
+            std::wstring(32, static_cast<wchar_t>(L'k' + index));
+    }
+    longBackupRelative /= L"long-state.json";
+    Write(fullBackupData / longBackupRelative,
+        "{ \"longPath\": true }\n");
+
+    snowdesktop::backup::FullDataBackupManager fullBackupManager(
+        fullBackupState, fullBackupData, "1.0.1.0", "portable");
+    const auto createdFullBackup = fullBackupManager.Create();
+    Expect(createdFullBackup.ok &&
+        std::filesystem::is_regular_file(
+            createdFullBackup.backup.root / L"backup.json"),
+        "complete data backup is created with a manifest");
+    Expect(std::filesystem::is_regular_file(
+            createdFullBackup.backup.data /
+                L"SnowDesktop.layout.json") &&
+        std::filesystem::is_regular_file(
+            createdFullBackup.backup.data / L"widgets" / L"storage" /
+                L"package-id" / L"instance-id.json"),
+        "complete backup preserves layout, settings, packages, and storage");
+    Expect(!std::filesystem::exists(
+            createdFullBackup.backup.data /
+                L"SnowDesktop_crash.log") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"crashdumps") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"widgets" / L"staging") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"widgets" / L"quarantine"),
+        "complete backup excludes logs, dumps, staging, and quarantine");
+    const auto longBackupFile = std::filesystem::absolute(
+        createdFullBackup.backup.data / longBackupRelative);
+    const std::wstring extendedLongBackupFile =
+        longBackupFile.wstring().starts_with(LR"(\\?\)")
+            ? longBackupFile.wstring()
+            : std::wstring(LR"(\\?\)") +
+                longBackupFile.wstring();
+    Expect(longBackupFile.wstring().size() > MAX_PATH &&
+        GetFileAttributesW(extendedLongBackupFile.c_str()) !=
+            INVALID_FILE_ATTRIBUTES,
+        "complete backup supports destination paths beyond MAX_PATH");
+    const auto completeBackupList = fullBackupManager.List();
+    Expect(!completeBackupList.empty() &&
+        !completeBackupList.front().migrationRollback &&
+        completeBackupList.front().fileCount >= 4,
+        "complete backup appears in the managed backup list");
+
+    const auto exportedBackup =
+        root / L"exports" / L"complete.snowbackup";
+    const auto exportResult = fullBackupManager.Export(
+        createdFullBackup.backup, exportedBackup);
+    Expect(exportResult.ok &&
+        std::filesystem::is_regular_file(exportedBackup),
+        "complete backup exports as a standard snowbackup archive");
+
+    Write(fullBackupData / L"SnowDesktop.layout.json",
+        modifiedLayout);
+    const auto queuedRestore =
+        fullBackupManager.QueueRestore(createdFullBackup.backup);
+    Expect(queuedRestore.ok,
+        "complete backup restore is queued without touching active data");
+    Expect(Read(fullBackupData / L"SnowDesktop.layout.json") ==
+            modifiedLayout,
+        "queued complete backup restore leaves active data unchanged");
+    const auto appliedRestore =
+        snowdesktop::migration::ApplyPending(fullBackupState);
+    Expect(appliedRestore.ok && appliedRestore.applied &&
+        Read(fullBackupData / L"SnowDesktop.layout.json") ==
+            originalLayout,
+        "complete backup is atomically restored on the next startup");
+    Expect(Read(appliedRestore.backup /
+            L"SnowDesktop.layout.json") == modifiedLayout,
+        "pre-restore active data is retained as a rollback backup");
+
+    const auto backupsAfterRestore = fullBackupManager.List();
+    const auto rollbackBackup = std::find_if(
+        backupsAfterRestore.begin(), backupsAfterRestore.end(),
+        [](const snowdesktop::backup::BackupInfo& backup) {
+            return backup.migrationRollback;
+        });
+    Expect(rollbackBackup != backupsAfterRestore.end(),
+        "pre-restore data is visible in the complete backup list");
+    if (rollbackBackup != backupsAfterRestore.end())
+    {
+        const auto queuedRollback =
+            fullBackupManager.QueueRestore(*rollbackBackup);
+        const auto appliedRollback =
+            snowdesktop::migration::ApplyPending(fullBackupState);
+        Expect(queuedRollback.ok && appliedRollback.ok &&
+            appliedRollback.applied &&
+            Read(fullBackupData / L"SnowDesktop.layout.json") ==
+                modifiedLayout,
+            "a pre-migration backup can restore the previous data");
+    }
+
+    const auto importedBackupState =
+        root / L"imported-complete-data-backup";
+    const auto importedBackupData =
+        importedBackupState / L"data";
+    Write(importedBackupData / L"SnowDesktop.layout.json",
+        "{ \"source\": \"before-archive-import\" }\n");
+    snowdesktop::backup::FullDataBackupManager importBackupManager(
+        importedBackupState, importedBackupData,
+        "1.0.1.0", "installed");
+    const auto importResult =
+        importBackupManager.ImportAndQueue(exportedBackup);
+    if (!importResult.ok)
+    {
+        std::cerr << "complete backup import error: "
+            << importResult.error << '\n';
+    }
+    Expect(importResult.ok,
+        "a snowbackup archive is verified and queued for restore");
+    const auto appliedImport =
+        snowdesktop::migration::ApplyPending(importedBackupState);
+    Expect(appliedImport.ok && appliedImport.applied &&
+        Read(importedBackupData / L"SnowDesktop.layout.json") ==
+            originalLayout,
+        "a snowbackup archive restores complete data after restart");
+
+    const auto corruptedBackup =
+        root / L"exports" / L"corrupted.snowbackup";
+    std::filesystem::copy_file(exportedBackup, corruptedBackup,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    Expect(CorruptArchivePayload(
+            corruptedBackup, originalLayout),
+        "complete backup corruption test modifies an archive payload");
+    const auto corruptedImport =
+        importBackupManager.ImportAndQueue(corruptedBackup);
+    Expect(!corruptedImport.ok &&
+        Read(importedBackupData / L"SnowDesktop.layout.json") ==
+            originalLayout,
+        "corrupted backup is rejected without replacing active data");
+
+    const auto unsafeBackup =
+        root / L"exports" / L"unsafe.snowbackup";
+    MakeUnsafeArchive(unsafeBackup, { "../escape.txt" });
+    const auto unsafeImport =
+        importBackupManager.ImportAndQueue(unsafeBackup);
+    Expect(!unsafeImport.ok &&
+        !std::filesystem::exists(
+            importedBackupState / L"escape.txt"),
+        "backup archive path traversal is rejected");
+
+    const auto deletedBackup =
+        fullBackupManager.Delete(createdFullBackup.backup);
+    Expect(deletedBackup.ok &&
+        !std::filesystem::exists(createdFullBackup.backup.root),
+        "complete backup can be deleted from managed storage");
 
     const auto automaticPaths = TestPaths(root / L"automatic-migration");
     constexpr const char* analogPackageId =

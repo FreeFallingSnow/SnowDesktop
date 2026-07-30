@@ -205,6 +205,23 @@ struct LegacyMigrationResult
     std::string error;
 };
 
+struct LegacyLooseImportResult
+{
+    bool ok = false;
+    std::size_t copiedPairs = 0;
+    std::string error;
+};
+
+/**
+ * @brief Copy only legacy loose-file component pairs from an old portable
+ *        widgets directory into the writable package migration root.
+ * @details Folder packages, authoring tools, orphaned Lua files, symbolic
+ *          links, junctions and reparse points are never copied.
+ */
+LegacyLooseImportResult ImportLegacyLooseWidgetPairs(
+    const std::filesystem::path& sourceWidgets,
+    const std::filesystem::path& destinationWidgets);
+
 struct PackagePaths
 {
     std::filesystem::path builtin;
