@@ -184,4 +184,12 @@ void MigrateLegacyDataPaths()
         GetDataFilePath(file);
 
     GetDataSubdirectoryPath(L"backups");
+    // Older MSIX builds exposed user-created loose Lua components directly
+    // under LocalState\widgets. Move that directory before the package manager
+    // scans LocalState\data\widgets so the migration wizard can still find it.
+    // Portable builds keep their read-only-in-practice bundled packages beside
+    // the executable in widgets\, so treating that directory as legacy user
+    // data would move every built-in package out of the scan root.
+    if (snowdesktop::deployment::IsPackaged())
+        GetDataSubdirectoryPath(L"widgets");
 }

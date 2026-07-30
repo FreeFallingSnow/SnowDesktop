@@ -1,4 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "b731dc11-92fa-404b-abf7-34741cd25277",
+  "slug": "digital-clock",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
   "name": "Digital Clock",
   "nameKey": "lua_widget.digital_clock.name",
   "version": "1.1.0",

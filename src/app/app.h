@@ -2236,6 +2236,7 @@ private:
     DWORD desktopHostExplorerProcessId_ = 0;
     bool exitRequested_ = false;
     bool startupInitializationComplete_ = false;
+    bool legacyWidgetLayoutMigrationPending_ = false;
     bool showSettingsPending_ = false;
     bool customDesktopVisible_ = true;
     bool updatingDisplayTopology_ = false;

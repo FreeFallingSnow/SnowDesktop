@@ -1,4 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "7d6803f2-63fd-428d-b947-6e07437ead2a",
+  "slug": "system-monitor",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
   "name": "System Monitor",
   "nameKey": "lua_widget.system_monitor.name",
   "version": "1.0.0",

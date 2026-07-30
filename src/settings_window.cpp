@@ -34,10 +34,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <cwctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -53,6 +55,39 @@ constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
 constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
+
+std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
+    const wchar_t* title, const COMDLG_FILTERSPEC* filters,
+    UINT filterCount)
+{
+    ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+        return std::nullopt;
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM |
+            FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    dialog->SetTitle(title);
+    if (filters && filterCount > 0)
+        dialog->SetFileTypes(filterCount, filters);
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED) || FAILED(shown))
+        return std::nullopt;
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item)) || !item)
+        return std::nullopt;
+    PWSTR selected = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &selected)) ||
+        !selected)
+    {
+        if (selected) CoTaskMemFree(selected);
+        return std::nullopt;
+    }
+    std::filesystem::path result(selected);
+    CoTaskMemFree(selected);
+    return result;
+}
 
 std::wstring QueryPortableAutoStartCommandViaWmi()
 {
@@ -649,6 +684,12 @@ void SettingsWindow::ShowDockSettings()
     Show();
 }
 
+void SettingsWindow::ShowWidgetMigration()
+{
+    activePage_ = 8;
+    Show();
+}
+
 /**
  * @brief 显示退出确认对话框。
  *
@@ -769,6 +810,7 @@ void SettingsWindow::Render()
         case 4: DrawCategorySettingsPage(); break;
         case 5: DrawBackupPage(); break;
         case 6: DrawAboutPage(); break;
+        case 8: DrawWidgetPackagesPage(); break;
         case 7:
             if (debugUnlocked_)
                 DrawDebugPage();
@@ -927,6 +969,7 @@ void SettingsWindow::DrawSidebar()
     SideButton(0, _L("app.settings.general"));
     SideButton(1, _L("app.settings.appearance"));
     SideButton(4, _L("app.settings.category"));
+    SideButton(8, _L("app.settings.widgets"));
     SideButton(5, _L("app.settings.backup"));
     SideButton(6, _L("app.settings.about"));
     if (debugUnlocked_)
@@ -998,6 +1041,21 @@ static bool BlueButton(const char* label, const ImVec2& size = ImVec2(0, 0))
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
     bool clicked = ImGui::Button(label, size);
     ImGui::PopStyleColor();
+    return clicked;
+}
+
+static bool SecondaryButton(const char* label,
+    const ImVec2& size = ImVec2(0, 0))
+{
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::PushStyleColor(ImGuiCol_Button,
+        style.Colors[ImGuiCol_FrameBg]);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+        style.Colors[ImGuiCol_FrameBgHovered]);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+        style.Colors[ImGuiCol_FrameBgActive]);
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor(3);
     return clicked;
 }
 
@@ -2790,48 +2848,887 @@ void SettingsWindow::DrawWidgetEditorPage()
     ImGui::EndChild();
 }
 
-/**
- * @brief 绘制"调试"页面。
- *
- * 提供以下功能：
- * - 组件错误记录列表（支持复制全部 / 清空全部 / 逐条点击复制）
- * - 组件诊断信息（列出已加载的 Lua 组件，显示状态、权限、最近错误与日志）
- * - 每项诊断支持重新加载组件按钮
- */
-void SettingsWindow::DrawDebugPage()
+void SettingsWindow::DrawWidgetPackagesPage()
 {
     const float pad = 16.0f * dpiScale_;
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
     pageSize.x = std::max(1.0f, pageSize.x);
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
-    ImGui::BeginChild("##DebugPageInner", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##WidgetPackagesPage", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiWindowFlags_AlwaysVerticalScrollbar);
     ImGui::PopStyleVar();
 
-    ImGui::Text("%s", _L("app.settings.debug_page"));
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (DrawCollapsingHeaderWithHelp(_L("app.settings.crash_test"),
-        _L("app.settings.crash_test_desc")))
+    const auto packages = WidgetEngine::ListWidgetPackages();
+    const std::string currentLocale =
+        Locale::Instance().GetEffectiveLanguage();
+    auto localizedManifest = [&](snowdesktop::widget::PackageManifest manifest)
     {
-        ImGui::Spacing();
-        if (BlueButton(_L("app.settings.trigger_crash")))
-            TriggerCrashForTesting();
-        ImGui::Spacing();
+        return snowdesktop::widget::LocalizePackageManifest(
+            std::move(manifest), currentLocale);
+    };
+    auto permissionLabel = [](const std::string& permission)
+    {
+        if (permission == "desktop.action")
+            return _L("app.settings.widgets_permission_desktop_action");
+        if (permission == "desktop.read")
+            return _L("app.settings.widgets_permission_desktop_read");
+        if (permission == "everything.search")
+            return _L("app.settings.widgets_permission_everything_search");
+        if (permission == "media.action")
+            return _L("app.settings.widgets_permission_media_action");
+        if (permission == "media.read")
+            return _L("app.settings.widgets_permission_media_read");
+        if (permission == "network.http")
+            return _L("app.settings.widgets_permission_network_http");
+        if (permission == "system.read")
+            return _L("app.settings.widgets_permission_system_read");
+        if (permission == "ui.contextMenu")
+            return _L("app.settings.widgets_permission_ui_context_menu");
+        if (permission == "ui.input")
+            return _L("app.settings.widgets_permission_ui_input");
+        if (permission == "ui.notify")
+            return _L("app.settings.widgets_permission_ui_notify");
+        return permission.c_str();
+    };
+    auto drawPermissions = [&](const std::vector<std::string>& permissions)
+    {
+        const bool desktopAccess =
+            std::find(permissions.begin(), permissions.end(),
+                "desktop.read") != permissions.end() ||
+            std::find(permissions.begin(), permissions.end(),
+                "desktop.action") != permissions.end();
+        const bool mediaAccess =
+            std::find(permissions.begin(), permissions.end(),
+                "media.read") != permissions.end() ||
+            std::find(permissions.begin(), permissions.end(),
+                "media.action") != permissions.end();
+        std::string summary;
+        for (const auto& permission : permissions)
+        {
+            if (permission == "ui.input" ||
+                permission == "ui.contextMenu" ||
+                permission == "desktop.read" ||
+                permission == "desktop.action" ||
+                permission == "media.read" ||
+                permission == "media.action")
+                continue;
+            if (!summary.empty()) summary += ", ";
+            summary += permissionLabel(permission);
+        }
+        if (desktopAccess)
+        {
+            if (!summary.empty()) summary += ", ";
+            summary += _L("app.settings.widgets_permission_desktop");
+        }
+        if (mediaAccess)
+        {
+            if (!summary.empty()) summary += ", ";
+            summary += _L("app.settings.widgets_permission_media");
+        }
+        if (summary.empty()) return;
+        ImGui::TextWrapped("%s: %s",
+            _L("app.settings.widgets_permissions"), summary.c_str());
+    };
+    auto sourceLabel = [](const std::string& providerId)
+    {
+        if (providerId == "builtin")
+            return std::string(
+                _L("app.settings.widgets_source_builtin"));
+        if (providerId == "local-directory" || providerId == "local")
+            return std::string(
+                _L("app.settings.widgets_source_local"));
+        if (providerId == "static-catalog")
+            return std::string(
+                _L("app.settings.widgets_source_catalog"));
+        return providerId;
+    };
+    auto needsInstallConfirmation = [](const std::wstring& message)
+    {
+        return message.find(L"requires explicit confirmation") !=
+                std::wstring::npos ||
+            message.find(L"requests a new permission") !=
+                std::wstring::npos ||
+            message.find(L"expands network access") != std::wstring::npos;
+    };
+    auto finishInstallAttempt = [&](bool ok, const std::wstring& installError,
+        PendingWidgetInstallKind kind, const std::filesystem::path& localPath,
+        const std::string& providerId, const std::string& externalId,
+        const std::string& version)
+    {
+        if (ok)
+        {
+            widgetPackageStatus_ = _L("app.settings.widgets_install_ok");
+            pendingWidgetInstallKind_ = PendingWidgetInstallKind::None;
+            pendingWidgetInstallPath_.clear();
+            pendingWidgetInstallProviderId_.clear();
+            pendingWidgetInstallExternalId_.clear();
+            pendingWidgetInstallVersion_.clear();
+            pendingWidgetInstallReason_.clear();
+            if (reloadCallback_) reloadCallback_();
+            return;
+        }
+        widgetPackageStatus_ = WideToUtf8(installError);
+        if (!needsInstallConfirmation(installError)) return;
+        pendingWidgetInstallKind_ = kind;
+        pendingWidgetInstallPath_ = localPath.wstring();
+        pendingWidgetInstallProviderId_ = providerId;
+        pendingWidgetInstallExternalId_ = externalId;
+        pendingWidgetInstallVersion_ = version;
+        pendingWidgetInstallReason_ = installError;
+    };
+    auto installLocalPackage = [&](const std::filesystem::path& path,
+        bool confirmed)
+    {
+        std::wstring installError;
+        const bool ok = widgetEngine_ &&
+            widgetEngine_->InstallAndVerifyWidgetPackage(path.wstring(),
+                installError, confirmed, confirmed);
+        finishInstallAttempt(ok, installError,
+            PendingWidgetInstallKind::Local, path, {}, {}, {});
+    };
+    auto installSourcePackage =
+        [&](const snowdesktop::widget::PackageDetails& details,
+            const std::string& providerId, bool confirmed)
+    {
+        std::wstring installError;
+        const bool ok = widgetEngine_ &&
+            widgetEngine_->InstallAndVerifyWidgetPackageFromSource(
+                providerId, details.source.externalItemId,
+                details.manifest.version, installError,
+                confirmed, confirmed);
+        finishInstallAttempt(ok, installError,
+            PendingWidgetInstallKind::StaticCatalog, widgetCatalogPath_,
+            providerId, details.source.externalItemId,
+            details.manifest.version);
+    };
+    auto queryCatalog = [&](bool applySafeUpdates, bool announce)
+    {
+        widgetCatalogEntries_.clear();
+        if (widgetPackageSourceId_.empty()) return;
+        snowdesktop::widget::PackageQuery query;
+        query.text = widgetCatalogSearch_;
+        query.locale = currentLocale;
+        query.limit = 200;
+        std::string catalogError;
+        widgetCatalogEntries_ = WidgetEngine::QueryWidgetPackageSource(
+            widgetPackageSourceId_, query, catalogError);
+        if (!catalogError.empty())
+            widgetPackageStatus_ = catalogError;
+        else if (announce)
+            widgetPackageStatus_ =
+                _L("app.settings.widgets_catalog_loaded");
+        if (catalogError.empty() && applySafeUpdates && widgetEngine_)
+        {
+            std::string updateReport;
+            const int updated =
+                widgetEngine_->ApplySafeWidgetPackageUpdates(
+                    widgetPackageSourceId_, updateReport);
+            if (updated > 0)
+            {
+                char message[256]{};
+                std::snprintf(message, sizeof(message),
+                    _L("app.settings.widgets_safe_updates_applied"),
+                    updated);
+                widgetPackageStatus_ = message;
+                if (reloadCallback_) reloadCallback_();
+            }
+        }
+    };
+    auto refreshCatalog = [&]()
+    {
+        queryCatalog(true, true);
+    };
+    const auto allSources = WidgetEngine::ListWidgetPackageSources();
+    std::vector<snowdesktop::widget::PackageSourceInfo> sources;
+    for (const auto& source : allSources)
+    {
+        if (!source.capabilities.query ||
+            source.providerId == "builtin" ||
+            source.providerId == "local-directory")
+            continue;
+        sources.push_back(source);
+    }
+    const bool selectedSourceAvailable = std::any_of(
+        sources.begin(), sources.end(), [&](const auto& source)
+        {
+            return source.providerId == widgetPackageSourceId_;
+        });
+    bool sourceChanged = false;
+    if (!selectedSourceAvailable)
+    {
+        widgetPackageSourceId_ =
+            sources.empty() ? std::string{} : sources.front().providerId;
+        widgetCatalogEntries_.clear();
+        sourceChanged = !widgetPackageSourceId_.empty();
+    }
+    if (!widgetCatalogInitialized_ ||
+        widgetCatalogLocale_ != currentLocale || sourceChanged)
+    {
+        widgetCatalogInitialized_ = true;
+        widgetCatalogLocale_ = currentLocale;
+        queryCatalog(false, false);
     }
 
-    if (BlueButton(_L("app.settings.open_widget_folder")))
+    // Component discovery belongs to the future Component Center, not the
+    // installed-component settings page.
+    if (false && !sources.empty())
     {
-        const std::wstring widgetPath =
-            snowdesktop::deployment::IsPackaged()
-            ? GetDataSubdirectoryPath(L"widgets")
-            : (std::filesystem::path(GetExecutableDirectoryPath()) /
-                L"widgets").wstring();
-        CreateDirectoryW(widgetPath.c_str(), nullptr);
-        ShellExecuteW(nullptr, L"open", widgetPath.c_str(),
-            nullptr, nullptr, SW_SHOW);
+        ImGui::SeparatorText(
+            _L("app.settings.widgets_catalog_results"));
+    std::string sourcePreview = sourceLabel(widgetPackageSourceId_);
+    if (sources.size() > 1)
+    {
+        ImGui::TextUnformatted(_L("app.settings.widgets_source"));
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##WidgetPackageSource",
+            sourcePreview.c_str()))
+        {
+            for (const auto& source : sources)
+            {
+                const bool selected =
+                    source.providerId == widgetPackageSourceId_;
+                std::string label = sourceLabel(source.providerId);
+                if (!source.status.available)
+                {
+                    label += " (";
+                    label += _L("app.settings.widgets_source_offline");
+                    label += ")";
+                }
+                if (ImGui::Selectable(label.c_str(), selected))
+                {
+                    widgetPackageSourceId_ = source.providerId;
+                    refreshCatalog();
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+        ImGui::SetNextItemWidth(-90.0f * dpiScale_);
+        ImGui::InputTextWithHint("##WidgetCatalogSearch",
+            _L("app.settings.widgets_search_hint"), widgetCatalogSearch_,
+            sizeof(widgetCatalogSearch_));
+        ImGui::SameLine();
+        if (ImGui::Button(_L("app.settings.widgets_search")))
+            refreshCatalog();
+
+        if (widgetCatalogEntries_.empty())
+            ImGui::TextDisabled("%s",
+                _L("app.settings.widgets_catalog_empty"));
+        if (!widgetCatalogEntries_.empty())
+        {
+            const float availableWidth =
+                ImGui::GetContentRegionAvail().x;
+            const float cardGap = 10.0f * dpiScale_;
+            const float minimumCardWidth = 250.0f * dpiScale_;
+            const int catalogColumns = std::clamp(
+                static_cast<int>((availableWidth + cardGap) /
+                    (minimumCardWidth + cardGap)), 1, 3);
+            const float cardWidth =
+                (availableWidth -
+                    cardGap * static_cast<float>(catalogColumns - 1)) /
+                static_cast<float>(catalogColumns);
+            const ImVec2 gridStart = ImGui::GetCursorPos();
+            std::vector<float> columnHeights(
+                static_cast<std::size_t>(catalogColumns), 0.0f);
+            for (const auto& details : widgetCatalogEntries_)
+            {
+                const auto shortest = std::min_element(
+                    columnHeights.begin(), columnHeights.end());
+                const int column = static_cast<int>(
+                    std::distance(columnHeights.begin(), shortest));
+                ImGui::SetCursorPos(ImVec2(
+                    gridStart.x +
+                        static_cast<float>(column) *
+                            (cardWidth + cardGap),
+                    gridStart.y + *shortest));
+                const auto manifest =
+                    localizedManifest(details.manifest);
+                ImGui::PushID((details.source.externalItemId +
+                    details.manifest.version).c_str());
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,
+                    6.0f * dpiScale_);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                    ImVec2(10.0f * dpiScale_,
+                        9.0f * dpiScale_));
+                ImGui::BeginChild("##WidgetCatalogCard",
+                    ImVec2(cardWidth, 0),
+                    ImGuiChildFlags_Borders |
+                        ImGuiChildFlags_AlwaysUseWindowPadding |
+                        ImGuiChildFlags_AutoResizeY |
+                        ImGuiChildFlags_AlwaysAutoResize);
+                ImGui::PopStyleVar(2);
+                ImGui::TextUnformatted(manifest.name.c_str());
+                ImGui::SameLine();
+                ImGui::TextDisabled(
+                    _L("app.settings.widgets_version"),
+                    manifest.version.c_str());
+                if (!manifest.description.empty())
+                    ImGui::TextWrapped("%s",
+                        manifest.description.c_str());
+                drawPermissions(manifest.permissions);
+                bool exactInstalled = false;
+                bool packageInstalled = false;
+                for (const auto& package : packages)
+                {
+                    if (!package.active ||
+                        package.manifest.id != details.manifest.id)
+                        continue;
+                    packageInstalled = true;
+                    if (package.manifest.version ==
+                        details.manifest.version)
+                        exactInstalled = true;
+                }
+                ImGui::Spacing();
+                if (exactInstalled)
+                {
+                    ImGui::TextDisabled("%s",
+                        _L("app.settings.widgets_installed"));
+                }
+                else
+                {
+                    const char* installLabel = packageInstalled
+                        ? _L("app.settings.widgets_update")
+                        : _L("app.settings.widgets_install");
+                    if (BlueButton(installLabel))
+                    {
+                        installSourcePackage(
+                            details, widgetPackageSourceId_, false);
+                    }
+                }
+                ImGui::EndChild();
+                columnHeights[static_cast<std::size_t>(column)] +=
+                    ImGui::GetItemRectSize().y + cardGap;
+                ImGui::PopID();
+            }
+            const float gridHeight =
+                *std::max_element(
+                    columnHeights.begin(), columnHeights.end()) -
+                cardGap;
+            ImGui::SetCursorPos(ImVec2(
+                gridStart.x, gridStart.y + std::max(0.0f, gridHeight)));
+            ImGui::Dummy(ImVec2(0, 0));
+        }
+    }
+
+    ImGui::SeparatorText(_L("app.settings.widgets_management"));
+    static constexpr COMDLG_FILTERSPEC packageFilters[] = {
+        { L"SnowDesktop Component", L"*.snowwidget;widget.json" },
+        { L"All Files", L"*.*" },
+    };
+    if (BlueButton(_L("app.settings.widgets_install_package")))
+    {
+        if (const auto selected = PickSettingsFile(hwnd_,
+            _LW("app.settings.widgets_install_package"),
+            packageFilters,
+            static_cast<UINT>(std::size(packageFilters))))
+        {
+            installLocalPackage(*selected, false);
+        }
+    }
+    ImGui::Spacing();
+
+    const auto legacy = WidgetEngine::ListLegacyWidgetPackages();
+
+    ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.widgets_my_components"));
+    const int activePackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(),
+        [](const auto& package) { return package.active; }));
+    const int builtinPackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(), [](const auto& package)
+        {
+            return package.active && package.builtin;
+        }));
+    const int installedPackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(), [](const auto& package)
+        {
+            return package.active && !package.builtin &&
+                !package.development;
+        }));
+    const int developmentPackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(), [](const auto& package)
+        {
+            return package.active && package.development;
+        }));
+    if ((widgetPackageFilter_ == 1 && builtinPackageCount == 0) ||
+        (widgetPackageFilter_ == 2 && installedPackageCount == 0) ||
+        (widgetPackageFilter_ == 3 && developmentPackageCount == 0))
+    {
+        widgetPackageFilter_ = 0;
+    }
+    auto drawFilterTag = [&](int filter, const char* label, int count)
+    {
+        std::string text = label;
+        text += " ";
+        text += std::to_string(count);
+        const bool selected = widgetPackageFilter_ == filter;
+        if ((selected ? BlueButton(text.c_str())
+                      : SecondaryButton(text.c_str())))
+        {
+            widgetPackageFilter_ = filter;
+        }
+    };
+    drawFilterTag(0, _L("app.settings.widgets_filter_all"),
+        activePackageCount);
+    if (builtinPackageCount > 0)
+    {
+        ImGui::SameLine();
+        drawFilterTag(1,
+            _L("app.settings.widgets_filter_builtin"),
+            builtinPackageCount);
+    }
+    if (installedPackageCount > 0)
+    {
+        ImGui::SameLine();
+        drawFilterTag(2,
+            _L("app.settings.widgets_filter_installed"),
+            installedPackageCount);
+    }
+    if (developmentPackageCount > 0)
+    {
+        ImGui::SameLine();
+        drawFilterTag(3,
+            _L("app.settings.widgets_filter_development"),
+            developmentPackageCount);
+    }
+
+    if (!widgetPackageStatus_.empty())
+        ImGui::TextWrapped("%s", widgetPackageStatus_.c_str());
+
+    const int visiblePackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(), [&](const auto& package)
+        {
+            if (!package.active) return false;
+            if (widgetPackageFilter_ == 1) return package.builtin;
+            if (widgetPackageFilter_ == 2)
+                return !package.builtin && !package.development;
+            if (widgetPackageFilter_ == 3) return package.development;
+            return true;
+        }));
+    if (visiblePackageCount == 0)
+        ImGui::TextDisabled("%s",
+            _L("app.settings.widgets_filter_empty"));
+    if (visiblePackageCount > 0)
+    {
+        const float availableWidth =
+            ImGui::GetContentRegionAvail().x;
+        const float cardGap = 10.0f * dpiScale_;
+        const float minimumCardWidth = 250.0f * dpiScale_;
+        const int installedColumns = std::clamp(
+            static_cast<int>((availableWidth + cardGap) /
+                (minimumCardWidth + cardGap)), 1, 3);
+        const float cardWidth =
+            (availableWidth -
+                cardGap * static_cast<float>(installedColumns - 1)) /
+            static_cast<float>(installedColumns);
+        const ImVec2 gridStart = ImGui::GetCursorPos();
+        std::vector<float> columnHeights(
+            static_cast<std::size_t>(installedColumns), 0.0f);
+        for (const auto& package : packages)
+        {
+            if (!package.active) continue;
+            if (widgetPackageFilter_ == 1 && !package.builtin)
+                continue;
+            if (widgetPackageFilter_ == 2 &&
+                (package.builtin || package.development))
+                continue;
+            if (widgetPackageFilter_ == 3 && !package.development)
+                continue;
+            const auto shortest = std::min_element(
+                columnHeights.begin(), columnHeights.end());
+            const int column = static_cast<int>(
+                std::distance(columnHeights.begin(), shortest));
+            ImGui::SetCursorPos(ImVec2(
+                gridStart.x +
+                    static_cast<float>(column) *
+                        (cardWidth + cardGap),
+                gridStart.y + *shortest));
+            const auto manifest = localizedManifest(package.manifest);
+            ImGui::PushID(
+                (package.manifest.id + package.manifest.version).c_str());
+            const bool hasActions =
+                !package.builtin && !package.development;
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,
+                6.0f * dpiScale_);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                ImVec2(10.0f * dpiScale_, 9.0f * dpiScale_));
+            ImGui::BeginChild("##InstalledWidgetCard",
+                ImVec2(cardWidth, 0),
+                ImGuiChildFlags_Borders |
+                    ImGuiChildFlags_AlwaysUseWindowPadding |
+                    ImGuiChildFlags_AutoResizeY |
+                    ImGuiChildFlags_AlwaysAutoResize);
+            ImGui::PopStyleVar(2);
+            ImGui::TextUnformatted(manifest.name.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled(_L("app.settings.widgets_version"),
+                manifest.version.c_str());
+            if (!manifest.description.empty())
+                ImGui::TextWrapped("%s", manifest.description.c_str());
+            const char* kind = package.builtin
+                ? _L("app.settings.widgets_builtin")
+                : package.development
+                ? _L("app.settings.widgets_development")
+                : package.enabled
+                ? _L("app.settings.widgets_active")
+                : _L("app.settings.widgets_disabled");
+            ImGui::TextDisabled("%s", kind);
+            drawPermissions(package.grantedPermissions.empty()
+                ? manifest.permissions : package.grantedPermissions);
+            if (hasActions)
+            {
+                ImGui::Spacing();
+                const char* toggleLabel = package.enabled
+                    ? _L("app.settings.widgets_disable")
+                    : _L("app.settings.widgets_enable");
+                if (SecondaryButton(toggleLabel))
+                {
+                    std::string error;
+                    const bool enabled = !package.enabled;
+                    if (WidgetEngine::SetWidgetPackageEnabled(
+                        package.manifest.id, enabled, error))
+                    {
+                        widgetPackageStatus_ = enabled
+                            ? _L("app.settings.widgets_enabled_ok")
+                            : _L("app.settings.widgets_disabled_ok");
+                        if (!enabled && widgetEngine_)
+                        {
+                            std::vector<std::wstring> instances;
+                            for (const auto& widget :
+                                widgetEngine_->GetWidgets())
+                            {
+                                if (widget.packageId ==
+                                    package.manifest.id)
+                                {
+                                    instances.push_back(
+                                        widget.widgetId);
+                                }
+                            }
+                            for (const auto& instance : instances)
+                                widgetEngine_->UnloadWidget(instance);
+                        }
+                        if (reloadCallback_) reloadCallback_();
+                    }
+                    else widgetPackageStatus_ = error;
+                }
+                ImGui::SameLine();
+                if (SecondaryButton(
+                    _L("app.settings.widgets_uninstall")))
+                {
+                    pendingWidgetPackageUninstall_ =
+                        package.manifest.id;
+                }
+            }
+            ImGui::EndChild();
+            columnHeights[static_cast<std::size_t>(column)] +=
+                ImGui::GetItemRectSize().y + cardGap;
+            ImGui::PopID();
+        }
+        const float gridHeight =
+            *std::max_element(
+                columnHeights.begin(), columnHeights.end()) -
+            cardGap;
+        ImGui::SetCursorPos(ImVec2(
+            gridStart.x, gridStart.y + std::max(0.0f, gridHeight)));
+        ImGui::Dummy(ImVec2(0, 0));
+    }
+
+    if (ImGui::CollapsingHeader(
+        _L("app.settings.widgets_advanced")))
+    {
+        if (!legacy.empty())
+        {
+            ImGui::SeparatorText(
+                _L("app.settings.widgets_legacy_components"));
+            ImGui::TextWrapped("%s",
+                _L("app.settings.widgets_migration_required"));
+            ImGui::Text(_L("app.settings.widgets_legacy_count"),
+                static_cast<int>(legacy.size()));
+            if (BlueButton(
+                _L("app.settings.widgets_migrate_all")))
+            {
+                int migrated = 0;
+                std::ostringstream failures;
+                for (const auto& candidate : legacy)
+                {
+                    const auto result =
+                        WidgetEngine::MigrateLegacyWidgetPackage(
+                            candidate);
+                    if (result.ok)
+                        ++migrated;
+                    else
+                    {
+                        failures << WideToUtf8(candidate.legacyName)
+                            << ": " << result.error << '\n';
+                    }
+                }
+                char message[256]{};
+                std::snprintf(message, sizeof(message),
+                    _L("app.settings.widgets_migration_result"),
+                    migrated, static_cast<int>(legacy.size()));
+                widgetPackageStatus_ = message;
+                if (!failures.str().empty())
+                    widgetPackageStatus_ += "\n" + failures.str();
+                if (migrated > 0 && reloadCallback_)
+                    reloadCallback_();
+            }
+            ImGui::Spacing();
+        }
+
+        const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
+        auto countDirectories = [](const std::filesystem::path& path)
+        {
+            int count = 0;
+            std::error_code error;
+            for (std::filesystem::directory_iterator it(path, error), end;
+                !error && it != end; it.increment(error))
+            {
+                if (it->is_directory(error)) ++count;
+            }
+            return count;
+        };
+        ImGui::Text(_L("app.settings.widgets_storage_summary"),
+            countDirectories(packagePaths.development),
+            countDirectories(packagePaths.quarantine));
+
+        bool hasOlderVersions = false;
+        for (const auto& package : packages)
+        {
+            if (!package.active && !package.builtin &&
+                !package.development)
+            {
+                hasOlderVersions = true;
+                break;
+            }
+        }
+        if (hasOlderVersions)
+        {
+            ImGui::SeparatorText(
+                _L("app.settings.widgets_old_versions"));
+            for (const auto& package : packages)
+            {
+                if (package.active || package.builtin ||
+                    package.development)
+                    continue;
+                const auto manifest = localizedManifest(package.manifest);
+                ImGui::PushID(("rollback-" + package.manifest.id +
+                    package.manifest.version).c_str());
+                ImGui::TextUnformatted(manifest.name.c_str());
+                ImGui::SameLine();
+                ImGui::TextDisabled(
+                    _L("app.settings.widgets_version"),
+                    manifest.version.c_str());
+                if (ImGui::Button(
+                    _L("app.settings.widgets_rollback_action")))
+                {
+                    std::string error;
+                    if (WidgetEngine::RollbackWidgetPackage(
+                        package.manifest.id, package.manifest.version,
+                        error))
+                    {
+                        if (widgetEngine_)
+                        {
+                            std::vector<std::wstring> instances;
+                            for (const auto& widget :
+                                widgetEngine_->GetWidgets())
+                            {
+                                if (widget.packageId ==
+                                    package.manifest.id)
+                                {
+                                    instances.push_back(widget.widgetId);
+                                }
+                            }
+                            for (const auto& instance : instances)
+                                widgetEngine_->ReloadWidget(instance);
+                        }
+                        widgetPackageStatus_ =
+                            _L("app.settings.widgets_rollback_ok");
+                        if (reloadCallback_) reloadCallback_();
+                    }
+                    else widgetPackageStatus_ = error;
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::Spacing();
+        DrawWidgetDeveloperTools();
+    }
+
+    if (pendingWidgetInstallKind_ != PendingWidgetInstallKind::None)
+        ImGui::OpenPopup("##ConfirmWidgetPackageInstall");
+    if (ImGui::BeginPopupModal("##ConfirmWidgetPackageInstall", nullptr,
+        ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("%s",
+            _L("app.settings.widgets_install_confirm"));
+        if (!pendingWidgetInstallReason_.empty())
+        {
+            const std::string rawReason =
+                WideToUtf8(pendingWidgetInstallReason_);
+            const std::string permissionMarker =
+                "requests a new permission: ";
+            const std::string domainMarker =
+                "expands network access to: ";
+            if (const auto position = rawReason.find(permissionMarker);
+                position != std::string::npos)
+            {
+                const std::string permission = rawReason.substr(
+                    position + permissionMarker.size());
+                ImGui::TextWrapped(
+                    _L("app.settings.widgets_new_permission"),
+                    permissionLabel(permission));
+            }
+            else if (const auto position = rawReason.find(domainMarker);
+                position != std::string::npos)
+            {
+                ImGui::TextWrapped(
+                    _L("app.settings.widgets_new_website"),
+                    rawReason.substr(position + domainMarker.size()).c_str());
+            }
+            else
+            {
+                ImGui::TextWrapped("%s",
+                    _L("app.settings.widgets_source_change"));
+            }
+            if (ImGui::CollapsingHeader(
+                _L("app.settings.widgets_technical_details")))
+            {
+                ImGui::TextWrapped("%s", rawReason.c_str());
+            }
+        }
+        if (BlueButton(_L("app.settings.widgets_confirm_install")))
+        {
+            const auto kind = pendingWidgetInstallKind_;
+            const std::filesystem::path path =
+                pendingWidgetInstallPath_;
+            const std::string externalId =
+                pendingWidgetInstallExternalId_;
+            const std::string version = pendingWidgetInstallVersion_;
+            const std::string providerId =
+                pendingWidgetInstallProviderId_;
+            pendingWidgetInstallKind_ = PendingWidgetInstallKind::None;
+            if (kind == PendingWidgetInstallKind::Local)
+            {
+                installLocalPackage(path, true);
+            }
+            else
+            {
+                snowdesktop::widget::PackageDetails details;
+                details.source.externalItemId = externalId;
+                details.manifest.version = version;
+                installSourcePackage(details, providerId, true);
+            }
+            if (pendingWidgetInstallKind_ ==
+                PendingWidgetInstallKind::None)
+                ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(_L("app.settings.cancel")))
+        {
+            pendingWidgetInstallKind_ = PendingWidgetInstallKind::None;
+            pendingWidgetInstallPath_.clear();
+            pendingWidgetInstallProviderId_.clear();
+            pendingWidgetInstallExternalId_.clear();
+            pendingWidgetInstallVersion_.clear();
+            pendingWidgetInstallReason_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (!pendingWidgetPackageUninstall_.empty())
+        ImGui::OpenPopup("##ConfirmWidgetPackageUninstall");
+    if (ImGui::BeginPopupModal("##ConfirmWidgetPackageUninstall", nullptr,
+        ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("%s",
+            _L("app.settings.widgets_uninstall_confirm"));
+        if (BlueButton(_L("app.settings.widgets_uninstall")))
+        {
+            std::string error;
+            const std::string packageId = pendingWidgetPackageUninstall_;
+            if (widgetEngine_)
+            {
+                std::vector<std::wstring> instances;
+                for (const auto& widget : widgetEngine_->GetWidgets())
+                    if (widget.packageId == packageId)
+                        instances.push_back(widget.widgetId);
+                for (const auto& instance : instances)
+                    widgetEngine_->UnloadWidget(instance);
+            }
+            if (WidgetEngine::UninstallWidgetPackage(packageId, error))
+            {
+                widgetPackageStatus_ =
+                    _L("app.settings.widgets_uninstall_ok");
+                pendingWidgetPackageUninstall_.clear();
+                ImGui::CloseCurrentPopup();
+                if (reloadCallback_) reloadCallback_();
+            }
+            else widgetPackageStatus_ = error;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(_L("app.settings.cancel")))
+        {
+            pendingWidgetPackageUninstall_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::EndChild();
+}
+
+void SettingsWindow::DrawWidgetDeveloperTools()
+{
+    if (!ImGui::CollapsingHeader(
+        _L("app.settings.widgets_developer_tools")))
+        return;
+
+    const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
+    std::error_code createError;
+    std::filesystem::create_directories(
+        packagePaths.development, createError);
+    if (SecondaryButton(
+        _L("app.settings.widgets_open_development_folder")))
+    {
+        ShellExecuteW(nullptr, L"open",
+            packagePaths.development.c_str(), nullptr, nullptr, SW_SHOW);
+    }
+    ImGui::SameLine();
+    if (SecondaryButton(
+        _L("app.settings.widgets_open_build_skill")))
+    {
+        const std::filesystem::path source =
+            packagePaths.builtin / L"snowdesktop-lua-widget";
+        std::filesystem::path target = source;
+        std::error_code skillError;
+        if (!std::filesystem::is_directory(source, skillError))
+        {
+            widgetPackageStatus_ =
+                _L("app.settings.widgets_build_skill_missing");
+        }
+        else
+        {
+            if (snowdesktop::deployment::IsPackaged())
+            {
+                target = packagePaths.registry.parent_path() /
+                    L"authoring" / L"snowdesktop-lua-widget";
+                if (!CopyDirectoryContents(source, target))
+                {
+                    widgetPackageStatus_ =
+                        _L("app.settings.widgets_build_skill_export_failed");
+                    target.clear();
+                }
+            }
+            if (!target.empty())
+            {
+                ShellExecuteW(nullptr, L"open", target.c_str(),
+                    nullptr, nullptr, SW_SHOW);
+            }
+        }
     }
     ImGui::Spacing();
 
@@ -2905,7 +3802,7 @@ void SettingsWindow::DrawDebugPage()
         errors = widgetEngine_->GetWidgetErrors();
     ImGui::Text(_L("app.settings.error_count"), static_cast<int>(errors.size()));
     ImGui::SameLine();
-    if (BlueButton(_L("app.settings.copy_all")))
+    if (SecondaryButton(_L("app.settings.copy_all")))
     {
         std::string copyText;
         for (const auto& e : errors)
@@ -2917,7 +3814,7 @@ void SettingsWindow::DrawDebugPage()
         ImGui::SetClipboardText(copyText.c_str());
     }
     ImGui::SameLine();
-    if (BlueButton(_L("app.settings.clear_all")))
+    if (SecondaryButton(_L("app.settings.clear_all")))
     {
         if (widgetEngine_)
             widgetEngine_->ClearWidgetErrors();
@@ -2962,7 +3859,7 @@ void SettingsWindow::DrawDebugPage()
     }
     else
     {
-        if (BlueButton(_L("app.settings.copy_diag")))
+        if (SecondaryButton(_L("app.settings.copy_diag")))
         {
             std::string text;
             for (const auto& d : diagnostics)
@@ -3008,7 +3905,7 @@ void SettingsWindow::DrawDebugPage()
                 if (!d.lastError.empty())
                     ImGui::TextWrapped(_L("app.settings.debug_last_error"),
                         d.lastError.c_str());
-                if (BlueButton((std::string(_L("app.settings.reload")) + "##" +
+                if (SecondaryButton((std::string(_L("app.settings.reload")) + "##" +
                     WideToUtf8(d.widgetId)).c_str(), ImVec2(96, 0)))
                 {
                     if (widgetEngine_)
@@ -3027,7 +3924,32 @@ void SettingsWindow::DrawDebugPage()
         }
         ImGui::EndChild();
     }
+}
 
+void SettingsWindow::DrawDebugPage()
+{
+    const float pad = 16.0f * dpiScale_;
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##DebugPageInner", pageSize,
+        ImGuiChildFlags_Borders |
+            ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+
+    ImGui::Text("%s", _L("app.settings.debug_page"));
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (DrawCollapsingHeaderWithHelp(
+        _L("app.settings.crash_test"),
+        _L("app.settings.crash_test_desc")))
+    {
+        ImGui::Spacing();
+        if (BlueButton(_L("app.settings.trigger_crash")))
+            TriggerCrashForTesting();
+        ImGui::Spacing();
+    }
     ImGui::EndChild();
 }
 

@@ -1,4 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "3a8b02f9-560c-49b9-9b22-bc4405d863ea",
+  "slug": "rss-reader",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
   "name": "RSS Reader",
   "nameKey": "lua_widget.rss_reader.name",
   "version": "2.0.0",
@@ -49,5 +58,5 @@
   "defaultSize": { "columns": 3, "rows": 2 },
   "minSize": { "columns": 2, "rows": 2 },
   "permissions": ["network.http", "ui.input", "desktop.action", "ui.contextMenu"],
-  "networkDomains": ["*"]
+  "networkDomains": ["www.ithome.com"]
 }

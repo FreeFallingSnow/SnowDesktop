@@ -1,4 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "64107f41-197a-426a-8f86-6eeb020f56b0",
+  "slug": "analog-clock",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
   "name": "Analog Clock",
   "nameKey": "lua_widget.analog_clock.name",
   "version": "1.0.0",

@@ -1,4 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "5b22d9ef-3802-48a3-8632-dcf9a3c41668",
+  "slug": "quick-launcher",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
   "name": "Quick Launcher",
   "nameKey": "lua_widget.quick_launcher.name",
   "version": "1.0.0",

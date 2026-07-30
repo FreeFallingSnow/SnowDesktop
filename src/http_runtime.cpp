@@ -1,14 +1,93 @@
 #include "http_runtime.h"
 
 #include <windows.h>
+#include <ws2tcpip.h>
 #include <winhttp.h>
 #include <shlwapi.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <mutex>
 
 namespace
 {
 constexpr DWORD kMaxResponseBytes = 1024 * 1024;
+
+bool IsPrivateIpv4(const IN_ADDR& address)
+{
+    const std::uint32_t value = ntohl(address.S_un.S_addr);
+    const std::uint8_t first = static_cast<std::uint8_t>(value >> 24);
+    const std::uint8_t second = static_cast<std::uint8_t>(value >> 16);
+    if (first == 0 || first == 10 || first == 127 || first >= 224)
+        return true;
+    if (first == 169 && second == 254) return true;
+    if (first == 172 && second >= 16 && second <= 31) return true;
+    if (first == 192 && second == 168) return true;
+    if (first == 100 && second >= 64 && second <= 127) return true;
+    return false;
+}
+
+bool IsPrivateIpv6(const IN6_ADDR& address)
+{
+    if (IN6_IS_ADDR_UNSPECIFIED(&address) ||
+        IN6_IS_ADDR_LOOPBACK(&address) ||
+        IN6_IS_ADDR_LINKLOCAL(&address) ||
+        IN6_IS_ADDR_MULTICAST(&address))
+        return true;
+    const auto* bytes = address.u.Byte;
+    if ((bytes[0] & 0xfe) == 0xfc ||
+        (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0xc0))
+        return true;
+    if (IN6_IS_ADDR_V4MAPPED(&address))
+    {
+        IN_ADDR mapped{};
+        std::memcpy(&mapped, bytes + 12, sizeof(mapped));
+        return IsPrivateIpv4(mapped);
+    }
+    return false;
+}
+
+bool HostResolvesToPublicAddress(const std::wstring& host)
+{
+    static std::once_flag winsockOnce;
+    static bool winsockReady = false;
+    std::call_once(winsockOnce, []
+    {
+        WSADATA data{};
+        winsockReady = WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    });
+    if (!winsockReady) return false;
+    ADDRINFOW hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    PADDRINFOW addresses = nullptr;
+    if (GetAddrInfoW(host.c_str(), nullptr, &hints, &addresses) != 0 ||
+        !addresses)
+        return false;
+    bool foundPublic = false;
+    bool foundPrivate = false;
+    for (auto* current = addresses; current; current = current->ai_next)
+    {
+        if (current->ai_family == AF_INET)
+        {
+            const auto* ipv4 =
+                reinterpret_cast<const SOCKADDR_IN*>(current->ai_addr);
+            if (IsPrivateIpv4(ipv4->sin_addr)) foundPrivate = true;
+            else foundPublic = true;
+        }
+        else if (current->ai_family == AF_INET6)
+        {
+            const auto* ipv6 =
+                reinterpret_cast<const SOCKADDR_IN6*>(current->ai_addr);
+            if (IsPrivateIpv6(ipv6->sin6_addr)) foundPrivate = true;
+            else foundPublic = true;
+        }
+    }
+    FreeAddrInfoW(addresses);
+    return foundPublic && !foundPrivate;
+}
 
 std::string WideToUtf8Http(const std::wstring& value)
 {
@@ -41,23 +120,30 @@ bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
     components.lpszHostName = host;
     components.dwHostNameLength = static_cast<DWORD>(std::size(host));
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components)) return false;
-    if (components.nScheme != INTERNET_SCHEME_HTTP &&
-        components.nScheme != INTERNET_SCHEME_HTTPS)
+    if (components.nScheme != INTERNET_SCHEME_HTTPS)
         return false;
     std::wstring actual = Lower(std::wstring(host, components.dwHostNameLength));
+    if (actual == L"localhost" || actual == L"::1" ||
+        actual.ends_with(L".localhost") || actual.ends_with(L".local") ||
+        actual.starts_with(L"127.") || actual.starts_with(L"10.") ||
+        actual.starts_with(L"192.168.") || actual.starts_with(L"169.254.") ||
+        actual.starts_with(L"0."))
+        return false;
+    if (actual.starts_with(L"172."))
+    {
+        const size_t nextDot = actual.find(L'.', 4);
+        if (nextDot != std::wstring::npos)
+        {
+            const int secondOctet = _wtoi(
+                actual.substr(4, nextDot - 4).c_str());
+            if (secondOctet >= 16 && secondOctet <= 31) return false;
+        }
+    }
     for (const auto& raw : domains)
     {
         std::wstring allowed(raw.begin(), raw.end());
         allowed = Lower(allowed);
-        if (allowed == L"*") return true;
         if (allowed == actual) return true;
-        if (allowed.starts_with(L"*."))
-        {
-            std::wstring suffix = allowed.substr(1);
-            if (actual.size() > suffix.size() &&
-                actual.compare(actual.size() - suffix.size(), suffix.size(), suffix) == 0)
-                return true;
-        }
     }
     return false;
 }
@@ -213,8 +299,15 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             response.error = "Invalid URL";
             break;
         }
+        const std::wstring currentHost(host, components.dwHostNameLength);
+        if (!HostResolvesToPublicAddress(currentHost))
+        {
+            response.error =
+                "Host resolves to a private, local, or unavailable address";
+            break;
+        }
         HINTERNET connection = WinHttpConnect(session,
-            std::wstring(host, components.dwHostNameLength).c_str(),
+            currentHost.c_str(),
             components.nPort, 0);
         if (!connection)
         {

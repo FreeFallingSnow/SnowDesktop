@@ -1947,7 +1947,7 @@ inline void DesktopApp::LoadLayoutSlots()
                         if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
                         std::string obj = text.substr(wp, objectEnd - wp + 1);
                         std::string idUtf8, typeUtf8, titleUtf8, customTitleUtf8,
-                            titleModeUtf8, sourceUtf8, scriptUtf8,
+                            titleModeUtf8, sourceUtf8, packageIdUtf8, scriptUtf8,
                             activeCategoryUtf8, pageUtf8;
                         int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0,
                             tabScrollOffset = 0,
@@ -1974,7 +1974,10 @@ inline void DesktopApp::LoadLayoutSlots()
                         const bool hasTitleMode =
                             ReadJsonStringField(obj, "titleMode", titleModeUtf8);
                         ReadJsonStringField(obj, "sourceFolderPath", sourceUtf8);
+                        ReadJsonStringField(obj, "packageId", packageIdUtf8);
                         ReadJsonStringField(obj, "scriptPath", scriptUtf8);
+                        if (scriptUtf8.empty())
+                            ReadJsonStringField(obj, "legacyScriptPath", scriptUtf8);
                         ReadJsonStringField(obj, "activeCategory", activeCategoryUtf8);
                         ReadJsonIntField(obj, "w", w);
                         ReadJsonIntField(obj, "h", h);
@@ -1999,13 +2002,29 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         widget.id = Utf8ToWide(idUtf8);
                         widget.type = WidgetTypeFromJson(Utf8ToWide(typeUtf8));
                         widget.sourceFolderPath = Utf8ToWide(sourceUtf8);
-                        widget.scriptPath = Utf8ToWide(scriptUtf8);
+                        widget.packageId = Utf8ToWide(packageIdUtf8);
+                        if (widget.packageId.empty())
+                            widget.legacyScriptPath = Utf8ToWide(scriptUtf8);
+                        if (widget.packageId.empty() &&
+                            !widget.legacyScriptPath.empty())
+                        {
+                            if (const auto migrated =
+                                WidgetEngine::ResolveLegacyWidgetPackage(
+                                    widget.legacyScriptPath))
+                            {
+                                widget.packageId = *migrated;
+                                widget.legacyScriptPath.clear();
+                                legacyWidgetLayoutMigrationPending_ = true;
+                            }
+                        }
                         if (titleUtf8.empty())
                         {
                             if (widget.type == DesktopWidgetType::LuaScript)
                             {
-                                widget.title = WidgetEngine::GetWidgetDisplayName(widget.scriptPath);
-                                if (widget.title.empty()) widget.title = widget.scriptPath;
+                                widget.title = WidgetEngine::GetWidgetDisplayName(widget.packageId);
+                                if (widget.title.empty())
+                                    widget.title = !widget.legacyScriptPath.empty()
+                                        ? widget.legacyScriptPath : widget.packageId;
                             }
                             else if (widget.type == DesktopWidgetType::Guide)
                             {
@@ -2106,7 +2125,7 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                                 break;
                             case DesktopWidgetType::LuaScript:
                                 usesDefaultTitle = WidgetEngine::IsWidgetDefaultName(
-                                    widget.scriptPath, widget.title);
+                                    widget.packageId, widget.title);
                                 break;
                             case DesktopWidgetType::FolderMapping:
                             default:
@@ -2116,7 +2135,7 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                                 widget.customTitle = widget.title;
                             else if (widget.type == DesktopWidgetType::LuaScript &&
                                 widget.title != WidgetEngine::GetWidgetDisplayName(
-                                    widget.scriptPath))
+                                    widget.packageId))
                                 widget.scriptTitle = widget.title;
                         }
                         widget.userRenamed = !widget.customTitle.empty();
@@ -2124,7 +2143,7 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                             widget.type == DesktopWidgetType::LuaScript &&
                             widget.scriptTitle.empty() && !widget.title.empty() &&
                             !WidgetEngine::IsWidgetDefaultName(
-                                widget.scriptPath, widget.title))
+                                widget.packageId, widget.title))
                         {
                             widget.scriptTitle = widget.title;
                         }
@@ -2549,7 +2568,8 @@ inline void DesktopApp::SaveLayoutSlots()
              << "\", \"titleMode\": \"" << (hasCustomTitle ? "custom" : "auto")
              << "\", \"customTitle\": \"" << JsonEscapeUtf8(w.customTitle)
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
-             << "\", \"scriptPath\": \"" << JsonEscapeUtf8(w.scriptPath)
+             << "\", \"packageId\": \"" << JsonEscapeUtf8(w.packageId)
+             << "\", \"legacyScriptPath\": \"" << JsonEscapeUtf8(w.legacyScriptPath)
              << "\", \"activeCategory\": \"" << JsonEscapeUtf8(w.activeCategoryId)
              << "\", \"page\": \"" << JsonEscapeUtf8(w.gridCell.pageId)
              << "\", \"x\": " << w.gridCell.column
@@ -7036,9 +7056,9 @@ inline void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
     {
         widget.minGridSpan = { 2, 2 };
     }
-    else if (widget.type == DesktopWidgetType::LuaScript && !widget.scriptPath.empty())
+    else if (widget.type == DesktopWidgetType::LuaScript && !widget.packageId.empty())
     {
-        LuaWidgetManifest manifest = WidgetEngine::GetWidgetManifest(widget.scriptPath);
+        LuaWidgetManifest manifest = WidgetEngine::GetWidgetManifest(widget.packageId);
         widget.minGridSpan = {
             std::max(1, manifest.minColumns),
             std::max(1, manifest.minRows)
@@ -7882,32 +7902,30 @@ inline void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
  * @param screenPoint 屏幕坐标点。
  * @param scriptFilename 脚本文件名。
  */
-inline void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename)
+inline void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId)
 {
-    if (scriptFilename.empty()) return;
+    if (packageId.empty()) return;
     lastContextMenuScreenPoint_ = screenPoint;
 
     DesktopWidget w;
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::LuaScript;
-    w.title = WidgetEngine::GetWidgetDisplayName(scriptFilename);
+    w.title = WidgetEngine::GetWidgetDisplayName(packageId);
     if (w.title.empty())
     {
-        w.title = scriptFilename;
-        if (w.title.size() > 4 && ToUpperInvariant(w.title.substr(w.title.size() - 4)) == L".LUA")
-            w.title.resize(w.title.size() - 4);
+        w.title = packageId;
     }
-    w.scriptPath = scriptFilename;
+    w.packageId = packageId;
     w.bottomBarHover = true;
     if (widgetEngine_)
     {
-        widgetEngine_->EnsureWidgetLoaded(w.id, scriptFilename);
-        w.showTitle = widgetEngine_->ReadBoolFlag(scriptFilename, "showTitle", false);
-        w.bottomBarHover = widgetEngine_->ReadBoolFlag(scriptFilename, "bottomBarHover", true);
+        widgetEngine_->EnsureWidgetLoaded(w.id, packageId);
+        w.showTitle = widgetEngine_->ReadBoolFlag(packageId, "showTitle", false);
+        w.bottomBarHover = widgetEngine_->ReadBoolFlag(packageId, "bottomBarHover", true);
     }
     int defaultColumns = 1;
     int defaultRows = 1;
-    WidgetEngine::GetWidgetDefaultSpan(scriptFilename, defaultColumns, defaultRows);
+    WidgetEngine::GetWidgetDefaultSpan(packageId, defaultColumns, defaultRows);
     AddWidgetToGrid(std::move(w), { defaultColumns, defaultRows });
     ShowWidgetAddedHint();
 }

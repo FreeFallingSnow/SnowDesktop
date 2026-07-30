@@ -26,6 +26,7 @@
 #include <wrl/client.h>
 #include "system_snapshot.h"
 #include "http_runtime.h"
+#include "widget_package.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -41,13 +42,26 @@ extern "C" {
 #include <functional>
 #include <chrono>
 #include <atomic>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 
 using Microsoft::WRL::ComPtr;
 
 struct D2DState;
+
+struct LuaRuntimeQuota
+{
+    std::size_t memoryBytes = 0;
+    std::size_t memoryLimit = 16u * 1024u * 1024u;
+    std::int64_t instructionsRemaining = 0;
+    std::chrono::steady_clock::time_point deadline{};
+    bool memoryExceeded = false;
+    bool executionExceeded = false;
+    double lastExecutionMs = 0.0;
+};
 
 /**
  * @struct LuaWidgetManifest
@@ -76,6 +90,11 @@ struct LuaWidgetManifest
         bool isDefault = false;
     };
     bool hasManifest = false;          ///< 是否存在清单文件
+    int schemaVersion = 0;             ///< 组件包清单版本
+    std::string packageId;             ///< 不可变组件包 UUID
+    std::string slug;                  ///< 人类可读短名称
+    int apiVersion = 0;                ///< Lua 宿主 API 契约版本
+    int dataVersion = 1;               ///< 实例存储结构版本
     std::string name;                  ///< 小部件显示名称
     std::string nameKey;               ///< 小部件名称翻译键
     std::string version;               ///< 版本号字符串
@@ -160,11 +179,19 @@ struct WidgetDiagnosticEntry
     std::wstring widgetId;              ///< 小部件实例 ID
     std::string name;                   ///< 小部件名称
     std::wstring scriptPath;            ///< 脚本文件路径
+    std::string packageId;
+    std::string packageVersion;
     bool valid = false;                 ///< 是否成功加载并处于有效状态
     bool hasManifest = false;           ///< 是否包含清单文件
     std::vector<std::string> permissions; ///< 已授予的权限列表
     std::string lastError;              ///< 最近一次错误信息
     std::vector<WidgetLogEntry> logs;   ///< 运行时日志列表
+    std::size_t memoryBytes = 0;
+    std::size_t memoryLimit = 0;
+    double lastCallbackMs = 0.0;
+    bool executionQuotaExceeded = false;
+    bool memoryQuotaExceeded = false;
+    bool circuitOpen = false;
 };
 
 /**
@@ -234,6 +261,10 @@ struct LuaWidget
         int viewportHeight = 0;
     };
     std::wstring widgetId;               ///< 小部件实例唯一 ID
+    std::string packageId;                ///< 组件包 UUID
+    std::filesystem::path packageRoot;    ///< 已校验组件包根目录
+    lua_State* state = nullptr;           ///< Per-instance Lua VM
+    std::unique_ptr<LuaRuntimeQuota> quota; ///< VM memory/instruction accounting
     std::string name;                    ///< 小部件名称
     std::wstring filePath;               ///< Lua 脚本文件的完整路径
     LuaWidgetManifest manifest;          ///< 从清单文件解析的元数据
@@ -252,6 +283,11 @@ struct LuaWidget
     bool hostVisible = false;
     bool usesSystemSnapshot = false;
     bool usesMediaSnapshot = false;
+    double lastCallbackMs = 0.0;
+    std::uint32_t consecutiveErrors = 0;
+    bool circuitOpen = false;
+    std::chrono::steady_clock::time_point notificationWindow{};
+    std::uint32_t notificationsInWindow = 0;
     std::chrono::steady_clock::time_point lastRenderTime{};
     UINT_PTR refreshTimerId = 0;        ///< 宿主分配的独立 Win32 定时器 ID（0 = 未开）
     struct Timer
@@ -357,6 +393,7 @@ public:
      * @param widgetId 要卸载的小部件 ID
      */
     void UnloadWidget(const std::wstring& widgetId);
+    void DeleteWidgetInstance(const std::wstring& widgetId);
 
     /**
      * @brief 重新加载指定小部件实例
@@ -533,7 +570,56 @@ public:
      * @return 成功读取返回 true
      */
     static bool GetWidgetDefaultSpan(const std::wstring& filename, int& columns, int& rows);
-    static bool InstallWidgetPackage(const std::wstring& manifestPath, std::wstring& error);
+    static bool InstallWidgetPackage(const std::wstring& manifestPath,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false,
+        snowdesktop::widget::InstalledPackage* installed = nullptr);
+    bool InstallAndVerifyWidgetPackage(const std::wstring& path,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    static snowdesktop::widget::ProviderStatus GetStaticWidgetCatalogStatus(
+        const std::filesystem::path& catalogPath);
+    static void RegisterWidgetPackageSource(
+        std::shared_ptr<snowdesktop::widget::IWidgetPackageSource> source);
+    static bool ConfigureStaticWidgetCatalog(
+        const std::filesystem::path& catalogPath, std::string& error);
+    static std::vector<snowdesktop::widget::PackageSourceInfo>
+        ListWidgetPackageSources();
+    static std::vector<snowdesktop::widget::PackageDetails>
+        QueryWidgetPackageSource(const std::string& providerId,
+            const snowdesktop::widget::PackageQuery& query,
+            std::string& error);
+    bool InstallAndVerifyWidgetPackageFromSource(
+        const std::string& providerId, const std::string& externalItemId,
+        const std::string& version, std::wstring& error,
+        bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    int ApplySafeWidgetPackageUpdates(const std::string& providerId,
+        std::string& report);
+    static std::vector<snowdesktop::widget::PackageDetails>
+        QueryStaticWidgetCatalog(const std::filesystem::path& catalogPath,
+            const snowdesktop::widget::PackageQuery& query,
+            std::string& error);
+    bool InstallAndVerifyStaticWidgetPackage(
+        const std::filesystem::path& catalogPath,
+        const std::string& externalItemId, const std::string& version,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    static snowdesktop::widget::PackagePaths GetWidgetPackagePaths();
+    static std::vector<snowdesktop::widget::InstalledPackage>
+        ListWidgetPackages();
+    static std::vector<snowdesktop::widget::LegacyPackage>
+        ListLegacyWidgetPackages();
+    static std::optional<std::wstring> ResolveLegacyWidgetPackage(
+        const std::wstring& legacyName);
+    static snowdesktop::widget::LegacyMigrationResult MigrateLegacyWidgetPackage(
+        const snowdesktop::widget::LegacyPackage& legacy);
+    static bool SetWidgetPackageEnabled(const std::string& packageId,
+        bool enabled, std::string& error);
+    static bool RollbackWidgetPackage(const std::string& packageId,
+        const std::string& version, std::string& error);
+    static bool UninstallWidgetPackage(const std::string& packageId,
+        std::string& error);
 
     /**
      * @brief 渲染指定小部件的 ImGui 编辑器界面
@@ -556,6 +642,7 @@ public:
      * @return 拥有权限返回 true，否则返回 false
      */
     bool RuntimeHasPermission(const std::wstring& widgetId, const char* permission) const;
+    void ActivateWidgetState(const std::wstring& widgetId);
 
     /**
      * @brief 记录运行时错误
@@ -598,6 +685,8 @@ public:
      * @return 操作成功返回 true
      */
     bool RuntimeRevealDesktopPath(const std::wstring& path);
+    std::optional<std::wstring> RuntimeResolvePackageAsset(
+        const std::wstring& widgetId, const std::wstring& relativePath) const;
 
     /**
      * @brief 请求宿主刷新桌面内容
@@ -669,7 +758,8 @@ public:
      * @param title 通知标题
      * @param message 通知内容
      */
-    void RuntimeNotify(const std::wstring& title, const std::wstring& message);
+    void RuntimeNotify(const std::wstring& widgetId,
+        const std::wstring& title, const std::wstring& message);
     CpuSnapshot RuntimeGetCpuSnapshot(const std::wstring& widgetId);
     MemorySnapshot RuntimeGetMemorySnapshot(const std::wstring& widgetId);
     BatterySnapshot RuntimeGetBatterySnapshot(const std::wstring& widgetId);
@@ -696,6 +786,10 @@ public:
     std::vector<LuaWidget::HostControl> GetScrollControls(const std::wstring& widgetId) const;
 
 private:
+    bool VerifyInstalledWidgetPackage(const std::string& packageId,
+        const std::optional<std::string>& previousVersion,
+        std::wstring& error);
+
     /**
      * @brief 内部加载小部件脚本到沙箱
      * @param path Lua 脚本文件路径

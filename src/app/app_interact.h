@@ -814,10 +814,10 @@ inline void DesktopApp::ApplyLanguageChange()
             defaultTitle = _LW("app.guide.title");
             break;
         case DesktopWidgetType::LuaScript:
-            if (widgetEngine_ && !widget.scriptPath.empty())
+            if (widgetEngine_ && !widget.packageId.empty())
             {
                 if (!widgetEngine_->ReloadWidget(widget.id))
-                    widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
+                    widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
                 widgetEngine_->NotifyLanguageChanged(widget.id);
                 const auto& runtimeWidgets = widgetEngine_->GetWidgets();
                 auto runtime = std::find_if(runtimeWidgets.begin(), runtimeWidgets.end(),
@@ -1975,7 +1975,7 @@ inline void DesktopApp::SelectWidgetOnly(size_t index)
         for (auto& e : w.folderEntries) e.selected = false;
     }
     if (widgetEngine_ && widgets_[index].type == DesktopWidgetType::LuaScript &&
-        widgetEngine_->EnsureWidgetLoaded(widgets_[index].id, widgets_[index].scriptPath))
+        widgetEngine_->EnsureWidgetLoaded(widgets_[index].id, widgets_[index].packageId))
         widgetEngine_->InvokeSelected(widgets_[index].id);
 }
 
@@ -2507,7 +2507,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (widgetEngine_ && widgets_[wi].type == DesktopWidgetType::LuaScript)
         {
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[wi]);
-            widgetEngine_->EnsureWidgetLoaded(widgets_[wi].id, widgets_[wi].scriptPath);
+            widgetEngine_->EnsureWidgetLoaded(widgets_[wi].id, widgets_[wi].packageId);
             int localX = pt.x - frame.left;
             int localY = pt.y - frame.top;
             if (!widgetEngine_->HandleHostUiPointer(widgets_[wi].id, localX, localY, 0, false))
@@ -2958,7 +2958,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         {
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
             widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
-                widgets_[mouseDownWidgetIndex_].scriptPath);
+                widgets_[mouseDownWidgetIndex_].packageId);
             widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseMove",
                 current.x - frame.left, current.y - frame.top,
                 (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
@@ -4047,7 +4047,7 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         {
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
             widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
-                widgets_[mouseDownWidgetIndex_].scriptPath);
+                widgets_[mouseDownWidgetIndex_].packageId);
             widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseUp",
                 upPoint.x - frame.left, upPoint.y - frame.top, 1, 0);
             widgetEngine_->InvokeClick(widgets_[mouseDownWidgetIndex_].id,
@@ -9165,7 +9165,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     {
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
         RECT frame = GetStandaloneWidgetFrameRect(widgets_[luaWidget]);
-        widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].scriptPath);
+        widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].packageId);
         int localX = pt.x - frame.left;
         int localY = pt.y - frame.top;
         if (!widgetEngine_->HandleHostUiPointer(widgets_[luaWidget].id, localX, localY, delta, true))
@@ -10448,7 +10448,7 @@ inline void DesktopApp::CommitRename(bool cancel)
                 if (!widget.scriptTitle.empty())
                     widget.title = widget.scriptTitle;
                 else if (widget.type == DesktopWidgetType::LuaScript)
-                    widget.title = WidgetEngine::GetWidgetDisplayName(widget.scriptPath);
+                    widget.title = WidgetEngine::GetWidgetDisplayName(widget.packageId);
                 else if (widget.type == DesktopWidgetType::FileCategories)
                     widget.title = _LW("widget.desktop_files");
                 else if (widget.type == DesktopWidgetType::Guide)
@@ -12514,7 +12514,7 @@ inline void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
     const auto& widget = widgets_[widgetIndex];
     if (widget.type != DesktopWidgetType::LuaScript) return;
     settingsWindow_->ShowWidgetEditor(widgetIndex, widget.id.c_str(),
-        widget.title.c_str(), widget.scriptPath.c_str());
+        widget.title.c_str(), widget.packageId.c_str());
 }
 
 /**
@@ -12786,7 +12786,7 @@ inline void DesktopApp::ShowWidgetContextMenu(
         AppendMenuW(menu, MF_STRING, kContextWidgetEdit, _LW("app.interact.detailed_settings"));
         if (widgetEngine_)
         {
-            widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
+            widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
             luaMenuItems = widgetEngine_->GetContextMenu(widget.id);
             for (size_t i = 0; i < luaMenuItems.size() &&
                 kContextLuaWidgetMenuFirst + static_cast<UINT>(i) <= kContextLuaWidgetMenuLast; ++i)
@@ -13145,7 +13145,7 @@ inline void DesktopApp::ShowWidgetContextMenu(
             ReleaseFileGroupChildren(widgetIndex);
         }
         if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript && widgetEngine_)
-            widgetEngine_->UnloadWidget(widgets_[widgetIndex].id);
+            widgetEngine_->DeleteWidgetInstance(widgets_[widgetIndex].id);
         for (auto& group : widgets_)
         {
             if (group.id == deletedWidgetId ||

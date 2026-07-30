@@ -106,6 +106,8 @@ set(SNOWDESKTOP_SOURCES
     src/search_match.cpp
     src/everything_search.cpp
     src/widget_engine.cpp
+    src/widget_package.cpp
+    src/widget_package_paths.cpp
     src/system_snapshot.cpp
     src/http_runtime.cpp
     src/widgets/widget_base.cpp
@@ -358,7 +360,7 @@ endif()
 target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp
+    advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
     wbemuuid
 )
 
@@ -379,8 +381,54 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMENT "Copying language files to output (SnowDesktop)..."
 )
 
+add_executable(snowwidget
+    tools/snowwidget/main.cpp
+    src/widget_package.cpp)
+target_compile_features(snowwidget PRIVATE cxx_std_20)
+target_include_directories(snowwidget PRIVATE src)
+target_link_libraries(snowwidget PRIVATE bcrypt ole32)
+if (MSVC)
+    set_property(TARGET snowwidget PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(snowwidget PRIVATE
+        /W4 /permissive- /EHsc /utf-8)
+    target_compile_definitions(snowwidget PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+else()
+    target_compile_options(snowwidget PRIVATE -Wall -Wextra -pedantic)
+endif()
+
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(SnowDesktopWidgetPackageTests
+        tests/widget_package_tests.cpp
+        src/widget_package.cpp)
+    target_compile_features(
+        SnowDesktopWidgetPackageTests PRIVATE cxx_std_20)
+    target_include_directories(
+        SnowDesktopWidgetPackageTests PRIVATE src)
+    target_link_libraries(
+        SnowDesktopWidgetPackageTests PRIVATE bcrypt ole32)
+    if (MSVC)
+        set_property(
+            TARGET SnowDesktopWidgetPackageTests
+            PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(
+            SnowDesktopWidgetPackageTests PRIVATE
+            /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(
+            SnowDesktopWidgetPackageTests PRIVATE
+            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    else()
+        target_compile_options(
+            SnowDesktopWidgetPackageTests PRIVATE
+            -Wall -Wextra -pedantic)
+    endif()
+    add_test(
+        NAME widget_package_lifecycle
+        COMMAND SnowDesktopWidgetPackageTests)
+
     add_executable(SnowDesktopSlotContractTests
         tests/slot_contract_tests.cpp)
     target_compile_features(

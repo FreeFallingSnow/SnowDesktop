@@ -1,4 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "4664f034-3c7c-4469-9a82-44db90f68094",
+  "slug": "sticky-note",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
   "name": "Sticky Note",
   "nameKey": "lua_widget.sticky_note.name",
   "version": "1.0.0",

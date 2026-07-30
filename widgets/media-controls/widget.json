@@ -1,4 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "9ccc7bd1-2a5a-473a-9bf7-a7d9ed5605ef",
+  "slug": "media-controls",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
   "name": "Media Controls",
   "nameKey": "lua_widget.media_control.name",
   "version": "1.0.0",

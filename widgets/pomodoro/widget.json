@@ -1,4 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23",
+  "slug": "pomodoro",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
   "name": "Pomodoro",
   "nameKey": "lua_widget.pomodoro.name",
   "version": "1.0.0",
@@ -73,5 +82,5 @@
   },
   "defaultSize": { "columns": 2, "rows": 2 },
   "minSize": { "columns": 2, "rows": 2 },
-  "permissions": ["ui.input", "ui.contextMenu"]
+  "permissions": ["ui.input", "ui.contextMenu", "ui.notify"]
 }

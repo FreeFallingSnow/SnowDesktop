@@ -1,24 +1,31 @@
 ---
 name: snowdesktop-lua-widget
-description: Create, modify, debug, and package Lua desktop widgets for SnowDesktop. Use when writing a new `.lua` widget and matching `.widget.json` manifest, adding drawing or mouse behavior, using widget storage and settings UI, querying desktop items, declaring permissions, or diagnosing a SnowDesktop Lua widget that does not load or render.
+description: Create, modify, debug, validate, and package Lua desktop widget folders for SnowDesktop. Use when writing a widget package with widget.json and main.lua, adding drawing or mouse behavior, using widget storage and settings UI, querying desktop items, declaring permissions, or diagnosing a SnowDesktop Lua widget that does not load or render.
 ---
 
 # SnowDesktop Lua Widget
 
-Create widgets against SnowDesktop's built-in sandboxed Lua API. Keep the script and manifest names paired:
+Create widgets against SnowDesktop's built-in sandboxed Lua API. Every runnable component is one package directory:
 
 ```text
 widgets/
-├── my_widget.lua
-└── my_widget.widget.json
+└── my-widget/
+    ├── widget.json
+    ├── main.lua
+    ├── assets/
+    ├── modules/
+    └── locales/
 ```
 
-Place runnable `.lua` files directly in SnowDesktop's active `widgets` directory. Portable builds use the `widgets` directory beside the executable directly. MSIX builds use `LocalState\data\widgets`, initially seeded from the packaged `widgets` directory. SnowDesktop only discovers `widgets\*.lua`; it does not scan subdirectories.
+SnowDesktop discovers validated package folders, never loose `.lua + .widget.json`
+pairs. Built-ins live under the read-only executable `widgets` directory.
+Installed and development packages live under `data\widgets\installed` and
+`data\widgets\dev`. Layouts store the immutable package UUID, not a path.
 
 ## Workflow
 
-1. Copy [assets/widget-template.lua](assets/widget-template.lua) and [assets/widget-template.widget.json](assets/widget-template.widget.json) into the root `widgets` directory.
-2. Rename both files to the same stem, using ASCII `snake_case` for predictable paths.
+1. Copy [assets/widget-template](assets/widget-template) as a new package directory.
+2. Generate a new UUID for `id`, choose a lowercase hyphenated `slug`, and keep the UUID forever across channels.
 3. Implement `render()` first using local widget coordinates starting at `(0, 0)`.
 4. Put every user-visible string behind `l10n.tr("literal.key")`, including the
    script name, settings, menus, placeholders, status text, and notifications.
@@ -29,7 +36,8 @@ Place runnable `.lua` files directly in SnowDesktop's active `widgets` directory
 8. Declare every privileged API in the manifest. Keep unused permissions out.
 9. Store persistent values as strings and parse them with `tonumber` or explicit boolean conversion.
 10. Test at multiple widget spans. Derive layout from `layout.width()` and `layout.height()` instead of assuming pixels.
-11. Check hot reload after saving. If a render error invalidates the widget, refresh/re-add it after correcting the script.
+11. Run `snowwidget validate <directory>` and `snowwidget pack <directory> <name.snowwidget>`.
+12. Check transactional hot reload after saving; a failed reload keeps the last-known-good VM.
 
 Read [references/api.md](references/api.md) whenever using callbacks, permissions, drawing arguments, desktop integration, settings controls, or troubleshooting.
 
@@ -77,9 +85,18 @@ Create a matching manifest even when no permission is needed:
 
 ```json
 {
+  "schemaVersion": 1,
+  "id": "f527797f-a986-4ad1-a58d-250ef91f53d3",
+  "slug": "my-widget",
   "name": "My Widget",
   "nameKey": "lua_widget.my_widget.name",
   "version": "1.0.0",
+  "apiVersion": 1,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "author": "Your Name",
+  "license": "MIT",
   "description": "A short English fallback description.",
   "descriptionKey": "lua_widget.my_widget.description",
   "locales": {
@@ -109,6 +126,7 @@ Valid permissions:
 
 - `ui.input`: expose `imgui` and support settings-editor controls.
 - `ui.contextMenu`: enable `getContextMenu()` and `onMenu(id)`.
+- `ui.notify`: enable rate-limited host notifications.
 - `desktop.read`: enable desktop queries and `draw.icon`.
 - `desktop.action`: enable open, reveal, and desktop refresh actions.
 - `system.read`: enable cached CPU, memory, battery, and network snapshots.
@@ -137,7 +155,8 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 - Use `maxWidth` with `singleLine = true` to get single-line ellipsis.
 - Treat the bottom 24px as a host-reserved move/resize area. Do not place clickable
   controls there, even when the bottom bar is visually hidden or hover-only.
-- Pass image paths relative to the root `widgets` directory. Absolute paths are rejected.
+- Pass image paths relative to the current package directory. Absolute paths,
+  parent traversal, symlinks, junctions, and reparse points are rejected.
 - Pass desktop item tables directly to `draw.icon`, `desktop.open`, or `desktop.reveal`.
 - Add `ui.input` before defining `imguiRender`; otherwise `imgui` is absent from the sandbox.
 - Add `ui.contextMenu` before defining custom menu callbacks; otherwise the host ignores them.
@@ -179,17 +198,18 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 
 For repository development:
 
-1. Save the files under the source `widgets` directory.
+1. Save the package directory under the source `widgets` directory.
 2. Run `scripts/check_l10n.bat` to catch untranslated Lua strings and missing keys.
 3. Run `build.bat`; CMake copies the complete directory recursively to `.build\Release\widgets`.
-4. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
+4. Run `.build\Release\snowwidget.exe validate widgets\my-widget`.
+5. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
 5. Exercise click, double-click, wheel, editor, context-menu, and language-switch behavior as applicable.
 6. Build Release before delivery. The release process copies the complete built `widgets` tree, including this skill and its resources, into `release\widgets`.
 
 Before finishing, verify:
 
-- Script and manifest stems match.
-- The script sits directly under `widgets`.
+- The package contains `widget.json` and its declared `main.lua` entry.
+- `id` is a stable UUID; `version` is SemVer; `apiVersion` is supported.
 - JSON is valid UTF-8.
 - `defaultSize` falls within any declared `minSize` / `maxSize`.
 - Every used privileged API has its permission.

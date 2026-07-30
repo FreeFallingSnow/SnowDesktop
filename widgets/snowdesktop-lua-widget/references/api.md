@@ -519,13 +519,19 @@ widget exposes both visual style and behavior/data settings.
 
 ## Manifest and permissions
 
-The manifest filename is derived by replacing `.lua` with `.widget.json`.
+The package manifest is always `widget.json` at the component root. Its `entry`
+field identifies `main.lua` or another safe package-relative Lua file.
 
 ```json
 {
+  "schemaVersion": 1,
+  "id": "bea2cf61-ce15-4dd7-aec0-af3c29a16440",
+  "slug": "example-widget",
   "name": "Example Widget",
   "nameKey": "lua_widget.example.name",
   "version": "1.0.0",
+  "apiVersion": 1,
+  "dataVersion": 1,
   "description": "Example description.",
   "descriptionKey": "lua_widget.example.description",
   "locales": {
@@ -542,10 +548,11 @@ The manifest filename is derived by replacing `.lua` with `.widget.json`.
   "minSize": { "columns": 2, "rows": 1 },
   "maxSize": { "columns": 4, "rows": 3 },
   "permissions": ["ui.input", "network.http"],
-  "networkDomains": ["api.example.com", "*.example.net"],
-  "publisher": "Example",
-  "minHostVersion": "0.1.2",
-  "entry": "example.lua",
+  "networkDomains": ["api.example.com"],
+  "author": "Example",
+  "license": "MIT",
+  "minHostVersion": "1.0.1.0",
+  "entry": "main.lua",
   "presets": [
     {
       "id": "default",
@@ -625,6 +632,7 @@ restoring saved layouts, and reacting to grid changes.
 |---|---|
 | `ui.input` | `imgui`, `imguiRender()` |
 | `ui.contextMenu` | `getContextMenu()`, `onMenu(id)` |
+| `ui.notify` | rate-limited `sys.notify` |
 | `desktop.read` | `desktop.items`, `selection`, `find`, `draw.icon`, desktop-change callback |
 | `desktop.action` | `desktop.open`, `reveal`, `refresh` |
 | `everything.search` | `everything.search(query, maxResults)` |
@@ -638,26 +646,24 @@ Missing permissions produce a runtime error for guarded APIs. Context menus and 
 Declarative setting types are `text`, `bool`, `int`, `float`, `select`, and `color`.
 Values are stored in the same per-instance string storage used by `storage`.
 
-For local package installation, select a `.widget.json` from
-**设置 → 调试 → 安装/升级组件包**. The optional `entry` field names the paired
-Lua file. Reinstalling the same manifest stem upgrades it. An optional
-`signature` field accepts `sha256:<64 lowercase hex characters>` and is checked
-against the Lua entry file. `minHostVersion` hides and rejects incompatible
-widgets. Installation validates temporary files first and restores the previous
-version if replacement fails.
+Validate and export with `snowwidget validate <directory>` and
+`snowwidget pack <directory> <output.snowwidget>`. Installation always stages
+and validates the complete package. Package identity is the UUID, versions are
+SemVer, and last-known-good versions remain available for rollback. Source
+changes and permission/domain expansion require explicit confirmation.
 
 ## Troubleshooting
 
 ### Component is absent from **添加组件**
 
-- Put the `.lua` file directly in the executable's `widgets` directory.
-- Do not put runnable scripts in a subdirectory.
+- Put `widget.json` and its declared Lua entry in one package directory.
+- Do not put runnable loose scripts directly in `widgets`.
 - Rebuild or run the widget sync script after editing the source repository's `widgets` folder.
-- Confirm the extension is exactly `.lua`.
+- Run `snowwidget validate` and fix every error in its JSON report.
 
 ### Manifest is ignored
 
-- Match `example.lua` with `example.widget.json`.
+- Name the manifest `widget.json` and keep `entry` package-relative.
 - Validate JSON syntax.
 - Keep `defaultSize` values between 1 and 8.
 - Ensure `defaultSize` is compatible with optional `minSize` and `maxSize`.
@@ -678,7 +684,7 @@ Add the exact permission required by the API and reload the widget.
 
 ### Image does not render
 
-- Use a relative path under the root `widgets` directory.
+- Use a relative path under the current package directory.
 - Do not pass an absolute path.
 - Verify Windows Imaging Component supports the file.
 

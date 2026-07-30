@@ -21,6 +21,7 @@
 #include "utils.h"
 #include "search_match.h"
 #include "personalization.h"
+#include "widget_package.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -39,6 +40,8 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <set>
+#include <cstdlib>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -176,141 +179,87 @@ static std::vector<std::string> JsonReadStringArray(const std::string& text, con
     return result;
 }
 
-static std::filesystem::path GetBundledWidgetsDir()
+static snowdesktop::widget::WidgetPackageManager& GetWidgetPackageManager()
 {
-    return std::filesystem::path(GetExecutableDirectoryPath()) / L"widgets";
-}
-
-static bool CopyWidgetDirectoryContents(
-    const std::filesystem::path& sourceDir,
-    const std::filesystem::path& targetDir,
-    std::filesystem::copy_options copyOptions)
-{
-    std::error_code error;
-    std::filesystem::create_directories(targetDir, error);
-    if (error)
-        return false;
-
-    error.clear();
-    if (!std::filesystem::is_directory(sourceDir, error))
-        return false;
-
-    std::filesystem::recursive_directory_iterator entry(
-        sourceDir,
-        std::filesystem::directory_options::skip_permission_denied,
-        error);
-    const std::filesystem::recursive_directory_iterator end;
-    if (error)
-        return false;
-
-    while (entry != end)
-    {
-        const std::filesystem::file_status status =
-            entry->symlink_status(error);
-        if (error || std::filesystem::is_symlink(status))
-            return false;
-
-        const std::filesystem::path relative =
-            entry->path().lexically_relative(sourceDir);
-        if (relative.empty() || relative.native().starts_with(L".."))
-            return false;
-        const std::filesystem::path target = targetDir / relative;
-
-        if (std::filesystem::is_directory(status))
-        {
-            error.clear();
-            std::filesystem::create_directories(target, error);
-            if (error)
-                return false;
-        }
-        else if (std::filesystem::is_regular_file(status))
-        {
-            error.clear();
-            std::filesystem::create_directories(target.parent_path(), error);
-            if (error)
-                return false;
-            error.clear();
-            std::filesystem::copy_file(
-                entry->path(), target, copyOptions, error);
-            if (error)
-                return false;
-        }
-        else
-        {
-            return false;
-        }
-
-        error.clear();
-        entry.increment(error);
-        if (error)
-            return false;
-    }
-
-    return true;
-}
-
-static void SeedPackagedWidgets(const std::filesystem::path& targetDir)
-{
-    CopyWidgetDirectoryContents(
-        GetBundledWidgetsDir(),
-        targetDir,
-        std::filesystem::copy_options::skip_existing);
-}
-
-static std::filesystem::path GetPortableWidgetsDir()
-{
-    const std::filesystem::path widgetsDir = GetBundledWidgetsDir();
-    const std::filesystem::path legacyDataWidgets =
-        std::filesystem::path(GetDataDirectoryPath()) / L"widgets";
-
-    std::error_code error;
-    if (!std::filesystem::is_directory(legacyDataWidgets, error))
-    {
-        error.clear();
-        std::filesystem::create_directories(widgetsDir, error);
-        return widgetsDir;
-    }
-
-    // Earlier unified-data builds temporarily stored portable widgets under
-    // data\widgets. Merge user edits back into the original portable widgets
-    // directory, then remove the duplicate only after a complete copy.
-    if (!CopyWidgetDirectoryContents(
-            legacyDataWidgets,
-            widgetsDir,
-            std::filesystem::copy_options::overwrite_existing))
-    {
-        return legacyDataWidgets;
-    }
-
-    error.clear();
-    std::filesystem::remove_all(legacyDataWidgets, error);
-    return widgetsDir;
-}
-
-static const std::wstring& GetWidgetsDir()
-{
-    static const std::wstring path = [] {
-        if (!snowdesktop::deployment::IsPackaged())
-            return GetPortableWidgetsDir().wstring();
-
-        const std::filesystem::path dataDir(
-            GetDataSubdirectoryPath(L"widgets"));
-        SeedPackagedWidgets(dataDir);
-        return dataDir.wstring();
+    static snowdesktop::widget::WidgetPackageManager manager;
+    static const bool initialized = [] {
+        std::string error;
+        return manager.Initialize(error);
     }();
-    return path;
+    (void)initialized;
+    return manager;
 }
 
-static std::wstring ResolveWidgetPath(const std::wstring& scriptPath)
+static std::unordered_map<std::string,
+    std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>>&
+GetWidgetPackageSources()
 {
-    std::wstring fullPath = GetWidgetsDir();
-    fullPath += L"\\";
-    fullPath += scriptPath;
-    return fullPath;
+    static std::unordered_map<std::string,
+        std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>> sources;
+    static const bool initialized = [&]
+    {
+        auto& manager = GetWidgetPackageManager();
+        auto builtin =
+            std::make_shared<snowdesktop::widget::BuiltinPackageSource>(
+                manager);
+        sources[builtin->ProviderId()] = builtin;
+        auto local =
+            std::make_shared<snowdesktop::widget::LocalDirectorySource>(
+                manager.Paths().development);
+        sources[local->ProviderId()] = local;
+        return true;
+    }();
+    (void)initialized;
+    return sources;
+}
+
+static std::wstring ResolveWidgetPath(const std::wstring& packageId)
+{
+    const auto entry = GetWidgetPackageManager().ResolveEntry(
+        WidgetWideToUtf8(packageId));
+    return entry ? entry->wstring() : std::wstring{};
+}
+
+static bool RecoverWidgetPackage(const std::string& packageId,
+    const std::optional<std::string>& preferredVersion = std::nullopt)
+{
+    auto& manager = GetWidgetPackageManager();
+    const auto packages = manager.ListPackages();
+    auto tryVersion = [&](const std::string& version) {
+        std::string error;
+        return manager.Rollback(packageId, version, error);
+    };
+    if (preferredVersion && tryVersion(*preferredVersion))
+        return true;
+    std::vector<std::string> candidates;
+    bool activeUserPackage = false;
+    for (const auto& package : packages)
+    {
+        if (package.manifest.id != packageId ||
+            package.builtin || package.development)
+            continue;
+        if (package.active) activeUserPackage = true;
+        else candidates.push_back(package.manifest.version);
+    }
+    std::sort(candidates.begin(), candidates.end(), std::greater<>());
+    for (const auto& version : candidates)
+        if (tryVersion(version)) return true;
+    if (activeUserPackage)
+    {
+        std::string error;
+        if (manager.Uninstall(packageId, error))
+            return manager.Resolve(packageId).has_value();
+    }
+    return false;
 }
 
 static std::wstring ManifestPathForScriptFile(const std::wstring& fullScriptPath)
 {
+    const std::filesystem::path packageManifest =
+        std::filesystem::path(fullScriptPath).parent_path() / L"widget.json";
+    std::error_code error;
+    if (std::filesystem::is_regular_file(packageManifest, error))
+        return packageManifest.wstring();
     std::wstring path = fullScriptPath;
     const wchar_t* ext = PathFindExtensionW(path.c_str());
     if (ext && _wcsicmp(ext, L".lua") == 0)
@@ -321,8 +270,13 @@ static std::wstring ManifestPathForScriptFile(const std::wstring& fullScriptPath
 
 // ── Storage (shared localStorage for Lua widgets) ────────────────
 static std::unordered_map<std::string, std::string> g_storage;
+static thread_local std::unordered_map<std::string, std::string>*
+    g_storageOverlay = nullptr;
+static thread_local bool g_widgetDryLoad = false;
 static std::wstring g_storagePath;
 static std::deque<WidgetLogEntry> g_widgetLogs;
+static bool StorageWriteWithinQuota(const std::string& prefix,
+    const std::string& key, const std::string& value);
 
 static bool IsRemovedPanelEffectSettingKey(const std::string& key)
 {
@@ -334,51 +288,167 @@ static bool IsRemovedPanelEffectSettingKey(const std::string& key)
         setting == "noiseAlpha";
 }
 
-static void LoadStorageFile()
+static std::unordered_map<std::string, std::string>& ActiveStorage()
 {
-    g_storage.clear();
-    if (g_storagePath.empty()) return;
-    std::ifstream file(g_storagePath, std::ios::binary);
-    if (!file) return;
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    std::string text = ss.str();
+    return g_storageOverlay ? *g_storageOverlay : g_storage;
+}
+
+static std::string EscapeStorageJson(std::string_view value)
+{
+    std::string result;
+    result.reserve(value.size() + 8);
+    static constexpr char hex[] = "0123456789abcdef";
+    for (unsigned char ch : value)
+    {
+        switch (ch)
+        {
+        case '"': result += "\\\""; break;
+        case '\\': result += "\\\\"; break;
+        case '\b': result += "\\b"; break;
+        case '\f': result += "\\f"; break;
+        case '\n': result += "\\n"; break;
+        case '\r': result += "\\r"; break;
+        case '\t': result += "\\t"; break;
+        default:
+            if (ch < 0x20)
+            {
+                result += "\\u00";
+                result.push_back(hex[(ch >> 4) & 0x0f]);
+                result.push_back(hex[ch & 0x0f]);
+            }
+            else result.push_back(static_cast<char>(ch));
+            break;
+        }
+    }
+    return result;
+}
+
+static bool ParseLegacyStorageText(const std::string& text,
+    std::unordered_map<std::string, std::string>& output)
+{
+    // Releases before package format v1 wrote string values without JSON
+    // escaping. Recover the same key/value pairs that the former reader
+    // accepted, then immediately rewrite them through the safe serializer.
     size_t pos = text.find('{');
-    if (pos == std::string::npos) return;
+    if (pos == std::string::npos) return false;
     while (true)
     {
         pos = text.find('"', pos);
         if (pos == std::string::npos) break;
-        size_t keyEnd = text.find('"', pos + 1);
+        const size_t keyEnd = text.find('"', pos + 1);
         if (keyEnd == std::string::npos) break;
-        std::string key = text.substr(pos + 1, keyEnd - pos - 1);
+        const std::string key = text.substr(pos + 1, keyEnd - pos - 1);
         pos = text.find(':', keyEnd + 1);
         if (pos == std::string::npos) break;
         pos = text.find('"', pos + 1);
         if (pos == std::string::npos) break;
-        size_t valEnd = text.find('"', pos + 1);
-        if (valEnd == std::string::npos) break;
-        if (!IsRemovedPanelEffectSettingKey(key))
-            g_storage[key] = text.substr(pos + 1, valEnd - pos - 1);
-        pos = valEnd + 1;
+        const size_t valueEnd = text.find('"', pos + 1);
+        if (valueEnd == std::string::npos) break;
+        if (!key.empty() && !IsRemovedPanelEffectSettingKey(key))
+            output[key] = text.substr(pos + 1, valueEnd - pos - 1);
+        pos = valueEnd + 1;
+    }
+    return !output.empty();
+}
+
+static bool ParseStorageText(const std::string& text,
+    std::unordered_map<std::string, std::string>& output)
+{
+    JsonValue root;
+    std::string parseError;
+    if (ParseJson(text, root, &parseError) && root.IsObject())
+    {
+        for (const auto& [key, value] : root.object)
+            if (value.IsString() && !IsRemovedPanelEffectSettingKey(key))
+                output.emplace(key, value.string);
+        return true;
+    }
+    return ParseLegacyStorageText(text, output);
+}
+
+static bool ReadStorageMap(const std::filesystem::path& path,
+    std::unordered_map<std::string, std::string>& output)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    std::ostringstream stream;
+    stream << file.rdbuf();
+    return ParseStorageText(stream.str(), output);
+}
+
+static bool SaveStorageFile();
+
+static void LoadStorageFile()
+{
+    g_storage.clear();
+    if (g_storagePath.empty()) return;
+
+    std::error_code ec;
+    const bool storageExists =
+        std::filesystem::is_regular_file(g_storagePath, ec);
+    if (storageExists && !ReadStorageMap(g_storagePath, g_storage))
+    {
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        wchar_t suffix[64]{};
+        swprintf_s(suffix, L".corrupt-%04u%02u%02u-%02u%02u%02u.json",
+            now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
+            now.wSecond);
+        const std::wstring quarantine = g_storagePath + suffix;
+        MoveFileExW(g_storagePath.c_str(), quarantine.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    }
+
+    // Built-in loose-file replacement creates this short-lived snapshot before
+    // touching package files. Merge only missing keys so current writes win,
+    // commit atomically, then consume it. It never enters migrations/.
+    const auto pending =
+        GetWidgetPackageManager().PendingLegacyStoragePath();
+    ec.clear();
+    if (!std::filesystem::is_regular_file(pending, ec))
+        return;
+    std::unordered_map<std::string, std::string> pendingStorage;
+    if (!ReadStorageMap(pending, pendingStorage))
+        return;
+    for (auto& [key, value] : pendingStorage)
+        g_storage.try_emplace(std::move(key), std::move(value));
+    if (SaveStorageFile())
+    {
+        ec.clear();
+        std::filesystem::remove(pending, ec);
     }
 }
 
-static void SaveStorageFile()
+static bool SaveStorageFile()
 {
-    if (g_storagePath.empty()) return;
-    std::ofstream file(g_storagePath, std::ios::binary | std::ios::trunc);
-    if (!file) return;
-    file << "{";
-    bool first = true;
-    for (const auto& kv : g_storage)
+    if (g_storagePath.empty()) return false;
+    std::vector<std::pair<std::string, std::string>> values(
+        g_storage.begin(), g_storage.end());
+    std::sort(values.begin(), values.end(),
+        [](const auto& left, const auto& right) {
+            return left.first < right.first;
+        });
+    std::ostringstream output;
+    output << "{";
+    for (std::size_t index = 0; index < values.size(); ++index)
     {
-        if (!first) file << ",";
-        file << "\n  \"" << kv.first << "\": \"" << kv.second << "\"";
-        first = false;
+        if (index) output << ',';
+        output << "\n  \"" << EscapeStorageJson(values[index].first)
+            << "\": \"" << EscapeStorageJson(values[index].second) << '"';
     }
-    if (!g_storage.empty()) file << "\n";
-    file << "}\n";
+    if (!values.empty()) output << '\n';
+    output << "}\n";
+
+    const std::wstring temporary = g_storagePath + L".tmp";
+    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    const std::string text = output.str();
+    file.write(text.data(), static_cast<std::streamsize>(text.size()));
+    file.flush();
+    if (!file) return false;
+    file.close();
+    return MoveFileExW(temporary.c_str(), g_storagePath.c_str(),
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
 }
 
 static bool EndsWithLastError(const std::string& key)
@@ -478,6 +548,8 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
         ? DWRITE_PARAGRAPH_ALIGNMENT_CENTER
         : DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     format->SetWordWrapping(wrapping);
+    if (state->textFormatCache.size() >= 128)
+        state->textFormatCache.clear();
     return state->textFormatCache.emplace(key, std::move(format)).first->second.Get();
 }
 
@@ -682,11 +754,27 @@ static D2DState* GetD2D(lua_State* L)
     return s;
 }
 
+static std::wstring BoundWidgetId(lua_State* state)
+{
+    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_id");
+    const char* value = lua_tostring(state, -1);
+    const std::wstring result = Utf8ToWideLocal(value ? value : "");
+    lua_pop(state, 1);
+    return result;
+}
+
+static std::string BoundStoragePrefix(lua_State* state)
+{
+    return WidgetWideToUtf8(BoundWidgetId(state));
+}
+
 static void SetWidgetExecutionContext(D2DState* state, const std::wstring& widgetId)
 {
     if (!state) return;
     state->currentWidgetId = widgetId;
     state->storagePrefix = WidgetWideToUtf8(widgetId);
+    if (state->engine)
+        state->engine->ActivateWidgetState(widgetId);
 }
 
 static void SetWidgetRectContext(D2DState* state, RECT bounds)
@@ -879,7 +967,13 @@ static int lua_Notify(lua_State* L)
     const char* message = luaL_checkstring(L, 2);
     auto* s = GetD2D(L);
     if (s && s->engine)
-        s->engine->RuntimeNotify(Utf8ToWideLocal(title), Utf8ToWideLocal(message));
+    {
+        const std::wstring widgetId = BoundWidgetId(L);
+        if (!s->engine->RuntimeHasPermission(widgetId, "ui.notify"))
+            return luaL_error(L, "widget permission denied: ui.notify");
+        s->engine->RuntimeNotify(widgetId, Utf8ToWideLocal(title),
+            Utf8ToWideLocal(message));
+    }
     return 0;
 }
 
@@ -1201,7 +1295,7 @@ static int lua_SystemCpu(lua_State* L)
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
     CpuSnapshot snapshot = s && s->engine
-        ? s->engine->RuntimeGetCpuSnapshot(s->currentWidgetId) : CpuSnapshot{};
+        ? s->engine->RuntimeGetCpuSnapshot(BoundWidgetId(L)) : CpuSnapshot{};
     lua_createtable(L, 0, 4);
     SetBooleanField(L, "available", snapshot.available);
     SetNumberField(L, "usagePercent", snapshot.usagePercent);
@@ -1215,7 +1309,7 @@ static int lua_SystemMemory(lua_State* L)
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
     MemorySnapshot snapshot = s && s->engine
-        ? s->engine->RuntimeGetMemorySnapshot(s->currentWidgetId) : MemorySnapshot{};
+        ? s->engine->RuntimeGetMemorySnapshot(BoundWidgetId(L)) : MemorySnapshot{};
     lua_createtable(L, 0, 5);
     SetBooleanField(L, "available", snapshot.available);
     SetNumberField(L, "totalBytes", static_cast<lua_Number>(snapshot.totalBytes));
@@ -1230,7 +1324,7 @@ static int lua_SystemBattery(lua_State* L)
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
     BatterySnapshot snapshot = s && s->engine
-        ? s->engine->RuntimeGetBatterySnapshot(s->currentWidgetId) : BatterySnapshot{};
+        ? s->engine->RuntimeGetBatterySnapshot(BoundWidgetId(L)) : BatterySnapshot{};
     lua_createtable(L, 0, 5);
     SetBooleanField(L, "available", snapshot.available);
     SetNumberField(L, "percent", snapshot.percent);
@@ -1245,7 +1339,7 @@ static int lua_SystemNetwork(lua_State* L)
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
     NetworkSnapshot snapshot = s && s->engine
-        ? s->engine->RuntimeGetNetworkSnapshot(s->currentWidgetId) : NetworkSnapshot{};
+        ? s->engine->RuntimeGetNetworkSnapshot(BoundWidgetId(L)) : NetworkSnapshot{};
     lua_createtable(L, 0, 7);
     SetBooleanField(L, "available", snapshot.available);
     SetBooleanField(L, "connected", snapshot.connected);
@@ -1261,7 +1355,7 @@ static int lua_SystemGpu(lua_State* L)
     if (!RequirePermission(L, "system.read")) return 0;
     auto* s = GetD2D(L);
     GpuSnapshot snapshot = s && s->engine
-        ? s->engine->RuntimeGetGpuSnapshot(s->currentWidgetId) : GpuSnapshot{};
+        ? s->engine->RuntimeGetGpuSnapshot(BoundWidgetId(L)) : GpuSnapshot{};
     lua_createtable(L, 0, 5);
     SetBooleanField(L, "available", snapshot.available);
     lua_pushstring(L, snapshot.name.c_str()); lua_setfield(L, -2, "name");
@@ -1276,7 +1370,7 @@ static int lua_MediaCurrent(lua_State* L)
     if (!RequirePermission(L, "media.read")) return 0;
     auto* s = GetD2D(L);
     MediaSnapshot snapshot = s && s->engine
-        ? s->engine->RuntimeGetMediaSnapshot(s->currentWidgetId) : MediaSnapshot{};
+        ? s->engine->RuntimeGetMediaSnapshot(BoundWidgetId(L)) : MediaSnapshot{};
     lua_createtable(L, 0, 10);
     SetBooleanField(L, "available", snapshot.available);
     lua_pushstring(L, WidgetWideToUtf8(snapshot.title).c_str()); lua_setfield(L, -2, "title");
@@ -1321,7 +1415,7 @@ static int lua_WidgetSetTimer(lua_State* L)
     bool repeat = lua_isnoneornil(L, 3) || lua_toboolean(L, 3) != 0;
     auto* s = GetD2D(L);
     lua_pushboolean(L, s && s->engine &&
-        s->engine->RuntimeSetTimer(s->currentWidgetId, name ? name : "", intervalMs, repeat));
+        s->engine->RuntimeSetTimer(BoundWidgetId(L), name ? name : "", intervalMs, repeat));
     return 1;
 }
 
@@ -1330,7 +1424,7 @@ static int lua_WidgetCancelTimer(lua_State* L)
     const char* name = luaL_checkstring(L, 1);
     auto* s = GetD2D(L);
     lua_pushboolean(L, s && s->engine &&
-        s->engine->RuntimeCancelTimer(s->currentWidgetId, name ? name : ""));
+        s->engine->RuntimeCancelTimer(BoundWidgetId(L), name ? name : ""));
     return 1;
 }
 
@@ -1342,7 +1436,7 @@ static int lua_HttpRequest(lua_State* L)
     if (!s || !s->engine) { lua_pushnil(L); return 1; }
 
     HttpRequestOptions options;
-    options.widgetId = s->currentWidgetId;
+    options.widgetId = BoundWidgetId(L);
     lua_getfield(L, 1, "url");
     options.url = Utf8ToWideLocal(luaL_checkstring(L, -1));
     lua_pop(L, 1);
@@ -1376,7 +1470,7 @@ static int lua_HttpRequest(lua_State* L)
     }
     lua_pop(L, 1);
 
-    int id = s->engine->RuntimeHttpRequest(s->currentWidgetId, std::move(options));
+    int id = s->engine->RuntimeHttpRequest(BoundWidgetId(L), std::move(options));
     if (id > 0) lua_pushinteger(L, id); else lua_pushnil(L);
     return 1;
 }
@@ -1386,7 +1480,8 @@ static int lua_HttpCancel(lua_State* L)
     if (!RequirePermission(L, "network.http")) return 0;
     int id = static_cast<int>(luaL_checkinteger(L, 1));
     auto* s = GetD2D(L);
-    lua_pushboolean(L, s && s->engine && s->engine->RuntimeHttpCancel(s->currentWidgetId, id));
+    lua_pushboolean(L, s && s->engine &&
+        s->engine->RuntimeHttpCancel(BoundWidgetId(L), id));
     return 1;
 }
 
@@ -1528,7 +1623,7 @@ static int lua_UiTextInput(lua_State* L)
     auto* s = GetD2D(L);
     std::string value;
     if (s && s->engine && storageKey && *storageKey)
-        value = s->engine->RuntimeGetStorageValue(s->currentWidgetId, storageKey);
+        value = s->engine->RuntimeGetStorageValue(BoundWidgetId(L), storageKey);
 
     bool focused = false;
     bool focusedSelectAll = false;
@@ -1537,7 +1632,7 @@ static int lua_UiTextInput(lua_State* L)
     if (s && s->engine && id && *id)
     {
         focused = s->engine->RuntimeGetFocusedHostInput(
-            s->currentWidgetId, id, focusedText, cursor, focusedSelectAll);
+            BoundWidgetId(L), id, focusedText, cursor, focusedSelectAll);
         if (focused)
             value = WidgetWideToUtf8(focusedText);
     }
@@ -1583,7 +1678,7 @@ static int lua_UiTextInput(lua_State* L)
             static_cast<LONG>(std::lround(x + width)), static_cast<LONG>(std::lround(y + height)) };
         control.selectAll = selectAll;
         control.liveUpdate = liveUpdate;
-        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+        s->engine->RuntimeRegisterHostControl(BoundWidgetId(L), std::move(control));
     }
 
     lua_pushlstring(L, value.data(), value.size());
@@ -1595,7 +1690,7 @@ static int lua_UiFocusInput(lua_State* L)
     const char* id = luaL_checkstring(L, 1);
     auto* s = GetD2D(L);
     bool focused = s && s->engine && id && *id &&
-        s->engine->RuntimeFocusHostInput(s->currentWidgetId, id);
+        s->engine->RuntimeFocusHostInput(BoundWidgetId(L), id);
     lua_pushboolean(L, focused);
     return 1;
 }
@@ -1619,7 +1714,7 @@ static int lua_UiButton(lua_State* L)
         control.id = id;
         control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
             static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
-        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+        s->engine->RuntimeRegisterHostControl(BoundWidgetId(L), std::move(control));
     }
     return 0;
 }
@@ -1646,7 +1741,7 @@ static int lua_UiToggle(lua_State* L)
         control.value = value;
         control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
             static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
-        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+        s->engine->RuntimeRegisterHostControl(BoundWidgetId(L), std::move(control));
     }
     return 0;
 }
@@ -1683,9 +1778,10 @@ static int lua_UiScrollArea(lua_State* L)
         control.viewportHeight = static_cast<int>(height);
         control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
             static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
-        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+        s->engine->RuntimeRegisterHostControl(BoundWidgetId(L), std::move(control));
     }
-    int offset = s && s->engine ? s->engine->RuntimeGetScrollOffset(s->currentWidgetId, id) : 0;
+    int offset = s && s->engine
+        ? s->engine->RuntimeGetScrollOffset(BoundWidgetId(L), id) : 0;
     lua_pushinteger(L, offset);
     return 1;
 }
@@ -1710,9 +1806,10 @@ static int lua_UiVirtualList(lua_State* L)
         control.viewportHeight = viewportHeight;
         control.rect = { static_cast<LONG>(x), static_cast<LONG>(y),
             static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
-        s->engine->RuntimeRegisterHostControl(s->currentWidgetId, std::move(control));
+        s->engine->RuntimeRegisterHostControl(BoundWidgetId(L), std::move(control));
     }
-    int offset = s && s->engine ? s->engine->RuntimeGetScrollOffset(s->currentWidgetId, id) : 0;
+    int offset = s && s->engine
+        ? s->engine->RuntimeGetScrollOffset(BoundWidgetId(L), id) : 0;
     int first = count == 0 ? 0 : offset / itemHeight + 1;
     int last = count == 0 ? 0 : std::min(count,
         (offset + viewportHeight + itemHeight - 1) / itemHeight);
@@ -1727,10 +1824,10 @@ static bool RequirePermission(lua_State* L, const char* permission)
 {
     auto* s = GetD2D(L);
     if (!s || !s->engine) return false;
-    if (s->engine->RuntimeHasPermission(s->currentWidgetId, permission))
+    if (s->engine->RuntimeHasPermission(BoundWidgetId(L), permission))
         return true;
     std::string msg = std::string("Permission denied: ") + permission;
-    s->engine->RuntimeRecordError(s->currentWidgetId, msg);
+    s->engine->RuntimeRecordError(BoundWidgetId(L), msg);
     luaL_error(L, "%s", msg.c_str());
     return false;
 }
@@ -1766,7 +1863,7 @@ static int lua_WidgetInfo(lua_State* L)
     lua_createtable(L, 0, 5);
     if (!s)
         return 1;
-    lua_pushstring(L, WidgetWideToUtf8(s->currentWidgetId).c_str()); lua_setfield(L, -2, "id");
+    lua_pushstring(L, WidgetWideToUtf8(BoundWidgetId(L)).c_str()); lua_setfield(L, -2, "id");
     lua_pushnumber(L, s->widgetRect.right - s->widgetRect.left); lua_setfield(L, -2, "width");
     lua_pushnumber(L, s->widgetRect.bottom - s->widgetRect.top); lua_setfield(L, -2, "height");
     return 1;
@@ -1777,7 +1874,7 @@ static int lua_WidgetSetTitle(lua_State* L)
     const char* title = luaL_checkstring(L, 1);
     auto* s = GetD2D(L);
     if (s && s->engine)
-        s->engine->RuntimeSetWidgetTitle(s->currentWidgetId, Utf8ToWideLocal(title ? title : ""));
+        s->engine->RuntimeSetWidgetTitle(BoundWidgetId(L), Utf8ToWideLocal(title ? title : ""));
     return 0;
 }
 
@@ -1785,7 +1882,7 @@ static int lua_WidgetOpenSettings(lua_State* L)
 {
     auto* s = GetD2D(L);
     if (s && s->engine)
-        s->engine->RuntimeOpenWidgetSettings(s->currentWidgetId);
+        s->engine->RuntimeOpenWidgetSettings(BoundWidgetId(L));
     return 0;
 }
 
@@ -1793,7 +1890,7 @@ static int lua_WidgetInvalidate(lua_State* L)
 {
     auto* s = GetD2D(L);
     if (s && s->engine)
-        s->engine->RuntimeInvalidateHost(s->currentWidgetId);
+        s->engine->RuntimeInvalidateHost(BoundWidgetId(L));
     return 0;
 }
 
@@ -1803,7 +1900,7 @@ static int lua_WidgetLog(lua_State* L)
     const char* message = luaL_optstring(L, 2, "");
     auto* s = GetD2D(L);
     if (s && s->engine)
-        s->engine->RuntimeAddLog(s->currentWidgetId, level ? level : "info", message ? message : "");
+        s->engine->RuntimeAddLog(BoundWidgetId(L), level ? level : "info", message ? message : "");
     return 0;
 }
 
@@ -1812,7 +1909,7 @@ static int lua_WidgetTheme(lua_State* L)
     auto* s = GetD2D(L);
     LuaWidgetTheme theme;
     if (s && s->engine)
-        theme = s->engine->RuntimeGetWidgetTheme(s->currentWidgetId);
+        theme = s->engine->RuntimeGetWidgetTheme(BoundWidgetId(L));
     lua_createtable(L, 0, 7);
     lua_pushinteger(L, theme.bg); lua_setfield(L, -2, "bg");
     lua_pushinteger(L, theme.border); lua_setfield(L, -2, "border");
@@ -1840,10 +1937,10 @@ static int lua_WidgetEditText(lua_State* L)
     if (lua_isstring(L, 7))
         initial = lua_tostring(L, 7);
     else
-        initial = s->engine->RuntimeGetStorageValue(s->currentWidgetId, key);
+        initial = s->engine->RuntimeGetStorageValue(BoundWidgetId(L), key);
 
     LuaInlineTextEditRequest request;
-    request.widgetId = s->currentWidgetId;
+    request.widgetId = BoundWidgetId(L);
     request.storageKey = key;
     request.text = initial;
     request.localRect = { x, y, x + std::max(1, w), y + std::max(1, h) };
@@ -2014,6 +2111,8 @@ static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
     if (FAILED(s->ctx->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &bitmap)) || !bitmap)
         return nullptr;
     ID2D1Bitmap1* result = bitmap.Get();
+    if (s->imageCache.size() >= 128)
+        s->imageCache.clear();
     s->imageCache[path] = bitmap;
     return result;
 }
@@ -2028,12 +2127,12 @@ static int lua_DrawImage(lua_State* L)
     float alpha = static_cast<float>(luaL_optnumber(L, 6, 1.0));
     auto* s = GetD2D(L);
     std::wstring path = Utf8ToWideLocal(pathRaw ? pathRaw : "");
-    if (path.empty() || !PathIsRelativeW(path.c_str()))
+    if (!s || !s->engine || path.empty())
         return 0;
-    std::wstring fullPath = GetWidgetsDir();
-    fullPath += L"\\";
-    fullPath += path;
-    ID2D1Bitmap1* bmp = LoadImageBitmap(s, fullPath);
+    const auto fullPath = s->engine->RuntimeResolvePackageAsset(
+        BoundWidgetId(L), path);
+    if (!fullPath) return 0;
+    ID2D1Bitmap1* bmp = LoadImageBitmap(s, *fullPath);
     if (!s || !s->ctx || !bmp) return 0;
     D2D1_RECT_F dst = D2D1::RectF(x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + w, y + s->widgetRect.top + h);
@@ -2083,6 +2182,88 @@ static int lua_DrawIcon(lua_State* L)
 }
 
 // ── WidgetEngine ──────────────────────────────────────────────────
+static void* LuaQuotaAllocator(void* userData, void* pointer,
+    size_t oldSize, size_t newSize)
+{
+    auto* quota = static_cast<LuaRuntimeQuota*>(userData);
+    if (!quota) return nullptr;
+    if (newSize == 0)
+    {
+        if (pointer)
+            quota->memoryBytes = oldSize > quota->memoryBytes
+                ? 0 : quota->memoryBytes - oldSize;
+        std::free(pointer);
+        return nullptr;
+    }
+    const size_t current = pointer ? oldSize : 0;
+    const size_t withoutCurrent = current > quota->memoryBytes
+        ? 0 : quota->memoryBytes - current;
+    if (newSize > quota->memoryLimit ||
+        withoutCurrent > quota->memoryLimit - newSize)
+    {
+        quota->memoryExceeded = true;
+        return nullptr;
+    }
+    void* result = std::realloc(pointer, newSize);
+    if (result)
+        quota->memoryBytes = withoutCurrent + newSize;
+    return result;
+}
+
+static void LuaQuotaHook(lua_State* state, lua_Debug*)
+{
+    lua_getfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
+    auto* quota = static_cast<LuaRuntimeQuota*>(
+        lua_touserdata(state, -1));
+    lua_pop(state, 1);
+    if (!quota) return;
+    quota->instructionsRemaining -= 10000;
+    if (quota->instructionsRemaining <= 0 ||
+        std::chrono::steady_clock::now() >= quota->deadline)
+    {
+        quota->executionExceeded = true;
+        luaL_error(state, "widget execution quota exceeded");
+    }
+}
+
+static void BeginLuaExecution(lua_State* state, LuaRuntimeQuota* quota,
+    std::int64_t instructionBudget = 500000,
+    std::chrono::milliseconds timeBudget = std::chrono::milliseconds(50))
+{
+    if (!state || !quota) return;
+    quota->instructionsRemaining = instructionBudget;
+    quota->deadline = std::chrono::steady_clock::now() + timeBudget;
+    quota->executionExceeded = false;
+    lua_sethook(state, LuaQuotaHook, LUA_MASKCOUNT, 10000);
+}
+
+static int LuaTraceback(lua_State* state)
+{
+    const char* message = lua_tostring(state, 1);
+    luaL_traceback(state, state, message ? message : "(Lua error)", 1);
+    return 1;
+}
+
+static int LuaProtectedCall(lua_State* state, int arguments, int results)
+{
+    const auto started = std::chrono::steady_clock::now();
+    const int functionIndex = lua_gettop(state) - arguments;
+    lua_pushcfunction(state, LuaTraceback);
+    lua_insert(state, functionIndex);
+    const int status = lua_pcall(state, arguments, results, functionIndex);
+    lua_remove(state, functionIndex);
+    lua_getfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
+    if (auto* quota = static_cast<LuaRuntimeQuota*>(
+        lua_touserdata(state, -1)))
+    {
+        quota->lastExecutionMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+    }
+    lua_pop(state, 1);
+    return status;
+}
+
 WidgetEngine::~WidgetEngine()
 {
     Shutdown();
@@ -2093,25 +2274,13 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     d2dContext_ = d2dContext;
     dwriteFactory_ = dwriteFactory;
 
-    L_ = luaL_newstate();
-    if (!L_) return false;
-
-    luaL_requiref(L_, "_G", luaopen_base, 1); lua_pop(L_, 1);
-    luaL_requiref(L_, LUA_TABLIBNAME, luaopen_table, 1); lua_pop(L_, 1);
-    luaL_requiref(L_, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(L_, 1);
-    luaL_requiref(L_, LUA_MATHLIBNAME, luaopen_math, 1); lua_pop(L_, 1);
-    luaL_requiref(L_, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(L_, 1);
-    RegisterDrawAPI(L_);
-
     // Allocate D2D state
     d2dState_ = new D2DState{};
     d2dState_->dwrite = dwriteFactory_.Get();
     d2dState_->engine = this;
-    lua_pushlightuserdata(L_, d2dState_);
-    lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
 
-    // Initialize the writable widget library before loading layouts or menus.
-    (void)GetWidgetsDir();
+    // Initialize the package registry before loading layouts or menus.
+    (void)GetWidgetPackageManager();
 
     // Init storage path
     g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
@@ -2142,8 +2311,16 @@ void WidgetEngine::Shutdown()
         httpService_->Stop();
         httpService_.reset();
     }
+    for (auto& widget : widgets_)
+    {
+        if (widget.state)
+        {
+            lua_close(widget.state);
+            widget.state = nullptr;
+        }
+    }
     widgets_.clear();
-    if (L_) { lua_close(L_); L_ = nullptr; }
+    L_ = nullptr;
     delete d2dState_; d2dState_ = nullptr;
 }
 
@@ -2158,37 +2335,59 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
     if (httpService_) httpService_->CancelWidget(widgetId);
-    luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
+    L_ = widgets_[idx].state;
+    if (L_)
+    {
+        luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
+        lua_close(L_);
+        widgets_[idx].state = nullptr;
+    }
     widgets_.erase(widgets_.begin() + idx);
     std::erase_if(widgets_, [&widgetId](const LuaWidget& widget) {
         return widget.widgetId == widgetId;
     });
 
-    // Remove storage data for this widget
+}
+
+void WidgetEngine::DeleteWidgetInstance(const std::wstring& widgetId)
+{
+    UnloadWidget(widgetId);
     std::string prefix = WidgetWideToUtf8(widgetId) + ".";
-    auto it = g_storage.begin();
-    while (it != g_storage.end())
+    auto& storage = ActiveStorage();
+    auto it = storage.begin();
+    while (it != storage.end())
     {
         if (it->first.compare(0, prefix.size(), prefix) == 0)
-            it = g_storage.erase(it);
+            it = storage.erase(it);
         else
             ++it;
     }
-    SaveStorageFile();
+    if (!g_storageOverlay) SaveStorageFile();
 }
 
 int WidgetEngine::FindWidget(const std::wstring& widgetId) const
 {
     for (int i = 0; i < (int)widgets_.size(); ++i)
     {
-        if (widgets_[i].valid && widgets_[i].widgetId == widgetId)
+        if (widgets_[i].widgetId == widgetId)
             return i;
     }
     return -1;
 }
 
+void WidgetEngine::ActivateWidgetState(const std::wstring& widgetId)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || !widgets_[index].state) return;
+    L_ = widgets_[index].state;
+    BeginLuaExecution(L_, widgets_[index].quota.get());
+}
+
 void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackName)
 {
+    L_ = widget.state;
+    if (!L_) return;
+    BeginLuaExecution(L_, widget.quota.get());
     SetWidgetExecutionContext(d2dState_, widget.widgetId);
     SetWidgetRectContext(d2dState_, widget.lastBounds);
     lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
@@ -2196,7 +2395,7 @@ void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackN
     lua_getfield(L_, -1, callbackName);
     if (lua_isfunction(L_, -1))
     {
-        if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+        if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
         {
             const char* error = lua_tostring(L_, -1);
             RuntimeRecordError(widget.widgetId, error ? error : "(callback error)");
@@ -2206,6 +2405,32 @@ void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackN
     else
         lua_pop(L_, 1);
     lua_pop(L_, 1);
+}
+
+static int LuaReadOnlyApiWrite(lua_State* state)
+{
+    return luaL_error(state, "SnowDesktop host API tables are read-only");
+}
+
+static void PushReadOnlyProxyForTopTable(lua_State* state)
+{
+    // Stack before: [..., source]. Stack after: [..., proxy].
+    lua_newtable(state);
+    lua_newtable(state);
+    lua_pushvalue(state, -3);
+    lua_setfield(state, -2, "__index");
+    lua_pushcfunction(state, LuaReadOnlyApiWrite);
+    lua_setfield(state, -2, "__newindex");
+    lua_pushboolean(state, 0);
+    lua_setfield(state, -2, "__metatable");
+    lua_setmetatable(state, -2);
+    lua_remove(state, -2);
+}
+
+static void PushReadOnlyGlobal(lua_State* state, const char* name)
+{
+    lua_getglobal(state, name);
+    PushReadOnlyProxyForTopTable(state);
 }
 
 void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
@@ -2221,26 +2446,20 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
         lua_getglobal(L, name);
         lua_setfield(L, -2, name);
     }
-    lua_getglobal(L, "string"); lua_setfield(L, -2, "string");
-    lua_getglobal(L, "table");  lua_setfield(L, -2, "table");
-    lua_getglobal(L, "math");   lua_setfield(L, -2, "math");
-    lua_getglobal(L, "utf8");   lua_setfield(L, -2, "utf8");
-
-    lua_getglobal(L, "draw");    lua_setfield(L, -2, "draw");
-    lua_getglobal(L, "sys");     lua_setfield(L, -2, "sys");
-    lua_getglobal(L, "layout");  lua_setfield(L, -2, "layout");
-    lua_getglobal(L, "storage"); lua_setfield(L, -2, "storage");
-    lua_getglobal(L, "widget");  lua_setfield(L, -2, "widget");
-    lua_getglobal(L, "desktop"); lua_setfield(L, -2, "desktop");
-    lua_getglobal(L, "media");   lua_setfield(L, -2, "media");
-    lua_getglobal(L, "http");    lua_setfield(L, -2, "http");
-    lua_getglobal(L, "ui");      lua_setfield(L, -2, "ui");
+    for (const char* name : { "string", "table", "math", "utf8", "draw",
+        "sys", "layout", "storage", "widget", "desktop", "media", "http",
+        "ui", "everything" })
+    {
+        PushReadOnlyGlobal(L, name);
+        lua_setfield(L, -2, name);
+    }
     PushWidgetL10nAPI(L, widget.manifest);
+    PushReadOnlyProxyForTopTable(L);
     lua_setfield(L, -2, "l10n");
 
     if (widget.permissions.contains("ui.input"))
     {
-        lua_getglobal(L, "imgui");
+        PushReadOnlyGlobal(L, "imgui");
         lua_setfield(L, -2, "imgui");
     }
 
@@ -2248,10 +2467,24 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     lua_setfield(L, -2, "widgetId");
 }
 
-bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& scriptPath)
+bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& packageId)
 {
     if (FindWidget(widgetId) >= 0) return true;
-    return LoadWidget(ResolveWidgetPath(scriptPath), widgetId);
+    const std::wstring path = ResolveWidgetPath(packageId);
+    if (path.empty())
+    {
+        RuntimeRecordError(widgetId,
+            "Widget package is missing, disabled, or has not been migrated");
+        return false;
+    }
+    if (LoadWidget(path, widgetId))
+        return true;
+    const std::string id = WidgetWideToUtf8(packageId);
+    if (!RecoverWidgetPackage(id))
+        return false;
+    const std::wstring fallback = ResolveWidgetPath(packageId);
+    return !fallback.empty() && fallback != path &&
+        LoadWidget(fallback, widgetId);
 }
 
 bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widgetId)
@@ -2262,7 +2495,14 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     LuaWidget pending;
     pending.widgetId = widgetId;
     pending.filePath = path;
-    pending.manifest = GetWidgetManifest(PathFindFileNameW(path.c_str()));
+    pending.manifest = GetWidgetManifest(path);
+    pending.packageId = pending.manifest.packageId;
+    pending.packageRoot = std::filesystem::path(path).parent_path();
+    if (pending.packageId.empty())
+    {
+        RuntimeRecordError(widgetId, "Legacy loose Lua scripts cannot run directly");
+        return false;
+    }
     if (!pending.manifest.signatureValid)
     {
         RuntimeRecordError(widgetId, "Widget signature validation failed");
@@ -2275,9 +2515,59 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
             pending.manifest.minHostVersion + " or newer");
         return false;
     }
-    for (const auto& permission : pending.manifest.permissions)
-        pending.permissions.insert(permission);
-    SetWidgetExecutionContext(d2dState_, widgetId);
+    if (const auto package =
+        GetWidgetPackageManager().Resolve(pending.packageId))
+    {
+        const std::set<std::string> grantedPermissions(
+            package->grantedPermissions.begin(),
+            package->grantedPermissions.end());
+        for (const auto& permission : pending.manifest.permissions)
+            if (grantedPermissions.contains(permission))
+                pending.permissions.insert(permission);
+        const std::set<std::string> grantedDomains(
+            package->grantedNetworkDomains.begin(),
+            package->grantedNetworkDomains.end());
+        std::erase_if(pending.manifest.networkDomains,
+            [&](const std::string& domain)
+            {
+                return !grantedDomains.contains(domain);
+            });
+    }
+    else
+    {
+        for (const auto& permission : pending.manifest.permissions)
+            pending.permissions.insert(permission);
+    }
+
+    auto quota = std::make_unique<LuaRuntimeQuota>();
+    lua_State* newState = lua_newstate(LuaQuotaAllocator, quota.get());
+    if (!newState)
+    {
+        RuntimeRecordError(widgetId, "Cannot allocate isolated Lua state");
+        return false;
+    }
+    std::unique_ptr<lua_State, decltype(&lua_close)> stateGuard(
+        newState, lua_close);
+    L_ = newState;
+    luaL_requiref(L_, "_G", luaopen_base, 1); lua_pop(L_, 1);
+    luaL_requiref(L_, LUA_TABLIBNAME, luaopen_table, 1); lua_pop(L_, 1);
+    luaL_requiref(L_, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(L_, 1);
+    luaL_requiref(L_, LUA_MATHLIBNAME, luaopen_math, 1); lua_pop(L_, 1);
+    luaL_requiref(L_, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(L_, 1);
+    RegisterDrawAPI(L_);
+    lua_pushlightuserdata(L_, d2dState_);
+    lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
+    lua_pushlightuserdata(L_, quota.get());
+    lua_setfield(L_, LUA_REGISTRYINDEX, "__quota_ptr");
+    lua_pushstring(L_, WidgetWideToUtf8(widgetId).c_str());
+    lua_setfield(L_, LUA_REGISTRYINDEX, "__widget_id");
+    BeginLuaExecution(L_, quota.get(), 1000000, std::chrono::milliseconds(100));
+    if (d2dState_)
+    {
+        d2dState_->currentWidgetId = widgetId;
+        d2dState_->storagePrefix = WidgetWideToUtf8(widgetId);
+    }
+    L_ = newState;
 
     // Create a sandbox table with only the registered safe API surface.
     PushSafeEnvironment(L_, pending);
@@ -2309,7 +2599,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
             return false;
         }
         lua_pushvalue(L_, -2);  // push sandbox as argument
-        if (lua_pcall(L_, 1, 0, 0) != LUA_OK)
+        if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
         {
             const char* err = lua_tostring(L_, -1);
             RuntimeRecordError(widgetId, err ? err : "(pcall error)");
@@ -2320,7 +2610,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     else
     {
         // Execute the chunk
-        if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+        if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
         {
             const char* err = lua_tostring(L_, -1);
             RuntimeRecordError(widgetId, err ? err : "(pcall error)");
@@ -2356,10 +2646,74 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets;
     ReadLuaDeclaredSettings(L_, -1, scriptSettings, scriptPresets);
 
+    const std::string storagePrefix = WidgetWideToUtf8(widgetId) + ".";
+    const std::string dataVersionKey = storagePrefix + "__host.dataVersion";
+    auto& activeStorage = ActiveStorage();
+    int storedDataVersion = 1;
+    if (const auto stored = activeStorage.find(dataVersionKey);
+        stored != activeStorage.end())
+        storedDataVersion = std::max(1, std::atoi(stored->second.c_str()));
+    if (pending.manifest.dataVersion < storedDataVersion)
+    {
+        RuntimeRecordError(widgetId,
+            "Widget package dataVersion is older than the instance storage");
+        lua_pop(L_, 1);
+        return false;
+    }
+    if (pending.manifest.dataVersion > storedDataVersion)
+    {
+        std::unordered_map<std::string, std::string> migratedStorage =
+            activeStorage;
+        auto* parentOverlay = g_storageOverlay;
+        g_storageOverlay = &migratedStorage;
+        lua_getfield(L_, -1, "migrateStorage");
+        if (lua_isfunction(L_, -1))
+        {
+            BeginLuaExecution(L_, quota.get(), 1000000,
+                std::chrono::milliseconds(100));
+            lua_pushinteger(L_, storedDataVersion);
+            lua_pushinteger(L_, pending.manifest.dataVersion);
+            if (LuaProtectedCall(L_, 2, 0) != LUA_OK)
+            {
+                const char* migrationError = lua_tostring(L_, -1);
+                const std::string message = migrationError
+                    ? migrationError : "(storage migration error)";
+                lua_pop(L_, 1);
+                g_storageOverlay = parentOverlay;
+                RuntimeRecordError(widgetId,
+                    "Widget storage migration failed: " + message);
+                lua_pop(L_, 1);
+                return false;
+            }
+        }
+        else
+            lua_pop(L_, 1);
+        migratedStorage[dataVersionKey] =
+            std::to_string(pending.manifest.dataVersion);
+        g_storageOverlay = parentOverlay;
+        if (parentOverlay)
+            *parentOverlay = std::move(migratedStorage);
+        else
+        {
+            g_storage = std::move(migratedStorage);
+            SaveStorageFile();
+        }
+    }
+    else if (!activeStorage.contains(dataVersionKey))
+    {
+        activeStorage[dataVersionKey] =
+            std::to_string(pending.manifest.dataVersion);
+        if (!g_storageOverlay) SaveStorageFile();
+    }
+
     lua_pop(L_, 1);  // pop table
 
     LuaWidget w;
     w.widgetId = widgetId;
+    w.packageId = pending.packageId;
+    w.packageRoot = pending.packageRoot;
+    w.state = stateGuard.release();
+    w.quota = std::move(quota);
     w.name = name;
     w.filePath = path;
     w.manifest = pending.manifest;
@@ -2373,12 +2727,12 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     WIN32_FILE_ATTRIBUTE_DATA attr{};
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
-    widgets_.push_back(w);
+    widgets_.push_back(std::move(w));
 
-    if (w.manifest.refreshIntervalMs > 0 && widgetTimerRequestCallback_)
+    if (widgets_.back().manifest.refreshIntervalMs > 0 && widgetTimerRequestCallback_)
     {
         UINT_PTR tid = widgetTimerRequestCallback_(widgetId,
-            static_cast<UINT>(w.manifest.refreshIntervalMs));
+            static_cast<UINT>(widgets_.back().manifest.refreshIntervalMs));
         if (tid && !widgets_.empty())
         {
             auto& stored = widgets_.back();
@@ -2852,7 +3206,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         {
             ImGui::Spacing();
 
-            if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+            if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
             {
                 const char* err = lua_tostring(L_, -1);
                 RuntimeRecordError(widgetId, err ? err : "(imguiRender error)");
@@ -2888,6 +3242,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             found = &widgets_[idx];
         }
     }
+    if (!found->valid) return;
 
     d2dState_->ctx = context;
     SetWidgetExecutionContext(d2dState_, widgetId);
@@ -2913,7 +3268,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             {
                 lua_pushinteger(L_, found->lastColumns);
                 lua_pushinteger(L_, found->lastRows);
-                if (lua_pcall(L_, 2, 0, 0) != LUA_OK)
+                if (LuaProtectedCall(L_, 2, 0) != LUA_OK)
                 {
                     const char* error = lua_tostring(L_, -1);
                     RuntimeRecordError(widgetId, error ? error : "(onSizeChanged error)");
@@ -2944,7 +3299,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     lua_getfield(L_, -1, "render");
     if (lua_isfunction(L_, -1))
     {
-        if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+        if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
         {
             const char* err = lua_tostring(L_, -1);
             RuntimeRecordError(widgetId, err ? err : "(render error)");
@@ -3052,7 +3407,7 @@ void WidgetEngine::TickRuntime()
                     lua_pushboolean(L_, response.error.empty() &&
                         response.status >= 200 && response.status < 300);
                     lua_setfield(L_, -2, "ok");
-                    if (lua_pcall(L_, 2, 0, 0) != LUA_OK)
+                    if (LuaProtectedCall(L_, 2, 0) != LUA_OK)
                     {
                         const char* error = lua_tostring(L_, -1);
                         RuntimeRecordError(widget.widgetId, error ? error : "(onHttpResponse error)");
@@ -3104,7 +3459,7 @@ void WidgetEngine::TickRuntime()
                 if (lua_isfunction(L_, -1))
                 {
                     lua_pushstring(L_, name.c_str());
-                    if (lua_pcall(L_, 1, 0, 0) != LUA_OK)
+                    if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
                     {
                         const char* error = lua_tostring(L_, -1);
                         RuntimeRecordError(widget.widgetId, error ? error : "(onTimer error)");
@@ -3133,7 +3488,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId)
         if (lua_isfunction(L_, -1))
         {
             lua_pushstring(L_, "refresh");
-            if (lua_pcall(L_, 1, 0, 0) != LUA_OK)
+            if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
             {
                 const char* error = lua_tostring(L_, -1);
                 RuntimeRecordError(widget.widgetId, error ? error : "(onTimer refresh error)");
@@ -3166,7 +3521,7 @@ void WidgetEngine::InvokeOpen(const std::wstring& widgetId)
     lua_getfield(L_, -1, "onOpen");
     if (lua_isfunction(L_, -1))
     {
-        if (lua_pcall(L_, 0, 0, 0) != LUA_OK)
+        if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
         {
             const char* err = lua_tostring(L_, -1);
             RuntimeRecordError(widgetId, err ? err : "(onOpen error)");
@@ -3208,7 +3563,7 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
         lua_pushinteger(L_, y);
         lua_pushinteger(L_, button);
         lua_pushinteger(L_, delta);
-        if (lua_pcall(L_, 4, 0, 0) != LUA_OK)
+        if (LuaProtectedCall(L_, 4, 0) != LUA_OK)
         {
             const char* err = lua_tostring(L_, -1);
             RuntimeRecordError(widgetId, err ? err : "(mouse callback error)");
@@ -3237,7 +3592,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(const std::wstring& 
     lua_getfield(L_, -1, "getContextMenu");
     if (lua_isfunction(L_, -1))
     {
-        if (lua_pcall(L_, 0, 1, 0) == LUA_OK && lua_istable(L_, -1))
+        if (LuaProtectedCall(L_, 0, 1) == LUA_OK && lua_istable(L_, -1))
         {
             int count = static_cast<int>(lua_rawlen(L_, -1));
             for (int i = 1; i <= count; ++i)
@@ -3299,7 +3654,7 @@ void WidgetEngine::InvokeMenu(const std::wstring& widgetId, int menuId)
     if (lua_isfunction(L_, -1))
     {
         lua_pushinteger(L_, menuId);
-        if (lua_pcall(L_, 1, 0, 0) != LUA_OK)
+        if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
         {
             const char* err = lua_tostring(L_, -1);
             RuntimeRecordError(widgetId, err ? err : "(onMenu error)");
@@ -3327,7 +3682,7 @@ void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
         if (lua_isfunction(L_, -1))
         {
             lua_pushstring(L_, reason.c_str());
-            if (lua_pcall(L_, 1, 0, 0) != LUA_OK)
+            if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
             {
                 const char* err = lua_tostring(L_, -1);
                 RuntimeRecordError(widget.widgetId, err ? err : "(onDesktopChanged error)");
@@ -3342,13 +3697,14 @@ void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
     }
 }
 
-bool WidgetEngine::ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const
+bool WidgetEngine::ReadBoolFlag(const std::wstring& packageId, const char* flag, bool defaultVal) const
 {
     for (const auto& w : widgets_)
     {
-        if (w.valid && w.filePath.size() >= scriptPath.size() &&
-            w.filePath.compare(w.filePath.size() - scriptPath.size(), scriptPath.size(), scriptPath) == 0)
+        if (w.valid && Utf8ToWideLocal(w.packageId) == packageId)
         {
+            const_cast<WidgetEngine*>(this)->L_ = w.state;
+            if (!L_) return defaultVal;
             lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
             if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return defaultVal; }
             lua_getfield(L_, -1, flag);
@@ -3368,6 +3724,8 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
     const auto& w = widgets_[idx];
+    const_cast<WidgetEngine*>(this)->L_ = w.state;
+    if (!L_) return false;
 
     lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
     if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return false; }
@@ -3467,18 +3825,33 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
-    std::wstring path = widgets_[idx].filePath;
-    if (widgets_[idx].hostVisible)
-        InvokeSimpleCallback(widgets_[idx], "onHidden");
-    if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
-        widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
+    std::wstring path = ResolveWidgetPath(
+        Utf8ToWideLocal(widgets_[idx].packageId));
+    if (path.empty())
+        path = widgets_[idx].filePath;
+    const size_t oldIndex = static_cast<size_t>(idx);
+    if (!LoadWidget(path, widgetId))
+    {
+        RecoverWidgetPackage(widgets_[idx].packageId,
+            widgets_[idx].manifest.version);
+        return false;
+    }
+
+    // The new VM is now fully loaded. Only then retire the last-known-good VM.
+    LuaWidget& old = widgets_[oldIndex];
+    if (old.hostVisible)
+        InvokeSimpleCallback(old, "onHidden");
+    if (old.refreshTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(old.refreshTimerId);
     if (httpService_) httpService_->CancelWidget(widgetId);
-    luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
-    widgets_.erase(widgets_.begin() + idx);
-    std::erase_if(widgets_, [&widgetId](const LuaWidget& widget) {
-        return widget.widgetId == widgetId;
-    });
-    return LoadWidget(path, widgetId);
+    if (old.state)
+    {
+        luaL_unref(old.state, LUA_REGISTRYINDEX, old.ref);
+        lua_close(old.state);
+        old.state = nullptr;
+    }
+    widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(oldIndex));
+    return true;
 }
 
 void WidgetEngine::NotifyLanguageChanged(const std::wstring& widgetId)
@@ -3504,6 +3877,17 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
     std::string idUtf8 = WidgetWideToUtf8(widgetId);
     g_storage[idUtf8 + ".lastError"] = message;
     SaveStorageFile();
+    const int index = FindWidget(widgetId);
+    if (index >= 0)
+    {
+        auto& widget = widgets_[index];
+        ++widget.consecutiveErrors;
+        if (widget.consecutiveErrors >= 5)
+        {
+            widget.circuitOpen = true;
+            widget.valid = false;
+        }
+    }
     RuntimeAddLog(widgetId, "error", message);
 }
 
@@ -3537,30 +3921,33 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeEverythingSearch(const std:
 
 bool WidgetEngine::RuntimeOpenDesktopPath(const std::wstring& path)
 {
-    if (path.empty()) return false;
+    if (g_widgetDryLoad || path.empty()) return false;
     return desktopOpenCallback_ ? desktopOpenCallback_(path) : false;
 }
 
 bool WidgetEngine::RuntimeRevealDesktopPath(const std::wstring& path)
 {
-    if (path.empty()) return false;
+    if (g_widgetDryLoad || path.empty()) return false;
     return desktopRevealCallback_ ? desktopRevealCallback_(path) : false;
 }
 
 void WidgetEngine::RuntimeRefreshDesktop()
 {
+    if (g_widgetDryLoad) return;
     if (desktopRefreshCallback_)
         desktopRefreshCallback_();
 }
 
 void WidgetEngine::RuntimeSetWidgetTitle(const std::wstring& widgetId, const std::wstring& title)
 {
+    if (g_widgetDryLoad) return;
     if (setWidgetTitleCallback_)
         setWidgetTitleCallback_(widgetId, title);
 }
 
 void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId)
 {
+    if (g_widgetDryLoad) return;
     if (invalidateCallback_)
         invalidateCallback_(widgetId);
 }
@@ -3568,8 +3955,9 @@ void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId)
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
 {
     std::string fullKey = WidgetWideToUtf8(widgetId) + "." + key;
-    auto it = g_storage.find(fullKey);
-    if (it != g_storage.end())
+    auto& storage = ActiveStorage();
+    auto it = storage.find(fullKey);
+    if (it != storage.end())
         return it->second;
 
     int idx = FindWidget(widgetId);
@@ -3584,8 +3972,14 @@ std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, c
 void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const std::string& key, const std::string& value)
 {
     if (key.empty() || IsRemovedPanelEffectSettingKey(key)) return;
-    g_storage[WidgetWideToUtf8(widgetId) + "." + key] = value;
-    SaveStorageFile();
+    const std::string prefix = WidgetWideToUtf8(widgetId);
+    if (!StorageWriteWithinQuota(prefix, key, value))
+    {
+        RuntimeRecordError(widgetId, "Widget storage quota exceeded");
+        return;
+    }
+    ActiveStorage()[prefix + "." + key] = value;
+    if (!g_storageOverlay) SaveStorageFile();
 }
 
 void WidgetEngine::ReloadStorage()
@@ -3595,12 +3989,31 @@ void WidgetEngine::ReloadStorage()
 
 void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& request)
 {
+    if (g_widgetDryLoad) return;
     if (inlineTextEditCallback_)
         inlineTextEditCallback_(request);
 }
 
-void WidgetEngine::RuntimeNotify(const std::wstring& title, const std::wstring& message)
+void WidgetEngine::RuntimeNotify(const std::wstring& widgetId,
+    const std::wstring& title, const std::wstring& message)
 {
+    if (g_widgetDryLoad) return;
+    const int index = FindWidget(widgetId);
+    if (index < 0) return;
+    auto& widget = widgets_[index];
+    const auto now = std::chrono::steady_clock::now();
+    if (widget.notificationWindow.time_since_epoch().count() == 0 ||
+        now - widget.notificationWindow >= std::chrono::minutes(1))
+    {
+        widget.notificationWindow = now;
+        widget.notificationsInWindow = 0;
+    }
+    if (widget.notificationsInWindow >= 5)
+    {
+        RuntimeRecordError(widgetId, "Widget notification quota exceeded");
+        return;
+    }
+    ++widget.notificationsInWindow;
     if (notifyCallback_)
         notifyCallback_(title, message);
 }
@@ -3667,18 +4080,21 @@ MediaSnapshot WidgetEngine::RuntimeGetMediaSnapshot(const std::wstring& widgetId
 
 bool WidgetEngine::RuntimeMediaPlayPause()
 {
+    if (g_widgetDryLoad) return false;
     EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaPlayPause();
 }
 
 bool WidgetEngine::RuntimeMediaNext()
 {
+    if (g_widgetDryLoad) return false;
     EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaNext();
 }
 
 bool WidgetEngine::RuntimeMediaPrevious()
 {
+    if (g_widgetDryLoad) return false;
     EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaPrevious();
 }
@@ -3686,8 +4102,12 @@ bool WidgetEngine::RuntimeMediaPrevious()
 bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::string& name,
     int intervalMs, bool repeat)
 {
+    if (g_widgetDryLoad) return false;
     int index = FindWidget(widgetId);
     if (index < 0 || name.empty()) return false;
+    if (!widgets_[index].timers.contains(name) &&
+        widgets_[index].timers.size() >= 32)
+        return false;
     intervalMs = std::clamp(intervalMs, 100, 86400000);
     LuaWidget::Timer timer;
     timer.name = name;
@@ -3706,6 +4126,7 @@ bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::s
 
 int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options)
 {
+    if (g_widgetDryLoad) return 0;
     int index = FindWidget(widgetId);
     if (index < 0 || !httpService_) return 0;
     options.widgetId = widgetId;
@@ -3726,6 +4147,7 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
 {
     int index = FindWidget(widgetId);
     if (index < 0) return;
+    if (widgets_[index].hostControls.size() >= 128) return;
     if (control.type == LuaWidget::HostControl::Type::Scroll)
     {
         const int maximum = std::max(0, control.contentHeight - control.viewportHeight);
@@ -4041,7 +4463,7 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
                 {
                     lua_pushstring(L_, it->id.c_str());
                     lua_pushboolean(L_, it->type == LuaWidget::HostControl::Type::Toggle ? !it->value : true);
-                    if (lua_pcall(L_, 2, 0, 0) != LUA_OK)
+                    if (LuaProtectedCall(L_, 2, 0) != LUA_OK)
                     {
                         const char* error = lua_tostring(L_, -1);
                         RuntimeRecordError(widgetId, error ? error : "(onUiAction error)");
@@ -4109,6 +4531,7 @@ void WidgetEngine::SetItemFontSizeScale(float scale)
 
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
 {
+    if (g_widgetDryLoad) return;
     if (openWidgetSettingsCallback_)
         openWidgetSettingsCallback_(widgetId, L"");
 }
@@ -4123,9 +4546,20 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
         entry.widgetId = widget.widgetId;
         entry.name = widget.name;
         entry.scriptPath = widget.filePath;
+        entry.packageId = widget.packageId;
+        entry.packageVersion = widget.manifest.version;
         entry.valid = widget.valid;
         entry.hasManifest = widget.manifest.hasManifest;
         entry.permissions = widget.manifest.permissions;
+        if (widget.quota)
+        {
+            entry.memoryBytes = widget.quota->memoryBytes;
+            entry.memoryLimit = widget.quota->memoryLimit;
+            entry.lastCallbackMs = widget.quota->lastExecutionMs;
+            entry.executionQuotaExceeded = widget.quota->executionExceeded;
+            entry.memoryQuotaExceeded = widget.quota->memoryExceeded;
+        }
+        entry.circuitOpen = widget.circuitOpen;
         std::string errorKey = WidgetWideToUtf8(widget.widgetId) + ".lastError";
         auto errIt = g_storage.find(errorKey);
         if (errIt != g_storage.end())
@@ -4145,26 +4579,57 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
 std::vector<std::wstring> WidgetEngine::ListAvailable()
 {
     std::vector<std::wstring> result;
-    std::wstring search = GetWidgetsDir();
-    search += L"\\*.lua";
-
-    WIN32_FIND_DATAW fd{};
-    HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE) return result;
-
-    do
+    for (const auto& package : GetWidgetPackageManager().ListPackages())
     {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        LuaWidgetManifest manifest = GetWidgetManifest(fd.cFileName);
-        if (!manifest.signatureValid) continue;
+        if (!package.active || !package.enabled) continue;
+        LuaWidgetManifest manifest =
+            GetWidgetManifest((package.root /
+                Utf8ToWideLocal(package.manifest.entry)).wstring());
         if (!manifest.minHostVersion.empty() &&
             CompareVersions(SNOWDESKTOP_VERSION, manifest.minHostVersion) < 0)
             continue;
-        result.push_back(fd.cFileName);
-    } while (FindNextFileW(hFind, &fd));
-
-    FindClose(hFind);
+        result.push_back(Utf8ToWideLocal(package.manifest.id));
+    }
+    std::sort(result.begin(), result.end());
     return result;
+}
+
+std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageAsset(
+    const std::wstring& widgetId, const std::wstring& relativePath) const
+{
+    if (!snowdesktop::widget::WidgetPackageValidator::IsSafeRelativePath(
+        std::filesystem::path(relativePath)))
+        return std::nullopt;
+    const int index = FindWidget(widgetId);
+    if (index < 0 || widgets_[index].packageRoot.empty())
+        return std::nullopt;
+    std::error_code error;
+    const auto root = std::filesystem::weakly_canonical(
+        widgets_[index].packageRoot, error);
+    const auto target = std::filesystem::weakly_canonical(
+        root / relativePath, error);
+    if (error) return std::nullopt;
+    auto rootIt = root.begin();
+    auto targetIt = target.begin();
+    for (; rootIt != root.end(); ++rootIt, ++targetIt)
+    {
+        if (targetIt == target.end() ||
+            _wcsicmp(rootIt->c_str(), targetIt->c_str()) != 0)
+            return std::nullopt;
+    }
+    for (auto current = root; current != target; )
+    {
+        // Check each path component that already exists. Missing assets simply
+        // fail at the image decoder without escaping the package.
+        const auto relative = std::filesystem::relative(target, current, error);
+        if (error || relative.empty()) break;
+        current /= *relative.begin();
+        const DWORD attributes = GetFileAttributesW(current.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES &&
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+            return std::nullopt;
+    }
+    return target.wstring();
 }
 
 LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
@@ -4173,6 +4638,8 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     std::wstring fullPath = filename;
     if (PathIsRelativeW(fullPath.c_str()))
         fullPath = ResolveWidgetPath(filename);
+    if (fullPath.empty())
+        return manifest;
 
     std::wstring manifestPath = ManifestPathForScriptFile(fullPath);
     std::string text = ReadTextFile(manifestPath);
@@ -4230,6 +4697,15 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         return true;
     };
 
+    readString(root, "id", manifest.packageId);
+    readString(root, "slug", manifest.slug);
+    double packageNumber = 0;
+    if (readNumber(root, "schemaVersion", packageNumber))
+        manifest.schemaVersion = static_cast<int>(packageNumber);
+    if (readNumber(root, "apiVersion", packageNumber))
+        manifest.apiVersion = static_cast<int>(packageNumber);
+    if (readNumber(root, "dataVersion", packageNumber))
+        manifest.dataVersion = static_cast<int>(packageNumber);
     readString(root, "name", manifest.name);
     readString(root, "nameKey", manifest.nameKey);
     readString(root, "version", manifest.version);
@@ -4379,129 +4855,373 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     return manifest;
 }
 
-bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath, std::wstring& error)
+bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath,
+    std::wstring& error, bool allowSourceChange,
+    bool allowPermissionExpansion,
+    snowdesktop::widget::InstalledPackage* installedResult)
 {
-    std::string text = ReadTextFile(manifestPath);
-    if (text.empty()) { error = _LW("engine.error.read_manifest"); return false; }
-    JsonValue packageRoot;
-    std::string parseError;
-    if (!ParseJson(text, packageRoot, &parseError) || !packageRoot.IsObject())
+    const std::filesystem::path input(manifestPath);
+    auto& manager = GetWidgetPackageManager();
+    snowdesktop::widget::InstalledPackage installed;
+    snowdesktop::widget::ValidationReport report;
+    snowdesktop::widget::PackageManifest manifest;
+    std::string installError;
+    bool ok = false;
+    if (_wcsicmp(input.extension().c_str(), L".snowwidget") == 0)
     {
-        error = _LW("engine.error.invalid_manifest");
-        return false;
+        report = manager.ValidateArchive(input, &manifest);
+        if (report.Ok())
+            ok = manager.InstallArchive(input,
+                { "local-import", manifest.id },
+                allowSourceChange, installed, report, installError,
+                allowPermissionExpansion);
     }
-    std::string entry;
-    if (const JsonValue* entryValue = packageRoot.Find("entry"); entryValue && entryValue->IsString())
-        entry = entryValue->string;
-    wchar_t sourceDirBuffer[MAX_PATH]{};
-    wcsncpy_s(sourceDirBuffer, manifestPath.c_str(), _TRUNCATE);
-    PathRemoveFileSpecW(sourceDirBuffer);
-    std::wstring sourceDir = sourceDirBuffer;
-    std::wstring sourceScript;
-    if (!entry.empty())
-        sourceScript = sourceDir + L"\\" + Utf8ToWideLocal(entry);
     else
     {
-        sourceScript = manifestPath;
-        if (sourceScript.size() > 12 &&
-            sourceScript.substr(sourceScript.size() - 12) == L".widget.json")
-            sourceScript.replace(sourceScript.size() - 12, 12, L".lua");
+        const std::filesystem::path root =
+            _wcsicmp(input.filename().c_str(), L"widget.json") == 0
+            ? input.parent_path() : input;
+        report = manager.ValidateDirectory(root, &manifest);
+        if (report.Ok())
+            ok = manager.InstallDirectory(root,
+                { "local-import", manifest.id },
+                allowSourceChange, installed, report, installError,
+                allowPermissionExpansion);
     }
-    if (GetFileAttributesW(sourceScript.c_str()) == INVALID_FILE_ATTRIBUTES)
+    if (!ok)
     {
-        error = _LW("engine.error.missing_entry");
+        if (installError.empty()) installError = "package validation failed";
+        error = Utf8ToWideLocal(installError);
+        if (!report.Ok())
+            error += L"\n" + Utf8ToWideLocal(report.ToJson());
         return false;
     }
-    wchar_t canonicalDir[MAX_PATH]{};
-    wchar_t canonicalScript[MAX_PATH]{};
-    if (!GetFullPathNameW(sourceDir.c_str(), MAX_PATH, canonicalDir, nullptr) ||
-        !GetFullPathNameW(sourceScript.c_str(), MAX_PATH, canonicalScript, nullptr))
-    {
-        error = _LW("engine.error.resolve_path");
-        return false;
-    }
-    std::wstring allowedPrefix = canonicalDir;
-    if (!allowedPrefix.empty() && allowedPrefix.back() != L'\\')
-        allowedPrefix.push_back(L'\\');
-    if (_wcsnicmp(canonicalScript, allowedPrefix.c_str(), allowedPrefix.size()) != 0 ||
-        _wcsicmp(PathFindExtensionW(canonicalScript), L".lua") != 0)
-    {
-        error = _LW("engine.error.entry_local");
-        return false;
-    }
-
-    std::wstring stem = PathFindFileNameW(manifestPath.c_str());
-    if (stem.size() > 12 && stem.substr(stem.size() - 12) == L".widget.json")
-        stem.resize(stem.size() - 12);
-    std::wstring targetDir = GetWidgetsDir();
-    std::wstring targetManifest = targetDir + L"\\" + stem + L".widget.json";
-    std::wstring targetScript = targetDir + L"\\" + stem + L".lua";
-    std::wstring tempStem = stem + L".installing";
-    std::wstring tempManifest = targetDir + L"\\" + tempStem + L".widget.json";
-    std::wstring tempScript = targetDir + L"\\" + tempStem + L".lua";
-    DeleteFileW(tempScript.c_str());
-    DeleteFileW(tempManifest.c_str());
-    if (!CopyFileW(sourceScript.c_str(), tempScript.c_str(), FALSE) ||
-        !CopyFileW(manifestPath.c_str(), tempManifest.c_str(), FALSE))
-    {
-        DeleteFileW(tempScript.c_str());
-        DeleteFileW(tempManifest.c_str());
-        error = _LW("engine.error.copy_failed");
-        return false;
-    }
-    LuaWidgetManifest installed = GetWidgetManifest(tempScript);
-    if (!installed.signatureValid)
-    {
-        DeleteFileW(tempScript.c_str());
-        DeleteFileW(tempManifest.c_str());
-        error = _LW("engine.error.signature_failed");
-        return false;
-    }
-    if (!installed.minHostVersion.empty() &&
-        CompareVersions(SNOWDESKTOP_VERSION, installed.minHostVersion) < 0)
-    {
-        DeleteFileW(tempScript.c_str());
-        DeleteFileW(tempManifest.c_str());
-        error = _LW("engine.error.host_version");
-        return false;
-    }
-
-    const std::wstring backupScript = targetScript + L".backup";
-    const std::wstring backupManifest = targetManifest + L".backup";
-    DeleteFileW(backupScript.c_str());
-    DeleteFileW(backupManifest.c_str());
-    const bool hadScript = GetFileAttributesW(targetScript.c_str()) != INVALID_FILE_ATTRIBUTES;
-    const bool hadManifest = GetFileAttributesW(targetManifest.c_str()) != INVALID_FILE_ATTRIBUTES;
-    if ((hadScript && !MoveFileExW(targetScript.c_str(), backupScript.c_str(), MOVEFILE_REPLACE_EXISTING)) ||
-        (hadManifest && !MoveFileExW(targetManifest.c_str(), backupManifest.c_str(), MOVEFILE_REPLACE_EXISTING)))
-    {
-        if (GetFileAttributesW(backupScript.c_str()) != INVALID_FILE_ATTRIBUTES)
-            MoveFileExW(backupScript.c_str(), targetScript.c_str(), MOVEFILE_REPLACE_EXISTING);
-        DeleteFileW(tempScript.c_str());
-        DeleteFileW(tempManifest.c_str());
-        error = _LW("engine.error.backup_failed");
-        return false;
-    }
-    const bool scriptInstalled = MoveFileExW(tempScript.c_str(), targetScript.c_str(), MOVEFILE_REPLACE_EXISTING);
-    const bool manifestInstalled = scriptInstalled &&
-        MoveFileExW(tempManifest.c_str(), targetManifest.c_str(), MOVEFILE_REPLACE_EXISTING);
-    if (!manifestInstalled)
-    {
-        DeleteFileW(targetScript.c_str());
-        DeleteFileW(targetManifest.c_str());
-        if (hadScript)
-            MoveFileExW(backupScript.c_str(), targetScript.c_str(), MOVEFILE_REPLACE_EXISTING);
-        if (hadManifest)
-            MoveFileExW(backupManifest.c_str(), targetManifest.c_str(), MOVEFILE_REPLACE_EXISTING);
-        DeleteFileW(tempScript.c_str());
-        DeleteFileW(tempManifest.c_str());
-        error = _LW("engine.error.replace_failed");
-        return false;
-    }
-    DeleteFileW(backupScript.c_str());
-    DeleteFileW(backupManifest.c_str());
+    if (installedResult) *installedResult = installed;
     error.clear();
     return true;
+}
+
+bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
+    const std::optional<std::string>& previousVersion, std::wstring& error)
+{
+    if (g_storageOverlay)
+    {
+        error = L"Another component storage migration is already running.";
+        return false;
+    }
+
+    std::vector<std::wstring> liveInstances;
+    for (const auto& widget : widgets_)
+        if (widget.packageId == packageId)
+            liveInstances.push_back(widget.widgetId);
+
+    std::unordered_map<std::string, std::string> migratedStorage = g_storage;
+    g_storageOverlay = &migratedStorage;
+    std::vector<std::wstring> updatedInstances;
+    bool ok = true;
+    std::string failure;
+
+    if (liveInstances.empty())
+    {
+        const std::wstring dryId = Utf8ToWideLocal(
+            "__package_dry_load_" +
+            snowdesktop::widget::WidgetPackageManager::GenerateUuid());
+        const std::wstring path = ResolveWidgetPath(Utf8ToWideLocal(packageId));
+        g_widgetDryLoad = true;
+        ok = !path.empty() && LoadWidget(path, dryId);
+        g_widgetDryLoad = false;
+        if (!ok)
+        {
+            const auto stored = g_storage.find(
+                WidgetWideToUtf8(dryId) + ".lastError");
+            if (stored != g_storage.end()) failure = stored->second;
+        }
+        DeleteWidgetInstance(dryId);
+    }
+    else
+    {
+        for (const auto& widgetId : liveInstances)
+        {
+            if (!ReloadWidget(widgetId))
+            {
+                ok = false;
+                const auto stored = g_storage.find(
+                    WidgetWideToUtf8(widgetId) + ".lastError");
+                if (stored != g_storage.end()) failure = stored->second;
+                break;
+            }
+            updatedInstances.push_back(widgetId);
+        }
+    }
+
+    g_storageOverlay = nullptr;
+    if (ok)
+    {
+        g_storage = std::move(migratedStorage);
+        SaveStorageFile();
+        error.clear();
+        return true;
+    }
+
+    RecoverWidgetPackage(packageId, previousVersion);
+    for (const auto& widgetId : updatedInstances)
+        (void)ReloadWidget(widgetId);
+    error = Utf8ToWideLocal(failure.empty()
+        ? "component dry-load or storage migration failed; restored last-known-good"
+        : failure + "\nRestored last-known-good component version.");
+    return false;
+}
+
+bool WidgetEngine::InstallAndVerifyWidgetPackage(const std::wstring& path,
+    std::wstring& error, bool allowSourceChange,
+    bool allowPermissionExpansion)
+{
+    snowdesktop::widget::PackageManifest incoming;
+    snowdesktop::widget::ValidationReport report;
+    const std::filesystem::path input(path);
+    auto& manager = GetWidgetPackageManager();
+    if (_wcsicmp(input.extension().c_str(), L".snowwidget") == 0)
+        report = manager.ValidateArchive(input, &incoming);
+    else
+        report = manager.ValidateDirectory(
+            _wcsicmp(input.filename().c_str(), L"widget.json") == 0
+                ? input.parent_path() : input, &incoming);
+    if (!report.Ok())
+    {
+        error = Utf8ToWideLocal(report.ToJson());
+        return false;
+    }
+    std::optional<std::string> previousVersion;
+    if (const auto previous = manager.Resolve(incoming.id))
+        if (!previous->builtin && !previous->development)
+            previousVersion = previous->manifest.version;
+    snowdesktop::widget::InstalledPackage installed;
+    if (!InstallWidgetPackage(path, error, allowSourceChange,
+        allowPermissionExpansion, &installed))
+        return false;
+    return VerifyInstalledWidgetPackage(
+        installed.manifest.id, previousVersion, error);
+}
+
+snowdesktop::widget::ProviderStatus
+WidgetEngine::GetStaticWidgetCatalogStatus(
+    const std::filesystem::path& catalogPath)
+{
+    snowdesktop::widget::StaticCatalogSource source(catalogPath);
+    return source.Status();
+}
+
+void WidgetEngine::RegisterWidgetPackageSource(
+    std::shared_ptr<snowdesktop::widget::IWidgetPackageSource> source)
+{
+    if (!source || source->ProviderId().empty()) return;
+    GetWidgetPackageSources()[source->ProviderId()] = std::move(source);
+}
+
+bool WidgetEngine::ConfigureStaticWidgetCatalog(
+    const std::filesystem::path& catalogPath, std::string& error)
+{
+    auto source =
+        std::make_shared<snowdesktop::widget::StaticCatalogSource>(
+            catalogPath);
+    const auto status = source->Status();
+    if (!status.available)
+    {
+        error = status.message;
+        return false;
+    }
+    RegisterWidgetPackageSource(source);
+    error.clear();
+    return true;
+}
+
+std::vector<snowdesktop::widget::PackageSourceInfo>
+WidgetEngine::ListWidgetPackageSources()
+{
+    std::vector<snowdesktop::widget::PackageSourceInfo> result;
+    for (const auto& [providerId, source] : GetWidgetPackageSources())
+        result.push_back({
+            providerId, source->Capabilities(), source->Status() });
+    std::sort(result.begin(), result.end(),
+        [](const auto& left, const auto& right)
+        {
+            return left.providerId < right.providerId;
+        });
+    return result;
+}
+
+std::vector<snowdesktop::widget::PackageDetails>
+WidgetEngine::QueryWidgetPackageSource(const std::string& providerId,
+    const snowdesktop::widget::PackageQuery& query, std::string& error)
+{
+    const auto source = GetWidgetPackageSources().find(providerId);
+    if (source == GetWidgetPackageSources().end())
+    {
+        error = "component source is not registered: " + providerId;
+        return {};
+    }
+    return source->second->Query(query, error);
+}
+
+int WidgetEngine::ApplySafeWidgetPackageUpdates(
+    const std::string& providerId, std::string& report)
+{
+    report.clear();
+    const auto source = GetWidgetPackageSources().find(providerId);
+    if (source == GetWidgetPackageSources().end()) return 0;
+    std::vector<snowdesktop::widget::PackageVersionRef> current;
+    for (const auto& package : GetWidgetPackageManager().ListPackages())
+    {
+        if (!package.active || package.builtin || package.development ||
+            package.source.providerId != providerId)
+            continue;
+        current.push_back({
+            package.manifest.id, package.manifest.version });
+    }
+    if (current.empty()) return 0;
+    std::string sourceError;
+    const auto updates =
+        source->second->CheckUpdates(current, sourceError);
+    if (!sourceError.empty())
+    {
+        report = sourceError;
+        return 0;
+    }
+    int applied = 0;
+    for (const auto& update : updates)
+    {
+        std::wstring installError;
+        if (InstallAndVerifyWidgetPackageFromSource(providerId,
+            update.available.source.externalItemId,
+            update.available.manifest.version, installError, false, false))
+        {
+            ++applied;
+        }
+        else
+        {
+            if (!report.empty()) report += '\n';
+            report += update.current.packageId + ": " +
+                WidgetWideToUtf8(installError);
+        }
+    }
+    return applied;
+}
+
+std::vector<snowdesktop::widget::PackageDetails>
+WidgetEngine::QueryStaticWidgetCatalog(
+    const std::filesystem::path& catalogPath,
+    const snowdesktop::widget::PackageQuery& query, std::string& error)
+{
+    snowdesktop::widget::StaticCatalogSource source(catalogPath);
+    return source.Query(query, error);
+}
+
+bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
+    const std::string& providerId, const std::string& externalItemId,
+    const std::string& version, std::wstring& error,
+    bool allowSourceChange, bool allowPermissionExpansion)
+{
+    const auto source = GetWidgetPackageSources().find(providerId);
+    if (source == GetWidgetPackageSources().end())
+    {
+        error = Utf8ToWideLocal(
+            "component source is not registered: " + providerId);
+        return false;
+    }
+    std::string sourceError;
+    const auto details =
+        source->second->GetDetails(externalItemId, sourceError);
+    if (!details)
+    {
+        error = Utf8ToWideLocal(sourceError);
+        return false;
+    }
+    std::optional<std::string> previousVersion;
+    auto& manager = GetWidgetPackageManager();
+    if (const auto previous = manager.Resolve(details->manifest.id))
+        if (!previous->builtin && !previous->development)
+            previousVersion = previous->manifest.version;
+    snowdesktop::widget::InstalledPackage installed;
+    snowdesktop::widget::ValidationReport report;
+    if (!manager.InstallFromSource(*source->second, externalItemId, version,
+        allowSourceChange, installed, report, sourceError,
+        allowPermissionExpansion))
+    {
+        error = Utf8ToWideLocal(sourceError);
+        if (!report.Ok()) error += L"\n" + Utf8ToWideLocal(report.ToJson());
+        return false;
+    }
+    return VerifyInstalledWidgetPackage(
+        installed.manifest.id, previousVersion, error);
+}
+
+bool WidgetEngine::InstallAndVerifyStaticWidgetPackage(
+    const std::filesystem::path& catalogPath,
+    const std::string& externalItemId, const std::string& version,
+    std::wstring& error, bool allowSourceChange,
+    bool allowPermissionExpansion)
+{
+    std::string sourceError;
+    if (!ConfigureStaticWidgetCatalog(catalogPath, sourceError))
+    {
+        error = Utf8ToWideLocal(sourceError);
+        return false;
+    }
+    return InstallAndVerifyWidgetPackageFromSource("static-catalog",
+        externalItemId, version, error, allowSourceChange,
+        allowPermissionExpansion);
+}
+
+snowdesktop::widget::PackagePaths WidgetEngine::GetWidgetPackagePaths()
+{
+    return GetWidgetPackageManager().Paths();
+}
+
+std::vector<snowdesktop::widget::InstalledPackage>
+WidgetEngine::ListWidgetPackages()
+{
+    return GetWidgetPackageManager().ListPackages();
+}
+
+std::vector<snowdesktop::widget::LegacyPackage>
+WidgetEngine::ListLegacyWidgetPackages()
+{
+    return GetWidgetPackageManager().FindLegacyPackages();
+}
+
+std::optional<std::wstring> WidgetEngine::ResolveLegacyWidgetPackage(
+    const std::wstring& legacyName)
+{
+    const auto packageId =
+        GetWidgetPackageManager().ResolveLegacyPackageId(legacyName);
+    return packageId
+        ? std::optional<std::wstring>(Utf8ToWideLocal(*packageId))
+        : std::nullopt;
+}
+
+snowdesktop::widget::LegacyMigrationResult
+WidgetEngine::MigrateLegacyWidgetPackage(
+    const snowdesktop::widget::LegacyPackage& legacy)
+{
+    return GetWidgetPackageManager().MigrateLegacy(legacy);
+}
+
+bool WidgetEngine::SetWidgetPackageEnabled(const std::string& packageId,
+    bool enabled, std::string& error)
+{
+    return GetWidgetPackageManager().SetEnabled(packageId, enabled, error);
+}
+
+bool WidgetEngine::RollbackWidgetPackage(const std::string& packageId,
+    const std::string& version, std::string& error)
+{
+    return GetWidgetPackageManager().Rollback(packageId, version, error);
+}
+
+bool WidgetEngine::UninstallWidgetPackage(const std::string& packageId,
+    std::string& error)
+{
+    return GetWidgetPackageManager().Uninstall(packageId, error);
 }
 
 bool WidgetEngine::GetWidgetDefaultSpan(const std::wstring& filename, int& columns, int& rows)
@@ -4654,13 +5374,14 @@ static int lua_StorageGet(lua_State* L)
     const char* key = luaL_checkstring(L, 1);
     auto* s = GetD2D(L);
     if (!s) { lua_pushnil(L); return 1; }
-    std::string fullKey = s->storagePrefix + "." + key;
+    std::string fullKey = BoundStoragePrefix(L) + "." + key;
     auto it = g_storage.find(fullKey);
     if (it != g_storage.end())
         lua_pushstring(L, it->second.c_str());
     else if (s->engine)
     {
-        std::string defaultValue = s->engine->RuntimeGetStorageValue(s->currentWidgetId, key);
+        std::string defaultValue =
+            s->engine->RuntimeGetStorageValue(BoundWidgetId(L), key);
         if (!defaultValue.empty())
             lua_pushstring(L, defaultValue.c_str());
         else
@@ -4671,14 +5392,41 @@ static int lua_StorageGet(lua_State* L)
     return 1;
 }
 
+static bool StorageWriteWithinQuota(const std::string& prefix,
+    const std::string& key, const std::string& value)
+{
+    constexpr std::size_t kMaxStorageKeys = 256;
+    constexpr std::size_t kMaxStorageKeyBytes = 128;
+    constexpr std::size_t kMaxStorageValueBytes = 64 * 1024;
+    constexpr std::size_t kMaxStorageBytes = 1024 * 1024;
+    if (key.empty() || key.size() > kMaxStorageKeyBytes ||
+        value.size() > kMaxStorageValueBytes)
+        return false;
+    const std::string fullKey = prefix + "." + key;
+    std::size_t count = 0;
+    std::size_t bytes = 0;
+    for (const auto& [storedKey, storedValue] : ActiveStorage())
+    {
+        if (!storedKey.starts_with(prefix + ".")) continue;
+        if (storedKey == fullKey) continue;
+        ++count;
+        bytes += storedKey.size() + storedValue.size();
+    }
+    return count < kMaxStorageKeys &&
+        bytes + fullKey.size() + value.size() <= kMaxStorageBytes;
+}
+
 static int lua_StorageSet(lua_State* L)
 {
     const char* key = luaL_checkstring(L, 1);
     const char* value = luaL_checkstring(L, 2);
     auto* s = GetD2D(L);
     if (!s || IsRemovedPanelEffectSettingKey(key)) return 0;
-    g_storage[s->storagePrefix + "." + key] = value;
-    SaveStorageFile();
+    const std::string prefix = BoundStoragePrefix(L);
+    if (!StorageWriteWithinQuota(prefix, key, value))
+        return luaL_error(L, "widget storage quota exceeded");
+    ActiveStorage()[prefix + "." + key] = value;
+    if (!g_storageOverlay) SaveStorageFile();
     return 0;
 }
 
@@ -4891,18 +5639,18 @@ static int lua_StorageRemove(lua_State* L)
     const char* key = luaL_checkstring(L, 1);
     auto* s = GetD2D(L);
     if (!s) return 0;
-    g_storage.erase(s->storagePrefix + "." + key);
-    SaveStorageFile();
+    ActiveStorage().erase(BoundStoragePrefix(L) + "." + key);
+    if (!g_storageOverlay) SaveStorageFile();
     return 0;
 }
 
 static int lua_StorageKeys(lua_State* L)
 {
     auto* s = GetD2D(L);
-    std::string prefix = s ? s->storagePrefix + "." : "";
+    std::string prefix = s ? BoundStoragePrefix(L) + "." : "";
     lua_newtable(L);
     int idx = 1;
-    for (const auto& kv : g_storage)
+    for (const auto& kv : ActiveStorage())
     {
         if (!prefix.empty() && kv.first.compare(0, prefix.size(), prefix) != 0)
             continue;

@@ -20,8 +20,10 @@
 #include "dock_settings.h"
 #include "navigation_settings.h"
 #include "category_settings.h"
+#include "widget_package.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -103,6 +105,7 @@ public:
 
     /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
     void ShowDockSettings();
+    void ShowWidgetMigration();
 
     /**
      * @brief 检查窗口当前是否可见
@@ -384,6 +387,8 @@ private:
     void DrawDisplayPage();
 
     void DrawCategorySettingsPage();
+    void DrawWidgetPackagesPage();
+    void DrawWidgetDeveloperTools();
 
     /**
      * @brief 绘制小组件编辑器页面（脚本编辑与保存）
@@ -516,8 +521,30 @@ private:
     /// 系统 DPI 缩放比例，用于字体和界面缩放适配
     float dpiScale_ = 1.0f;
 
-    /// 当前活动页面索引（0 = 通用, 1 = 组件显示, 2 = Dock, 3 = 图标显示, 4 = 分类设置, 5 = 布局备份, 6 = 关于, 7 = 调试）
+    /// 当前活动页面索引（8 = Lua 组件包与迁移）
     int activePage_ = 0;
+    std::string widgetPackageStatus_;
+    std::string pendingWidgetPackageUninstall_;
+    std::filesystem::path widgetCatalogPath_;
+    std::string widgetPackageSourceId_;
+    std::vector<snowdesktop::widget::PackageDetails> widgetCatalogEntries_;
+    char widgetCatalogSearch_[128] = {};
+    bool widgetCatalogInitialized_ = false;
+    std::string widgetCatalogLocale_;
+    int widgetPackageFilter_ = 0;
+    enum class PendingWidgetInstallKind
+    {
+        None,
+        Local,
+        StaticCatalog,
+    };
+    PendingWidgetInstallKind pendingWidgetInstallKind_ =
+        PendingWidgetInstallKind::None;
+    std::wstring pendingWidgetInstallPath_;
+    std::string pendingWidgetInstallExternalId_;
+    std::string pendingWidgetInstallVersion_;
+    std::string pendingWidgetInstallProviderId_;
+    std::wstring pendingWidgetInstallReason_;
 
     /// 备份名称输入缓冲区
     char backupNameBuf_[128] = {};

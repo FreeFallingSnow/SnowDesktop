@@ -282,12 +282,28 @@ def validate_widget_manifests(
             errors.append("{0}: top-level JSON value must be an object".format(relative))
             continue
 
-        stem = path.name[:-len(".widget.json")]
-        lua_path = path.with_name(stem + ".lua")
-        paired_lua_files.add(lua_path)
         references: Dict[str, List[str]] = collections.defaultdict(list)
-        for key, locations in lua_references.get(lua_path, {}).items():
-            references[key].extend(locations)
+        if path.name == "widget.json":
+            entry = data.get("entry", "main.lua")
+            if not isinstance(entry, str) or not entry:
+                errors.append("{0}: entry must be a non-empty string".format(relative))
+                package_lua_files = []
+            else:
+                entry_path = path.parent / Path(entry)
+                if not entry_path.is_file():
+                    errors.append(
+                        "{0}: package entry does not exist: {1}".format(
+                            relative, entry
+                        )
+                    )
+                package_lua_files = sorted(path.parent.rglob("*.lua"))
+        else:
+            stem = path.name[:-len(".widget.json")]
+            package_lua_files = [path.with_name(stem + ".lua")]
+        for lua_path in package_lua_files:
+            paired_lua_files.add(lua_path)
+            for key, locations in lua_references.get(lua_path, {}).items():
+                references[key].extend(locations)
         for field in ("nameKey", "descriptionKey"):
             key = data.get(field)
             if key is None:
@@ -417,7 +433,7 @@ def validate_widget_manifests(
 
     for lua_path in sorted(set(lua_references) - paired_lua_files):
         errors.append(
-            "{0}: missing matching .widget.json manifest".format(
+            "{0}: missing containing widget.json or matching .widget.json manifest".format(
                 lua_path.relative_to(root)
             )
         )
@@ -493,7 +509,12 @@ def main() -> int:
     cpp_files = source_files(source_root) if source_root.is_dir() else []
     lua_files = sorted(widget_root.rglob("*.lua")) if widget_root.is_dir() else []
     manifest_files = (
-        sorted(widget_root.rglob("*.widget.json")) if widget_root.is_dir() else []
+        sorted(
+            set(widget_root.rglob("*.widget.json"))
+            | set(widget_root.rglob("widget.json"))
+        )
+        if widget_root.is_dir()
+        else []
     )
     files = cpp_files + lua_files
     if not files:
