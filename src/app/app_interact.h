@@ -2187,24 +2187,20 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 clickedPopupItem = true;
                 break;
             }
-            const bool clickedPopupContent =
-                PtInRect(&content, pt) != FALSE;
+            const bool startPopupMarquee =
+                snowdesktop::
+                    collection_popup_layout::
+                        AllowsMarqueeStart(
+                            true,
+                            clickedPopupItem,
+                            false);
             if (!clickedPopupItem && !ctrl)
                 for (auto& entry :
                      dockFolderPopupWidget_.folderEntries)
                     entry.selected = false;
-            if (!clickedPopupItem &&
-                !clickedPopupContent)
-            {
-                mouseDown_ = false;
-                mouseDownHit_ = nullptr;
-                InvalidateRect(
-                    hwnd_, nullptr, FALSE);
-                return;
-            }
             dockFolderPopupMarqueeInitialSelection_.
                 clear();
-            if (!clickedPopupItem)
+            if (startPopupMarquee)
             {
                 dockFolderPopupMarqueeInitialSelection_.
                     reserve(
@@ -2222,7 +2218,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             marqueeWidgetIndex_ =
                 static_cast<size_t>(-1);
             marqueeDockFolderPopup_ =
-                !clickedPopupItem;
+                startPopupMarquee;
             marqueeInitialScrollOffset_ =
                 popupScrollOffset_;
             mouseDownWidgetIndex_ =

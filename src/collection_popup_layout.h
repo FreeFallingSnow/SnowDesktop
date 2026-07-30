@@ -35,4 +35,20 @@ inline int RequiredRowCount(
             columns);
 }
 
+/**
+ * @brief 判断弹窗中的按下位置能否作为框选起点。
+ *
+ * 弹窗留白、标题栏和圆角内边缘都属于可用起点；条目和按钮等交互控件
+ * 保留自身操作，不启动框选。
+ */
+inline constexpr bool AllowsMarqueeStart(
+    bool pointInsidePopup,
+    bool pointOnItem,
+    bool pointOnControl)
+{
+    return pointInsidePopup &&
+        !pointOnItem &&
+        !pointOnControl;
+}
+
 } // namespace snowdesktop::collection_popup_layout

@@ -92,6 +92,18 @@ int main()
             popupLayout::RequiredRowCount(
                 1, 1) == 1,
         "non-empty collection popups must retain their content-driven size");
+    Check(
+        popupLayout::AllowsMarqueeStart(
+            true, false, false),
+        "popup chrome and inner edges must allow marquee selection to start");
+    Check(
+        !popupLayout::AllowsMarqueeStart(
+            false, false, false) &&
+            !popupLayout::AllowsMarqueeStart(
+                true, true, false) &&
+            !popupLayout::AllowsMarqueeStart(
+                true, false, true),
+        "outside presses, items and popup controls must not start marquee selection");
 
     Check(floatingDock::HasAnySummonTrigger(true, false),
         "the floating Dock hotkey must work without edge swipe");
