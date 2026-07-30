@@ -264,6 +264,26 @@ void TestFileGroupRules()
         }) && second.empty(),
         "a child must have one owner and duplicates must be removed");
 
+    std::vector<std::string> retainedKeys{
+        "shared"
+    };
+    const auto releasedKeys =
+        rules::ClaimUniqueAllowedItems(
+            std::vector<std::string>{
+                "first", "shared", "first", "second"
+            },
+            retainedKeys,
+            [](const std::string& value) {
+                return !value.empty();
+            });
+    Check(
+        releasedKeys ==
+            std::vector<std::string>({
+                "first", "second"
+            }),
+        "deleting an item-owning widget must release each "
+        "unique item except keys retained by another owner");
+
     Check(
         rules::ShouldShowInnerCategoryTabs(
             true, false, true),

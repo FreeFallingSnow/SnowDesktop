@@ -7827,6 +7827,171 @@ inline void DesktopApp::ReleaseFileGroupChildren(size_t groupIndex)
     }
 }
 
+inline void DesktopApp::ReleaseDesktopItemsFromWidget(
+    size_t widgetIndex)
+{
+    if (widgetIndex >= widgets_.size())
+        return;
+
+    const DesktopWidget& source = widgets_[widgetIndex];
+    if (source.type != DesktopWidgetType::Collection &&
+        source.type != DesktopWidgetType::FileCategories)
+        return;
+
+    std::vector<std::wstring> claimedKeys;
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (i == widgetIndex) continue;
+        for (const auto& key : widgets_[i].itemKeys)
+        {
+            if (!key.empty())
+                claimedKeys.push_back(
+                    ToUpperInvariant(key));
+        }
+    }
+    for (const auto& entry : dockEntries_)
+    {
+        if (entry.type ==
+                DockEntryType::DesktopItem &&
+            !entry.keepOnDesktop &&
+            !entry.reference.empty())
+        {
+            claimedKeys.push_back(
+                ToUpperInvariant(entry.reference));
+        }
+    }
+
+    std::vector<std::wstring> sourceKeys;
+    sourceKeys.reserve(source.itemKeys.size());
+    for (const auto& key : source.itemKeys)
+        sourceKeys.push_back(
+            ToUpperInvariant(key));
+    const std::vector<std::wstring> releasedKeys =
+        snowdesktop::collection_group_rules::
+            ClaimUniqueAllowedItems(
+                sourceKeys, claimedKeys,
+                [](const std::wstring& key) {
+                    return !key.empty();
+                });
+    if (releasedKeys.empty())
+        return;
+
+    std::unordered_set<std::wstring> releasedSet(
+        releasedKeys.begin(), releasedKeys.end());
+    std::unordered_set<std::wstring> usedSlots;
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        if (i == widgetIndex ||
+            IsGroupedWidget(widgets_[i]))
+            continue;
+        MarkGridArea(
+            usedSlots, widgets_[i].gridCell,
+            widgets_[i].gridSpan);
+    }
+    for (const auto& item : items_)
+    {
+        if (item.name.empty() ||
+            releasedSet.contains(
+                ToUpperInvariant(item.layoutKey)) ||
+            IsItemInAnyWidget(item) ||
+            item.gridCell.pageId ==
+                kDockPageId)
+            continue;
+        MarkGridArea(
+            usedSlots, item.gridCell,
+            item.gridSpan);
+    }
+
+    GridCell preferredCell = source.gridCell;
+    if (source.type ==
+            DesktopWidgetType::Collection)
+    {
+        const size_t groupIndex =
+            FindCollectionGroupIndexForChild(
+                source.id);
+        if (groupIndex < widgets_.size())
+            preferredCell =
+                widgets_[groupIndex].gridCell;
+    }
+    else
+    {
+        const size_t groupIndex =
+            FindFileGroupIndexForChild(source.id);
+        if (groupIndex < widgets_.size())
+            preferredCell =
+                widgets_[groupIndex].gridCell;
+    }
+
+    auto isKnownPage =
+        [&](const std::wstring& pageId) {
+            return !pageId.empty() &&
+                pageId != kDockPageId &&
+                (FindGridPage(
+                     gridPages_, pageId) !=
+                     nullptr ||
+                 (savedPageColumns_.contains(pageId) &&
+                  savedPageRows_.contains(pageId)));
+        };
+    if (!isKnownPage(preferredCell.pageId))
+    {
+        const GridPage* firstPage =
+            GetFirstPageGridPage();
+        if (!firstPage) return;
+        preferredCell = {
+            firstPage->id, 0, 0
+        };
+    }
+
+    auto slotForCell =
+        [&](const GridCell& cell) {
+            int rows = 1;
+            if (const GridPage* page =
+                    FindGridPage(
+                        gridPages_, cell.pageId))
+                rows = std::max(1, page->rows);
+            else if (const auto it =
+                         savedPageRows_.find(
+                             cell.pageId);
+                     it != savedPageRows_.end())
+                rows = std::max(1, it->second);
+            return std::max(0, cell.column) *
+                    rows +
+                std::max(0, cell.row);
+        };
+
+    std::wstring preferredPage =
+        preferredCell.pageId;
+    int startSlot = slotForCell(preferredCell);
+    for (const auto& key : releasedKeys)
+    {
+        const size_t itemIndex =
+            FindItemIndexByKey(key);
+        if (itemIndex >= items_.size())
+            continue;
+
+        DesktopItem& item = items_[itemIndex];
+        item.gridSpan.columns =
+            std::max(1, item.gridSpan.columns);
+        item.gridSpan.rows =
+            std::max(1, item.gridSpan.rows);
+
+        GridCell landing;
+        if (!FindDockReturnCell(
+                usedSlots, preferredPage,
+                startSlot, item.gridSpan,
+                landing))
+            continue;
+
+        item.gridCell = landing;
+        item.slot = slotForCell(landing);
+        item.selected = false;
+        MarkGridArea(
+            usedSlots, landing, item.gridSpan);
+        preferredPage = landing.pageId;
+        startSlot = item.slot + 1;
+    }
+}
+
 /**
  * @brief 在右键菜单位置添加桌面文件分类组件。
  * @param screenPoint 屏幕坐标点。

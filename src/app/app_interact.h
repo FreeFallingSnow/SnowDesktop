@@ -13203,6 +13203,7 @@ inline void DesktopApp::ShowWidgetContextMenu(
         {
             ReleaseFileGroupChildren(widgetIndex);
         }
+        ReleaseDesktopItemsFromWidget(widgetIndex);
         if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript && widgetEngine_)
             widgetEngine_->DeleteWidgetInstance(widgets_[widgetIndex].id);
         for (auto& group : widgets_)
@@ -13222,7 +13223,7 @@ inline void DesktopApp::ShowWidgetContextMenu(
                         group.childWidgetIds,
                         group.activeCategoryId);
         }
-        // Move widget's itemKeys back to desktop by just removing the widget
+        // 成员落点已在删除前逐个分配；移除组件后重新进入桌面容器。
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
         std::erase_if(dockEntries_, [&](const DockEntry& entry) {
             return (entry.type == DockEntryType::Collection ||

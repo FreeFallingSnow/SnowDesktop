@@ -1742,6 +1742,8 @@ private:
     bool ReleaseCollectionFromGroup(const std::wstring& collectionId,
         GridCell preferredCell);
     void ReleaseCollectionGroupChildren(size_t groupIndex);
+    /** @brief 删除桌面项目容器前，将其成员依次放回可用网格空位。 */
+    void ReleaseDesktopItemsFromWidget(size_t widgetIndex);
     size_t HitTestCollectionGroupIndex(POINT point,
         size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
     bool AddWidgetToFileGroup(size_t childIndex, size_t groupIndex,
