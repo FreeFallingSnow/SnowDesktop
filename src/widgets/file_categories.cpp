@@ -1147,7 +1147,10 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     (void)body;
-    bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
+    bool privacyActive = data_->privacyMode &&
+        !app_->dragSession_.IsActive() &&
+        !app_->dragDropController_.IsExternalDragActive() &&
+        !PtInRect(&data_->bounds, app_->lastMousePoint_);
     const bool lt = app_->IsLightContentTheme();
 
     const auto& categoryIds = CachedVisibleCategoryIds();

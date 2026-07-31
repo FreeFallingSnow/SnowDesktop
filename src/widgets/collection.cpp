@@ -379,7 +379,10 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (data_->itemKeys.empty()) return;
     const bool lt = app_->IsLightContentTheme();
 
-    bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
+    bool privacyActive = data_->privacyMode &&
+        !app_->dragSession_.IsActive() &&
+        !app_->dragDropController_.IsExternalDragActive() &&
+        !PtInRect(&data_->bounds, app_->lastMousePoint_);
 
     // ── Scroll container mode (like FolderMapping) ───────────
     if (data_->scrollContainerMode)

@@ -338,6 +338,59 @@ struct DragSourceList
                 SlotSurfaceKind::Desktop;
     }
 
+    /** Classify this runtime source for the centralized slot contract. */
+    snowdesktop::slot_contract::DragPayloadKind SlotPayloadKind() const
+    {
+        bool collectionWidgetsOnly = false;
+        bool folderMappingWidgetsOnly = false;
+        if (hasWidgets)
+        {
+            collectionWidgetsOnly = true;
+            folderMappingWidgetsOnly = true;
+            bool sawWidget = false;
+            for (const auto& entry : entries)
+            {
+                if (entry.kind != DropSourceKind::Widget)
+                    continue;
+                sawWidget = true;
+                if (entry.fromDock)
+                {
+                    collectionWidgetsOnly = collectionWidgetsOnly &&
+                        entry.dockEntryType == DockEntryType::Collection;
+                    folderMappingWidgetsOnly = folderMappingWidgetsOnly &&
+                        entry.dockEntryType == DockEntryType::FolderMapping;
+                    continue;
+                }
+                if (entry.dockEntryType == DockEntryType::FolderMapping)
+                {
+                    collectionWidgetsOnly = false;
+                    continue;
+                }
+                auto* widget = dynamic_cast<Widget*>(entry.item);
+                DesktopWidget* data =
+                    widget ? widget->GetWidgetData() : nullptr;
+                collectionWidgetsOnly = collectionWidgetsOnly && data &&
+                    data->type == DesktopWidgetType::Collection;
+                folderMappingWidgetsOnly =
+                    folderMappingWidgetsOnly && data &&
+                    data->type == DesktopWidgetType::FolderMapping;
+            }
+            collectionWidgetsOnly = sawWidget && collectionWidgetsOnly;
+            folderMappingWidgetsOnly =
+                sawWidget && folderMappingWidgetsOnly;
+        }
+        return snowdesktop::slot_contract::ClassifyPayload({
+            hasDesktopIcons,
+            hasFolderEntries,
+            hasExternalFiles,
+            hasWidgets,
+            collectionWidgetsOnly,
+            hasCollectionGroupEntries,
+            hasFileGroupEntries,
+            folderMappingWidgetsOnly,
+        });
+    }
+
     /**
      * @brief 获取所有条目的文件路径
      * @return 非空文件路径列表

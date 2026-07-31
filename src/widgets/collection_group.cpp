@@ -1008,7 +1008,7 @@ void CollectionGroup::DrawContent(
     const bool privacyActive =
         data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
-        !app_->externalDragActive_ &&
+        !app_->dragDropController_.IsExternalDragActive() &&
         !PtInRect(
             &data_->bounds, app_->lastMousePoint_);
     DrawSearchBox(context);

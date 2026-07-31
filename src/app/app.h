@@ -9,11 +9,11 @@
  * - 快速导航条目 QuickNavigationEntry，用于在快速导航面板中展示
  *   桌面项、文件夹条目等快捷入口
  *
- * DesktopApp 实现了 COM 接口 IDropTarget 和 IDropSource，支持
- * OLE 拖放协议，可接受来自外部程序的文件拖入以及发起内部拖拽。
+ * Windows OLE 拖放协议由 OleDragDropAdapter 适配，DesktopApp 只处理
+ * 应用级拖放事件，不再承担 COM 身份与引用计数。
  *
- * @note 本文件仅包含声明，内联实现分散在 app_run.h、app_gfx.h、
- *       app_interact.h、app_menu.h、app_grid.h 等子头文件中。
+ * @note 本文件只声明组合根与应用级协调接口。实现按页面网格、拖放、
+ *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
 #include "item.h"
@@ -24,6 +24,7 @@
 #include "widget.h"
 #include "drop_model.h"
 #include "drag_session.h"
+#include "drag_target_resolver.h"
 #include "settings_window.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
@@ -56,7 +57,15 @@
 #include "constants.h"
 #include "resource.h"
 #include "desktop_backdrop_compositor.h"
+#include "drag_drop_controller.h"
+#include "grid_geometry.h"
+#include "ole_drag_drop_adapter.h"
+#include "popup_dwell_controller.h"
+#include "rename_controller.h"
+#include "selection_controller.h"
+#include "tray_icon_controller.h"
 #include "taskbar_dynamic/search_visibility_detector.h"
+#include "../crashlog.h"
 
 #include <windowsx.h>
 #include <dbt.h>
@@ -100,6 +109,13 @@
 
 using Microsoft::WRL::ComPtr;
 
+// Shared render helpers used by both the remaining inline render code and the
+// extracted rendering translation units. Keep their declarations independent
+// of DesktopApp so pure color conversion/brush-key logic stays reusable.
+std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& color);
+D2D1_COLOR_F ToD2DColor(COLORREF color, float alpha = 1.0f);
+std::wstring DockItemWindowKey(const DesktopItem& item);
+
 enum class IconLoadPhase { Phase1, Phase2 };
 
 struct IconLoadTask {
@@ -114,13 +130,11 @@ struct IconLoadTask {
     std::wstring folderPath;
     IconLoadPhase phase = IconLoadPhase::Phase1;
 };
-
 struct RecycleBinPollState {
     std::atomic<int64_t> itemCount{ -1 };
     std::atomic<bool> queryInFlight{ false };
     std::atomic<HWND> targetWindow{ nullptr };
 };
-
 enum class DockWindowVisualState
 {
     Closed,
@@ -245,78 +259,23 @@ private:
  * - 基于 Direct2D / Direct3D / DirectComposition 的图形渲染管线
  * - 桌面图标（DesktopItem）和网格页面（GridPage）的数据管理
  * - 部件系统（Widget）：集合、文件分类、文件夹映射、Lua 脚本等
- * - OLE 拖放协议支持（IDropTarget / IDropSource），处理内部和外部拖拽
+ * - 通过 OleDragDropAdapter 协调内部与外部 OLE 拖放
  * - 托盘图标与系统托盘菜单
  * - 上下文菜单（外壳扩展、新建菜单等）
  * - 快速导航面板，用于快速定位桌面项和部件条目
  * - 布局持久化：网格尺寸、页面状态保存与恢复
  *
- * 实现 split 模式：核心声明在此文件中，内联实现按功能域分散在
- * app_run.h、app_gfx.h、app_interact.h、app_menu.h、app_grid.h 中。
+ * DesktopApp 是应用组合根；槽位规则、拖放目标解析、选择、重命名、
+ * 弹窗驻留和托盘生命周期由独立核心/控制器对象承接。
  */
-class DesktopApp : public IDropTarget, public IDropSource
+class DesktopApp : private OleDragDropHandler
 {
 public:
-    /** @brief 默认构造函数，refCount_ 初始化为 1。 */
+    /** @brief 默认构造函数。 */
     DesktopApp() = default;
 
     /** @brief 析构函数，释放所有 COM 资源、GPU 资源和窗口资源。 */
     ~DesktopApp();
-
-    // ── IUnknown ────────────────────────────────────────────
-    /**
-     * @brief 查询 COM 接口。
-     * @param riid   请求的接口 ID
-     * @param object 输出指针，接收接口指针
-     * @return S_OK 成功，E_NOINTERFACE 不支持该接口
-     */
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override;
-    /** @brief 递增 COM 引用计数。 @return 新的引用计数值 */
-    ULONG STDMETHODCALLTYPE AddRef() override;
-    /** @brief 递减 COM 引用计数，减至零时销毁对象。 @return 新的引用计数值 */
-    ULONG STDMETHODCALLTYPE Release() override;
-
-    // ── IDropTarget ────────────────────────────────────────
-    /**
-     * @brief 拖拽对象进入窗口时调用，判断是否接受拖入。
-     * @param dataObject 拖拽数据对象
-     * @param keyState   键盘修饰键状态
-     * @param point      鼠标屏幕坐标
-     * @param effect     输出允许的拖放效果（DROPEFFECT_*）
-     */
-    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect) override;
-    /**
-     * @brief 拖拽对象在窗口内移动时调用，更新拖放效果。
-     * @param keyState 键盘修饰键状态
-     * @param point    鼠标屏幕坐标
-     * @param effect   输出当前的拖放效果
-     */
-    HRESULT STDMETHODCALLTYPE DragOver(DWORD keyState, POINTL point, DWORD* effect) override;
-    /** @brief 拖拽离开窗口时调用，清理拖拽状态。 */
-    HRESULT STDMETHODCALLTYPE DragLeave() override;
-    /**
-     * @brief 拖拽对象在窗口内释放（放置）时调用，执行放置操作。
-     * @param dataObject 拖拽数据对象
-     * @param keyState   键盘修饰键状态
-     * @param point      鼠标屏幕坐标
-     * @param effect     输出最终执行的拖放效果
-     */
-    HRESULT STDMETHODCALLTYPE Drop(IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect) override;
-
-    // ── IDropSource ────────────────────────────────────────
-    /**
-     * @brief 查询是否继续拖拽或取消/执行放置。
-     * @param escapePressed Escape 键是否被按下
-     * @param keyState      键盘修饰键状态
-     * @return S_OK 继续拖拽，DRAGDROP_S_CANCEL 取消，DRAGDROP_S_DROP 执行放置
-     */
-    HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escapePressed, DWORD keyState) override;
-    /**
-     * @brief 提供拖拽过程中的视觉反馈（光标样式等）。
-     * @param effect 当前的拖放效果
-     * @return DRAGDROP_S_USEDEFAULT 使用系统默认光标
-     */
-    HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD effect) override;
 
     /**
      * @brief 启动应用程序的主消息循环。
@@ -2243,14 +2202,13 @@ private:
 
     /** @name 托盘图标 */
     /** @{ */
-    HICON trayIcon_ = nullptr;
-    HWND trayIconOwnerHwnd_ = nullptr;
-    bool trayIconAdded_ = false;
+    TrayIconController trayIconController_;
     /** @} */
 
     /** @name 鼠标/交互状态 */
     /** @{ */
     POINT lastMousePoint_{};
+    SelectionController selectionController_;
     // per-widget 独立定时器：timerId -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
     UINT_PTR nextWidgetTimerId_ = kWidgetTimerIdBase;
@@ -2271,6 +2229,7 @@ private:
     /** @name 拖拽状态 */
     /** @{ */
     DragSession dragSession_;
+    DragDropController dragDropController_{dragSession_};
     DragRenderCache dragRenderCache_;
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
@@ -2310,16 +2269,21 @@ private:
 
     /** @name OLE 拖拽状态 */
     /** @{ */
-    LONG refCount_ = 1;
-    bool selfDragActive_ = false;
-    bool selfDragReturned_ = false;
-    std::vector<std::wstring> selfDragOutKeys_;
-    bool externalDragActive_ = false;
-    int externalDropFileCount_ = 0;
-    bool externalDropHasShortcut_ = false;
-    bool externalDropFoldersOnly_ = false;
+    ComPtr<OleDragDropAdapter> oleDragDropAdapter_;
     bool dropTargetRegistered_ = false;
     /** @} */
+
+    OleDragDropAdapter* EnsureOleDragDropAdapter();
+    HRESULT HandleOleDragEnter(IDataObject* dataObject,
+        DWORD keyState, POINTL point, DWORD* effect) override;
+    HRESULT HandleOleDragOver(
+        DWORD keyState, POINTL point, DWORD* effect) override;
+    HRESULT HandleOleDragLeave() override;
+    HRESULT HandleOleDrop(IDataObject* dataObject,
+        DWORD keyState, POINTL point, DWORD* effect) override;
+    HRESULT HandleOleQueryContinueDrag(
+        BOOL escapePressed, DWORD keyState) override;
+    HRESULT HandleOleGiveFeedback(DWORD effect) override;
 
     /** @name 待处理放置缓存（源列表 -> 预览在外壳刷新后仍存活） */
     /** @{ */
@@ -2353,14 +2317,8 @@ private:
     /** @{ */
     HWND renameEdit_ = nullptr;
     HFONT renameFont_ = nullptr;
-    size_t renameIndex_ = static_cast<size_t>(-1);
     bool renameCommitPending_ = false;
-    bool renamingWidget_ = false;
-    bool renamingFolderEntry_ = false;
-    bool renamingDockFolderPopupEntry_ = false;
-    bool renamingQuickNavigationItem_ = false;
-    size_t renameFolderWidgetIndex_ = static_cast<size_t>(-1);
-    size_t renameFolderEntryIndex_ = static_cast<size_t>(-1);
+    RenameController renameController_;
     /** @brief 开始重命名选中的项。 */
     void BeginRenameSelected(
         std::optional<RECT> dockRenameAnchor = std::nullopt);
@@ -2455,8 +2413,7 @@ private:
     std::vector<bool>
         dockFolderPopupMarqueeInitialSelection_;
     /** @brief 悬停打开：拖拽中悬停在集合"全部"按钮上 */
-    size_t popupDwellWidgetIndex_ = static_cast<size_t>(-1);
-    DWORD popupDwellTick_ = 0;
+    PopupDwellController popupDwellController_;
     size_t collectionGroupTabDwellWidgetIndex_ =
         static_cast<size_t>(-1);
     std::wstring collectionGroupTabDwellId_;
@@ -2574,14 +2531,3 @@ private:
     ComPtr<IContextMenu3> activeContextMenu3_;
     /** @} */
 };
-
-// ── Inline implementations (split into sub-headers) ─────────
-#include "app_run.h"
-#include "app_gfx.h"
-#include "app_glass.h"
-#include "app_dock.h"
-#include "app_floating_dock.h"
-#include "app_quick_navigation.h"
-#include "app_interact.h"
-#include "app_menu.h"
-#include "app_grid.h"

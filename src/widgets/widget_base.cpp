@@ -447,8 +447,9 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
             return _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
         };
 
-        bool sourceHasShortcut = sourceItems.empty() && app_ && app_->externalDragActive_ &&
-            app_->externalDropHasShortcut_;
+        bool sourceHasShortcut = sourceItems.empty() && app_ &&
+            app_->dragDropController_.IsExternalDragActive() &&
+            app_->dragDropController_.ExternalSummary().hasShortcut;
         for (auto* item : sourceItems)
         {
             if (!item) continue;

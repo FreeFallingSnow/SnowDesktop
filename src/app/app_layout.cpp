@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widgets/collection_group_rules.h"
 
 #include "../layout_storage.h"
 

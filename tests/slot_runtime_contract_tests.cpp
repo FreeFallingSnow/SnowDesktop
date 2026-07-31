@@ -1,7 +1,15 @@
 #include "core/container.h"
 #include "core/drag_session.h"
+#include "core/drag_target_resolver.h"
 #include "core/slot.h"
+#include "app/drag_drop_controller.h"
+#include "app/ole_drag_drop_adapter.h"
+#include "app/popup_dwell_controller.h"
+#include "app/rename_controller.h"
+#include "app/selection_controller.h"
+#include "app/tray_icon_controller.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -112,6 +120,74 @@ private:
     BarStyle style_;
     snowdesktop::slot_contract::
         SlotSurfaceKind surface_;
+};
+
+class FakeOleDragDropHandler final : public OleDragDropHandler
+{
+public:
+    HRESULT HandleOleDragEnter(IDataObject* dataObject,
+        DWORD keyState, POINTL point, DWORD* effect) override
+    {
+        ++dragEnterCount;
+        lastDataObject = dataObject;
+        lastKeyState = keyState;
+        lastPoint = point;
+        if (effect) *effect = DROPEFFECT_LINK;
+        return S_OK;
+    }
+
+    HRESULT HandleOleDragOver(DWORD keyState,
+        POINTL point, DWORD* effect) override
+    {
+        ++dragOverCount;
+        lastKeyState = keyState;
+        lastPoint = point;
+        if (effect) *effect = DROPEFFECT_MOVE;
+        return S_FALSE;
+    }
+
+    HRESULT HandleOleDragLeave() override
+    {
+        ++dragLeaveCount;
+        return S_OK;
+    }
+
+    HRESULT HandleOleDrop(IDataObject* dataObject,
+        DWORD keyState, POINTL point, DWORD* effect) override
+    {
+        ++dropCount;
+        lastDataObject = dataObject;
+        lastKeyState = keyState;
+        lastPoint = point;
+        if (effect) *effect = DROPEFFECT_COPY;
+        return S_OK;
+    }
+
+    HRESULT HandleOleQueryContinueDrag(
+        BOOL escapePressed, DWORD keyState) override
+    {
+        ++queryContinueCount;
+        return escapePressed || keyState == 0
+            ? DRAGDROP_S_CANCEL : S_OK;
+    }
+
+    HRESULT HandleOleGiveFeedback(DWORD effect) override
+    {
+        ++feedbackCount;
+        lastEffect = effect;
+        return DRAGDROP_S_USEDEFAULTCURSORS;
+    }
+
+    int dragEnterCount = 0;
+    int dragOverCount = 0;
+    int dragLeaveCount = 0;
+    int dropCount = 0;
+    int queryContinueCount = 0;
+    int feedbackCount = 0;
+    IDataObject* lastDataObject = nullptr;
+    DWORD lastKeyState = 0;
+    DWORD lastEffect = 0;
+    POINTL lastPoint{};
 };
 
 Item* NonOwningItemToken()
@@ -354,6 +430,17 @@ void TestEverySurfaceRetainsStableDragMetadata()
         "external drags without a runtime container must retain the external surface fallback");
 }
 
+struct SelectionFixtureEntry
+{
+    bool selected = false;
+};
+
+struct SelectionFixtureWidget
+{
+    bool selected = false;
+    std::vector<SelectionFixtureEntry> folderEntries;
+};
+
 void TestEveryRegisteredSurfaceOriginLifecycle()
 {
     namespace contract = snowdesktop::slot_contract;
@@ -471,6 +558,302 @@ void TestDropActionModifiers()
             0, DropAction::Copy),
         "reapplying the same action must not invalidate state");
 }
+
+void TestDragTargetResolutionUsesContractAndZOrder()
+{
+    namespace contract = snowdesktop::slot_contract;
+    ContractContainer source(
+        BarStyle::VBar,
+        contract::SlotSurfaceKind::Desktop);
+    DragSourceList sourceList;
+    sourceList.BindRuntimeOrigin(&source);
+    sourceList.hasDesktopIcons = true;
+
+    std::vector<std::unique_ptr<Container>> containers;
+    auto lower = std::make_unique<ContractContainer>(
+        BarStyle::VBar,
+        contract::SlotSurfaceKind::Desktop);
+    Container* lowerPointer = lower.get();
+    containers.push_back(std::move(lower));
+    auto upper = std::make_unique<ContractContainer>(
+        BarStyle::VBar,
+        contract::SlotSurfaceKind::Collection);
+    Container* upperPointer = upper.get();
+    containers.push_back(std::move(upper));
+
+    const POINT point{50, 50};
+    DragTargetResolution resolved =
+        DragTargetResolver::ResolveInternal(
+            containers, point, sourceList);
+    Check(resolved.container == upperPointer &&
+            resolved.slot &&
+            resolved.region == HitRegion::Empty,
+        "the topmost contract-compatible slot surface must win hit testing");
+
+    resolved = DragTargetResolver::ResolveInternal(
+        containers, point, sourceList,
+        [&](const Container& candidate) {
+            return &candidate != upperPointer;
+        });
+    Check(resolved.container == lowerPointer,
+        "application policy must be able to filter a top surface and fall through");
+
+    auto guide = std::make_unique<ContractContainer>(
+        BarStyle::VBar,
+        contract::SlotSurfaceKind::Guide);
+    Container* guidePointer = guide.get();
+    containers.push_back(std::move(guide));
+    resolved = DragTargetResolver::ResolveInternal(
+        containers, point, sourceList);
+    Check(resolved.container == upperPointer &&
+            resolved.container != guidePointer,
+        "a visually topmost surface rejected by the slot contract must be skipped");
+
+    resolved = DragTargetResolver::ResolveExternal(
+        containers, point);
+    Check(resolved.container == upperPointer &&
+            resolved.container != guidePointer,
+        "external ingress must use the same contract-aware z-order resolution");
+
+    DragSourceList mixed;
+    mixed.BindRuntimeOrigin(&source);
+    mixed.hasDesktopIcons = true;
+    mixed.hasFolderEntries = true;
+    Check(!DragTargetResolver::AcceptsInternal(
+            *upperPointer, mixed),
+        "ambiguous mixed payload families must not bypass centralized classification");
+}
+
+void TestDragDropControllerOwnsTransportTransitions()
+{
+    namespace contract = snowdesktop::slot_contract;
+    ContractContainer source(
+        BarStyle::VBar,
+        contract::SlotSurfaceKind::Desktop);
+    DragSourceList sourceList;
+    sourceList.BindRuntimeOrigin(&source);
+    sourceList.hasDesktopIcons = true;
+
+    DragSession session;
+    session.Begin(
+        &source, {}, std::move(sourceList),
+        POINT{}, POINT{});
+    DragDropController controller(session);
+
+    controller.BeginSelfDrag();
+    Check(controller.IsSelfDragActive() &&
+            controller.IsTransportActive() &&
+            !controller.SelfDragReturned(),
+        "starting a self OLE drag must reset and own the return state");
+    controller.MarkSelfDragReturned();
+    controller.EndSelfDrag();
+    Check(!controller.IsTransportActive() &&
+            controller.SelfDragReturned(),
+        "ending self transport must preserve its completion result for the caller");
+
+    controller.BeginExternalDrag({3});
+    controller.ContinueExternalDrag();
+    Check(controller.IsExternalDragActive() &&
+            controller.ExternalSummary().fileCount == 3,
+        "drag-over must preserve metadata captured by external drag-enter");
+
+    std::vector<std::unique_ptr<Container>> containers;
+    auto target = std::make_unique<ContractContainer>(
+        BarStyle::VBar,
+        contract::SlotSurfaceKind::Collection);
+    Container* targetPointer = target.get();
+    containers.push_back(std::move(target));
+    const DragTargetResolution resolved =
+        controller.ResolveInternalTarget(
+            containers, POINT{50, 50});
+    Check(resolved.container == targetPointer &&
+            session.TargetContainer() == targetPointer &&
+            session.TargetSlot() == resolved.slot &&
+            session.TargetRegion() == resolved.region,
+        "the application controller must atomically resolve and update the core session target");
+
+    controller.EndExternalDrag();
+    Check(!controller.IsTransportActive() &&
+            controller.ExternalSummary().fileCount == 0,
+        "ending external transport must clear transient ingress metadata");
+}
+
+void TestOleAdapterOwnsComBoundary()
+{
+    FakeOleDragDropHandler handler;
+    auto* adapter = new OleDragDropAdapter(&handler);
+
+    IDropTarget* target = nullptr;
+    IDropSource* source = nullptr;
+    void* unsupported = reinterpret_cast<void*>(1);
+    Check(adapter->QueryInterface(IID_IDropTarget,
+            reinterpret_cast<void**>(&target)) == S_OK && target,
+        "OLE adapter must expose IDropTarget independently of DesktopApp");
+    Check(adapter->QueryInterface(IID_IDropSource,
+            reinterpret_cast<void**>(&source)) == S_OK && source,
+        "OLE adapter must expose IDropSource independently of DesktopApp");
+    Check(adapter->QueryInterface(IID_IStream, &unsupported) ==
+            E_NOINTERFACE && unsupported == nullptr,
+        "OLE adapter must reject unrelated COM interfaces");
+
+    auto* dataObject = reinterpret_cast<IDataObject*>(
+        static_cast<std::uintptr_t>(1));
+    DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+    const POINTL point{123, 456};
+    Check(target->DragEnter(dataObject, MK_CONTROL, point, &effect) == S_OK &&
+            handler.dragEnterCount == 1 &&
+            handler.lastDataObject == dataObject &&
+            handler.lastKeyState == MK_CONTROL &&
+            handler.lastPoint.x == point.x &&
+            handler.lastPoint.y == point.y &&
+            effect == DROPEFFECT_LINK,
+        "OLE target callback must forward arguments and effects once");
+    effect = DROPEFFECT_COPY;
+    Check(target->DragOver(MK_SHIFT, POINTL{7, 8}, &effect) == S_FALSE &&
+            handler.dragOverCount == 1 && effect == DROPEFFECT_MOVE,
+        "OLE drag-over result must come from the application handler");
+    Check(target->DragLeave() == S_OK && handler.dragLeaveCount == 1,
+        "OLE drag-leave must be forwarded once");
+    Check(source->QueryContinueDrag(FALSE, MK_LBUTTON) == S_OK &&
+            handler.queryContinueCount == 1,
+        "OLE source continuation must be delegated to the handler");
+    Check(source->GiveFeedback(DROPEFFECT_COPY) ==
+            DRAGDROP_S_USEDEFAULTCURSORS &&
+            handler.feedbackCount == 1 &&
+            handler.lastEffect == DROPEFFECT_COPY,
+        "OLE feedback must be delegated without DesktopApp COM identity");
+
+    adapter->Detach();
+    Check(target->DragOver(0, POINTL{}, &effect) == E_UNEXPECTED &&
+            source->QueryContinueDrag(FALSE, MK_LBUTTON) ==
+                DRAGDROP_S_CANCEL,
+        "detached adapters must fail safely after the application is gone");
+
+    target->Release();
+    source->Release();
+    adapter->Release();
+}
+
+void TestTrayCallbackClassification()
+{
+    Check(TrayIconController::ClassifyCallback(
+            MAKELPARAM(WM_CONTEXTMENU, 0)) ==
+            TrayCallbackAction::ShowContextMenu &&
+            TrayIconController::ClassifyCallback(
+                MAKELPARAM(WM_RBUTTONUP, 0)) ==
+            TrayCallbackAction::ShowContextMenu,
+        "tray context-menu callbacks must share one application action");
+    Check(TrayIconController::ClassifyCallback(
+            MAKELPARAM(WM_LBUTTONDBLCLK, 0)) ==
+            TrayCallbackAction::ReloadItems,
+        "tray double-click must map to the reload action");
+    Check(TrayIconController::ClassifyCallback(
+            MAKELPARAM(WM_MOUSEMOVE, 0)) ==
+            TrayCallbackAction::None,
+        "unhandled tray notifications must not leak into application behavior");
+}
+
+void TestSelectionControllerCoversEveryRegisteredRange()
+{
+    SelectionController controller;
+    std::vector<SelectionFixtureEntry> desktop{{true}, {false}};
+    std::vector<SelectionFixtureEntry> dock{{true}};
+    std::vector<SelectionFixtureEntry> running{{true}};
+    std::vector<SelectionFixtureWidget> widgets{
+        {true, {{true}, {false}}},
+        {false, {{true}}},
+    };
+
+    Check(controller.ClearAll(
+            desktop, dock, running, widgets),
+        "clearing selection must report a mutation across registered ranges");
+    const auto allClear = [](const auto& range) {
+        return std::all_of(
+            range.begin(), range.end(),
+            [](const auto& value) {
+                return !value.selected;
+            });
+    };
+    Check(allClear(desktop) && allClear(dock) &&
+            allClear(running) &&
+            allClear(widgets) &&
+            allClear(widgets[0].folderEntries) &&
+            allClear(widgets[1].folderEntries),
+        "one clear operation must cover desktop, dock, running-app, widget, and nested-entry slots");
+    const std::uint64_t clearedRevision =
+        controller.Revision();
+    Check(!controller.ClearAll(
+            desktop, dock, running, widgets) &&
+            controller.Revision() == clearedRevision,
+        "idempotent selection clears must not create false revisions");
+
+    Check(controller.SelectDesktop(desktop, 1) &&
+            desktop[1].selected &&
+            controller.ToggleDesktop(desktop, 1) &&
+            !desktop[1].selected,
+        "desktop selection and toggle must share controller revision semantics");
+    widgets[1].folderEntries[0].selected = true;
+    Check(controller.SelectWidget(widgets, 1) &&
+            !widgets[0].selected &&
+            widgets[1].selected &&
+            !widgets[1].folderEntries[0].selected,
+        "selecting one widget must clear nested entry selection on every widget");
+}
+
+void TestRenameControllerKeepsTargetsExclusive()
+{
+    RenameController controller;
+    controller.BeginWidget(4);
+    Check(controller.IsWidget() &&
+            controller.Index() == 4 &&
+            controller.OwnerIndex() ==
+                RenameController::InvalidIndex,
+        "widget rename must expose one unambiguous target");
+
+    controller.BeginFolderEntry(2, 7);
+    Check(controller.IsFolderEntry() &&
+            !controller.IsWidget() &&
+            controller.OwnerIndex() == 2 &&
+            controller.Index() == 7,
+        "starting a folder-entry rename must replace every prior target");
+    controller.SetQuickNavigationPresentation(true);
+    Check(controller.IsQuickNavigationPresentation(),
+        "quick navigation is a presentation of the same logical rename target");
+
+    controller.BeginDockFolderEntry(3);
+    Check(controller.IsDockFolderEntry() &&
+            controller.OwnerIndex() ==
+                RenameController::InvalidIndex &&
+            !controller.IsQuickNavigationPresentation(),
+        "dock popup entries must not retain stale owner or presentation state");
+
+    controller.Reset();
+    controller.SetQuickNavigationPresentation(true);
+    Check(!controller.IsActive() &&
+            !controller.IsQuickNavigationPresentation(),
+        "an inactive rename cannot acquire a detached presentation state");
+}
+
+void TestPopupDwellControllerHandlesCandidateChanges()
+{
+    PopupDwellController controller;
+    Check(controller.Track(4, 100) &&
+            !controller.IsReady(149, 50) &&
+            controller.IsReady(150, 50),
+        "popup dwell must mature only after the configured delay");
+    Check(!controller.Track(4, 140) &&
+            controller.IsReady(150, 50),
+        "repeated hover samples must not restart the same candidate timer");
+    Check(controller.Track(7, 151) &&
+            controller.Candidate() == 7 &&
+            !controller.IsReady(199, 50),
+        "changing popup candidate must atomically restart dwell timing");
+    controller.Reset();
+    Check(controller.Candidate() ==
+            PopupDwellController::NoCandidate &&
+            !controller.IsReady(1000, 0),
+        "reset popup dwell must remove both candidate and readiness");
+}
 }
 
 int main()
@@ -482,6 +865,13 @@ int main()
     TestEverySurfaceRetainsStableDragMetadata();
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
+    TestDragTargetResolutionUsesContractAndZOrder();
+    TestDragDropControllerOwnsTransportTransitions();
+    TestOleAdapterOwnsComBoundary();
+    TestTrayCallbackClassification();
+    TestSelectionControllerCoversEveryRegisteredRange();
+    TestRenameControllerKeepsTargetsExclusive();
+    TestPopupDwellControllerHandlesCandidateChanges();
     if (failures != 0)
     {
         std::cerr << failures

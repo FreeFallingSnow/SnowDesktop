@@ -82,14 +82,105 @@ message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
 
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
-    src/app/app.cpp
+    src/app/app_bitmap_cache.cpp
+    src/app/app_background_menu.cpp
+    src/app/app_clipboard_interaction.cpp
+    src/app/app_container_navigation.cpp
+    src/app/app_data_object.cpp
+    src/app/app_desktop_enumeration.cpp
+    src/app/app_desktop_layout.cpp
+    src/app/app_desktop_reload.cpp
+    src/app/app_dock_drop.cpp
+    src/app/app_dock_launch.cpp
+    src/app/app_dock_layout.cpp
+    src/app/app_dock_menu.cpp
+    src/app/app_dock_model.cpp
+    src/app/app_dock_render.cpp
+    src/app/app_dock_window_control.cpp
+    src/app/app_dock_window_tracking.cpp
+    src/app/app_drag_hint_window.cpp
+    src/app/app_drag_lifecycle.cpp
+    src/app/app_drag_target_update.cpp
+    src/app/app_drop_data_extraction.cpp
+    src/app/app_drop_execution.cpp
+    src/app/app_drop_preview.cpp
+    src/app/app_drop_render.cpp
+    src/app/app_floating_dock_interaction.cpp
+    src/app/app_floating_dock_lifecycle.cpp
+    src/app/app_floating_dock_render.cpp
+    src/app/app_floating_dock_window.cpp
+    src/app/app_graphics_device.cpp
+    src/app/app_glass_render.cpp
+    src/app/app_grid_drag.cpp
+    src/app/app_grid_placement.cpp
+    src/app/app_hit_testing.cpp
+    src/app/app_icon_loader.cpp
+    src/app/app_icon_render.cpp
+    src/app/app_item_sorting.cpp
+    src/app/app_item_menu.cpp
+    src/app/app_keyboard_input.cpp
+    src/app/app_keyboard_navigation.cpp
     src/app/app_layout.cpp
+    src/app/app_lifecycle.cpp
+    src/app/app_lua_panel.cpp
+    src/app/app_lua_panel_render.cpp
+    src/app/app_lua_bridge.cpp
+    src/app/app_menu_icons.cpp
+    src/app/app_message_dispatch.cpp
+    src/app/app_navigation_render.cpp
+    src/app/app_ole_drop_routing.cpp
+    src/app/app_ole_drop_session.cpp
+    src/app/app_overlay_render.cpp
+    src/app/app_page_grid.cpp
+    src/app/app_paint.cpp
+    src/app/app_pointer_context.cpp
+    src/app/app_pointer_down.cpp
+    src/app/app_pointer_move.cpp
+    src/app/app_pointer_release.cpp
+    src/app/app_popup_geometry.cpp
+    src/app/app_popup_dwell_interaction.cpp
+    src/app/app_popup_lifecycle.cpp
+    src/app/app_popup_render.cpp
+    src/app/app_popup_transition.cpp
+    src/app/app_quick_navigation_interaction.cpp
+    src/app/app_quick_navigation_layout.cpp
+    src/app/app_quick_navigation_messages.cpp
+    src/app/app_quick_navigation_model.cpp
+    src/app/app_quick_navigation_render.cpp
+    src/app/app_quick_navigation_window.cpp
+    src/app/app_rename_begin.cpp
+    src/app/app_rename_commit.cpp
+    src/app/app_rename_editor.cpp
+    src/app/app_rename_target.cpp
+    src/app/app_render_geometry.cpp
+    src/app/app_render_primitives.cpp
+    src/app/app_run.cpp
+    src/app/app_shell_context_menu.cpp
+    src/app/app_shell_menu.cpp
+    src/app/app_scene_render.cpp
+    src/app/app_scroll_interaction.cpp
+    src/app/app_selection_interaction.cpp
+    src/app/app_settings_apply.cpp
+    src/app/app_text_render.cpp
+    src/app/app_taskbar_integration.cpp
+    src/app/app_timer_dispatch.cpp
+    src/app/app_tray.cpp
+    src/app/app_window_dispatch.cpp
+    src/app/app_widget_context_menu.cpp
+    src/app/app_widget_grouping.cpp
+    src/app/app_widget_placement.cpp
+    src/app/app_widget_refresh.cpp
+    src/app/drag_drop_controller.cpp
+    src/app/drag_render_cache.cpp
+    src/app/ole_drag_drop_adapter.cpp
+    src/app/tray_icon_controller.cpp
     src/app/desktop_backdrop_compositor.cpp
     src/atomic_file.cpp
     src/dock_window_preview.cpp
     src/dock_window_transition.cpp
     src/taskbar_dynamic/search_visibility_detector.cpp
     src/core/item.cpp
+    src/core/drag_target_resolver.cpp
     src/core/dock.cpp
     src/core/slot.cpp
     src/core/container.cpp
@@ -523,12 +614,16 @@ if (BUILD_TESTING)
         slot_runtime_contract
         SOURCES
             tests/slot_runtime_contract_tests.cpp
+            src/app/drag_drop_controller.cpp
+            src/app/ole_drag_drop_adapter.cpp
+            src/app/tray_icon_controller.cpp
+            src/core/drag_target_resolver.cpp
             src/core/slot.cpp
             src/core/container.cpp
             src/l10n.cpp
         INCLUDE_DIRECTORIES src src/core
-        LINK_LIBRARIES d2d1 user32
-        LABELS contract slot integration)
+        LINK_LIBRARIES d2d1 ole32 shell32 user32 uuid
+        LABELS contract interaction slot integration)
 
     snowdesktop_add_test(
         SnowDesktopWidgetInteractionRulesTests

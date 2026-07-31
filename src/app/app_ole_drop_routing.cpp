@@ -1,0 +1,95 @@
+#include "app.h"
+
+// OLE surface classification, effect choice and coordinate conversion.
+
+bool DesktopApp::IsSameWindowTree(HWND parent, HWND window)
+{
+    return parent != nullptr && window != nullptr && (window == parent || IsChild(parent, window));
+}
+
+/**
+ * @brief 判断是否为已知的桌面表层窗口
+ * @param window 待检查窗口句柄
+ * @return 若属于桌面表层窗口体系返回 true
+ */
+bool DesktopApp::IsKnownDesktopSurfaceWindow(HWND window) const
+{
+    if (!window) return false;
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root) root = window;
+
+    if (IsSameWindowTree(hwnd_, window) || window == hwnd_ || root == hwnd_) return true;
+    if (luaInlineEdit_ && (IsSameWindowTree(luaInlineEdit_, window) || root == luaInlineEdit_)) return true;
+    if (hintHwnd_ && (IsSameWindowTree(hintHwnd_, window) || root == hintHwnd_)) return true;
+    if (controlHwnd_ && (IsSameWindowTree(controlHwnd_, window) || root == controlHwnd_)) return true;
+    if (inputHwnd_ && (IsSameWindowTree(inputHwnd_, window) || root == inputHwnd_)) return true;
+
+    auto isSurface = [&](HWND candidate) {
+        return candidate && (window == candidate || root == candidate || IsChild(candidate, window));
+    };
+    if (isSurface(desktopWindows_.host) || isSurface(desktopWindows_.progman) ||
+        isSurface(desktopWindows_.defView) || isSurface(desktopWindows_.listView))
+        return true;
+
+    HWND desktop = GetDesktopWindow();
+    return window == desktop || root == desktop;
+}
+
+/**
+ * @brief 判断指定点是否位于外部可放置窗口上
+ * @param clientPoint 客户端坐标点
+ * @return 如果是外部窗口返回 true
+ */
+bool DesktopApp::IsExternalDropWindowAt(POINT clientPoint) const
+{
+    POINT screenPoint = clientPoint;
+    ClientToScreen(hwnd_, &screenPoint);
+    HWND hit = WindowFromPoint(screenPoint);
+    if (!hit || IsKnownDesktopSurfaceWindow(hit)) return false;
+    HWND root = GetAncestor(hit, GA_ROOT);
+    if (!root) root = hit;
+    return IsWindowVisible(root) != FALSE;
+}
+
+/**
+ * @brief 根据修饰键状态和允许的效果选择拖放效果
+ * @param keyState 键盘修饰键状态
+ * @param allowed 允许的拖放效果标志
+ * @return 选择的 DROPEFFECT
+ */
+DWORD DesktopApp::ChooseDropEffect(DWORD keyState, DWORD allowed) const
+{
+    if ((keyState & MK_ALT)) return DROPEFFECT_LINK;
+    if ((keyState & MK_SHIFT)) return DROPEFFECT_MOVE;
+    if ((keyState & MK_CONTROL)) return DROPEFFECT_COPY;
+
+    DWORD available = allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
+    if (!available) available = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+    if (available & DROPEFFECT_MOVE) return DROPEFFECT_MOVE;
+    if (available & DROPEFFECT_COPY) return DROPEFFECT_COPY;
+    return DROPEFFECT_LINK;
+}
+
+// ── OLE drag-drop ───────────────────────────────────────────
+
+/**
+ * @brief 将屏幕坐标转换为客户端坐标
+ * @param screen 屏幕坐标点
+ * @return 客户端坐标点
+ */
+POINT DesktopApp::ScreenPointToClient(POINTL screen) const
+{
+    POINT pt{ screen.x, screen.y };
+    if (hwnd_ && IsWindow(hwnd_))
+        ScreenToClient(hwnd_, &pt);
+    return pt;
+}
+
+/**
+ * @brief COM IDropTarget::DragEnter 实现
+ * @param dataObject 拖放数据对象
+ * @param keyState 键盘修饰键状态
+ * @param point 鼠标屏幕坐标
+ * @param effect [in/out] 拖放效果
+ * @return S_OK 或错误码
+ */

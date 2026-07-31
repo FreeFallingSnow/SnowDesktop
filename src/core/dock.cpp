@@ -321,8 +321,10 @@ bool DockContainer::HasOnlyFolderDragSource() const
     const auto& sourceItems = app_->dragSession_.Items();
     if (sourceItems.empty())
     {
-        if (app_->externalDragActive_)
-            return app_->externalDropFoldersOnly_;
+        if (app_->dragDropController_.
+                IsExternalDragActive())
+            return app_->dragDropController_.
+                ExternalSummary().foldersOnly;
         return app_->widgetAction_ ==
                 DesktopApp::WidgetAction::Move &&
             app_->mouseDownWidgetIndex_ <
@@ -2202,7 +2204,8 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
     if (origin != this && !HasCapacity(sourceItems.empty() ? 1 : sourceItems.size()))
         return _LW("core.drag.dock_full");
     if (origin == this) return _LW("core.drag.release_adjust_order");
-    if (app_ && app_->externalDragActive_)
+    if (app_ && app_->dragDropController_.
+            IsExternalDragActive())
         return _LW("core.dock.release_dock_map_full");
     return (mods & MK_CONTROL)
         ? _LW("core.dock.release_dock_map_full")
