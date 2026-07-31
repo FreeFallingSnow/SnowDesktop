@@ -335,8 +335,17 @@ function render()
         draw.rect(pad, cardY, cardW, cardH, palette.card,
             layout.cu(10), selected and 0.105 or 0.055)
         if selected then
-            draw.strokeRect(pad, cardY, cardW, cardH, accent,
-                layout.cu(10), layout.cu(1), 0.42)
+            local strokeInset = layout.cu(1.2)
+            draw.strokeRect(
+                pad + strokeInset,
+                cardY + strokeInset,
+                cardW - strokeInset * 2,
+                cardH - strokeInset * 2,
+                accent,
+                math.max(
+                    0, layout.cu(10) -
+                        strokeInset),
+                layout.cu(1), 0.42)
         end
 
         local checkboxSize = math.min(layout.cu(22), cardH - layout.cu(10))

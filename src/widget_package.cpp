@@ -474,6 +474,7 @@ bool WriteStoreZip(const std::filesystem::path& root,
 bool IsKnownPermission(const std::string& permission)
 {
     static const std::set<std::string> permissions = {
+        "calendar.read", "calendar.write",
         "desktop.action", "desktop.read", "everything.search",
         "media.action", "media.read", "network.http", "system.read",
         "ui.contextMenu", "ui.input", "ui.notify",

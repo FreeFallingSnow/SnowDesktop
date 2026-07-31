@@ -12,6 +12,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_scroll_rules.h"
 #include "data_paths.h"
 #include "deployment_context.h"
 #include "json_value.h"
@@ -49,6 +50,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #pragma comment(lib, "windowscodecs.lib")
 
@@ -2480,7 +2482,7 @@ static std::wstring ReadLuaPathArg(lua_State* L, int index)
 static int lua_WidgetInfo(lua_State* L)
 {
     auto* s = GetD2D(L);
-    lua_createtable(L, 0, 4);
+    lua_createtable(L, 0, 5);
     if (!s)
         return 1;
     lua_pushstring(L, WidgetWideToUtf8(BoundWidgetId(L)).c_str()); lua_setfield(L, -2, "id");
@@ -2489,6 +2491,13 @@ static int lua_WidgetInfo(lua_State* L)
     lua_pushboolean(L, s->engine &&
         s->engine->RuntimeIsWidgetSelected(BoundWidgetId(L)));
     lua_setfield(L, -2, "selected");
+    const std::wstring selectedPackageId =
+        s->engine
+            ? s->engine->RuntimeSelectedWidgetPackageId()
+            : std::wstring{};
+    lua_pushstring(
+        L, WidgetWideToUtf8(selectedPackageId).c_str());
+    lua_setfield(L, -2, "selectedPackageId");
     return 1;
 }
 
@@ -2686,6 +2695,248 @@ static int lua_DesktopFindApplications(lua_State* L)
     return 1;
 }
 
+static void PushCalendarEvent(
+    lua_State* L,
+    const snowdesktop::calendar::CalendarEvent& event)
+{
+    lua_createtable(L, 0, 10);
+    lua_pushlstring(
+        L, event.id.data(), event.id.size());
+    lua_setfield(L, -2, "id");
+    lua_pushinteger(L, event.revision);
+    lua_setfield(L, -2, "revision");
+    lua_pushlstring(
+        L, event.title.data(), event.title.size());
+    lua_setfield(L, -2, "title");
+    lua_pushlstring(
+        L, event.date.data(), event.date.size());
+    lua_setfield(L, -2, "date");
+    lua_pushboolean(L, event.allDay);
+    lua_setfield(L, -2, "allDay");
+    lua_pushinteger(L, event.startMinutes);
+    lua_setfield(L, -2, "startMinutes");
+    lua_pushinteger(L, event.endMinutes);
+    lua_setfield(L, -2, "endMinutes");
+    lua_pushlstring(
+        L, event.notes.data(), event.notes.size());
+    lua_setfield(L, -2, "notes");
+    lua_pushinteger(L, event.reminderMinutes);
+    lua_setfield(L, -2, "reminderMinutes");
+}
+
+static snowdesktop::calendar::CalendarEvent
+ReadCalendarEvent(lua_State* L, int index)
+{
+    const int table = lua_absindex(L, index);
+    luaL_checktype(L, table, LUA_TTABLE);
+    snowdesktop::calendar::CalendarEvent event;
+    auto readString = [&](const char* field) {
+        lua_getfield(L, table, field);
+        std::string result;
+        if (lua_isstring(L, -1))
+        {
+            size_t length = 0;
+            const char* value =
+                lua_tolstring(L, -1, &length);
+            if (value)
+                result.assign(value, length);
+        }
+        lua_pop(L, 1);
+        return result;
+    };
+    auto readInteger = [&](const char* field, int fallback) {
+        lua_getfield(L, table, field);
+        const int result = lua_isinteger(L, -1)
+            ? static_cast<int>(lua_tointeger(L, -1))
+            : fallback;
+        lua_pop(L, 1);
+        return result;
+    };
+    event.title = readString("title");
+    event.date = readString("date");
+    lua_getfield(L, table, "allDay");
+    event.allDay =
+        lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    event.startMinutes =
+        readInteger("startMinutes", 0);
+    event.endMinutes =
+        readInteger("endMinutes", 0);
+    event.notes = readString("notes");
+    event.reminderMinutes =
+        readInteger("reminderMinutes", -1);
+    return event;
+}
+
+static void PushCalendarMutation(
+    lua_State* L,
+    const snowdesktop::calendar::MutationResult& result)
+{
+    lua_createtable(L, 0, 4);
+    lua_pushboolean(L, result.ok);
+    lua_setfield(L, -2, "ok");
+    lua_pushlstring(
+        L, result.id.data(), result.id.size());
+    lua_setfield(L, -2, "id");
+    lua_pushinteger(L, result.revision);
+    lua_setfield(L, -2, "revision");
+    lua_pushlstring(
+        L, result.error.data(), result.error.size());
+    lua_setfield(L, -2, "error");
+}
+
+static int lua_CalendarSelectedDate(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.read"))
+        return 0;
+    auto* state = GetD2D(L);
+    const std::string date =
+        state && state->engine
+        ? state->engine->RuntimeCalendarSelectedDate()
+        : std::string();
+    lua_pushlstring(L, date.data(), date.size());
+    return 1;
+}
+
+static int lua_CalendarSetSelectedDate(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.write"))
+        return 0;
+    size_t length = 0;
+    const char* value =
+        luaL_checklstring(L, 1, &length);
+    auto* state = GetD2D(L);
+    lua_pushboolean(
+        L, state && state->engine &&
+            state->engine->RuntimeCalendarSetSelectedDate(
+                std::string(value, length)));
+    return 1;
+}
+
+static int lua_CalendarDateInfo(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.read"))
+        return 0;
+    const char* value = luaL_checkstring(L, 1);
+    auto* state = GetD2D(L);
+    const auto info = state && state->engine
+        ? state->engine->RuntimeCalendarDateInfo(value)
+        : std::nullopt;
+    if (!info)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 5);
+    lua_pushinteger(L, info->year);
+    lua_setfield(L, -2, "year");
+    lua_pushinteger(L, info->month);
+    lua_setfield(L, -2, "month");
+    lua_pushinteger(L, info->day);
+    lua_setfield(L, -2, "day");
+    lua_pushinteger(L, info->weekday);
+    lua_setfield(L, -2, "weekday");
+    lua_pushinteger(L, info->daysInMonth);
+    lua_setfield(L, -2, "daysInMonth");
+    return 1;
+}
+
+static int lua_CalendarAddDays(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.read"))
+        return 0;
+    const char* value = luaL_checkstring(L, 1);
+    const int offset = static_cast<int>(
+        luaL_checkinteger(L, 2));
+    auto* state = GetD2D(L);
+    const auto result = state && state->engine
+        ? state->engine->RuntimeCalendarAddDays(
+            value, offset)
+        : std::nullopt;
+    if (!result)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushlstring(
+        L, result->data(), result->size());
+    return 1;
+}
+
+static int lua_CalendarEvents(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.read"))
+        return 0;
+    const char* fromDate =
+        luaL_checkstring(L, 1);
+    const char* toDate =
+        luaL_checkstring(L, 2);
+    auto* state = GetD2D(L);
+    const auto events = state && state->engine
+        ? state->engine->RuntimeCalendarEvents(
+            fromDate, toDate)
+        : std::vector<
+            snowdesktop::calendar::CalendarEvent>{};
+    lua_createtable(
+        L, static_cast<int>(events.size()), 0);
+    int index = 1;
+    for (const auto& event : events)
+    {
+        PushCalendarEvent(L, event);
+        lua_rawseti(L, -2, index++);
+    }
+    return 1;
+}
+
+static int lua_CalendarCreate(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.write"))
+        return 0;
+    auto* state = GetD2D(L);
+    const auto result = state && state->engine
+        ? state->engine->RuntimeCalendarCreate(
+            ReadCalendarEvent(L, 1))
+        : snowdesktop::calendar::MutationResult{
+            false, {}, 0, "unavailable"
+        };
+    PushCalendarMutation(L, result);
+    return 1;
+}
+
+static int lua_CalendarUpdate(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.write"))
+        return 0;
+    const char* id = luaL_checkstring(L, 1);
+    const int revision = static_cast<int>(
+        luaL_checkinteger(L, 2));
+    auto* state = GetD2D(L);
+    const auto result = state && state->engine
+        ? state->engine->RuntimeCalendarUpdate(
+            id, revision,
+            ReadCalendarEvent(L, 3))
+        : snowdesktop::calendar::MutationResult{
+            false, {}, 0, "unavailable"
+        };
+    PushCalendarMutation(L, result);
+    return 1;
+}
+
+static int lua_CalendarRemove(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.write"))
+        return 0;
+    const char* id = luaL_checkstring(L, 1);
+    auto* state = GetD2D(L);
+    const auto result = state && state->engine
+        ? state->engine->RuntimeCalendarRemove(id)
+        : snowdesktop::calendar::MutationResult{
+            false, {}, 0, "unavailable"
+        };
+    PushCalendarMutation(L, result);
+    return 1;
+}
+
 static int lua_EverythingSearch(lua_State* L)
 {
     if (!RequirePermission(L, "everything.search")) return 0;
@@ -2753,6 +3004,40 @@ static int lua_DrawStrokeRect(lua_State* L)
         s->ctx->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush, thickness);
     else
         s->ctx->DrawRectangle(rect, brush, thickness);
+    return 0;
+}
+
+static int lua_WidgetOpenPanel(lua_State* L)
+{
+    std::string title;
+    int width = 520;
+    int height = 620;
+    if (lua_istable(L, 1))
+    {
+        title = LuaReadStorageField(L, 1, "title");
+        lua_getfield(L, 1, "width");
+        if (lua_isnumber(L, -1))
+            width = static_cast<int>(lua_tointeger(L, -1));
+        lua_pop(L, 1);
+        lua_getfield(L, 1, "height");
+        if (lua_isnumber(L, -1))
+            height = static_cast<int>(lua_tointeger(L, -1));
+        lua_pop(L, 1);
+    }
+    auto* s = GetD2D(L);
+    if (s && s->engine)
+        s->engine->RuntimeOpenWidgetPanel(
+            BoundWidgetId(L), Utf8ToWideLocal(title),
+            width, height);
+    return 0;
+}
+
+static int lua_WidgetClosePanel(lua_State* L)
+{
+    auto* s = GetD2D(L);
+    if (s && s->engine)
+        s->engine->RuntimeCloseWidgetPanel(
+            BoundWidgetId(L));
     return 0;
 }
 
@@ -3005,6 +3290,28 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     // Init storage path
     g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
     LoadStorageFile();
+    calendarService_ =
+        std::make_unique<
+            snowdesktop::calendar::CalendarService>(
+            GetDataFilePath(
+                L"SnowDesktop.calendar.json"));
+    calendarService_->SetChangedCallback(
+        [this](const std::string& reason) {
+            if (reason == "selection")
+                pendingCalendarSelectionChange_ = true;
+            else if (reason == "events")
+                pendingCalendarEventsChange_ = true;
+        });
+    calendarService_->SetNotificationCallback(
+        [this](
+            const snowdesktop::calendar::CalendarEvent& event) {
+            if (!notifyCallback_)
+                return;
+            notifyCallback_(
+                _LW("calendar.notification_title"),
+                Utf8ToWideLocal(event.title));
+        });
+    (void)calendarService_->Load();
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
     httpService_ = std::make_unique<AsyncHttpService>();
     return true;
@@ -3035,6 +3342,9 @@ void WidgetEngine::Shutdown()
         httpService_->Stop();
         httpService_.reset();
     }
+    calendarService_.reset();
+    pendingCalendarSelectionChange_ = false;
+    pendingCalendarEventsChange_ = false;
     for (auto& widget : widgets_)
     {
         if (widget.state)
@@ -3174,7 +3484,7 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     }
     for (const char* name : { "string", "table", "math", "utf8", "draw",
         "sys", "layout", "storage", "widget", "desktop", "media", "http",
-        "ui", "everything" })
+        "ui", "everything", "calendar" })
     {
         PushReadOnlyGlobal(L, name);
         lua_setfield(L, -2, name);
@@ -3454,6 +3764,15 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
     widgets_.push_back(std::move(w));
+
+    auto& loadedStorage = ActiveStorage();
+    const std::string staleErrorKey =
+        WidgetWideToUtf8(widgetId) + ".lastError";
+    if (loadedStorage.erase(staleErrorKey) > 0 &&
+        !g_storageOverlay)
+    {
+        SaveStorageFile();
+    }
 
     if (widgets_.back().manifest.refreshIntervalMs > 0 && widgetTimerRequestCallback_)
     {
@@ -4091,8 +4410,74 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     lua_pop(L_, 1);
 }
 
+bool WidgetEngine::RenderWidgetPanel(
+    const std::wstring& widgetId,
+    ID2D1DeviceContext* context, RECT bounds)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || !context)
+        return false;
+    auto& widget = widgets_[index];
+    if (!widget.valid)
+        return false;
+
+    d2dState_->ctx = context;
+    DrainShellIconResults(d2dState_);
+    SetWidgetExecutionContext(d2dState_, widgetId);
+    widget.lastBounds = bounds;
+    SetWidgetRectContext(d2dState_, bounds);
+    widget.lastRenderTime =
+        std::chrono::steady_clock::now();
+    widget.hostControls.clear();
+    d2dState_->widgetClipDepth = 0;
+
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+    if (!lua_istable(L_, -1))
+    {
+        lua_pop(L_, 1);
+        return false;
+    }
+    lua_getfield(L_, -1, "renderPanel");
+    if (!lua_isfunction(L_, -1))
+    {
+        lua_pop(L_, 2);
+        return false;
+    }
+    const bool succeeded =
+        LuaProtectedCall(L_, 0, 0) == LUA_OK;
+    if (!succeeded)
+    {
+        const char* error = lua_tostring(L_, -1);
+        RuntimeRecordError(
+            widgetId,
+            error ? error : "(renderPanel error)");
+        lua_pop(L_, 1);
+    }
+    while (d2dState_->widgetClipDepth > 0)
+    {
+        d2dState_->ctx->PopAxisAlignedClip();
+        --d2dState_->widgetClipDepth;
+    }
+    lua_pop(L_, 1);
+    return succeeded;
+}
+
 void WidgetEngine::TickRuntime()
 {
+    if (calendarService_)
+        calendarService_->Tick();
+    const bool eventsChanged =
+        std::exchange(
+            pendingCalendarEventsChange_, false);
+    const bool selectionChanged =
+        std::exchange(
+            pendingCalendarSelectionChange_, false);
+    if (eventsChanged)
+        NotifyCalendarChanged("events");
+    if (selectionChanged)
+    {
+        NotifyCalendarChanged("selection");
+    }
     const bool systemChanged = systemSnapshotChanged_.exchange(false);
     const bool mediaChanged = mediaSnapshotChanged_.exchange(false);
     if (systemChanged || mediaChanged)
@@ -4666,6 +5051,52 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopSelection() const
     return selectionProvider_ ? selectionProvider_() : std::vector<LuaDesktopItemInfo>{};
 }
 
+void WidgetEngine::NotifyCalendarChanged(
+    const std::string& reason)
+{
+    for (const auto& widget : widgets_)
+    {
+        if (!widget.valid ||
+            !RuntimeHasPermission(
+                widget.widgetId, "calendar.read"))
+            continue;
+        SetWidgetExecutionContext(
+            d2dState_, widget.widgetId);
+        SetWidgetRectContext(
+            d2dState_, widget.lastBounds);
+        L_ = widget.state;
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
+        if (!lua_istable(L_, -1))
+        {
+            lua_pop(L_, 1);
+            continue;
+        }
+        lua_getfield(L_, -1, "onCalendarChanged");
+        if (lua_isfunction(L_, -1))
+        {
+            lua_pushlstring(
+                L_, reason.data(), reason.size());
+            if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+            {
+                const char* error =
+                    lua_tostring(L_, -1);
+                RuntimeRecordError(
+                    widget.widgetId,
+                    error
+                        ? error
+                        : "(onCalendarChanged error)");
+                lua_pop(L_, 1);
+            }
+        }
+        else
+        {
+            lua_pop(L_, 1);
+        }
+        lua_pop(L_, 1);
+        RuntimeInvalidateHost(widget.widgetId);
+    }
+}
+
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeApplicationSearch(
     const std::string& query, int maxResults) const
 {
@@ -4879,6 +5310,83 @@ bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::stri
     widgets_[index].timers[name] = std::move(timer);
     RescheduleNamedTimer(widgets_[index]);
     return true;
+}
+
+std::string WidgetEngine::RuntimeCalendarSelectedDate() const
+{
+    return calendarService_
+        ? calendarService_->SelectedDate()
+        : std::string();
+}
+
+bool WidgetEngine::RuntimeCalendarSetSelectedDate(
+    const std::string& date)
+{
+    return calendarService_ &&
+        calendarService_->SetSelectedDate(date);
+}
+
+std::optional<snowdesktop::calendar::DateInfo>
+WidgetEngine::RuntimeCalendarDateInfo(
+    const std::string& date) const
+{
+    return snowdesktop::calendar::CalendarService::
+        GetDateInfo(date);
+}
+
+std::optional<std::string>
+WidgetEngine::RuntimeCalendarAddDays(
+    const std::string& date, int offset) const
+{
+    return snowdesktop::calendar::CalendarService::
+        AddDays(date, offset);
+}
+
+std::vector<snowdesktop::calendar::CalendarEvent>
+WidgetEngine::RuntimeCalendarEvents(
+    const std::string& fromDate,
+    const std::string& toDate) const
+{
+    return calendarService_
+        ? calendarService_->Events(fromDate, toDate)
+        : std::vector<
+            snowdesktop::calendar::CalendarEvent>{};
+}
+
+snowdesktop::calendar::MutationResult
+WidgetEngine::RuntimeCalendarCreate(
+    snowdesktop::calendar::CalendarEvent event)
+{
+    return calendarService_
+        ? calendarService_->Create(std::move(event))
+        : snowdesktop::calendar::MutationResult{
+            false, {}, 0, "unavailable"
+        };
+}
+
+snowdesktop::calendar::MutationResult
+WidgetEngine::RuntimeCalendarUpdate(
+    const std::string& id,
+    int expectedRevision,
+    snowdesktop::calendar::CalendarEvent event)
+{
+    return calendarService_
+        ? calendarService_->Update(
+            id, expectedRevision, std::move(event))
+        : snowdesktop::calendar::MutationResult{
+            false, id, 0, "unavailable"
+        };
+}
+
+snowdesktop::calendar::MutationResult
+WidgetEngine::RuntimeCalendarRemove(
+    const std::string& id)
+{
+    return calendarService_
+        ? calendarService_->Remove(id)
+        : snowdesktop::calendar::MutationResult{
+            false, id, 0, "unavailable"
+        };
 }
 
 bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name)
@@ -5148,6 +5656,13 @@ bool WidgetEngine::RuntimeIsWidgetSelected(
 {
     return widgetSelectedProvider_ &&
         widgetSelectedProvider_(widgetId);
+}
+
+std::wstring WidgetEngine::RuntimeSelectedWidgetPackageId() const
+{
+    return selectedWidgetPackageProvider_
+        ? selectedWidgetPackageProvider_()
+        : std::wstring{};
 }
 
 bool WidgetEngine::HasFocusedHostInput() const
@@ -5729,7 +6244,12 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
         {
             int maximum = std::max(0, it->contentHeight - it->viewportHeight);
             int& offset = widget.scrollOffsets[it->id];
-            offset = std::clamp(offset - delta / WHEEL_DELTA * 48, 0, maximum);
+            const auto result =
+                snowdesktop::widget_scroll_rules::ApplyWheelDelta(
+                    offset, maximum, delta);
+            if (!result.moved)
+                continue;
+            offset = result.offset;
             RuntimeInvalidateHost(widgetId);
             return true;
         }
@@ -5892,6 +6412,27 @@ std::vector<std::wstring> WidgetEngine::ListAvailable()
     }
     std::sort(result.begin(), result.end());
     return result;
+}
+
+void WidgetEngine::RuntimeOpenWidgetPanel(
+    const std::wstring& widgetId, std::wstring title,
+    int width, int height)
+{
+    if (!openWidgetPanelCallback_)
+        return;
+    LuaWidgetPanelRequest request;
+    request.widgetId = widgetId;
+    request.title = std::move(title);
+    request.width = std::clamp(width, 320, 900);
+    request.height = std::clamp(height, 280, 900);
+    openWidgetPanelCallback_(request);
+}
+
+void WidgetEngine::RuntimeCloseWidgetPanel(
+    const std::wstring& widgetId)
+{
+    if (closeWidgetPanelCallback_)
+        closeWidgetPanelCallback_(widgetId);
 }
 
 std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageAsset(
@@ -7137,6 +7678,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_WidgetInfo); lua_setfield(L, -2, "info");
     lua_pushcfunction(L, lua_WidgetSetTitle); lua_setfield(L, -2, "setTitle");
     lua_pushcfunction(L, lua_WidgetOpenSettings); lua_setfield(L, -2, "openSettings");
+    lua_pushcfunction(L, lua_WidgetOpenPanel); lua_setfield(L, -2, "openPanel");
+    lua_pushcfunction(L, lua_WidgetClosePanel); lua_setfield(L, -2, "closePanel");
     lua_pushcfunction(L, lua_WidgetInvalidate); lua_setfield(L, -2, "invalidate");
     lua_pushcfunction(L, lua_WidgetLog); lua_setfield(L, -2, "log");
     lua_pushcfunction(L, lua_WidgetTheme); lua_setfield(L, -2, "theme");
@@ -7192,6 +7735,17 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_newtable(L);
     lua_pushcfunction(L, lua_EverythingSearch); lua_setfield(L, -2, "search");
     lua_setglobal(L, "everything");
+
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_CalendarSelectedDate); lua_setfield(L, -2, "selectedDate");
+    lua_pushcfunction(L, lua_CalendarSetSelectedDate); lua_setfield(L, -2, "setSelectedDate");
+    lua_pushcfunction(L, lua_CalendarDateInfo); lua_setfield(L, -2, "dateInfo");
+    lua_pushcfunction(L, lua_CalendarAddDays); lua_setfield(L, -2, "addDays");
+    lua_pushcfunction(L, lua_CalendarEvents); lua_setfield(L, -2, "events");
+    lua_pushcfunction(L, lua_CalendarCreate); lua_setfield(L, -2, "create");
+    lua_pushcfunction(L, lua_CalendarUpdate); lua_setfield(L, -2, "update");
+    lua_pushcfunction(L, lua_CalendarRemove); lua_setfield(L, -2, "remove");
+    lua_setglobal(L, "calendar");
 
     lua_newtable(L);
     lua_pushcfunction(L, lua_LayoutWidth);  lua_setfield(L, -2, "width");

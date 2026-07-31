@@ -93,6 +93,7 @@ set(SNOWDESKTOP_SOURCES
     src/core/container.cpp
     src/core/desktop.cpp
     src/data_paths.cpp
+    src/calendar_service.cpp
     src/full_data_backup.cpp
     src/portable_data_migration.cpp
     src/single_instance.cpp
@@ -435,6 +436,36 @@ if (BUILD_TESTING)
     add_test(
         NAME widget_package_lifecycle
         COMMAND SnowDesktopWidgetPackageTests)
+
+    add_executable(
+        SnowDesktopCalendarServiceTests
+        tests/calendar_service_tests.cpp
+        src/calendar_service.cpp)
+    target_compile_features(
+        SnowDesktopCalendarServiceTests PRIVATE cxx_std_20)
+    target_include_directories(
+        SnowDesktopCalendarServiceTests PRIVATE src)
+    target_link_libraries(
+        SnowDesktopCalendarServiceTests PRIVATE ole32)
+    if (MSVC)
+        set_property(
+            TARGET SnowDesktopCalendarServiceTests
+            PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(
+            SnowDesktopCalendarServiceTests PRIVATE
+            /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(
+            SnowDesktopCalendarServiceTests PRIVATE
+            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    else()
+        target_compile_options(
+            SnowDesktopCalendarServiceTests PRIVATE
+            -Wall -Wextra -pedantic)
+    endif()
+    add_test(
+        NAME calendar_service
+        COMMAND SnowDesktopCalendarServiceTests)
 
     add_executable(SnowDesktopSlotContractTests
         tests/slot_contract_tests.cpp)

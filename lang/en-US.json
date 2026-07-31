@@ -623,5 +623,6 @@
     "app.settings.widget_editor_back": "Back to Main",
     "app.settings.download_latest_hint": "Download Latest Version",
     "app.settings.taskbar_theme_hint": "Select taskbar appearance theme",
-    "app.settings.taskbar_follow_theme": "Follow Global Theme"
+    "app.settings.taskbar_follow_theme": "Follow Global Theme",
+    "calendar.notification_title": "Schedule Reminder"
 }

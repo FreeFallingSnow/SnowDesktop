@@ -2,6 +2,7 @@
 #include "widget_package.h"
 #include "portable_data_migration.h"
 #include "single_instance.h"
+#include "widget_scroll_rules.h"
 
 #include <windows.h>
 
@@ -141,6 +142,31 @@ PackagePaths TestPaths(const std::filesystem::path& root)
 
 int main()
 {
+    {
+        using snowdesktop::widget_scroll_rules::
+            ApplyWheelDelta;
+        const auto innerBoundary =
+            ApplyWheelDelta(0, 0, 120);
+        Expect(!innerBoundary.moved &&
+            innerBoundary.offset == 0,
+            "wheel at a nested scroll boundary can bubble");
+        const auto outerScroll =
+            ApplyWheelDelta(48, 240, 120);
+        Expect(outerScroll.moved &&
+            outerScroll.offset == 0,
+            "wheel moves the first enclosing scroll area that can move");
+        const auto lowerBoundary =
+            ApplyWheelDelta(240, 240, -120);
+        Expect(!lowerBoundary.moved &&
+            lowerBoundary.offset == 240,
+            "wheel at the lower boundary can bubble");
+        const auto precisionWheel =
+            ApplyWheelDelta(20, 240, 15);
+        Expect(precisionWheel.moved &&
+            precisionWheel.offset < 20,
+            "precision touchpad wheel deltas still scroll");
+    }
+
     const auto root = std::filesystem::temp_directory_path() /
         (L"SnowDesktopWidgetPackageTests-" + std::to_wstring(GetCurrentProcessId()));
     std::error_code ec;
@@ -229,6 +255,12 @@ int main()
         "\"network.http\"", "\"*.example.com\"");
     Expect(!validator.ValidateDirectory(badNetwork).Ok(),
         "wildcard network domains are rejected");
+    const auto calendarPackage = root / L"calendar-package";
+    MakePackage(calendarPackage, "1.0.0",
+        "fd084e05-bb0f-43d7-977d-426ae39c1ab9",
+        "\"calendar.read\", \"calendar.write\"");
+    Expect(validator.ValidateDirectory(calendarPackage).Ok(),
+        "calendar permissions are accepted");
 
     std::string error;
     const auto managerPaths = TestPaths(root / L"manager");
@@ -529,10 +561,14 @@ int main()
         "{ \"source\": \"complete-backup-original\" }\n";
     const std::string modifiedLayout =
         "{ \"source\": \"complete-backup-modified\" }\n";
+    const std::string originalCalendar =
+        "{ \"schemaVersion\": 1, \"events\": [] }\n";
     Write(fullBackupData / L"SnowDesktop.layout.json",
         originalLayout);
     Write(fullBackupData / L"SnowDesktop.general.json",
         "{ \"language\": \"zh-CN\" }\n");
+    Write(fullBackupData / L"SnowDesktop.calendar.json",
+        originalCalendar);
     Write(fullBackupData / L"widgets" / L"installed" /
         L"package-id" / L"1.0.0" / L"main.lua",
         "function render() end\n");
@@ -569,8 +605,10 @@ int main()
                 L"SnowDesktop.layout.json") &&
         std::filesystem::is_regular_file(
             createdFullBackup.backup.data / L"widgets" / L"storage" /
-                L"package-id" / L"instance-id.json"),
-        "complete backup preserves layout, settings, packages, and storage");
+                L"package-id" / L"instance-id.json") &&
+        Read(createdFullBackup.backup.data /
+            L"SnowDesktop.calendar.json") == originalCalendar,
+        "complete backup preserves layout, settings, calendar, packages, and storage");
     Expect(!std::filesystem::exists(
             createdFullBackup.backup.data /
                 L"SnowDesktop_crash.log") &&
@@ -608,6 +646,8 @@ int main()
 
     Write(fullBackupData / L"SnowDesktop.layout.json",
         modifiedLayout);
+    Write(fullBackupData / L"SnowDesktop.calendar.json",
+        "{ \"schemaVersion\": 1, \"events\": [1] }\n");
     const auto queuedRestore =
         fullBackupManager.QueueRestore(createdFullBackup.backup);
     Expect(queuedRestore.ok,
@@ -619,8 +659,10 @@ int main()
         snowdesktop::migration::ApplyPending(fullBackupState);
     Expect(appliedRestore.ok && appliedRestore.applied &&
         Read(fullBackupData / L"SnowDesktop.layout.json") ==
-            originalLayout,
-        "complete backup is atomically restored on the next startup");
+            originalLayout &&
+        Read(fullBackupData / L"SnowDesktop.calendar.json") ==
+            originalCalendar,
+        "complete backup atomically restores layout and calendar on the next startup");
     Expect(Read(appliedRestore.backup /
             L"SnowDesktop.layout.json") == modifiedLayout,
         "pre-restore active data is retained as a rollback backup");

@@ -1563,6 +1563,16 @@ private:
     void DrawCollectionPopup(
         ID2D1DeviceContext* ctx,
         bool applyAnimation = true);
+    RECT GetLuaWidgetPanelRect() const;
+    RECT GetLuaWidgetPanelContentRect() const;
+    RECT GetLuaWidgetPanelCloseRect() const;
+    void DrawLuaWidgetPanel(ID2D1DeviceContext* ctx);
+    void OpenLuaWidgetPanel(
+        const LuaWidgetPanelRequest& request);
+    void CloseLuaWidgetPanel(
+        const std::wstring& widgetId = L"",
+        const char* reason = "dismissed");
+    void FinalizeCloseLuaWidgetPanel();
     /** @brief 在动画开始前将完整弹窗录制到 GPU 位图。 */
     void PrepareCollectionPopupAnimationCache();
     /** @brief 释放弹窗动画位图。 */
@@ -2487,6 +2497,16 @@ private:
     std::wstring collectionGroupTabDwellId_;
     DWORD collectionGroupTabDwellTick_ = 0;
     std::unique_ptr<Slot> popupDragTargetSlot_;
+    /** @} */
+
+    /** @name Lua 组件附加面板 */
+    /** @{ */
+    LuaWidgetPanelRequest luaWidgetPanelRequest_{};
+    snowdesktop::popup_animation_rules::State
+        luaWidgetPanelAnimation_;
+    RECT luaWidgetPanelRect_{};
+    POINT luaWidgetPanelAnchorPoint_{};
+    bool luaWidgetPanelMouseDown_ = false;
     /** @} */
 
     /** @name 快速导航 */

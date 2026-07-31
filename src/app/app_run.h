@@ -143,6 +143,7 @@ inline void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
         KillTimer(hwnd_, kCollectionPopupAnimationTimerId);
+        KillTimer(hwnd_, kLuaWidgetPanelAnimationTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
         KillTimer(hwnd_, kDockLaunchBounceTimerId);
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
@@ -155,6 +156,10 @@ inline void DesktopApp::ResetDesktopWindowResources()
             popupAnimation_.ShowImmediately();
         else
             popupAnimation_.ResetHidden();
+        if (!luaWidgetPanelRequest_.widgetId.empty())
+            FinalizeCloseLuaWidgetPanel();
+        else
+            luaWidgetPanelAnimation_.ResetHidden();
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }
@@ -1350,6 +1355,23 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         return widget.selected;
                 return false;
             });
+        widgetEngine_->SetSelectedWidgetPackageProvider(
+            [this]() {
+                std::wstring selectedPackageId;
+                int selectedCount = 0;
+                for (const auto& widget : widgets_)
+                {
+                    if (!widget.selected)
+                        continue;
+                    ++selectedCount;
+                    if (widget.type ==
+                        DesktopWidgetType::LuaScript)
+                        selectedPackageId = widget.packageId;
+                }
+                return selectedCount == 1
+                    ? selectedPackageId
+                    : std::wstring{};
+            });
         widgetEngine_->SetApplicationSearchProvider(
             [this](const std::string& query, int maxResults) {
                 return BuildLuaApplicationSearch(
@@ -1367,6 +1389,15 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             {
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
+            }
+            if (luaWidgetPanelRequest_.widgetId ==
+                    widgetId)
+            {
+                RECT dirty =
+                    GetLuaWidgetPanelRect();
+                InflateRect(&dirty, 3, 3);
+                InvalidateRect(
+                    hwnd_, &dirty, FALSE);
             }
             for (const auto& widget : widgets_)
             {
@@ -1428,6 +1459,14 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 }
             }
         });
+        widgetEngine_->SetOpenWidgetPanelCallback(
+            [this](const LuaWidgetPanelRequest& request) {
+                OpenLuaWidgetPanel(request);
+            });
+        widgetEngine_->SetCloseWidgetPanelCallback(
+            [this](const std::wstring& widgetId) {
+                CloseLuaWidgetPanel(widgetId, "widget");
+            });
         if (settingsWindow_)
         {
             settingsWindow_->SetWidgetEngine(widgetEngine_.get());

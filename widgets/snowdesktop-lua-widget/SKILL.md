@@ -141,6 +141,8 @@ Valid permissions:
 - `media.read`: read the current Windows media session.
 - `media.action`: play/pause, skip next, and skip previous.
 - `network.http`: enable asynchronous HTTP requests to `networkDomains`.
+- `calendar.read`: read shared local calendar dates and events.
+- `calendar.write`: select a shared date and create, edit, or delete events.
 
 Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 
@@ -202,6 +204,9 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 - Use `onSelected()` when a widget should react as soon as the desktop selects
   it. For search-oriented widgets, call `ui.focusInput(id)` there so the
   host-rendered input is ready for typing immediately.
+- Use `widget.openPanel()` plus `renderPanel()` for form-heavy editors or
+  details that do not fit the component's normal grid span. Keep the primary
+  component useful while the host-owned transient panel is open.
 - Never call `http.request()` unconditionally from `render()`. Start requests
   from lifecycle, timer, menu, or UI callbacks and consume them in
   `onHttpResponse`. Redirect targets must also be declared in `networkDomains`.

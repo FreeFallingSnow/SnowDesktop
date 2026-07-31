@@ -10,6 +10,7 @@
 - [Storage](#storage)
 - [Desktop integration](#desktop-integration)
 - [Everything search](#everything-search)
+- [Calendar](#calendar)
 - [Settings UI](#settings-ui)
 - [Manifest and permissions](#manifest-and-permissions)
 - [Troubleshooting](#troubleshooting)
@@ -105,7 +106,16 @@ function onMouseDown(x, y, button, delta) end
 function onMouseMove(x, y, button, delta) end
 function onMouseUp(x, y, button, delta) end
 function onWheel(x, y, button, delta) end
+function renderPanel() end
+function onPanelOpened() end
+function onPanelClosed() end
+function onPanelClick(x, y, button, delta) end
+function onPanelMouseDown(x, y, button, delta) end
+function onPanelMouseMove(x, y, button, delta) end
+function onPanelMouseUp(x, y, button, delta) end
+function onPanelWheel(x, y, button, delta) end
 function onDesktopChanged(reason) end
+function onCalendarChanged(reason) end
 function onLanguageChanged() end
 function onVisible() end
 function onHidden() end
@@ -119,9 +129,15 @@ function onMenu(id) end
 ```
 
 - Mouse callbacks receive four arguments even if the script only declares `x, y`.
+- Panel mouse callbacks use coordinates local to the panel content area.
+- `renderPanel()` is rendered in a host-owned transient panel opened with
+  `widget.openPanel`. Only one component panel is open at a time; Escape,
+  clicking outside, and the host close button dismiss it.
 - `onSelected()` runs when the desktop selects the widget.
 - For wheel handling, use the sign of `delta`.
 - `onDesktopChanged(reason)` requires `desktop.read`.
+- `onCalendarChanged(reason)` requires `calendar.read`; `reason` is
+  `"selection"` or `"events"`.
 - `onLanguageChanged()` runs after the widget has been reloaded with its new
   manifest locale. Use it to refresh state-dependent titles or other runtime
   text caches.
@@ -237,6 +253,8 @@ draw.icon(pathOrDesktopItem, x, y, size?, alpha?)
 ```lua
 local info = widget.info()
 -- info.id, info.width, info.height, info.selected
+-- info.selectedPackageId is the package UUID of the one selected
+-- Lua widget, or an empty string when that is not applicable
 
 widget.setTitle("新标题")
 widget.invalidate()
@@ -250,11 +268,25 @@ widget.editText(key, x, y, width, height, multiline,
     initialText?, selectAll?, textColor?, fontSize?, backgroundColor?)
 
 widget.openSettings()
+widget.openPanel({
+    title = "编辑",
+    width = 560,
+    height = 620,
+})
+widget.closePanel()
 ```
 
 `widget.openSettings` opens the host settings panel for the current widget
 instance. Call this from `onDoubleClick` or `onMenu` to let the user configure
 the widget without using the right-click menu.
+
+`widget.openPanel(options)` opens a collection-popup-style auxiliary surface
+for form-heavy or detail-heavy interactions. The host clamps `width` to
+320–900 pixels and `height` to 280–900 pixels and further constrains the panel
+to the current work area. Render its content in `renderPanel()` using the same
+`draw`, `layout`, and host-rendered `ui` controls as the widget. Use
+`widget.closePanel()` after save or cancel. Prefer this surface for editors
+that would otherwise crowd the widget's normal grid span.
 
 `widget.editText` is a legacy compatibility API that opens the old system-style
 editor and saves the result to `storage` under `key`. It is not recommended for
@@ -505,6 +537,53 @@ The optional second argument is the maximum number of results, clamped by the
 host. Returned items use the same shape as desktop items; `source` is
 `"Everything"`, and `path` contains the full filesystem path.
 
+## Calendar
+
+Shared local calendar data is stored by the host. Reading requires
+`calendar.read`; selecting a date and mutating events requires
+`calendar.write`:
+
+```lua
+local selected = calendar.selectedDate() -- YYYY-MM-DD
+calendar.setSelectedDate("2026-07-30")
+
+local info = calendar.dateInfo("2026-07-30")
+-- year, month, day, weekday (1=Sunday), daysInMonth
+local tomorrow = calendar.addDays("2026-07-30", 1)
+
+local events = calendar.events("2026-07-30", "2026-08-05")
+local created = calendar.create({
+    title = "Design review",
+    date = "2026-07-30",
+    allDay = false,
+    startMinutes = 600,
+    endMinutes = 660,
+    notes = "",
+    reminderMinutes = 15,
+})
+local updated = calendar.update(created.id, created.revision, {
+    title = "Updated design review",
+    date = "2026-07-30",
+    allDay = false,
+    startMinutes = 600,
+    endMinutes = 660,
+    notes = "",
+    reminderMinutes = 15,
+})
+local removed = calendar.remove(created.id)
+```
+
+Mutation results contain `ok`, `id`, `revision`, and `error`. Updates require
+the revision returned by the latest query or mutation and return
+`error = "conflict"` rather than overwriting a newer edit.
+
+Events contain `id`, `revision`, `title`, `date`, `allDay`, `startMinutes`,
+`endMinutes`, `notes`, and `reminderMinutes`. Dates use local time and ISO
+`YYYY-MM-DD`. Timed events cannot cross midnight. Reminder values supported by
+the host are `-1` (none), `0`, `5`, `15`, `30`, `60`, and `1440`
+minutes before the event. All-day reminders use 09:00 local time as their
+base.
+
 ## Settings UI
 
 Declare `ui.input`, then define `imguiRender()`.
@@ -674,6 +753,8 @@ restoring saved layouts, and reacting to grid changes.
 | `media.read` | `media.current` |
 | `media.action` | Media playback controls |
 | `network.http` | `http.request`, `http.cancel` |
+| `calendar.read` | selected date, date helpers, event queries, calendar-change callback |
+| `calendar.write` | shared date selection and event create/update/delete |
 
 Missing permissions produce a runtime error for guarded APIs. Context menus and desktop-change callbacks are skipped by the host when their permission is absent.
 

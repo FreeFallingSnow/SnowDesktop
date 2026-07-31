@@ -623,5 +623,6 @@
     "app.settings.widget_editor_back": "返回主页面",
     "app.settings.download_latest_hint": "下载最新版本",
     "app.settings.taskbar_theme_hint": "选择任务栏外观主题",
-    "app.settings.taskbar_follow_theme": "跟随全局主题"
+    "app.settings.taskbar_follow_theme": "跟随全局主题",
+    "calendar.notification_title": "日程提醒"
 }

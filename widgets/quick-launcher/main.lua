@@ -298,53 +298,55 @@ function render()
         draw.pushClip(pad, listY, w - pad * 2, viewportH)
         for rowIndex = range.first, range.last do
             local row = rows[rowIndex]
-            local y = listY + (rowIndex - 1) * rowH -
-                range.offset
-            if row.kind == "header" then
-                draw.text(pad + layout.cu(4),
-                    y + metrics.itemTextOffsetY, row.title,
-                    layout.fontCu(metrics.fontSize),
-                    pal.itemText,
-                    w - pad * 2 - layout.cu(8),
-                    true, true, nil, 0.72)
-                draw.line(pad + layout.cu(4),
-                    y + rowH - layout.cu(5),
-                    w - pad - layout.cu(4),
-                    y + rowH - layout.cu(5),
-                    layout.cu(1), pal.itemText, 0.16)
-            else
-                local item = row.item
-                local isSelected =
-                    row.itemIndex == selected
-                if isSelected then
-                    draw.rect(pad, y - layout.cu(2),
-                        w - pad * 2,
-                        rowH - layout.cu(2),
-                        pal.selBg, layout.cu(6), 0.28)
-                    draw.strokeRect(
-                        pad, y - layout.cu(2),
-                        w - pad * 2,
-                        rowH - layout.cu(2),
-                        pal.selBorder, layout.cu(6),
-                        layout.cu(1.0), 0.65)
+            if row then
+                local y = listY + (rowIndex - 1) * rowH -
+                    range.offset
+                if row.kind == "header" then
+                    draw.text(pad + layout.cu(4),
+                        y + metrics.itemTextOffsetY, row.title,
+                        layout.fontCu(metrics.fontSize),
+                        pal.itemText,
+                        w - pad * 2 - layout.cu(8),
+                        true, true, nil, 0.72)
+                    draw.line(pad + layout.cu(4),
+                        y + rowH - layout.cu(5),
+                        w - pad - layout.cu(4),
+                        y + rowH - layout.cu(5),
+                        layout.cu(1), pal.itemText, 0.16)
+                else
+                    local item = row.item
+                    local isSelected =
+                        row.itemIndex == selected
+                    if isSelected then
+                        draw.rect(pad, y - layout.cu(2),
+                            w - pad * 2,
+                            rowH - layout.cu(2),
+                            pal.selBg, layout.cu(6), 0.28)
+                        draw.strokeRect(
+                            pad, y - layout.cu(2),
+                            w - pad * 2,
+                            rowH - layout.cu(2),
+                            pal.selBorder, layout.cu(6),
+                            layout.cu(1.0), 0.65)
+                    end
+                    draw.icon(item, pad + layout.cu(4),
+                        y + math.max(0,
+                            (rowH - metrics.iconSize) / 2 -
+                                layout.cu(1)),
+                        metrics.iconSize)
+                    local textX =
+                        pad + metrics.iconSize +
+                        layout.cu(12)
+                    draw.text(textX,
+                        y + metrics.itemTextOffsetY,
+                        item.title or
+                            l10n.tr(
+                                "lua_widget.common.untitled"),
+                        layout.fontCu(metrics.fontSize),
+                        pal.itemText,
+                        w - pad - textX - layout.cu(12),
+                        false, true)
                 end
-                draw.icon(item, pad + layout.cu(4),
-                    y + math.max(0,
-                        (rowH - metrics.iconSize) / 2 -
-                            layout.cu(1)),
-                    metrics.iconSize)
-                local textX =
-                    pad + metrics.iconSize +
-                    layout.cu(12)
-                draw.text(textX,
-                    y + metrics.itemTextOffsetY,
-                    item.title or
-                        l10n.tr(
-                            "lua_widget.common.untitled"),
-                    layout.fontCu(metrics.fontSize),
-                    pal.itemText,
-                    w - pad - textX - layout.cu(12),
-                    false, true)
             end
         end
         draw.popClip()
