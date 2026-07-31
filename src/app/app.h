@@ -556,13 +556,17 @@ private:
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */
     void RenderFrame(
         ID2D1DeviceContext* ctx,
-        const RECT* updateRect = nullptr);
+        const RECT* updateRect = nullptr,
+        bool hiddenMode = false);
     /** @brief 绘制静态背景（桌面项图标、文本、网格等）。 @param ctx D2D 设备上下文 */
     void DrawStaticBackground(
         ID2D1DeviceContext* ctx,
-        const RECT* updateRect = nullptr);
+        const RECT* updateRect = nullptr,
+        bool hiddenMode = false);
     /** @brief 绘制动态叠加层（拖拽图标、放置预览、选择框等）。 @param ctx D2D 设备上下文 */
-    void DrawDynamicOverlays(ID2D1DeviceContext* ctx);
+    void DrawDynamicOverlays(
+        ID2D1DeviceContext* ctx,
+        bool hiddenMode = false);
     /** @brief 绘制翻页导航按钮（左右箭头）。 @param ctx D2D 设备上下文 */
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
@@ -806,6 +810,14 @@ private:
     }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility();
+    /** @brief 判断隐藏桌面时该点是否位于保留元素（组件/Dock）上。 */
+    bool IsPointOnRetainedElement(POINT pt) const;
+    /** @brief 判断当前打开的集合弹窗是否属于隐藏桌面时保留的元素。 */
+    bool IsOpenPopupRetained() const;
+    /** @brief 判断容器是否可在隐藏桌面时继续作为交互/拖放目标。 */
+    bool IsRetainedContainer(const Container* container) const;
+    /** @brief 隐藏桌面时是否存在保留元素（组件/Dock）。 */
+    bool HasRetainedElements() const;
     /** @brief 显示隐藏状态提示文字。 */
     void ShowHiddenHint();
     /** @brief 清除隐藏状态提示。 */

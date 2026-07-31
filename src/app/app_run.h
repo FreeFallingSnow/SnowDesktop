@@ -2077,21 +2077,44 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     }
     case WM_LBUTTONDOWN:
-        if (desktopIconsHidden_) { ShowHiddenHint(); return 0; }
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        {
+            ShowHiddenHint();
+            return 0;
+        }
         OnLeftButtonDown(wp, lp);
         return 0;
+    }
     case WM_MBUTTONDOWN:
     case WM_MBUTTONDBLCLK:
-        if (desktopIconsHidden_) return 0;
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+            return 0;
         OnMiddleButtonDown(wp, lp);
         return 0;
+    }
     case WM_MOUSEMOVE:
-        if (desktopIconsHidden_) return 0;
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !middleButtonWidgetMove_ && !dragSession_.IsActive() &&
+            widgetAction_ == WidgetAction::None &&
+            !luaWidgetPanelMouseDown_)
+        {
+            if (IsPointOnRetainedElement(lastMousePoint_))
+                OnMouseLeave();
+            return 0;
+        }
         OnMouseMove(wp, lp);
         // Internal drags capture this HWND. Commit the cheap cached drag frame
         // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
         PresentPointerInteractionFrame();
         return 0;
+    }
     case WM_MOUSELEAVE:
         if (floatingDockVisible_)
         {
@@ -2120,27 +2143,57 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         OnMouseLeave();
         return 0;
     case WM_LBUTTONUP:
-        if (desktopIconsHidden_) return 0;
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !dragSession_.IsActive() &&
+            widgetAction_ == WidgetAction::None &&
+            !luaWidgetPanelMouseDown_)
+            return 0;
         OnLeftButtonUp(wp, lp);
         InvalidateFloatingDockWindow(true);
         return 0;
+    }
     case WM_MBUTTONUP:
-        if (desktopIconsHidden_) return 0;
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !middleButtonWidgetMove_ &&
+            widgetAction_ == WidgetAction::None)
+            return 0;
         OnMiddleButtonUp(wp, lp);
         return 0;
+    }
     case WM_MOUSEWHEEL:
-        if (desktopIconsHidden_) return 0;
+    {
+        POINT wheelPt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_)
+        {
+            ScreenToClient(hwnd_, &wheelPt);
+            if (!IsPointOnRetainedElement(wheelPt))
+                return 0;
+        }
         OnMouseWheel(wp, lp);
         return 0;
+    }
     case WM_RBUTTONUP:
-        if (desktopIconsHidden_) { ShowHiddenHint(); return 0; }
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        {
+            ShowHiddenHint();
+            return 0;
+        }
         OnRightButtonUp(lp);
         return 0;
+    }
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
 
-        if (desktopIconsHidden_)
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
             ToggleDesktopIconsVisibility();
             return 0;

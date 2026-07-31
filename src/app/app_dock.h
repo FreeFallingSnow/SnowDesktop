@@ -2936,6 +2936,11 @@ inline DockContainer* DesktopApp::GetDockContainerAtPoint(POINT point) const
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock) continue;
+        if (desktopIconsHidden_ &&
+            !dockSettings_.keepWhenDesktopHidden &&
+            !(floatingDockVisible_ &&
+                dock == floatingDockContainer_))
+            continue;
         if (dock->ContainsInteractivePoint(point)) return dock;
     }
     return nullptr;

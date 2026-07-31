@@ -89,6 +89,7 @@ struct DockSettings
     bool showRunningApps = true;
     bool showWindowPreviews = true;
     bool showFrequentItems = false;
+    bool keepWhenDesktopHidden = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
     bool systemTaskbarAutoHide = false;

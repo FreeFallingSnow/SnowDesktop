@@ -769,6 +769,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
+    ReadBoolField(text, "keepWhenDesktopHidden",
+        settings.keepWhenDesktopHidden);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
@@ -844,6 +846,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"showWindowPreviews\": true,\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
+    file << "  \"keepWhenDesktopHidden\": "
+         << (settings.keepWhenDesktopHidden ? "true" : "false") << ",\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
     file << "  \"systemTaskbarAutoHide\": "

@@ -449,6 +449,7 @@ struct DesktopWidget
     std::wstring packageId;        ///< Lua package UUID used by layouts/runtime
     std::wstring legacyScriptPath; ///< Pending loose-script migration only
     bool showOnHoverOnly = false;
+    bool keepWhenDesktopHidden = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
     bool userRenamed = false; // Compatibility mirror of !customTitle.empty().

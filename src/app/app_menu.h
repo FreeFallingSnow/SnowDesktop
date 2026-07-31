@@ -149,6 +149,21 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     AppendMenuW(menu,
         MF_STRING | (dockSettings_.showFrequentItems ? MF_CHECKED : MF_UNCHECKED),
         kContextDockShowFrequentItems, _LW("app.dock.show_frequent"));
+
+    HMENU keepMenu = CreatePopupMenu();
+    if (keepMenu)
+    {
+        AppendMenuW(keepMenu,
+            MF_STRING | (dockSettings_.keepWhenDesktopHidden ? MF_CHECKED : MF_UNCHECKED),
+            kContextDockKeepWhenHiddenOn, _LW("app.interact.on"));
+        AppendMenuW(keepMenu,
+            MF_STRING | (!dockSettings_.keepWhenDesktopHidden ? MF_CHECKED : MF_UNCHECKED),
+            kContextDockKeepWhenHiddenOff, _LW("app.interact.off"));
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(keepMenu),
+            _LW("app.dock.keep_when_hidden"));
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(keepMenu), L"");
+    }
+
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
 
@@ -187,6 +202,12 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     case kContextDockShowFrequentItems:
         updated.showFrequentItems = !updated.showFrequentItems;
         layoutChanged = true;
+        break;
+    case kContextDockKeepWhenHiddenOn:
+        updated.keepWhenDesktopHidden = true;
+        break;
+    case kContextDockKeepWhenHiddenOff:
+        updated.keepWhenDesktopHidden = false;
         break;
     case kContextDockDetailedSettings:
         if (settingsWindow_)

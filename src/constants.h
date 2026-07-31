@@ -119,6 +119,8 @@ constexpr UINT kContextWidgetSortByTypeDesc = 41036;
 constexpr UINT kContextWidgetSortByDateDesc = 41037;
 constexpr UINT kContextWidgetShowOnHover = 41038;
 constexpr UINT kContextWidgetShowOnHoverOn = 41038;
+constexpr UINT kContextWidgetKeepWhenHiddenOn = 41050;
+constexpr UINT kContextWidgetKeepWhenHiddenOff = 41051;
 constexpr UINT kContextWidgetPrivacyMode = 41043;
 constexpr UINT kContextWidgetPrivacyModeOn = 41043;
 constexpr UINT kContextWidgetPrivacyModeOff = 41044;
@@ -160,6 +162,8 @@ constexpr UINT kContextDockDetailedSettings = 41807;
 constexpr UINT kContextDockShowFrequentItems = 41808;
 constexpr UINT kContextDockRemoveFrequentItem = 41809;
 constexpr UINT kContextDockCloseApplication = 41810;
+constexpr UINT kContextDockKeepWhenHiddenOn = 41811;
+constexpr UINT kContextDockKeepWhenHiddenOff = 41812;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;

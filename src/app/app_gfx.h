@@ -503,10 +503,11 @@ inline void DesktopApp::OnPaint(const RECT* updateRect)
         }
         desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
 
-        if (!desktopIconsHidden_)
+        if (!desktopIconsHidden_ || HasRetainedElements())
             RenderFrame(
-                context.Get(), dcompUpdate);
-        else if (showHiddenHint_)
+                context.Get(), dcompUpdate,
+                desktopIconsHidden_);
+        if (desktopIconsHidden_ && showHiddenHint_)
             DrawHiddenHintOverlay(context.Get());
 
         if (showWidgetAddedHint_)
@@ -2233,7 +2234,8 @@ extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCel
 // ── Static background layer (icons + widget chrome + popup) ──
 inline void DesktopApp::DrawStaticBackground(
     ID2D1DeviceContext* ctx,
-    const RECT* updateRect)
+    const RECT* updateRect,
+    bool hiddenMode)
 {
     auto intersectsUpdate =
         [&](RECT bounds, int overdraw = 0) {
@@ -2256,32 +2258,37 @@ inline void DesktopApp::DrawStaticBackground(
 
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
-    for (auto& ooItem : items_oo_)
+    if (!hiddenMode)
     {
-        auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
-        if (!icon) continue;
-        DesktopItem* di = icon->GetDesktopItem();
-        if (!di || IsRectEmptyRect(di->bounds)) continue;
-        if (!intersectsUpdate(di->bounds, 8))
-            continue;
-        if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
-            dragSession_.IsMoveAction() && di->selected)
-            continue;
+        for (auto& ooItem : items_oo_)
+        {
+            auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
+            if (!icon) continue;
+            DesktopItem* di = icon->GetDesktopItem();
+            if (!di || IsRectEmptyRect(di->bounds)) continue;
+            if (!intersectsUpdate(di->bounds, 8))
+                continue;
+            if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
+                dragSession_.IsMoveAction() && di->selected)
+                continue;
 
-        const bool desktopMarqueeActive =
-            marqueeActive_ &&
-            !marqueeDockFolderPopup_ &&
-            marqueeWidgetIndex_ >= widgets_.size();
-        const bool hovered = !desktopMarqueeActive && !mouseOverWidget &&
-            PtInRect(&di->bounds, lastMousePoint_) != FALSE;
-        const bool selected = di->selected && !desktopMarqueeActive;
-        int state = selected ? 2 : (hovered ? 1 : 0);
-        icon->Draw(ctx, di->bounds, state);
+            const bool desktopMarqueeActive =
+                marqueeActive_ &&
+                !marqueeDockFolderPopup_ &&
+                marqueeWidgetIndex_ >= widgets_.size();
+            const bool hovered = !desktopMarqueeActive && !mouseOverWidget &&
+                PtInRect(&di->bounds, lastMousePoint_) != FALSE;
+            const bool selected = di->selected && !desktopMarqueeActive;
+            int state = selected ? 2 : (hovered ? 1 : 0);
+            icon->Draw(ctx, di->bounds, state);
+        }
     }
 
     // Widgets
     for (auto& widgetData : widgets_)
     {
+        if (hiddenMode && !widgetData.keepWhenDesktopHidden)
+            continue;
         // Dock-exclusive and grouped collections deliberately keep an empty
         // desktop rectangle while retaining a runtime WidgetContainer for
         // popup interaction. Never let an empty rectangle reach widget
@@ -2339,6 +2346,7 @@ inline void DesktopApp::DrawStaticBackground(
         auto* dock = dynamic_cast<DockContainer*>(
             container.get());
         if (!dock ||
+            (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
             !snowdesktop::floating_dock_rules::
                 ShouldRenderDesktopDock(
                     floatingDockVisible_,
@@ -2365,7 +2373,9 @@ inline void DesktopApp::DrawStaticBackground(
 }
 
 // ── Dynamic overlays (drag preview, dragged items, marquee, nav) ──
-inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
+inline void DesktopApp::DrawDynamicOverlays(
+    ID2D1DeviceContext* ctx,
+    bool hiddenMode)
 {
     auto beginPopupAnimationTransform =
         [&](const RECT& popup,
@@ -2420,6 +2430,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
             : !(popupAnchoredToDock_ &&
                 floatingDockVisible_);
     if (popupBelongsToCurrentSurface &&
+        (!hiddenMode || IsOpenPopupRetained()) &&
         GetOpenPopupWidget())
     {
         const bool suppressPopupHover =
@@ -2437,7 +2448,22 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
     if (!renderingFloatingDock_ &&
         !luaWidgetPanelRequest_.widgetId.empty())
-        DrawLuaWidgetPanel(ctx);
+    {
+        bool renderLuaPanel = !hiddenMode;
+        if (hiddenMode)
+        {
+            const auto source = std::find_if(
+                widgets_.begin(), widgets_.end(),
+                [&](const DesktopWidget& widget) {
+                    return widget.id ==
+                        luaWidgetPanelRequest_.widgetId;
+                });
+            renderLuaPanel = source != widgets_.end() &&
+                source->keepWhenDesktopHidden;
+        }
+        if (renderLuaPanel)
+            DrawLuaWidgetPanel(ctx);
+    }
 
     // Widget drag/resize preview
     if ((widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize) && mouseDownWidgetIndex_ < widgets_.size())
@@ -2526,6 +2552,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     Slot* targetSlot = dragSession_.TargetSlot();
     HitRegion targetRegion = dragSession_.TargetRegion();
     if ((dragSession_.IsActive() || externalDragActive_) && targetContainer
+        && (!hiddenMode || IsRetainedContainer(targetContainer))
         && targetRegion != HitRegion::None)
     {
         RECT clipViewport{};
@@ -2683,7 +2710,7 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         }
     }
 
-    if (!renderingFloatingDock_)
+    if (!hiddenMode && !renderingFloatingDock_)
     {
         DrawPageNavButtons(ctx);
         DrawPageNotify(ctx);
@@ -2692,7 +2719,8 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
 inline void DesktopApp::RenderFrame(
     ID2D1DeviceContext* ctx,
-    const RECT* updateRect)
+    const RECT* updateRect,
+    bool hiddenMode)
 {
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
     {
@@ -2705,7 +2733,8 @@ inline void DesktopApp::RenderFrame(
         marqueeActive_ &&
         !marqueeDockFolderPopup_ &&
         marqueeWidgetIndex_ >= widgets_.size();
-    if (dragSession_.IsActive() || widgetPreviewActive || desktopMarqueeActive)
+    if (!hiddenMode &&
+        (dragSession_.IsActive() || widgetPreviewActive || desktopMarqueeActive))
     {
         RECT client{};
         GetClientRect(hwnd_, &client);
@@ -2730,8 +2759,8 @@ inline void DesktopApp::RenderFrame(
     }
 
     // ── Normal path (not dragging) ────────────────────────────
-    DrawStaticBackground(ctx, updateRect);
-    DrawDynamicOverlays(ctx);
+    DrawStaticBackground(ctx, updateRect, hiddenMode);
+    DrawDynamicOverlays(ctx, hiddenMode);
 }
 
 inline void DesktopApp::GetNavButtonRects(RECT& outPrev, RECT& outNext) const

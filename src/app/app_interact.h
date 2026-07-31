@@ -259,6 +259,8 @@ inline WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT p
 {
     if (widgetIndex >= widgets_.size()) return WidgetHit::None;
     const DesktopWidget& widget = widgets_[widgetIndex];
+    if (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)
+        return WidgetHit::None;
     if (widget.type != DesktopWidgetType::LuaScript) return WidgetHit::None;
 
     RECT frame = GetStandaloneWidgetFrameRect(widget);
@@ -641,6 +643,9 @@ inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 {
     for (auto& c : containers_)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(c.get()))
+            continue;
         auto* wc = dynamic_cast<WidgetContainer*>(c.get());
         if (!wc) continue;
         RECT frame = wc->GetFrameRect();
@@ -1115,8 +1120,126 @@ inline void DesktopApp::ToggleDesktopIconsVisibility()
     // the blurred desktop background. Keep it alive while icons are hidden.
     ClearHiddenHint();
 
+    if (desktopIconsHidden_)
+    {
+        if (GetOpenPopupWidget() && !IsOpenPopupRetained())
+            CloseCollectionPopup();
+        if (!luaWidgetPanelRequest_.widgetId.empty())
+        {
+            const auto source = std::find_if(
+                widgets_.begin(), widgets_.end(),
+                [&](const DesktopWidget& widget) {
+                    return widget.id ==
+                        luaWidgetPanelRequest_.widgetId;
+                });
+            if (source == widgets_.end() ||
+                !source->keepWhenDesktopHidden)
+            {
+                CloseLuaWidgetPanel(
+                    luaWidgetPanelRequest_.widgetId,
+                    "desktop-hidden");
+            }
+        }
+    }
+
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline bool DesktopApp::HasRetainedElements() const
+{
+    if (dockSettings_.keepWhenDesktopHidden)
+    {
+        for (const auto& container : containers_)
+            if (dynamic_cast<DockContainer*>(container.get()))
+                return true;
+    }
+    for (const auto& widgetData : widgets_)
+        if (widgetData.keepWhenDesktopHidden &&
+            !IsRectEmptyRect(widgetData.bounds))
+            return true;
+    return false;
+}
+
+inline bool DesktopApp::IsOpenPopupRetained() const
+{
+    if (!desktopIconsHidden_)
+        return GetOpenPopupWidget() != nullptr;
+    if (!GetOpenPopupWidget())
+        return false;
+    if (dockFolderPopupOpen_ || popupAnchoredToDock_)
+        return dockSettings_.keepWhenDesktopHidden ||
+            floatingDockVisible_;
+    return popupWidgetIndex_ < widgets_.size() &&
+        widgets_[popupWidgetIndex_].keepWhenDesktopHidden;
+}
+
+inline bool DesktopApp::IsRetainedContainer(
+    const Container* container) const
+{
+    if (!container)
+        return false;
+    if (!desktopIconsHidden_)
+        return true;
+    if (dynamic_cast<const DockContainer*>(container))
+        return dockSettings_.keepWhenDesktopHidden ||
+            (floatingDockVisible_ &&
+                container == floatingDockContainer_);
+    if (container == dockFolderPopupContainer_.get())
+        return dockSettings_.keepWhenDesktopHidden;
+    const auto* widget =
+        dynamic_cast<const WidgetContainer*>(container);
+    const DesktopWidget* widgetData = widget
+        ? widget->GetWidgetData()
+        : nullptr;
+    if (widgetData && popupAnchoredToDock_ &&
+        dockSettings_.keepWhenDesktopHidden &&
+        GetOpenPopupWidget() == widgetData)
+        return true;
+    return widgetData && widgetData->keepWhenDesktopHidden;
+}
+
+inline bool DesktopApp::IsPointOnRetainedElement(POINT pt) const
+{
+    if (IsOpenPopupRetained() &&
+        IsPointInsideOpenPopup(pt))
+        return true;
+    if (const DockContainer* dock =
+            GetDockContainerAtPoint(pt);
+        dock &&
+        (dockSettings_.keepWhenDesktopHidden ||
+            (floatingDockVisible_ &&
+                dock == floatingDockContainer_)))
+        return true;
+    for (const auto& widgetData : widgets_)
+    {
+        if (!widgetData.keepWhenDesktopHidden) continue;
+        if (luaWidgetPanelRequest_.widgetId == widgetData.id &&
+            luaWidgetPanelAnimation_.IsInteractive())
+        {
+            const RECT panel = GetLuaWidgetPanelRect();
+            if (!IsRectEmptyRect(panel) && PtInRect(&panel, pt))
+                return true;
+        }
+        const size_t standalone =
+            HitTestStandaloneWidgetIndex(pt);
+        if (standalone < widgets_.size() &&
+            &widgets_[standalone] == &widgetData)
+            return true;
+        if (!IsRectEmptyRect(widgetData.bounds) &&
+            PtInRect(&widgetData.bounds, pt))
+            return true;
+        for (const auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (!wc || wc->GetWidgetData() != &widgetData) continue;
+            const RECT bodyRect = wc->GetBodyRect();
+            if (PtInRect(&bodyRect, pt))
+                return true;
+            break;
+        }
+    }
+    return false;
 }
 
 inline void DesktopApp::ShowHiddenHint()
@@ -1190,6 +1313,9 @@ inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
     {
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
+            if (desktopIconsHidden_ &&
+                !IsRetainedContainer(it->get()))
+                continue;
             if (!AcceptsSlotSurfaceDrop(
                     it->get(),
                     dragSession_.SourceList()))
@@ -1307,6 +1433,8 @@ inline bool DesktopApp::HitTestPopupForDrag(POINT client,
     Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion)
 {
     if (!IsCollectionPopupInteractive())
+        return false;
+    if (desktopIconsHidden_ && !IsOpenPopupRetained())
         return false;
 
     if (dockFolderPopupOpen_ &&
@@ -1630,6 +1758,13 @@ inline bool DesktopApp::HitTestPopupForDrag(POINT client,
 inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
 {
     lastMousePoint_ = clientPoint;
+    if (desktopIconsHidden_)
+    {
+        navHoverSide_ = 0;
+        navAutoFlipDir_ = 0;
+        navAutoFlipTick_ = 0;
+        return dragSession_.IsActive();
+    }
     if (!dragSession_.IsActive())
     {
         navHoverSide_ = 0;
@@ -2769,6 +2904,9 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         bool clickedSearchBox = false;
         for (auto& c : containers_)
         {
+            if (desktopIconsHidden_ &&
+                !IsRetainedContainer(c.get()))
+                continue;
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
             if (!searchable) continue;
             RECT sr = searchable->GetSearchBoxRect();
@@ -2856,6 +2994,9 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
     {
+        if (desktopIconsHidden_ &&
+            !widgets_[wi].keepWhenDesktopHidden)
+            continue;
         WidgetContainer* wc = nullptr;
         for (auto& c : containers_)
         {
@@ -3217,11 +3358,17 @@ inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     for (size_t n = widgets_.size(); n > 0; --n)
     {
         const size_t candidate = n - 1;
+        if (desktopIconsHidden_ &&
+            !widgets_[candidate].keepWhenDesktopHidden)
+            continue;
         bool hit = HitTestStandaloneWidget(candidate, pt) != WidgetHit::None;
         if (!hit && widgets_[candidate].type != DesktopWidgetType::LuaScript)
         {
             for (auto& container : containers_)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(container.get()))
+                    continue;
                 auto* widgetContainer = dynamic_cast<WidgetContainer*>(container.get());
                 if (!widgetContainer ||
                     widgetContainer->GetWidgetData() != &widgets_[candidate])
@@ -3791,6 +3938,9 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
                 if (!AcceptsSlotSurfaceDrop(
                         it->get(),
                         dragSession_.SourceList()))
@@ -3874,6 +4024,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             if (const DesktopWidget* popupWidget =
                     GetOpenPopupWidget();
                 IsCollectionPopupInteractive() &&
+                (!desktopIconsHidden_ || IsOpenPopupRetained()) &&
                 popupWidget &&
                 !IsRectEmptyRect(popupRect_) &&
                 PtInRect(&popupRect_, point))
@@ -3916,6 +4067,9 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
                 auto* widget = dynamic_cast<WidgetContainer*>(it->get());
                 if (!widget)
                     continue;
@@ -7345,6 +7499,9 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
     for (auto it = containers_.rbegin();
         it != containers_.rend(); ++it)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(it->get()))
+            continue;
         auto* group =
             dynamic_cast<FileGroup*>(it->get());
         if (!group) continue;
@@ -7393,6 +7550,9 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
     for (auto it = containers_.rbegin();
         it != containers_.rend(); ++it)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(it->get()))
+            continue;
         auto* group =
             dynamic_cast<CollectionGroup*>(it->get());
         if (!group) continue;
@@ -7451,6 +7611,9 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
     // Check widget member items first; otherwise the widget frame menu steals member right-clicks.
     for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(it->get()))
+            continue;
         auto* wc = dynamic_cast<WidgetContainer*>(it->get());
         if (!wc) continue;
 
@@ -7526,6 +7689,9 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
     size_t hitWidget = static_cast<size_t>(-1);
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
     {
+        if (desktopIconsHidden_ &&
+            !widgets_[wi].keepWhenDesktopHidden)
+            continue;
         for (auto& c : containers_)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());
@@ -7941,6 +8107,9 @@ inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     for (auto& c : containers_)
     {
         if (hoveredCollection < widgets_.size()) break;
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(c.get()))
+            continue;
         auto* collection = dynamic_cast<Collection*>(c.get());
         if (!collection) continue;
 
@@ -7991,6 +8160,9 @@ inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
         return false;
     if (popupDwellWidgetIndex_ >= widgets_.size())
         return false;
+    if (desktopIconsHidden_ &&
+        !widgets_[popupDwellWidgetIndex_].keepWhenDesktopHidden)
+        return false;
     if (popupDwellWidgetIndex_ == popupWidgetIndex_)
         return false;
     if (now - popupDwellTick_ < kCollectionPopupDwellDelayMs)
@@ -8032,6 +8204,9 @@ inline void DesktopApp::UpdateCollectionGroupTabDwell(
     for (auto it = containers_.rbegin();
         it != containers_.rend(); ++it)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(it->get()))
+            continue;
         DesktopWidget* data = nullptr;
         std::wstring id;
         if (auto* group =
@@ -9860,6 +10035,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     if (DesktopWidget* popupWidget =
             GetOpenPopupWidget();
         IsCollectionPopupInteractive() &&
+        (!desktopIconsHidden_ || IsOpenPopupRetained()) &&
         popupWidget)
     {
         RECT popup =
@@ -9887,6 +10063,9 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     // Scroll widgets with overflow content
     for (auto& c : containers_)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(c.get()))
+            continue;
         auto* wc = dynamic_cast<WidgetContainer*>(c.get());
         if (!wc || !wc->GetWidgetData()) continue;
         RECT frame = wc->GetFrameRect();
@@ -11573,6 +11752,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
                 if (!AcceptsSlotSurfaceDrop(
                         it->get(),
                         dragSession_.SourceList()))
@@ -11676,6 +11858,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     {
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
+            if (desktopIconsHidden_ &&
+                !IsRetainedContainer(it->get()))
+                continue;
             if (!AcceptsExternalSlotSurfaceDrop(
                     it->get()))
                 continue;
@@ -11714,7 +11899,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     if (targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
-    *effect = targetRegion == HitRegion::Blocked
+    *effect = ((desktopIconsHidden_ && !targetContainer) ||
+        targetRegion == HitRegion::Blocked)
         ? DROPEFFECT_NONE
         : (externalDockMapping
             ? snowdesktop::dock_drop_rules::
@@ -11773,6 +11959,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
                 if (!AcceptsSlotSurfaceDrop(
                         it->get(),
                         dragSession_.SourceList()))
@@ -11840,6 +12029,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     {
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
+            if (desktopIconsHidden_ &&
+                !IsRetainedContainer(it->get()))
+                continue;
             if (!AcceptsExternalSlotSurfaceDrop(
                     it->get()))
                 continue;
@@ -11878,7 +12070,8 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     if (targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
-    *effect = targetRegion == HitRegion::Blocked
+    *effect = ((desktopIconsHidden_ && !targetContainer) ||
+        targetRegion == HitRegion::Blocked)
         ? DROPEFFECT_NONE
         : (externalDockMapping
             ? snowdesktop::dock_drop_rules::
@@ -12145,6 +12338,14 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     externalDropFileCount_ = 0;
     externalDropHasShortcut_ = false;
     externalDropFoldersOnly_ = false;
+    if (desktopIconsHidden_ &&
+        !IsRetainedContainer(
+            dragSession_.TargetContainer()))
+    {
+        *effect = DROPEFFECT_NONE;
+        EndDragSession();
+        return S_OK;
+    }
     dragSession_.DeactivateForDrop();
     CommitDragVisualEndBeforeShellOperation();
 
@@ -13331,6 +13532,7 @@ inline void DesktopApp::ShowWidgetContextMenu(
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     HMENU displayModeMenu = nullptr;
     HMENU hoverMenu = nullptr;
+    HMENU keepMenu = nullptr;
     HMENU privacyMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
@@ -13529,6 +13731,15 @@ inline void DesktopApp::ShowWidgetContextMenu(
             kContextWidgetShowOnHoverOff, _LW("app.interact.off"));
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), _LW("app.interact.hover_only"));
     }
+    keepMenu = CreatePopupMenu();
+    if (keepMenu)
+    {
+        AppendMenuW(keepMenu, MF_STRING | (widget.keepWhenDesktopHidden ? MF_CHECKED : 0),
+            kContextWidgetKeepWhenHiddenOn, _LW("app.interact.on"));
+        AppendMenuW(keepMenu, MF_STRING | (!widget.keepWhenDesktopHidden ? MF_CHECKED : 0),
+            kContextWidgetKeepWhenHiddenOff, _LW("app.interact.off"));
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(keepMenu), _LW("app.interact.keep_when_hidden"));
+    }
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
@@ -13561,6 +13772,8 @@ inline void DesktopApp::ShowWidgetContextMenu(
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
     if (hoverMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(hoverMenu), L"");
+    if (keepMenu)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(keepMenu), L"");
     if (privacyMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(privacyMenu), widget.privacyMode ? L"" : L"");
     if (sortMenu)
@@ -13898,6 +14111,16 @@ inline void DesktopApp::ShowWidgetContextMenu(
         break;
     case kContextWidgetShowOnHoverOff:
         widgets_[widgetIndex].showOnHoverOnly = false;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetKeepWhenHiddenOn:
+        widgets_[widgetIndex].keepWhenDesktopHidden = true;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetKeepWhenHiddenOff:
+        widgets_[widgetIndex].keepWhenDesktopHidden = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;

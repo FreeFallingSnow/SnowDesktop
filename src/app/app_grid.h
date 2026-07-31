@@ -1970,6 +1970,7 @@ inline void DesktopApp::LoadLayoutSlots()
                             scrollContainerMode = false, showTitle = false,
                             bottomBarHover = false, userRenamed = false,
                             folderSortAscending = true;
+                        bool keepWhenDesktopHidden = false;
                         if (!ReadJsonStringField(obj, "id", idUtf8) ||
                             !ReadJsonStringField(obj, "page", pageUtf8) ||
                             !ReadJsonIntField(obj, "x", x) ||
@@ -2008,6 +2009,8 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         ReadJsonBoolField(obj, "showOnHoverOnly", showOnHoverOnly);
                         ReadJsonBoolField(obj, "privacyMode", privacyMode);
                         ReadJsonBoolField(obj, "scrollContainerMode", scrollContainerMode);
+                        ReadJsonBoolField(obj, "keepWhenDesktopHidden",
+                            keepWhenDesktopHidden);
 
                         DesktopWidget widget;
                         widget.id = Utf8ToWide(idUtf8);
@@ -2076,6 +2079,7 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
                         widget.showOnHoverOnly = showOnHoverOnly;
                         widget.privacyMode = privacyMode;
                         widget.scrollContainerMode = scrollContainerMode;
+                        widget.keepWhenDesktopHidden = keepWhenDesktopHidden;
                         showTitle = widget.type != DesktopWidgetType::LuaScript;
                         bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
                             widget.type == DesktopWidgetType::LuaScript ||
@@ -2595,6 +2599,8 @@ inline void DesktopApp::SaveLayoutSlots()
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
+             << ", \"keepWhenDesktopHidden\": "
+             << (w.keepWhenDesktopHidden ? "true" : "false")
              << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
              << ", \"bottomBarHover\": " << (w.bottomBarHover ? "true" : "false")
              << ", \"userRenamed\": " << (hasCustomTitle ? "true" : "false")
