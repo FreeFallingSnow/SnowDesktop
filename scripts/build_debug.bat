@@ -1,5 +1,6 @@
 @echo off
-cd /d "%~dp0"
+setlocal
+cd /d "%~dp0.."
 
 echo === Configuring CMake (Debug) ===
 cmake -B .build_debug -S .

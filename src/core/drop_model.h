@@ -22,6 +22,7 @@
 #include "types.h"
 #include "utils.h"
 
+#include <algorithm>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -272,8 +273,52 @@ struct DragSourceList
     bool hasWidgets = false;
     bool hasCollectionGroupEntries = false;
     bool hasFileGroupEntries = false;
+    /**
+     * 拖拽项是否来自文件组的来源标签。
+     *
+     * 映射文件夹标签为了支持在 Desktop / Dock / FileGroup 之间移动，
+     * 仍属于 Widget 载荷家族，不能同时设置 hasFileGroupEntries；本标记只
+     * 描述它的文件组标签视觉/插入语义，不参与载荷家族分类。
+     */
+    bool hasFileGroupSourceLabels = false;
 
     bool Empty() const { return entries.empty(); }
+
+    /**
+     * @brief 是否应按文件组来源标签的插入语义处理。
+     *
+     * 除文件组自身的来源标签外，Dock 中的映射文件夹组件也会作为一个
+     * 新来源插入文件组。两者必须共用标签命中、插入索引和不裁剪预览。
+     */
+    bool UsesFileGroupSourceInsertion() const
+    {
+        if (hasFileGroupSourceLabels)
+            return true;
+        if (entries.empty()) return false;
+        return std::all_of(
+            entries.begin(), entries.end(),
+            [](const DragSourceEntry& entry) {
+                return entry.fromDock &&
+                    entry.kind == DropSourceKind::Widget &&
+                    entry.dockEntryType ==
+                        DockEntryType::FolderMapping;
+            });
+    }
+
+    /**
+     * @brief 绑定运行时来源，并同步来源面元数据。
+     *
+     * 文件组等代理容器会把逻辑来源改绑到实际子组件。origin 与
+     * originSurface 必须一起更新，否则同一子组件会被错误分类为
+     * “同实例但不同 Surface”，从而被槽位契约拒绝。
+     */
+    void BindRuntimeOrigin(Container* value)
+    {
+        origin = value;
+        if (!value) return;
+        originSurface = value->GetSlotSurfaceKind();
+        hasOriginSurface = true;
+    }
 
     /**
      * @brief 获取不依赖运行时容器生命周期的来源面类型。

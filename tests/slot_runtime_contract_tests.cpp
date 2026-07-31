@@ -318,20 +318,16 @@ void TestEverySurfaceRetainsStableDragMetadata()
     using Surface =
         snowdesktop::slot_contract::
             SlotSurfaceKind;
-    const auto surfaceCount =
-        snowdesktop::slot_contract::
-            ToIndex(Surface::Count);
-    for (std::size_t index = 0;
-        index < surfaceCount; ++index)
+    for (const auto& descriptor :
+         snowdesktop::slot_contract::
+            kSurfaceDescriptors)
     {
-        const auto surface =
-            static_cast<Surface>(index);
+        if (!descriptor.buildsSlots) continue;
         ContractContainer source(
-            BarStyle::VBar, surface);
+            BarStyle::VBar,
+            descriptor.kind);
         DragSourceList sourceList;
-        sourceList.origin = &source;
-        sourceList.originSurface = surface;
-        sourceList.hasOriginSurface = true;
+        sourceList.BindRuntimeOrigin(&source);
         DragSourceEntry entry;
         entry.item = NonOwningItemToken();
         sourceList.entries.push_back(entry);
@@ -345,7 +341,8 @@ void TestEverySurfaceRetainsStableDragMetadata()
 
         Check(
             session.SourceList().
-                SourceSurfaceKind() == surface,
+                SourceSurfaceKind() ==
+                    descriptor.kind,
             "every registered container surface must survive runtime-source detachment");
     }
 
@@ -357,63 +354,94 @@ void TestEverySurfaceRetainsStableDragMetadata()
         "external drags without a runtime container must retain the external surface fallback");
 }
 
-void TestTransientSourceReplacementRebindsBeforeDestroy()
+void TestEveryRegisteredSurfaceOriginLifecycle()
 {
-    using Surface =
-        snowdesktop::slot_contract::
-            SlotSurfaceKind;
-    auto oldPopup =
-        std::make_unique<ContractContainer>(
-            BarStyle::VBar,
-            Surface::FolderMapping);
-    DragSourceList initial;
-    initial.origin = oldPopup.get();
-    initial.originSurface =
-        Surface::FolderMapping;
-    initial.hasOriginSurface = true;
-    DragSourceEntry initialEntry;
-    initialEntry.item = NonOwningItemToken();
-    initial.entries.push_back(initialEntry);
+    namespace contract = snowdesktop::slot_contract;
+    for (const auto& initialDescriptor :
+         contract::kSurfaceDescriptors)
+    {
+        if (!initialDescriptor.buildsSlots) continue;
+        for (const auto& reboundDescriptor :
+             contract::kSurfaceDescriptors)
+        {
+            if (!reboundDescriptor.buildsSlots) continue;
+            auto oldContainer =
+                std::make_unique<ContractContainer>(
+                    BarStyle::VBar,
+                    initialDescriptor.kind);
+            DragSourceList initial;
+            initial.BindRuntimeOrigin(
+                oldContainer.get());
+            DragSourceEntry initialEntry;
+            initialEntry.item = NonOwningItemToken();
+            initial.entries.push_back(initialEntry);
 
-    DragSession session;
-    session.Begin(
-        oldPopup.get(), {NonOwningItemToken()},
-        std::move(initial),
-        POINT{}, POINT{});
+            DragSession session;
+            session.Begin(
+                oldContainer.get(),
+                {NonOwningItemToken()},
+                std::move(initial),
+                POINT{}, POINT{});
 
-    auto stableSnapshot =
-        std::make_unique<ContractContainer>(
-            BarStyle::VBar,
-            Surface::FolderMapping);
-    DragSourceList rebound;
-    rebound.origin = stableSnapshot.get();
-    rebound.originSurface =
-        Surface::FolderMapping;
-    rebound.hasOriginSurface = true;
-    DragSourceEntry reboundEntry;
-    reboundEntry.item = NonOwningItemToken();
-    rebound.entries.push_back(reboundEntry);
-    session.RebindSource(
-        stableSnapshot.get(),
-        {NonOwningItemToken()},
-        std::move(rebound));
+            auto stableContainer =
+                std::make_unique<ContractContainer>(
+                    BarStyle::VBar,
+                    reboundDescriptor.kind);
+            DragSourceList rebound;
+            rebound.BindRuntimeOrigin(
+                stableContainer.get());
+            DragSourceEntry reboundEntry;
+            reboundEntry.item =
+                NonOwningItemToken();
+            rebound.entries.push_back(reboundEntry);
+            session.RebindSource(
+                stableContainer.get(),
+                {NonOwningItemToken()},
+                std::move(rebound));
 
-    oldPopup.reset();
-    Check(
-        session.Source() ==
-            stableSnapshot.get() &&
-            session.SourceList().origin ==
-                stableSnapshot.get() &&
-            session.SourceList().
-                SourceSurfaceKind() ==
-                    Surface::FolderMapping,
-        "replacing a transient popup must rebind every runtime source pointer before destruction");
-    Check(
-        session.Source() &&
-            session.Source()->
-                GetSlotSurfaceKind() ==
-                    Surface::FolderMapping,
-        "the next drag hit-test must use the stable replacement container");
+            oldContainer.reset();
+            const std::string pair =
+                std::string(initialDescriptor.name) +
+                " -> " +
+                std::string(reboundDescriptor.name);
+            Check(
+                session.Source() ==
+                    stableContainer.get() &&
+                    session.SourceList().origin ==
+                        stableContainer.get() &&
+                    session.SourceList().
+                        SourceSurfaceKind() ==
+                            reboundDescriptor.kind,
+                pair +
+                    ": every transient source replacement must rebind all runtime pointers before destruction");
+            Check(
+                session.Source() &&
+                    session.Source()->
+                        GetSlotSurfaceKind() ==
+                            reboundDescriptor.kind,
+                pair +
+                    ": the next hit-test must use the registered replacement surface");
+            const auto relation =
+                contract::ClassifyRelation(
+                    session.SourceList().
+                        SourceSurfaceKind(),
+                    session.Source()->
+                        GetSlotSurfaceKind(),
+                    session.SourceList().origin ==
+                        session.Source());
+            Check(
+                relation ==
+                    contract::DragRelation::SameInstance &&
+                    contract::RelationMatches(
+                        session.SourceList().
+                            SourceSurfaceKind(),
+                        session.Source()->
+                            GetSlotSurfaceKind(),
+                        relation),
+                pair +
+                    ": replacement metadata must form a valid same-instance relation");
+        }
+    }
 }
 
 void TestDropActionModifiers()
@@ -452,15 +480,15 @@ int main()
     TestExecuteDropDelegatesOnce();
     TestDragSessionRejectsInvalidatedSlots();
     TestEverySurfaceRetainsStableDragMetadata();
-    TestTransientSourceReplacementRebindsBeforeDestroy();
+    TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
     if (failures != 0)
     {
         std::cerr << failures
-            << " Slot runtime contract test(s) failed\n";
+            << " slot runtime contract test(s) failed\n";
         return 1;
     }
     std::cout
-        << "All Slot runtime contract tests passed\n";
+        << "All slot runtime contract tests passed\n";
     return 0;
 }

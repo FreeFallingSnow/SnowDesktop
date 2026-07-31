@@ -20,8 +20,5 @@ jobs:
       - name: Build Release targets
         run: cmake --build .build --config Release --parallel
 
-      - name: Run behavior tests
+      - name: Run CTest suite
         run: ctest --test-dir .build -C Release --output-on-failure
-
-      - name: Check localization
-        run: python scripts/check_l10n.py

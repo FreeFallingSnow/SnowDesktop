@@ -38,7 +38,7 @@ A Windows desktop organization and personalization tool. SnowDesktop replaces na
 Requirements: CMake 3.24+, Visual Studio 2022, and the Windows 10 SDK (0x0A00).
 
 ```bat
-.\build.bat
+.\scripts\build.bat
 ```
 
 The build script automatically stops a running `SnowDesktop.exe` and briefly

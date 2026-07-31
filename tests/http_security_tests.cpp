@@ -47,6 +47,6 @@ int main()
         "invalid IP literals are rejected");
 
     if (failures == 0)
-        std::cout << "HTTP runtime security tests passed\n";
+        std::cout << "HTTP security tests passed\n";
     return failures == 0 ? 0 : 1;
 }

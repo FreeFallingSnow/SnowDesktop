@@ -36,7 +36,7 @@ Installed and development packages live under `data\widgets\installed` and
 8. Declare every privileged API in the manifest. Keep unused permissions out.
 9. Store persistent values as strings and parse them with `tonumber` or explicit boolean conversion.
 10. Test at multiple widget spans. Derive layout from `layout.width()` and `layout.height()` instead of assuming pixels.
-11. For repository development, run `widget-dev.bat widgets\my-widget`.
+11. For repository development, run `scripts\widget-dev.bat widgets\my-widget`.
     The first run syncs the package into `.build\<Config>\data\widgets\dev`,
     activates the development override, and then watches source files. Later
     saves update the live package without rebuilding the host.
@@ -219,8 +219,8 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 For repository development:
 
 1. Save the package directory under the source `widgets` directory.
-2. Run `scripts/check_l10n.bat` to catch untranslated Lua strings and missing keys.
-3. Build the host once, then run `widget-dev.bat widgets\my-widget`.
+2. Run `scripts/test.bat` to catch untranslated Lua strings and missing keys through the CTest localization contract.
+3. Build the host once, then run `scripts\widget-dev.bat widgets\my-widget`.
    It validates and mirrors the source package into the active development
    directory. When the override is first created, SnowDesktop restarts once to
    discover it; subsequent `main.lua`, manifest, locale, module, and asset saves
@@ -231,7 +231,7 @@ For repository development:
 5. Run `.build\Release\snowwidget.exe validate widgets\my-widget`.
 6. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
 7. Exercise click, double-click, wheel, editor, context-menu, and language-switch behavior as applicable.
-8. Run `build.bat` only for final delivery verification. The release process
+8. Run `scripts\build.bat` only for final delivery verification. The release process
    copies the complete built `widgets` tree, including this skill and its
    resources, into `release\widgets`.
 

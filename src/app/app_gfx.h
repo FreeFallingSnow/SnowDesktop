@@ -2569,7 +2569,7 @@ inline void DesktopApp::DrawDynamicOverlays(
                     hasCollectionGroupEntries &&
                 dynamic_cast<CollectionGroup*>(wc)) ||
              (dragSession_.SourceList().
-                    hasFileGroupEntries &&
+                    UsesFileGroupSourceInsertion() &&
                 dynamic_cast<FileGroup*>(wc)));
         if (wc && !groupEntryTarget)
         {

@@ -31,7 +31,7 @@ $repositoryRoot = [System.IO.Path]::GetFullPath(
 $releaseRepository = Join-Path $repositoryRoot "release"
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
 $packageScript = Join-Path $scriptDirectory "package_release.ps1"
-$buildScript = Join-Path $repositoryRoot "build.bat"
+$buildScript = Join-Path $scriptDirectory "build.bat"
 $squashScript = Join-Path $scriptDirectory "squash_release_to_main.bat"
 $sourceRemote = "https://github.com/FreeFallingSnow/SnowDesktop.git"
 $binaryRemote =
@@ -379,7 +379,7 @@ function Invoke-Package {
     $packageLog = Join-Path $logsDirectory "package-$timestamp.log"
 
     Write-Host ""
-    Write-Host "[1/2] 使用 build.bat 构建 Release" -ForegroundColor Cyan
+    Write-Host "[1/2] 使用 scripts/build.bat 构建 Release" -ForegroundColor Cyan
     $previousNonInteractive = $env:SNOWDESKTOP_NONINTERACTIVE
     try {
         $env:SNOWDESKTOP_NONINTERACTIVE = "1"
@@ -391,7 +391,7 @@ function Invoke-Package {
         $env:SNOWDESKTOP_NONINTERACTIVE = $previousNonInteractive
     }
     if ($buildExitCode -ne 0) {
-        throw "build.bat failed with exit code $buildExitCode. See $buildLog"
+        throw "scripts/build.bat failed with exit code $buildExitCode. See $buildLog"
     }
     $releaseExecutable = Join-Path `
         $repositoryRoot ".build\Release\SnowDesktop.exe"

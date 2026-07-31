@@ -37,7 +37,7 @@
 依赖：CMake 3.24+、Visual Studio 2022、Windows 10 SDK（0x0A00）
 
 ```bat
-.\build.bat
+.\scripts\build.bat
 ```
 
 构建脚本会自动终止已在运行的 SnowDesktop.exe，并为释放任务栏 Hook DLL

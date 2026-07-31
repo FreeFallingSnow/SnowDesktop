@@ -205,6 +205,7 @@ public:
         if (!groupData_ || !sourceData_) return;
 
         savedGridSpan_ = sourceData_->gridSpan;
+        savedGridCell_ = sourceData_->gridCell;
         savedBounds_ = sourceData_->bounds;
         savedCellScale_ = sourceData_->cellScale;
         savedListMode_ = sourceData_->listMode;
@@ -225,6 +226,11 @@ public:
             source_->GetSearchCompositionCursor();
 
         sourceData_->gridSpan = groupData_->gridSpan;
+        // Hosted item geometry (notably icon-mode cell height) resolves its
+        // grid page from gridCell.pageId.  Inherit the parent page while the
+        // child is hosted so cross-monitor DPI/cell sizing follows the file
+        // group instead of the child's last standalone position.
+        sourceData_->gridCell = groupData_->gridCell;
         sourceData_->bounds = groupData_->bounds;
         sourceData_->cellScale = groupData_->cellScale;
         sourceData_->listMode = groupData_->listMode;
@@ -274,6 +280,7 @@ public:
         source_->ClearCategorizedHostOptions();
         source_->SetHostedFrame(nullptr);
         sourceData_->gridSpan = savedGridSpan_;
+        sourceData_->gridCell = savedGridCell_;
         sourceData_->bounds = savedBounds_;
         sourceData_->cellScale = savedCellScale_;
         sourceData_->listMode = savedListMode_;
@@ -300,6 +307,7 @@ private:
     DesktopWidget* groupData_ = nullptr;
     DesktopWidget* sourceData_ = nullptr;
     GridSpan savedGridSpan_{};
+    GridCell savedGridCell_{};
     RECT savedBounds_{};
     float savedCellScale_ = 1.0f;
     bool savedListMode_ = false;
@@ -1180,7 +1188,7 @@ size_t FileGroup::GetDropInsertIndex(
     {
         if (app_ &&
             app_->dragSession_.SourceList().
-                hasFileGroupEntries)
+                UsesFileGroupSourceInsertion())
         {
             size_t index = std::min(
                 targetSlot->GetIndex(),
@@ -1444,7 +1452,8 @@ HitRegion FileGroup::HitTestDrag(
     }
 
     if (app_ &&
-        app_->dragSession_.SourceList().hasFileGroupEntries)
+        app_->dragSession_.SourceList().
+            UsesFileGroupSourceInsertion())
         return HitRegion::Empty;
 
     if (IsGroupSearchActive())
@@ -1512,7 +1521,8 @@ void FileGroup::DrawDropPreview(
 {
     if (!context) return;
     if (app_ &&
-        app_->dragSession_.SourceList().hasFileGroupEntries)
+        app_->dragSession_.SourceList().
+            UsesFileGroupSourceInsertion())
     {
         if (dropPreviewSourceTab_ &&
             dropPreviewValid_ &&

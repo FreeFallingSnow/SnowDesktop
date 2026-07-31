@@ -1640,6 +1640,6 @@ int main()
         "pending activation suppression must block immediate reopening");
 
     if (failures == 0)
-        std::cout << "All dock window preview tests passed.\n";
+        std::cout << "All Dock and window rule tests passed.\n";
     return failures == 0 ? 0 : 1;
 }

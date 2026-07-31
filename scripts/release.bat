@@ -1,13 +1,13 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 if "%~1"=="" (
     powershell -NoProfile -ExecutionPolicy Bypass ^
-        -File "%~dp0scripts\release_manager.ps1" menu
+        -File "%~dp0release_manager.ps1" menu
 ) else (
     powershell -NoProfile -ExecutionPolicy Bypass ^
-        -File "%~dp0scripts\release_manager.ps1" %*
+        -File "%~dp0release_manager.ps1" %*
 )
 set "RESULT=%ERRORLEVEL%"
 

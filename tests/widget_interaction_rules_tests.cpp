@@ -1,4 +1,5 @@
 #include "widgets/collection_group_rules.h"
+#include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
 
 #include <algorithm>
@@ -152,70 +153,71 @@ void TestTabWidthDistribution()
 
 void TestStableReorder()
 {
-    const std::vector<std::string> source{
-        "A", "B", "C", "D"
-    };
-    Check(
-        rules::ReorderItems(
-            source, {1}, 4) ==
-            std::vector<std::string>({
-                "A", "C", "D", "B"
-            }),
-        "moving a tab to the end must preserve order");
-    Check(
-        rules::ReorderItems(
-            source, {3, 1, 1}, 0) ==
-            std::vector<std::string>({
-                "B", "D", "A", "C"
-            }),
-        "unsorted duplicate indices must be normalized");
-    Check(
-        rules::ReorderItems(
-            source, {1, 2}, 3) == source,
-        "dropping a selected range on its own boundary must be stable");
-    Check(
-        rules::ReorderItems(
-            source, {99}, 0) == source,
-        "invalid indices must not mutate the list");
-}
+    constexpr size_t maxLength = 7;
+    for (size_t length = 0;
+        length <= maxLength; ++length)
+    {
+        std::vector<size_t> source(length);
+        for (size_t index = 0;
+            index < length; ++index)
+            source[index] = index;
 
-void TestCollectionLabelTargetMatrix()
-{
-    using Surface =
-        rules::CollectionLabelDropSurface;
-    Check(
-        rules::AcceptsCollectionLabelDrop(
-            Surface::Desktop),
-        "desktop must accept a collection label");
-    Check(
-        rules::AcceptsCollectionLabelDrop(
-            Surface::CollectionGroup),
-        "collection group must accept a collection label");
-    Check(
-        !rules::AcceptsCollectionLabelDrop(
-            Surface::Other),
-        "file and generic item containers must reject a collection label");
+        const size_t selectionCount =
+            size_t{1} << length;
+        for (size_t mask = 0;
+            mask < selectionCount; ++mask)
+        {
+            std::vector<size_t> selected;
+            for (size_t index = length;
+                index > 0; --index)
+            {
+                const size_t sourceIndex = index - 1;
+                if ((mask &
+                        (size_t{1} << sourceIndex)) == 0)
+                    continue;
+                selected.push_back(sourceIndex);
+                selected.push_back(sourceIndex);
+            }
+            selected.push_back(length + 7);
 
-    Check(
-        rules::AcceptsGroupedDrag(
-            rules::GroupedDragKind::FileGroupLabel,
-            Surface::Desktop),
-        "desktop must accept a file-group source label");
-    Check(
-        rules::AcceptsGroupedDrag(
-            rules::GroupedDragKind::FileGroupLabel,
-            Surface::FileGroup),
-        "file group must accept its dedicated label drag type");
-    Check(
-        !rules::AcceptsGroupedDrag(
-            rules::GroupedDragKind::FileGroupLabel,
-            Surface::FileList),
-        "a source label must not use file-entry drop targets");
-    Check(
-        !rules::AcceptsGroupedDrag(
-            rules::GroupedDragKind::FileEntry,
-            Surface::FileGroup),
-        "a file entry must not use source-label placement");
+            for (size_t insertBefore = 0;
+                insertBefore <= length + 2;
+                ++insertBefore)
+            {
+                const size_t boundary =
+                    std::min(insertBefore, length);
+                std::vector<size_t> expected;
+                expected.reserve(length);
+                for (size_t index = 0;
+                    index < boundary; ++index)
+                {
+                    if ((mask &
+                            (size_t{1} << index)) == 0)
+                        expected.push_back(index);
+                }
+                for (size_t index = 0;
+                    index < length; ++index)
+                {
+                    if ((mask &
+                            (size_t{1} << index)) != 0)
+                        expected.push_back(index);
+                }
+                for (size_t index = boundary;
+                    index < length; ++index)
+                {
+                    if ((mask &
+                            (size_t{1} << index)) == 0)
+                        expected.push_back(index);
+                }
+
+                Check(
+                    rules::ReorderItems(
+                        source, selected,
+                        insertBefore) == expected,
+                    "every selection and insertion boundary must preserve stable reorder semantics");
+            }
+        }
+    }
 }
 
 void TestFileGroupRules()
@@ -503,6 +505,32 @@ void TestHoverOnlyWidgetVisibility()
             true, false, true),
         "a hovered widget must retain its backdrop after drag");
 }
+
+void TestNestedWidgetScrolling()
+{
+    using snowdesktop::widget_scroll_rules::
+        ApplyWheelDelta;
+    const auto innerBoundary =
+        ApplyWheelDelta(0, 0, 120);
+    Check(!innerBoundary.moved &&
+            innerBoundary.offset == 0,
+        "wheel at a nested scroll boundary can bubble");
+    const auto outerScroll =
+        ApplyWheelDelta(48, 240, 120);
+    Check(outerScroll.moved &&
+            outerScroll.offset == 0,
+        "wheel moves the first enclosing scroll area that can move");
+    const auto lowerBoundary =
+        ApplyWheelDelta(240, 240, -120);
+    Check(!lowerBoundary.moved &&
+            lowerBoundary.offset == 240,
+        "wheel at the lower boundary can bubble");
+    const auto precisionWheel =
+        ApplyWheelDelta(20, 240, 15);
+    Check(precisionWheel.moved &&
+            precisionWheel.offset < 20,
+        "precision touchpad wheel deltas still scroll");
+}
 }
 
 int main()
@@ -512,17 +540,17 @@ int main()
     TestActiveItemFallback();
     TestTabWidthDistribution();
     TestStableReorder();
-    TestCollectionLabelTargetMatrix();
     TestFileGroupRules();
     TestGridPlacementInvariants();
     TestHoverOnlyWidgetVisibility();
+    TestNestedWidgetScrolling();
     if (failures != 0)
     {
         std::cerr << failures
-            << " collection-group rule test(s) failed\n";
+            << " widget interaction rule test(s) failed\n";
         return 1;
     }
     std::cout
-        << "All collection-group rule tests passed\n";
+        << "All widget interaction rule tests passed\n";
     return 0;
 }

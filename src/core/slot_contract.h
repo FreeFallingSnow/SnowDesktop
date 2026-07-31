@@ -7,7 +7,7 @@
  *  1. 在 SlotSurfaceKind 中增加枚举；
  *  2. 在 kSurfaceDescriptors 中登记其可发出的载荷；
  *  3. 在 EvaluateSlotDrop 中声明接受规则；
- *  4. 由 slot_contract_tests 的全有向矩阵覆盖。
+ *  4. 由 slot_contract_matrix_tests 的全有向矩阵覆盖。
  *
  * 运行时命中测试和自动化测试共同调用本文件中的规则，避免测试复制实现。
  */
@@ -559,7 +559,9 @@ consteval bool RegistryIsComplete()
         const auto& descriptor =
             kSurfaceDescriptors[i];
         if (ToIndex(descriptor.kind) != i ||
-            descriptor.name.empty())
+            descriptor.name.empty() ||
+            (descriptor.buildsSlots &&
+                descriptor.externalBoundary))
             return false;
         for (std::size_t j = i + 1;
             j < kSurfaceDescriptors.size(); ++j)

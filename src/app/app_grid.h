@@ -4805,13 +4805,7 @@ inline DragSourceList DesktopApp::BuildDragSourceList(
     const std::vector<Item*>& sourceItems, Container* origin) const
 {
     DragSourceList list;
-    list.origin = origin;
-    if (origin)
-    {
-        list.originSurface =
-            origin->GetSlotSurfaceKind();
-        list.hasOriginSurface = true;
-    }
+    list.BindRuntimeOrigin(origin);
 
     WidgetContainer* originWidget = dynamic_cast<WidgetContainer*>(origin);
     FileGroup* fileGroupOrigin =
@@ -4838,7 +4832,7 @@ inline DragSourceList DesktopApp::BuildDragSourceList(
         if (logicalSource)
         {
             originWidget = logicalSource;
-            list.origin = logicalSource;
+            list.BindRuntimeOrigin(logicalSource);
         }
     }
     DesktopWidget* originData = originWidget ? originWidget->GetWidgetData() : nullptr;
@@ -4927,6 +4921,7 @@ inline DragSourceList DesktopApp::BuildDragSourceList(
         else if (auto* fileGroupEntry =
             dynamic_cast<FileGroupEntryItem*>(src))
         {
+            list.hasFileGroupSourceLabels = true;
             entry.widgetId =
                 fileGroupEntry->GetChildWidgetId();
             const size_t widgetIndex =

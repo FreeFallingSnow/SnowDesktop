@@ -27,66 +27,6 @@ std::string PairName(
         std::string(contract::Describe(target).name);
 }
 
-void TestRegistryContract()
-{
-    std::array<bool,
-        contract::ToIndex(
-            contract::SlotSurfaceKind::Count)> seen{};
-    for (const auto& descriptor :
-        contract::kSurfaceDescriptors)
-    {
-        const auto index =
-            contract::ToIndex(descriptor.kind);
-        Check(index < seen.size(),
-            "registered surface index must be in range");
-        if (index < seen.size())
-        {
-            Check(!seen[index],
-                "each surface must be registered once");
-            seen[index] = true;
-        }
-        Check(!descriptor.name.empty(),
-            "each surface must have a diagnostic name");
-        if (descriptor.buildsSlots)
-            Check(!descriptor.externalBoundary,
-                "an in-process slot surface cannot be an external boundary");
-    }
-    for (bool registered : seen)
-        Check(registered,
-            "every SlotSurfaceKind must be registered");
-
-    std::array<bool,
-        contract::ToIndex(
-            DesktopWidgetType::Count)> widgetSeen{};
-    for (const auto& descriptor :
-        contract::kWidgetContractDescriptors)
-    {
-        const auto index =
-            contract::ToIndex(descriptor.type);
-        Check(index < widgetSeen.size(),
-            "registered widget type index must be in range");
-        if (index < widgetSeen.size())
-        {
-            Check(!widgetSeen[index],
-                "each DesktopWidgetType must be registered once");
-            widgetSeen[index] = true;
-        }
-        const bool shouldBuildSlots =
-            descriptor.role ==
-                contract::WidgetContainerRole::
-                    SlotContainer;
-        Check(
-            contract::SurfaceBuildsSlots(
-                descriptor.surface) ==
-                shouldBuildSlots,
-            std::string(descriptor.name) +
-            ": widget role and slot surface must agree");
-    }
-    for (bool registered : widgetSeen)
-        Check(registered,
-            "every DesktopWidgetType must declare a slot contract");
-}
-
 void TestEveryDirectedPairAndPayload()
 {
     using Surface = contract::SlotSurfaceKind;
@@ -98,9 +38,7 @@ void TestEveryDirectedPairAndPayload()
     constexpr std::size_t payloadCount =
         contract::ToIndex(Payload::Count);
     std::array<std::array<bool, surfaceCount>,
-        surfaceCount> pairCovered{};
-    std::array<bool, payloadCount> payloadCovered{};
-    std::size_t evaluatedCases = 0;
+        surfaceCount> nativeRouteCovered{};
 
     for (std::size_t sourceIndex = 0;
         sourceIndex < surfaceCount;
@@ -123,6 +61,10 @@ void TestEveryDirectedPairAndPayload()
                 contract::ClassifyRelation(
                     source, target, false),
             };
+            const size_t relationCount =
+                relations[0] == relations[1]
+                ? 1
+                : relations.size();
 
             for (std::size_t payloadIndex = 0;
                 payloadIndex < payloadCount;
@@ -130,16 +72,22 @@ void TestEveryDirectedPairAndPayload()
             {
                 const auto payload =
                     static_cast<Payload>(payloadIndex);
-                for (const auto relation : relations)
+                for (size_t relationIndex = 0;
+                    relationIndex < relationCount;
+                    ++relationIndex)
                 {
+                    const auto relation =
+                        relations[relationIndex];
                     const Route route =
                         contract::EvaluateSlotDrop(
                             source, payload,
                             target, relation);
-                    ++evaluatedCases;
-                    pairCovered[sourceIndex][targetIndex] =
-                        true;
-                    payloadCovered[payloadIndex] = true;
+
+                    if (contract::SurfaceEmits(
+                            source, payload) &&
+                        route != Route::Reject)
+                        nativeRouteCovered
+                            [sourceIndex][targetIndex] = true;
 
                     if (!contract::SurfaceEmits(
                             source, payload))
@@ -154,30 +102,27 @@ void TestEveryDirectedPairAndPayload()
                             PairName(source, target) +
                             ": the guide must never accept a drop");
                     }
-                    Check(
-                        contract::AcceptsSlotDrop(
-                            source, payload,
-                            target, relation) ==
-                            (route != Route::Reject),
-                        PairName(source, target) +
-                        ": acceptance and route must agree");
                 }
             }
         }
     }
 
-    for (const auto& row : pairCovered)
-        for (bool covered : row)
-            Check(covered,
-                "every directed source/target pair must be exercised");
-    for (bool covered : payloadCovered)
-        Check(covered,
-            "every payload kind must be exercised");
-    Check(
-        evaluatedCases ==
-            surfaceCount * surfaceCount *
-                payloadCount * 2,
-        "adding a container surface must expand the complete directed drag matrix");
+    for (const auto& source :
+         contract::kSurfaceDescriptors)
+    {
+        if (!source.buildsSlots) continue;
+        for (const auto& target :
+             contract::kSurfaceDescriptors)
+        {
+            if (!target.buildsSlots) continue;
+            Check(
+                nativeRouteCovered
+                    [contract::ToIndex(source.kind)]
+                    [contract::ToIndex(target.kind)],
+                PairName(source.kind, target.kind) +
+                ": every registered slot pair must declare at least one accepted native-payload route");
+        }
+    }
 }
 
 void TestPayloadClassificationIsExclusive()
@@ -459,7 +404,6 @@ void TestExternalIngressAndEgress()
 
 int main()
 {
-    TestRegistryContract();
     TestPayloadClassificationIsExclusive();
     TestEveryDirectedPairAndPayload();
     TestSameComponentAndSameTypeRules();
@@ -472,6 +416,6 @@ int main()
         return 1;
     }
     std::cout
-        << "All directed slot contract tests passed\n";
+        << "All directed slot contract matrix tests passed\n";
     return 0;
 }

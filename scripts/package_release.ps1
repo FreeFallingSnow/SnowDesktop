@@ -235,9 +235,9 @@ $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 if (-not $SkipBuild) {
     Write-Host "Running the repository-standard Release build."
     Write-Host "SnowDesktop will be stopped and Explorer will restart briefly."
-    & cmd.exe /d /c "call `"$repositoryRoot\build.bat`""
+    & cmd.exe /d /c "call `"$repositoryRoot\scripts\build.bat`""
     if ($LASTEXITCODE -ne 0) {
-        throw "build.bat failed with exit code $LASTEXITCODE."
+        throw "scripts/build.bat failed with exit code $LASTEXITCODE."
     }
 }
 

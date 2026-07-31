@@ -998,50 +998,36 @@ std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
 
 /**
  * @brief 重新排序成员项目：将选中的项目移动到指定可见索引之前。
- * @param indices 未使用的参数，保留以匹配接口。实际使用选中状态来确定移动项目。
- * @param insertBefore 目标插入位置的可见索引。
+ * @param indices 拖拽开始时捕获的 data_->itemKeys 成员索引。
+ * @param insertBefore data_->itemKeys 中的目标插入边界。
  */
 void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
     if (!data_ || !app_) return;
     if (data_->dateHeaders) return;
-    (void)indices;
 
-    const auto& activeKeys = GetSearchResultKeys();
-    std::vector<std::wstring> selectedKeys;
-    for (const auto& key : activeKeys)
+    std::vector<size_t> movingIndices = indices;
+    if (movingIndices.empty())
     {
-        size_t itemIdx = app_->FindItemIndexByKey(key);
-        if (itemIdx != static_cast<size_t>(-1) && app_->GetDesktopItems()[itemIdx].selected)
-            selectedKeys.push_back(ToUpperInvariant(key));
+        // Compatibility fallback for callers that do not carry a captured
+        // DragSourceList.  The normal file-group path always supplies the
+        // stable indices, so a proxy rebuild or selection reset cannot turn
+        // the drop into a no-op.
+        for (size_t i = 0; i < data_->itemKeys.size(); ++i)
+        {
+            const size_t itemIndex =
+                app_->FindItemIndexByKey(data_->itemKeys[i]);
+            if (itemIndex < app_->GetDesktopItems().size() &&
+                app_->GetDesktopItems()[itemIndex].selected)
+                movingIndices.push_back(i);
+        }
     }
-    if (selectedKeys.empty()) return;
+    if (movingIndices.empty()) return;
 
-    std::unordered_set<std::wstring> selectedSet(selectedKeys.begin(), selectedKeys.end());
-    size_t insertAt = data_->itemKeys.size();
-    if (insertBefore < activeKeys.size())
-    {
-        size_t anchorIdx = insertBefore;
-        while (anchorIdx < activeKeys.size() &&
-            selectedSet.contains(ToUpperInvariant(activeKeys[anchorIdx])))
-            ++anchorIdx;
-        if (anchorIdx < activeKeys.size())
-            insertAt = InsertIndexForVisibleSlot(this, anchorIdx);
-    }
-
-    size_t before = 0;
-    for (size_t i = 0; i < std::min(insertAt, data_->itemKeys.size()); ++i)
-        if (selectedSet.contains(ToUpperInvariant(data_->itemKeys[i]))) ++before;
-    insertAt -= std::min(insertAt, before);
-
-    data_->itemKeys.erase(
-        std::remove_if(data_->itemKeys.begin(), data_->itemKeys.end(),
-            [&](const std::wstring& key) { return selectedSet.contains(ToUpperInvariant(key)); }),
-        data_->itemKeys.end());
-
-    insertAt = std::min(insertAt, data_->itemKeys.size());
-    for (const auto& key : selectedKeys)
-        data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt++), key);
+    data_->itemKeys =
+        snowdesktop::collection_group_rules::ReorderItems(
+            data_->itemKeys, std::move(movingIndices),
+            insertBefore);
     InvalidateCategorySnapshot();
     InvalidateSlots();
 }

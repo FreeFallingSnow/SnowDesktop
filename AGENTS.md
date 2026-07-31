@@ -35,17 +35,17 @@
 - 本地压缩合并与版本标签创建应使用 `scripts/squash_release_to_main.bat`。该脚本只允许操作本地分支、提交和本地标签，严禁包含 `fetch`、`pull`、`push`、远程 API 或删除分支操作。
 - `scripts/squash_release_to_main.bat` 完成后，必须由用户检查并测试本地 `main`，再由用户明确决定是否推送。
 - `scripts/squash_release_to_main.bat` 应在唯一的版本提交上创建与 `version.json` 一致的本地注释标签 `vA.B.C.D`。
-- `release.bat` 无参数时是人工发布的统一 TUI 入口，带命令参数时是 Agent 与自动化的非交互 CLI；两种模式必须复用 `scripts/release_manager.ps1` 中的同一套检查与动作。
+- `scripts/release.bat` 无参数时是人工发布的统一 TUI 入口，带命令参数时是 Agent 与自动化的非交互 CLI；两种模式必须复用 `scripts/release_manager.ps1` 中的同一套检查与动作。
 - 每个版本的发行包、校验文件、发布说明、状态和日志必须统一保存到 `artifacts\vA.B.C.D\`，不得继续将不同版本的文件平铺到 `artifacts\` 根目录。
 - TUI/CLI 可以提供远程发布动作，但必须与本地压缩合并分开；只有在用户测试本地 `main` 后，通过交互式版本确认或 CLI 的 `-Yes -ConfirmVersion A.B.C.D` 才能推送远程 `main` 和标签。
 - `scripts/squash_release_to_main.bat` 仍只允许执行本地 Git 操作；统一发布界面不得通过环境变量或参数改变这一限制。
 
 ## 构建与验证
 
-- Release 构建的标准验证入口是仓库根目录的 `build.bat`。
-- 在报告构建通过前，必须实际运行 `build.bat` 并确认 `.build\Release\SnowDesktop.exe` 成功生成。
-- `build.bat` 会终止正在运行的 `SnowDesktop.exe`；执行前应在进度说明中告知用户这一副作用。
-- Ninja、直接调用 CMake 或其他构建方式只能用于诊断，不能替代最终的 `build.bat` 验证。
+- Release 构建的标准验证入口是 `scripts/build.bat`。
+- 在报告构建通过前，必须实际运行 `scripts/build.bat` 并确认 `.build\Release\SnowDesktop.exe` 成功生成。
+- `scripts/build.bat` 会终止正在运行的 `SnowDesktop.exe`；执行前应在进度说明中告知用户这一副作用。
+- Ninja、直接调用 CMake 或其他构建方式只能用于诊断，不能替代最终的 `scripts/build.bat` 验证。
 - 构建警告应如实报告，并区分既有警告与本次改动引入的警告。
 
 ## 工作区安全

@@ -1,5 +1,6 @@
 @echo off
-cd /d "%~dp0"
+setlocal
+cd /d "%~dp0.."
 
 echo === Configuring CMake (Release) ===
 cmake -B .build -S .
@@ -41,7 +42,7 @@ echo SnowDesktop.exe: .build\Release\SnowDesktop.exe
 echo Widget package tool: .build\Release\snowwidget.exe
 echo Taskbar appearance Hook: .build\Release\SnowDesktopTaskbarHook.dll
 echo.
-echo For a version release, run release.bat to open the unified release center.
-echo Agent and automation usage is available through release.bat COMMAND.
+echo For a version release, run scripts\release.bat to open the unified release center.
+echo Agent and automation usage is available through scripts\release.bat COMMAND.
 echo.
 if not defined SNOWDESKTOP_NONINTERACTIVE pause

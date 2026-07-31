@@ -2,7 +2,6 @@
 #include "widget_package.h"
 #include "portable_data_migration.h"
 #include "single_instance.h"
-#include "widget_scroll_rules.h"
 
 #include <windows.h>
 
@@ -205,33 +204,9 @@ PackagePaths TestPaths(const std::filesystem::path& root)
 
 int main()
 {
-    {
-        using snowdesktop::widget_scroll_rules::
-            ApplyWheelDelta;
-        const auto innerBoundary =
-            ApplyWheelDelta(0, 0, 120);
-        Expect(!innerBoundary.moved &&
-            innerBoundary.offset == 0,
-            "wheel at a nested scroll boundary can bubble");
-        const auto outerScroll =
-            ApplyWheelDelta(48, 240, 120);
-        Expect(outerScroll.moved &&
-            outerScroll.offset == 0,
-            "wheel moves the first enclosing scroll area that can move");
-        const auto lowerBoundary =
-            ApplyWheelDelta(240, 240, -120);
-        Expect(!lowerBoundary.moved &&
-            lowerBoundary.offset == 240,
-            "wheel at the lower boundary can bubble");
-        const auto precisionWheel =
-            ApplyWheelDelta(20, 240, 15);
-        Expect(precisionWheel.moved &&
-            precisionWheel.offset < 20,
-            "precision touchpad wheel deltas still scroll");
-    }
-
     const auto root = std::filesystem::temp_directory_path() /
-        (L"SnowDesktopWidgetPackageTests-" + std::to_wstring(GetCurrentProcessId()));
+        (L"SnowDesktopApplicationDataLifecycleTests-" +
+            std::to_wstring(GetCurrentProcessId()));
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
@@ -1001,6 +976,7 @@ int main()
 
     std::filesystem::remove_all(root, ec);
     if (failures)
-        std::cerr << failures << " widget package test(s) failed\n";
+        std::cerr << failures
+            << " application data lifecycle test(s) failed\n";
     return failures == 0 ? 0 : 1;
 }
