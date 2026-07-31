@@ -1,7 +1,8 @@
 #include "http_runtime.h"
 
-#include <windows.h>
+#include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #include <winhttp.h>
 #include <shlwapi.h>
 
@@ -14,41 +15,93 @@ namespace
 {
 constexpr DWORD kMaxResponseBytes = 1024 * 1024;
 
-bool IsPrivateIpv4(const IN_ADDR& address)
+bool IsBlockedIpv4(const IN_ADDR& address)
 {
     const std::uint32_t value = ntohl(address.S_un.S_addr);
     const std::uint8_t first = static_cast<std::uint8_t>(value >> 24);
     const std::uint8_t second = static_cast<std::uint8_t>(value >> 16);
     if (first == 0 || first == 10 || first == 127 || first >= 224)
         return true;
+    if (first == 100 && second >= 64 && second <= 127) return true;
     if (first == 169 && second == 254) return true;
     if (first == 172 && second >= 16 && second <= 31) return true;
+    if (first == 192 && second == 0 &&
+        static_cast<std::uint8_t>(value >> 8) == 0)
+        return true;
+    if (first == 192 && second == 0 &&
+        static_cast<std::uint8_t>(value >> 8) == 2)
+        return true;
     if (first == 192 && second == 168) return true;
-    if (first == 100 && second >= 64 && second <= 127) return true;
+    // 198.18.0.0/15 is widely used by local proxy/VPN Fake-IP modes.
+    // The request remains authenticated against the original HTTPS hostname.
+    if (first == 198 && second == 51 &&
+        static_cast<std::uint8_t>(value >> 8) == 100)
+        return true;
+    if (first == 203 && second == 0 &&
+        static_cast<std::uint8_t>(value >> 8) == 113)
+        return true;
     return false;
 }
 
-bool IsPrivateIpv6(const IN6_ADDR& address)
+bool IsBlockedIpv6(const IN6_ADDR& address)
 {
     if (IN6_IS_ADDR_UNSPECIFIED(&address) ||
         IN6_IS_ADDR_LOOPBACK(&address) ||
         IN6_IS_ADDR_LINKLOCAL(&address) ||
+        IN6_IS_ADDR_SITELOCAL(&address) ||
         IN6_IS_ADDR_MULTICAST(&address))
         return true;
     const auto* bytes = address.u.Byte;
-    if ((bytes[0] & 0xfe) == 0xfc ||
-        (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0xc0))
-        return true;
     if (IN6_IS_ADDR_V4MAPPED(&address))
     {
         IN_ADDR mapped{};
         std::memcpy(&mapped, bytes + 12, sizeof(mapped));
-        return IsPrivateIpv4(mapped);
+        return IsBlockedIpv4(mapped);
     }
+    if (bytes[0] == 0x20 && bytes[1] == 0x01 &&
+        ((bytes[2] == 0x0d && bytes[3] == 0xb8) ||
+         (bytes[2] == 0x00 && bytes[3] == 0x02)))
+        return true;
+    // Public IPv6 unicast addresses are currently allocated from 2000::/3.
+    return (bytes[0] & 0xe0) != 0x20;
+}
+
+bool IsAllowedRemoteSockaddr(const SOCKADDR* address)
+{
+    if (!address) return false;
+    if (address->sa_family == AF_INET)
+        return !IsBlockedIpv4(
+            reinterpret_cast<const SOCKADDR_IN*>(address)->sin_addr);
+    if (address->sa_family == AF_INET6)
+        return !IsBlockedIpv6(
+            reinterpret_cast<const SOCKADDR_IN6*>(address)->sin6_addr);
     return false;
 }
 
-bool HostResolvesToPublicAddress(const std::wstring& host)
+bool SockaddrToIpLiteral(const SOCKADDR* address, std::wstring& output)
+{
+    wchar_t buffer[INET6_ADDRSTRLEN]{};
+    if (address->sa_family == AF_INET)
+    {
+        const auto* ipv4 = reinterpret_cast<const SOCKADDR_IN*>(address);
+        if (!InetNtopW(AF_INET, const_cast<IN_ADDR*>(&ipv4->sin_addr),
+                buffer, static_cast<DWORD>(std::size(buffer))))
+            return false;
+    }
+    else if (address->sa_family == AF_INET6)
+    {
+        const auto* ipv6 = reinterpret_cast<const SOCKADDR_IN6*>(address);
+        if (!InetNtopW(AF_INET6, const_cast<IN6_ADDR*>(&ipv6->sin6_addr),
+                buffer, static_cast<DWORD>(std::size(buffer))))
+            return false;
+    }
+    else
+        return false;
+    output = buffer;
+    return true;
+}
+
+bool EnsureWinsock()
 {
     static std::once_flag winsockOnce;
     static bool winsockReady = false;
@@ -57,7 +110,13 @@ bool HostResolvesToPublicAddress(const std::wstring& host)
         WSADATA data{};
         winsockReady = WSAStartup(MAKEWORD(2, 2), &data) == 0;
     });
-    if (!winsockReady) return false;
+    return winsockReady;
+}
+
+bool ResolvePinnedPublicAddress(
+    const std::wstring& host, std::wstring& pinnedAddress)
+{
+    if (!EnsureWinsock()) return false;
     ADDRINFOW hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -67,26 +126,23 @@ bool HostResolvesToPublicAddress(const std::wstring& host)
         !addresses)
         return false;
     bool foundPublic = false;
-    bool foundPrivate = false;
+    bool foundNonPublic = false;
     for (auto* current = addresses; current; current = current->ai_next)
     {
-        if (current->ai_family == AF_INET)
+        if (!IsAllowedRemoteSockaddr(current->ai_addr))
         {
-            const auto* ipv4 =
-                reinterpret_cast<const SOCKADDR_IN*>(current->ai_addr);
-            if (IsPrivateIpv4(ipv4->sin_addr)) foundPrivate = true;
-            else foundPublic = true;
+            foundNonPublic = true;
+            continue;
         }
-        else if (current->ai_family == AF_INET6)
+        foundPublic = true;
+        if (pinnedAddress.empty())
         {
-            const auto* ipv6 =
-                reinterpret_cast<const SOCKADDR_IN6*>(current->ai_addr);
-            if (IsPrivateIpv6(ipv6->sin6_addr)) foundPrivate = true;
-            else foundPublic = true;
+            if (!SockaddrToIpLiteral(current->ai_addr, pinnedAddress))
+                foundNonPublic = true;
         }
     }
     FreeAddrInfoW(addresses);
-    return foundPublic && !foundPrivate;
+    return foundPublic && !foundNonPublic && !pinnedAddress.empty();
 }
 
 std::string WideToUtf8Http(const std::wstring& value)
@@ -105,6 +161,20 @@ std::wstring Lower(std::wstring value)
     std::transform(value.begin(), value.end(), value.begin(), towlower);
     return value;
 }
+}
+
+bool snowdesktop::http_security::IsAllowedRemoteIpLiteral(
+    std::wstring_view address)
+{
+    if (!EnsureWinsock()) return false;
+    const std::wstring value(address);
+    IN_ADDR ipv4{};
+    if (InetPtonW(AF_INET, value.c_str(), &ipv4) == 1)
+        return !IsBlockedIpv4(ipv4);
+    IN6_ADDR ipv6{};
+    if (InetPtonW(AF_INET6, value.c_str(), &ipv6) == 1)
+        return !IsBlockedIpv6(ipv6);
+    return false;
 }
 
 AsyncHttpService::~AsyncHttpService()
@@ -267,7 +337,7 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     response.widgetId = options.widgetId;
 
     HINTERNET session = WinHttpOpen(L"SnowDesktop/1.0",
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { response.error = "WinHttpOpen failed"; return response; }
     WinHttpSetTimeouts(session, options.timeoutMs, options.timeoutMs,
@@ -300,7 +370,8 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             break;
         }
         const std::wstring currentHost(host, components.dwHostNameLength);
-        if (!HostResolvesToPublicAddress(currentHost))
+        std::wstring pinnedAddress;
+        if (!ResolvePinnedPublicAddress(currentHost, pinnedAddress))
         {
             response.error =
                 "Host resolves to a private, local, or unavailable address";
@@ -326,6 +397,27 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             response.error = "WinHttpOpenRequest failed";
             break;
         }
+        const DWORD pinnedAddressBytes = static_cast<DWORD>(
+            (pinnedAddress.size() + 1) * sizeof(wchar_t));
+        if (!WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
+                pinnedAddress.data(), pinnedAddressBytes))
+        {
+            response.error =
+                "This Windows version cannot securely pin the resolved host";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
+        DWORD disabledFeatures =
+            WINHTTP_DISABLE_AUTHENTICATION | WINHTTP_DISABLE_COOKIES;
+        if (!WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE,
+                &disabledFeatures, sizeof(disabledFeatures)))
+        {
+            response.error = "Cannot apply HTTP request security policy";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
         BOOL sent = WinHttpSendRequest(request,
             options.headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : options.headers.c_str(),
             options.headers.empty() ? 0 : static_cast<DWORD>(-1L),
@@ -334,6 +426,19 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
         if (!sent || !WinHttpReceiveResponse(request, nullptr))
         {
             response.error = "HTTP request failed";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
+        WINHTTP_CONNECTION_INFO connectionInfo{};
+        connectionInfo.cbSize = sizeof(connectionInfo);
+        DWORD connectionInfoSize = sizeof(connectionInfo);
+        if (!WinHttpQueryOption(request, WINHTTP_OPTION_CONNECTION_INFO,
+                &connectionInfo, &connectionInfoSize) ||
+            !IsAllowedRemoteSockaddr(reinterpret_cast<const SOCKADDR*>(
+                &connectionInfo.RemoteAddress)))
+        {
+            response.error = "HTTP connection reached a non-public address";
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;

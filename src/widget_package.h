@@ -247,6 +247,8 @@ public:
 
     static bool IsUuid(std::string_view value);
     static bool IsSemVer(std::string_view value);
+    static bool IsNewerSemVer(
+        std::string_view candidate, std::string_view current);
     static bool IsSafeRelativePath(const std::filesystem::path& path);
 };
 
@@ -261,6 +263,9 @@ public:
         std::string& error) = 0;
     virtual std::optional<PackageDetails> GetDetails(
         const std::string& externalItemId, std::string& error) = 0;
+    virtual std::optional<PackageDetails> GetVersionDetails(
+        const std::string& externalItemId, const std::string& version,
+        std::string& error);
     virtual std::optional<PackageArtifact> Materialize(
         const std::string& externalItemId, const std::string& version,
         const std::filesystem::path& destination, std::string& error) = 0;
@@ -290,6 +295,8 @@ public:
     std::optional<InstalledPackage> Resolve(const std::string& packageId) const;
     std::optional<std::filesystem::path> ResolveEntry(
         const std::string& packageId) const;
+    std::optional<InstalledPackage> ResolveEntryPath(
+        const std::filesystem::path& entryPath) const;
 
     ValidationReport ValidateDirectory(const std::filesystem::path& root,
         PackageManifest* manifest = nullptr) const;
@@ -298,11 +305,13 @@ public:
     bool InstallDirectory(const std::filesystem::path& source,
         const PackageSourceRef& sourceRef, bool allowSourceChange,
         InstalledPackage& installed, ValidationReport& report,
-        std::string& error, bool allowPermissionExpansion = false);
+        std::string& error, bool allowPermissionExpansion = false,
+        const PackageManifest* expectedManifest = nullptr);
     bool InstallArchive(const std::filesystem::path& archive,
         const PackageSourceRef& sourceRef, bool allowSourceChange,
         InstalledPackage& installed, ValidationReport& report,
-        std::string& error, bool allowPermissionExpansion = false);
+        std::string& error, bool allowPermissionExpansion = false,
+        const PackageManifest* expectedManifest = nullptr);
     bool InstallFromSource(IWidgetPackageSource& source,
         const std::string& externalItemId, const std::string& version,
         bool allowSourceChange, InstalledPackage& installed,
@@ -435,6 +444,9 @@ public:
         std::string& error) override;
     std::optional<PackageDetails> GetDetails(
         const std::string& externalItemId, std::string& error) override;
+    std::optional<PackageDetails> GetVersionDetails(
+        const std::string& externalItemId, const std::string& version,
+        std::string& error) override;
     std::optional<PackageArtifact> Materialize(
         const std::string& externalItemId, const std::string& version,
         const std::filesystem::path& destination, std::string& error) override;

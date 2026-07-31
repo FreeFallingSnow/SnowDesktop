@@ -8,9 +8,15 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+namespace snowdesktop::http_security
+{
+bool IsAllowedRemoteIpLiteral(std::wstring_view address);
+}
 
 struct HttpRequestOptions
 {

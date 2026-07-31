@@ -247,7 +247,12 @@ static bool RecoverWidgetPackage(const std::string& packageId,
         if (package.active) activeUserPackage = true;
         else candidates.push_back(package.manifest.version);
     }
-    std::sort(candidates.begin(), candidates.end(), std::greater<>());
+    std::sort(candidates.begin(), candidates.end(),
+        [](const std::string& left, const std::string& right)
+        {
+            return snowdesktop::widget::WidgetPackageValidator::
+                IsNewerSemVer(left, right);
+        });
     for (const auto& version : candidates)
         if (tryVersion(version)) return true;
     if (activeUserPackage)
@@ -261,6 +266,9 @@ static bool RecoverWidgetPackage(const std::string& packageId,
 
 static std::wstring ManifestPathForScriptFile(const std::wstring& fullScriptPath)
 {
+    if (const auto package =
+        GetWidgetPackageManager().ResolveEntryPath(fullScriptPath))
+        return (package->root / L"widget.json").wstring();
     const std::filesystem::path packageManifest =
         std::filesystem::path(fullScriptPath).parent_path() / L"widget.json";
     std::error_code error;
@@ -3533,7 +3541,11 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     pending.filePath = path;
     pending.manifest = GetWidgetManifest(path);
     pending.packageId = pending.manifest.packageId;
-    pending.packageRoot = std::filesystem::path(path).parent_path();
+    if (const auto package =
+        GetWidgetPackageManager().ResolveEntryPath(path))
+        pending.packageRoot = package->root;
+    else
+        pending.packageRoot = std::filesystem::path(path).parent_path();
     if (pending.packageId.empty())
     {
         RuntimeRecordError(widgetId, "Legacy loose Lua scripts cannot run directly");
@@ -6970,8 +6982,8 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
         return false;
     }
     std::string sourceError;
-    const auto details =
-        source->second->GetDetails(externalItemId, sourceError);
+    const auto details = source->second->GetVersionDetails(
+        externalItemId, version, sourceError);
     if (!details)
     {
         error = Utf8ToWideLocal(sourceError);

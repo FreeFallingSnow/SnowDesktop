@@ -658,7 +658,7 @@ bool IsNewerSemVer(std::string_view candidate, std::string_view current)
         if (candidatePre[i] == currentPre[i]) continue;
         const bool candidateNumeric = IsNumericIdentifier(candidatePre[i]);
         const bool currentNumeric = IsNumericIdentifier(currentPre[i]);
-        if (candidateNumeric != currentNumeric) return candidateNumeric;
+        if (candidateNumeric != currentNumeric) return !candidateNumeric;
         if (candidateNumeric)
             return CompareNumericIdentifier(candidatePre[i], currentPre[i]) > 0;
         return candidatePre[i] > currentPre[i];
@@ -764,12 +764,58 @@ bool CopyArtifactWithProgress(const std::filesystem::path& source,
     }
     return true;
 }
+
+bool MatchesExpectedManifest(const PackageManifest& actual,
+    const PackageManifest& expected, std::string& error)
+{
+    if (actual.id != expected.id)
+    {
+        error = "package identity does not match the source metadata";
+        return false;
+    }
+    if (actual.version != expected.version)
+    {
+        error = "package version does not match the source metadata";
+        return false;
+    }
+    const std::set<std::string> actualPermissions(
+        actual.permissions.begin(), actual.permissions.end());
+    const std::set<std::string> expectedPermissions(
+        expected.permissions.begin(), expected.permissions.end());
+    if (actualPermissions != expectedPermissions)
+    {
+        error = "package permissions do not match the source metadata";
+        return false;
+    }
+    const std::set<std::string> actualDomains(
+        actual.networkDomains.begin(), actual.networkDomains.end());
+    const std::set<std::string> expectedDomains(
+        expected.networkDomains.begin(), expected.networkDomains.end());
+    if (actualDomains != expectedDomains)
+    {
+        error = "package network domains do not match the source metadata";
+        return false;
+    }
+    return true;
+}
 }
 
 PackageManifest LocalizePackageManifest(PackageManifest manifest,
     const std::string& requestedLocale)
 {
     return LocalizedManifest(std::move(manifest), requestedLocale);
+}
+
+std::optional<PackageDetails> IWidgetPackageSource::GetVersionDetails(
+    const std::string& externalItemId, const std::string& version,
+    std::string& error)
+{
+    auto details = GetDetails(externalItemId, error);
+    if (details && details->manifest.version == version)
+        return details;
+    if (details)
+        error = "package source did not provide metadata for the requested version";
+    return std::nullopt;
 }
 
 LegacyLooseImportResult ImportLegacyLooseWidgetPairs(
@@ -992,6 +1038,14 @@ bool WidgetPackageValidator::IsSemVer(std::string_view value)
         !validSuffix(plus + 1, value.size(), false))
         return false;
     return true;
+}
+
+bool WidgetPackageValidator::IsNewerSemVer(
+    std::string_view candidate, std::string_view current)
+{
+    if (!IsSemVer(candidate) || !IsSemVer(current))
+        return false;
+    return snowdesktop::widget::IsNewerSemVer(candidate, current);
 }
 
 bool WidgetPackageValidator::IsSafeRelativePath(
@@ -1559,6 +1613,27 @@ std::optional<std::filesystem::path> WidgetPackageManager::ResolveEntry(
     return canonicalEntry;
 }
 
+std::optional<InstalledPackage> WidgetPackageManager::ResolveEntryPath(
+    const std::filesystem::path& entryPath) const
+{
+    std::error_code ec;
+    const auto canonicalInput =
+        std::filesystem::weakly_canonical(entryPath, ec);
+    if (ec) return std::nullopt;
+    for (const auto& package : packages_)
+    {
+        if (!package.active || !package.enabled)
+            continue;
+        const auto resolved = ResolveEntry(package.manifest.id);
+        if (!resolved)
+            continue;
+        if (std::filesystem::equivalent(*resolved, canonicalInput, ec))
+            return package;
+        ec.clear();
+    }
+    return std::nullopt;
+}
+
 ValidationReport WidgetPackageManager::ValidateDirectory(
     const std::filesystem::path& root, PackageManifest* manifest) const
 {
@@ -1741,7 +1816,7 @@ bool WidgetPackageManager::InstallDirectory(
     const std::filesystem::path& source, const PackageSourceRef& sourceRef,
     bool allowSourceChange, InstalledPackage& installed,
     ValidationReport& report, std::string& error,
-    bool allowPermissionExpansion)
+    bool allowPermissionExpansion, const PackageManifest* expectedManifest)
 {
     PackageManifest manifest;
     report = validator_.ValidateDirectory(source, &manifest);
@@ -1750,6 +1825,9 @@ bool WidgetPackageManager::InstallDirectory(
         error = "package validation failed";
         return false;
     }
+    if (expectedManifest &&
+        !MatchesExpectedManifest(manifest, *expectedManifest, error))
+        return false;
     const auto staging = CreateStagingPath("install");
     if (!CopyPackageTree(source, staging, error)) return false;
     PackageManifest copiedManifest;
@@ -1876,7 +1954,7 @@ bool WidgetPackageManager::InstallArchive(
     const std::filesystem::path& archive, const PackageSourceRef& sourceRef,
     bool allowSourceChange, InstalledPackage& installed,
     ValidationReport& report, std::string& error,
-    bool allowPermissionExpansion)
+    bool allowPermissionExpansion, const PackageManifest* expectedManifest)
 {
     report = validator_.ValidateArchive(archive);
     if (!report.Ok())
@@ -1899,6 +1977,15 @@ bool WidgetPackageManager::InstallArchive(
     if (!report.Ok())
     {
         error = "extracted package validation failed";
+        const auto quarantine = paths_.quarantine /
+            (archive.stem().wstring() + L"-" + Utf8ToWide(Timestamp()));
+        std::error_code ec;
+        std::filesystem::rename(staging, quarantine, ec);
+        return false;
+    }
+    if (expectedManifest &&
+        !MatchesExpectedManifest(manifest, *expectedManifest, error))
+    {
         const auto quarantine = paths_.quarantine /
             (archive.stem().wstring() + L"-" + Utf8ToWide(Timestamp()));
         std::error_code ec;
@@ -1929,16 +2016,10 @@ bool WidgetPackageManager::InstallFromSource(IWidgetPackageSource& source,
             status.message;
         return false;
     }
-    const auto details = source.GetDetails(externalItemId, error);
+    const auto details =
+        source.GetVersionDetails(externalItemId, version, error);
     if (!details)
         return false;
-    if (std::find(details->versions.begin(), details->versions.end(), version) ==
-            details->versions.end() &&
-        details->manifest.version != version)
-    {
-        error = "requested package version is not available from the source";
-        return false;
-    }
     const auto staging = CreateStagingPath("provider");
     std::error_code ec;
     std::filesystem::create_directories(staging, ec);
@@ -1985,9 +2066,11 @@ bool WidgetPackageManager::InstallFromSource(IWidgetPackageSource& source,
     const PackageSourceRef sourceRef{ source.ProviderId(), externalItemId };
     const bool ok = std::filesystem::is_directory(artifact->localPath, ec)
         ? InstallDirectory(artifact->localPath, sourceRef, allowSourceChange,
-            installed, report, error, allowPermissionExpansion)
+            installed, report, error, allowPermissionExpansion,
+            &details->manifest)
         : InstallArchive(artifact->localPath, sourceRef, allowSourceChange,
-            installed, report, error, allowPermissionExpansion);
+            installed, report, error, allowPermissionExpansion,
+            &details->manifest);
     if (!ok)
     {
         quarantineOrRemove();
@@ -2899,6 +2982,23 @@ std::optional<PackageDetails> StaticCatalogSource::GetDetails(
     }
     if (result) return result;
     error = "catalog item not found";
+    return std::nullopt;
+}
+
+std::optional<PackageDetails> StaticCatalogSource::GetVersionDetails(
+    const std::string& externalItemId, const std::string& version,
+    std::string& error)
+{
+    std::vector<PackageDetails> entries;
+    std::unordered_map<std::string, PackageArtifact> artifacts;
+    if (!ReadCatalog(entries, artifacts, error)) return std::nullopt;
+    for (const auto& entry : entries)
+    {
+        if (entry.source.externalItemId == externalItemId &&
+            entry.manifest.version == version)
+            return entry;
+    }
+    error = "catalog item version not found";
     return std::nullopt;
 }
 

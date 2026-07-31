@@ -103,9 +103,10 @@ void MakeUnsafeArchive(const std::filesystem::path& path,
 void MakePackage(const std::filesystem::path& root, std::string version,
     std::string id = "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
     std::string permissions = "\"ui.input\"",
-    std::string networkDomains = "")
+    std::string networkDomains = "",
+    std::string entry = "main.lua")
 {
-    Write(root / L"main.lua", "function render() end\n");
+    Write(root / std::filesystem::path(entry), "function render() end\n");
     Write(root / L"assets" / L"label.txt", "asset");
     Write(root / L"widget.json",
         "{\n"
@@ -115,7 +116,7 @@ void MakePackage(const std::filesystem::path& root, std::string version,
         "  \"version\": \"" + version + "\",\n"
         "  \"apiVersion\": 1,\n"
         "  \"dataVersion\": 1,\n"
-        "  \"entry\": \"main.lua\",\n"
+        "  \"entry\": \"" + entry + "\",\n"
         "  \"minHostVersion\": \"1.0.1.0\",\n"
         "  \"name\": \"Package Test\",\n"
         "  \"description\": \"English fallback\",\n"
@@ -125,6 +126,68 @@ void MakePackage(const std::filesystem::path& root, std::string version,
         "  \"networkDomains\": [" + networkDomains + "]\n"
         "}\n");
 }
+
+class DeclaredArtifactSource final : public IWidgetPackageSource
+{
+public:
+    DeclaredArtifactSource(
+        PackageDetails details, std::filesystem::path artifact)
+        : details_(std::move(details)), artifact_(std::move(artifact)) {}
+
+    std::string ProviderId() const override { return "declared-artifact"; }
+    ProviderCapabilities Capabilities() const override
+    {
+        return { false, true, true, false, false, false };
+    }
+    ProviderStatus Status() override { return { true, "available" }; }
+    std::vector<PackageDetails> Query(
+        const PackageQuery&, std::string& error) override
+    {
+        error.clear();
+        return { details_ };
+    }
+    std::optional<PackageDetails> GetDetails(
+        const std::string& externalItemId, std::string& error) override
+    {
+        if (externalItemId == details_.source.externalItemId)
+            return details_;
+        error = "not found";
+        return std::nullopt;
+    }
+    std::optional<PackageArtifact> Materialize(
+        const std::string& externalItemId, const std::string& version,
+        const std::filesystem::path& destination,
+        std::string& error) override
+    {
+        if (externalItemId != details_.source.externalItemId ||
+            version != details_.manifest.version)
+        {
+            error = "not found";
+            return std::nullopt;
+        }
+        std::error_code ec;
+        std::filesystem::copy_file(artifact_, destination,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec)
+        {
+            error = ec.message();
+            return std::nullopt;
+        }
+        return PackageArtifact{
+            destination, details_.manifest.id, version, {} };
+    }
+    std::vector<PackageUpdate> CheckUpdates(
+        const std::vector<PackageVersionRef>&,
+        std::string& error) override
+    {
+        error.clear();
+        return {};
+    }
+
+private:
+    PackageDetails details_;
+    std::filesystem::path artifact_;
+};
 
 PackagePaths TestPaths(const std::filesystem::path& root)
 {
@@ -229,6 +292,11 @@ int main()
     Expect(WidgetPackageValidator::IsUuid(manifest.id), "UUID is valid");
     Expect(WidgetPackageValidator::IsSemVer("1.2.3-beta.1+build.7"),
         "SemVer prerelease is valid");
+    Expect(WidgetPackageValidator::IsNewerSemVer(
+            "1.0.0-beta", "1.0.0-1") &&
+        !WidgetPackageValidator::IsNewerSemVer(
+            "1.0.0-1", "1.0.0-beta"),
+        "SemVer non-numeric prerelease identifiers outrank numeric ones");
     Expect(!WidgetPackageValidator::IsSafeRelativePath(L"../escape.lua"),
         "parent traversal is rejected");
     manifest.locales["en-US"] = { "English title", "English description" };
@@ -263,6 +331,32 @@ int main()
         "calendar permissions are accepted");
 
     std::string error;
+    const auto nestedSource = root / L"nested-entry";
+    MakePackage(nestedSource, "1.0.0",
+        "8d5535c5-1a53-45bc-bdf3-9034c929ea23",
+        "\"ui.input\"", "", "scripts/main.lua");
+    PackageManifest nestedManifest;
+    Expect(validator.ValidateDirectory(
+            nestedSource, &nestedManifest).Ok(),
+        "a package-relative nested Lua entry validates");
+    WidgetPackageManager nestedManager(TestPaths(root / L"nested-manager"));
+    Expect(nestedManager.Initialize(error),
+        "nested-entry package manager initializes");
+    InstalledPackage nestedInstalled;
+    Expect(nestedManager.InstallDirectory(nestedSource,
+            { "local", "nested-entry" }, false,
+            nestedInstalled, report, error),
+        "nested-entry package installs");
+    const auto nestedEntry =
+        nestedManager.ResolveEntry(nestedManifest.id);
+    const auto nestedResolved = nestedEntry
+        ? nestedManager.ResolveEntryPath(*nestedEntry)
+        : std::nullopt;
+    Expect(nestedResolved &&
+        std::filesystem::equivalent(
+            nestedResolved->root, nestedInstalled.root),
+        "nested entry resolves back to the package root");
+
     const auto managerPaths = TestPaths(root / L"manager");
     std::filesystem::create_directories(managerPaths.builtin);
     std::filesystem::copy(sourceV1, managerPaths.builtin / L"package-test",
@@ -373,6 +467,44 @@ int main()
         { "static-catalog", "remote-42" }, false, imported, report, error),
         "exported archive installs through staging");
     Expect(imported.manifest.id == manifest.id, "archive identity is preserved");
+
+    WidgetPackageManager sourceTrustManager(
+        TestPaths(root / L"source-trust"));
+    Expect(sourceTrustManager.Initialize(error),
+        "source trust test manager initializes");
+    PackageDetails spoofedIdentity{
+        manifest,
+        { "declared-artifact", "spoofed-identity" },
+        { manifest.version },
+        false };
+    spoofedIdentity.manifest.id =
+        "5213e963-a643-4e50-bc7a-82f761e0e29f";
+    DeclaredArtifactSource identitySource(spoofedIdentity, archive);
+    InstalledPackage rejectedInstall;
+    error.clear();
+    Expect(!sourceTrustManager.InstallFromSource(identitySource,
+            spoofedIdentity.source.externalItemId,
+            spoofedIdentity.manifest.version, false,
+            rejectedInstall, report, error) &&
+        !sourceTrustManager.Resolve(
+            spoofedIdentity.manifest.id).has_value(),
+        "source artifacts cannot spoof the catalog package identity");
+
+    PackageDetails understatedPermissions{
+        manifest,
+        { "declared-artifact", "understated-permissions" },
+        { manifest.version },
+        false };
+    understatedPermissions.manifest.permissions.clear();
+    DeclaredArtifactSource permissionSource(
+        understatedPermissions, archive);
+    error.clear();
+    Expect(!sourceTrustManager.InstallFromSource(permissionSource,
+            understatedPermissions.source.externalItemId,
+            understatedPermissions.manifest.version, false,
+            rejectedInstall, report, error) &&
+        !sourceTrustManager.Resolve(manifest.id).has_value(),
+        "source artifacts cannot request undeclared permissions");
 
     LocalCatalogPublisher publisher(root / L"catalog");
     PublishRequest request;

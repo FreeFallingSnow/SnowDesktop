@@ -7766,12 +7766,17 @@ inline void DesktopApp::ReleaseCollectionGroupChildren(size_t groupIndex)
         GridCell landing;
         if (!TryFindFreeCell(child.gridSpan, usedSlots, landing,
             preferredPage, startSlot) &&
-            !TryFindFreeCell(child.gridSpan, usedSlots, landing, L"", 0))
+            !TryFindFreeCell(child.gridSpan, usedSlots, landing, L"", 0) &&
+            !FindDockReturnCell(
+                usedSlots, preferredPage, startSlot,
+                child.gridSpan, landing))
             continue;
         child.gridCell = landing;
         child.selected = false;
         MarkGridArea(usedSlots, landing, child.gridSpan);
-        startSlot = SlotFromCell(gridPages_, landing) + 1;
+        startSlot = FindGridPage(gridPages_, landing.pageId)
+            ? SlotFromCell(gridPages_, landing) + 1
+            : 0;
     }
 }
 

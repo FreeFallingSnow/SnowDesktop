@@ -438,6 +438,37 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopWidgetPackageTests)
 
     add_executable(
+        SnowDesktopHttpRuntimeTests
+        tests/http_runtime_tests.cpp
+        src/http_runtime.cpp)
+    target_compile_features(
+        SnowDesktopHttpRuntimeTests PRIVATE cxx_std_20)
+    target_include_directories(
+        SnowDesktopHttpRuntimeTests PRIVATE src)
+    target_link_libraries(
+        SnowDesktopHttpRuntimeTests PRIVATE
+        shlwapi winhttp ws2_32)
+    if (MSVC)
+        set_property(
+            TARGET SnowDesktopHttpRuntimeTests
+            PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(
+            SnowDesktopHttpRuntimeTests PRIVATE
+            /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(
+            SnowDesktopHttpRuntimeTests PRIVATE
+            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    else()
+        target_compile_options(
+            SnowDesktopHttpRuntimeTests PRIVATE
+            -Wall -Wextra -pedantic)
+    endif()
+    add_test(
+        NAME http_runtime_security
+        COMMAND SnowDesktopHttpRuntimeTests)
+
+    add_executable(
         SnowDesktopCalendarServiceTests
         tests/calendar_service_tests.cpp
         src/calendar_service.cpp)
