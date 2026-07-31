@@ -1,6 +1,10 @@
 #pragma once
 
+#include "../json_value.h"
+
+#include <cmath>
 #include <ctime>
+#include <limits>
 #include <numeric>
 
 extern inline const GridPage* FindGridPage(
@@ -1658,32 +1662,44 @@ inline void DesktopApp::LoadDockUsageStats()
     if (!file) return;
     std::ostringstream stream;
     stream << file.rdbuf();
-    const std::string text = stream.str();
+    JsonValue root;
+    if (!ParseJson(stream.str(), root) || !root.IsObject()) return;
+    const JsonValue* entries = root.Find("entries");
+    if (!entries || !entries->IsArray()) return;
 
-    const size_t entriesName = text.find("\"entries\"");
-    const size_t arrayStart = entriesName == std::string::npos
-        ? std::string::npos : text.find('[', entriesName);
-    const size_t arrayEnd = arrayStart == std::string::npos
-        ? std::string::npos : FindJsonArrayEnd(text, arrayStart);
-    size_t position = arrayStart == std::string::npos ? 0 : arrayStart + 1;
-    while (arrayEnd != std::string::npos &&
-        (position = text.find('{', position)) != std::string::npos && position < arrayEnd)
+    auto readInteger = [](const JsonValue& object,
+        std::string_view name, int& output)
     {
-        const size_t objectEnd = FindJsonObjectEnd(text, position);
-        if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
-        const std::string object = text.substr(position, objectEnd - position + 1);
-        std::string keyUtf8;
+        const JsonValue* value = object.Find(name);
+        if (!value || !value->IsNumber() ||
+            !std::isfinite(value->number) ||
+            std::trunc(value->number) != value->number ||
+            value->number < std::numeric_limits<int>::min() ||
+            value->number > std::numeric_limits<int>::max())
+        {
+            return false;
+        }
+        output = static_cast<int>(value->number);
+        return true;
+    };
+
+    for (const JsonValue& entry : entries->array)
+    {
+        if (!entry.IsObject()) continue;
+        const JsonValue* key = entry.Find("key");
         int launchCount = 0;
         int lastUsed = 0;
-        if (ReadJsonStringField(object, "key", keyUtf8) &&
-            ReadJsonIntField(object, "launchCount", launchCount) && launchCount > 0)
+        if (key && key->IsString() &&
+            readInteger(entry, "launchCount", launchCount) &&
+            launchCount > 0)
         {
-            ReadJsonIntField(object, "lastUsed", lastUsed);
-            const std::wstring key = ToUpperInvariant(Utf8ToWide(keyUtf8));
-            if (!key.empty())
-                dockUsageStats_[key] = { launchCount, std::max(0, lastUsed) };
+            readInteger(entry, "lastUsed", lastUsed);
+            const std::wstring normalizedKey =
+                ToUpperInvariant(Utf8ToWide(key->string));
+            if (!normalizedKey.empty())
+                dockUsageStats_[normalizedKey] =
+                    { launchCount, std::max(0, lastUsed) };
         }
-        position = objectEnd + 1;
     }
 }
 

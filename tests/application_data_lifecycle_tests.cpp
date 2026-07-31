@@ -215,13 +215,20 @@ int main()
     const auto layoutPath =
         root / L"layout-storage" / L"SnowDesktop.layout.json";
     const std::string firstLayout =
-        "{\"pages\":[],\"items\":[],\"widgets\":[],"
-        "\"dockEntries\":[],\"navTabOrder\":[],\"revision\":1}";
+        "{\"revision\":1,\"metadata\":{\"key\":\"not-an-item\"},"
+        "\"pages\":[{\"rows\":3,\"id\":\"page-a\",\"columns\":4}],"
+        "\"items\":[{\"y\":2,\"key\":\"item-a\",\"x\":1,"
+        "\"page\":\"page-a\",\"w\":2,\"h\":1}],"
+        "\"widgets\":[{\"y\":0,\"id\":\"widget-a\",\"x\":0,"
+        "\"page\":\"page-a\",\"type\":\"collection\","
+        "\"items\":[\"item-b\"]}],"
+        "\"dockEntries\":[{\"ref\":\"item-a\",\"type\":\"item\"}],"
+        "\"navTabOrder\":[\"widget-a\"]}";
     const std::string secondLayout =
-        "{\"pages\":[],\"items\":[],\"widgets\":[],"
+        "{\"layoutSchemaVersion\":1,\"pages\":[],\"items\":[],\"widgets\":[],"
         "\"dockEntries\":[],\"navTabOrder\":[],\"revision\":2}";
     const std::string thirdLayout =
-        "{\"pages\":[],\"items\":[],\"widgets\":[],"
+        "{\"layoutSchemaVersion\":1,\"pages\":[],\"items\":[],\"widgets\":[],"
         "\"dockEntries\":[],\"navTabOrder\":[],\"revision\":3}";
     std::string layoutError;
     Expect(!snowdesktop::layout_storage::ValidateDocument(
@@ -233,15 +240,74 @@ int main()
     Expect(!snowdesktop::layout_storage::ValidateDocument(
             "{\"layoutSchemaVersion\":2}", &layoutError),
         "unsupported future layout schemas are rejected without partial loading");
+    struct InvalidLayoutCase
+    {
+        const char* name;
+        const char* document;
+        const char* errorPath;
+    };
+    const InvalidLayoutCase invalidLayoutCases[] = {
+        { "root scalar type", "[]", "layout root" },
+        { "top-level boolean type", "{\"dockEnabled\":1}",
+            "dockEnabled" },
+        { "top-level number type", "{\"itemFontSize\":\"16\"}",
+            "itemFontSize" },
+        { "integer exactness", "{\"shortcutArrowMode\":1.5}",
+            "shortcutArrowMode" },
+        { "page required field", "{\"pages\":[{\"columns\":4}]}",
+            "pages[0].id" },
+        { "item coordinate group",
+            "{\"items\":[{\"key\":\"a\",\"page\":\"p\",\"x\":1}]}",
+            "items[0]" },
+        { "widget required field",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0}]}",
+            "widgets[0].y" },
+        { "widget boolean type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"showTitle\":\"yes\"}]}",
+            "widgets[0].showTitle" },
+        { "nested string-array type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"items\":[\"a\",2]}]}",
+            "widgets[0].items[1]" },
+        { "dock required field",
+            "{\"dockEntries\":[{\"type\":\"item\"}]}",
+            "dockEntries[0].ref" },
+        { "navigation array type", "{\"navTabOrder\":[\"w\",false]}",
+            "navTabOrder[1]" },
+    };
+    for (const auto& invalid : invalidLayoutCases)
+    {
+        layoutError.clear();
+        Expect(!snowdesktop::layout_storage::ValidateDocument(
+                invalid.document, &layoutError) &&
+                layoutError.find(invalid.errorPath) != std::string::npos,
+            (std::string("typed layout matrix rejects ") +
+                invalid.name).c_str());
+    }
+    snowdesktop::layout_storage::Document typedLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            firstLayout, typedLayout, &layoutError) &&
+            typedLayout.sourceSchemaVersion == 0 &&
+            typedLayout.schemaVersion ==
+                snowdesktop::layout_storage::kCurrentSchemaVersion &&
+            typedLayout.pages.size() == 1 &&
+            typedLayout.pages[0].id == "page-a" &&
+            typedLayout.items.size() == 1 &&
+            typedLayout.items[0].key == "item-a" &&
+            typedLayout.widgets.size() == 1 &&
+            typedLayout.dockEntries.size() == 1,
+        "legacy schema and reordered fields decode into one typed document");
     Expect(snowdesktop::layout_storage::SaveDocument(
             layoutPath, firstLayout, &layoutError),
         "first layout document is written atomically");
-    std::string loadedLayout;
+    snowdesktop::layout_storage::Document loadedLayout;
     auto layoutLoad = snowdesktop::layout_storage::LoadDocument(
         layoutPath, loadedLayout);
     Expect(layoutLoad.status ==
             snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
-            loadedLayout == firstLayout,
+            loadedLayout.pages.size() == 1 &&
+            loadedLayout.items.size() == 1,
         "valid primary layout document loads without fallback");
     Expect(snowdesktop::layout_storage::SaveDocument(
             layoutPath, secondLayout, &layoutError) &&
@@ -253,7 +319,8 @@ int main()
         layoutPath, loadedLayout);
     Expect(layoutLoad.status ==
             snowdesktop::layout_storage::LoadStatus::RecoveredBackup &&
-            loadedLayout == firstLayout,
+            loadedLayout.pages.size() == 1 &&
+            loadedLayout.pages[0].id == "page-a",
         "corrupt primary layout recovers from the last-good document");
     const std::string corruptPrimary = Read(layoutPath);
     Expect(!snowdesktop::layout_storage::SaveDocument(

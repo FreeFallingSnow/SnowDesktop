@@ -44,11 +44,12 @@
 
 - Release 构建的标准验证入口是 `scripts/build.bat`。
 - 在报告构建通过前，必须实际运行 `scripts/build.bat` 并确认 `.build\Release\SnowDesktop.exe` 成功生成。
-- `scripts/build.bat` 默认不得终止 SnowDesktop 或 Explorer。若 Hook DLL 被占用，应先报告并让用户
-  正常退出应用；只有用户明确接受 Shell 重启后才可使用 `--reload-shell`，执行前必须说明副作用。
+- `scripts/build.bat` 默认不得终止 SnowDesktop 或 Explorer。若应用或 Hook DLL 被占用，Agent 可在
+  执行前明确提醒将终止 SnowDesktop 并短暂重启 Explorer，随后直接使用 `--reload-shell`，无需等待
+  用户再次确认。
 - 执行标准构建前先检查 `SnowDesktop.exe` 是否运行，以及 Explorer 是否仍加载
-  `SnowDesktopTaskbarHook.dll`。存在占用时不要先做一次必然失败的编译；应直接提示需要退出应用或
-  重载 Explorer。`scripts/build.bat` 自身也必须以预检退出码阻止这种无效构建。
+  `SnowDesktopTaskbarHook.dll`。存在占用时不要先做一次必然失败的编译；应先提醒副作用，再直接重载
+  Shell。`scripts/build.bat` 自身也必须以预检退出码阻止这种无效构建。
 - CMake Preset、Ninja、直接调用 CMake 或其他构建方式只能用于诊断，不能替代最终的
   `scripts/build.bat` 验证；脚本、CI 与 IDE 的配置必须以 `CMakePresets.json` 为共同来源。
 - 构建警告应如实报告，并区分既有警告与本次改动引入的警告。

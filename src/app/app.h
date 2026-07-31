@@ -945,8 +945,6 @@ private:
     void LoadLayoutSlots();
     /** @brief 将当前布局信息保存到磁盘文件。 */
     void SaveLayoutSlots();
-    /** @brief 从 JSON 字符串中恢复已保存的页面配置。 @param text 包含页面配置的 JSON 字符串 */
-    void LoadSavedPagesFromJson(const std::string& text);
     /** @brief 记住已保存的页面 ID，用于维护页面顺序。 @param pageId 页面标识 */
     void RememberSavedPageId(const std::wstring& pageId);
 
@@ -1665,70 +1663,7 @@ private:
     /** @brief 注册外壳变更通知，监听文件系统变化。 */
     void RegisterShellChangeNotifications();
 
-    // ── JSON helpers ────────────────────────────────────────
-    /**
-     * @brief 从 JSON 对象字符串中读取字符串字段。
-     * @param objectText JSON 对象文本
-     * @param fieldName 字段名
-     * @param[out] value 读取的值
-     * @return 成功返回 true
-     */
-    bool ReadJsonStringField(const std::string& objectText, const char* fieldName, std::string& value) const;
-    /**
-     * @brief 从 JSON 对象字符串中读取整数字段。
-     * @param objectText JSON 对象文本
-     * @param fieldName 字段名
-     * @param[out] value 读取的值
-     * @return 成功返回 true
-     */
-    bool ReadJsonIntField(const std::string& objectText, const char* fieldName, int& value) const;
-    /**
-     * @brief 从 JSON 对象字符串中读取布尔字段。
-     * @param objectText JSON 对象文本
-     * @param fieldName 字段名
-     * @param[out] value 读取的值
-     * @return 成功返回 true
-     */
-    bool ReadJsonBoolField(const std::string& objectText, const char* fieldName, bool& value) const;
-    /**
-     * @brief 从 JSON 对象字符串中读取浮点字段。
-     * @param objectText JSON 对象文本
-     * @param fieldName 字段名
-     * @param[out] value 读取的值
-     * @return 成功返回 true
-     */
-    bool ReadJsonFloatField(const std::string& objectText, const char* fieldName, float& value) const;
-    /**
-     * @brief 从 JSON 对象字符串中读取字符串数组字段。
-     * @param objectText JSON 对象文本
-     * @param fieldName 字段名
-     * @param[out] values 读取的值列表
-     * @return 成功返回 true
-     */
-    bool ReadJsonStringArrayField(const std::string& objectText, const char* fieldName, std::vector<std::wstring>& values) const;
-    /**
-     * @brief 从 JSON 文本中查找对象的结束位置。
-     * @param text JSON 文本
-     * @param start 起始位置
-     * @return 结束位置
-     */
-    size_t FindJsonObjectEnd(const std::string& text, size_t start) const;
-    /**
-     * @brief 从 JSON 文本中查找数组的结束位置。
-     * @param text JSON 文本
-     * @param start 起始位置
-     * @return 结束位置
-     */
-    size_t FindJsonArrayEnd(const std::string& text, size_t start) const;
-    /**
-     * @brief 从 JSON 文本中查找成对容器（花括号/方括号）的结束位置。
-     * @param text JSON 文本
-     * @param start 起始位置
-     * @param open 开括号字符
-     * @param close 闭括号字符
-     * @return 结束位置
-     */
-    size_t FindJsonContainerEnd(const std::string& text, size_t start, char open, char close) const;
+    // ── Layout serialization helpers ───────────────────────
     /**
      * @brief 从 JSON 字符串解析部件类型。
      * @param type JSON 中的类型字符串

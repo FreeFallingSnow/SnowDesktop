@@ -43,8 +43,8 @@ Requirements: CMake 3.24+, Visual Studio 2022, and the Windows 10 SDK (0x0A00).
 
 The default build does not stop SnowDesktop or restart Explorer. Its preflight
 stops before compilation when the app or hook DLL is active. Exit SnowDesktop
-normally first. Use
-`.\scripts\build.bat --reload-shell` only when an Explorer restart is acceptable.
+normally first. To clear the lock automatically, use
+`.\scripts\build.bat --reload-shell`; it stops SnowDesktop and briefly restarts Explorer.
 
 ## 🧱 Technology
 

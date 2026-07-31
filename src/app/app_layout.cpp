@@ -14,47 +14,6 @@ std::wstring DesktopApp::GetLayoutPath() const
 }
 
 /**
- * @brief 从 JSON 文本中解析保存的页面信息（ID、行数、列数）。
- * @param text JSON 格式的布局文本。
- */
-void DesktopApp::LoadSavedPagesFromJson(const std::string& text)
-{
-    size_t pagesName = text.find("\"pages\"");
-    if (pagesName == std::string::npos) return;
-
-    size_t arrayStart = text.find('[', pagesName);
-    size_t arrayEnd = text.find(']', arrayStart == std::string::npos ? pagesName : arrayStart + 1);
-    if (arrayStart == std::string::npos || arrayEnd == std::string::npos || arrayEnd <= arrayStart) return;
-
-    size_t pos = arrayStart + 1;
-    while ((pos = text.find('{', pos)) != std::string::npos && pos < arrayEnd)
-    {
-        size_t objectEnd = text.find('}', pos);
-        if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
-
-        std::string objectText = text.substr(pos, objectEnd - pos + 1);
-        std::string pageUtf8;
-        if (ReadJsonStringField(objectText, "id", pageUtf8))
-        {
-            std::wstring pageId = Utf8ToWide(pageUtf8);
-            if (pageId == kDockPageId)
-            {
-                pos = objectEnd + 1;
-                continue;
-            }
-            if (std::find(savedPageIds_.begin(), savedPageIds_.end(), pageId) == savedPageIds_.end())
-                savedPageIds_.push_back(pageId);
-            int columns = 0, rows = 0;
-            if (ReadJsonIntField(objectText, "columns", columns) && columns > 0)
-                savedPageColumns_[pageId] = columns;
-            if (ReadJsonIntField(objectText, "rows", rows) && rows > 0)
-                savedPageRows_[pageId] = rows;
-        }
-        pos = objectEnd + 1;
-    }
-}
-
-/**
  * @brief 记录页面 ID 到已保存页面列表（去重）。
  * @param pageId 页面 ID。
  */
@@ -73,9 +32,9 @@ void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
 void DesktopApp::LoadLayoutSlots()
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
-    std::string text;
+    snowdesktop::layout_storage::Document document;
     const auto loadResult = snowdesktop::layout_storage::LoadDocument(
-        GetLayoutPath(), text);
+        GetLayoutPath(), document);
     if (loadResult.status ==
         snowdesktop::layout_storage::LoadStatus::Missing)
     {
@@ -136,380 +95,297 @@ void DesktopApp::LoadLayoutSlots()
     savedPageColumns_.clear();
     savedPageRows_.clear();
 
-    int widgetTitleSchemaVersion = 0;
-    ReadJsonIntField(text, "widgetTitleSchemaVersion", widgetTitleSchemaVersion);
+    const int widgetTitleSchemaVersion =
+        document.widgetTitleSchemaVersion.value_or(0);
     const bool hasTrustedWidgetTitleMode = widgetTitleSchemaVersion >= 1;
 
-    std::string firstPageMonitorUtf8;
-    if (ReadJsonStringField(text, "firstPageMonitor", firstPageMonitorUtf8))
-        firstPageMonitorId_ = Utf8ToWide(firstPageMonitorUtf8);
+    if (document.firstPageMonitor)
+        firstPageMonitorId_ = Utf8ToWide(*document.firstPageMonitor);
 
-    std::string lastPageMonitorUtf8;
-    if (ReadJsonStringField(text, "lastPageMonitor", lastPageMonitorUtf8))
-        lastPageMonitorId_ = Utf8ToWide(lastPageMonitorUtf8);
+    if (document.lastPageMonitor)
+        lastPageMonitorId_ = Utf8ToWide(*document.lastPageMonitor);
 
-    bool loadedDockEnabled = false;
-    if (ReadJsonBoolField(text, "dockEnabled", loadedDockEnabled))
-        generalSettings_.dockEnabled = loadedDockEnabled;
+    if (document.dockEnabled)
+        generalSettings_.dockEnabled = *document.dockEnabled;
 
-    float loadedFontSize = 0;
-    if (ReadJsonFloatField(text, "itemFontSize", loadedFontSize) &&
-        loadedFontSize >= 10.0f && loadedFontSize <= 24.0f)
-        itemFontSize_ = loadedFontSize;
+    if (document.itemFontSize &&
+        *document.itemFontSize >= 10.0f &&
+        *document.itemFontSize <= 24.0f)
+        itemFontSize_ = *document.itemFontSize;
 
-    float loadedFontWeight = 0;
-    if (ReadJsonFloatField(text, "itemFontWeight", loadedFontWeight) &&
-        loadedFontWeight >= 100 && loadedFontWeight <= 950)
-        itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(loadedFontWeight));
+    if (document.itemFontWeight &&
+        *document.itemFontWeight >= 100 &&
+        *document.itemFontWeight <= 950)
+        itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(
+            static_cast<int>(*document.itemFontWeight));
 
-    float loadedIconSpacing = 0;
-    if (ReadJsonFloatField(text, "iconSpacing", loadedIconSpacing) &&
-        loadedIconSpacing >= 0.5f && loadedIconSpacing <= 2.0f)
-        iconSpacingScale_ = loadedIconSpacing;
+    if (document.iconSpacing &&
+        *document.iconSpacing >= 0.5f &&
+        *document.iconSpacing <= 2.0f)
+        iconSpacingScale_ = *document.iconSpacing;
 
-    int loadedShortcutArrowMode = 0;
-    if (ReadJsonIntField(text, "shortcutArrowMode", loadedShortcutArrowMode))
-        shortcutArrowMode_ = std::clamp(loadedShortcutArrowMode, 0, 2);
+    if (document.shortcutArrowMode)
+        shortcutArrowMode_ = std::clamp(
+            *document.shortcutArrowMode, 0, 2);
 
-    bool loadedIconBeautify = false;
-    if (ReadJsonBoolField(text, "iconBeautifyEnabled", loadedIconBeautify))
-        iconBeautifyEnabled_ = loadedIconBeautify;
+    if (document.iconBeautifyEnabled)
+        iconBeautifyEnabled_ = *document.iconBeautifyEnabled;
 
-    int loadedIconBeautifyMode = 0;
-    if (ReadJsonIntField(text, "iconBeautifyMode", loadedIconBeautifyMode))
-        iconBeautifyMode_ = std::clamp(loadedIconBeautifyMode, 0, 1);
+    if (document.iconBeautifyMode)
+        iconBeautifyMode_ = std::clamp(
+            *document.iconBeautifyMode, 0, 1);
 
-    float loadedIconBeautifyFloat = 0.0f;
-    if (ReadJsonFloatField(text, "iconBeautifyBgOpacity", loadedIconBeautifyFloat))
-        iconBeautifyBgOpacity_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
-    bool loadedIconBeautifyGradient = false;
-    if (ReadJsonBoolField(text, "iconBeautifyGradientEnabled", loadedIconBeautifyGradient))
-        iconBeautifyGradientEnabled_ = loadedIconBeautifyGradient;
-    int loadedIconBeautifyDirection = 0;
-    if (ReadJsonIntField(text, "iconBeautifyGradientDirection", loadedIconBeautifyDirection))
-        iconBeautifyGradientDirection_ = std::clamp(loadedIconBeautifyDirection, 0, 3);
-    if (ReadJsonFloatField(text, "iconBeautifyBgStartR", loadedIconBeautifyFloat))
-        iconBeautifyBgStartR_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
-    if (ReadJsonFloatField(text, "iconBeautifyBgStartG", loadedIconBeautifyFloat))
-        iconBeautifyBgStartG_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
-    if (ReadJsonFloatField(text, "iconBeautifyBgStartB", loadedIconBeautifyFloat))
-        iconBeautifyBgStartB_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
-    if (ReadJsonFloatField(text, "iconBeautifyBgEndR", loadedIconBeautifyFloat))
-        iconBeautifyBgEndR_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
-    if (ReadJsonFloatField(text, "iconBeautifyBgEndG", loadedIconBeautifyFloat))
-        iconBeautifyBgEndG_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
-    if (ReadJsonFloatField(text, "iconBeautifyBgEndB", loadedIconBeautifyFloat))
-        iconBeautifyBgEndB_ = std::clamp(loadedIconBeautifyFloat, 0.0f, 1.0f);
+    if (document.iconBeautifyBgOpacity)
+        iconBeautifyBgOpacity_ = std::clamp(
+            *document.iconBeautifyBgOpacity, 0.0f, 1.0f);
+    if (document.iconBeautifyGradientEnabled)
+        iconBeautifyGradientEnabled_ =
+            *document.iconBeautifyGradientEnabled;
+    if (document.iconBeautifyGradientDirection)
+        iconBeautifyGradientDirection_ = std::clamp(
+            *document.iconBeautifyGradientDirection, 0, 3);
+    if (document.iconBeautifyBgStartR)
+        iconBeautifyBgStartR_ = std::clamp(
+            *document.iconBeautifyBgStartR, 0.0f, 1.0f);
+    if (document.iconBeautifyBgStartG)
+        iconBeautifyBgStartG_ = std::clamp(
+            *document.iconBeautifyBgStartG, 0.0f, 1.0f);
+    if (document.iconBeautifyBgStartB)
+        iconBeautifyBgStartB_ = std::clamp(
+            *document.iconBeautifyBgStartB, 0.0f, 1.0f);
+    if (document.iconBeautifyBgEndR)
+        iconBeautifyBgEndR_ = std::clamp(
+            *document.iconBeautifyBgEndR, 0.0f, 1.0f);
+    if (document.iconBeautifyBgEndG)
+        iconBeautifyBgEndG_ = std::clamp(
+            *document.iconBeautifyBgEndG, 0.0f, 1.0f);
+    if (document.iconBeautifyBgEndB)
+        iconBeautifyBgEndB_ = std::clamp(
+            *document.iconBeautifyBgEndB, 0.0f, 1.0f);
 
-    LoadSavedPagesFromJson(text);
-
-    size_t pos = 0;
-    while ((pos = text.find("\"key\"", pos)) != std::string::npos)
+    for (const auto& page : document.pages)
     {
-        size_t objStart = text.rfind('{', pos);
-        if (objStart == std::string::npos) break;
-        size_t objEnd = objStart + 1;
-        int depth = 1;
-        for (size_t i = objStart + 1; i < text.size() && depth > 0; ++i)
-        {
-            if (text[i] == '{') ++depth;
-            else if (text[i] == '}') --depth;
-            objEnd = i;
-        }
-        if (depth != 0) break;
+        const std::wstring pageId = Utf8ToWide(page.id);
+        if (pageId == kDockPageId) continue;
+        RememberSavedPageId(pageId);
+        if (page.columns && *page.columns > 0)
+            savedPageColumns_[pageId] = *page.columns;
+        if (page.rows && *page.rows > 0)
+            savedPageRows_[pageId] = *page.rows;
+    }
 
-        std::string objText = text.substr(objStart, objEnd - objStart + 1);
-        std::string keyUtf8;
-        if (!ReadJsonStringField(objText, "key", keyUtf8)) { pos = objEnd + 1; continue; }
-
+    for (const auto& item : document.items)
+    {
         LayoutRecord record;
-        std::string pageUtf8;
-        int x = 0, y = 0, w = 1, h = 1;
-        if (ReadJsonStringField(objText, "page", pageUtf8) &&
-            ReadJsonIntField(objText, "x", x) && ReadJsonIntField(objText, "y", y))
+        if (item.page && item.column && item.row)
         {
-            record.cell.pageId = Utf8ToWide(pageUtf8);
-            record.cell.column = x;
-            record.cell.row = y;
+            record.cell.pageId = Utf8ToWide(*item.page);
+            record.cell.column = *item.column;
+            record.cell.row = *item.row;
             RememberSavedPageId(record.cell.pageId);
-            ReadJsonIntField(objText, "w", w);
-            ReadJsonIntField(objText, "h", h);
-            record.span.columns = std::max(1, w);
-            record.span.rows = std::max(1, h);
+            record.span.columns = std::max(1, item.width);
+            record.span.rows = std::max(1, item.height);
             record.hasGrid = true;
             record.legacySlot = SlotFromCell(gridPages_, record.cell);
         }
-        layoutRecords_[ToUpperInvariant(Utf8ToWide(keyUtf8))] = record;
-        pos = objEnd + 1;
+        layoutRecords_[ToUpperInvariant(Utf8ToWide(item.key))] = record;
     }
 
     // Load widgets
+    for (const auto& saved : document.widgets)
     {
-        size_t widgetsName = text.find("\"widgets\"");
-        if (widgetsName != std::string::npos)
+        const std::string titleUtf8 = saved.title.value_or("");
+        const bool hasCustomTitle = saved.customTitle.has_value();
+        const std::string customTitleUtf8 =
+            saved.customTitle.value_or("");
+        const bool hasTitleMode = saved.titleMode.has_value();
+        const std::string titleModeUtf8 = saved.titleMode.value_or("");
+        const bool hasUserRenamed = saved.userRenamed.has_value();
+        const bool userRenamed = saved.userRenamed.value_or(false);
+        const std::string scriptUtf8 = !saved.scriptPath.empty()
+            ? saved.scriptPath : saved.legacyScriptPath;
+
+        DesktopWidget widget;
+        widget.id = Utf8ToWide(saved.id);
+        widget.type = WidgetTypeFromJson(Utf8ToWide(saved.type));
+        widget.sourceFolderPath = Utf8ToWide(saved.sourceFolderPath);
+        widget.packageId = Utf8ToWide(saved.packageId);
+        if (widget.packageId.empty())
+            widget.legacyScriptPath = Utf8ToWide(scriptUtf8);
+        if (widget.packageId.empty() &&
+            !widget.legacyScriptPath.empty())
         {
-            size_t arrayStart = text.find('[', widgetsName);
-            if (arrayStart != std::string::npos)
+            if (const auto migrated =
+                WidgetEngine::ResolveLegacyWidgetPackage(
+                    widget.legacyScriptPath))
             {
-                size_t arrayEnd = FindJsonArrayEnd(text, arrayStart);
-                if (arrayEnd != std::string::npos && arrayEnd > arrayStart)
-                {
-                    size_t wp = arrayStart + 1;
-                    while ((wp = text.find('{', wp)) != std::string::npos && wp < arrayEnd)
-                    {
-                        size_t objectEnd = FindJsonObjectEnd(text, wp);
-                        if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
-                        std::string obj = text.substr(wp, objectEnd - wp + 1);
-                        std::string idUtf8, typeUtf8, titleUtf8, customTitleUtf8,
-                            titleModeUtf8, sourceUtf8, packageIdUtf8, scriptUtf8,
-                            activeCategoryUtf8, pageUtf8;
-                        int x = 0, y = 0, w = 1, h = 1, scrollOffset = 0,
-                            tabScrollOffset = 0,
-                            folderSortMode =
-                                snowdesktop::folder_sort_rules::kManual;
-                        bool autoCollect = false, listMode = false, dateHeaders = false,
-                            showFileCategories = false, showSearchBox = false,
-                            showOnHoverOnly = false, privacyMode = false,
-                            scrollContainerMode = false, showTitle = false,
-                            bottomBarHover = false, userRenamed = false,
-                            folderSortAscending = true;
-                        bool keepWhenDesktopHidden = false;
-                        if (!ReadJsonStringField(obj, "id", idUtf8) ||
-                            !ReadJsonStringField(obj, "page", pageUtf8) ||
-                            !ReadJsonIntField(obj, "x", x) ||
-                            !ReadJsonIntField(obj, "y", y))
-                        {
-                            wp = objectEnd + 1;
-                            continue;
-                        }
-                        ReadJsonStringField(obj, "type", typeUtf8);
-                        ReadJsonStringField(obj, "title", titleUtf8);
-                        const bool hasCustomTitle =
-                            ReadJsonStringField(obj, "customTitle", customTitleUtf8);
-                        const bool hasTitleMode =
-                            ReadJsonStringField(obj, "titleMode", titleModeUtf8);
-                        ReadJsonStringField(obj, "sourceFolderPath", sourceUtf8);
-                        ReadJsonStringField(obj, "packageId", packageIdUtf8);
-                        ReadJsonStringField(obj, "scriptPath", scriptUtf8);
-                        if (scriptUtf8.empty())
-                            ReadJsonStringField(obj, "legacyScriptPath", scriptUtf8);
-                        ReadJsonStringField(obj, "activeCategory", activeCategoryUtf8);
-                        ReadJsonIntField(obj, "w", w);
-                        ReadJsonIntField(obj, "h", h);
-                        ReadJsonIntField(obj, "scrollOffset", scrollOffset);
-ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
-                        ReadJsonIntField(
-                            obj, "folderSortMode",
-                            folderSortMode);
-                        ReadJsonBoolField(
-                            obj, "folderSortAscending",
-                            folderSortAscending);
-                        ReadJsonBoolField(obj, "autoCollect", autoCollect);
-                        ReadJsonBoolField(obj, "listMode", listMode);
-                        ReadJsonBoolField(obj, "dateHeaders", dateHeaders);
-                        ReadJsonBoolField(obj, "showFileCategories", showFileCategories);
-                        ReadJsonBoolField(obj, "showSearchBox", showSearchBox);
-                        ReadJsonBoolField(obj, "showOnHoverOnly", showOnHoverOnly);
-                        ReadJsonBoolField(obj, "privacyMode", privacyMode);
-                        ReadJsonBoolField(obj, "scrollContainerMode", scrollContainerMode);
-                        ReadJsonBoolField(obj, "keepWhenDesktopHidden",
-                            keepWhenDesktopHidden);
-
-                        DesktopWidget widget;
-                        widget.id = Utf8ToWide(idUtf8);
-                        widget.type = WidgetTypeFromJson(Utf8ToWide(typeUtf8));
-                        widget.sourceFolderPath = Utf8ToWide(sourceUtf8);
-                        widget.packageId = Utf8ToWide(packageIdUtf8);
-                        if (widget.packageId.empty())
-                            widget.legacyScriptPath = Utf8ToWide(scriptUtf8);
-                        if (widget.packageId.empty() &&
-                            !widget.legacyScriptPath.empty())
-                        {
-                            if (const auto migrated =
-                                WidgetEngine::ResolveLegacyWidgetPackage(
-                                    widget.legacyScriptPath))
-                            {
-                                widget.packageId = *migrated;
-                                widget.legacyScriptPath.clear();
-                                legacyWidgetLayoutMigrationPending_ = true;
-                            }
-                        }
-                        if (titleUtf8.empty())
-                        {
-                            if (widget.type == DesktopWidgetType::LuaScript)
-                            {
-                                widget.title = WidgetEngine::GetWidgetDisplayName(widget.packageId);
-                                if (widget.title.empty())
-                                    widget.title = !widget.legacyScriptPath.empty()
-                                        ? widget.legacyScriptPath : widget.packageId;
-                            }
-                            else if (widget.type == DesktopWidgetType::Guide)
-                            {
-                                widget.title = _LW("app.guide.title");
-                            }
-                            else if (widget.type == DesktopWidgetType::CollectionGroup)
-                            {
-                                widget.title = _LW("widget.collection_group");
-                            }
-                            else if (widget.type == DesktopWidgetType::FileGroup)
-                            {
-                                widget.title = _LW("widget.file_group");
-                            }
-                            else
-                            {
-                                widget.title = widget.type == DesktopWidgetType::FileCategories ? _LW("widget.desktop_files")
-                                    : widget.type == DesktopWidgetType::FolderMapping ? _LW("widget.folder_mapping")
-                                    : _LW("widget.collection");
-                            }
-                        }
-                        else
-                        {
-                            widget.title = Utf8ToWide(titleUtf8);
-                        }
-                        widget.gridCell.pageId = Utf8ToWide(pageUtf8);
-                        widget.gridCell.column = x;
-                        widget.gridCell.row = y;
-                        widget.gridSpan.columns = std::max(1, w);
-                        widget.gridSpan.rows = std::max(1, h);
-                        widget.autoCollect = autoCollect;
-                        widget.listMode = listMode;
-                        widget.dateHeaders =
-                            widget.type == DesktopWidgetType::CollectionGroup
-                                ? false
-                                : dateHeaders;
-                        widget.showFileCategories = showFileCategories;
-                        widget.showSearchBox = showSearchBox;
-                        widget.showOnHoverOnly = showOnHoverOnly;
-                        widget.privacyMode = privacyMode;
-                        widget.scrollContainerMode = scrollContainerMode;
-                        widget.keepWhenDesktopHidden = keepWhenDesktopHidden;
-                        showTitle = widget.type != DesktopWidgetType::LuaScript;
-                        bottomBarHover = (widget.type == DesktopWidgetType::Collection ||
-                            widget.type == DesktopWidgetType::LuaScript ||
-                            widget.type == DesktopWidgetType::Guide);
-                        ReadJsonBoolField(obj, "showTitle", showTitle);
-                        ReadJsonBoolField(obj, "bottomBarHover", bottomBarHover);
-                        const bool hasUserRenamed =
-                            ReadJsonBoolField(obj, "userRenamed", userRenamed);
-                        widget.showTitle = showTitle;
-                        widget.bottomBarHover = bottomBarHover;
-                        if (hasTrustedWidgetTitleMode && hasTitleMode)
-                        {
-                            if (titleModeUtf8 == "custom")
-                            {
-                                widget.customTitle = Utf8ToWide(
-                                    hasCustomTitle ? customTitleUtf8 : titleUtf8);
-                                widget.title = widget.customTitle;
-                            }
-                            else
-                            {
-                                widget.customTitle.clear();
-                            }
-                        }
-                        else if (hasUserRenamed && userRenamed)
-                        {
-                            // Legacy layouts only set this flag reliably when it
-                            // is true. Older versions wrote false even for
-                            // user-named widgets, so false must still go through
-                            // title-content inference below.
-                            widget.customTitle = Utf8ToWide(
-                                hasCustomTitle ? customTitleUtf8 : titleUtf8);
-                            widget.title = widget.customTitle;
-                        }
-                        else if (!widget.title.empty())
-                        {
-                            bool usesDefaultTitle = false;
-                            switch (widget.type)
-                            {
-                            case DesktopWidgetType::Collection:
-                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
-                                    L10N_KEY("widget.collection"), widget.title);
-                                break;
-                            case DesktopWidgetType::CollectionGroup:
-                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
-                                    L10N_KEY("widget.collection_group"), widget.title);
-                                break;
-                            case DesktopWidgetType::FileGroup:
-                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
-                                    L10N_KEY("widget.file_group"), widget.title);
-                                break;
-                            case DesktopWidgetType::FileCategories:
-                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
-                                    L10N_KEY("widget.desktop_files"), widget.title);
-                                break;
-                            case DesktopWidgetType::Guide:
-                                usesDefaultTitle = Locale::Instance().IsTranslationValue(
-                                    L10N_KEY("app.guide.title"), widget.title);
-                                break;
-                            case DesktopWidgetType::LuaScript:
-                                usesDefaultTitle = WidgetEngine::IsWidgetDefaultName(
-                                    widget.packageId, widget.title);
-                                break;
-                            case DesktopWidgetType::FolderMapping:
-                            default:
-                                break;
-                            }
-                            if (!usesDefaultTitle)
-                                widget.customTitle = widget.title;
-                            else if (widget.type == DesktopWidgetType::LuaScript &&
-                                widget.title != WidgetEngine::GetWidgetDisplayName(
-                                    widget.packageId))
-                                widget.scriptTitle = widget.title;
-                        }
-                        widget.userRenamed = !widget.customTitle.empty();
-                        if (widget.customTitle.empty() &&
-                            widget.type == DesktopWidgetType::LuaScript &&
-                            widget.scriptTitle.empty() && !widget.title.empty() &&
-                            !WidgetEngine::IsWidgetDefaultName(
-                                widget.packageId, widget.title))
-                        {
-                            widget.scriptTitle = widget.title;
-                        }
-                        widget.scrollOffset = std::max(0, scrollOffset);
-                        widget.tabScrollOffset =
-                            std::max(0, tabScrollOffset);
-                        widget.folderSortMode =
-                            snowdesktop::folder_sort_rules::
-                                NormalizeMode(
-                                    folderSortMode);
-                        widget.folderSortAscending =
-                            folderSortAscending;
-                        widget.activeCategoryId = Utf8ToWide(activeCategoryUtf8);
-                        ReadJsonStringArrayField(obj, "items", widget.itemKeys);
-                        ReadJsonStringArrayField(obj, "childWidgets", widget.childWidgetIds);
-                        ConfigureWidgetGridLimits(widget);
-                        {
-                            std::unordered_set<std::wstring> seen;
-                            std::vector<std::wstring> unique;
-                            for (auto& key : widget.itemKeys)
-                            {
-                                key = ToUpperInvariant(key);
-                                if (!key.empty() && seen.insert(key).second)
-                                    unique.push_back(key);
-                            }
-                            widget.itemKeys = std::move(unique);
-                        }
-
-                        widgets_.push_back(std::move(widget));
-                        if (widgets_.back().type == DesktopWidgetType::FolderMapping &&
-                            !widgets_.back().sourceFolderPath.empty())
-                        {
-                            auto preservedIt = preservedFolderEntries.find(
-                                ToUpperInvariant(widgets_.back().id));
-                            if (preservedIt != preservedFolderEntries.end() &&
-                                _wcsicmp(preservedIt->second.sourceFolderPath.c_str(),
-                                    widgets_.back().sourceFolderPath.c_str()) == 0)
-                            {
-                                widgets_.back().folderEntries =
-                                    std::move(preservedIt->second.entries);
-                                preservedFolderEntries.erase(preservedIt);
-                            }
-                            EnumerateFolderMappingEntries(widgets_.back());
-                        }
-                        wp = objectEnd + 1;
-                    }
-                }
+                widget.packageId = *migrated;
+                widget.legacyScriptPath.clear();
+                legacyWidgetLayoutMigrationPending_ = true;
             }
+        }
+
+        if (titleUtf8.empty())
+        {
+            if (widget.type == DesktopWidgetType::LuaScript)
+            {
+                widget.title =
+                    WidgetEngine::GetWidgetDisplayName(widget.packageId);
+                if (widget.title.empty())
+                    widget.title = !widget.legacyScriptPath.empty()
+                        ? widget.legacyScriptPath : widget.packageId;
+            }
+            else if (widget.type == DesktopWidgetType::Guide)
+                widget.title = _LW("app.guide.title");
+            else if (widget.type == DesktopWidgetType::CollectionGroup)
+                widget.title = _LW("widget.collection_group");
+            else if (widget.type == DesktopWidgetType::FileGroup)
+                widget.title = _LW("widget.file_group");
+            else
+                widget.title =
+                    widget.type == DesktopWidgetType::FileCategories
+                        ? _LW("widget.desktop_files")
+                    : widget.type == DesktopWidgetType::FolderMapping
+                        ? _LW("widget.folder_mapping")
+                        : _LW("widget.collection");
+        }
+        else
+        {
+            widget.title = Utf8ToWide(titleUtf8);
+        }
+
+        widget.gridCell.pageId = Utf8ToWide(saved.page);
+        widget.gridCell.column = saved.column;
+        widget.gridCell.row = saved.row;
+        widget.gridSpan.columns = std::max(1, saved.width);
+        widget.gridSpan.rows = std::max(1, saved.height);
+        widget.autoCollect = saved.autoCollect;
+        widget.listMode = saved.listMode;
+        widget.dateHeaders =
+            widget.type == DesktopWidgetType::CollectionGroup
+                ? false : saved.dateHeaders;
+        widget.showFileCategories = saved.showFileCategories;
+        widget.showSearchBox = saved.showSearchBox;
+        widget.showOnHoverOnly = saved.showOnHoverOnly;
+        widget.privacyMode = saved.privacyMode;
+        widget.scrollContainerMode = saved.scrollContainerMode;
+        widget.keepWhenDesktopHidden = saved.keepWhenDesktopHidden;
+        widget.showTitle = saved.showTitle.value_or(
+            widget.type != DesktopWidgetType::LuaScript);
+        widget.bottomBarHover = saved.bottomBarHover.value_or(
+            widget.type == DesktopWidgetType::Collection ||
+            widget.type == DesktopWidgetType::LuaScript ||
+            widget.type == DesktopWidgetType::Guide);
+
+        if (hasTrustedWidgetTitleMode && hasTitleMode)
+        {
+            if (titleModeUtf8 == "custom")
+            {
+                widget.customTitle = Utf8ToWide(
+                    hasCustomTitle ? customTitleUtf8 : titleUtf8);
+                widget.title = widget.customTitle;
+            }
+            else
+            {
+                widget.customTitle.clear();
+            }
+        }
+        else if (hasUserRenamed && userRenamed)
+        {
+            // Legacy layouts only set this flag reliably when it is true.
+            widget.customTitle = Utf8ToWide(
+                hasCustomTitle ? customTitleUtf8 : titleUtf8);
+            widget.title = widget.customTitle;
+        }
+        else if (!widget.title.empty())
+        {
+            bool usesDefaultTitle = false;
+            switch (widget.type)
+            {
+            case DesktopWidgetType::Collection:
+                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                    L10N_KEY("widget.collection"), widget.title);
+                break;
+            case DesktopWidgetType::CollectionGroup:
+                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                    L10N_KEY("widget.collection_group"), widget.title);
+                break;
+            case DesktopWidgetType::FileGroup:
+                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                    L10N_KEY("widget.file_group"), widget.title);
+                break;
+            case DesktopWidgetType::FileCategories:
+                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                    L10N_KEY("widget.desktop_files"), widget.title);
+                break;
+            case DesktopWidgetType::Guide:
+                usesDefaultTitle = Locale::Instance().IsTranslationValue(
+                    L10N_KEY("app.guide.title"), widget.title);
+                break;
+            case DesktopWidgetType::LuaScript:
+                usesDefaultTitle = WidgetEngine::IsWidgetDefaultName(
+                    widget.packageId, widget.title);
+                break;
+            case DesktopWidgetType::FolderMapping:
+            default:
+                break;
+            }
+            if (!usesDefaultTitle)
+                widget.customTitle = widget.title;
+            else if (widget.type == DesktopWidgetType::LuaScript &&
+                widget.title != WidgetEngine::GetWidgetDisplayName(
+                    widget.packageId))
+                widget.scriptTitle = widget.title;
+        }
+        widget.userRenamed = !widget.customTitle.empty();
+        if (widget.customTitle.empty() &&
+            widget.type == DesktopWidgetType::LuaScript &&
+            widget.scriptTitle.empty() && !widget.title.empty() &&
+            !WidgetEngine::IsWidgetDefaultName(
+                widget.packageId, widget.title))
+        {
+            widget.scriptTitle = widget.title;
+        }
+        widget.scrollOffset = std::max(0, saved.scrollOffset);
+        widget.tabScrollOffset = std::max(0, saved.tabScrollOffset);
+        widget.folderSortMode = snowdesktop::folder_sort_rules::NormalizeMode(
+            saved.folderSortMode);
+        widget.folderSortAscending = saved.folderSortAscending;
+        widget.activeCategoryId = Utf8ToWide(saved.activeCategory);
+        widget.itemKeys.reserve(saved.items.size());
+        for (const auto& key : saved.items)
+            widget.itemKeys.push_back(Utf8ToWide(key));
+        widget.childWidgetIds.reserve(saved.childWidgets.size());
+        for (const auto& child : saved.childWidgets)
+            widget.childWidgetIds.push_back(Utf8ToWide(child));
+        ConfigureWidgetGridLimits(widget);
+        {
+            std::unordered_set<std::wstring> seen;
+            std::vector<std::wstring> unique;
+            for (auto& key : widget.itemKeys)
+            {
+                key = ToUpperInvariant(key);
+                if (!key.empty() && seen.insert(key).second)
+                    unique.push_back(key);
+            }
+            widget.itemKeys = std::move(unique);
+        }
+
+        widgets_.push_back(std::move(widget));
+        if (widgets_.back().type == DesktopWidgetType::FolderMapping &&
+            !widgets_.back().sourceFolderPath.empty())
+        {
+            auto preservedIt = preservedFolderEntries.find(
+                ToUpperInvariant(widgets_.back().id));
+            if (preservedIt != preservedFolderEntries.end() &&
+                _wcsicmp(preservedIt->second.sourceFolderPath.c_str(),
+                    widgets_.back().sourceFolderPath.c_str()) == 0)
+            {
+                widgets_.back().folderEntries =
+                    std::move(preservedIt->second.entries);
+                preservedFolderEntries.erase(preservedIt);
+            }
+            EnumerateFolderMappingEntries(widgets_.back());
         }
     }
 
@@ -583,72 +459,33 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
     }
 
     // Load Dock references. "ref" intentionally differs from desktop item
-    // "key" so the legacy item scanner cannot mistake Dock entries for layout records.
+    // "key" in the serialized document.
+    for (const auto& saved : document.dockEntries)
     {
-        size_t dockName = text.find("\"dockEntries\"");
-        if (dockName != std::string::npos)
+        DockEntry entry;
+        if (saved.type == "collection")
+            entry.type = DockEntryType::Collection;
+        else if (saved.type == "folderMapping")
+            entry.type = DockEntryType::FolderMapping;
+        else
+            entry.type = DockEntryType::DesktopItem;
+        entry.reference = Utf8ToWide(saved.reference);
+        if (entry.type == DockEntryType::DesktopItem)
+            entry.reference = ToUpperInvariant(entry.reference);
+        entry.keepOnDesktop = saved.keepOnDesktop;
+        entry.folderSortMode =
+            snowdesktop::folder_sort_rules::NormalizeMode(
+                saved.folderSortMode);
+        entry.folderSortAscending = saved.folderSortAscending;
+        entry.folderItemKeys.reserve(saved.folderItems.size());
+        for (const auto& key : saved.folderItems)
+            entry.folderItemKeys.push_back(Utf8ToWide(key));
+        if (!entry.reference.empty() &&
+            !(entry.type == DockEntryType::DesktopItem &&
+                snowdesktop::shell_item_visibility::IsAlwaysHidden(
+                    entry.reference)))
         {
-            size_t arrayStart = text.find('[', dockName);
-            size_t arrayEnd = arrayStart == std::string::npos
-                ? std::string::npos : FindJsonArrayEnd(text, arrayStart);
-            size_t dp = arrayStart == std::string::npos ? 0 : arrayStart + 1;
-            while (arrayEnd != std::string::npos &&
-                (dp = text.find('{', dp)) != std::string::npos && dp < arrayEnd)
-            {
-                size_t objectEnd = FindJsonObjectEnd(text, dp);
-                if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
-                std::string object = text.substr(dp, objectEnd - dp + 1);
-                std::string typeUtf8, referenceUtf8;
-                bool keepOnDesktop = false;
-                bool folderSortAscending = true;
-                int folderSortMode =
-                    snowdesktop::folder_sort_rules::kName;
-                std::vector<std::wstring> folderItemKeys;
-                if (ReadJsonStringField(object, "type", typeUtf8) &&
-                    ReadJsonStringField(object, "ref", referenceUtf8))
-                {
-                    ReadJsonBoolField(object, "keepOnDesktop", keepOnDesktop);
-                    ReadJsonIntField(
-                        object, "folderSortMode",
-                        folderSortMode);
-                    ReadJsonBoolField(
-                        object, "folderSortAscending",
-                        folderSortAscending);
-                    ReadJsonStringArrayField(
-                        object, "folderItems",
-                        folderItemKeys);
-                    DockEntry entry;
-                    if (typeUtf8 == "collection")
-                        entry.type = DockEntryType::Collection;
-                    else if (typeUtf8 == "folderMapping")
-                        entry.type = DockEntryType::FolderMapping;
-                    else
-                        entry.type = DockEntryType::DesktopItem;
-                    entry.reference = Utf8ToWide(referenceUtf8);
-                    if (entry.type == DockEntryType::DesktopItem)
-                        entry.reference = ToUpperInvariant(entry.reference);
-                    entry.keepOnDesktop = keepOnDesktop;
-                    entry.folderSortMode =
-                        snowdesktop::folder_sort_rules::
-                            NormalizeMode(
-                                folderSortMode);
-                    entry.folderSortAscending =
-                        folderSortAscending;
-                    entry.folderItemKeys =
-                        std::move(folderItemKeys);
-                    if (!entry.reference.empty() &&
-                        !(entry.type ==
-                                DockEntryType::
-                                    DesktopItem &&
-                            snowdesktop::
-                                shell_item_visibility::
-                                    IsAlwaysHidden(
-                                        entry.reference)))
-                        dockEntries_.push_back(
-                            std::move(entry));
-                }
-                dp = objectEnd + 1;
-            }
+            dockEntries_.push_back(std::move(entry));
         }
     }
 
@@ -751,11 +588,10 @@ ReadJsonIntField(obj, "tabScrollOffset", tabScrollOffset);
         savedPageRows_.erase(candidate);
     }
 
-    {
-        std::vector<std::wstring> savedOrder;
-        ReadJsonStringArrayField(text, "navTabOrder", savedOrder);
-        navTabOrder_ = std::move(savedOrder);
-    }
+    navTabOrder_.clear();
+    navTabOrder_.reserve(document.navTabOrder.size());
+    for (const auto& id : document.navTabOrder)
+        navTabOrder_.push_back(Utf8ToWide(id));
     EnsureNavTabOrder();
     NormalizePageIds();
     releasePreservedEntries();
@@ -979,152 +815,6 @@ void DesktopApp::SaveLayoutSlots()
         WriteDiagnosticLogEntry(
             message.c_str(), DiagnosticLogLevel::Error);
     }
-}
-
-/**
- * @brief 从 JSON 对象文本中读取字符串字段值。
- * @param objectText JSON 对象文本。
- * @param fieldName 字段名。
- * @param value 输出参数，UTF-8 编码的值。
- * @return 读取成功返回 true。
- */
-bool DesktopApp::ReadJsonStringField(const std::string& objectText, const char* fieldName, std::string& value) const
-{
-    std::string marker = std::string("\"") + fieldName + "\"";
-    size_t name = objectText.find(marker);
-    if (name == std::string::npos) return false;
-    size_t colon = objectText.find(':', name + marker.size());
-    size_t quote = objectText.find('"', colon == std::string::npos ? name + marker.size() : colon + 1);
-    size_t end = 0;
-    return quote != std::string::npos && ParseJsonStringAt(objectText, quote, value, end);
-}
-
-/**
- * @brief 从 JSON 对象文本中读取整数字段值。
- * @param objectText JSON 对象文本。
- * @param fieldName 字段名。
- * @param value 输出参数，整数值。
- * @return 读取成功返回 true。
- */
-bool DesktopApp::ReadJsonIntField(const std::string& objectText, const char* fieldName, int& value) const
-{
-    std::string marker = std::string("\"") + fieldName + "\"";
-    size_t name = objectText.find(marker);
-    if (name == std::string::npos) return false;
-    size_t colon = objectText.find(':', name + marker.size());
-    size_t numberStart = objectText.find_first_of("-0123456789", colon == std::string::npos ? name + marker.size() : colon + 1);
-    if (numberStart == std::string::npos) return false;
-    try { value = std::stoi(objectText.substr(numberStart)); return true; }
-    catch (...) { return false; }
-}
-
-/**
- * @brief 从 JSON 对象文本中读取布尔字段值。
- * @param objectText JSON 对象文本。
- * @param fieldName 字段名。
- * @param value 输出参数，布尔值。
- * @return 读取成功返回 true。
- */
-bool DesktopApp::ReadJsonBoolField(const std::string& objectText, const char* fieldName, bool& value) const
-{
-    std::string marker = std::string("\"") + fieldName + "\"";
-    size_t name = objectText.find(marker);
-    if (name == std::string::npos) return false;
-    size_t colon = objectText.find(':', name + marker.size());
-    size_t valueStart = objectText.find_first_not_of(" \t\r\n", colon == std::string::npos ? name + marker.size() : colon + 1);
-    if (valueStart == std::string::npos) return false;
-    if (objectText.compare(valueStart, 4, "true") == 0) { value = true; return true; }
-    if (objectText.compare(valueStart, 5, "false") == 0) { value = false; return true; }
-    return false;
-}
-
-/**
- * @brief 从 JSON 对象文本中读取浮点字段值。
- * @param objectText JSON 对象文本。
- * @param fieldName 字段名。
- * @param value 输出参数，浮点值。
- * @return 读取成功返回 true。
- */
-bool DesktopApp::ReadJsonFloatField(const std::string& objectText, const char* fieldName, float& value) const
-{
-    std::string marker = std::string("\"") + fieldName + "\"";
-    size_t name = objectText.find(marker);
-    if (name == std::string::npos) return false;
-    size_t colon = objectText.find(':', name + marker.size());
-    size_t numberStart = objectText.find_first_of("-.0123456789", colon == std::string::npos ? name + marker.size() : colon + 1);
-    if (numberStart == std::string::npos) return false;
-    try { value = std::stof(objectText.substr(numberStart)); return true; }
-    catch (...) { return false; }
-}
-
-/**
- * @brief 在 JSON 文本中查找匹配的闭合括号位置（支持字符串内转义）。
- * @param text JSON 文本。
- * @param start 起始位置（应为 '{' 或 '['）。
- * @param open 起始括号字符。
- * @param close 闭合括号字符。
- * @return 闭合位置，未找到返回 npos。
- */
-size_t DesktopApp::FindJsonContainerEnd(const std::string& text, size_t start, char open, char close) const
-{
-    if (start >= text.size() || text[start] != open) return std::string::npos;
-    int depth = 1;
-    bool inString = false;
-    for (size_t i = start + 1; i < text.size(); ++i)
-    {
-        char ch = text[i];
-        if (ch == '"' && (i == 0 || text[i - 1] != '\\')) inString = !inString;
-        else if (!inString)
-        {
-            if (ch == open) ++depth;
-            else if (ch == close) { --depth; if (depth == 0) return i; }
-        }
-    }
-    return std::string::npos;
-}
-
-/**
- * @brief 在 JSON 文本中查找对象结束位置。
- */
-size_t DesktopApp::FindJsonObjectEnd(const std::string& text, size_t start) const
-    { return FindJsonContainerEnd(text, start, '{', '}'); }
-
-/**
- * @brief 在 JSON 文本中查找数组结束位置。
- */
-size_t DesktopApp::FindJsonArrayEnd(const std::string& text, size_t start) const
-    { return FindJsonContainerEnd(text, start, '[', ']'); }
-
-/**
- * @brief 从 JSON 对象文本中读取字符串数组字段。
- * @param objectText JSON 对象文本。
- * @param fieldName 字段名。
- * @param values 输出参数，宽字符串数组。
- * @return 读取成功返回 true。
- */
-bool DesktopApp::ReadJsonStringArrayField(const std::string& objectText, const char* fieldName, std::vector<std::wstring>& values) const
-{
-    values.clear();
-    std::string marker = std::string("\"") + fieldName + "\"";
-    size_t name = objectText.find(marker);
-    if (name == std::string::npos) return false;
-    size_t colon = objectText.find(':', name + marker.size());
-    size_t arrayStart = objectText.find('[', colon == std::string::npos ? name + marker.size() : colon + 1);
-    if (arrayStart == std::string::npos) return false;
-    size_t arrayEnd = FindJsonArrayEnd(objectText, arrayStart);
-    if (arrayEnd == std::string::npos) return false;
-    size_t pos = arrayStart + 1;
-    while (pos < arrayEnd)
-    {
-        size_t quote = objectText.find('"', pos);
-        if (quote == std::string::npos || quote >= arrayEnd) break;
-        std::string utf8;
-        size_t end = 0;
-        if (!ParseJsonStringAt(objectText, quote, utf8, end)) break;
-        values.push_back(Utf8ToWide(utf8));
-        pos = end;
-    }
-    return true;
 }
 
 /**

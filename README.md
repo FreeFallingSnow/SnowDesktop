@@ -41,8 +41,8 @@
 ```
 
 默认构建不会终止 SnowDesktop 或重启 Explorer。如果任务栏 Hook DLL 正被占用，
-预检会在编译前停止并提示。请先正常退出 SnowDesktop；仅在明确接受 Explorer 重启时使用
-`.\scripts\build.bat --reload-shell`。
+预检会在编译前停止并提示。请先正常退出 SnowDesktop；需要自动解除占用时可使用
+`.\scripts\build.bat --reload-shell`，该参数会终止 SnowDesktop 并短暂重启 Explorer。
 
 ## 🧱 技术栈
 
