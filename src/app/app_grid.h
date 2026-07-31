@@ -1182,8 +1182,19 @@ inline void DesktopApp::RelayoutDisplacedItems()
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         auto& widget = widgets_[i];
-        if (IsGroupedWidget(widget))
+        const bool dockExclusive =
+            IsDockExclusiveWidgetId(widget.id);
+        if (!snowdesktop::item_layout_rules::
+                ShouldRelayoutDesktopWidget(
+                    IsGroupedWidget(widget),
+                    dockExclusive))
+        {
+            if (dockExclusive)
+                widget.gridCell = {
+                    kDockPageId, 0, 0
+                };
             continue;
+        }
         const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (!page)
         {

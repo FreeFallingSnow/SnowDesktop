@@ -6,6 +6,18 @@
 namespace snowdesktop::item_layout_rules
 {
 
+/**
+ * @brief 判断组件是否应参与桌面网格尺寸变化后的重新安置。
+ *
+ * 组合内组件由其宿主负责布局；Dock 专属组件使用 Dock 伪页面保存位置，
+ * 两者都不属于桌面网格，不能被当作越界组件迁回桌面。
+ */
+constexpr bool ShouldRelayoutDesktopWidget(
+    bool grouped, bool dockExclusive)
+{
+    return !grouped && !dockExclusive;
+}
+
 constexpr int RoundPositive(float value)
 {
     return value <= 0.0f

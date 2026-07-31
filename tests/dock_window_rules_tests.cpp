@@ -75,6 +75,19 @@ int main()
         snowdesktop::item_layout_rules;
 
     Check(
+        itemLayout::ShouldRelayoutDesktopWidget(
+            false, false),
+        "standalone desktop widgets must participate in grid relayout");
+    Check(
+        !itemLayout::ShouldRelayoutDesktopWidget(
+            true, false),
+        "grouped widgets must remain owned by their host during grid relayout");
+    Check(
+        !itemLayout::ShouldRelayoutDesktopWidget(
+            false, true),
+        "Dock-exclusive widgets must not be displaced back onto the desktop");
+
+    Check(
         popupLayout::PreferredColumnCount(
             0, 5) == 3 &&
             popupLayout::RequiredRowCount(
