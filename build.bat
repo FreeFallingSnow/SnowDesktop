@@ -27,8 +27,8 @@ if %ERRORLEVEL% EQU 0 (
 )
 
 echo.
-echo === Building SnowDesktop.exe ===
-cmake --build .build --config Release --target SnowDesktop --parallel
+echo === Building SnowDesktop.exe and snowwidget.exe ===
+cmake --build .build --config Release --target SnowDesktop snowwidget --parallel
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
     if not defined SNOWDESKTOP_NONINTERACTIVE pause
@@ -38,6 +38,7 @@ if %ERRORLEVEL% NEQ 0 (
 echo.
 echo === Build complete ===
 echo SnowDesktop.exe: .build\Release\SnowDesktop.exe
+echo Widget package tool: .build\Release\snowwidget.exe
 echo Taskbar appearance Hook: .build\Release\SnowDesktopTaskbarHook.dll
 echo.
 echo For a version release, run release.bat to open the unified release center.

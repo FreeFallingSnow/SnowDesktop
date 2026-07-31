@@ -62,6 +62,24 @@ namespace
         return true;
     }
 
+    bool ReadStringField(
+        const std::string& text, const char* field,
+        std::string& out)
+    {
+        const std::string marker =
+            "\"" + std::string(field) + "\"";
+        size_t p = text.find(marker);
+        if (p == std::string::npos) return false;
+        p = text.find(':', p);
+        if (p == std::string::npos) return false;
+        p = text.find('"', p + 1);
+        if (p == std::string::npos) return false;
+        const size_t end = text.find('"', p + 1);
+        if (end == std::string::npos) return false;
+        out = text.substr(p + 1, end - p - 1);
+        return true;
+    }
+
     /**
      * @brief 将虚拟键码转换为可读的键名
      * @details 将 Windows 虚拟键码映射为对应的文本表示。
@@ -84,9 +102,29 @@ namespace
         case VK_TAB: return L"Tab";
         case VK_RETURN: return L"Enter";
         case VK_ESCAPE: return L"Esc";
-        case VK_OEM_3: return L"`";
-        default: return L"VK " + std::to_wstring(vk);
+        case VK_BACK: return L"Backspace";
+        case VK_DELETE: return L"Delete";
+        case VK_OEM_3: return L"` / ~";
+        default:
+            break;
         }
+
+        const UINT scanCode =
+            MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX);
+        if (scanCode != 0)
+        {
+            LONG keyNameParam =
+                static_cast<LONG>((scanCode & 0xFF) << 16);
+            if ((scanCode & 0xFF00) != 0)
+                keyNameParam |= 1 << 24;
+            wchar_t keyName[64]{};
+            if (GetKeyNameTextW(
+                    keyNameParam, keyName,
+                    static_cast<int>(
+                        sizeof(keyName) / sizeof(keyName[0]))) > 0)
+                return keyName;
+        }
+        return L"VK " + std::to_wstring(vk);
     }
 }
 
@@ -123,12 +161,22 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
     bool enabled = false;
     int modifiers = 0;
     int virtualKey = 0;
+    std::string desktopViewMode;
+    settings.desktopViewMode =
+        QuickNavigationDesktopViewMode::Tile;
     if (ReadBoolField(text, "enabled", enabled))
         settings.enabled = enabled;
     if (ReadIntField(text, "modifiers", modifiers))
         settings.modifiers = static_cast<UINT>(modifiers);
     if (ReadIntField(text, "virtualKey", virtualKey) && virtualKey > 0)
         settings.virtualKey = static_cast<UINT>(virtualKey);
+    QuickNavigationDesktopViewMode parsedMode{};
+    if (ReadStringField(
+            text, "desktopViewMode",
+            desktopViewMode) &&
+        QuickNavigationDesktopViewModeFromJson(
+            desktopViewMode, parsedMode))
+        settings.desktopViewMode = parsedMode;
     return true;
 }
 
@@ -149,7 +197,11 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     file << "{\n";
     file << "  \"enabled\": " << (settings.enabled ? "true" : "false") << ",\n";
     file << "  \"modifiers\": " << settings.modifiers << ",\n";
-    file << "  \"virtualKey\": " << settings.virtualKey << "\n";
+    file << "  \"virtualKey\": " << settings.virtualKey << ",\n";
+    file << "  \"desktopViewMode\": \""
+         << QuickNavigationDesktopViewModeToJson(
+                settings.desktopViewMode)
+         << "\"\n";
     file << "}\n";
     return true;
 }
@@ -173,7 +225,7 @@ std::wstring FormatNavigationHotkey(const NavigationSettings& settings)
     if (settings.modifiers & MOD_ALT) append(L"Alt");
     if (settings.modifiers & MOD_SHIFT) append(L"Shift");
     if (settings.modifiers & MOD_WIN) append(L"Win");
-    if (!text.empty()) text += L" + ";
-    text += KeyName(settings.virtualKey);
+    if (settings.virtualKey != 0)
+        append(KeyName(settings.virtualKey).c_str());
     return text;
 }

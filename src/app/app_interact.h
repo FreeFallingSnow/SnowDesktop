@@ -13,11 +13,124 @@
 // This file is included by app.h after the class definition.
 
 #include "drop_model.h"
+#include "../widgets/collection_group_rules.h"
+#include "../core/slot_contract.h"
 #include <imm.h>
 #include <wincodec.h>
 #include <urlmon.h>
 
 // ── Interaction ─────────────────────────────────────────────
+
+inline snowdesktop::slot_contract::DragPayloadKind
+ClassifySlotDragPayload(const DragSourceList& sourceList)
+{
+    bool collectionWidgetsOnly = false;
+    bool folderMappingWidgetsOnly = false;
+    if (sourceList.hasWidgets)
+    {
+        collectionWidgetsOnly = true;
+        folderMappingWidgetsOnly = true;
+        bool sawWidget = false;
+        for (const auto& entry : sourceList.entries)
+        {
+            if (entry.kind != DropSourceKind::Widget)
+                continue;
+            sawWidget = true;
+            if (entry.fromDock)
+            {
+                collectionWidgetsOnly =
+                    collectionWidgetsOnly &&
+                    entry.dockEntryType ==
+                        DockEntryType::Collection;
+                folderMappingWidgetsOnly =
+                    folderMappingWidgetsOnly &&
+                    entry.dockEntryType ==
+                        DockEntryType::FolderMapping;
+                continue;
+            }
+            if (entry.dockEntryType ==
+                    DockEntryType::FolderMapping)
+            {
+                collectionWidgetsOnly = false;
+                continue;
+            }
+            auto* widget =
+                dynamic_cast<Widget*>(entry.item);
+            DesktopWidget* data =
+                widget ? widget->GetWidgetData() : nullptr;
+            collectionWidgetsOnly =
+                collectionWidgetsOnly && data &&
+                data->type ==
+                    DesktopWidgetType::Collection;
+            folderMappingWidgetsOnly =
+                folderMappingWidgetsOnly && data &&
+                data->type ==
+                    DesktopWidgetType::FolderMapping;
+        }
+        collectionWidgetsOnly =
+            sawWidget && collectionWidgetsOnly;
+        folderMappingWidgetsOnly =
+            sawWidget && folderMappingWidgetsOnly;
+    }
+    return snowdesktop::slot_contract::
+        ClassifyPayload({
+            sourceList.hasDesktopIcons,
+            sourceList.hasFolderEntries,
+            sourceList.hasExternalFiles,
+            sourceList.hasWidgets,
+            collectionWidgetsOnly,
+            sourceList.hasCollectionGroupEntries,
+            sourceList.hasFileGroupEntries,
+            folderMappingWidgetsOnly,
+        });
+}
+
+inline snowdesktop::slot_contract::DragPayloadKind
+SlotPayloadForWidgetType(DesktopWidgetType type)
+{
+    return snowdesktop::slot_contract::
+        PayloadForWidgetType(type);
+}
+
+inline bool AcceptsSlotSurfaceDrop(
+    Container* container,
+    const DragSourceList& sourceList)
+{
+    namespace contract =
+        snowdesktop::slot_contract;
+    if (!container)
+        return false;
+    const auto payload =
+        ClassifySlotDragPayload(sourceList);
+    if (payload ==
+        contract::DragPayloadKind::Count)
+        return false;
+    const auto sourceSurface =
+        sourceList.SourceSurfaceKind();
+    const auto targetSurface =
+        container->GetSlotSurfaceKind();
+    const auto relation =
+        contract::ClassifyRelation(
+            sourceSurface, targetSurface,
+            sourceList.origin == container);
+    return contract::AcceptsSlotDrop(
+        sourceSurface, payload,
+        targetSurface, relation);
+}
+
+inline bool AcceptsExternalSlotSurfaceDrop(
+    Container* container)
+{
+    namespace contract =
+        snowdesktop::slot_contract;
+    if (!container)
+        return false;
+    return contract::AcceptsSlotDrop(
+        contract::SlotSurfaceKind::External,
+        contract::DragPayloadKind::ExternalFile,
+        container->GetSlotSurfaceKind(),
+        contract::DragRelation::ExternalIngress);
+}
 
 /**
  * @brief 命中测试：根据点坐标查找桌面项索引（向后兼容包装）
@@ -146,6 +259,8 @@ inline WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT p
 {
     if (widgetIndex >= widgets_.size()) return WidgetHit::None;
     const DesktopWidget& widget = widgets_[widgetIndex];
+    if (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)
+        return WidgetHit::None;
     if (widget.type != DesktopWidgetType::LuaScript) return WidgetHit::None;
 
     RECT frame = GetStandaloneWidgetFrameRect(widget);
@@ -256,6 +371,90 @@ inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaDesktopSnapshot(bool 
     return result;
 }
 
+inline std::vector<LuaDesktopItemInfo>
+DesktopApp::BuildLuaApplicationSearch(
+    const std::string& query, int maxResults)
+{
+    std::vector<LuaDesktopItemInfo> result;
+    const std::wstring queryWide =
+        LuaWidgetUtf8ToWide(query);
+    if (queryWide.empty() || maxResults <= 0)
+        return result;
+
+    StartQuickNavigationAppIndexing();
+    if (!quickNavigationAppsIndexed_)
+        return result;
+
+    const size_t resultLimit = static_cast<size_t>(
+        std::clamp(maxResults, 1, 200));
+    std::array<std::vector<size_t>,
+        kNameSearchNoMatchRank> buckets;
+    for (size_t index = 0;
+        index < quickNavigationAppEntries_.size();
+        ++index)
+    {
+        const int rank = NameSearchMatchRank(
+            quickNavigationAppEntries_[index].name,
+            queryWide);
+        if (rank >= 0 &&
+            rank < kNameSearchNoMatchRank)
+        {
+            buckets[static_cast<size_t>(rank)]
+                .push_back(index);
+        }
+    }
+
+    result.reserve(std::min(
+        resultLimit,
+        quickNavigationAppEntries_.size()));
+    for (const auto& bucket : buckets)
+    {
+        for (const size_t index : bucket)
+        {
+            const QuickNavigationAppEntry& entry =
+                quickNavigationAppEntries_[index];
+            if (entry.parsingName.empty())
+                continue;
+            std::wstring launchPath =
+                entry.parsingName;
+            const bool hasShellPrefix =
+                launchPath.size() >= 6 &&
+                _wcsnicmp(
+                    launchPath.c_str(),
+                    L"shell:", 6) == 0;
+            const bool hasNamespacePrefix =
+                launchPath.starts_with(L"::");
+            const bool hasDrivePrefix =
+                launchPath.size() >= 2 &&
+                launchPath[1] == L':';
+            const bool hasUncPrefix =
+                launchPath.starts_with(L"\\\\");
+            if (!hasShellPrefix &&
+                !hasNamespacePrefix &&
+                !hasDrivePrefix &&
+                !hasUncPrefix)
+            {
+                launchPath =
+                    L"shell:AppsFolder\\" +
+                    launchPath;
+            }
+            LuaDesktopItemInfo info;
+            info.id = LuaWidgetWideToUtf8(
+                entry.parsingName);
+            info.title = LuaWidgetWideToUtf8(
+                entry.name);
+            info.path = LuaWidgetWideToUtf8(
+                launchPath);
+            info.source = "Applications";
+            info.type = "application";
+            result.push_back(std::move(info));
+            if (result.size() >= resultLimit)
+                return result;
+        }
+    }
+    return result;
+}
+
 inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(const std::string& query, int maxResults) const
 {
     std::vector<LuaDesktopItemInfo> result;
@@ -291,6 +490,27 @@ inline std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(cons
 inline bool DesktopApp::LuaOpenPath(const std::wstring& path)
 {
     if (path.empty()) return false;
+    if (path.size() >= 6 &&
+        _wcsnicmp(path.c_str(), L"shell:", 6) == 0)
+    {
+        PIDLIST_ABSOLUTE rawPidl = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(
+                path.c_str(), nullptr, &rawPidl,
+                0, nullptr)) &&
+            rawPidl)
+        {
+            Pidl pidl;
+            pidl.reset(rawPidl);
+            SHELLEXECUTEINFOW executeInfo{};
+            executeInfo.cbSize = sizeof(executeInfo);
+            executeInfo.fMask = SEE_MASK_IDLIST;
+            executeInfo.hwnd = hwnd_;
+            executeInfo.lpIDList = pidl.get();
+            executeInfo.nShow = SW_SHOWNORMAL;
+            if (ShellExecuteExW(&executeInfo))
+                return true;
+        }
+    }
     HINSTANCE result = ShellExecuteW(hwnd_, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     return reinterpret_cast<INT_PTR>(result) > 32;
 }
@@ -302,10 +522,7 @@ inline bool DesktopApp::LuaOpenPath(const std::wstring& path)
  */
 inline bool DesktopApp::LuaRevealPath(const std::wstring& path)
 {
-    if (path.empty()) return false;
-    std::wstring params = L"/select,\"" + path + L"\"";
-    HINSTANCE result = ShellExecuteW(hwnd_, L"open", L"explorer.exe", params.c_str(), nullptr, SW_SHOWNORMAL);
-    return reinterpret_cast<INT_PTR>(result) > 32;
+    return snowdesktop::item_location::Reveal(hwnd_, path);
 }
 
 /**
@@ -426,6 +643,9 @@ inline bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 {
     for (auto& c : containers_)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(c.get()))
+            continue;
         auto* wc = dynamic_cast<WidgetContainer*>(c.get());
         if (!wc) continue;
         RECT frame = wc->GetFrameRect();
@@ -445,21 +665,108 @@ inline void DesktopApp::InvalidateDragStaticScene()
 }
 
 /**
+ * @brief 同步提交快速拖动帧，避免连续 WM_MOUSEMOVE 让 WM_PAINT 饥饿。
+ */
+inline void DesktopApp::PresentPointerInteractionFrame()
+{
+    const bool widgetPreviewActive =
+        widgetAction_ == WidgetAction::Move ||
+        widgetAction_ == WidgetAction::Resize;
+    const bool immediateDesktopPresent =
+        snowdesktop::floating_dock_rules::
+            NeedsImmediatePointerPresent(
+                dragSession_.IsActive(),
+                widgetPreviewActive,
+                marqueeActive_);
+    if (immediateDesktopPresent &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (!compositionPaintInProgress_)
+            UpdateWindow(hwnd_);
+    }
+    if (floatingDockVisible_)
+    {
+        const ULONGLONG now = GetTickCount64();
+        const bool presentNow =
+            snowdesktop::floating_dock_rules::
+                ShouldPresentPointerFrame(
+                    now,
+                    floatingDockLastPointerPresentTick_,
+                    immediateDesktopPresent);
+        if (presentNow)
+            floatingDockLastPointerPresentTick_ = now;
+        InvalidateFloatingDockWindow(presentNow);
+    }
+}
+
+/**
  * @brief 结束当前拖拽会话，重置拖拽渲染缓存
  */
 inline void DesktopApp::EndDragSession()
 {
-    if (hwnd_) KillTimer(hwnd_, kDockHandoffDwellTimerId);
+    if (hwnd_)
+    {
+        KillTimer(hwnd_, kDockHandoffDwellTimerId);
+        KillTimer(
+            hwnd_, kCollectionGroupTabDwellTimerId);
+    }
     dockHandoffDwellIndex_ = static_cast<size_t>(-1);
     dockHandoffDwellStartTick_ = 0;
     dockHandoffDwellReady_ = false;
+    collectionGroupTabDwellWidgetIndex_ =
+        static_cast<size_t>(-1);
+    collectionGroupTabDwellId_.clear();
+    collectionGroupTabDwellTick_ = 0;
     dragSession_.End();
+    ClearDockFolderPopupDragSourceSnapshot();
     dragRenderCache_.Reset();
     // 清除拖放预览缓存
     cachedDropPreview_ = {};
     cachedDropPreviewPoint_ = { -1, -1 };
     cachedDropPreviewTarget_ = nullptr;
     cachedDropPreviewSlot_ = nullptr;
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+inline void DesktopApp::CommitDragVisualEndBeforeShellOperation()
+{
+    dragRenderCache_.Reset();
+    for (size_t widgetIndex = 0;
+         widgetIndex < widgets_.size();
+         ++widgetIndex)
+    {
+        const DesktopWidget& widget = widgets_[widgetIndex];
+        if (IsRectEmptyRect(widget.bounds))
+            continue;
+        const bool popupOpen =
+            popupWidgetIndex_ == widgetIndex;
+        const bool pointerInside =
+            PtInRect(
+                &widget.bounds,
+                lastMousePoint_) != FALSE;
+        if (snowdesktop::widget_visibility_rules::
+                ShouldRetainBackdropAfterDrag(
+                    widget.showOnHoverOnly,
+                    popupOpen,
+                    pointerInside))
+            continue;
+        desktopBackdropCompositor_.RemovePanel(
+            GetStandaloneWidgetFrameRect(widget));
+    }
+
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (!compositionPaintInProgress_)
+            UpdateWindow(hwnd_);
+    }
+    // The backdrop uses a separate composition tree. Flush it before a Shell
+    // drop handler can enter a nested progress loop, otherwise its stale panel
+    // can remain visible while the main content frame has already disappeared.
+    DwmFlush();
+    InvalidateFloatingDockWindow(true);
 }
 
 /**
@@ -487,6 +794,157 @@ inline void DesktopApp::LoadNavigationSettingsAndApply()
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), settings);
     navigationSettings_ = settings;
     ApplyNavigationHotkey();
+}
+
+inline bool DesktopApp::IsDesktopPassthroughHotkeyDown() const
+{
+    const auto keyDown = [](int virtualKey) {
+        return (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+    };
+    if (!keyDown(static_cast<int>(
+            generalSettings_.desktopPassthroughHotkeyVirtualKey)))
+        return false;
+
+    const UINT modifiers =
+        generalSettings_.desktopPassthroughHotkeyModifiers;
+    if ((modifiers & MOD_CONTROL) != 0 && !keyDown(VK_CONTROL))
+        return false;
+    if ((modifiers & MOD_ALT) != 0 && !keyDown(VK_MENU))
+        return false;
+    if ((modifiers & MOD_SHIFT) != 0 && !keyDown(VK_SHIFT))
+        return false;
+    if ((modifiers & MOD_WIN) != 0 &&
+        !keyDown(VK_LWIN) && !keyDown(VK_RWIN))
+        return false;
+    return true;
+}
+
+inline bool DesktopApp::IsDesktopPassthroughPointerDown() const
+{
+    constexpr int pointerKeys[] = {
+        VK_LBUTTON, VK_RBUTTON, VK_MBUTTON,
+        VK_XBUTTON1, VK_XBUTTON2
+    };
+    for (const int virtualKey : pointerKeys)
+    {
+        if ((GetAsyncKeyState(virtualKey) & 0x8000) != 0)
+            return true;
+    }
+    return false;
+}
+
+inline void DesktopApp::EndDesktopPassthroughHold(
+    bool restoreDesktop)
+{
+    if (desktopPassthroughHotkeyHwnd_ &&
+        IsWindow(desktopPassthroughHotkeyHwnd_))
+    {
+        KillTimer(desktopPassthroughHotkeyHwnd_,
+            kDesktopPassthroughHoldTimerId);
+    }
+
+    if (!desktopPassthroughHoldActive_)
+        return;
+    desktopPassthroughHoldActive_ = false;
+
+    if (!restoreDesktop || !customDesktopVisible_ ||
+        !hwnd_ || !IsWindow(hwnd_))
+        return;
+
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    desktopBackdropCompositor_.SetVisible(true);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    UpdateWindow(hwnd_);
+}
+
+inline void DesktopApp::BeginDesktopPassthroughHold()
+{
+    if (desktopPassthroughHoldActive_ ||
+        !desktopPassthroughHotkeyRegistered_ ||
+        !generalSettings_.desktopPassthroughHotkeyEnabled ||
+        !customDesktopVisible_ ||
+        !hwnd_ || !IsWindow(hwnd_) ||
+        !desktopPassthroughHotkeyHwnd_ ||
+        !IsWindow(desktopPassthroughHotkeyHwnd_))
+        return;
+
+    // Hiding in the middle of a desktop drag would prevent SnowDesktop from
+    // receiving the matching button-up event and leave its interaction state
+    // latched. The shortcut can be pressed again after the current gesture.
+    if (IsDesktopPassthroughPointerDown() ||
+        mouseDown_ || marqueeActive_ ||
+        dragSession_.IsActive() ||
+        externalDragActive_ || selfDragActive_ ||
+        GetCapture() != nullptr)
+        return;
+
+    if (SetTimer(desktopPassthroughHotkeyHwnd_,
+            kDesktopPassthroughHoldTimerId,
+            kDesktopPassthroughHoldIntervalMs,
+            nullptr) == 0)
+        return;
+
+    if (quickNavigationOpen_)
+    {
+        CloseQuickNavigation();
+        FinalizeCloseQuickNavigation();
+    }
+    CloseFloatingDock();
+    HideDockWindowPreview();
+    HideDragHintWindow();
+
+    desktopPassthroughHoldActive_ = true;
+    desktopBackdropCompositor_.SetVisible(false);
+    ShowWindow(hwnd_, SW_HIDE);
+}
+
+inline void DesktopApp::UnregisterDesktopPassthroughHotkey()
+{
+    EndDesktopPassthroughHold();
+    if (desktopPassthroughHotkeyRegistered_ &&
+        desktopPassthroughHotkeyHwnd_)
+    {
+        UnregisterHotKey(desktopPassthroughHotkeyHwnd_,
+            kDesktopPassthroughHotkeyId);
+    }
+    desktopPassthroughHotkeyRegistered_ = false;
+    desktopPassthroughHotkeyHwnd_ = nullptr;
+}
+
+inline void DesktopApp::ApplyDesktopPassthroughHotkey()
+{
+    UnregisterDesktopPassthroughHotkey();
+    if (!generalSettings_.desktopPassthroughHotkeyEnabled ||
+        !customDesktopVisible_ ||
+        generalSettings_.desktopPassthroughHotkeyVirtualKey == 0)
+        return;
+
+    HWND target =
+        controlHwnd_ && IsWindow(controlHwnd_)
+            ? controlHwnd_
+            : (inputHwnd_ && IsWindow(inputHwnd_)
+                ? inputHwnd_ : hwnd_);
+    if (!target)
+        return;
+
+    const UINT modifiers =
+        generalSettings_.desktopPassthroughHotkeyModifiers |
+        MOD_NOREPEAT;
+    desktopPassthroughHotkeyRegistered_ =
+        RegisterHotKey(target, kDesktopPassthroughHotkeyId,
+            modifiers,
+            generalSettings_.desktopPassthroughHotkeyVirtualKey) != FALSE;
+    if (desktopPassthroughHotkeyRegistered_)
+    {
+        desktopPassthroughHotkeyHwnd_ = target;
+        WriteCrashLogEntry(
+            L"Desktop passthrough hold hotkey registered");
+    }
+    else
+    {
+        WriteCrashLogEntry(
+            L"Desktop passthrough hold hotkey registration failed");
+    }
 }
 
 inline void DesktopApp::LoadGeneralSettingsAndApply()
@@ -547,11 +1005,13 @@ inline void DesktopApp::LoadDockSettingsAndApply()
 {
     DockSettings settings;
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
+    NormalizeDockSettings(settings);
     SetSystemTaskbarAutoHideEnabled(settings.systemTaskbarAutoHide);
     settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
     SetSystemTaskbarAlignmentCentered(settings.systemTaskbarAlignment == 1);
     settings.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     dockSettings_ = settings;
+    ApplyFloatingDockHotkey();
     systemTaskbarWindowStateChangedTick_.fetch_add(1,
         std::memory_order_relaxed);
     RefreshSystemTaskbarAppearance(true);
@@ -569,6 +1029,12 @@ inline void DesktopApp::LoadCategorySettingsAndApply()
     {
         if (auto* fc = dynamic_cast<FileCategories*>(c.get()))
             fc->InvalidateCategoryCache();
+        else if (auto* mapping =
+                     dynamic_cast<FolderMapping*>(c.get()))
+            mapping->InvalidateFilterCache();
+        else if (auto* group =
+                     dynamic_cast<FileGroup*>(c.get()))
+            group->InvalidateHostedView();
     }
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -596,6 +1062,12 @@ inline void DesktopApp::ApplyLanguageChange()
         case DesktopWidgetType::Collection:
             defaultTitle = _LW("widget.collection");
             break;
+        case DesktopWidgetType::CollectionGroup:
+            defaultTitle = _LW("widget.collection_group");
+            break;
+        case DesktopWidgetType::FileGroup:
+            defaultTitle = _LW("widget.file_group");
+            break;
         case DesktopWidgetType::FileCategories:
             defaultTitle = _LW("widget.desktop_files");
             break;
@@ -603,10 +1075,10 @@ inline void DesktopApp::ApplyLanguageChange()
             defaultTitle = _LW("app.guide.title");
             break;
         case DesktopWidgetType::LuaScript:
-            if (widgetEngine_ && !widget.scriptPath.empty())
+            if (widgetEngine_ && !widget.packageId.empty())
             {
                 if (!widgetEngine_->ReloadWidget(widget.id))
-                    widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
+                    widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
                 widgetEngine_->NotifyLanguageChanged(widget.id);
                 const auto& runtimeWidgets = widgetEngine_->GetWidgets();
                 auto runtime = std::find_if(runtimeWidgets.begin(), runtimeWidgets.end(),
@@ -648,8 +1120,126 @@ inline void DesktopApp::ToggleDesktopIconsVisibility()
     // the blurred desktop background. Keep it alive while icons are hidden.
     ClearHiddenHint();
 
+    if (desktopIconsHidden_)
+    {
+        if (GetOpenPopupWidget() && !IsOpenPopupRetained())
+            CloseCollectionPopup();
+        if (!luaWidgetPanelRequest_.widgetId.empty())
+        {
+            const auto source = std::find_if(
+                widgets_.begin(), widgets_.end(),
+                [&](const DesktopWidget& widget) {
+                    return widget.id ==
+                        luaWidgetPanelRequest_.widgetId;
+                });
+            if (source == widgets_.end() ||
+                !source->keepWhenDesktopHidden)
+            {
+                CloseLuaWidgetPanel(
+                    luaWidgetPanelRequest_.widgetId,
+                    "desktop-hidden");
+            }
+        }
+    }
+
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline bool DesktopApp::HasRetainedElements() const
+{
+    if (dockSettings_.keepWhenDesktopHidden)
+    {
+        for (const auto& container : containers_)
+            if (dynamic_cast<DockContainer*>(container.get()))
+                return true;
+    }
+    for (const auto& widgetData : widgets_)
+        if (widgetData.keepWhenDesktopHidden &&
+            !IsRectEmptyRect(widgetData.bounds))
+            return true;
+    return false;
+}
+
+inline bool DesktopApp::IsOpenPopupRetained() const
+{
+    if (!desktopIconsHidden_)
+        return GetOpenPopupWidget() != nullptr;
+    if (!GetOpenPopupWidget())
+        return false;
+    if (dockFolderPopupOpen_ || popupAnchoredToDock_)
+        return dockSettings_.keepWhenDesktopHidden ||
+            floatingDockVisible_;
+    return popupWidgetIndex_ < widgets_.size() &&
+        widgets_[popupWidgetIndex_].keepWhenDesktopHidden;
+}
+
+inline bool DesktopApp::IsRetainedContainer(
+    const Container* container) const
+{
+    if (!container)
+        return false;
+    if (!desktopIconsHidden_)
+        return true;
+    if (dynamic_cast<const DockContainer*>(container))
+        return dockSettings_.keepWhenDesktopHidden ||
+            (floatingDockVisible_ &&
+                container == floatingDockContainer_);
+    if (container == dockFolderPopupContainer_.get())
+        return dockSettings_.keepWhenDesktopHidden;
+    const auto* widget =
+        dynamic_cast<const WidgetContainer*>(container);
+    const DesktopWidget* widgetData = widget
+        ? widget->GetWidgetData()
+        : nullptr;
+    if (widgetData && popupAnchoredToDock_ &&
+        dockSettings_.keepWhenDesktopHidden &&
+        GetOpenPopupWidget() == widgetData)
+        return true;
+    return widgetData && widgetData->keepWhenDesktopHidden;
+}
+
+inline bool DesktopApp::IsPointOnRetainedElement(POINT pt) const
+{
+    if (IsOpenPopupRetained() &&
+        IsPointInsideOpenPopup(pt))
+        return true;
+    if (const DockContainer* dock =
+            GetDockContainerAtPoint(pt);
+        dock &&
+        (dockSettings_.keepWhenDesktopHidden ||
+            (floatingDockVisible_ &&
+                dock == floatingDockContainer_)))
+        return true;
+    for (const auto& widgetData : widgets_)
+    {
+        if (!widgetData.keepWhenDesktopHidden) continue;
+        if (luaWidgetPanelRequest_.widgetId == widgetData.id &&
+            luaWidgetPanelAnimation_.IsInteractive())
+        {
+            const RECT panel = GetLuaWidgetPanelRect();
+            if (!IsRectEmptyRect(panel) && PtInRect(&panel, pt))
+                return true;
+        }
+        const size_t standalone =
+            HitTestStandaloneWidgetIndex(pt);
+        if (standalone < widgets_.size() &&
+            &widgets_[standalone] == &widgetData)
+            return true;
+        if (!IsRectEmptyRect(widgetData.bounds) &&
+            PtInRect(&widgetData.bounds, pt))
+            return true;
+        for (const auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (!wc || wc->GetWidgetData() != &widgetData) continue;
+            const RECT bodyRect = wc->GetBodyRect();
+            if (PtInRect(&bodyRect, pt))
+                return true;
+            break;
+        }
+    }
+    return false;
 }
 
 inline void DesktopApp::ShowHiddenHint()
@@ -707,14 +1297,29 @@ inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
     HitRegion targetRegion = HitRegion::None;
     popupDragTargetSlot_.reset();
 
-    const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
-    const bool popupHit = !suppressDesktopWidgetTargets &&
+    const bool suppressDesktopWidgetTargets =
+        SuppressDesktopWidgetDragTargets();
+    const bool groupedEntryDrag =
+        dragSession_.SourceList().
+            hasCollectionGroupEntries ||
+        dragSession_.SourceList().
+            hasFileGroupEntries;
+    const bool popupHit =
+        !suppressDesktopWidgetTargets &&
+        !groupedEntryDrag &&
         HitTestPopupForDrag(clientPoint, targetContainer, targetSlot, targetRegion);
 
     if (!popupHit && !targetContainer)
     {
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
+            if (desktopIconsHidden_ &&
+                !IsRetainedContainer(it->get()))
+                continue;
+            if (!AcceptsSlotSurfaceDrop(
+                    it->get(),
+                    dragSession_.SourceList()))
+                continue;
             if (suppressDesktopWidgetTargets &&
                 (dynamic_cast<DesktopGrid*>(it->get()) ||
                  dynamic_cast<WidgetContainer*>(it->get())))
@@ -738,6 +1343,7 @@ inline void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion,
             dragSession_.Items(), dragSession_.Source(), mods);
     ShowDragHintWindow(clientPoint, hint);
+    InvalidateFloatingDockWindow(true);
 }
 
 /**
@@ -749,6 +1355,7 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
     if (!dragSession_.IsActive()) return;
 
     Container* source = nullptr;
+    FileGroup* sourceFileGroup = nullptr;
     const DragSourceList& oldSourceList = dragSession_.SourceList();
     // External OLE drags do not have an internal source. Keep the session active
     // with empty source bindings; the next DragOver will rebuild its target.
@@ -766,6 +1373,27 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
                 break;
             }
         }
+        const size_t fileGroupIndex =
+            FindFileGroupIndexForChild(
+                oldSourceList.originWidgetId);
+        if (fileGroupIndex < widgets_.size())
+        {
+            for (auto& c : containers_)
+            {
+                auto* group =
+                    dynamic_cast<FileGroup*>(c.get());
+                if (group &&
+                    group->GetWidgetData() ==
+                        &widgets_[fileGroupIndex])
+                {
+                    source = group->
+                        GetSourceContainerById(
+                            oldSourceList.originWidgetId);
+                    sourceFileGroup = group;
+                    break;
+                }
+            }
+        }
     }
     else
     {
@@ -778,7 +1406,12 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
         return;
     }
 
-    std::vector<Item*> reboundItems = source->GetSelectedItems();
+    std::vector<Item*> reboundItems =
+        sourceFileGroup
+            ? sourceFileGroup->
+                GetHostedSelectedItemsForSource(
+                    oldSourceList.originWidgetId)
+            : source->GetSelectedItems();
     if (reboundItems.empty())
     {
         EndDragSession();
@@ -799,6 +1432,189 @@ inline void DesktopApp::RebindDragSourceAfterRebuild()
 inline bool DesktopApp::HitTestPopupForDrag(POINT client,
     Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion)
 {
+    if (!IsCollectionPopupInteractive())
+        return false;
+    if (desktopIconsHidden_ && !IsOpenPopupRetained())
+        return false;
+
+    if (dockFolderPopupOpen_ &&
+        dockFolderPopupContainer_)
+    {
+        const RECT popup = GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+        if (!PtInRect(&popup, client))
+            return false;
+
+        const RECT content =
+            GetCollectionPopupContentRect(popup);
+        targetContainer =
+            dockFolderPopupContainer_.get();
+        targetSlot = nullptr;
+        targetRegion = HitRegion::None;
+        if (!PtInRect(&content, client))
+            return true;
+
+        if (dockFolderPopupWidget_.
+                folderEntries.empty())
+        {
+            RECT virtualItem =
+                GetCollectionPopupItemRect(
+                    popup, 0);
+            RECT visibleItem{};
+            if (!IntersectRect(
+                    &visibleItem,
+                    &virtualItem,
+                    &content))
+                visibleItem = content;
+            popupDragTargetSlot_ =
+                std::make_unique<Slot>(
+                    targetContainer,
+                    visibleItem, 0);
+            targetSlot =
+                popupDragTargetSlot_.get();
+            targetRegion =
+                HitRegion::SortBefore;
+            return true;
+        }
+
+        for (size_t i = 0;
+             i < dockFolderPopupWidget_.
+                folderEntries.size(); ++i)
+        {
+            RECT itemRect =
+                GetCollectionPopupItemRect(popup, i);
+            RECT clipped{};
+            if (!IntersectRect(
+                    &clipped, &itemRect, &content) ||
+                !PtInRect(&clipped, client))
+                continue;
+
+            FolderEntry& entry =
+                dockFolderPopupWidget_.folderEntries[i];
+            RECT handoffRect =
+                GetItemIconRect(itemRect);
+            InflateRect(&handoffRect, -4, -4);
+            if (entry.isDirectory &&
+                PtInRect(&handoffRect, client))
+            {
+                RECT handoffVisual =
+                    GetItemIconRect(itemRect);
+                InflateRect(
+                    &handoffVisual, 4, 4);
+                RECT clippedVisual{};
+                if (IntersectRect(
+                        &clippedVisual,
+                        &handoffVisual,
+                        &content))
+                    handoffVisual =
+                        clippedVisual;
+                popupDragTargetSlot_ =
+                    std::make_unique<Slot>(
+                        targetContainer,
+                        handoffVisual, i);
+                popupDragTargetSlot_->SetItem(
+                    dockFolderPopupContainer_->
+                        GetMemberItem(i));
+                targetSlot =
+                    popupDragTargetSlot_.get();
+                targetRegion = HitRegion::Handoff;
+                return true;
+            }
+
+            popupDragTargetSlot_ =
+                std::make_unique<Slot>(
+                    targetContainer,
+                    itemRect, i);
+            targetSlot =
+                popupDragTargetSlot_.get();
+            targetRegion =
+                client.x <
+                    itemRect.left +
+                        (itemRect.right -
+                         itemRect.left) / 2
+                ? HitRegion::SortBefore
+                : HitRegion::SortAfter;
+            return true;
+        }
+
+        long long bestDistanceSquared =
+            std::numeric_limits<
+                long long>::max();
+        size_t nearestIndex = 0;
+        RECT nearestBounds{};
+        HitRegion nearestRegion =
+            HitRegion::SortAfter;
+        for (size_t i = 0;
+            i < dockFolderPopupWidget_.
+                folderEntries.size(); ++i)
+        {
+            const RECT itemRect =
+                GetCollectionPopupItemRect(
+                    popup, i);
+            RECT clipped{};
+            if (!IntersectRect(
+                    &clipped, &itemRect,
+                    &content))
+                continue;
+            const LONG edgeXs[] = {
+                itemRect.left -
+                    kCollectionPopupGapX / 2,
+                itemRect.right +
+                    kCollectionPopupGapX / 2,
+            };
+            const HitRegion edgeRegions[] = {
+                HitRegion::SortBefore,
+                HitRegion::SortAfter,
+            };
+            for (size_t edge = 0;
+                edge < 2; ++edge)
+            {
+                const long long dx =
+                    static_cast<long long>(
+                        client.x) -
+                    edgeXs[edge];
+                long long dy = 0;
+                if (client.y < clipped.top)
+                    dy =
+                        static_cast<long long>(
+                            clipped.top) -
+                        client.y;
+                else if (client.y >=
+                    clipped.bottom)
+                    dy =
+                        static_cast<long long>(
+                            client.y) -
+                        clipped.bottom + 1;
+                const long long distance =
+                    dx * dx + dy * dy;
+                if (distance >=
+                    bestDistanceSquared)
+                    continue;
+                bestDistanceSquared =
+                    distance;
+                nearestIndex = i;
+                nearestBounds = itemRect;
+                nearestRegion =
+                    edgeRegions[edge];
+            }
+        }
+        if (bestDistanceSquared !=
+            std::numeric_limits<
+                long long>::max())
+        {
+            popupDragTargetSlot_ =
+                std::make_unique<Slot>(
+                    targetContainer,
+                    nearestBounds,
+                    nearestIndex);
+            targetSlot =
+                popupDragTargetSlot_.get();
+            targetRegion =
+                nearestRegion;
+        }
+        return true;
+    }
+
     if (popupWidgetIndex_ >= widgets_.size()) return false;
 
     RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -829,9 +1645,22 @@ inline bool DesktopApp::HitTestPopupForDrag(POINT client,
 
     if (popupKeys.empty())
     {
-        popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, content, 0);
+        RECT virtualItem =
+            GetCollectionPopupItemRect(
+                popup, 0);
+        RECT visibleItem{};
+        if (!IntersectRect(
+                &visibleItem,
+                &virtualItem,
+                &content))
+            visibleItem = content;
+        popupDragTargetSlot_ =
+            std::make_unique<Slot>(
+                popupContainer,
+                visibleItem, 0);
         targetSlot = popupDragTargetSlot_.get();
-        targetRegion = HitRegion::Empty;
+        targetRegion =
+            HitRegion::SortBefore;
         return true;
     }
 
@@ -853,11 +1682,19 @@ inline bool DesktopApp::HitTestPopupForDrag(POINT client,
             {
                 region = HitRegion::Handoff;
                 handoffItem = popupContainer->GetMemberItem(i);
+                RECT clippedHandoff{};
+                if (IntersectRect(
+                        &clippedHandoff,
+                        &handoffRect,
+                        &content))
+                    slotBounds =
+                        clippedHandoff;
             }
         }
 
         slotIndex = i;
-        slotBounds = itemRect;
+        if (region != HitRegion::Handoff)
+            slotBounds = itemRect;
         if (region != HitRegion::Handoff)
         {
             region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
@@ -921,6 +1758,13 @@ inline bool DesktopApp::HitTestPopupForDrag(POINT client,
 inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
 {
     lastMousePoint_ = clientPoint;
+    if (desktopIconsHidden_)
+    {
+        navHoverSide_ = 0;
+        navAutoFlipDir_ = 0;
+        navAutoFlipTick_ = 0;
+        return dragSession_.IsActive();
+    }
     if (!dragSession_.IsActive())
     {
         navHoverSide_ = 0;
@@ -964,6 +1808,11 @@ inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         return true;
 
     const bool hasInternalItems = !dragSession_.Items().empty();
+    const bool groupedEntryDrag =
+        dragSession_.SourceList().
+            hasCollectionGroupEntries ||
+        dragSession_.SourceList().
+            hasFileGroupEntries;
     // 保存迁移前第一个选中项的实际 bounds（含页面渲染尺寸差异）
     RECT oldFirstBounds{};
     bool hasOldBounds = false;
@@ -981,7 +1830,7 @@ inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     }
     pageOffset_ = newOffset;
     ApplyPageMapping();
-    if (hasInternalItems)
+    if (hasInternalItems && !groupedEntryDrag)
         MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
 
@@ -994,7 +1843,7 @@ inline bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     }
 
     InvalidateDragStaticScene();
-    if (hasInternalItems)
+    if (hasInternalItems && !groupedEntryDrag)
     {
         UpdateDragGroupOrigin();
         // 用实际 bounds 差值补偿 mouseDown，消除跨页渲染尺寸差异导致的视觉跳动
@@ -1044,6 +1893,8 @@ inline void DesktopApp::ClearSelection()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavCollectionGroupTabs_ = false;
+    keyboardNavFileGroupCategoryTabs_ = false;
 }
 
 /**
@@ -1055,9 +1906,115 @@ inline void DesktopApp::ClearSelection()
  */
 inline void DesktopApp::SyncKeyboardNavFromSelection()
 {
+    keyboardNavCollectionGroupTabs_ = false;
+    keyboardNavFileGroupCategoryTabs_ = false;
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
     {
         const auto& w = widgets_[wi];
+        if (IsGroupedWidget(w))
+            continue;
+        if (w.type == DesktopWidgetType::FileGroup)
+        {
+            for (auto& container : containers_)
+            {
+                auto* group =
+                    dynamic_cast<FileGroup*>(
+                        container.get());
+                if (!group ||
+                    group->GetWidgetData() != &w)
+                    continue;
+                const auto& sourceIds =
+                    group->GetVisibleSourceIds();
+                for (size_t k = 0;
+                    k < sourceIds.size(); ++k)
+                {
+                    const size_t childIndex =
+                        FindWidgetIndexById(
+                            sourceIds[k]);
+                    if (childIndex < widgets_.size() &&
+                        widgets_[childIndex].selected)
+                    {
+                        keyboardNavInsideWidget_ = true;
+                        keyboardNavWidgetIndex_ = wi;
+                        keyboardNavMemberIndex_ =
+                            static_cast<int>(k);
+                        keyboardNavCollectionGroupTabs_ =
+                            true;
+                        return;
+                    }
+                }
+                const auto keys =
+                    group->GetHostedVisibleItemKeys();
+                for (size_t k = 0; k < keys.size(); ++k)
+                {
+                    const size_t itemIndex =
+                        FindItemIndexByKey(keys[k]);
+                    if (itemIndex < items_.size() &&
+                        items_[itemIndex].selected)
+                    {
+                        keyboardNavInsideWidget_ = true;
+                        keyboardNavWidgetIndex_ = wi;
+                        keyboardNavMemberIndex_ =
+                            static_cast<int>(k);
+                        return;
+                    }
+                }
+                auto* active =
+                    group->GetActiveSourceContainer();
+                DesktopWidget* activeData = active
+                    ? active->GetWidgetData() : nullptr;
+                const auto indices =
+                    group->
+                        GetHostedVisibleFolderIndices();
+                if (activeData)
+                    for (size_t k = 0;
+                        k < indices.size(); ++k)
+                    {
+                        const size_t entryIndex =
+                            indices[k];
+                        if (entryIndex <
+                                activeData->
+                                    folderEntries.size() &&
+                            activeData->
+                                folderEntries[entryIndex].
+                                    selected)
+                        {
+                            keyboardNavInsideWidget_ = true;
+                            keyboardNavWidgetIndex_ = wi;
+                            keyboardNavMemberIndex_ =
+                                static_cast<int>(k);
+                            return;
+                        }
+                    }
+                break;
+            }
+        }
+        if (w.type == DesktopWidgetType::CollectionGroup)
+        {
+            for (auto& container : containers_)
+            {
+                auto* group =
+                    dynamic_cast<CollectionGroup*>(container.get());
+                if (!group || group->GetWidgetData() != &w)
+                    continue;
+                const auto& keys = group->GetVisibleItemKeys();
+                for (size_t k = 0; k < keys.size(); ++k)
+                {
+                    const size_t itemIndex =
+                        FindItemIndexByKey(keys[k]);
+                    if (itemIndex < items_.size() &&
+                        items_[itemIndex].selected)
+                    {
+                        keyboardNavInsideWidget_ = true;
+                        keyboardNavWidgetIndex_ = wi;
+                        keyboardNavMemberIndex_ =
+                            static_cast<int>(k);
+                        return;
+                    }
+                }
+                break;
+            }
+        }
         for (size_t k = 0; k < w.itemKeys.size(); ++k)
         {
             size_t idx = FindItemIndexByKey(w.itemKeys[k]);
@@ -1079,10 +2036,30 @@ inline void DesktopApp::SyncKeyboardNavFromSelection()
                 return;
             }
         }
+        if (w.type == DesktopWidgetType::CollectionGroup)
+        {
+            for (size_t k = 0; k < w.childWidgetIds.size(); ++k)
+            {
+                const size_t childIndex =
+                    FindWidgetIndexById(w.childWidgetIds[k]);
+                if (childIndex < widgets_.size() &&
+                    widgets_[childIndex].selected)
+                {
+                    keyboardNavInsideWidget_ = true;
+                    keyboardNavWidgetIndex_ = wi;
+                    keyboardNavMemberIndex_ =
+                        static_cast<int>(k);
+                    keyboardNavCollectionGroupTabs_ = true;
+                    return;
+                }
+            }
+        }
     }
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavCollectionGroupTabs_ = false;
+    keyboardNavFileGroupCategoryTabs_ = false;
 }
 
 /**
@@ -1094,10 +2071,36 @@ inline void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
     for (auto& entry : dockEntries_)
         entry.selected = false;
     std::unordered_set<std::wstring> allowedKeys;
+    std::unordered_set<std::wstring> allowedWidgetIds;
+    std::unordered_set<std::wstring>
+        allowedFolderWidgetIds;
     if (widgetIndex < widgets_.size())
     {
         for (const auto& key : widgets_[widgetIndex].itemKeys)
             allowedKeys.insert(ToUpperInvariant(key));
+        if (widgets_[widgetIndex].type ==
+                DesktopWidgetType::CollectionGroup ||
+            widgets_[widgetIndex].type ==
+                DesktopWidgetType::FileGroup)
+        {
+            allowedWidgetIds.insert(
+                widgets_[widgetIndex].childWidgetIds.begin(),
+                widgets_[widgetIndex].childWidgetIds.end());
+            for (const auto& childId :
+                widgets_[widgetIndex].childWidgetIds)
+            {
+                const size_t childIndex =
+                    FindWidgetIndexById(childId);
+                if (childIndex >= widgets_.size()) continue;
+                for (const auto& key :
+                    widgets_[childIndex].itemKeys)
+                    allowedKeys.insert(ToUpperInvariant(key));
+                if (widgets_[childIndex].type ==
+                    DesktopWidgetType::FolderMapping)
+                    allowedFolderWidgetIds.insert(
+                        widgets_[childIndex].id);
+            }
+        }
     }
 
     for (auto& item : items_)
@@ -1109,8 +2112,13 @@ inline void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
 
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
     {
-        widgets_[wi].selected = false;
-        if (wi == widgetIndex && widgets_[wi].type == DesktopWidgetType::FolderMapping)
+        if (!allowedWidgetIds.contains(widgets_[wi].id))
+            widgets_[wi].selected = false;
+        if ((wi == widgetIndex &&
+             widgets_[wi].type ==
+                DesktopWidgetType::FolderMapping) ||
+            allowedFolderWidgetIds.contains(
+                widgets_[wi].id))
             continue;
         for (auto& entry : widgets_[wi].folderEntries)
             entry.selected = false;
@@ -1163,6 +2171,9 @@ inline void DesktopApp::ToggleSelection(int index)
 
 inline int DesktopApp::GetMarqueeScrollOffset() const
 {
+    if (marqueeDockFolderPopup_ &&
+        dockFolderPopupOpen_)
+        return popupScrollOffset_;
     if (marqueeWidgetIndex_ >= widgets_.size())
         return 0;
     if (popupWidgetIndex_ == marqueeWidgetIndex_)
@@ -1182,6 +2193,13 @@ inline int DesktopApp::GetMarqueeScrollOffset() const
 
 inline RECT DesktopApp::GetMarqueeViewportRect() const
 {
+    if (marqueeDockFolderPopup_ &&
+        dockFolderPopupOpen_)
+    {
+        return GetCollectionPopupContentRect(
+            GetCollectionPopupRect(
+                dockFolderPopupWidget_));
+    }
     if (marqueeWidgetIndex_ >= widgets_.size())
     {
         RECT client{};
@@ -1209,6 +2227,64 @@ inline RECT DesktopApp::GetMarqueeViewportRect() const
 
 inline void DesktopApp::UpdateMarqueeSelection(POINT current)
 {
+    if (marqueeDockFolderPopup_ &&
+        dockFolderPopupOpen_)
+    {
+        const int currentScroll =
+            popupScrollOffset_;
+        const RECT popup =
+            GetCollectionPopupRect(
+                dockFolderPopupWidget_);
+        const RECT viewport =
+            GetCollectionPopupContentRect(popup);
+        const POINT contentAnchor{
+            marqueeAnchorPoint_.x,
+            marqueeAnchorPoint_.y +
+                marqueeInitialScrollOffset_
+        };
+        const POINT contentCurrent{
+            std::clamp<LONG>(
+                current.x,
+                viewport.left,
+                viewport.right),
+            std::clamp<LONG>(
+                current.y,
+                viewport.top,
+                viewport.bottom) +
+                currentScroll
+        };
+        const RECT contentSelectionRect =
+            NormalizeRect(
+                contentAnchor,
+                contentCurrent);
+
+        marqueeRect_ = contentSelectionRect;
+        OffsetRect(
+            &marqueeRect_, 0,
+            -currentScroll);
+        for (size_t i = 0;
+            i < dockFolderPopupWidget_.
+                folderEntries.size(); ++i)
+        {
+            RECT itemRect =
+                GetCollectionPopupItemRect(
+                    popup, i);
+            OffsetRect(
+                &itemRect, 0,
+                currentScroll);
+            dockFolderPopupWidget_.
+                folderEntries[i].selected =
+                (i <
+                    dockFolderPopupMarqueeInitialSelection_.
+                        size() &&
+                 dockFolderPopupMarqueeInitialSelection_[i]) ||
+                RectsIntersect(
+                    itemRect,
+                    contentSelectionRect);
+        }
+        return;
+    }
+
     if (marqueeWidgetIndex_ < widgets_.size())
     {
         const int currentScroll = GetMarqueeScrollOffset();
@@ -1290,7 +2366,7 @@ inline void DesktopApp::SelectWidgetOnly(size_t index)
         for (auto& e : w.folderEntries) e.selected = false;
     }
     if (widgetEngine_ && widgets_[index].type == DesktopWidgetType::LuaScript &&
-        widgetEngine_->EnsureWidgetLoaded(widgets_[index].id, widgets_[index].scriptPath))
+        widgetEngine_->EnsureWidgetLoaded(widgets_[index].id, widgets_[index].packageId))
         widgetEngine_->InvokeSelected(widgets_[index].id);
 }
 
@@ -1307,35 +2383,150 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-    DockContainer* pointDock = GetDockContainerAtPoint(pt);
-    const bool pointInDock = pointDock != nullptr;
-    dockPressedContainer_ = pointDock;
-    // Dock is an app switcher: do not move focus away from the current app before
-    // deciding whether this click should minimize or restore it.
-    if (pointInDock)
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelAnimation_.IsInteractive())
     {
-        const HWND foreground = GetForegroundWindow();
-        const DWORD elapsed = GetTickCount() - dockPressedForegroundTick_;
-        const DWORD snapshotLifetime = std::max<DWORD>(1000, GetDoubleClickTime() * 2);
-        if (!dockPressedForegroundWindow_ || elapsed > snapshotLifetime ||
-            !IsDockDesktopActivationWindow(foreground))
+        const RECT panel = GetLuaWidgetPanelRect();
+        if (!PtInRect(&panel, pt))
         {
-            dockPressedForegroundWindow_ = foreground;
-            dockPressedForegroundTick_ = GetTickCount();
+            CloseLuaWidgetPanel(
+                luaWidgetPanelRequest_.widgetId,
+                "outside");
+        }
+        else
+        {
+            FocusDesktopInputWindow();
+            const RECT closeRect =
+                GetLuaWidgetPanelCloseRect();
+            if (PtInRect(&closeRect, pt))
+            {
+                CloseLuaWidgetPanel(
+                    luaWidgetPanelRequest_.widgetId,
+                    "close");
+                return;
+            }
+            const RECT content =
+                GetLuaWidgetPanelContentRect();
+            if (!PtInRect(&content, pt))
+                return;
+            const int localX =
+                pt.x - content.left;
+            const int localY =
+                pt.y - content.top;
+            if (widgetEngine_ &&
+                widgetEngine_->HasFocusedHostInput() &&
+                !widgetEngine_->IsFocusedHostInputAt(
+                    luaWidgetPanelRequest_.widgetId,
+                    localX, localY))
+            {
+                widgetEngine_->BlurHostInput(false);
+            }
+            mouseDown_ = true;
+            mouseDownPoint_ = pt;
+            luaWidgetPanelMouseDown_ = true;
+            SetCapture(hwnd_);
+            if (!widgetEngine_ ||
+                !widgetEngine_->HandleHostUiPointer(
+                    luaWidgetPanelRequest_.widgetId,
+                    localX, localY, 0, false))
+            {
+                if (widgetEngine_)
+                    widgetEngine_->InvokeMouseEvent(
+                        luaWidgetPanelRequest_.widgetId,
+                        "onPanelMouseDown",
+                        localX, localY, 1, 0);
+            }
+            UpdateHostInputImePosition();
+            InvalidateRect(
+                hwnd_, &panel, FALSE);
+            return;
         }
     }
-    else
+    DockContainer* pointDock = GetDockContainerAtPoint(pt);
+    const bool pointInDock = pointDock != nullptr;
+    size_t pressedDockCollectionWidgetIndex =
+        static_cast<size_t>(-1);
+    bool pressedOpenPopupFolderToggle = false;
+    if (pointDock)
     {
-        dockPressedForegroundWindow_ = nullptr;
-        dockPressedForegroundTick_ = 0;
-        FocusDesktopInputWindow();
+        if (DockEntryItem* pressedDockItem =
+                pointDock->EntryAtPoint(pt);
+            pressedDockItem)
+        {
+            if (pressedDockItem->GetEntryType() ==
+                    DockEntryType::Collection)
+            {
+                pressedDockCollectionWidgetIndex =
+                    FindWidgetIndexById(
+                        pressedDockItem->GetReference());
+            }
+            if (pressedDockItem->GetEntryIndex() <
+                    dockEntries_.size() &&
+                IsFolderDockEntry(dockEntries_[
+                    pressedDockItem->GetEntryIndex()]))
+            {
+                const DockEntry& entry = dockEntries_[
+                    pressedDockItem->GetEntryIndex()];
+                const std::wstring sourceId =
+                    std::to_wstring(
+                        static_cast<int>(entry.type)) +
+                    L":" + ToUpperInvariant(entry.reference);
+                pressedOpenPopupFolderToggle =
+                    IsCollectionPopupInteractive() &&
+                    dockFolderPopupOpen_ &&
+                    dockFolderPopupSourceId_ == sourceId;
+            }
+        }
     }
+    const bool pressedOpenPopupDockToggle =
+        IsCollectionPopupInteractive() &&
+        snowdesktop::floating_dock_rules::
+            ShouldCloseCollectionPopup(
+                popupWidgetIndex_,
+                pressedDockCollectionWidgetIndex);
+    bool collectionPopupClosedByPointerDown = false;
+    HWND interactionCaptureHwnd = hwnd_;
+    if (handlingFloatingDockInput_ &&
+        floatingDockHwnd_ &&
+        IsWindow(floatingDockHwnd_))
+        interactionCaptureHwnd =
+            floatingDockHwnd_;
+    dockPressedContainer_ = pointDock;
+    // Dock is an app switcher: do not move focus away from the current app before
+    // deciding whether this click should minimize or restore it. The decision
+    // itself is captured from the indicator state during hit testing below.
+    if (!pointInDock)
+        FocusDesktopInputWindow();
     if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
-        widgetEngine_->BlurHostInput(false);
+    {
+        bool keepFocusedInput = false;
+        for (size_t n = widgets_.size(); n > 0; --n)
+        {
+            const size_t wi = n - 1;
+            if (widgets_[wi].type != DesktopWidgetType::LuaScript ||
+                HitTestStandaloneWidget(wi, pt) != WidgetHit::Content)
+                continue;
+            const RECT frame =
+                GetStandaloneWidgetFrameRect(widgets_[wi]);
+            keepFocusedInput =
+                widgetEngine_->IsFocusedHostInputAt(
+                    widgets_[wi].id,
+                    pt.x - frame.left,
+                    pt.y - frame.top);
+            break;
+        }
+        if (!keepFocusedInput)
+        {
+            widgetEngine_->BlurHostInput(false);
+            UpdateHostInputImePosition();
+        }
+    }
     mouseDown_ = true;
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
+    dockFolderPopupMarqueeInitialSelection_.clear();
     marqueeAnchorPoint_ = pt;
     marqueeInitialScrollOffset_ = 0;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
@@ -1343,10 +2534,28 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
     // 外部点击先关闭集合弹窗，但保留本次按下事件，继续命中弹窗下方的真实目标。
-    if (popupWidgetIndex_ < widgets_.size())
+    if (IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-        if (!PtInRect(&popup, pt))
+        if (snowdesktop::floating_dock_rules::
+                ShouldCloseCollectionPopupOnPointerDown(
+                    popupWidgetIndex_,
+                    pressedDockCollectionWidgetIndex,
+                    PtInRect(&popup, pt) != FALSE))
+        {
+            CloseCollectionPopup();
+            collectionPopupClosedByPointerDown = true;
+        }
+    }
+    else if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
+    {
+        const RECT popup =
+            GetCollectionPopupRect(
+                dockFolderPopupWidget_);
+        if (!PtInRect(&popup, pt) &&
+            !pressedOpenPopupFolderToggle)
             CloseCollectionPopup();
     }
 
@@ -1360,7 +2569,119 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     bool ctrl = (wp & MK_CONTROL) != 0;
 
-    if (popupWidgetIndex_ < widgets_.size())
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_ &&
+        !pressedOpenPopupFolderToggle)
+    {
+        const RECT popup = GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+        if (PtInRect(&popup, pt))
+        {
+            const RECT sortButton =
+                GetDockFolderPopupSortButtonRect(
+                    popup);
+            if (PtInRect(&sortButton, pt))
+            {
+                mouseDown_ = false;
+                mouseDownHit_ = nullptr;
+                marqueeActive_ = false;
+                marqueeDockFolderPopup_ = false;
+                POINT screenPoint = pt;
+                ClientToScreen(
+                    hwnd_, &screenPoint);
+                ShowDockFolderPopupSortMenu(
+                    screenPoint);
+                return;
+            }
+
+            const RECT content =
+                GetCollectionPopupContentRect(popup);
+            bool clickedPopupItem = false;
+            for (size_t i = 0;
+                 i < dockFolderPopupWidget_.
+                    folderEntries.size(); ++i)
+            {
+                RECT itemRect =
+                    GetCollectionPopupItemRect(popup, i);
+                RECT clipped = itemRect;
+                clipped.top =
+                    std::max(clipped.top, content.top);
+                clipped.bottom =
+                    std::min(clipped.bottom, content.bottom);
+                if (clipped.bottom <= clipped.top ||
+                    !PtInRect(&clipped, pt))
+                    continue;
+
+                auto& entries =
+                    dockFolderPopupWidget_.folderEntries;
+                ClearSelection();
+                if (ctrl)
+                {
+                    entries[i].selected =
+                        !entries[i].selected;
+                }
+                else if (!entries[i].selected)
+                {
+                    for (auto& entry : entries)
+                        entry.selected = false;
+                    entries[i].selected = true;
+                }
+                popupMouseDownItem_ =
+                    std::make_unique<FolderEntryIcon>(
+                        &entries[i],
+                        dockFolderPopupContainer_.get(),
+                        this);
+                popupMouseDownItem_->SetBounds(itemRect);
+                mouseDownHit_ =
+                    popupMouseDownItem_.get();
+                clickedPopupItem = true;
+                break;
+            }
+            const bool startPopupMarquee =
+                snowdesktop::
+                    collection_popup_layout::
+                        AllowsMarqueeStart(
+                            true,
+                            clickedPopupItem,
+                            false);
+            if (!clickedPopupItem && !ctrl)
+                for (auto& entry :
+                     dockFolderPopupWidget_.folderEntries)
+                    entry.selected = false;
+            dockFolderPopupMarqueeInitialSelection_.
+                clear();
+            if (startPopupMarquee)
+            {
+                dockFolderPopupMarqueeInitialSelection_.
+                    reserve(
+                        dockFolderPopupWidget_.
+                            folderEntries.size());
+                for (const auto& entry :
+                     dockFolderPopupWidget_.
+                        folderEntries)
+                {
+                    dockFolderPopupMarqueeInitialSelection_.
+                        push_back(entry.selected);
+                }
+                mouseDownHit_ = nullptr;
+            }
+            marqueeWidgetIndex_ =
+                static_cast<size_t>(-1);
+            marqueeDockFolderPopup_ =
+                startPopupMarquee;
+            marqueeInitialScrollOffset_ =
+                popupScrollOffset_;
+            mouseDownWidgetIndex_ =
+                static_cast<size_t>(-1);
+            SetCapture(interactionCaptureHwnd);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
+
+    if (IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size() &&
+        !pressedOpenPopupDockToggle)
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
 
@@ -1413,7 +2734,7 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         marqueeWidgetIndex_ = popupWidgetIndex_;
         marqueeInitialScrollOffset_ = popupScrollOffset_;
         mouseDownWidgetIndex_ = popupWidgetIndex_;
-        SetCapture(hwnd_);
+        SetCapture(interactionCaptureHwnd);
         InvalidateRect(hwnd_, nullptr, FALSE);
         SyncKeyboardNavFromSelection();
         return;
@@ -1423,26 +2744,46 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
+    dockPressedWindowAction_ =
+        snowdesktop::dock_window_rules::DockClickAction::None;
+    dockPressedTargetWindow_ = nullptr;
     if (DockContainer* dock = pointDock)
     {
-        RECT dockBounds = dock->GetBounds();
-        if (PtInRect(&dockBounds, pt))
+        if (dock->ContainsInteractivePoint(pt))
         {
+            const auto primeDockMinimizeSnapshot =
+                [this]() {
+                    if (floatingDockVisible_ ||
+                        dockPressedWindowAction_ !=
+                            snowdesktop::dock_window_rules::
+                                DockClickAction::Minimize ||
+                        !dockPressedTargetWindow_ ||
+                        !dockWindowTransition_)
+                        return;
+
+                    // Paint the pressed state before snapshot capture blocks
+                    // this UI thread, then overlap capture with the natural
+                    // button-down/button-up interval.
+                    UpdateWindow(hwnd_);
+                    dockWindowTransition_->
+                        PrimeMinimizeSnapshot(
+                            dockPressedTargetWindow_);
+                };
             if (dock->IsWindowsButtonPoint(pt))
             {
-                dockPressedForegroundWindow_ = nullptr;
-                dockPressedForegroundTick_ = 0;
                 mouseDown_ = false;
                 ToggleWindowsStartMenu();
+                if (floatingDockVisible_)
+                    CloseFloatingDock();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
             if (dock->IsSearchPoint(pt))
             {
-                dockPressedForegroundWindow_ = nullptr;
-                dockPressedForegroundTick_ = 0;
                 mouseDown_ = false;
-                OpenQuickNavigation();
+                OpenQuickNavigation(true);
+                if (floatingDockVisible_)
+                    CloseFloatingDock();
                 return;
             }
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
@@ -1450,9 +2791,34 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (!ctrl) ClearSelection();
                 dockItem->SetSelected(true);
                 dockPressedEntry_ = dockItem->GetEntryIndex();
+                if (dockPressedEntry_ < dockEntries_.size() &&
+                    dockEntries_[dockPressedEntry_].type ==
+                        DockEntryType::DesktopItem)
+                {
+                    const size_t itemIndex = FindItemIndexByKey(
+                        dockEntries_[dockPressedEntry_].reference);
+                    if (itemIndex < items_.size())
+                    {
+                        const DockWindowVisualState state =
+                            GetDockWindowVisualState(itemIndex);
+                        dockPressedWindowAction_ =
+                            snowdesktop::dock_window_rules::
+                                ResolveDockClickAction(
+                                    state != DockWindowVisualState::Closed,
+                                    state == DockWindowVisualState::Minimized,
+                                    state == DockWindowVisualState::Foreground);
+                        const auto running = dockRunningWindows_.find(
+                            DockItemWindowKey(items_[itemIndex]));
+                        if (running != dockRunningWindows_.end() &&
+                            IsWindow(running->second.window))
+                            dockPressedTargetWindow_ =
+                                running->second.window;
+                    }
+                }
                 mouseDownHit_ = dockItem;
-                SetCapture(hwnd_);
+                SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                primeDockMinimizeSnapshot();
                 return;
             }
             if (DockRunningItem* runningItem = dock->RunningItemAtPoint(pt))
@@ -1460,9 +2826,34 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (!ctrl) ClearSelection();
                 runningItem->SetSelected(true);
                 dockPressedRunningAppKey_ = runningItem->GetIdentityKey();
+                const auto running = std::find_if(
+                    dockUnpinnedRunningApps_.begin(),
+                    dockUnpinnedRunningApps_.end(),
+                    [&](const DockRunningAppInfo& app) {
+                        return app.identityKey ==
+                            dockPressedRunningAppKey_;
+                    });
+                if (running != dockUnpinnedRunningApps_.end())
+                {
+                    const bool hasLiveWindow =
+                        IsWindow(running->window) != FALSE;
+                    const bool minimized =
+                        hasLiveWindow
+                        ? IsIconic(running->window) != FALSE
+                        : running->minimized;
+                    dockPressedWindowAction_ =
+                        snowdesktop::dock_window_rules::
+                            ResolveDockClickAction(
+                                true, minimized,
+                                running->foreground);
+                    if (hasLiveWindow)
+                        dockPressedTargetWindow_ =
+                            running->window;
+                }
                 mouseDownHit_ = runningItem;
-                SetCapture(hwnd_);
+                SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                primeDockMinimizeSnapshot();
                 return;
             }
             if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
@@ -1470,14 +2861,32 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (!ctrl) ClearSelection();
                 frequentItem->SetSelected(true);
                 dockPressedFrequentItem_ = frequentItem->GetItemIndex();
+                if (dockPressedFrequentItem_ < items_.size())
+                {
+                    const DockWindowVisualState state =
+                        GetDockWindowVisualState(
+                            dockPressedFrequentItem_);
+                    dockPressedWindowAction_ =
+                        snowdesktop::dock_window_rules::
+                            ResolveDockClickAction(
+                                state != DockWindowVisualState::Closed,
+                                state == DockWindowVisualState::Minimized,
+                                state == DockWindowVisualState::Foreground);
+                    const auto running = dockRunningWindows_.find(
+                        DockItemWindowKey(
+                            items_[dockPressedFrequentItem_]));
+                    if (running != dockRunningWindows_.end() &&
+                        IsWindow(running->second.window))
+                        dockPressedTargetWindow_ =
+                            running->second.window;
+                }
                 mouseDownHit_ = frequentItem;
-                SetCapture(hwnd_);
+                SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                primeDockMinimizeSnapshot();
                 return;
             }
             if (!ctrl) ClearSelection();
-            dockPressedForegroundWindow_ = nullptr;
-            dockPressedForegroundTick_ = 0;
             mouseDown_ = false;
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
@@ -1487,15 +2896,20 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     // ── Widget hit-test ─────────────────────────────────────
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     widgetAction_ = WidgetAction::None;
+    widgetCollectionGroupTargetIndex_ = static_cast<size_t>(-1);
+    widgetCollectionGroupInsertIndex_ = static_cast<size_t>(-1);
 
     // Defocus search box when clicking outside all search boxes
     {
         bool clickedSearchBox = false;
         for (auto& c : containers_)
         {
-            auto* fc = dynamic_cast<FileCategories*>(c.get());
-            if (!fc) continue;
-            RECT sr = fc->GetSearchBoxRect();
+            if (desktopIconsHidden_ &&
+                !IsRetainedContainer(c.get()))
+                continue;
+            auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+            if (!searchable) continue;
+            RECT sr = searchable->GetSearchBoxRect();
             if (!IsRectEmptyRect(sr) && PtInRect(&sr, pt))
             {
                 clickedSearchBox = true;
@@ -1506,10 +2920,10 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             for (auto& c : containers_)
             {
-                auto* fc = dynamic_cast<FileCategories*>(c.get());
-                if (fc && fc->IsSearchFocused())
+                auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+                if (searchable && searchable->IsSearchFocused())
                 {
-                    fc->SetSearchFocused(false);
+                    searchable->SetSearchFocused(false);
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }
             }
@@ -1564,12 +2978,15 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (widgetEngine_ && widgets_[wi].type == DesktopWidgetType::LuaScript)
         {
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[wi]);
-            widgetEngine_->EnsureWidgetLoaded(widgets_[wi].id, widgets_[wi].scriptPath);
+            widgetEngine_->EnsureWidgetLoaded(widgets_[wi].id, widgets_[wi].packageId);
             int localX = pt.x - frame.left;
             int localY = pt.y - frame.top;
-            if (!widgetEngine_->HandleHostUiPointer(widgets_[wi].id, localX, localY, 0, false))
+            if (!widgetEngine_->HandleHostUiPointer(
+                    widgets_[wi].id, localX, localY, 0, false))
                 widgetEngine_->InvokeMouseEvent(widgets_[wi].id, "onMouseDown",
                     localX, localY, 1, 0);
+            else
+                UpdateHostInputImePosition();
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -1577,6 +2994,9 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
     {
+        if (desktopIconsHidden_ &&
+            !widgets_[wi].keepWhenDesktopHidden)
+            continue;
         WidgetContainer* wc = nullptr;
         for (auto& c : containers_)
         {
@@ -1678,7 +3098,9 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::CollectionOpenBtn)
         {
             SelectWidgetOnly(wi);
-            OpenCollectionPopupAt(wi, pt);
+            OpenCollectionPopupAt(
+                wi, pt, L"",
+                collectionPopupClosedByPointerDown);
             mouseDown_ = false;
             mouseDownWidgetIndex_ = static_cast<size_t>(-1);
             mouseDownHit_ = nullptr;
@@ -1689,10 +3111,16 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             if (widgets_[wi].type == DesktopWidgetType::FolderMapping ||
                 widgets_[wi].type == DesktopWidgetType::FileCategories ||
-                widgets_[wi].type == DesktopWidgetType::Collection)
+                widgets_[wi].type == DesktopWidgetType::Collection ||
+                widgets_[wi].type == DesktopWidgetType::CollectionGroup ||
+                widgets_[wi].type == DesktopWidgetType::FileGroup)
             {
                 widgets_[wi].listMode = !widgets_[wi].listMode;
-                wc->InvalidateSlots();
+                if (auto* group =
+                        dynamic_cast<FileGroup*>(wc))
+                    group->InvalidateHostedView();
+                else
+                    wc->InvalidateSlots();
                 SaveLayoutSlots();
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
@@ -1700,10 +3128,19 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
         else if (wh == WidgetHit::DateHeaderToggleBtn)
         {
-            if (widgets_[wi].type == DesktopWidgetType::FileCategories)
+            if (widgets_[wi].type == DesktopWidgetType::FileCategories ||
+                widgets_[wi].type == DesktopWidgetType::FolderMapping ||
+                widgets_[wi].type == DesktopWidgetType::FileGroup)
             {
                 widgets_[wi].dateHeaders = !widgets_[wi].dateHeaders;
-                RebuildContainersAndItems();
+                widgets_[wi].scrollOffset = 0;
+                if (auto* mapping = dynamic_cast<FolderMapping*>(wc))
+                    mapping->InvalidateFilterCache();
+                else if (auto* group =
+                             dynamic_cast<FileGroup*>(wc))
+                    group->InvalidateHostedView();
+                else
+                    RebuildContainersAndItems();
                 SaveLayoutSlots();
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
@@ -1711,26 +3148,108 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
         else if (wh == WidgetHit::OpenFolderBtn)
         {
-            // FolderMapping: open source folder
-            if (widgets_[wi].type == DesktopWidgetType::FolderMapping
-                && !widgets_[wi].sourceFolderPath.empty())
+            DesktopWidget* folder = &widgets_[wi];
+            if (auto* group = dynamic_cast<FileGroup*>(wc))
             {
-                ShellExecuteW(hwnd_, L"open", widgets_[wi].sourceFolderPath.c_str(),
+                const size_t activeIndex =
+                    FindWidgetIndexById(
+                        group->GetActiveSourceId());
+                folder = activeIndex < widgets_.size()
+                    ? &widgets_[activeIndex] : nullptr;
+            }
+            if (folder &&
+                folder->type ==
+                    DesktopWidgetType::FolderMapping &&
+                !folder->sourceFolderPath.empty())
+            {
+                ShellExecuteW(hwnd_, L"open",
+                    folder->sourceFolderPath.c_str(),
                     nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            return;
+        }
+        else if (wh == WidgetHit::SourceTab)
+        {
+            auto* group = dynamic_cast<FileGroup*>(wc);
+            const std::wstring id = group
+                ? group->SourceIdAtPoint(pt) : L"";
+            if (!id.empty())
+            {
+                widgets_[wi].activeCategoryId = id;
+                widgets_[wi].scrollOffset = 0;
+                group->InvalidateHostedView();
+                ClearSelection();
+                const size_t childIndex =
+                    FindWidgetIndexById(id);
+                if (childIndex < widgets_.size())
+                    widgets_[childIndex].selected = true;
+                mouseDownWidgetIndex_ = wi;
+                mouseDownHit_ =
+                    group->GetSourceTabItemAtPoint(pt);
+                if (mouseDownHit_)
+                {
+                    SetCapture(hwnd_);
+                    SyncKeyboardNavFromSelection();
+                }
+                SaveLayoutSlots();
+                InvalidateRect(hwnd_, nullptr, FALSE);
             }
             return;
         }
         else if (wh == WidgetHit::CategoryTab)
         {
-            if (widgets_[wi].type == DesktopWidgetType::FileCategories)
+            if (widgets_[wi].type == DesktopWidgetType::FileCategories ||
+                widgets_[wi].type == DesktopWidgetType::FolderMapping ||
+                widgets_[wi].type == DesktopWidgetType::CollectionGroup ||
+                widgets_[wi].type == DesktopWidgetType::FileGroup)
             {
-                auto* fc = dynamic_cast<FileCategories*>(wc);
-                std::wstring id = fc ? fc->CategoryIdAtPoint(pt) : L"";
+                auto* categorized = dynamic_cast<ScrollingItemWidget*>(wc);
+                std::wstring id = categorized
+                    ? categorized->CategoryIdAtPoint(pt)
+                    : L"";
                 if (!id.empty())
                 {
-                    widgets_[wi].activeCategoryId = id;
+                    DesktopWidget* categorizedData =
+                        &widgets_[wi];
+                    if (auto* fileGroup =
+                            dynamic_cast<FileGroup*>(wc))
+                    {
+                        if (auto* active =
+                                fileGroup->
+                                    GetActiveSourceContainer())
+                            categorizedData =
+                                active->GetWidgetData();
+                    }
+                    if (!categorizedData) return;
+                    categorizedData->activeCategoryId = id;
                     widgets_[wi].scrollOffset = 0;
-                    wc->InvalidateSlots();
+                    if (auto* group =
+                        dynamic_cast<CollectionGroup*>(wc))
+                    {
+                        group->InvalidateFilterCache();
+                        ClearSelection();
+                        const size_t childIndex =
+                            FindWidgetIndexById(id);
+                        if (childIndex < widgets_.size())
+                            widgets_[childIndex].selected = true;
+                        mouseDownWidgetIndex_ = wi;
+                        mouseDownHit_ =
+                            group->GetTabItemAtPoint(pt);
+                        if (mouseDownHit_)
+                        {
+                            SetCapture(hwnd_);
+                            SyncKeyboardNavFromSelection();
+                        }
+                    }
+                    else
+                    {
+                        if (auto* fileGroup =
+                                dynamic_cast<FileGroup*>(wc))
+                            fileGroup->
+                                InvalidateHostedView();
+                        else
+                            wc->InvalidateSlots();
+                    }
                     SaveLayoutSlots();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return;
@@ -1740,13 +3259,22 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
         else if (wh == WidgetHit::SearchBox)
         {
-            auto* fc = dynamic_cast<FileCategories*>(wc);
+            auto* searchable = dynamic_cast<ScrollingItemWidget*>(wc);
             for (auto& c : containers_)
             {
-                auto* other = dynamic_cast<FileCategories*>(c.get());
-                if (other) other->SetSearchFocused(false);
+                auto* other = dynamic_cast<ScrollingItemWidget*>(c.get());
+                if (other && other != searchable)
+                    other->SetSearchFocused(false);
             }
-            if (fc) fc->SetSearchFocused(true);
+            if (searchable)
+            {
+                searchable->BeginSearchPointerSelection(
+                    pt, (wp & MK_SHIFT) != 0);
+                mouseDownWidgetIndex_ = wi;
+                mouseDownHit_ = nullptr;
+                SetCapture(hwnd_);
+                UpdateHostInputImePosition();
+            }
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1761,10 +3289,10 @@ inline void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     {
         for (auto& c : containers_)
         {
-            auto* fc = dynamic_cast<FileCategories*>(c.get());
-            if (fc && fc->IsSearchFocused())
+            auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+            if (searchable && searchable->IsSearchFocused())
             {
-                fc->SetSearchFocused(false);
+                searchable->SetSearchFocused(false);
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
         }
@@ -1818,7 +3346,8 @@ inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (quickNavigationOpen_) return;
     if (GetDockContainerAtPoint(pt)) return;
-    if (popupWidgetIndex_ < widgets_.size())
+    if (IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
         if (PtInRect(&popup, pt)) return;
@@ -1829,11 +3358,17 @@ inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     for (size_t n = widgets_.size(); n > 0; --n)
     {
         const size_t candidate = n - 1;
+        if (desktopIconsHidden_ &&
+            !widgets_[candidate].keepWhenDesktopHidden)
+            continue;
         bool hit = HitTestStandaloneWidget(candidate, pt) != WidgetHit::None;
         if (!hit && widgets_[candidate].type != DesktopWidgetType::LuaScript)
         {
             for (auto& container : containers_)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(container.get()))
+                    continue;
                 auto* widgetContainer = dynamic_cast<WidgetContainer*>(container.get());
                 if (!widgetContainer ||
                     widgetContainer->GetWidgetData() != &widgets_[candidate])
@@ -1858,6 +3393,7 @@ inline void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     mouseDownWidgetIndex_ = widgetIndex;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     widgetAction_ = WidgetAction::PendingMove;
@@ -1889,10 +3425,60 @@ inline void DesktopApp::OnMiddleButtonUp(WPARAM wp, LPARAM lp)
 inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 {
     (void)wp;
+    if (!handlingFloatingDockInput_)
+    {
+        TRACKMOUSEEVENT mouseTrack{};
+        mouseTrack.cbSize = sizeof(mouseTrack);
+        mouseTrack.dwFlags = TME_LEAVE;
+        mouseTrack.hwndTrack = hwnd_;
+        TrackMouseEvent(&mouseTrack);
+    }
+
     POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
     UpdateSystemTaskbarRevealGuard();
+    UpdateDockWindowPreview(current);
+
+    if (luaWidgetPanelMouseDown_ &&
+        !luaWidgetPanelRequest_.widgetId.empty() &&
+        widgetEngine_)
+    {
+        const RECT content =
+            GetLuaWidgetPanelContentRect();
+        const int localX =
+            current.x - content.left;
+        const int localY =
+            current.y - content.top;
+        const bool handled =
+            widgetEngine_->HandleHostInputPointerMove(
+                luaWidgetPanelRequest_.widgetId,
+                localX, localY);
+        if (!handled &&
+            PtInRect(&content, current))
+        {
+            widgetEngine_->InvokeMouseEvent(
+                luaWidgetPanelRequest_.widgetId,
+                "onPanelMouseMove",
+                localX, localY, 1, 0);
+        }
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    for (auto& container : containers_)
+    {
+        auto* searchable =
+            dynamic_cast<ScrollingItemWidget*>(container.get());
+        if (!searchable ||
+            !searchable->IsSearchPointerSelecting())
+            continue;
+        searchable->UpdateSearchPointerSelection(current);
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
@@ -1900,18 +3486,34 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         widgetEngine_)
     {
         WidgetHit hit = HitTestStandaloneWidget(mouseDownWidgetIndex_, current);
-        if (hit == WidgetHit::Content)
+        RECT frame =
+            GetStandaloneWidgetFrameRect(
+                widgets_[mouseDownWidgetIndex_]);
+        widgetEngine_->EnsureWidgetLoaded(
+            widgets_[mouseDownWidgetIndex_].id,
+            widgets_[mouseDownWidgetIndex_].packageId);
+        const bool hostInputHandled =
+            widgetEngine_->HandleHostInputPointerMove(
+                widgets_[mouseDownWidgetIndex_].id,
+                current.x - frame.left,
+                current.y - frame.top);
+        if (hostInputHandled)
+            UpdateHostInputImePosition();
+        if (!hostInputHandled && hit == WidgetHit::Content)
         {
-            RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
-            widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
-                widgets_[mouseDownWidgetIndex_].scriptPath);
             widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseMove",
                 current.x - frame.left, current.y - frame.top,
                 (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
         }
     }
 
-    if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ && mouseDownHit_->IsSelected())
+    const bool pressedDockEntryWithoutSelection =
+        mouseDownHit_ &&
+        dynamic_cast<DockEntryItem*>(mouseDownHit_) &&
+        dockPressedEntry_ < dockEntries_.size();
+    if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ &&
+        (mouseDownHit_->IsSelected() ||
+            pressedDockEntryWithoutSelection))
     {
         if (dynamic_cast<DockFrequentItem*>(mouseDownHit_) ||
             dynamic_cast<DockRunningItem*>(mouseDownHit_))
@@ -1926,12 +3528,24 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             std::abs(current.y - mouseDownPoint_.y) > thresholdY)
         {
             Container* source = mouseDownHit_->GetContainer();
-            std::vector<Item*> sourceItems = source ? source->GetSelectedItems() : std::vector<Item*>{};
+            std::vector<Item*> sourceItems =
+                source ==
+                    dockFolderPopupContainer_.get()
+                ? GetDockFolderPopupSelectedItems()
+                : (source
+                    ? source->GetSelectedItems()
+                    : std::vector<Item*>{});
+            if (sourceItems.empty() &&
+                pressedDockEntryWithoutSelection)
+            {
+                sourceItems.push_back(mouseDownHit_);
+            }
             DragSourceList sourceList = BuildDragSourceList(sourceItems, source);
             if (sourceItems.empty())
             {
                 return;
             }
+            ClearDockBackdropForDragTransition(oldMouse, current);
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
             // From this point the drag session owns the logical interaction.
@@ -1941,6 +3555,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             pendingCtrlToggleWidgetItem_ = nullptr;
             marqueeActive_ = false;
             marqueeWidgetIndex_ = static_cast<size_t>(-1);
+            marqueeDockFolderPopup_ = false;
             if (source == GetDesktopGrid())
             {
                 UpdateDragGroupOrigin();
@@ -1967,6 +3582,7 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     }
 
     UpdateCollectionPopupDwell(current);
+    UpdateCollectionGroupTabDwell(current);
 
     if (mouseDown_ && !dragSession_.IsActive()
         && (widgetAction_ == WidgetAction::PendingMove || widgetAction_ == WidgetAction::PendingResize)
@@ -2015,9 +3631,86 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
 
+        const DesktopWidgetType movingType =
+            widgets_[mouseDownWidgetIndex_].type;
+        const auto movingPayload =
+            SlotPayloadForWidgetType(movingType);
+        const bool movingCollection =
+            snowdesktop::slot_contract::AcceptsSlotDrop(
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::Desktop,
+                movingPayload,
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::CollectionGroup,
+                snowdesktop::slot_contract::
+                    DragRelation::CrossSurface);
+        const bool movingFileSource =
+            snowdesktop::slot_contract::AcceptsSlotDrop(
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::Desktop,
+                movingPayload,
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::FileGroup,
+                snowdesktop::slot_contract::
+                    DragRelation::CrossSurface);
+        const size_t groupTarget = movingCollection
+            ? HitTestCollectionGroupIndex(
+                current, mouseDownWidgetIndex_)
+            : (movingFileSource
+                ? HitTestFileGroupIndex(
+                    current, mouseDownWidgetIndex_)
+                : static_cast<size_t>(-1));
+        if (groupTarget < widgets_.size())
+        {
+            widgetCollectionGroupTargetIndex_ = groupTarget;
+            widgetCollectionGroupInsertIndex_ =
+                widgets_[groupTarget].childWidgetIds.size();
+            for (auto& container : containers_)
+            {
+                auto* group =
+                    dynamic_cast<WidgetContainer*>(
+                        container.get());
+                if (!group ||
+                    group->GetWidgetData() != &widgets_[groupTarget])
+                    continue;
+                Slot* slot = nullptr;
+                HitRegion region = group->HitTestDrag(current, slot);
+                const bool overTab =
+                    widgets_[groupTarget].type ==
+                        DesktopWidgetType::CollectionGroup
+                        ? !dynamic_cast<CollectionGroup*>(group)->
+                            CategoryIdAtPoint(current).empty()
+                        : !dynamic_cast<FileGroup*>(group)->
+                            SourceIdAtPoint(current).empty();
+                if (overTab)
+                    widgetCollectionGroupInsertIndex_ =
+                        group->GetDropInsertIndex(slot, region);
+                break;
+            }
+            widgetDockTarget_ = false;
+            widgetDockTargetContainer_ = nullptr;
+            ShowDragHintWindow(current,
+                _LW(movingCollection
+                    ? "core.drag.move_collection_group"
+                    : "core.drag.move_file_group"));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        widgetCollectionGroupTargetIndex_ =
+            static_cast<size_t>(-1);
+        widgetCollectionGroupInsertIndex_ =
+            static_cast<size_t>(-1);
+
         DockContainer* dock = GetDockContainerAtPoint(current);
         const bool canDock = dock &&
-            widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection;
+            snowdesktop::slot_contract::AcceptsSlotDrop(
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::Desktop,
+                movingPayload,
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::Dock,
+                snowdesktop::slot_contract::
+                    DragRelation::CrossSurface);
         if (canDock)
         {
             widgetDockTarget_ = true;
@@ -2130,6 +3823,10 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {
+                const bool dockFolderPopupSource =
+                    dockFolderPopupOpen_ &&
+                    dragSession_.Source() ==
+                        dockFolderPopupContainer_.get();
                 auto* sourceWidget = dynamic_cast<WidgetContainer*>(dragSession_.Source());
                 DesktopWidget* sourceWidgetData = sourceWidget ? sourceWidget->GetWidgetData() : nullptr;
 
@@ -2195,6 +3892,9 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     ClearSelection();
                     EndDragSession();
                     ReloadItems();
+                    if (dockFolderPopupSource &&
+                        dockFolderPopupOpen_)
+                        RefreshDockFolderPopup();
                 }
                 else
                 {
@@ -2208,7 +3908,13 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             }
         }
 
-        const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+        const bool suppressDesktopWidgetTargets =
+            SuppressDesktopWidgetDragTargets();
+        const bool groupedEntryDrag =
+            dragSession_.SourceList().
+                hasCollectionGroupEntries ||
+            dragSession_.SourceList().
+                hasFileGroupEntries;
         if (suppressDesktopWidgetTargets)
         {
             navHoverSide_ = 0;
@@ -2224,12 +3930,21 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         HitRegion targetRegion = HitRegion::None;
         popupDragTargetSlot_.reset();
 
-        const bool popupHit = !suppressDesktopWidgetTargets &&
+        const bool popupHit =
+            !suppressDesktopWidgetTargets &&
+            !groupedEntryDrag &&
             HitTestPopupForDrag(current, targetContainer, targetSlot, targetRegion);
         if (!popupHit)
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
+                if (!AcceptsSlotSurfaceDrop(
+                        it->get(),
+                        dragSession_.SourceList()))
+                    continue;
                 if (suppressDesktopWidgetTargets &&
                     (dynamic_cast<DesktopGrid*>(it->get()) ||
                      dynamic_cast<WidgetContainer*>(it->get())))
@@ -2306,15 +4021,21 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 a.index == b.index;
         };
         auto findHoverVisual = [&](POINT point) -> MouseHoverVisual {
-            if (popupWidgetIndex_ < widgets_.size() &&
-                !IsRectEmptyRect(popupRect_) && PtInRect(&popupRect_, point))
+            if (const DesktopWidget* popupWidget =
+                    GetOpenPopupWidget();
+                IsCollectionPopupInteractive() &&
+                (!desktopIconsHidden_ || IsOpenPopupRetained()) &&
+                popupWidget &&
+                !IsRectEmptyRect(popupRect_) &&
+                PtInRect(&popupRect_, point))
             {
-                const DesktopWidget* popupWidget = &widgets_[popupWidgetIndex_];
                 RECT content = GetCollectionPopupContentRect(popupRect_);
                 if (PtInRect(&content, point))
                 {
-                    const std::vector<std::wstring> popupKeys = GetPopupItemKeys(*popupWidget);
-                    for (size_t i = 0; i < popupKeys.size(); ++i)
+                    const size_t popupItemCount =
+                        GetPopupItemCount(*popupWidget);
+                    for (size_t i = 0;
+                         i < popupItemCount; ++i)
                     {
                         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
                         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom)
@@ -2328,25 +4049,27 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
             if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
-                RECT dockBounds = dock->GetBounds();
-                if (PtInRect(&dockBounds, point))
+                if (dock->ContainsInteractivePoint(point))
                 {
                     if (DockEntryItem* entry = dock->EntryAtPoint(point))
-                        return { dock, entry, 8, entry->GetEntryIndex(), false };
+                        return { dock, entry, 8, entry->GetEntryIndex(), true };
                     if (DockRunningItem* item = dock->RunningItemAtPoint(point))
-                        return { dock, item, 12, item->GetRunningIndex(), false };
+                        return { dock, item, 12, item->GetRunningIndex(), true };
                     if (DockFrequentItem* item = dock->FrequentItemAtPoint(point))
-                        return { dock, item, 11, item->GetItemIndex(), false };
+                        return { dock, item, 11, item->GetItemIndex(), true };
                     if (dock->IsWindowsButtonPoint(point))
-                        return { dock, dock, 13, 0, false };
+                        return { dock, dock, 13, 0, true };
                     if (dock->IsSearchPoint(point))
-                        return { dock, dock, 9, 0, false };
-                    return { dock, dock, 10, 0, false };
+                        return { dock, dock, 9, 0, true };
+                    return { dock, dock, 10, 0, true };
                 }
             }
 
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
                 auto* widget = dynamic_cast<WidgetContainer*>(it->get());
                 if (!widget)
                     continue;
@@ -2425,26 +4148,97 @@ inline void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const MouseHoverVisual newVisual = findHoverVisual(current);
         const bool hoverChanged = !sameHoverVisual(oldVisual, newVisual);
         const bool dockHoverChanged = hoverChanged &&
-            ((oldVisual.kind >= 8 && oldVisual.kind <= 12) ||
-             (newVisual.kind >= 8 && newVisual.kind <= 12));
+            ((oldVisual.kind >= 8 && oldVisual.kind <= 13) ||
+             (newVisual.kind >= 8 && newVisual.kind <= 13));
         const bool needsContinuousHoverPaint =
             (oldVisual.owner && oldVisual.continuous) ||
             (newVisual.owner && newVisual.continuous);
-        if (marqueeActive_ || hoverChanged || needsContinuousHoverPaint)
+        const bool invalidateDesktopHover =
+            snowdesktop::floating_dock_rules::
+                ShouldInvalidateDesktopHover(
+                    handlingFloatingDockInput_);
+        if (invalidateDesktopHover &&
+            (marqueeActive_ || hoverChanged ||
+                needsContinuousHoverPaint))
             InvalidateRect(hwnd_, nullptr, FALSE);
-        if (dockHoverChanged && hwnd_ && IsWindow(hwnd_))
+        const bool dockHoverActive =
+            (oldVisual.kind >= 8 &&
+                oldVisual.kind <= 13) ||
+            (newVisual.kind >= 8 &&
+                newVisual.kind <= 13);
+        if (invalidateDesktopHover &&
+            dockHoverActive &&
+            (dockHoverChanged ||
+                needsContinuousHoverPaint) &&
+            hwnd_ && IsWindow(hwnd_) &&
+            !compositionPaintInProgress_)
             UpdateWindow(hwnd_);
 
-        for (auto& w : widgets_)
+        if (invalidateDesktopHover)
         {
-            if (!w.showOnHoverOnly) continue;
-            if (PtInRect(&w.bounds, oldMouse) != PtInRect(&w.bounds, current))
+            for (auto& w : widgets_)
             {
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                break;
+                if (!w.showOnHoverOnly)
+                    continue;
+                if (PtInRect(&w.bounds, oldMouse) !=
+                    PtInRect(&w.bounds, current))
+                {
+                    InvalidateRect(
+                        hwnd_, nullptr, FALSE);
+                    break;
+                }
             }
         }
     }
+}
+
+inline void DesktopApp::OnMouseLeave()
+{
+    POINT cursorScreen{};
+    GetCursorPos(&cursorScreen);
+    const bool pointerStillInteractsWithDockPreview =
+        dockWindowPreview_ &&
+        dockWindowPreview_->ContainsInteractionPoint(cursorScreen);
+    if (pointerStillInteractsWithDockPreview)
+        dockWindowPreview_->ScheduleHide();
+    else
+        HideDockWindowPreview();
+    navHoverSide_ = 0;
+    navAutoFlipDir_ = 0;
+    navAutoFlipTick_ = 0;
+
+    popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+    popupDwellTick_ = 0;
+    collectionGroupTabDwellWidgetIndex_ =
+        static_cast<size_t>(-1);
+    collectionGroupTabDwellId_.clear();
+    collectionGroupTabDwellTick_ = 0;
+    dockHandoffDwellIndex_ = static_cast<size_t>(-1);
+    dockHandoffDwellStartTick_ = 0;
+    dockHandoffDwellReady_ = false;
+    if (hwnd_)
+    {
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        KillTimer(hwnd_, kDockHandoffDwellTimerId);
+    }
+
+    // Capture-based dragging continues to receive coordinates outside the
+    // window. Preserve that pointer state, but clear passive hover immediately.
+    // The preview owns its independent screen-space transition triangle, so
+    // Dock magnification can still be reset while the preview stays reachable.
+    const HWND captureWindow = GetCapture();
+    const bool ownsInteractionCapture =
+        captureWindow == hwnd_ ||
+        captureWindow == floatingDockHwnd_;
+    if (!ownsInteractionCapture && !mouseDown_ &&
+        !dragSession_.IsActive() &&
+        widgetAction_ == WidgetAction::None)
+    {
+        lastMousePoint_ = { LONG_MIN, LONG_MIN };
+    }
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 inline bool DesktopApp::HandleDockClickRelease(POINT point)
@@ -2459,6 +4253,21 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     std::wstring runningAppKey;
     const size_t pressedEntryIndex = dockPressedEntry_;
     const size_t pressedFrequentItemIndex = dockPressedFrequentItem_;
+    const auto pressedWindowAction = dockPressedWindowAction_;
+    const HWND pressedTargetWindow = dockPressedTargetWindow_;
+    std::optional<RECT> pressedAnchorScreen;
+    if (mouseDownHit_ && hwnd_)
+    {
+        RECT anchor = dock->GetElementVisualRect(
+            mouseDownHit_->GetBounds(), mouseDownPoint_);
+        if (!IsRectEmpty(&anchor))
+        {
+            MapWindowPoints(
+                hwnd_, nullptr,
+                reinterpret_cast<POINT*>(&anchor), 2);
+            pressedAnchorScreen = anchor;
+        }
+    }
     if (dockPressedEntry_ < dockEntries_.size())
     {
         DockEntryItem* hit = dock->EntryAtPoint(point);
@@ -2503,17 +4312,18 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     {
         return false;
     }
+    const bool folderEntry =
+        pressedEntryIndex < dockEntries_.size() &&
+        IsFolderDockEntry(dockEntries_[pressedEntryIndex]);
 
     size_t appItemIndex = frequentItemIndex;
     if (appItemIndex >= items_.size() && entryType == DockEntryType::DesktopItem)
         appItemIndex = FindItemIndexByKey(reference);
     bool waitForDoubleClick = false;
-    if (appItemIndex < items_.size())
-    {
-        RefreshDockRunningWindows(false);
+    if (appItemIndex < items_.size() && !folderEntry)
         waitForDoubleClick =
-            GetDockWindowVisualState(appItemIndex) == DockWindowVisualState::Closed;
-    }
+            pressedWindowAction ==
+                snowdesktop::dock_window_rules::DockClickAction::Launch;
 
     // 在激活外部应用前完整结束本次桌面交互，避免鼠标捕获、选择高亮或
     // 拖拽预览跨到新前台窗口后仍残留。
@@ -2529,18 +4339,33 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
+    dockPressedWindowAction_ =
+        snowdesktop::dock_window_rules::DockClickAction::None;
+    dockPressedTargetWindow_ = nullptr;
     dockPressedContainer_ = nullptr;
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     ReleaseCapture();
     InvalidateDragStaticScene();
-    if (hwnd_)
+    const bool popupEntryOnFloatingDock =
+        (entryType == DockEntryType::Collection ||
+         folderEntry) &&
+        floatingDockVisible_ &&
+        dock == floatingDockContainer_;
+    if (hwnd_ && !popupEntryOnFloatingDock)
     {
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        UpdateWindow(hwnd_);
+        if (floatingDockVisible_ &&
+            dock == floatingDockContainer_)
+            InvalidateFloatingDockWindow(true);
+        else
+        {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            UpdateWindow(hwnd_);
+        }
     }
 
     if (waitForDoubleClick)
@@ -2555,30 +4380,96 @@ inline bool DesktopApp::HandleDockClickRelease(POINT point)
     dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
     dockPendingDoubleClickTick_ = 0;
 
+    if (snowdesktop::dock_window_rules::
+            ShouldSuppressDockClickRelease(
+                pressedEntryIndex,
+                dockSuppressClickReleaseEntry_))
+    {
+        dockSuppressClickReleaseEntry_ =
+            static_cast<size_t>(-1);
+        return true;
+    }
+
+    const auto prepareFloatingDockForWindowCommand =
+        [&]() {
+            if (!snowdesktop::dock_window_rules::
+                    MustCloseFloatingDockBeforeWindowCommand(
+                        floatingDockVisible_,
+                        pressedWindowAction))
+                return;
+            CloseFloatingDock();
+            // ShowWindow(SW_HIDE) 与 DComp 提交不在同一个时序域。等待
+            // 顶层 Dock 真正退出合成场景后再抓屏，避免快照残留 Dock。
+            DwmFlush();
+        };
+
     if (!runningAppKey.empty())
     {
+        prepareFloatingDockForWindowCommand();
         const auto running = std::find_if(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& app) {
                 return app.identityKey == runningAppKey;
             });
         if (running != dockUnpinnedRunningApps_.end())
-            ActivateOrToggleDockWindow(running->window);
+        {
+            ActivateOrToggleDockWindow(
+                running->window, pressedWindowAction,
+                pressedTargetWindow,
+                pressedAnchorScreen);
+        }
     }
     else if (frequentItemIndex < items_.size())
     {
-        ActivateOrToggleDockItem(frequentItemIndex);
+        prepareFloatingDockForWindowCommand();
+        ActivateOrToggleDockItem(
+            frequentItemIndex, pressedWindowAction,
+            pressedTargetWindow,
+            pressedAnchorScreen);
     }
     else if (entryType == DockEntryType::Collection)
     {
-        dockPressedForegroundWindow_ = nullptr;
-        dockPressedForegroundTick_ = 0;
         const size_t widgetIndex = FindWidgetIndexById(reference);
-        if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, point);
+        if (widgetIndex < widgets_.size())
+        {
+            if (IsCollectionPopupInteractive() &&
+                snowdesktop::floating_dock_rules::
+                    ShouldCloseCollectionPopup(
+                        popupWidgetIndex_,
+                        widgetIndex))
+                CloseCollectionPopup();
+            else
+                OpenCollectionPopupAt(
+                    widgetIndex, point);
+        }
+    }
+    else if (folderEntry)
+    {
+        const std::wstring sourceId =
+            std::to_wstring(static_cast<int>(entryType)) +
+            L":" + ToUpperInvariant(reference);
+        if (IsCollectionPopupInteractive() &&
+            dockFolderPopupOpen_ &&
+            dockFolderPopupSourceId_ == sourceId)
+            CloseCollectionPopup();
+        else
+            OpenDockFolderPopupAt(
+                pressedEntryIndex, point);
+        dockPendingDoubleClickEntry_ =
+            pressedEntryIndex;
+        dockPendingDoubleClickTick_ =
+            GetTickCount();
     }
     else
     {
+        prepareFloatingDockForWindowCommand();
         const size_t itemIndex = FindItemIndexByKey(reference);
-        if (itemIndex < items_.size()) ActivateOrToggleDockItem(itemIndex);
+        if (itemIndex < items_.size())
+        {
+            ActivateOrToggleDockItem(
+                itemIndex, pressedWindowAction,
+                pressedTargetWindow,
+                pressedAnchorScreen);
+        }
     }
     return true;
 }
@@ -2596,15 +4487,120 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     POINT upPoint{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     HideDragHintWindow();
 
+    if (luaWidgetPanelMouseDown_ &&
+        !luaWidgetPanelRequest_.widgetId.empty())
+    {
+        const std::wstring panelWidgetId =
+            luaWidgetPanelRequest_.widgetId;
+        const RECT content =
+            GetLuaWidgetPanelContentRect();
+        const int localX =
+            upPoint.x - content.left;
+        const int localY =
+            upPoint.y - content.top;
+        const bool hostInputHandled =
+            widgetEngine_ &&
+            widgetEngine_->HandleHostInputPointerUp(
+                panelWidgetId, localX, localY);
+        if (!hostInputHandled &&
+            PtInRect(&content, upPoint) &&
+            widgetEngine_)
+        {
+            widgetEngine_->InvokeMouseEvent(
+                panelWidgetId,
+                "onPanelMouseUp",
+                localX, localY, 1, 0);
+            widgetEngine_->InvokeMouseEvent(
+                panelWidgetId,
+                "onPanelClick",
+                localX, localY, 1, 0);
+        }
+        luaWidgetPanelMouseDown_ = false;
+        mouseDown_ = false;
+        ReleaseCapture();
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    for (auto& container : containers_)
+    {
+        auto* searchable =
+            dynamic_cast<ScrollingItemWidget*>(container.get());
+        if (!searchable ||
+            !searchable->IsSearchPointerSelecting())
+            continue;
+        searchable->UpdateSearchPointerSelection(upPoint);
+        searchable->EndSearchPointerSelection();
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ =
+            static_cast<size_t>(-1);
+        ReleaseCapture();
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
     // ── Widget action completion ────────────────────────────
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {
         if (widgetAction_ == WidgetAction::Move)
         {
-            DockContainer* dock = GetDockContainerAtPoint(upPoint);
-            const bool canDock = dock &&
-                widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::Collection;
-            if (canDock)
+            const auto movingPayload =
+                SlotPayloadForWidgetType(
+                    widgets_[mouseDownWidgetIndex_].type);
+            const bool canCollectionGroup =
+                widgetCollectionGroupTargetIndex_ < widgets_.size() &&
+                widgets_[widgetCollectionGroupTargetIndex_].type ==
+                    DesktopWidgetType::CollectionGroup &&
+                snowdesktop::slot_contract::AcceptsSlotDrop(
+                    snowdesktop::slot_contract::
+                        SlotSurfaceKind::Desktop,
+                    movingPayload,
+                    snowdesktop::slot_contract::
+                        SlotSurfaceKind::CollectionGroup,
+                    snowdesktop::slot_contract::
+                        DragRelation::CrossSurface);
+            const bool canFileGroup =
+                widgetCollectionGroupTargetIndex_ < widgets_.size() &&
+                widgets_[widgetCollectionGroupTargetIndex_].type ==
+                    DesktopWidgetType::FileGroup &&
+                snowdesktop::slot_contract::AcceptsSlotDrop(
+                    snowdesktop::slot_contract::
+                        SlotSurfaceKind::Desktop,
+                    movingPayload,
+                    snowdesktop::slot_contract::
+                        SlotSurfaceKind::FileGroup,
+                    snowdesktop::slot_contract::
+                        DragRelation::CrossSurface);
+            const bool canGroup =
+                canCollectionGroup || canFileGroup;
+            DockContainer* dock = canGroup
+                ? nullptr : GetDockContainerAtPoint(upPoint);
+            const bool canDock = !canGroup && dock &&
+                snowdesktop::slot_contract::AcceptsSlotDrop(
+                    snowdesktop::slot_contract::
+                        SlotSurfaceKind::Desktop,
+                    movingPayload,
+                    snowdesktop::slot_contract::
+                        SlotSurfaceKind::Dock,
+                    snowdesktop::slot_contract::
+                        DragRelation::CrossSurface);
+            if (canGroup)
+            {
+                if (canCollectionGroup)
+                    AddCollectionToGroup(
+                        mouseDownWidgetIndex_,
+                        widgetCollectionGroupTargetIndex_,
+                        widgetCollectionGroupInsertIndex_);
+                else
+                    AddWidgetToFileGroup(
+                        mouseDownWidgetIndex_,
+                        widgetCollectionGroupTargetIndex_,
+                        widgetCollectionGroupInsertIndex_);
+            }
+            else if (canDock)
             {
                 Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
                 int mods = (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
@@ -2624,6 +4620,10 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         widgetDockTarget_ = false;
         widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
+        widgetCollectionGroupTargetIndex_ =
+            static_cast<size_t>(-1);
+        widgetCollectionGroupInsertIndex_ =
+            static_cast<size_t>(-1);
         InvalidateDragStaticScene();
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
@@ -2640,19 +4640,38 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         dockPressedEntry_ = static_cast<size_t>(-1);
         dockPressedFrequentItem_ = static_cast<size_t>(-1);
         dockPressedRunningAppKey_.clear();
+        dockPressedWindowAction_ =
+            snowdesktop::dock_window_rules::DockClickAction::None;
+        dockPressedTargetWindow_ = nullptr;
         dockPressedContainer_ = nullptr;
         if (mouseDownWidgetIndex_ < widgets_.size() &&
-            widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
-            HitTestStandaloneWidget(mouseDownWidgetIndex_, upPoint) == WidgetHit::Content &&
+            widgets_[mouseDownWidgetIndex_].type ==
+                DesktopWidgetType::LuaScript &&
             widgetEngine_)
         {
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
             widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
-                widgets_[mouseDownWidgetIndex_].scriptPath);
-            widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseUp",
-                upPoint.x - frame.left, upPoint.y - frame.top, 1, 0);
-            widgetEngine_->InvokeClick(widgets_[mouseDownWidgetIndex_].id,
-                upPoint.x - frame.left, upPoint.y - frame.top);
+                widgets_[mouseDownWidgetIndex_].packageId);
+            const bool hostInputHandled =
+                widgetEngine_->HandleHostInputPointerUp(
+                    widgets_[mouseDownWidgetIndex_].id,
+                    upPoint.x - frame.left,
+                    upPoint.y - frame.top);
+            if (hostInputHandled)
+                UpdateHostInputImePosition();
+            if (!hostInputHandled &&
+                HitTestStandaloneWidget(mouseDownWidgetIndex_,
+                    upPoint) == WidgetHit::Content)
+            {
+                widgetEngine_->InvokeMouseEvent(
+                    widgets_[mouseDownWidgetIndex_].id,
+                    "onMouseUp", upPoint.x - frame.left,
+                    upPoint.y - frame.top, 1, 0);
+                widgetEngine_->InvokeClick(
+                    widgets_[mouseDownWidgetIndex_].id,
+                    upPoint.x - frame.left,
+                    upPoint.y - frame.top);
+            }
         }
         if (pendingCtrlToggleDesktopIndex_ < items_.size())
             items_[pendingCtrlToggleDesktopIndex_].selected = false;
@@ -2665,6 +4684,8 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         mouseDown_ = false;
         marqueeActive_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
+        marqueeDockFolderPopup_ = false;
+        dockFolderPopupMarqueeInitialSelection_.clear();
         navHoverSide_ = 0;
         navAutoFlipDir_ = 0;
         mouseDownHit_ = nullptr;
@@ -2704,11 +4725,10 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     // interactive/visual phase before entering them, while retaining the
     // source and target context until EndDragSession() performs final cleanup.
     dragSession_.DeactivateForDrop();
-    dragRenderCache_.Reset();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     ReleaseCapture();
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    CommitDragVisualEndBeforeShellOperation();
 
     {
         int mods = 0;
@@ -2720,8 +4740,40 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             && dragSession_.TargetSlot()->GetItem())
         {
             Item* targetItem = dragSession_.TargetSlot()->GetItem();
+            const bool dockFolderPopupTarget =
+                dockFolderPopupOpen_ &&
+                targetItem->GetContainer() ==
+                    dockFolderPopupContainer_.get();
+            bool explicitDockFolderTarget =
+                dockFolderPopupTarget;
             if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
             {
+                const size_t targetEntryIndex =
+                    dockTarget->GetEntryIndex();
+                explicitDockFolderTarget =
+                    targetEntryIndex <
+                        dockEntries_.size() &&
+                    IsFolderDockEntry(
+                        dockEntries_[
+                            targetEntryIndex]);
+                if (dynamic_cast<DockContainer*>(
+                        dragSession_.Source()) &&
+                    targetEntryIndex <
+                        dockEntries_.size() &&
+                    IsRecycleBinDockEntry(
+                        dockEntries_[targetEntryIndex]) &&
+                    RemoveDockDragOutItems(
+                        dragSession_.Items()))
+                {
+                    ClearSelection();
+                    EndDragSession();
+                    SaveLayoutSlots();
+                    RebuildContainersAndItems();
+                    LayoutItems();
+                    InvalidateRect(
+                        hwnd_, nullptr, FALSE);
+                    goto cleanup;
+                }
                 if (dockTarget->GetEntryType() == DockEntryType::Collection)
                 {
                     const bool executed = DropItemsIntoDockCollection(
@@ -2786,6 +4838,10 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
                     if (mods & MK_CONTROL) keyState |= MK_CONTROL;
                     if (mods & MK_ALT)     keyState |= MK_ALT;
                     if (mods & MK_SHIFT)   keyState |= MK_SHIFT;
+                    if (explicitDockFolderTarget &&
+                        (mods & (MK_CONTROL |
+                            MK_ALT | MK_SHIFT)) == 0)
+                        keyState |= MK_SHIFT;
                     if (SUCCEEDED(dropTarget->DragEnter(dataObj.Get(), keyState, spl, &effect)))
                     {
                         dropTarget->DragOver(keyState, spl, &effect);
@@ -2796,18 +4852,31 @@ inline void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             SaveLayoutSlots();
             ClearSelection();
             EndDragSession();
+            if (dockFolderPopupTarget)
+                RefreshDockFolderPopup();
             ReloadItems();
             goto cleanup;
         }
 
         Container* targetContainer = dragSession_.TargetContainer();
         bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
+        const bool dockFolderPopupTarget =
+            dockFolderPopupOpen_ &&
+            targetContainer ==
+                dockFolderPopupContainer_.get();
+        const bool dockFolderPopupSource =
+            dockFolderPopupOpen_ &&
+            dragSession_.Source() ==
+                dockFolderPopupContainer_.get();
         targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
             dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
 
         SaveLayoutSlots();
         ClearSelection();
         EndDragSession();
+        if (dockFolderPopupTarget ||
+            dockFolderPopupSource)
+            RefreshDockFolderPopup();
         if (needsReload)
         {
             RebuildContainersAndItems();
@@ -2828,6 +4897,8 @@ cleanup:
     EndDragSession();
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
@@ -2840,8 +4911,12 @@ cleanup:
     dockPressedEntry_ = static_cast<size_t>(-1);
     dockPressedFrequentItem_ = static_cast<size_t>(-1);
     dockPressedRunningAppKey_.clear();
+    dockPressedWindowAction_ =
+        snowdesktop::dock_window_rules::DockClickAction::None;
+    dockPressedTargetWindow_ = nullptr;
     dockPressedContainer_ = nullptr;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
     ReleaseCapture();
 }
 
@@ -2891,6 +4966,22 @@ inline std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t*
     if (firstWidgetIndex)
         *firstWidgetIndex = static_cast<size_t>(-1);
 
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
+    {
+        std::vector<std::wstring> paths;
+        for (const auto& entry :
+             dockFolderPopupWidget_.
+                folderEntries)
+        {
+            if (entry.selected &&
+                !entry.fullPath.empty())
+                paths.push_back(
+                    entry.fullPath);
+        }
+        return paths;
+    }
+
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const auto& widget = widgets_[i];
@@ -2924,9 +5015,45 @@ inline size_t DesktopApp::FindFolderMappingShortcutTarget() const
     if (selectedEntryWidget < widgets_.size())
         return selectedEntryWidget;
 
+    auto activeFileGroupMapping =
+        [&](const DesktopWidget& group)
+            -> size_t {
+        if (group.type !=
+            DesktopWidgetType::FileGroup)
+            return static_cast<size_t>(-1);
+        const size_t childIndex =
+            FindWidgetIndexById(
+                group.activeCategoryId);
+        return childIndex < widgets_.size() &&
+            widgets_[childIndex].type ==
+                DesktopWidgetType::FolderMapping &&
+            !widgets_[childIndex].
+                sourceFolderPath.empty()
+            ? childIndex
+            : static_cast<size_t>(-1);
+    };
+    if (keyboardNavInsideWidget_ &&
+        keyboardNavWidgetIndex_ < widgets_.size())
+    {
+        const size_t childIndex =
+            activeFileGroupMapping(
+                widgets_[keyboardNavWidgetIndex_]);
+        if (childIndex < widgets_.size())
+            return childIndex;
+    }
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const auto& widget = widgets_[i];
+        if (widget.type ==
+                DesktopWidgetType::FileGroup &&
+            PtInRect(&widget.bounds,
+                lastMousePoint_))
+        {
+            const size_t childIndex =
+                activeFileGroupMapping(widget);
+            if (childIndex < widgets_.size())
+                return childIndex;
+        }
         if (widget.type != DesktopWidgetType::FolderMapping || widget.sourceFolderPath.empty())
             continue;
         if (PtInRect(&widget.bounds, lastMousePoint_))
@@ -2936,6 +5063,15 @@ inline size_t DesktopApp::FindFolderMappingShortcutTarget() const
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const auto& widget = widgets_[i];
+        if (widget.type ==
+                DesktopWidgetType::FileGroup &&
+            widget.selected)
+        {
+            const size_t childIndex =
+                activeFileGroupMapping(widget);
+            if (childIndex < widgets_.size())
+                return childIndex;
+        }
         if (widget.type == DesktopWidgetType::FolderMapping &&
             widget.selected && !widget.sourceFolderPath.empty())
             return i;
@@ -3016,6 +5152,9 @@ inline bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
         if (widgets_[i].type == DesktopWidgetType::FolderMapping)
             RefreshFolderMappingWidget(i);
     ReloadItems(false);
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
+        RefreshDockFolderPopup();
     return true;
 }
 
@@ -3029,6 +5168,23 @@ inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
     if (widgetIndex >= widgets_.size()) return false;
     DesktopWidget& widget = widgets_[widgetIndex];
     if (widget.type != DesktopWidgetType::FolderMapping || widget.sourceFolderPath.empty())
+        return false;
+    return PasteClipboardToFolderPath(
+        widget.sourceFolderPath);
+}
+
+inline bool DesktopApp::PasteClipboardToFolderPath(
+    const std::wstring& targetFolderPath)
+{
+    if (targetFolderPath.empty())
+        return false;
+    const DWORD attributes =
+        GetFileAttributesW(
+            targetFolderPath.c_str());
+    if (attributes ==
+            INVALID_FILE_ATTRIBUTES ||
+        (attributes &
+            FILE_ATTRIBUTE_DIRECTORY) == 0)
         return false;
 
     ComPtr<IDataObject> clipObj;
@@ -3084,7 +5240,9 @@ inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
         sourceList.entries.push_back(std::move(entry));
     }
 
-    if (!MaterializeFilesToFolder(sourceList, widget.sourceFolderPath, action))
+    if (!MaterializeFilesToFolder(
+            sourceList, targetFolderPath,
+            action))
         return true;
 
     if (action == DropAction::Move)
@@ -3101,6 +5259,8 @@ inline bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
         if (widgets_[i].type == DesktopWidgetType::FolderMapping)
             RefreshFolderMappingWidget(i);
     ReloadItems(false);
+    if (dockFolderPopupOpen_)
+        RefreshDockFolderPopup();
     return true;
 }
 
@@ -3118,52 +5278,15 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
 
     if (renameEdit_ != nullptr) return;
 
-    // Handle FileCategories search box keyboard input
+    // Handle searchable widget keyboard input.
     {
         for (auto& c : containers_)
         {
-            auto* fc = dynamic_cast<FileCategories*>(c.get());
-            if (fc && fc->IsSearchFocused())
+            auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+            if (searchable && searchable->IsSearchFocused())
             {
-                if (key == VK_ESCAPE)
+                if (searchable->HandleSearchKey(key))
                 {
-                    fc->ClearSearchText();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_BACK)
-                {
-                    fc->BackspaceSearchText();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_DELETE)
-                {
-                    fc->DeleteSearchText();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_LEFT)
-                {
-                    fc->MoveCursorLeft();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_RIGHT)
-                {
-                    fc->MoveCursorRight();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_HOME)
-                {
-                    fc->MoveCursorHome();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (key == VK_END)
-                {
-                    fc->MoveCursorEnd();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return;
                 }
@@ -3312,6 +5435,12 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     case 'V':
         if (!ctrl) break;
     {
+        if (dockFolderPopupOpen_ &&
+            dockFolderPopupAvailable_ &&
+            PasteClipboardToFolderPath(
+                dockFolderPopupWidget_.
+                    sourceFolderPath))
+            break;
         if (PasteClipboardToFolderMapping(FindFolderMappingShortcutTarget()))
             break;
 
@@ -3395,6 +5524,18 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     case 'A':
         if (!ctrl) break;
     {
+        if (IsCollectionPopupInteractive() &&
+            dockFolderPopupOpen_)
+        {
+            ClearSelection();
+            for (auto& entry :
+                 dockFolderPopupWidget_.
+                    folderEntries)
+                entry.selected = true;
+            InvalidateRect(
+                hwnd_, nullptr, FALSE);
+            break;
+        }
         ClearSelection();
         for (auto& oo : items_oo_)
         {
@@ -3409,7 +5550,21 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
     break;
     case VK_RETURN:
         if (keyboardNavInsideWidget_)
-            OpenWidgetMember(keyboardNavWidgetIndex_, keyboardNavMemberIndex_);
+        {
+            if (keyboardNavWidgetIndex_ < widgets_.size() &&
+                ((widgets_[keyboardNavWidgetIndex_].type ==
+                      DesktopWidgetType::CollectionGroup &&
+                  keyboardNavCollectionGroupTabs_) ||
+                 (widgets_[keyboardNavWidgetIndex_].type ==
+                      DesktopWidgetType::FileGroup &&
+                  (keyboardNavCollectionGroupTabs_ ||
+                   keyboardNavFileGroupCategoryTabs_))))
+                NavigateWidgetMembers(VK_DOWN);
+            else
+                OpenWidgetMember(
+                    keyboardNavWidgetIndex_,
+                    keyboardNavMemberIndex_);
+        }
         else if (std::any_of(widgets_.begin(), widgets_.end(),
             [](const DesktopWidget& w) { return w.selected; }))
             EnterWidget();
@@ -3417,7 +5572,13 @@ inline void DesktopApp::OnKeyDown(WPARAM key)
             OpenSelectedDesktopItem();
         break;
     case VK_ESCAPE:
-        if (keyboardNavInsideWidget_)
+        if (!luaWidgetPanelRequest_.widgetId.empty())
+            CloseLuaWidgetPanel(
+                luaWidgetPanelRequest_.widgetId,
+                "escape");
+        else if (IsCollectionPopupInteractive())
+            CloseCollectionPopup();
+        else if (keyboardNavInsideWidget_)
             ExitWidget();
         else
         {
@@ -3467,6 +5628,7 @@ inline void DesktopApp::RefreshDragHintFromKeyboard()
         ClientToScreen(hwnd_, &screenPoint);
         ShowDragHintWindowScreen(screenPoint, hint);
         OnPaint();
+        InvalidateFloatingDockWindow(true);
     }
     else
     {
@@ -3545,6 +5707,7 @@ inline void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const auto& w = widgets_[i];
+        if (IsGroupedWidget(w)) continue;
         if (hasVisiblePages && !visiblePageIds.contains(w.gridCell.pageId)) continue;
         targets.push_back({ true, i,
             w.gridCell.column, w.gridCell.row,
@@ -3799,8 +5962,11 @@ inline void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex
 
     // 按行比例计算目标滚动位置（适配含 gapY 的 FolderMapping/Collection）
     int columns = std::max(1, widget.gridSpan.columns);
-    bool listMode = (widget.type == DesktopWidgetType::FileCategories && (widget.listMode || widget.dateHeaders)) ||
-                    (widget.type == DesktopWidgetType::FolderMapping && widget.listMode) ||
+    bool listMode = ((widget.type == DesktopWidgetType::CollectionGroup ||
+                      widget.type == DesktopWidgetType::FileGroup) &&
+                     (widget.listMode || widget.dateHeaders)) ||
+                    (widget.type == DesktopWidgetType::FileCategories && (widget.listMode || widget.dateHeaders)) ||
+                    (widget.type == DesktopWidgetType::FolderMapping && (widget.listMode || widget.dateHeaders)) ||
                     (widget.type == DesktopWidgetType::Collection && widget.listMode);
 
     size_t memberCount = (widget.type == DesktopWidgetType::FolderMapping)
@@ -3810,6 +5976,21 @@ inline void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex
     {
         auto* fc = dynamic_cast<FileCategories*>(wc);
         if (fc) memberCount = fc->GetSlotCount();
+    }
+    else if (widget.type == DesktopWidgetType::FolderMapping)
+    {
+        auto* mapping = dynamic_cast<FolderMapping*>(wc);
+        if (mapping) memberCount = mapping->GetSlotCount();
+    }
+    else if (widget.type == DesktopWidgetType::FileGroup)
+    {
+        auto* group = dynamic_cast<FileGroup*>(wc);
+        if (group) memberCount = group->GetSlotCount();
+    }
+    else if (widget.type == DesktopWidgetType::CollectionGroup)
+    {
+        auto* group = dynamic_cast<CollectionGroup*>(wc);
+        if (group) memberCount = group->GetSlotCount();
     }
     if (memberCount <= 1) return;
 
@@ -3825,7 +6006,11 @@ inline void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex
     if (scroll != widget.scrollOffset)
     {
         widget.scrollOffset = scroll;
-        wc->InvalidateSlots();
+        if (auto* group =
+                dynamic_cast<FileGroup*>(wc))
+            group->InvalidateHostedView();
+        else
+            wc->InvalidateSlots();
     }
 }
 
@@ -3841,12 +6026,402 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     if (keyboardNavWidgetIndex_ >= widgets_.size()) return;
     auto& widget = widgets_[keyboardNavWidgetIndex_];
 
+    if (widget.type == DesktopWidgetType::FileGroup)
+    {
+        FileGroup* group = nullptr;
+        for (auto& c : containers_)
+        {
+            auto* candidate =
+                dynamic_cast<FileGroup*>(c.get());
+            if (candidate &&
+                candidate->GetWidgetData() == &widget)
+            {
+                group = candidate;
+                break;
+            }
+        }
+        if (!group) return;
+        const auto& visibleSourceIds =
+            group->GetVisibleSourceIds();
+        const std::vector<std::wstring> sourceIds(
+            visibleSourceIds.begin(),
+            visibleSourceIds.end());
+        if (sourceIds.empty()) return;
+        const size_t groupIndex =
+            keyboardNavWidgetIndex_;
+        auto activeSourceIt = std::find(
+            sourceIds.begin(), sourceIds.end(),
+            group->GetActiveSourceId());
+        const size_t activeSource =
+            activeSourceIt == sourceIds.end()
+                ? 0
+                : static_cast<size_t>(std::distance(
+                    sourceIds.begin(), activeSourceIt));
+
+        auto focusSource = [&](size_t index,
+            bool activate) {
+            if (index >= sourceIds.size()) return;
+            ClearSelection();
+            if (activate)
+            {
+                widget.activeCategoryId =
+                    sourceIds[index];
+                widget.scrollOffset = 0;
+                group->InvalidateHostedView();
+            }
+            const size_t childIndex =
+                FindWidgetIndexById(sourceIds[index]);
+            if (childIndex < widgets_.size())
+                widgets_[childIndex].selected = true;
+            keyboardNavInsideWidget_ = true;
+            keyboardNavWidgetIndex_ = groupIndex;
+            keyboardNavMemberIndex_ =
+                static_cast<int>(index);
+            keyboardNavCollectionGroupTabs_ = true;
+            keyboardNavFileGroupCategoryTabs_ = false;
+            group->EnsureSourceTabVisible(index);
+            if (activate) SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        };
+
+        const bool showCategoryRow =
+            widget.showFileCategories &&
+            !(widget.showSearchBox &&
+              !group->GetSearchText().empty());
+        const std::vector<std::wstring> categoryIds =
+            showCategoryRow
+                ? group->GetHostedVisibleCategoryIds()
+                : std::vector<std::wstring>{};
+        auto* activeContainer =
+            group->GetActiveSourceContainer();
+        DesktopWidget* activeData = activeContainer
+            ? activeContainer->GetWidgetData() : nullptr;
+        auto activeCategoryIt = activeData
+            ? std::find(categoryIds.begin(),
+                categoryIds.end(),
+                activeData->activeCategoryId)
+            : categoryIds.end();
+        const size_t activeCategory =
+            activeCategoryIt == categoryIds.end()
+                ? 0
+                : static_cast<size_t>(std::distance(
+                    categoryIds.begin(), activeCategoryIt));
+
+        auto focusCategory = [&](size_t index,
+            bool activate) {
+            if (!activeData ||
+                index >= categoryIds.size())
+                return;
+            ClearSelection();
+            if (activate)
+            {
+                activeData->activeCategoryId =
+                    categoryIds[index];
+                widget.scrollOffset = 0;
+                group->InvalidateHostedView();
+            }
+            keyboardNavInsideWidget_ = true;
+            keyboardNavWidgetIndex_ = groupIndex;
+            keyboardNavMemberIndex_ =
+                static_cast<int>(index);
+            keyboardNavCollectionGroupTabs_ = false;
+            keyboardNavFileGroupCategoryTabs_ = true;
+            if (activate) SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        };
+
+        const bool groupSearching =
+            group->IsGroupSearchActive();
+        const auto itemKeys = groupSearching
+            ? std::vector<std::wstring>{}
+            : group->GetHostedVisibleItemKeys();
+        const auto folderIndices = groupSearching
+            ? std::vector<size_t>{}
+            : group->GetHostedVisibleFolderIndices();
+        const size_t itemCount = groupSearching
+            ? group->GetSlotCount()
+            : (!itemKeys.empty()
+                ? itemKeys.size()
+                : folderIndices.size());
+        auto selectItem = [&](size_t index) {
+            if (index >= itemCount) return;
+            ClearSelection();
+            if (groupSearching)
+            {
+                Item* item =
+                    group->GetMemberItem(index);
+                if (!item) return;
+                item->SetSelected(true);
+            }
+            else if (!itemKeys.empty())
+            {
+                const size_t itemIndex =
+                    FindItemIndexByKey(itemKeys[index]);
+                if (itemIndex >= items_.size()) return;
+                items_[itemIndex].selected = true;
+            }
+            else if (activeData)
+            {
+                const size_t entryIndex =
+                    folderIndices[index];
+                if (entryIndex >=
+                    activeData->folderEntries.size())
+                    return;
+                activeData->folderEntries[
+                    entryIndex].selected = true;
+            }
+            keyboardNavInsideWidget_ = true;
+            keyboardNavWidgetIndex_ = groupIndex;
+            keyboardNavMemberIndex_ =
+                static_cast<int>(index);
+            keyboardNavCollectionGroupTabs_ = false;
+            keyboardNavFileGroupCategoryTabs_ = false;
+            ScrollWidgetToMember(groupIndex,
+                static_cast<int>(index));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        };
+
+        if (keyboardNavCollectionGroupTabs_)
+        {
+            size_t current =
+                keyboardNavMemberIndex_ >= 0
+                    ? std::min(
+                        static_cast<size_t>(
+                            keyboardNavMemberIndex_),
+                        sourceIds.size() - 1)
+                    : activeSource;
+            if (arrowKey == VK_LEFT && current > 0)
+                focusSource(current - 1, true);
+            else if (arrowKey == VK_RIGHT &&
+                     current + 1 < sourceIds.size())
+                focusSource(current + 1, true);
+            else if (arrowKey == VK_DOWN)
+            {
+                if (!categoryIds.empty())
+                    focusCategory(activeCategory, false);
+                else if (itemCount > 0)
+                    selectItem(0);
+            }
+            return;
+        }
+        if (keyboardNavFileGroupCategoryTabs_)
+        {
+            if (categoryIds.empty())
+            {
+                focusSource(activeSource, false);
+                return;
+            }
+            size_t current =
+                keyboardNavMemberIndex_ >= 0
+                    ? std::min(
+                        static_cast<size_t>(
+                            keyboardNavMemberIndex_),
+                        categoryIds.size() - 1)
+                    : activeCategory;
+            if (arrowKey == VK_LEFT && current > 0)
+                focusCategory(current - 1, true);
+            else if (arrowKey == VK_RIGHT &&
+                     current + 1 < categoryIds.size())
+                focusCategory(current + 1, true);
+            else if (arrowKey == VK_UP)
+                focusSource(activeSource, false);
+            else if (arrowKey == VK_DOWN &&
+                     itemCount > 0)
+                selectItem(0);
+            return;
+        }
+
+        if (itemCount == 0)
+        {
+            if (groupSearching)
+                return;
+            if (!categoryIds.empty())
+                focusCategory(activeCategory, false);
+            else
+                focusSource(activeSource, false);
+            return;
+        }
+        size_t current =
+            keyboardNavMemberIndex_ >= 0
+                ? std::min(
+                    static_cast<size_t>(
+                        keyboardNavMemberIndex_),
+                    itemCount - 1)
+                : 0;
+        const int columns =
+            (widget.listMode || widget.dateHeaders)
+                ? 1
+                : std::max(1, widget.gridSpan.columns);
+        if (arrowKey == VK_UP &&
+            current < static_cast<size_t>(columns))
+        {
+            if (groupSearching)
+                return;
+            if (!categoryIds.empty())
+                focusCategory(activeCategory, false);
+            else
+                focusSource(activeSource, false);
+            return;
+        }
+        int next = static_cast<int>(current);
+        if (arrowKey == VK_UP) next -= columns;
+        else if (arrowKey == VK_DOWN) next += columns;
+        else if (arrowKey == VK_LEFT) --next;
+        else if (arrowKey == VK_RIGHT) ++next;
+        else return;
+        if (next >= 0 &&
+            static_cast<size_t>(next) < itemCount)
+            selectItem(static_cast<size_t>(next));
+        return;
+    }
+
+    if (widget.type == DesktopWidgetType::CollectionGroup)
+    {
+        CollectionGroup* group = nullptr;
+        for (auto& c : containers_)
+        {
+            auto* candidate =
+                dynamic_cast<CollectionGroup*>(c.get());
+            if (candidate &&
+                candidate->GetWidgetData() == &widget)
+            {
+                group = candidate;
+                break;
+            }
+        }
+        if (!group) return;
+
+        const auto& visibleChildIds =
+            group->GetVisibleCollectionIds();
+        const std::vector<std::wstring> childIds(
+            visibleChildIds.begin(),
+            visibleChildIds.end());
+        const size_t groupWidgetIndex =
+            keyboardNavWidgetIndex_;
+        auto activeIt = std::find(
+            childIds.begin(), childIds.end(),
+            group->GetActiveCollectionId());
+        size_t activeTab = activeIt == childIds.end()
+            ? 0
+            : static_cast<size_t>(
+                std::distance(childIds.begin(), activeIt));
+
+        auto focusTab = [&](size_t tabIndex,
+            bool activate) {
+            if (tabIndex >= childIds.size()) return;
+            ClearSelection();
+            if (activate)
+            {
+                widget.activeCategoryId =
+                    childIds[tabIndex];
+                widget.scrollOffset = 0;
+                group->InvalidateFilterCache();
+            }
+            const size_t childIndex =
+                FindWidgetIndexById(childIds[tabIndex]);
+            if (childIndex < widgets_.size())
+                widgets_[childIndex].selected = true;
+            keyboardNavInsideWidget_ = true;
+            keyboardNavWidgetIndex_ =
+                groupWidgetIndex;
+            keyboardNavMemberIndex_ =
+                static_cast<int>(tabIndex);
+            keyboardNavCollectionGroupTabs_ = true;
+            group->EnsureTabVisible(tabIndex);
+            if (activate)
+                SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        };
+
+        if (keyboardNavCollectionGroupTabs_)
+        {
+            if (childIds.empty()) return;
+            size_t currentTab =
+                keyboardNavMemberIndex_ >= 0
+                    ? std::min(
+                        static_cast<size_t>(
+                            keyboardNavMemberIndex_),
+                        childIds.size() - 1)
+                    : activeTab;
+            if (arrowKey == VK_LEFT)
+            {
+                if (currentTab == 0) return;
+                focusTab(currentTab - 1, true);
+            }
+            else if (arrowKey == VK_RIGHT)
+            {
+                if (currentTab + 1 >=
+                    childIds.size())
+                    return;
+                focusTab(currentTab + 1, true);
+            }
+            else if (arrowKey == VK_DOWN)
+            {
+                const auto& keys =
+                    group->GetVisibleItemKeys();
+                if (keys.empty()) return;
+                const size_t itemIndex =
+                    FindItemIndexByKey(keys.front());
+                if (itemIndex >= items_.size()) return;
+                ClearSelection();
+                items_[itemIndex].selected = true;
+                keyboardNavInsideWidget_ = true;
+                keyboardNavWidgetIndex_ =
+                    groupWidgetIndex;
+                keyboardNavMemberIndex_ = 0;
+                keyboardNavCollectionGroupTabs_ =
+                    false;
+                ScrollWidgetToMember(
+                    keyboardNavWidgetIndex_, 0);
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+            }
+            return;
+        }
+
+        if (arrowKey == VK_UP && !childIds.empty())
+        {
+            const auto& keys =
+                group->GetVisibleItemKeys();
+            int current = keyboardNavMemberIndex_;
+            for (size_t i = 0; i < keys.size(); ++i)
+            {
+                const size_t itemIndex =
+                    FindItemIndexByKey(keys[i]);
+                if (itemIndex < items_.size() &&
+                    items_[itemIndex].selected)
+                {
+                    current = static_cast<int>(i);
+                    break;
+                }
+            }
+            const int columns = widget.listMode
+                ? 1
+                : std::max(
+                    1, widget.gridSpan.columns);
+            if (current >= 0 && current < columns)
+            {
+                focusTab(activeTab, false);
+                return;
+            }
+        }
+    }
+
     size_t memberCount = 0;
     int columns = 1;
     bool isListMode = false;
 
     switch (widget.type)
     {
+    case DesktopWidgetType::CollectionGroup:
+        memberCount = 0;
+        columns = std::max(1, widget.gridSpan.columns);
+        if (widget.listMode)
+        {
+            columns = 1;
+            isListMode = true;
+        }
+        break;
     case DesktopWidgetType::Collection:
     case DesktopWidgetType::FileCategories:
         memberCount = widget.itemKeys.size();
@@ -3860,7 +6435,7 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     case DesktopWidgetType::FolderMapping:
         memberCount = widget.folderEntries.size();
         columns = std::max(1, widget.gridSpan.columns);
-        if (widget.listMode)
+        if (widget.listMode || widget.dateHeaders)
         {
             columns = 1;
             isListMode = true;
@@ -3880,11 +6455,27 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             columns = popupCols;
     }
 
-    if (memberCount == 0) return;
-
     // FileCategories：获取当前可见项目键列表（受搜索/分类标签页过滤）
     std::vector<std::wstring> visibleKeys;
-    if (widget.type == DesktopWidgetType::FileCategories)
+    std::vector<size_t> visibleFolderIndices;
+    if (widget.type == DesktopWidgetType::CollectionGroup)
+    {
+        for (auto& c : containers_)
+        {
+            auto* group =
+                dynamic_cast<CollectionGroup*>(c.get());
+            if (group && group->GetWidgetData() == &widget)
+            {
+                const auto& keys =
+                    group->GetVisibleItemKeys();
+                visibleKeys.assign(keys.begin(), keys.end());
+                break;
+            }
+        }
+        memberCount = visibleKeys.size();
+        if (memberCount == 0) return;
+    }
+    else if (widget.type == DesktopWidgetType::FileCategories)
     {
         for (auto& c : containers_)
         {
@@ -3902,6 +6493,25 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         }
         memberCount = visibleKeys.size();
         if (memberCount == 0) return;
+    }
+    else if (widget.type == DesktopWidgetType::FolderMapping)
+    {
+        for (auto& c : containers_)
+        {
+            auto* mapping = dynamic_cast<FolderMapping*>(c.get());
+            if (mapping && mapping->GetWidgetData() == &widget)
+            {
+                const auto& indices = mapping->GetVisibleEntryIndices();
+                visibleFolderIndices.assign(indices.begin(), indices.end());
+                break;
+            }
+        }
+        memberCount = visibleFolderIndices.size();
+        if (memberCount == 0) return;
+    }
+    else if (memberCount == 0)
+    {
+        return;
     }
 
     int currentIdx = keyboardNavMemberIndex_;
@@ -3924,6 +6534,21 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             currentIdx = foundIdx;
         else
             currentIdx = 0;
+    }
+    else if (!visibleFolderIndices.empty())
+    {
+        int foundIdx = -1;
+        for (size_t i = 0; i < visibleFolderIndices.size(); ++i)
+        {
+            size_t entryIndex = visibleFolderIndices[i];
+            if (entryIndex < widget.folderEntries.size() &&
+                widget.folderEntries[entryIndex].selected)
+            {
+                foundIdx = static_cast<int>(i);
+                break;
+            }
+        }
+        currentIdx = foundIdx >= 0 ? foundIdx : 0;
     }
 
     int currentCol = currentIdx % columns;
@@ -4003,8 +6628,14 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     {
         if (widget.type == DesktopWidgetType::FolderMapping)
         {
-            if (static_cast<size_t>(currentIdx) < widget.folderEntries.size())
-                widget.folderEntries[static_cast<size_t>(currentIdx)].selected = false;
+            if (static_cast<size_t>(currentIdx) <
+                visibleFolderIndices.size())
+            {
+                size_t entryIndex =
+                    visibleFolderIndices[static_cast<size_t>(currentIdx)];
+                if (entryIndex < widget.folderEntries.size())
+                    widget.folderEntries[entryIndex].selected = false;
+            }
         }
         else if (!visibleKeys.empty())
         {
@@ -4031,7 +6662,10 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     // 选中新成员
     if (widget.type == DesktopWidgetType::FolderMapping)
     {
-        widget.folderEntries[static_cast<size_t>(nextIdx)].selected = true;
+        size_t entryIndex =
+            visibleFolderIndices[static_cast<size_t>(nextIdx)];
+        if (entryIndex >= widget.folderEntries.size()) return;
+        widget.folderEntries[entryIndex].selected = true;
     }
     else if (!visibleKeys.empty())
     {
@@ -4047,7 +6681,11 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             items_[itemIdx].selected = true;
     }
 
-    keyboardNavMemberIndex_ = nextIdx;
+    keyboardNavMemberIndex_ =
+        widget.type == DesktopWidgetType::FolderMapping
+            ? static_cast<int>(
+                visibleFolderIndices[static_cast<size_t>(nextIdx)])
+            : nextIdx;
 
     // 确保选中的成员项可见
     ScrollWidgetToMember(keyboardNavWidgetIndex_, nextIdx);
@@ -4068,16 +6706,8 @@ inline void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         else if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
             (cols > 1 || rows > 1))   // 紧凑模式保持弹窗常开
         {
-            // 退回内联区域：关闭弹窗（不调用 CloseCollectionPopup，
-            // 因为它会 ClearSelection 清除刚导航选中的成员项）
-            popupWidgetIndex_ = static_cast<size_t>(-1);
-            popupScrollOffset_ = 0;
-            popupHasAnchor_ = false;
-            popupAnchoredToDock_ = false;
-            popupAnchorPoint_ = {};
-            popupPageId_.clear();
-            popupCategoryId_.clear();
-            popupRect_ = {};
+            // 退回内联区域时保留刚导航选中的成员项，但仍播放关闭动画。
+            CloseCollectionPopup(false);
         }
     }
 
@@ -4131,11 +6761,193 @@ inline void DesktopApp::EnterWidget()
     keyboardNavInsideWidget_ = true;
     keyboardNavWidgetIndex_ = static_cast<size_t>(foundIdx);
     keyboardNavMemberIndex_ = 0;
+    keyboardNavCollectionGroupTabs_ = false;
+    keyboardNavFileGroupCategoryTabs_ = false;
 
     if (widget.type == DesktopWidgetType::FolderMapping)
     {
-        if (!widget.folderEntries.empty())
-            widgets_[static_cast<size_t>(foundIdx)].folderEntries[0].selected = true;
+        size_t entryIndex = static_cast<size_t>(-1);
+        for (auto& c : containers_)
+        {
+            auto* mapping = dynamic_cast<FolderMapping*>(c.get());
+            if (mapping && mapping->GetWidgetData() == &widget)
+            {
+                const auto& visibleEntries =
+                    mapping->GetVisibleEntryIndices();
+                if (!visibleEntries.empty())
+                    entryIndex = visibleEntries.front();
+                break;
+            }
+        }
+        if (entryIndex < widget.folderEntries.size())
+        {
+            widgets_[static_cast<size_t>(foundIdx)]
+                .folderEntries[entryIndex].selected = true;
+            keyboardNavMemberIndex_ = static_cast<int>(entryIndex);
+        }
+        else
+        {
+            keyboardNavInsideWidget_ = false;
+            keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+            keyboardNavMemberIndex_ = -1;
+            keyboardNavCollectionGroupTabs_ = false;
+            keyboardNavFileGroupCategoryTabs_ = false;
+            widgets_[static_cast<size_t>(foundIdx)].selected = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
+    else if (widget.type == DesktopWidgetType::FileGroup)
+    {
+        FileGroup* group = nullptr;
+        for (auto& c : containers_)
+        {
+            auto* candidate =
+                dynamic_cast<FileGroup*>(c.get());
+            if (candidate &&
+                candidate->GetWidgetData() == &widget)
+            {
+                group = candidate;
+                break;
+            }
+        }
+        std::vector<std::wstring> sourceIds;
+        if (group)
+        {
+            const auto& visible =
+                group->GetVisibleSourceIds();
+            sourceIds.assign(
+                visible.begin(), visible.end());
+        }
+        if (group &&
+            group->IsGroupSearchActive())
+        {
+            if (group->GetSlotCount() == 0)
+            {
+                keyboardNavInsideWidget_ = false;
+                keyboardNavWidgetIndex_ =
+                    static_cast<size_t>(-1);
+                keyboardNavMemberIndex_ = -1;
+                widgets_[static_cast<size_t>(
+                    foundIdx)].selected = true;
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                return;
+            }
+            Item* item = group->GetMemberItem(0);
+            if (!item)
+            {
+                keyboardNavInsideWidget_ = false;
+                keyboardNavWidgetIndex_ =
+                    static_cast<size_t>(-1);
+                keyboardNavMemberIndex_ = -1;
+                widgets_[static_cast<size_t>(
+                    foundIdx)].selected = true;
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                return;
+            }
+            item->SetSelected(true);
+            keyboardNavMemberIndex_ = 0;
+            keyboardNavCollectionGroupTabs_ = false;
+            keyboardNavFileGroupCategoryTabs_ = false;
+        }
+        else if (!group || sourceIds.empty())
+        {
+            keyboardNavInsideWidget_ = false;
+            keyboardNavWidgetIndex_ =
+                static_cast<size_t>(-1);
+            keyboardNavMemberIndex_ = -1;
+            keyboardNavCollectionGroupTabs_ = false;
+            keyboardNavFileGroupCategoryTabs_ = false;
+            widgets_[static_cast<size_t>(
+                foundIdx)].selected = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        else
+        {
+            auto active = std::find(
+                sourceIds.begin(), sourceIds.end(),
+                group->GetActiveSourceId());
+            const size_t tabIndex =
+                active == sourceIds.end()
+                    ? 0
+                    : static_cast<size_t>(
+                        std::distance(
+                            sourceIds.begin(), active));
+            widgets_[static_cast<size_t>(foundIdx)]
+                .activeCategoryId = sourceIds[tabIndex];
+            const size_t childIndex =
+                FindWidgetIndexById(
+                    sourceIds[tabIndex]);
+            if (childIndex < widgets_.size())
+                widgets_[childIndex].selected = true;
+            keyboardNavMemberIndex_ =
+                static_cast<int>(tabIndex);
+            keyboardNavCollectionGroupTabs_ = true;
+            keyboardNavFileGroupCategoryTabs_ = false;
+            group->EnsureSourceTabVisible(tabIndex);
+        }
+    }
+    else if (widget.type == DesktopWidgetType::CollectionGroup)
+    {
+        CollectionGroup* group = nullptr;
+        for (auto& c : containers_)
+        {
+            auto* candidate =
+                dynamic_cast<CollectionGroup*>(c.get());
+            if (!candidate ||
+                candidate->GetWidgetData() != &widget)
+                continue;
+            group = candidate;
+            break;
+        }
+        if (!group)
+        {
+            keyboardNavInsideWidget_ = false;
+            keyboardNavWidgetIndex_ =
+                static_cast<size_t>(-1);
+            keyboardNavMemberIndex_ = -1;
+            keyboardNavCollectionGroupTabs_ = false;
+            keyboardNavFileGroupCategoryTabs_ = false;
+            widgets_[static_cast<size_t>(foundIdx)].selected = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        const auto& childIds =
+            group->GetVisibleCollectionIds();
+        if (childIds.empty())
+        {
+            keyboardNavInsideWidget_ = false;
+            keyboardNavWidgetIndex_ =
+                static_cast<size_t>(-1);
+            keyboardNavMemberIndex_ = -1;
+            keyboardNavCollectionGroupTabs_ = false;
+            keyboardNavFileGroupCategoryTabs_ = false;
+            widgets_[static_cast<size_t>(foundIdx)].selected = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        auto active = std::find(
+            childIds.begin(), childIds.end(),
+            group->GetActiveCollectionId());
+        const size_t tabIndex =
+            active == childIds.end()
+                ? 0
+                : static_cast<size_t>(
+                    std::distance(
+                        childIds.begin(), active));
+        widgets_[static_cast<size_t>(foundIdx)]
+            .activeCategoryId = childIds[tabIndex];
+        const size_t childIndex =
+            FindWidgetIndexById(childIds[tabIndex]);
+        if (childIndex < widgets_.size())
+            widgets_[childIndex].selected = true;
+        keyboardNavMemberIndex_ =
+            static_cast<int>(tabIndex);
+        keyboardNavCollectionGroupTabs_ = true;
+        group->EnsureTabVisible(tabIndex);
     }
     else
     {
@@ -4180,6 +6992,49 @@ inline void DesktopApp::ExitWidget()
             for (auto& e : widget.folderEntries)
                 e.selected = false;
         }
+        else if (widget.type == DesktopWidgetType::CollectionGroup)
+        {
+            for (const auto& childId : widget.childWidgetIds)
+            {
+                const size_t childIndex =
+                    FindWidgetIndexById(childId);
+                if (childIndex < widgets_.size())
+                {
+                    widgets_[childIndex].selected = false;
+                    for (const auto& key :
+                        widgets_[childIndex].itemKeys)
+                    {
+                        const size_t itemIndex =
+                            FindItemIndexByKey(key);
+                        if (itemIndex < items_.size())
+                            items_[itemIndex].selected = false;
+                    }
+                }
+            }
+        }
+        else if (widget.type == DesktopWidgetType::FileGroup)
+        {
+            for (const auto& childId :
+                widget.childWidgetIds)
+            {
+                const size_t childIndex =
+                    FindWidgetIndexById(childId);
+                if (childIndex >= widgets_.size())
+                    continue;
+                DesktopWidget& child =
+                    widgets_[childIndex];
+                child.selected = false;
+                for (auto& entry : child.folderEntries)
+                    entry.selected = false;
+                for (const auto& key : child.itemKeys)
+                {
+                    const size_t itemIndex =
+                        FindItemIndexByKey(key);
+                    if (itemIndex < items_.size())
+                        items_[itemIndex].selected = false;
+                }
+            }
+        }
         else
         {
             for (const auto& key : widget.itemKeys)
@@ -4194,6 +7049,8 @@ inline void DesktopApp::ExitWidget()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavCollectionGroupTabs_ = false;
+    keyboardNavFileGroupCategoryTabs_ = false;
 
     // 退出组件时关闭其弹窗
     if (popupWidgetIndex_ == wi)
@@ -4234,8 +7091,106 @@ inline void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
 {
     if (widgetIndex >= widgets_.size() || memberIndex < 0) return;
     const auto& widget = widgets_[widgetIndex];
-
-    if (widget.type == DesktopWidgetType::FolderMapping)
+    if (widget.type == DesktopWidgetType::CollectionGroup)
+    {
+        for (auto& c : containers_)
+        {
+            auto* group =
+                dynamic_cast<CollectionGroup*>(c.get());
+            if (!group || group->GetWidgetData() != &widget)
+                continue;
+            const auto& keys = group->GetVisibleItemKeys();
+            if (static_cast<size_t>(memberIndex) < keys.size())
+            {
+                const size_t itemIndex =
+                    FindItemIndexByKey(
+                        keys[static_cast<size_t>(memberIndex)]);
+                if (itemIndex < items_.size())
+                    LaunchDesktopItem(itemIndex);
+            }
+            break;
+        }
+    }
+    else if (widget.type == DesktopWidgetType::FileGroup)
+    {
+        for (auto& c : containers_)
+        {
+            auto* group =
+                dynamic_cast<FileGroup*>(c.get());
+            if (!group ||
+                group->GetWidgetData() != &widget)
+                continue;
+            if (group->IsGroupSearchActive())
+            {
+                Item* item = group->GetMemberItem(
+                    static_cast<size_t>(memberIndex));
+                if (auto* desktop =
+                        dynamic_cast<DesktopIcon*>(item))
+                {
+                    DesktopItem* source =
+                        desktop->GetDesktopItem();
+                    if (source)
+                    {
+                        const size_t itemIndex =
+                            FindItemIndexByKey(
+                                source->layoutKey);
+                        if (itemIndex < items_.size())
+                            LaunchDesktopItem(itemIndex);
+                    }
+                }
+                else if (item &&
+                         !item->GetPath().empty())
+                    ShellExecuteW(
+                        nullptr, L"open",
+                        item->GetPath().c_str(),
+                        nullptr, nullptr,
+                        SW_SHOWNORMAL);
+                break;
+            }
+            const auto keys =
+                group->GetHostedVisibleItemKeys();
+            if (static_cast<size_t>(memberIndex) <
+                keys.size())
+            {
+                const size_t itemIndex =
+                    FindItemIndexByKey(
+                        keys[static_cast<size_t>(
+                            memberIndex)]);
+                if (itemIndex < items_.size())
+                    LaunchDesktopItem(itemIndex);
+                break;
+            }
+            const auto entries =
+                group->
+                    GetHostedVisibleFolderIndices();
+            auto* active =
+                group->GetActiveSourceContainer();
+            DesktopWidget* activeData = active
+                ? active->GetWidgetData() : nullptr;
+            if (activeData &&
+                static_cast<size_t>(memberIndex) <
+                    entries.size())
+            {
+                const size_t entryIndex =
+                    entries[static_cast<size_t>(
+                        memberIndex)];
+                if (entryIndex <
+                    activeData->folderEntries.size())
+                {
+                    const auto& entry =
+                        activeData->
+                            folderEntries[entryIndex];
+                    if (!entry.fullPath.empty())
+                        ShellExecuteW(nullptr, L"open",
+                            entry.fullPath.c_str(),
+                            nullptr, nullptr,
+                            SW_SHOWNORMAL);
+                }
+            }
+            break;
+        }
+    }
+    else if (widget.type == DesktopWidgetType::FolderMapping)
     {
         if (static_cast<size_t>(memberIndex) < widget.folderEntries.size())
         {
@@ -4359,20 +7314,34 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (entryIndex < dockEntries_.size())
             {
                 ClearSelection();
-                dockEntries_[entryIndex].selected = true;
-                const RECT dockItemBounds = dockItem->GetBounds();
+                dockItem->SetSelected(true);
+                const RECT dockItemBounds = dock->GetElementVisualRect(
+                    dockItem->GetBounds(), pt);
                 if (dockItem->GetEntryType() == DockEntryType::DesktopItem)
                 {
                     size_t itemIndex = FindItemIndexByKey(dockItem->GetReference());
                     if (itemIndex < items_.size())
                     {
-                        items_[itemIndex].selected = true;
+                        items_[itemIndex].selected =
+                            dockItem->IsSelected();
                         items_[itemIndex].bounds = dockItemBounds;
                         InvalidateRect(hwnd_, nullptr, FALSE);
                         if (IsProtectedDesktopIcon(items_[itemIndex]))
-                            ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
+                            ShowShellContextMenu(
+                                screenPt,
+                                static_cast<int>(itemIndex),
+                                false, dockItemBounds);
                         else
-                            ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+                            ShowItemContextMenu(
+                                screenPt,
+                                static_cast<int>(itemIndex),
+                                false, false, dockItemBounds,
+                                dockEntries_[entryIndex].
+                                        keepOnDesktop
+                                    ? std::optional<size_t>(
+                                          entryIndex)
+                                    : std::nullopt,
+                                true);
                     }
                 }
                 else
@@ -4380,10 +7349,12 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
                     size_t widgetIndex = FindWidgetIndexById(dockItem->GetReference());
                     if (widgetIndex < widgets_.size())
                     {
-                        widgets_[widgetIndex].selected = true;
-                        widgets_[widgetIndex].bounds = dockItemBounds;
+                        widgets_[widgetIndex].selected =
+                            dockItem->IsSelected();
                         InvalidateRect(hwnd_, nullptr, FALSE);
-                        ShowWidgetContextMenu(screenPt, widgetIndex);
+                        ShowWidgetContextMenu(
+                            screenPt, widgetIndex,
+                            dockItemBounds);
                     }
                 }
                 return;
@@ -4396,19 +7367,47 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (itemIndex < items_.size())
             {
                 ClearSelection();
-                items_[itemIndex].selected = true;
-                items_[itemIndex].bounds = frequentItem->GetBounds();
+                frequentItem->SetSelected(true);
+                items_[itemIndex].bounds = dock->GetElementVisualRect(
+                    frequentItem->GetBounds(), pt);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 if (IsProtectedDesktopIcon(items_[itemIndex]))
-                    ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
+                    ShowShellContextMenu(
+                        screenPt,
+                        static_cast<int>(itemIndex),
+                        false, dock->GetElementVisualRect(
+                            frequentItem->GetBounds(), pt));
                 else
-                    ShowItemContextMenu(screenPt, static_cast<int>(itemIndex), true);
+                    ShowItemContextMenu(
+                        screenPt,
+                        static_cast<int>(itemIndex),
+                        true, false,
+                        dock->GetElementVisualRect(
+                            frequentItem->GetBounds(), pt),
+                        std::nullopt, true);
                 return;
             }
         }
 
-        RECT dockBounds = dock->GetBounds();
-        if (PtInRect(&dockBounds, pt))
+        if (DockRunningItem* runningItem =
+                dock->RunningItemAtPoint(pt))
+        {
+            const size_t runningIndex =
+                runningItem->GetRunningIndex();
+            if (runningIndex <
+                dockUnpinnedRunningApps_.size())
+            {
+                ClearSelection();
+                DismissDockWindowPreviewUntilLeave();
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                ShowDockRunningAppContextMenu(
+                    screenPt, runningIndex);
+                return;
+            }
+        }
+
+        if (dock->ContainsInteractivePoint(pt))
         {
             ClearSelection();
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -4417,7 +7416,54 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         }
     }
 
-    if (popupWidgetIndex_ < widgets_.size())
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
+    {
+        RECT popup = GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+        if (PtInRect(&popup, pt))
+        {
+            RECT content =
+                GetCollectionPopupContentRect(popup);
+            for (size_t i = 0;
+                 i < dockFolderPopupWidget_.
+                    folderEntries.size(); ++i)
+            {
+                RECT itemRect =
+                    GetCollectionPopupItemRect(popup, i);
+                RECT clipped = itemRect;
+                clipped.top =
+                    std::max(clipped.top, content.top);
+                clipped.bottom =
+                    std::min(clipped.bottom, content.bottom);
+                if (clipped.bottom <= clipped.top ||
+                    !PtInRect(&clipped, pt))
+                    continue;
+                ClearSelection();
+                if (!dockFolderPopupWidget_.
+                        folderEntries[i].selected)
+                {
+                    for (auto& entry :
+                         dockFolderPopupWidget_.
+                            folderEntries)
+                        entry.selected = false;
+                    dockFolderPopupWidget_.
+                        folderEntries[i].
+                            selected = true;
+                }
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                ShowDockFolderPopupContextMenu(
+                    screenPt, i);
+                return;
+            }
+            ShowDockFolderPopupContextMenu(
+                screenPt);
+            return;
+        }
+    }
+    else if (IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
         if (PtInRect(&popup, pt))
@@ -4448,9 +7494,126 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
         }
     }
 
+    // File-group source tabs own their context menu; do not let the
+    // surrounding widget frame consume a tab right-click.
+    for (auto it = containers_.rbegin();
+        it != containers_.rend(); ++it)
+    {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(it->get()))
+            continue;
+        auto* group =
+            dynamic_cast<FileGroup*>(it->get());
+        if (!group) continue;
+        const std::wstring childId =
+            group->SourceIdAtPoint(pt);
+        if (childId.empty()) continue;
+        DesktopWidget* groupData = group->GetWidgetData();
+        const size_t groupIndex = groupData
+            ? FindWidgetIndexById(groupData->id)
+            : static_cast<size_t>(-1);
+        const size_t childIndex =
+            FindWidgetIndexById(childId);
+        if (groupIndex >= widgets_.size() ||
+            childIndex >= widgets_.size())
+            break;
+
+        const auto childIds =
+            group->GetVisibleSourceIds();
+        const auto childIt = std::find(
+            childIds.begin(), childIds.end(), childId);
+        const size_t tabIndex =
+            childIt == childIds.end()
+                ? 0
+                : static_cast<size_t>(
+                    std::distance(
+                        childIds.begin(), childIt));
+        ClearSelection();
+        widgets_[groupIndex].activeCategoryId = childId;
+        widgets_[groupIndex].scrollOffset = 0;
+        widgets_[childIndex].selected = true;
+        group->InvalidateHostedView();
+        group->EnsureSourceTabVisible(tabIndex);
+        keyboardNavInsideWidget_ = true;
+        keyboardNavWidgetIndex_ = groupIndex;
+        keyboardNavMemberIndex_ =
+            static_cast<int>(tabIndex);
+        keyboardNavCollectionGroupTabs_ = true;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        ShowFileGroupSourceTabContextMenu(
+            screenPt, groupIndex, childId);
+        return;
+    }
+
+    // Collection-group tabs own their context menu.
+    for (auto it = containers_.rbegin();
+        it != containers_.rend(); ++it)
+    {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(it->get()))
+            continue;
+        auto* group =
+            dynamic_cast<CollectionGroup*>(it->get());
+        if (!group) continue;
+        const std::wstring collectionId =
+            group->CategoryIdAtPoint(pt);
+        if (collectionId.empty()) continue;
+
+        DesktopWidget* groupData =
+            group->GetWidgetData();
+        size_t groupIndex =
+            static_cast<size_t>(-1);
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (&widgets_[i] == groupData)
+            {
+                groupIndex = i;
+                break;
+            }
+        }
+        const size_t childIndex =
+            FindWidgetIndexById(collectionId);
+        if (groupIndex >= widgets_.size() ||
+            childIndex >= widgets_.size())
+            break;
+
+        const auto& childIds =
+            group->GetVisibleCollectionIds();
+        auto childIt = std::find(
+            childIds.begin(), childIds.end(),
+            collectionId);
+        const size_t tabIndex =
+            childIt == childIds.end()
+                ? 0
+                : static_cast<size_t>(
+                    std::distance(
+                        childIds.begin(), childIt));
+        ClearSelection();
+        widgets_[groupIndex].activeCategoryId =
+            collectionId;
+        widgets_[groupIndex].scrollOffset = 0;
+        widgets_[childIndex].selected = true;
+        group->InvalidateFilterCache();
+        group->EnsureTabVisible(tabIndex);
+        keyboardNavInsideWidget_ = true;
+        keyboardNavWidgetIndex_ = groupIndex;
+        keyboardNavMemberIndex_ =
+            static_cast<int>(tabIndex);
+        keyboardNavCollectionGroupTabs_ = true;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        ShowCollectionGroupTabContextMenu(
+            screenPt, groupIndex, collectionId);
+        return;
+    }
+
     // Check widget member items first; otherwise the widget frame menu steals member right-clicks.
     for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(it->get()))
+            continue;
         auto* wc = dynamic_cast<WidgetContainer*>(it->get());
         if (!wc) continue;
 
@@ -4526,6 +7689,9 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
     size_t hitWidget = static_cast<size_t>(-1);
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
     {
+        if (desktopIconsHidden_ &&
+            !widgets_[wi].keepWhenDesktopHidden)
+            continue;
         for (auto& c : containers_)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());
@@ -4590,13 +7756,33 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
  */
 inline void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kDesktopPassthroughHoldTimerId)
+    {
+        if (!desktopPassthroughHoldActive_)
+        {
+            if (desktopPassthroughHotkeyHwnd_ &&
+                IsWindow(desktopPassthroughHotkeyHwnd_))
+            {
+                KillTimer(desktopPassthroughHotkeyHwnd_,
+                    kDesktopPassthroughHoldTimerId);
+            }
+        }
+        else if (!IsDesktopPassthroughHotkeyDown() &&
+            !IsDesktopPassthroughPointerDown())
+        {
+            EndDesktopPassthroughHold();
+        }
+        return;
+    }
+
     if (timerId >= kWidgetTimerIdBase)
     {
         auto it = widgetTimerIds_.find(static_cast<UINT_PTR>(timerId));
         if (it != widgetTimerIds_.end())
         {
             if (widgetEngine_)
-                widgetEngine_->OnWidgetTimer(it->second);
+                widgetEngine_->OnWidgetTimer(
+                    it->second, static_cast<UINT_PTR>(timerId));
             return;
         }
     }
@@ -4653,7 +7839,32 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
     {
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
-        RefreshDockRunningWindows();
+        const DWORD now = GetTickCount();
+        const DWORD foregroundTick =
+            dockForegroundChangedTick_.load();
+        const DWORD windowStateTick =
+            dockWindowListChangedTick_.load();
+        const bool dockStateChanged =
+            foregroundTick != dockRunningWindowsForegroundTick_ ||
+            windowStateTick != dockRunningWindowsStateTick_;
+        const bool fallbackRefreshDue =
+            dockRunningWindowsRefreshTick_ == 0 ||
+            now - dockRunningWindowsRefreshTick_ >= 10000;
+        if (generalSettings_.dockEnabled &&
+            (dockStateChanged || fallbackRefreshDue))
+            RefreshDockRunningWindows();
+    }
+    else if (timerId == kDockWindowPreviewHoverTimerId)
+    {
+        OnDockWindowPreviewHoverTimer();
+    }
+    else if (timerId == kDockLaunchBounceTimerId)
+    {
+        OnDockLaunchBounceTimer();
+    }
+    else if (timerId == kFloatingDockEdgeSwipeTimerId)
+    {
+        UpdateFloatingDockEdgeSwipe();
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
@@ -4666,17 +7877,59 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
             foregroundTick != systemTaskbarBackdropForegroundTick_;
         const bool windowStateChanged = windowStateTick !=
             systemTaskbarWindowStateObservedTick_;
+        const bool windowStateRefreshDue =
+            windowStateChanged &&
+            (systemTaskbarWindowScanTick_ == 0 ||
+                now - systemTaskbarWindowScanTick_ >= 250);
         const bool foregroundSettling = foregroundTick != 0 &&
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
         if (IsSystemTaskbarHookRequired(dockSettings_) &&
-            (foregroundChanged || windowStateChanged || foregroundSettling))
+            (foregroundChanged || windowStateRefreshDue ||
+                foregroundSettling))
         {
-            RefreshSystemTaskbarAppearance(true);
+            const bool taskbarAppearanceApplied =
+                RefreshSystemTaskbarAppearance(true, true);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
-            if (hwnd_ && IsWindow(hwnd_))
+            if (taskbarAppearanceApplied &&
+                hwnd_ && IsWindow(hwnd_))
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }
+    }
+    else if (timerId ==
+        kCollectionPopupAnimationTimerId)
+    {
+        popupAnimation_.Advance(GetTickCount64());
+        if (!popupAnimation_.IsAnimating())
+        {
+            KillTimer(
+                hwnd_,
+                kCollectionPopupAnimationTimerId);
+            if (popupAnimation_.IsHidden())
+            {
+                FinalizeCloseCollectionPopup();
+                return;
+            }
+        }
+        InvalidateCollectionPopupAnimation();
+    }
+    else if (timerId ==
+        kLuaWidgetPanelAnimationTimerId)
+    {
+        luaWidgetPanelAnimation_.Advance(
+            GetTickCount64());
+        if (!luaWidgetPanelAnimation_.IsAnimating())
+        {
+            KillTimer(
+                hwnd_,
+                kLuaWidgetPanelAnimationTimerId);
+            if (luaWidgetPanelAnimation_.IsHidden())
+            {
+                FinalizeCloseLuaWidgetPanel();
+                return;
+            }
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
@@ -4693,6 +7946,33 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         {
             KillTimer(hwnd_, kCollectionPopupDwellTimerId);
             OnMouseMove(0, MAKELPARAM(lastMousePoint_.x, lastMousePoint_.y));
+            InvalidateFloatingDockWindow(true);
+        }
+    }
+    else if (timerId == kCollectionGroupTabDwellTimerId)
+    {
+        if (!dragSession_.IsActive() ||
+            collectionGroupTabDwellWidgetIndex_ >=
+                widgets_.size() ||
+            collectionGroupTabDwellId_.empty())
+        {
+            collectionGroupTabDwellWidgetIndex_ =
+                static_cast<size_t>(-1);
+            collectionGroupTabDwellId_.clear();
+            KillTimer(
+                hwnd_, kCollectionGroupTabDwellTimerId);
+            return;
+        }
+
+        if (TryActivateCollectionGroupTab(GetTickCount()))
+        {
+            KillTimer(
+                hwnd_, kCollectionGroupTabDwellTimerId);
+            OnMouseMove(
+                0, MAKELPARAM(
+                    lastMousePoint_.x,
+                    lastMousePoint_.y));
+            InvalidateFloatingDockWindow(true);
         }
     }
     else if (timerId == kDockHandoffDwellTimerId)
@@ -4705,12 +7985,55 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
         }
         if (GetTickCount() - dockHandoffDwellStartTick_ >= kDockHandoffDwellDelayMs)
         {
+            const POINT dwellPoint =
+                dragSession_.CurrentPoint();
+            DockContainer* dock =
+                GetDockContainerAtPoint(
+                    dwellPoint);
+            DockEntryItem* dockItem =
+                dock
+                    ? dock->EntryAtPoint(
+                        dwellPoint)
+                    : nullptr;
+            const size_t entryIndex =
+                dockItem
+                    ? dockItem->
+                        GetEntryIndex()
+                    : static_cast<size_t>(-1);
+            if (entryIndex <
+                    dockEntries_.size() &&
+                IsFolderDockEntry(
+                    dockEntries_[entryIndex]))
+            {
+                dockHandoffDwellIndex_ =
+                    static_cast<size_t>(-1);
+                dockHandoffDwellStartTick_ = 0;
+                dockHandoffDwellReady_ = false;
+                KillTimer(
+                    hwnd_,
+                    kDockHandoffDwellTimerId);
+                OpenDockFolderPopupAt(
+                    entryIndex, dwellPoint);
+                if (!externalDragActive_)
+                    OnMouseMove(
+                        0,
+                        MAKELPARAM(
+                            dwellPoint.x,
+                            dwellPoint.y));
+                InvalidateRect(
+                    hwnd_, nullptr, FALSE);
+                InvalidateFloatingDockWindow(
+                    true);
+                return;
+            }
+
             dockHandoffDwellReady_ = true;
             KillTimer(hwnd_, kDockHandoffDwellTimerId);
             if (!externalDragActive_)
                 OnMouseMove(0, MAKELPARAM(
                     dragSession_.CurrentPoint().x, dragSession_.CurrentPoint().y));
             InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidateFloatingDockWindow(true);
         }
     }
     else if (timerId == kPageNotifyTimerId)
@@ -4759,7 +8082,12 @@ inline void DesktopApp::OnTimer(WPARAM timerId)
 inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
     lastMousePoint_ = point;
-    if (!dragSession_.IsActive() || SuppressDesktopWidgetDragTargets())
+    if (!dragSession_.IsActive() ||
+        SuppressDesktopWidgetDragTargets() ||
+        (dragSession_.SourceList().
+                hasCollectionGroupEntries ||
+            dragSession_.SourceList().
+                hasFileGroupEntries))
     {
         popupDwellWidgetIndex_ = static_cast<size_t>(-1);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -4779,6 +8107,9 @@ inline void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     for (auto& c : containers_)
     {
         if (hoveredCollection < widgets_.size()) break;
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(c.get()))
+            continue;
         auto* collection = dynamic_cast<Collection*>(c.get());
         if (!collection) continue;
 
@@ -4829,6 +8160,9 @@ inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
         return false;
     if (popupDwellWidgetIndex_ >= widgets_.size())
         return false;
+    if (desktopIconsHidden_ &&
+        !widgets_[popupDwellWidgetIndex_].keepWhenDesktopHidden)
+        return false;
     if (popupDwellWidgetIndex_ == popupWidgetIndex_)
         return false;
     if (now - popupDwellTick_ < kCollectionPopupDwellDelayMs)
@@ -4840,7 +8174,390 @@ inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
     return true;
 }
 
+inline void DesktopApp::UpdateCollectionGroupTabDwell(
+    POINT point)
+{
+    auto clearDwell = [&]() {
+        collectionGroupTabDwellWidgetIndex_ =
+            static_cast<size_t>(-1);
+        collectionGroupTabDwellId_.clear();
+        collectionGroupTabDwellTick_ = 0;
+        KillTimer(
+            hwnd_, kCollectionGroupTabDwellTimerId);
+    };
+
+    const DragSourceList& sourceList =
+        dragSession_.SourceList();
+    if (!dragSession_.IsActive() ||
+        !(sourceList.hasDesktopIcons ||
+          sourceList.hasFolderEntries ||
+          sourceList.hasExternalFiles) ||
+        sourceList.hasCollectionGroupEntries ||
+        sourceList.hasFileGroupEntries)
+    {
+        clearDwell();
+        return;
+    }
+
+    size_t hoveredGroup = static_cast<size_t>(-1);
+    std::wstring hoveredId;
+    for (auto it = containers_.rbegin();
+        it != containers_.rend(); ++it)
+    {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(it->get()))
+            continue;
+        DesktopWidget* data = nullptr;
+        std::wstring id;
+        if (auto* group =
+                dynamic_cast<CollectionGroup*>(it->get());
+            group && sourceList.hasDesktopIcons)
+        {
+            id = group->CategoryIdAtPoint(point);
+            if (id.empty() ||
+                id == group->GetActiveCollectionId())
+                continue;
+            data = group->GetWidgetData();
+        }
+        else if (auto* fileGroup =
+                     dynamic_cast<FileGroup*>(it->get()))
+        {
+            const std::wstring sourceId =
+                fileGroup->SourceIdAtPoint(point);
+            if (!sourceId.empty() &&
+                sourceId != fileGroup->GetActiveSourceId())
+            {
+                id = L"source:" + sourceId;
+            }
+            else
+            {
+                const std::wstring categoryId =
+                    fileGroup->CategoryIdAtPoint(point);
+                ScrollingItemWidget* active =
+                    fileGroup->GetActiveSourceContainer();
+                DesktopWidget* activeData = active
+                    ? active->GetWidgetData() : nullptr;
+                if (categoryId.empty() ||
+                    (activeData &&
+                     activeData->activeCategoryId ==
+                        categoryId))
+                    continue;
+                id = L"category:" + categoryId;
+            }
+            data = fileGroup->GetWidgetData();
+        }
+        else
+        {
+            continue;
+        }
+        if (!data) continue;
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (&widgets_[i] != data) continue;
+            hoveredGroup = i;
+            hoveredId = std::move(id);
+            break;
+        }
+        if (hoveredGroup < widgets_.size())
+            break;
+    }
+
+    if (hoveredGroup >= widgets_.size() ||
+        hoveredId.empty())
+    {
+        clearDwell();
+        return;
+    }
+
+    if (collectionGroupTabDwellWidgetIndex_ !=
+            hoveredGroup ||
+        collectionGroupTabDwellId_ != hoveredId)
+    {
+        collectionGroupTabDwellWidgetIndex_ =
+            hoveredGroup;
+        collectionGroupTabDwellId_ =
+            std::move(hoveredId);
+        collectionGroupTabDwellTick_ =
+            GetTickCount();
+        SetTimer(
+            hwnd_,
+            kCollectionGroupTabDwellTimerId,
+            kCollectionGroupTabDwellIntervalMs,
+            nullptr);
+    }
+}
+
+inline bool DesktopApp::TryActivateCollectionGroupTab(
+    DWORD now)
+{
+    if (!dragSession_.IsActive() ||
+        collectionGroupTabDwellWidgetIndex_ >=
+            widgets_.size() ||
+        collectionGroupTabDwellId_.empty() ||
+        now - collectionGroupTabDwellTick_ <
+            kCollectionGroupTabDwellDelayMs)
+        return false;
+
+    DesktopWidget& data =
+        widgets_[collectionGroupTabDwellWidgetIndex_];
+    const bool collectionGroup =
+        data.type == DesktopWidgetType::CollectionGroup;
+    const bool fileGroup =
+        data.type == DesktopWidgetType::FileGroup;
+    if (!collectionGroup && !fileGroup)
+    {
+        collectionGroupTabDwellWidgetIndex_ =
+            static_cast<size_t>(-1);
+        collectionGroupTabDwellId_.clear();
+        return false;
+    }
+
+    WidgetContainer* groupedContainer = nullptr;
+    for (auto& container : containers_)
+    {
+        auto* candidate =
+            dynamic_cast<WidgetContainer*>(
+                container.get());
+        if (candidate &&
+            candidate->GetWidgetData() == &data)
+        {
+            groupedContainer = candidate;
+            break;
+        }
+    }
+    if (!groupedContainer)
+    {
+        collectionGroupTabDwellWidgetIndex_ =
+            static_cast<size_t>(-1);
+        collectionGroupTabDwellId_.clear();
+        return false;
+    }
+
+    bool activated = false;
+    if (collectionGroup)
+    {
+        auto* group =
+            dynamic_cast<CollectionGroup*>(
+                groupedContainer);
+        const std::wstring id =
+            collectionGroupTabDwellId_;
+        if (group &&
+            group->CategoryIdAtPoint(lastMousePoint_) == id &&
+            std::find(data.childWidgetIds.begin(),
+                data.childWidgetIds.end(), id) !=
+                data.childWidgetIds.end())
+        {
+            data.activeCategoryId = id;
+            data.scrollOffset = 0;
+            group->InvalidateFilterCache();
+            activated = true;
+        }
+    }
+    else
+    {
+        auto* group =
+            dynamic_cast<FileGroup*>(groupedContainer);
+        constexpr std::wstring_view sourcePrefix =
+            L"source:";
+        constexpr std::wstring_view categoryPrefix =
+            L"category:";
+        if (group &&
+            collectionGroupTabDwellId_.starts_with(
+                sourcePrefix))
+        {
+            const std::wstring id =
+                collectionGroupTabDwellId_.substr(
+                    sourcePrefix.size());
+            if (group->SourceIdAtPoint(lastMousePoint_) == id &&
+                std::find(data.childWidgetIds.begin(),
+                    data.childWidgetIds.end(), id) !=
+                    data.childWidgetIds.end())
+            {
+                data.activeCategoryId = id;
+                data.scrollOffset = 0;
+                group->InvalidateHostedView();
+                activated = true;
+            }
+        }
+        else if (group &&
+                 collectionGroupTabDwellId_.starts_with(
+                    categoryPrefix))
+        {
+            const std::wstring id =
+                collectionGroupTabDwellId_.substr(
+                    categoryPrefix.size());
+            ScrollingItemWidget* active =
+                group->GetActiveSourceContainer();
+            DesktopWidget* activeData = active
+                ? active->GetWidgetData() : nullptr;
+            if (activeData &&
+                group->CategoryIdAtPoint(lastMousePoint_) == id)
+            {
+                activeData->activeCategoryId = id;
+                data.scrollOffset = 0;
+                group->InvalidateHostedView();
+                activated = true;
+            }
+        }
+    }
+    if (!activated)
+    {
+        collectionGroupTabDwellWidgetIndex_ =
+            static_cast<size_t>(-1);
+        collectionGroupTabDwellId_.clear();
+        return false;
+    }
+    cachedDropPreview_ = {};
+    cachedDropPreviewPoint_ = {-1, -1};
+    dragSession_.InvalidateStaticScene();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+
+    collectionGroupTabDwellWidgetIndex_ =
+        static_cast<size_t>(-1);
+    collectionGroupTabDwellId_.clear();
+    collectionGroupTabDwellTick_ = 0;
+    int mods = 0;
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+        mods |= MK_CONTROL;
+    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+        mods |= MK_ALT;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+        mods |= MK_SHIFT;
+    RefreshDragTargetAt(lastMousePoint_, mods);
+    return true;
+}
+
 // ── Collection popup ─────────────────────────────────────────
+
+/**
+ * @brief 在替换 Dock 文件夹弹窗前，将活动拖拽来源提升为稳定快照。
+ *
+ * Dock 文件夹弹窗使用临时 Widget、Container 和 Item 包装器。悬停打开
+ * 另一个 Dock 弹窗时这些对象会被销毁，因此必须先复制被拖拽条目并一次性
+ * 重绑定 DragSession 中的全部运行时指针。
+ */
+inline bool DesktopApp::
+PreserveDockFolderPopupDragSourceForTransition()
+{
+    if (!dragSession_.IsActive() ||
+        !dockFolderPopupContainer_ ||
+        dragSession_.Source() !=
+            dockFolderPopupContainer_.get())
+        return false;
+
+    DesktopWidget snapshot;
+    snapshot.id = dockFolderPopupWidget_.id;
+    snapshot.type = DesktopWidgetType::FolderMapping;
+    snapshot.title = dockFolderPopupWidget_.title;
+    snapshot.customTitle =
+        dockFolderPopupWidget_.customTitle;
+    snapshot.sourceFolderPath =
+        dockFolderPopupWidget_.sourceFolderPath;
+    snapshot.gridCell =
+        dockFolderPopupWidget_.gridCell;
+    snapshot.gridSpan =
+        dockFolderPopupWidget_.gridSpan;
+    snapshot.bounds =
+        dockFolderPopupWidget_.bounds;
+    snapshot.cellScale =
+        dockFolderPopupWidget_.cellScale;
+    snapshot.folderSortMode =
+        dockFolderPopupWidget_.folderSortMode;
+    snapshot.folderSortAscending =
+        dockFolderPopupWidget_.
+            folderSortAscending;
+    snapshot.itemKeys =
+        dockFolderPopupWidget_.itemKeys;
+
+    std::vector<RECT> itemBounds;
+    for (Item* sourceItem :
+         dragSession_.Items())
+    {
+        if (!sourceItem ||
+            !dynamic_cast<FolderEntryIcon*>(
+                sourceItem))
+            continue;
+        const std::wstring path =
+            sourceItem->GetPath();
+        auto entry = std::find_if(
+            dockFolderPopupWidget_.
+                folderEntries.begin(),
+            dockFolderPopupWidget_.
+                folderEntries.end(),
+            [&](const FolderEntry& candidate) {
+                return PathsEqualInsensitive(
+                    candidate.fullPath, path);
+            });
+        if (entry ==
+            dockFolderPopupWidget_.
+                folderEntries.end())
+            continue;
+        snapshot.folderEntries.push_back(*entry);
+        snapshot.folderEntries.back().selected =
+            true;
+        itemBounds.push_back(
+            sourceItem->GetBounds());
+    }
+    if (snapshot.folderEntries.empty())
+    {
+        EndDragSession();
+        return true;
+    }
+
+    dockFolderPopupDragSourceItems_.clear();
+    dockFolderPopupDragSourceContainer_.reset();
+    dockFolderPopupDragSourceWidget_ =
+        std::move(snapshot);
+    dockFolderPopupDragSourceContainer_ =
+        std::make_unique<FolderMapping>(
+            &dockFolderPopupDragSourceWidget_,
+            this);
+
+    std::vector<Item*> reboundItems;
+    reboundItems.reserve(
+        dockFolderPopupDragSourceWidget_.
+            folderEntries.size());
+    dockFolderPopupDragSourceItems_.reserve(
+        dockFolderPopupDragSourceWidget_.
+            folderEntries.size());
+    for (size_t i = 0;
+        i < dockFolderPopupDragSourceWidget_.
+            folderEntries.size(); ++i)
+    {
+        auto item =
+            std::make_unique<FolderEntryIcon>(
+                &dockFolderPopupDragSourceWidget_.
+                    folderEntries[i],
+                dockFolderPopupDragSourceContainer_.
+                    get(),
+                this);
+        item->SetBounds(itemBounds[i]);
+        reboundItems.push_back(item.get());
+        dockFolderPopupDragSourceItems_.
+            push_back(std::move(item));
+    }
+
+    DragSourceList sourceList =
+        BuildDragSourceList(
+            reboundItems,
+            dockFolderPopupDragSourceContainer_.
+                get());
+    dragSession_.RebindSource(
+        dockFolderPopupDragSourceContainer_.get(),
+        std::move(reboundItems),
+        std::move(sourceList));
+    return true;
+}
+
+inline void DesktopApp::
+ClearDockFolderPopupDragSourceSnapshot()
+{
+    dockFolderPopupDragSourceItems_.clear();
+    dockFolderPopupDragSourceContainer_.reset();
+    dockFolderPopupDragSourceWidget_ =
+        DesktopWidget{};
+}
 
 /**
  * @brief 在指定位置打开集合弹窗
@@ -4848,13 +8565,50 @@ inline bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
  * @param anchorPoint 锚点位置
  * @param categoryId 可选的分类 ID
  */
-inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint,
-    const std::wstring& categoryId)
+inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
+    POINT anchorPoint, const std::wstring& categoryId,
+    bool closingStartedByCurrentPress)
 {
     if (widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::Collection)
         return;
 
+    const bool samePopupSource =
+        !dockFolderPopupOpen_ &&
+        popupWidgetIndex_ == widgetIndex;
+    switch (snowdesktop::popup_animation_rules::
+        ResolveExistingSourceAction(
+            samePopupSource,
+            popupAnimation_.IsInteractive(),
+            closingStartedByCurrentPress))
+    {
+    case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::CloseExisting:
+        CloseCollectionPopup();
+        return;
+    case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::KeepClosing:
+        return;
+    case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::ReopenExisting:
+        StartCollectionPopupAnimation(true);
+        InvalidateCollectionPopupAnimation(true);
+        return;
+    case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::OpenAtRequestedAnchor:
+    default:
+        break;
+    }
+
+    PreserveDockFolderPopupDragSourceForTransition();
+    dockFolderPopupOpen_ = false;
+    dockFolderPopupAvailable_ = false;
+    dockFolderPopupContainer_.reset();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
+    dockFolderPopupSourceId_.clear();
+    dockFolderPopupMappingWidgetId_.clear();
+    dockFolderPopupWidget_.folderEntries.clear();
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
@@ -4862,10 +8616,17 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_ = categoryId;
     popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
+    const size_t groupIndex =
+            FindCollectionGroupIndexForChild(
+                widgets_[widgetIndex].id);
+    if (groupIndex < widgets_.size())
+    {
+        popupPageId_ = widgets_[groupIndex].gridCell.pageId;
+    }
     if (DockContainer* dock = GetDockContainerAtPoint(anchorPoint))
     {
-        RECT dockBounds = dock->GetBounds();
-        if (PtInRect(&dockBounds, anchorPoint))
+        RECT dockBounds = dock->GetInteractiveBounds();
+        if (dock->ContainsInteractivePoint(anchorPoint))
         {
             const POINT dockCenter{
                 (dockBounds.left + dockBounds.right) / 2,
@@ -4886,7 +8647,8 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
                 dockItem && dockItem->GetEntryType() == DockEntryType::Collection &&
                 dockItem->GetReference() == widgets_[widgetIndex].id)
             {
-                RECT itemBounds = dockItem->GetBounds();
+                RECT itemBounds = dock->GetElementVisualRect(
+                    dockItem->GetBounds(), anchorPoint);
                 popupDockPosition_ = dockSettings_.position;
                 popupAnchoredToDock_ = true;
                 switch (popupDockPosition_)
@@ -4916,18 +8678,1032 @@ inline void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPo
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
     popupDwellWidgetIndex_ = static_cast<size_t>(-1);
+    StartCollectionPopupAnimation();
+    if (floatingDockVisible_)
+    {
+        floatingDockContainer_ =
+            GetDockContainerAtPoint(anchorPoint);
+        if (!floatingDockContainer_)
+            floatingDockContainer_ =
+                SelectFloatingDockContainerForMonitor(
+                    floatingDockMonitor_);
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
+    InvalidateDragStaticScene();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::RefreshDockFolderPopup()
+{
+    if (!dockFolderPopupOpen_) return;
+    PreserveDockFolderPopupDragSourceForTransition();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
+    for (auto& entry : dockFolderPopupWidget_.folderEntries)
+        entry.selected = false;
+    if (!dockFolderPopupMappingWidgetId_.empty())
+    {
+        const size_t widgetIndex =
+            FindWidgetIndexById(
+                dockFolderPopupMappingWidgetId_);
+        if (widgetIndex < widgets_.size() &&
+            widgets_[widgetIndex].type ==
+                DesktopWidgetType::FolderMapping)
+        {
+            const DesktopWidget& source =
+                widgets_[widgetIndex];
+            dockFolderPopupWidget_.
+                sourceFolderPath =
+                    source.sourceFolderPath;
+            dockFolderPopupWidget_.
+                folderSortMode =
+                    source.folderSortMode;
+            dockFolderPopupWidget_.
+                folderSortAscending =
+                    source.folderSortAscending;
+            dockFolderPopupWidget_.itemKeys =
+                source.itemKeys;
+        }
+        else
+        {
+            dockFolderPopupMappingWidgetId_.
+                clear();
+        }
+    }
+    if (dockFolderPopupAvailable_)
+    {
+        EnumerateFolderMappingEntries(
+            dockFolderPopupWidget_, false);
+        for (auto& entry :
+             dockFolderPopupWidget_.folderEntries)
+        {
+            const wchar_t* extension =
+                PathFindExtensionW(
+                    entry.fullPath.c_str());
+            entry.isShortcut =
+                extension &&
+                _wcsicmp(
+                    extension, L".lnk") == 0;
+            // The transient popup is not part of widgets_; use the system
+            // image-list icon immediately instead of waiting for an async
+            // callback keyed to a persistent widget id.
+            entry.iconState =
+                IconState::IconReady;
+        }
+    }
+    else
+        dockFolderPopupWidget_.folderEntries.clear();
+    dockFolderPopupContainer_ =
+        std::make_unique<FolderMapping>(
+            &dockFolderPopupWidget_, this);
+    dockFolderPopupContainer_->InvalidateFilterCache();
+}
+
+inline void DesktopApp::
+CommitDockFolderPopupStateToSource()
+{
+    if (!dockFolderPopupOpen_)
+        return;
+
+    if (!dockFolderPopupMappingWidgetId_.empty())
+    {
+        const size_t sourceIndex =
+            FindWidgetIndexById(
+                dockFolderPopupMappingWidgetId_);
+        if (sourceIndex < widgets_.size() &&
+            widgets_[sourceIndex].type ==
+                DesktopWidgetType::FolderMapping)
+        {
+            DesktopWidget& source =
+                widgets_[sourceIndex];
+            source.folderSortMode =
+                snowdesktop::folder_sort_rules::
+                    NormalizeMode(
+                        dockFolderPopupWidget_.
+                            folderSortMode);
+            source.folderSortAscending =
+                dockFolderPopupWidget_.
+                    folderSortAscending;
+            source.itemKeys =
+                dockFolderPopupWidget_.itemKeys;
+            RefreshFolderMappingWidget(
+                sourceIndex);
+            SaveLayoutSlots();
+            return;
+        }
+        dockFolderPopupMappingWidgetId_.clear();
+    }
+
+    for (DockEntry& entry : dockEntries_)
+    {
+        const std::wstring sourceId =
+            std::to_wstring(
+                static_cast<int>(entry.type)) +
+            L":" +
+            ToUpperInvariant(entry.reference);
+        if (sourceId !=
+                dockFolderPopupSourceId_ ||
+            !IsFolderDockEntry(entry))
+            continue;
+
+        entry.folderSortMode =
+            snowdesktop::folder_sort_rules::
+                NormalizeMode(
+                    dockFolderPopupWidget_.
+                        folderSortMode);
+        entry.folderSortAscending =
+            dockFolderPopupWidget_.
+                folderSortAscending;
+        entry.folderItemKeys =
+            dockFolderPopupWidget_.itemKeys;
+        SaveLayoutSlots();
+        return;
+    }
+}
+
+inline void DesktopApp::SortDockFolderPopupContents(
+    int mode, bool ascending)
+{
+    if (!dockFolderPopupOpen_) return;
+    PreserveDockFolderPopupDragSourceForTransition();
+    mode =
+        snowdesktop::folder_sort_rules::
+            NormalizeMode(mode);
+    if (mode ==
+        snowdesktop::folder_sort_rules::kManual)
+        return;
+
+    const size_t sourceIndex =
+        dockFolderPopupMappingWidgetId_.empty()
+            ? static_cast<size_t>(-1)
+            : FindWidgetIndexById(
+                dockFolderPopupMappingWidgetId_);
+    if (sourceIndex < widgets_.size() &&
+        widgets_[sourceIndex].type ==
+            DesktopWidgetType::FolderMapping)
+    {
+        // The mapping widget is the single source of truth, regardless of
+        // whether it is hosted on the desktop, in a FileGroup or in Dock.
+        SortWidgetContents(
+            sourceIndex, mode, ascending);
+        RefreshDockFolderPopup();
+    }
+    else
+    {
+        dockFolderPopupMappingWidgetId_.clear();
+        dockFolderPopupWidget_.folderSortMode =
+            mode;
+        dockFolderPopupWidget_.
+            folderSortAscending = ascending;
+        snowdesktop::folder_sort_rules::
+            StableSort(
+                dockFolderPopupWidget_.
+                    folderEntries,
+                mode, ascending);
+        snowdesktop::folder_sort_rules::
+            RewriteOrderKeys(
+                dockFolderPopupWidget_.
+                    folderEntries,
+                dockFolderPopupWidget_.
+                    itemKeys);
+        if (dockFolderPopupContainer_)
+            dockFolderPopupContainer_->
+                InvalidateFilterCache();
+        CommitDockFolderPopupStateToSource();
+    }
+
+    popupScrollOffset_ = 0;
+    popupRect_ =
+        GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+    dockFolderPopupWidget_.bounds =
+        popupRect_;
+    InvalidateDragStaticScene();
+    if (floatingDockVisible_)
+    {
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::ShowDockFolderPopupSortMenu(
+    POINT screenPoint)
+{
+    if (!dockFolderPopupOpen_) return;
+
+    HMENU menu = CreatePopupMenu();
+    HMENU nameMenu = CreatePopupMenu();
+    HMENU typeMenu = CreatePopupMenu();
+    HMENU dateMenu = CreatePopupMenu();
+    if (!menu || !nameMenu ||
+        !typeMenu || !dateMenu)
+    {
+        if (menu) DestroyMenu(menu);
+        if (nameMenu) DestroyMenu(nameMenu);
+        if (typeMenu) DestroyMenu(typeMenu);
+        if (dateMenu) DestroyMenu(dateMenu);
+        return;
+    }
+
+    auto appendDirectionMenu = [](
+        HMENU parent, HMENU child,
+        UINT ascendingCommand,
+        UINT descendingCommand,
+        const wchar_t* label) {
+        AppendMenuW(
+            child, MF_STRING,
+            ascendingCommand,
+            _LW("app.menu.sort_asc"));
+        AppendMenuW(
+            child, MF_STRING,
+            descendingCommand,
+            _LW("app.menu.sort_desc"));
+        AppendMenuW(
+            parent, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(
+                child),
+            label);
+    };
+    appendDirectionMenu(
+        menu, nameMenu,
+        kContextWidgetSortByName,
+        kContextWidgetSortByNameDesc,
+        _LW("app.menu.sort_name"));
+    appendDirectionMenu(
+        menu, typeMenu,
+        kContextWidgetSortByType,
+        kContextWidgetSortByTypeDesc,
+        _LW("app.menu.sort_type"));
+    appendDirectionMenu(
+        menu, dateMenu,
+        kContextWidgetSortByDate,
+        kContextWidgetSortByDateDesc,
+        _LW("app.interact.sort_date"));
+
+    const int mode =
+        snowdesktop::folder_sort_rules::
+            NormalizeMode(
+                dockFolderPopupWidget_.
+                    folderSortMode);
+    HMENU checkedMenu = nullptr;
+    UINT checkedCommand = 0;
+    if (mode ==
+        snowdesktop::folder_sort_rules::kName)
+    {
+        checkedMenu = nameMenu;
+        checkedCommand =
+            dockFolderPopupWidget_.
+                    folderSortAscending
+                ? kContextWidgetSortByName
+                : kContextWidgetSortByNameDesc;
+    }
+    else if (mode ==
+        snowdesktop::folder_sort_rules::kType)
+    {
+        checkedMenu = typeMenu;
+        checkedCommand =
+            dockFolderPopupWidget_.
+                    folderSortAscending
+                ? kContextWidgetSortByType
+                : kContextWidgetSortByTypeDesc;
+    }
+    else if (mode ==
+        snowdesktop::folder_sort_rules::
+            kModified)
+    {
+        checkedMenu = dateMenu;
+        checkedCommand =
+            dockFolderPopupWidget_.
+                    folderSortAscending
+                ? kContextWidgetSortByDate
+                : kContextWidgetSortByDateDesc;
+    }
+    if (checkedMenu && checkedCommand != 0)
+        CheckMenuItem(
+            checkedMenu, checkedCommand,
+            MF_BYCOMMAND | MF_CHECKED);
+
+    SetMenuItemIcon(
+        menu,
+        reinterpret_cast<UINT_PTR>(
+            nameMenu), L"");
+    SetMenuItemIcon(
+        menu,
+        reinterpret_cast<UINT_PTR>(
+            typeMenu), L"");
+    SetMenuItemIcon(
+        menu,
+        reinterpret_cast<UINT_PTR>(
+            dateMenu), L"");
+    SetForegroundWindow(hwnd_);
+    const UINT command = TrackPopupMenuEx(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y,
+        hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+
+    switch (command)
+    {
+    case kContextWidgetSortByName:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kName, true);
+        break;
+    case kContextWidgetSortByNameDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kName, false);
+        break;
+    case kContextWidgetSortByType:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kType, true);
+        break;
+    case kContextWidgetSortByTypeDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kType, false);
+        break;
+    case kContextWidgetSortByDate:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kModified, true);
+        break;
+    case kContextWidgetSortByDateDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::folder_sort_rules::
+                kModified, false);
+        break;
+    default:
+        break;
+    }
+}
+
+inline void DesktopApp::
+ShowDockFolderPopupContextMenu(
+    POINT screenPoint,
+    std::optional<size_t> memberIndex)
+{
+    if (!dockFolderPopupOpen_) return;
+
+    const bool itemMenu =
+        memberIndex &&
+        *memberIndex <
+            dockFolderPopupWidget_.
+                folderEntries.size();
+    const std::vector<std::wstring>
+        selectedPaths =
+            GetSelectedFolderEntryPaths();
+    const bool singleSelection =
+        selectedPaths.size() == 1;
+    const bool hasSelection =
+        !selectedPaths.empty();
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    HMENU sortMenu = nullptr;
+    HMENU nameMenu = nullptr;
+    HMENU typeMenu = nullptr;
+    HMENU dateMenu = nullptr;
+
+    if (itemMenu)
+    {
+        AppendMenuW(
+            menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextOpenCommand,
+            _LW("app.menu.open"));
+        AppendMenuW(
+            menu,
+            singleSelection &&
+                    snowdesktop::
+                        item_location::
+                            CanReveal(
+                                selectedPaths.front())
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextRevealLocationCommand,
+            _LW(
+                "app.menu.open_file_location"));
+        AppendMenuW(
+            menu,
+            singleSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextRenameCommand,
+            _LW("app.menu.rename"));
+        AppendMenuW(
+            menu, MF_SEPARATOR,
+            0, nullptr);
+        AppendMenuW(
+            menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextCutCommand,
+            _LW("app.menu.cut"));
+        AppendMenuW(
+            menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextCopyCommand,
+            _LW("app.menu.copy"));
+        AppendMenuW(
+            menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextDeleteCommand,
+            _LW("app.settings.delete"));
+        AppendMenuW(
+            menu, MF_SEPARATOR,
+            0, nullptr);
+        AppendMenuW(
+            menu,
+            singleSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextMoreCommand,
+            _LW(
+                "app.menu.more_options"));
+    }
+    else
+    {
+        ComPtr<IDataObject> clipObject;
+        bool canPaste = false;
+        if (dockFolderPopupAvailable_ &&
+            SUCCEEDED(
+                OleGetClipboard(
+                    &clipObject)) &&
+            clipObject)
+        {
+            FORMATETC format{
+                CF_HDROP, nullptr,
+                DVASPECT_CONTENT, -1,
+                TYMED_HGLOBAL
+            };
+            canPaste = SUCCEEDED(
+                clipObject->
+                    QueryGetData(&format));
+        }
+        AppendMenuW(
+            menu,
+            canPaste
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextPasteCommand,
+            _LW("app.menu.paste"));
+        AppendMenuW(
+            menu,
+            dockFolderPopupAvailable_
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextNewMenu,
+            _LW("app.menu.new"));
+        AppendMenuW(
+            menu,
+            dockFolderPopupAvailable_
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextMoreCommand,
+            _LW("app.menu.more_options"));
+        AppendMenuW(
+            menu, MF_SEPARATOR,
+            0, nullptr);
+
+        sortMenu = CreatePopupMenu();
+        nameMenu = CreatePopupMenu();
+        typeMenu = CreatePopupMenu();
+        dateMenu = CreatePopupMenu();
+        if (sortMenu && nameMenu &&
+            typeMenu && dateMenu)
+        {
+            auto addDirections = [](
+                HMENU parent,
+                HMENU child,
+                UINT ascendingCommand,
+                UINT descendingCommand,
+                const wchar_t* label) {
+                AppendMenuW(
+                    child, MF_STRING,
+                    ascendingCommand,
+                    _LW(
+                        "app.menu.sort_asc"));
+                AppendMenuW(
+                    child, MF_STRING,
+                    descendingCommand,
+                    _LW(
+                        "app.menu.sort_desc"));
+                AppendMenuW(
+                    parent, MF_POPUP,
+                    reinterpret_cast<
+                        UINT_PTR>(child),
+                    label);
+            };
+            addDirections(
+                sortMenu, nameMenu,
+                kContextWidgetSortByName,
+                kContextWidgetSortByNameDesc,
+                _LW("app.menu.sort_name"));
+            addDirections(
+                sortMenu, typeMenu,
+                kContextWidgetSortByType,
+                kContextWidgetSortByTypeDesc,
+                _LW("app.menu.sort_type"));
+            addDirections(
+                sortMenu, dateMenu,
+                kContextWidgetSortByDate,
+                kContextWidgetSortByDateDesc,
+                _LW(
+                    "app.interact.sort_date"));
+            AppendMenuW(
+                menu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(
+                    sortMenu),
+                _LW("app.menu.sort_by"));
+        }
+        else
+        {
+            if (sortMenu)
+                DestroyMenu(sortMenu);
+            if (nameMenu)
+                DestroyMenu(nameMenu);
+            if (typeMenu)
+                DestroyMenu(typeMenu);
+            if (dateMenu)
+                DestroyMenu(dateMenu);
+            sortMenu = nullptr;
+            nameMenu = nullptr;
+            typeMenu = nullptr;
+            dateMenu = nullptr;
+        }
+    }
+
+    SetMenuItemIcon(
+        menu, kContextOpenCommand,
+        L"");
+    SetMenuItemIcon(
+        menu,
+        kContextRevealLocationCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextRenameCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextCutCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextCopyCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextDeleteCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextPasteCommand,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextNewMenu,
+        L"");
+    SetMenuItemIcon(
+        menu, kContextMoreCommand,
+        L"");
+    if (sortMenu)
+        SetMenuItemIcon(
+            menu,
+            reinterpret_cast<UINT_PTR>(
+                sortMenu),
+            L"");
+
+    SetForegroundWindow(hwnd_);
+    const UINT command =
+        TrackPopupMenuEx(
+            menu,
+            TPM_RETURNCMD |
+                TPM_RIGHTBUTTON,
+            screenPoint.x,
+            screenPoint.y,
+            hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+
+    switch (command)
+    {
+    case kContextOpenCommand:
+        for (const auto& path :
+             GetSelectedFolderEntryPaths())
+            ShellExecuteW(
+                hwnd_, L"open",
+                path.c_str(),
+                nullptr, nullptr,
+                SW_SHOWNORMAL);
+        break;
+    case kContextRevealLocationCommand:
+        if (selectedPaths.size() == 1)
+            snowdesktop::item_location::
+                Reveal(
+                    hwnd_,
+                    selectedPaths.front());
+        break;
+    case kContextRenameCommand:
+        if (singleSelection)
+        {
+            size_t selectedIndex =
+                static_cast<size_t>(-1);
+            for (size_t i = 0;
+                i <
+                    dockFolderPopupWidget_.
+                        folderEntries.size();
+                ++i)
+            {
+                if (dockFolderPopupWidget_.
+                        folderEntries[i].
+                            selected)
+                {
+                    selectedIndex = i;
+                    break;
+                }
+            }
+            if (selectedIndex <
+                dockFolderPopupWidget_.
+                    folderEntries.size())
+                BeginRenameDockFolderPopupEntry(
+                    selectedIndex);
+        }
+        break;
+    case kContextCutCommand:
+        CopyCutSelectedFolderEntries(
+            true);
+        break;
+    case kContextCopyCommand:
+        CopyCutSelectedFolderEntries(
+            false);
+        break;
+    case kContextDeleteCommand:
+        DeleteSelectedFolderEntries(
+            false);
+        break;
+    case kContextMoreCommand:
+        if (itemMenu &&
+            selectedPaths.size() == 1)
+        {
+            ShowShellItemContextMenuForPath(
+                selectedPaths.front(),
+                screenPoint);
+            break;
+        }
+        ShowShellContextMenuForPath(
+            dockFolderPopupWidget_.
+                sourceFolderPath,
+            screenPoint);
+        RefreshDockFolderPopup();
+        break;
+    case kContextPasteCommand:
+        PasteClipboardToFolderPath(
+            dockFolderPopupWidget_.
+                sourceFolderPath);
+        break;
+    case kContextNewMenu:
+        ShowNewMenuAndInvoke(
+            screenPoint,
+            dockFolderPopupWidget_.
+                sourceFolderPath);
+        for (size_t i = 0;
+            i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].type ==
+                DesktopWidgetType::
+                    FolderMapping)
+                RefreshFolderMappingWidget(
+                    i);
+        }
+        RefreshDockFolderPopup();
+        break;
+    case kContextWidgetSortByName:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::kName,
+            true);
+        break;
+    case kContextWidgetSortByNameDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::kName,
+            false);
+        break;
+    case kContextWidgetSortByType:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::kType,
+            true);
+        break;
+    case kContextWidgetSortByTypeDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::kType,
+            false);
+        break;
+    case kContextWidgetSortByDate:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::
+                    kModified,
+            true);
+        break;
+    case kContextWidgetSortByDateDesc:
+        SortDockFolderPopupContents(
+            snowdesktop::
+                folder_sort_rules::
+                    kModified,
+            false);
+        break;
+    default:
+        break;
+    }
+}
+
+inline std::vector<Item*>
+DesktopApp::GetDockFolderPopupSelectedItems()
+{
+    dockFolderPopupDragItems_.clear();
+    std::vector<Item*> selected;
+    if (!dockFolderPopupOpen_ ||
+        !dockFolderPopupContainer_)
+        return selected;
+
+    const RECT popup =
+        GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+    for (size_t i = 0;
+        i < dockFolderPopupWidget_.
+            folderEntries.size(); ++i)
+    {
+        FolderEntry& entry =
+            dockFolderPopupWidget_.
+                folderEntries[i];
+        if (!entry.selected)
+            continue;
+        auto item =
+            std::make_unique<FolderEntryIcon>(
+                &entry,
+                dockFolderPopupContainer_.get(),
+                this);
+        item->SetBounds(
+            GetCollectionPopupItemRect(
+                popup, i));
+        selected.push_back(item.get());
+        dockFolderPopupDragItems_.push_back(
+            std::move(item));
+    }
+    return selected;
+}
+
+inline void DesktopApp::OpenDockFolderPopupAt(
+    size_t entryIndex, POINT anchorPoint)
+{
+    if (entryIndex >= dockEntries_.size() ||
+        !IsFolderDockEntry(dockEntries_[entryIndex]))
+        return;
+
+    PreserveDockFolderPopupDragSourceForTransition();
+    const DockEntry entry = dockEntries_[entryIndex];
+    const auto target = ResolveDockFolderTarget(entry);
+    const std::wstring sourceId =
+        std::to_wstring(static_cast<int>(entry.type)) +
+        L":" + ToUpperInvariant(entry.reference);
+    const bool reverseClosingAnimation =
+        popupAnimation_.IsClosing() &&
+        dockFolderPopupOpen_ &&
+        dockFolderPopupSourceId_ == sourceId;
+    dockFolderPopupOpen_ = true;
+    dockFolderPopupAvailable_ = target.available;
+    dockFolderPopupSourceId_ = sourceId;
+    dockFolderPopupMappingWidgetId_.clear();
+    popupWidgetIndex_ = static_cast<size_t>(-1);
+    popupScrollOffset_ = 0;
+    popupHasAnchor_ = true;
+    popupAnchoredToDock_ = false;
+    popupAnchorPoint_ = anchorPoint;
+    popupCategoryId_.clear();
+
+    dockFolderPopupWidget_ = DesktopWidget{};
+    dockFolderPopupWidget_.type =
+        DesktopWidgetType::FolderMapping;
+    dockFolderPopupWidget_.id =
+        L"__dock_folder_popup__";
+    dockFolderPopupWidget_.sourceFolderPath =
+        target.path;
+    dockFolderPopupWidget_.folderSortMode =
+        snowdesktop::folder_sort_rules::
+            NormalizeMode(
+                entry.folderSortMode);
+    dockFolderPopupWidget_.
+        folderSortAscending =
+            entry.folderSortAscending;
+    dockFolderPopupWidget_.itemKeys =
+        entry.folderItemKeys;
+    dockFolderPopupWidget_.gridCell =
+        { kDockPageId, 0, 0 };
+    if (entry.type == DockEntryType::FolderMapping)
+    {
+        const size_t widgetIndex =
+            FindWidgetIndexById(entry.reference);
+        if (widgetIndex < widgets_.size())
+        {
+            dockFolderPopupMappingWidgetId_ =
+                widgets_[widgetIndex].id;
+            dockFolderPopupWidget_.title =
+                widgets_[widgetIndex].title;
+            dockFolderPopupWidget_.
+                folderSortMode =
+                    widgets_[widgetIndex].
+                        folderSortMode;
+            dockFolderPopupWidget_.
+                folderSortAscending =
+                    widgets_[widgetIndex].
+                        folderSortAscending;
+            dockFolderPopupWidget_.itemKeys =
+                widgets_[widgetIndex].
+                    itemKeys;
+        }
+    }
+    else
+    {
+        const size_t itemIndex =
+            FindItemIndexByKey(entry.reference);
+        if (itemIndex < items_.size())
+            dockFolderPopupWidget_.title =
+                items_[itemIndex].name;
+    }
+    if (dockFolderPopupWidget_.title.empty())
+        dockFolderPopupWidget_.title =
+            _LW("widget.folder_mapping");
+
+    const GridPage* dockPage = nullptr;
+    if (DockContainer* dock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        const RECT dockBounds =
+            dock->GetInteractiveBounds();
+        const POINT dockCenter{
+            (dockBounds.left + dockBounds.right) / 2,
+            (dockBounds.top + dockBounds.bottom) / 2
+        };
+        for (const auto& page : gridPages_)
+        {
+            if (PtInRect(&page.bounds, dockCenter))
+            {
+                dockPage = &page;
+                break;
+            }
+        }
+        if (DockEntryItem* dockItem =
+                dock->EntryAtPoint(anchorPoint);
+            dockItem &&
+            dockItem->GetEntryIndex() == entryIndex)
+        {
+            const RECT itemBounds =
+                dock->GetElementVisualRect(
+                    dockItem->GetBounds(), anchorPoint);
+            popupDockPosition_ = dockSettings_.position;
+            popupAnchoredToDock_ = true;
+            switch (popupDockPosition_)
+            {
+            case DockPosition::Top:
+                popupAnchorPoint_ = {
+                    (itemBounds.left + itemBounds.right) / 2,
+                    itemBounds.bottom };
+                break;
+            case DockPosition::Left:
+                popupAnchorPoint_ = {
+                    itemBounds.right,
+                    (itemBounds.top + itemBounds.bottom) / 2 };
+                break;
+            case DockPosition::Right:
+                popupAnchorPoint_ = {
+                    itemBounds.left,
+                    (itemBounds.top + itemBounds.bottom) / 2 };
+                break;
+            case DockPosition::Bottom:
+            default:
+                popupAnchorPoint_ = {
+                    (itemBounds.left + itemBounds.right) / 2,
+                    itemBounds.top };
+                break;
+            }
+        }
+    }
+    if (!dockPage)
+        dockPage = GetFirstPageGridPage();
+    if (dockPage) popupPageId_ = dockPage->id;
+
+    RefreshDockFolderPopup();
+    popupRect_ =
+        GetCollectionPopupRect(dockFolderPopupWidget_);
+    dockFolderPopupWidget_.bounds = popupRect_;
+    popupScrollOffset_ = std::clamp(
+        popupScrollOffset_, 0,
+        GetCollectionPopupMaxScrollOffset(
+            dockFolderPopupWidget_, popupRect_));
+    StartCollectionPopupAnimation(
+        reverseClosingAnimation);
+    if (floatingDockVisible_)
+    {
+        floatingDockContainer_ =
+            GetDockContainerAtPoint(anchorPoint);
+        if (!floatingDockContainer_)
+            floatingDockContainer_ =
+                SelectFloatingDockContainerForMonitor(
+                    floatingDockMonitor_);
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 /**
- * @brief 关闭当前打开的集合弹窗
+ * @brief 启动集合弹窗的打开动画。
  */
-inline void DesktopApp::CloseCollectionPopup()
+inline void DesktopApp::StartCollectionPopupAnimation(
+    bool reverseClosingAnimation)
 {
-    if (popupWidgetIndex_ == static_cast<size_t>(-1)) return;
-    ClearSelection();
+    if (!reverseClosingAnimation)
+        popupAnimation_.ResetHidden();
+    PrepareCollectionPopupAnimationCache();
+    popupAnimation_.Open(GetTickCount64());
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(
+            hwnd_,
+            kCollectionPopupAnimationTimerId,
+            snowdesktop::popup_animation_rules::
+                kFrameIntervalMs,
+            nullptr);
+    }
+}
+
+inline void DesktopApp::InvalidateCollectionPopupAnimation(
+    bool invalidateStaticScene)
+{
+    if (invalidateStaticScene)
+        InvalidateDragStaticScene();
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        if (invalidateStaticScene)
+        {
+            InvalidateRect(
+                hwnd_, nullptr, FALSE);
+        }
+        else if (!(popupAnchoredToDock_ &&
+                   floatingDockVisible_) &&
+                 !IsRectEmptyRect(popupRect_))
+        {
+            RECT dirty = popupRect_;
+            InflateRect(&dirty, 4, 4);
+            InvalidateRect(
+                hwnd_, &dirty, FALSE);
+        }
+    }
+    // Animation frames may be coalesced when the UI thread is busy. Forcing
+    // UpdateWindow here would make every timer tick synchronously redraw the
+    // complete floating Dock surface and is the main source of frame stalls.
+    InvalidateFloatingDockWindow(
+        invalidateStaticScene);
+}
+
+/**
+ * @brief 完成关闭并释放当前弹窗的数据源。
+ */
+inline void DesktopApp::FinalizeCloseCollectionPopup()
+{
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(
+            hwnd_,
+            kCollectionPopupAnimationTimerId);
+    popupAnimation_.ResetHidden();
+    ResetCollectionPopupAnimationCache();
+    if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
+        !dockFolderPopupOpen_)
+        return;
     popupWidgetIndex_ = static_cast<size_t>(-1);
+    dockFolderPopupOpen_ = false;
+    dockFolderPopupAvailable_ = false;
+    dockFolderPopupSourceId_.clear();
+    dockFolderPopupMappingWidgetId_.clear();
+    dockFolderPopupContainer_.reset();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
+    dockFolderPopupWidget_.folderEntries.clear();
+    marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = false;
     popupAnchoredToDock_ = false;
@@ -4935,8 +9711,199 @@ inline void DesktopApp::CloseCollectionPopup()
     popupPageId_.clear();
     popupCategoryId_.clear();
     popupRect_ = {};
+    if (floatingDockVisible_)
+    {
+        floatingDockContainer_ =
+            SelectFloatingDockContainerForMonitor(
+                floatingDockMonitor_);
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+/**
+ * @brief 关闭当前打开的集合弹窗
+ */
+inline void DesktopApp::CloseCollectionPopup(
+    bool clearSelection)
+{
+    if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
+        !dockFolderPopupOpen_)
+        return;
+    if (popupAnimation_.IsClosing())
+        return;
+
+    PreserveDockFolderPopupDragSourceForTransition();
+    if (clearSelection)
+    {
+        ClearSelection();
+        for (auto& entry :
+             dockFolderPopupWidget_.folderEntries)
+            entry.selected = false;
+    }
+    popupMouseDownItem_.reset();
+    popupDragTargetSlot_.reset();
+    marqueeActive_ = false;
+    marqueeDockFolderPopup_ = false;
+    dockFolderPopupMarqueeInitialSelection_.clear();
+
+    PrepareCollectionPopupAnimationCache();
+    popupAnimation_.Close(GetTickCount64());
+    if (popupAnimation_.IsHidden())
+    {
+        FinalizeCloseCollectionPopup();
+        return;
+    }
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(
+            hwnd_,
+            kCollectionPopupAnimationTimerId,
+            snowdesktop::popup_animation_rules::
+                kFrameIntervalMs,
+            nullptr);
+    }
+    InvalidateCollectionPopupAnimation(true);
+}
+
+inline void DesktopApp::OpenLuaWidgetPanel(
+    const LuaWidgetPanelRequest& request)
+{
+    if (request.widgetId.empty())
+        return;
+    if (!luaWidgetPanelRequest_.widgetId.empty())
+    {
+        if (luaWidgetPanelRequest_.widgetId ==
+                request.widgetId &&
+            luaWidgetPanelAnimation_.IsClosing())
+        {
+            luaWidgetPanelRequest_ = request;
+            luaWidgetPanelAnimation_.Open(
+                GetTickCount64());
+            SetTimer(
+                hwnd_,
+                kLuaWidgetPanelAnimationTimerId,
+                snowdesktop::popup_animation_rules::
+                    kFrameIntervalMs,
+                nullptr);
+            InvalidateRect(
+                hwnd_, nullptr, FALSE);
+            return;
+        }
+        FinalizeCloseLuaWidgetPanel();
+    }
+    if (IsCollectionPopupInteractive())
+        CloseCollectionPopup(false);
+    if (quickNavigationOpen_)
+        CloseQuickNavigation();
+    luaWidgetPanelRequest_ = request;
+    luaWidgetPanelAnchorPoint_ =
+        lastMousePoint_;
+    const auto source = std::find_if(
+        widgets_.begin(), widgets_.end(),
+        [&](const DesktopWidget& widget) {
+            return widget.id == request.widgetId;
+        });
+    if (source != widgets_.end())
+    {
+        const RECT sourceRect =
+            GetStandaloneWidgetFrameRect(*source);
+        if (!PtInRect(
+                &sourceRect,
+                luaWidgetPanelAnchorPoint_))
+        {
+            luaWidgetPanelAnchorPoint_ = {
+                (sourceRect.left + sourceRect.right) / 2,
+                (sourceRect.top + sourceRect.bottom) / 2
+            };
+        }
+    }
+    luaWidgetPanelRect_ = GetLuaWidgetPanelRect();
+    luaWidgetPanelMouseDown_ = false;
+    luaWidgetPanelAnimation_.ResetHidden();
+    luaWidgetPanelAnimation_.Open(
+        GetTickCount64());
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(
+            hwnd_,
+            kLuaWidgetPanelAnimationTimerId,
+            snowdesktop::popup_animation_rules::
+                kFrameIntervalMs,
+            nullptr);
+    }
+    if (widgetEngine_)
+    {
+        widgetEngine_->InvokeMouseEvent(
+            request.widgetId, "onPanelOpened",
+            0, 0, 0, 0);
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+inline void DesktopApp::FinalizeCloseLuaWidgetPanel()
+{
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        KillTimer(
+            hwnd_,
+            kLuaWidgetPanelAnimationTimerId);
+    }
+    const std::wstring closingId =
+        luaWidgetPanelRequest_.widgetId;
+    if (!closingId.empty() && widgetEngine_)
+    {
+        widgetEngine_->InvokeMouseEvent(
+            closingId, "onPanelClosed",
+            0, 0, 0, 0);
+    }
+    luaWidgetPanelAnimation_.ResetHidden();
+    luaWidgetPanelRequest_ = {};
+    luaWidgetPanelRect_ = {};
+    luaWidgetPanelAnchorPoint_ = {};
+    luaWidgetPanelMouseDown_ = false;
+    ReleaseCapture();
+    UpdateHostInputImePosition();
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+inline void DesktopApp::CloseLuaWidgetPanel(
+    const std::wstring& widgetId,
+    const char* reason)
+{
+    (void)reason;
+    if (luaWidgetPanelRequest_.widgetId.empty() ||
+        (!widgetId.empty() &&
+         widgetId !=
+            luaWidgetPanelRequest_.widgetId))
+        return;
+    if (luaWidgetPanelAnimation_.IsClosing())
+        return;
+    if (widgetEngine_)
+        widgetEngine_->BlurHostInput(false);
+    luaWidgetPanelMouseDown_ = false;
+    ReleaseCapture();
+    UpdateHostInputImePosition();
+    luaWidgetPanelAnimation_.Close(
+        GetTickCount64());
+    if (luaWidgetPanelAnimation_.IsHidden())
+    {
+        FinalizeCloseLuaWidgetPanel();
+        return;
+    }
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(
+            hwnd_,
+            kLuaWidgetPanelAnimationTimerId,
+            snowdesktop::popup_animation_rules::
+                kFrameIntervalMs,
+            nullptr);
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 /**
@@ -4955,18 +9922,65 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     if (dragSession_.IsActive())
         dragSession_.UpdateActionFromMods(currentMods, externalDragActive_ ? DropAction::Copy : DropAction::Move);
 
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelAnimation_.IsInteractive())
+    {
+        const RECT content =
+            GetLuaWidgetPanelContentRect();
+        if (PtInRect(&content, pt))
+        {
+            const int delta =
+                GET_WHEEL_DELTA_WPARAM(wp);
+            const int localX =
+                pt.x - content.left;
+            const int localY =
+                pt.y - content.top;
+            if (!widgetEngine_ ||
+                !widgetEngine_->HandleHostUiPointer(
+                    luaWidgetPanelRequest_.widgetId,
+                    localX, localY, delta, true))
+            {
+                if (widgetEngine_)
+                    widgetEngine_->InvokeMouseEvent(
+                        luaWidgetPanelRequest_.widgetId,
+                        "onPanelWheel",
+                        localX, localY, 0, delta);
+            }
+            UpdateHostInputImePosition();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        return;
+    }
+
     if (quickNavigationOpen_)
     {
         RECT overlay = quickNavigationRect_;
         if (PtInRect(&overlay, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
-            RECT tabs = GetQuickNavigationTabsRect(overlay);
-            if (GetQuickNavigationEffectiveSearchText().empty() && PtInRect(&tabs, pt))
+            if (quickNavigationInitialJumpOpen_)
             {
-                int maxTabScroll = GetQuickNavigationMaxTabScrollOffset(overlay);
-                quickNavigationTabScrollOffset_ =
-                    std::clamp(quickNavigationTabScrollOffset_ - delta / 2, 0, maxTabScroll);
+                InvalidateQuickNavigationWindow();
+                return;
+            }
+            RECT tabs = GetQuickNavigationTabsRect(overlay);
+            if (GetQuickNavigationEffectiveSearchText().empty() &&
+                PtInRect(&tabs, pt))
+            {
+                if (pt.x >=
+                    GetQuickNavigationTabsStart(
+                        overlay))
+                {
+                    int maxTabScroll =
+                        GetQuickNavigationMaxTabScrollOffset(
+                            overlay);
+                    quickNavigationTabScrollOffset_ =
+                        std::clamp(
+                            quickNavigationTabScrollOffset_ -
+                                delta / 2,
+                            0, maxTabScroll);
+                }
             }
             else
             {
@@ -4986,12 +10000,16 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     {
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
         RECT frame = GetStandaloneWidgetFrameRect(widgets_[luaWidget]);
-        widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].scriptPath);
+        widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].packageId);
         int localX = pt.x - frame.left;
         int localY = pt.y - frame.top;
-        if (!widgetEngine_->HandleHostUiPointer(widgets_[luaWidget].id, localX, localY, delta, true))
+        if (!widgetEngine_->HandleHostUiPointer(
+                widgets_[luaWidget].id, localX, localY,
+                delta, true))
             widgetEngine_->InvokeMouseEvent(widgets_[luaWidget].id, "onWheel",
                 localX, localY, 0, delta);
+        else
+            UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -5006,7 +10024,7 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     if (DockContainer* dock = GetDockContainerAtPoint(pt))
     {
         const int delta = GET_WHEEL_DELTA_WPARAM(wp);
-        if (dock->ScrollByWheelDelta(delta))
+        if (dock->ScrollByWheelDelta(pt, delta))
         {
             refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -5014,15 +10032,27 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         }
     }
 
-    if (popupWidgetIndex_ < widgets_.size())
+    if (DesktopWidget* popupWidget =
+            GetOpenPopupWidget();
+        IsCollectionPopupInteractive() &&
+        (!desktopIconsHidden_ || IsOpenPopupRetained()) &&
+        popupWidget)
     {
-        RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        RECT popup =
+            GetCollectionPopupRect(*popupWidget);
         if (PtInRect(&popup, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
-            int maxScroll = GetCollectionPopupMaxScrollOffset(widgets_[popupWidgetIndex_], popup);
+            int maxScroll =
+                GetCollectionPopupMaxScrollOffset(
+                    *popupWidget, popup);
             popupScrollOffset_ = std::clamp(popupScrollOffset_ - delta / 2, 0, maxScroll);
-            if (marqueeActive_ && marqueeWidgetIndex_ == popupWidgetIndex_)
+            if (marqueeActive_ &&
+                ((dockFolderPopupOpen_ &&
+                  marqueeDockFolderPopup_) ||
+                 (!dockFolderPopupOpen_ &&
+                  marqueeWidgetIndex_ ==
+                    popupWidgetIndex_)))
                 UpdateMarqueeSelection(pt);
             refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -5033,6 +10063,9 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     // Scroll widgets with overflow content
     for (auto& c : containers_)
     {
+        if (desktopIconsHidden_ &&
+            !IsRetainedContainer(c.get()))
+            continue;
         auto* wc = dynamic_cast<WidgetContainer*>(c.get());
         if (!wc || !wc->GetWidgetData()) continue;
         RECT frame = wc->GetFrameRect();
@@ -5041,11 +10074,14 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
         DesktopWidget* data = wc->GetWidgetData();
 
-        // FileCategories: horizontal scroll for tabs area
-        if (data->type == DesktopWidgetType::FileCategories)
+        // File category tabs use horizontal wheel scrolling.
+        if (data->type == DesktopWidgetType::FileCategories ||
+            data->type == DesktopWidgetType::FolderMapping ||
+            data->type == DesktopWidgetType::CollectionGroup ||
+            data->type == DesktopWidgetType::FileGroup)
         {
-            auto* fc = dynamic_cast<FileCategories*>(wc);
-            if (fc && fc->TryScrollTabs(pt, delta))
+            auto* categorized = dynamic_cast<ScrollingItemWidget*>(wc);
+            if (categorized && categorized->TryScrollTabs(pt, delta))
             {
                 refreshDragAfterScroll();
                 SaveLayoutSlots();
@@ -5058,7 +10094,11 @@ inline void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         if (maxScroll <= 0) continue;
 
         data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
-        wc->InvalidateSlots();
+        if (auto* group =
+                dynamic_cast<FileGroup*>(wc))
+            group->InvalidateHostedView();
+        else
+            wc->InvalidateSlots();
         if (marqueeActive_ && marqueeWidgetIndex_ < widgets_.size() &&
             &widgets_[marqueeWidgetIndex_] == data)
         {
@@ -5090,7 +10130,10 @@ inline RECT DesktopApp::GetVisibleCollectionItemBounds(size_t itemIndex) const
     if (itemIndex >= items_.size()) return {};
     std::wstring key = ToUpperInvariant(items_[itemIndex].layoutKey);
 
-    if (popupWidgetIndex_ < widgets_.size())
+    if (snowdesktop::popup_animation_rules::
+            ShouldUsePopupItemBounds(
+                popupWidgetIndex_ < widgets_.size(),
+                IsCollectionPopupInteractive()))
     {
         const DesktopWidget& widget = widgets_[popupWidgetIndex_];
         std::vector<std::wstring> keys = GetPopupItemKeys(widget);
@@ -5158,6 +10201,53 @@ inline RECT DesktopApp::GetFolderEntryRenameRect(size_t widgetIndex, size_t memb
     if (widgetIndex >= widgets_.size() ||
         memberIndex >= widgets_[widgetIndex].folderEntries.size())
         return {};
+
+    const size_t fileGroupIndex =
+        FindFileGroupIndexForChild(
+            widgets_[widgetIndex].id);
+    if (fileGroupIndex < widgets_.size())
+    {
+        for (const auto& c : containers_)
+        {
+            auto* group =
+                dynamic_cast<FileGroup*>(c.get());
+            if (!group ||
+                group->GetWidgetData() !=
+                    &widgets_[fileGroupIndex] ||
+                group->GetActiveSourceId() !=
+                    widgets_[widgetIndex].id)
+                continue;
+            for (const auto& slot : group->GetSlots())
+            {
+                auto* icon = slot
+                    ? dynamic_cast<FolderEntryIcon*>(
+                        slot->GetItem())
+                    : nullptr;
+                if (!icon ||
+                    icon->GetFolderEntry() !=
+                        &widgets_[widgetIndex].
+                            folderEntries[memberIndex])
+                    continue;
+                const RECT itemRect = slot->GetBounds();
+                if (widgets_[fileGroupIndex].listMode)
+                {
+                    const int itemH = std::max<int>(
+                        1, itemRect.bottom -
+                            itemRect.top);
+                    const int iconSize =
+                        std::min(32, itemH - 4);
+                    return MakeRect(
+                        itemRect.left + 4 +
+                            iconSize + 6,
+                        itemRect.top + 5,
+                        itemRect.right - 6,
+                        itemRect.bottom - 5);
+                }
+                return GetItemTextRect(
+                    itemRect, true);
+            }
+        }
+    }
 
     for (const auto& c : containers_)
     {
@@ -5260,6 +10350,146 @@ inline void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t member
     SetFocus(renameEdit_);
 }
 
+inline void DesktopApp::
+BeginRenameDockFolderPopupEntry(
+    size_t memberIndex)
+{
+    if (renameEdit_ != nullptr ||
+        !dockFolderPopupOpen_ ||
+        memberIndex >=
+            dockFolderPopupWidget_.
+                folderEntries.size())
+        return;
+
+    ClearSelection();
+    for (auto& entry :
+         dockFolderPopupWidget_.folderEntries)
+        entry.selected = false;
+    FolderEntry& entry =
+        dockFolderPopupWidget_.
+            folderEntries[memberIndex];
+    entry.selected = true;
+    renameCommitPending_ = false;
+    renamingFolderEntry_ = true;
+    renamingDockFolderPopupEntry_ = true;
+    renameFolderWidgetIndex_ =
+        static_cast<size_t>(-1);
+    renameFolderEntryIndex_ = memberIndex;
+
+    const RECT popup =
+        GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+    RECT itemRect =
+        GetCollectionPopupItemRect(
+            popup, memberIndex);
+    RECT rect =
+        GetItemTextRect(itemRect, true);
+    if (IsRectEmptyRect(rect))
+    {
+        renamingFolderEntry_ = false;
+        renamingDockFolderPopupEntry_ =
+            false;
+        renameFolderEntryIndex_ =
+            static_cast<size_t>(-1);
+        return;
+    }
+    InflateRect(&rect, 2, 2);
+    RECT screenRect = rect;
+    MapWindowPoints(
+        hwnd_, nullptr,
+        reinterpret_cast<POINT*>(
+            &screenRect), 2);
+
+    const DWORD style =
+        WS_POPUP | WS_VISIBLE |
+        ES_AUTOVSCROLL |
+        ES_MULTILINE | ES_CENTER |
+        ES_WANTRETURN;
+    renameEdit_ = CreateWindowExW(
+        WS_EX_CLIENTEDGE |
+            WS_EX_TOOLWINDOW |
+            WS_EX_TOPMOST,
+        L"EDIT", entry.name.c_str(),
+        style,
+        screenRect.left,
+        screenRect.top,
+        screenRect.right -
+            screenRect.left,
+        screenRect.bottom -
+            screenRect.top,
+        hwnd_, nullptr, instance_, nullptr);
+    if (!renameEdit_)
+    {
+        renamingFolderEntry_ = false;
+        renamingDockFolderPopupEntry_ =
+            false;
+        renameFolderEntryIndex_ =
+            static_cast<size_t>(-1);
+        return;
+    }
+
+    if (renameFont_)
+        DeleteObject(renameFont_);
+    const float renameScale =
+        GetItemLayoutScale(itemRect);
+    renameFont_ = CreateFontW(
+        -std::max(
+            1, static_cast<int>(
+                std::round(
+                    itemFontSize_ *
+                    renameScale))),
+        0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE,
+        L"Segoe UI");
+    SendMessageW(
+        renameEdit_, WM_SETFONT,
+        reinterpret_cast<WPARAM>(
+            renameFont_
+                ? renameFont_
+                : GetStockObject(
+                    DEFAULT_GUI_FONT)),
+        TRUE);
+    const int renameMargin =
+        std::max(
+            1, static_cast<int>(
+                std::round(
+                    6.0f * renameScale)));
+    SendMessageW(
+        renameEdit_, EM_SETMARGINS,
+        EC_LEFTMARGIN |
+            EC_RIGHTMARGIN,
+        MAKELPARAM(
+            renameMargin,
+            renameMargin));
+    SetWindowSubclass(
+        renameEdit_,
+        &DesktopApp::
+            RenameEditSubclassProc,
+        1,
+        reinterpret_cast<DWORD_PTR>(
+            this));
+    SetWindowPos(
+        renameEdit_, HWND_TOPMOST,
+        screenRect.left,
+        screenRect.top,
+        screenRect.right -
+            screenRect.left,
+        screenRect.bottom -
+            screenRect.top,
+        SWP_SHOWWINDOW);
+    SendMessageW(
+        renameEdit_, EM_SETSEL, 0,
+        GetRenameInitialSelectionEnd(
+            entry.name,
+            entry.isDirectory));
+    SetFocus(renameEdit_);
+}
+
 /**
  * @brief 判断 Shell 上下文菜单命令是否为重命名命令
  * @param contextMenu Shell 上下文菜单接口
@@ -5285,13 +10515,44 @@ inline bool DesktopApp::IsShellRenameCommand(IContextMenu* contextMenu, UINT com
     return false;
 }
 
+inline bool DesktopApp::IsShellDeleteCommand(
+    IContextMenu* contextMenu,
+    UINT commandOffset) const
+{
+    if (!contextMenu) return false;
+
+    wchar_t verbW[128]{};
+    if (SUCCEEDED(contextMenu->GetCommandString(
+            commandOffset, GCS_VERBW, nullptr,
+            reinterpret_cast<LPSTR>(verbW),
+            static_cast<UINT>(_countof(verbW)))) &&
+        lstrcmpiW(verbW, L"delete") == 0)
+    {
+        return true;
+    }
+
+    char verbA[128]{};
+    if (SUCCEEDED(contextMenu->GetCommandString(
+            commandOffset, GCS_VERBA, nullptr,
+            verbA,
+            static_cast<UINT>(_countof(verbA)))) &&
+        lstrcmpiA(verbA, "delete") == 0)
+    {
+        return true;
+    }
+    return false;
+}
+
 /**
  * @brief 显示文件夹条目的 Shell 上下文菜单
  * @param screenPoint 屏幕坐标点
  * @param widgetIndex 部件索引
  * @param memberIndex 条目索引
  */
-inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex)
+inline void DesktopApp::ShowFolderEntryContextMenu(
+    POINT screenPoint, size_t widgetIndex,
+    size_t memberIndex,
+    bool keepQuickNavigationOpen)
 {
     if (widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
@@ -5340,16 +10601,39 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
         return;
     }
 
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu,
+        snowdesktop::item_location::CanReveal(fullPath)
+            ? MF_STRING
+            : MF_STRING | MF_GRAYED,
+        kContextRevealLocationCommand,
+        _LW("app.menu.open_file_location"));
+
     contextMenu.As(&activeContextMenu2_);
     contextMenu.As(&activeContextMenu3_);
 
-    SetForegroundWindow(hwnd_);
+    HWND menuOwner = keepQuickNavigationOpen &&
+        quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_
+        : hwnd_;
+    SetForegroundWindow(menuOwner);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
-    FocusDesktopInputWindow();
+        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    if (!keepQuickNavigationOpen)
+        FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
+
+    if (command == kContextRevealLocationCommand)
+    {
+        DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
+        ILFree(pidl);
+        snowdesktop::item_location::Reveal(hwnd_, fullPath);
+        return;
+    }
 
     if (command >= kFirstCmd && command <= kLastCmd)
     {
@@ -5369,7 +10653,12 @@ inline void DesktopApp::ShowFolderEntryContextMenu(POINT screenPoint, size_t wid
 
         if (renameCommand)
         {
-            BeginRenameFolderEntry(widgetIndex, memberIndex);
+            if (keepQuickNavigationOpen)
+                BeginQuickNavigationFolderEntryRename(
+                    widgetIndex, memberIndex);
+            else
+                BeginRenameFolderEntry(
+                    widgetIndex, memberIndex);
             return;
         }
 
@@ -5441,22 +10730,48 @@ static std::wstring MakeUniqueFileName(const std::wstring& folderPath, const std
  */
 inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cancel)
 {
-    size_t widgetIndex = renameFolderWidgetIndex_;
-    size_t memberIndex = renameFolderEntryIndex_;
+    const size_t widgetIndex =
+        renameFolderWidgetIndex_;
+    const size_t memberIndex =
+        renameFolderEntryIndex_;
+    const bool dockPopupEntry =
+        renamingDockFolderPopupEntry_;
     renamingFolderEntry_ = false;
+    renamingDockFolderPopupEntry_ = false;
     renameFolderWidgetIndex_ = static_cast<size_t>(-1);
     renameFolderEntryIndex_ = static_cast<size_t>(-1);
 
-    if (cancel ||
-        widgetIndex >= widgets_.size() ||
-        widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
-        memberIndex >= widgets_[widgetIndex].folderEntries.size() ||
+    const FolderEntry* sourceEntry = nullptr;
+    if (dockPopupEntry)
+    {
+        if (dockFolderPopupOpen_ &&
+            memberIndex <
+                dockFolderPopupWidget_.
+                    folderEntries.size())
+            sourceEntry =
+                &dockFolderPopupWidget_.
+                    folderEntries[memberIndex];
+    }
+    else if (widgetIndex < widgets_.size() &&
+        widgets_[widgetIndex].type ==
+            DesktopWidgetType::FolderMapping &&
+        memberIndex <
+            widgets_[widgetIndex].
+                folderEntries.size())
+    {
+        sourceEntry =
+            &widgets_[widgetIndex].
+                folderEntries[memberIndex];
+    }
+
+    if (cancel || !sourceEntry ||
         newName.empty() ||
-        newName == widgets_[widgetIndex].folderEntries[memberIndex].name)
+        newName == sourceEntry->name)
         return;
 
     PIDLIST_ABSOLUTE pidl = nullptr;
-    const std::wstring oldPath = widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
+    const std::wstring oldPath =
+        sourceEntry->fullPath;
     if (FAILED(SHParseDisplayName(oldPath.c_str(), nullptr, &pidl, 0, nullptr)))
     {
         MessageBeep(MB_ICONWARNING);
@@ -5467,12 +10782,19 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
     PCUITEMID_CHILD child = nullptr;
     HRESULT hr = SHBindToParent(pidl, IID_IShellFolder,
         reinterpret_cast<void**>(&parentFolder), &child);
+    std::wstring renamedPath;
     if (SUCCEEDED(hr) && parentFolder)
     {
         wchar_t dirBuf[MAX_PATH]{};
         wcscpy_s(dirBuf, oldPath.c_str());
         PathRemoveFileSpecW(dirBuf);
         std::wstring uniqueName = MakeUniqueFileName(dirBuf, newName);
+        wchar_t renamedPathBuffer[MAX_PATH]{};
+        if (PathCombineW(
+                renamedPathBuffer,
+                dirBuf,
+                uniqueName.c_str()))
+            renamedPath = renamedPathBuffer;
         PITEMID_CHILD newChild = nullptr;
         hr = parentFolder->SetNameOf(ShellDialogOwnerHwnd(), child, uniqueName.c_str(), SHGDN_NORMAL, &newChild);
         if (newChild) ILFree(newChild);
@@ -5486,7 +10808,39 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
         return;
     }
 
-    RefreshFolderMappingWidget(widgetIndex);
+    if (!renamedPath.empty())
+    {
+        auto replaceOrderKey =
+            [&](std::vector<std::wstring>& keys) {
+                for (auto& key : keys)
+                {
+                    if (PathsEqualInsensitive(
+                            key, oldPath))
+                        key = renamedPath;
+                }
+            };
+        for (auto& widget : widgets_)
+        {
+            if (widget.type ==
+                DesktopWidgetType::
+                    FolderMapping)
+                replaceOrderKey(
+                    widget.itemKeys);
+        }
+        replaceOrderKey(
+            dockFolderPopupWidget_.
+                itemKeys);
+    }
+    for (size_t i = 0;
+        i < widgets_.size(); ++i)
+    {
+        if (widgets_[i].type ==
+            DesktopWidgetType::FolderMapping)
+            RefreshFolderMappingWidget(i);
+    }
+    ReloadItems(false);
+    if (dockFolderPopupOpen_)
+        RefreshDockFolderPopup();
     RebuildContainersAndItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -5495,10 +10849,129 @@ inline void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, boo
 /**
  * @brief 开始重命名选中的元素（小部件、文件夹条目或桌面项）
  */
-inline void DesktopApp::BeginRenameSelected()
+inline bool DesktopApp::BeginDockAnchoredRename(
+    const std::wstring& text, RECT anchorClient,
+    int selectionEnd)
+{
+    RECT anchorScreen = anchorClient;
+    MapWindowPoints(hwnd_, nullptr,
+        reinterpret_cast<POINT*>(&anchorScreen), 2);
+    const POINT anchorCenter{
+        (anchorScreen.left + anchorScreen.right) / 2,
+        (anchorScreen.top + anchorScreen.bottom) / 2
+    };
+    const HMONITOR monitor = MonitorFromPoint(
+        anchorCenter, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+    if (!GetMonitorInfoW(monitor, &monitorInfo))
+    {
+        monitorInfo.rcWork = {
+            virtualLeft_, virtualTop_,
+            virtualLeft_ + virtualWidth_,
+            virtualTop_ + virtualHeight_
+        };
+    }
+
+    UINT dpiX = 96;
+    UINT dpiY = 96;
+    if (FAILED(GetDpiForMonitor(
+            monitor, MDT_EFFECTIVE_DPI,
+            &dpiX, &dpiY)))
+        dpiX = 96;
+    const int desiredWidth =
+        std::max(150, MulDiv(180, static_cast<int>(dpiX), 96));
+    const int desiredHeight =
+        std::max(26, MulDiv(30, static_cast<int>(dpiX), 96));
+    const int gap =
+        std::max(3, MulDiv(6, static_cast<int>(dpiX), 96));
+    const int monitorMargin =
+        std::max(3, MulDiv(5, static_cast<int>(dpiX), 96));
+    const RECT screenRect =
+        snowdesktop::dock_rename_layout::
+            CalculateAdjacentEditRect(
+                anchorScreen, monitorInfo.rcWork,
+                dockSettings_.position,
+                desiredWidth, desiredHeight,
+                gap, monitorMargin);
+
+    renameEdit_ = CreateWindowExW(
+        WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"EDIT", text.c_str(),
+        WS_POPUP | WS_VISIBLE |
+            ES_CENTER | ES_AUTOHSCROLL,
+        screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left,
+        screenRect.bottom - screenRect.top,
+        hwnd_, nullptr, instance_, nullptr);
+    if (!renameEdit_)
+        return false;
+
+    if (renameFont_)
+        DeleteObject(renameFont_);
+    const int fontHeight = std::max(
+        12, MulDiv(
+            static_cast<int>(std::round(itemFontSize_)),
+            static_cast<int>(dpiX), 96));
+    renameFont_ = CreateFontW(
+        -fontHeight, 0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(renameEdit_, WM_SETFONT,
+        reinterpret_cast<WPARAM>(
+            renameFont_ ? renameFont_
+                : GetStockObject(DEFAULT_GUI_FONT)),
+        TRUE);
+    const int editMargin = std::max(
+        3, MulDiv(5, static_cast<int>(dpiX), 96));
+    SendMessageW(renameEdit_, EM_SETMARGINS,
+        EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELPARAM(editMargin, editMargin));
+    SetWindowSubclass(renameEdit_,
+        &DesktopApp::RenameEditSubclassProc, 1,
+        reinterpret_cast<DWORD_PTR>(this));
+    SetWindowPos(renameEdit_, HWND_TOPMOST,
+        screenRect.left, screenRect.top,
+        screenRect.right - screenRect.left,
+        screenRect.bottom - screenRect.top,
+        SWP_SHOWWINDOW);
+    SendMessageW(renameEdit_, EM_SETSEL,
+        0, selectionEnd);
+    SetFocus(renameEdit_);
+    return true;
+}
+
+inline void DesktopApp::BeginRenameSelected(
+    std::optional<RECT> dockRenameAnchor)
 {
     if (renameEdit_ != nullptr) return;
     renameCommitPending_ = false;
+
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_)
+    {
+        size_t selectedMember =
+            static_cast<size_t>(-1);
+        int selectedCount = 0;
+        for (size_t i = 0;
+            i < dockFolderPopupWidget_.
+                folderEntries.size(); ++i)
+        {
+            if (!dockFolderPopupWidget_.
+                    folderEntries[i].
+                        selected)
+                continue;
+            selectedMember = i;
+            ++selectedCount;
+        }
+        if (selectedCount == 1)
+        {
+            BeginRenameDockFolderPopupEntry(
+                selectedMember);
+            return;
+        }
+    }
 
     int selectedWidgetCount = 0;
     size_t selectedWidgetIndex = static_cast<size_t>(-1);
@@ -5516,19 +10989,93 @@ inline void DesktopApp::BeginRenameSelected()
 
         renamingWidget_ = true;
         renameIndex_ = selectedWidgetIndex;
+        if (dockRenameAnchor)
+        {
+            if (!BeginDockAnchoredRename(
+                    widgets_[selectedWidgetIndex].title,
+                    *dockRenameAnchor, -1))
+            {
+                renamingWidget_ = false;
+                renameIndex_ = static_cast<size_t>(-1);
+            }
+            return;
+        }
 
         RECT frame = widgets_[selectedWidgetIndex].bounds;
         RECT handle = frame;
         bool foundContainer = false;
-        for (const auto& c : containers_)
+        bool groupedTabRename = false;
+        if (IsGroupedCollection(
+                widgets_[selectedWidgetIndex]))
         {
-            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
-            if (wc && wc->GetWidgetData() == &widgets_[selectedWidgetIndex])
+            const size_t groupIndex =
+                FindCollectionGroupIndexForChild(
+                    widgets_[selectedWidgetIndex].id);
+            if (groupIndex < widgets_.size())
             {
-                frame = wc->GetFrameRect();
-                handle = wc->GetMoveHandleRect();
-                foundContainer = true;
-                break;
+                for (const auto& c : containers_)
+                {
+                    auto* group =
+                        dynamic_cast<CollectionGroup*>(
+                            c.get());
+                    if (!group ||
+                        group->GetWidgetData() !=
+                            &widgets_[groupIndex])
+                        continue;
+                    frame = group->GetTabRectById(
+                        widgets_[selectedWidgetIndex].id);
+                    if (!IsRectEmptyRect(frame))
+                    {
+                        handle = frame;
+                        foundContainer = true;
+                        groupedTabRename = true;
+                    }
+                    break;
+                }
+            }
+        }
+        else
+        {
+            const size_t groupIndex =
+                FindFileGroupIndexForChild(
+                    widgets_[selectedWidgetIndex].id);
+            if (groupIndex < widgets_.size())
+            {
+                for (const auto& c : containers_)
+                {
+                    auto* group =
+                        dynamic_cast<FileGroup*>(
+                            c.get());
+                    if (!group ||
+                        group->GetWidgetData() !=
+                            &widgets_[groupIndex])
+                        continue;
+                    frame = group->GetSourceTabRectById(
+                        widgets_[selectedWidgetIndex].id);
+                    if (!IsRectEmptyRect(frame))
+                    {
+                        handle = frame;
+                        foundContainer = true;
+                        groupedTabRename = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!foundContainer)
+        {
+            for (const auto& c : containers_)
+            {
+                auto* wc =
+                    dynamic_cast<WidgetContainer*>(c.get());
+                if (wc && wc->GetWidgetData() ==
+                        &widgets_[selectedWidgetIndex])
+                {
+                    frame = wc->GetFrameRect();
+                    handle = wc->GetMoveHandleRect();
+                    foundContainer = true;
+                    break;
+                }
             }
         }
         if (!foundContainer && widgets_[selectedWidgetIndex].type == DesktopWidgetType::LuaScript)
@@ -5536,17 +11083,36 @@ inline void DesktopApp::BeginRenameSelected()
             frame = GetStandaloneWidgetFrameRect(widgets_[selectedWidgetIndex]);
             handle = GetStandaloneWidgetMoveHandleRect(widgets_[selectedWidgetIndex]);
         }
-        const int editHeight = std::max(40, static_cast<int>(handle.bottom - handle.top) * 2);
-        RECT rect = MakeRect(frame.left + 4, handle.top, frame.right - 4, handle.top + editHeight);
+        const int editHeight = groupedTabRename
+            ? std::max(
+                24, static_cast<int>(
+                    handle.bottom - handle.top))
+            : std::max(
+                40, static_cast<int>(
+                    handle.bottom - handle.top) * 2);
+        RECT rect = groupedTabRename
+            ? MakeRect(
+                frame.left + 2, frame.top,
+                frame.right - 2, frame.top + editHeight)
+            : MakeRect(
+                frame.left + 4, handle.top,
+                frame.right - 4,
+                handle.top + editHeight);
         InflateRect(&rect, 2, 2);
         RECT screenRect = rect;
         MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
+        const DWORD editStyle = groupedTabRename
+            ? (WS_POPUP | WS_VISIBLE |
+                ES_CENTER | ES_AUTOHSCROLL)
+            : (WS_POPUP | WS_VISIBLE |
+                ES_MULTILINE | ES_CENTER |
+                ES_AUTOVSCROLL | ES_WANTRETURN);
         renameEdit_ = CreateWindowExW(
             WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             L"EDIT",
             widgets_[selectedWidgetIndex].title.c_str(),
-            WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_CENTER | ES_AUTOVSCROLL | ES_WANTRETURN,
+            editStyle,
             screenRect.left, screenRect.top,
             screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
             hwnd_, nullptr, instance_, nullptr);
@@ -5605,6 +11171,19 @@ inline void DesktopApp::BeginRenameSelected()
         (fileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
     renameIndex_ = static_cast<size_t>(selectedIndex);
+    if (dockRenameAnchor)
+    {
+        if (!BeginDockAnchoredRename(
+                items_[selectedIndex].name,
+                *dockRenameAnchor,
+                GetRenameInitialSelectionEnd(
+                    items_[selectedIndex].name,
+                    isDirectory)))
+        {
+            renameIndex_ = static_cast<size_t>(-1);
+        }
+        return;
+    }
     RECT itemBounds = GetVisibleCollectionItemBounds(renameIndex_);
     if (IsRectEmptyRect(itemBounds))
         itemBounds = items_[selectedIndex].bounds;
@@ -5656,7 +11235,15 @@ inline void DesktopApp::BeginRenameSelected()
 inline void DesktopApp::CommitRename(bool cancel)
 {
     renameCommitPending_ = false;
-    if (renameEdit_ == nullptr) return;
+    if (renameEdit_ == nullptr)
+    {
+        renamingQuickNavigationItem_ = false;
+        return;
+    }
+
+    const bool quickNavigationRename =
+        renamingQuickNavigationItem_;
+    renamingQuickNavigationItem_ = false;
 
     HWND edit = renameEdit_;
     renameEdit_ = nullptr;
@@ -5680,6 +11267,8 @@ inline void DesktopApp::CommitRename(bool cancel)
     if (renamingFolderEntry_)
     {
         CommitFolderEntryRename(newName, cancel);
+        if (quickNavigationRename)
+            InvalidateQuickNavigationWindow();
         return;
     }
 
@@ -5702,23 +11291,30 @@ inline void DesktopApp::CommitRename(bool cancel)
                 if (!widget.scriptTitle.empty())
                     widget.title = widget.scriptTitle;
                 else if (widget.type == DesktopWidgetType::LuaScript)
-                    widget.title = WidgetEngine::GetWidgetDisplayName(widget.scriptPath);
+                    widget.title = WidgetEngine::GetWidgetDisplayName(widget.packageId);
                 else if (widget.type == DesktopWidgetType::FileCategories)
                     widget.title = _LW("widget.desktop_files");
                 else if (widget.type == DesktopWidgetType::Guide)
                     widget.title = _LW("app.guide.title");
                 else if (widget.type == DesktopWidgetType::Collection)
                     widget.title = _LW("widget.collection");
+                else if (widget.type ==
+                    DesktopWidgetType::CollectionGroup)
+                    widget.title =
+                        _LW("widget.collection_group");
                 SaveLayoutSlots();
             }
         }
         renamingWidget_ = false;
         renameIndex_ = static_cast<size_t>(-1);
         InvalidateRect(hwnd_, nullptr, TRUE);
+        if (quickNavigationRename)
+            InvalidateQuickNavigationWindow();
         return;
     }
 
     bool keepLayoutSlots = false;
+    bool dockUsageKeyMigrated = false;
     if (!cancel && renameIndex_ < items_.size() && !newName.empty() && newName != items_[renameIndex_].name)
     {
         std::wstring oldLayoutKey = items_[renameIndex_].layoutKey;
@@ -5737,19 +11333,48 @@ inline void DesktopApp::CommitRename(bool cancel)
                 std::wstring newParsingName = StrRetToString(desktopFolder_.Get(), newChild, SHGDN_FORPARSING);
                 if (newAbsolute)
                 {
-                    std::wstring newLayoutKey = GetStableLayoutKey(newAbsolute, newParsingName);
+                    const std::wstring oldNormalizedKey =
+                        ToUpperInvariant(oldLayoutKey);
+                    const std::wstring newLayoutKey =
+                        ToUpperInvariant(GetStableLayoutKey(
+                            newAbsolute, newParsingName));
                     LayoutRecord record;
                     record.cell = items_[renameIndex_].gridCell;
                     record.span = items_[renameIndex_].gridSpan;
                     record.hasGrid = true;
                     record.legacySlot = items_[renameIndex_].slot;
+                    if (oldNormalizedKey != newLayoutKey)
+                        layoutRecords_.erase(oldNormalizedKey);
                     layoutRecords_[newLayoutKey] = record;
-                    for (auto& widget : widgets_)
+
+                    snowdesktop::
+                        desktop_item_reference_migration::
+                            MigrateReferences(
+                                widgets_, dockEntries_,
+                                oldLayoutKey, newLayoutKey);
+
+                    if (oldNormalizedKey != newLayoutKey)
                     {
-                        for (auto& key : widget.itemKeys)
+                        auto oldUsage =
+                            dockUsageStats_.find(
+                                oldNormalizedKey);
+                        if (oldUsage !=
+                            dockUsageStats_.end())
                         {
-                            if (ToUpperInvariant(key) == ToUpperInvariant(oldLayoutKey))
-                                key = newLayoutKey;
+                            const DockUsageRecord migrated =
+                                oldUsage->second;
+                            dockUsageStats_.erase(oldUsage);
+                            DockUsageRecord& destination =
+                                dockUsageStats_[newLayoutKey];
+                            destination.launchCount =
+                                std::max(
+                                    destination.launchCount,
+                                    migrated.launchCount);
+                            destination.lastUsed =
+                                std::max(
+                                    destination.lastUsed,
+                                    migrated.lastUsed);
+                            dockUsageKeyMigrated = true;
                         }
                     }
                     keepLayoutSlots = true;
@@ -5766,6 +11391,10 @@ inline void DesktopApp::CommitRename(bool cancel)
 
     renameIndex_ = static_cast<size_t>(-1);
     ReloadItems(!keepLayoutSlots);
+    if (dockUsageKeyMigrated)
+        SaveDockUsageStats();
+    if (quickNavigationRename)
+        InvalidateQuickNavigationWindow();
 }
 
 /**
@@ -5781,6 +11410,28 @@ inline LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
 
     switch (message)
     {
+    case WM_ACTIVATE:
+        if (app->renamingQuickNavigationItem_ &&
+            LOWORD(wParam) == WA_INACTIVE)
+        {
+            const HWND activatedWindow =
+                reinterpret_cast<HWND>(lParam);
+            const bool remainsInQuickNavigation =
+                activatedWindow ==
+                    app->quickNavigationHwnd_ ||
+                activatedWindow ==
+                    app->quickNavigationSearchEdit_ ||
+                app->quickNavBackdropCompositor_.
+                    IsBackdropWindow(
+                        activatedWindow);
+            if (!remainsInQuickNavigation)
+            {
+                app->CommitRename(false);
+                app->CloseQuickNavigation();
+                return 0;
+            }
+        }
+        break;
     case WM_KEYDOWN:
         if (wParam == VK_RETURN) { app->CommitRename(false); return 0; }
         if (wParam == VK_ESCAPE) { app->CommitRename(true); return 0; }
@@ -6074,11 +11725,18 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
         UpdateCollectionPopupDwell(client);
+        UpdateCollectionGroupTabDwell(client);
         const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+        const bool groupedEntryDrag =
+            dragSession_.SourceList().
+                hasCollectionGroupEntries ||
+            dragSession_.SourceList().
+                hasFileGroupEntries;
         if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
             *effect = DROPEFFECT_NONE;
             OnPaint();
+            InvalidateFloatingDockWindow(true);
             return S_OK;
         }
 
@@ -6086,12 +11744,21 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         Container* targetContainer = nullptr;
         Slot* targetSlot = nullptr;
         HitRegion targetRegion = HitRegion::None;
-        const bool popupHit = !suppressDesktopWidgetTargets &&
+        const bool popupHit =
+            !suppressDesktopWidgetTargets &&
+            !groupedEntryDrag &&
             HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion);
         if (!popupHit)
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
+                if (!AcceptsSlotSurfaceDrop(
+                        it->get(),
+                        dragSession_.SourceList()))
+                    continue;
                 if (suppressDesktopWidgetTargets &&
                     (dynamic_cast<DesktopGrid*>(it->get()) ||
                      dynamic_cast<WidgetContainer*>(it->get())))
@@ -6125,19 +11792,61 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
         *effect = targetRegion == HitRegion::Blocked
             ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
 
     externalDragActive_ = true;
+    externalDropHasShortcut_ = false;
+    externalDropFoldersOnly_ = false;
+    if (dataObject)
+    {
+        const std::vector<std::wstring> paths =
+            GetDropPaths(dataObject);
+        externalDropFileCount_ =
+            static_cast<int>(paths.size());
+        externalDropHasShortcut_ =
+            std::any_of(
+                paths.begin(), paths.end(),
+                [](const std::wstring& path) {
+                    return _wcsicmp(
+                        PathFindExtensionW(
+                            path.c_str()),
+                        L".lnk") == 0;
+                });
+        externalDropFoldersOnly_ =
+            !paths.empty() &&
+            std::all_of(
+                paths.begin(), paths.end(),
+                [](const std::wstring& path) {
+                    return snowdesktop::
+                        item_location::
+                            ResolveFolderTarget(
+                                path).kind !=
+                        snowdesktop::
+                            item_location::
+                                FolderTargetKind::
+                                    None;
+                });
+    }
+    else
+    {
+        externalDropFileCount_ = 1;
+    }
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
+    {
+        ClearDockBackdropForDragTransition(
+            lastMousePoint_, client);
         dragSession_.Begin(nullptr, {}, {}, client, client);
+    }
     else
         dragSession_.UpdatePoint(client);
     if (!UpdateDragPageNavigation(client))
     {
         *effect = DROPEFFECT_NONE;
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
 
@@ -6149,6 +11858,12 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     {
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
+            if (desktopIconsHidden_ &&
+                !IsRetainedContainer(it->get()))
+                continue;
+            if (!AcceptsExternalSlotSurfaceDrop(
+                    it->get()))
+                continue;
             Slot* slot = nullptr;
             HitRegion region = (*it)->HitTestDrag(client, slot);
             if (region != HitRegion::None)
@@ -6162,34 +11877,37 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragEnter(
     }
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 
-    externalDropHasShortcut_ = false;
-    if (dataObject)
-    {
-        std::vector<std::wstring> paths = GetDropPaths(dataObject);
-        externalDropFileCount_ = static_cast<int>(paths.size());
-        externalDropHasShortcut_ = std::any_of(paths.begin(), paths.end(),
-            [](const std::wstring& path) {
-                return _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-            });
-    }
-    else
-    {
-        externalDropFileCount_ = 1;
-    }
-
     int mods = 0;
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
     if (keyState & MK_ALT)     mods |= MK_ALT;
     if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-    dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
+    const bool externalDockMapping =
+        dynamic_cast<DockContainer*>(targetContainer) &&
+        targetRegion != HitRegion::Handoff &&
+        targetRegion != HitRegion::Blocked;
+    if (externalDockMapping)
+        dragSession_.UpdateActionFromMods(
+            DropActionToMods(
+                snowdesktop::dock_drop_rules::
+                    ExternalMappingAction()),
+            snowdesktop::dock_drop_rules::
+                ExternalMappingAction());
+    else
+        dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
     std::wstring hint;
     if (targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
-    *effect = targetRegion == HitRegion::Blocked
-        ? DROPEFFECT_NONE : ChooseDropEffect(keyState, *effect);
+    *effect = ((desktopIconsHidden_ && !targetContainer) ||
+        targetRegion == HitRegion::Blocked)
+        ? DROPEFFECT_NONE
+        : (externalDockMapping
+            ? snowdesktop::dock_drop_rules::
+                ChooseExternalMappingEffect(*effect)
+            : ChooseDropEffect(keyState, *effect));
     OnPaint();
+    InvalidateFloatingDockWindow(true);
     return S_OK;
 }
 
@@ -6214,11 +11932,18 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
         UpdateCollectionPopupDwell(client);
+        UpdateCollectionGroupTabDwell(client);
         const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+        const bool groupedEntryDrag =
+            dragSession_.SourceList().
+                hasCollectionGroupEntries ||
+            dragSession_.SourceList().
+                hasFileGroupEntries;
         if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
             *effect = DROPEFFECT_NONE;
             OnPaint();
+            InvalidateFloatingDockWindow(true);
             return S_OK;
         }
 
@@ -6226,12 +11951,21 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         Container* targetContainer = nullptr;
         Slot* targetSlot = nullptr;
         HitRegion targetRegion = HitRegion::None;
-        const bool popupHit = !suppressDesktopWidgetTargets &&
+        const bool popupHit =
+            !suppressDesktopWidgetTargets &&
+            !groupedEntryDrag &&
             HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion);
         if (!popupHit)
         {
             for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
             {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
+                if (!AcceptsSlotSurfaceDrop(
+                        it->get(),
+                        dragSession_.SourceList()))
+                    continue;
                 if (suppressDesktopWidgetTargets &&
                     (dynamic_cast<DesktopGrid*>(it->get()) ||
                      dynamic_cast<WidgetContainer*>(it->get())))
@@ -6265,19 +11999,25 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
         *effect = targetRegion == HitRegion::Blocked
             ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
 
     externalDragActive_ = true;
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
+    {
+        ClearDockBackdropForDragTransition(
+            lastMousePoint_, client);
         dragSession_.Begin(nullptr, {}, {}, client, client);
+    }
     else
         dragSession_.UpdatePoint(client);
     if (!UpdateDragPageNavigation(client))
     {
         *effect = DROPEFFECT_NONE;
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
 
@@ -6289,6 +12029,12 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     {
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
+            if (desktopIconsHidden_ &&
+                !IsRetainedContainer(it->get()))
+                continue;
+            if (!AcceptsExternalSlotSurfaceDrop(
+                    it->get()))
+                continue;
             Slot* slot = nullptr;
             HitRegion region = (*it)->HitTestDrag(client, slot);
             if (region != HitRegion::None)
@@ -6306,15 +12052,33 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragOver(
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
     if (keyState & MK_ALT)     mods |= MK_ALT;
     if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-    dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
+    const bool externalDockMapping =
+        dynamic_cast<DockContainer*>(targetContainer) &&
+        targetRegion != HitRegion::Handoff &&
+        targetRegion != HitRegion::Blocked;
+    if (externalDockMapping)
+        dragSession_.UpdateActionFromMods(
+            DropActionToMods(
+                snowdesktop::dock_drop_rules::
+                    ExternalMappingAction()),
+            snowdesktop::dock_drop_rules::
+                ExternalMappingAction());
+    else
+        dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
     std::wstring hint;
     if (targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
-    *effect = targetRegion == HitRegion::Blocked
-        ? DROPEFFECT_NONE : ChooseDropEffect(keyState, *effect);
+    *effect = ((desktopIconsHidden_ && !targetContainer) ||
+        targetRegion == HitRegion::Blocked)
+        ? DROPEFFECT_NONE
+        : (externalDockMapping
+            ? snowdesktop::dock_drop_rules::
+                ChooseExternalMappingEffect(*effect)
+            : ChooseDropEffect(keyState, *effect));
     OnPaint();
+    InvalidateFloatingDockWindow(true);
     return S_OK;
 }
 
@@ -6331,17 +12095,26 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::DragLeave()
     {
         popupDwellWidgetIndex_ = static_cast<size_t>(-1);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        collectionGroupTabDwellWidgetIndex_ =
+            static_cast<size_t>(-1);
+        collectionGroupTabDwellId_.clear();
+        collectionGroupTabDwellTick_ = 0;
+        KillTimer(
+            hwnd_, kCollectionGroupTabDwellTimerId);
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
         HideDragHintWindow();
         OnPaint();
+        InvalidateFloatingDockWindow(true);
         return S_OK;
     }
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
     externalDropHasShortcut_ = false;
+    externalDropFoldersOnly_ = false;
     EndDragSession();
     HideDragHintWindow();
     OnPaint();
+    InvalidateFloatingDockWindow(true);
     return S_OK;
 }
 
@@ -6366,6 +12139,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         externalDragActive_ = false;
         externalDropFileCount_ = 0;
         externalDropHasShortcut_ = false;
+        externalDropFoldersOnly_ = false;
         *effect = DROPEFFECT_NONE;
         EndDragSession();
         return S_OK;
@@ -6375,14 +12149,28 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
     if (selfDragActive_)
     {
+        const bool dockFolderPopupSource =
+            dockFolderPopupOpen_ &&
+            dragSession_.Source() ==
+                dockFolderPopupContainer_.get();
+        const bool dockFolderPopupTarget =
+            dockFolderPopupOpen_ &&
+            dragSession_.TargetContainer() ==
+                dockFolderPopupContainer_.get();
+        auto refreshDockFolderPopup =
+            [&]() {
+                if ((dockFolderPopupSource ||
+                     dockFolderPopupTarget) &&
+                    dockFolderPopupOpen_)
+                    RefreshDockFolderPopup();
+            };
         selfDragActive_ = false;
         selfDragReturned_ = true;
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         ReleaseCapture();
         dragSession_.DeactivateForDrop();
-        dragRenderCache_.Reset();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        CommitDragVisualEndBeforeShellOperation();
 
         if (!GetDockDragOutRemovalHint(clientPoint).empty())
         {
@@ -6421,6 +12209,7 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                     {
                         RebuildContainersAndItems();
                         LayoutItems();
+                        refreshDockFolderPopup();
                         InvalidateRect(hwnd_, nullptr, FALSE);
                     }
                     *effect = executed ? DROPEFFECT_MOVE : DROPEFFECT_NONE;
@@ -6445,6 +12234,20 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             if (dataObj && targetItem)
             {
                 ComPtr<IDropTarget> dt;
+                bool explicitFolderTarget =
+                    dockFolderPopupTarget;
+                if (auto* dockTarget =
+                        dynamic_cast<DockEntryItem*>(
+                            targetItem))
+                {
+                    const size_t entryIndex =
+                        dockTarget->GetEntryIndex();
+                    explicitFolderTarget =
+                        entryIndex <
+                            dockEntries_.size() &&
+                        IsFolderDockEntry(
+                            dockEntries_[entryIndex]);
+                }
                 if (auto* icon = dynamic_cast<DesktopIcon*>(targetItem))
                 {
                     DesktopItem* di = icon->GetDesktopItem();
@@ -6467,15 +12270,30 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 if (dt)
                 {
                     POINTL spl{ point.x, point.y };
-                    DWORD le = DROPEFFECT_COPY | DROPEFFECT_MOVE;
-                    dt->DragEnter(dataObj.Get(), keyState, spl, &le);
-                    dt->DragOver(keyState, spl, &le);
-                    dt->Drop(dataObj.Get(), keyState, spl, &le);
+                    DWORD shellKeyState = keyState;
+                    if (explicitFolderTarget &&
+                        (shellKeyState &
+                            (MK_CONTROL |
+                             MK_ALT |
+                             MK_SHIFT)) == 0)
+                        shellKeyState |= MK_SHIFT;
+                    DWORD le = DROPEFFECT_COPY |
+                        DROPEFFECT_MOVE |
+                        DROPEFFECT_LINK;
+                    dt->DragEnter(
+                        dataObj.Get(),
+                        shellKeyState, spl, &le);
+                    dt->DragOver(
+                        shellKeyState, spl, &le);
+                    dt->Drop(
+                        dataObj.Get(),
+                        shellKeyState, spl, &le);
                 }
             }
             ClearSelection();
             EndDragSession();
             ReloadItems();
+            refreshDockFolderPopup();
             *effect = DROPEFFECT_MOVE;
             return S_OK;
         }
@@ -6506,8 +12324,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 ApplyPageMapping();
                 RebuildContainersAndItems();
                 LayoutItems();
-                InvalidateRect(hwnd_, nullptr, FALSE);
             }
+            refreshDockFolderPopup();
+            InvalidateRect(hwnd_, nullptr, FALSE);
         }
         *effect = DROPEFFECT_MOVE;
         EndDragSession();
@@ -6518,9 +12337,17 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
     externalDragActive_ = false;
     externalDropFileCount_ = 0;
     externalDropHasShortcut_ = false;
+    externalDropFoldersOnly_ = false;
+    if (desktopIconsHidden_ &&
+        !IsRetainedContainer(
+            dragSession_.TargetContainer()))
+    {
+        *effect = DROPEFFECT_NONE;
+        EndDragSession();
+        return S_OK;
+    }
     dragSession_.DeactivateForDrop();
-    dragRenderCache_.Reset();
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    CommitDragVisualEndBeforeShellOperation();
 
     std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
     if (dropPaths.empty() && dataObject)
@@ -6556,6 +12383,11 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
 
         if (dt)
         {
+            const bool dockFolderPopupTarget =
+                dockFolderPopupOpen_ &&
+                targetItem &&
+                targetItem->GetContainer() ==
+                    dockFolderPopupContainer_.get();
             DWORD le = *effect;
             POINTL spl{ point.x, point.y };
             dt->DragEnter(dataObject, keyState, spl, &le);
@@ -6563,8 +12395,57 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             dt->Drop(dataObject, keyState, spl, &le);
             *effect = le;
             EndDragSession();
+            if (dockFolderPopupTarget)
+                RefreshDockFolderPopup();
             ReloadItems(false);
             return S_OK;
+        }
+    }
+
+    if (dataObject &&
+        dockFolderPopupOpen_ &&
+        dragSession_.TargetContainer() ==
+            dockFolderPopupContainer_.get() &&
+        dragSession_.TargetRegion() !=
+            HitRegion::Blocked)
+    {
+        ComPtr<IShellItem> folderItem;
+        ComPtr<IDropTarget> folderDropTarget;
+        if (dockFolderPopupAvailable_ &&
+            SUCCEEDED(SHCreateItemFromParsingName(
+                dockFolderPopupWidget_.
+                    sourceFolderPath.c_str(),
+                nullptr,
+                IID_PPV_ARGS(&folderItem))) &&
+            folderItem)
+        {
+            folderItem->BindToHandler(
+                nullptr, BHID_SFUIObject,
+                IID_PPV_ARGS(&folderDropTarget));
+        }
+        if (folderDropTarget)
+        {
+            DWORD shellEffect = *effect;
+            POINTL screenPoint{
+                point.x, point.y };
+            if (SUCCEEDED(
+                    folderDropTarget->DragEnter(
+                        dataObject, keyState,
+                        screenPoint,
+                        &shellEffect)))
+            {
+                folderDropTarget->DragOver(
+                    keyState, screenPoint,
+                    &shellEffect);
+                folderDropTarget->Drop(
+                    dataObject, keyState,
+                    screenPoint,
+                    &shellEffect);
+                *effect = shellEffect;
+                EndDragSession();
+                RefreshDockFolderPopup();
+                return S_OK;
+            }
         }
     }
 
@@ -6588,11 +12469,22 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
         Container* target = dragSession_.TargetContainer() ? dragSession_.TargetContainer() : GetDesktopGrid();
         HitRegion targetRegion = dragSession_.TargetRegion() != HitRegion::None ? dragSession_.TargetRegion() : HitRegion::Empty;
 
-        if (auto* dock = dynamic_cast<DockContainer*>(target))
+        if (auto* dock = dynamic_cast<DockContainer*>(target);
+            dock && targetRegion != HitRegion::Handoff)
         {
             if (!dock->HasCapacity(sourceItems.size()))
             {
                 MessageBeep(MB_ICONWARNING);
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
+
+            const DWORD mappingEffect =
+                snowdesktop::dock_drop_rules::
+                    ChooseExternalMappingEffect(*effect);
+            if (mappingEffect == DROPEFFECT_NONE)
+            {
                 *effect = DROPEFFECT_NONE;
                 EndDragSession();
                 return S_OK;
@@ -6603,6 +12495,9 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
             const auto existingKeys = SnapshotDesktopKeys();
             DropPreviewList desktopPreview = BuildDropPreviewList(sourceList, GetDesktopGrid(),
                 nullptr, HitRegion::Empty, mods, clientPoint);
+            desktopPreview.action =
+                snowdesktop::dock_drop_rules::
+                    ExternalMappingAction();
             bool executed = ExecuteDropPipeline(sourceList, desktopPreview);
             if (executed)
             {
@@ -6610,16 +12505,31 @@ inline HRESULT STDMETHODCALLTYPE DesktopApp::Drop(
                 SaveLayoutSlots();
                 EndDragSession();
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                *effect = ChooseDropEffect(keyState, *effect);
+                *effect = mappingEffect;
                 return S_OK;
             }
         }
 
         DropPreviewList preview = BuildDropPreviewList(sourceList, target,
             dragSession_.TargetContainer() ? dragSession_.TargetSlot() : nullptr, targetRegion, mods, clientPoint);
+        const bool dockFolderPopupTarget =
+            dockFolderPopupOpen_ &&
+            target ==
+                dockFolderPopupContainer_.get();
+        if (dockFolderPopupTarget)
+        {
+            if ((*effect & DROPEFFECT_MOVE) != 0)
+                preview.action = DropAction::Move;
+            else if ((*effect & DROPEFFECT_LINK) != 0)
+                preview.action = DropAction::Link;
+            else
+                preview.action = DropAction::Copy;
+        }
         bool executed = ExecuteDropPipeline(sourceList, preview);
         if (executed)
         {
+            if (dockFolderPopupTarget)
+                RefreshDockFolderPopup();
             SaveLayoutSlots();
             EndDragSession();
             RebuildContainersAndItems();
@@ -7469,7 +13379,7 @@ inline void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
     const auto& widget = widgets_[widgetIndex];
     if (widget.type != DesktopWidgetType::LuaScript) return;
     settingsWindow_->ShowWidgetEditor(widgetIndex, widget.id.c_str(),
-        widget.title.c_str(), widget.scriptPath.c_str());
+        widget.title.c_str(), widget.packageId.c_str());
 }
 
 /**
@@ -7477,7 +13387,130 @@ inline void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
  * @param screenPoint 屏幕坐标点
  * @param widgetIndex 小部件索引
  */
-inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex)
+inline void DesktopApp::ShowCollectionGroupTabContextMenu(
+    POINT screenPoint, size_t groupIndex,
+    const std::wstring& collectionId)
+{
+    if (groupIndex >= widgets_.size() ||
+        widgets_[groupIndex].type !=
+            DesktopWidgetType::CollectionGroup)
+        return;
+    const size_t childIndex =
+        FindWidgetIndexById(collectionId);
+    if (childIndex >= widgets_.size() ||
+        widgets_[childIndex].type !=
+            DesktopWidgetType::Collection ||
+        std::find(
+            widgets_[groupIndex].childWidgetIds.begin(),
+            widgets_[groupIndex].childWidgetIds.end(),
+            collectionId) ==
+            widgets_[groupIndex].childWidgetIds.end())
+        return;
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    AppendMenuW(
+        menu, MF_STRING,
+        kContextWidgetRename,
+        _LW("app.menu.rename"));
+    SetMenuItemIcon(
+        menu, kContextWidgetRename, L"");
+    SetForegroundWindow(hwnd_);
+    const UINT command = TrackPopupMenuEx(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y,
+        hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+
+    if (command == kContextWidgetRename)
+    {
+        ClearSelection();
+        widgets_[childIndex].selected = true;
+        keyboardNavInsideWidget_ = true;
+        keyboardNavWidgetIndex_ = groupIndex;
+        auto it = std::find(
+            widgets_[groupIndex].childWidgetIds.begin(),
+            widgets_[groupIndex].childWidgetIds.end(),
+            collectionId);
+        keyboardNavMemberIndex_ =
+            it == widgets_[groupIndex].childWidgetIds.end()
+                ? 0
+                : static_cast<int>(
+                    std::distance(
+                        widgets_[groupIndex].childWidgetIds.begin(),
+                        it));
+        keyboardNavCollectionGroupTabs_ = true;
+        BeginRenameSelected();
+    }
+}
+
+inline void DesktopApp::ShowFileGroupSourceTabContextMenu(
+    POINT screenPoint, size_t groupIndex,
+    const std::wstring& childId)
+{
+    if (groupIndex >= widgets_.size() ||
+        widgets_[groupIndex].type !=
+            DesktopWidgetType::FileGroup)
+        return;
+    const size_t childIndex =
+        FindWidgetIndexById(childId);
+    if (childIndex >= widgets_.size() ||
+        (widgets_[childIndex].type !=
+             DesktopWidgetType::FileCategories &&
+         widgets_[childIndex].type !=
+             DesktopWidgetType::FolderMapping) ||
+        std::find(
+            widgets_[groupIndex].childWidgetIds.begin(),
+            widgets_[groupIndex].childWidgetIds.end(),
+            childId) ==
+            widgets_[groupIndex].childWidgetIds.end())
+        return;
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    AppendMenuW(menu, MF_STRING,
+        kContextWidgetRename,
+        _LW("app.menu.rename"));
+    SetMenuItemIcon(
+        menu, kContextWidgetRename, L"");
+    SetForegroundWindow(hwnd_);
+    const UINT command = TrackPopupMenuEx(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y,
+        hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+
+    if (command == kContextWidgetRename)
+    {
+        ClearSelection();
+        widgets_[childIndex].selected = true;
+        keyboardNavInsideWidget_ = true;
+        keyboardNavWidgetIndex_ = groupIndex;
+        const auto it = std::find(
+            widgets_[groupIndex].childWidgetIds.begin(),
+            widgets_[groupIndex].childWidgetIds.end(),
+            childId);
+        keyboardNavMemberIndex_ =
+            it == widgets_[groupIndex].childWidgetIds.end()
+                ? 0
+                : static_cast<int>(
+                    std::distance(
+                        widgets_[groupIndex].
+                            childWidgetIds.begin(), it));
+        keyboardNavCollectionGroupTabs_ = true;
+        BeginRenameSelected();
+    }
+}
+
+inline void DesktopApp::ShowWidgetContextMenu(
+    POINT screenPoint, size_t widgetIndex,
+    std::optional<RECT> dockRenameAnchor)
 {
     if (widgetIndex >= widgets_.size()) return;
     ClearMenuIcons();
@@ -7486,9 +13519,20 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     if (!menu) return;
 
     const auto& widget = widgets_[widgetIndex];
+    size_t effectiveSourceIndex = widgetIndex;
+    if (widget.type == DesktopWidgetType::FileGroup)
+    {
+        effectiveSourceIndex =
+            FindWidgetIndexById(widget.activeCategoryId);
+        if (effectiveSourceIndex >= widgets_.size())
+            effectiveSourceIndex = widgetIndex;
+    }
+    const DesktopWidget& effectiveSource =
+        widgets_[effectiveSourceIndex];
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     HMENU displayModeMenu = nullptr;
     HMENU hoverMenu = nullptr;
+    HMENU keepMenu = nullptr;
     HMENU privacyMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
@@ -7509,6 +13553,71 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
                 widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
         }
     }
+    else if (widget.type == DesktopWidgetType::CollectionGroup)
+    {
+        AppendMenuW(menu, MF_STRING,
+            kContextWidgetToggleListMode,
+            widget.listMode
+                ? _LW("app.interact.icon_display")
+                : _LW("app.interact.list_display"));
+        AppendMenuW(menu, MF_STRING | (widget.showSearchBox ? MF_CHECKED : 0),
+            kContextWidgetToggleSearchBox,
+            widget.showSearchBox
+                ? _LW("app.interact.hide_search_box")
+                : _LW("app.interact.show_search_box"));
+    }
+    else if (widget.type == DesktopWidgetType::FileGroup)
+    {
+        if (effectiveSource.type ==
+            DesktopWidgetType::FileCategories)
+        {
+            AppendMenuW(menu, MF_STRING,
+                kContextWidgetManualCollect,
+                _LW("app.interact.collect_now"));
+            AppendMenuW(menu,
+                MF_STRING |
+                    (effectiveSource.autoCollect
+                        ? MF_CHECKED : 0),
+                kContextWidgetToggleAutoCollect,
+                _LW("app.interact.auto_collect"));
+        }
+        else if (effectiveSource.type ==
+                 DesktopWidgetType::FolderMapping)
+        {
+            AppendMenuW(menu, MF_STRING,
+                kContextWidgetOpenFolder,
+                _LW("app.interact.open_folder"));
+        }
+        AppendMenuW(menu, MF_STRING,
+            kContextWidgetToggleListMode,
+            widget.listMode
+                ? _LW("app.interact.icon_display")
+                : _LW("app.interact.list_display"));
+        AppendMenuW(menu, MF_STRING,
+            kContextWidgetToggleFileCategories,
+            widget.showFileCategories
+                ? _LW("app.interact.hide_file_categories")
+                : _LW("app.interact.show_file_categories"));
+        AppendMenuW(menu, MF_STRING,
+            kContextWidgetToggleSearchBox,
+            widget.showSearchBox
+                ? _LW("app.interact.hide_search_box")
+                : _LW("app.interact.show_search_box"));
+        AppendMenuW(menu, MF_STRING,
+            kContextWidgetToggleDateGroup,
+            widget.dateHeaders
+                ? _LW("app.interact.hide_date_header")
+                : _LW("app.interact.show_date_header"));
+        if (effectiveSource.type ==
+            DesktopWidgetType::FolderMapping)
+        {
+            AppendMenuW(menu, MF_STRING,
+                kContextNewMenu, _LW("app.menu.new"));
+            AppendMenuW(menu, MF_STRING,
+                kContextMoreCommand,
+                _LW("app.menu.more_options"));
+        }
+    }
     else if (widget.type == DesktopWidgetType::FileCategories)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, _LW("app.interact.collect_now"));
@@ -7521,6 +13630,20 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
+        AppendMenuW(menu, MF_STRING | (widget.showFileCategories ? MF_CHECKED : 0),
+            kContextWidgetToggleFileCategories,
+            widget.showFileCategories
+                ? _LW("app.interact.hide_file_categories")
+                : _LW("app.interact.show_file_categories"));
+        AppendMenuW(menu, MF_STRING | (widget.showSearchBox ? MF_CHECKED : 0),
+            kContextWidgetToggleSearchBox,
+            widget.showSearchBox
+                ? _LW("app.interact.hide_search_box")
+                : _LW("app.interact.show_search_box"));
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
+            widget.dateHeaders
+                ? _LW("app.interact.hide_date_header")
+                : _LW("app.interact.show_date_header"));
         AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
         AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     }
@@ -7529,7 +13652,7 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         AppendMenuW(menu, MF_STRING, kContextWidgetEdit, _LW("app.interact.detailed_settings"));
         if (widgetEngine_)
         {
-            widgetEngine_->EnsureWidgetLoaded(widget.id, widget.scriptPath);
+            widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
             luaMenuItems = widgetEngine_->GetContextMenu(widget.id);
             for (size_t i = 0; i < luaMenuItems.size() &&
                 kContextLuaWidgetMenuFirst + static_cast<UINT>(i) <= kContextLuaWidgetMenuLast; ++i)
@@ -7558,7 +13681,12 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr, wDateMenu = nullptr;
     if ((widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
-        widget.type == DesktopWidgetType::Collection) && !widget.dateHeaders)
+        widget.type == DesktopWidgetType::Collection ||
+        widget.type == DesktopWidgetType::CollectionGroup ||
+        widget.type == DesktopWidgetType::FileGroup) &&
+        (widget.type == DesktopWidgetType::CollectionGroup ||
+            widget.type == DesktopWidgetType::FileGroup ||
+            !widget.dateHeaders))
     {
         sortMenu = CreatePopupMenu();
         if (sortMenu)
@@ -7603,9 +13731,20 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
             kContextWidgetShowOnHoverOff, _LW("app.interact.off"));
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), _LW("app.interact.hover_only"));
     }
+    keepMenu = CreatePopupMenu();
+    if (keepMenu)
+    {
+        AppendMenuW(keepMenu, MF_STRING | (widget.keepWhenDesktopHidden ? MF_CHECKED : 0),
+            kContextWidgetKeepWhenHiddenOn, _LW("app.interact.on"));
+        AppendMenuW(keepMenu, MF_STRING | (!widget.keepWhenDesktopHidden ? MF_CHECKED : 0),
+            kContextWidgetKeepWhenHiddenOff, _LW("app.interact.off"));
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(keepMenu), _LW("app.interact.keep_when_hidden"));
+    }
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
-        widget.type == DesktopWidgetType::FolderMapping)
+        widget.type == DesktopWidgetType::FolderMapping ||
+        widget.type == DesktopWidgetType::CollectionGroup ||
+        widget.type == DesktopWidgetType::FileGroup)
     {
         privacyMenu = CreatePopupMenu();
         if (privacyMenu)
@@ -7624,6 +13763,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetToggleListMode, widget.listMode ? L"" : L"");
     SetMenuItemIcon(menu, kContextWidgetToggleDateGroup, L"");
     SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
+    SetMenuItemIcon(menu, kContextWidgetToggleFileCategories, L"");
+    SetMenuItemIcon(menu, kContextWidgetToggleSearchBox, L"");
     SetMenuItemIcon(menu, kContextNewMenu, L"");
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
     SetMenuItemIcon(menu, kContextWidgetEdit, L"");
@@ -7631,6 +13772,8 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
     if (hoverMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(hoverMenu), L"");
+    if (keepMenu)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(keepMenu), L"");
     if (privacyMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(privacyMenu), widget.privacyMode ? L"" : L"");
     if (sortMenu)
@@ -7690,8 +13833,12 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     }
     case kContextWidgetOpenFolder:
-        if (!widget.sourceFolderPath.empty())
-            ShellExecuteW(hwnd_, L"open", widget.sourceFolderPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        if (effectiveSource.type ==
+                DesktopWidgetType::FolderMapping &&
+            !effectiveSource.sourceFolderPath.empty())
+            ShellExecuteW(hwnd_, L"open",
+                effectiveSource.sourceFolderPath.c_str(),
+                nullptr, nullptr, SW_SHOWNORMAL);
         break;
     case kContextWidgetToggleListMode:
         widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
@@ -7699,17 +13846,31 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());
             if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
-            { wc->InvalidateSlots(); break; }
+            {
+                if (auto* group =
+                        dynamic_cast<FileGroup*>(wc))
+                    group->InvalidateHostedView();
+                else
+                    wc->InvalidateSlots();
+                break;
+            }
         }
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetToggleAutoCollect:
-        widgets_[widgetIndex].autoCollect = !widgets_[widgetIndex].autoCollect;
-        if (widgets_[widgetIndex].autoCollect)
+        if (effectiveSourceIndex >= widgets_.size() ||
+            widgets_[effectiveSourceIndex].type !=
+                DesktopWidgetType::FileCategories)
+            break;
+        widgets_[effectiveSourceIndex].autoCollect =
+            !widgets_[effectiveSourceIndex].autoCollect;
+        if (widgets_[effectiveSourceIndex].autoCollect)
         {
-            EnforceSingleAutoCollectFileCategory(widgetIndex);
-            CollectFileCategoryWidget(widgetIndex, false);
+            EnforceSingleAutoCollectFileCategory(
+                effectiveSourceIndex);
+            CollectFileCategoryWidget(
+                effectiveSourceIndex, false);
         }
         RebuildContainersAndItems();
         SaveLayoutSlots();
@@ -7717,19 +13878,118 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     case kContextWidgetToggleDateGroup:
         widgets_[widgetIndex].dateHeaders = !widgets_[widgetIndex].dateHeaders;
-        RebuildContainersAndItems();
+        widgets_[widgetIndex].scrollOffset = 0;
+        if (widgets_[widgetIndex].type ==
+            DesktopWidgetType::FileGroup)
+        {
+            for (auto& c : containers_)
+            {
+                auto* group =
+                    dynamic_cast<FileGroup*>(c.get());
+                if (group &&
+                    group->GetWidgetData() ==
+                        &widgets_[widgetIndex])
+                {
+                    group->InvalidateHostedView();
+                    break;
+                }
+            }
+        }
+        else if (widgets_[widgetIndex].type ==
+                 DesktopWidgetType::FolderMapping)
+        {
+            for (auto& c : containers_)
+            {
+                auto* mapping = dynamic_cast<FolderMapping*>(c.get());
+                if (mapping &&
+                    mapping->GetWidgetData() == &widgets_[widgetIndex])
+                {
+                    mapping->InvalidateFilterCache();
+                    break;
+                }
+            }
+        }
+        else
+        {
+            RebuildContainersAndItems();
+        }
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
+    case kContextWidgetToggleFileCategories:
+        if (widgets_[widgetIndex].type ==
+                DesktopWidgetType::FolderMapping ||
+            widgets_[widgetIndex].type ==
+                DesktopWidgetType::FileGroup)
+        {
+            widgets_[widgetIndex].showFileCategories =
+                !widgets_[widgetIndex].showFileCategories;
+            widgets_[widgetIndex].scrollOffset = 0;
+            widgets_[widgetIndex].tabScrollOffset = 0;
+            for (auto& c : containers_)
+            {
+                auto* scrolling =
+                    dynamic_cast<ScrollingItemWidget*>(c.get());
+                if (scrolling &&
+                    scrolling->GetWidgetData() ==
+                        &widgets_[widgetIndex])
+                {
+                    if (auto* mapping =
+                            dynamic_cast<FolderMapping*>(
+                                scrolling))
+                        mapping->InvalidateFilterCache();
+                    else if (auto* fileGroup =
+                                 dynamic_cast<FileGroup*>(
+                                     scrolling))
+                        fileGroup->InvalidateHostedView();
+                    break;
+                }
+            }
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        break;
+    case kContextWidgetToggleSearchBox:
+        if (widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
+            widgets_[widgetIndex].type == DesktopWidgetType::CollectionGroup ||
+            widgets_[widgetIndex].type == DesktopWidgetType::FileGroup)
+        {
+            widgets_[widgetIndex].showSearchBox =
+                !widgets_[widgetIndex].showSearchBox;
+            widgets_[widgetIndex].scrollOffset = 0;
+            for (auto& c : containers_)
+            {
+                auto* scrolling = dynamic_cast<ScrollingItemWidget*>(c.get());
+                if (scrolling &&
+                    scrolling->GetWidgetData() == &widgets_[widgetIndex])
+                {
+                    if (!widgets_[widgetIndex].showSearchBox)
+                        scrolling->ClearSearchText();
+                    if (auto* mapping = dynamic_cast<FolderMapping*>(scrolling))
+                        mapping->InvalidateFilterCache();
+                    else if (auto* group = dynamic_cast<CollectionGroup*>(scrolling))
+                        group->InvalidateFilterCache();
+                    else if (auto* fileGroup =
+                                 dynamic_cast<FileGroup*>(
+                                     scrolling))
+                        fileGroup->InvalidateHostedView();
+                    break;
+                }
+            }
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        break;
     case kContextWidgetManualCollect:
-        if (!CollectFileCategoryWidget(widgetIndex, true))
+        if (!CollectFileCategoryWidget(
+                effectiveSourceIndex, true))
             MessageBeep(MB_ICONINFORMATION);
         break;
     case kContextWidgetRename:
         if (CanRenameWidget(widgets_[widgetIndex]))
         {
             SelectWidgetOnly(widgetIndex);
-            BeginRenameSelected();
+            BeginRenameSelected(dockRenameAnchor);
         }
         break;
     case kContextWidgetEdit:
@@ -7737,13 +13997,55 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     case kContextWidgetDelete:
     {
+        // widgets_ 的下标会在删除后整体移动，不能让关闭动画继续引用
+        // 即将失效的弹窗数据源。
+        if (GetOpenPopupWidget())
+        {
+            CloseCollectionPopup();
+            FinalizeCloseCollectionPopup();
+        }
         const std::wstring deletedWidgetId = widgets_[widgetIndex].id;
+        if (widgets_[widgetIndex].type == DesktopWidgetType::CollectionGroup)
+        {
+            if (popupWidgetIndex_ < widgets_.size() &&
+                std::find(
+                    widgets_[widgetIndex].childWidgetIds.begin(),
+                    widgets_[widgetIndex].childWidgetIds.end(),
+                    widgets_[popupWidgetIndex_].id) !=
+                    widgets_[widgetIndex].childWidgetIds.end())
+                CloseCollectionPopup();
+            ReleaseCollectionGroupChildren(widgetIndex);
+        }
+        else if (widgets_[widgetIndex].type ==
+                 DesktopWidgetType::FileGroup)
+        {
+            ReleaseFileGroupChildren(widgetIndex);
+        }
+        ReleaseDesktopItemsFromWidget(widgetIndex);
         if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript && widgetEngine_)
-            widgetEngine_->UnloadWidget(widgets_[widgetIndex].id);
-        // Move widget's itemKeys back to desktop by just removing the widget
+            widgetEngine_->DeleteWidgetInstance(widgets_[widgetIndex].id);
+        for (auto& group : widgets_)
+        {
+            if (group.id == deletedWidgetId ||
+                (group.type !=
+                     DesktopWidgetType::CollectionGroup &&
+                 group.type !=
+                     DesktopWidgetType::FileGroup))
+                continue;
+            std::erase(
+                group.childWidgetIds,
+                deletedWidgetId);
+            group.activeCategoryId =
+                snowdesktop::collection_group_rules::
+                    ResolveActiveItem(
+                        group.childWidgetIds,
+                        group.activeCategoryId);
+        }
+        // 成员落点已在删除前逐个分配；移除组件后重新进入桌面容器。
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
         std::erase_if(dockEntries_, [&](const DockEntry& entry) {
-            return entry.type == DockEntryType::Collection &&
+            return (entry.type == DockEntryType::Collection ||
+                    entry.type == DockEntryType::FolderMapping) &&
                 entry.reference == deletedWidgetId;
         });
         EnsureNavTabOrder();
@@ -7756,40 +14058,51 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     }
     case kContextNewMenu:
-        if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping &&
-            !widgets_[widgetIndex].sourceFolderPath.empty())
+        if (effectiveSourceIndex < widgets_.size() &&
+            widgets_[effectiveSourceIndex].type ==
+                DesktopWidgetType::FolderMapping &&
+            !widgets_[effectiveSourceIndex].
+                sourceFolderPath.empty())
         {
-            ShowNewMenuAndInvoke(screenPoint, widgets_[widgetIndex].sourceFolderPath);
-            RefreshFolderMappingWidget(widgetIndex);
+            ShowNewMenuAndInvoke(screenPoint,
+                widgets_[effectiveSourceIndex].
+                    sourceFolderPath);
+            RefreshFolderMappingWidget(
+                effectiveSourceIndex);
             RebuildContainersAndItems();
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
         }
         break;
     case kContextMoreCommand:
-        if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping &&
-            !widgets_[widgetIndex].sourceFolderPath.empty())
+        if (effectiveSourceIndex < widgets_.size() &&
+            widgets_[effectiveSourceIndex].type ==
+                DesktopWidgetType::FolderMapping &&
+            !widgets_[effectiveSourceIndex].
+                sourceFolderPath.empty())
         {
-            ShowShellContextMenuForPath(widgets_[widgetIndex].sourceFolderPath, screenPoint);
+            ShowShellContextMenuForPath(
+                widgets_[effectiveSourceIndex].
+                    sourceFolderPath, screenPoint);
         }
         break;
     case kContextWidgetSortByName:
-        SortWidgetContents(widgetIndex, 0, true);
+        SortWidgetContents(effectiveSourceIndex, 0, true);
         break;
     case kContextWidgetSortByNameDesc:
-        SortWidgetContents(widgetIndex, 0, false);
+        SortWidgetContents(effectiveSourceIndex, 0, false);
         break;
     case kContextWidgetSortByType:
-        SortWidgetContents(widgetIndex, 1, true);
+        SortWidgetContents(effectiveSourceIndex, 1, true);
         break;
     case kContextWidgetSortByTypeDesc:
-        SortWidgetContents(widgetIndex, 1, false);
+        SortWidgetContents(effectiveSourceIndex, 1, false);
         break;
     case kContextWidgetSortByDate:
-        SortWidgetContents(widgetIndex, 2, true);
+        SortWidgetContents(effectiveSourceIndex, 2, true);
         break;
     case kContextWidgetSortByDateDesc:
-        SortWidgetContents(widgetIndex, 2, false);
+        SortWidgetContents(effectiveSourceIndex, 2, false);
         break;
     case kContextWidgetShowOnHoverOn:
         widgets_[widgetIndex].showOnHoverOnly = true;
@@ -7798,6 +14111,16 @@ inline void DesktopApp::ShowWidgetContextMenu(POINT screenPoint, size_t widgetIn
         break;
     case kContextWidgetShowOnHoverOff:
         widgets_[widgetIndex].showOnHoverOnly = false;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetKeepWhenHiddenOn:
+        widgets_[widgetIndex].keepWhenDesktopHidden = true;
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetKeepWhenHiddenOff:
+        widgets_[widgetIndex].keepWhenDesktopHidden = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;

@@ -10,6 +10,42 @@
 #include <windows.h>
 
 #include <string>
+#include <string_view>
+
+/** @brief 快捷导航“桌面”聚合标签的显示方式。 */
+enum class QuickNavigationDesktopViewMode
+{
+    Tile,
+    Source,
+    Initial,
+};
+
+inline const char* QuickNavigationDesktopViewModeToJson(
+    QuickNavigationDesktopViewMode mode)
+{
+    switch (mode)
+    {
+    case QuickNavigationDesktopViewMode::Source: return "source";
+    case QuickNavigationDesktopViewMode::Initial: return "initial";
+    case QuickNavigationDesktopViewMode::Tile:
+    default: return "tile";
+    }
+}
+
+inline bool QuickNavigationDesktopViewModeFromJson(
+    std::string_view value,
+    QuickNavigationDesktopViewMode& mode)
+{
+    if (value == "tile")
+        mode = QuickNavigationDesktopViewMode::Tile;
+    else if (value == "source")
+        mode = QuickNavigationDesktopViewMode::Source;
+    else if (value == "initial")
+        mode = QuickNavigationDesktopViewMode::Initial;
+    else
+        return false;
+    return true;
+}
 
 /**
  * @brief 快捷导航设置
@@ -20,6 +56,8 @@ struct NavigationSettings
     bool enabled = false;
     UINT modifiers = MOD_CONTROL | MOD_ALT;
     UINT virtualKey = VK_SPACE;
+    QuickNavigationDesktopViewMode desktopViewMode =
+        QuickNavigationDesktopViewMode::Tile;
 };
 
 /**

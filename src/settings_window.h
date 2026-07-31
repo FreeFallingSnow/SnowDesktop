@@ -20,8 +20,11 @@
 #include "dock_settings.h"
 #include "navigation_settings.h"
 #include "category_settings.h"
+#include "full_data_backup.h"
+#include "widget_package.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -30,6 +33,7 @@
 using Microsoft::WRL::ComPtr;
 
 struct ImFont;
+class AsyncHttpService;
 
 /**
  * @brief 布局备份条目结构体
@@ -42,6 +46,15 @@ struct LayoutBackup
     std::wstring filename;
     std::wstring displayName;
     FILETIME timestamp;
+};
+
+/** @brief 设置页中可配置的全局快捷键用途。 */
+enum class HotkeySettingTarget
+{
+    None,
+    QuickNavigation,
+    DesktopPassthrough,
+    FloatingDock,
 };
 
 /**
@@ -102,12 +115,22 @@ public:
 
     /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
     void ShowDockSettings();
+    void ShowWidgetMigration();
 
     /**
      * @brief 检查窗口当前是否可见
      * @return 窗口已创建且可见时返回 true
      */
     bool IsVisible() const { return hwnd_ != nullptr && IsWindowVisible(hwnd_); }
+
+    /** @brief 是否正在等待用户按下新的快捷键组合。 */
+    bool IsHotkeyCaptureActive() const
+    { return hotkeyCaptureTarget_ != HotkeySettingTarget::None; }
+    /**
+     * @brief 将已由 RegisterHotKey 截获的组合交给当前录制框。
+     */
+    void CaptureRegisteredHotkey(
+        UINT modifiers, UINT virtualKey);
 
     /** @brief 设置窗口是否有尚未绘制的界面变化。 */
     bool NeedsRender() const { return renderRequested_; }
@@ -164,13 +187,38 @@ public:
     void SetDockSettingsChangedCallback(std::function<void()> callback)
     { dockSettingsChangedCallback_ = std::move(callback); }
 
+    /**
+     * @brief 设置系统级快捷键可用性探测器。
+     *
+     * 回调应在组合可注册时返回 true；若被 Windows、其他程序或当前
+     * SnowDesktop 运行实例占用则返回 false。
+     */
+    void SetHotkeyAvailabilityCallback(
+        std::function<bool(HotkeySettingTarget, UINT, UINT)> callback)
+    {
+        hotkeyAvailabilityCallback_ = std::move(callback);
+    }
+
+    void SetDockSettingsPreviewChangedCallback(
+        std::function<void(const DockSettings&)> callback)
+    {
+        dockSettingsPreviewChangedCallback_ =
+            std::move(callback);
+    }
+
     void SetPersonalizationChangedCallback(std::function<void()> callback)
     { personalizationChangedCallback_ = std::move(callback); }
 
     void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
     void SyncSoftwareDesktopEnabled(bool enabled)
     { generalSettings_.softwareDesktopEnabled = enabled; }
-    void SyncDockSettings(const DockSettings& settings) { dockSettings_ = settings; }
+    void SyncDockSettings(const DockSettings& settings)
+    {
+        dockSettings_ = settings;
+        NormalizeDockSettings(dockSettings_);
+    }
+    void SyncNavigationSettings(const NavigationSettings& settings)
+    { navigationSettings_ = settings; }
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 
@@ -365,11 +413,43 @@ private:
 
     void DrawDockPage();
 
+    /** @brief 绘制共享的点击录制式快捷键控件。 */
+    void DrawHotkeyRecorder(
+        HotkeySettingTarget target,
+        const char* label,
+        const char* id,
+        bool enabled,
+        UINT modifiers,
+        UINT virtualKey,
+        UINT defaultModifiers,
+        UINT defaultVirtualKey);
+    /** @brief 开始捕获物理键盘组合。 */
+    void StartHotkeyCapture(HotkeySettingTarget target);
+    /** @brief 轮询当前物理键状态并完成快捷键录入。 */
+    void UpdateHotkeyCapture();
+    /** @brief 使用设置窗口收到的键盘消息补充快速按键捕获。 */
+    void HandleHotkeyCaptureKeyMessage(
+        UINT message, WPARAM virtualKey);
+    /** @brief 取消当前快捷键录入。 */
+    void CancelHotkeyCapture();
+    /** @brief 将录制结果写入对应设置并请求保存。 */
+    void CommitHotkeyCapture(
+        HotkeySettingTarget target,
+        UINT modifiers,
+        UINT virtualKey);
+    /** @brief 查找与当前组合冲突的另一个已启用功能。 */
+    HotkeySettingTarget FindInternalHotkeyConflict(
+        HotkeySettingTarget target,
+        UINT modifiers,
+        UINT virtualKey) const;
+
     void DrawSystemTaskbarPage();
 
     void DrawDisplayPage();
 
     void DrawCategorySettingsPage();
+    void DrawWidgetPackagesPage();
+    void DrawWidgetDeveloperTools();
 
     /**
      * @brief 绘制小组件编辑器页面（脚本编辑与保存）
@@ -390,6 +470,11 @@ private:
      * @brief 执行在线更新检查（调用 GitHub API）
      */
     void PerformUpdateCheck();
+
+    /**
+     * @brief 轮询并应用后台更新检查结果
+     */
+    void PollUpdateCheck();
 
     /** @} */
 
@@ -430,9 +515,19 @@ private:
     bool DeleteBackup(const std::wstring& filename);
 
     /**
-     * @brief 选择携带版目录，将其中全部数据迁移到当前商店版数据目录
+     * @brief 选择其他 SnowDesktop 数据目录并迁入当前版本
      */
-    void MigratePortableData();
+    void MigrateAllData();
+
+    void CreateFullDataBackup();
+    void ImportFullDataBackup();
+    void ExportFullDataBackup(
+        const snowdesktop::backup::BackupInfo& backup);
+    void RestoreFullDataBackup(
+        const snowdesktop::backup::BackupInfo& backup);
+    void DeleteFullDataBackup(
+        const snowdesktop::backup::BackupInfo& backup);
+    void RestartAfterDataReplacement(const char* successMessageKey);
 
     /**
      * @brief 基于当前时间生成唯一的备份文件名
@@ -497,8 +592,30 @@ private:
     /// 系统 DPI 缩放比例，用于字体和界面缩放适配
     float dpiScale_ = 1.0f;
 
-    /// 当前活动页面索引（0 = 通用, 1 = 组件显示, 2 = Dock, 3 = 图标显示, 4 = 分类设置, 5 = 布局备份, 6 = 关于, 7 = 调试）
+    /// 当前活动页面索引（8 = Lua 组件包与迁移）
     int activePage_ = 0;
+    std::string widgetPackageStatus_;
+    std::string pendingWidgetPackageUninstall_;
+    std::filesystem::path widgetCatalogPath_;
+    std::string widgetPackageSourceId_;
+    std::vector<snowdesktop::widget::PackageDetails> widgetCatalogEntries_;
+    char widgetCatalogSearch_[128] = {};
+    bool widgetCatalogInitialized_ = false;
+    std::string widgetCatalogLocale_;
+    int widgetPackageFilter_ = 0;
+    enum class PendingWidgetInstallKind
+    {
+        None,
+        Local,
+        StaticCatalog,
+    };
+    PendingWidgetInstallKind pendingWidgetInstallKind_ =
+        PendingWidgetInstallKind::None;
+    std::wstring pendingWidgetInstallPath_;
+    std::string pendingWidgetInstallExternalId_;
+    std::string pendingWidgetInstallVersion_;
+    std::string pendingWidgetInstallProviderId_;
+    std::wstring pendingWidgetInstallReason_;
 
     /// 备份名称输入缓冲区
     char backupNameBuf_[128] = {};
@@ -514,6 +631,16 @@ private:
 
     /// 防止尺寸变化消息在当前帧内嵌套进入 ImGui/DX11 渲染。
     bool renderInProgress_ = false;
+
+    /// 当前正在录制快捷键的功能及已观察到的组合。
+    HotkeySettingTarget hotkeyCaptureTarget_ =
+        HotkeySettingTarget::None;
+    UINT hotkeyCaptureModifiers_ = 0;
+    UINT hotkeyCapturePressedModifiers_ = 0;
+    UINT hotkeyCaptureVirtualKey_ = 0;
+    bool hotkeyCapturePrimarySeen_ = false;
+    bool hotkeyCapturePrimaryDown_ = false;
+    bool hotkeyCaptureClearPending_ = false;
 
     /// 是否已解锁调试页面（通过版本号点击彩蛋激活）
     bool debugUnlocked_ = false;
@@ -533,6 +660,10 @@ private:
     std::string downloadUrl_;
     /// 是否有可用更新
     bool updateAvailable_ = false;
+    /// 携带版更新检查使用的异步 HTTP 服务
+    std::unique_ptr<AsyncHttpService> updateHttpService_;
+    /// 当前更新检查请求 ID；0 表示没有进行中的请求
+    int updateCheckRequestId_ = 0;
 
     /// MSIX StartupTask 状态是否已完成首次查询
     mutable bool packagedAutoStartStateKnown_ = false;
@@ -574,6 +705,13 @@ private:
     std::function<void(bool)> dockEnabledChangedCallback_;
 
     std::function<void()> dockSettingsChangedCallback_;
+
+    /// 使用实际 RegisterHotKey 状态探测系统级占用。
+    std::function<bool(HotkeySettingTarget, UINT, UINT)>
+        hotkeyAvailabilityCallback_;
+
+    std::function<void(const DockSettings&)>
+        dockSettingsPreviewChangedCallback_;
 
     std::function<void()> personalizationChangedCallback_;
 
@@ -617,6 +755,8 @@ private:
     DockSettings dockSettings_;
 
     bool dockSettingsDirty_ = false;
+    bool dockSettingsPreviewDirty_ = false;
+    bool dockSettingsSaveRequested_ = false;
 
     /// 通用设置是否已修改（需要保存）
     bool generalSettingsDirty_ = false;
@@ -634,7 +774,7 @@ private:
     float iconSpacingScale_ = 1.0f;
 
     /// 当前桌面项目字号
-    float itemFontSize_ = 14.0f;
+    float itemFontSize_ = 15.0f;
 
     /// 当前桌面项目字体粗细 (DWRITE_FONT_WEIGHT)
     float itemFontWeight_ = 600.0f;

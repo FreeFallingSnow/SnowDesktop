@@ -83,7 +83,7 @@ void GuideWidget::DrawContent(ID2D1DeviceContext *context, RECT body)
 
     const std::wstring wtext = BuildGuideText(app_);
 
-    const float bodyFontSize = FontCu(16.0f);
+    const float bodyFontSize = FontCu(15.0f);
     const float titleFontSize = FontCu(20.0f);
     const float padX = static_cast<float>(Cu(14.0f));
     const float padY = static_cast<float>(Cu(12.0f));

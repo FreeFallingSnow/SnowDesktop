@@ -97,6 +97,12 @@ public:
     DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area);
 
     std::wstring GetTitle() const override { return L"Dock"; }
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SlotSurfaceKind::Dock;
+    }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
@@ -112,7 +118,7 @@ public:
 
     size_t Capacity() const;
     bool HasCapacity(size_t additional) const;
-    bool ScrollByWheelDelta(int wheelDelta);
+    bool ScrollByWheelDelta(POINT pointer, int wheelDelta);
     bool IsWindowsButtonPoint(POINT pt) const;
     bool IsSearchPoint(POINT pt) const;
     DockEntryItem* EntryAtPoint(POINT pt) const;
@@ -120,21 +126,58 @@ public:
     DockFrequentItem* FrequentItemAtPoint(POINT pt) const;
     RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
+    RECT GetInteractiveBounds() const;
+    bool ContainsInteractivePoint(POINT pt) const;
+    RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
+    RECT GetVisualPanelBounds(POINT pointer) const;
+    RECT GetHoveredTitleBounds(POINT pointer) const;
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
     void DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const;
 
 private:
+    enum class MagnificationZone
+    {
+        None,
+        Leading,
+        Trailing,
+    };
+
     bool IsVertical() const;
     bool IsEdgeAttached() const;
+    void RefreshEntryGroupCounts() const;
     size_t SortableEntryCount() const;
+    size_t FolderEntryCount() const;
+    size_t FolderEntryBegin() const;
+    bool HasOnlyRecycleBinDragSource() const;
+    bool HasOnlyFolderDragSource() const;
     int ItemIconSize() const;
     int ItemPitch() const;
     int ScaledSpacing() const;
     int ScaledSeparatorGap() const;
     int EdgeMargin() const;
+    std::vector<RECT> GetLeadingMagnificationRects() const;
+    std::vector<RECT> GetTrailingMagnificationRects() const;
+    MagnificationZone GetMagnificationZone(
+        const RECT& baseRect) const;
+    std::vector<RECT> GetElementBaseRects() const;
+    RECT ResolveMagnificationFocusRect(POINT pointer) const;
+    float GetMagnificationScale(
+        const RECT& baseRect, const RECT& focusRect,
+        POINT pointer) const;
+    int GetMagnificationAxisShift(
+        const RECT& baseRect, const RECT& focusRect,
+        POINT pointer) const;
+    RECT CalculateTitleTooltipBounds(
+        const std::wstring& title,
+        const RECT& hoveredBounds,
+        IDWriteTextFormat* measurementFormat =
+            nullptr) const;
+    bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
+    // Folder entries share the Dock's single scroll viewport/offset. These
+    // accessors keep the semantic group boundary explicit for hit testing.
     int GetMaxScrollOffset(const RECT& bounds) const;
     bool IsPointInScrollViewport(POINT point) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
@@ -145,5 +188,16 @@ private:
     mutable std::vector<std::unique_ptr<DockEntryItem>> entryItems_;
     mutable std::vector<std::unique_ptr<DockRunningItem>> runningItems_;
     mutable std::vector<std::unique_ptr<DockFrequentItem>> frequentItems_;
+    mutable std::uint64_t entryGroupCountGeneration_ = 0;
+    mutable size_t mainEntryCount_ = 0;
+    mutable size_t folderEntryCount_ = 0;
     mutable int scrollOffset_ = 0;
+    // Tooltip anchors are stable slot rectangles. Cache the measured chip
+    // bounds so rapid pointer scans do not create a DirectWrite layout for
+    // every individual WM_MOUSEMOVE.
+    mutable std::wstring hoveredTitleBoundsCacheText_;
+    mutable RECT hoveredTitleBoundsCacheAnchor_{};
+    mutable RECT hoveredTitleBoundsCache_{};
+    mutable int hoveredTitleBoundsCachePosition_ = -1;
+    mutable bool hoveredTitleBoundsCacheLightTheme_ = false;
 };

@@ -16,6 +16,7 @@
 #include "constants.h"
 #include "utils.h"
 #include "app.h"
+#include "collection_group_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -243,6 +244,10 @@ std::vector<std::unique_ptr<Slot>> WidgetContainer::BuildSlots()
 RECT WidgetContainer::GetFrameRect() const
 {
     if (!data_) return {};
+    if (hostedFrameActive_)
+        return hostedFrame_;
+    if (app_ && app_->IsGroupedWidget(*data_))
+        return {};
     RECT rect = data_->bounds;
 
     // Absorb half the grid gap on all four sides so widget frames have
@@ -325,7 +330,7 @@ RECT WidgetContainer::GetTitleRect() const
     RECT handle = GetMoveHandleRect();
     LONG left = handle.left + Cu(4.0f);
     const float bh = GetBarHeight();
-    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? bh * 2.5f : bh * 1.08f);
+    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? bh * 3.4f : bh * 1.08f);
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
     return { left, handle.top + Cu(bh * 0.083f), right, handle.bottom - Cu(bh * 0.083f) };
 }
@@ -545,6 +550,961 @@ int ScrollingItemWidget::GetScrollOffset() const
 BarStyle ScrollingItemWidget::GetInsertionStyle() const
 {
     return data_ && data_->listMode ? BarStyle::HBar : BarStyle::VBar;
+}
+
+void WidgetContainer::SetHostedFrame(const RECT* frame)
+{
+    hostedFrameActive_ = frame != nullptr;
+    hostedFrame_ = frame ? *frame : RECT{};
+    InvalidateSlots();
+}
+
+RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
+    bool visible) const
+{
+    if (categorizedSearchVisibilityOverrideActive_)
+        visible = categorizedSearchVisible_;
+    if (!visible) return {};
+    RECT body = GetBodyRect();
+    InflateRect(&body, -Cu(10.0f), -Cu(12.0f));
+    if (IsRectEmptyRect(body)) return {};
+    InflateRect(&body, -Cu(2.0f), 0);
+    if (IsRectEmptyRect(body)) return {};
+    const LONG bottom = std::min<LONG>(
+        body.bottom, body.top + Cu(30.0f));
+    return bottom > body.top
+        ? MakeRect(
+            body.left, body.top,
+            body.right, bottom)
+        : RECT{};
+}
+
+RECT ScrollingItemWidget::GetCategorizedTabsRect(
+    bool visible) const
+{
+    if (categorizedTabsVisibilityOverrideActive_)
+        visible = categorizedTabsVisible_;
+    if (!visible) return {};
+    RECT body = GetBodyRect();
+    InflateRect(&body, -Cu(10.0f), -Cu(8.0f));
+    if (IsRectEmptyRect(body)) return {};
+    const RECT search = GetSearchBoxRect();
+    LONG top = IsRectEmptyRect(search)
+        ? body.top
+        : search.bottom + Cu(5.0f);
+    top += categorizedTabRowOffset_ * Cu(38.0f);
+    const LONG bottom = std::min<LONG>(
+        body.bottom, top + Cu(34.0f));
+    return bottom > top
+        ? MakeRect(body.left, top, body.right, bottom)
+        : RECT{};
+}
+
+void ScrollingItemWidget::SetCategorizedHostOptions(
+    int tabRowOffset,
+    bool searchVisibilityOverrideActive,
+    bool searchVisible,
+    bool tabsVisibilityOverrideActive,
+    bool tabsVisible,
+    bool searchAllCategories)
+{
+    categorizedTabRowOffset_ = std::max(0, tabRowOffset);
+    categorizedSearchVisibilityOverrideActive_ =
+        searchVisibilityOverrideActive;
+    categorizedSearchVisible_ = searchVisible;
+    categorizedTabsVisibilityOverrideActive_ =
+        tabsVisibilityOverrideActive;
+    categorizedTabsVisible_ = tabsVisible;
+    categorizedSearchAllCategories_ = searchAllCategories;
+    InvalidateSlots();
+}
+
+void ScrollingItemWidget::ClearCategorizedHostOptions()
+{
+    categorizedTabRowOffset_ = 0;
+    categorizedSearchVisibilityOverrideActive_ = false;
+    categorizedSearchVisible_ = false;
+    categorizedTabsVisibilityOverrideActive_ = false;
+    categorizedTabsVisible_ = false;
+    categorizedSearchAllCategories_ = false;
+    InvalidateSlots();
+}
+
+float ScrollingItemWidget::
+    GetCategorizedTabFontSize() const
+{
+    return app_
+        ? app_->GetCategorizedWidgetTabFontSize()
+        : 15.0f;
+}
+
+std::vector<int>
+ScrollingItemWidget::BuildCategorizedTabWidths(
+    const std::vector<std::wstring>& labels,
+    int availableWidth) const
+{
+    std::vector<int> widths;
+    widths.reserve(labels.size());
+    IDWriteTextFormat* format =
+        GetCuTextFormat(
+            GetCategorizedTabFontSize(),
+            true, true);
+    IDWriteFactory* dwrite =
+        app_ ? app_->GetDWriteFactory() : nullptr;
+    for (const auto& label : labels)
+    {
+        int measured = 0;
+        if (dwrite && format && !label.empty())
+        {
+            Microsoft::WRL::ComPtr<
+                IDWriteTextLayout> layout;
+            if (SUCCEEDED(dwrite->CreateTextLayout(
+                    label.c_str(),
+                    static_cast<UINT32>(label.size()),
+                    format, 4096.0f, FontCu(24.0f),
+                    &layout)) &&
+                layout)
+            {
+                DWRITE_TEXT_METRICS metrics{};
+                if (SUCCEEDED(
+                        layout->GetMetrics(&metrics)))
+                    measured = static_cast<int>(
+                        std::max(
+                            metrics.width,
+                            metrics.
+                                widthIncludingTrailingWhitespace) +
+                        1.0f);
+            }
+        }
+        if (measured <= 0)
+            measured =
+                static_cast<int>(label.size()) *
+                Cu(8.0f);
+        const int width = std::max(
+            Cu(76.0f), measured + Cu(24.0f));
+        widths.push_back(width);
+    }
+
+    return snowdesktop::collection_group_rules::
+        DistributeWidthsToFill(
+            std::move(widths), availableWidth);
+}
+
+void ScrollingItemWidget::DrawCategorizedTab(
+    ID2D1DeviceContext* context,
+    RECT tabRect,
+    const std::wstring& label,
+    bool active,
+    bool hovered) const
+{
+    if (!context || !app_ ||
+        IsRectEmptyRect(tabRect))
+        return;
+    const bool light = app_->IsLightContentTheme();
+    app_->DrawD2DRoundedRectangle(
+        context, tabRect,
+        static_cast<float>(Cu(8.0f)),
+        active
+            ? (light
+                ? D2D1::ColorF(
+                    0.0f, 0.0f, 0.0f, 0.12f)
+                : D2D1::ColorF(
+                    1.0f, 1.0f, 1.0f, 0.22f))
+            : (hovered
+                ? (light
+                    ? D2D1::ColorF(
+                        0.0f, 0.0f, 0.0f, 0.08f)
+                    : D2D1::ColorF(
+                        1.0f, 1.0f, 1.0f, 0.13f))
+                : (light
+                    ? D2D1::ColorF(
+                        0.0f, 0.0f, 0.0f, 0.04f)
+                    : D2D1::ColorF(
+                        1.0f, 1.0f, 1.0f, 0.06f))),
+        active
+            ? (light
+                ? D2D1::ColorF(
+                    0.0f, 0.0f, 0.0f, 0.52f)
+                : D2D1::ColorF(
+                    1.0f, 1.0f, 1.0f, 0.62f))
+            : (light
+                ? D2D1::ColorF(
+                    0.0f, 0.0f, 0.0f, 0.14f)
+                : D2D1::ColorF(
+                    1.0f, 1.0f, 1.0f, 0.20f)));
+
+    RECT textRect = tabRect;
+    InflateRect(&textRect, -Cu(7.0f), 0);
+    IDWriteTextFormat* tabFormat =
+        GetCuTextFormat(
+            GetCategorizedTabFontSize(),
+            true, true);
+    app_->DrawD2DText(
+        context, label, textRect,
+        tabFormat
+            ? tabFormat
+            : (app_->fileCategoryTabTextFormat_
+                ? app_->fileCategoryTabTextFormat_.Get()
+                : app_->listItemTextFormat_.Get()),
+        light
+            ? D2D1::ColorF(
+                0.0f, 0.0f, 0.0f,
+                active ? 0.88f : 0.74f)
+            : D2D1::ColorF(
+                1.0f, 1.0f, 1.0f,
+                active ? 0.98f : 0.78f));
+}
+
+size_t ScrollingItemWidget::GetSearchSelectionStart() const
+{
+    return std::min(
+        std::min(searchSelectionAnchor_, searchText_.size()),
+        std::min(searchCursorPos_, searchText_.size()));
+}
+
+size_t ScrollingItemWidget::GetSearchSelectionEnd() const
+{
+    return std::max(
+        std::min(searchSelectionAnchor_, searchText_.size()),
+        std::min(searchCursorPos_, searchText_.size()));
+}
+
+bool ScrollingItemWidget::HasSearchSelection() const
+{
+    return GetSearchSelectionStart() != GetSearchSelectionEnd();
+}
+
+bool ScrollingItemWidget::EraseSearchSelection()
+{
+    if (!HasSearchSelection())
+        return false;
+    const size_t start = GetSearchSelectionStart();
+    const size_t end = GetSearchSelectionEnd();
+    searchText_.erase(start, end - start);
+    searchCursorPos_ = start;
+    searchSelectionAnchor_ = start;
+    return true;
+}
+
+void ScrollingItemWidget::ReplaceSearchSelection(
+    const std::wstring& text)
+{
+    EraseSearchSelection();
+    searchCursorPos_ =
+        std::min(searchCursorPos_, searchText_.size());
+    searchText_.insert(searchCursorPos_, text);
+    searchCursorPos_ += text.size();
+    searchSelectionAnchor_ = searchCursorPos_;
+    InvalidateSlots();
+}
+
+void ScrollingItemWidget::SetSearchText(
+    const std::wstring& text)
+{
+    searchText_ = text;
+    searchCursorPos_ = searchText_.size();
+    searchSelectionAnchor_ = searchCursorPos_;
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+    InvalidateSlots();
+}
+
+void ScrollingItemWidget::AppendSearchChar(wchar_t ch)
+{
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+    ReplaceSearchSelection(std::wstring(1, ch));
+}
+
+void ScrollingItemWidget::BackspaceSearchText()
+{
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+    if (!EraseSearchSelection() && searchCursorPos_ > 0)
+    {
+        searchText_.erase(searchCursorPos_ - 1, 1);
+        --searchCursorPos_;
+        searchSelectionAnchor_ = searchCursorPos_;
+    }
+    InvalidateSlots();
+}
+
+void ScrollingItemWidget::DeleteSearchText()
+{
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+    if (!EraseSearchSelection() &&
+        searchCursorPos_ < searchText_.size())
+    {
+        searchText_.erase(searchCursorPos_, 1);
+        searchSelectionAnchor_ = searchCursorPos_;
+    }
+    InvalidateSlots();
+}
+
+void ScrollingItemWidget::ClearSearchText()
+{
+    searchText_.clear();
+    searchCursorPos_ = 0;
+    searchSelectionAnchor_ = 0;
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+    searchFocused_ = false;
+    searchPointerSelecting_ = false;
+    InvalidateSlots();
+}
+
+void ScrollingItemWidget::SetSearchFocused(bool focused)
+{
+    if (focused && !searchFocused_)
+    {
+        searchCursorPos_ = searchText_.size();
+        searchSelectionAnchor_ = searchCursorPos_;
+    }
+    searchFocused_ = focused;
+    if (!focused)
+    {
+        searchSelectionAnchor_ = searchCursorPos_;
+        searchCompositionText_.clear();
+        searchCompositionCursor_ = 0;
+        searchPointerSelecting_ = false;
+    }
+}
+
+void ScrollingItemWidget::SetSearchCursorPosition(
+    size_t position)
+{
+    searchCursorPos_ = std::min(position, searchText_.size());
+    searchSelectionAnchor_ = searchCursorPos_;
+}
+
+void ScrollingItemWidget::SetSearchEditingState(
+    size_t cursor,
+    size_t selectionAnchor,
+    const std::wstring& compositionText,
+    size_t compositionCursor)
+{
+    searchCursorPos_ = std::min(cursor, searchText_.size());
+    searchSelectionAnchor_ =
+        std::min(selectionAnchor, searchText_.size());
+    searchCompositionText_ = compositionText;
+    searchCompositionCursor_ =
+        std::min(compositionCursor, compositionText.size());
+}
+
+void ScrollingItemWidget::MoveCursorLeft(bool extendSelection)
+{
+    if (!extendSelection && HasSearchSelection())
+        searchCursorPos_ = GetSearchSelectionStart();
+    else if (searchCursorPos_ > 0)
+        --searchCursorPos_;
+    if (!extendSelection)
+        searchSelectionAnchor_ = searchCursorPos_;
+    ClearSearchComposition();
+}
+
+void ScrollingItemWidget::MoveCursorRight(bool extendSelection)
+{
+    if (!extendSelection && HasSearchSelection())
+        searchCursorPos_ = GetSearchSelectionEnd();
+    else if (searchCursorPos_ < searchText_.size())
+        ++searchCursorPos_;
+    if (!extendSelection)
+        searchSelectionAnchor_ = searchCursorPos_;
+    ClearSearchComposition();
+}
+
+void ScrollingItemWidget::MoveCursorHome(bool extendSelection)
+{
+    searchCursorPos_ = 0;
+    if (!extendSelection)
+        searchSelectionAnchor_ = searchCursorPos_;
+    ClearSearchComposition();
+}
+
+void ScrollingItemWidget::MoveCursorEnd(bool extendSelection)
+{
+    searchCursorPos_ = searchText_.size();
+    if (!extendSelection)
+        searchSelectionAnchor_ = searchCursorPos_;
+    ClearSearchComposition();
+}
+
+bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
+{
+    if (!searchFocused_)
+        return false;
+
+    const bool control =
+        (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift =
+        (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    searchCursorPos_ =
+        std::min(searchCursorPos_, searchText_.size());
+    searchSelectionAnchor_ =
+        std::min(searchSelectionAnchor_, searchText_.size());
+    searchPointerSelecting_ = false;
+
+    if (key == VK_ESCAPE)
+    {
+        ClearSearchText();
+        return true;
+    }
+    if (control && key == 'A')
+    {
+        searchSelectionAnchor_ = 0;
+        searchCursorPos_ = searchText_.size();
+        ClearSearchComposition();
+        return true;
+    }
+    if (control && (key == 'C' || key == 'X'))
+    {
+        bool copied = false;
+        if (HasSearchSelection() && OpenClipboard(nullptr))
+        {
+            EmptyClipboard();
+            const std::wstring selected =
+                searchText_.substr(
+                    GetSearchSelectionStart(),
+                    GetSearchSelectionEnd() -
+                        GetSearchSelectionStart());
+            const SIZE_T bytes =
+                (selected.size() + 1) * sizeof(wchar_t);
+            HGLOBAL memory =
+                GlobalAlloc(GMEM_MOVEABLE, bytes);
+            if (memory)
+            {
+                if (void* destination = GlobalLock(memory))
+                {
+                    memcpy(destination, selected.c_str(), bytes);
+                    GlobalUnlock(memory);
+                    if (SetClipboardData(
+                            CF_UNICODETEXT, memory))
+                        copied = true;
+                    else
+                        GlobalFree(memory);
+                }
+                else
+                    GlobalFree(memory);
+            }
+            CloseClipboard();
+        }
+        if (key == 'X' && copied)
+        {
+            EraseSearchSelection();
+            InvalidateSlots();
+        }
+        ClearSearchComposition();
+        return true;
+    }
+    if (control && key == 'V')
+    {
+        std::wstring pasted;
+        if (OpenClipboard(nullptr))
+        {
+            if (HANDLE data =
+                    GetClipboardData(CF_UNICODETEXT))
+            {
+                const wchar_t* source =
+                    static_cast<const wchar_t*>(
+                        GlobalLock(data));
+                if (source)
+                {
+                    for (; *source; ++source)
+                    {
+                        if (*source == L'\r')
+                            continue;
+                        if (*source == L'\n' ||
+                            *source == L'\t')
+                            pasted.push_back(L' ');
+                        else
+                            pasted.push_back(*source);
+                    }
+                    GlobalUnlock(data);
+                }
+            }
+            CloseClipboard();
+        }
+        if (!pasted.empty())
+            ReplaceSearchSelection(pasted);
+        ClearSearchComposition();
+        return true;
+    }
+    if (key == VK_BACK)
+    {
+        BackspaceSearchText();
+        return true;
+    }
+    if (key == VK_DELETE)
+    {
+        DeleteSearchText();
+        return true;
+    }
+    if (key == VK_LEFT)
+    {
+        MoveCursorLeft(shift);
+        return true;
+    }
+    if (key == VK_RIGHT)
+    {
+        MoveCursorRight(shift);
+        return true;
+    }
+    if (key == VK_HOME)
+    {
+        MoveCursorHome(shift);
+        return true;
+    }
+    if (key == VK_END)
+    {
+        MoveCursorEnd(shift);
+        return true;
+    }
+    return false;
+}
+
+std::wstring ScrollingItemWidget::BuildSearchDisplayText(
+    size_t& displayCursor,
+    size_t& compositionStart,
+    size_t& compositionLength) const
+{
+    const size_t cursor =
+        std::min(searchCursorPos_, searchText_.size());
+    if (searchCompositionText_.empty())
+    {
+        displayCursor = cursor;
+        compositionStart = 0;
+        compositionLength = 0;
+        return searchText_;
+    }
+
+    const size_t start = GetSearchSelectionStart();
+    const size_t end = GetSearchSelectionEnd();
+    std::wstring display = searchText_.substr(0, start);
+    display.append(searchCompositionText_);
+    display.append(searchText_.substr(end));
+    displayCursor = start +
+        std::min(searchCompositionCursor_,
+            searchCompositionText_.size());
+    compositionStart = start;
+    compositionLength = searchCompositionText_.size();
+    return display;
+}
+
+size_t ScrollingItemWidget::HitTestSearchTextPosition(
+    POINT point) const
+{
+    if (!app_)
+        return 0;
+    RECT searchRect = GetSearchBoxRect();
+    if (IsRectEmptyRect(searchRect))
+        return 0;
+    RECT textRect = MakeRect(
+        searchRect.left + Cu(10.0f), searchRect.top,
+        searchRect.right - Cu(10.0f), searchRect.bottom);
+    IDWriteFactory* dwrite = app_->GetDWriteFactory();
+    IDWriteTextFormat* format =
+        GetCuTextFormat(15.0f, false, false);
+    if (!dwrite || !format)
+        return point.x <= textRect.left
+            ? 0 : searchText_.size();
+
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite->CreateTextLayout(
+            searchText_.c_str(),
+            static_cast<UINT32>(searchText_.size()),
+            format,
+            static_cast<float>(std::max<LONG>(
+                1, textRect.right - textRect.left)),
+            static_cast<float>(std::max<LONG>(
+                1, textRect.bottom - textRect.top)),
+            &layout)) ||
+        !layout)
+        return searchText_.size();
+
+    BOOL trailing = FALSE;
+    BOOL inside = FALSE;
+    DWRITE_HIT_TEST_METRICS metrics{};
+    if (FAILED(layout->HitTestPoint(
+            static_cast<float>(point.x - textRect.left),
+            static_cast<float>(point.y - textRect.top),
+            &trailing, &inside, &metrics)))
+        return searchText_.size();
+    size_t position = metrics.textPosition;
+    if (trailing)
+        position += std::max<UINT32>(1, metrics.length);
+    return std::min(position, searchText_.size());
+}
+
+void ScrollingItemWidget::BeginSearchPointerSelection(
+    POINT point, bool extendSelection)
+{
+    SetSearchFocused(true);
+    ClearSearchComposition();
+    const size_t position =
+        HitTestSearchTextPosition(point);
+    if (!extendSelection)
+        searchSelectionAnchor_ = position;
+    searchCursorPos_ = position;
+    searchPointerSelecting_ = true;
+}
+
+void ScrollingItemWidget::UpdateSearchPointerSelection(
+    POINT point)
+{
+    if (!searchPointerSelecting_)
+        return;
+    searchCursorPos_ =
+        HitTestSearchTextPosition(point);
+}
+
+void ScrollingItemWidget::EndSearchPointerSelection()
+{
+    searchPointerSelecting_ = false;
+}
+
+void ScrollingItemWidget::SetSearchComposition(
+    const std::wstring& text, size_t cursor)
+{
+    if (!searchFocused_)
+        return;
+    searchCompositionText_ = text;
+    searchCompositionCursor_ =
+        std::min(cursor, text.size());
+}
+
+void ScrollingItemWidget::CommitSearchComposition(
+    const std::wstring& text)
+{
+    if (!searchFocused_)
+        return;
+    ReplaceSearchSelection(text);
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+}
+
+void ScrollingItemWidget::ClearSearchComposition()
+{
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+}
+
+bool ScrollingItemWidget::GetSearchCaretRect(
+    RECT& rect) const
+{
+    rect = {};
+    if (!searchFocused_ || !app_)
+        return false;
+    RECT searchRect = GetSearchBoxRect();
+    if (IsRectEmptyRect(searchRect))
+        return false;
+    RECT textRect = MakeRect(
+        searchRect.left + Cu(10.0f), searchRect.top,
+        searchRect.right - Cu(10.0f), searchRect.bottom);
+    IDWriteFactory* dwrite = app_->GetDWriteFactory();
+    IDWriteTextFormat* format =
+        GetCuTextFormat(15.0f, false, false);
+    if (!dwrite || !format)
+        return false;
+
+    size_t displayCursor = 0;
+    size_t compositionStart = 0;
+    size_t compositionLength = 0;
+    const std::wstring display = BuildSearchDisplayText(
+        displayCursor, compositionStart, compositionLength);
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite->CreateTextLayout(
+            display.c_str(),
+            static_cast<UINT32>(display.size()),
+            format,
+            static_cast<float>(std::max<LONG>(
+                1, textRect.right - textRect.left)),
+            static_cast<float>(std::max<LONG>(
+                1, textRect.bottom - textRect.top)),
+            &layout)) ||
+        !layout)
+        return false;
+
+    const size_t safeCursor =
+        std::min(displayCursor, display.size());
+    UINT32 hitPosition = 0;
+    BOOL trailing = FALSE;
+    if (!display.empty())
+    {
+        if (safeCursor >= display.size())
+        {
+            hitPosition =
+                static_cast<UINT32>(display.size() - 1);
+            trailing = TRUE;
+        }
+        else
+            hitPosition =
+                static_cast<UINT32>(safeCursor);
+    }
+    float caretX = 0.0f;
+    float caretY = 0.0f;
+    DWRITE_HIT_TEST_METRICS metrics{};
+    if (FAILED(layout->HitTestTextPosition(
+            hitPosition, trailing, &caretX, &caretY,
+            &metrics)))
+        return false;
+
+    rect.left = textRect.left +
+        static_cast<LONG>(std::lround(caretX));
+    rect.top = textRect.top +
+        static_cast<LONG>(std::lround(caretY));
+    rect.right = rect.left + 1;
+    rect.bottom = rect.top +
+        std::max<LONG>(1,
+            static_cast<LONG>(std::lround(
+                std::max(metrics.height, FontCu(15.0f)))));
+    return true;
+}
+
+/**
+ * @brief 绘制可滚动组件共用的搜索框。
+ */
+void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
+{
+    if (!context || !app_) return;
+    RECT searchRect = GetSearchBoxRect();
+    if (IsRectEmptyRect(searchRect)) return;
+
+    const bool light = app_->IsLightContentTheme();
+    const bool hovered =
+        PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
+    const D2D1_COLOR_F foreground = light
+        ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.90f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.97f);
+    const D2D1_COLOR_F placeholder = light
+        ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.52f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.64f);
+    const D2D1_COLOR_F stateColor = light
+        ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    app_->DrawD2DRoundedRectangle(
+        context, searchRect,
+        static_cast<float>(Cu(8.0f)),
+        D2D1::ColorF(
+            stateColor.r, stateColor.g, stateColor.b,
+            searchFocused_
+                ? (light ? 0.10f : 0.12f)
+                : (hovered
+                    ? (light ? 0.06f : 0.08f)
+                    : (light ? 0.035f : 0.05f))),
+        D2D1::ColorF(
+            stateColor.r, stateColor.g, stateColor.b,
+            searchFocused_
+                ? (light ? 0.52f : 0.62f)
+                : (light ? 0.14f : 0.20f)));
+
+    IDWriteTextFormat* format =
+        GetCuTextFormat(15.0f, false, false);
+    IDWriteFactory* dwrite = app_->GetDWriteFactory();
+    if (!format || !dwrite)
+        return;
+    RECT textRect = MakeRect(
+        searchRect.left + Cu(10.0f), searchRect.top,
+        searchRect.right - Cu(10.0f), searchRect.bottom);
+
+    size_t displayCursor = 0;
+    size_t compositionStart = 0;
+    size_t compositionLength = 0;
+    const bool showingPlaceholder =
+        searchText_.empty() && !searchFocused_;
+    const std::wstring display = showingPlaceholder
+        ? _LW("widget.categories.search_hint")
+        : BuildSearchDisplayText(
+            displayCursor,
+            compositionStart,
+            compositionLength);
+
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite->CreateTextLayout(
+            display.c_str(),
+            static_cast<UINT32>(display.size()),
+            format,
+            static_cast<float>(std::max<LONG>(
+                1, textRect.right - textRect.left)),
+            static_cast<float>(std::max<LONG>(
+                1, textRect.bottom - textRect.top)),
+            &layout)) ||
+        !layout)
+        return;
+
+    auto getBrush =
+        [&](const D2D1_COLOR_F& color)
+            -> ID2D1SolidColorBrush* {
+        const auto key = D2DColorBrushKey(color);
+        auto found = app_->brushCache_.find(key);
+        if (found == app_->brushCache_.end())
+        {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (FAILED(context->CreateSolidColorBrush(
+                    color, &brush)) ||
+                !brush)
+                return nullptr;
+            found = app_->brushCache_.emplace(
+                key, std::move(brush)).first;
+        }
+        return found->second.Get();
+    };
+
+    context->PushAxisAlignedClip(
+        D2D1::RectF(
+            static_cast<float>(textRect.left),
+            static_cast<float>(textRect.top),
+            static_cast<float>(textRect.right),
+            static_cast<float>(textRect.bottom)),
+        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+    if (searchFocused_ &&
+        searchCompositionText_.empty() &&
+        HasSearchSelection())
+    {
+        UINT32 count = 0;
+        const UINT32 start =
+            static_cast<UINT32>(GetSearchSelectionStart());
+        const UINT32 length = static_cast<UINT32>(
+            GetSearchSelectionEnd() -
+                GetSearchSelectionStart());
+        layout->HitTestTextRange(
+            start, length, 0.0f, 0.0f,
+            nullptr, 0, &count);
+        if (count > 0)
+        {
+            std::vector<DWRITE_HIT_TEST_METRICS>
+                metrics(count);
+            if (SUCCEEDED(layout->HitTestTextRange(
+                    start, length, 0.0f, 0.0f,
+                    metrics.data(), count, &count)))
+            {
+                ID2D1SolidColorBrush* selectionBrush =
+                    getBrush(D2D1::ColorF(
+                        stateColor.r,
+                        stateColor.g,
+                        stateColor.b,
+                        light ? 0.18f : 0.24f));
+                if (selectionBrush)
+                {
+                    for (UINT32 i = 0; i < count; ++i)
+                    {
+                        const auto& hit = metrics[i];
+                        context->FillRectangle(
+                            D2D1::RectF(
+                                textRect.left + hit.left,
+                                textRect.top + hit.top,
+                                textRect.left + hit.left +
+                                    hit.width,
+                                textRect.top + hit.top +
+                                    hit.height),
+                            selectionBrush);
+                    }
+                }
+            }
+        }
+    }
+
+    if (ID2D1SolidColorBrush* textBrush =
+            getBrush(showingPlaceholder
+                ? placeholder : foreground))
+    {
+        context->DrawTextLayout(
+            D2D1::Point2F(
+                static_cast<float>(textRect.left),
+                static_cast<float>(textRect.top)),
+            layout.Get(), textBrush,
+            D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
+    if (searchFocused_ && compositionLength > 0)
+    {
+        UINT32 count = 0;
+        layout->HitTestTextRange(
+            static_cast<UINT32>(compositionStart),
+            static_cast<UINT32>(compositionLength),
+            0.0f, 0.0f, nullptr, 0, &count);
+        if (count > 0)
+        {
+            std::vector<DWRITE_HIT_TEST_METRICS>
+                metrics(count);
+            if (SUCCEEDED(layout->HitTestTextRange(
+                    static_cast<UINT32>(compositionStart),
+                    static_cast<UINT32>(compositionLength),
+                    0.0f, 0.0f,
+                    metrics.data(), count, &count)))
+            {
+                ID2D1SolidColorBrush* underlineBrush =
+                    getBrush(foreground);
+                if (underlineBrush)
+                {
+                    for (UINT32 i = 0; i < count; ++i)
+                    {
+                        const auto& hit = metrics[i];
+                        const float y = textRect.top +
+                            hit.top +
+                            std::max(1.0f,
+                                hit.height - 1.5f);
+                        context->FillRectangle(
+                            D2D1::RectF(
+                                textRect.left + hit.left,
+                                y,
+                                textRect.left + hit.left +
+                                    std::max(1.5f, hit.width),
+                                y + 1.5f),
+                            underlineBrush);
+                    }
+                }
+            }
+        }
+    }
+
+    if (searchFocused_)
+    {
+        const size_t safeCursor =
+            std::min(displayCursor, display.size());
+        UINT32 hitPosition = 0;
+        BOOL trailing = FALSE;
+        if (!display.empty())
+        {
+            if (safeCursor >= display.size())
+            {
+                hitPosition = static_cast<UINT32>(
+                    display.size() - 1);
+                trailing = TRUE;
+            }
+            else
+                hitPosition =
+                    static_cast<UINT32>(safeCursor);
+        }
+        float caretX = 0.0f;
+        float caretY = 0.0f;
+        DWRITE_HIT_TEST_METRICS metrics{};
+        if (SUCCEEDED(layout->HitTestTextPosition(
+                hitPosition, trailing,
+                &caretX, &caretY, &metrics)))
+        {
+            ID2D1SolidColorBrush* caretBrush =
+                getBrush(foreground);
+            if (caretBrush)
+            {
+                context->FillRectangle(
+                    D2D1::RectF(
+                        textRect.left + caretX,
+                        textRect.top + caretY,
+                        textRect.left + caretX +
+                            std::max(1.0f,
+                                static_cast<float>(
+                                    Cu(1.5f))),
+                        textRect.top + caretY +
+                            std::max(
+                                metrics.height,
+                                FontCu(15.0f))),
+                    caretBrush);
+            }
+        }
+    }
+    context->PopAxisAlignedClip();
 }
 
 void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
@@ -886,6 +1846,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const bool persistentBottomBar = tinyCollection ||
         data_->type == DesktopWidgetType::FileCategories ||
         data_->type == DesktopWidgetType::FolderMapping ||
+        data_->type == DesktopWidgetType::CollectionGroup ||
+        data_->type == DesktopWidgetType::FileGroup ||
         data_->type == DesktopWidgetType::Guide ||
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
@@ -1026,6 +1988,10 @@ std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app)
     {
     case DesktopWidgetType::Collection:
         return std::make_unique<Collection>(data, app);
+    case DesktopWidgetType::CollectionGroup:
+        return std::make_unique<CollectionGroup>(data, app);
+    case DesktopWidgetType::FileGroup:
+        return std::make_unique<FileGroup>(data, app);
     case DesktopWidgetType::FileCategories:
         return std::make_unique<FileCategories>(data, app);
     case DesktopWidgetType::FolderMapping:

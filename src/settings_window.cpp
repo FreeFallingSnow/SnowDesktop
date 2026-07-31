@@ -21,6 +21,9 @@
 #include "crashlog.h"
 #include "data_paths.h"
 #include "deployment_context.h"
+#include "full_data_backup.h"
+#include "http_runtime.h"
+#include "portable_data_migration.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -30,14 +33,16 @@
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <wbemidl.h>
-#include <winhttp.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <cwctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -48,11 +53,130 @@ SettingsWindow* g_settingsWindow = nullptr;
 namespace {
 constexpr UINT_PTR kSettingsRefreshTimerId = 1;
 constexpr UINT kSettingsRefreshIntervalMs = 500;
+constexpr UINT_PTR kSettingsHotkeyCaptureTimerId = 2;
+constexpr UINT kSettingsHotkeyCaptureIntervalMs = 16;
 constexpr float kSettingControlWidthDip = 300.0f;
 constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
 constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
+
+std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
+    const wchar_t* title, const COMDLG_FILTERSPEC* filters,
+    UINT filterCount)
+{
+    ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+        return std::nullopt;
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM |
+            FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    dialog->SetTitle(title);
+    if (filters && filterCount > 0)
+        dialog->SetFileTypes(filterCount, filters);
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED) || FAILED(shown))
+        return std::nullopt;
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item)) || !item)
+        return std::nullopt;
+    PWSTR selected = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &selected)) ||
+        !selected)
+    {
+        if (selected) CoTaskMemFree(selected);
+        return std::nullopt;
+    }
+    std::filesystem::path result(selected);
+    CoTaskMemFree(selected);
+    return result;
+}
+
+std::optional<std::filesystem::path> SaveSettingsFile(HWND owner,
+    const wchar_t* title, const wchar_t* defaultName,
+    const wchar_t* defaultExtension,
+    const COMDLG_FILTERSPEC* filters, UINT filterCount)
+{
+    ComPtr<IFileSaveDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+    {
+        return std::nullopt;
+    }
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+    {
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM |
+            FOS_PATHMUSTEXIST | FOS_OVERWRITEPROMPT);
+    }
+    dialog->SetTitle(title);
+    if (defaultName && *defaultName)
+        dialog->SetFileName(defaultName);
+    if (defaultExtension && *defaultExtension)
+        dialog->SetDefaultExtension(defaultExtension);
+    if (filters && filterCount > 0)
+        dialog->SetFileTypes(filterCount, filters);
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED) || FAILED(shown))
+        return std::nullopt;
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item)) || !item)
+        return std::nullopt;
+    PWSTR selected = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &selected)) ||
+        !selected)
+    {
+        if (selected)
+            CoTaskMemFree(selected);
+        return std::nullopt;
+    }
+    std::filesystem::path result(selected);
+    CoTaskMemFree(selected);
+    return result;
+}
+
+std::filesystem::path FullBackupStateRoot()
+{
+    std::filesystem::path stateRoot =
+        snowdesktop::deployment::GetPackageLocalStatePath();
+    if (stateRoot.empty())
+        stateRoot = GetExecutableDirectoryPath();
+    return stateRoot;
+}
+
+snowdesktop::backup::FullDataBackupManager MakeFullBackupManager()
+{
+    return snowdesktop::backup::FullDataBackupManager(
+        FullBackupStateRoot(),
+        GetDataDirectoryPath(),
+        SNOWDESKTOP_VERSION,
+        snowdesktop::deployment::IsPackaged()
+            ? "installed" : "portable");
+}
+
+std::string FormatBackupSize(std::uint64_t bytes)
+{
+    static constexpr const char* units[] = {
+        "B", "KiB", "MiB", "GiB"
+    };
+    double value = static_cast<double>(bytes);
+    std::size_t unit = 0;
+    while (value >= 1024.0 && unit + 1 < std::size(units))
+    {
+        value /= 1024.0;
+        ++unit;
+    }
+    char buffer[64]{};
+    if (unit == 0)
+        std::snprintf(buffer, sizeof(buffer), "%llu %s",
+            static_cast<unsigned long long>(bytes), units[unit]);
+    else
+        std::snprintf(buffer, sizeof(buffer), "%.1f %s",
+            value, units[unit]);
+    return buffer;
+}
 
 std::wstring QueryPortableAutoStartCommandViaWmi()
 {
@@ -226,55 +350,8 @@ bool PathsOverlap(const std::filesystem::path& first,
 bool CopyDirectoryContents(const std::filesystem::path& source,
     const std::filesystem::path& destination)
 {
-    std::error_code error;
-    std::filesystem::create_directories(destination, error);
-    if (error)
-        return false;
-
-    std::filesystem::recursive_directory_iterator entry(source, error);
-    const std::filesystem::recursive_directory_iterator end;
-    if (error)
-        return false;
-
-    while (entry != end)
-    {
-        const std::filesystem::file_status status =
-            entry->symlink_status(error);
-        if (error || std::filesystem::is_symlink(status))
-            return false;
-
-        const std::filesystem::path relative =
-            entry->path().lexically_relative(source);
-        if (relative.empty() || relative.native().starts_with(L".."))
-            return false;
-        const std::filesystem::path target = destination / relative;
-
-        if (std::filesystem::is_directory(status))
-        {
-            std::filesystem::create_directories(target, error);
-            if (error)
-                return false;
-        }
-        else if (std::filesystem::is_regular_file(status))
-        {
-            std::filesystem::create_directories(target.parent_path(), error);
-            if (error)
-                return false;
-            std::filesystem::copy_file(entry->path(), target,
-                std::filesystem::copy_options::overwrite_existing, error);
-            if (error)
-                return false;
-        }
-        else
-        {
-            return false;
-        }
-
-        entry.increment(error);
-        if (error)
-            return false;
-    }
-    return true;
+    return snowdesktop::migration::CopyDataTree(
+        source, destination).ok;
 }
 
 void DrawHelpTooltip(const char* description)
@@ -499,7 +576,11 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 
     SetupFonts();
 
-    LoadPersonalization(GetPersonalizationPath().c_str(), personalization_);
+    bool categorizedTabFontSizeLoaded = false;
+    LoadPersonalization(
+        GetPersonalizationPath().c_str(),
+        personalization_,
+        &categorizedTabFontSizeLoaded);
     LoadDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
@@ -512,6 +593,18 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     }
     categorySettings_ = CategorySettings::Defaults();
     LoadCategorySettings(GetCategorySettingsPath().c_str(), categorySettings_);
+    if (!categorizedTabFontSizeLoaded)
+    {
+        // 1.0.1.0 之前该值保存在分类设置中。迁移一次后由外观设置持有，
+        // 避免重置分类规则时意外重置三类组件的共同外观。
+        personalization_.categorizedTabFontSize =
+            std::clamp(
+                categorySettings_.tabFontSize,
+                10.0f, 22.0f);
+        SavePersonalization(
+            GetPersonalizationPath().c_str(),
+            personalization_);
+    }
     SyncCategoryRuleBuffersFromSettings();
 
     g_settingsWindow = this;
@@ -537,7 +630,11 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 void SettingsWindow::Shutdown()
 {
     if (hwnd_ != nullptr)
+    {
         KillTimer(hwnd_, kSettingsRefreshTimerId);
+        KillTimer(hwnd_, kSettingsHotkeyCaptureTimerId);
+    }
+    hotkeyCaptureTarget_ = HotkeySettingTarget::None;
 
     if (personalizationDirty_)
     {
@@ -549,6 +646,8 @@ void SettingsWindow::Shutdown()
     {
         SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
         dockSettingsDirty_ = false;
+        dockSettingsPreviewDirty_ = false;
+        dockSettingsSaveRequested_ = false;
         if (dockSettingsChangedCallback_)
             dockSettingsChangedCallback_();
     }
@@ -631,6 +730,12 @@ void SettingsWindow::ShowDockSettings()
     Show();
 }
 
+void SettingsWindow::ShowWidgetMigration()
+{
+    activePage_ = 8;
+    Show();
+}
+
 /**
  * @brief 显示退出确认对话框。
  *
@@ -656,6 +761,8 @@ void SettingsWindow::RequestClose()
         editingWidgetIndex_ = static_cast<size_t>(-1);
     if (personalizationDirty_)
         personalizationSaveRequested_ = true;
+    if (dockSettingsDirty_)
+        dockSettingsSaveRequested_ = true;
     if (categorySettingsDirty_)
         categorySettingsSaveRequested_ = true;
     pendingClose_ = true;
@@ -696,6 +803,7 @@ void SettingsWindow::Render()
     } renderScope{ renderInProgress_ };
 
     renderRequested_ = false;
+    PollUpdateCheck();
 
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -748,6 +856,7 @@ void SettingsWindow::Render()
         case 4: DrawCategorySettingsPage(); break;
         case 5: DrawBackupPage(); break;
         case 6: DrawAboutPage(); break;
+        case 8: DrawWidgetPackagesPage(); break;
         case 7:
             if (debugUnlocked_)
                 DrawDebugPage();
@@ -782,10 +891,18 @@ void SettingsWindow::Render()
             personalizationChangedCallback_();
     }
 
-    if (dockSettingsDirty_)
+    if (dockSettingsPreviewDirty_)
+    {
+        dockSettingsPreviewDirty_ = false;
+        if (dockSettingsPreviewChangedCallback_)
+            dockSettingsPreviewChangedCallback_(dockSettings_);
+    }
+
+    if (dockSettingsSaveRequested_ && dockSettingsDirty_)
     {
         SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
         dockSettingsDirty_ = false;
+        dockSettingsSaveRequested_ = false;
         if (dockSettingsChangedCallback_)
             dockSettingsChangedCallback_();
     }
@@ -898,6 +1015,7 @@ void SettingsWindow::DrawSidebar()
     SideButton(0, _L("app.settings.general"));
     SideButton(1, _L("app.settings.appearance"));
     SideButton(4, _L("app.settings.category"));
+    SideButton(8, _L("app.settings.widgets"));
     SideButton(5, _L("app.settings.backup"));
     SideButton(6, _L("app.settings.about"));
     if (debugUnlocked_)
@@ -972,59 +1090,556 @@ static bool BlueButton(const char* label, const ImVec2& size = ImVec2(0, 0))
     return clicked;
 }
 
-/**
- * @brief 描述一个快捷键选项（虚拟键码 + 显示文本）。
- */
-struct HotkeyOption
+static bool SecondaryButton(const char* label,
+    const ImVec2& size = ImVec2(0, 0))
 {
-    UINT virtualKey;
-    const char* label;
-};
-
-/**
- * @brief 获取全局导航快捷键可选项列表。
- *
- * 包含 Space、Tab、Enter、反引号、字母 A-Z、功能键 F1-F12。
- * @param count 输出参数，接收选项总数
- * @return 指向静态常量 HotkeyOption 数组的指针
- */
-static const HotkeyOption* NavigationHotkeyOptions(size_t& count)
-{
-    static const HotkeyOption options[] = {
-        { VK_SPACE, "Space" },
-        { VK_TAB, "Tab" },
-        { VK_RETURN, "Enter" },
-        { VK_OEM_3, "`" },
-        { 'A', "A" }, { 'B', "B" }, { 'C', "C" }, { 'D', "D" },
-        { 'E', "E" }, { 'F', "F" }, { 'G', "G" }, { 'H', "H" },
-        { 'I', "I" }, { 'J', "J" }, { 'K', "K" }, { 'L', "L" },
-        { 'M', "M" }, { 'N', "N" }, { 'O', "O" }, { 'P', "P" },
-        { 'Q', "Q" }, { 'R', "R" }, { 'S', "S" }, { 'T', "T" },
-        { 'U', "U" }, { 'V', "V" }, { 'W', "W" }, { 'X', "X" },
-        { 'Y', "Y" }, { 'Z', "Z" },
-        { VK_F1, "F1" }, { VK_F2, "F2" }, { VK_F3, "F3" }, { VK_F4, "F4" },
-        { VK_F5, "F5" }, { VK_F6, "F6" }, { VK_F7, "F7" }, { VK_F8, "F8" },
-        { VK_F9, "F9" }, { VK_F10, "F10" }, { VK_F11, "F11" }, { VK_F12, "F12" },
-    };
-    count = sizeof(options) / sizeof(options[0]);
-    return options;
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::PushStyleColor(ImGuiCol_Button,
+        style.Colors[ImGuiCol_FrameBg]);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+        style.Colors[ImGuiCol_FrameBgHovered]);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+        style.Colors[ImGuiCol_FrameBgActive]);
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor(3);
+    return clicked;
 }
 
-/**
- * @brief 根据虚拟键码查找 NavigationHotkeyOptions 中的索引。
- * @param virtualKey 要查找的 Windows 虚拟键码
- * @return 匹配的选项索引，未找到时返回 0（Space）
- */
-static int NavigationHotkeyOptionIndex(UINT virtualKey)
+namespace
 {
-    size_t count = 0;
-    const HotkeyOption* options = NavigationHotkeyOptions(count);
-    for (size_t i = 0; i < count; ++i)
+    bool IsHotkeyPhysicalKeyDown(UINT virtualKey)
     {
-        if (options[i].virtualKey == virtualKey)
-            return static_cast<int>(i);
+        return (GetAsyncKeyState(static_cast<int>(virtualKey)) &
+            0x8000) != 0;
     }
-    return 0;
+
+    UINT ReadHotkeyModifierMask()
+    {
+        UINT modifiers = 0;
+        if (IsHotkeyPhysicalKeyDown(VK_CONTROL))
+            modifiers |= MOD_CONTROL;
+        if (IsHotkeyPhysicalKeyDown(VK_MENU))
+            modifiers |= MOD_ALT;
+        if (IsHotkeyPhysicalKeyDown(VK_SHIFT))
+            modifiers |= MOD_SHIFT;
+        if (IsHotkeyPhysicalKeyDown(VK_LWIN) ||
+            IsHotkeyPhysicalKeyDown(VK_RWIN))
+            modifiers |= MOD_WIN;
+        return modifiers;
+    }
+
+    bool IsHotkeyModifierVirtualKey(UINT virtualKey)
+    {
+        switch (virtualKey)
+        {
+        case VK_SHIFT:
+        case VK_CONTROL:
+        case VK_MENU:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+        case VK_LMENU:
+        case VK_RMENU:
+        case VK_LWIN:
+        case VK_RWIN:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    UINT HotkeyModifierForVirtualKey(UINT virtualKey)
+    {
+        switch (virtualKey)
+        {
+        case VK_CONTROL:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+            return MOD_CONTROL;
+        case VK_MENU:
+        case VK_LMENU:
+        case VK_RMENU:
+            return MOD_ALT;
+        case VK_SHIFT:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+            return MOD_SHIFT;
+        case VK_LWIN:
+        case VK_RWIN:
+            return MOD_WIN;
+        default:
+            return 0;
+        }
+    }
+
+    bool IsCapturableHotkeyVirtualKey(UINT virtualKey)
+    {
+        if (virtualKey <= VK_XBUTTON2 ||
+            virtualKey == VK_ESCAPE ||
+            virtualKey == VK_BACK ||
+            virtualKey == VK_DELETE ||
+            virtualKey == VK_PACKET)
+            return false;
+        return !IsHotkeyModifierVirtualKey(virtualKey);
+    }
+
+    const char* HotkeyTargetLabelKey(HotkeySettingTarget target)
+    {
+        switch (target)
+        {
+        case HotkeySettingTarget::QuickNavigation:
+            return "app.settings.quick_navigation";
+        case HotkeySettingTarget::DesktopPassthrough:
+            return "app.settings.desktop_passthrough_hotkey";
+        case HotkeySettingTarget::FloatingDock:
+            return "app.settings.dock_bar";
+        case HotkeySettingTarget::None:
+        default:
+            return "";
+        }
+    }
+}
+
+void SettingsWindow::StartHotkeyCapture(
+    HotkeySettingTarget target)
+{
+    CancelHotkeyCapture();
+    hotkeyCaptureTarget_ = target;
+    hotkeyCaptureModifiers_ = 0;
+    hotkeyCapturePressedModifiers_ = 0;
+    hotkeyCaptureVirtualKey_ = 0;
+    hotkeyCapturePrimarySeen_ = false;
+    hotkeyCapturePrimaryDown_ = false;
+    hotkeyCaptureClearPending_ = false;
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        SetTimer(hwnd_, kSettingsHotkeyCaptureTimerId,
+            kSettingsHotkeyCaptureIntervalMs, nullptr);
+        SetFocus(hwnd_);
+    }
+    renderRequested_ = true;
+}
+
+void SettingsWindow::CancelHotkeyCapture()
+{
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kSettingsHotkeyCaptureTimerId);
+    hotkeyCaptureTarget_ = HotkeySettingTarget::None;
+    hotkeyCaptureModifiers_ = 0;
+    hotkeyCapturePressedModifiers_ = 0;
+    hotkeyCaptureVirtualKey_ = 0;
+    hotkeyCapturePrimarySeen_ = false;
+    hotkeyCapturePrimaryDown_ = false;
+    hotkeyCaptureClearPending_ = false;
+    renderRequested_ = true;
+}
+
+void SettingsWindow::CaptureRegisteredHotkey(
+    UINT modifiers, UINT virtualKey)
+{
+    if (!IsHotkeyCaptureActive() || virtualKey == 0)
+        return;
+    const HotkeySettingTarget target =
+        hotkeyCaptureTarget_;
+    CancelHotkeyCapture();
+    CommitHotkeyCapture(
+        target,
+        modifiers &
+            (MOD_CONTROL | MOD_ALT |
+                MOD_SHIFT | MOD_WIN),
+        virtualKey);
+}
+
+void SettingsWindow::CommitHotkeyCapture(
+    HotkeySettingTarget target,
+    UINT modifiers,
+    UINT virtualKey)
+{
+    modifiers &=
+        MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
+    if (virtualKey == 0)
+        modifiers = 0;
+
+    switch (target)
+    {
+    case HotkeySettingTarget::QuickNavigation:
+        navigationSettings_.modifiers = modifiers;
+        navigationSettings_.virtualKey = virtualKey;
+        navigationSettingsDirty_ = true;
+        break;
+    case HotkeySettingTarget::DesktopPassthrough:
+        generalSettings_.desktopPassthroughHotkeyModifiers =
+            modifiers;
+        generalSettings_.desktopPassthroughHotkeyVirtualKey =
+            virtualKey;
+        generalSettingsDirty_ = true;
+        break;
+    case HotkeySettingTarget::FloatingDock:
+        dockSettings_.floatingHotkeyModifiers = modifiers;
+        dockSettings_.floatingHotkeyVirtualKey = virtualKey;
+        dockSettingsDirty_ = true;
+        dockSettingsSaveRequested_ = true;
+        break;
+    case HotkeySettingTarget::None:
+        return;
+    }
+    renderRequested_ = true;
+}
+
+void SettingsWindow::UpdateHotkeyCapture()
+{
+    if (!IsHotkeyCaptureActive())
+        return;
+
+    if (IsHotkeyPhysicalKeyDown(VK_ESCAPE))
+    {
+        CancelHotkeyCapture();
+        return;
+    }
+
+    const UINT currentModifiers = ReadHotkeyModifierMask();
+    hotkeyCaptureModifiers_ |= currentModifiers;
+
+    if (!hotkeyCapturePrimarySeen_ &&
+        !hotkeyCaptureClearPending_)
+    {
+        if (IsHotkeyPhysicalKeyDown(VK_BACK) ||
+            IsHotkeyPhysicalKeyDown(VK_DELETE))
+        {
+            hotkeyCaptureClearPending_ = true;
+        }
+        else
+        {
+            for (UINT virtualKey = 1;
+                 virtualKey <= 0xFE;
+                 ++virtualKey)
+            {
+                if (!IsCapturableHotkeyVirtualKey(virtualKey) ||
+                    !IsHotkeyPhysicalKeyDown(virtualKey))
+                    continue;
+                hotkeyCaptureVirtualKey_ = virtualKey;
+                hotkeyCapturePrimarySeen_ = true;
+                hotkeyCapturePrimaryDown_ = true;
+                break;
+            }
+        }
+    }
+
+    if (hotkeyCaptureClearPending_)
+    {
+        if (!IsHotkeyPhysicalKeyDown(VK_BACK) &&
+            !IsHotkeyPhysicalKeyDown(VK_DELETE) &&
+            currentModifiers == 0)
+        {
+            const HotkeySettingTarget target =
+                hotkeyCaptureTarget_;
+            CancelHotkeyCapture();
+            CommitHotkeyCapture(target, 0, 0);
+        }
+        return;
+    }
+
+    if (!hotkeyCapturePrimarySeen_)
+        return;
+
+    if (!IsHotkeyPhysicalKeyDown(hotkeyCaptureVirtualKey_) &&
+        currentModifiers == 0)
+    {
+        const HotkeySettingTarget target =
+            hotkeyCaptureTarget_;
+        const UINT modifiers = hotkeyCaptureModifiers_;
+        const UINT virtualKey = hotkeyCaptureVirtualKey_;
+        CancelHotkeyCapture();
+        CommitHotkeyCapture(target, modifiers, virtualKey);
+    }
+}
+
+void SettingsWindow::HandleHotkeyCaptureKeyMessage(
+    UINT message, WPARAM virtualKeyValue)
+{
+    if (!IsHotkeyCaptureActive())
+        return;
+
+    const UINT virtualKey =
+        static_cast<UINT>(virtualKeyValue);
+    const bool keyDown =
+        message == WM_KEYDOWN ||
+        message == WM_SYSKEYDOWN;
+    const UINT modifier =
+        HotkeyModifierForVirtualKey(virtualKey);
+
+    if (keyDown)
+    {
+        if (virtualKey == VK_ESCAPE)
+        {
+            CancelHotkeyCapture();
+            return;
+        }
+        if (modifier != 0)
+        {
+            hotkeyCaptureModifiers_ |= modifier;
+            hotkeyCapturePressedModifiers_ |= modifier;
+            return;
+        }
+        if (virtualKey == VK_BACK ||
+            virtualKey == VK_DELETE)
+        {
+            hotkeyCaptureClearPending_ = true;
+            return;
+        }
+        if (!IsCapturableHotkeyVirtualKey(virtualKey))
+            return;
+        if (!hotkeyCapturePrimarySeen_)
+        {
+            hotkeyCaptureVirtualKey_ = virtualKey;
+            hotkeyCapturePrimarySeen_ = true;
+        }
+        if (hotkeyCaptureVirtualKey_ == virtualKey)
+            hotkeyCapturePrimaryDown_ = true;
+        return;
+    }
+
+    if (modifier != 0)
+        hotkeyCapturePressedModifiers_ &= ~modifier;
+    if (hotkeyCaptureClearPending_ &&
+        (virtualKey == VK_BACK ||
+            virtualKey == VK_DELETE) &&
+        hotkeyCapturePressedModifiers_ == 0 &&
+        ReadHotkeyModifierMask() == 0)
+    {
+        const HotkeySettingTarget target =
+            hotkeyCaptureTarget_;
+        CancelHotkeyCapture();
+        CommitHotkeyCapture(target, 0, 0);
+        return;
+    }
+    if (hotkeyCapturePrimarySeen_ &&
+        virtualKey == hotkeyCaptureVirtualKey_)
+        hotkeyCapturePrimaryDown_ = false;
+
+    if (hotkeyCapturePrimarySeen_ &&
+        !hotkeyCapturePrimaryDown_ &&
+        hotkeyCapturePressedModifiers_ == 0 &&
+        ReadHotkeyModifierMask() == 0)
+    {
+        const HotkeySettingTarget target =
+            hotkeyCaptureTarget_;
+        const UINT modifiers = hotkeyCaptureModifiers_;
+        const UINT capturedVirtualKey =
+            hotkeyCaptureVirtualKey_;
+        CancelHotkeyCapture();
+        CommitHotkeyCapture(
+            target, modifiers, capturedVirtualKey);
+    }
+}
+
+HotkeySettingTarget SettingsWindow::FindInternalHotkeyConflict(
+    HotkeySettingTarget target,
+    UINT modifiers,
+    UINT virtualKey) const
+{
+    if (virtualKey == 0)
+        return HotkeySettingTarget::None;
+    const UINT normalizedModifiers =
+        modifiers &
+        (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    const auto matches = [&](UINT otherModifiers,
+        UINT otherVirtualKey) {
+        return normalizedModifiers ==
+                (otherModifiers &
+                    (MOD_CONTROL | MOD_ALT |
+                        MOD_SHIFT | MOD_WIN)) &&
+            virtualKey == otherVirtualKey;
+    };
+
+    if (target != HotkeySettingTarget::QuickNavigation &&
+        navigationSettings_.enabled &&
+        matches(navigationSettings_.modifiers,
+            navigationSettings_.virtualKey))
+        return HotkeySettingTarget::QuickNavigation;
+    if (target != HotkeySettingTarget::DesktopPassthrough &&
+        generalSettings_.desktopPassthroughHotkeyEnabled &&
+        matches(
+            generalSettings_.desktopPassthroughHotkeyModifiers,
+            generalSettings_.desktopPassthroughHotkeyVirtualKey))
+        return HotkeySettingTarget::DesktopPassthrough;
+    if (target != HotkeySettingTarget::FloatingDock &&
+        dockEnabled_ &&
+        dockSettings_.floatingShortcutMode &&
+        matches(dockSettings_.floatingHotkeyModifiers,
+            dockSettings_.floatingHotkeyVirtualKey))
+        return HotkeySettingTarget::FloatingDock;
+    return HotkeySettingTarget::None;
+}
+
+void SettingsWindow::DrawHotkeyRecorder(
+    HotkeySettingTarget target,
+    const char* label,
+    const char* id,
+    bool enabled,
+    UINT modifiers,
+    UINT virtualKey,
+    UINT defaultModifiers,
+    UINT defaultVirtualKey)
+{
+    if (!enabled && hotkeyCaptureTarget_ == target)
+        CancelHotkeyCapture();
+
+    const bool capturing = hotkeyCaptureTarget_ == target;
+    const HotkeySettingTarget internalConflict =
+        enabled && !capturing
+            ? FindInternalHotkeyConflict(
+                target, modifiers, virtualKey)
+            : HotkeySettingTarget::None;
+    const bool systemAvailable =
+        !enabled || capturing || virtualKey == 0 ||
+        internalConflict != HotkeySettingTarget::None ||
+        !hotkeyAvailabilityCallback_
+            ? true
+            : hotkeyAvailabilityCallback_(
+                target, modifiers, virtualKey);
+
+    NavigationSettings displaySettings;
+    displaySettings.modifiers = modifiers;
+    displaySettings.virtualKey = virtualKey;
+    std::string displayText;
+    if (capturing)
+        displayText = _L("app.settings.hotkey_press");
+    else if (virtualKey == 0)
+        displayText = _L("app.settings.hotkey_not_set");
+    else
+        displayText = WideToUtf8(
+            FormatNavigationHotkey(displaySettings));
+    const std::string buttonLabel =
+        displayText + id;
+    const std::string resetLabel =
+        std::string(_L("app.settings.restore_default")) +
+        id + "Reset";
+
+    std::string statusText;
+    std::string statusDetails;
+    ImVec4 statusColor;
+    if (!enabled)
+    {
+        statusText = _L("app.settings.hotkey_status_disabled");
+        statusColor = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+    }
+    else if (capturing)
+    {
+        statusText = _L("app.settings.hotkey_status_recording");
+        statusDetails = _L("app.settings.hotkey_capture_active");
+        statusColor = ImVec4(0.18f, 0.45f, 0.82f, 1.0f);
+    }
+    else if (virtualKey == 0)
+    {
+        statusText = _L("app.settings.hotkey_not_set");
+        statusDetails = _L("app.settings.hotkey_not_set_warning");
+        statusColor = ImVec4(0.82f, 0.46f, 0.08f, 1.0f);
+    }
+    else if (internalConflict != HotkeySettingTarget::None)
+    {
+        statusText = _L("app.settings.hotkey_status_conflict");
+        statusDetails = _LF(
+            "app.settings.hotkey_conflict_with",
+            _L(HotkeyTargetLabelKey(internalConflict)));
+        statusColor = ImVec4(0.80f, 0.12f, 0.12f, 1.0f);
+    }
+    else if (!systemAvailable)
+    {
+        statusText = _L("app.settings.hotkey_status_in_use");
+        statusDetails = _L("app.settings.hotkey_conflict_system");
+        statusColor = ImVec4(0.80f, 0.12f, 0.12f, 1.0f);
+    }
+    else if (modifiers == 0)
+    {
+        statusText = _L("app.settings.hotkey_status_no_modifier");
+        statusDetails = _L("app.settings.hotkey_no_modifier_warning");
+        statusColor = ImVec4(0.82f, 0.46f, 0.08f, 1.0f);
+    }
+    else
+    {
+        statusText = _L("app.settings.hotkey_status_available");
+        statusDetails = _L("app.settings.hotkey_available");
+        statusColor = ImVec4(0.12f, 0.58f, 0.30f, 1.0f);
+    }
+
+    const float controlWidth =
+        kSettingControlWidthDip * dpiScale_;
+    const float resetWidth =
+        SettingButtonWidth(resetLabel.c_str());
+    const float statusWidth =
+        ImGui::CalcTextSize(statusText.c_str()).x;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float fieldWidth = std::max(
+        96.0f * dpiScale_,
+        controlWidth - resetWidth - spacing);
+    const float controlX = BeginSettingRow(
+        label, controlWidth,
+        _L("app.settings.hotkey_capture_help"));
+
+    ImGui::SetCursorPosX(std::max(
+        0.0f, controlX - statusWidth - spacing));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(statusColor, "%s", statusText.c_str());
+    DrawHelpTooltip(statusDetails.c_str());
+    ImGui::SameLine(controlX);
+
+    ImGui::BeginDisabled(!enabled);
+    if (capturing)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button,
+            ImVec4(0.18f, 0.45f, 0.82f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+            ImVec4(0.20f, 0.49f, 0.88f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+            ImVec4(0.16f, 0.40f, 0.75f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            ImVec4(1, 1, 1, 1));
+    }
+    else if (enabled &&
+        (internalConflict != HotkeySettingTarget::None ||
+            !systemAvailable))
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button,
+            ImVec4(1.0f, 0.88f, 0.88f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+            ImVec4(1.0f, 0.82f, 0.82f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+            ImVec4(0.97f, 0.76f, 0.76f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            ImVec4(0.54f, 0.08f, 0.08f, 1.0f));
+    }
+    else
+    {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        ImGui::PushStyleColor(ImGuiCol_Button,
+            style.Colors[ImGuiCol_FrameBg]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+            style.Colors[ImGuiCol_FrameBgHovered]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+            style.Colors[ImGuiCol_FrameBgActive]);
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            style.Colors[ImGuiCol_Text]);
+    }
+    if (ImGui::Button(buttonLabel.c_str(),
+            ImVec2(fieldWidth, 0)))
+    {
+        StartHotkeyCapture(target);
+    }
+    ImGui::PopStyleColor(4);
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text,
+        ImVec4(1, 1, 1, 1));
+    if (ImGui::Button(resetLabel.c_str(),
+            ImVec2(resetWidth, 0)))
+    {
+        CancelHotkeyCapture();
+        CommitHotkeyCapture(target,
+            defaultModifiers, defaultVirtualKey);
+    }
+    ImGui::PopStyleColor();
+    ImGui::EndDisabled();
 }
 
 /**
@@ -1045,7 +1660,7 @@ void SettingsWindow::DrawBackupPage()
     ImGui::BeginChild("##BackupPageInner", pageSize,
         ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
-    ImGui::SeparatorText(_L("app.settings.backup_page_title"));
+    ImGui::SeparatorText(_L("app.settings.layout_backups"));
     ImGui::Spacing();
 
     const char* saveBackupLabel = _L("app.settings.save_backup");
@@ -1079,18 +1694,16 @@ void SettingsWindow::DrawBackupPage()
             nullptr, nullptr, SW_SHOW);
     }
 
-    ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.saved_backups"));
-    ImGui::Spacing();
-
     std::vector<LayoutBackup> backups = ListBackups();
-    const float migrationAreaHeight =
-        ImGui::GetTextLineHeightWithSpacing() +
-        ImGui::GetFrameHeightWithSpacing() + 32.0f * dpiScale_;
-    const float backupListHeight = std::max(
-        100.0f * dpiScale_,
-        ImGui::GetContentRegionAvail().y - migrationAreaHeight);
-    ImGui::BeginChild("##BackupList", ImVec2(0, backupListHeight), true);
+    ImGui::Spacing();
+    const float layoutBackupListHeight = backups.empty()
+        ? 48.0f * dpiScale_
+        : (std::min)(132.0f * dpiScale_,
+            18.0f * dpiScale_ +
+                static_cast<float>(backups.size()) *
+                    ImGui::GetFrameHeightWithSpacing());
+    ImGui::BeginChild("##BackupList",
+        ImVec2(0, layoutBackupListHeight), true);
     if (backups.empty())
     {
         ImGui::TextDisabled("%s", _L("app.settings.no_backups"));
@@ -1121,10 +1734,120 @@ void SettingsWindow::DrawBackupPage()
     ImGui::EndChild();
 
     ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.full_data_backups"));
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s",
+        _L("app.settings.full_data_backup_description"));
+    ImGui::Spacing();
+
+    const char* createFullLabel =
+        _L("app.settings.create_full_backup");
+    const char* importFullLabel =
+        _L("app.settings.restore_from_backup_file");
+    const char* openFullLabel =
+        _L("app.settings.open_full_backup_folder");
+    if (BlueButton(createFullLabel,
+            ImVec2(SettingButtonWidth(createFullLabel), 0)))
+    {
+        CreateFullDataBackup();
+    }
+    ImGui::SameLine();
+    if (BlueButton(importFullLabel,
+            ImVec2(SettingButtonWidth(importFullLabel), 0)))
+    {
+        ImportFullDataBackup();
+    }
+    ImGui::SameLine();
+    if (BlueButton(openFullLabel,
+            ImVec2(SettingButtonWidth(openFullLabel), 0)))
+    {
+        auto manager = MakeFullBackupManager();
+        std::error_code error;
+        std::filesystem::create_directories(
+            manager.BackupRoot(), error);
+        ShellExecuteW(nullptr, L"open",
+            manager.BackupRoot().c_str(), nullptr, nullptr, SW_SHOW);
+    }
+
+    const auto fullBackups = MakeFullBackupManager().List();
+    ImGui::Spacing();
+    const float fullBackupListHeight = fullBackups.empty()
+        ? 48.0f * dpiScale_
+        : (std::min)(172.0f * dpiScale_,
+            18.0f * dpiScale_ +
+                static_cast<float>(fullBackups.size()) *
+                    ImGui::GetFrameHeightWithSpacing());
+    ImGui::BeginChild("##FullBackupList",
+        ImVec2(0, fullBackupListHeight), true);
+    if (fullBackups.empty())
+    {
+        ImGui::TextDisabled("%s",
+            _L("app.settings.no_full_data_backups"));
+    }
+    else
+    {
+        for (std::size_t index = 0;
+            index < fullBackups.size(); ++index)
+        {
+            const auto& backup = fullBackups[index];
+            ImGui::PushID(
+                static_cast<int>(index) + 10000);
+            const std::string timestamp = backup.createdAt.empty()
+                ? _L("app.settings.full_backup_unknown_time")
+                : backup.createdAt;
+            const std::string label = backup.migrationRollback
+                ? _LF("app.settings.migration_backup_item", timestamp)
+                : _LF("app.settings.full_backup_item",
+                    timestamp,
+                    std::to_string(backup.fileCount),
+                    FormatBackupSize(backup.totalBytes));
+            const char* restoreLabel =
+                _L("app.settings.restore");
+            const char* exportLabel =
+                _L("app.settings.export_backup");
+            const char* openLabel =
+                _L("app.settings.open");
+            const char* deleteLabel =
+                _L("app.settings.delete");
+            const float restoreW =
+                SettingButtonWidth(restoreLabel);
+            const float exportW =
+                SettingButtonWidth(exportLabel);
+            const float openW =
+                SettingButtonWidth(openLabel);
+            const float deleteW =
+                SettingButtonWidth(deleteLabel);
+            const float actionsW =
+                restoreW + exportW + openW + deleteW +
+                ImGui::GetStyle().ItemSpacing.x * 3.0f;
+            BeginSettingRow(label.c_str(), actionsW);
+            if (BlueButton(restoreLabel, ImVec2(restoreW, 0)))
+                RestoreFullDataBackup(backup);
+            ImGui::SameLine();
+            if (BlueButton(exportLabel, ImVec2(exportW, 0)))
+                ExportFullDataBackup(backup);
+            ImGui::SameLine();
+            if (BlueButton(openLabel, ImVec2(openW, 0)))
+            {
+                ShellExecuteW(nullptr, L"open",
+                    backup.root.c_str(), nullptr, nullptr, SW_SHOW);
+            }
+            ImGui::SameLine();
+            if (BlueButton(deleteLabel, ImVec2(deleteW, 0)))
+                DeleteFullDataBackup(backup);
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.data_migration"));
     ImGui::Spacing();
-    if (BlueButton(_L("app.settings.migrate_portable_data")))
-        MigratePortableData();
+    ImGui::TextWrapped("%s",
+        _L("app.settings.data_migration_description"));
+    ImGui::Spacing();
+    if (BlueButton(_L("app.settings.migrate_all_data")))
+        MigrateAllData();
 
     ImGui::EndChild();
 }
@@ -1252,57 +1975,45 @@ void SettingsWindow::DrawGeneralPage()
         &navigationSettings_.enabled))
         navigationSettingsDirty_ = true;
 
-    ImGui::BeginDisabled(!navigationSettings_.enabled);
-
-    bool ctrl = (navigationSettings_.modifiers & MOD_CONTROL) != 0;
-    bool alt = (navigationSettings_.modifiers & MOD_ALT) != 0;
-    bool shift = (navigationSettings_.modifiers & MOD_SHIFT) != 0;
-    bool win = (navigationSettings_.modifiers & MOD_WIN) != 0;
-    bool modifiersChanged = false;
-    const float modifierWidth = 244.0f * dpiScale_;
-    BeginSettingRow(_L("app.settings.modifier_keys"), modifierWidth);
-    modifiersChanged |= ImGui::Checkbox("Ctrl", &ctrl);
-    ImGui::SameLine();
-    modifiersChanged |= ImGui::Checkbox("Alt", &alt);
-    ImGui::SameLine();
-    modifiersChanged |= ImGui::Checkbox("Shift", &shift);
-    ImGui::SameLine();
-    modifiersChanged |= ImGui::Checkbox("Win", &win);
-    if (modifiersChanged)
-    {
-        navigationSettings_.modifiers = 0;
-        if (ctrl) navigationSettings_.modifiers |= MOD_CONTROL;
-        if (alt) navigationSettings_.modifiers |= MOD_ALT;
-        if (shift) navigationSettings_.modifiers |= MOD_SHIFT;
-        if (win) navigationSettings_.modifiers |= MOD_WIN;
-        navigationSettingsDirty_ = true;
-    }
-
-    size_t optionCount = 0;
-    const HotkeyOption* options = NavigationHotkeyOptions(optionCount);
-    int selected = NavigationHotkeyOptionIndex(navigationSettings_.virtualKey);
-    const float hotkeyControlW = kSettingControlWidthDip * dpiScale_;
-    BeginSettingRow(_L("app.settings.primary_key"), hotkeyControlW);
-    ImGui::SetNextItemWidth(hotkeyControlW);
-    if (ImGui::Combo("##NavigationMainKey", &selected,
-        [](void* data, int idx, const char** outText) {
-            auto* opts = static_cast<const HotkeyOption*>(data);
-            *outText = opts[idx].label;
-            return true;
-        }, const_cast<HotkeyOption*>(options), static_cast<int>(optionCount)))
-    {
-        navigationSettings_.virtualKey = options[selected].virtualKey;
-        navigationSettingsDirty_ = true;
-    }
-
-    std::wstring hotkeyText = FormatNavigationHotkey(navigationSettings_);
-    const std::string hotkeyTextUtf8 = WideToUtf8(hotkeyText);
-    DrawSettingValue(_L("app.settings.current_hotkey"), hotkeyTextUtf8.c_str());
-
-    ImGui::EndDisabled();
+    DrawHotkeyRecorder(
+        HotkeySettingTarget::QuickNavigation,
+        _L("app.settings.hotkey"),
+        "##QuickNavigationHotkeyRecorder",
+        navigationSettings_.enabled,
+        navigationSettings_.modifiers,
+        navigationSettings_.virtualKey,
+        MOD_CONTROL | MOD_ALT,
+        VK_SPACE);
 
     ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.desktop_interact"));
+    ImGui::Spacing();
+
+    if (DrawSettingCheckbox(
+            _L("app.settings.desktop_passthrough_hotkey"),
+            "##DesktopPassthroughHotkeyEnabled",
+            &generalSettings_.desktopPassthroughHotkeyEnabled))
+        generalSettingsDirty_ = true;
+    if (generalSettings_.desktopPassthroughHotkeyEnabled)
+    {
+        ImGui::Indent();
+        ImGui::TextDisabled(
+            "%s",
+            _L("app.settings.desktop_passthrough_hotkey_hint"));
+        ImGui::Unindent();
+    }
+
+    ImGui::Indent();
+    DrawHotkeyRecorder(
+        HotkeySettingTarget::DesktopPassthrough,
+        _L("app.settings.hotkey"),
+        "##DesktopPassthroughHotkeyRecorder",
+        generalSettings_.desktopPassthroughHotkeyEnabled,
+        generalSettings_.desktopPassthroughHotkeyModifiers,
+        generalSettings_.desktopPassthroughHotkeyVirtualKey,
+        MOD_CONTROL | MOD_ALT,
+        VK_OEM_3);
+    ImGui::Unindent();
     ImGui::Spacing();
 
     if (DrawSettingCheckbox(_L("app.settings.double_click_hide"), "##DoubleClickHideDesktop",
@@ -1329,7 +2040,12 @@ void SettingsWindow::DrawDockPage()
     const float sliderActionW = controlW;
     const float actionSliderW = std::max(1.0f,
         sliderActionW - ImGui::GetStyle().ItemSpacing.x - resetW);
-    auto markChanged = [&]() { dockSettingsDirty_ = true; };
+    auto markChanged = [&](bool saveImmediately) {
+        dockSettingsDirty_ = true;
+        dockSettingsPreviewDirty_ = true;
+        if (saveImmediately)
+            dockSettingsSaveRequested_ = true;
+    };
 
     if (DrawSettingCheckbox(_L("app.dock.enable"), "##DockEnabled", &dockEnabled_))
     {
@@ -1339,6 +2055,45 @@ void SettingsWindow::DrawDockPage()
 
     ImGui::BeginDisabled(!dockEnabled_);
     ImGui::Spacing();
+    if (DrawSettingCheckbox(_L("app.dock.floating_shortcut_mode"),
+        "##DockFloatingShortcutMode",
+        &dockSettings_.floatingShortcutMode))
+        markChanged(true);
+    if (dockSettings_.floatingShortcutMode)
+    {
+        ImGui::Indent();
+        ImGui::TextDisabled("%s", _L("app.dock.floating_shortcut_hint"));
+        ImGui::Unindent();
+    }
+
+    ImGui::Spacing();
+    ImGui::Indent();
+    DrawHotkeyRecorder(
+        HotkeySettingTarget::FloatingDock,
+        _L("app.settings.hotkey"),
+        "##FloatingDockHotkeyRecorder",
+        dockEnabled_ &&
+            dockSettings_.floatingShortcutMode,
+        dockSettings_.floatingHotkeyModifiers,
+        dockSettings_.floatingHotkeyVirtualKey,
+        MOD_CONTROL | MOD_ALT,
+        'D');
+    ImGui::Unindent();
+
+    ImGui::Spacing();
+    if (DrawSettingCheckbox(
+            _L("app.dock.floating_edge_swipe"),
+            "##DockFloatingEdgeSwipe",
+            &dockSettings_.floatingEdgeSwipeEnabled))
+        markChanged(true);
+    if (dockSettings_.floatingEdgeSwipeEnabled)
+    {
+        ImGui::TextDisabled(
+            "%s",
+            _L("app.dock.floating_edge_swipe_hint"));
+    }
+
+    ImGui::Spacing();
     BeginSettingRow(_L("app.settings.dock_position"), controlW);
     const char* positionNames[] = { _L("app.dock.bottom"), _L("app.dock.top"), _L("app.dock.left"), _L("app.dock.right") };
     int position = std::clamp(static_cast<int>(dockSettings_.position), 0, 3);
@@ -1346,7 +2101,7 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::Combo("##DockPosition", &position, positionNames, IM_ARRAYSIZE(positionNames)))
     {
         dockSettings_.position = static_cast<DockPosition>(position);
-        markChanged();
+        markChanged(true);
     }
 
     BeginSettingRow(_L("app.settings.display_scope"), controlW);
@@ -1358,7 +2113,7 @@ void SettingsWindow::DrawDockPage()
         monitorScopeNames, IM_ARRAYSIZE(monitorScopeNames)))
     {
         dockSettings_.monitorScope = static_cast<DockMonitorScope>(monitorScope);
-        markChanged();
+        markChanged(true);
     }
     BeginSettingRow(_L("app.dock.layout"), controlW);
     const char* layoutNames[] = { _L("app.dock.island"), _L("app.dock.edge") };
@@ -1367,7 +2122,7 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::Combo("##DockLayoutMode", &layoutMode, layoutNames, IM_ARRAYSIZE(layoutNames)))
     {
         dockSettings_.edgeAttached = layoutMode == 1;
-        markChanged();
+        markChanged(true);
     }
     BeginSettingRow(_L("app.settings.dock_thickness"), sliderActionW,
         _L("app.settings.dock_thickness_hint"));
@@ -1377,33 +2132,35 @@ void SettingsWindow::DrawDockPage()
     if (ImGui::SliderInt("##DockThickness", &thicknessPercent, 50, 100, "%d%%"))
     {
         dockSettings_.thicknessScale = thicknessPercent / 100.0f;
-        markChanged();
+        markChanged(false);
     }
+    if (ImGui::IsItemDeactivatedAfterEdit() &&
+        dockSettingsDirty_)
+        dockSettingsSaveRequested_ = true;
     ImGui::SameLine();
     if (BlueButton(thicknessResetLabel.c_str(), ImVec2(resetW, 0)))
     {
         dockSettings_.thicknessScale = 1.0f;
-        markChanged();
+        markChanged(true);
     }
 
     if (DrawSettingCheckbox(_L("app.dock.show_windows_button"), "##DockShowWindowsButton",
         &dockSettings_.showWindowsButton))
-        markChanged();
-
-    if (DrawSettingCheckbox(_L("app.dock.show_running_area"), "##DockShowRunningApps",
-        &dockSettings_.showRunningApps))
-        markChanged();
+        markChanged(true);
 
     if (DrawSettingCheckbox(_L("app.dock.show_frequent_items"), "##DockShowFrequentItems",
         &dockSettings_.showFrequentItems))
-        markChanged();
+        markChanged(true);
 
     ImGui::BeginDisabled(!dockSettings_.showFrequentItems);
     BeginSettingRow(_L("app.settings.show_count"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::SliderInt("##DockFrequentItemCount",
         &dockSettings_.frequentItemCount, 1, 8, _L("app.settings.items_unit")))
-        markChanged();
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() &&
+        dockSettingsDirty_)
+        dockSettingsSaveRequested_ = true;
     ImGui::EndDisabled();
 
     ImGui::EndDisabled();
@@ -1416,7 +2173,11 @@ void SettingsWindow::DrawDockPage()
 void SettingsWindow::DrawSystemTaskbarPage()
 {
     const float controlW = kSettingControlWidthDip * dpiScale_;
-    auto markChanged = [&]() { dockSettingsDirty_ = true; };
+    auto markChanged = [&]() {
+        dockSettingsDirty_ = true;
+        dockSettingsPreviewDirty_ = true;
+        dockSettingsSaveRequested_ = true;
+    };
 
     if (DrawSettingCheckbox(_L("app.settings.auto_hide_taskbar"), "##SystemTaskbarAutoHide",
         &dockSettings_.systemTaskbarAutoHide))
@@ -1453,6 +2214,8 @@ void SettingsWindow::DrawSystemTaskbarPage()
     {
         SetWindowsSystemLightThemeEnabled(windowsTheme == 0);
         dockSettingsDirty_ = true;
+        dockSettingsPreviewDirty_ = true;
+        dockSettingsSaveRequested_ = true;
     }
     ImGui::SameLine();
     if (BlueButton(restartExplorerLabel.c_str()))
@@ -1567,7 +2330,7 @@ void SettingsWindow::DrawDisplayPage()
     if (BlueButton((std::string(_L("app.settings.restore_default")) +
         "##ItemFontSizeDefault").c_str(), ImVec2(resetW, 0)))
     {
-        itemFontSize_ = 14.0f;
+        itemFontSize_ = 15.0f;
         markChanged();
     }
 
@@ -1763,18 +2526,19 @@ void SettingsWindow::DrawCategorySettingsPage()
         categorySettingsSavedTick_ = 0;
     };
 
+    const float subsectionContentIndent = 16.0f * dpiScale_;
+    auto drawSubsectionLabel = [](const char* label, const char* description) {
+        ImGui::TextUnformatted(label);
+        if (description && description[0])
+            DrawHelpMarker(description);
+    };
+
     ImGui::SeparatorText(_L("app.settings.category_settings"));
     ImGui::Spacing();
 
-    const float tabFontWidth = inputW;
-    BeginSettingRow(_L("app.settings.tab_font_size"), tabFontWidth);
-    ImGui::SetNextItemWidth(tabFontWidth);
-    if (ImGui::SliderFloat("##CategoryTabFontSize", &categorySettings_.tabFontSize, 10.0f, 22.0f, "%.0f"))
-        markChanged();
-
-    ImGui::Spacing();
-    DrawSettingSection(_L("app.settings.category_type"),
+    drawSubsectionLabel(_L("app.settings.category_type"),
         _L("app.settings.category_hint"));
+    ImGui::Indent(subsectionContentIndent);
     ImGui::Spacing();
 
     int deleteIndex = -1;
@@ -1813,7 +2577,12 @@ void SettingsWindow::DrawCategorySettingsPage()
         markChanged();
     }
 
-    ImGui::SeparatorText(_L("app.settings.add_category"));
+    ImGui::Unindent(subsectionContentIndent);
+    ImGui::Spacing();
+    drawSubsectionLabel(_L("app.settings.add_category"), nullptr);
+    ImGui::Indent(subsectionContentIndent);
+    ImGui::Spacing();
+
     const float actionWidth = 56.0f * dpiScale_;
     const float nameInputW = std::max(1.0f,
         inputW - actionWidth - ImGui::GetStyle().ItemSpacing.x);
@@ -1859,8 +2628,12 @@ void SettingsWindow::DrawCategorySettingsPage()
     ImGui::SetNextItemWidth(inputW);
     ImGui::InputText("##NewCategoryExtensions", newCategoryExtensionsBuf_, sizeof(newCategoryExtensionsBuf_));
 
+    ImGui::Unindent(subsectionContentIndent);
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.save_settings"));
+    drawSubsectionLabel(_L("app.settings.save_settings"), nullptr);
+    ImGui::Indent(subsectionContentIndent);
+    ImGui::Spacing();
+
     const float applyButtonW = 80.0f * dpiScale_;
     const float restoreButtonW = 96.0f * dpiScale_;
     const float saveActionsW = applyButtonW + ImGui::GetStyle().ItemSpacing.x + restoreButtonW;
@@ -1888,6 +2661,7 @@ void SettingsWindow::DrawCategorySettingsPage()
         DrawSettingValue(_L("app.settings.save_status"), _L("app.settings.saved"));
     }
 
+    ImGui::Unindent(subsectionContentIndent);
     ImGui::EndChild();
 }
 
@@ -1960,6 +2734,8 @@ void SettingsWindow::DrawPersonalizationPage()
         const int previousPreset = personalization_.backgroundPreset;
         const float cornerRadius = personalization_.cornerRadius;
         const float barHeight = personalization_.barHeight;
+        const float categorizedTabFontSize =
+            personalization_.categorizedTabFontSize;
         if (presetIds[presetIndex] == kAppearancePresetCustom)
         {
             switch (NormalizeAppearancePresetId(previousPreset))
@@ -1978,6 +2754,8 @@ void SettingsWindow::DrawPersonalizationPage()
         }
         personalization_.cornerRadius = cornerRadius;
         personalization_.barHeight = barHeight;
+        personalization_.categorizedTabFontSize =
+            categorizedTabFontSize;
         markChanged(true);
     }
 
@@ -2127,6 +2905,29 @@ void SettingsWindow::DrawPersonalizationPage()
         "##BarHeightDefault").c_str(), ImVec2(resetW, 0)))
     {
         personalization_.barHeight = 24.0f;
+        markChanged(true);
+    }
+
+    BeginSettingRow(
+        _L("app.settings.tab_font_size"),
+        sliderActionW);
+    ImGui::SetNextItemWidth(actionSliderW);
+    if (ImGui::SliderFloat(
+            "##CategorizedTabFontSize",
+            &personalization_.categorizedTabFontSize,
+            10.0f, 22.0f, "%.0f cu"))
+        markChanged(false);
+    if (ImGui::IsItemDeactivatedAfterEdit() &&
+        personalizationDirty_)
+        personalizationSaveRequested_ = true;
+    ImGui::SameLine();
+    if (BlueButton(
+            (std::string(
+                _L("app.settings.restore_default")) +
+                "##CategorizedTabFontSizeDefault").c_str(),
+            ImVec2(resetW, 0)))
+    {
+        personalization_.categorizedTabFontSize = 15.0f;
         markChanged(true);
     }
 
@@ -2299,6 +3100,8 @@ void SettingsWindow::DrawPersonalizationPage()
             break;
         }
         dockSettingsDirty_ = true;
+        dockSettingsPreviewDirty_ = true;
+        dockSettingsSaveRequested_ = true;
     }
 
     const auto dynamicRuleNeedsHook =
@@ -2348,6 +3151,8 @@ void SettingsWindow::DrawPersonalizationPage()
             {
                 dockSettings_.systemTaskbarContentTheme = ct;
                 dockSettingsDirty_ = true;
+                dockSettingsPreviewDirty_ = true;
+                dockSettingsSaveRequested_ = true;
             }
         }
         else
@@ -2360,6 +3165,8 @@ void SettingsWindow::DrawPersonalizationPage()
             {
                 dockSettings_.systemTaskbarContentTheme = ct - 1;
                 dockSettingsDirty_ = true;
+                dockSettingsPreviewDirty_ = true;
+                dockSettingsSaveRequested_ = true;
             }
         }
 
@@ -2369,7 +3176,11 @@ void SettingsWindow::DrawPersonalizationPage()
             if (drawOverrideAdvanced(
                 dockSettings_.systemTaskbarAppearance,
                 "OverrideAdvanced"))
+            {
                 dockSettingsDirty_ = true;
+                dockSettingsPreviewDirty_ = true;
+                dockSettingsSaveRequested_ = true;
+            }
             ImGui::Unindent(8.0f * dpiScale_);
         }
     }
@@ -2379,7 +3190,11 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::PushID(id);
         ImGui::Spacing();
         if (DrawSettingCheckbox(label, "##Enabled", &rule.enabled))
+        {
             dockSettingsDirty_ = true;
+            dockSettingsPreviewDirty_ = true;
+            dockSettingsSaveRequested_ = true;
+        }
 
         if (!rule.enabled)
         {
@@ -2418,6 +3233,8 @@ void SettingsWindow::DrawPersonalizationPage()
                 rule.appearance.backgroundPreset = kAppearancePresetCustom;
             }
             dockSettingsDirty_ = true;
+            dockSettingsPreviewDirty_ = true;
+            dockSettingsSaveRequested_ = true;
         }
 
         const char* dynamicContentThemeNames[] = {
@@ -2434,6 +3251,8 @@ void SettingsWindow::DrawPersonalizationPage()
         {
             rule.contentTheme = contentTheme - 1;
             dockSettingsDirty_ = true;
+            dockSettingsPreviewDirty_ = true;
+            dockSettingsSaveRequested_ = true;
         }
 
         if (rule.themeMode == SystemTaskbarThemeMode::Custom &&
@@ -2441,6 +3260,8 @@ void SettingsWindow::DrawPersonalizationPage()
         {
             rule.appearance.backgroundPreset = kAppearancePresetCustom;
             dockSettingsDirty_ = true;
+            dockSettingsPreviewDirty_ = true;
+            dockSettingsSaveRequested_ = true;
         }
         ImGui::Unindent(8.0f * dpiScale_);
         ImGui::PopID();
@@ -2567,48 +3388,887 @@ void SettingsWindow::DrawWidgetEditorPage()
     ImGui::EndChild();
 }
 
-/**
- * @brief 绘制"调试"页面。
- *
- * 提供以下功能：
- * - 组件错误记录列表（支持复制全部 / 清空全部 / 逐条点击复制）
- * - 组件诊断信息（列出已加载的 Lua 组件，显示状态、权限、最近错误与日志）
- * - 每项诊断支持重新加载组件按钮
- */
-void SettingsWindow::DrawDebugPage()
+void SettingsWindow::DrawWidgetPackagesPage()
 {
     const float pad = 16.0f * dpiScale_;
     ImVec2 pageSize = ImGui::GetContentRegionAvail();
     pageSize.x = std::max(1.0f, pageSize.x);
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
-    ImGui::BeginChild("##DebugPageInner", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##WidgetPackagesPage", pageSize,
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiWindowFlags_AlwaysVerticalScrollbar);
     ImGui::PopStyleVar();
 
-    ImGui::Text("%s", _L("app.settings.debug_page"));
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (DrawCollapsingHeaderWithHelp(_L("app.settings.crash_test"),
-        _L("app.settings.crash_test_desc")))
+    const auto packages = WidgetEngine::ListWidgetPackages();
+    const std::string currentLocale =
+        Locale::Instance().GetEffectiveLanguage();
+    auto localizedManifest = [&](snowdesktop::widget::PackageManifest manifest)
     {
-        ImGui::Spacing();
-        if (BlueButton(_L("app.settings.trigger_crash")))
-            TriggerCrashForTesting();
-        ImGui::Spacing();
+        return snowdesktop::widget::LocalizePackageManifest(
+            std::move(manifest), currentLocale);
+    };
+    auto permissionLabel = [](const std::string& permission)
+    {
+        if (permission == "desktop.action")
+            return _L("app.settings.widgets_permission_desktop_action");
+        if (permission == "desktop.read")
+            return _L("app.settings.widgets_permission_desktop_read");
+        if (permission == "everything.search")
+            return _L("app.settings.widgets_permission_everything_search");
+        if (permission == "media.action")
+            return _L("app.settings.widgets_permission_media_action");
+        if (permission == "media.read")
+            return _L("app.settings.widgets_permission_media_read");
+        if (permission == "network.http")
+            return _L("app.settings.widgets_permission_network_http");
+        if (permission == "system.read")
+            return _L("app.settings.widgets_permission_system_read");
+        if (permission == "ui.contextMenu")
+            return _L("app.settings.widgets_permission_ui_context_menu");
+        if (permission == "ui.input")
+            return _L("app.settings.widgets_permission_ui_input");
+        if (permission == "ui.notify")
+            return _L("app.settings.widgets_permission_ui_notify");
+        return permission.c_str();
+    };
+    auto drawPermissions = [&](const std::vector<std::string>& permissions)
+    {
+        const bool desktopAccess =
+            std::find(permissions.begin(), permissions.end(),
+                "desktop.read") != permissions.end() ||
+            std::find(permissions.begin(), permissions.end(),
+                "desktop.action") != permissions.end();
+        const bool mediaAccess =
+            std::find(permissions.begin(), permissions.end(),
+                "media.read") != permissions.end() ||
+            std::find(permissions.begin(), permissions.end(),
+                "media.action") != permissions.end();
+        std::string summary;
+        for (const auto& permission : permissions)
+        {
+            if (permission == "ui.input" ||
+                permission == "ui.contextMenu" ||
+                permission == "desktop.read" ||
+                permission == "desktop.action" ||
+                permission == "media.read" ||
+                permission == "media.action")
+                continue;
+            if (!summary.empty()) summary += ", ";
+            summary += permissionLabel(permission);
+        }
+        if (desktopAccess)
+        {
+            if (!summary.empty()) summary += ", ";
+            summary += _L("app.settings.widgets_permission_desktop");
+        }
+        if (mediaAccess)
+        {
+            if (!summary.empty()) summary += ", ";
+            summary += _L("app.settings.widgets_permission_media");
+        }
+        if (summary.empty()) return;
+        ImGui::TextWrapped("%s: %s",
+            _L("app.settings.widgets_permissions"), summary.c_str());
+    };
+    auto sourceLabel = [](const std::string& providerId)
+    {
+        if (providerId == "builtin")
+            return std::string(
+                _L("app.settings.widgets_source_builtin"));
+        if (providerId == "local-directory" || providerId == "local")
+            return std::string(
+                _L("app.settings.widgets_source_local"));
+        if (providerId == "static-catalog")
+            return std::string(
+                _L("app.settings.widgets_source_catalog"));
+        return providerId;
+    };
+    auto needsInstallConfirmation = [](const std::wstring& message)
+    {
+        return message.find(L"requires explicit confirmation") !=
+                std::wstring::npos ||
+            message.find(L"requests a new permission") !=
+                std::wstring::npos ||
+            message.find(L"expands network access") != std::wstring::npos;
+    };
+    auto finishInstallAttempt = [&](bool ok, const std::wstring& installError,
+        PendingWidgetInstallKind kind, const std::filesystem::path& localPath,
+        const std::string& providerId, const std::string& externalId,
+        const std::string& version)
+    {
+        if (ok)
+        {
+            widgetPackageStatus_ = _L("app.settings.widgets_install_ok");
+            pendingWidgetInstallKind_ = PendingWidgetInstallKind::None;
+            pendingWidgetInstallPath_.clear();
+            pendingWidgetInstallProviderId_.clear();
+            pendingWidgetInstallExternalId_.clear();
+            pendingWidgetInstallVersion_.clear();
+            pendingWidgetInstallReason_.clear();
+            if (reloadCallback_) reloadCallback_();
+            return;
+        }
+        widgetPackageStatus_ = WideToUtf8(installError);
+        if (!needsInstallConfirmation(installError)) return;
+        pendingWidgetInstallKind_ = kind;
+        pendingWidgetInstallPath_ = localPath.wstring();
+        pendingWidgetInstallProviderId_ = providerId;
+        pendingWidgetInstallExternalId_ = externalId;
+        pendingWidgetInstallVersion_ = version;
+        pendingWidgetInstallReason_ = installError;
+    };
+    auto installLocalPackage = [&](const std::filesystem::path& path,
+        bool confirmed)
+    {
+        std::wstring installError;
+        const bool ok = widgetEngine_ &&
+            widgetEngine_->InstallAndVerifyWidgetPackage(path.wstring(),
+                installError, confirmed, confirmed);
+        finishInstallAttempt(ok, installError,
+            PendingWidgetInstallKind::Local, path, {}, {}, {});
+    };
+    auto installSourcePackage =
+        [&](const snowdesktop::widget::PackageDetails& details,
+            const std::string& providerId, bool confirmed)
+    {
+        std::wstring installError;
+        const bool ok = widgetEngine_ &&
+            widgetEngine_->InstallAndVerifyWidgetPackageFromSource(
+                providerId, details.source.externalItemId,
+                details.manifest.version, installError,
+                confirmed, confirmed);
+        finishInstallAttempt(ok, installError,
+            PendingWidgetInstallKind::StaticCatalog, widgetCatalogPath_,
+            providerId, details.source.externalItemId,
+            details.manifest.version);
+    };
+    auto queryCatalog = [&](bool applySafeUpdates, bool announce)
+    {
+        widgetCatalogEntries_.clear();
+        if (widgetPackageSourceId_.empty()) return;
+        snowdesktop::widget::PackageQuery query;
+        query.text = widgetCatalogSearch_;
+        query.locale = currentLocale;
+        query.limit = 200;
+        std::string catalogError;
+        widgetCatalogEntries_ = WidgetEngine::QueryWidgetPackageSource(
+            widgetPackageSourceId_, query, catalogError);
+        if (!catalogError.empty())
+            widgetPackageStatus_ = catalogError;
+        else if (announce)
+            widgetPackageStatus_ =
+                _L("app.settings.widgets_catalog_loaded");
+        if (catalogError.empty() && applySafeUpdates && widgetEngine_)
+        {
+            std::string updateReport;
+            const int updated =
+                widgetEngine_->ApplySafeWidgetPackageUpdates(
+                    widgetPackageSourceId_, updateReport);
+            if (updated > 0)
+            {
+                char message[256]{};
+                std::snprintf(message, sizeof(message),
+                    _L("app.settings.widgets_safe_updates_applied"),
+                    updated);
+                widgetPackageStatus_ = message;
+                if (reloadCallback_) reloadCallback_();
+            }
+        }
+    };
+    auto refreshCatalog = [&]()
+    {
+        queryCatalog(true, true);
+    };
+    const auto allSources = WidgetEngine::ListWidgetPackageSources();
+    std::vector<snowdesktop::widget::PackageSourceInfo> sources;
+    for (const auto& source : allSources)
+    {
+        if (!source.capabilities.query ||
+            source.providerId == "builtin" ||
+            source.providerId == "local-directory")
+            continue;
+        sources.push_back(source);
+    }
+    const bool selectedSourceAvailable = std::any_of(
+        sources.begin(), sources.end(), [&](const auto& source)
+        {
+            return source.providerId == widgetPackageSourceId_;
+        });
+    bool sourceChanged = false;
+    if (!selectedSourceAvailable)
+    {
+        widgetPackageSourceId_ =
+            sources.empty() ? std::string{} : sources.front().providerId;
+        widgetCatalogEntries_.clear();
+        sourceChanged = !widgetPackageSourceId_.empty();
+    }
+    if (!widgetCatalogInitialized_ ||
+        widgetCatalogLocale_ != currentLocale || sourceChanged)
+    {
+        widgetCatalogInitialized_ = true;
+        widgetCatalogLocale_ = currentLocale;
+        queryCatalog(false, false);
     }
 
-    if (BlueButton(_L("app.settings.open_widget_folder")))
+    // Component discovery belongs to the future Component Center, not the
+    // installed-component settings page.
+    if (false && !sources.empty())
     {
-        const std::wstring widgetPath =
-            snowdesktop::deployment::IsPackaged()
-            ? GetDataSubdirectoryPath(L"widgets")
-            : (std::filesystem::path(GetExecutableDirectoryPath()) /
-                L"widgets").wstring();
-        CreateDirectoryW(widgetPath.c_str(), nullptr);
-        ShellExecuteW(nullptr, L"open", widgetPath.c_str(),
-            nullptr, nullptr, SW_SHOW);
+        ImGui::SeparatorText(
+            _L("app.settings.widgets_catalog_results"));
+    std::string sourcePreview = sourceLabel(widgetPackageSourceId_);
+    if (sources.size() > 1)
+    {
+        ImGui::TextUnformatted(_L("app.settings.widgets_source"));
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##WidgetPackageSource",
+            sourcePreview.c_str()))
+        {
+            for (const auto& source : sources)
+            {
+                const bool selected =
+                    source.providerId == widgetPackageSourceId_;
+                std::string label = sourceLabel(source.providerId);
+                if (!source.status.available)
+                {
+                    label += " (";
+                    label += _L("app.settings.widgets_source_offline");
+                    label += ")";
+                }
+                if (ImGui::Selectable(label.c_str(), selected))
+                {
+                    widgetPackageSourceId_ = source.providerId;
+                    refreshCatalog();
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+        ImGui::SetNextItemWidth(-90.0f * dpiScale_);
+        ImGui::InputTextWithHint("##WidgetCatalogSearch",
+            _L("app.settings.widgets_search_hint"), widgetCatalogSearch_,
+            sizeof(widgetCatalogSearch_));
+        ImGui::SameLine();
+        if (ImGui::Button(_L("app.settings.widgets_search")))
+            refreshCatalog();
+
+        if (widgetCatalogEntries_.empty())
+            ImGui::TextDisabled("%s",
+                _L("app.settings.widgets_catalog_empty"));
+        if (!widgetCatalogEntries_.empty())
+        {
+            const float availableWidth =
+                ImGui::GetContentRegionAvail().x;
+            const float cardGap = 10.0f * dpiScale_;
+            const float minimumCardWidth = 250.0f * dpiScale_;
+            const int catalogColumns = std::clamp(
+                static_cast<int>((availableWidth + cardGap) /
+                    (minimumCardWidth + cardGap)), 1, 3);
+            const float cardWidth =
+                (availableWidth -
+                    cardGap * static_cast<float>(catalogColumns - 1)) /
+                static_cast<float>(catalogColumns);
+            const ImVec2 gridStart = ImGui::GetCursorPos();
+            std::vector<float> columnHeights(
+                static_cast<std::size_t>(catalogColumns), 0.0f);
+            for (const auto& details : widgetCatalogEntries_)
+            {
+                const auto shortest = std::min_element(
+                    columnHeights.begin(), columnHeights.end());
+                const int column = static_cast<int>(
+                    std::distance(columnHeights.begin(), shortest));
+                ImGui::SetCursorPos(ImVec2(
+                    gridStart.x +
+                        static_cast<float>(column) *
+                            (cardWidth + cardGap),
+                    gridStart.y + *shortest));
+                const auto manifest =
+                    localizedManifest(details.manifest);
+                ImGui::PushID((details.source.externalItemId +
+                    details.manifest.version).c_str());
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,
+                    6.0f * dpiScale_);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                    ImVec2(10.0f * dpiScale_,
+                        9.0f * dpiScale_));
+                ImGui::BeginChild("##WidgetCatalogCard",
+                    ImVec2(cardWidth, 0),
+                    ImGuiChildFlags_Borders |
+                        ImGuiChildFlags_AlwaysUseWindowPadding |
+                        ImGuiChildFlags_AutoResizeY |
+                        ImGuiChildFlags_AlwaysAutoResize);
+                ImGui::PopStyleVar(2);
+                ImGui::TextUnformatted(manifest.name.c_str());
+                ImGui::SameLine();
+                ImGui::TextDisabled(
+                    _L("app.settings.widgets_version"),
+                    manifest.version.c_str());
+                if (!manifest.description.empty())
+                    ImGui::TextWrapped("%s",
+                        manifest.description.c_str());
+                drawPermissions(manifest.permissions);
+                bool exactInstalled = false;
+                bool packageInstalled = false;
+                for (const auto& package : packages)
+                {
+                    if (!package.active ||
+                        package.manifest.id != details.manifest.id)
+                        continue;
+                    packageInstalled = true;
+                    if (package.manifest.version ==
+                        details.manifest.version)
+                        exactInstalled = true;
+                }
+                ImGui::Spacing();
+                if (exactInstalled)
+                {
+                    ImGui::TextDisabled("%s",
+                        _L("app.settings.widgets_installed"));
+                }
+                else
+                {
+                    const char* installLabel = packageInstalled
+                        ? _L("app.settings.widgets_update")
+                        : _L("app.settings.widgets_install");
+                    if (BlueButton(installLabel))
+                    {
+                        installSourcePackage(
+                            details, widgetPackageSourceId_, false);
+                    }
+                }
+                ImGui::EndChild();
+                columnHeights[static_cast<std::size_t>(column)] +=
+                    ImGui::GetItemRectSize().y + cardGap;
+                ImGui::PopID();
+            }
+            const float gridHeight =
+                *std::max_element(
+                    columnHeights.begin(), columnHeights.end()) -
+                cardGap;
+            ImGui::SetCursorPos(ImVec2(
+                gridStart.x, gridStart.y + std::max(0.0f, gridHeight)));
+            ImGui::Dummy(ImVec2(0, 0));
+        }
+    }
+
+    ImGui::SeparatorText(_L("app.settings.widgets_management"));
+    static constexpr COMDLG_FILTERSPEC packageFilters[] = {
+        { L"SnowDesktop Component", L"*.snowwidget;widget.json" },
+        { L"All Files", L"*.*" },
+    };
+    if (BlueButton(_L("app.settings.widgets_install_package")))
+    {
+        if (const auto selected = PickSettingsFile(hwnd_,
+            _LW("app.settings.widgets_install_package"),
+            packageFilters,
+            static_cast<UINT>(std::size(packageFilters))))
+        {
+            installLocalPackage(*selected, false);
+        }
+    }
+    ImGui::Spacing();
+
+    const auto legacy = WidgetEngine::ListLegacyWidgetPackages();
+
+    ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.widgets_my_components"));
+    const int activePackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(),
+        [](const auto& package) { return package.active; }));
+    const int builtinPackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(), [](const auto& package)
+        {
+            return package.active && package.builtin;
+        }));
+    const int installedPackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(), [](const auto& package)
+        {
+            return package.active && !package.builtin &&
+                !package.development;
+        }));
+    const int developmentPackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(), [](const auto& package)
+        {
+            return package.active && package.development;
+        }));
+    if ((widgetPackageFilter_ == 1 && builtinPackageCount == 0) ||
+        (widgetPackageFilter_ == 2 && installedPackageCount == 0) ||
+        (widgetPackageFilter_ == 3 && developmentPackageCount == 0))
+    {
+        widgetPackageFilter_ = 0;
+    }
+    auto drawFilterTag = [&](int filter, const char* label, int count)
+    {
+        std::string text = label;
+        text += " ";
+        text += std::to_string(count);
+        const bool selected = widgetPackageFilter_ == filter;
+        if ((selected ? BlueButton(text.c_str())
+                      : SecondaryButton(text.c_str())))
+        {
+            widgetPackageFilter_ = filter;
+        }
+    };
+    drawFilterTag(0, _L("app.settings.widgets_filter_all"),
+        activePackageCount);
+    if (builtinPackageCount > 0)
+    {
+        ImGui::SameLine();
+        drawFilterTag(1,
+            _L("app.settings.widgets_filter_builtin"),
+            builtinPackageCount);
+    }
+    if (installedPackageCount > 0)
+    {
+        ImGui::SameLine();
+        drawFilterTag(2,
+            _L("app.settings.widgets_filter_installed"),
+            installedPackageCount);
+    }
+    if (developmentPackageCount > 0)
+    {
+        ImGui::SameLine();
+        drawFilterTag(3,
+            _L("app.settings.widgets_filter_development"),
+            developmentPackageCount);
+    }
+
+    if (!widgetPackageStatus_.empty())
+        ImGui::TextWrapped("%s", widgetPackageStatus_.c_str());
+
+    const int visiblePackageCount = static_cast<int>(std::count_if(
+        packages.begin(), packages.end(), [&](const auto& package)
+        {
+            if (!package.active) return false;
+            if (widgetPackageFilter_ == 1) return package.builtin;
+            if (widgetPackageFilter_ == 2)
+                return !package.builtin && !package.development;
+            if (widgetPackageFilter_ == 3) return package.development;
+            return true;
+        }));
+    if (visiblePackageCount == 0)
+        ImGui::TextDisabled("%s",
+            _L("app.settings.widgets_filter_empty"));
+    if (visiblePackageCount > 0)
+    {
+        const float availableWidth =
+            ImGui::GetContentRegionAvail().x;
+        const float cardGap = 10.0f * dpiScale_;
+        const float minimumCardWidth = 250.0f * dpiScale_;
+        const int installedColumns = std::clamp(
+            static_cast<int>((availableWidth + cardGap) /
+                (minimumCardWidth + cardGap)), 1, 3);
+        const float cardWidth =
+            (availableWidth -
+                cardGap * static_cast<float>(installedColumns - 1)) /
+            static_cast<float>(installedColumns);
+        const ImVec2 gridStart = ImGui::GetCursorPos();
+        std::vector<float> columnHeights(
+            static_cast<std::size_t>(installedColumns), 0.0f);
+        for (const auto& package : packages)
+        {
+            if (!package.active) continue;
+            if (widgetPackageFilter_ == 1 && !package.builtin)
+                continue;
+            if (widgetPackageFilter_ == 2 &&
+                (package.builtin || package.development))
+                continue;
+            if (widgetPackageFilter_ == 3 && !package.development)
+                continue;
+            const auto shortest = std::min_element(
+                columnHeights.begin(), columnHeights.end());
+            const int column = static_cast<int>(
+                std::distance(columnHeights.begin(), shortest));
+            ImGui::SetCursorPos(ImVec2(
+                gridStart.x +
+                    static_cast<float>(column) *
+                        (cardWidth + cardGap),
+                gridStart.y + *shortest));
+            const auto manifest = localizedManifest(package.manifest);
+            ImGui::PushID(
+                (package.manifest.id + package.manifest.version).c_str());
+            const bool hasActions =
+                !package.builtin && !package.development;
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,
+                6.0f * dpiScale_);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                ImVec2(10.0f * dpiScale_, 9.0f * dpiScale_));
+            ImGui::BeginChild("##InstalledWidgetCard",
+                ImVec2(cardWidth, 0),
+                ImGuiChildFlags_Borders |
+                    ImGuiChildFlags_AlwaysUseWindowPadding |
+                    ImGuiChildFlags_AutoResizeY |
+                    ImGuiChildFlags_AlwaysAutoResize);
+            ImGui::PopStyleVar(2);
+            ImGui::TextUnformatted(manifest.name.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled(_L("app.settings.widgets_version"),
+                manifest.version.c_str());
+            if (!manifest.description.empty())
+                ImGui::TextWrapped("%s", manifest.description.c_str());
+            const char* kind = package.builtin
+                ? _L("app.settings.widgets_builtin")
+                : package.development
+                ? _L("app.settings.widgets_development")
+                : package.enabled
+                ? _L("app.settings.widgets_active")
+                : _L("app.settings.widgets_disabled");
+            ImGui::TextDisabled("%s", kind);
+            drawPermissions(package.grantedPermissions.empty()
+                ? manifest.permissions : package.grantedPermissions);
+            if (hasActions)
+            {
+                ImGui::Spacing();
+                const char* toggleLabel = package.enabled
+                    ? _L("app.settings.widgets_disable")
+                    : _L("app.settings.widgets_enable");
+                if (SecondaryButton(toggleLabel))
+                {
+                    std::string error;
+                    const bool enabled = !package.enabled;
+                    if (WidgetEngine::SetWidgetPackageEnabled(
+                        package.manifest.id, enabled, error))
+                    {
+                        widgetPackageStatus_ = enabled
+                            ? _L("app.settings.widgets_enabled_ok")
+                            : _L("app.settings.widgets_disabled_ok");
+                        if (!enabled && widgetEngine_)
+                        {
+                            std::vector<std::wstring> instances;
+                            for (const auto& widget :
+                                widgetEngine_->GetWidgets())
+                            {
+                                if (widget.packageId ==
+                                    package.manifest.id)
+                                {
+                                    instances.push_back(
+                                        widget.widgetId);
+                                }
+                            }
+                            for (const auto& instance : instances)
+                                widgetEngine_->UnloadWidget(instance);
+                        }
+                        if (reloadCallback_) reloadCallback_();
+                    }
+                    else widgetPackageStatus_ = error;
+                }
+                ImGui::SameLine();
+                if (SecondaryButton(
+                    _L("app.settings.widgets_uninstall")))
+                {
+                    pendingWidgetPackageUninstall_ =
+                        package.manifest.id;
+                }
+            }
+            ImGui::EndChild();
+            columnHeights[static_cast<std::size_t>(column)] +=
+                ImGui::GetItemRectSize().y + cardGap;
+            ImGui::PopID();
+        }
+        const float gridHeight =
+            *std::max_element(
+                columnHeights.begin(), columnHeights.end()) -
+            cardGap;
+        ImGui::SetCursorPos(ImVec2(
+            gridStart.x, gridStart.y + std::max(0.0f, gridHeight)));
+        ImGui::Dummy(ImVec2(0, 0));
+    }
+
+    if (ImGui::CollapsingHeader(
+        _L("app.settings.widgets_advanced")))
+    {
+        if (!legacy.empty())
+        {
+            ImGui::SeparatorText(
+                _L("app.settings.widgets_legacy_components"));
+            ImGui::TextWrapped("%s",
+                _L("app.settings.widgets_migration_required"));
+            ImGui::Text(_L("app.settings.widgets_legacy_count"),
+                static_cast<int>(legacy.size()));
+            if (BlueButton(
+                _L("app.settings.widgets_migrate_all")))
+            {
+                int migrated = 0;
+                std::ostringstream failures;
+                for (const auto& candidate : legacy)
+                {
+                    const auto result =
+                        WidgetEngine::MigrateLegacyWidgetPackage(
+                            candidate);
+                    if (result.ok)
+                        ++migrated;
+                    else
+                    {
+                        failures << WideToUtf8(candidate.legacyName)
+                            << ": " << result.error << '\n';
+                    }
+                }
+                char message[256]{};
+                std::snprintf(message, sizeof(message),
+                    _L("app.settings.widgets_migration_result"),
+                    migrated, static_cast<int>(legacy.size()));
+                widgetPackageStatus_ = message;
+                if (!failures.str().empty())
+                    widgetPackageStatus_ += "\n" + failures.str();
+                if (migrated > 0 && reloadCallback_)
+                    reloadCallback_();
+            }
+            ImGui::Spacing();
+        }
+
+        const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
+        auto countDirectories = [](const std::filesystem::path& path)
+        {
+            int count = 0;
+            std::error_code error;
+            for (std::filesystem::directory_iterator it(path, error), end;
+                !error && it != end; it.increment(error))
+            {
+                if (it->is_directory(error)) ++count;
+            }
+            return count;
+        };
+        ImGui::Text(_L("app.settings.widgets_storage_summary"),
+            countDirectories(packagePaths.development),
+            countDirectories(packagePaths.quarantine));
+
+        bool hasOlderVersions = false;
+        for (const auto& package : packages)
+        {
+            if (!package.active && !package.builtin &&
+                !package.development)
+            {
+                hasOlderVersions = true;
+                break;
+            }
+        }
+        if (hasOlderVersions)
+        {
+            ImGui::SeparatorText(
+                _L("app.settings.widgets_old_versions"));
+            for (const auto& package : packages)
+            {
+                if (package.active || package.builtin ||
+                    package.development)
+                    continue;
+                const auto manifest = localizedManifest(package.manifest);
+                ImGui::PushID(("rollback-" + package.manifest.id +
+                    package.manifest.version).c_str());
+                ImGui::TextUnformatted(manifest.name.c_str());
+                ImGui::SameLine();
+                ImGui::TextDisabled(
+                    _L("app.settings.widgets_version"),
+                    manifest.version.c_str());
+                if (ImGui::Button(
+                    _L("app.settings.widgets_rollback_action")))
+                {
+                    std::string error;
+                    if (WidgetEngine::RollbackWidgetPackage(
+                        package.manifest.id, package.manifest.version,
+                        error))
+                    {
+                        if (widgetEngine_)
+                        {
+                            std::vector<std::wstring> instances;
+                            for (const auto& widget :
+                                widgetEngine_->GetWidgets())
+                            {
+                                if (widget.packageId ==
+                                    package.manifest.id)
+                                {
+                                    instances.push_back(widget.widgetId);
+                                }
+                            }
+                            for (const auto& instance : instances)
+                                widgetEngine_->ReloadWidget(instance);
+                        }
+                        widgetPackageStatus_ =
+                            _L("app.settings.widgets_rollback_ok");
+                        if (reloadCallback_) reloadCallback_();
+                    }
+                    else widgetPackageStatus_ = error;
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::Spacing();
+        DrawWidgetDeveloperTools();
+    }
+
+    if (pendingWidgetInstallKind_ != PendingWidgetInstallKind::None)
+        ImGui::OpenPopup("##ConfirmWidgetPackageInstall");
+    if (ImGui::BeginPopupModal("##ConfirmWidgetPackageInstall", nullptr,
+        ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("%s",
+            _L("app.settings.widgets_install_confirm"));
+        if (!pendingWidgetInstallReason_.empty())
+        {
+            const std::string rawReason =
+                WideToUtf8(pendingWidgetInstallReason_);
+            const std::string permissionMarker =
+                "requests a new permission: ";
+            const std::string domainMarker =
+                "expands network access to: ";
+            if (const auto position = rawReason.find(permissionMarker);
+                position != std::string::npos)
+            {
+                const std::string permission = rawReason.substr(
+                    position + permissionMarker.size());
+                ImGui::TextWrapped(
+                    _L("app.settings.widgets_new_permission"),
+                    permissionLabel(permission));
+            }
+            else if (const auto position = rawReason.find(domainMarker);
+                position != std::string::npos)
+            {
+                ImGui::TextWrapped(
+                    _L("app.settings.widgets_new_website"),
+                    rawReason.substr(position + domainMarker.size()).c_str());
+            }
+            else
+            {
+                ImGui::TextWrapped("%s",
+                    _L("app.settings.widgets_source_change"));
+            }
+            if (ImGui::CollapsingHeader(
+                _L("app.settings.widgets_technical_details")))
+            {
+                ImGui::TextWrapped("%s", rawReason.c_str());
+            }
+        }
+        if (BlueButton(_L("app.settings.widgets_confirm_install")))
+        {
+            const auto kind = pendingWidgetInstallKind_;
+            const std::filesystem::path path =
+                pendingWidgetInstallPath_;
+            const std::string externalId =
+                pendingWidgetInstallExternalId_;
+            const std::string version = pendingWidgetInstallVersion_;
+            const std::string providerId =
+                pendingWidgetInstallProviderId_;
+            pendingWidgetInstallKind_ = PendingWidgetInstallKind::None;
+            if (kind == PendingWidgetInstallKind::Local)
+            {
+                installLocalPackage(path, true);
+            }
+            else
+            {
+                snowdesktop::widget::PackageDetails details;
+                details.source.externalItemId = externalId;
+                details.manifest.version = version;
+                installSourcePackage(details, providerId, true);
+            }
+            if (pendingWidgetInstallKind_ ==
+                PendingWidgetInstallKind::None)
+                ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(_L("app.settings.cancel")))
+        {
+            pendingWidgetInstallKind_ = PendingWidgetInstallKind::None;
+            pendingWidgetInstallPath_.clear();
+            pendingWidgetInstallProviderId_.clear();
+            pendingWidgetInstallExternalId_.clear();
+            pendingWidgetInstallVersion_.clear();
+            pendingWidgetInstallReason_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (!pendingWidgetPackageUninstall_.empty())
+        ImGui::OpenPopup("##ConfirmWidgetPackageUninstall");
+    if (ImGui::BeginPopupModal("##ConfirmWidgetPackageUninstall", nullptr,
+        ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("%s",
+            _L("app.settings.widgets_uninstall_confirm"));
+        if (BlueButton(_L("app.settings.widgets_uninstall")))
+        {
+            std::string error;
+            const std::string packageId = pendingWidgetPackageUninstall_;
+            if (widgetEngine_)
+            {
+                std::vector<std::wstring> instances;
+                for (const auto& widget : widgetEngine_->GetWidgets())
+                    if (widget.packageId == packageId)
+                        instances.push_back(widget.widgetId);
+                for (const auto& instance : instances)
+                    widgetEngine_->UnloadWidget(instance);
+            }
+            if (WidgetEngine::UninstallWidgetPackage(packageId, error))
+            {
+                widgetPackageStatus_ =
+                    _L("app.settings.widgets_uninstall_ok");
+                pendingWidgetPackageUninstall_.clear();
+                ImGui::CloseCurrentPopup();
+                if (reloadCallback_) reloadCallback_();
+            }
+            else widgetPackageStatus_ = error;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(_L("app.settings.cancel")))
+        {
+            pendingWidgetPackageUninstall_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::EndChild();
+}
+
+void SettingsWindow::DrawWidgetDeveloperTools()
+{
+    if (!ImGui::CollapsingHeader(
+        _L("app.settings.widgets_developer_tools")))
+        return;
+
+    const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
+    std::error_code createError;
+    std::filesystem::create_directories(
+        packagePaths.development, createError);
+    if (SecondaryButton(
+        _L("app.settings.widgets_open_development_folder")))
+    {
+        ShellExecuteW(nullptr, L"open",
+            packagePaths.development.c_str(), nullptr, nullptr, SW_SHOW);
+    }
+    ImGui::SameLine();
+    if (SecondaryButton(
+        _L("app.settings.widgets_open_build_skill")))
+    {
+        const std::filesystem::path source =
+            packagePaths.builtin / L"snowdesktop-lua-widget";
+        std::filesystem::path target = source;
+        std::error_code skillError;
+        if (!std::filesystem::is_directory(source, skillError))
+        {
+            widgetPackageStatus_ =
+                _L("app.settings.widgets_build_skill_missing");
+        }
+        else
+        {
+            if (snowdesktop::deployment::IsPackaged())
+            {
+                target = packagePaths.registry.parent_path() /
+                    L"authoring" / L"snowdesktop-lua-widget";
+                if (!CopyDirectoryContents(source, target))
+                {
+                    widgetPackageStatus_ =
+                        _L("app.settings.widgets_build_skill_export_failed");
+                    target.clear();
+                }
+            }
+            if (!target.empty())
+            {
+                ShellExecuteW(nullptr, L"open", target.c_str(),
+                    nullptr, nullptr, SW_SHOW);
+            }
+        }
     }
     ImGui::Spacing();
 
@@ -2682,7 +4342,7 @@ void SettingsWindow::DrawDebugPage()
         errors = widgetEngine_->GetWidgetErrors();
     ImGui::Text(_L("app.settings.error_count"), static_cast<int>(errors.size()));
     ImGui::SameLine();
-    if (BlueButton(_L("app.settings.copy_all")))
+    if (SecondaryButton(_L("app.settings.copy_all")))
     {
         std::string copyText;
         for (const auto& e : errors)
@@ -2694,7 +4354,7 @@ void SettingsWindow::DrawDebugPage()
         ImGui::SetClipboardText(copyText.c_str());
     }
     ImGui::SameLine();
-    if (BlueButton(_L("app.settings.clear_all")))
+    if (SecondaryButton(_L("app.settings.clear_all")))
     {
         if (widgetEngine_)
             widgetEngine_->ClearWidgetErrors();
@@ -2739,7 +4399,7 @@ void SettingsWindow::DrawDebugPage()
     }
     else
     {
-        if (BlueButton(_L("app.settings.copy_diag")))
+        if (SecondaryButton(_L("app.settings.copy_diag")))
         {
             std::string text;
             for (const auto& d : diagnostics)
@@ -2785,7 +4445,7 @@ void SettingsWindow::DrawDebugPage()
                 if (!d.lastError.empty())
                     ImGui::TextWrapped(_L("app.settings.debug_last_error"),
                         d.lastError.c_str());
-                if (BlueButton((std::string(_L("app.settings.reload")) + "##" +
+                if (SecondaryButton((std::string(_L("app.settings.reload")) + "##" +
                     WideToUtf8(d.widgetId)).c_str(), ImVec2(96, 0)))
                 {
                     if (widgetEngine_)
@@ -2804,7 +4464,32 @@ void SettingsWindow::DrawDebugPage()
         }
         ImGui::EndChild();
     }
+}
 
+void SettingsWindow::DrawDebugPage()
+{
+    const float pad = 16.0f * dpiScale_;
+    ImVec2 pageSize = ImGui::GetContentRegionAvail();
+    pageSize.x = std::max(1.0f, pageSize.x);
+    pageSize.y = std::max(1.0f, pageSize.y);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::BeginChild("##DebugPageInner", pageSize,
+        ImGuiChildFlags_Borders |
+            ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+
+    ImGui::Text("%s", _L("app.settings.debug_page"));
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (DrawCollapsingHeaderWithHelp(
+        _L("app.settings.crash_test"),
+        _L("app.settings.crash_test_desc")))
+    {
+        ImGui::Spacing();
+        if (BlueButton(_L("app.settings.trigger_crash")))
+            TriggerCrashForTesting();
+        ImGui::Spacing();
+    }
     ImGui::EndChild();
 }
 
@@ -2816,10 +4501,15 @@ void SettingsWindow::DrawDebugPage()
  */
 void SettingsWindow::PerformUpdateCheck()
 {
+    if (updateCheckRequestId_ != 0)
+        return;
+
     updateCheckStatus_ = "checking";
     updateCheckStatusKey_.clear();
     updateCheckStatusArgument_.clear();
     updateAvailable_ = false;
+    latestVersion_.clear();
+    downloadUrl_.clear();
 
     if (snowdesktop::deployment::IsPackaged())
     {
@@ -2837,148 +4527,142 @@ void SettingsWindow::PerformUpdateCheck()
         return;
     }
 
-    HINTERNET session = WinHttpOpen(L"SnowDesktop/" SNOWDESKTOP_VERSION,
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
-    if (!session)
+    if (!updateHttpService_)
+        updateHttpService_ = std::make_unique<AsyncHttpService>();
+
+    HttpRequestOptions options;
+    options.widgetId = L"SnowDesktop.UpdateCheck";
+    options.url =
+        L"https://api.github.com/repos/FreeFallingSnow/"
+        L"SnowDesktop_Release/releases/latest";
+    options.headers =
+        L"Accept: application/vnd.github+json\r\n"
+        L"X-GitHub-Api-Version: 2022-11-28\r\n";
+    options.timeoutMs = 8000;
+    options.allowedDomains = { "api.github.com" };
+    updateCheckRequestId_ = updateHttpService_->Submit(std::move(options));
+    if (updateCheckRequestId_ == 0)
     {
         updateCheckStatusKey_ = L10N_KEY("app.settings.update_http_init_failed");
         updateCheckStatus_ = _L("app.settings.update_http_init_failed");
+    }
+}
+
+void SettingsWindow::PollUpdateCheck()
+{
+    if (!updateHttpService_ || updateCheckRequestId_ == 0)
         return;
-    }
-    WinHttpSetTimeouts(session, 8000, 8000, 8000, 8000);
 
-    URL_COMPONENTS urlComp{};
-    urlComp.dwStructSize = sizeof(urlComp);
-    urlComp.dwSchemeLength   = (DWORD)-1;
-    urlComp.dwHostNameLength = (DWORD)-1;
-    urlComp.dwUrlPathLength  = (DWORD)-1;
-    std::wstring apiUrl = L"https://api.github.com/repos/FreeFallingSnow/SnowDesktop_Release/releases/latest";
-    if (!WinHttpCrackUrl(apiUrl.c_str(), 0, 0, &urlComp))
+    for (HttpResponse& response : updateHttpService_->Drain())
     {
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_url_parse_failed");
-        updateCheckStatus_ = _L("app.settings.update_url_parse_failed");
-        return;
-    }
+        if (response.id != updateCheckRequestId_)
+            continue;
 
-    HINTERNET connect = WinHttpConnect(session,
-        std::wstring(urlComp.lpszHostName, urlComp.dwHostNameLength).c_str(),
-        INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!connect)
-    {
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_connect_failed");
-        updateCheckStatus_ = _L("app.settings.update_connect_failed");
-        return;
-    }
-
-    HINTERNET request = WinHttpOpenRequest(connect, L"GET",
-        std::wstring(urlComp.lpszUrlPath, urlComp.dwUrlPathLength).c_str(),
-        nullptr, nullptr, nullptr, WINHTTP_FLAG_SECURE);
-    if (!request)
-    {
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_request_failed");
-        updateCheckStatus_ = _L("app.settings.update_request_failed");
-        return;
-    }
-
-    const wchar_t* headers = L"Accept: application/vnd.github+json\r\nUser-Agent: SnowDesktop\r\n";
-    if (!WinHttpSendRequest(request, headers, (DWORD)wcslen(headers), nullptr, 0, 0, 0))
-    {
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_send_failed");
-        updateCheckStatus_ = _L("app.settings.update_send_failed");
-        return;
-    }
-
-    if (!WinHttpReceiveResponse(request, nullptr))
-    {
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_receive_failed");
-        updateCheckStatus_ = _L("app.settings.update_receive_failed");
-        return;
-    }
-
-    std::string body;
-    DWORD available = 0;
-    while (WinHttpQueryDataAvailable(request, &available) && available > 0)
-    {
-        std::vector<char> chunk(available + 1);
-        DWORD read = 0;
-        if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
-        body.append(chunk.data(), read);
-        if (body.size() > 128 * 1024) break;
-    }
-
-    WinHttpCloseHandle(request);
-    WinHttpCloseHandle(connect);
-    WinHttpCloseHandle(session);
-
-    if (body.empty())
-    {
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_empty_response");
-        updateCheckStatus_ = _L("app.settings.update_empty_response");
-        return;
-    }
-
-    auto extractJsonString = [](const std::string& json, const char* field) -> std::string {
-        std::string key = "\"" + std::string(field) + "\":\"";
-        size_t pos = json.find(key);
-        if (pos == std::string::npos) return {};
-        pos += key.size();
-        size_t end = json.find('"', pos);
-        if (end == std::string::npos) return {};
-        return json.substr(pos, end - pos);
-    };
-
-    std::string tag = extractJsonString(body, "tag_name");
-    if (tag.empty())
-    {
-        updateCheckStatusKey_ = L10N_KEY("app.settings.update_parse_failed");
-        updateCheckStatus_ = _L("app.settings.update_parse_failed");
-        return;
-    }
-
-    if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V'))
-        tag = tag.substr(1);
-
-    std::string htmlUrl = extractJsonString(body, "html_url");
-
-    auto compareVersion = [](const std::string& a, const std::string& b) -> int {
-        std::istringstream sa(a), sb(b);
-        std::string pa, pb;
-        for (int i = 0; i < 4; ++i)
+        updateCheckRequestId_ = 0;
+        if (!response.error.empty() || response.status < 200 ||
+            response.status >= 300)
         {
-            int va = 0, vb = 0;
-            if (std::getline(sa, pa, '.')) va = std::atoi(pa.c_str());
-            if (std::getline(sb, pb, '.')) vb = std::atoi(pb.c_str());
-            if (va != vb) return va < vb ? -1 : 1;
+            if (response.error.find("WinHttpOpen") != std::string::npos)
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_http_init_failed");
+            else if (response.error.find("WinHttpConnect") !=
+                std::string::npos)
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_connect_failed");
+            else if (response.error.find("Invalid URL") !=
+                std::string::npos)
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_url_parse_failed");
+            else
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_receive_failed");
+            updateCheckStatus_ =
+                Locale::Instance().Tr(updateCheckStatusKey_.c_str());
+            return;
         }
-        return 0;
-    };
 
-    latestVersion_ = tag;
-    downloadUrl_ = htmlUrl;
+        if (response.body.empty())
+        {
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.update_empty_response");
+            updateCheckStatus_ =
+                _L("app.settings.update_empty_response");
+            return;
+        }
 
-    int cmp = compareVersion(SNOWDESKTOP_VERSION, tag);
-    if (cmp >= 0)
-    {
-        updateAvailable_ = false;
-        updateCheckStatusKey_ = L10N_KEY("app.settings.already_latest");
-        updateCheckStatus_ = _L("app.settings.already_latest");
-    }
-    else
-    {
-        updateAvailable_ = true;
-        updateCheckStatusKey_ = L10N_KEY("app.settings.new_version");
-        updateCheckStatusArgument_ = tag;
-        updateCheckStatus_ = _LF("app.settings.new_version", tag);
+        auto extractJsonString = [](const std::string& json,
+                                     const char* field) -> std::string {
+            const std::string key = "\"" + std::string(field) + "\"";
+            size_t pos = json.find(key);
+            if (pos == std::string::npos) return {};
+            pos += key.size();
+            pos = json.find(':', pos);
+            if (pos == std::string::npos) return {};
+            ++pos;
+            while (pos < json.size() &&
+                (json[pos] == ' ' || json[pos] == '\t' ||
+                 json[pos] == '\r' || json[pos] == '\n'))
+                ++pos;
+            if (pos >= json.size() || json[pos] != '"') return {};
+            ++pos;
+            size_t end = json.find('"', pos);
+            if (end == std::string::npos) return {};
+            return json.substr(pos, end - pos);
+        };
+
+        std::string tag =
+            extractJsonString(response.body, "tag_name");
+        if (tag.empty())
+        {
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.update_parse_failed");
+            updateCheckStatus_ =
+                _L("app.settings.update_parse_failed");
+            return;
+        }
+
+        if (tag[0] == 'v' || tag[0] == 'V')
+            tag.erase(0, 1);
+
+        const std::string htmlUrl =
+            extractJsonString(response.body, "html_url");
+
+        auto compareVersion = [](const std::string& a,
+                                  const std::string& b) -> int {
+            std::istringstream sa(a), sb(b);
+            std::string pa, pb;
+            for (int i = 0; i < 4; ++i)
+            {
+                int va = 0, vb = 0;
+                if (std::getline(sa, pa, '.')) va = std::atoi(pa.c_str());
+                if (std::getline(sb, pb, '.')) vb = std::atoi(pb.c_str());
+                if (va != vb) return va < vb ? -1 : 1;
+            }
+            return 0;
+        };
+
+        latestVersion_ = tag;
+        downloadUrl_ = htmlUrl;
+
+        if (compareVersion(SNOWDESKTOP_VERSION, tag) >= 0)
+        {
+            updateAvailable_ = false;
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.already_latest");
+            updateCheckStatusArgument_.clear();
+            updateCheckStatus_ =
+                _L("app.settings.already_latest");
+        }
+        else
+        {
+            updateAvailable_ = true;
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.new_version");
+            updateCheckStatusArgument_ = tag;
+            updateCheckStatus_ =
+                _LF("app.settings.new_version", tag);
+        }
+        return;
     }
 }
 
@@ -3087,10 +4771,12 @@ void SettingsWindow::DrawAboutPage()
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    ImGui::BeginDisabled(updateCheckRequestId_ != 0);
     if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
     {
         PerformUpdateCheck();
     }
+    ImGui::EndDisabled();
     ImGui::PopStyleColor(4);
 
     if (!updateCheckStatus_.empty() &&
@@ -3157,17 +4843,195 @@ void SettingsWindow::DrawAboutPage()
 }
 
 // ════════════════════════════════════════════════════════════════
-//  布局备份：目录、列举、保存、恢复、删除
+//  布局备份、完整数据备份与数据迁移
 // ════════════════════════════════════════════════════════════════
 
 /**
- * @brief 从用户选择的携带版目录迁移全部 SnowDesktop 数据。
- *
- * 用户既可选择携带版程序目录，也可直接选择其中的 data 目录。迁移时先把
- * 来源完整复制到 LocalState\TempState 下的暂存目录，再将当前 data 原子移动
- * 为完整备份并替换为暂存数据，成功后重载布局并重启应用。
+ * @brief 清除当前设置页的待写状态并重启，以应用已排队的数据替换。
  */
-void SettingsWindow::MigratePortableData()
+void SettingsWindow::RestartAfterDataReplacement(
+    const char* successMessageKey)
+{
+    // Prevent the current settings frame from writing old values over the
+    // replacement data while the application is restarting.
+    personalizationDirty_ = false;
+    personalizationPreviewDirty_ = false;
+    personalizationSaveRequested_ = false;
+    dockSettingsDirty_ = false;
+    dockSettingsPreviewDirty_ = false;
+    dockSettingsSaveRequested_ = false;
+    navigationSettingsDirty_ = false;
+    generalSettingsDirty_ = false;
+    categorySettingsDirty_ = false;
+    categorySettingsSaveRequested_ = false;
+
+    MessageBoxW(hwnd_, _LW(successMessageKey),
+        _LW("app.settings.full_data_backups"),
+        MB_OK | MB_ICONINFORMATION);
+    if (restartCallback_)
+        restartCallback_();
+}
+
+void SettingsWindow::CreateFullDataBackup()
+{
+    auto manager = MakeFullBackupManager();
+    const auto result = manager.Create();
+    if (!result.ok)
+    {
+        std::wstring message =
+            _LW("app.settings.create_full_backup_failed");
+        if (!result.error.empty())
+            message += L"\n\n" + Utf8ToWide(result.error);
+        MessageBoxW(hwnd_, message.c_str(),
+            _LW("app.settings.full_data_backups"),
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    MessageBoxW(hwnd_,
+        _LW("app.settings.create_full_backup_success"),
+        _LW("app.settings.full_data_backups"),
+        MB_OK | MB_ICONINFORMATION);
+}
+
+void SettingsWindow::ExportFullDataBackup(
+    const snowdesktop::backup::BackupInfo& backup)
+{
+    const COMDLG_FILTERSPEC filters[] = {
+        {
+            _LW("app.settings.snowbackup_file_type"),
+            L"*.snowbackup",
+        },
+        {
+            _LW("app.settings.zip_file_type"),
+            L"*.zip",
+        },
+    };
+    std::wstring defaultName = L"SnowDesktop-";
+    defaultName += backup.id.empty() ? L"Backup" : backup.id;
+    defaultName += L".snowbackup";
+    const auto selected = SaveSettingsFile(hwnd_,
+        _LW("app.settings.export_backup"),
+        defaultName.c_str(), L"snowbackup",
+        filters, static_cast<UINT>(std::size(filters)));
+    if (!selected)
+        return;
+
+    const auto result =
+        MakeFullBackupManager().Export(backup, *selected);
+    if (!result.ok)
+    {
+        std::wstring message =
+            _LW("app.settings.export_backup_failed");
+        if (!result.error.empty())
+            message += L"\n\n" + Utf8ToWide(result.error);
+        MessageBoxW(hwnd_, message.c_str(),
+            _LW("app.settings.full_data_backups"),
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    MessageBoxW(hwnd_,
+        _LW("app.settings.export_backup_success"),
+        _LW("app.settings.full_data_backups"),
+        MB_OK | MB_ICONINFORMATION);
+}
+
+void SettingsWindow::ImportFullDataBackup()
+{
+    const COMDLG_FILTERSPEC filters[] = {
+        {
+            _LW("app.settings.backup_archive_file_type"),
+            L"*.snowbackup;*.zip",
+        },
+    };
+    const auto selected = PickSettingsFile(hwnd_,
+        _LW("app.settings.restore_from_backup_file"),
+        filters, static_cast<UINT>(std::size(filters)));
+    if (!selected)
+        return;
+    if (MessageBoxW(hwnd_,
+            _LW("app.settings.restore_backup_file_confirm"),
+            _LW("app.settings.full_data_backups"),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    {
+        return;
+    }
+
+    const auto result =
+        MakeFullBackupManager().ImportAndQueue(*selected);
+    if (!result.ok)
+    {
+        std::wstring message =
+            _LW("app.settings.restore_backup_file_failed");
+        if (!result.error.empty())
+            message += L"\n\n" + Utf8ToWide(result.error);
+        MessageBoxW(hwnd_, message.c_str(),
+            _LW("app.settings.full_data_backups"),
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    RestartAfterDataReplacement(
+        L10N_KEY("app.settings.restore_backup_file_success"));
+}
+
+void SettingsWindow::RestoreFullDataBackup(
+    const snowdesktop::backup::BackupInfo& backup)
+{
+    if (MessageBoxW(hwnd_,
+            _LW("app.settings.restore_full_backup_confirm"),
+            _LW("app.settings.full_data_backups"),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    {
+        return;
+    }
+    const auto result =
+        MakeFullBackupManager().QueueRestore(backup);
+    if (!result.ok)
+    {
+        std::wstring message =
+            _LW("app.settings.restore_full_backup_failed");
+        if (!result.error.empty())
+            message += L"\n\n" + Utf8ToWide(result.error);
+        MessageBoxW(hwnd_, message.c_str(),
+            _LW("app.settings.full_data_backups"),
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+    RestartAfterDataReplacement(
+        L10N_KEY("app.settings.restore_full_backup_success"));
+}
+
+void SettingsWindow::DeleteFullDataBackup(
+    const snowdesktop::backup::BackupInfo& backup)
+{
+    if (MessageBoxW(hwnd_,
+            _LW("app.settings.delete_full_backup_confirm"),
+            _LW("app.settings.full_data_backups"),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    {
+        return;
+    }
+    const auto result =
+        MakeFullBackupManager().Delete(backup);
+    if (result.ok)
+        return;
+
+    std::wstring message =
+        _LW("app.settings.delete_full_backup_failed");
+    if (!result.error.empty())
+        message += L"\n\n" + Utf8ToWide(result.error);
+    MessageBoxW(hwnd_, message.c_str(),
+        _LW("app.settings.full_data_backups"),
+        MB_OK | MB_ICONERROR);
+}
+
+/**
+ * @brief 从用户选择的其他 SnowDesktop 目录迁入全部数据。
+ *
+ * 用户既可选择 SnowDesktop 程序目录，也可直接选择其中的 data 目录。迁移
+ * 时先把来源完整复制到当前状态目录的暂存目录，发布待处理事务后重启。
+ * 新进程会在打开任何数据文件前将当前 data 原子备份并换入暂存数据。
+ */
+void SettingsWindow::MigrateAllData()
 {
     const wchar_t* title = _LW("app.settings.data_migration");
 
@@ -3176,7 +5040,7 @@ void SettingsWindow::MigratePortableData()
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
     if (FAILED(result))
     {
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_failed"),
             title, MB_OK | MB_ICONERROR);
         return;
     }
@@ -3187,14 +5051,14 @@ void SettingsWindow::MigratePortableData()
         dialog->SetOptions(options | FOS_PICKFOLDERS |
             FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
     }
-    dialog->SetTitle(_LW("app.settings.select_portable_data"));
+    dialog->SetTitle(_LW("app.settings.select_migration_data"));
 
     result = dialog->Show(hwnd_);
     if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED))
         return;
     if (FAILED(result))
     {
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_failed"),
             title, MB_OK | MB_ICONERROR);
         return;
     }
@@ -3202,7 +5066,7 @@ void SettingsWindow::MigratePortableData()
     ComPtr<IShellItem> selectedItem;
     if (FAILED(dialog->GetResult(&selectedItem)) || !selectedItem)
     {
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_failed"),
             title, MB_OK | MB_ICONERROR);
         return;
     }
@@ -3213,7 +5077,7 @@ void SettingsWindow::MigratePortableData()
     {
         if (selectedPath)
             CoTaskMemFree(selectedPath);
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_failed"),
             title, MB_OK | MB_ICONERROR);
         return;
     }
@@ -3222,38 +5086,40 @@ void SettingsWindow::MigratePortableData()
     CoTaskMemFree(selectedPath);
 
     std::filesystem::path sourceData = selectedDirectory;
-    std::filesystem::path sourceWidgets;
+    std::filesystem::path sourceLegacyWidgets;
     const std::filesystem::path nestedData =
         selectedDirectory / L"data";
     if (LooksLikeSnowDesktopDataDirectory(nestedData))
     {
         sourceData = nestedData;
-        sourceWidgets = selectedDirectory / L"widgets";
+        sourceLegacyWidgets = selectedDirectory / L"widgets";
     }
     else if (_wcsicmp(
                  selectedDirectory.filename().c_str(), L"data") == 0)
     {
-        sourceWidgets = selectedDirectory.parent_path() / L"widgets";
+        sourceLegacyWidgets =
+            selectedDirectory.parent_path() / L"widgets";
     }
 
     std::error_code sourceWidgetsError;
     if (!std::filesystem::is_directory(
-            sourceWidgets, sourceWidgetsError))
+            sourceLegacyWidgets, sourceWidgetsError))
     {
-        sourceWidgets.clear();
+        sourceLegacyWidgets.clear();
     }
 
     const std::filesystem::path targetData(GetDataDirectoryPath());
     if (!LooksLikeSnowDesktopDataDirectory(sourceData) ||
         PathsOverlap(sourceData, targetData) ||
-        (!sourceWidgets.empty() && PathsOverlap(sourceWidgets, targetData)))
+        (!sourceLegacyWidgets.empty() &&
+            PathsOverlap(sourceLegacyWidgets, targetData)))
     {
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_invalid"),
+        MessageBoxW(hwnd_, _LW("app.settings.migrate_data_invalid"),
             title, MB_OK | MB_ICONWARNING);
         return;
     }
 
-    if (MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_confirm"),
+    if (MessageBoxW(hwnd_, _LW("app.settings.migrate_data_confirm"),
             title, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
     {
         return;
@@ -3277,71 +5143,66 @@ void SettingsWindow::MigratePortableData()
         stateRoot / L"TempState" / L"PortableMigration";
     const std::filesystem::path stagingData =
         migrationRoot / (std::wstring(L"staging-") + token);
-    const std::filesystem::path backupData =
-        migrationRoot / (std::wstring(L"backup-") + token);
 
-    std::error_code error;
-    std::filesystem::create_directories(migrationRoot, error);
-    bool staged = !error &&
-        CopyDirectoryContents(sourceData, stagingData);
-    if (staged && !sourceWidgets.empty())
+    const auto copyResult =
+        snowdesktop::migration::CopyDataTree(sourceData, stagingData);
+    bool staged = copyResult.ok;
+    std::string stageError = copyResult.error;
+    if (staged && !sourceLegacyWidgets.empty())
     {
-        // Portable widgets live next to the executable. Copy them after data
-        // so they replace any stale duplicate left by an earlier build.
-        staged = CopyDirectoryContents(
-            sourceWidgets, stagingData / L"widgets");
+        // Current folder packages and authoring tools beside the executable
+        // are application files, not user data. Only old loose pairs need to
+        // enter the writable migration root; built-ins are rebound to the
+        // installed copy and user-authored pairs remain explicit migrations.
+        const auto legacyImport =
+            snowdesktop::widget::ImportLegacyLooseWidgetPairs(
+                sourceLegacyWidgets, stagingData / L"widgets");
+        staged = legacyImport.ok;
+        if (!staged)
+        {
+            stageError = legacyImport.error.empty()
+                ? "legacy component import failed"
+                : legacyImport.error;
+            OutputDebugStringA(("SnowDesktop: legacy component "
+                "import failed: " + stageError + "\n").c_str());
+        }
     }
     if (!staged ||
         !LooksLikeSnowDesktopDataDirectory(stagingData))
     {
-        error.clear();
-        std::filesystem::remove_all(stagingData, error);
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
-            title, MB_OK | MB_ICONERROR);
+        if (staged && stageError.empty())
+            stageError = "staged data validation failed";
+        OutputDebugStringA(("SnowDesktop: data migration staging failed: " +
+            stageError + "\n").c_str());
+        std::error_code cleanupError;
+        std::filesystem::remove_all(stagingData, cleanupError);
+        std::wstring message =
+            _LW("app.settings.migrate_data_failed");
+        if (!stageError.empty())
+            message += L"\n\n" + Utf8ToWide(stageError);
+        MessageBoxW(hwnd_, message.c_str(), title,
+            MB_OK | MB_ICONERROR);
         return;
     }
 
-    error.clear();
-    std::filesystem::rename(targetData, backupData, error);
-    if (error)
+    std::string queueError;
+    if (!snowdesktop::migration::Queue(
+            stateRoot, token, queueError))
     {
-        error.clear();
-        std::filesystem::remove_all(stagingData, error);
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
-            title, MB_OK | MB_ICONERROR);
+        OutputDebugStringA(("SnowDesktop: cannot queue data "
+            "migration: " + queueError + "\n").c_str());
+        std::error_code cleanupError;
+        std::filesystem::remove_all(stagingData, cleanupError);
+        std::wstring message =
+            _LW("app.settings.migrate_data_failed");
+        message += L"\n\n" + Utf8ToWide(queueError);
+        MessageBoxW(hwnd_, message.c_str(), title,
+            MB_OK | MB_ICONERROR);
         return;
     }
 
-    error.clear();
-    std::filesystem::rename(stagingData, targetData, error);
-    if (error)
-    {
-        std::error_code rollbackError;
-        std::filesystem::rename(backupData, targetData, rollbackError);
-        std::filesystem::remove_all(stagingData, rollbackError);
-        MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_failed"),
-            title, MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    // Prevent the current settings frame from writing pre-migration values
-    // over the imported files while the application is restarting.
-    personalizationDirty_ = false;
-    personalizationPreviewDirty_ = false;
-    personalizationSaveRequested_ = false;
-    dockSettingsDirty_ = false;
-    navigationSettingsDirty_ = false;
-    generalSettingsDirty_ = false;
-    categorySettingsDirty_ = false;
-    categorySettingsSaveRequested_ = false;
-
-    if (reloadCallback_)
-        reloadCallback_();
-
-    MessageBoxW(hwnd_, _LW("app.settings.migrate_portable_success"),
-        title, MB_OK | MB_ICONINFORMATION);
-    if (restartCallback_)
-        restartCallback_();
+    RestartAfterDataReplacement(
+        L10N_KEY("app.settings.migrate_data_success"));
 }
 
 /**
@@ -3829,10 +5690,26 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     if (g_settingsWindow != nullptr && msg != WM_TIMER)
         g_settingsWindow->renderRequested_ = true;
 
-    if (g_settingsWindow != nullptr && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && wParam == VK_ESCAPE)
+    if (g_settingsWindow != nullptr &&
+        (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) &&
+        wParam == VK_ESCAPE)
     {
+        if (g_settingsWindow->IsHotkeyCaptureActive())
+        {
+            g_settingsWindow->CancelHotkeyCapture();
+            return 0;
+        }
         g_settingsWindow->RequestClose();
         return 0;
+    }
+
+    if (g_settingsWindow != nullptr &&
+        g_settingsWindow->IsHotkeyCaptureActive() &&
+        (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN ||
+            msg == WM_KEYUP || msg == WM_SYSKEYUP))
+    {
+        g_settingsWindow->HandleHotkeyCaptureKeyMessage(
+            msg, wParam);
     }
 
     if (g_settingsWindow != nullptr && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
@@ -3841,11 +5718,31 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     switch (msg)
     {
     case WM_TIMER:
+        if (g_settingsWindow != nullptr &&
+            wParam == kSettingsHotkeyCaptureTimerId)
+        {
+            g_settingsWindow->UpdateHotkeyCapture();
+            g_settingsWindow->renderRequested_ = true;
+            return 0;
+        }
         if (g_settingsWindow != nullptr && wParam == kSettingsRefreshTimerId)
         {
             // 低频更新后端状态、调试采样和文本光标等动态内容。
             g_settingsWindow->renderRequested_ = true;
             return 0;
+        }
+        break;
+    case WM_KILLFOCUS:
+        if (g_settingsWindow != nullptr &&
+            g_settingsWindow->IsHotkeyCaptureActive())
+        {
+            g_settingsWindow->UpdateHotkeyCapture();
+            if (g_settingsWindow->IsHotkeyCaptureActive() &&
+                !g_settingsWindow->hotkeyCapturePrimarySeen_ &&
+                !g_settingsWindow->hotkeyCaptureClearPending_)
+            {
+                g_settingsWindow->CancelHotkeyCapture();
+            }
         }
         break;
     case WM_MOUSEACTIVATE:

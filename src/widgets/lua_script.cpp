@@ -42,9 +42,8 @@ LuaScript::WidgetLoadResult LuaScript::SafeLoadWidget(const std::wstring& id, co
     WidgetLoadResult result;
     __try
     {
-        app_->widgetEngine_->EnsureWidgetLoaded(id, scriptPath);
+        result.ok = app_->widgetEngine_->EnsureWidgetLoaded(id, scriptPath);
         result.customStyle = app_->widgetEngine_->HasCustomStyle(id);
-        result.ok = true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
@@ -139,7 +138,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     bool widgetOk = false;
     if (app_->widgetEngine_)
     {
-        auto loadResult = SafeLoadWidget(data_->id, data_->scriptPath);
+        auto loadResult = SafeLoadWidget(data_->id, data_->packageId);
         widgetOk = loadResult.ok;
         customStyle = loadResult.customStyle;
 
@@ -245,13 +244,13 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                     InflateRect(&frame, -inset, -inset);
             }
         }
-        SafeRenderWidget(data_->id, data_->scriptPath, context, frame,
+        SafeRenderWidget(data_->id, data_->packageId, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows);
     }
     context->PopAxisAlignedClip();
 
     if (app_->widgetEngine_ && widgetOk)
-        SafeReadFlags(data_->scriptPath, data_->showTitle, data_->bottomBarHover);
+        SafeReadFlags(data_->packageId, data_->showTitle, data_->bottomBarHover);
 
     if (app_->widgetEngine_ && widgetOk)
     {

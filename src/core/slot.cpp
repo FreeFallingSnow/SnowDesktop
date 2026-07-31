@@ -17,6 +17,7 @@
 #include "constants.h"
 #include <wrl/client.h>
 #include <algorithm>
+#include <cassert>
 
 using Microsoft::WRL::ComPtr;
 
@@ -29,7 +30,14 @@ using Microsoft::WRL::ComPtr;
  * 初始化插槽所属容器、边界矩形和索引，此时插槽内尚无项目(item_ 为 nullptr)。
  */
 Slot::Slot(Container* parent, RECT bounds, size_t index)
-    : parent_(parent), bounds_(bounds), index_(index) {}
+    : parent_(parent), bounds_(bounds), index_(index)
+{
+    assert(parent_ != nullptr);
+    assert(
+        !parent_ ||
+        snowdesktop::slot_contract::SurfaceBuildsSlots(
+            parent_->GetSlotSurfaceKind()));
+}
 
 /**
  * @brief 获取所属父容器

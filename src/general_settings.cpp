@@ -81,6 +81,23 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.softwareDesktopEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
         settings.doubleClickHideDesktop = val;
+    if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
+        settings.desktopPassthroughHotkeyEnabled = val;
+    int hotkeyValue = 0;
+    if (ReadIntField(text, "desktopPassthroughHotkeyModifiers",
+        hotkeyValue))
+    {
+        settings.desktopPassthroughHotkeyModifiers =
+            static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadIntField(text, "desktopPassthroughHotkeyVirtualKey",
+        hotkeyValue) &&
+        hotkeyValue > 0 && hotkeyValue <= 0xFF)
+    {
+        settings.desktopPassthroughHotkeyVirtualKey =
+            static_cast<UINT>(hotkeyValue);
+    }
     int theme = 0;
     if (ReadIntField(text, "quickNavTheme", theme))
     {
@@ -99,6 +116,13 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"softwareDesktopEnabled\": "
          << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
     file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << ",\n";
+    file << "  \"desktopPassthroughHotkeyEnabled\": "
+         << (settings.desktopPassthroughHotkeyEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"desktopPassthroughHotkeyModifiers\": "
+         << settings.desktopPassthroughHotkeyModifiers << ",\n";
+    file << "  \"desktopPassthroughHotkeyVirtualKey\": "
+         << settings.desktopPassthroughHotkeyVirtualKey << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";

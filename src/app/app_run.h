@@ -14,6 +14,7 @@
 // This file is included by app_oo.h after the class definition.
 
 #include <commoncontrols.h>
+#include <imm.h>
 
 // ── Inline implementations ──────────────────────────────────
 
@@ -25,8 +26,14 @@
  */
 inline DesktopApp::~DesktopApp()
 {
+    EndDesktopPassthroughHold(false);
+    UnregisterDesktopPassthroughHotkey();
     ApplySystemTaskbarBackdrop(false, false,
         ResolveSystemTaskbarAppearance(dockSettings_));
+    dockWindowTransition_.reset();
+    dockWindowPreview_.reset();
+    UnregisterFloatingDockHotkey();
+    DestroyFloatingDockWindow();
     StopQuickNavigationAppIndexing();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
@@ -122,26 +129,47 @@ inline void DesktopApp::RegisterOleDropTarget()
  */
 inline void DesktopApp::ResetDesktopWindowResources()
 {
+    EndDesktopPassthroughHold(false);
+    UnregisterDesktopPassthroughHotkey();
     desktopBackdropCompositor_.Reset();
+    if (dockWindowTransition_)
+        dockWindowTransition_->Cancel();
     nativeGlassPanelReadyLogged_ = false;
     recycleBinPollState_->targetWindow = nullptr;
     if (hwnd_ && IsWindow(hwnd_))
     {
         UnregisterNavigationHotkey();
+        UnregisterFloatingDockHotkey();
         KillTimer(hwnd_, kShellChangeTimerId);
         KillTimer(hwnd_, kDisplayTopologyRefreshTimerId);
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        KillTimer(hwnd_, kCollectionPopupAnimationTimerId);
+        KillTimer(hwnd_, kLuaWidgetPanelAnimationTimerId);
         KillTimer(hwnd_, kPageNotifyTimerId);
+        KillTimer(hwnd_, kDockLaunchBounceTimerId);
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             KillTimer(hwnd_, timerId);
+        if (popupAnimation_.IsClosing())
+            FinalizeCloseCollectionPopup();
+        else if (popupWidgetIndex_ < widgets_.size() ||
+                 dockFolderPopupOpen_)
+            popupAnimation_.ShowImmediately();
+        else
+            popupAnimation_.ResetHidden();
+        if (!luaWidgetPanelRequest_.widgetId.empty())
+            FinalizeCloseLuaWidgetPanel();
+        else
+            luaWidgetPanelAnimation_.ResetHidden();
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }
     StopDockForegroundMonitor();
     widgetTimerIds_.clear();
+    dockLaunchBounces_.clear();
     nextWidgetTimerId_ = kWidgetTimerIdBase;
     dropTargetRegistered_ = false;
 
@@ -152,11 +180,13 @@ inline void DesktopApp::ResetDesktopWindowResources()
     }
 
     DestroyDragHintWindow();
+    DestroyFloatingDockWindow();
     DestroyQuickNavigationWindow();
     if (inputHwnd_ && IsWindow(inputHwnd_))
         DestroyWindow(inputHwnd_);
     inputHwnd_ = nullptr;
     dragRenderCache_.Reset();
+    ResetCollectionPopupAnimationCache();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
@@ -266,6 +296,71 @@ inline void DesktopApp::FocusDesktopInputWindow()
         SetFocus(hwnd_);
 }
 
+/**
+ * @brief 将隐藏输入窗口和 IMM 窗口锚定到宿主绘制的文本光标。
+ *
+ * 输入窗口平时位于屏幕外。宿主输入框获得焦点时，将这个 1x1 窗口移到
+ * DirectWrite 光标位置，兼容依赖焦点窗口原点的输入法；同时显式设置组合
+ * 窗口和候选窗口坐标，避免输入法回退到桌面左上角。
+ */
+inline void DesktopApp::UpdateHostInputImePosition()
+{
+    if (!inputHwnd_ || !IsWindow(inputHwnd_))
+        return;
+
+    RECT caret{};
+    bool hasCaret = widgetEngine_ &&
+        widgetEngine_->GetFocusedHostInputCaretRect(caret);
+    if (!hasCaret)
+    {
+        for (const auto& container : containers_)
+        {
+            const auto* searchable =
+                dynamic_cast<const ScrollingItemWidget*>(
+                    container.get());
+            if (searchable &&
+                searchable->GetSearchCaretRect(caret))
+            {
+                hasCaret = true;
+                break;
+            }
+        }
+    }
+    if (!hasCaret || !hwnd_ || !IsWindow(hwnd_))
+    {
+        SetWindowPos(inputHwnd_, nullptr, -32000, -32000, 1, 1,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+        return;
+    }
+
+    POINT origin{ caret.left, caret.top };
+    ClientToScreen(hwnd_, &origin);
+    HWND parent = GetParent(inputHwnd_);
+    if (parent && IsWindow(parent))
+        ScreenToClient(parent, &origin);
+
+    SetWindowPos(inputHwnd_, HWND_TOP, origin.x, origin.y, 1, 1,
+        SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+    const LONG caretHeight = std::max<LONG>(
+        1, caret.bottom - caret.top);
+    HIMC context = ImmGetContext(inputHwnd_);
+    if (!context)
+        return;
+
+    COMPOSITIONFORM composition{};
+    composition.dwStyle = CFS_POINT;
+    composition.ptCurrentPos = { 0, 0 };
+    ImmSetCompositionWindow(context, &composition);
+
+    CANDIDATEFORM candidate{};
+    candidate.dwIndex = 0;
+    candidate.dwStyle = CFS_CANDIDATEPOS;
+    candidate.ptCurrentPos = { 0, caretHeight };
+    ImmSetCandidateWindow(context, &candidate);
+    ImmReleaseContext(inputHwnd_, context);
+}
+
 inline HWND DesktopApp::ShellDialogOwnerHwnd() const
 {
     if (controlHwnd_ && IsWindow(controlHwnd_))
@@ -334,6 +429,8 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
 
     RegisterOleDropTarget();
     ApplyNavigationHotkey();
+    ApplyFloatingDockHotkey();
+    ApplyDesktopPassthroughHotkey();
     RegisterShellChangeNotifications();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
@@ -529,7 +626,8 @@ inline void DesktopApp::RequestRestart()
 
     std::wstring commandLine = L"\"";
     commandLine.append(exePath, pathLen);
-    commandLine.push_back(L'"');
+    commandLine += L"\" --wait-for-pid=";
+    commandLine += std::to_wstring(GetCurrentProcessId());
     std::vector<wchar_t> commandLineBuffer(commandLine.begin(), commandLine.end());
     commandLineBuffer.push_back(L'\0');
 
@@ -750,6 +848,8 @@ inline void DesktopApp::BeginIconLoadGeneration()
 inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
 {
     const bool wasEnabled = customDesktopVisible_;
+    if (!enabled)
+        EndDesktopPassthroughHold(false);
     customDesktopVisible_ = enabled;
     generalSettings_.softwareDesktopEnabled = enabled;
     if (persist)
@@ -758,7 +858,10 @@ inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         settingsWindow_->SyncSoftwareDesktopEnabled(enabled);
 
     if (!hwnd_ || !IsWindow(hwnd_))
+    {
+        ApplyDesktopPassthroughHotkey();
         return;
+    }
 
     if (!enabled)
     {
@@ -772,6 +875,7 @@ inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         if (inputHwnd_ && IsWindow(inputHwnd_))
             ShowWindow(inputHwnd_, SW_HIDE);
         RestoreExplorerIcons();
+        ApplyDesktopPassthroughHotkey();
         return;
     }
 
@@ -809,15 +913,15 @@ inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
     InvalidateRect(hwnd_, nullptr, TRUE);
     if (!wasEnabled)
         ReloadItems();
+    ApplyDesktopPassthroughHotkey();
 }
 
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
 
-    WriteCrashLogEntry(L"Run start");
-
     MigrateLegacyDataPaths();
+    WriteCrashLogEntry(L"Run start");
 
     {
         std::wstring langDir = GetExecutableDirectoryPath();
@@ -919,6 +1023,19 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         nav.lpszClassName = kQuickNavigationWindowClassName;
         RegisterClassExW(&nav);
     }
+    {
+        WNDCLASSEXW dock{};
+        dock.cbSize = sizeof(dock);
+        dock.style = CS_DBLCLKS;
+        dock.lpfnWndProc = FloatingDockWndProc;
+        dock.hInstance = instance;
+        dock.hCursor =
+            LoadCursorW(nullptr, IDC_ARROW);
+        dock.hbrBackground = nullptr;
+        dock.lpszClassName =
+            kFloatingDockWindowClassName;
+        RegisterClassExW(&dock);
+    }
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         wc.lpszClassName, L"SnowDesktop",
@@ -926,6 +1043,20 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         nullptr, nullptr, instance, this);
     if (!hwnd_) { WriteCrashLogEntry(L"CreateWindow FAILED"); return __LINE__; }
     AttachWindowToDesktopHost(parent);
+    dockWindowPreview_ = std::make_unique<DockWindowPreview>();
+    if (!dockWindowPreview_->Initialize(
+            instance_,
+            [this](HWND window) {
+                ActivateDockWindowFromPreview(window);
+            },
+            [this](HWND window) {
+                CloseDockWindowFromPreview(window);
+            }))
+        dockWindowPreview_.reset();
+    dockWindowTransition_ =
+        std::make_unique<DockWindowTransition>();
+    if (!dockWindowTransition_->Initialize(instance_))
+        dockWindowTransition_.reset();
     if (!CreateDesktopInputWindow(parent))
     {
         WriteCrashLogEntry(L"CreateInputWindow FAILED");
@@ -991,6 +1122,11 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // already contains more items than the visible grids can create virtual
     // overflow pages during the initial load.
     ReloadItems(false);
+    if (legacyWidgetLayoutMigrationPending_)
+    {
+        SaveLayoutSlots();
+        legacyWidgetLayoutMigrationPending_ = false;
+    }
     StartIconLoader();
     WriteCrashLogEntry(L"LoadDesktopItems ok");
     WriteCrashLogEntry(L"Layout done");
@@ -1006,6 +1142,8 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     RegisterShellChangeNotifications();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
+    ApplyFloatingDockHotkey();
+    ApplyDesktopPassthroughHotkey();
 
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
@@ -1019,6 +1157,24 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (settingsWindow_->Init(instance, d3dDevice_.Get()))
     {
         settingsWindow_->SetReloadCallback([this]() {
+            bool migratedLayout = false;
+            for (auto& widget : widgets_)
+            {
+                if (widget.type != DesktopWidgetType::LuaScript ||
+                    !widget.packageId.empty() ||
+                    widget.legacyScriptPath.empty())
+                    continue;
+                if (const auto packageId =
+                    WidgetEngine::ResolveLegacyWidgetPackage(
+                        widget.legacyScriptPath))
+                {
+                    widget.packageId = *packageId;
+                    widget.legacyScriptPath.clear();
+                    migratedLayout = true;
+                }
+            }
+            if (migratedLayout)
+                SaveLayoutSlots();
             ReloadItems();
             if (settingsWindow_)
                 settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
@@ -1047,6 +1203,74 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetGlassStatusProvider([this]() {
             return GetGlassBackendStatusText();
         });
+        settingsWindow_->SetHotkeyAvailabilityCallback(
+            [this](HotkeySettingTarget target,
+                UINT modifiers, UINT virtualKey) {
+                if (virtualKey == 0)
+                    return false;
+                const UINT normalizedModifiers =
+                    modifiers &
+                    (MOD_CONTROL | MOD_ALT |
+                        MOD_SHIFT | MOD_WIN);
+                const auto matches = [&](
+                    UINT configuredModifiers,
+                    UINT configuredVirtualKey) {
+                    return normalizedModifiers ==
+                            (configuredModifiers &
+                                (MOD_CONTROL | MOD_ALT |
+                                    MOD_SHIFT | MOD_WIN)) &&
+                        virtualKey == configuredVirtualKey;
+                };
+
+                switch (target)
+                {
+                case HotkeySettingTarget::QuickNavigation:
+                    if (navigationSettings_.enabled &&
+                        matches(navigationSettings_.modifiers,
+                            navigationSettings_.virtualKey))
+                        return navigationHotkeyRegistered_;
+                    break;
+                case HotkeySettingTarget::DesktopPassthrough:
+                    if (generalSettings_.
+                            desktopPassthroughHotkeyEnabled &&
+                        customDesktopVisible_ &&
+                        matches(generalSettings_.
+                                desktopPassthroughHotkeyModifiers,
+                            generalSettings_.
+                                desktopPassthroughHotkeyVirtualKey))
+                        return desktopPassthroughHotkeyRegistered_;
+                    break;
+                case HotkeySettingTarget::FloatingDock:
+                    if (generalSettings_.dockEnabled &&
+                        dockSettings_.floatingShortcutMode &&
+                        matches(
+                            dockSettings_.floatingHotkeyModifiers,
+                            dockSettings_.floatingHotkeyVirtualKey))
+                        return floatingDockHotkeyRegistered_;
+                    break;
+                case HotkeySettingTarget::None:
+                    return false;
+                }
+
+                HWND probeWindow =
+                    controlHwnd_ && IsWindow(controlHwnd_)
+                        ? controlHwnd_
+                        : (inputHwnd_ && IsWindow(inputHwnd_)
+                            ? inputHwnd_ : hwnd_);
+                if (!probeWindow || !IsWindow(probeWindow))
+                    return false;
+                const BOOL registered = RegisterHotKey(
+                    probeWindow, kSettingsHotkeyProbeId,
+                    normalizedModifiers | MOD_NOREPEAT,
+                    virtualKey);
+                if (registered)
+                {
+                    UnregisterHotKey(
+                        probeWindow, kSettingsHotkeyProbeId);
+                    return true;
+                }
+                return false;
+            });
         settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
             LoadNavigationSettingsAndApply();
         });
@@ -1061,6 +1285,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetDockEnabledChangedCallback([this](bool enabled) {
             if (generalSettings_.dockEnabled == enabled) return;
             generalSettings_.dockEnabled = enabled;
+            ApplyFloatingDockHotkey();
             UpdateLayoutWorkArea();
             if (!enabled)
                 RestoreDockEntriesToDesktop();
@@ -1069,12 +1294,64 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             InvalidateDragStaticScene();
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         });
+        settingsWindow_->SetDockSettingsPreviewChangedCallback(
+            [this](const DockSettings& settings) {
+                DockSettings normalizedSettings = settings;
+                NormalizeDockSettings(normalizedSettings);
+                std::vector<RECT> previousDockRects;
+                for (const auto& container : containers_)
+                {
+                    if (const auto* dock =
+                            dynamic_cast<DockContainer*>(
+                                container.get()))
+                    {
+                        previousDockRects.push_back(
+                            dock->GetInteractiveBounds());
+                    }
+                }
+                const bool layoutChanged =
+                    normalizedSettings.position != dockSettings_.position ||
+                    normalizedSettings.edgeAttached != dockSettings_.edgeAttached ||
+                    normalizedSettings.floatingShortcutMode !=
+                        dockSettings_.floatingShortcutMode ||
+                    normalizedSettings.monitorScope != dockSettings_.monitorScope ||
+                    normalizedSettings.showWindowsButton !=
+                        dockSettings_.showWindowsButton ||
+                    normalizedSettings.showFrequentItems !=
+                        dockSettings_.showFrequentItems ||
+                    normalizedSettings.frequentItemCount !=
+                        dockSettings_.frequentItemCount ||
+                    std::abs(
+                        normalizedSettings.thicknessScale -
+                        dockSettings_.thicknessScale) > 0.0001f;
+
+                dockSettings_ = normalizedSettings;
+                ApplyFloatingDockHotkey();
+                dockSettingsLayoutCommitPending_ =
+                    dockSettingsLayoutCommitPending_ ||
+                    layoutChanged;
+                if (layoutChanged)
+                {
+                    InvalidateDockContainers();
+                    if (hwnd_)
+                    {
+                        for (const RECT& rect :
+                            previousDockRects)
+                        {
+                            InvalidateRect(
+                                hwnd_, &rect, TRUE);
+                        }
+                        InvalidateDockRects(TRUE);
+                    }
+                }
+            });
         settingsWindow_->SetDockSettingsChangedCallback([this]() {
             const DockPosition previousPosition = dockSettings_.position;
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
+            const bool previousFloatingShortcutMode =
+                dockSettings_.floatingShortcutMode;
             const DockMonitorScope previousMonitorScope = dockSettings_.monitorScope;
             const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
-            const bool previousShowRunningApps = dockSettings_.showRunningApps;
             const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
             const int previousFrequentItemCount = dockSettings_.frequentItemCount;
             const float previousThicknessScale = dockSettings_.thicknessScale;
@@ -1083,24 +1360,25 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const int previousSystemTaskbarAlignment =
                 dockSettings_.systemTaskbarAlignment;
             LoadDockSettingsAndApply();
-            if (dockSettings_.position != previousPosition ||
+            if (dockSettingsLayoutCommitPending_ ||
+                dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
+                dockSettings_.floatingShortcutMode !=
+                    previousFloatingShortcutMode ||
                 dockSettings_.monitorScope != previousMonitorScope ||
                 dockSettings_.showWindowsButton != previousShowWindowsButton ||
-                dockSettings_.showRunningApps != previousShowRunningApps ||
                 dockSettings_.showFrequentItems != previousShowFrequentItems ||
                 dockSettings_.frequentItemCount != previousFrequentItemCount ||
                 std::abs(dockSettings_.thicknessScale - previousThicknessScale) > 0.0001f ||
                 dockSettings_.systemTaskbarAutoHide != previousSystemTaskbarAutoHide ||
                 dockSettings_.systemTaskbarAlignment != previousSystemTaskbarAlignment)
             {
-                if (dockSettings_.showRunningApps != previousShowRunningApps)
-                    RefreshDockRunningWindows(false);
                 UpdateLayoutWorkArea();
                 LayoutItems();
                 SaveLayoutSlots();
                 InvalidateDragStaticScene();
             }
+            dockSettingsLayoutCommitPending_ = false;
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         });
         settingsWindow_->SetPersonalizationChangedCallback([this]() {
@@ -1150,6 +1428,36 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetSelectionProvider([this]() {
             return BuildLuaDesktopSnapshot(true);
         });
+        widgetEngine_->SetWidgetSelectedProvider(
+            [this](const std::wstring& widgetId) {
+                for (const auto& widget : widgets_)
+                    if (widget.id == widgetId &&
+                        widget.type == DesktopWidgetType::LuaScript)
+                        return widget.selected;
+                return false;
+            });
+        widgetEngine_->SetSelectedWidgetPackageProvider(
+            [this]() {
+                std::wstring selectedPackageId;
+                int selectedCount = 0;
+                for (const auto& widget : widgets_)
+                {
+                    if (!widget.selected)
+                        continue;
+                    ++selectedCount;
+                    if (widget.type ==
+                        DesktopWidgetType::LuaScript)
+                        selectedPackageId = widget.packageId;
+                }
+                return selectedCount == 1
+                    ? selectedPackageId
+                    : std::wstring{};
+            });
+        widgetEngine_->SetApplicationSearchProvider(
+            [this](const std::string& query, int maxResults) {
+                return BuildLuaApplicationSearch(
+                    query, maxResults);
+            });
         widgetEngine_->SetEverythingSearchProvider([this](const std::string& query, int maxResults) {
             return BuildLuaEverythingSearch(query, maxResults);
         });
@@ -1162,6 +1470,15 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             {
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
+            }
+            if (luaWidgetPanelRequest_.widgetId ==
+                    widgetId)
+            {
+                RECT dirty =
+                    GetLuaWidgetPanelRect();
+                InflateRect(&dirty, 3, 3);
+                InvalidateRect(
+                    hwnd_, &dirty, FALSE);
             }
             for (const auto& widget : widgets_)
             {
@@ -1189,11 +1506,13 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetHostInputFocusCallback([this]() {
             for (auto& container : containers_)
             {
-                auto* fileCategories = dynamic_cast<FileCategories*>(container.get());
-                if (fileCategories)
-                    fileCategories->SetSearchFocused(false);
+                auto* searchable =
+                    dynamic_cast<ScrollingItemWidget*>(container.get());
+                if (searchable)
+                    searchable->SetSearchFocused(false);
             }
             FocusDesktopInputWindow();
+            UpdateHostInputImePosition();
         });
         widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
             ShowBalloonNotification(title, message);
@@ -1221,8 +1540,20 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 }
             }
         });
+        widgetEngine_->SetOpenWidgetPanelCallback(
+            [this](const LuaWidgetPanelRequest& request) {
+                OpenLuaWidgetPanel(request);
+            });
+        widgetEngine_->SetCloseWidgetPanelCallback(
+            [this](const std::wstring& widgetId) {
+                CloseLuaWidgetPanel(widgetId, "widget");
+            });
         if (settingsWindow_)
+        {
             settingsWindow_->SetWidgetEngine(widgetEngine_.get());
+            if (!WidgetEngine::ListLegacyWidgetPackages().empty())
+                settingsWindow_->ShowWidgetMigration();
+        }
     }
     else
     {
@@ -1329,6 +1660,30 @@ inline LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, 
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+inline LRESULT CALLBACK DesktopApp::FloatingDockWndProc(
+    HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    DesktopApp* app = nullptr;
+    if (msg == WM_NCCREATE)
+    {
+        auto* create =
+            reinterpret_cast<CREATESTRUCTW*>(lp);
+        app = static_cast<DesktopApp*>(
+            create->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(app));
+    }
+    else
+    {
+        app = reinterpret_cast<DesktopApp*>(
+            GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+    if (app)
+        return app->HandleFloatingDockMessage(
+            hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 /**
  * @brief 独立键盘输入窗口的静态窗口过程。
  */
@@ -1356,23 +1711,168 @@ inline LRESULT CALLBACK DesktopApp::InputWndProc(HWND hwnd, UINT msg, WPARAM wp,
  */
 inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    auto focusedSearchWidget =
+        [this]() -> ScrollingItemWidget* {
+        for (auto& container : containers_)
+        {
+            auto* searchable =
+                dynamic_cast<ScrollingItemWidget*>(
+                    container.get());
+            if (searchable &&
+                searchable->IsSearchFocused())
+                return searchable;
+        }
+        return nullptr;
+    };
+
     switch (msg)
     {
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
+    case WM_NCHITTEST:
+        return HTTRANSPARENT;
+    case WM_IME_STARTCOMPOSITION:
+        if (widgetEngine_ &&
+            widgetEngine_->HasFocusedHostInput())
+        {
+            widgetEngine_->ClearHostInputComposition();
+            UpdateHostInputImePosition();
+            return 0;
+        }
+        if (auto* searchable = focusedSearchWidget())
+        {
+            searchable->ClearSearchComposition();
+            UpdateHostInputImePosition();
+            return 0;
+        }
+        break;
+    case WM_IME_COMPOSITION:
+    {
+        const bool hostInputFocused =
+            widgetEngine_ &&
+            widgetEngine_->HasFocusedHostInput();
+        ScrollingItemWidget* searchable =
+            hostInputFocused
+                ? nullptr : focusedSearchWidget();
+        if (hostInputFocused || searchable)
+        {
+            HIMC context = ImmGetContext(hwnd);
+            if (context)
+            {
+                auto readCompositionString =
+                    [&](DWORD index) {
+                        std::wstring result;
+                        const LONG byteCount =
+                            ImmGetCompositionStringW(
+                                context, index, nullptr, 0);
+                        if (byteCount <= 0)
+                            return result;
+                        result.resize(static_cast<size_t>(
+                            byteCount) / sizeof(wchar_t));
+                        const LONG copied =
+                            ImmGetCompositionStringW(
+                                context, index, result.data(),
+                                static_cast<DWORD>(byteCount));
+                        if (copied >= 0)
+                        {
+                            result.resize(static_cast<size_t>(
+                                copied) / sizeof(wchar_t));
+                        }
+                        else
+                        {
+                            result.clear();
+                        }
+                        return result;
+                    };
+
+                if ((lp & GCS_RESULTSTR) != 0)
+                {
+                    const std::wstring result =
+                        readCompositionString(GCS_RESULTSTR);
+                    if (hostInputFocused)
+                    {
+                        widgetEngine_->
+                            CommitHostInputComposition(result);
+                    }
+                    else
+                        searchable->
+                            CommitSearchComposition(result);
+                }
+                if ((lp & (GCS_COMPSTR | GCS_CURSORPOS)) != 0)
+                {
+                    const std::wstring composition =
+                        readCompositionString(GCS_COMPSTR);
+                    const LONG imeCursor =
+                        ImmGetCompositionStringW(
+                            context, GCS_CURSORPOS, nullptr, 0);
+                    const size_t cursor =
+                        imeCursor >= 0
+                            ? static_cast<size_t>(imeCursor)
+                            : composition.size();
+                    if (hostInputFocused)
+                    {
+                        widgetEngine_->
+                            SetHostInputComposition(
+                                composition, cursor);
+                    }
+                    else
+                    {
+                        searchable->SetSearchComposition(
+                            composition, cursor);
+                    }
+                }
+                else if (lp == 0)
+                {
+                    if (hostInputFocused)
+                    {
+                        widgetEngine_->
+                            ClearHostInputComposition();
+                    }
+                    else
+                        searchable->
+                            ClearSearchComposition();
+                }
+                ImmReleaseContext(hwnd, context);
+            }
+            UpdateHostInputImePosition();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        break;
+    }
+    case WM_IME_ENDCOMPOSITION:
+        if (widgetEngine_ &&
+            widgetEngine_->HasFocusedHostInput())
+        {
+            widgetEngine_->ClearHostInputComposition();
+            UpdateHostInputImePosition();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        if (auto* searchable = focusedSearchWidget())
+        {
+            searchable->ClearSearchComposition();
+            UpdateHostInputImePosition();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        break;
     case WM_KEYDOWN:
         if (widgetEngine_ && widgetEngine_->HandleHostInputKey(wp))
         {
+            UpdateHostInputImePosition();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
         OnKeyDown(wp);
+        UpdateHostInputImePosition();
         return 0;
     case WM_CHAR:
     {
         wchar_t ch = static_cast<wchar_t>(wp);
         if (widgetEngine_ && widgetEngine_->HandleHostInputChar(ch))
         {
+            UpdateHostInputImePosition();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
@@ -1380,10 +1880,11 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
         {
             for (auto& c : containers_)
             {
-                auto* fc = dynamic_cast<FileCategories*>(c.get());
-                if (fc && fc->IsSearchFocused())
+                auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+                if (searchable && searchable->IsSearchFocused())
                 {
-                    fc->AppendSearchChar(ch);
+                    searchable->AppendSearchChar(ch);
+                    UpdateHostInputImePosition();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     break;
                 }
@@ -1394,10 +1895,32 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
     case WM_KEYUP:
         RefreshDragHintFromKeyboard();
         return 0;
+    case WM_TIMER:
+        OnTimer(wp);
+        return 0;
     case WM_HOTKEY:
+        if (settingsWindow_ &&
+            settingsWindow_->IsHotkeyCaptureActive())
+        {
+            settingsWindow_->CaptureRegisteredHotkey(
+                LOWORD(lp), HIWORD(lp));
+            return 0;
+        }
         if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
         {
             ToggleQuickNavigation();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kFloatingDockHotkeyId)
+        {
+            ToggleFloatingDock();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kDesktopPassthroughHotkeyId)
+        {
+            BeginDesktopPassthroughHold();
             return 0;
         }
         break;
@@ -1406,6 +1929,23 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
         {
             navigationHotkeyHwnd_ = nullptr;
             navigationHotkeyRegistered_ = false;
+        }
+        if (floatingDockHotkeyHwnd_ == hwnd)
+        {
+            floatingDockHotkeyHwnd_ = nullptr;
+            floatingDockHotkeyRegistered_ = false;
+        }
+        if (desktopPassthroughHotkeyHwnd_ == hwnd)
+        {
+            KillTimer(hwnd, kDesktopPassthroughHoldTimerId);
+            desktopPassthroughHotkeyHwnd_ = nullptr;
+            desktopPassthroughHotkeyRegistered_ = false;
+            desktopPassthroughHoldActive_ = false;
+        }
+        if (floatingDockEdgeSwipeHwnd_ == hwnd)
+        {
+            floatingDockEdgeSwipeHwnd_ = nullptr;
+            floatingDockEdgeSwipeDetector_.Reset();
         }
         if (inputHwnd_ == hwnd)
             inputHwnd_ = nullptr;
@@ -1488,13 +2028,8 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             ScreenToClient(hwnd_, &point);
             if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
-                const RECT dockBounds = dock->GetBounds();
-                if (PtInRect(&dockBounds, point))
-                {
-                    dockPressedForegroundWindow_ = GetForegroundWindow();
-                    dockPressedForegroundTick_ = GetTickCount();
+                if (dock->ContainsInteractivePoint(point))
                     return MA_NOACTIVATE;
-                }
             }
         }
         break;
@@ -1542,39 +2077,123 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     }
     case WM_LBUTTONDOWN:
-        if (desktopIconsHidden_) { ShowHiddenHint(); return 0; }
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        {
+            ShowHiddenHint();
+            return 0;
+        }
         OnLeftButtonDown(wp, lp);
         return 0;
+    }
     case WM_MBUTTONDOWN:
     case WM_MBUTTONDBLCLK:
-        if (desktopIconsHidden_) return 0;
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+            return 0;
         OnMiddleButtonDown(wp, lp);
         return 0;
+    }
     case WM_MOUSEMOVE:
-        if (desktopIconsHidden_) return 0;
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !middleButtonWidgetMove_ && !dragSession_.IsActive() &&
+            widgetAction_ == WidgetAction::None &&
+            !luaWidgetPanelMouseDown_)
+        {
+            if (IsPointOnRetainedElement(lastMousePoint_))
+                OnMouseLeave();
+            return 0;
+        }
         OnMouseMove(wp, lp);
+        // Internal drags capture this HWND. Commit the cheap cached drag frame
+        // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
+        PresentPointerInteractionFrame();
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        if (floatingDockVisible_)
+        {
+            POINT cursor{};
+            if (GetCursorPos(&cursor))
+            {
+                ScreenToClient(hwnd_, &cursor);
+                const bool inFloatingLayer =
+                    PtInRect(
+                        &floatingDockRect_,
+                        cursor) ||
+                    (!IsRectEmpty(
+                            &floatingDockPopupRect_) &&
+                        PtInRect(
+                            &floatingDockPopupRect_,
+                            cursor)) ||
+                    (!IsRectEmpty(
+                            &floatingDockTooltipRect_) &&
+                        PtInRect(
+                            &floatingDockTooltipRect_,
+                            cursor));
+                if (inFloatingLayer)
+                    return 0;
+            }
+        }
+        OnMouseLeave();
         return 0;
     case WM_LBUTTONUP:
-        if (desktopIconsHidden_) return 0;
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !dragSession_.IsActive() &&
+            widgetAction_ == WidgetAction::None &&
+            !luaWidgetPanelMouseDown_)
+            return 0;
         OnLeftButtonUp(wp, lp);
+        InvalidateFloatingDockWindow(true);
         return 0;
+    }
     case WM_MBUTTONUP:
-        if (desktopIconsHidden_) return 0;
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !middleButtonWidgetMove_ &&
+            widgetAction_ == WidgetAction::None)
+            return 0;
         OnMiddleButtonUp(wp, lp);
         return 0;
+    }
     case WM_MOUSEWHEEL:
-        if (desktopIconsHidden_) return 0;
+    {
+        POINT wheelPt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_)
+        {
+            ScreenToClient(hwnd_, &wheelPt);
+            if (!IsPointOnRetainedElement(wheelPt))
+                return 0;
+        }
         OnMouseWheel(wp, lp);
         return 0;
+    }
     case WM_RBUTTONUP:
-        if (desktopIconsHidden_) { ShowHiddenHint(); return 0; }
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        {
+            ShowHiddenHint();
+            return 0;
+        }
         OnRightButtonUp(lp);
         return 0;
+    }
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
 
-        if (desktopIconsHidden_)
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
             ToggleDesktopIconsVisibility();
             return 0;
@@ -1588,22 +2207,57 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
         if (DockContainer* dock = GetDockContainerAtPoint(pt))
         {
-            RECT dockBounds = dock->GetBounds();
-            if (PtInRect(&dockBounds, pt))
+            RECT dockBounds = dock->GetInteractiveBounds();
+            if (dock->ContainsInteractivePoint(pt))
             {
                 if (dock->IsSearchPoint(pt))
                 {
-                    OpenQuickNavigation();
+                    OpenQuickNavigation(true);
                     return 0;
                 }
                 if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
                 {
                     const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
-                    if (dockItem->GetEntryType() == DockEntryType::DesktopItem &&
+                    const size_t entryIndex =
+                        dockItem->GetEntryIndex();
+                    bool specialDoubleClickHandled = false;
+                    if (entryIndex < dockEntries_.size() &&
+                        IsFolderDockEntry(
+                            dockEntries_[entryIndex]) &&
+                        dockPendingDoubleClickEntry_ ==
+                            entryIndex &&
+                        elapsed <= GetDoubleClickTime())
+                    {
+                        const auto target =
+                            ResolveDockFolderTarget(
+                                dockEntries_[entryIndex]);
+                        dockSuppressClickReleaseEntry_ =
+                            entryIndex;
+                        dockPressedContainer_ = dock;
+                        dockPressedEntry_ = entryIndex;
+                        mouseDownPoint_ = pt;
+                        mouseDown_ = true;
+                        dockPendingDoubleClickEntry_ =
+                            static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ =
+                            static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        CloseCollectionPopup();
+                        ClearSelection();
+                        if (target.available)
+                            ShellExecuteW(
+                                hwnd_, L"open",
+                                target.path.c_str(),
+                                nullptr, nullptr,
+                                SW_SHOWNORMAL);
+                        InvalidateRect(
+                            hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
+                    }
+                    else if (dockItem->GetEntryType() == DockEntryType::DesktopItem &&
                         dockPendingDoubleClickEntry_ == dockItem->GetEntryIndex() &&
                         elapsed <= GetDoubleClickTime())
                     {
-                        const size_t entryIndex = dockItem->GetEntryIndex();
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
@@ -1613,21 +2267,31 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                             const size_t itemIndex =
                                 FindItemIndexByKey(dockEntries_[entryIndex].reference);
                             if (itemIndex < items_.size())
-                                ActivateOrToggleDockItem(itemIndex);
+                                LaunchDesktopItem(itemIndex, true);
                         }
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
+                    }
+                    if (snowdesktop::dock_window_rules::
+                            ShouldDispatchDockDoubleClickPress(
+                                specialDoubleClickHandled))
+                    {
+                        OnLeftButtonDown(wp, lp);
                     }
                     return 0;
                 }
                 if (dock->RunningItemAtPoint(pt))
                 {
-                    // Dynamic running apps already react on the first click.
+                    // WM_LBUTTONDBLCLK replaces the second button-down. Replay
+                    // it so the following button-up can reverse an animation.
+                    OnLeftButtonDown(wp, lp);
                     return 0;
                 }
                 if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
                 {
                     const size_t itemIndex = frequentItem->GetItemIndex();
                     const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
+                    bool specialDoubleClickHandled = false;
                     if (dockPendingDoubleClickFrequentItem_ == itemIndex &&
                         elapsed <= GetDoubleClickTime())
                     {
@@ -1636,8 +2300,15 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                         dockPendingDoubleClickTick_ = 0;
                         ClearSelection();
                         if (itemIndex < items_.size())
-                            ActivateOrToggleDockItem(itemIndex);
+                            LaunchDesktopItem(itemIndex, true);
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
+                    }
+                    if (snowdesktop::dock_window_rules::
+                            ShouldDispatchDockDoubleClickPress(
+                                specialDoubleClickHandled))
+                    {
+                        OnLeftButtonDown(wp, lp);
                     }
                     return 0;
                 }
@@ -1645,7 +2316,87 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             }
         }
 
-        if (popupWidgetIndex_ < widgets_.size())
+        bool collectionOpenButtonHit = false;
+        for (const auto& container : containers_)
+        {
+            auto* widgetContainer =
+                dynamic_cast<WidgetContainer*>(
+                    container.get());
+            const DesktopWidget* widget =
+                widgetContainer
+                ? widgetContainer->GetWidgetData()
+                : nullptr;
+            if (widget &&
+                widget->type ==
+                    DesktopWidgetType::Collection &&
+                widgetContainer->HitTestWidget(pt) ==
+                    WidgetHit::CollectionOpenBtn)
+            {
+                collectionOpenButtonHit = true;
+                break;
+            }
+        }
+        bool pointerInsideInteractivePopup = false;
+        if (IsCollectionPopupInteractive())
+        {
+            if (const DesktopWidget* popupWidget =
+                    GetOpenPopupWidget())
+            {
+                const RECT popup =
+                    GetCollectionPopupRect(*popupWidget);
+                pointerInsideInteractivePopup =
+                    PtInRect(&popup, pt) != FALSE;
+            }
+        }
+        if (snowdesktop::popup_animation_rules::
+                ShouldDispatchCollectionDoubleClickPress(
+                    collectionOpenButtonHit,
+                    pointerInsideInteractivePopup))
+        {
+            // Restore the second button-down so a rapid third click can
+            // reverse a close animation before its 90 ms duration ends.
+            OnLeftButtonDown(wp, lp);
+            return 0;
+        }
+
+        if (IsCollectionPopupInteractive() &&
+            dockFolderPopupOpen_)
+        {
+            RECT popup = GetCollectionPopupRect(
+                dockFolderPopupWidget_);
+            if (PtInRect(&popup, pt))
+            {
+                RECT content =
+                    GetCollectionPopupContentRect(popup);
+                for (size_t i = 0;
+                     i < dockFolderPopupWidget_.
+                        folderEntries.size(); ++i)
+                {
+                    RECT itemRect =
+                        GetCollectionPopupItemRect(
+                            popup, i);
+                    RECT clipped = itemRect;
+                    clipped.top = std::max(
+                        clipped.top, content.top);
+                    clipped.bottom = std::min(
+                        clipped.bottom,
+                        content.bottom);
+                    if (clipped.bottom <= clipped.top ||
+                        !PtInRect(&clipped, pt))
+                        continue;
+                    const std::wstring path =
+                        dockFolderPopupWidget_.
+                            folderEntries[i].fullPath;
+                    ShellExecuteW(
+                        hwnd_, L"open", path.c_str(),
+                        nullptr, nullptr, SW_SHOWNORMAL);
+                    CloseCollectionPopup();
+                    return 0;
+                }
+            }
+        }
+        else if (IsCollectionPopupInteractive() &&
+            popupWidgetIndex_ < widgets_.size())
         {
             RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
             if (PtInRect(&popup, pt))
@@ -1678,7 +2429,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             {
                 RECT frame = GetStandaloneWidgetFrameRect(widgets_[standaloneWidget]);
                 widgetEngine_->EnsureWidgetLoaded(widgets_[standaloneWidget].id,
-                    widgets_[standaloneWidget].scriptPath);
+                    widgets_[standaloneWidget].packageId);
                 widgetEngine_->InvokeMouseEvent(widgets_[standaloneWidget].id, "onDoubleClick",
                     pt.x - frame.left, pt.y - frame.top, 1, 0);
             }
@@ -1696,6 +2447,17 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 RECT slotBounds = slot->GetBounds();
                 if (!PtInRect(&slotBounds, pt)) continue;
                 if (!PtInRect(&bodyRect, pt)) continue;
+                if (auto* groupEntry =
+                    dynamic_cast<CollectionGroupEntryItem*>(
+                        slot->GetItem()))
+                {
+                    const size_t collectionIndex =
+                        FindWidgetIndexById(
+                            groupEntry->GetCollectionId());
+                    if (collectionIndex < widgets_.size())
+                        OpenCollectionPopupAt(collectionIndex, pt);
+                    return 0;
+                }
                 if (auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem()))
                 {
                     DesktopItem* item = icon->GetDesktopItem();
@@ -1757,9 +2519,28 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         OnKeyDown(wp);
         return 0;
     case WM_HOTKEY:
+        if (settingsWindow_ &&
+            settingsWindow_->IsHotkeyCaptureActive())
+        {
+            settingsWindow_->CaptureRegisteredHotkey(
+                LOWORD(lp), HIWORD(lp));
+            return 0;
+        }
         if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
         {
             ToggleQuickNavigation();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kFloatingDockHotkeyId)
+        {
+            ToggleFloatingDock();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kDesktopPassthroughHotkeyId)
+        {
+            BeginDesktopPassthroughHold();
             return 0;
         }
         break;
@@ -1803,6 +2584,7 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (luaInlineEdit_)
             CommitLuaInlineTextEdit(false);
         UnregisterNavigationHotkey();
+        UnregisterFloatingDockHotkey();
         if (!exitRequested_)
         {
             ResetDesktopWindowResources();

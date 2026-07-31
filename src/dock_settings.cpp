@@ -715,6 +715,7 @@ PersonalizationSettings MakeTransparentTaskbarAppearance()
 
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
 {
+    NormalizeDockSettings(settings);
     // Older configuration files do not contain this system setting. Start
     // from the current Windows state so upgrading never changes it silently.
     settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
@@ -730,6 +731,24 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "position", value))
         settings.position = static_cast<DockPosition>(std::clamp(static_cast<int>(value), 0, 3));
     ReadBoolField(text, "edgeAttached", settings.edgeAttached);
+    ReadBoolField(text, "floatingShortcutMode", settings.floatingShortcutMode);
+    if (ReadDoubleField(text, "floatingHotkeyModifiers", value))
+    {
+        constexpr UINT allowedModifiers =
+            MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
+        settings.floatingHotkeyModifiers =
+            static_cast<UINT>(
+                std::max(0, static_cast<int>(value))) &
+            allowedModifiers;
+    }
+    if (ReadDoubleField(text, "floatingHotkeyVirtualKey", value) &&
+        value > 0.0 && value <= 0xFF)
+    {
+        settings.floatingHotkeyVirtualKey =
+            static_cast<UINT>(value);
+    }
+    ReadBoolField(text, "floatingEdgeSwipeEnabled",
+        settings.floatingEdgeSwipeEnabled);
     if (ReadDoubleField(text, "monitorScope", value))
     {
         settings.monitorScope = static_cast<DockMonitorScope>(
@@ -748,7 +767,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
+    ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
+    ReadBoolField(text, "keepWhenDesktopHidden",
+        settings.keepWhenDesktopHidden);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
@@ -791,6 +813,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     ReadDynamicRule(text, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
+    NormalizeDockSettings(settings);
     return true;
 }
 
@@ -804,14 +827,27 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"position\": " << static_cast<int>(settings.position) << ",\n";
     file << "  \"edgeAttached\": "
          << (settings.edgeAttached ? "true" : "false") << ",\n";
+    file << "  \"floatingShortcutMode\": "
+         << (settings.floatingShortcutMode ? "true" : "false") << ",\n";
+    file << "  \"floatingHotkeyModifiers\": "
+         << settings.floatingHotkeyModifiers << ",\n";
+    file << "  \"floatingHotkeyVirtualKey\": "
+         << settings.floatingHotkeyVirtualKey << ",\n";
+    file << "  \"floatingEdgeSwipeEnabled\": "
+         << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
+         << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
-    file << "  \"showRunningApps\": "
-         << (settings.showRunningApps ? "true" : "false") << ",\n";
+    // Preserve the legacy keys for downgrade compatibility while migrating
+    // every saved configuration to the unconditional feature behavior.
+    file << "  \"showRunningApps\": true,\n";
+    file << "  \"showWindowPreviews\": true,\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
+    file << "  \"keepWhenDesktopHidden\": "
+         << (settings.keepWhenDesktopHidden ? "true" : "false") << ",\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
     file << "  \"systemTaskbarAutoHide\": "

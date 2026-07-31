@@ -149,6 +149,21 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     AppendMenuW(menu,
         MF_STRING | (dockSettings_.showFrequentItems ? MF_CHECKED : MF_UNCHECKED),
         kContextDockShowFrequentItems, _LW("app.dock.show_frequent"));
+
+    HMENU keepMenu = CreatePopupMenu();
+    if (keepMenu)
+    {
+        AppendMenuW(keepMenu,
+            MF_STRING | (dockSettings_.keepWhenDesktopHidden ? MF_CHECKED : MF_UNCHECKED),
+            kContextDockKeepWhenHiddenOn, _LW("app.interact.on"));
+        AppendMenuW(keepMenu,
+            MF_STRING | (!dockSettings_.keepWhenDesktopHidden ? MF_CHECKED : MF_UNCHECKED),
+            kContextDockKeepWhenHiddenOff, _LW("app.interact.off"));
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(keepMenu),
+            _LW("app.dock.keep_when_hidden"));
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(keepMenu), L"");
+    }
+
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
 
@@ -188,6 +203,12 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         updated.showFrequentItems = !updated.showFrequentItems;
         layoutChanged = true;
         break;
+    case kContextDockKeepWhenHiddenOn:
+        updated.keepWhenDesktopHidden = true;
+        break;
+    case kContextDockKeepWhenHiddenOff:
+        updated.keepWhenDesktopHidden = false;
+        break;
     case kContextDockDetailedSettings:
         if (settingsWindow_)
         {
@@ -213,6 +234,57 @@ inline void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     }
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+inline void DesktopApp::ShowDockRunningAppContextMenu(
+    POINT screenPoint, size_t runningIndex)
+{
+    if (runningIndex >=
+        dockUnpinnedRunningApps_.size())
+        return;
+
+    const DockRunningAppInfo& running =
+        dockUnpinnedRunningApps_[runningIndex];
+    DockAppIdentity identity;
+    identity.executablePath =
+        running.executablePath;
+    identity.appUserModelId =
+        running.appUserModelId;
+    identity.kind =
+        !identity.appUserModelId.empty()
+        ? DockAppIdentityKind::Applications
+        : DockAppIdentityKind::Executable;
+    if (identity.kind ==
+            DockAppIdentityKind::Executable &&
+        identity.executablePath.empty())
+        return;
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+    AppendMenuW(
+        menu, MF_STRING,
+        kContextDockCloseApplication,
+        _LW("app.dock.close_application"));
+    SetMenuItemIcon(
+        menu, kContextDockCloseApplication,
+        L"");
+
+    DismissDockWindowPreviewUntilLeave();
+    SetForegroundWindow(hwnd_);
+    const UINT command = TrackPopupMenuEx(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint.x, screenPoint.y,
+        hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+
+    if (command ==
+        kContextDockCloseApplication)
+        CloseDockApplicationWindows(identity);
 }
 
 /**
@@ -440,7 +512,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 AppendMenuW(fontSizeMenu, flags, id, label);
             };
             addFontSizeItem(kContextFontSizeSmall, _LW("app.menu.font_small"), 12);
-            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 14);
+            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 15);
             addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 16);
             const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_pt",
                 std::to_wstring(currentFontSize));
@@ -483,6 +555,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, _LW("app.menu.collection"));
         AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, _LW("app.menu.file_categories"));
         AppendMenuW(widgetMenu, MF_STRING, kContextAddFolderMappingWidget, _LW("app.menu.folder_mapping"));
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionGroupWidget, _LW("app.menu.collection_group"));
+        AppendMenuW(widgetMenu, MF_STRING, kContextAddFileGroupWidget, _LW("app.menu.file_group"));
         if (!luaWidgets.empty())
         {
             AppendMenuW(widgetMenu, MF_SEPARATOR, 0, nullptr);
@@ -611,6 +685,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu), L"");
         SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget, L"");
+        SetMenuItemIcon(widgetMenu, kContextAddCollectionGroupWidget, L"");
+        SetMenuItemIcon(widgetMenu, kContextAddFileGroupWidget, L"");
         SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, L"");
         SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, L"");
     }
@@ -695,6 +771,8 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextPinFirstPage: ToggleFirstPagePin(screenPoint); break;
     case kContextPinLastPage:  ToggleLastPagePin(screenPoint);  break;
     case kContextAddCollectionWidget: AddCollectionWidgetAt(screenPoint); break;
+    case kContextAddCollectionGroupWidget: AddCollectionGroupWidgetAt(screenPoint); break;
+    case kContextAddFileGroupWidget: AddFileGroupWidgetAt(screenPoint); break;
     case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;
     case kContextAddFolderMappingWidget: AddFolderMappingWidgetAt(screenPoint); break;
     case kContextNewMenu:
@@ -790,7 +868,7 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         break;
     case kContextSettingsCommand: ShowSettingsWindow(); break;
     case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
-    case kContextFontSizeMedium: SetItemFontSize(14.0f); break;
+    case kContextFontSizeMedium: SetItemFontSize(15.0f); break;
     case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
     case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
     case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
@@ -811,29 +889,67 @@ inline void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
  * @param itemIndex   当前右键点击的桌面项索引。
  */
 inline void DesktopApp::ShowItemContextMenu(
-    POINT screenPoint, int itemIndex, bool dockFrequentItem)
+    POINT screenPoint, int itemIndex, bool dockFrequentItem,
+    bool keepQuickNavigationOpen,
+    std::optional<RECT> dockRenameAnchor,
+    std::optional<size_t> dockMappingEntryIndex,
+    bool dockApplicationItem)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
     ClearMenuIcons();
+
+    const bool dockMapping =
+        dockMappingEntryIndex &&
+        *dockMappingEntryIndex < dockEntries_.size() &&
+        snowdesktop::
+            desktop_item_reference_migration::
+                IsDockMapping(
+                    dockEntries_[*dockMappingEntryIndex]) &&
+        snowdesktop::
+            desktop_item_reference_migration::
+                KeysEqual(
+                    dockEntries_[*dockMappingEntryIndex].
+                        reference,
+                    items_[static_cast<size_t>(
+                        itemIndex)].layoutKey);
 
     int selectedCount = 0;
     for (const auto& item : items_) if (item.selected) ++selectedCount;
 
     bool canFile = !items_[itemIndex].desktopIconClsid.empty() ? false : true;
+    std::wstring itemPath;
     if (canFile)
     {
         wchar_t path[MAX_PATH]{};
         if (!SHGetPathFromIDListW(items_[itemIndex].absolutePidl.get(), path))
             canFile = false;
+        else
+            itemPath = path;
     }
+    const bool canReveal = selectedCount == 1 && canFile &&
+        snowdesktop::item_location::CanReveal(itemPath);
+    const bool canCloseDockApplication =
+        dockApplicationItem &&
+        GetDockWindowVisualState(
+            static_cast<size_t>(itemIndex)) !=
+            DockWindowVisualState::Closed;
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
+    AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
     AppendMenuW(menu, selectedCount == 1 && canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextRenameCommand, _LW("app.menu.rename"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCutCommand, _LW("app.menu.cut"));
     AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCopyCommand, _LW("app.menu.copy"));
-    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextDeleteCommand, _LW("app.settings.delete"));
+    AppendMenuW(menu,
+        (canFile || dockMapping)
+            ? MF_STRING
+            : MF_STRING | MF_GRAYED,
+        kContextDeleteCommand,
+        dockMapping
+            ? _LW("app.dock.remove_mapping")
+            : _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFrequentItem)
@@ -842,8 +958,17 @@ inline void DesktopApp::ShowItemContextMenu(
         AppendMenuW(menu, MF_STRING, kContextDockRemoveFrequentItem,
             _LW("app.dock.remove_frequent"));
     }
+    if (canCloseDockApplication)
+    {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(
+            menu, MF_STRING,
+            kContextDockCloseApplication,
+            _LW("app.dock.close_application"));
+    }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
+    SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
     SetMenuItemIcon(menu, kContextRenameCommand, L"");
     SetMenuItemIcon(menu, kContextCutCommand, L"");
     SetMenuItemIcon(menu, kContextCopyCommand, L"");
@@ -851,11 +976,21 @@ inline void DesktopApp::ShowItemContextMenu(
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
     if (dockFrequentItem)
         SetMenuItemIcon(menu, kContextDockRemoveFrequentItem, L"");
+    if (canCloseDockApplication)
+        SetMenuItemIcon(
+            menu, kContextDockCloseApplication,
+            L"");
 
-    SetForegroundWindow(hwnd_);
+    HWND menuOwner = keepQuickNavigationOpen &&
+        quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_
+        : hwnd_;
+    SetForegroundWindow(menuOwner);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
-    FocusDesktopInputWindow();
+        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    if (!keepQuickNavigationOpen)
+        FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
@@ -871,8 +1006,15 @@ inline void DesktopApp::ShowItemContextMenu(
         }
         break;
     }
+    case kContextRevealLocationCommand:
+        snowdesktop::item_location::Reveal(hwnd_, itemPath);
+        break;
     case kContextRenameCommand:
-        BeginRenameSelected();
+        if (keepQuickNavigationOpen)
+            BeginQuickNavigationDesktopItemRename(
+                static_cast<size_t>(itemIndex));
+        else
+            BeginRenameSelected(dockRenameAnchor);
         break;
     case kContextCutCommand:
     case kContextCopyCommand:
@@ -931,6 +1073,12 @@ inline void DesktopApp::ShowItemContextMenu(
     }
     case kContextDeleteCommand:
     {
+        if (dockMapping &&
+            RemoveDockMappingAt(
+                *dockMappingEntryIndex))
+        {
+            break;
+        }
         cutPaths_.clear();
         for (const auto& item : items_)
         {
@@ -953,7 +1101,13 @@ inline void DesktopApp::ShowItemContextMenu(
         break;
     }
     case kContextMoreCommand:
-        ShowShellContextMenu(screenPoint, itemIndex);
+        ShowShellContextMenu(
+            screenPoint, itemIndex,
+            keepQuickNavigationOpen,
+            dockRenameAnchor,
+            dockMapping
+                ? dockMappingEntryIndex
+                : std::nullopt);
         break;
     case kContextDockRemoveFrequentItem:
     {
@@ -970,6 +1124,12 @@ inline void DesktopApp::ShowItemContextMenu(
         if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     }
+    case kContextDockCloseApplication:
+        CloseDockApplicationWindows(
+            ResolveDockAppIdentity(
+                static_cast<size_t>(
+                    itemIndex)));
+        break;
     }
 }
 
@@ -980,7 +1140,11 @@ inline void DesktopApp::ShowItemContextMenu(
  * @param screenPoint 菜单弹出的屏幕坐标。
  * @param itemIndex   当前右键点击的项索引（用于确定 PIDL 列表的锚点）。
  */
-inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
+inline void DesktopApp::ShowShellContextMenu(
+    POINT screenPoint, int itemIndex,
+    bool keepQuickNavigationOpen,
+    std::optional<RECT> dockRenameAnchor,
+    std::optional<size_t> dockMappingEntryIndex)
 {
     std::vector<LPCITEMIDLIST> pidls;
     if (itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size())
@@ -1007,10 +1171,16 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
     ctxMenu.As(&activeContextMenu2_);
     ctxMenu.As(&activeContextMenu3_);
 
-    SetForegroundWindow(hwnd_);
+    HWND menuOwner = keepQuickNavigationOpen &&
+        quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_
+        : hwnd_;
+    SetForegroundWindow(menuOwner);
     UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
-    FocusDesktopInputWindow();
+        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    if (!keepQuickNavigationOpen)
+        FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -1020,18 +1190,38 @@ inline void DesktopApp::ShowShellContextMenu(POINT screenPoint, int itemIndex)
         UINT commandOffset = cmd - kFirstCmd;
         wchar_t menuText[128]{};
         bool renameCommand = IsShellRenameCommand(ctxMenu.Get(), commandOffset);
+        bool deleteCommand = IsShellDeleteCommand(
+            ctxMenu.Get(), commandOffset);
         if (!renameCommand &&
             GetMenuStringW(menu, cmd, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
         {
             renameCommand = StrStrIW(menuText, L"重命名") != nullptr || // l10n-allow: match Chinese Windows shell verb
                 StrStrIW(menuText, L"Rename") != nullptr;
+            deleteCommand = deleteCommand ||
+                StrStrIW(menuText, L"删除") != nullptr || // l10n-allow: match Chinese Windows shell verb
+                StrStrIW(menuText, L"Delete") != nullptr;
         }
 
         if (renameCommand)
         {
             DestroyMenu(menu);
             RestoreDesktopWindowLayer();
-            BeginRenameSelected();
+            if (keepQuickNavigationOpen)
+                BeginQuickNavigationDesktopItemRename(
+                    static_cast<size_t>(
+                        itemIndex));
+            else
+                BeginRenameSelected(dockRenameAnchor);
+            return;
+        }
+
+        if (deleteCommand &&
+            dockMappingEntryIndex &&
+            RemoveDockMappingAt(
+                *dockMappingEntryIndex))
+        {
+            DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
             return;
         }
 
@@ -1272,6 +1462,128 @@ inline void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPa
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         ReloadItems();
+    }
+
+    DestroyMenu(menu);
+    RestoreDesktopWindowLayer();
+    ILFree(pidl);
+}
+
+inline void DesktopApp::
+ShowShellItemContextMenuForPath(
+    const std::wstring& itemPath,
+    POINT screenPoint)
+{
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHParseDisplayName(
+            itemPath.c_str(), nullptr,
+            &pidl, 0, nullptr)) ||
+        !pidl)
+        return;
+
+    IShellFolder* parentFolder = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    if (FAILED(SHBindToParent(
+            pidl, IID_IShellFolder,
+            reinterpret_cast<void**>(
+                &parentFolder),
+            &child)) ||
+        !parentFolder)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    ComPtr<IContextMenu> contextMenu;
+    const HRESULT hr =
+        parentFolder->GetUIObjectOf(
+            hwnd_, 1, &child,
+            IID_IContextMenu, nullptr,
+            reinterpret_cast<void**>(
+                contextMenu.
+                    GetAddressOf()));
+    parentFolder->Release();
+    if (FAILED(hr) || !contextMenu)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+    {
+        ILFree(pidl);
+        return;
+    }
+    constexpr UINT kFirstCmd = 1;
+    constexpr UINT kLastCmd = 0x7FFF;
+    if (FAILED(
+            contextMenu->QueryContextMenu(
+                menu, 0, kFirstCmd,
+                kLastCmd,
+                CMF_NORMAL |
+                    CMF_EXPLORE |
+                    CMF_CANRENAME)))
+    {
+        DestroyMenu(menu);
+        ILFree(pidl);
+        return;
+    }
+
+    contextMenu.As(
+        &activeContextMenu2_);
+    contextMenu.As(
+        &activeContextMenu3_);
+    SetForegroundWindow(hwnd_);
+    const UINT command =
+        TrackPopupMenuEx(
+            menu,
+            TPM_RETURNCMD |
+                TPM_RIGHTBUTTON,
+            screenPoint.x,
+            screenPoint.y,
+            hwnd_, nullptr);
+    FocusDesktopInputWindow();
+    activeContextMenu2_.Reset();
+    activeContextMenu3_.Reset();
+
+    if (command >= kFirstCmd &&
+        command <= kLastCmd)
+    {
+        const UINT commandOffset =
+            command - kFirstCmd;
+        CMINVOKECOMMANDINFOEX invoke{};
+        invoke.cbSize = sizeof(invoke);
+        invoke.fMask =
+            CMIC_MASK_UNICODE |
+            CMIC_MASK_PTINVOKE;
+        invoke.hwnd =
+            ShellDialogOwnerHwnd();
+        invoke.lpVerb =
+            MAKEINTRESOURCEA(
+                commandOffset);
+        invoke.lpVerbW =
+            MAKEINTRESOURCEW(
+                commandOffset);
+        invoke.nShow = SW_SHOWNORMAL;
+        invoke.ptInvoke = screenPoint;
+        SafeInvokeCommand(
+            contextMenu.Get(),
+            reinterpret_cast<
+                LPCMINVOKECOMMANDINFO>(
+                    &invoke));
+        for (size_t i = 0;
+            i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].type ==
+                DesktopWidgetType::
+                    FolderMapping)
+                RefreshFolderMappingWidget(
+                    i);
+        }
+        ReloadItems(false);
+        if (dockFolderPopupOpen_)
+            RefreshDockFolderPopup();
     }
 
     DestroyMenu(menu);

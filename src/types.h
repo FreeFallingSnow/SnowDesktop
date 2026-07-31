@@ -9,6 +9,7 @@
 #include <shlobj.h>
 
 #include "constants.h"
+#include "folder_sort_rules.h"
 
 #include <string>
 #include <vector>
@@ -107,10 +108,13 @@ struct PendingWidgetMove
 enum class DesktopWidgetType
 {
     Collection,      /**< 集合组件 */
+    CollectionGroup, /**< 集合组组件 */
+    FileGroup,       /**< 文件组组件 */
     FileCategories,  /**< 文件分类组件 */
     FolderMapping,   /**< 文件夹映射组件 */
     LuaScript,       /**< Lua 脚本组件 */
     Guide,           /**< 分页指南组件 */
+    Count,           /**< 组件类型注册表边界；不得用于持久化 */
 };
 
 // ── PIDL Wrapper ───────────────────────────
@@ -268,6 +272,7 @@ struct FolderEntry
     std::wstring name;
     std::wstring fullPath;
     bool isDirectory = false;
+    FILETIME lastWriteTime{};
     int sysIconIndex = -1;
     HBITMAP iconBitmap = nullptr;
     SIZE iconBitmapSize{};
@@ -284,6 +289,7 @@ struct FolderEntry
         : name(other.name),
           fullPath(other.fullPath),
           isDirectory(other.isDirectory),
+          lastWriteTime(other.lastWriteTime),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(nullptr),
           iconBitmapSize(other.iconBitmapSize),
@@ -313,6 +319,7 @@ struct FolderEntry
             name = other.name;
             fullPath = other.fullPath;
             isDirectory = other.isDirectory;
+            lastWriteTime = other.lastWriteTime;
             sysIconIndex = other.sysIconIndex;
             iconBitmapSize = other.iconBitmapSize;
             selected = other.selected;
@@ -365,6 +372,7 @@ public:
         : name(std::move(other.name)),
           fullPath(std::move(other.fullPath)),
           isDirectory(other.isDirectory),
+          lastWriteTime(other.lastWriteTime),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(other.iconBitmap),
           iconBitmapSize(other.iconBitmapSize),
@@ -390,6 +398,7 @@ public:
             name = std::move(other.name);
             fullPath = std::move(other.fullPath);
             isDirectory = other.isDirectory;
+            lastWriteTime = other.lastWriteTime;
             sysIconIndex = other.sysIconIndex;
             iconBitmap = other.iconBitmap;
             iconBitmapSize = other.iconBitmapSize;
@@ -432,14 +441,23 @@ struct DesktopWidget
     bool bottomBarHover = true;
     int scrollOffset = 0;
     int tabScrollOffset = 0;
+    // Folder mappings share this order across their desktop, FileGroup and
+    // Dock-popup hosts. -1 preserves an explicitly dragged/manual order.
+    int folderSortMode = -1;
+    bool folderSortAscending = true;
     std::wstring activeCategoryId;
-    std::wstring scriptPath;
+    std::wstring packageId;        ///< Lua package UUID used by layouts/runtime
+    std::wstring legacyScriptPath; ///< Pending loose-script migration only
     bool showOnHoverOnly = false;
+    bool keepWhenDesktopHidden = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
     bool userRenamed = false; // Compatibility mirror of !customTitle.empty().
     bool dateHeaders = false;
+    bool showFileCategories = false;
+    bool showSearchBox = false;
     std::vector<std::wstring> itemKeys;
+    std::vector<std::wstring> childWidgetIds;
     std::vector<FolderEntry> folderEntries;
 };
 
@@ -448,13 +466,14 @@ enum class DockEntryType
 {
     DesktopItem,
     Collection,
+    FolderMapping,
 };
 
 /**
  * @brief 主屏 Dock 条目。
- * @details DesktopItem 使用 layoutKey，Collection 使用 widget id。
+ * @details DesktopItem 使用 layoutKey，Collection/FolderMapping 使用 widget id。
  *          DesktopItem 的 keepOnDesktop=true 表示 Ctrl“假复制”；
- *          Collection 始终是唯一实例，进入 Dock 后不会保留桌面入口。
+ *          Collection/FolderMapping 始终是唯一实例，进入 Dock 后不会保留桌面入口。
  */
 struct DockEntry
 {
@@ -462,6 +481,12 @@ struct DockEntry
     std::wstring reference;
     bool keepOnDesktop = false;
     bool selected = false;
+    // Direct folder items and folder shortcuts have no persistent
+    // FolderMapping widget, so their popup order belongs to the Dock entry.
+    int folderSortMode =
+        snowdesktop::folder_sort_rules::kName;
+    bool folderSortAscending = true;
+    std::vector<std::wstring> folderItemKeys;
 };
 
 struct DockUsageRecord

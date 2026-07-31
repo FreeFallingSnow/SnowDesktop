@@ -26,6 +26,8 @@
 #include <wrl/client.h>
 #include "system_snapshot.h"
 #include "http_runtime.h"
+#include "calendar_service.h"
+#include "widget_package.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -41,13 +43,26 @@ extern "C" {
 #include <functional>
 #include <chrono>
 #include <atomic>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 
 using Microsoft::WRL::ComPtr;
 
 struct D2DState;
+
+struct LuaRuntimeQuota
+{
+    std::size_t memoryBytes = 0;
+    std::size_t memoryLimit = 16u * 1024u * 1024u;
+    std::int64_t instructionsRemaining = 0;
+    std::chrono::steady_clock::time_point deadline{};
+    bool memoryExceeded = false;
+    bool executionExceeded = false;
+    double lastExecutionMs = 0.0;
+};
 
 /**
  * @struct LuaWidgetManifest
@@ -76,6 +91,11 @@ struct LuaWidgetManifest
         bool isDefault = false;
     };
     bool hasManifest = false;          ///< 是否存在清单文件
+    int schemaVersion = 0;             ///< 组件包清单版本
+    std::string packageId;             ///< 不可变组件包 UUID
+    std::string slug;                  ///< 人类可读短名称
+    int apiVersion = 0;                ///< Lua 宿主 API 契约版本
+    int dataVersion = 1;               ///< 实例存储结构版本
     std::string name;                  ///< 小部件显示名称
     std::string nameKey;               ///< 小部件名称翻译键
     std::string version;               ///< 版本号字符串
@@ -160,11 +180,19 @@ struct WidgetDiagnosticEntry
     std::wstring widgetId;              ///< 小部件实例 ID
     std::string name;                   ///< 小部件名称
     std::wstring scriptPath;            ///< 脚本文件路径
+    std::string packageId;
+    std::string packageVersion;
     bool valid = false;                 ///< 是否成功加载并处于有效状态
     bool hasManifest = false;           ///< 是否包含清单文件
     std::vector<std::string> permissions; ///< 已授予的权限列表
     std::string lastError;              ///< 最近一次错误信息
     std::vector<WidgetLogEntry> logs;   ///< 运行时日志列表
+    std::size_t memoryBytes = 0;
+    std::size_t memoryLimit = 0;
+    double lastCallbackMs = 0.0;
+    bool executionQuotaExceeded = false;
+    bool memoryQuotaExceeded = false;
+    bool circuitOpen = false;
 };
 
 /**
@@ -186,6 +214,14 @@ struct LuaInlineTextEditRequest
     int textColor = 0x000000; ///< 文本颜色（ARGB 格式，默认黑色）
     int backgroundColor = 0xFFFFFF; ///< 编辑框背景颜色（RGB，默认白色）
     float fontSize = 15.0f;  ///< 编辑框字号（像素，默认 15）
+};
+
+struct LuaWidgetPanelRequest
+{
+    std::wstring widgetId;
+    std::wstring title;
+    int width = 520;
+    int height = 620;
 };
 
 /**
@@ -230,10 +266,17 @@ struct LuaWidget
         bool value = false;
         bool selectAll = true;
         bool liveUpdate = false;
+        bool multiline = false;
+        float fontSize = 15.0f;
+        float padding = 8.0f;
         int contentHeight = 0;
         int viewportHeight = 0;
     };
     std::wstring widgetId;               ///< 小部件实例唯一 ID
+    std::string packageId;                ///< 组件包 UUID
+    std::filesystem::path packageRoot;    ///< 已校验组件包根目录
+    lua_State* state = nullptr;           ///< Per-instance Lua VM
+    std::unique_ptr<LuaRuntimeQuota> quota; ///< VM memory/instruction accounting
     std::string name;                    ///< 小部件名称
     std::wstring filePath;               ///< Lua 脚本文件的完整路径
     LuaWidgetManifest manifest;          ///< 从清单文件解析的元数据
@@ -252,8 +295,14 @@ struct LuaWidget
     bool hostVisible = false;
     bool usesSystemSnapshot = false;
     bool usesMediaSnapshot = false;
+    double lastCallbackMs = 0.0;
+    std::uint32_t consecutiveErrors = 0;
+    bool circuitOpen = false;
+    std::chrono::steady_clock::time_point notificationWindow{};
+    std::uint32_t notificationsInWindow = 0;
     std::chrono::steady_clock::time_point lastRenderTime{};
     UINT_PTR refreshTimerId = 0;        ///< 宿主分配的独立 Win32 定时器 ID（0 = 未开）
+    UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒 ID
     struct Timer
     {
         std::string name;
@@ -305,12 +354,17 @@ public:
     void Shutdown();
 
     using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
+    using ApplicationSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
     using EverythingSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
+    using WidgetSelectedProvider = std::function<bool(const std::wstring&)>;
+    using SelectedWidgetPackageProvider = std::function<std::wstring()>;
     using WidgetTitleCallback = std::function<void(const std::wstring&, const std::wstring&)>;
     using InvalidateCallback = std::function<void(const std::wstring&)>;
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
     using DesktopRefreshCallback = std::function<void()>;
     using InlineTextEditCallback = std::function<void(const LuaInlineTextEditRequest&)>;
+    using WidgetPanelOpenCallback = std::function<void(const LuaWidgetPanelRequest&)>;
+    using WidgetPanelCloseCallback = std::function<void(const std::wstring&)>;
     using HostInputFocusCallback = std::function<void()>;
     using NotifyCallback = std::function<void(const std::wstring&, const std::wstring&)>;
     using WidgetTimerRequestCallback = std::function<UINT_PTR(const std::wstring& widgetId, UINT intervalMs)>;
@@ -320,6 +374,15 @@ public:
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
     /** @brief 设置选中项提供者回调 */
     void SetSelectionProvider(DesktopSnapshotProvider provider) { selectionProvider_ = std::move(provider); }
+    /** @brief 设置组件选中状态提供者回调 */
+    void SetWidgetSelectedProvider(WidgetSelectedProvider provider) { widgetSelectedProvider_ = std::move(provider); }
+    /** @brief 设置当前唯一选中组件的包 UUID 提供者 */
+    void SetSelectedWidgetPackageProvider(
+        SelectedWidgetPackageProvider provider)
+    {
+        selectedWidgetPackageProvider_ = std::move(provider);
+    }
+    void SetApplicationSearchProvider(ApplicationSearchProvider provider) { applicationSearchProvider_ = std::move(provider); }
     void SetEverythingSearchProvider(EverythingSearchProvider provider) { everythingSearchProvider_ = std::move(provider); }
     /** @brief 设置小部件标题变更回调 */
     void SetWidgetTitleCallback(WidgetTitleCallback callback) { setWidgetTitleCallback_ = std::move(callback); }
@@ -337,6 +400,8 @@ public:
     void SetHostInputFocusCallback(HostInputFocusCallback callback) { hostInputFocusCallback_ = std::move(callback); }
     /** @brief 设置打开组件设置面板回调 */
     void SetOpenWidgetSettingsCallback(WidgetTitleCallback callback) { openWidgetSettingsCallback_ = std::move(callback); }
+    void SetOpenWidgetPanelCallback(WidgetPanelOpenCallback callback) { openWidgetPanelCallback_ = std::move(callback); }
+    void SetCloseWidgetPanelCallback(WidgetPanelCloseCallback callback) { closeWidgetPanelCallback_ = std::move(callback); }
     /** @brief 设置系统通知回调 */
     void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
     /** @brief 设置组件独立刷新定时器请求回调（宿主为该 widget 开 Win32 timer，返回 timerId） */
@@ -357,6 +422,7 @@ public:
      * @param widgetId 要卸载的小部件 ID
      */
     void UnloadWidget(const std::wstring& widgetId);
+    void DeleteWidgetInstance(const std::wstring& widgetId);
 
     /**
      * @brief 重新加载指定小部件实例
@@ -381,16 +447,18 @@ public:
      */
     void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
+    bool RenderWidgetPanel(const std::wstring& widgetId,
+        ID2D1DeviceContext* context, RECT bounds);
     void TickRuntime();
     /**
-     * @brief 处理宿主转发的组件独立刷新定时器到期
+     * @brief 处理宿主转发的组件独立定时器到期
      * @param widgetId 触发刷新的小部件实例 ID
+     * @param timerId 宿主触发的 Win32 定时器 ID
      *
-     * 由 manifest 的 refreshIntervalMs 声明驱动：宿主为该 widget 单独开 Win32 timer，
-     * 到期时调用本方法，触发该 widget 的 onTimer("refresh") 回调（若定义）并 invalidate 自身。
-     * 与全局 TickRuntime 解耦，高刷新组件不影响其他组件。
+     * 同时处理 manifest.refreshIntervalMs 的周期刷新和 widget.setTimer 命名定时器。
+     * 命名定时器只为最近一次到期时间申请单次宿主唤醒，避免全局轮询全部组件。
      */
-    void OnWidgetTimer(const std::wstring& widgetId);
+    void OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId);
 
     /**
      * @brief 查询指定小部件是否启用了自定义主题样式
@@ -450,6 +518,7 @@ public:
      * @param reason 变更原因描述字符串
      */
     void NotifyDesktopChanged(const std::string& reason);
+    void NotifyCalendarChanged(const std::string& reason);
 
     /**
      * @brief 读取 Lua 脚本中的布尔标志值
@@ -533,7 +602,56 @@ public:
      * @return 成功读取返回 true
      */
     static bool GetWidgetDefaultSpan(const std::wstring& filename, int& columns, int& rows);
-    static bool InstallWidgetPackage(const std::wstring& manifestPath, std::wstring& error);
+    static bool InstallWidgetPackage(const std::wstring& manifestPath,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false,
+        snowdesktop::widget::InstalledPackage* installed = nullptr);
+    bool InstallAndVerifyWidgetPackage(const std::wstring& path,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    static snowdesktop::widget::ProviderStatus GetStaticWidgetCatalogStatus(
+        const std::filesystem::path& catalogPath);
+    static void RegisterWidgetPackageSource(
+        std::shared_ptr<snowdesktop::widget::IWidgetPackageSource> source);
+    static bool ConfigureStaticWidgetCatalog(
+        const std::filesystem::path& catalogPath, std::string& error);
+    static std::vector<snowdesktop::widget::PackageSourceInfo>
+        ListWidgetPackageSources();
+    static std::vector<snowdesktop::widget::PackageDetails>
+        QueryWidgetPackageSource(const std::string& providerId,
+            const snowdesktop::widget::PackageQuery& query,
+            std::string& error);
+    bool InstallAndVerifyWidgetPackageFromSource(
+        const std::string& providerId, const std::string& externalItemId,
+        const std::string& version, std::wstring& error,
+        bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    int ApplySafeWidgetPackageUpdates(const std::string& providerId,
+        std::string& report);
+    static std::vector<snowdesktop::widget::PackageDetails>
+        QueryStaticWidgetCatalog(const std::filesystem::path& catalogPath,
+            const snowdesktop::widget::PackageQuery& query,
+            std::string& error);
+    bool InstallAndVerifyStaticWidgetPackage(
+        const std::filesystem::path& catalogPath,
+        const std::string& externalItemId, const std::string& version,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    static snowdesktop::widget::PackagePaths GetWidgetPackagePaths();
+    static std::vector<snowdesktop::widget::InstalledPackage>
+        ListWidgetPackages();
+    static std::vector<snowdesktop::widget::LegacyPackage>
+        ListLegacyWidgetPackages();
+    static std::optional<std::wstring> ResolveLegacyWidgetPackage(
+        const std::wstring& legacyName);
+    static snowdesktop::widget::LegacyMigrationResult MigrateLegacyWidgetPackage(
+        const snowdesktop::widget::LegacyPackage& legacy);
+    static bool SetWidgetPackageEnabled(const std::string& packageId,
+        bool enabled, std::string& error);
+    static bool RollbackWidgetPackage(const std::string& packageId,
+        const std::string& version, std::string& error);
+    static bool UninstallWidgetPackage(const std::string& packageId,
+        std::string& error);
 
     /**
      * @brief 渲染指定小部件的 ImGui 编辑器界面
@@ -556,6 +674,7 @@ public:
      * @return 拥有权限返回 true，否则返回 false
      */
     bool RuntimeHasPermission(const std::wstring& widgetId, const char* permission) const;
+    void ActivateWidgetState(const std::wstring& widgetId);
 
     /**
      * @brief 记录运行时错误
@@ -583,7 +702,30 @@ public:
      * @return 选中项信息列表
      */
     std::vector<LuaDesktopItemInfo> RuntimeDesktopSelection() const;
+    std::vector<LuaDesktopItemInfo> RuntimeApplicationSearch(const std::string& query, int maxResults) const;
     std::vector<LuaDesktopItemInfo> RuntimeEverythingSearch(const std::string& query, int maxResults) const;
+    std::string RuntimeCalendarSelectedDate() const;
+    bool RuntimeCalendarSetSelectedDate(
+        const std::string& date);
+    std::optional<snowdesktop::calendar::DateInfo>
+        RuntimeCalendarDateInfo(
+            const std::string& date) const;
+    std::optional<std::string> RuntimeCalendarAddDays(
+        const std::string& date, int offset) const;
+    std::vector<snowdesktop::calendar::CalendarEvent>
+        RuntimeCalendarEvents(
+            const std::string& fromDate,
+            const std::string& toDate) const;
+    snowdesktop::calendar::MutationResult
+        RuntimeCalendarCreate(
+            snowdesktop::calendar::CalendarEvent event);
+    snowdesktop::calendar::MutationResult
+        RuntimeCalendarUpdate(
+            const std::string& id,
+            int expectedRevision,
+            snowdesktop::calendar::CalendarEvent event);
+    snowdesktop::calendar::MutationResult
+        RuntimeCalendarRemove(const std::string& id);
 
     /**
      * @brief 通过宿主打开指定路径
@@ -598,6 +740,8 @@ public:
      * @return 操作成功返回 true
      */
     bool RuntimeRevealDesktopPath(const std::wstring& path);
+    std::optional<std::wstring> RuntimeResolvePackageAsset(
+        const std::wstring& widgetId, const std::wstring& relativePath) const;
 
     /**
      * @brief 请求宿主刷新桌面内容
@@ -663,13 +807,17 @@ public:
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
     void SetItemFontSizeScale(float scale);
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
+    void RuntimeOpenWidgetPanel(const std::wstring& widgetId,
+        std::wstring title, int width, int height);
+    void RuntimeCloseWidgetPanel(const std::wstring& widgetId);
 
     /**
      * @brief 发送系统通知
      * @param title 通知标题
      * @param message 通知内容
      */
-    void RuntimeNotify(const std::wstring& title, const std::wstring& message);
+    void RuntimeNotify(const std::wstring& widgetId,
+        const std::wstring& title, const std::wstring& message);
     CpuSnapshot RuntimeGetCpuSnapshot(const std::wstring& widgetId);
     MemorySnapshot RuntimeGetMemorySnapshot(const std::wstring& widgetId);
     BatterySnapshot RuntimeGetBatterySnapshot(const std::wstring& widgetId);
@@ -686,16 +834,35 @@ public:
     void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
     bool RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id);
     bool RuntimeGetFocusedHostInput(const std::wstring& widgetId, const std::string& id,
-        std::wstring& text, size_t& cursor, bool& selectAll) const;
+        std::wstring& text, size_t& cursor, size_t& selectionAnchor,
+        std::wstring& compositionText, size_t& compositionCursor) const;
+    bool RuntimeIsWidgetSelected(const std::wstring& widgetId) const;
+    std::wstring RuntimeSelectedWidgetPackageId() const;
     bool HandleHostInputKey(WPARAM key);
     bool HandleHostInputChar(wchar_t ch);
+    bool SetHostInputComposition(
+        const std::wstring& text, size_t cursor);
+    bool CommitHostInputComposition(const std::wstring& text);
+    void ClearHostInputComposition();
     bool HasFocusedHostInput() const;
+    bool GetFocusedHostInputCaretRect(RECT& rect) const;
+    bool IsFocusedHostInputAt(const std::wstring& widgetId, int x, int y) const;
+    bool HandleHostInputPointerMove(const std::wstring& widgetId, int x, int y);
+    bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y);
     void BlurHostInput(bool cancel = false);
     int RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const;
+    void RuntimeSetScrollOffset(const std::wstring& widgetId,
+        const std::string& id, int offset);
     bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y, int delta, bool wheel);
     std::vector<LuaWidget::HostControl> GetScrollControls(const std::wstring& widgetId) const;
 
 private:
+    bool VerifyInstalledWidgetPackage(const std::string& packageId,
+        const std::optional<std::string>& previousVersion,
+        std::wstring& error);
+    size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
+        const std::wstring& widgetId, int x, int y) const;
+
     /**
      * @brief 内部加载小部件脚本到沙箱
      * @param path Lua 脚本文件路径
@@ -725,6 +892,7 @@ private:
     int FindWidget(const std::wstring& widgetId) const;
     void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
     void EnsureSystemSnapshotServiceStarted();
+    void RescheduleNamedTimer(LuaWidget& widget);
 
     lua_State* L_ = nullptr;                           ///< 全局 Lua 状态机指针
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
@@ -733,9 +901,15 @@ private:
     std::vector<LuaWidget> widgets_;                   ///< 已加载的小部件实例列表
     DesktopSnapshotProvider desktopSnapshotProvider_;  ///< 桌面快照提供者回调
     DesktopSnapshotProvider selectionProvider_;        ///< 当前选中项提供者回调
+    WidgetSelectedProvider widgetSelectedProvider_;    ///< 当前组件选中状态提供者回调
+    SelectedWidgetPackageProvider
+        selectedWidgetPackageProvider_; ///< 当前唯一选中组件包 UUID
+    ApplicationSearchProvider applicationSearchProvider_; ///< Windows 应用搜索提供者回调
     EverythingSearchProvider everythingSearchProvider_; ///< Everything 搜索提供者回调
     WidgetTitleCallback setWidgetTitleCallback_;       ///< 设置小部件标题的回调
     WidgetTitleCallback openWidgetSettingsCallback_;   ///< 打开小部件设置面板的回调
+    WidgetPanelOpenCallback openWidgetPanelCallback_;
+    WidgetPanelCloseCallback closeWidgetPanelCallback_;
     InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
@@ -746,6 +920,11 @@ private:
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
+    std::unique_ptr<
+        snowdesktop::calendar::CalendarService>
+        calendarService_;
+    bool pendingCalendarSelectionChange_ = false;
+    bool pendingCalendarEventsChange_ = false;
     bool systemSnapshotServiceStarted_ = false;
     std::atomic<bool> systemSnapshotChanged_{ false };
     std::atomic<bool> mediaSnapshotChanged_{ false };
@@ -759,8 +938,12 @@ private:
         std::wstring text;
         std::wstring originalText;
         size_t cursor = 0;
-        bool selectAll = false;
+        size_t selectionAnchor = 0;
+        std::wstring compositionText;
+        size_t compositionCursor = 0;
+        bool pointerSelecting = false;
         bool liveUpdate = true;
+        bool multiline = false;
     };
     FocusedHostInput focusedHostInput_;
 };

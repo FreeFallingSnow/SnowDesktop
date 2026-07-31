@@ -17,7 +17,7 @@ struct CategoryRule
 
 struct CategorySettings
 {
-    float tabFontSize = 14.0f;
+    float tabFontSize = 15.0f;
     std::vector<CategoryRule> rules;
 
     static CategorySettings Defaults();

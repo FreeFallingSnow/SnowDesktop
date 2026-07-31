@@ -2,6 +2,9 @@
 // Inline implementations for DesktopApp — Graphics & Rendering.
 // This file is included by app_oo.h after the class definition.
 
+#include "../widgets/collection_group_rules.h"
+#include "../widget_visibility_rules.h"
+
 // ── Quick Navigation Theme Colors ───────────────────────────
 
 struct QuickNavTheme {
@@ -193,6 +196,26 @@ inline void DragRenderCache::Draw(ID2D1DeviceContext* ctx) const
         1.0f, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
 }
 
+inline bool DragRenderCache::DrawAt(
+    ID2D1DeviceContext* ctx,
+    D2D1_POINT_2F destination,
+    D2D1_INTERPOLATION_MODE interpolation) const
+{
+    if (!ctx || !bitmap_)
+        return false;
+    const D2D1_SIZE_F size = bitmap_->GetSize();
+    ctx->DrawBitmap(
+        bitmap_.Get(),
+        D2D1::RectF(
+            destination.x,
+            destination.y,
+            destination.x + size.width,
+            destination.y + size.height),
+        1.0f,
+        interpolation);
+    return true;
+}
+
 inline bool DesktopApp::InitGraphics()
 {
     // D3D11
@@ -329,6 +352,7 @@ inline void DesktopApp::RecreateItemTextFormat()
 inline void DesktopApp::ResetCompositionRenderCaches()
 {
     dragRenderCache_.Reset();
+    ResetCollectionPopupAnimationCache();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     acrylicNoiseBrushCache_.clear();
@@ -466,9 +490,12 @@ inline void DesktopApp::OnPaint(const RECT* updateRect)
         const bool widgetPreviewActive =
             widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize;
         const bool desktopMarqueeActive =
-            marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
+            marqueeActive_ &&
+            !marqueeDockFolderPopup_ &&
+            marqueeWidgetIndex_ >= widgets_.size();
         const bool completeGlassCollection = !dragSession_.IsActive() &&
-            !widgetPreviewActive && !desktopMarqueeActive;
+            !widgetPreviewActive && !desktopMarqueeActive &&
+            dcompUpdate == nullptr;
         if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size())
         {
             desktopBackdropCompositor_.RemovePanel(
@@ -476,9 +503,11 @@ inline void DesktopApp::OnPaint(const RECT* updateRect)
         }
         desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
 
-        if (!desktopIconsHidden_)
-            RenderFrame(context.Get());
-        else if (showHiddenHint_)
+        if (!desktopIconsHidden_ || HasRetainedElements())
+            RenderFrame(
+                context.Get(), dcompUpdate,
+                desktopIconsHidden_);
+        if (desktopIconsHidden_ && showHiddenHint_)
             DrawHiddenHintOverlay(context.Get());
 
         if (showWidgetAddedHint_)
@@ -597,7 +626,12 @@ inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
     const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
     const int topInset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
     const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
-    const int textHeight = std::max(1, static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
+    const int textHeight =
+        snowdesktop::item_layout_rules::
+            CollapsedTextHeight(lineHeight);
+    const int titleGap =
+        snowdesktop::item_layout_rules::
+            TitleGap(layoutScale);
     const int cellW = bounds.right - bounds.left;
     const int cellH = bounds.bottom - bounds.top;
     if (cellH < static_cast<int>(std::round(50.0f * layoutScale)))
@@ -613,7 +647,11 @@ inline RECT DesktopApp::GetItemIconRect(RECT bounds) const
             bounds.top + (cellH + iconSz) / 2);
     }
     const int maxIconW = std::max(1, cellW - inset * 2);
-    const int maxIconH = std::max(1, cellH - textHeight - inset * 2);
+    const int maxIconH =
+        snowdesktop::item_layout_rules::
+            AvailableIconHeight(
+                cellH, topInset,
+                titleGap, textHeight);
     // The title owns the bottom text band. Let the icon fill the remaining
     // square area instead of capping it at the old fixed 64-pixel size.
     const int iconSz = std::max(1, std::min(maxIconW, maxIconH));
@@ -647,13 +685,15 @@ inline RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
     RECT iconRect = GetItemIconRect(bounds);
     const int inset = std::max(1, static_cast<int>(std::round(4.0f * layoutScale)));
     const int textTop = iconRect.bottom +
-        std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
+        snowdesktop::item_layout_rules::
+            TitleGap(layoutScale);
     const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
     const int textH = expanded
         ? std::max(
             static_cast<int>(std::round(kTextExpandedHeight * layoutScale)),
             static_cast<int>(std::ceil(lineHeight * 3.0f)))
-        : std::max(1, static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
+        : snowdesktop::item_layout_rules::
+            CollapsedTextHeight(lineHeight);
 
     // The collapsed label is clipped just before a third line can begin.
     // Selected labels intentionally extend below the cell to reveal the lines
@@ -754,7 +794,17 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
 
     // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
     if (p.glassEnabled)
-        desktopBackdropCompositor_.AddPanel(frame, radius, p.glassBlurRadius);
+    {
+        if (renderingFloatingDock_)
+            floatingDockBackdropCompositor_.AddPanel(
+                snowdesktop::floating_dock_rules::
+                    DesktopRectToWindowRect(
+                        frame, floatingDockSourceRect_),
+                radius, p.glassBlurRadius);
+        else
+            desktopBackdropCompositor_.AddPanel(
+                frame, radius, p.glassBlurRadius);
+    }
 
     if (fill.a > 0.0f)
     {
@@ -764,7 +814,12 @@ inline void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT 
     if (p.glassEnabled && p.acrylicEnabled)
     {
         POINT screenOrigin{};
-        if (hwnd_) ClientToScreen(hwnd_, &screenOrigin);
+        // Both render paths use desktop-client coordinates. Anchor the acrylic
+        // texture to that common coordinate space so the Dock does not appear
+        // to change border/noise treatment when moved to the floating host.
+        HWND renderWindow = hwnd_;
+        if (renderWindow)
+            ClientToScreen(renderWindow, &screenOrigin);
         DrawAcrylicNoise(ctx, frame, radius, p.contentTheme == 1,
             screenOrigin);
     }
@@ -1103,26 +1158,105 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
         std::to_wstring(scaleKey) + L"@" +
-        std::to_wstring(lightTheme ? 1 : 0);
+        std::to_wstring(lightTheme ? 1 : 0) + L"@" +
+        std::to_wstring(selected ? 1 : 0);
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
-        ComPtr<IDWriteTextLayout> layout;
-        if (FAILED(dwriteFactory_->CreateTextLayout(
-            text.c_str(), static_cast<UINT32>(text.size()),
-            itemTextFormat_.Get(), tw, th, &layout)) || !layout)
-            return;
-        const DWRITE_TEXT_RANGE fullRange{ 0, static_cast<UINT32>(text.size()) };
-        layout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
-        if (lightTheme)
+        auto createConfiguredLayout =
+            [&](const std::wstring& layoutText,
+                float maxWidth,
+                float maxHeight,
+                ComPtr<IDWriteTextLayout>& result) {
+            result.Reset();
+            if (FAILED(
+                    dwriteFactory_->CreateTextLayout(
+                        layoutText.c_str(),
+                        static_cast<UINT32>(
+                            layoutText.size()),
+                        itemTextFormat_.Get(),
+                        maxWidth, maxHeight,
+                        &result)) ||
+                !result)
+            {
+                return false;
+            }
+
+            const DWRITE_TEXT_RANGE range{
+                0,
+                static_cast<UINT32>(
+                    layoutText.size())
+            };
+            result->SetFontSize(
+                itemFontSize_ * layoutScale,
+                range);
+            if (lightTheme)
+            {
+                const auto weight =
+                    static_cast<
+                        DWRITE_FONT_WEIGHT>(
+                        std::max<int>(
+                            100,
+                            static_cast<int>(
+                                itemFontWeight_) -
+                                200));
+                result->SetFontWeight(
+                    weight, range);
+            }
+            result->SetLineSpacing(
+                DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                itemFontSize_ * 7.0f /
+                    6.0f * layoutScale,
+                itemFontSize_ * 5.0f /
+                    6.0f * layoutScale);
+            return true;
+        };
+
+        std::wstring visibleText = text;
+        if (!selected)
         {
-            const auto w = static_cast<DWRITE_FONT_WEIGHT>(
-                std::max<int>(100, static_cast<int>(itemFontWeight_) - 200));
-            layout->SetFontWeight(w, fullRange);
+            ComPtr<IDWriteTextLayout>
+                wrappedMeasureLayout;
+            if (createConfiguredLayout(
+                    text, tw, 10000.0f,
+                    wrappedMeasureLayout))
+            {
+                UINT32 lineCount = 0;
+                wrappedMeasureLayout->
+                    GetLineMetrics(
+                        nullptr, 0,
+                        &lineCount);
+                if (lineCount > 2)
+                {
+                    std::vector<
+                        DWRITE_LINE_METRICS>
+                        lines(lineCount);
+                    UINT32 actualLineCount = 0;
+                    if (SUCCEEDED(
+                            wrappedMeasureLayout->
+                                GetLineMetrics(
+                                    lines.data(),
+                                    lineCount,
+                                    &actualLineCount)))
+                    {
+                        visibleText.resize(
+                            snowdesktop::
+                                item_layout_rules::
+                                    VisibleTextLengthForLineLimit(
+                                        lines.data(),
+                                        actualLineCount,
+                                        2,
+                                        text.size()));
+                    }
+                }
+            }
         }
-        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            itemFontSize_ * 7.0f / 6.0f * layoutScale,
-            itemFontSize_ * 5.0f / 6.0f * layoutScale);
+
+        ComPtr<IDWriteTextLayout> layout;
+        if (!createConfiguredLayout(
+                visibleText, tw, th, layout))
+            return;
+
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);
         bool isSingleLine = (metrics.lineCount == 1);
@@ -1133,7 +1267,15 @@ inline void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                 text.c_str(), static_cast<UINT32>(text.size()),
                 itemTextFormat_.Get(), 10000.0f, 10000.0f, &measureLayout)) && measureLayout)
             {
-                measureLayout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+                const DWRITE_TEXT_RANGE
+                    measureRange{
+                        0,
+                        static_cast<UINT32>(
+                            text.size())
+                    };
+                measureLayout->SetFontSize(
+                    itemFontSize_ * layoutScale,
+                    measureRange);
                 DWRITE_TEXT_METRICS m{};
                 measureLayout->GetMetrics(&m);
                 isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
@@ -1260,7 +1402,8 @@ inline void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds
 }
 
 inline void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
-    RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color)
+    RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
+    DWRITE_WORD_WRAPPING wordWrapping)
 {
     if (!ctx || !format || text.empty() || IsRectEmptyRect(rect)) return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
@@ -1275,6 +1418,27 @@ inline void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& 
         ComPtr<ID2D1SolidColorBrush> brush;
         if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
         it = brushCache_.emplace(key, std::move(brush)).first;
+    }
+    if (wordWrapping != DWRITE_WORD_WRAPPING_NO_WRAP && dwriteFactory_)
+    {
+        const float width = static_cast<float>(
+            std::max<LONG>(1, rect.right - rect.left));
+        const float height = static_cast<float>(
+            std::max<LONG>(1, rect.bottom - rect.top));
+        ComPtr<IDWriteTextLayout> layout;
+        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                text.c_str(), static_cast<UINT32>(text.size()),
+                format, width, height, &layout)) && layout)
+        {
+            layout->SetWordWrapping(wordWrapping);
+            ctx->DrawTextLayout(
+                D2D1::Point2F(
+                    static_cast<float>(rect.left),
+                    static_cast<float>(rect.top)),
+                layout.Get(), it->second.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            return;
+        }
     }
     ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
         ToD2DRect(rect), it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -1327,6 +1491,30 @@ inline std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidge
     return {};
 }
 
+inline DesktopWidget* DesktopApp::GetOpenPopupWidget()
+{
+    if (dockFolderPopupOpen_)
+        return &dockFolderPopupWidget_;
+    return popupWidgetIndex_ < widgets_.size()
+        ? &widgets_[popupWidgetIndex_] : nullptr;
+}
+
+inline const DesktopWidget* DesktopApp::GetOpenPopupWidget() const
+{
+    if (dockFolderPopupOpen_)
+        return &dockFolderPopupWidget_;
+    return popupWidgetIndex_ < widgets_.size()
+        ? &widgets_[popupWidgetIndex_] : nullptr;
+}
+
+inline size_t DesktopApp::GetPopupItemCount(
+    const DesktopWidget& widget) const
+{
+    if (widget.type == DesktopWidgetType::FolderMapping)
+        return widget.folderEntries.size();
+    return GetPopupItemKeys(widget).size();
+}
+
 inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
 {
     const std::wstring& targetPageId = popupPageId_.empty()
@@ -1365,9 +1553,16 @@ inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) cons
     const int maxColumns = std::max(1,
         (popupContentWidth + kCollectionPopupGapX) /
         std::max(1, cellW + kCollectionPopupGapX));
-    const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
-    int columns = std::clamp(std::min(itemCount, 5), 1, maxColumns);
-    int rows = (itemCount + columns - 1) / columns;
+    const size_t itemCount =
+        GetPopupItemCount(widget);
+    int columns =
+        snowdesktop::collection_popup_layout::
+            PreferredColumnCount(
+                itemCount, maxColumns);
+    int rows =
+        snowdesktop::collection_popup_layout::
+            RequiredRowCount(
+                itemCount, columns);
     const int maxHeight = std::max(1, workHeight - 24);
     auto popupWidthForColumns = [&](int columnCount) {
         return kCollectionPopupPaddingX * 2 + columnCount * cellW +
@@ -1380,10 +1575,15 @@ inline RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) cons
     };
     int width = popupWidthForColumns(columns);
     int height = popupHeightForRows(rows);
-    if (height > maxHeight && columns < maxColumns)
+    if (itemCount > 0 &&
+        height > maxHeight &&
+        columns < maxColumns)
     {
         columns = maxColumns;
-        rows = (itemCount + columns - 1) / columns;
+        rows =
+            snowdesktop::collection_popup_layout::
+                RequiredRowCount(
+                    itemCount, columns);
         width = popupWidthForColumns(columns);
         height = popupHeightForRows(rows);
     }
@@ -1439,6 +1639,20 @@ inline RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
         popup.bottom - kCollectionPopupBottomPadding);
 }
 
+inline RECT DesktopApp::GetDockFolderPopupSortButtonRect(
+    const RECT& popup) const
+{
+    const int width = std::min(
+        104,
+        std::max(72, static_cast<int>(
+            popup.right - popup.left) / 3));
+    return MakeRect(
+        popup.right - 16 - width,
+        popup.top + 11,
+        popup.right - 16,
+        popup.top + 45);
+}
+
 inline int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
 {
     RECT content = GetCollectionPopupContentRect(popup);
@@ -1479,7 +1693,8 @@ inline int DesktopApp::GetCollectionPopupCellHeight() const
 inline int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const
 {
     const int columns = GetCollectionPopupColumnCount(popup);
-    const int itemCount = std::max(1, static_cast<int>(GetPopupItemKeys(widget).size()));
+    const int itemCount = std::max(
+        1, static_cast<int>(GetPopupItemCount(widget)));
     return (itemCount + columns - 1) / columns;
 }
 
@@ -1511,62 +1726,531 @@ inline RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t lin
 
 inline bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
 {
-    if (popupWidgetIndex_ >= widgets_.size()) return false;
-    RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+    if (!IsCollectionPopupInteractive())
+        return false;
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    if (!widget) return false;
+    RECT popup = GetCollectionPopupRect(*widget);
     return PtInRect(&popup, point) != FALSE;
 }
 
-inline void DesktopApp::DrawCollectionPopup(ID2D1DeviceContext* ctx)
+inline void DesktopApp::ResetCollectionPopupAnimationCache()
 {
-    if (!ctx || popupWidgetIndex_ >= widgets_.size()) return;
+    popupAnimationRenderCache_.Reset();
+    popupAnimationCacheRect_ = {};
+}
 
-    const DesktopWidget& widget = widgets_[popupWidgetIndex_];
-    std::vector<std::wstring> popupKeys = GetPopupItemKeys(widget);
+inline void DesktopApp::PrepareCollectionPopupAnimationCache()
+{
+    ResetCollectionPopupAnimationCache();
+    const DesktopWidget* openWidget =
+        GetOpenPopupWidget();
+    if (!d2dDevice_ || !openWidget)
+        return;
+
+    popupRect_ = GetCollectionPopupRect(*openWidget);
+    popupAnimationCacheRect_ = popupRect_;
+    InflateRect(&popupAnimationCacheRect_, 4, 4);
+    const UINT width = static_cast<UINT>(
+        std::max<LONG>(
+            1,
+            popupAnimationCacheRect_.right -
+                popupAnimationCacheRect_.left));
+    const UINT height = static_cast<UINT>(
+        std::max<LONG>(
+            1,
+            popupAnimationCacheRect_.bottom -
+                popupAnimationCacheRect_.top));
+
+    const bool ready =
+        popupAnimationRenderCache_.Ensure(
+            d2dDevice_.Get(),
+            D2D1::SizeU(width, height),
+            1,
+            [&](ID2D1DeviceContext* cacheContext) {
+                cacheContext->SetTransform(
+                    D2D1::Matrix3x2F::Translation(
+                        static_cast<float>(
+                            -popupAnimationCacheRect_.left),
+                        static_cast<float>(
+                            -popupAnimationCacheRect_.top)));
+                DrawCollectionPopup(
+                    cacheContext, false);
+            });
+    if (!ready)
+        popupAnimationCacheRect_ = {};
+
+    // The off-screen draw switches the shared brush cache to its context.
+    // Restore lazy creation for the next desktop/floating-Dock frame.
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+}
+
+inline void DesktopApp::DrawCollectionPopup(
+    ID2D1DeviceContext* ctx,
+    bool applyAnimation)
+{
+    const DesktopWidget* openWidget = GetOpenPopupWidget();
+    if (!ctx || !openWidget) return;
+
+    const DesktopWidget& widget = *openWidget;
     popupRect_ = GetCollectionPopupRect(widget);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widget, popupRect_));
 
+    const auto animation =
+        popupAnimation_.GetVisual();
+    if (applyAnimation && !animation.visible)
+        return;
+
+    D2D1_MATRIX_3X2_F previousTransform{};
+    const bool animationApplied =
+        applyAnimation &&
+        animation.progress < 1.0f;
+    if (animationApplied)
+    {
+        ctx->GetTransform(&previousTransform);
+        D2D1_POINT_2F animationOrigin =
+            D2D1::Point2F(
+                static_cast<float>(
+                    popupRect_.left + popupRect_.right) *
+                    0.5f,
+                static_cast<float>(
+                    popupRect_.top + popupRect_.bottom) *
+                    0.5f);
+        if (popupHasAnchor_)
+        {
+            animationOrigin.x = std::clamp(
+                static_cast<float>(popupAnchorPoint_.x),
+                static_cast<float>(popupRect_.left),
+                static_cast<float>(popupRect_.right));
+            animationOrigin.y = std::clamp(
+                static_cast<float>(popupAnchorPoint_.y),
+                static_cast<float>(popupRect_.top),
+                static_cast<float>(popupRect_.bottom));
+        }
+        ctx->SetTransform(
+            D2D1::Matrix3x2F::Scale(
+                animation.scale,
+                animation.scale,
+                animationOrigin) *
+            previousTransform);
+
+        if (!IsRectEmptyRect(
+                popupAnimationCacheRect_) &&
+            popupAnimationRenderCache_.DrawAt(
+                ctx,
+                D2D1::Point2F(
+                    static_cast<float>(
+                        popupAnimationCacheRect_.left),
+                    static_cast<float>(
+                        popupAnimationCacheRect_.top)),
+                D2D1_INTERPOLATION_MODE_LINEAR))
+        {
+            ctx->SetTransform(previousTransform);
+            return;
+        }
+    }
+
+    std::vector<std::wstring> popupKeys =
+        GetPopupItemKeys(widget);
     DrawD2DRoundedRectangle(ctx, popupRect_, 18.0f,
         D2D1::ColorF(0.08f, 0.10f, 0.13f, 1.0f),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f), 1.4f);
 
     RECT titleRect = MakeRect(popupRect_.left + 22, popupRect_.top + 18,
         popupRect_.right - 22, popupRect_.top + 44);
+    if (dockFolderPopupOpen_)
+        titleRect.right =
+            GetDockFolderPopupSortButtonRect(
+                popupRect_).left - 10;
     std::wstring title = widget.title.empty() ? _LW("app.overlay.collection_default") : widget.title;
-    DrawD2DText(ctx, title, titleRect, itemTextFormat_.Get(),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
+    DrawD2DTextEllipsis(
+        ctx, title, titleRect,
+        itemTextFormat_.Get(),
+        D2D1::ColorF(
+            1.0f, 1.0f, 1.0f, 1.0f),
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    if (dockFolderPopupOpen_)
+    {
+        const RECT sortRect =
+            GetDockFolderPopupSortButtonRect(
+                popupRect_);
+        const bool hovered =
+            popupAnimation_.IsInteractive() &&
+            PtInRect(
+                &sortRect,
+                lastMousePoint_) != FALSE;
+        DrawD2DRoundedRectangle(
+            ctx, sortRect, 8.0f,
+            hovered
+                ? D2D1::ColorF(
+                    1.0f, 1.0f, 1.0f, 0.16f)
+                : D2D1::ColorF(
+                    1.0f, 1.0f, 1.0f, 0.08f),
+            D2D1::ColorF(
+                1.0f, 1.0f, 1.0f,
+                hovered ? 0.34f : 0.20f),
+            1.0f);
+
+        std::wstring sortLabel =
+            _LW("app.menu.sort_by");
+        switch (
+            snowdesktop::folder_sort_rules::
+                NormalizeMode(
+                    widget.folderSortMode))
+        {
+        case snowdesktop::folder_sort_rules::kName:
+            sortLabel =
+                _LW("app.menu.sort_name");
+            break;
+        case snowdesktop::folder_sort_rules::kType:
+            sortLabel =
+                _LW("app.menu.sort_type");
+            break;
+        case snowdesktop::folder_sort_rules::kModified:
+            sortLabel =
+                _LW("app.interact.sort_date");
+            break;
+        default:
+            break;
+        }
+        if (widget.folderSortMode !=
+            snowdesktop::folder_sort_rules::kManual)
+        {
+            sortLabel +=
+                widget.folderSortAscending
+                    ? L" ↑" : L" ↓";
+        }
+        DrawD2DTextEllipsis(
+            ctx, sortLabel, sortRect,
+            itemTextFormat_.Get(),
+            D2D1::ColorF(
+                1.0f, 1.0f, 1.0f, 0.88f),
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
     ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    for (size_t i = 0; i < popupKeys.size(); ++i)
+    const size_t popupItemCount = GetPopupItemCount(widget);
+    for (size_t i = 0; i < popupItemCount; ++i)
     {
         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
 
-        size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
-        if (itemIndex == static_cast<size_t>(-1)) continue;
-
-        bool hovered = !items_[itemIndex].selected && PtInRect(&itemRect, lastMousePoint_);
-        DesktopIcon icon(&items_[itemIndex], nullptr, this);
-        icon.Draw(ctx, itemRect, items_[itemIndex].selected ? 2 : (hovered ? 1 : 0));
+        if (widget.type == DesktopWidgetType::FolderMapping)
+        {
+            FolderEntry& entry = dockFolderPopupWidget_.folderEntries[i];
+            const bool hovered =
+                popupAnimation_.IsInteractive() &&
+                !entry.selected &&
+                PtInRect(&itemRect, lastMousePoint_);
+            FolderEntryIcon icon(
+                &entry, dockFolderPopupContainer_.get(), this);
+            icon.Draw(ctx, itemRect,
+                entry.selected ? 2 : (hovered ? 1 : 0));
+        }
+        else
+        {
+            size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+            if (itemIndex == static_cast<size_t>(-1)) continue;
+            bool hovered =
+                popupAnimation_.IsInteractive() &&
+                !items_[itemIndex].selected &&
+                PtInRect(&itemRect, lastMousePoint_);
+            DesktopIcon icon(&items_[itemIndex], nullptr, this);
+            icon.Draw(ctx, itemRect,
+                items_[itemIndex].selected ? 2 : (hovered ? 1 : 0));
+        }
     }
     ctx->PopAxisAlignedClip();
+
+    if (widget.type == DesktopWidgetType::FolderMapping &&
+        popupItemCount == 0)
+    {
+        const std::wstring status = dockFolderPopupAvailable_
+            ? _LW("widget.folder_mapping.empty")
+            : _LW("widget.folder_mapping.unavailable");
+        DrawD2DTextEllipsis(ctx, status, content, itemTextFormat_.Get(),
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.68f),
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    }
 
     // Scrollbar — same style as widget content areas
     const int cellH = GetCollectionPopupCellHeight();
     int columns = std::max(1, GetCollectionPopupColumnCount(popupRect_));
-    int rows = (static_cast<int>(popupKeys.size()) + columns - 1) / columns;
+    int rows = (static_cast<int>(popupItemCount) + columns - 1) / columns;
     int contentHeight = rows * cellH + std::max(0, rows - 1) * kCollectionPopupGapY;
     int visibleHeight = std::max(1, (int)(content.bottom - content.top));
-    bool popupHovered = PtInRect(&popupRect_, lastMousePoint_);
+    bool popupHovered =
+        popupAnimation_.IsInteractive() &&
+        PtInRect(&popupRect_, lastMousePoint_);
     DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered, IsLightContentTheme());
+
+    if (animationApplied)
+        ctx->SetTransform(previousTransform);
+}
+
+inline RECT DesktopApp::GetLuaWidgetPanelRect() const
+{
+    if (luaWidgetPanelRequest_.widgetId.empty())
+        return {};
+    RECT work = layoutWorkArea_;
+    const DesktopWidget* source = nullptr;
+    for (const auto& widget : widgets_)
+    {
+        if (widget.id ==
+            luaWidgetPanelRequest_.widgetId)
+        {
+            source = &widget;
+            break;
+        }
+    }
+    const GridPage* sourcePage = nullptr;
+    if (source)
+    {
+        for (const auto& page : gridPages_)
+        {
+            if (page.id == source->gridCell.pageId)
+            {
+                sourcePage = &page;
+                break;
+            }
+        }
+    }
+    if (!sourcePage)
+    {
+        for (const auto& page : gridPages_)
+        {
+            if (PtInRect(
+                    &page.bounds,
+                    luaWidgetPanelAnchorPoint_))
+            {
+                sourcePage = &page;
+                break;
+            }
+        }
+    }
+    if (sourcePage)
+        work = sourcePage->workArea;
+    const int availableWidth =
+        std::max(1, static_cast<int>(
+            work.right - work.left) - 24);
+    const int availableHeight =
+        std::max(1, static_cast<int>(
+            work.bottom - work.top) - 24);
+    const int width = std::clamp(
+        luaWidgetPanelRequest_.width,
+        std::min(320, availableWidth),
+        availableWidth);
+    const int height = std::clamp(
+        luaWidgetPanelRequest_.height,
+        std::min(280, availableHeight),
+        availableHeight);
+    int left =
+        luaWidgetPanelAnchorPoint_.x + 12;
+    int top =
+        luaWidgetPanelAnchorPoint_.y + 12;
+    if (left + width > work.right - 12)
+        left =
+            luaWidgetPanelAnchorPoint_.x -
+            width - 12;
+    if (top + height > work.bottom - 12)
+        top =
+            luaWidgetPanelAnchorPoint_.y -
+            height - 12;
+    left = std::clamp(
+        left,
+        static_cast<int>(work.left + 12),
+        static_cast<int>(std::max<LONG>(
+            work.left + 12,
+            work.right - width - 12)));
+    top = std::clamp(
+        top,
+        static_cast<int>(work.top + 12),
+        static_cast<int>(std::max<LONG>(
+            work.top + 12,
+            work.bottom - height - 12)));
+    return MakeRect(
+        left, top, left + width, top + height);
+}
+
+inline RECT DesktopApp::GetLuaWidgetPanelContentRect() const
+{
+    const RECT panel = GetLuaWidgetPanelRect();
+    if (IsRectEmptyRect(panel))
+        return {};
+    return MakeRect(
+        panel.left + 18, panel.top + 56,
+        panel.right - 18, panel.bottom - 18);
+}
+
+inline RECT DesktopApp::GetLuaWidgetPanelCloseRect() const
+{
+    const RECT panel = GetLuaWidgetPanelRect();
+    if (IsRectEmptyRect(panel))
+        return {};
+    return MakeRect(
+        panel.right - 50, panel.top + 12,
+        panel.right - 14, panel.top + 48);
+}
+
+inline void DesktopApp::DrawLuaWidgetPanel(
+    ID2D1DeviceContext* ctx)
+{
+    if (!ctx || !widgetEngine_ ||
+        luaWidgetPanelRequest_.widgetId.empty())
+        return;
+    luaWidgetPanelRect_ = GetLuaWidgetPanelRect();
+    const RECT content =
+        GetLuaWidgetPanelContentRect();
+    if (IsRectEmptyRect(luaWidgetPanelRect_) ||
+        IsRectEmptyRect(content))
+        return;
+
+    const auto animation =
+        luaWidgetPanelAnimation_.GetVisual();
+    if (!animation.visible)
+        return;
+    D2D1_MATRIX_3X2_F previousTransform{};
+    const bool animationApplied =
+        animation.progress < 1.0f;
+    if (animationApplied)
+    {
+        ctx->GetTransform(&previousTransform);
+        const D2D1_POINT_2F origin =
+            D2D1::Point2F(
+                std::clamp(
+                    static_cast<float>(
+                        luaWidgetPanelAnchorPoint_.x),
+                    static_cast<float>(
+                        luaWidgetPanelRect_.left),
+                    static_cast<float>(
+                        luaWidgetPanelRect_.right)),
+                std::clamp(
+                    static_cast<float>(
+                        luaWidgetPanelAnchorPoint_.y),
+                    static_cast<float>(
+                        luaWidgetPanelRect_.top),
+                    static_cast<float>(
+                        luaWidgetPanelRect_.bottom)));
+        ctx->SetTransform(
+            D2D1::Matrix3x2F::Scale(
+                animation.scale,
+                animation.scale,
+                origin) *
+            previousTransform);
+    }
+
+    const bool darkText =
+        widgetEngine_->RuntimeGetWidgetTheme(
+            luaWidgetPanelRequest_.widgetId)
+            .contentTheme == 1;
+    const D2D1_COLOR_F background = darkText
+        ? D2D1::ColorF(
+            0.96f, 0.97f, 0.98f, 0.98f)
+        : D2D1::ColorF(
+            0.08f, 0.10f, 0.13f, 0.98f);
+    const D2D1_COLOR_F foreground = darkText
+        ? D2D1::ColorF(
+            0.04f, 0.05f, 0.07f, 1.0f)
+        : D2D1::ColorF(
+            1.0f, 1.0f, 1.0f, 1.0f);
+    DrawD2DRoundedRectangle(
+        ctx, luaWidgetPanelRect_, 18.0f,
+        background,
+        D2D1::ColorF(
+            foreground.r, foreground.g,
+            foreground.b, 0.34f),
+        1.2f);
+
+    RECT titleRect = MakeRect(
+        luaWidgetPanelRect_.left + 22,
+        luaWidgetPanelRect_.top + 13,
+        luaWidgetPanelRect_.right - 58,
+        luaWidgetPanelRect_.top + 49);
+    DrawD2DTextEllipsis(
+        ctx, luaWidgetPanelRequest_.title,
+        titleRect, itemTextFormat_.Get(),
+        foreground,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    const RECT closeRect =
+        GetLuaWidgetPanelCloseRect();
+    const bool closeHovered =
+        PtInRect(&closeRect, lastMousePoint_) != FALSE;
+    if (closeHovered)
+    {
+        DrawD2DRoundedRectangle(
+            ctx, closeRect, 9.0f,
+            D2D1::ColorF(
+                foreground.r, foreground.g,
+                foreground.b, 0.12f),
+            D2D1::ColorF(
+                foreground.r, foreground.g,
+                foreground.b, 0.0f),
+            0.0f);
+    }
+    DrawD2DTextEllipsis(
+        ctx, L"×", closeRect,
+        itemTextFormat_.Get(), foreground,
+        DWRITE_TEXT_ALIGNMENT_CENTER,
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+        false);
+
+    const auto source = std::find_if(
+        widgets_.begin(), widgets_.end(),
+        [&](const DesktopWidget& widget) {
+            return widget.id ==
+                luaWidgetPanelRequest_.widgetId &&
+                widget.type ==
+                    DesktopWidgetType::LuaScript;
+        });
+    if (source == widgets_.end())
+    {
+        if (animationApplied)
+            ctx->SetTransform(previousTransform);
+        return;
+    }
+    widgetEngine_->EnsureWidgetLoaded(
+        source->id, source->packageId);
+    ctx->PushAxisAlignedClip(
+        ToD2DRect(content),
+        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    widgetEngine_->RenderWidgetPanel(
+        source->id, ctx, content);
+    ctx->PopAxisAlignedClip();
+    if (animationApplied)
+        ctx->SetTransform(previousTransform);
 }
 
 extern inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span);
 
 // ── Static background layer (icons + widget chrome + popup) ──
-inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
+inline void DesktopApp::DrawStaticBackground(
+    ID2D1DeviceContext* ctx,
+    const RECT* updateRect,
+    bool hiddenMode)
 {
+    auto intersectsUpdate =
+        [&](RECT bounds, int overdraw = 0) {
+        if (!updateRect)
+            return true;
+        if (overdraw > 0)
+            InflateRect(
+                &bounds, overdraw, overdraw);
+        RECT intersection{};
+        return IntersectRect(
+            &intersection,
+            &bounds,
+            updateRect) != FALSE;
+    };
+
     const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
     const POINT interactionMousePoint = lastMousePoint_;
     if (suppressDesktopWidgetTargets)
@@ -1574,28 +2258,47 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
 
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
-    for (auto& ooItem : items_oo_)
+    if (!hiddenMode)
     {
-        auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
-        if (!icon) continue;
-        DesktopItem* di = icon->GetDesktopItem();
-        if (!di || IsRectEmptyRect(di->bounds)) continue;
-        if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
-            dragSession_.IsMoveAction() && di->selected)
-            continue;
+        for (auto& ooItem : items_oo_)
+        {
+            auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
+            if (!icon) continue;
+            DesktopItem* di = icon->GetDesktopItem();
+            if (!di || IsRectEmptyRect(di->bounds)) continue;
+            if (!intersectsUpdate(di->bounds, 8))
+                continue;
+            if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
+                dragSession_.IsMoveAction() && di->selected)
+                continue;
 
-        const bool desktopMarqueeActive =
-            marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
-        const bool hovered = !desktopMarqueeActive && !mouseOverWidget &&
-            PtInRect(&di->bounds, lastMousePoint_) != FALSE;
-        const bool selected = di->selected && !desktopMarqueeActive;
-        int state = selected ? 2 : (hovered ? 1 : 0);
-        icon->Draw(ctx, di->bounds, state);
+            const bool desktopMarqueeActive =
+                marqueeActive_ &&
+                !marqueeDockFolderPopup_ &&
+                marqueeWidgetIndex_ >= widgets_.size();
+            const bool hovered = !desktopMarqueeActive && !mouseOverWidget &&
+                PtInRect(&di->bounds, lastMousePoint_) != FALSE;
+            const bool selected = di->selected && !desktopMarqueeActive;
+            int state = selected ? 2 : (hovered ? 1 : 0);
+            icon->Draw(ctx, di->bounds, state);
+        }
     }
 
     // Widgets
     for (auto& widgetData : widgets_)
     {
+        if (hiddenMode && !widgetData.keepWhenDesktopHidden)
+            continue;
+        // Dock-exclusive and grouped collections deliberately keep an empty
+        // desktop rectangle while retaining a runtime WidgetContainer for
+        // popup interaction. Never let an empty rectangle reach widget
+        // drawing: rounded geometry APIs can turn it into a visible 1x1
+        // artifact at the desktop origin.
+        if (IsRectEmptyRect(widgetData.bounds))
+            continue;
+        if (!intersectsUpdate(
+                widgetData.bounds, 8))
+            continue;
         if (widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize)
         {
             if (mouseDownWidgetIndex_ < widgets_.size() &&
@@ -1603,9 +2306,16 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
                 continue;
         }
 
-        if (widgetData.showOnHoverOnly && !dragSession_.IsActive() && !externalDragActive_
-            && !(popupWidgetIndex_ < widgets_.size() && &widgetData == &widgets_[popupWidgetIndex_])
-            && !PtInRect(&widgetData.bounds, lastMousePoint_))
+        const bool popupOpen =
+            popupWidgetIndex_ < widgets_.size() &&
+            &widgetData == &widgets_[popupWidgetIndex_];
+        if (!snowdesktop::widget_visibility_rules::ShouldRenderWidget(
+                widgetData.showOnHoverOnly,
+                dragSession_.IsActive(),
+                externalDragActive_,
+                widgetAction_ == WidgetAction::Move,
+                popupOpen,
+                PtInRect(&widgetData.bounds, lastMousePoint_) != FALSE))
             continue;
 
         bool drawn = false;
@@ -1633,26 +2343,171 @@ inline void DesktopApp::DrawStaticBackground(ID2D1DeviceContext* ctx)
 
     for (const auto& container : containers_)
     {
-        auto* dock = dynamic_cast<DockContainer*>(container.get());
-        if (!dock) continue;
+        auto* dock = dynamic_cast<DockContainer*>(
+            container.get());
+        if (!dock ||
+            (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
+            !snowdesktop::floating_dock_rules::
+                ShouldRenderDesktopDock(
+                    floatingDockVisible_,
+                    dock ==
+                        floatingDockContainer_))
+            continue;
+        RECT dockVisualBounds =
+            dock->GetInteractiveBounds();
+        const RECT titleBounds =
+            dock->GetHoveredTitleBounds(
+                lastMousePoint_);
+        if (!IsRectEmptyRect(titleBounds))
+            UnionRect(
+                &dockVisualBounds,
+                &dockVisualBounds,
+                &titleBounds);
+        if (!intersectsUpdate(
+                dockVisualBounds, 4))
+            continue;
         dock->DrawChrome(ctx, lastMousePoint_);
         dock->DrawContents(ctx);
     }
 
-    if (suppressDesktopWidgetTargets)
-        lastMousePoint_ = { LONG_MIN, LONG_MIN };
-    DrawCollectionPopup(ctx);
-    if (suppressDesktopWidgetTargets)
-        lastMousePoint_ = interactionMousePoint;
 }
 
 // ── Dynamic overlays (drag preview, dragged items, marquee, nav) ──
-inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
+inline void DesktopApp::DrawDynamicOverlays(
+    ID2D1DeviceContext* ctx,
+    bool hiddenMode)
 {
+    auto beginPopupAnimationTransform =
+        [&](const RECT& popup,
+            D2D1_MATRIX_3X2_F& previousTransform) {
+        const auto animation =
+            popupAnimation_.GetVisual();
+        if (!animation.visible ||
+            animation.progress >= 1.0f)
+            return false;
+
+        ctx->GetTransform(&previousTransform);
+        D2D1_POINT_2F origin =
+            D2D1::Point2F(
+                static_cast<float>(
+                    popup.left + popup.right) * 0.5f,
+                static_cast<float>(
+                    popup.top + popup.bottom) * 0.5f);
+        if (popupHasAnchor_)
+        {
+            origin.x = std::clamp(
+                static_cast<float>(
+                    popupAnchorPoint_.x),
+                static_cast<float>(popup.left),
+                static_cast<float>(popup.right));
+            origin.y = std::clamp(
+                static_cast<float>(
+                    popupAnchorPoint_.y),
+                static_cast<float>(popup.top),
+                static_cast<float>(popup.bottom));
+        }
+        ctx->SetTransform(
+            D2D1::Matrix3x2F::Scale(
+                animation.scale,
+                animation.scale,
+                origin) *
+            previousTransform);
+        return true;
+    };
+    auto endPopupAnimationTransform =
+        [&](bool applied,
+            const D2D1_MATRIX_3X2_F&
+                previousTransform) {
+        if (!applied)
+            return;
+        ctx->SetTransform(previousTransform);
+    };
+
+    const bool popupBelongsToCurrentSurface =
+        renderingFloatingDock_
+            ? popupAnchoredToDock_ &&
+                floatingDockVisible_
+            : !(popupAnchoredToDock_ &&
+                floatingDockVisible_);
+    if (popupBelongsToCurrentSurface &&
+        (!hiddenMode || IsOpenPopupRetained()) &&
+        GetOpenPopupWidget())
+    {
+        const bool suppressPopupHover =
+            SuppressDesktopWidgetDragTargets();
+        const POINT interactionPoint =
+            lastMousePoint_;
+        if (suppressPopupHover)
+            lastMousePoint_ = {
+                LONG_MIN, LONG_MIN };
+        DrawCollectionPopup(ctx);
+        if (suppressPopupHover)
+            lastMousePoint_ =
+                interactionPoint;
+    }
+
+    if (!renderingFloatingDock_ &&
+        !luaWidgetPanelRequest_.widgetId.empty())
+    {
+        bool renderLuaPanel = !hiddenMode;
+        if (hiddenMode)
+        {
+            const auto source = std::find_if(
+                widgets_.begin(), widgets_.end(),
+                [&](const DesktopWidget& widget) {
+                    return widget.id ==
+                        luaWidgetPanelRequest_.widgetId;
+                });
+            renderLuaPanel = source != widgets_.end() &&
+                source->keepWhenDesktopHidden;
+        }
+        if (renderLuaPanel)
+            DrawLuaWidgetPanel(ctx);
+    }
+
     // Widget drag/resize preview
     if ((widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize) && mouseDownWidgetIndex_ < widgets_.size())
     {
-        if (widgetDockTarget_)
+        if (widgetAction_ == WidgetAction::Move &&
+            widgetCollectionGroupTargetIndex_ <
+                widgets_.size() &&
+            (widgets_[widgetCollectionGroupTargetIndex_].type ==
+                 DesktopWidgetType::CollectionGroup ||
+             widgets_[widgetCollectionGroupTargetIndex_].type ==
+                 DesktopWidgetType::FileGroup))
+        {
+            RECT target =
+                widgets_[widgetCollectionGroupTargetIndex_].bounds;
+            for (const auto& container : containers_)
+            {
+                auto* group =
+                    dynamic_cast<WidgetContainer*>(
+                        container.get());
+                if (group &&
+                    group->GetWidgetData() ==
+                        &widgets_[widgetCollectionGroupTargetIndex_])
+                {
+                    target = group->GetFrameRect();
+                    break;
+                }
+            }
+            const float cellScale =
+                widgets_[widgetCollectionGroupTargetIndex_]
+                    .cellScale;
+            const int targetPadding =
+                ScaleWidgetCu(3.0f, cellScale);
+            InflateRect(
+                &target, targetPadding, targetPadding);
+            DrawD2DRoundedRectangle(
+                ctx, target,
+                static_cast<float>(
+                    ScaleWidgetCu(10.0f, cellScale)),
+                D2D1::ColorF(1.0f, 0.72f, 0.12f, 0.14f),
+                D2D1::ColorF(1.0f, 0.72f, 0.12f, 0.92f),
+                static_cast<float>(
+                    ScaleWidgetCu(2.5f, cellScale)));
+        }
+        else if (widgetDockTarget_)
         {
             if (widgetDockTargetContainer_)
                 widgetDockTargetContainer_->DrawInsertionPreview(
@@ -1669,6 +2524,10 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         {
             if (i == mouseDownWidgetIndex_) continue;
             const auto& ow = widgets_[i];
+            if (!snowdesktop::collection_group_rules::
+                    ShouldOccupyDesktopGrid(
+                        IsGroupedWidget(ow)))
+                continue;
             if (ow.gridCell.pageId != cell.pageId) continue;
             if (cell.column + span.columns <= ow.gridCell.column) continue;
             if (ow.gridCell.column + ow.gridSpan.columns <= cell.column) continue;
@@ -1693,20 +2552,41 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
     Slot* targetSlot = dragSession_.TargetSlot();
     HitRegion targetRegion = dragSession_.TargetRegion();
     if ((dragSession_.IsActive() || externalDragActive_) && targetContainer
+        && (!hiddenMode || IsRetainedContainer(targetContainer))
         && targetRegion != HitRegion::None)
     {
         RECT clipViewport{};
+        RECT popupTargetRect{};
         auto* wc = dynamic_cast<WidgetContainer*>(targetContainer);
-        const bool popupTarget = wc && popupWidgetIndex_ < widgets_.size() &&
-            wc->GetWidgetData() == &widgets_[popupWidgetIndex_] &&
+        const DesktopWidget* openPopupWidget =
+            GetOpenPopupWidget();
+        const bool popupTarget = wc && openPopupWidget &&
+            wc->GetWidgetData() == openPopupWidget &&
             targetSlot == popupDragTargetSlot_.get();
-        if (wc)
+        const bool groupEntryTarget =
+            wc &&
+            ((dragSession_.SourceList().
+                    hasCollectionGroupEntries &&
+                dynamic_cast<CollectionGroup*>(wc)) ||
+             (dragSession_.SourceList().
+                    hasFileGroupEntries &&
+                dynamic_cast<FileGroup*>(wc)));
+        if (wc && !groupEntryTarget)
         {
             RECT bodyRect = wc->GetBodyRect();
             if (popupTarget)
             {
-                RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-                clipViewport = GetCollectionPopupContentRect(popup);
+                RECT popup =
+                    GetCollectionPopupRect(
+                        *openPopupWidget);
+                popupTargetRect = popup;
+                clipViewport =
+                    snowdesktop::popup_drag_rules::
+                        ExpandInsertionClipHorizontally(
+                            GetCollectionPopupContentRect(
+                                popup),
+                            popup,
+                            kCollectionPopupGapX / 2 + 2);
             }
             else
             {
@@ -1722,6 +2602,13 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
                 }
             }
         }
+        D2D1_MATRIX_3X2_F
+            popupTargetPreviousTransform{};
+        const bool popupTargetAnimationApplied =
+            popupTarget &&
+            beginPopupAnimationTransform(
+                popupTargetRect,
+                popupTargetPreviousTransform);
         bool clipped = false;
         if (!IsRectEmptyRect(clipViewport))
         {
@@ -1741,7 +2628,6 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
                 (targetRegion == HitRegion::SortBefore ||
                  targetRegion == HitRegion::SortAfter))
             {
-                if (clipped) { ctx->PopAxisAlignedClip(); clipped = false; }
                 targetSlot->DrawDropIndicator(ctx, targetRegion,
                     static_cast<float>(kCollectionPopupGapX) * 0.5f);
             }
@@ -1751,6 +2637,9 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
             }
         }
         if (clipped) ctx->PopAxisAlignedClip();
+        endPopupAnimationTransform(
+            popupTargetAnimationApplied,
+            popupTargetPreviousTransform);
     }
 
     // Dragged items at offset
@@ -1776,7 +2665,8 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
 
     if (marqueeActive_)
     {
-        if (marqueeWidgetIndex_ >= widgets_.size())
+        if (!marqueeDockFolderPopup_ &&
+            marqueeWidgetIndex_ >= widgets_.size())
         {
             for (auto& ooItem : items_oo_)
             {
@@ -1787,15 +2677,30 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
                 icon->Draw(ctx, item->bounds, 2);
             }
         }
-        if (marqueeWidgetIndex_ < widgets_.size())
+        if (marqueeDockFolderPopup_ ||
+            marqueeWidgetIndex_ < widgets_.size())
         {
             RECT viewport = GetMarqueeViewportRect();
+            const bool popupMarquee =
+                marqueeDockFolderPopup_ ||
+                marqueeWidgetIndex_ ==
+                    popupWidgetIndex_;
+            D2D1_MATRIX_3X2_F
+                marqueePreviousTransform{};
+            const bool marqueeAnimationApplied =
+                popupMarquee &&
+                beginPopupAnimationTransform(
+                    popupRect_,
+                    marqueePreviousTransform);
             ctx->PushAxisAlignedClip(ToD2DRect(viewport),
                 D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             DrawD2DFilledRectangle(ctx, marqueeRect_,
                 D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
                 D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
             ctx->PopAxisAlignedClip();
+            endPopupAnimationTransform(
+                marqueeAnimationApplied,
+                marqueePreviousTransform);
         }
         else
         {
@@ -1805,11 +2710,17 @@ inline void DesktopApp::DrawDynamicOverlays(ID2D1DeviceContext* ctx)
         }
     }
 
-    DrawPageNavButtons(ctx);
-    DrawPageNotify(ctx);
+    if (!hiddenMode && !renderingFloatingDock_)
+    {
+        DrawPageNavButtons(ctx);
+        DrawPageNotify(ctx);
+    }
 }
 
-inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
+inline void DesktopApp::RenderFrame(
+    ID2D1DeviceContext* ctx,
+    const RECT* updateRect,
+    bool hiddenMode)
 {
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
     {
@@ -1819,8 +2730,11 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize;
     const bool desktopMarqueeActive =
-        marqueeActive_ && marqueeWidgetIndex_ >= widgets_.size();
-    if (dragSession_.IsActive() || widgetPreviewActive || desktopMarqueeActive)
+        marqueeActive_ &&
+        !marqueeDockFolderPopup_ &&
+        marqueeWidgetIndex_ >= widgets_.size();
+    if (!hiddenMode &&
+        (dragSession_.IsActive() || widgetPreviewActive || desktopMarqueeActive))
     {
         RECT client{};
         GetClientRect(hwnd_, &client);
@@ -1829,20 +2743,24 @@ inline void DesktopApp::RenderFrame(ID2D1DeviceContext* ctx)
 
         bool cacheReady = dragRenderCache_.Ensure(d2dDevice_.Get(), D2D1_SIZE_U{ w, h },
             dragSession_.StaticSceneRevision(),
-            [&](ID2D1DeviceContext* cacheCtx) { DrawStaticBackground(cacheCtx); });
+            [&](ID2D1DeviceContext* cacheCtx) {
+                DrawStaticBackground(
+                    cacheCtx, nullptr);
+            });
         brushCache_.clear();
         brushCacheContext_ = ctx;
         if (cacheReady)
             dragRenderCache_.Draw(ctx);
         else
-            DrawStaticBackground(ctx);
+            DrawStaticBackground(
+                ctx, updateRect);
         DrawDynamicOverlays(ctx);
         return;
     }
 
     // ── Normal path (not dragging) ────────────────────────────
-    DrawStaticBackground(ctx);
-    DrawDynamicOverlays(ctx);
+    DrawStaticBackground(ctx, updateRect, hiddenMode);
+    DrawDynamicOverlays(ctx, hiddenMode);
 }
 
 inline void DesktopApp::GetNavButtonRects(RECT& outPrev, RECT& outNext) const

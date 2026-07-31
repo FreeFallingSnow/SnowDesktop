@@ -14,6 +14,7 @@ constexpr wchar_t kControlWindowClassName[] = L"SnowDesktopControlWindow";
 constexpr wchar_t kInputWindowClassName[] = L"SnowDesktopInputWindow";
 constexpr wchar_t kHintWindowClassName[] = L"SnowDesktopDragHintWindow";
 constexpr wchar_t kQuickNavigationWindowClassName[] = L"SnowDesktopQuickNavigationWindow";
+constexpr wchar_t kFloatingDockWindowClassName[] = L"SnowDesktopFloatingDockWindow";
 constexpr wchar_t kHiddenBySnowDesktopProp[] = L"SnowDesktop.HiddenExplorerIconLayer";
 
 // ── 透明色键值 ────────────────────────────────
@@ -29,7 +30,7 @@ constexpr int kGridMarginY = 6;
 constexpr int kMarginX = kGridMarginX;
 constexpr int kMarginY = 6;
 constexpr int kTextTop = 70;
-constexpr float kItemFontSize = 14.0f;
+constexpr float kItemFontSize = 15.0f;
 constexpr float kItemLineHeight = kItemFontSize * 7.0f / 6.0f;
 constexpr float kItemBaseline = kItemFontSize * 5.0f / 6.0f;
 constexpr int kTextCollapsedHeight = 28;
@@ -46,6 +47,7 @@ constexpr int kRenameEditId = 1001;
 
 // ── 系统托盘通知 ──────────────────────────────
 constexpr UINT kTrayCallbackMessage = WM_APP + 1;
+constexpr UINT kActivateExistingInstanceMessage = WM_APP + 6;
 constexpr UINT_PTR kTrayIconId = 1;
 
 // ── 托盘右键菜单命令 ──────────────────────────
@@ -90,6 +92,9 @@ constexpr UINT kContextGridRemoveColumn = 41015;
 constexpr UINT kContextSpacingIncrease = 41016;
 constexpr UINT kContextSpacingDecrease = 41017;
 constexpr UINT kContextAddCollectionWidget = 41018;
+constexpr UINT kContextAddCollectionGroupWidget = 41047;
+constexpr UINT kContextAddFileGroupWidget = 41048;
+constexpr UINT kContextRevealLocationCommand = 41049;
 constexpr UINT kContextWidgetOpen = 41019;
 constexpr UINT kContextWidgetRename = 41020;
 constexpr UINT kContextWidgetDelete = 41021;
@@ -114,9 +119,13 @@ constexpr UINT kContextWidgetSortByTypeDesc = 41036;
 constexpr UINT kContextWidgetSortByDateDesc = 41037;
 constexpr UINT kContextWidgetShowOnHover = 41038;
 constexpr UINT kContextWidgetShowOnHoverOn = 41038;
+constexpr UINT kContextWidgetKeepWhenHiddenOn = 41050;
+constexpr UINT kContextWidgetKeepWhenHiddenOff = 41051;
 constexpr UINT kContextWidgetPrivacyMode = 41043;
 constexpr UINT kContextWidgetPrivacyModeOn = 41043;
 constexpr UINT kContextWidgetPrivacyModeOff = 41044;
+constexpr UINT kContextWidgetToggleFileCategories = 41045;
+constexpr UINT kContextWidgetToggleSearchBox = 41046;
 constexpr UINT kContextWidgetToggleDateGroup = 41042;
 constexpr UINT kContextWidgetShowOnHoverOff = 41041;
 constexpr UINT kContextWidgetCollModeLargeFolder = 41039;
@@ -152,6 +161,9 @@ constexpr UINT kContextDockLayoutEdge = 41805;
 constexpr UINT kContextDockDetailedSettings = 41807;
 constexpr UINT kContextDockShowFrequentItems = 41808;
 constexpr UINT kContextDockRemoveFrequentItem = 41809;
+constexpr UINT kContextDockCloseApplication = 41810;
+constexpr UINT kContextDockKeepWhenHiddenOn = 41811;
+constexpr UINT kContextDockKeepWhenHiddenOff = 41812;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
@@ -184,8 +196,18 @@ constexpr UINT kWidgetAddedHintVisibleMs = 2000;
 constexpr UINT_PTR kDockHandoffDwellTimerId = 11;
 constexpr UINT kDockHandoffDwellIntervalMs = 40;
 constexpr DWORD kDockHandoffDwellDelayMs = 520;
+constexpr UINT_PTR kCollectionGroupTabDwellTimerId = 12;
+constexpr UINT kCollectionGroupTabDwellIntervalMs = 40;
+constexpr DWORD kCollectionGroupTabDwellDelayMs = 420;
+constexpr UINT_PTR kDockWindowPreviewHoverTimerId = 13;
+constexpr UINT kDockWindowPreviewHoverFallbackMs = 400;
+constexpr ULONGLONG kDockWindowClosePendingTimeoutMs = 3000;
+constexpr UINT_PTR kDockLaunchBounceTimerId = 14;
 constexpr UINT_PTR kTaskbarRevealGuardTimerId = 15;
-constexpr UINT kTaskbarRevealGuardIntervalMs = 50;
+constexpr UINT kTaskbarRevealGuardIntervalMs = 100;
+constexpr UINT_PTR kCollectionPopupAnimationTimerId = 17;
+constexpr UINT_PTR kQuickNavigationAnimationTimerId = 18;
+constexpr UINT_PTR kLuaWidgetPanelAnimationTimerId = 19;
 constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 
@@ -198,6 +220,13 @@ constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
 
 // ── 快捷导航 ──────────────────────────────────
 constexpr int kQuickNavigationHotkeyId = 101;
+constexpr int kFloatingDockHotkeyId = 102;
+constexpr int kDesktopPassthroughHotkeyId = 103;
+constexpr int kSettingsHotkeyProbeId = 104;
+constexpr UINT_PTR kDesktopPassthroughHoldTimerId = 20;
+constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
+constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
+constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;
 
 // ── 集合弹出面板布局 ──────────────────────────

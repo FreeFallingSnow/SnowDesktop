@@ -9,7 +9,8 @@
 
 /**
  * @brief 绘制液态玻璃边缘。
- * @details 左上角使用柔亮斜向高光，右下角收暗，内侧暗边提供厚度感。
+ * @details 左上角和右下角使用独立的柔和高光，右上角和左下角淡出；
+ * 内侧暗边使用相同的角落权重提供厚度感。
  */
 inline bool DesktopApp::DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame,
     float radius, D2D1_COLOR_F color, float strokeWidth)
@@ -24,37 +25,73 @@ inline bool DesktopApp::DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame,
         mixWhite(color.r, 0.58f), mixWhite(color.g, 0.58f),
         mixWhite(color.b, 0.58f),
         std::clamp(color.a * 0.91f, 0.0f, 1.0f));
-    const D2D1_COLOR_F middle = D2D1::ColorF(color.r, color.g, color.b,
-        std::clamp(color.a * 0.67f, 0.0f, 1.0f));
-    const D2D1_COLOR_F dim = D2D1::ColorF(
-        color.r * 0.72f, color.g * 0.72f, color.b * 0.72f,
-        std::clamp(color.a * 0.28f, 0.0f, 1.0f));
-    const D2D1_GRADIENT_STOP outerStops[] = {
+    const D2D1_COLOR_F lowerRight = D2D1::ColorF(
+        mixWhite(color.r, 0.18f), mixWhite(color.g, 0.18f),
+        mixWhite(color.b, 0.18f),
+        std::clamp(color.a * 0.82f, 0.0f, 1.0f));
+    const D2D1_GRADIENT_STOP upperLeftStops[] = {
         { 0.0f, bright },
-        { 0.38f, middle },
-        { 0.72f, D2D1::ColorF(color.r, color.g, color.b, color.a * 0.42f) },
-        { 1.0f, dim },
+        { 0.46f, D2D1::ColorF(bright.r, bright.g, bright.b,
+            bright.a * 0.55f) },
+        { 0.82f, D2D1::ColorF(bright.r, bright.g, bright.b,
+            bright.a * 0.20f) },
+        { 1.0f, D2D1::ColorF(
+            bright.r, bright.g, bright.b, bright.a * 0.12f) },
     };
-    ComPtr<ID2D1GradientStopCollection> outerCollection;
-    ComPtr<ID2D1LinearGradientBrush> outerBrush;
-    if (FAILED(ctx->CreateGradientStopCollection(outerStops,
-            static_cast<UINT32>(std::size(outerStops)), D2D1_GAMMA_2_2,
-            D2D1_EXTEND_MODE_CLAMP, &outerCollection)) || !outerCollection ||
-        FAILED(ctx->CreateLinearGradientBrush(
-            D2D1::LinearGradientBrushProperties(
-                D2D1::Point2F(static_cast<float>(frame.left),
-                    static_cast<float>(frame.top)),
-                D2D1::Point2F(static_cast<float>(frame.right),
-                    static_cast<float>(frame.bottom))),
-            outerCollection.Get(), &outerBrush)) || !outerBrush)
+    const D2D1_GRADIENT_STOP lowerRightStops[] = {
+        { 0.0f, lowerRight },
+        { 0.46f, D2D1::ColorF(lowerRight.r, lowerRight.g, lowerRight.b,
+            lowerRight.a * 0.55f) },
+        { 0.82f, D2D1::ColorF(lowerRight.r, lowerRight.g, lowerRight.b,
+            lowerRight.a * 0.20f) },
+        { 1.0f, D2D1::ColorF(
+            lowerRight.r, lowerRight.g, lowerRight.b, lowerRight.a * 0.12f) },
+    };
+    ComPtr<ID2D1GradientStopCollection> upperLeftCollection;
+    ComPtr<ID2D1GradientStopCollection> lowerRightCollection;
+    if (FAILED(ctx->CreateGradientStopCollection(upperLeftStops,
+            static_cast<UINT32>(std::size(upperLeftStops)), D2D1_GAMMA_2_2,
+            D2D1_EXTEND_MODE_CLAMP, &upperLeftCollection)) ||
+        !upperLeftCollection ||
+        FAILED(ctx->CreateGradientStopCollection(lowerRightStops,
+            static_cast<UINT32>(std::size(lowerRightStops)), D2D1_GAMMA_2_2,
+            D2D1_EXTEND_MODE_CLAMP, &lowerRightCollection)) ||
+        !lowerRightCollection)
         return false;
 
-    const D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(ToD2DRect(frame),
-        radius, radius);
-    outerBrush->SetOpacity(0.24f);
-    ctx->DrawRoundedRectangle(outer, outerBrush.Get(), strokeWidth + 1.35f);
-    outerBrush->SetOpacity(1.0f);
-    ctx->DrawRoundedRectangle(outer, outerBrush.Get(), strokeWidth);
+    auto createCornerBrush = [ctx](const D2D1_RECT_F& bounds,
+        bool useLowerRight, ID2D1GradientStopCollection* stops,
+        ComPtr<ID2D1RadialGradientBrush>& brush) {
+        const float width = bounds.right - bounds.left;
+        const float height = bounds.bottom - bounds.top;
+        const D2D1_POINT_2F center = useLowerRight
+            ? D2D1::Point2F(bounds.right, bounds.bottom)
+            : D2D1::Point2F(bounds.left, bounds.top);
+        return SUCCEEDED(ctx->CreateRadialGradientBrush(
+            D2D1::RadialGradientBrushProperties(center,
+                D2D1::Point2F(0.0f, 0.0f), width, height),
+            stops, &brush)) && brush;
+    };
+
+    const D2D1_RECT_F outerRect = ToD2DRect(frame);
+    ComPtr<ID2D1RadialGradientBrush> upperLeftBrush;
+    ComPtr<ID2D1RadialGradientBrush> lowerRightBrush;
+    if (!createCornerBrush(outerRect, false, upperLeftCollection.Get(),
+            upperLeftBrush) ||
+        !createCornerBrush(outerRect, true, lowerRightCollection.Get(),
+            lowerRightBrush))
+        return false;
+
+    const D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
+        outerRect, radius, radius);
+    for (ID2D1RadialGradientBrush* brush :
+        { upperLeftBrush.Get(), lowerRightBrush.Get() })
+    {
+        brush->SetOpacity(0.24f);
+        ctx->DrawRoundedRectangle(outer, brush, strokeWidth + 1.35f);
+        brush->SetOpacity(1.0f);
+        ctx->DrawRoundedRectangle(outer, brush, strokeWidth);
+    }
 
     const float inset = std::max(0.85f, strokeWidth * 0.85f);
     const D2D1_RECT_F innerRect = D2D1::RectF(
@@ -62,16 +99,36 @@ inline bool DesktopApp::DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame,
         frame.right - inset, frame.bottom - inset);
     if (innerRect.right > innerRect.left && innerRect.bottom > innerRect.top)
     {
-        const float darkAlpha = std::clamp(color.a * 0.52f, 0.025f, 0.24f);
-        ComPtr<ID2D1SolidColorBrush> innerBrush;
-        if (SUCCEEDED(ctx->CreateSolidColorBrush(
-                D2D1::ColorF(0.0f, 0.0f, 0.0f, darkAlpha),
-                &innerBrush)) && innerBrush)
+        const float darkAlpha = std::clamp(color.a * 0.30f, 0.015f, 0.14f);
+        const D2D1_GRADIENT_STOP innerStops[] = {
+            { 0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, darkAlpha) },
+            { 0.46f, D2D1::ColorF(
+                0.0f, 0.0f, 0.0f, darkAlpha * 0.32f) },
+            { 0.82f, D2D1::ColorF(
+                0.0f, 0.0f, 0.0f, darkAlpha * 0.10f) },
+            { 1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f) },
+        };
+        ComPtr<ID2D1GradientStopCollection> innerCollection;
+        ComPtr<ID2D1RadialGradientBrush> innerUpperLeftBrush;
+        ComPtr<ID2D1RadialGradientBrush> innerLowerRightBrush;
+        if (SUCCEEDED(ctx->CreateGradientStopCollection(innerStops,
+                static_cast<UINT32>(std::size(innerStops)), D2D1_GAMMA_2_2,
+                D2D1_EXTEND_MODE_CLAMP, &innerCollection)) &&
+            innerCollection &&
+            createCornerBrush(innerRect, false, innerCollection.Get(),
+                innerUpperLeftBrush) &&
+            createCornerBrush(innerRect, true, innerCollection.Get(),
+                innerLowerRightBrush))
         {
-            ctx->DrawRoundedRectangle(D2D1::RoundedRect(innerRect,
+            const D2D1_ROUNDED_RECT inner = D2D1::RoundedRect(innerRect,
                 std::max(0.0f, radius - inset),
-                std::max(0.0f, radius - inset)), innerBrush.Get(),
-                std::max(0.65f, strokeWidth * 0.65f));
+                std::max(0.0f, radius - inset));
+            const float innerStroke = std::max(
+                0.65f, strokeWidth * 0.65f);
+            ctx->DrawRoundedRectangle(
+                inner, innerUpperLeftBrush.Get(), innerStroke);
+            ctx->DrawRoundedRectangle(
+                inner, innerLowerRightBrush.Get(), innerStroke);
         }
     }
     return true;

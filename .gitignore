@@ -16,3 +16,4 @@ imgui.ini
 out/
 .tmp/
 artifacts/
+/luac.obj

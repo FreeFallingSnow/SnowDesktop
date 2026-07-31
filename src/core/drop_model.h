@@ -17,6 +17,7 @@
 #pragma once
 
 #include "item.h"
+#include "slot_contract.h"
 #include "widget.h"
 #include "types.h"
 #include "utils.h"
@@ -173,6 +174,8 @@ enum class DropSourceKind
     FolderEntry,    ///< 来自文件夹视图内部的条目
     ExternalFile,   ///< 来自桌面外部（如资源管理器拖入）的文件
     Widget,         ///< 来自 Widget 组件自身
+    CollectionGroupEntry, ///< 来自集合组中的集合标签
+    FileGroupEntry, ///< 来自文件组中的来源标签
     Unknown,        ///< 来源未知
 };
 
@@ -232,6 +235,7 @@ struct DragSourceEntry
     std::wstring filePath;
     std::wstring displayName;
     std::wstring dockReference;
+    std::wstring widgetId;
     DockEntryType dockEntryType = DockEntryType::DesktopItem;
     bool fromDock = false;
     GridCell originalCell;
@@ -256,6 +260,9 @@ struct DragSourceList
 {
     std::vector<DragSourceEntry> entries;
     Container* origin = nullptr;
+    snowdesktop::slot_contract::SlotSurfaceKind originSurface =
+        snowdesktop::slot_contract::SlotSurfaceKind::Desktop;
+    bool hasOriginSurface = false;
     bool hasOriginWidget = false;
     std::wstring originWidgetId;
     DesktopWidgetType originWidgetType = DesktopWidgetType::Collection;
@@ -263,8 +270,28 @@ struct DragSourceList
     bool hasFolderEntries = false;
     bool hasExternalFiles = false;
     bool hasWidgets = false;
+    bool hasCollectionGroupEntries = false;
+    bool hasFileGroupEntries = false;
 
     bool Empty() const { return entries.empty(); }
+
+    /**
+     * @brief 获取不依赖运行时容器生命周期的来源面类型。
+     *
+     * 内部拖拽在建立 DragSourceList 时记录来源面。容器树或临时弹窗
+     * 重建后，即使 origin 已解除绑定，命中规则仍可安全使用该稳定元数据。
+     */
+    snowdesktop::slot_contract::SlotSurfaceKind
+        SourceSurfaceKind() const
+    {
+        if (hasOriginSurface)
+            return originSurface;
+        return hasExternalFiles
+            ? snowdesktop::slot_contract::
+                SlotSurfaceKind::External
+            : snowdesktop::slot_contract::
+                SlotSurfaceKind::Desktop;
+    }
 
     /**
      * @brief 获取所有条目的文件路径
@@ -306,6 +333,7 @@ struct DropLanding
     DropLandingKind kind = DropLandingKind::None;
     size_t sourceIndex = 0;
     GridCell cell;
+    GridSpan span{1, 1};
     size_t insertIndex = 0;
     DesktopWidget* widget = nullptr;
     std::wstring widgetId;

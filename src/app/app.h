@@ -28,12 +28,30 @@
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "dock_settings.h"
+#include "dock_drop_rules.h"
+#include "dock_folder_rules.h"
+#include "dock_collection_icon_rules.h"
+#include "collection_popup_layout.h"
+#include "folder_sort_rules.h"
+#include "shell_item_visibility.h"
+#include "popup_drag_rules.h"
+#include "popup_animation_rules.h"
+#include "quick_navigation_animation_rules.h"
+#include "item_layout_rules.h"
+#include "dock_window_rules.h"
+#include "dock_window_preview.h"
+#include "dock_window_transition.h"
+#include "dock_launch_animation.h"
+#include "dock_rename_layout.h"
+#include "floating_dock_rules.h"
+#include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "everything_search.h"
 #include "data_paths.h"
 #include "utils.h"
 #include "widget_engine.h"
 #include "l10n.h"
+#include "item_location.h"
 #include "types.h"
 #include "constants.h"
 #include "resource.h"
@@ -62,6 +80,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <functional>
@@ -70,6 +89,8 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -124,6 +145,15 @@ struct DockAppIdentity
     std::wstring appUserModelId;
     std::wstring steamAppId;
     std::wstring steamInstallDirectory;
+};
+
+struct DockWindowPreviewTarget
+{
+    DockAppIdentity identity;
+    std::wstring identityKey;
+    std::wstring targetToken;
+    RECT anchorScreen{};
+    bool floatingLayer = false;
 };
 
 struct DockWindowInfo
@@ -189,6 +219,15 @@ public:
 
     /** @brief 将缓存的静态场景绘制到指定设备上下文中。 @param ctx D2D 设备上下文 */
     void Draw(ID2D1DeviceContext* ctx) const;
+    /**
+     * @brief 将缓存绘制到指定坐标。
+     * @return 缓存存在并完成绘制时返回 true。
+     */
+    bool DrawAt(
+        ID2D1DeviceContext* ctx,
+        D2D1_POINT_2F destination,
+        D2D1_INTERPOLATION_MODE interpolation =
+            D2D1_INTERPOLATION_MODE_LINEAR) const;
 
 private:
     ComPtr<ID2D1Bitmap1> bitmap_;      /**< 缓存的静态场景位图 */
@@ -298,6 +337,10 @@ public:
     friend class Widget;
     friend class WidgetContainer;
     friend class Collection;
+    friend class CollectionGroup;
+    friend class CollectionGroupEntryItem;
+    friend class FileGroup;
+    friend class FileGroupEntryItem;
     friend class FileCategories;
     friend class FolderMapping;
     friend class ScrollingItemWidget;
@@ -331,6 +374,24 @@ public:
         std::wstring name;           /**< 显示名称 */
         std::wstring path;           /**< 完整路径 */
         std::wstring source;         /**< 来源标识 */
+    };
+
+    struct QuickNavigationSection
+    {
+        std::wstring label;
+        size_t firstEntryIndex = 0;
+        size_t entryCount = 0;
+    };
+
+    struct QuickNavigationContentModel
+    {
+        std::vector<QuickNavigationEntry> entries;
+        std::vector<QuickNavigationSection> sections;
+
+        bool IsSectioned() const
+        {
+            return !sections.empty();
+        }
     };
 
     struct QuickNavigationEverythingEntry
@@ -417,6 +478,7 @@ private:
      * @return 消息处理结果
      */
     static LRESULT CALLBACK QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    static LRESULT CALLBACK FloatingDockWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /**
      * @brief 主窗口消息分发处理。
      * @param hwnd 窗口句柄
@@ -435,6 +497,7 @@ private:
      * @return 消息处理结果
      */
     LRESULT HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    LRESULT HandleFloatingDockMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /** @brief 创建桌面覆盖窗口，挂载到 Explorer 桌面上层。 @return 成功返回 true */
     bool CreateDesktopOverlayWindow();
     /** @brief 重置桌面窗口相关的 D2D/DComp 资源（窗口尺寸变化或设备丢失时调用）。 */
@@ -447,6 +510,8 @@ private:
     void AttachInputWindowToDesktopHost(HWND host);
     /** @brief 将键盘焦点交给独立输入窗口。 */
     void FocusDesktopInputWindow();
+    /** @brief 将输入法组合文本和候选窗口定位到自绘输入框光标。 */
+    void UpdateHostInputImePosition();
     /** @brief 获取 Shell 弹窗/命令使用的顶层 owner，避免使用挂在 Explorer 下的子窗口。 */
     HWND ShellDialogOwnerHwnd() const;
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
@@ -489,11 +554,19 @@ private:
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
     void OnPaint(const RECT* updateRect = nullptr);
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */
-    void RenderFrame(ID2D1DeviceContext* ctx);
+    void RenderFrame(
+        ID2D1DeviceContext* ctx,
+        const RECT* updateRect = nullptr,
+        bool hiddenMode = false);
     /** @brief 绘制静态背景（桌面项图标、文本、网格等）。 @param ctx D2D 设备上下文 */
-    void DrawStaticBackground(ID2D1DeviceContext* ctx);
+    void DrawStaticBackground(
+        ID2D1DeviceContext* ctx,
+        const RECT* updateRect = nullptr,
+        bool hiddenMode = false);
     /** @brief 绘制动态叠加层（拖拽图标、放置预览、选择框等）。 @param ctx D2D 设备上下文 */
-    void DrawDynamicOverlays(ID2D1DeviceContext* ctx);
+    void DrawDynamicOverlays(
+        ID2D1DeviceContext* ctx,
+        bool hiddenMode = false);
     /** @brief 绘制翻页导航按钮（左右箭头）。 @param ctx D2D 设备上下文 */
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
@@ -522,6 +595,8 @@ private:
     void InvalidateDragStaticScene();
     /** @brief 结束当前拖拽会话，清理拖拽状态。 */
     void EndDragSession();
+    /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */
+    void CommitDragVisualEndBeforeShellOperation();
     /** @brief 在控件重建后重新绑定拖拽源。 */
     void RebindDragSourceAfterRebuild();
     /**
@@ -554,29 +629,88 @@ private:
     DockContainer* GetDockContainerAtPoint(POINT point) const;
     void InvalidateDockContainers();
     void InvalidateDockRects(BOOL erase = FALSE) const;
+    /** @brief 提交拖动帧，并按刷新间隔合并浮动 Dock 的被动 hover 帧。 */
+    void PresentPointerInteractionFrame();
+    void ClearDockBackdropForDragTransition(
+        POINT previousPointer, POINT currentPointer);
+    bool CreateFloatingDockWindow();
+    void DestroyFloatingDockWindow();
+    void ShowFloatingDock();
+    void CloseFloatingDock(bool closeDockPopup = true);
+    void ToggleFloatingDock();
+    void ApplyFloatingDockHotkey();
+    void UnregisterFloatingDockHotkey();
+    void UpdateFloatingDockEdgeSwipe();
+    DockContainer* SelectFloatingDockContainerAtCursor() const;
+    DockContainer* SelectFloatingDockContainerForMonitor(
+        HMONITOR monitor) const;
+    RECT CalculateFloatingDockStableSourceRect() const;
+    void UpdateFloatingDockWindowBounds(
+        bool immediatePresent = true);
+    void InvalidateFloatingDockWindow(bool immediate = false) const;
+    HRESULT CreateOrResizeFloatingDockCompositionSurface();
+    void ResetFloatingDockCompositionResources();
+    void RecoverFloatingDockCompositionFailure(
+        const wchar_t* stage, HRESULT hr);
+    void PaintFloatingDockWindow(HWND hwnd);
+    POINT FloatingDockClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
     void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
-    bool LaunchDesktopItem(size_t itemIndex);
-    bool ActivateOrToggleDockItem(size_t itemIndex);
-    bool ActivateOrToggleDockWindow(HWND window);
+    bool LaunchDesktopItem(
+        size_t itemIndex, bool animateDockLaunch = false);
+    bool StartDockLaunchBounce(size_t itemIndex);
+    float GetDockLaunchBounceOffset(
+        size_t itemIndex, int iconSize) const;
+    void OnDockLaunchBounceTimer();
+    bool ActivateOrToggleDockItem(size_t itemIndex,
+        std::optional<snowdesktop::dock_window_rules::DockClickAction>
+            pressedAction = std::nullopt,
+        HWND pressedTarget = nullptr,
+        std::optional<RECT> pressedAnchorScreen =
+            std::nullopt);
+    bool ActivateOrToggleDockWindow(HWND window,
+        std::optional<snowdesktop::dock_window_rules::DockClickAction>
+            pressedAction = std::nullopt,
+        HWND pressedTarget = nullptr,
+        std::optional<RECT> pressedAnchorScreen =
+            std::nullopt);
+    void ActivateDockWindowFromPreview(HWND window);
     bool HandleDockClickRelease(POINT point);
     void ToggleWindowsStartMenu();
     DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
+    void PruneDockPendingCloseWindows();
+    bool IsDockWindowClosePending(HWND window);
+    bool IsDockAppClosePending(const DockAppIdentity& identity);
+    bool RequestTrackedDockWindowClose(HWND window);
+    std::vector<DockWindowPreviewItem> CollectDockWindowPreviewItems(
+        const DockAppIdentity& identity,
+        bool includeCloaked = false);
+    void CloseDockWindowFromPreview(HWND window);
+    void CloseDockApplicationWindows(
+        const DockAppIdentity& identity);
+    bool ResolveDockWindowPreviewTarget(
+        POINT clientPoint, DockWindowPreviewTarget& target);
+    void UpdateDockWindowPreview(POINT clientPoint);
+    void OnDockWindowPreviewHoverTimer();
+    void HideDockWindowPreview();
+    void DismissDockWindowPreviewUntilLeave();
     void StartDockForegroundMonitor();
     void StopDockForegroundMonitor();
     void UpdateSystemTaskbarRevealGuard();
     bool IsSystemTaskbarHookRequired(const DockSettings& settings) const;
     PersonalizationSettings ResolveSystemTaskbarDynamicAppearance(
         const SystemTaskbarDynamicRule& rule) const;
-    void RefreshSystemTaskbarWindowState();
-    void RefreshSystemTaskbarAppearance(bool forceWindowScan = false);
+    bool RefreshSystemTaskbarWindowState();
+    bool RefreshSystemTaskbarAppearance(
+        bool forceWindowScan = false,
+        bool skipUnchangedWindowState = false);
     void RestartSystemTaskbarShellVisibilityDetectors();
     static void CALLBACK DockForegroundWinEventProc(HWINEVENTHOOK hook, DWORD event,
         HWND window, LONG objectId, LONG childId, DWORD eventThread, DWORD eventTime);
@@ -585,6 +719,7 @@ private:
     void RecordDockItemUsage(size_t itemIndex);
     bool IsDockUsageEligibleItem(const DesktopItem& item) const;
     bool RemoveDockDragOutItems(const std::vector<Item*>& sourceItems);
+    bool RemoveDockMappingAt(size_t entryIndex);
     std::vector<size_t> GetFrequentDockItemIndices();
     bool SuppressDesktopWidgetDragTargets() const;
     std::wstring GetDockDragOutRemovalHint(POINT point) const;
@@ -595,6 +730,15 @@ private:
         Container* origin, DockEntryItem* targetItem, int mods);
     bool IsDockExclusiveItemKey(const std::wstring& key) const;
     bool IsDockExclusiveWidgetId(const std::wstring& id) const;
+    snowdesktop::item_location::FolderTarget ResolveDockFolderTarget(
+        const DockEntry& entry) const;
+    bool IsFolderDockEntry(const DockEntry& entry) const;
+    size_t DockMainEntryCount() const;
+    size_t DockFolderEntryCount() const;
+    bool IsGroupedCollection(const DesktopWidget& widget) const;
+    bool IsGroupedWidget(const DesktopWidget& widget) const;
+    size_t FindCollectionGroupIndexForChild(const std::wstring& childId) const;
+    size_t FindFileGroupIndexForChild(const std::wstring& childId) const;
     bool IsRecycleBinDockEntry(const DockEntry& entry) const;
     void NormalizeDockRecycleBinPosition();
     size_t FindWidgetIndexById(const std::wstring& id) const;
@@ -604,6 +748,21 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    /** @brief 按通用设置注册“按住隐藏桌面”全局快捷键。 */
+    void ApplyDesktopPassthroughHotkey();
+    /** @brief 注销“按住隐藏桌面”全局快捷键并停止释放检测。 */
+    void UnregisterDesktopPassthroughHotkey();
+    /** @brief 快捷键按下后临时隐藏软件桌面，使输入交给动态壁纸。 */
+    void BeginDesktopPassthroughHold();
+    /**
+     * @brief 结束临时隐藏状态。
+     * @param restoreDesktop 是否重新显示软件桌面窗口
+     */
+    void EndDesktopPassthroughHold(bool restoreDesktop = true);
+    /** @brief 判断当前配置的快捷键所有组成键是否仍按下。 */
+    bool IsDesktopPassthroughHotkeyDown() const;
+    /** @brief 判断任一鼠标按钮是否仍按下。 */
+    bool IsDesktopPassthroughPointerDown() const;
     /** @brief 应用软件桌面启用状态，并可选择持久化到通用设置。 */
     void SetSoftwareDesktopEnabled(bool enabled, bool persist);
     /** @brief 根据全局继承或快捷搜索覆盖项解析并应用主题。 */
@@ -639,8 +798,26 @@ private:
     void ApplyLanguageChange();
     /** @brief 获取当前分类设置。 */
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
+    /** @brief 获取三类滚动分类组件共用的标签字号。 */
+    float GetCategorizedWidgetTabFontSize() const
+    {
+        return settingsWindow_
+            ? std::clamp(
+                settingsWindow_->GetPersonalization().
+                    categorizedTabFontSize,
+                10.0f, 22.0f)
+            : 14.0f;
+    }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility();
+    /** @brief 判断隐藏桌面时该点是否位于保留元素（组件/Dock）上。 */
+    bool IsPointOnRetainedElement(POINT pt) const;
+    /** @brief 判断当前打开的集合弹窗是否属于隐藏桌面时保留的元素。 */
+    bool IsOpenPopupRetained() const;
+    /** @brief 判断容器是否可在隐藏桌面时继续作为交互/拖放目标。 */
+    bool IsRetainedContainer(const Container* container) const;
+    /** @brief 隐藏桌面时是否存在保留元素（组件/Dock）。 */
+    bool HasRetainedElements() const;
     /** @brief 显示隐藏状态提示文字。 */
     void ShowHiddenHint();
     /** @brief 清除隐藏状态提示。 */
@@ -656,9 +833,14 @@ private:
     /** @brief 切换快速导航面板的打开/关闭状态。 */
     void ToggleQuickNavigation();
     /** @brief 打开快速导航面板。 */
-    void OpenQuickNavigation();
+    void OpenQuickNavigation(
+        bool fromDockSearch = false);
     /** @brief 关闭快速导航面板。 */
     void CloseQuickNavigation();
+    /** @brief 将快速导航动画的当前视觉状态同步到内容、毛玻璃和搜索框。 */
+    void ApplyQuickNavigationAnimationFrame();
+    /** @brief 动画结束后释放快速导航窗口和临时数据。 */
+    void FinalizeCloseQuickNavigation();
     /** @brief 创建快速导航窗口。 @return 成功返回 true */
     bool CreateQuickNavigationWindow();
     /** @brief 销毁快速导航窗口。 */
@@ -693,7 +875,7 @@ private:
     int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
     const QuickNavigationAppEntry* FindQuickNavigationEverythingAppEntry() const;
     std::wstring GetQuickNavigationEverythingNoticeText() const;
-    bool TryLaunchQuickNavigationEverythingApp() const;
+    bool TryLaunchQuickNavigationEverythingApp();
     void StartQuickNavigationAppIndexing();
     void StopQuickNavigationAppIndexing();
     void OnQuickNavigationAppsIndexed(WPARAM wParam, LPARAM lParam);
@@ -706,6 +888,10 @@ private:
     bool HasQuickNavigationEverythingLoadMoreButton() const;
     bool TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point);
     bool TryGetQuickNavigationAppEntryAtPoint(POINT point, const QuickNavigationAppEntry*& outEntry) const;
+    size_t FindDockItemIndexForQuickNavigationApp(
+        const QuickNavigationAppEntry& entry);
+    bool LaunchQuickNavigationAppEntry(
+        const QuickNavigationAppEntry& entry);
     std::vector<QuickNavigationKeyboardTarget> GetQuickNavigationKeyboardTargets() const;
     bool HandleQuickNavigationKeyboardInput(WPARAM key);
     bool IsQuickNavigationKeyboardTarget(
@@ -719,6 +905,28 @@ private:
         PIDLIST_ABSOLUTE targetPidl, const std::wstring& targetPath, const std::wstring& workingDirectory);
     static std::wstring SanitizeShortcutFileStem(const std::wstring& name);
     static bool IsApplicationsShellLinkTarget(IShellLinkW* shellLink);
+    QuickNavigationContentModel BuildQuickNavigationContentModel() const;
+    RECT GetQuickNavigationSectionHeaderRect(
+        const RECT& overlay, size_t sectionIndex,
+        const QuickNavigationContentModel& model) const;
+    RECT GetQuickNavigationViewModeButtonRect(
+        const RECT& overlay) const;
+    int GetQuickNavigationTabsStart(
+        const RECT& overlay) const;
+    bool TrySetQuickNavigationDesktopViewModeAtPoint(
+        POINT point);
+    void SetQuickNavigationDesktopViewMode(
+        QuickNavigationDesktopViewMode mode);
+    RECT GetQuickNavigationInitialJumpBackRect(
+        const RECT& overlay) const;
+    RECT GetQuickNavigationInitialJumpCellRect(
+        const RECT& overlay, size_t bucketIndex) const;
+    bool HandleQuickNavigationInitialJumpClick(
+        POINT point);
+    bool HandleQuickNavigationInitialJumpKeyboardInput(
+        WPARAM key);
+    bool ActivateQuickNavigationInitialJumpBucket(
+        size_t bucketIndex);
     /** @brief 计算快捷导航标签页的宽度。 */
     int GetQuickNavigationTabWidth() const;
     /** @brief 获取指定标签页的显示名称。 */
@@ -757,6 +965,8 @@ private:
     DesktopIcon* HitTestIcon(POINT pt) const;
     /** @brief 处理鼠标移动消息。 @param wp WPARAM @param lp LPARAM */
     void OnMouseMove(WPARAM wp, LPARAM lp);
+    /** @brief 鼠标进入其他窗口时清理所有悬浮状态。 */
+    void OnMouseLeave();
     /** @brief 处理鼠标左键按下消息。 @param wp WPARAM @param lp LPARAM */
     void OnLeftButtonDown(WPARAM wp, LPARAM lp);
     /** @brief 处理鼠标左键释放消息。 @param wp WPARAM @param lp LPARAM */
@@ -798,6 +1008,8 @@ private:
      * @return 操作是否成功
      */
     bool PasteClipboardToFolderMapping(size_t widgetIndex);
+    bool PasteClipboardToFolderPath(
+        const std::wstring& targetFolderPath);
     /** @brief 根据方向键在桌面网格上进行 2D 空间导航。 @param arrowKey 方向键的虚拟键码 */
     void NavigateDesktopGrid(WPARAM arrowKey);
     /** @brief 在组件内部导航成员项。 @param arrowKey 方向键的虚拟键码 */
@@ -818,6 +1030,10 @@ private:
     void OnTimer(WPARAM timerId);
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */
     void UpdateCollectionPopupDwell(POINT point);
+    /** @brief 拖动条目时更新集合组标签的悬停切换计时。 */
+    void UpdateCollectionGroupTabDwell(POINT point);
+    /** @brief 尝试切换到当前悬停的集合组标签。 */
+    bool TryActivateCollectionGroupTab(DWORD now);
     /**
      * @brief 尝试打开悬停停留后的集合弹出面板。
      * @param now 当前时间（毫秒）
@@ -900,23 +1116,47 @@ private:
     void ShowBackgroundContextMenu(POINT screenPoint);
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint);
+    /** @brief 显示 Dock 运行区应用上下文菜单。 */
+    void ShowDockRunningAppContextMenu(
+        POINT screenPoint, size_t runningIndex);
     /** @brief 连续显示行列调整菜单，直到用户取消。 */
     void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
-    void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex);
+    void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex,
+        std::optional<RECT> dockRenameAnchor = std::nullopt);
+    /** @brief 显示集合组标签上下文菜单。 */
+    void ShowCollectionGroupTabContextMenu(
+        POINT screenPoint, size_t groupIndex,
+        const std::wstring& collectionId);
+    void ShowFileGroupSourceTabContextMenu(
+        POINT screenPoint, size_t groupIndex,
+        const std::wstring& childId);
     /** @brief 显示文件夹条目上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
-    void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex, size_t memberIndex);
+    void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex,
+        size_t memberIndex, bool keepQuickNavigationOpen = false);
     /** @brief 显示桌面项上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引 @param dockFrequentItem 是否来自 Dock 常用区 */
     void ShowItemContextMenu(POINT screenPoint, int itemIndex,
-        bool dockFrequentItem = false);
+        bool dockFrequentItem = false,
+        bool keepQuickNavigationOpen = false,
+        std::optional<RECT> dockRenameAnchor = std::nullopt,
+        std::optional<size_t> dockMappingEntryIndex =
+            std::nullopt,
+        bool dockApplicationItem = false);
     /** @brief 显示外壳扩展上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引（可选，-1 表示背景） */
-    void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1);
+    void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1,
+        bool keepQuickNavigationOpen = false,
+        std::optional<RECT> dockRenameAnchor = std::nullopt,
+        std::optional<size_t> dockMappingEntryIndex =
+            std::nullopt);
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir);
     /** @brief 显示桌面背景的专用上下文菜单（含新建、显示设置等）。 @param screenPoint 屏幕坐标 */
     void ShowDesktopBackgroundContextMenu(POINT screenPoint);
     /** @brief 为指定路径显示外壳扩展上下文菜单。 @param folderPath 文件夹路径 @param screenPoint 屏幕坐标 */
     void ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint);
+    void ShowShellItemContextMenuForPath(
+        const std::wstring& itemPath,
+        POINT screenPoint);
     /**
      * @brief 创建用于菜单图标的位图（包含文本渲染）。
      * @param text 图标文字
@@ -942,6 +1182,8 @@ private:
      * @return 是重命名命令返回 true
      */
     bool IsShellRenameCommand(IContextMenu* contextMenu, UINT commandOffset) const;
+    bool IsShellDeleteCommand(
+        IContextMenu* contextMenu, UINT commandOffset) const;
 
     // ── Grid helpers ────────────────────────────────────────
     /**
@@ -1321,9 +1563,11 @@ private:
      * @param rect 绘制矩形
      * @param format 文字格式
      * @param color 文字颜色
+     * @param wordWrapping 换行模式，默认保持单行
      */
     void DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
-        RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color);
+        RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
+        DWRITE_WORD_WRAPPING wordWrapping = DWRITE_WORD_WRAPPING_NO_WRAP);
     /**
      * @brief 绘制带省略号（可选）的单行文本，覆盖对齐方式。
      * @param ctx D2D 上下文
@@ -1338,8 +1582,28 @@ private:
     void DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
         DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis = true);
-    /** @brief 绘制集合弹出面板内容。 @param ctx D2D 上下文 */
-    void DrawCollectionPopup(ID2D1DeviceContext* ctx);
+    /**
+     * @brief 绘制集合弹出面板内容。
+     * @param ctx D2D 上下文
+     * @param applyAnimation 是否应用当前缩放动画
+     */
+    void DrawCollectionPopup(
+        ID2D1DeviceContext* ctx,
+        bool applyAnimation = true);
+    RECT GetLuaWidgetPanelRect() const;
+    RECT GetLuaWidgetPanelContentRect() const;
+    RECT GetLuaWidgetPanelCloseRect() const;
+    void DrawLuaWidgetPanel(ID2D1DeviceContext* ctx);
+    void OpenLuaWidgetPanel(
+        const LuaWidgetPanelRequest& request);
+    void CloseLuaWidgetPanel(
+        const std::wstring& widgetId = L"",
+        const char* reason = "dismissed");
+    void FinalizeCloseLuaWidgetPanel();
+    /** @brief 在动画开始前将完整弹窗录制到 GPU 位图。 */
+    void PrepareCollectionPopupAnimationCache();
+    /** @brief 释放弹窗动画位图。 */
+    void ResetCollectionPopupAnimationCache();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
     static float GetBeautifiedIconCornerRadius(int width, int height);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
@@ -1347,6 +1611,8 @@ private:
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
     bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
         bool forceWhiteStyle = false);
+    void DrawDockSelectionIndicator(
+        ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,
         const DockRunningAppInfo& app, RECT rect, int state);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
@@ -1494,6 +1760,9 @@ private:
     void AddWidgetToGrid(DesktopWidget&& widget, GridSpan span);
     /** @brief 在指定屏幕位置创建集合部件。 @param screenPoint 屏幕坐标 */
     void AddCollectionWidgetAt(POINT screenPoint);
+    /** @brief 在指定屏幕位置创建集合组部件。 @param screenPoint 屏幕坐标 */
+    void AddCollectionGroupWidgetAt(POINT screenPoint);
+    void AddFileGroupWidgetAt(POINT screenPoint);
     /** @brief 在指定屏幕位置创建文件分类部件。 @param screenPoint 屏幕坐标 */
     void AddFileCategoryWidgetAt(POINT screenPoint);
     /** @brief 在指定屏幕位置创建文件夹映射部件。 @param screenPoint 屏幕坐标 */
@@ -1508,8 +1777,29 @@ private:
      * @param isMove 是否为移动操作
      */
     void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove = false);
+    bool AddCollectionToGroup(size_t collectionIndex, size_t groupIndex,
+        size_t insertIndex = static_cast<size_t>(-1));
+    bool ReleaseCollectionFromGroup(const std::wstring& collectionId,
+        GridCell preferredCell);
+    void ReleaseCollectionGroupChildren(size_t groupIndex);
+    /** @brief 删除桌面项目容器前，将其成员依次放回可用网格空位。 */
+    void ReleaseDesktopItemsFromWidget(size_t widgetIndex);
+    size_t HitTestCollectionGroupIndex(POINT point,
+        size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
+    bool AddWidgetToFileGroup(size_t childIndex, size_t groupIndex,
+        size_t insertIndex = static_cast<size_t>(-1));
+    bool MoveFolderMappingsToFileGroup(
+        const std::vector<Item*>& sourceItems,
+        size_t groupIndex, size_t insertIndex);
+    bool ReleaseWidgetFromFileGroup(const std::wstring& childId,
+        GridCell preferredCell);
+    void ReleaseFileGroupChildren(size_t groupIndex);
+    size_t HitTestFileGroupIndex(POINT point,
+        size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
     /** @brief 枚举文件夹映射部件中的条目。 @param widget 部件引用 */
-    void EnumerateFolderMappingEntries(DesktopWidget& widget);
+    void EnumerateFolderMappingEntries(
+        DesktopWidget& widget,
+        bool enqueueIconLoads = true);
     /** @brief 刷新文件夹映射部件的内容。 @param widgetIndex 部件索引 */
     void RefreshFolderMappingWidget(size_t widgetIndex);
     /**
@@ -1529,9 +1819,48 @@ private:
      * @param anchorPoint 锚点坐标
      * @param categoryId 可选的分类 ID
      */
-    void OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint, const std::wstring& categoryId = L"");
+    void OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint,
+        const std::wstring& categoryId = L"",
+        bool closingStartedByCurrentPress = false);
+    void OpenDockFolderPopupAt(size_t entryIndex, POINT anchorPoint);
+    bool IsDockFolderPopupOpen() const
+    {
+        return dockFolderPopupOpen_ &&
+            popupAnimation_.IsInteractive();
+    }
+    bool IsCollectionPopupInteractive() const
+    {
+        return GetOpenPopupWidget() != nullptr &&
+            popupAnimation_.IsInteractive();
+    }
+    DesktopWidget* GetOpenPopupWidget();
+    const DesktopWidget* GetOpenPopupWidget() const;
+    size_t GetPopupItemCount(const DesktopWidget& widget) const;
+    std::vector<Item*>
+        GetDockFolderPopupSelectedItems();
+    /**
+     * @brief 在替换 Dock 文件夹弹窗运行时对象前保存活动拖拽来源。
+     * @return 当前拖拽来源来自该弹窗且已完成稳定重绑定或安全结束时返回 true。
+     */
+    bool PreserveDockFolderPopupDragSourceForTransition();
+    /** @brief 释放拖拽期间保存的 Dock 文件夹弹窗来源快照。 */
+    void ClearDockFolderPopupDragSourceSnapshot();
+    void RefreshDockFolderPopup();
+    void CommitDockFolderPopupStateToSource();
+    void SortDockFolderPopupContents(int mode, bool ascending);
+    void ShowDockFolderPopupSortMenu(POINT screenPoint);
+    void ShowDockFolderPopupContextMenu(
+        POINT screenPoint,
+        std::optional<size_t> memberIndex =
+            std::nullopt);
     /** @brief 关闭集合弹出面板。 */
-    void CloseCollectionPopup();
+    void CloseCollectionPopup(
+        bool clearSelection = true);
+    void FinalizeCloseCollectionPopup();
+    void StartCollectionPopupAnimation(
+        bool reverseClosingAnimation = false);
+    void InvalidateCollectionPopupAnimation(
+        bool invalidateStaticScene = false);
     /**
      * @brief 判断坐标点是否位于当前打开的弹出面板内。
      * @param point 客户端坐标
@@ -1583,6 +1912,7 @@ private:
     bool CopyTextToClipboard(const std::wstring& text);
     /** @brief 获取集合弹出面板的矩形。 @param widget 部件引用 @return 面板矩形 */
     RECT GetCollectionPopupRect(const DesktopWidget& widget) const;
+    RECT GetDockFolderPopupSortButtonRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容区域的矩形。 @param popup 面板矩形 @return 内容矩形 */
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
@@ -1643,6 +1973,8 @@ private:
      * @return Lua 桌面项信息列表
      */
     std::vector<LuaDesktopItemInfo> BuildLuaDesktopSnapshot(bool selectedOnly) const;
+    std::vector<LuaDesktopItemInfo> BuildLuaApplicationSearch(
+        const std::string& query, int maxResults);
     std::vector<LuaDesktopItemInfo> BuildLuaEverythingSearch(const std::string& query, int maxResults) const;
     std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
     /** @brief 通过 Lua 脚本打开指定路径。 @param path 要打开的路径 @return 操作是否成功 */
@@ -1677,6 +2009,7 @@ private:
     RECT GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const;
     /** @brief 开始重命名文件夹条目。 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
     void BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex);
+    void BeginRenameDockFolderPopupEntry(size_t memberIndex);
     /** @brief 提交或取消文件夹条目重命名。 @param newName 新名称 @param cancel true 取消 */
     void CommitFolderEntryRename(const std::wstring& newName, bool cancel);
 
@@ -1734,6 +2067,7 @@ private:
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
     DockSettings dockSettings_;
+    bool dockSettingsLayoutCommitPending_ = false;
     CategorySettings categorySettings_ = CategorySettings::Defaults();
     bool quickNavLightTheme_ = false;
     bool quickNavGlassTheme_ = false;
@@ -1746,6 +2080,7 @@ private:
     bool showWidgetAddedHint_ = false;
     DWORD widgetAddedHintStartTick_ = 0;
     bool navigationHotkeyRegistered_ = false;
+    bool floatingDockHotkeyRegistered_ = false;
     /** @} */
 
     /** @name Shell 外壳相关 */
@@ -1765,11 +2100,37 @@ private:
     std::vector<GridPage> gridPages_;
     std::vector<DesktopWidget> widgets_;
     std::vector<DockEntry> dockEntries_;
+    // Folder classification participates in Dock layout, hit-testing and
+    // painting. Resolving a .lnk uses Shell COM and querying a system folder
+    // icon can touch the Shell namespace, so neither operation may run once
+    // per frame.
+    mutable std::unordered_map<
+        std::wstring,
+        snowdesktop::item_location::FolderTarget>
+        dockFolderTargetCache_;
+    mutable std::unordered_map<std::wstring, int>
+        dockFolderIconIndexCache_;
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
     std::unordered_map<std::wstring, DockAppIdentity> dockAppIdentityCache_;
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
     std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
+    std::unordered_map<HWND, ULONGLONG> dockPendingCloseWindows_;
+    std::unique_ptr<DockWindowPreview> dockWindowPreview_;
+    std::unique_ptr<DockWindowTransition>
+        dockWindowTransition_;
+    struct DockLaunchBounceState
+    {
+        double startTimeMs = 0.0;
+        bool stopRequested = false;
+        HWND observedForeground = nullptr;
+    };
+    std::unordered_map<std::wstring, DockLaunchBounceState>
+        dockLaunchBounces_;
+    DockPreviewHoverController dockWindowPreviewHover_;
+    std::wstring dockWindowPreviewKey_;
+    RECT dockWindowPreviewAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
+    DWORD systemTaskbarWindowScanTick_ = 0;
     DWORD systemTaskbarBackdropForegroundTick_ = 0;
     HWINEVENTHOOK dockForegroundEventHook_ = nullptr;
     std::vector<HWINEVENTHOOK> systemTaskbarWindowEventHooks_;
@@ -1777,7 +2138,20 @@ private:
     inline static std::atomic<HWND> dockPreviousForegroundWindow_{ nullptr };
     inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
     inline static std::atomic<DWORD> systemTaskbarWindowStateChangedTick_{ 0 };
+    inline static std::atomic<DWORD> dockWindowListChangedTick_{ 0 };
+    struct SystemTaskbarWindowObservation
+    {
+        HMONITOR monitor = nullptr;
+        bool maximized = false;
+    };
+    inline static std::mutex systemTaskbarWindowObservationMutex_;
+    inline static std::unordered_map<HWND,
+        SystemTaskbarWindowObservation>
+        systemTaskbarWindowObservations_;
     DWORD systemTaskbarWindowStateObservedTick_ = 0;
+    DWORD dockRunningWindowsForegroundTick_ = 0;
+    DWORD dockRunningWindowsStateTick_ = 0;
+    DWORD dockRunningWindowsRefreshTick_ = 0;
     struct SystemTaskbarMonitorWindowState
     {
         bool visible = false;
@@ -1794,15 +2168,22 @@ private:
     bool systemTaskbarTaskViewActive_ = false;
     UINT systemTaskbarTaskViewStateMsg_ = 0;
     std::vector<RECT> dockAreas_;
+    bool dockWorkAreaReservationApplied_ = false;
+    DockPosition dockWorkAreaReservationPosition_ =
+        DockPosition::Bottom;
     DockContainer* dockPressedContainer_ = nullptr;
     size_t dockPressedEntry_ = static_cast<size_t>(-1);
     size_t dockPressedFrequentItem_ = static_cast<size_t>(-1);
     std::wstring dockPressedRunningAppKey_;
+    snowdesktop::dock_window_rules::DockClickAction
+        dockPressedWindowAction_ =
+            snowdesktop::dock_window_rules::DockClickAction::None;
+    HWND dockPressedTargetWindow_ = nullptr;
     size_t dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
     size_t dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
     DWORD dockPendingDoubleClickTick_ = 0;
-    HWND dockPressedForegroundWindow_ = nullptr;
-    DWORD dockPressedForegroundTick_ = 0;
+    size_t dockSuppressClickReleaseEntry_ =
+        static_cast<size_t>(-1);
     std::unordered_map<std::wstring, LayoutRecord> layoutRecords_;
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
@@ -1833,6 +2214,8 @@ private:
     bool keyboardNavInsideWidget_ = false;
     size_t keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     int keyboardNavMemberIndex_ = -1;
+    bool keyboardNavCollectionGroupTabs_ = false;
+    bool keyboardNavFileGroupCategoryTabs_ = false;
     int navHoverSide_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
@@ -1851,6 +2234,35 @@ private:
     HWND controlHwnd_ = nullptr;
     HWND inputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
+    HWND floatingDockHwnd_ = nullptr;
+    HWND floatingDockHotkeyHwnd_ = nullptr;
+    HWND desktopPassthroughHotkeyHwnd_ = nullptr;
+    HWND floatingDockEdgeSwipeHwnd_ = nullptr;
+    snowdesktop::floating_dock_rules::EdgeSwipeDetector
+        floatingDockEdgeSwipeDetector_;
+    UINT floatingDockPointerButtonsDown_ = 0;
+    DockContainer* floatingDockContainer_ = nullptr;
+    HMONITOR floatingDockMonitor_ = nullptr;
+    RECT floatingDockSourceRect_{};
+    RECT floatingDockRect_{};
+    RECT floatingDockPopupRect_{};
+    RECT floatingDockTooltipRect_{};
+    bool floatingDockVisible_ = false;
+    bool floatingDockRevealPending_ = false;
+    bool renderingFloatingDock_ = false;
+    bool handlingFloatingDockInput_ = false;
+    ULONGLONG floatingDockLastPointerPresentTick_ = 0;
+    PersonalizationSettings floatingDockPersonalization_ =
+        PersonalizationSettings::DarkPreset();
+    DesktopBackdropCompositor floatingDockBackdropCompositor_;
+    ComPtr<IDCompositionTarget> floatingDockDcompTarget_;
+    ComPtr<IDCompositionVisual2> floatingDockDcompVisual_;
+    ComPtr<IDCompositionSurface> floatingDockDcompSurface_;
+    UINT floatingDockCompWidth_ = 0;
+    UINT floatingDockCompHeight_ = 0;
+    bool floatingDockCompositionRenderRecoveryPending_ = false;
+    bool floatingDockCompositionPaintInProgress_ = false;
+    bool floatingDockDropTargetRegistered_ = false;
     /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
     DesktopBackdropCompositor quickNavBackdropCompositor_;
     HWND quickNavigationSearchEdit_ = nullptr;
@@ -1859,6 +2271,7 @@ private:
     // 快捷导航 DComp 渲染资源（与桌面共享 d2dDevice_ / dcompDevice_）
     ComPtr<IDCompositionTarget> quickNavDcompTarget_;
     ComPtr<IDCompositionVisual2> quickNavDcompVisual_;
+    ComPtr<IDCompositionEffectGroup> quickNavDcompEffect_;
     ComPtr<IDCompositionSurface> quickNavDcompSurface_;
     UINT quickNavCompWidth_ = 0;
     UINT quickNavCompHeight_ = 0;
@@ -1867,6 +2280,7 @@ private:
     ComPtr<IDWriteTextFormat> quickNavTabTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
+    ComPtr<IDWriteTextFormat> quickNavFaTextFormat_;
     /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按 sysIconIndex）。 */
     std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
     std::vector<int> quickNavTabWidths_;
@@ -1883,8 +2297,11 @@ private:
     DWORD desktopHostExplorerProcessId_ = 0;
     bool exitRequested_ = false;
     bool startupInitializationComplete_ = false;
+    bool legacyWidgetLayoutMigrationPending_ = false;
     bool showSettingsPending_ = false;
     bool customDesktopVisible_ = true;
+    bool desktopPassthroughHotkeyRegistered_ = false;
+    bool desktopPassthroughHoldActive_ = false;
     bool updatingDisplayTopology_ = false;
     std::wstring displayTopologySignature_;
     /** @} */
@@ -1899,7 +2316,7 @@ private:
     /** @name 鼠标/交互状态 */
     /** @{ */
     POINT lastMousePoint_{};
-    // per-widget 独立刷新定时器：timerId -> widgetId（manifest refreshIntervalMs 驱动）
+    // per-widget 独立定时器：timerId -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
     UINT_PTR nextWidgetTimerId_ = kWidgetTimerIdBase;
     bool mouseDown_ = false;
@@ -1908,6 +2325,7 @@ private:
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
     size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    bool marqueeDockFolderPopup_ = false;
     POINT marqueeAnchorPoint_{};
     int marqueeInitialScrollOffset_ = 0;
     size_t pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
@@ -1948,6 +2366,8 @@ private:
     bool widgetDockTarget_ = false;
     DockContainer* widgetDockTargetContainer_ = nullptr;
     size_t widgetDockInsertIndex_ = 0;
+    size_t widgetCollectionGroupTargetIndex_ = static_cast<size_t>(-1);
+    size_t widgetCollectionGroupInsertIndex_ = static_cast<size_t>(-1);
     size_t dockHandoffDwellIndex_ = static_cast<size_t>(-1);
     DWORD dockHandoffDwellStartTick_ = 0;
     bool dockHandoffDwellReady_ = false;
@@ -1962,6 +2382,7 @@ private:
     bool externalDragActive_ = false;
     int externalDropFileCount_ = 0;
     bool externalDropHasShortcut_ = false;
+    bool externalDropFoldersOnly_ = false;
     bool dropTargetRegistered_ = false;
     /** @} */
 
@@ -2001,10 +2422,16 @@ private:
     bool renameCommitPending_ = false;
     bool renamingWidget_ = false;
     bool renamingFolderEntry_ = false;
+    bool renamingDockFolderPopupEntry_ = false;
+    bool renamingQuickNavigationItem_ = false;
     size_t renameFolderWidgetIndex_ = static_cast<size_t>(-1);
     size_t renameFolderEntryIndex_ = static_cast<size_t>(-1);
     /** @brief 开始重命名选中的项。 */
-    void BeginRenameSelected();
+    void BeginRenameSelected(
+        std::optional<RECT> dockRenameAnchor = std::nullopt);
+    bool BeginDockAnchoredRename(
+        const std::wstring& text, RECT anchorClient,
+        int selectionEnd);
     /** @brief 提交或取消重命名操作。 @param cancel true 取消，false 提交 */
     void CommitRename(bool cancel);
     /** @brief 重命名编辑框的子类化窗口过程。 @param hwnd 窗口句柄 @param message 消息 @param wParam WPARAM @param lParam LPARAM @param subclassId 子类化 ID @param refData 引用数据 @return 消息处理结果 */
@@ -2064,6 +2491,10 @@ private:
     /** @name 集合弹出面板 */
     /** @{ */
     size_t popupWidgetIndex_ = static_cast<size_t>(-1);
+    snowdesktop::popup_animation_rules::State
+        popupAnimation_;
+    DragRenderCache popupAnimationRenderCache_;
+    RECT popupAnimationCacheRect_{};
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
     bool popupHasAnchor_ = false;
@@ -2072,21 +2503,64 @@ private:
     POINT popupAnchorPoint_{};
     std::wstring popupPageId_;
     std::wstring popupCategoryId_;
-    std::unique_ptr<DesktopIcon> popupMouseDownItem_;
+    std::unique_ptr<Item> popupMouseDownItem_;
+    bool dockFolderPopupOpen_ = false;
+    bool dockFolderPopupAvailable_ = false;
+    std::wstring dockFolderPopupSourceId_;
+    std::wstring dockFolderPopupMappingWidgetId_;
+    DesktopWidget dockFolderPopupWidget_;
+    std::unique_ptr<FolderMapping> dockFolderPopupContainer_;
+    std::vector<std::unique_ptr<Item>>
+        dockFolderPopupDragItems_;
+    DesktopWidget dockFolderPopupDragSourceWidget_;
+    std::unique_ptr<FolderMapping>
+        dockFolderPopupDragSourceContainer_;
+    std::vector<std::unique_ptr<Item>>
+        dockFolderPopupDragSourceItems_;
+    std::vector<bool>
+        dockFolderPopupMarqueeInitialSelection_;
     /** @brief 悬停打开：拖拽中悬停在集合"全部"按钮上 */
     size_t popupDwellWidgetIndex_ = static_cast<size_t>(-1);
     DWORD popupDwellTick_ = 0;
+    size_t collectionGroupTabDwellWidgetIndex_ =
+        static_cast<size_t>(-1);
+    std::wstring collectionGroupTabDwellId_;
+    DWORD collectionGroupTabDwellTick_ = 0;
     std::unique_ptr<Slot> popupDragTargetSlot_;
+    /** @} */
+
+    /** @name Lua 组件附加面板 */
+    /** @{ */
+    LuaWidgetPanelRequest luaWidgetPanelRequest_{};
+    snowdesktop::popup_animation_rules::State
+        luaWidgetPanelAnimation_;
+    RECT luaWidgetPanelRect_{};
+    POINT luaWidgetPanelAnchorPoint_{};
+    bool luaWidgetPanelMouseDown_ = false;
     /** @} */
 
     /** @name 快速导航 */
     /** @{ */
     bool quickNavigationOpen_ = false;
+    snowdesktop::quick_navigation_animation_rules::State
+        quickNavigationAnimation_;
+    snowdesktop::quick_navigation_animation_rules::AnchorMode
+        quickNavigationAnimationAnchorMode_ =
+            snowdesktop::
+                quick_navigation_animation_rules::
+                    AnchorMode::Pointer;
+    RECT quickNavigationRenameItemRect_{};
     size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
     int quickNavigationScrollOffset_ = 0;
     int quickNavigationTabScrollOffset_ = 0;
+    bool quickNavigationInitialJumpOpen_ = false;
+    size_t quickNavigationInitialJumpSelection_ = 0;
     POINT quickNavigationOpenPoint_{};
+    /** @brief 快速导航缩放动画锚点（app 坐标，通常为 Dock 搜索图标中心）。 */
+    POINT quickNavigationAnimationAnchorPoint_{};
     RECT quickNavigationRect_{};
+    /** @brief 快速导航合成宿主范围，覆盖目标面板与 Dock 动画锚点。 */
+    RECT quickNavigationHostRect_{};
     std::wstring quickNavigationSearchText_;
     std::wstring quickNavigationSearchCompositionText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
@@ -2123,6 +2597,11 @@ private:
     mutable bool everythingSearchAvailable_ = true;
 
     int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
+    void BeginQuickNavigationDesktopItemRename(size_t itemIndex);
+    void BeginQuickNavigationFolderEntryRename(
+        size_t widgetIndex, size_t entryIndex);
+    void BeginQuickNavigationItemRename(
+        const std::wstring& name, bool isDirectory);
     /** @} */
 
     /** @name 面向对象系统 */
@@ -2166,6 +2645,7 @@ private:
 #include "app_gfx.h"
 #include "app_glass.h"
 #include "app_dock.h"
+#include "app_floating_dock.h"
 #include "app_quick_navigation.h"
 #include "app_interact.h"
 #include "app_menu.h"

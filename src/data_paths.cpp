@@ -5,6 +5,7 @@
 
 #include "data_paths.h"
 #include "deployment_context.h"
+#include "portable_data_migration.h"
 
 #include <windows.h>
 #include <shlwapi.h>
@@ -168,6 +169,18 @@ std::wstring GetDataSubdirectoryPath(const wchar_t* dirname)
 
 void MigrateLegacyDataPaths()
 {
+    std::filesystem::path stateRoot =
+        snowdesktop::deployment::GetPackageLocalStatePath();
+    if (stateRoot.empty())
+        stateRoot = GetExecutableDirectoryPath();
+    const auto portableMigration =
+        snowdesktop::migration::ApplyPending(stateRoot);
+    if (!portableMigration.ok)
+    {
+        OutputDebugStringA(("SnowDesktop: pending portable data migration "
+            "failed: " + portableMigration.error + "\n").c_str());
+    }
+
     static const wchar_t* files[] = {
         L"SnowDesktop.layout.json",
         L"SnowDesktop.storage.json",
@@ -184,4 +197,12 @@ void MigrateLegacyDataPaths()
         GetDataFilePath(file);
 
     GetDataSubdirectoryPath(L"backups");
+    // Older MSIX builds exposed user-created loose Lua components directly
+    // under LocalState\widgets. Move that directory before the package manager
+    // scans LocalState\data\widgets so the migration wizard can still find it.
+    // Portable builds keep their read-only-in-practice bundled packages beside
+    // the executable in widgets\, so treating that directory as legacy user
+    // data would move every built-in package out of the scan root.
+    if (snowdesktop::deployment::IsPackaged())
+        GetDataSubdirectoryPath(L"widgets");
 }

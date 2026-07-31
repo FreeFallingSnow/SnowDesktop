@@ -209,6 +209,7 @@ struct DesktopBackdropCompositor::Impl
     bool completeCollection = true;
     bool available = false;
     bool popupMode = false;
+    bool popupTopmost = false;
     bool visible = true;
 
     void SetError(const wchar_t* stage, HRESULT hr)
@@ -303,6 +304,62 @@ struct DesktopBackdropCompositor::Impl
         SetWindowPos(backdropWindow, contentWindow, origin.x, origin.y,
             size.cx, size.cy, SWP_NOACTIVATE |
             (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+
+        // Popup content windows can reserve a stable composition allocation
+        // while exposing only a compact Dock/popup HRGN. Mirror that region
+        // onto the helper window so its transparent reserve never becomes an
+        // input surface of its own.
+        HRGN contentRegion =
+            CreateRectRgn(0, 0, 0, 0);
+        if (contentRegion)
+        {
+            const int contentRegionType =
+                GetWindowRgn(
+                    contentWindow,
+                    contentRegion);
+            if (contentRegionType == ERROR)
+            {
+                DeleteObject(contentRegion);
+                HRGN backdropRegion =
+                    CreateRectRgn(0, 0, 0, 0);
+                const int backdropRegionType =
+                    backdropRegion
+                        ? GetWindowRgn(
+                              backdropWindow,
+                              backdropRegion)
+                        : ERROR;
+                if (backdropRegion)
+                    DeleteObject(backdropRegion);
+                if (backdropRegionType != ERROR)
+                    SetWindowRgn(
+                        backdropWindow,
+                        nullptr, FALSE);
+            }
+            else
+            {
+                HRGN backdropRegion =
+                    CreateRectRgn(0, 0, 0, 0);
+                const int backdropRegionType =
+                    backdropRegion
+                        ? GetWindowRgn(
+                              backdropWindow,
+                              backdropRegion)
+                        : ERROR;
+                const bool unchanged =
+                    backdropRegionType != ERROR &&
+                    EqualRgn(
+                        contentRegion,
+                        backdropRegion);
+                if (backdropRegion)
+                    DeleteObject(backdropRegion);
+                if (unchanged)
+                    DeleteObject(contentRegion);
+                else if (!SetWindowRgn(
+                             backdropWindow,
+                             contentRegion, FALSE))
+                    DeleteObject(contentRegion);
+            }
+        }
         return true;
     }
 
@@ -340,6 +397,7 @@ struct DesktopBackdropCompositor::Impl
         backdropWindow = nullptr;
         contentWindow = nullptr;
         popupMode = false;
+        popupTopmost = false;
         visible = true;
     }
 };
@@ -356,15 +414,23 @@ DesktopBackdropCompositor::~DesktopBackdropCompositor()
 
 bool DesktopBackdropCompositor::Initialize(HWND contentWindow)
 {
-    return InitializeInternal(contentWindow, false);
+    return InitializeInternal(
+        contentWindow, false, false, true);
 }
 
-bool DesktopBackdropCompositor::InitializePopup(HWND contentWindow)
+bool DesktopBackdropCompositor::InitializePopup(
+    HWND contentWindow, bool topmost,
+    bool initiallyVisible)
 {
-    return InitializeInternal(contentWindow, true);
+    return InitializeInternal(
+        contentWindow, true, topmost,
+        initiallyVisible);
 }
 
-bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popupMode)
+bool DesktopBackdropCompositor::InitializeInternal(
+    HWND contentWindow, bool popupMode,
+    bool popupTopmost,
+    bool initiallyVisible)
 {
     Reset();
     impl_->lastError.clear();
@@ -391,7 +457,9 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
     SIZE size{};
     impl_->contentWindow = contentWindow;
     impl_->popupMode = popupMode;
-    impl_->visible = true;
+    impl_->popupTopmost =
+        popupMode && popupTopmost;
+    impl_->visible = initiallyVisible;
     if (!impl_->QueryContentPlacement(parent, origin, size))
     {
         impl_->lastError = _LW("backdrop.read_position");
@@ -400,9 +468,12 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
     }
 
     const DWORD extendedStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
-        WS_EX_TRANSPARENT | (popupMode ? WS_EX_TOPMOST : 0);
-    const DWORD windowStyle = popupMode ? (WS_POPUP | WS_VISIBLE) :
-        (WS_CHILD | WS_VISIBLE);
+        WS_EX_TRANSPARENT |
+        (impl_->popupTopmost ? WS_EX_TOPMOST : 0);
+    const DWORD windowStyle = popupMode
+        ? (WS_POPUP |
+            (initiallyVisible ? WS_VISIBLE : 0))
+        : (WS_CHILD | WS_VISIBLE);
     impl_->backdropWindow = CreateWindowExW(
         extendedStyle,
         kBackdropWindowClassName, L"SnowDesktopBackdrop",
@@ -455,7 +526,10 @@ bool DesktopBackdropCompositor::InitializeInternal(HWND contentWindow, bool popu
         impl_->target.Root(impl_->root);
         impl_->available = true;
         impl_->SyncWindowPlacement();
-        ShowWindow(impl_->backdropWindow, SW_SHOWNOACTIVATE);
+        if (initiallyVisible)
+            ShowWindow(
+                impl_->backdropWindow,
+                SW_SHOWNOACTIVATE);
         impl_->lastError.clear();
         return true;
     }
@@ -487,6 +561,31 @@ void DesktopBackdropCompositor::SetVisible(bool visible)
         impl_->SyncWindowPlacement();
     else
         ShowWindow(impl_->backdropWindow, SW_HIDE);
+}
+
+void DesktopBackdropCompositor::SetVisualTransform(
+    float scale, float opacity,
+    float anchorX, float anchorY)
+{
+    if (!impl_ || !impl_->available || !impl_->root ||
+        !impl_->contentWindow || !IsWindow(impl_->contentWindow))
+        return;
+
+    const float clampedScale = std::clamp(scale, 0.01f, 1.0f);
+    const float clampedOpacity = std::clamp(opacity, 0.0f, 1.0f);
+
+    try
+    {
+        impl_->root.CenterPoint(wfn::float3{
+            anchorX, anchorY, 0.0f });
+        impl_->root.Scale(wfn::float3{
+            clampedScale, clampedScale, 1.0f });
+        impl_->root.Opacity(clampedOpacity);
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
 }
 
 void DesktopBackdropCompositor::BeginFrame(bool completeCollection)

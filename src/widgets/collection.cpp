@@ -136,6 +136,52 @@ static RECT CollectionItemRect(Collection* widget, size_t linearIndex)
         content.top + row * rowStep + cellH - scroll);
 }
 
+static std::pair<size_t, size_t> CollectionVisibleIndexRange(
+    Collection* widget, size_t itemCount)
+{
+    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+    if (!data || !data->scrollContainerMode || itemCount == 0)
+        return { 0, 0 };
+
+    const RECT content = CollectionScrollContentRect(widget);
+    const int visibleHeight = std::max<int>(
+        1, content.bottom - content.top);
+    const int scroll = std::clamp(
+        data->scrollOffset, 0, CollectionScrollMaxOffset(widget));
+
+    if (data->listMode)
+    {
+        const int itemHeight = std::max(1, widget->Cu(38.0f));
+        const int firstRow = std::max(
+            0, scroll / itemHeight - 1);
+        const int lastRow =
+            (scroll + visibleHeight + itemHeight - 1) /
+                itemHeight + 1;
+        return {
+            std::min(itemCount, static_cast<size_t>(firstRow)),
+            std::min(itemCount, static_cast<size_t>(
+                std::max(firstRow, lastRow)))
+        };
+    }
+
+    const int columns = std::max(1, data->gridSpan.columns);
+    const int rowStep = std::max(
+        1, CollectionCellHeight(widget) +
+            CollectionAdaptiveGapY(widget));
+    const int firstRow = std::max(
+        0, scroll / rowStep - 1);
+    const int lastRow =
+        (scroll + visibleHeight + rowStep - 1) /
+            rowStep + 1;
+    return {
+        std::min(itemCount, static_cast<size_t>(
+            firstRow) * static_cast<size_t>(columns)),
+        std::min(itemCount, static_cast<size_t>(
+            std::max(firstRow, lastRow)) *
+                static_cast<size_t>(columns))
+    };
+}
+
 // ═══════════════════════════════════════════════════════════════
 /// @name 静态辅助函数
 /// 集合控件布局计算相关工具函数，非类成员。
@@ -343,12 +389,17 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
         const auto& items = app_->GetDesktopItems();
         auto& slots = GetSlots();
-        for (size_t i = 0; i < slots.size() && i < data_->itemKeys.size(); ++i)
+        for (const auto& slot : slots)
         {
-            RECT cell = slots[i]->GetBounds();
+            if (!slot) continue;
+            const size_t itemKeyIndex = slot->GetIndex();
+            if (itemKeyIndex >= data_->itemKeys.size()) continue;
+            RECT cell = slot->GetBounds();
             if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
 
-            size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[i]);
+            size_t itemIdx =
+                app_->FindItemIndexByKey(
+                    data_->itemKeys[itemKeyIndex]);
             if (itemIdx == static_cast<size_t>(-1)) continue;
             const DesktopItem& di = items[itemIdx];
 
@@ -496,10 +547,14 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     std::vector<std::unique_ptr<Slot>> slots;
     if (!data_ || !app_) return slots;
 
-    // ── Scroll container mode: build all slots ──────────────
+    // ── Scroll container mode: only materialize the visible rows ──
     if (data_->scrollContainerMode)
     {
-        for (size_t idx = 0; idx < data_->itemKeys.size(); ++idx)
+        const auto [firstIndex, lastIndex] =
+            CollectionVisibleIndexRange(
+                this, data_->itemKeys.size());
+        slots.reserve(lastIndex - firstIndex);
+        for (size_t idx = firstIndex; idx < lastIndex; ++idx)
         {
             RECT cell = CollectionItemRect(this, idx);
             if (IsRectEmptyRect(cell)) continue;

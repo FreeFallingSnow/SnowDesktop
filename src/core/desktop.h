@@ -44,6 +44,12 @@ public:
      * @return 桌面窗口的标题字符串
      */
     std::wstring GetTitle() const override;
+    snowdesktop::slot_contract::SlotSurfaceKind
+        GetSlotSurfaceKind() const override
+    {
+        return snowdesktop::slot_contract::
+            SlotSurfaceKind::Desktop;
+    }
     /**
      * @brief 构建网格中的所有槽位
      * @return 包含所有 Slot 唯一指针的向量

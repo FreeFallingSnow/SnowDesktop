@@ -525,7 +525,8 @@ function Sync-ReleaseRepository {
         foreach ($name in @(
                 "SnowDesktop.exe",
                 "SnowDesktopTaskbarHook.dll",
-                "README.md")) {
+                "README.md",
+                "README.en.md")) {
             $source = Join-Path $temporary $name
             if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
                 throw "Portable package is missing $name."
