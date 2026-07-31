@@ -4121,12 +4121,13 @@ void SettingsWindow::DrawWidgetPackagesPage()
                     _L("app.settings.widgets_new_permission"),
                     permissionLabel(permission));
             }
-            else if (const auto position = rawReason.find(domainMarker);
-                position != std::string::npos)
+            else if (const auto domainPosition = rawReason.find(domainMarker);
+                domainPosition != std::string::npos)
             {
                 ImGui::TextWrapped(
                     _L("app.settings.widgets_new_website"),
-                    rawReason.substr(position + domainMarker.size()).c_str());
+                    rawReason.substr(
+                        domainPosition + domainMarker.size()).c_str());
             }
             else
             {

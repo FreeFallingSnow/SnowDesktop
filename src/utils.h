@@ -349,4 +349,13 @@ std::string JsonEscapeUtf8(const std::wstring& value);
  */
 bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value, size_t& end);
 
-void WriteCrashLogEntry(const wchar_t* message);
+enum class DiagnosticLogLevel
+{
+    Debug,
+    Info,
+    Warning,
+    Error,
+};
+
+void WriteDiagnosticLogEntry(const wchar_t* message,
+    DiagnosticLogLevel level = DiagnosticLogLevel::Info);

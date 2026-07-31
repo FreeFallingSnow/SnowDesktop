@@ -161,6 +161,30 @@ std::wstring Lower(std::wstring value)
     std::transform(value.begin(), value.end(), value.begin(), towlower);
     return value;
 }
+
+std::wstring NormalizeHostname(std::wstring value)
+{
+    value = Lower(std::move(value));
+    if (value.size() >= 2 &&
+        value.front() == L'[' && value.back() == L']')
+    {
+        value = value.substr(1, value.size() - 2);
+    }
+    while (!value.empty() && value.back() == L'.')
+        value.pop_back();
+    return value;
+}
+
+bool IsIpLiteral(std::wstring_view address)
+{
+    if (!EnsureWinsock()) return false;
+    const std::wstring value(address);
+    IN_ADDR ipv4{};
+    if (InetPtonW(AF_INET, value.c_str(), &ipv4) == 1)
+        return true;
+    IN6_ADDR ipv6{};
+    return InetPtonW(AF_INET6, value.c_str(), &ipv6) == 1;
+}
 }
 
 bool snowdesktop::http_security::IsAllowedRemoteIpLiteral(
@@ -182,7 +206,8 @@ AsyncHttpService::~AsyncHttpService()
     Stop();
 }
 
-bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
+bool snowdesktop::http_security::IsAllowedHttpsUrlForDomains(
+    const std::wstring& url,
     const std::vector<std::string>& domains)
 {
     URL_COMPONENTS components{ sizeof(components) };
@@ -192,7 +217,9 @@ bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components)) return false;
     if (components.nScheme != INTERNET_SCHEME_HTTPS)
         return false;
-    std::wstring actual = Lower(std::wstring(host, components.dwHostNameLength));
+    std::wstring actual = NormalizeHostname(
+        std::wstring(host, components.dwHostNameLength));
+    if (actual.empty()) return false;
     if (actual == L"localhost" || actual == L"::1" ||
         actual.ends_with(L".localhost") || actual.ends_with(L".local") ||
         actual.starts_with(L"127.") || actual.starts_with(L"10.") ||
@@ -209,10 +236,25 @@ bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
             if (secondOctet >= 16 && secondOctet <= 31) return false;
         }
     }
+    if (IsIpLiteral(actual) &&
+        !IsAllowedRemoteIpLiteral(actual))
+        return false;
     for (const auto& raw : domains)
     {
+        if (raw.empty() || std::any_of(
+                raw.begin(), raw.end(),
+                [](unsigned char ch) {
+                    return ch > 0x7f;
+                }))
+            continue;
         std::wstring allowed(raw.begin(), raw.end());
-        allowed = Lower(allowed);
+        allowed = NormalizeHostname(std::move(allowed));
+        if (allowed.empty() ||
+            allowed.find_first_of(L"/*?@#[]") !=
+                std::wstring::npos ||
+            (allowed.find(L':') != std::wstring::npos &&
+                !IsIpLiteral(allowed)))
+            continue;
         if (allowed == actual) return true;
     }
     return false;
@@ -220,7 +262,10 @@ bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
 
 int AsyncHttpService::Submit(HttpRequestOptions options)
 {
-    if (!IsDomainAllowed(options.url, options.allowedDomains)) return 0;
+    if (!snowdesktop::http_security::
+            IsAllowedHttpsUrlForDomains(
+                options.url, options.allowedDomains))
+        return 0;
     std::scoped_lock lock(mutex_);
     int activeForWidget = 0;
     for (const auto& [id, request] : requests_)
@@ -349,7 +394,9 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     std::wstring currentUrl = options.url;
     for (int redirectCount = 0; redirectCount <= 3 && !token.stop_requested(); ++redirectCount)
     {
-        if (!IsDomainAllowed(currentUrl, options.allowedDomains))
+        if (!snowdesktop::http_security::
+                IsAllowedHttpsUrlForDomains(
+                    currentUrl, options.allowedDomains))
         {
             response.error = "Redirect domain is not allowed";
             break;

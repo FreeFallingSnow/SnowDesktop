@@ -16,7 +16,9 @@ param(
     [string]$Message = "",
     [string]$ConfirmVersion = "",
     [string]$CertificatePath = "",
-    [string]$CertificatePassword = "",
+    [string]$CertificateThumbprint = "",
+    [ValidateSet("CurrentUser", "LocalMachine")]
+    [string]$CertificateStoreLocation = "CurrentUser",
     [switch]$Development,
     [switch]$Json,
     [switch]$Yes
@@ -365,12 +367,6 @@ function Invoke-Package {
     param([switch]$AskBeforeBuild)
 
     $context = Get-ReleaseContext
-    if ($AskBeforeBuild -and -not (Confirm-Interactive `
-        "构建会关闭 SnowDesktop 并短暂重启 Explorer，继续吗？")) {
-        Write-Host "已取消构建。"
-        return $false
-    }
-
     New-Item -ItemType Directory `
         -Path $context.VersionDirectory -Force | Out-Null
     $logsDirectory = Get-LogsDirectory -Context $context
@@ -380,16 +376,9 @@ function Invoke-Package {
 
     Write-Host ""
     Write-Host "[1/2] 使用 scripts/build.bat 构建 Release" -ForegroundColor Cyan
-    $previousNonInteractive = $env:SNOWDESKTOP_NONINTERACTIVE
-    try {
-        $env:SNOWDESKTOP_NONINTERACTIVE = "1"
-        $buildExitCode = Invoke-BatchWithLiveLog `
-            -BatchPath $buildScript `
-            -LogPath $buildLog
-    }
-    finally {
-        $env:SNOWDESKTOP_NONINTERACTIVE = $previousNonInteractive
-    }
+    $buildExitCode = Invoke-BatchWithLiveLog `
+        -BatchPath $buildScript `
+        -LogPath $buildLog
     if ($buildExitCode -ne 0) {
         throw "scripts/build.bat failed with exit code $buildExitCode. See $buildLog"
     }
@@ -416,8 +405,10 @@ function Invoke-Package {
     if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
         $packageArguments += @("-CertificatePath", $CertificatePath)
     }
-    if (-not [string]::IsNullOrEmpty($CertificatePassword)) {
-        $packageArguments += @("-CertificatePassword", $CertificatePassword)
+    if (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+        $packageArguments += @(
+            "-CertificateThumbprint", $CertificateThumbprint,
+            "-CertificateStoreLocation", $CertificateStoreLocation)
     }
     & $powershell @packageArguments 2>&1 |
         Tee-Object -FilePath $packageLog

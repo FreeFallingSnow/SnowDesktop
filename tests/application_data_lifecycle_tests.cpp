@@ -1,4 +1,5 @@
 #include "full_data_backup.h"
+#include "layout_storage.h"
 #include "widget_package.h"
 #include "portable_data_migration.h"
 #include "single_instance.h"
@@ -210,6 +211,60 @@ int main()
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
+
+    const auto layoutPath =
+        root / L"layout-storage" / L"SnowDesktop.layout.json";
+    const std::string firstLayout =
+        "{\"pages\":[],\"items\":[],\"widgets\":[],"
+        "\"dockEntries\":[],\"navTabOrder\":[],\"revision\":1}";
+    const std::string secondLayout =
+        "{\"pages\":[],\"items\":[],\"widgets\":[],"
+        "\"dockEntries\":[],\"navTabOrder\":[],\"revision\":2}";
+    const std::string thirdLayout =
+        "{\"pages\":[],\"items\":[],\"widgets\":[],"
+        "\"dockEntries\":[],\"navTabOrder\":[],\"revision\":3}";
+    std::string layoutError;
+    Expect(!snowdesktop::layout_storage::ValidateDocument(
+            "{\"pages\":[}", &layoutError) && !layoutError.empty(),
+        "truncated layout JSON is rejected before application state changes");
+    Expect(!snowdesktop::layout_storage::ValidateDocument(
+            "{\"pages\":{}}", &layoutError),
+        "layout collection fields must preserve their schema types");
+    Expect(!snowdesktop::layout_storage::ValidateDocument(
+            "{\"layoutSchemaVersion\":2}", &layoutError),
+        "unsupported future layout schemas are rejected without partial loading");
+    Expect(snowdesktop::layout_storage::SaveDocument(
+            layoutPath, firstLayout, &layoutError),
+        "first layout document is written atomically");
+    std::string loadedLayout;
+    auto layoutLoad = snowdesktop::layout_storage::LoadDocument(
+        layoutPath, loadedLayout);
+    Expect(layoutLoad.status ==
+            snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            loadedLayout == firstLayout,
+        "valid primary layout document loads without fallback");
+    Expect(snowdesktop::layout_storage::SaveDocument(
+            layoutPath, secondLayout, &layoutError) &&
+            Read(snowdesktop::layout_storage::BackupPath(layoutPath)) ==
+                firstLayout,
+        "replacing a valid layout preserves the previous last-good document");
+    Write(layoutPath, "{\"pages\":[}");
+    layoutLoad = snowdesktop::layout_storage::LoadDocument(
+        layoutPath, loadedLayout);
+    Expect(layoutLoad.status ==
+            snowdesktop::layout_storage::LoadStatus::RecoveredBackup &&
+            loadedLayout == firstLayout,
+        "corrupt primary layout recovers from the last-good document");
+    const std::string corruptPrimary = Read(layoutPath);
+    Expect(!snowdesktop::layout_storage::SaveDocument(
+            layoutPath, "{\"items\":[}", &layoutError) &&
+            Read(layoutPath) == corruptPrimary,
+        "invalid replacement layout never touches the active file");
+    Expect(snowdesktop::layout_storage::SaveDocument(
+            layoutPath, thirdLayout, &layoutError) &&
+            Read(snowdesktop::layout_storage::BackupPath(layoutPath)) ==
+                firstLayout,
+        "saving after recovery does not overwrite the last-good backup with corruption");
 
     Expect(snowdesktop::single_instance::
             ParseRestartPredecessorProcessId(
@@ -684,6 +739,10 @@ int main()
         "{ \"counter\": 27 }\n");
     Write(fullBackupData / L"SnowDesktop_crash.log",
         "excluded log\n");
+    Write(fullBackupData / L"SnowDesktop.log",
+        "excluded diagnostic log\n");
+    Write(fullBackupData / L"SnowDesktop.log.1",
+        "excluded rotated diagnostic log\n");
     Write(fullBackupData / L"crashdumps" / L"test.dmp",
         "excluded dump\n");
     Write(fullBackupData / L"widgets" / L"staging" /
@@ -719,6 +778,10 @@ int main()
     Expect(!std::filesystem::exists(
             createdFullBackup.backup.data /
                 L"SnowDesktop_crash.log") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"SnowDesktop.log") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"SnowDesktop.log.1") &&
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"crashdumps") &&
         !std::filesystem::exists(

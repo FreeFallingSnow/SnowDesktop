@@ -9,9 +9,12 @@ TestResults/
 build/
 .build_debug/
 release/
-docs/
+/docs/html/
 SnowDesktop_crash.log
+SnowDesktop.log
+SnowDesktop.log.1
 .claude/
+.codex-probes/
 imgui.ini
 out/
 .tmp/

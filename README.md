@@ -40,8 +40,9 @@
 .\scripts\build.bat
 ```
 
-构建脚本会自动终止已在运行的 SnowDesktop.exe，并为释放任务栏 Hook DLL
-短暂重启 Explorer。
+默认构建不会终止 SnowDesktop 或重启 Explorer。如果任务栏 Hook DLL 正被占用，
+预检会在编译前停止并提示。请先正常退出 SnowDesktop；仅在明确接受 Explorer 重启时使用
+`.\scripts\build.bat --reload-shell`。
 
 ## 🧱 技术栈
 
@@ -49,10 +50,10 @@
 - Direct2D + Direct3D 11 + DirectComposition
 - Dear ImGui（设置窗口）
 - Lua 5.4（脚本引擎）
-- spdlog（日志）
 - Font Awesome 6 Free（图标）
 - WinHTTP（Lua HTTP 运行时）
 
 ## 📄 协议
 
-GNU General Public License v3.0 — 详见 [LICENSE](./LICENSE)
+GNU General Public License v3.0 — 详见 [LICENSE](./LICENSE)。随软件分发的第三方组件及字体许可见
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。

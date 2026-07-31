@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
 #include <unordered_set>
 #include <vector>
 
@@ -1267,54 +1268,75 @@ bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value
 }
 
 // ============================================================================
-// 日志写入（自动裁剪至最新 500 条）
+// 诊断日志写入（按文件大小轮转）
 // ============================================================================
 
-void WriteCrashLogEntry(const wchar_t* message)
+void WriteDiagnosticLogEntry(
+    const wchar_t* message, DiagnosticLogLevel level)
 {
+    if (!message) return;
+    static std::mutex logMutex;
+    std::scoped_lock lock(logMutex);
+
+    constexpr LONGLONG kMaximumLogBytes = 1024 * 1024;
     const std::wstring filename =
-        GetDataFilePath(L"SnowDesktop_crash.log");
+        GetDataFilePath(L"SnowDesktop.log");
+    const std::wstring previousFilename = filename + L".1";
 
-    HANDLE f = CreateFileW(filename.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f != INVALID_HANDLE_VALUE)
+    HANDLE file = CreateFileW(filename.c_str(), GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+
+    LARGE_INTEGER size{};
+    if (GetFileSizeEx(file, &size) &&
+        size.QuadPart >= kMaximumLogBytes)
     {
-        DWORD w;
-        WriteFile(f, message, static_cast<DWORD>(wcslen(message) * sizeof(wchar_t)), &w, nullptr);
-        WriteFile(f, L"\r\n", 2 * sizeof(wchar_t), &w, nullptr);
-        CloseHandle(f);
+        CloseHandle(file);
+        if (MoveFileExW(filename.c_str(), previousFilename.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            file = CreateFileW(filename.c_str(), GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
+        else
+        {
+            file = CreateFileW(filename.c_str(), GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
+        if (file == INVALID_HANDLE_VALUE) return;
     }
 
-    f = CreateFileW(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-
-    DWORD size = GetFileSize(f, nullptr);
-    if (size == INVALID_FILE_SIZE || size < sizeof(wchar_t)) { CloseHandle(f); return; }
-
-    std::vector<wchar_t> content(size / sizeof(wchar_t) + 1);
-    DWORD read;
-    SetFilePointer(f, 0, nullptr, FILE_BEGIN);
-    if (!ReadFile(f, content.data(), size, &read, nullptr)) { CloseHandle(f); return; }
-    DWORD numChars = read / sizeof(wchar_t);
-
-    int totalLines = 0;
-    for (DWORD i = 0; i < numChars; i++)
-        if (content[i] == L'\n') totalLines++;
-
-    if (totalLines <= 500) { CloseHandle(f); return; }
-
-    int linesToSkip = totalLines - 500;
-    DWORD startIdx = 0;
-    while (startIdx < numChars && linesToSkip > 0)
+    const wchar_t* levelName = L"INFO";
+    switch (level)
     {
-        if (content[startIdx] == L'\n') linesToSkip--;
-        startIdx++;
+    case DiagnosticLogLevel::Debug: levelName = L"DEBUG"; break;
+    case DiagnosticLogLevel::Warning: levelName = L"WARN"; break;
+    case DiagnosticLogLevel::Error: levelName = L"ERROR"; break;
+    case DiagnosticLogLevel::Info:
+    default: break;
     }
 
-    DWORD tailBytes = (numChars - startIdx) * sizeof(wchar_t);
-    SetFilePointer(f, 0, nullptr, FILE_BEGIN);
-    WriteFile(f, content.data() + startIdx, tailBytes, &read, nullptr);
-    SetEndOfFile(f);
-    CloseHandle(f);
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    wchar_t prefix[96]{};
+    swprintf_s(prefix,
+        L"[%04u-%02u-%02u %02u:%02u:%02u.%03u] [%ls] ",
+        now.wYear, now.wMonth, now.wDay,
+        now.wHour, now.wMinute, now.wSecond,
+        now.wMilliseconds, levelName);
+    std::wstring line = prefix;
+    line += message;
+    line += L"\r\n";
+
+    LARGE_INTEGER end{};
+    end.QuadPart = 0;
+    SetFilePointerEx(file, end, nullptr, FILE_END);
+    DWORD written = 0;
+    WriteFile(file, line.data(),
+        static_cast<DWORD>(line.size() * sizeof(wchar_t)),
+        &written, nullptr);
+    CloseHandle(file);
 }

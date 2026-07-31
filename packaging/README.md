@@ -117,11 +117,13 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 证书；如需旁加载测试，证书主题必须与清单 Publisher 完全一致，并在测试机
 信任该证书。
 
-可选 PFX 签名可直接传给统一发布入口：
+推荐先通过 Windows 的安全证书导入界面将 PFX 导入个人证书库，再按指纹签名：
 
 ```powershell
-.\scripts\release.bat package -CertificatePath C:\secure\SnowDesktop.pfx
+.\scripts\release.bat package -CertificateThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
 ```
 
-如果 PFX 有密码，可同时传入 `-CertificatePassword`。PFX、密码和 Partner
+机器证书库可额外传入 `-CertificateStoreLocation LocalMachine`。这种方式不会把
+PFX 密码放进 PowerShell 或 SignTool 的子进程命令行。无密码 PFX 仍可使用
+`-CertificatePath`，但脚本不再接受明文 `-CertificatePassword`。PFX 和 Partner
 Center 登录材料不得提交到仓库。

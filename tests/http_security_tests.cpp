@@ -17,6 +17,7 @@ void Expect(bool condition, const char* message)
 int main()
 {
     using snowdesktop::http_security::IsAllowedRemoteIpLiteral;
+    using snowdesktop::http_security::IsAllowedHttpsUrlForDomains;
 
     Expect(IsAllowedRemoteIpLiteral(L"8.8.8.8"),
         "a public IPv4 address is accepted");
@@ -45,6 +46,59 @@ int main()
 
     Expect(!IsAllowedRemoteIpLiteral(L"not-an-address"),
         "invalid IP literals are rejected");
+
+    struct UrlPolicyCase
+    {
+        const wchar_t* url;
+        std::vector<std::string> domains;
+        bool expected;
+        const char* message;
+    };
+    const std::vector<UrlPolicyCase> urlCases{
+        { L"https://example.com/feed", {"example.com"}, true,
+            "an exact HTTPS allowlist match is accepted" },
+        { L"https://EXAMPLE.COM:8443/feed?q=1", {"Example.Com"}, true,
+            "host matching is case-insensitive and independent of port" },
+        { L"https://example.com./feed", {"example.com."}, true,
+            "equivalent trailing-dot hostnames are normalized" },
+        { L"https://xn--bcher-kva.example/", {"xn--bcher-kva.example"}, true,
+            "IDNs use an explicit ASCII punycode allowlist" },
+        { L"https://8.8.8.8/", {"8.8.8.8"}, true,
+            "an explicitly allowed public IPv4 literal is accepted" },
+        { L"https://[2606:4700:4700::1111]/",
+            {"2606:4700:4700::1111"}, true,
+            "an explicitly allowed public IPv6 literal is accepted" },
+        { L"http://example.com/", {"example.com"}, false,
+            "plaintext HTTP is rejected" },
+        { L"https://sub.example.com/", {"example.com"}, false,
+            "subdomains require their own exact allowlist entry" },
+        { L"https://example.com.evil.test/", {"example.com"}, false,
+            "suffix-confusion hosts are rejected" },
+        { L"https://example.com/", {"*.example.com"}, false,
+            "wildcard allowlist entries are rejected" },
+        { L"https://example.com/", {"https://example.com"}, false,
+            "allowlist entries cannot contain URL syntax" },
+        { L"https://localhost/", {"localhost"}, false,
+            "localhost is rejected even when declared" },
+        { L"https://service.local/", {"service.local"}, false,
+            "local DNS suffixes are rejected" },
+        { L"https://127.0.0.1/", {"127.0.0.1"}, false,
+            "loopback IPv4 is rejected even when declared" },
+        { L"https://[fc00::1]/", {"fc00::1"}, false,
+            "private IPv6 is rejected even when declared" },
+        { L"https://example.com@evil.test/", {"example.com"}, false,
+            "userinfo cannot disguise a different target host" },
+        { L"not a URL", {"example.com"}, false,
+            "malformed URLs are rejected" },
+        { L"https://example.com/", {"例子.测试"}, false,
+            "non-ASCII allowlist entries must be supplied as punycode" },
+    };
+    for (const auto& test : urlCases)
+    {
+        Expect(IsAllowedHttpsUrlForDomains(
+                test.url, test.domains) == test.expected,
+            test.message);
+    }
 
     if (failures == 0)
         std::cout << "HTTP security tests passed\n";

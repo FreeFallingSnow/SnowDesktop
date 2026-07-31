@@ -261,7 +261,7 @@ inline bool DesktopApp::CreateDesktopInputWindow(HWND host)
             inputHwnd_, GetParent(inputHwnd_),
             static_cast<unsigned>(GetWindowLongPtrW(inputHwnd_, GWL_STYLE)),
             static_cast<unsigned>(GetWindowLongPtrW(inputHwnd_, GWL_EXSTYLE)));
-        WriteCrashLogEntry(buf);
+        WriteDiagnosticLogEntry(buf);
     }
     return true;
 }
@@ -412,13 +412,13 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     if (desktopBackdropCompositor_.Initialize(hwnd_))
     {
         nativeGlassPanelReadyLogged_ = false;
-        WriteCrashLogEntry(L"Native desktop CompositionBackdropBrush initialized");
+        WriteDiagnosticLogEntry(L"Native desktop CompositionBackdropBrush initialized");
     }
     else
     {
         std::wstring message = L"Native desktop CompositionBackdropBrush unavailable: ";
         message += desktopBackdropCompositor_.LastError();
-        WriteCrashLogEntry(message.c_str());
+        WriteDiagnosticLogEntry(message.c_str());
     }
 
     if (HICON appIcon = LoadAppIcon())
@@ -893,7 +893,7 @@ inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         if (desktopBackdropCompositor_.Initialize(hwnd_))
         {
             nativeGlassPanelReadyLogged_ = false;
-            WriteCrashLogEntry(
+            WriteDiagnosticLogEntry(
                 L"Native desktop CompositionBackdropBrush initialized");
         }
         else
@@ -901,7 +901,7 @@ inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
             std::wstring message =
                 L"Native desktop CompositionBackdropBrush unavailable: ";
             message += desktopBackdropCompositor_.LastError();
-            WriteCrashLogEntry(message.c_str());
+            WriteDiagnosticLogEntry(message.c_str());
         }
     }
     desktopBackdropCompositor_.SetVisible(true);
@@ -921,7 +921,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     (void)showCommand;
 
     MigrateLegacyDataPaths();
-    WriteCrashLogEntry(L"Run start");
+    WriteDiagnosticLogEntry(L"Run start");
 
     {
         std::wstring langDir = GetExecutableDirectoryPath();
@@ -935,7 +935,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     InitCommonControlsEx(&icc);
 
     HRESULT hr = OleInitialize(nullptr);
-    WriteCrashLogEntry(SUCCEEDED(hr) ? L"OleInit ok" : L"OleInit FAILED");
+    WriteDiagnosticLogEntry(SUCCEEDED(hr) ? L"OleInit ok" : L"OleInit FAILED");
 
     instance_ = instance;
 
@@ -952,19 +952,19 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         wsprintfW(buf, L"Desktop: progman=%p defView=%p listView=%p host=%p",
             desktopWindows_.progman, desktopWindows_.defView,
             desktopWindows_.listView, desktopWindows_.host);
-        WriteCrashLogEntry(buf);
+        WriteDiagnosticLogEntry(buf);
     }
     if (customDesktopVisible_)
     {
         HideExplorerIcons();
         if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
-            WriteCrashLogEntry(L"Explorer icon layer hidden");
+            WriteDiagnosticLogEntry(L"Explorer icon layer hidden");
         else
-            WriteCrashLogEntry(L"Explorer icon layer not found or already hidden");
+            WriteDiagnosticLogEntry(L"Explorer icon layer not found or already hidden");
     }
     else
     {
-        WriteCrashLogEntry(L"Native desktop selected by persisted setting");
+        WriteDiagnosticLogEntry(L"Native desktop selected by persisted setting");
     }
 
     // Create desktop overlay window as child of desktop host
@@ -1041,7 +1041,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         wc.lpszClassName, L"SnowDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance, this);
-    if (!hwnd_) { WriteCrashLogEntry(L"CreateWindow FAILED"); return __LINE__; }
+    if (!hwnd_) { WriteDiagnosticLogEntry(L"CreateWindow FAILED"); return __LINE__; }
     AttachWindowToDesktopHost(parent);
     dockWindowPreview_ = std::make_unique<DockWindowPreview>();
     if (!dockWindowPreview_->Initialize(
@@ -1059,20 +1059,20 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         dockWindowTransition_.reset();
     if (!CreateDesktopInputWindow(parent))
     {
-        WriteCrashLogEntry(L"CreateInputWindow FAILED");
+        WriteDiagnosticLogEntry(L"CreateInputWindow FAILED");
         return __LINE__;
     }
-    WriteCrashLogEntry(L"Window created");
+    WriteDiagnosticLogEntry(L"Window created");
     {
         wchar_t buf[256];
         wsprintfW(buf, L"Parent=%p origin=(%d,%d) size=%dx%d exStyle=0x%08X",
             parent, origin.x, origin.y, virtualWidth_, virtualHeight_,
             static_cast<unsigned>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)));
-        WriteCrashLogEntry(buf);
+        WriteDiagnosticLogEntry(buf);
     }
 
-    if (!InitGraphics()) { WriteCrashLogEntry(L"InitGraphics FAILED"); return __LINE__; }
-    WriteCrashLogEntry(L"InitGraphics ok");
+    if (!InitGraphics()) { WriteDiagnosticLogEntry(L"InitGraphics FAILED"); return __LINE__; }
+    WriteDiagnosticLogEntry(L"InitGraphics ok");
 
     // Create control window for tray icon ownership
     {
@@ -1092,19 +1092,19 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     // Create DComp target and initial surface
     if (FAILED(dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_)))
-        { WriteCrashLogEntry(L"CreateTargetForHwnd FAILED"); return __LINE__; }
+        { WriteDiagnosticLogEntry(L"CreateTargetForHwnd FAILED"); return __LINE__; }
     if (FAILED(dcompDevice_->CreateVisual(&dcompVisual_)))
-        { WriteCrashLogEntry(L"CreateVisual FAILED"); return __LINE__; }
+        { WriteDiagnosticLogEntry(L"CreateVisual FAILED"); return __LINE__; }
     dcompTarget_->SetRoot(dcompVisual_.Get());
     if (FAILED(CreateOrResizeCompositionSurface()))
-        { WriteCrashLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
-    WriteCrashLogEntry(L"Composition target ready");
+        { WriteDiagnosticLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
+    WriteDiagnosticLogEntry(L"Composition target ready");
     if (customDesktopVisible_)
     {
         if (desktopBackdropCompositor_.Initialize(hwnd_))
         {
             nativeGlassPanelReadyLogged_ = false;
-            WriteCrashLogEntry(
+            WriteDiagnosticLogEntry(
                 L"Native desktop CompositionBackdropBrush initialized");
         }
         else
@@ -1112,7 +1112,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
             std::wstring message =
                 L"Native desktop CompositionBackdropBrush unavailable: ";
             message += desktopBackdropCompositor_.LastError();
-            WriteCrashLogEntry(message.c_str());
+            WriteDiagnosticLogEntry(message.c_str());
         }
     }
 
@@ -1128,9 +1128,9 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         legacyWidgetLayoutMigrationPending_ = false;
     }
     StartIconLoader();
-    WriteCrashLogEntry(L"LoadDesktopItems ok");
-    WriteCrashLogEntry(L"Layout done");
-    WriteCrashLogEntry(L"RebuildContainersAndItems ok");
+    WriteDiagnosticLogEntry(L"LoadDesktopItems ok");
+    WriteDiagnosticLogEntry(L"Layout done");
+    WriteDiagnosticLogEntry(L"RebuildContainersAndItems ok");
 
     // App icon
     if (HICON appIcon = LoadAppIcon())
@@ -1573,7 +1573,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     SetSoftwareDesktopEnabled(customDesktopVisible_, false);
     if (customDesktopVisible_)
         UpdateWindow(hwnd_);
-    WriteCrashLogEntry(customDesktopVisible_
+    WriteDiagnosticLogEntry(customDesktopVisible_
         ? L"Window shown, entering loop"
         : L"Native desktop active, entering loop");
 
@@ -1622,7 +1622,7 @@ inline LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
     {
         wchar_t buf[128];
         wsprintfW(buf, L"WndProc msg=0x%04X app=%p", msg, app);
-        WriteCrashLogEntry(buf);
+        WriteDiagnosticLogEntry(buf);
     }
 
     if (app) return app->HandleMessage(hwnd, msg, wp, lp);

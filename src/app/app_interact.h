@@ -937,12 +937,12 @@ inline void DesktopApp::ApplyDesktopPassthroughHotkey()
     if (desktopPassthroughHotkeyRegistered_)
     {
         desktopPassthroughHotkeyHwnd_ = target;
-        WriteCrashLogEntry(
+        WriteDiagnosticLogEntry(
             L"Desktop passthrough hold hotkey registered");
     }
     else
     {
-        WriteCrashLogEntry(
+        WriteDiagnosticLogEntry(
             L"Desktop passthrough hold hotkey registration failed");
     }
 }

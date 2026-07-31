@@ -7,18 +7,29 @@ on:
       - main
       - "release/**"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -B .build -S . -DBUILD_TESTING=ON
+        run: cmake --preset tests
 
       - name: Build Release targets
-        run: cmake --build .build --config Release --parallel
+        run: cmake --build --preset release
+
+      - name: Build test targets
+        run: cmake --build --preset tests
 
       - name: Run CTest suite
-        run: ctest --test-dir .build -C Release --output-on-failure
+        run: ctest --preset tests

@@ -2320,10 +2320,10 @@ inline void DesktopApp::UpdateQuickNavigationBackdrop()
         {
             std::wstring message = L"Quick navigation native backdrop unavailable: ";
             message += quickNavBackdropCompositor_.LastError();
-            WriteCrashLogEntry(message.c_str());
+            WriteDiagnosticLogEntry(message.c_str());
             return;
         }
-        WriteCrashLogEntry(L"Quick navigation native CompositionBackdropBrush initialized");
+        WriteDiagnosticLogEntry(L"Quick navigation native CompositionBackdropBrush initialized");
     }
     else
     {
@@ -4251,7 +4251,7 @@ inline void DesktopApp::RecoverQuickNavCompositionFailure(const wchar_t* stage, 
     wchar_t buf[192];
     wsprintfW(buf, L"QuickNav %s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render", static_cast<unsigned>(hr));
-    WriteCrashLogEntry(buf);
+    WriteDiagnosticLogEntry(buf);
 
     ResetQuickNavCompositionResources();
 
@@ -4289,7 +4289,7 @@ inline HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"QuickNav CreateTargetForHwnd FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            WriteDiagnosticLogEntry(buf);
             return hr;
         }
     }
@@ -4300,7 +4300,7 @@ inline HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"QuickNav CreateVisual FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            WriteDiagnosticLogEntry(buf);
             return hr;
         }
         quickNavDcompTarget_->SetRoot(quickNavDcompVisual_.Get());
@@ -4317,7 +4317,7 @@ inline HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
                 buf,
                 L"QuickNav CreateEffectGroup FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            WriteDiagnosticLogEntry(buf);
             return FAILED(hr) ? hr : E_FAIL;
         }
         hr = quickNavDcompVisual_->SetEffect(
@@ -4329,7 +4329,7 @@ inline HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
                 buf,
                 L"QuickNav SetEffect FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            WriteDiagnosticLogEntry(buf);
             return hr;
         }
     }
@@ -4344,7 +4344,7 @@ inline HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     {
         wchar_t buf[128];
         wsprintfW(buf, L"QuickNav CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
-        WriteCrashLogEntry(buf);
+        WriteDiagnosticLogEntry(buf);
         return hr;
     }
     hr = quickNavDcompVisual_->SetContent(surface.Get());
@@ -4352,7 +4352,7 @@ inline HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     {
         wchar_t buf[128];
         wsprintfW(buf, L"QuickNav SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
-        WriteCrashLogEntry(buf);
+        WriteDiagnosticLogEntry(buf);
         return hr;
     }
     hr = dcompDevice_->Commit();
@@ -4360,7 +4360,7 @@ inline HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     {
         wchar_t buf[128];
         wsprintfW(buf, L"QuickNav CreateSurface Commit FAILED hr=0x%08X", static_cast<unsigned>(hr));
-        WriteCrashLogEntry(buf);
+        WriteDiagnosticLogEntry(buf);
         return hr;
     }
 

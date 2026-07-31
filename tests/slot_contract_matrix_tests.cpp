@@ -1,6 +1,7 @@
 #include "core/slot_contract.h"
 
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <string>
 
@@ -102,6 +103,43 @@ void TestEveryDirectedPairAndPayload()
                             PairName(source, target) +
                             ": the guide must never accept a drop");
                     }
+                    if (route != Route::Reject)
+                    {
+                        Check(
+                            contract::SurfaceSupportsRoute(
+                                target, route),
+                            PairName(source, target) +
+                            ": every accepted route must provide all preview/commit/insertion phases");
+                        Check(
+                            contract::SurfaceSupports(
+                                target,
+                                contract::InteractionCapability::Commit),
+                            PairName(source, target) +
+                            ": every accepted target must implement commit");
+                        if (contract::RouteRequiresInsertionIndicator(route))
+                        {
+                            Check(
+                                contract::SurfaceSupports(
+                                    target,
+                                    contract::InteractionCapability::InsertionIndicator),
+                                PairName(source, target) +
+                                ": sortable routes must implement an insertion indicator");
+                        }
+                        if (relation == contract::DragRelation::CrossSurface ||
+                            relation == contract::DragRelation::ExternalIngress ||
+                            relation == contract::DragRelation::ExternalEgress)
+                        {
+                            Check(
+                                contract::SurfaceSupports(
+                                    source,
+                                    contract::InteractionCapability::CrossDisplayCoordinates) &&
+                                contract::SurfaceSupports(
+                                    target,
+                                    contract::InteractionCapability::CrossDisplayCoordinates),
+                                PairName(source, target) +
+                                ": cross-surface routes must own coordinate conversion");
+                        }
+                    }
                 }
             }
         }
@@ -123,6 +161,86 @@ void TestEveryDirectedPairAndPayload()
                 ": every registered slot pair must declare at least one accepted native-payload route");
         }
     }
+}
+
+void TestSurfaceGeometryMatrix()
+{
+    using Capability = contract::InteractionCapability;
+    using Surface = contract::SlotSurfaceKind;
+
+    constexpr std::array origins{
+        contract::SurfacePoint{-2560.0, -240.0},
+        contract::SurfacePoint{0.0, 0.0},
+        contract::SurfacePoint{3840.0, 360.0},
+    };
+    constexpr std::array scales{
+        0.75, 1.0, 1.25, 1.5, 2.0,
+    };
+    constexpr contract::SurfacePoint localPoint{
+        37.25, 61.5
+    };
+
+    for (const auto& target :
+        contract::kSurfaceDescriptors)
+    {
+        if (!target.buildsSlots) continue;
+        Check(
+            contract::SurfaceSupports(
+                target.kind,
+                Capability::ParentVisualMetrics),
+            std::string(target.name) +
+            ": slot visuals must inherit their current parent metrics");
+        Check(
+            contract::SurfaceSupports(
+                target.kind,
+                Capability::CrossDisplayCoordinates),
+            std::string(target.name) +
+            ": slot coordinates must support monitor-origin changes");
+
+        for (const auto& origin : origins)
+        {
+            for (double scale : scales)
+            {
+                const contract::SurfaceFrame frame{
+                    origin.x, origin.y, scale
+                };
+                const auto screen =
+                    contract::ParentToScreen(
+                        localPoint, frame);
+                const auto restored =
+                    contract::ScreenToParent(
+                        screen, frame);
+                Check(
+                    std::abs(restored.x - localPoint.x) < 0.0001 &&
+                    std::abs(restored.y - localPoint.y) < 0.0001,
+                    std::string(target.name) +
+                    ": parent/screen conversion must round-trip for every monitor and DPI frame");
+            }
+        }
+
+        for (const auto& source :
+            contract::kSurfaceDescriptors)
+        {
+            for (double sourceScale : scales)
+            {
+                for (double targetScale : scales)
+                {
+                    Check(
+                        contract::ResolvePreviewScale(
+                            target.kind,
+                            sourceScale,
+                            targetScale) == targetScale,
+                        PairName(source.kind, target.kind) +
+                        ": drag preview size must follow the target parent rather than its old source");
+                }
+            }
+        }
+    }
+
+    Check(
+        contract::ResolvePreviewScale(
+            Surface::External, 1.5, 2.0) == 1.5,
+        "external egress keeps source metrics because it has no SnowDesktop parent");
 }
 
 void TestPayloadClassificationIsExclusive()
@@ -406,6 +524,7 @@ int main()
 {
     TestPayloadClassificationIsExclusive();
     TestEveryDirectedPairAndPayload();
+    TestSurfaceGeometryMatrix();
     TestSameComponentAndSameTypeRules();
     TestTypeIsolationRules();
     TestExternalIngressAndEgress();

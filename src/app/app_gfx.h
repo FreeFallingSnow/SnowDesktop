@@ -236,7 +236,7 @@ inline bool DesktopApp::InitGraphics()
         wsprintfW(buf, L"D3D11 driver=%s hr=0x%08X feature=0x%04X",
             usingWarp ? L"WARP" : L"HARDWARE",
             static_cast<unsigned>(hr), static_cast<unsigned>(fl));
-        WriteCrashLogEntry(buf);
+        WriteDiagnosticLogEntry(buf);
     }
     if (FAILED(hr)) return false;
     d3dDevice_->GetImmediateContext(&d3dImmediateContext_);
@@ -261,7 +261,7 @@ inline bool DesktopApp::InitGraphics()
             wchar_t buf[256];
             wsprintfW(buf, L"D3D adapter=%s vendor=0x%04X device=0x%04X",
                 desc.Description, desc.VendorId, desc.DeviceId);
-            WriteCrashLogEntry(buf);
+            WriteDiagnosticLogEntry(buf);
         }
     }
     hr = d2dFactory_->CreateDevice(dxgiDevice.Get(), &d2dDevice_);
@@ -371,7 +371,7 @@ inline void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HR
     wchar_t buf[192];
     wsprintfW(buf, L"%s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render", static_cast<unsigned>(hr));
-    WriteCrashLogEntry(buf);
+    WriteDiagnosticLogEntry(buf);
 
     ResetCompositionRenderCaches();
     dcompSurface_.Reset();
@@ -401,7 +401,7 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            WriteDiagnosticLogEntry(buf);
             return hr;
         }
         hr = dcompVisual_->SetContent(surface.Get());
@@ -409,7 +409,7 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            WriteDiagnosticLogEntry(buf);
             return hr;
         }
         hr = dcompDevice_->Commit();
@@ -418,7 +418,7 @@ inline HRESULT DesktopApp::CreateOrResizeCompositionSurface()
             wchar_t buf[128];
             wsprintfW(buf, L"CreateSurface Commit FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
-            WriteCrashLogEntry(buf);
+            WriteDiagnosticLogEntry(buf);
             return hr;
         }
 
@@ -520,7 +520,7 @@ inline void DesktopApp::OnPaint(const RECT* updateRect)
         {
             std::wstring message = L"Native desktop CompositionBackdropBrush active, panels=";
             message += std::to_wstring(desktopBackdropCompositor_.PanelCount());
-            WriteCrashLogEntry(message.c_str());
+            WriteDiagnosticLogEntry(message.c_str());
             nativeGlassPanelReadyLogged_ = true;
         }
 

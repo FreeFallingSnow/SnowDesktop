@@ -44,9 +44,28 @@
 
 - Release 构建的标准验证入口是 `scripts/build.bat`。
 - 在报告构建通过前，必须实际运行 `scripts/build.bat` 并确认 `.build\Release\SnowDesktop.exe` 成功生成。
-- `scripts/build.bat` 会终止正在运行的 `SnowDesktop.exe`；执行前应在进度说明中告知用户这一副作用。
-- Ninja、直接调用 CMake 或其他构建方式只能用于诊断，不能替代最终的 `scripts/build.bat` 验证。
+- `scripts/build.bat` 默认不得终止 SnowDesktop 或 Explorer。若 Hook DLL 被占用，应先报告并让用户
+  正常退出应用；只有用户明确接受 Shell 重启后才可使用 `--reload-shell`，执行前必须说明副作用。
+- 执行标准构建前先检查 `SnowDesktop.exe` 是否运行，以及 Explorer 是否仍加载
+  `SnowDesktopTaskbarHook.dll`。存在占用时不要先做一次必然失败的编译；应直接提示需要退出应用或
+  重载 Explorer。`scripts/build.bat` 自身也必须以预检退出码阻止这种无效构建。
+- CMake Preset、Ninja、直接调用 CMake 或其他构建方式只能用于诊断，不能替代最终的
+  `scripts/build.bat` 验证；脚本、CI 与 IDE 的配置必须以 `CMakePresets.json` 为共同来源。
 - 构建警告应如实报告，并区分既有警告与本次改动引入的警告。
+- 完整测试的统一入口是 `scripts/test.bat`；CMake 中的 `SnowDesktopTests`
+  聚合目标是测试可执行文件的唯一清单。新增测试不得在批处理脚本中再维护一份目标列表。
+- CTest 使用 `contract`、`integration`、`rules` 等标签支持定向验证；Agent 可在开发中
+  按标签执行，但交付前仍需运行完整测试。
+
+## 仓库内容边界
+
+- `widgets/` 同时包含内置 Lua 组件与面向用户提供的
+  `snowdesktop-lua-widget` Agent Skill；后者是产品的组件开发功能，必须继续随软件分发，
+  不得当作临时 Agent 文件删除。
+- `tests/` 仅保存测试源码，测试目标统一在 `CMakeLists.txt` 注册。
+- `scripts/` 保存人工与自动化入口；根目录不再新增脚本副本。
+- `.build/`、`.build_debug/`、`artifacts/` 和 `docs/html/` 是生成目录，不得提交。
+- `.codex-probes/` 是 Agent 临时探测目录，不得提交或依赖其中内容。
 
 ## 工作区安全
 

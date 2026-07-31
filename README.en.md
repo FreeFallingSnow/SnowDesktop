@@ -41,8 +41,10 @@ Requirements: CMake 3.24+, Visual Studio 2022, and the Windows 10 SDK (0x0A00).
 .\scripts\build.bat
 ```
 
-The build script automatically stops a running `SnowDesktop.exe` and briefly
-restarts Explorer to release the taskbar hook DLL.
+The default build does not stop SnowDesktop or restart Explorer. Its preflight
+stops before compilation when the app or hook DLL is active. Exit SnowDesktop
+normally first. Use
+`.\scripts\build.bat --reload-shell` only when an Explorer restart is acceptable.
 
 ## 🧱 Technology
 
@@ -50,10 +52,11 @@ restarts Explorer to release the taskbar hook DLL.
 - Direct2D + Direct3D 11 + DirectComposition
 - Dear ImGui (settings window)
 - Lua 5.4 (script engine)
-- spdlog (logging)
 - Font Awesome 6 Free (icons)
 - WinHTTP (Lua HTTP runtime)
 
 ## 📄 License
 
-GNU General Public License v3.0 — see [LICENSE](./LICENSE).
+GNU General Public License v3.0 — see [LICENSE](./LICENSE). Licenses for the
+third-party components and font distributed with SnowDesktop are listed in
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

@@ -74,14 +74,14 @@ inline void DesktopApp::ApplyFloatingDockHotkey()
             const std::wstring message =
                 L"Floating Dock hotkey " + hotkeyText +
                 L" registered";
-            WriteCrashLogEntry(message.c_str());
+            WriteDiagnosticLogEntry(message.c_str());
         }
         else
         {
             const std::wstring message =
                 L"Floating Dock hotkey " + hotkeyText +
                 L" registration failed";
-            WriteCrashLogEntry(message.c_str());
+            WriteDiagnosticLogEntry(message.c_str());
         }
     }
 
@@ -224,7 +224,7 @@ inline void DesktopApp::UpdateFloatingDockEdgeSwipe()
             requiredTravel);
     if (triggered && !floatingDockVisible_)
     {
-        WriteCrashLogEntry(
+        WriteDiagnosticLogEntry(
             L"Floating Dock edge swipe received");
         ShowFloatingDock();
     }
@@ -664,7 +664,7 @@ inline void DesktopApp::UpdateFloatingDockWindowBounds(
                 L"Floating Dock native backdrop unavailable: ";
             message += floatingDockBackdropCompositor_.
                 LastError();
-            WriteCrashLogEntry(message.c_str());
+            WriteDiagnosticLogEntry(message.c_str());
         }
     }
     if (firstReveal)
@@ -689,24 +689,24 @@ inline void DesktopApp::UpdateFloatingDockWindowBounds(
         (GetWindowLongPtrW(
             floatingDockHwnd_, GWL_EXSTYLE) &
             WS_EX_TOPMOST) != 0);
-    WriteCrashLogEntry(message);
+    WriteDiagnosticLogEntry(message);
     InvalidateFloatingDockWindow(
         immediatePresent);
 }
 
 inline void DesktopApp::ShowFloatingDock()
 {
-    WriteCrashLogEntry(
+    WriteDiagnosticLogEntry(
         L"Floating Dock shortcut received");
     if (!generalSettings_.dockEnabled)
     {
-        WriteCrashLogEntry(
+        WriteDiagnosticLogEntry(
             L"Floating Dock shortcut ignored: feature disabled");
         return;
     }
     if (!CreateFloatingDockWindow())
     {
-        WriteCrashLogEntry(
+        WriteDiagnosticLogEntry(
             L"Floating Dock CreateWindowEx failed");
         MessageBeep(MB_ICONWARNING);
         return;
@@ -719,7 +719,7 @@ inline void DesktopApp::ShowFloatingDock()
         SelectFloatingDockContainerAtCursor();
     if (!floatingDockContainer_)
     {
-        WriteCrashLogEntry(
+        WriteDiagnosticLogEntry(
             L"Floating Dock shortcut ignored: no Dock container");
         MessageBeep(MB_ICONWARNING);
         return;
@@ -968,7 +968,7 @@ RecoverFloatingDockCompositionFailure(
         L"FloatingDock %s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render",
         static_cast<unsigned>(hr));
-    WriteCrashLogEntry(message);
+    WriteDiagnosticLogEntry(message);
     ResetFloatingDockCompositionResources();
     if (!floatingDockCompositionRenderRecoveryPending_ &&
         floatingDockHwnd_ &&

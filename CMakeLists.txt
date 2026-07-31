@@ -83,7 +83,9 @@ message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app.cpp
+    src/app/app_layout.cpp
     src/app/desktop_backdrop_compositor.cpp
+    src/atomic_file.cpp
     src/dock_window_preview.cpp
     src/dock_window_transition.cpp
     src/taskbar_dynamic/search_visibility_detector.cpp
@@ -107,6 +109,7 @@ set(SNOWDESKTOP_SOURCES
     src/category_settings.cpp
     src/l10n.cpp
     src/item_location.cpp
+    src/layout_storage.cpp
     src/search_match.cpp
     src/everything_search.cpp
     src/widget_engine.cpp
@@ -164,7 +167,7 @@ target_include_directories(SnowDesktopImgui PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopImgui PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopImgui PRIVATE /MP /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_options(SnowDesktopImgui PRIVATE /MP4 /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktopImgui PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
@@ -175,7 +178,7 @@ target_include_directories(SnowDesktopLua PUBLIC third_party/lua)
 if(MSVC)
     set_property(TARGET SnowDesktopLua PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopLua PRIVATE /MP
+    target_compile_options(SnowDesktopLua PRIVATE /MP4
         /wd4244 /wd4310 /wd4324 /wd4701 /wd4702)
 endif()
 
@@ -186,7 +189,7 @@ target_include_directories(SnowDesktopEverything PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopEverything PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopEverything PRIVATE /MP /wd4100 /wd4133 /wd4996)
+    target_compile_options(SnowDesktopEverything PRIVATE /MP4 /wd4100 /wd4133 /wd4996)
 endif()
 
 add_library(SnowDesktopPinyinData STATIC ${PINYIN_DATA_SOURCES})
@@ -196,7 +199,7 @@ target_include_directories(SnowDesktopPinyinData PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopPinyinData PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopPinyinData PRIVATE /MP)
+    target_compile_options(SnowDesktopPinyinData PRIVATE /MP4)
 endif()
 
 if (MSVC)
@@ -315,12 +318,11 @@ target_include_directories(SnowDesktop PRIVATE
     src
     src/core
     src/app
-    third_party/spdlog/include
 )
 
 if (MSVC)
     set_property(TARGET SnowDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktop PRIVATE /MP /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_options(SnowDesktop PRIVATE /MP4 /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00
@@ -368,10 +370,6 @@ target_link_libraries(SnowDesktop PRIVATE
     version wbemuuid
 )
 
-add_custom_command(TARGET SnowDesktop PRE_BUILD
-    COMMAND cmd /c "taskkill /f /im SnowDesktop.exe 2>nul & exit 0"
-    COMMENT "Stopping running SnowDesktop.exe before build..."
-)
 add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/widgets"
@@ -404,328 +402,182 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
-    add_executable(SnowDesktopApplicationDataLifecycleTests
-        tests/application_data_lifecycle_tests.cpp
-        src/full_data_backup.cpp
-        src/widget_package.cpp
-        src/portable_data_migration.cpp
-        src/single_instance.cpp)
-    target_compile_features(
-        SnowDesktopApplicationDataLifecycleTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopApplicationDataLifecycleTests PRIVATE src)
-    target_link_libraries(
-        SnowDesktopApplicationDataLifecycleTests PRIVATE
-        bcrypt ole32 shell32 user32 version)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopApplicationDataLifecycleTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopApplicationDataLifecycleTests PRIVATE
-            /W4 /permissive- /EHsc /utf-8)
-        target_compile_definitions(
-            SnowDesktopApplicationDataLifecycleTests PRIVATE
-            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(
-            SnowDesktopApplicationDataLifecycleTests PRIVATE
-            -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME application_data_lifecycle
-        COMMAND SnowDesktopApplicationDataLifecycleTests)
+    set(SNOWDESKTOP_TEST_TARGETS)
 
-    add_executable(
-        SnowDesktopHttpSecurityTests
-        tests/http_security_tests.cpp
-        src/http_runtime.cpp)
-    target_compile_features(
-        SnowDesktopHttpSecurityTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopHttpSecurityTests PRIVATE src)
-    target_link_libraries(
-        SnowDesktopHttpSecurityTests PRIVATE
-        shlwapi winhttp ws2_32)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopHttpSecurityTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopHttpSecurityTests PRIVATE
-            /W4 /permissive- /EHsc /utf-8)
-        target_compile_definitions(
-            SnowDesktopHttpSecurityTests PRIVATE
-            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(
-            SnowDesktopHttpSecurityTests PRIVATE
-            -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME http_security
-        COMMAND SnowDesktopHttpSecurityTests)
+    function(snowdesktop_add_test TEST_TARGET TEST_NAME)
+        set(multiValueArgs
+            SOURCES
+            INCLUDE_DIRECTORIES
+            LINK_LIBRARIES
+            COMMAND_ARGUMENTS
+            LABELS)
+        cmake_parse_arguments(
+            SNOW_TEST "" "" "${multiValueArgs}" ${ARGN})
 
-    add_executable(
-        SnowDesktopCalendarServiceTests
-        tests/calendar_service_tests.cpp
-        src/calendar_service.cpp)
-    target_compile_features(
-        SnowDesktopCalendarServiceTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopCalendarServiceTests PRIVATE src)
-    target_link_libraries(
-        SnowDesktopCalendarServiceTests PRIVATE ole32)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopCalendarServiceTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopCalendarServiceTests PRIVATE
-            /W4 /permissive- /EHsc /utf-8)
-        target_compile_definitions(
-            SnowDesktopCalendarServiceTests PRIVATE
-            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(
-            SnowDesktopCalendarServiceTests PRIVATE
-            -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME calendar_service
-        COMMAND SnowDesktopCalendarServiceTests)
+        if (NOT SNOW_TEST_SOURCES)
+            message(FATAL_ERROR
+                "${TEST_TARGET} must declare at least one source file")
+        endif()
 
-    add_executable(
-        SnowDesktopLocalizationContractTests
-        tests/localization_contract_tests.cpp
-        src/l10n.cpp)
-    target_compile_features(
-        SnowDesktopLocalizationContractTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopLocalizationContractTests PRIVATE src)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopLocalizationContractTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopLocalizationContractTests PRIVATE
-            /W4 /permissive- /EHsc /utf-8)
-        target_compile_definitions(
-            SnowDesktopLocalizationContractTests PRIVATE
-            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(
-            SnowDesktopLocalizationContractTests PRIVATE
-            -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME localization_contract
-        COMMAND SnowDesktopLocalizationContractTests
-            "${CMAKE_CURRENT_SOURCE_DIR}")
+        add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
+        target_compile_features(${TEST_TARGET} PRIVATE cxx_std_20)
+        if (SNOW_TEST_INCLUDE_DIRECTORIES)
+            target_include_directories(
+                ${TEST_TARGET} PRIVATE
+                ${SNOW_TEST_INCLUDE_DIRECTORIES})
+        endif()
+        if (SNOW_TEST_LINK_LIBRARIES)
+            target_link_libraries(
+                ${TEST_TARGET} PRIVATE
+                ${SNOW_TEST_LINK_LIBRARIES})
+        endif()
 
-    add_executable(SnowDesktopSlotContractMatrixTests
-        tests/slot_contract_matrix_tests.cpp)
-    target_compile_features(
-        SnowDesktopSlotContractMatrixTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopSlotContractMatrixTests PRIVATE src)
-
-    add_executable(SnowDesktopSlotRuntimeContractTests
-        tests/slot_runtime_contract_tests.cpp
-        src/core/slot.cpp
-        src/core/container.cpp
-        src/l10n.cpp)
-    target_compile_features(
-        SnowDesktopSlotRuntimeContractTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopSlotRuntimeContractTests PRIVATE
-        src src/core)
-    target_link_libraries(
-        SnowDesktopSlotRuntimeContractTests PRIVATE
-        d2d1 user32)
-
-    foreach(SLOT_TEST_TARGET
-        SnowDesktopSlotContractMatrixTests
-        SnowDesktopSlotRuntimeContractTests)
         if (MSVC)
             set_property(
-                TARGET ${SLOT_TEST_TARGET}
+                TARGET ${TEST_TARGET}
                 PROPERTY MSVC_RUNTIME_LIBRARY
                     "MultiThreaded$<$<CONFIG:Debug>:Debug>")
             target_compile_options(
-                ${SLOT_TEST_TARGET} PRIVATE
+                ${TEST_TARGET} PRIVATE
                 /W4 /permissive- /EHsc /utf-8)
             target_compile_definitions(
-                ${SLOT_TEST_TARGET} PRIVATE
-                _UNICODE UNICODE NOMINMAX
-                    WIN32_LEAN_AND_MEAN)
+                ${TEST_TARGET} PRIVATE
+                _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
         else()
             target_compile_options(
-                ${SLOT_TEST_TARGET} PRIVATE
+                ${TEST_TARGET} PRIVATE
                 -Wall -Wextra -pedantic)
         endif()
-    endforeach()
-    add_test(
-        NAME slot_contract_matrix
-        COMMAND SnowDesktopSlotContractMatrixTests)
-    add_test(
-        NAME slot_runtime_contract
-        COMMAND SnowDesktopSlotRuntimeContractTests)
 
-    add_executable(SnowDesktopWidgetInteractionRulesTests
-        tests/widget_interaction_rules_tests.cpp)
-    target_compile_features(
-        SnowDesktopWidgetInteractionRulesTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopWidgetInteractionRulesTests PRIVATE src)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopWidgetInteractionRulesTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopWidgetInteractionRulesTests PRIVATE
-            /W4 /permissive- /EHsc /utf-8)
-    else()
-        target_compile_options(
-            SnowDesktopWidgetInteractionRulesTests PRIVATE
-            -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME widget_interaction_rules
-        COMMAND SnowDesktopWidgetInteractionRulesTests)
+        add_test(
+            NAME ${TEST_NAME}
+            COMMAND ${TEST_TARGET}
+                ${SNOW_TEST_COMMAND_ARGUMENTS})
+        set_tests_properties(
+            ${TEST_NAME} PROPERTIES TIMEOUT 60)
+        if (SNOW_TEST_LABELS)
+            set_tests_properties(
+                ${TEST_NAME} PROPERTIES
+                LABELS "${SNOW_TEST_LABELS}")
+        endif()
 
-    add_executable(
-        SnowDesktopQuickNavigationRulesTests
-        tests/quick_navigation_rules_tests.cpp
-        src/navigation_settings.cpp)
-    target_compile_features(
-        SnowDesktopQuickNavigationRulesTests
-        PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopQuickNavigationRulesTests
-        PRIVATE src)
-    target_link_libraries(
-        SnowDesktopQuickNavigationRulesTests
-        PRIVATE SnowDesktopPinyinData)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopQuickNavigationRulesTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopQuickNavigationRulesTests
-            PRIVATE /W4 /permissive- /EHsc /utf-8)
-        target_compile_definitions(
-            SnowDesktopQuickNavigationRulesTests
-            PRIVATE _UNICODE UNICODE NOMINMAX
-                WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(
-            SnowDesktopQuickNavigationRulesTests
-            PRIVATE -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME quick_navigation_rules
-        COMMAND SnowDesktopQuickNavigationRulesTests)
+        list(APPEND SNOWDESKTOP_TEST_TARGETS ${TEST_TARGET})
+        set(SNOWDESKTOP_TEST_TARGETS
+            "${SNOWDESKTOP_TEST_TARGETS}" PARENT_SCOPE)
+    endfunction()
 
-    add_executable(
+    snowdesktop_add_test(
+        SnowDesktopApplicationDataLifecycleTests
+        application_data_lifecycle
+        SOURCES
+            tests/application_data_lifecycle_tests.cpp
+            src/atomic_file.cpp
+            src/full_data_backup.cpp
+            src/layout_storage.cpp
+            src/widget_package.cpp
+            src/portable_data_migration.cpp
+            src/single_instance.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES bcrypt ole32 shell32 user32 version
+        LABELS integration data)
+
+    snowdesktop_add_test(
+        SnowDesktopHttpSecurityTests
+        http_security
+        SOURCES
+            tests/http_security_tests.cpp
+            src/http_runtime.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES shlwapi winhttp ws2_32
+        LABELS contract security)
+
+    snowdesktop_add_test(
+        SnowDesktopCalendarServiceTests
+        calendar_service
+        SOURCES
+            tests/calendar_service_tests.cpp
+            src/calendar_service.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32
+        LABELS service)
+
+    snowdesktop_add_test(
+        SnowDesktopLocalizationContractTests
+        localization_contract
+        SOURCES
+            tests/localization_contract_tests.cpp
+            src/l10n.cpp
+        INCLUDE_DIRECTORIES src
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract l10n)
+
+    snowdesktop_add_test(
+        SnowDesktopSlotContractMatrixTests
+        slot_contract_matrix
+        SOURCES tests/slot_contract_matrix_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract slot matrix)
+
+    snowdesktop_add_test(
+        SnowDesktopSlotRuntimeContractTests
+        slot_runtime_contract
+        SOURCES
+            tests/slot_runtime_contract_tests.cpp
+            src/core/slot.cpp
+            src/core/container.cpp
+            src/l10n.cpp
+        INCLUDE_DIRECTORIES src src/core
+        LINK_LIBRARIES d2d1 user32
+        LABELS contract slot integration)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetInteractionRulesTests
+        widget_interaction_rules
+        SOURCES tests/widget_interaction_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS rules widget)
+
+    snowdesktop_add_test(
+        SnowDesktopQuickNavigationRulesTests
+        quick_navigation_rules
+        SOURCES
+            tests/quick_navigation_rules_tests.cpp
+            src/navigation_settings.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopPinyinData
+        LABELS rules navigation)
+
+    snowdesktop_add_test(
         SnowDesktopItemLocationTests
-        tests/item_location_tests.cpp
-        src/item_location.cpp)
-    target_compile_features(
-        SnowDesktopItemLocationTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopItemLocationTests PRIVATE src)
-    target_link_libraries(
-        SnowDesktopItemLocationTests
-        PRIVATE ole32 shell32 shlwapi uuid)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopItemLocationTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopItemLocationTests PRIVATE
-            /W4 /permissive- /EHsc /utf-8)
-        target_compile_definitions(
-            SnowDesktopItemLocationTests PRIVATE
-            _UNICODE UNICODE NOMINMAX
-                WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(
-            SnowDesktopItemLocationTests PRIVATE
-            -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME item_location
-        COMMAND SnowDesktopItemLocationTests)
+        item_location
+        SOURCES
+            tests/item_location_tests.cpp
+            src/item_location.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid
+        LABELS integration shell)
 
-    add_executable(
+    snowdesktop_add_test(
         SnowDesktopDockAndWindowRulesTests
-        tests/dock_and_window_rules_tests.cpp
-        src/dock_window_preview.cpp
-        src/dock_window_transition.cpp)
-    target_compile_features(
-        SnowDesktopDockAndWindowRulesTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopDockAndWindowRulesTests PRIVATE src)
-    target_link_libraries(
-        SnowDesktopDockAndWindowRulesTests PRIVATE
-        d2d1 dwrite dwmapi gdi32 shcore user32)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopDockAndWindowRulesTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopDockAndWindowRulesTests PRIVATE
-            /W4 /permissive- /EHsc /utf-8)
-        target_compile_definitions(
-            SnowDesktopDockAndWindowRulesTests PRIVATE
-            _UNICODE UNICODE NOMINMAX
-                WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(
-            SnowDesktopDockAndWindowRulesTests PRIVATE
-            -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME dock_and_window_rules
-        COMMAND SnowDesktopDockAndWindowRulesTests)
+        dock_and_window_rules
+        SOURCES
+            tests/dock_and_window_rules_tests.cpp
+            src/dock_window_preview.cpp
+            src/dock_window_transition.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES d2d1 dwrite dwmapi gdi32 shcore user32
+        LABELS rules window)
 
-    add_executable(
+    snowdesktop_add_test(
         SnowDesktopPopupAnimationRulesTests
-        tests/popup_animation_rules_tests.cpp)
-    target_compile_features(
-        SnowDesktopPopupAnimationRulesTests PRIVATE cxx_std_20)
-    target_include_directories(
-        SnowDesktopPopupAnimationRulesTests PRIVATE src)
-    if (MSVC)
-        set_property(
-            TARGET SnowDesktopPopupAnimationRulesTests
-            PROPERTY MSVC_RUNTIME_LIBRARY
-                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(
-            SnowDesktopPopupAnimationRulesTests PRIVATE
-            /W4 /permissive- /EHsc /utf-8)
-        target_compile_definitions(
-            SnowDesktopPopupAnimationRulesTests PRIVATE
-            _UNICODE UNICODE NOMINMAX
-                WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(
-            SnowDesktopPopupAnimationRulesTests PRIVATE
-            -Wall -Wextra -pedantic)
-    endif()
-    add_test(
-        NAME popup_animation_rules
-        COMMAND SnowDesktopPopupAnimationRulesTests)
+        popup_animation_rules
+        SOURCES tests/popup_animation_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS rules animation)
 
+    add_custom_target(
+        SnowDesktopTests
+        DEPENDS ${SNOWDESKTOP_TEST_TARGETS})
 endif()
 
 

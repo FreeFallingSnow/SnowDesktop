@@ -2,37 +2,54 @@
 setlocal
 cd /d "%~dp0.."
 
-echo === Configuring CMake (Release) ===
-cmake -B .build -S .
+set "RELOAD_SHELL="
+if /i "%~1"=="--reload-shell" (
+    set "RELOAD_SHELL=1"
+    shift
+)
+if not "%~1"=="" (
+    echo Usage: scripts\build.bat [--reload-shell]
+    exit /b 2
+)
+
+if defined RELOAD_SHELL (
+    echo WARNING: --reload-shell stops SnowDesktop and restarts Explorer.
+    taskkill /f /im SnowDesktop.exe >nul 2>&1
+    tasklist /fi "IMAGENAME eq explorer.exe" /nh 2>nul | find /i "explorer.exe" >nul
+    if not errorlevel 1 (
+        taskkill /f /im explorer.exe >nul 2>&1
+        timeout /t 2 /nobreak >nul
+        start "" explorer.exe >nul 2>&1
+    )
+    goto configure
+)
+
+tasklist /fi "IMAGENAME eq SnowDesktop.exe" /nh 2>nul | find /i "SnowDesktop.exe" >nul
+if not errorlevel 1 (
+    echo Build preflight stopped: SnowDesktop.exe is running.
+    echo Exit SnowDesktop normally before building.
+    exit /b 3
+)
+tasklist /m SnowDesktopTaskbarHook.dll /fi "IMAGENAME eq explorer.exe" /nh 2>nul | find /i "SnowDesktopTaskbarHook.dll" >nul
+if not errorlevel 1 (
+    echo Build preflight stopped: Explorer still has SnowDesktopTaskbarHook.dll loaded.
+    echo Run scripts\build.bat --reload-shell only when an Explorer restart is acceptable.
+    exit /b 3
+)
+
+:configure
+echo === Configuring CMake (Release preset) ===
+cmake --preset release
 if %ERRORLEVEL% NEQ 0 (
     echo CMake configure FAILED
-    if not defined SNOWDESKTOP_NONINTERACTIVE pause
     exit /b 1
 )
 
 echo.
-echo === Ensuring hook DLL is not locked by explorer ===
-tasklist /fi "IMAGENAME eq SnowDesktop.exe" 2>nul | find /i "SnowDesktop.exe" >nul
-if %ERRORLEVEL% EQU 0 (
-    echo Stopping running SnowDesktop.exe...
-    taskkill /f /im SnowDesktop.exe >nul 2>&1
-    ping 127.0.0.1 -n 2 >nul
-)
-rem Explorer keeps the hook DLL loaded; terminate it briefly to release the lock.
-taskkill /f /im explorer.exe >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    echo Explorer terminated to release DLL lock.
-    ping 127.0.0.1 -n 3 >nul
-    echo Starting explorer...
-    start "" explorer.exe >nul 2>&1
-)
-
-echo.
 echo === Building SnowDesktop.exe and snowwidget.exe ===
-cmake --build .build --config Release --target SnowDesktop snowwidget --parallel
+cmake --build --preset release
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
-    if not defined SNOWDESKTOP_NONINTERACTIVE pause
     exit /b 1
 )
 
@@ -44,5 +61,4 @@ echo Taskbar appearance Hook: .build\Release\SnowDesktopTaskbarHook.dll
 echo.
 echo For a version release, run scripts\release.bat to open the unified release center.
 echo Agent and automation usage is available through scripts\release.bat COMMAND.
-echo.
-if not defined SNOWDESKTOP_NONINTERACTIVE pause
+exit /b 0

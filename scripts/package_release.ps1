@@ -9,7 +9,9 @@ param(
     [string]$PackageSid = "",
     [string]$StoreId = "",
     [string]$CertificatePath = "",
-    [string]$CertificatePassword = "",
+    [string]$CertificateThumbprint = "",
+    [ValidateSet("CurrentUser", "LocalMachine")]
+    [string]$CertificateStoreLocation = "CurrentUser",
     [string]$OutputDirectory = ""
 )
 
@@ -93,6 +95,7 @@ function Copy-Payload {
         (Join-Path $buildOutput "SnowDesktop.exe"),
         (Join-Path $buildOutput "SnowDesktopTaskbarHook.dll"),
         (Join-Path $repositoryRoot "LICENSE"),
+        (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"),
         (Join-Path $repositoryRoot "README.md"),
         (Join-Path $repositoryRoot "README.en.md")
     )
@@ -234,7 +237,7 @@ $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 
 if (-not $SkipBuild) {
     Write-Host "Running the repository-standard Release build."
-    Write-Host "SnowDesktop will be stopped and Explorer will restart briefly."
+    Write-Host "The build will not stop SnowDesktop or restart Explorer."
     & cmd.exe /d /c "call `"$repositoryRoot\scripts\build.bat`""
     if ($LASTEXITCODE -ne 0) {
         throw "scripts/build.bat failed with exit code $LASTEXITCODE."
@@ -452,18 +455,40 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $signed = $false
+$signArguments = @()
+if (-not [string]::IsNullOrWhiteSpace($CertificatePath) -and
+    -not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+    throw "Use either CertificatePath or CertificateThumbprint, not both."
+}
+if (-not [string]::IsNullOrWhiteSpace($CertificatePath) -or
+    -not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+    $signTool = Join-Path (Split-Path -Parent $makeAppx) "signtool.exe"
+    $signArguments = @("sign", "/fd", "SHA256")
+}
 if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
     $CertificatePath = [System.IO.Path]::GetFullPath($CertificatePath)
     if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
         throw "Signing certificate was not found: $CertificatePath"
     }
-    $signTool = Join-Path (Split-Path -Parent $makeAppx) "signtool.exe"
-    $signArguments = @(
-        "sign", "/fd", "SHA256", "/f", $CertificatePath
-    )
-    if (-not [string]::IsNullOrEmpty($CertificatePassword)) {
-        $signArguments += @("/p", $CertificatePassword)
+    $signArguments += @("/f", $CertificatePath)
+}
+elseif (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+    $CertificateThumbprint =
+        ($CertificateThumbprint -replace "\s", "").ToUpperInvariant()
+    if ($CertificateThumbprint -notmatch "^[0-9A-F]{40}$") {
+        throw "CertificateThumbprint must be a 40-digit SHA-1 thumbprint."
     }
+    $storeCertificatePath =
+        "Cert:\$CertificateStoreLocation\My\$CertificateThumbprint"
+    if (-not (Test-Path -LiteralPath $storeCertificatePath)) {
+        throw "Signing certificate was not found in $CertificateStoreLocation\\My: $CertificateThumbprint"
+    }
+    $signArguments += @("/sha1", $CertificateThumbprint, "/s", "My")
+    if ($CertificateStoreLocation -eq "LocalMachine") {
+        $signArguments += "/sm"
+    }
+}
+if ($signArguments.Count -gt 0) {
     $signArguments += $msixPath
     & $signTool @signArguments
     if ($LASTEXITCODE -ne 0) {
