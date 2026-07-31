@@ -5411,6 +5411,27 @@ bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::s
     return removed;
 }
 
+void WidgetEngine::RebindHostTimers()
+{
+    for (auto& widget : widgets_)
+    {
+        // The old HWND and all timers owned by it have already been destroyed.
+        // Do not route the stale IDs through the kill callback, which now
+        // targets the replacement HWND and may have started reusing IDs.
+        widget.refreshTimerId = 0;
+        widget.namedTimerId = 0;
+
+        if (widget.manifest.refreshIntervalMs > 0 &&
+            widgetTimerRequestCallback_)
+        {
+            widget.refreshTimerId = widgetTimerRequestCallback_(
+                widget.widgetId,
+                static_cast<UINT>(widget.manifest.refreshIntervalMs));
+        }
+        RescheduleNamedTimer(widget);
+    }
+}
+
 void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
 {
     if (widget.namedTimerId && widgetTimerKillCallback_)

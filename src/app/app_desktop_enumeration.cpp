@@ -315,6 +315,49 @@ void DesktopApp::ScheduleDisplayTopologyRefresh()
 }
 
 /**
+ * @brief 判断当前桌面窗口是否仍完整覆盖虚拟屏幕。
+ *
+ * 某些显卡/扩展坞路径不会向隐藏控制窗口投递显示变化通知。即使显示器
+ * 枚举结果已经稳定，Explorer 下的子窗口也可能仍保持旧屏幕尺寸。
+ */
+bool DesktopApp::DesktopWindowNeedsDisplaySynchronization() const
+{
+    if (!customDesktopVisible_ || !hwnd_ || !IsWindow(hwnd_))
+        return false;
+
+    RECT windowRect{};
+    if (!GetWindowRect(hwnd_, &windowRect))
+        return true;
+
+    const int virtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int virtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int virtualWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    const int virtualHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (virtualWidth <= 0 || virtualHeight <= 0)
+        return false;
+
+    return windowRect.left != virtualLeft ||
+        windowRect.top != virtualTop ||
+        windowRect.right != virtualLeft + virtualWidth ||
+        windowRect.bottom != virtualTop + virtualHeight;
+}
+
+/**
+ * @brief 低成本轮询显示器拓扑和桌面窗口覆盖范围。
+ */
+void DesktopApp::PollDisplayTopology()
+{
+    if (exitRequested_)
+        return;
+
+    if (CaptureDisplayTopologySignature() != displayTopologySignature_ ||
+        DesktopWindowNeedsDisplaySynchronization())
+    {
+        ScheduleDisplayTopologyRefresh();
+    }
+}
+
+/**
  * @brief 在显示器拓扑实际变化后调整桌面覆盖层并重建布局。
  */
 void DesktopApp::RefreshDisplayTopologyIfChanged()
@@ -323,7 +366,17 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         return;
 
     const std::wstring currentSignature = CaptureDisplayTopologySignature();
-    if (currentSignature == displayTopologySignature_)
+    const bool topologyChanged =
+        currentSignature != displayTopologySignature_;
+    const bool windowBoundsOutOfSync =
+        DesktopWindowNeedsDisplaySynchronization();
+    const auto refreshAction =
+        snowdesktop::display_topology_refresh::ResolveAction(
+            topologyChanged,
+            displayTopologyWindowSyncPending_,
+            windowBoundsOutOfSync);
+    if (refreshAction ==
+        snowdesktop::display_topology_refresh::Action::None)
         return;
 
     if (reloading_)
@@ -332,41 +385,110 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         return;
     }
 
-    const int newVirtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    const int newVirtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const int newVirtualWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    const int newVirtualHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    if (newVirtualWidth <= 0 || newVirtualHeight <= 0)
+    bool recreateExpandedOverlay = false;
+    if (topologyChanged)
     {
-        ScheduleDisplayTopologyRefresh();
-        return;
+        const int newVirtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        const int newVirtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        const int newVirtualWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        const int newVirtualHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (newVirtualWidth <= 0 || newVirtualHeight <= 0)
+        {
+            ScheduleDisplayTopologyRefresh();
+            return;
+        }
+
+        const snowdesktop::display_topology_refresh::Bounds previousBounds{
+            virtualLeft_, virtualTop_,
+            virtualLeft_ + virtualWidth_, virtualTop_ + virtualHeight_ };
+        const snowdesktop::display_topology_refresh::Bounds currentBounds{
+            newVirtualLeft, newVirtualTop,
+            newVirtualLeft + newVirtualWidth,
+            newVirtualTop + newVirtualHeight };
+        recreateExpandedOverlay = customDesktopVisible_ &&
+            hwnd_ && IsWindow(hwnd_) &&
+            snowdesktop::display_topology_refresh::ExtendsBeyond(
+                previousBounds, currentBounds);
+
+        virtualLeft_ = newVirtualLeft;
+        virtualTop_ = newVirtualTop;
+        virtualWidth_ = newVirtualWidth;
+        virtualHeight_ = newVirtualHeight;
+
+        // Build the monitor pages before a replacement window performs its
+        // first synchronous paint.
+        UpdateLayoutWorkArea();
+        LayoutItems();
     }
 
-    virtualLeft_ = newVirtualLeft;
-    virtualTop_ = newVirtualTop;
-    virtualWidth_ = newVirtualWidth;
-    virtualHeight_ = newVirtualHeight;
-
-    if (hwnd_ && IsWindow(hwnd_))
+    if (recreateExpandedOverlay)
+    {
+        // Resizing the cross-process layered child updates GetWindowRect but,
+        // on monitor hot-add, Windows can retain the old DirectComposition
+        // input allocation. Recreate the HWND and its DComp target exactly as
+        // startup does so the added pixels participate in hit testing.
+        const HWND previousWindow = hwnd_;
+        DestroyWindow(previousWindow);
+        if (!CreateDesktopOverlayWindow())
+        {
+            WriteDiagnosticLogEntry(
+                L"Display topology overlay recreation failed",
+                DiagnosticLogLevel::Error);
+            ScheduleDisplayTopologyRefresh();
+            return;
+        }
+        if (widgetEngine_)
+            widgetEngine_->RebindHostTimers();
+        HideExplorerIcons();
+        UpdateHostInputImePosition();
+    }
+    else if (hwnd_ && IsWindow(hwnd_))
     {
         HWND parent = GetParent(hwnd_);
-        POINT origin{ virtualLeft_, virtualTop_ };
-        if (parent && IsWindow(parent))
-            ScreenToClient(parent, &origin);
-
         updatingDisplayTopology_ = true;
-        SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y,
-            virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+        if (customDesktopVisible_ && parent && IsWindow(parent))
+        {
+            // Reuse the complete startup attachment path. Besides resizing,
+            // it reapplies the child frame, z-order, backdrop sibling and
+            // keyboard-input sibling. A bare SetWindowPos can leave the newly
+            // added part of a layered child window visible but outside
+            // Explorer's effective mouse hit-test surface.
+            AttachWindowToDesktopHost(parent);
+            UpdateHostInputImePosition();
+        }
+        else
+        {
+            POINT origin{ virtualLeft_, virtualTop_ };
+            if (parent && IsWindow(parent))
+                ScreenToClient(parent, &origin);
+            SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y,
+                virtualWidth_, virtualHeight_,
+                SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
         updatingDisplayTopology_ = false;
 
-        dcompSurface_.Reset();
-        compositionWidth_ = 0;
-        compositionHeight_ = 0;
+        if (topologyChanged)
+        {
+            dcompSurface_.Reset();
+            compositionWidth_ = 0;
+            compositionHeight_ = 0;
+        }
     }
 
-    UpdateLayoutWorkArea();
-    LayoutItems();
-    displayTopologySignature_ = currentSignature;
+    if (topologyChanged)
+    {
+        displayTopologySignature_ = currentSignature;
+
+        // Monitor APIs can settle before Explorer has finished resizing and
+        // reordering Progman/WorkerW. Run one more native-window-only pass
+        // after the debounce interval even though the signature is then equal.
+        displayTopologyWindowSyncPending_ = true;
+        ScheduleDisplayTopologyRefresh();
+    }
+    else
+    {
+        displayTopologyWindowSyncPending_ = false;
+    }
 
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);

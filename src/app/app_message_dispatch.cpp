@@ -51,6 +51,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     switch (msg)
     {
+    case WM_NCHITTEST:
+        // The desktop overlay intentionally owns input across its complete
+        // client area. Be explicit for the resized portion of the layered
+        // child window after a monitor is added at runtime.
+        return HTCLIENT;
     case WM_MOUSEACTIVATE:
     {
         POINT point{};

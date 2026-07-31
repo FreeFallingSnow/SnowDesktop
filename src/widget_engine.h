@@ -408,6 +408,8 @@ public:
     void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
     /** @brief 设置组件独立刷新定时器关闭回调 */
     void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
+    /** @brief 主宿主窗口重建后，将组件刷新与命名定时器重新绑定到新 HWND。 */
+    void RebindHostTimers();
 
     /**
      * @brief 确保小部件已加载到沙箱中

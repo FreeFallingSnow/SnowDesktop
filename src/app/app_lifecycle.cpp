@@ -504,10 +504,9 @@ void DesktopApp::WatchDesktopHost()
         return;
 
     // Low-cost fallback for display-driver paths that do not broadcast the
-    // usual display messages. The signature is only a handful of monitor
-    // records and layout work is still deferred and conditional.
-    if (CaptureDisplayTopologySignature() != displayTopologySignature_)
-        ScheduleDisplayTopologyRefresh();
+    // usual display messages. This also catches a desktop child window that
+    // Explorer left at the old virtual-screen bounds.
+    PollDisplayTopology();
 
     if (!customDesktopVisible_)
         return;

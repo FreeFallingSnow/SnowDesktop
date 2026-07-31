@@ -15,6 +15,7 @@
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "floating_dock_rules.h"
+#include "display_topology_refresh.h"
 
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -73,6 +74,40 @@ int main()
         snowdesktop::popup_drag_rules;
     namespace itemLayout =
         snowdesktop::item_layout_rules;
+    namespace displayRefresh =
+        snowdesktop::display_topology_refresh;
+
+    Check(
+        displayRefresh::ResolveAction(false, false, false) ==
+            displayRefresh::Action::None,
+        "stable display topology must not cause redundant window work");
+    Check(
+        displayRefresh::ResolveAction(true, false, false) ==
+            displayRefresh::Action::ApplyTopology &&
+        displayRefresh::ResolveAction(true, true, true) ==
+            displayRefresh::Action::ApplyTopology,
+        "a changed display topology must rebuild layout before any settle pass");
+    Check(
+        displayRefresh::ResolveAction(false, true, false) ==
+            displayRefresh::Action::ResynchronizeWindow,
+        "an unchanged signature must retain Explorer's deferred window "
+        "synchronization pass");
+    Check(
+        displayRefresh::ResolveAction(false, false, true) ==
+            displayRefresh::Action::ResynchronizeWindow,
+        "a stale desktop window bounds must recover even when the monitor "
+        "signature is unchanged");
+    Check(
+        displayRefresh::ExtendsBeyond(
+            { 0, 0, 2560, 1600 }, { 0, 0, 4480, 1600 }) &&
+        displayRefresh::ExtendsBeyond(
+            { 0, 0, 2560, 1600 }, { -1920, 0, 2560, 1600 }) &&
+        !displayRefresh::ExtendsBeyond(
+            { 0, 0, 4480, 1600 }, { 0, 0, 2560, 1600 }) &&
+        !displayRefresh::ExtendsBeyond(
+            { -1920, 0, 2560, 1600 }, { -1280, 0, 2560, 1440 }),
+        "only virtual desktops extending beyond the old layered allocation "
+        "must recreate the overlay");
 
     Check(
         itemLayout::ShouldRelayoutDesktopWidget(

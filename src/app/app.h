@@ -28,6 +28,7 @@
 #include "settings_window.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "display_topology_refresh.h"
 #include "dock_settings.h"
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
@@ -496,7 +497,11 @@ private:
     std::wstring CaptureDisplayTopologySignature() const;
     /** @brief 防抖调度一次显示器拓扑复查。 */
     void ScheduleDisplayTopologyRefresh();
-    /** @brief 仅在显示器拓扑确实变化时调整覆盖窗口并重建布局。 */
+    /** @brief 轮询显示拓扑及桌面窗口覆盖范围，必要时调度刷新。 */
+    void PollDisplayTopology();
+    /** @brief 判断桌面窗口是否未覆盖当前虚拟屏幕。 */
+    bool DesktopWindowNeedsDisplaySynchronization() const;
+    /** @brief 在显示拓扑变化时重建布局，并完成延迟的窗口同步。 */
     void RefreshDisplayTopologyIfChanged();
 
     // ── Graphics ────────────────────────────────────────────
@@ -2197,6 +2202,7 @@ private:
     bool desktopPassthroughHotkeyRegistered_ = false;
     bool desktopPassthroughHoldActive_ = false;
     bool updatingDisplayTopology_ = false;
+    bool displayTopologyWindowSyncPending_ = false;
     std::wstring displayTopologySignature_;
     /** @} */
 

@@ -85,6 +85,10 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
+        // Keep display hot-plug recovery independent from the hidden control
+        // window's host-watch timer. Some display-driver paths leave that
+        // timer alive but do not deliver its low-priority WM_TIMER promptly.
+        PollDisplayTopology();
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
         const DWORD now = GetTickCount();
