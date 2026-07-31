@@ -53,6 +53,8 @@ SettingsWindow* g_settingsWindow = nullptr;
 namespace {
 constexpr UINT_PTR kSettingsRefreshTimerId = 1;
 constexpr UINT kSettingsRefreshIntervalMs = 500;
+constexpr UINT_PTR kSettingsHotkeyCaptureTimerId = 2;
+constexpr UINT kSettingsHotkeyCaptureIntervalMs = 16;
 constexpr float kSettingControlWidthDip = 300.0f;
 constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -628,7 +630,11 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 void SettingsWindow::Shutdown()
 {
     if (hwnd_ != nullptr)
+    {
         KillTimer(hwnd_, kSettingsRefreshTimerId);
+        KillTimer(hwnd_, kSettingsHotkeyCaptureTimerId);
+    }
+    hotkeyCaptureTarget_ = HotkeySettingTarget::None;
 
     if (personalizationDirty_)
     {
@@ -1099,59 +1105,541 @@ static bool SecondaryButton(const char* label,
     return clicked;
 }
 
-/**
- * @brief 描述一个快捷键选项（虚拟键码 + 显示文本）。
- */
-struct HotkeyOption
+namespace
 {
-    UINT virtualKey;
-    const char* label;
-};
+    bool IsHotkeyPhysicalKeyDown(UINT virtualKey)
+    {
+        return (GetAsyncKeyState(static_cast<int>(virtualKey)) &
+            0x8000) != 0;
+    }
 
-/**
- * @brief 获取全局导航快捷键可选项列表。
- *
- * 包含 Space、Tab、Enter、反引号、字母 A-Z、功能键 F1-F12。
- * @param count 输出参数，接收选项总数
- * @return 指向静态常量 HotkeyOption 数组的指针
- */
-static const HotkeyOption* NavigationHotkeyOptions(size_t& count)
-{
-    static const HotkeyOption options[] = {
-        { VK_SPACE, "Space" },
-        { VK_TAB, "Tab" },
-        { VK_RETURN, "Enter" },
-        { VK_OEM_3, "`" },
-        { 'A', "A" }, { 'B', "B" }, { 'C', "C" }, { 'D', "D" },
-        { 'E', "E" }, { 'F', "F" }, { 'G', "G" }, { 'H', "H" },
-        { 'I', "I" }, { 'J', "J" }, { 'K', "K" }, { 'L', "L" },
-        { 'M', "M" }, { 'N', "N" }, { 'O', "O" }, { 'P', "P" },
-        { 'Q', "Q" }, { 'R', "R" }, { 'S', "S" }, { 'T', "T" },
-        { 'U', "U" }, { 'V', "V" }, { 'W', "W" }, { 'X', "X" },
-        { 'Y', "Y" }, { 'Z', "Z" },
-        { VK_F1, "F1" }, { VK_F2, "F2" }, { VK_F3, "F3" }, { VK_F4, "F4" },
-        { VK_F5, "F5" }, { VK_F6, "F6" }, { VK_F7, "F7" }, { VK_F8, "F8" },
-        { VK_F9, "F9" }, { VK_F10, "F10" }, { VK_F11, "F11" }, { VK_F12, "F12" },
-    };
-    count = sizeof(options) / sizeof(options[0]);
-    return options;
+    UINT ReadHotkeyModifierMask()
+    {
+        UINT modifiers = 0;
+        if (IsHotkeyPhysicalKeyDown(VK_CONTROL))
+            modifiers |= MOD_CONTROL;
+        if (IsHotkeyPhysicalKeyDown(VK_MENU))
+            modifiers |= MOD_ALT;
+        if (IsHotkeyPhysicalKeyDown(VK_SHIFT))
+            modifiers |= MOD_SHIFT;
+        if (IsHotkeyPhysicalKeyDown(VK_LWIN) ||
+            IsHotkeyPhysicalKeyDown(VK_RWIN))
+            modifiers |= MOD_WIN;
+        return modifiers;
+    }
+
+    bool IsHotkeyModifierVirtualKey(UINT virtualKey)
+    {
+        switch (virtualKey)
+        {
+        case VK_SHIFT:
+        case VK_CONTROL:
+        case VK_MENU:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+        case VK_LMENU:
+        case VK_RMENU:
+        case VK_LWIN:
+        case VK_RWIN:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    UINT HotkeyModifierForVirtualKey(UINT virtualKey)
+    {
+        switch (virtualKey)
+        {
+        case VK_CONTROL:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+            return MOD_CONTROL;
+        case VK_MENU:
+        case VK_LMENU:
+        case VK_RMENU:
+            return MOD_ALT;
+        case VK_SHIFT:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+            return MOD_SHIFT;
+        case VK_LWIN:
+        case VK_RWIN:
+            return MOD_WIN;
+        default:
+            return 0;
+        }
+    }
+
+    bool IsCapturableHotkeyVirtualKey(UINT virtualKey)
+    {
+        if (virtualKey <= VK_XBUTTON2 ||
+            virtualKey == VK_ESCAPE ||
+            virtualKey == VK_BACK ||
+            virtualKey == VK_DELETE ||
+            virtualKey == VK_PACKET)
+            return false;
+        return !IsHotkeyModifierVirtualKey(virtualKey);
+    }
+
+    const char* HotkeyTargetLabelKey(HotkeySettingTarget target)
+    {
+        switch (target)
+        {
+        case HotkeySettingTarget::QuickNavigation:
+            return "app.settings.quick_navigation";
+        case HotkeySettingTarget::DesktopPassthrough:
+            return "app.settings.desktop_passthrough_hotkey";
+        case HotkeySettingTarget::FloatingDock:
+            return "app.settings.dock_bar";
+        case HotkeySettingTarget::None:
+        default:
+            return "";
+        }
+    }
 }
 
-/**
- * @brief 根据虚拟键码查找 NavigationHotkeyOptions 中的索引。
- * @param virtualKey 要查找的 Windows 虚拟键码
- * @return 匹配的选项索引，未找到时返回 0（Space）
- */
-static int NavigationHotkeyOptionIndex(UINT virtualKey)
+void SettingsWindow::StartHotkeyCapture(
+    HotkeySettingTarget target)
 {
-    size_t count = 0;
-    const HotkeyOption* options = NavigationHotkeyOptions(count);
-    for (size_t i = 0; i < count; ++i)
+    CancelHotkeyCapture();
+    hotkeyCaptureTarget_ = target;
+    hotkeyCaptureModifiers_ = 0;
+    hotkeyCapturePressedModifiers_ = 0;
+    hotkeyCaptureVirtualKey_ = 0;
+    hotkeyCapturePrimarySeen_ = false;
+    hotkeyCapturePrimaryDown_ = false;
+    hotkeyCaptureClearPending_ = false;
+    if (hwnd_ && IsWindow(hwnd_))
     {
-        if (options[i].virtualKey == virtualKey)
-            return static_cast<int>(i);
+        SetTimer(hwnd_, kSettingsHotkeyCaptureTimerId,
+            kSettingsHotkeyCaptureIntervalMs, nullptr);
+        SetFocus(hwnd_);
     }
-    return 0;
+    renderRequested_ = true;
+}
+
+void SettingsWindow::CancelHotkeyCapture()
+{
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kSettingsHotkeyCaptureTimerId);
+    hotkeyCaptureTarget_ = HotkeySettingTarget::None;
+    hotkeyCaptureModifiers_ = 0;
+    hotkeyCapturePressedModifiers_ = 0;
+    hotkeyCaptureVirtualKey_ = 0;
+    hotkeyCapturePrimarySeen_ = false;
+    hotkeyCapturePrimaryDown_ = false;
+    hotkeyCaptureClearPending_ = false;
+    renderRequested_ = true;
+}
+
+void SettingsWindow::CaptureRegisteredHotkey(
+    UINT modifiers, UINT virtualKey)
+{
+    if (!IsHotkeyCaptureActive() || virtualKey == 0)
+        return;
+    const HotkeySettingTarget target =
+        hotkeyCaptureTarget_;
+    CancelHotkeyCapture();
+    CommitHotkeyCapture(
+        target,
+        modifiers &
+            (MOD_CONTROL | MOD_ALT |
+                MOD_SHIFT | MOD_WIN),
+        virtualKey);
+}
+
+void SettingsWindow::CommitHotkeyCapture(
+    HotkeySettingTarget target,
+    UINT modifiers,
+    UINT virtualKey)
+{
+    modifiers &=
+        MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
+    if (virtualKey == 0)
+        modifiers = 0;
+
+    switch (target)
+    {
+    case HotkeySettingTarget::QuickNavigation:
+        navigationSettings_.modifiers = modifiers;
+        navigationSettings_.virtualKey = virtualKey;
+        navigationSettingsDirty_ = true;
+        break;
+    case HotkeySettingTarget::DesktopPassthrough:
+        generalSettings_.desktopPassthroughHotkeyModifiers =
+            modifiers;
+        generalSettings_.desktopPassthroughHotkeyVirtualKey =
+            virtualKey;
+        generalSettingsDirty_ = true;
+        break;
+    case HotkeySettingTarget::FloatingDock:
+        dockSettings_.floatingHotkeyModifiers = modifiers;
+        dockSettings_.floatingHotkeyVirtualKey = virtualKey;
+        dockSettingsDirty_ = true;
+        dockSettingsSaveRequested_ = true;
+        break;
+    case HotkeySettingTarget::None:
+        return;
+    }
+    renderRequested_ = true;
+}
+
+void SettingsWindow::UpdateHotkeyCapture()
+{
+    if (!IsHotkeyCaptureActive())
+        return;
+
+    if (IsHotkeyPhysicalKeyDown(VK_ESCAPE))
+    {
+        CancelHotkeyCapture();
+        return;
+    }
+
+    const UINT currentModifiers = ReadHotkeyModifierMask();
+    hotkeyCaptureModifiers_ |= currentModifiers;
+
+    if (!hotkeyCapturePrimarySeen_ &&
+        !hotkeyCaptureClearPending_)
+    {
+        if (IsHotkeyPhysicalKeyDown(VK_BACK) ||
+            IsHotkeyPhysicalKeyDown(VK_DELETE))
+        {
+            hotkeyCaptureClearPending_ = true;
+        }
+        else
+        {
+            for (UINT virtualKey = 1;
+                 virtualKey <= 0xFE;
+                 ++virtualKey)
+            {
+                if (!IsCapturableHotkeyVirtualKey(virtualKey) ||
+                    !IsHotkeyPhysicalKeyDown(virtualKey))
+                    continue;
+                hotkeyCaptureVirtualKey_ = virtualKey;
+                hotkeyCapturePrimarySeen_ = true;
+                hotkeyCapturePrimaryDown_ = true;
+                break;
+            }
+        }
+    }
+
+    if (hotkeyCaptureClearPending_)
+    {
+        if (!IsHotkeyPhysicalKeyDown(VK_BACK) &&
+            !IsHotkeyPhysicalKeyDown(VK_DELETE) &&
+            currentModifiers == 0)
+        {
+            const HotkeySettingTarget target =
+                hotkeyCaptureTarget_;
+            CancelHotkeyCapture();
+            CommitHotkeyCapture(target, 0, 0);
+        }
+        return;
+    }
+
+    if (!hotkeyCapturePrimarySeen_)
+        return;
+
+    if (!IsHotkeyPhysicalKeyDown(hotkeyCaptureVirtualKey_) &&
+        currentModifiers == 0)
+    {
+        const HotkeySettingTarget target =
+            hotkeyCaptureTarget_;
+        const UINT modifiers = hotkeyCaptureModifiers_;
+        const UINT virtualKey = hotkeyCaptureVirtualKey_;
+        CancelHotkeyCapture();
+        CommitHotkeyCapture(target, modifiers, virtualKey);
+    }
+}
+
+void SettingsWindow::HandleHotkeyCaptureKeyMessage(
+    UINT message, WPARAM virtualKeyValue)
+{
+    if (!IsHotkeyCaptureActive())
+        return;
+
+    const UINT virtualKey =
+        static_cast<UINT>(virtualKeyValue);
+    const bool keyDown =
+        message == WM_KEYDOWN ||
+        message == WM_SYSKEYDOWN;
+    const UINT modifier =
+        HotkeyModifierForVirtualKey(virtualKey);
+
+    if (keyDown)
+    {
+        if (virtualKey == VK_ESCAPE)
+        {
+            CancelHotkeyCapture();
+            return;
+        }
+        if (modifier != 0)
+        {
+            hotkeyCaptureModifiers_ |= modifier;
+            hotkeyCapturePressedModifiers_ |= modifier;
+            return;
+        }
+        if (virtualKey == VK_BACK ||
+            virtualKey == VK_DELETE)
+        {
+            hotkeyCaptureClearPending_ = true;
+            return;
+        }
+        if (!IsCapturableHotkeyVirtualKey(virtualKey))
+            return;
+        if (!hotkeyCapturePrimarySeen_)
+        {
+            hotkeyCaptureVirtualKey_ = virtualKey;
+            hotkeyCapturePrimarySeen_ = true;
+        }
+        if (hotkeyCaptureVirtualKey_ == virtualKey)
+            hotkeyCapturePrimaryDown_ = true;
+        return;
+    }
+
+    if (modifier != 0)
+        hotkeyCapturePressedModifiers_ &= ~modifier;
+    if (hotkeyCaptureClearPending_ &&
+        (virtualKey == VK_BACK ||
+            virtualKey == VK_DELETE) &&
+        hotkeyCapturePressedModifiers_ == 0 &&
+        ReadHotkeyModifierMask() == 0)
+    {
+        const HotkeySettingTarget target =
+            hotkeyCaptureTarget_;
+        CancelHotkeyCapture();
+        CommitHotkeyCapture(target, 0, 0);
+        return;
+    }
+    if (hotkeyCapturePrimarySeen_ &&
+        virtualKey == hotkeyCaptureVirtualKey_)
+        hotkeyCapturePrimaryDown_ = false;
+
+    if (hotkeyCapturePrimarySeen_ &&
+        !hotkeyCapturePrimaryDown_ &&
+        hotkeyCapturePressedModifiers_ == 0 &&
+        ReadHotkeyModifierMask() == 0)
+    {
+        const HotkeySettingTarget target =
+            hotkeyCaptureTarget_;
+        const UINT modifiers = hotkeyCaptureModifiers_;
+        const UINT capturedVirtualKey =
+            hotkeyCaptureVirtualKey_;
+        CancelHotkeyCapture();
+        CommitHotkeyCapture(
+            target, modifiers, capturedVirtualKey);
+    }
+}
+
+HotkeySettingTarget SettingsWindow::FindInternalHotkeyConflict(
+    HotkeySettingTarget target,
+    UINT modifiers,
+    UINT virtualKey) const
+{
+    if (virtualKey == 0)
+        return HotkeySettingTarget::None;
+    const UINT normalizedModifiers =
+        modifiers &
+        (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    const auto matches = [&](UINT otherModifiers,
+        UINT otherVirtualKey) {
+        return normalizedModifiers ==
+                (otherModifiers &
+                    (MOD_CONTROL | MOD_ALT |
+                        MOD_SHIFT | MOD_WIN)) &&
+            virtualKey == otherVirtualKey;
+    };
+
+    if (target != HotkeySettingTarget::QuickNavigation &&
+        navigationSettings_.enabled &&
+        matches(navigationSettings_.modifiers,
+            navigationSettings_.virtualKey))
+        return HotkeySettingTarget::QuickNavigation;
+    if (target != HotkeySettingTarget::DesktopPassthrough &&
+        generalSettings_.desktopPassthroughHotkeyEnabled &&
+        matches(
+            generalSettings_.desktopPassthroughHotkeyModifiers,
+            generalSettings_.desktopPassthroughHotkeyVirtualKey))
+        return HotkeySettingTarget::DesktopPassthrough;
+    if (target != HotkeySettingTarget::FloatingDock &&
+        dockEnabled_ &&
+        dockSettings_.floatingShortcutMode &&
+        matches(dockSettings_.floatingHotkeyModifiers,
+            dockSettings_.floatingHotkeyVirtualKey))
+        return HotkeySettingTarget::FloatingDock;
+    return HotkeySettingTarget::None;
+}
+
+void SettingsWindow::DrawHotkeyRecorder(
+    HotkeySettingTarget target,
+    const char* label,
+    const char* id,
+    bool enabled,
+    UINT modifiers,
+    UINT virtualKey,
+    UINT defaultModifiers,
+    UINT defaultVirtualKey)
+{
+    if (!enabled && hotkeyCaptureTarget_ == target)
+        CancelHotkeyCapture();
+
+    const bool capturing = hotkeyCaptureTarget_ == target;
+    const HotkeySettingTarget internalConflict =
+        enabled && !capturing
+            ? FindInternalHotkeyConflict(
+                target, modifiers, virtualKey)
+            : HotkeySettingTarget::None;
+    const bool systemAvailable =
+        !enabled || capturing || virtualKey == 0 ||
+        internalConflict != HotkeySettingTarget::None ||
+        !hotkeyAvailabilityCallback_
+            ? true
+            : hotkeyAvailabilityCallback_(
+                target, modifiers, virtualKey);
+
+    NavigationSettings displaySettings;
+    displaySettings.modifiers = modifiers;
+    displaySettings.virtualKey = virtualKey;
+    std::string displayText;
+    if (capturing)
+        displayText = _L("app.settings.hotkey_press");
+    else if (virtualKey == 0)
+        displayText = _L("app.settings.hotkey_not_set");
+    else
+        displayText = WideToUtf8(
+            FormatNavigationHotkey(displaySettings));
+    const std::string buttonLabel =
+        displayText + id;
+    const std::string resetLabel =
+        std::string(_L("app.settings.restore_default")) +
+        id + "Reset";
+
+    std::string statusText;
+    std::string statusDetails;
+    ImVec4 statusColor;
+    if (!enabled)
+    {
+        statusText = _L("app.settings.hotkey_status_disabled");
+        statusColor = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+    }
+    else if (capturing)
+    {
+        statusText = _L("app.settings.hotkey_status_recording");
+        statusDetails = _L("app.settings.hotkey_capture_active");
+        statusColor = ImVec4(0.18f, 0.45f, 0.82f, 1.0f);
+    }
+    else if (virtualKey == 0)
+    {
+        statusText = _L("app.settings.hotkey_not_set");
+        statusDetails = _L("app.settings.hotkey_not_set_warning");
+        statusColor = ImVec4(0.82f, 0.46f, 0.08f, 1.0f);
+    }
+    else if (internalConflict != HotkeySettingTarget::None)
+    {
+        statusText = _L("app.settings.hotkey_status_conflict");
+        statusDetails = _LF(
+            "app.settings.hotkey_conflict_with",
+            _L(HotkeyTargetLabelKey(internalConflict)));
+        statusColor = ImVec4(0.80f, 0.12f, 0.12f, 1.0f);
+    }
+    else if (!systemAvailable)
+    {
+        statusText = _L("app.settings.hotkey_status_in_use");
+        statusDetails = _L("app.settings.hotkey_conflict_system");
+        statusColor = ImVec4(0.80f, 0.12f, 0.12f, 1.0f);
+    }
+    else if (modifiers == 0)
+    {
+        statusText = _L("app.settings.hotkey_status_no_modifier");
+        statusDetails = _L("app.settings.hotkey_no_modifier_warning");
+        statusColor = ImVec4(0.82f, 0.46f, 0.08f, 1.0f);
+    }
+    else
+    {
+        statusText = _L("app.settings.hotkey_status_available");
+        statusDetails = _L("app.settings.hotkey_available");
+        statusColor = ImVec4(0.12f, 0.58f, 0.30f, 1.0f);
+    }
+
+    const float controlWidth =
+        kSettingControlWidthDip * dpiScale_;
+    const float resetWidth =
+        SettingButtonWidth(resetLabel.c_str());
+    const float statusWidth =
+        ImGui::CalcTextSize(statusText.c_str()).x;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float fieldWidth = std::max(
+        96.0f * dpiScale_,
+        controlWidth - resetWidth - spacing);
+    const float controlX = BeginSettingRow(
+        label, controlWidth,
+        _L("app.settings.hotkey_capture_help"));
+
+    ImGui::SetCursorPosX(std::max(
+        0.0f, controlX - statusWidth - spacing));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(statusColor, "%s", statusText.c_str());
+    DrawHelpTooltip(statusDetails.c_str());
+    ImGui::SameLine(controlX);
+
+    ImGui::BeginDisabled(!enabled);
+    if (capturing)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button,
+            ImVec4(0.18f, 0.45f, 0.82f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+            ImVec4(0.20f, 0.49f, 0.88f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+            ImVec4(0.16f, 0.40f, 0.75f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            ImVec4(1, 1, 1, 1));
+    }
+    else if (enabled &&
+        (internalConflict != HotkeySettingTarget::None ||
+            !systemAvailable))
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button,
+            ImVec4(1.0f, 0.88f, 0.88f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+            ImVec4(1.0f, 0.82f, 0.82f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+            ImVec4(0.97f, 0.76f, 0.76f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            ImVec4(0.54f, 0.08f, 0.08f, 1.0f));
+    }
+    else
+    {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        ImGui::PushStyleColor(ImGuiCol_Button,
+            style.Colors[ImGuiCol_FrameBg]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+            style.Colors[ImGuiCol_FrameBgHovered]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+            style.Colors[ImGuiCol_FrameBgActive]);
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            style.Colors[ImGuiCol_Text]);
+    }
+    if (ImGui::Button(buttonLabel.c_str(),
+            ImVec2(fieldWidth, 0)))
+    {
+        StartHotkeyCapture(target);
+    }
+    ImGui::PopStyleColor(4);
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text,
+        ImVec4(1, 1, 1, 1));
+    if (ImGui::Button(resetLabel.c_str(),
+            ImVec2(resetWidth, 0)))
+    {
+        CancelHotkeyCapture();
+        CommitHotkeyCapture(target,
+            defaultModifiers, defaultVirtualKey);
+    }
+    ImGui::PopStyleColor();
+    ImGui::EndDisabled();
 }
 
 /**
@@ -1487,57 +1975,45 @@ void SettingsWindow::DrawGeneralPage()
         &navigationSettings_.enabled))
         navigationSettingsDirty_ = true;
 
-    ImGui::BeginDisabled(!navigationSettings_.enabled);
-
-    bool ctrl = (navigationSettings_.modifiers & MOD_CONTROL) != 0;
-    bool alt = (navigationSettings_.modifiers & MOD_ALT) != 0;
-    bool shift = (navigationSettings_.modifiers & MOD_SHIFT) != 0;
-    bool win = (navigationSettings_.modifiers & MOD_WIN) != 0;
-    bool modifiersChanged = false;
-    const float modifierWidth = 244.0f * dpiScale_;
-    BeginSettingRow(_L("app.settings.modifier_keys"), modifierWidth);
-    modifiersChanged |= ImGui::Checkbox("Ctrl", &ctrl);
-    ImGui::SameLine();
-    modifiersChanged |= ImGui::Checkbox("Alt", &alt);
-    ImGui::SameLine();
-    modifiersChanged |= ImGui::Checkbox("Shift", &shift);
-    ImGui::SameLine();
-    modifiersChanged |= ImGui::Checkbox("Win", &win);
-    if (modifiersChanged)
-    {
-        navigationSettings_.modifiers = 0;
-        if (ctrl) navigationSettings_.modifiers |= MOD_CONTROL;
-        if (alt) navigationSettings_.modifiers |= MOD_ALT;
-        if (shift) navigationSettings_.modifiers |= MOD_SHIFT;
-        if (win) navigationSettings_.modifiers |= MOD_WIN;
-        navigationSettingsDirty_ = true;
-    }
-
-    size_t optionCount = 0;
-    const HotkeyOption* options = NavigationHotkeyOptions(optionCount);
-    int selected = NavigationHotkeyOptionIndex(navigationSettings_.virtualKey);
-    const float hotkeyControlW = kSettingControlWidthDip * dpiScale_;
-    BeginSettingRow(_L("app.settings.primary_key"), hotkeyControlW);
-    ImGui::SetNextItemWidth(hotkeyControlW);
-    if (ImGui::Combo("##NavigationMainKey", &selected,
-        [](void* data, int idx, const char** outText) {
-            auto* opts = static_cast<const HotkeyOption*>(data);
-            *outText = opts[idx].label;
-            return true;
-        }, const_cast<HotkeyOption*>(options), static_cast<int>(optionCount)))
-    {
-        navigationSettings_.virtualKey = options[selected].virtualKey;
-        navigationSettingsDirty_ = true;
-    }
-
-    std::wstring hotkeyText = FormatNavigationHotkey(navigationSettings_);
-    const std::string hotkeyTextUtf8 = WideToUtf8(hotkeyText);
-    DrawSettingValue(_L("app.settings.current_hotkey"), hotkeyTextUtf8.c_str());
-
-    ImGui::EndDisabled();
+    DrawHotkeyRecorder(
+        HotkeySettingTarget::QuickNavigation,
+        _L("app.settings.hotkey"),
+        "##QuickNavigationHotkeyRecorder",
+        navigationSettings_.enabled,
+        navigationSettings_.modifiers,
+        navigationSettings_.virtualKey,
+        MOD_CONTROL | MOD_ALT,
+        VK_SPACE);
 
     ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.desktop_interact"));
+    ImGui::Spacing();
+
+    if (DrawSettingCheckbox(
+            _L("app.settings.desktop_passthrough_hotkey"),
+            "##DesktopPassthroughHotkeyEnabled",
+            &generalSettings_.desktopPassthroughHotkeyEnabled))
+        generalSettingsDirty_ = true;
+    if (generalSettings_.desktopPassthroughHotkeyEnabled)
+    {
+        ImGui::Indent();
+        ImGui::TextDisabled(
+            "%s",
+            _L("app.settings.desktop_passthrough_hotkey_hint"));
+        ImGui::Unindent();
+    }
+
+    ImGui::Indent();
+    DrawHotkeyRecorder(
+        HotkeySettingTarget::DesktopPassthrough,
+        _L("app.settings.hotkey"),
+        "##DesktopPassthroughHotkeyRecorder",
+        generalSettings_.desktopPassthroughHotkeyEnabled,
+        generalSettings_.desktopPassthroughHotkeyModifiers,
+        generalSettings_.desktopPassthroughHotkeyVirtualKey,
+        MOD_CONTROL | MOD_ALT,
+        VK_OEM_3);
+    ImGui::Unindent();
     ImGui::Spacing();
 
     if (DrawSettingCheckbox(_L("app.settings.double_click_hide"), "##DoubleClickHideDesktop",
@@ -1590,103 +2066,19 @@ void SettingsWindow::DrawDockPage()
         ImGui::Unindent();
     }
 
-    ImGui::BeginDisabled(
-        !dockSettings_.floatingShortcutMode);
     ImGui::Spacing();
     ImGui::Indent();
-
-    bool floatingCtrl =
-        (dockSettings_.floatingHotkeyModifiers &
-            MOD_CONTROL) != 0;
-    bool floatingAlt =
-        (dockSettings_.floatingHotkeyModifiers &
-            MOD_ALT) != 0;
-    bool floatingShift =
-        (dockSettings_.floatingHotkeyModifiers &
-            MOD_SHIFT) != 0;
-    bool floatingWin =
-        (dockSettings_.floatingHotkeyModifiers &
-            MOD_WIN) != 0;
-    bool floatingModifiersChanged = false;
-    const float modifierWidth = 244.0f * dpiScale_;
-    BeginSettingRow(
-        _L("app.settings.modifier_keys"),
-        modifierWidth);
-    floatingModifiersChanged |=
-        ImGui::Checkbox(
-            "Ctrl##FloatingDockHotkey", &floatingCtrl);
-    ImGui::SameLine();
-    floatingModifiersChanged |=
-        ImGui::Checkbox(
-            "Alt##FloatingDockHotkey", &floatingAlt);
-    ImGui::SameLine();
-    floatingModifiersChanged |=
-        ImGui::Checkbox(
-            "Shift##FloatingDockHotkey", &floatingShift);
-    ImGui::SameLine();
-    floatingModifiersChanged |=
-        ImGui::Checkbox(
-            "Win##FloatingDockHotkey", &floatingWin);
-    if (floatingModifiersChanged)
-    {
-        dockSettings_.floatingHotkeyModifiers = 0;
-        if (floatingCtrl)
-            dockSettings_.floatingHotkeyModifiers |=
-                MOD_CONTROL;
-        if (floatingAlt)
-            dockSettings_.floatingHotkeyModifiers |=
-                MOD_ALT;
-        if (floatingShift)
-            dockSettings_.floatingHotkeyModifiers |=
-                MOD_SHIFT;
-        if (floatingWin)
-            dockSettings_.floatingHotkeyModifiers |=
-                MOD_WIN;
-        markChanged(true);
-    }
-
-    size_t floatingOptionCount = 0;
-    const HotkeyOption* floatingOptions =
-        NavigationHotkeyOptions(floatingOptionCount);
-    int floatingSelected =
-        NavigationHotkeyOptionIndex(
-            dockSettings_.floatingHotkeyVirtualKey);
-    BeginSettingRow(
-        _L("app.settings.primary_key"), controlW);
-    ImGui::SetNextItemWidth(controlW);
-    if (ImGui::Combo(
-            "##FloatingDockMainKey",
-            &floatingSelected,
-            [](void* data, int index,
-                const char** outText) {
-                auto* options =
-                    static_cast<const HotkeyOption*>(data);
-                *outText = options[index].label;
-                return true;
-            },
-            const_cast<HotkeyOption*>(floatingOptions),
-            static_cast<int>(floatingOptionCount)))
-    {
-        dockSettings_.floatingHotkeyVirtualKey =
-            floatingOptions[floatingSelected].virtualKey;
-        markChanged(true);
-    }
-
-    NavigationSettings floatingHotkeyText;
-    floatingHotkeyText.modifiers =
-        dockSettings_.floatingHotkeyModifiers;
-    floatingHotkeyText.virtualKey =
-        dockSettings_.floatingHotkeyVirtualKey;
-    const std::string floatingHotkeyTextUtf8 =
-        WideToUtf8(
-            FormatNavigationHotkey(
-                floatingHotkeyText));
-    DrawSettingValue(
-        _L("app.settings.current_hotkey"),
-        floatingHotkeyTextUtf8.c_str());
-
+    DrawHotkeyRecorder(
+        HotkeySettingTarget::FloatingDock,
+        _L("app.settings.hotkey"),
+        "##FloatingDockHotkeyRecorder",
+        dockEnabled_ &&
+            dockSettings_.floatingShortcutMode,
+        dockSettings_.floatingHotkeyModifiers,
+        dockSettings_.floatingHotkeyVirtualKey,
+        MOD_CONTROL | MOD_ALT,
+        'D');
     ImGui::Unindent();
-    ImGui::EndDisabled();
 
     ImGui::Spacing();
     if (DrawSettingCheckbox(
@@ -5298,10 +5690,26 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     if (g_settingsWindow != nullptr && msg != WM_TIMER)
         g_settingsWindow->renderRequested_ = true;
 
-    if (g_settingsWindow != nullptr && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && wParam == VK_ESCAPE)
+    if (g_settingsWindow != nullptr &&
+        (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) &&
+        wParam == VK_ESCAPE)
     {
+        if (g_settingsWindow->IsHotkeyCaptureActive())
+        {
+            g_settingsWindow->CancelHotkeyCapture();
+            return 0;
+        }
         g_settingsWindow->RequestClose();
         return 0;
+    }
+
+    if (g_settingsWindow != nullptr &&
+        g_settingsWindow->IsHotkeyCaptureActive() &&
+        (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN ||
+            msg == WM_KEYUP || msg == WM_SYSKEYUP))
+    {
+        g_settingsWindow->HandleHotkeyCaptureKeyMessage(
+            msg, wParam);
     }
 
     if (g_settingsWindow != nullptr && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
@@ -5310,11 +5718,31 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     switch (msg)
     {
     case WM_TIMER:
+        if (g_settingsWindow != nullptr &&
+            wParam == kSettingsHotkeyCaptureTimerId)
+        {
+            g_settingsWindow->UpdateHotkeyCapture();
+            g_settingsWindow->renderRequested_ = true;
+            return 0;
+        }
         if (g_settingsWindow != nullptr && wParam == kSettingsRefreshTimerId)
         {
             // 低频更新后端状态、调试采样和文本光标等动态内容。
             g_settingsWindow->renderRequested_ = true;
             return 0;
+        }
+        break;
+    case WM_KILLFOCUS:
+        if (g_settingsWindow != nullptr &&
+            g_settingsWindow->IsHotkeyCaptureActive())
+        {
+            g_settingsWindow->UpdateHotkeyCapture();
+            if (g_settingsWindow->IsHotkeyCaptureActive() &&
+                !g_settingsWindow->hotkeyCapturePrimarySeen_ &&
+                !g_settingsWindow->hotkeyCaptureClearPending_)
+            {
+                g_settingsWindow->CancelHotkeyCapture();
+            }
         }
         break;
     case WM_MOUSEACTIVATE:

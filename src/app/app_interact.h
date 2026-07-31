@@ -791,6 +791,157 @@ inline void DesktopApp::LoadNavigationSettingsAndApply()
     ApplyNavigationHotkey();
 }
 
+inline bool DesktopApp::IsDesktopPassthroughHotkeyDown() const
+{
+    const auto keyDown = [](int virtualKey) {
+        return (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+    };
+    if (!keyDown(static_cast<int>(
+            generalSettings_.desktopPassthroughHotkeyVirtualKey)))
+        return false;
+
+    const UINT modifiers =
+        generalSettings_.desktopPassthroughHotkeyModifiers;
+    if ((modifiers & MOD_CONTROL) != 0 && !keyDown(VK_CONTROL))
+        return false;
+    if ((modifiers & MOD_ALT) != 0 && !keyDown(VK_MENU))
+        return false;
+    if ((modifiers & MOD_SHIFT) != 0 && !keyDown(VK_SHIFT))
+        return false;
+    if ((modifiers & MOD_WIN) != 0 &&
+        !keyDown(VK_LWIN) && !keyDown(VK_RWIN))
+        return false;
+    return true;
+}
+
+inline bool DesktopApp::IsDesktopPassthroughPointerDown() const
+{
+    constexpr int pointerKeys[] = {
+        VK_LBUTTON, VK_RBUTTON, VK_MBUTTON,
+        VK_XBUTTON1, VK_XBUTTON2
+    };
+    for (const int virtualKey : pointerKeys)
+    {
+        if ((GetAsyncKeyState(virtualKey) & 0x8000) != 0)
+            return true;
+    }
+    return false;
+}
+
+inline void DesktopApp::EndDesktopPassthroughHold(
+    bool restoreDesktop)
+{
+    if (desktopPassthroughHotkeyHwnd_ &&
+        IsWindow(desktopPassthroughHotkeyHwnd_))
+    {
+        KillTimer(desktopPassthroughHotkeyHwnd_,
+            kDesktopPassthroughHoldTimerId);
+    }
+
+    if (!desktopPassthroughHoldActive_)
+        return;
+    desktopPassthroughHoldActive_ = false;
+
+    if (!restoreDesktop || !customDesktopVisible_ ||
+        !hwnd_ || !IsWindow(hwnd_))
+        return;
+
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    desktopBackdropCompositor_.SetVisible(true);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    UpdateWindow(hwnd_);
+}
+
+inline void DesktopApp::BeginDesktopPassthroughHold()
+{
+    if (desktopPassthroughHoldActive_ ||
+        !desktopPassthroughHotkeyRegistered_ ||
+        !generalSettings_.desktopPassthroughHotkeyEnabled ||
+        !customDesktopVisible_ ||
+        !hwnd_ || !IsWindow(hwnd_) ||
+        !desktopPassthroughHotkeyHwnd_ ||
+        !IsWindow(desktopPassthroughHotkeyHwnd_))
+        return;
+
+    // Hiding in the middle of a desktop drag would prevent SnowDesktop from
+    // receiving the matching button-up event and leave its interaction state
+    // latched. The shortcut can be pressed again after the current gesture.
+    if (IsDesktopPassthroughPointerDown() ||
+        mouseDown_ || marqueeActive_ ||
+        dragSession_.IsActive() ||
+        externalDragActive_ || selfDragActive_ ||
+        GetCapture() != nullptr)
+        return;
+
+    if (SetTimer(desktopPassthroughHotkeyHwnd_,
+            kDesktopPassthroughHoldTimerId,
+            kDesktopPassthroughHoldIntervalMs,
+            nullptr) == 0)
+        return;
+
+    if (quickNavigationOpen_)
+    {
+        CloseQuickNavigation();
+        FinalizeCloseQuickNavigation();
+    }
+    CloseFloatingDock();
+    HideDockWindowPreview();
+    HideDragHintWindow();
+
+    desktopPassthroughHoldActive_ = true;
+    desktopBackdropCompositor_.SetVisible(false);
+    ShowWindow(hwnd_, SW_HIDE);
+}
+
+inline void DesktopApp::UnregisterDesktopPassthroughHotkey()
+{
+    EndDesktopPassthroughHold();
+    if (desktopPassthroughHotkeyRegistered_ &&
+        desktopPassthroughHotkeyHwnd_)
+    {
+        UnregisterHotKey(desktopPassthroughHotkeyHwnd_,
+            kDesktopPassthroughHotkeyId);
+    }
+    desktopPassthroughHotkeyRegistered_ = false;
+    desktopPassthroughHotkeyHwnd_ = nullptr;
+}
+
+inline void DesktopApp::ApplyDesktopPassthroughHotkey()
+{
+    UnregisterDesktopPassthroughHotkey();
+    if (!generalSettings_.desktopPassthroughHotkeyEnabled ||
+        !customDesktopVisible_ ||
+        generalSettings_.desktopPassthroughHotkeyVirtualKey == 0)
+        return;
+
+    HWND target =
+        controlHwnd_ && IsWindow(controlHwnd_)
+            ? controlHwnd_
+            : (inputHwnd_ && IsWindow(inputHwnd_)
+                ? inputHwnd_ : hwnd_);
+    if (!target)
+        return;
+
+    const UINT modifiers =
+        generalSettings_.desktopPassthroughHotkeyModifiers |
+        MOD_NOREPEAT;
+    desktopPassthroughHotkeyRegistered_ =
+        RegisterHotKey(target, kDesktopPassthroughHotkeyId,
+            modifiers,
+            generalSettings_.desktopPassthroughHotkeyVirtualKey) != FALSE;
+    if (desktopPassthroughHotkeyRegistered_)
+    {
+        desktopPassthroughHotkeyHwnd_ = target;
+        WriteCrashLogEntry(
+            L"Desktop passthrough hold hotkey registered");
+    }
+    else
+    {
+        WriteCrashLogEntry(
+            L"Desktop passthrough hold hotkey registration failed");
+    }
+}
+
 inline void DesktopApp::LoadGeneralSettingsAndApply()
 {
     const bool dockEnabled = generalSettings_.dockEnabled;
@@ -7439,6 +7590,25 @@ inline void DesktopApp::OnRightButtonUp(LPARAM lp)
  */
 inline void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kDesktopPassthroughHoldTimerId)
+    {
+        if (!desktopPassthroughHoldActive_)
+        {
+            if (desktopPassthroughHotkeyHwnd_ &&
+                IsWindow(desktopPassthroughHotkeyHwnd_))
+            {
+                KillTimer(desktopPassthroughHotkeyHwnd_,
+                    kDesktopPassthroughHoldTimerId);
+            }
+        }
+        else if (!IsDesktopPassthroughHotkeyDown() &&
+            !IsDesktopPassthroughPointerDown())
+        {
+            EndDesktopPassthroughHold();
+        }
+        return;
+    }
+
     if (timerId >= kWidgetTimerIdBase)
     {
         auto it = widgetTimerIds_.find(static_cast<UINT_PTR>(timerId));

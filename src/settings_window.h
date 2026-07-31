@@ -48,6 +48,15 @@ struct LayoutBackup
     FILETIME timestamp;
 };
 
+/** @brief 设置页中可配置的全局快捷键用途。 */
+enum class HotkeySettingTarget
+{
+    None,
+    QuickNavigation,
+    DesktopPassthrough,
+    FloatingDock,
+};
+
 /**
  * @brief 基于 ImGui 的设置窗口类
  *
@@ -114,6 +123,15 @@ public:
      */
     bool IsVisible() const { return hwnd_ != nullptr && IsWindowVisible(hwnd_); }
 
+    /** @brief 是否正在等待用户按下新的快捷键组合。 */
+    bool IsHotkeyCaptureActive() const
+    { return hotkeyCaptureTarget_ != HotkeySettingTarget::None; }
+    /**
+     * @brief 将已由 RegisterHotKey 截获的组合交给当前录制框。
+     */
+    void CaptureRegisteredHotkey(
+        UINT modifiers, UINT virtualKey);
+
     /** @brief 设置窗口是否有尚未绘制的界面变化。 */
     bool NeedsRender() const { return renderRequested_; }
 
@@ -168,6 +186,18 @@ public:
 
     void SetDockSettingsChangedCallback(std::function<void()> callback)
     { dockSettingsChangedCallback_ = std::move(callback); }
+
+    /**
+     * @brief 设置系统级快捷键可用性探测器。
+     *
+     * 回调应在组合可注册时返回 true；若被 Windows、其他程序或当前
+     * SnowDesktop 运行实例占用则返回 false。
+     */
+    void SetHotkeyAvailabilityCallback(
+        std::function<bool(HotkeySettingTarget, UINT, UINT)> callback)
+    {
+        hotkeyAvailabilityCallback_ = std::move(callback);
+    }
 
     void SetDockSettingsPreviewChangedCallback(
         std::function<void(const DockSettings&)> callback)
@@ -383,6 +413,36 @@ private:
 
     void DrawDockPage();
 
+    /** @brief 绘制共享的点击录制式快捷键控件。 */
+    void DrawHotkeyRecorder(
+        HotkeySettingTarget target,
+        const char* label,
+        const char* id,
+        bool enabled,
+        UINT modifiers,
+        UINT virtualKey,
+        UINT defaultModifiers,
+        UINT defaultVirtualKey);
+    /** @brief 开始捕获物理键盘组合。 */
+    void StartHotkeyCapture(HotkeySettingTarget target);
+    /** @brief 轮询当前物理键状态并完成快捷键录入。 */
+    void UpdateHotkeyCapture();
+    /** @brief 使用设置窗口收到的键盘消息补充快速按键捕获。 */
+    void HandleHotkeyCaptureKeyMessage(
+        UINT message, WPARAM virtualKey);
+    /** @brief 取消当前快捷键录入。 */
+    void CancelHotkeyCapture();
+    /** @brief 将录制结果写入对应设置并请求保存。 */
+    void CommitHotkeyCapture(
+        HotkeySettingTarget target,
+        UINT modifiers,
+        UINT virtualKey);
+    /** @brief 查找与当前组合冲突的另一个已启用功能。 */
+    HotkeySettingTarget FindInternalHotkeyConflict(
+        HotkeySettingTarget target,
+        UINT modifiers,
+        UINT virtualKey) const;
+
     void DrawSystemTaskbarPage();
 
     void DrawDisplayPage();
@@ -572,6 +632,16 @@ private:
     /// 防止尺寸变化消息在当前帧内嵌套进入 ImGui/DX11 渲染。
     bool renderInProgress_ = false;
 
+    /// 当前正在录制快捷键的功能及已观察到的组合。
+    HotkeySettingTarget hotkeyCaptureTarget_ =
+        HotkeySettingTarget::None;
+    UINT hotkeyCaptureModifiers_ = 0;
+    UINT hotkeyCapturePressedModifiers_ = 0;
+    UINT hotkeyCaptureVirtualKey_ = 0;
+    bool hotkeyCapturePrimarySeen_ = false;
+    bool hotkeyCapturePrimaryDown_ = false;
+    bool hotkeyCaptureClearPending_ = false;
+
     /// 是否已解锁调试页面（通过版本号点击彩蛋激活）
     bool debugUnlocked_ = false;
 
@@ -635,6 +705,10 @@ private:
     std::function<void(bool)> dockEnabledChangedCallback_;
 
     std::function<void()> dockSettingsChangedCallback_;
+
+    /// 使用实际 RegisterHotKey 状态探测系统级占用。
+    std::function<bool(HotkeySettingTarget, UINT, UINT)>
+        hotkeyAvailabilityCallback_;
 
     std::function<void(const DockSettings&)>
         dockSettingsPreviewChangedCallback_;

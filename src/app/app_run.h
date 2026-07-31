@@ -26,6 +26,8 @@
  */
 inline DesktopApp::~DesktopApp()
 {
+    EndDesktopPassthroughHold(false);
+    UnregisterDesktopPassthroughHotkey();
     ApplySystemTaskbarBackdrop(false, false,
         ResolveSystemTaskbarAppearance(dockSettings_));
     dockWindowTransition_.reset();
@@ -127,6 +129,8 @@ inline void DesktopApp::RegisterOleDropTarget()
  */
 inline void DesktopApp::ResetDesktopWindowResources()
 {
+    EndDesktopPassthroughHold(false);
+    UnregisterDesktopPassthroughHotkey();
     desktopBackdropCompositor_.Reset();
     if (dockWindowTransition_)
         dockWindowTransition_->Cancel();
@@ -426,6 +430,7 @@ inline bool DesktopApp::CreateDesktopOverlayWindow()
     RegisterOleDropTarget();
     ApplyNavigationHotkey();
     ApplyFloatingDockHotkey();
+    ApplyDesktopPassthroughHotkey();
     RegisterShellChangeNotifications();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
@@ -843,6 +848,8 @@ inline void DesktopApp::BeginIconLoadGeneration()
 inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
 {
     const bool wasEnabled = customDesktopVisible_;
+    if (!enabled)
+        EndDesktopPassthroughHold(false);
     customDesktopVisible_ = enabled;
     generalSettings_.softwareDesktopEnabled = enabled;
     if (persist)
@@ -851,7 +858,10 @@ inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         settingsWindow_->SyncSoftwareDesktopEnabled(enabled);
 
     if (!hwnd_ || !IsWindow(hwnd_))
+    {
+        ApplyDesktopPassthroughHotkey();
         return;
+    }
 
     if (!enabled)
     {
@@ -865,6 +875,7 @@ inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         if (inputHwnd_ && IsWindow(inputHwnd_))
             ShowWindow(inputHwnd_, SW_HIDE);
         RestoreExplorerIcons();
+        ApplyDesktopPassthroughHotkey();
         return;
     }
 
@@ -902,6 +913,7 @@ inline void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
     InvalidateRect(hwnd_, nullptr, TRUE);
     if (!wasEnabled)
         ReloadItems();
+    ApplyDesktopPassthroughHotkey();
 }
 
 inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
@@ -1131,6 +1143,7 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
     ApplyFloatingDockHotkey();
+    ApplyDesktopPassthroughHotkey();
 
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
@@ -1190,6 +1203,74 @@ inline int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetGlassStatusProvider([this]() {
             return GetGlassBackendStatusText();
         });
+        settingsWindow_->SetHotkeyAvailabilityCallback(
+            [this](HotkeySettingTarget target,
+                UINT modifiers, UINT virtualKey) {
+                if (virtualKey == 0)
+                    return false;
+                const UINT normalizedModifiers =
+                    modifiers &
+                    (MOD_CONTROL | MOD_ALT |
+                        MOD_SHIFT | MOD_WIN);
+                const auto matches = [&](
+                    UINT configuredModifiers,
+                    UINT configuredVirtualKey) {
+                    return normalizedModifiers ==
+                            (configuredModifiers &
+                                (MOD_CONTROL | MOD_ALT |
+                                    MOD_SHIFT | MOD_WIN)) &&
+                        virtualKey == configuredVirtualKey;
+                };
+
+                switch (target)
+                {
+                case HotkeySettingTarget::QuickNavigation:
+                    if (navigationSettings_.enabled &&
+                        matches(navigationSettings_.modifiers,
+                            navigationSettings_.virtualKey))
+                        return navigationHotkeyRegistered_;
+                    break;
+                case HotkeySettingTarget::DesktopPassthrough:
+                    if (generalSettings_.
+                            desktopPassthroughHotkeyEnabled &&
+                        customDesktopVisible_ &&
+                        matches(generalSettings_.
+                                desktopPassthroughHotkeyModifiers,
+                            generalSettings_.
+                                desktopPassthroughHotkeyVirtualKey))
+                        return desktopPassthroughHotkeyRegistered_;
+                    break;
+                case HotkeySettingTarget::FloatingDock:
+                    if (generalSettings_.dockEnabled &&
+                        dockSettings_.floatingShortcutMode &&
+                        matches(
+                            dockSettings_.floatingHotkeyModifiers,
+                            dockSettings_.floatingHotkeyVirtualKey))
+                        return floatingDockHotkeyRegistered_;
+                    break;
+                case HotkeySettingTarget::None:
+                    return false;
+                }
+
+                HWND probeWindow =
+                    controlHwnd_ && IsWindow(controlHwnd_)
+                        ? controlHwnd_
+                        : (inputHwnd_ && IsWindow(inputHwnd_)
+                            ? inputHwnd_ : hwnd_);
+                if (!probeWindow || !IsWindow(probeWindow))
+                    return false;
+                const BOOL registered = RegisterHotKey(
+                    probeWindow, kSettingsHotkeyProbeId,
+                    normalizedModifiers | MOD_NOREPEAT,
+                    virtualKey);
+                if (registered)
+                {
+                    UnregisterHotKey(
+                        probeWindow, kSettingsHotkeyProbeId);
+                    return true;
+                }
+                return false;
+            });
         settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
             LoadNavigationSettingsAndApply();
         });
@@ -1814,7 +1895,17 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
     case WM_KEYUP:
         RefreshDragHintFromKeyboard();
         return 0;
+    case WM_TIMER:
+        OnTimer(wp);
+        return 0;
     case WM_HOTKEY:
+        if (settingsWindow_ &&
+            settingsWindow_->IsHotkeyCaptureActive())
+        {
+            settingsWindow_->CaptureRegisteredHotkey(
+                LOWORD(lp), HIWORD(lp));
+            return 0;
+        }
         if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
         {
             ToggleQuickNavigation();
@@ -1824,6 +1915,12 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
             kFloatingDockHotkeyId)
         {
             ToggleFloatingDock();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kDesktopPassthroughHotkeyId)
+        {
+            BeginDesktopPassthroughHold();
             return 0;
         }
         break;
@@ -1837,6 +1934,13 @@ inline LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LP
         {
             floatingDockHotkeyHwnd_ = nullptr;
             floatingDockHotkeyRegistered_ = false;
+        }
+        if (desktopPassthroughHotkeyHwnd_ == hwnd)
+        {
+            KillTimer(hwnd, kDesktopPassthroughHoldTimerId);
+            desktopPassthroughHotkeyHwnd_ = nullptr;
+            desktopPassthroughHotkeyRegistered_ = false;
+            desktopPassthroughHoldActive_ = false;
         }
         if (floatingDockEdgeSwipeHwnd_ == hwnd)
         {
@@ -2362,6 +2466,13 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         OnKeyDown(wp);
         return 0;
     case WM_HOTKEY:
+        if (settingsWindow_ &&
+            settingsWindow_->IsHotkeyCaptureActive())
+        {
+            settingsWindow_->CaptureRegisteredHotkey(
+                LOWORD(lp), HIWORD(lp));
+            return 0;
+        }
         if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
         {
             ToggleQuickNavigation();
@@ -2371,6 +2482,12 @@ inline LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             kFloatingDockHotkeyId)
         {
             ToggleFloatingDock();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kDesktopPassthroughHotkeyId)
+        {
+            BeginDesktopPassthroughHold();
             return 0;
         }
         break;

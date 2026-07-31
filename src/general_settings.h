@@ -7,12 +7,17 @@
 
 #pragma once
 
+#include <windows.h>
+
 #include <string>
 
 struct GeneralSettings
 {
     bool softwareDesktopEnabled = true;
     bool doubleClickHideDesktop = false;
+    bool desktopPassthroughHotkeyEnabled = false;
+    UINT desktopPassthroughHotkeyModifiers = MOD_CONTROL | MOD_ALT;
+    UINT desktopPassthroughHotkeyVirtualKey = VK_OEM_3;
     int quickNavTheme = 1;
     bool dockEnabled = false;
     char language[85] = "system";

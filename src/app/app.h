@@ -744,6 +744,21 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    /** @brief 按通用设置注册“按住隐藏桌面”全局快捷键。 */
+    void ApplyDesktopPassthroughHotkey();
+    /** @brief 注销“按住隐藏桌面”全局快捷键并停止释放检测。 */
+    void UnregisterDesktopPassthroughHotkey();
+    /** @brief 快捷键按下后临时隐藏软件桌面，使输入交给动态壁纸。 */
+    void BeginDesktopPassthroughHold();
+    /**
+     * @brief 结束临时隐藏状态。
+     * @param restoreDesktop 是否重新显示软件桌面窗口
+     */
+    void EndDesktopPassthroughHold(bool restoreDesktop = true);
+    /** @brief 判断当前配置的快捷键所有组成键是否仍按下。 */
+    bool IsDesktopPassthroughHotkeyDown() const;
+    /** @brief 判断任一鼠标按钮是否仍按下。 */
+    bool IsDesktopPassthroughPointerDown() const;
     /** @brief 应用软件桌面启用状态，并可选择持久化到通用设置。 */
     void SetSoftwareDesktopEnabled(bool enabled, bool persist);
     /** @brief 根据全局继承或快捷搜索覆盖项解析并应用主题。 */
@@ -2209,6 +2224,7 @@ private:
     HWND quickNavigationHwnd_ = nullptr;
     HWND floatingDockHwnd_ = nullptr;
     HWND floatingDockHotkeyHwnd_ = nullptr;
+    HWND desktopPassthroughHotkeyHwnd_ = nullptr;
     HWND floatingDockEdgeSwipeHwnd_ = nullptr;
     snowdesktop::floating_dock_rules::EdgeSwipeDetector
         floatingDockEdgeSwipeDetector_;
@@ -2272,6 +2288,8 @@ private:
     bool legacyWidgetLayoutMigrationPending_ = false;
     bool showSettingsPending_ = false;
     bool customDesktopVisible_ = true;
+    bool desktopPassthroughHotkeyRegistered_ = false;
+    bool desktopPassthroughHoldActive_ = false;
     bool updatingDisplayTopology_ = false;
     std::wstring displayTopologySignature_;
     /** @} */

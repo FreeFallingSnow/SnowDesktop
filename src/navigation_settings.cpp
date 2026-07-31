@@ -102,9 +102,29 @@ namespace
         case VK_TAB: return L"Tab";
         case VK_RETURN: return L"Enter";
         case VK_ESCAPE: return L"Esc";
-        case VK_OEM_3: return L"`";
-        default: return L"VK " + std::to_wstring(vk);
+        case VK_BACK: return L"Backspace";
+        case VK_DELETE: return L"Delete";
+        case VK_OEM_3: return L"` / ~";
+        default:
+            break;
         }
+
+        const UINT scanCode =
+            MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX);
+        if (scanCode != 0)
+        {
+            LONG keyNameParam =
+                static_cast<LONG>((scanCode & 0xFF) << 16);
+            if ((scanCode & 0xFF00) != 0)
+                keyNameParam |= 1 << 24;
+            wchar_t keyName[64]{};
+            if (GetKeyNameTextW(
+                    keyNameParam, keyName,
+                    static_cast<int>(
+                        sizeof(keyName) / sizeof(keyName[0]))) > 0)
+                return keyName;
+        }
+        return L"VK " + std::to_wstring(vk);
     }
 }
 
@@ -205,7 +225,7 @@ std::wstring FormatNavigationHotkey(const NavigationSettings& settings)
     if (settings.modifiers & MOD_ALT) append(L"Alt");
     if (settings.modifiers & MOD_SHIFT) append(L"Shift");
     if (settings.modifiers & MOD_WIN) append(L"Win");
-    if (!text.empty()) text += L" + ";
-    text += KeyName(settings.virtualKey);
+    if (settings.virtualKey != 0)
+        append(KeyName(settings.virtualKey).c_str());
     return text;
 }

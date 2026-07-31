@@ -217,6 +217,10 @@ constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
 // ── 快捷导航 ──────────────────────────────────
 constexpr int kQuickNavigationHotkeyId = 101;
 constexpr int kFloatingDockHotkeyId = 102;
+constexpr int kDesktopPassthroughHotkeyId = 103;
+constexpr int kSettingsHotkeyProbeId = 104;
+constexpr UINT_PTR kDesktopPassthroughHoldTimerId = 20;
+constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

@@ -2944,6 +2944,13 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
         OnTimer(wp);
         return 0;
     case WM_HOTKEY:
+        if (settingsWindow_ &&
+            settingsWindow_->IsHotkeyCaptureActive())
+        {
+            settingsWindow_->CaptureRegisteredHotkey(
+                LOWORD(lp), HIWORD(lp));
+            return 0;
+        }
         if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
         {
             ToggleQuickNavigation();
@@ -2953,6 +2960,12 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
             kFloatingDockHotkeyId)
         {
             ToggleFloatingDock();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kDesktopPassthroughHotkeyId)
+        {
+            BeginDesktopPassthroughHold();
             return 0;
         }
         break;
@@ -2967,6 +2980,13 @@ inline LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, 
         {
             floatingDockHotkeyHwnd_ = nullptr;
             floatingDockHotkeyRegistered_ = false;
+        }
+        if (desktopPassthroughHotkeyHwnd_ == hwnd)
+        {
+            KillTimer(hwnd, kDesktopPassthroughHoldTimerId);
+            desktopPassthroughHotkeyHwnd_ = nullptr;
+            desktopPassthroughHotkeyRegistered_ = false;
+            desktopPassthroughHoldActive_ = false;
         }
         if (floatingDockEdgeSwipeHwnd_ == hwnd)
         {
