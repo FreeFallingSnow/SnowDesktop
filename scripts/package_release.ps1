@@ -93,7 +93,8 @@ function Copy-Payload {
         (Join-Path $buildOutput "SnowDesktop.exe"),
         (Join-Path $buildOutput "SnowDesktopTaskbarHook.dll"),
         (Join-Path $repositoryRoot "LICENSE"),
-        (Join-Path $repositoryRoot "README.md")
+        (Join-Path $repositoryRoot "README.md"),
+        (Join-Path $repositoryRoot "README.en.md")
     )
     foreach ($file in $requiredFiles) {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
