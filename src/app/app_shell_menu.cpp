@@ -345,10 +345,35 @@ ShowShellItemContextMenuForPath(
     if (command >= kFirstCmd &&
         command <= kLastCmd)
     {
-        const std::wstring invocationDirectory =
-            snowdesktop::ShellInvocationDirectoryForItem(itemPath);
         const UINT commandOffset =
             command - kFirstCmd;
+        if (IsShellDeleteCommand(
+                contextMenu.Get(), commandOffset))
+        {
+            DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
+            ILFree(pidl);
+            std::vector<snowdesktop::ShellFileOperationStep> steps;
+            steps.push_back({
+                FO_DELETE,
+                { itemPath },
+                {},
+                static_cast<FILEOP_FLAGS>(
+                    FOF_ALLOWUNDO |
+                    FOF_NOCONFIRMATION) });
+            QueueShellFileOperation(
+                std::move(steps),
+                [this](bool succeeded) {
+                    if (!succeeded)
+                        return;
+                    ReloadItems(false);
+                    if (dockFolderPopupOpen_)
+                        RefreshDockFolderPopup();
+                });
+            return;
+        }
+        const std::wstring invocationDirectory =
+            snowdesktop::ShellInvocationDirectoryForItem(itemPath);
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask =

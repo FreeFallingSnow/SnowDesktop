@@ -128,6 +128,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_menu_icons.cpp
     src/app/app_message_dispatch.cpp
     src/shell_context_menu_site.cpp
+    src/shell_file_operation_worker.cpp
     src/app/app_navigation_render.cpp
     src/app/app_ole_drop_routing.cpp
     src/app/app_ole_drop_session.cpp
@@ -157,6 +158,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_render_primitives.cpp
     src/app/app_run.cpp
     src/app/app_shell_context_menu.cpp
+    src/app/app_shell_file_operation.cpp
     src/app/app_shell_menu.cpp
     src/app/app_scene_render.cpp
     src/app/app_scroll_interaction.cpp
@@ -662,6 +664,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32
         LABELS contract shell)
+
+    snowdesktop_add_test(
+        SnowDesktopShellFileOperationWorkerTests
+        shell_file_operation_worker
+        SOURCES
+            tests/shell_file_operation_worker_tests.cpp
+            src/shell_file_operation_worker.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32
+        LABELS integration shell interaction)
 
     snowdesktop_add_test(
         SnowDesktopDockAndWindowRulesTests

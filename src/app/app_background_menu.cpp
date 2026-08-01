@@ -611,6 +611,13 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         }
         else
         {
+            wchar_t desktopPath[MAX_PATH]{};
+            if (SHGetSpecialFolderPathW(
+                    nullptr, desktopPath,
+                    CSIDL_DESKTOPDIRECTORY, FALSE) &&
+                PasteClipboardToFolderPath(desktopPath))
+                break;
+
             ComPtr<IContextMenu> bgMenu;
             if (SUCCEEDED(desktopFolder_->CreateViewObject(hwnd_, IID_IContextMenu,
                 reinterpret_cast<void**>(bgMenu.GetAddressOf()))) && bgMenu)

@@ -121,11 +121,16 @@ void DesktopApp::ShowFolderEntryContextMenu(
         UINT commandOffset = command - kFirstCmd;
         wchar_t menuText[128]{};
         bool renameCommand = IsShellRenameCommand(contextMenu.Get(), commandOffset);
+        bool deleteCommand = IsShellDeleteCommand(
+            contextMenu.Get(), commandOffset);
         if (!renameCommand &&
             GetMenuStringW(menu, command, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
         {
             renameCommand = StrStrIW(menuText, L"重命名") != nullptr || // l10n-allow: match Chinese Windows shell verb
                 StrStrIW(menuText, L"Rename") != nullptr;
+            deleteCommand = deleteCommand ||
+                StrStrIW(menuText, L"删除") != nullptr || // l10n-allow: match Chinese Windows shell verb
+                StrStrIW(menuText, L"Delete") != nullptr;
         }
 
         DestroyMenu(menu);
@@ -140,6 +145,28 @@ void DesktopApp::ShowFolderEntryContextMenu(
             else
                 BeginRenameFolderEntry(
                     widgetIndex, memberIndex);
+            return;
+        }
+
+        if (deleteCommand)
+        {
+            DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
+            ILFree(pidl);
+            std::vector<snowdesktop::ShellFileOperationStep> steps;
+            steps.push_back({
+                FO_DELETE,
+                { fullPath },
+                {},
+                static_cast<FILEOP_FLAGS>(
+                    FOF_ALLOWUNDO |
+                    FOF_NOCONFIRMATION) });
+            QueueShellFileOperation(
+                std::move(steps),
+                [this](bool succeeded) {
+                    if (succeeded)
+                        ReloadItems(false);
+                });
             return;
         }
 

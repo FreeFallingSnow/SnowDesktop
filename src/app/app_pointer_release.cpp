@@ -633,6 +633,94 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
                 EndDragSession();
                 goto cleanup;
             }
+            const std::vector<std::wstring> sourcePaths =
+                dragSession_.SourceList().FilePaths();
+            const bool recycleBinTarget =
+                targetDesktopItem &&
+                _wcsicmp(
+                    targetDesktopItem->desktopIconClsid.c_str(),
+                    kDesktopIconClsidRecycleBin) == 0;
+            const std::wstring targetPath = targetItem->GetPath();
+            const DWORD targetAttributes = targetPath.empty()
+                ? INVALID_FILE_ATTRIBUTES
+                : GetFileAttributesW(targetPath.c_str());
+            if (!sourcePaths.empty() && recycleBinTarget)
+            {
+                std::vector<snowdesktop::ShellFileOperationStep> steps;
+                steps.push_back({
+                    FO_DELETE,
+                    sourcePaths,
+                    {},
+                    static_cast<FILEOP_FLAGS>(
+                        FOF_ALLOWUNDO |
+                        FOF_NOCONFIRMATION) });
+                QueueShellFileOperation(
+                    std::move(steps),
+                    [this,
+                     dockFolderPopupTarget,
+                     dockFolderPopupSource](bool succeeded) {
+                        if (!succeeded)
+                            return;
+                        ReloadItems(false);
+                        if ((dockFolderPopupTarget ||
+                             dockFolderPopupSource) &&
+                            dockFolderPopupOpen_)
+                            RefreshDockFolderPopup();
+                    });
+                SaveLayoutSlots();
+                ClearSelection();
+                EndDragSession();
+                goto cleanup;
+            }
+            if (!sourcePaths.empty() &&
+                targetAttributes != INVALID_FILE_ATTRIBUTES &&
+                (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+            {
+                DWORD keyState = MK_LBUTTON;
+                if (mods & MK_CONTROL) keyState |= MK_CONTROL;
+                if (mods & MK_ALT) keyState |= MK_ALT;
+                if (mods & MK_SHIFT) keyState |= MK_SHIFT;
+                const DWORD selectedEffect = ChooseDropEffect(
+                    keyState,
+                    DROPEFFECT_COPY |
+                        DROPEFFECT_MOVE |
+                        DROPEFFECT_LINK);
+                const DropAction action =
+                    selectedEffect == DROPEFFECT_LINK
+                        ? DropAction::Link
+                        : selectedEffect == DROPEFFECT_COPY
+                            ? DropAction::Copy
+                            : DropAction::Move;
+                DragSourceList fileSources =
+                    dragSession_.SourceList();
+                auto finished = [this,
+                    dockFolderPopupTarget,
+                    dockFolderPopupSource](bool succeeded) {
+                    if (!succeeded)
+                        return;
+                    ReloadItems(false);
+                    if ((dockFolderPopupTarget ||
+                         dockFolderPopupSource) &&
+                        dockFolderPopupOpen_)
+                        RefreshDockFolderPopup();
+                };
+                if (action == DropAction::Link)
+                {
+                    const bool succeeded = MaterializeFilesToFolder(
+                        fileSources, targetPath, action, {});
+                    finished(succeeded);
+                }
+                else
+                {
+                    MaterializeFilesToFolder(
+                        fileSources, targetPath, action,
+                        std::move(finished));
+                }
+                SaveLayoutSlots();
+                ClearSelection();
+                EndDragSession();
+                goto cleanup;
+            }
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {

@@ -4,7 +4,8 @@
 // Internal and file-backed drop-plan execution.
 
 bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
-    const DropPreviewList& preview)
+    const DropPreviewList& preview,
+    FileOperationCompletion completion)
 {
     const bool sourceFromDock = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
         [](const DragSourceEntry& entry) { return entry.fromDock; });
@@ -19,23 +20,48 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         preview.action == DropAction::Move &&
         IsAutoCollectFileCategorySource(sourceList))
         return false;
-    bool executed = preview.fileBacked
-        ? ExecuteFileBackedDropPlan(sourceList, preview)
-        : ExecuteInternalDropPlan(sourceList, preview);
-    if (executed && (preview.action == DropAction::Move || preview.consumeDockSource) && sourceFromDock)
+    std::unordered_set<std::wstring> movedDockEntries;
+    if ((preview.action == DropAction::Move ||
+         preview.consumeDockSource) && sourceFromDock)
     {
-        std::unordered_set<std::wstring> moved;
         for (const auto& entry : sourceList.entries)
             if (entry.fromDock && !entry.dockReference.empty())
-                moved.insert(std::to_wstring(static_cast<int>(entry.dockEntryType)) + L":" +
-                    ToUpperInvariant(entry.dockReference));
-        std::erase_if(dockEntries_, [&](const DockEntry& entry) {
-            const std::wstring key = std::to_wstring(static_cast<int>(entry.type)) + L":" +
-                ToUpperInvariant(entry.reference);
-            return moved.contains(key);
-        });
-        RefreshCollectedKeysCache();
+                movedDockEntries.insert(
+                    std::to_wstring(static_cast<int>(entry.dockEntryType)) +
+                    L":" + ToUpperInvariant(entry.dockReference));
     }
+
+    auto finish = [this,
+        movedDockEntries = std::move(movedDockEntries),
+        completion = std::move(completion)](bool succeeded) mutable {
+        if (succeeded && !movedDockEntries.empty())
+        {
+            const size_t previousSize = dockEntries_.size();
+            std::erase_if(dockEntries_, [&](const DockEntry& entry) {
+                const std::wstring key =
+                    std::to_wstring(static_cast<int>(entry.type)) +
+                    L":" + ToUpperInvariant(entry.reference);
+                return movedDockEntries.contains(key);
+            });
+            RefreshCollectedKeysCache();
+            if (dockEntries_.size() != previousSize)
+            {
+                SaveLayoutSlots();
+                RebuildContainersAndItems();
+                LayoutItems();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
+        if (completion)
+            completion(succeeded);
+    };
+
+    if (preview.fileBacked)
+        return ExecuteFileBackedDropPlan(
+            sourceList, preview, std::move(finish));
+
+    const bool executed = ExecuteInternalDropPlan(sourceList, preview);
+    finish(executed);
     return executed;
 }
 
@@ -419,7 +445,8 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
  */
 bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
     DropAction action, bool duplicateDesktopCopyNames,
-    std::unordered_map<size_t, std::wstring>* createdPathsBySource)
+    std::unordered_map<size_t, std::wstring>* createdPathsBySource,
+    FileOperationCompletion completion)
 {
     std::vector<std::wstring> paths = sourceList.FilePaths();
     if (paths.empty()) return false;
@@ -431,13 +458,6 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
         return false;
     std::wstring desktopPath = TrimTrailingPathSeparators(desktopPathRaw);
 
-    auto doubleNull = [](const std::wstring& value) {
-        std::wstring result = value;
-        result.push_back(L'\0');
-        result.push_back(L'\0');
-        return result;
-    };
-
     auto sameParentAsDesktop = [&](const std::wstring& path) -> bool {
         wchar_t parent[MAX_PATH]{};
         wcscpy_s(parent, path.c_str());
@@ -445,6 +465,7 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
         return PathsEqualInsensitive(parent, desktopPath);
     };
 
+    std::unordered_set<std::wstring> reservedDestinations;
     auto makeUniqueCopyPath = [&](const std::wstring& path) {
         const wchar_t* fileName = PathFindFileNameW(path.c_str());
         DWORD attrs = GetFileAttributesW(path.c_str());
@@ -469,8 +490,15 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
                 : stem + _LFW("app.grid.copy_suffix_num", std::to_wstring(i)) + ext;
             wchar_t dst[MAX_PATH]{};
             PathCombineW(dst, desktopPath.c_str(), name.c_str());
-            if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES)
+            const std::wstring candidate = dst;
+            if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES &&
+                !reservedDestinations.contains(
+                    ToUpperInvariant(candidate)))
+            {
+                reservedDestinations.insert(
+                    ToUpperInvariant(candidate));
                 return std::wstring(dst);
+            }
         }
         wchar_t fallback[MAX_PATH]{};
         PathCombineW(fallback, desktopPath.c_str(), (stem + _LW("app.grid.copy_suffix_1000") + ext).c_str());
@@ -497,38 +525,6 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
         wchar_t fallback[MAX_PATH]{};
         PathCombineW(fallback, desktopPath.c_str(), (stem + L" (1000).lnk").c_str());
         return std::wstring(fallback);
-    };
-
-    auto shellOperateOne = [&](UINT func, const std::wstring& fromPath, const std::wstring& toPath) {
-        std::wstring from = doubleNull(fromPath);
-        std::wstring to = doubleNull(toPath);
-        SHFILEOPSTRUCTW op{};
-        op.hwnd = ShellDialogOwnerHwnd();
-        op.wFunc = func;
-        op.pFrom = from.c_str();
-        op.pTo = to.c_str();
-        op.fFlags = FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR | FOF_NOERRORUI | FOF_RENAMEONCOLLISION;
-        return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
-    };
-
-    auto shellOperateManyToDesktop = [&](UINT func, const std::vector<std::wstring>& sourcePaths) {
-        std::wstring from;
-        for (const auto& path : sourcePaths)
-        {
-            from += path;
-            from.push_back(L'\0');
-        }
-        from.push_back(L'\0');
-
-        std::wstring to = desktopPath;
-        to.push_back(L'\0');
-        SHFILEOPSTRUCTW op{};
-        op.hwnd = ShellDialogOwnerHwnd();
-        op.wFunc = func;
-        op.pFrom = from.c_str();
-        op.pTo = to.c_str();
-        op.fFlags = FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR | FOF_NOERRORUI | FOF_RENAMEONCOLLISION;
-        return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
     };
 
     bool operated = false;
@@ -559,20 +555,54 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
     }
     else if (action == DropAction::Copy)
     {
+        std::vector<snowdesktop::ShellFileOperationStep> steps;
         std::vector<std::wstring> normalCopies;
         for (const auto& path : paths)
         {
             if (duplicateDesktopCopyNames && sameParentAsDesktop(path))
-                operated = shellOperateOne(FO_COPY, path, makeUniqueCopyPath(path)) || operated;
+            {
+                steps.push_back({
+                    FO_COPY,
+                    { path },
+                    makeUniqueCopyPath(path),
+                    static_cast<FILEOP_FLAGS>(
+                        FOF_NOCONFIRMATION |
+                        FOF_NOCONFIRMMKDIR |
+                        FOF_NOERRORUI |
+                        FOF_RENAMEONCOLLISION) });
+            }
             else
                 normalCopies.push_back(path);
         }
         if (!normalCopies.empty())
-            operated = shellOperateManyToDesktop(FO_COPY, normalCopies) || operated;
+        {
+            steps.push_back({
+                FO_COPY,
+                std::move(normalCopies),
+                desktopPath,
+                static_cast<FILEOP_FLAGS>(
+                    FOF_NOCONFIRMATION |
+                    FOF_NOCONFIRMMKDIR |
+                    FOF_NOERRORUI |
+                    FOF_RENAMEONCOLLISION) });
+        }
+        operated = QueueShellFileOperation(
+            std::move(steps), std::move(completion));
     }
     else
     {
-        operated = shellOperateManyToDesktop(FO_MOVE, paths);
+        std::vector<snowdesktop::ShellFileOperationStep> steps;
+        steps.push_back({
+            FO_MOVE,
+            std::move(paths),
+            desktopPath,
+            static_cast<FILEOP_FLAGS>(
+                FOF_NOCONFIRMATION |
+                FOF_NOCONFIRMMKDIR |
+                FOF_NOERRORUI |
+                FOF_RENAMEONCOLLISION) });
+        operated = QueueShellFileOperation(
+            std::move(steps), std::move(completion));
     }
     return operated;
 }
@@ -585,7 +615,8 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
  * @return 操作成功返回 true。
  */
 bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
-    const std::wstring& folderPath, DropAction action) const
+    const std::wstring& folderPath, DropAction action,
+    FileOperationCompletion completion)
 {
     std::vector<std::wstring> paths = sourceList.FilePaths();
     if (paths.empty() || folderPath.empty()) return false;
@@ -626,23 +657,18 @@ bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
         return createdAny;
     }
 
-    std::wstring from;
-    for (const auto& path : paths)
-    {
-        from += path;
-        from += L'\0';
-    }
-    from += L'\0';
-
-    std::wstring to = folder;
-    to += L'\0';
-    SHFILEOPSTRUCTW op{};
-    op.hwnd = ShellDialogOwnerHwnd();
-    op.wFunc = action == DropAction::Move ? FO_MOVE : FO_COPY;
-    op.pFrom = from.c_str();
-    op.pTo = to.c_str();
-    op.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_RENAMEONCOLLISION;
-    return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
+    std::vector<snowdesktop::ShellFileOperationStep> steps;
+    steps.push_back({
+        static_cast<UINT>(
+            action == DropAction::Move ? FO_MOVE : FO_COPY),
+        std::move(paths),
+        folder,
+        static_cast<FILEOP_FLAGS>(
+            FOF_NOCONFIRMATION |
+            FOF_NOERRORUI |
+            FOF_RENAMEONCOLLISION) });
+    return QueueShellFileOperation(
+        std::move(steps), std::move(completion));
 }
 
 /**
@@ -697,140 +723,170 @@ void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
  * @return 执行成功返回 true。
  */
 bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
-    const DropPreviewList& preview)
+    const DropPreviewList& preview,
+    FileOperationCompletion completion)
 {
-    auto refreshFolderMappingById = [&](const std::wstring& widgetId) {
-        if (widgetId.empty()) return;
-        for (size_t i = 0; i < widgets_.size(); ++i)
-        {
-            if (widgets_[i].id == widgetId)
-            {
-                RefreshFolderMappingWidget(i);
-                break;
-            }
-        }
-    };
-    auto refreshSourceFolderMappings = [&]() {
-        std::unordered_set<std::wstring> sourceIds;
-        if (sourceList.hasOriginWidget &&
-            sourceList.originWidgetType ==
-                DesktopWidgetType::FolderMapping)
-            sourceIds.insert(
-                sourceList.originWidgetId);
-        for (const auto& entry : sourceList.entries)
-            if (entry.kind ==
-                    DropSourceKind::FolderEntry &&
-                !entry.widgetId.empty())
-                sourceIds.insert(entry.widgetId);
-        for (const auto& sourceId : sourceIds)
-            refreshFolderMappingById(sourceId);
-    };
-    auto removeDesktopItemsByKeys = [&](const std::vector<std::wstring>& keys) {
-        if (keys.empty()) return false;
-
-        std::unordered_set<std::wstring> normalizedKeys;
-        normalizedKeys.reserve(keys.size());
-        for (const auto& key : keys)
-            if (!key.empty())
-                normalizedKeys.insert(ToUpperInvariant(key));
-        if (normalizedKeys.empty()) return false;
-
-        size_t oldSize = items_.size();
-        items_.erase(
-            std::remove_if(items_.begin(), items_.end(),
-                [&](const DesktopItem& item) {
-                    return !item.layoutKey.empty() &&
-                        normalizedKeys.contains(ToUpperInvariant(item.layoutKey));
-                }),
-            items_.end());
-        if (items_.size() == oldSize) return false;
-
-        d2dIconCache_.clear();
-        itemTextLayoutCache_.clear();
-        itemTextShadowCache_.clear();
-        RefreshDesktopItemIndexCache();
-        if (GetDesktopGrid())
-            GetDesktopGrid()->InvalidateSlots();
-        return true;
-    };
+    const std::vector<std::wstring> desktopKeys =
+        sourceList.DesktopKeys();
 
     if (preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget)
     {
-        size_t targetWidgetIndex = static_cast<size_t>(-1);
+        const std::wstring targetWidgetId =
+            preview.targetWidget->id;
         std::unordered_set<std::wstring> targetExistingPaths;
-        for (size_t i = 0; i < widgets_.size(); ++i)
-        {
-            if (&widgets_[i] != preview.targetWidget) continue;
-            targetWidgetIndex = i;
-            for (const auto& entry : widgets_[i].folderEntries)
-                targetExistingPaths.insert(ToUpperInvariant(entry.fullPath));
-            break;
-        }
+        for (const auto& entry : preview.targetWidget->folderEntries)
+            targetExistingPaths.insert(
+                ToUpperInvariant(entry.fullPath));
+        const size_t targetInsertIndex = preview.insertIndex;
+        const DropAction action = preview.action;
 
-        bool operated = MaterializeFilesToFolder(sourceList, preview.targetWidget->sourceFolderPath,
-            preview.action);
-        if (!operated) return false;
-        if (preview.action == DropAction::Move)
-        {
-            RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
-            removeDesktopItemsByKeys(sourceList.DesktopKeys());
-        }
-
-        refreshSourceFolderMappings();
-        if (targetWidgetIndex != static_cast<size_t>(-1))
-        {
-            RefreshFolderMappingWidget(targetWidgetIndex);
-            auto& target = widgets_[targetWidgetIndex];
-            std::vector<FolderEntry> inserted;
-            for (auto it = target.folderEntries.begin(); it != target.folderEntries.end(); )
+        auto operationCompletion = [this,
+            action,
+            desktopKeys,
+            targetWidgetId,
+            targetExistingPaths = std::move(targetExistingPaths),
+            targetInsertIndex,
+            completion = std::move(completion)](bool succeeded) mutable {
+            if (succeeded)
             {
-                if (targetExistingPaths.contains(ToUpperInvariant(it->fullPath)))
+                if (action == DropAction::Move)
+                    RemoveDesktopKeysFromWidgets(desktopKeys);
+
+                ReloadItems(false);
+                const size_t targetWidgetIndex =
+                    FindWidgetIndexById(targetWidgetId);
+                if (targetWidgetIndex < widgets_.size())
                 {
-                    ++it;
-                    continue;
+                    auto& target = widgets_[targetWidgetIndex];
+                    std::vector<FolderEntry> inserted;
+                    for (auto it = target.folderEntries.begin();
+                        it != target.folderEntries.end();)
+                    {
+                        if (targetExistingPaths.contains(
+                                ToUpperInvariant(it->fullPath)))
+                        {
+                            ++it;
+                            continue;
+                        }
+                        inserted.push_back(std::move(*it));
+                        it = target.folderEntries.erase(it);
+                    }
+                    if (!inserted.empty())
+                    {
+                        const size_t insertAt = std::min(
+                            targetInsertIndex,
+                            target.folderEntries.size());
+                        target.folderEntries.insert(
+                            target.folderEntries.begin() +
+                                static_cast<std::ptrdiff_t>(insertAt),
+                            std::make_move_iterator(inserted.begin()),
+                            std::make_move_iterator(inserted.end()));
+                        target.itemKeys.clear();
+                        target.itemKeys.reserve(
+                            target.folderEntries.size());
+                        for (const auto& entry : target.folderEntries)
+                            target.itemKeys.push_back(entry.fullPath);
+                        SaveLayoutSlots();
+                        RebuildContainersAndItems();
+                        LayoutItems();
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    }
                 }
-                inserted.push_back(std::move(*it));
-                it = target.folderEntries.erase(it);
+                if (dockFolderPopupOpen_)
+                    RefreshDockFolderPopup();
             }
-            if (!inserted.empty())
-            {
-                size_t insertAt = std::min(preview.insertIndex, target.folderEntries.size());
-                target.folderEntries.insert(target.folderEntries.begin() + static_cast<std::ptrdiff_t>(insertAt),
-                    std::make_move_iterator(inserted.begin()), std::make_move_iterator(inserted.end()));
-                target.itemKeys.clear();
-                target.itemKeys.reserve(target.folderEntries.size());
-                for (const auto& entry : target.folderEntries)
-                    target.itemKeys.push_back(entry.fullPath);
-            }
-            for (auto& c : containers_)
-            {
-                auto* wc = dynamic_cast<WidgetContainer*>(c.get());
-                if (wc && wc->GetWidgetData() == &target) { wc->InvalidateSlots(); break; }
-            }
+            if (completion)
+                completion(succeeded);
+        };
+
+        if (action == DropAction::Link)
+        {
+            const bool succeeded = MaterializeFilesToFolder(
+                sourceList,
+                preview.targetWidget->sourceFolderPath,
+                action,
+                {});
+            operationCompletion(succeeded);
+            return succeeded;
         }
-        return true;
+
+        const bool queued = MaterializeFilesToFolder(
+            sourceList,
+            preview.targetWidget->sourceFolderPath,
+            action,
+            operationCompletion);
+        if (!queued)
+            operationCompletion(false);
+        return queued;
     }
 
-    bool duplicateCopyNames = preview.action == DropAction::Copy && sourceList.hasDesktopIcons &&
+    const bool duplicateCopyNames =
+        preview.action == DropAction::Copy && sourceList.hasDesktopIcons &&
         !sourceList.hasExternalFiles;
-    std::unordered_set<std::wstring> existingKeys = SnapshotDesktopKeys();
+    const std::unordered_set<std::wstring> existingKeys =
+        SnapshotDesktopKeys();
     std::unordered_map<size_t, std::wstring> createdPathsBySource;
-    std::unordered_map<size_t, std::wstring>* createdPaths =
-        preview.action == DropAction::Link ? &createdPathsBySource : nullptr;
-    bool operated = MaterializeFilesToDesktop(sourceList, preview.action, duplicateCopyNames,
-        createdPaths);
-    if (!operated)
+    const DropAction action = preview.action;
+
+    if (action == DropAction::Link)
+    {
+        const bool succeeded = MaterializeFilesToDesktop(
+            sourceList, action, duplicateCopyNames,
+            &createdPathsBySource, {});
+        if (succeeded)
+        {
+            StorePendingLandingCache(
+                sourceList, preview, existingKeys,
+                &createdPathsBySource);
+            pendingLandingCache_.tick = GetTickCount();
+            ReloadItems(false);
+            if (dockFolderPopupOpen_)
+                RefreshDockFolderPopup();
+        }
+        else
+        {
+            pendingLandingCache_.Clear();
+        }
+        if (completion)
+            completion(succeeded);
+        return succeeded;
+    }
+
+    StorePendingLandingCache(
+        sourceList, preview, existingKeys, nullptr);
+    PendingLandingCache landingCache =
+        std::move(pendingLandingCache_);
+    pendingLandingCache_.Clear();
+
+    auto operationCompletion = [this,
+        action,
+        hasDesktopIcons = sourceList.hasDesktopIcons,
+        desktopKeys,
+        landingCache = std::move(landingCache),
+        completion = std::move(completion)](bool succeeded) mutable {
+        if (succeeded)
+        {
+            landingCache.tick = GetTickCount();
+            pendingLandingCache_ = std::move(landingCache);
+            if (action == DropAction::Move && hasDesktopIcons)
+                RemoveDesktopKeysFromWidgets(desktopKeys);
+            ReloadItems(false);
+            if (dockFolderPopupOpen_)
+                RefreshDockFolderPopup();
+        }
+        if (completion)
+            completion(succeeded);
+    };
+
+    const bool queued = MaterializeFilesToDesktop(
+        sourceList, action, duplicateCopyNames,
+        nullptr, operationCompletion);
+    if (!queued)
     {
         pendingLandingCache_.Clear();
-        return false;
+        operationCompletion(false);
     }
-    StorePendingLandingCache(sourceList, preview, existingKeys, createdPaths);
-
-    ReloadItems(false);
-    if (preview.action == DropAction::Move && sourceList.hasDesktopIcons)
-        RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
-    refreshSourceFolderMappings();
-    return true;
+    return queued;
 }
 
 /**

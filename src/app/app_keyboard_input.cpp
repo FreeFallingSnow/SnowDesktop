@@ -88,23 +88,21 @@ void DesktopApp::OnKeyDown(WPARAM key)
 
         if (!paths.empty())
         {
-            std::wstring from;
-            for (const auto& path : paths)
-            {
-                from += path;
-                from.push_back(L'\0');
-            }
-            from.push_back(L'\0');
-
-            SHFILEOPSTRUCTW op{};
-            op.hwnd = ShellDialogOwnerHwnd();
-            op.wFunc = FO_DELETE;
-            op.pFrom = from.c_str();
-            op.fFlags = static_cast<FILEOP_FLAGS>(shift
-                ? FOF_WANTNUKEWARNING
-                : (FOF_ALLOWUNDO | FOF_NOCONFIRMATION));
-            if (SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted)
-                ReloadItems();
+            std::vector<snowdesktop::ShellFileOperationStep> steps;
+            steps.push_back({
+                FO_DELETE,
+                std::move(paths),
+                {},
+                static_cast<FILEOP_FLAGS>(shift
+                    ? FOF_WANTNUKEWARNING
+                    : (FOF_ALLOWUNDO |
+                       FOF_NOCONFIRMATION)) });
+            QueueShellFileOperation(
+                std::move(steps),
+                [this](bool succeeded) {
+                    if (succeeded)
+                        ReloadItems();
+                });
         }
         break;
     }

@@ -212,6 +212,7 @@ void DesktopApp::ShowItemContextMenu(
             break;
         }
         cutPaths_.clear();
+        std::vector<std::wstring> deletePaths;
         for (const auto& item : items_)
         {
             if (!item.selected || !item.desktopIconClsid.empty()) continue;
@@ -219,17 +220,26 @@ void DesktopApp::ShowItemContextMenu(
             if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
             {
                 cutPaths_.erase(path);
-                SHFILEOPSTRUCTW op{};
-                op.wFunc = FO_DELETE;
-                op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION;
-                wchar_t from[MAX_PATH + 2]{};
-                wcscpy_s(from, path);
-                from[wcslen(path) + 1] = L'\0';
-                op.pFrom = from;
-                SHFileOperationW(&op);
+                deletePaths.push_back(path);
             }
         }
-        ReloadItems();
+        if (!deletePaths.empty())
+        {
+            std::vector<snowdesktop::ShellFileOperationStep> steps;
+            steps.push_back({
+                FO_DELETE,
+                std::move(deletePaths),
+                {},
+                static_cast<FILEOP_FLAGS>(
+                    FOF_ALLOWUNDO |
+                    FOF_NOCONFIRMATION) });
+            QueueShellFileOperation(
+                std::move(steps),
+                [this](bool succeeded) {
+                    if (succeeded)
+                        ReloadItems();
+                });
+        }
         break;
     }
     case kContextMoreCommand:
@@ -361,6 +371,51 @@ void DesktopApp::ShowShellContextMenu(
             DestroyMenu(menu);
             RestoreDesktopWindowLayer();
             return;
+        }
+
+        if (deleteCommand)
+        {
+            std::vector<std::wstring> deletePaths;
+            for (const auto& item : items_)
+            {
+                if (!item.selected ||
+                    !item.desktopIconClsid.empty())
+                    continue;
+                wchar_t path[MAX_PATH]{};
+                if (SHGetPathFromIDListW(
+                        item.absolutePidl.get(), path))
+                    deletePaths.push_back(path);
+            }
+            if (deletePaths.empty() && itemIndex >= 0 &&
+                static_cast<size_t>(itemIndex) < items_.size())
+            {
+                wchar_t path[MAX_PATH]{};
+                if (SHGetPathFromIDListW(
+                        items_[static_cast<size_t>(itemIndex)].
+                            absolutePidl.get(),
+                        path))
+                    deletePaths.push_back(path);
+            }
+            if (!deletePaths.empty())
+            {
+                DestroyMenu(menu);
+                RestoreDesktopWindowLayer();
+                std::vector<snowdesktop::ShellFileOperationStep> steps;
+                steps.push_back({
+                    FO_DELETE,
+                    std::move(deletePaths),
+                    {},
+                    static_cast<FILEOP_FLAGS>(
+                        FOF_ALLOWUNDO |
+                        FOF_NOCONFIRMATION) });
+                QueueShellFileOperation(
+                    std::move(steps),
+                    [this](bool succeeded) {
+                        if (succeeded)
+                            ReloadItems();
+                    });
+                return;
+            }
         }
 
         CMINVOKECOMMANDINFOEX invoke{};

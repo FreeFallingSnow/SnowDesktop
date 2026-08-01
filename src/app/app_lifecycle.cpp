@@ -4,6 +4,7 @@
 
 DesktopApp::~DesktopApp()
 {
+    StopShellFileOperationWorker();
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
     ApplySystemTaskbarBackdrop(false, false,
@@ -568,6 +569,7 @@ void DesktopApp::RequestExit()
     if (exitRequested_)
         return;
     exitRequested_ = true;
+    StopShellFileOperationWorker();
     StopQuickNavigationAppIndexing();
     StopIconLoader();
     RestoreExplorerIcons();

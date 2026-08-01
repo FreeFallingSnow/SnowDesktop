@@ -153,6 +153,9 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case kShellFileOperationCompletedMessage:
+        OnShellFileOperationCompleted(lp);
+        return 0;
     case kActivateExistingInstanceMessage:
         ShowSettingsWindow();
         return 0;

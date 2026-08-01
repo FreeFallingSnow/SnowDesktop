@@ -49,6 +49,7 @@
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "../menu_quick_icon.h"
+#include "../shell_file_operation_worker.h"
 #include "everything_search.h"
 #include "data_paths.h"
 #include "utils.h"
@@ -1408,7 +1409,10 @@ private:
      * @param preview 放置预览
      * @return 操作是否成功
      */
-    bool ExecuteDropPipeline(const DragSourceList& sourceList, const DropPreviewList& preview);
+    using FileOperationCompletion = std::function<void(bool)>;
+    bool ExecuteDropPipeline(const DragSourceList& sourceList,
+        const DropPreviewList& preview,
+        FileOperationCompletion completion = {});
     /**
      * @brief 执行内部拖拽放置计划。
      * @param sourceList 拖拽源列表
@@ -1422,7 +1426,9 @@ private:
      * @param preview 放置预览
      * @return 操作是否成功
      */
-    bool ExecuteFileBackedDropPlan(const DragSourceList& sourceList, const DropPreviewList& preview);
+    bool ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
+        const DropPreviewList& preview,
+        FileOperationCompletion completion = {});
     /**
      * @brief 将文件实际写入桌面（从源列表物化）。
      * @param sourceList 拖拽源列表
@@ -1433,7 +1439,8 @@ private:
      */
     bool MaterializeFilesToDesktop(const DragSourceList& sourceList, DropAction action,
         bool duplicateDesktopCopyNames,
-        std::unordered_map<size_t, std::wstring>* createdPathsBySource = nullptr);
+        std::unordered_map<size_t, std::wstring>* createdPathsBySource,
+        FileOperationCompletion completion);
     /**
      * @brief 将文件写入指定的目标文件夹。
      * @param sourceList 拖拽源列表
@@ -1442,7 +1449,15 @@ private:
      * @return 操作是否成功
      */
     bool MaterializeFilesToFolder(const DragSourceList& sourceList, const std::wstring& folder,
-        DropAction action) const;
+        DropAction action, FileOperationCompletion completion);
+    /** @brief 将路径操作加入独立 Shell STA 队列。 */
+    bool QueueShellFileOperation(
+        std::vector<snowdesktop::ShellFileOperationStep> steps,
+        FileOperationCompletion completion);
+    /** @brief 在 UI 线程处理 Shell 文件操作完成通知。 */
+    void OnShellFileOperationCompleted(LPARAM lParam);
+    /** @brief 停止文件操作线程并清理未投递的 UI 完成通知。 */
+    void StopShellFileOperationWorker();
     /**
      * @brief 缓存待处理的放置信息（用于外壳刷新后恢复）。
      * @param sourceList 拖拽源列表
@@ -2161,6 +2176,12 @@ private:
     /** @name 控制窗口（托盘图标所有权 + 桌面宿主监听） */
     /** @{ */
     HWND controlHwnd_ = nullptr;
+    struct ShellFileOperationUiCompletion
+    {
+        bool succeeded = false;
+        FileOperationCompletion callback;
+    };
+    snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
     HWND inputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
     HWND floatingDockHwnd_ = nullptr;

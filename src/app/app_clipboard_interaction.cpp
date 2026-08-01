@@ -211,32 +211,29 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
     std::vector<std::wstring> paths = GetSelectedFolderEntryPaths();
     if (paths.empty()) return false;
 
-    std::wstring from;
     for (const auto& path : paths)
-    {
         cutPaths_.erase(path);
-        from += path;
-        from.push_back(L'\0');
-    }
-    from.push_back(L'\0');
 
-    SHFILEOPSTRUCTW op{};
-    op.hwnd = ShellDialogOwnerHwnd();
-    op.wFunc = FO_DELETE;
-    op.pFrom = from.c_str();
-    op.fFlags = static_cast<FILEOP_FLAGS>(permanentDelete
-        ? FOF_WANTNUKEWARNING
-        : (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI));
-    if (SHFileOperationW(&op) != 0 || op.fAnyOperationsAborted)
-        return true;
-
-    for (size_t i = 0; i < widgets_.size(); ++i)
-        if (widgets_[i].type == DesktopWidgetType::FolderMapping)
-            RefreshFolderMappingWidget(i);
-    ReloadItems(false);
-    if (IsCollectionPopupInteractive() &&
-        dockFolderPopupOpen_)
-        RefreshDockFolderPopup();
+    std::vector<snowdesktop::ShellFileOperationStep> steps;
+    steps.push_back({
+        FO_DELETE,
+        std::move(paths),
+        {},
+        static_cast<FILEOP_FLAGS>(permanentDelete
+            ? FOF_WANTNUKEWARNING
+            : (FOF_ALLOWUNDO |
+               FOF_NOCONFIRMATION |
+               FOF_NOERRORUI)) });
+    (void)QueueShellFileOperation(
+        std::move(steps),
+        [this](bool succeeded) {
+            if (!succeeded)
+                return;
+            ReloadItems(false);
+            if (IsCollectionPopupInteractive() &&
+                dockFolderPopupOpen_)
+                RefreshDockFolderPopup();
+        });
     return true;
 }
 
@@ -322,27 +319,34 @@ bool DesktopApp::PasteClipboardToFolderPath(
         sourceList.entries.push_back(std::move(entry));
     }
 
-    if (!MaterializeFilesToFolder(
-            sourceList, targetFolderPath,
-            action))
-        return true;
-
-    if (action == DropAction::Move)
-    {
-        cutPaths_.clear();
-        if (OpenClipboard(hwnd_))
+    auto operationCompletion = [this, action](bool succeeded) {
+        if (!succeeded)
+            return;
+        if (action == DropAction::Move)
         {
-            EmptyClipboard();
-            CloseClipboard();
+            cutPaths_.clear();
+            if (OpenClipboard(hwnd_))
+            {
+                EmptyClipboard();
+                CloseClipboard();
+            }
         }
+        ReloadItems(false);
+        if (dockFolderPopupOpen_)
+            RefreshDockFolderPopup();
+    };
+
+    if (action == DropAction::Link)
+    {
+        const bool succeeded = MaterializeFilesToFolder(
+            sourceList, targetFolderPath, action, {});
+        operationCompletion(succeeded);
+        return true;
     }
 
-    for (size_t i = 0; i < widgets_.size(); ++i)
-        if (widgets_[i].type == DesktopWidgetType::FolderMapping)
-            RefreshFolderMappingWidget(i);
-    ReloadItems(false);
-    if (dockFolderPopupOpen_)
-        RefreshDockFolderPopup();
+    (void)MaterializeFilesToFolder(
+        sourceList, targetFolderPath,
+        action, std::move(operationCompletion));
     return true;
 }
 

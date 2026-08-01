@@ -524,14 +524,21 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                         wchar_t path[MAX_PATH]{};
                         if (SHGetPathFromIDList(it->absolutePidl.get(), path))
                         {
-                            SHFILEOPSTRUCTW op{};
-                            op.wFunc = FO_DELETE;
-                            op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION;
-                            wchar_t from[MAX_PATH + 2]{};
-                            wcscpy_s(from, path);
-                            from[wcslen(path) + 1] = L'\0';
-                            op.pFrom = from;
-                            SHFileOperationW(&op);
+                            std::vector<snowdesktop::ShellFileOperationStep>
+                                steps;
+                            steps.push_back({
+                                FO_DELETE,
+                                { path },
+                                {},
+                                static_cast<FILEOP_FLAGS>(
+                                    FOF_ALLOWUNDO |
+                                    FOF_NOCONFIRMATION) });
+                            QueueShellFileOperation(
+                                std::move(steps),
+                                [this](bool succeeded) {
+                                    if (succeeded)
+                                        ReloadItems(false);
+                                });
                         }
                     }
                     SaveLayoutSlots();
