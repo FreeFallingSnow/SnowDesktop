@@ -1,4 +1,5 @@
 #include "app.h"
+#include "desktop_backdrop_update_rules.h"
 
 // Desktop composition paint transaction.
 
@@ -67,9 +68,14 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             marqueeActive_ &&
             !marqueeDockFolderPopup_ &&
             marqueeWidgetIndex_ >= widgets_.size();
-        const bool completeGlassCollection = !dragSession_.IsActive() &&
-            !widgetPreviewActive && !desktopMarqueeActive &&
-            dcompUpdate == nullptr;
+        const bool completeGlassCollection =
+            snowdesktop::desktop_backdrop_update_rules::
+                ShouldCollectAllPanels(
+                    dragSession_.IsActive(),
+                    widgetPreviewActive,
+                    desktopMarqueeActive,
+                    dcompUpdate,
+                    clientRect);
         if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size())
         {
             desktopBackdropCompositor_.RemovePanel(

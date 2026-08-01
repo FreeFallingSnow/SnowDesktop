@@ -14,6 +14,7 @@
 #include "dock_window_transition.h"
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
+#include "app/desktop_backdrop_update_rules.h"
 #include "floating_dock_rules.h"
 #include "display_topology_refresh.h"
 
@@ -76,6 +77,42 @@ int main()
         snowdesktop::item_layout_rules;
     namespace displayRefresh =
         snowdesktop::display_topology_refresh;
+    namespace backdropUpdate =
+        snowdesktop::desktop_backdrop_update_rules;
+
+    const RECT backdropClientRect{0, 0, 1920, 1080};
+    const RECT fullBackdropUpdate{0, 0, 1920, 1080};
+    const RECT oversizedBackdropUpdate{-20, -20, 1940, 1100};
+    const RECT partialBackdropUpdate{0, 0, 1920, 400};
+    Check(
+        backdropUpdate::ShouldCollectAllPanels(
+            false, false, false, nullptr, backdropClientRect),
+        "an unbounded paint reconciles every backdrop panel");
+    Check(
+        backdropUpdate::ShouldCollectAllPanels(
+            false, false, false, &fullBackdropUpdate, backdropClientRect),
+        "a full WM_PAINT update reconciles every backdrop panel");
+    Check(
+        backdropUpdate::ShouldCollectAllPanels(
+            false, false, false, &oversizedBackdropUpdate,
+            backdropClientRect),
+        "an update covering the client area reconciles backdrop panels");
+    Check(
+        !backdropUpdate::ShouldCollectAllPanels(
+            false, false, false, &partialBackdropUpdate,
+            backdropClientRect),
+        "a partial paint preserves backdrop panels outside the dirty area");
+    Check(
+        !backdropUpdate::ShouldCollectAllPanels(
+            true, false, false, &fullBackdropUpdate,
+            backdropClientRect) &&
+        !backdropUpdate::ShouldCollectAllPanels(
+            false, true, false, &fullBackdropUpdate,
+            backdropClientRect) &&
+        !backdropUpdate::ShouldCollectAllPanels(
+            false, false, true, &fullBackdropUpdate,
+            backdropClientRect),
+        "interactive preview paints preserve retained backdrop panels");
 
     Check(
         displayRefresh::ResolveAction(false, false, false) ==

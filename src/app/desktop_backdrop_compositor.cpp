@@ -203,7 +203,7 @@ struct DesktopBackdropCompositor::Impl
     wuc::Compositor compositor{nullptr};
     wucd::DesktopWindowTarget target{nullptr};
     wuc::ContainerVisual root{nullptr};
-    std::unordered_map<int, wuc::CompositionEffectBrush> blurBrushes;
+    std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     std::vector<PanelVisual> panels;
     std::wstring lastError;
     bool completeCollection = true;
@@ -363,19 +363,30 @@ struct DesktopBackdropCompositor::Impl
         return true;
     }
 
-    wuc::CompositionEffectBrush GetBlurBrush(int blurRadius)
+    wuc::CompositionEffectFactory GetBlurFactory(int blurRadius)
     {
-        const auto found = blurBrushes.find(blurRadius);
-        if (found != blurBrushes.end())
+        const auto found = blurFactories.find(blurRadius);
+        if (found != blurFactories.end())
             return found->second;
 
-        auto backdrop = compositor.CreateBackdropBrush();
         auto blur = winrt::make_self<GaussianBlurEffect>();
         blur->effectSource = wuc::CompositionEffectSourceParameter(L"backdrop");
         blur->blurAmount = static_cast<float>(blurRadius);
-        auto brush = compositor.CreateEffectFactory(*blur).CreateBrush();
-        brush.SetSourceParameter(L"backdrop", backdrop);
-        blurBrushes.emplace(blurRadius, brush);
+        auto factory = compositor.CreateEffectFactory(*blur);
+        blurFactories.emplace(blurRadius, factory);
+        return factory;
+    }
+
+    wuc::CompositionEffectBrush CreateBlurBrush(int blurRadius)
+    {
+        // A backdrop effect brush is sized for the SpriteVisual that consumes
+        // it. Sharing one brush between differently-sized panels can retain
+        // the shorter effect surface and stretch its final row over a taller
+        // panel. Factories are safe to cache, but every panel needs its own
+        // effect brush and backdrop source.
+        auto brush = GetBlurFactory(blurRadius).CreateBrush();
+        brush.SetSourceParameter(
+            L"backdrop", compositor.CreateBackdropBrush());
         return brush;
     }
 
@@ -383,7 +394,7 @@ struct DesktopBackdropCompositor::Impl
     {
         available = false;
         panels.clear();
-        blurBrushes.clear();
+        blurFactories.clear();
         if (target)
             target.Root(nullptr);
         root = nullptr;
@@ -633,7 +644,7 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
         if (existing->blurRadius != blurKey || !existing->visual.Brush())
         {
             existing->blurRadius = blurKey;
-            existing->visual.Brush(impl_->GetBlurBrush(blurKey));
+            existing->visual.Brush(impl_->CreateBlurBrush(blurKey));
         }
         existing->cornerRadius = cornerKey;
         existing->visual.Offset(wfn::float3{
