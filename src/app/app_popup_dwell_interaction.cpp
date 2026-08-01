@@ -596,7 +596,8 @@ ShowDockFolderPopupContextMenu(
         MenuIconFont::FluentRegular);
     SetMenuItemIcon(
         menu, kContextMoreCommand,
-        L"");
+        snowdesktop::menu_fluent_glyphs::kMoreOptions,
+        MenuIconFont::FluentRegular);
     SetMenuItemQuickAction(menu, kContextRenameCommand);
     SetMenuItemQuickAction(menu, kContextCutCommand);
     SetMenuItemQuickAction(menu, kContextCopyCommand);

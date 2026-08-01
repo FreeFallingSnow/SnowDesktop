@@ -326,6 +326,38 @@ int wmain(int argc, wchar_t** argv)
         newIconBounds, dark.text) > 0,
         "dark add-circle keeps a neutral Fluent ring");
 
+    const snowdesktop::menu_icon::ItemView moreOptionsItem{
+        L"Show more options", L"\uF582", false, false, false,
+        snowdesktop::MenuQuickIcon::Open,
+    };
+    const RECT moreOptionsBounds{ 0, 0, kWidth, metrics96.rowHeight };
+    const RECT moreOptionsIconBounds{
+        metrics96.leftPadding,
+        0,
+        metrics96.leftPadding + metrics96.iconColumnWidth,
+        metrics96.rowHeight,
+    };
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawItem(
+        dc, font, fluentFont, moreOptionsItem, moreOptionsBounds,
+        0, light, metrics96),
+        "Explorer-style more-options row icon renders");
+    Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
+        moreOptionsIconBounds) > 0,
+        "more-options row colors only its open arrow with the accent");
+    Expect(CountColorInRect(pixels, kWidth, kHeight,
+        moreOptionsIconBounds, light.text) > 0,
+        "more-options row keeps a neutral window outline");
+
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawItem(
+        dc, font, fluentFont, moreOptionsItem, moreOptionsBounds,
+        ODS_DISABLED | ODS_GRAYED, light, metrics96),
+        "disabled more-options row icon renders");
+    Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
+        moreOptionsIconBounds) == 0,
+        "disabled more-options row does not retain a blue accent");
+
     const std::array<UINT, 4> iconTestDpis{ 96, 120, 144, 192 };
     for (const UINT dpi : iconTestDpis)
     {

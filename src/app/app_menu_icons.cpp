@@ -370,6 +370,12 @@ void DesktopApp::SetMenuItemIcon(
 
         entry->glyph.clear();
         entry->fontAwesome = font == MenuIconFont::FontAwesomeSolid;
+        if (!entry->quickAction)
+        {
+            entry->quickIcon = command == kContextMoreCommand
+                ? snowdesktop::MenuQuickIcon::Open
+                : snowdesktop::MenuQuickIcon::FontGlyph;
+        }
         if (font == MenuIconFont::BuiltinFluentFromLegacy &&
             !TranslateLegacyBuiltinGlyph(text, entry->glyph))
         {

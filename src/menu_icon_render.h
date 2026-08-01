@@ -46,6 +46,7 @@ struct ItemView
     bool separator = false;
     bool hasSubmenu = false;
     bool checked = false;
+    MenuQuickIcon semanticIcon = MenuQuickIcon::FontGlyph;
 };
 
 /** @brief 返回接近 Windows 11 原生上下文菜单的明暗配色。 */

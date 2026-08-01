@@ -1,4 +1,7 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
+#include "../shell_context_menu_invoke.h"
+#include "../shell_context_menu_site.h"
 
 // Desktop-item and Shell-backed context menus.
 
@@ -98,7 +101,9 @@ void DesktopApp::ShowItemContextMenu(
     SetMenuItemQuickAction(menu, kContextCutCommand);
     SetMenuItemQuickAction(menu, kContextCopyCommand);
     SetMenuItemQuickAction(menu, kContextDeleteCommand);
-    SetMenuItemIcon(menu, kContextMoreCommand, L"");
+    SetMenuItemIcon(menu, kContextMoreCommand,
+        snowdesktop::menu_fluent_glyphs::kMoreOptions,
+        MenuIconFont::FluentRegular);
     if (dockFrequentItem)
         SetMenuItemIcon(menu, kContextDockRemoveFrequentItem, L"");
     if (canCloseDockApplication)
@@ -284,25 +289,31 @@ void DesktopApp::ShowShellContextMenu(
     }
     if (pidls.empty()) return;
 
-    ComPtr<IContextMenu> ctxMenu;
-    if (FAILED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()), pidls.data(),
-        IID_IContextMenu, nullptr, reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
-        return;
-
-    HMENU menu = CreatePopupMenu();
-    constexpr UINT kFirstCmd = 1;
-    constexpr UINT kLastCmd = 0x7FFF;
-    if (FAILED(ctxMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd, CMF_NORMAL | CMF_CANRENAME)))
-        { DestroyMenu(menu); return; }
-
-    ctxMenu.As(&activeContextMenu2_);
-    ctxMenu.As(&activeContextMenu3_);
-
     HWND menuOwner = keepQuickNavigationOpen &&
         quickNavigationHwnd_ &&
         IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
+    snowdesktop::ShellContextMenuSite menuSite;
+    menuSite.Initialize(desktopFolder_.Get(), menuOwner);
+    HWND shellOwner = menuSite.HostWindow()
+        ? menuSite.HostWindow() : menuOwner;
+    ComPtr<IContextMenu> ctxMenu;
+    if (FAILED(desktopFolder_->GetUIObjectOf(shellOwner, static_cast<UINT>(pidls.size()), pidls.data(),
+        IID_IContextMenu, nullptr, reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
+        return;
+    menuSite.Attach(ctxMenu.Get());
+
+    HMENU menu = CreatePopupMenu();
+    constexpr UINT kFirstCmd = 1;
+    constexpr UINT kLastCmd = 0x7FFF;
+    if (FAILED(ctxMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd,
+            CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU)))
+        { DestroyMenu(menu); return; }
+
+    ctxMenu.As(&activeContextMenu2_);
+    ctxMenu.As(&activeContextMenu3_);
+
     SetForegroundWindow(menuOwner);
     UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, menuOwner, nullptr);
@@ -358,6 +369,11 @@ void DesktopApp::ShowShellContextMenu(
         invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(commandOffset);
         invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
+        const std::wstring invocationDirectory =
+            snowdesktop::DesktopShellInvocationDirectory();
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));

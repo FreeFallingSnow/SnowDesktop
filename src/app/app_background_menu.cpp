@@ -412,7 +412,9 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     SetMenuItemQuickAction(menu, kContextPasteCommand);
     SetMenuItemQuickAction(menu, kContextNewMenu);
     SetMenuItemQuickAction(menu, kContextRefreshCommand);
-    SetMenuItemIcon(menu, kContextMoreCommand, L"");
+    SetMenuItemIcon(menu, kContextMoreCommand,
+        snowdesktop::menu_fluent_glyphs::kMoreOptions,
+        MenuIconFont::FluentRegular);
     if (sortMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu),

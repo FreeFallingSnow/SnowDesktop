@@ -387,6 +387,7 @@ public:
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
+                item.quickIcon,
             };
             UINT state = 0;
             if (!item.enabled)

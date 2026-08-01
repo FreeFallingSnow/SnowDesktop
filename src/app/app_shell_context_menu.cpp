@@ -1,4 +1,6 @@
 #include "app.h"
+#include "../shell_context_menu_invoke.h"
+#include "../shell_context_menu_site.h"
 
 // Shell context-menu command routing.
 
@@ -45,9 +47,20 @@ void DesktopApp::ShowFolderEntryContextMenu(
         return;
     }
 
+    HWND menuOwner = keepQuickNavigationOpen &&
+        quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_
+        : hwnd_;
+    snowdesktop::ShellContextMenuSite menuSite;
+    menuSite.Initialize(parentFolder, menuOwner);
+    HWND shellOwner = menuSite.HostWindow()
+        ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> contextMenu;
-    HRESULT hr = parentFolder->GetUIObjectOf(hwnd_, 1, &child, IID_IContextMenu,
+    HRESULT hr = parentFolder->GetUIObjectOf(shellOwner, 1, &child, IID_IContextMenu,
         nullptr, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+    if (SUCCEEDED(hr) && contextMenu)
+        menuSite.Attach(contextMenu.Get());
     parentFolder->Release();
     if (FAILED(hr) || !contextMenu)
     {
@@ -64,7 +77,8 @@ void DesktopApp::ShowFolderEntryContextMenu(
 
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
-    hr = contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd, CMF_NORMAL | CMF_CANRENAME);
+    hr = contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd,
+        CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU);
     if (FAILED(hr))
     {
         DestroyMenu(menu);
@@ -84,11 +98,6 @@ void DesktopApp::ShowFolderEntryContextMenu(
     contextMenu.As(&activeContextMenu2_);
     contextMenu.As(&activeContextMenu3_);
 
-    HWND menuOwner = keepQuickNavigationOpen &&
-        quickNavigationHwnd_ &&
-        IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_
-        : hwnd_;
     SetForegroundWindow(menuOwner);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, menuOwner, nullptr);
@@ -140,6 +149,11 @@ void DesktopApp::ShowFolderEntryContextMenu(
         invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(commandOffset);
         invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
+        const std::wstring invocationDirectory =
+            snowdesktop::ShellInvocationDirectoryForItem(fullPath);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));

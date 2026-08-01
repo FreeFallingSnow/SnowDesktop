@@ -1,4 +1,6 @@
 #include "app.h"
+#include "../shell_context_menu_invoke.h"
+#include "../shell_context_menu_site.h"
 
 // Shell New menu, desktop host restoration and protected-icon handling.
 
@@ -44,6 +46,9 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
         invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(cmd - 1);
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - 1);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, targetDir, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
     }
@@ -64,18 +69,24 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
  */
 void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 {
+    snowdesktop::ShellContextMenuSite menuSite;
+    menuSite.Initialize(desktopFolder_.Get(), hwnd_);
+    HWND shellOwner = menuSite.HostWindow()
+        ? menuSite.HostWindow() : hwnd_;
     ComPtr<IContextMenu> contextMenu;
-    HRESULT hr = desktopFolder_->CreateViewObject(hwnd_, IID_IContextMenu,
+    HRESULT hr = desktopFolder_->CreateViewObject(shellOwner, IID_IContextMenu,
         reinterpret_cast<void**>(contextMenu.GetAddressOf()));
     if (FAILED(hr) || !contextMenu)
         return;
+    menuSite.Attach(contextMenu.Get());
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
 
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
-    hr = contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd, CMF_NORMAL);
+    hr = contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd,
+        CMF_NORMAL | CMF_SYNCCASCADEMENU);
     if (FAILED(hr)) { DestroyMenu(menu); RestoreDesktopWindowLayer(); return; }
 
     contextMenu.As(&activeContextMenu2_);
@@ -91,12 +102,17 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 
     if (cmd != 0)
     {
+        const std::wstring invocationDirectory =
+            snowdesktop::DesktopShellInvocationDirectory();
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
         invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(cmd - kFirstCmd);
         invoke.lpVerbW = MAKEINTRESOURCEW(cmd - kFirstCmd);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
@@ -177,8 +193,14 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
         return;
     }
 
+    snowdesktop::ShellContextMenuSite menuSite;
+    menuSite.Initialize(folder, hwnd_);
+    HWND shellOwner = menuSite.HostWindow()
+        ? menuSite.HostWindow() : hwnd_;
     ComPtr<IContextMenu> contextMenu;
-    HRESULT hr = folder->CreateViewObject(hwnd_, IID_IContextMenu, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+    HRESULT hr = folder->CreateViewObject(shellOwner, IID_IContextMenu, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+    if (SUCCEEDED(hr) && contextMenu)
+        menuSite.Attach(contextMenu.Get());
     folder->Release();
     if (FAILED(hr) || !contextMenu)
     {
@@ -191,7 +213,16 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
 
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
-    contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd, CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME);
+    if (FAILED(contextMenu->QueryContextMenu(menu, 0,
+            kFirstCmd, kLastCmd,
+            CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME |
+                CMF_SYNCCASCADEMENU)))
+    {
+        DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
+        ILFree(pidl);
+        return;
+    }
 
     contextMenu.As(&activeContextMenu2_);
     contextMenu.As(&activeContextMenu3_);
@@ -212,6 +243,9 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
         invoke.hwnd = ShellDialogOwnerHwnd();
         invoke.lpVerb = MAKEINTRESOURCEA(command - kFirstCmd);
         invoke.lpVerbW = MAKEINTRESOURCEW(command - kFirstCmd);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, folderPath, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
@@ -248,14 +282,20 @@ ShowShellItemContextMenuForPath(
         return;
     }
 
+    snowdesktop::ShellContextMenuSite menuSite;
+    menuSite.Initialize(parentFolder, hwnd_);
+    HWND shellOwner = menuSite.HostWindow()
+        ? menuSite.HostWindow() : hwnd_;
     ComPtr<IContextMenu> contextMenu;
     const HRESULT hr =
         parentFolder->GetUIObjectOf(
-            hwnd_, 1, &child,
+            shellOwner, 1, &child,
             IID_IContextMenu, nullptr,
             reinterpret_cast<void**>(
                 contextMenu.
                     GetAddressOf()));
+    if (SUCCEEDED(hr) && contextMenu)
+        menuSite.Attach(contextMenu.Get());
     parentFolder->Release();
     if (FAILED(hr) || !contextMenu)
     {
@@ -277,7 +317,8 @@ ShowShellItemContextMenuForPath(
                 kLastCmd,
                 CMF_NORMAL |
                     CMF_EXPLORE |
-                    CMF_CANRENAME)))
+                    CMF_CANRENAME |
+                    CMF_SYNCCASCADEMENU)))
     {
         DestroyMenu(menu);
         ILFree(pidl);
@@ -304,6 +345,8 @@ ShowShellItemContextMenuForPath(
     if (command >= kFirstCmd &&
         command <= kLastCmd)
     {
+        const std::wstring invocationDirectory =
+            snowdesktop::ShellInvocationDirectoryForItem(itemPath);
         const UINT commandOffset =
             command - kFirstCmd;
         CMINVOKECOMMANDINFOEX invoke{};
@@ -319,6 +362,9 @@ ShowShellItemContextMenuForPath(
         invoke.lpVerbW =
             MAKEINTRESOURCEW(
                 commandOffset);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(

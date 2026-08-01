@@ -127,6 +127,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_lua_bridge.cpp
     src/app/app_menu_icons.cpp
     src/app/app_message_dispatch.cpp
+    src/shell_context_menu_site.cpp
     src/app/app_navigation_render.cpp
     src/app/app_ole_drop_routing.cpp
     src/app/app_ole_drop_session.cpp
@@ -653,6 +654,14 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid
         LABELS integration shell)
+
+    snowdesktop_add_test(
+        SnowDesktopShellContextMenuInvokeTests
+        shell_context_menu_invoke
+        SOURCES tests/shell_context_menu_invoke_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32
+        LABELS contract shell)
 
     snowdesktop_add_test(
         SnowDesktopDockAndWindowRulesTests

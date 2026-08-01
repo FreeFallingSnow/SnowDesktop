@@ -1120,6 +1120,10 @@ private:
     void ShowShellItemContextMenuForPath(
         const std::wstring& itemPath,
         POINT screenPoint);
+    /** @brief 将 Shell 菜单支持的消息转发给当前 IContextMenu2/3。 */
+    bool HandleShellContextMenuMessage(
+        UINT message, WPARAM wParam, LPARAM lParam,
+        LRESULT& result);
     /** @brief 清理旧菜单状态，并记录弹出点所在显示器的主题和 DPI。 */
     void PrepareMenuIconsForPoint(POINT screenPoint);
     enum class MenuIconFont

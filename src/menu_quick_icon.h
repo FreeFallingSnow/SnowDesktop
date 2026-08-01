@@ -16,6 +16,7 @@ enum class MenuQuickIcon
     Delete,
     Edit,
     Settings,
+    Open,
 };
 
 } // namespace snowdesktop

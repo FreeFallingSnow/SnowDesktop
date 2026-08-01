@@ -7,19 +7,10 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     // Shell context menus send owner-draw and submenu messages to the
     // TrackPopupMenu owner. Quick Navigation owns menus opened from its
     // entries so it can stay active while the menu is visible.
-    if (activeContextMenu3_)
-    {
-        LRESULT result = 0;
-        if (SUCCEEDED(activeContextMenu3_->
-                HandleMenuMsg2(msg, wp, lp, &result)))
-            return result;
-    }
-    else if (activeContextMenu2_)
-    {
-        if (SUCCEEDED(activeContextMenu2_->
-                HandleMenuMsg(msg, wp, lp)))
-            return 0;
-    }
+    LRESULT shellMenuResult = 0;
+    if (HandleShellContextMenuMessage(
+            msg, wp, lp, shellMenuResult))
+        return shellMenuResult;
 
     switch (msg)
     {

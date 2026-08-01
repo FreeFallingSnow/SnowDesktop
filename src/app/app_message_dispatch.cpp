@@ -4,24 +4,48 @@
 
 // Main desktop-window message dispatch.
 
+bool DesktopApp::HandleShellContextMenuMessage(
+    UINT message, WPARAM wParam, LPARAM lParam,
+    LRESULT& result)
+{
+    const bool supportsContextMenu2 =
+        message == WM_INITMENUPOPUP ||
+        message == WM_DRAWITEM ||
+        message == WM_MEASUREITEM;
+    const bool supportsContextMenu3 =
+        supportsContextMenu2 || message == WM_MENUCHAR;
+    if (!supportsContextMenu3)
+        return false;
+
+    if (newMenuContextMenu_ && supportsContextMenu2 &&
+        newMenuContextMenu_->HandleMenuMsg(
+            message, wParam, lParam) == S_OK)
+    {
+        result = 0;
+        return true;
+    }
+    if (activeContextMenu3_ &&
+        activeContextMenu3_->HandleMenuMsg2(
+            message, wParam, lParam, &result) == S_OK)
+    {
+        return true;
+    }
+    if (activeContextMenu2_ && supportsContextMenu2 &&
+        activeContextMenu2_->HandleMenuMsg(
+            message, wParam, lParam) == S_OK)
+    {
+        result = 0;
+        return true;
+    }
+    return false;
+}
+
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (newMenuContextMenu_ && (msg == WM_INITMENUPOPUP || msg == WM_DRAWITEM || msg == WM_MEASUREITEM))
-    {
-        if (SUCCEEDED(newMenuContextMenu_->HandleMenuMsg(msg, wp, lp)))
-            return 0;
-    }
-    if (activeContextMenu3_)
-    {
-        LRESULT result = 0;
-        if (SUCCEEDED(activeContextMenu3_->HandleMenuMsg2(msg, wp, lp, &result)))
-            return result;
-    }
-    else if (activeContextMenu2_)
-    {
-        if (SUCCEEDED(activeContextMenu2_->HandleMenuMsg(msg, wp, lp)))
-            return 0;
-    }
+    LRESULT shellMenuResult = 0;
+    if (HandleShellContextMenuMessage(
+            msg, wp, lp, shellMenuResult))
+        return shellMenuResult;
 
     switch (msg)
     {

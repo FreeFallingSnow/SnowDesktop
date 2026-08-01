@@ -59,6 +59,7 @@ const wchar_t* ResolveQuickGlyph(
     case MenuQuickIcon::Delete: return L"\uF34C";
     case MenuQuickIcon::Edit: return L"\uF3DD";
     case MenuQuickIcon::Settings: return L"\uF6A9";
+    case MenuQuickIcon::Open: return L"\uF582";
     case MenuQuickIcon::FontGlyph:
     default:
         return fallback ? fallback : L"";
@@ -405,6 +406,11 @@ void DrawQuickLayeredGlyph(HDC dc, MenuQuickIcon icon,
         drawAccent(50, 0, 75, 22);
         drawAccent(50, 78, 75, 100);
         return;
+    case MenuQuickIcon::Open:
+        // Match Explorer: the open window stays neutral while only the
+        // north-east arrow uses the system accent color.
+        drawAccent(48, 0, 100, 56);
+        return;
     case MenuQuickIcon::Paste:
     case MenuQuickIcon::Refresh:
     case MenuQuickIcon::Delete:
@@ -598,8 +604,18 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         RECT iconBounds = bounds;
         iconBounds.left += metrics.leftPadding;
         iconBounds.right = iconBounds.left + metrics.iconColumnWidth;
-        DrawGlyphLayer(dc, item.glyph, iconBounds,
-            foreground, nullptr);
+        if (item.semanticIcon == MenuQuickIcon::FontGlyph)
+        {
+            DrawGlyphLayer(dc, item.glyph, iconBounds,
+                foreground, nullptr);
+        }
+        else
+        {
+            const COLORREF accent = disabled
+                ? palette.disabledText : palette.accent;
+            DrawQuickLayeredGlyph(dc, item.semanticIcon,
+                item.glyph, iconBounds, foreground, accent, disabled);
+        }
         if (oldFont)
             SelectObject(dc, oldFont);
     }

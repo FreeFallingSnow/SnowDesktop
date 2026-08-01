@@ -7,6 +7,7 @@ namespace snowdesktop::menu_fluent_glyphs
 // consistent. All code points come from FluentSystemIcons-Regular.ttf.
 inline constexpr wchar_t kDateHeader[] = L"\uF22A";
 inline constexpr wchar_t kNewItem[] = L"\uF10C";
+inline constexpr wchar_t kMoreOptions[] = L"\uF582";
 inline constexpr wchar_t kShowFrequent[] = L"\uF70F";
 inline constexpr wchar_t kHideFrequent[] = L"\uF71A";
 inline constexpr wchar_t kKeepWhenDesktopHidden[] = L"\U000F05EB";

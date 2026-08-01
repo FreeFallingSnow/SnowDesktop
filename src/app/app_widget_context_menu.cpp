@@ -429,7 +429,8 @@ void DesktopApp::ShowWidgetContextMenu(
     setFluentIcon(menu, kContextWidgetToggleSearchBox, L"\uF68F");
     setFluentIcon(menu, kContextNewMenu,
         snowdesktop::menu_fluent_glyphs::kNewItem);
-    setFluentIcon(menu, kContextMoreCommand, L"\uE824");
+    setFluentIcon(menu, kContextMoreCommand,
+        snowdesktop::menu_fluent_glyphs::kMoreOptions);
     setFluentIcon(menu, kContextWidgetEdit, L"\uF6A9");
     setFluentIcon(menu, kContextWidgetRename, L"\U000F0A39");
     setFluentIcon(menu, kContextWidgetDelete, L"\uF34C");
