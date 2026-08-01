@@ -1,5 +1,7 @@
 #pragma once
 
+#include "menu_quick_icon.h"
+
 #include <windows.h>
 
 #include <functional>
@@ -27,6 +29,12 @@ enum class Appearance
     SystemDarkBlur = 2,
 };
 
+enum class IconFont
+{
+    FluentRegular,
+    FontAwesomeSolid,
+};
+
 struct Item
 {
     UINT command = 0;
@@ -36,6 +44,10 @@ struct Item
     bool checked = false;
     bool separator = false;
     std::vector<Item> children;
+    IconFont iconFont = IconFont::FluentRegular;
+    /** 根菜单中以 Windows 11 风格的顶部快捷按钮显示。 */
+    bool quickAction = false;
+    MenuQuickIcon quickIcon = MenuQuickIcon::FontGlyph;
 };
 
 struct Options
@@ -47,7 +59,6 @@ struct Options
     /** 托盘菜单使用；确保根菜单和子菜单位于任务栏之上。 */
     bool topmost = false;
     Appearance appearance = Appearance::FollowSystem;
-    const wchar_t* iconFontFamily = L"Font Awesome 6 Free Solid";
     RootPlacement rootPlacement = RootPlacement::Default;
     RECT anchorRect{};
     /** 返回 true 时应用命令并保持根菜单打开。 */

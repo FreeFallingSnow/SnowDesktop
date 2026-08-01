@@ -196,6 +196,28 @@ IDWriteTextFormat* Widget::GetCuFaTextFormat(float value) const
     return cuFaTextFormatCache_.emplace(key, std::move(format)).first->second.Get();
 }
 
+IDWriteTextFormat* Widget::GetCuFluentTextFormat(float value) const
+{
+    if (!app_ || !app_->dwriteFactory_)
+        return nullptr;
+    const float size = FontCu(value);
+    const int key = static_cast<int>(std::round(size * 100.0f));
+    auto found = cuFluentTextFormatCache_.find(key);
+    if (found != cuFluentTextFormatCache_.end())
+        return found->second.Get();
+
+    ComPtr<IDWriteTextFormat> format;
+    format.Attach(CreateFluentTextFormat(
+        app_->dwriteFactory_.Get(), size));
+    if (!format)
+        return nullptr;
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    return cuFluentTextFormatCache_.emplace(
+        key, std::move(format)).first->second.Get();
+}
+
 // ── WidgetContainer geometry ──────────────────────────────────
 
 /**

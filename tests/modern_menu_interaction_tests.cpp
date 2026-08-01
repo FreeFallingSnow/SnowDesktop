@@ -77,10 +77,10 @@ LRESULT CALLBACK OwnerWindowProc(
             gDrivePhase == 0)
         {
             // Select the cascade row, open it, then activate its first item.
-            PostMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
             for (int i = 0; i < 4; ++i)
-                PostMessageW(menus.root, WM_KEYDOWN, VK_DOWN, 0);
-            PostMessageW(menus.root, WM_KEYDOWN, VK_RIGHT, 0);
+                SendMessageW(menus.root, WM_KEYDOWN, VK_DOWN, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_RIGHT, 0);
             gDrivePhase = 1;
         }
         else if (gDriveMode == DriveMode::Cascade && menus.root &&
@@ -105,8 +105,11 @@ LRESULT CALLBACK OwnerWindowProc(
                     (GetWindowLongPtrW(menus.root, GWL_EXSTYLE) &
                         WS_EX_TOPMOST) != 0;
             }
-            PostMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
-            PostMessageW(menus.root, WM_KEYDOWN, VK_RETURN, 0);
+            // Dispatch synchronously: CI runners can briefly transfer the
+            // foreground window after popup creation, so queued keystrokes
+            // may otherwise arrive only after the menu has deactivated.
+            SendMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
             KillTimer(hwnd, kDriveTimer);
         }
@@ -173,6 +176,12 @@ int wmain()
     HWND owner = CreateWindowExW(0, kOwnerClass, L"", WS_POPUP,
         0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     Expect(owner != nullptr, "interaction-test owner window is created");
+    // Give the popup a real active owner.  A hidden owner lets CTest's console
+    // reclaim activation while the menu fade-in is running, which can dismiss
+    // the popup before the driver timer sees it.
+    ShowWindow(owner, SW_SHOW);
+    SetForegroundWindow(owner);
+    SetFocus(owner);
 
     using snowdesktop::modern_menu::Item;
     const std::vector<Item> items{
@@ -281,6 +290,41 @@ int wmain()
         "follow-system menu uses the blur menu's shadow-free HWND height");
     Expect(gObservedTopmost,
         "a topmost modern menu is created above taskbar windows");
+
+    auto quickAdjustmentItems = adjustmentItems;
+    quickAdjustmentItems[2].label =
+        L"Remove Dock Mapping With An Intentionally Long Label";
+    quickAdjustmentItems[2].quickAction = true;
+    quickAdjustmentItems[3].quickAction = true;
+    gDriveMode = DriveMode::Simple;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gCaptureRootRect = true;
+    gObservedRootRect = {};
+    gCaptureTopmost = false;
+    options.topmost = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto quickResult = snowdesktop::modern_menu::Show(
+        quickAdjustmentItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired, "quick-action popup did not time out");
+    Expect(quickResult.command == 21,
+        "keyboard navigation starts in the top quick-action strip");
+    const int regularHeight = followSystemMenuRect.bottom -
+        followSystemMenuRect.top;
+    const int quickHeight = gObservedRootRect.bottom -
+        gObservedRootRect.top;
+    Expect(quickHeight < regularHeight,
+        "quick actions reduce the vertical menu height");
+    const int quickItemWidth = quickResult.itemScreenRect.right -
+        quickResult.itemScreenRect.left;
+    const int quickMenuWidth = gObservedRootRect.right -
+        gObservedRootRect.left;
+    Expect(quickItemWidth < quickMenuWidth / 2,
+        "a short quick-action strip remains left-aligned at fixed width");
+    Expect(quickItemWidth <= 64,
+        "a long quick-action label cannot widen every top button");
     options.appearance = snowdesktop::modern_menu::Appearance::FollowSystem;
     options.topmost = false;
     gCaptureTopmost = false;

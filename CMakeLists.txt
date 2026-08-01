@@ -671,6 +671,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/menu_icon_render_tests.cpp
             src/menu_icon_render.cpp
+            src/resource.rc
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES gdi32 user32
         LABELS contract ui)
@@ -691,10 +692,12 @@ if (BUILD_TESTING)
     add_executable(SnowDesktopModernMenuPreview WIN32 EXCLUDE_FROM_ALL
         tests/modern_menu_preview.cpp
         src/menu_icon_render.cpp
-        src/modern_menu.cpp)
+        src/modern_menu.cpp
+        src/resource.rc)
     target_compile_features(SnowDesktopModernMenuPreview PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopModernMenuPreview PRIVATE src)
-    target_link_libraries(SnowDesktopModernMenuPreview PRIVATE gdi32 user32)
+    target_link_libraries(SnowDesktopModernMenuPreview PRIVATE
+        gdi32 user32)
     if (MSVC)
         set_property(TARGET SnowDesktopModernMenuPreview PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

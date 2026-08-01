@@ -649,7 +649,8 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
     bool centered = false,
     DWRITE_WORD_WRAPPING wrapping = DWRITE_WORD_WRAPPING_WRAP,
     bool fontAwesome = false,
-    bool verticallyCentered = false)
+    bool verticallyCentered = false,
+    bool fluent = false)
 {
     if (!state || !state->dwrite) return nullptr;
     const auto sizeKey = static_cast<std::uint64_t>(std::clamp(
@@ -659,12 +660,17 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
         (static_cast<std::uint64_t>(centered) << 36) |
         (static_cast<std::uint64_t>(wrapping) << 37) |
         (static_cast<std::uint64_t>(fontAwesome) << 40) |
-        (static_cast<std::uint64_t>(verticallyCentered) << 41);
+        (static_cast<std::uint64_t>(verticallyCentered) << 41) |
+        (static_cast<std::uint64_t>(fluent) << 42);
     if (auto found = state->textFormatCache.find(key); found != state->textFormatCache.end())
         return found->second.Get();
 
     ComPtr<IDWriteTextFormat> format;
-    if (fontAwesome)
+    if (fluent)
+    {
+        format.Attach(CreateFluentTextFormat(state->dwrite, size));
+    }
+    else if (fontAwesome)
     {
         format.Attach(CreateFaTextFormat(state->dwrite, size));
     }
@@ -4754,6 +4760,10 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(const std::wstring& 
                     lua_getfield(L_, -1, "icon");
                     item.icon = lua_isstring(L_, -1) ? lua_tostring(L_, -1) : "";
                     lua_pop(L_, 1);
+                    lua_getfield(L_, -1, "iconFont");
+                    item.iconFont = lua_isstring(L_, -1)
+                        ? lua_tostring(L_, -1) : "fa";
+                    lua_pop(L_, 1);
                     lua_getfield(L_, -1, "enabled");
                     item.enabled = lua_isnil(L_, -1) ? true : (lua_toboolean(L_, -1) != 0);
                     lua_pop(L_, 1);
@@ -7183,7 +7193,7 @@ static int lua_DrawCircle(lua_State* L)
     return 0;
 }
 
-static int lua_DrawFa(lua_State* L)
+static int LuaDrawFontGlyph(lua_State* L, bool fluent)
 {
     const char* glyph = luaL_checkstring(L, 1);
     float x = static_cast<float>(luaL_checknumber(L, 2));
@@ -7200,7 +7210,8 @@ static int lua_DrawFa(lua_State* L)
     MultiByteToWideChar(CP_UTF8, 0, glyph, -1, wtext.data(), wlen);
 
     IDWriteTextFormat* format = GetCachedTextFormat(s, size,
-        DWRITE_FONT_WEIGHT_NORMAL, true, DWRITE_WORD_WRAPPING_NO_WRAP, true);
+        DWRITE_FONT_WEIGHT_NORMAL, true, DWRITE_WORD_WRAPPING_NO_WRAP,
+        !fluent, false, fluent);
     if (!format) return 0;
 
     ID2D1SolidColorBrush* brush = GetCachedBrush(s, color);
@@ -7241,6 +7252,16 @@ static int lua_DrawFa(lua_State* L)
 
     s->ctx->DrawTextLayout(D2D1::Point2F(drawX, drawY), layout.Get(), brush);
     return 0;
+}
+
+static int lua_DrawFa(lua_State* L)
+{
+    return LuaDrawFontGlyph(L, false);
+}
+
+static int lua_DrawFluent(lua_State* L)
+{
+    return LuaDrawFontGlyph(L, true);
 }
 
 static int lua_StorageGet(lua_State* L)
@@ -7703,6 +7724,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
     lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");
     lua_pushcfunction(L, lua_DrawFa);    lua_setfield(L, -2, "fa");
+    lua_pushcfunction(L, lua_DrawFluent);lua_setfield(L, -2, "fluent");
     lua_pushcfunction(L, lua_DrawImage); lua_setfield(L, -2, "image");
     lua_pushcfunction(L, lua_DrawIcon);  lua_setfield(L, -2, "icon");
     lua_setglobal(L, "draw");

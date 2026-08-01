@@ -50,7 +50,8 @@
 - Direct2D + Direct3D 11 + DirectComposition
 - Dear ImGui（设置窗口）
 - Lua 5.4（脚本引擎）
-- Font Awesome 6 Free（图标）
+- Fluent System Icons Regular（现代右键菜单与组件菜单图标）
+- Font Awesome 6 Free（组件兼容图标）
 - WinHTTP（Lua HTTP 运行时）
 
 ## 📄 协议

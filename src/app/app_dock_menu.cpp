@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
 
 // Dock and running-application context menus.
 
@@ -36,29 +37,43 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), _LW("app.dock.position"));
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        MF_STRING | (dockSettings_.showFrequentItems ? MF_CHECKED : MF_UNCHECKED),
-        kContextDockShowFrequentItems, _LW("app.dock.show_frequent"));
+    auto toggleLabel = [](const wchar_t* title, bool enabled) {
+        std::wstring label = title;
+        label += L"\t";
+        label += enabled
+            ? _LW("app.interact.on")
+            : _LW("app.interact.off");
+        return label;
+    };
+    const std::wstring frequentLabel = toggleLabel(
+        _LW("app.dock.show_frequent"),
+        dockSettings_.showFrequentItems);
+    AppendMenuW(menu, MF_STRING,
+        kContextDockShowFrequentItems, frequentLabel.c_str());
 
-    HMENU keepMenu = CreatePopupMenu();
-    if (keepMenu)
-    {
-        AppendMenuW(keepMenu,
-            MF_STRING | (dockSettings_.keepWhenDesktopHidden ? MF_CHECKED : MF_UNCHECKED),
-            kContextDockKeepWhenHiddenOn, _LW("app.interact.on"));
-        AppendMenuW(keepMenu,
-            MF_STRING | (!dockSettings_.keepWhenDesktopHidden ? MF_CHECKED : MF_UNCHECKED),
-            kContextDockKeepWhenHiddenOff, _LW("app.interact.off"));
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(keepMenu),
-            _LW("app.dock.keep_when_hidden"));
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(keepMenu), L"");
-    }
+    const UINT keepToggleCommand =
+        dockSettings_.keepWhenDesktopHidden
+            ? kContextDockKeepWhenHiddenOff
+            : kContextDockKeepWhenHiddenOn;
+    const std::wstring keepLabel = toggleLabel(
+        _LW("app.dock.keep_when_hidden"),
+        dockSettings_.keepWhenDesktopHidden);
+    AppendMenuW(menu, MF_STRING,
+        keepToggleCommand, keepLabel.c_str());
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
 
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
+    SetMenuItemIcon(menu, kContextDockShowFrequentItems,
+        dockSettings_.showFrequentItems
+            ? snowdesktop::menu_fluent_glyphs::kShowFrequent
+            : snowdesktop::menu_fluent_glyphs::kHideFrequent,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, keepToggleCommand,
+        snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden,
+        MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
 
     SetForegroundWindow(hwnd_);

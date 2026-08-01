@@ -33,6 +33,11 @@ DesktopApp::~DesktopApp()
         RemoveFontMemResourceEx(faFontHandle_);
         faFontHandle_ = nullptr;
     }
+    if (fluentIconFontHandle_)
+    {
+        RemoveFontMemResourceEx(fluentIconFontHandle_);
+        fluentIconFontHandle_ = nullptr;
+    }
     if (oleDragDropAdapter_)
         oleDragDropAdapter_->Detach();
 }

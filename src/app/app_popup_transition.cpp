@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
 
 // Collection and Dock-folder popup transitions.
 
@@ -355,15 +356,39 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
     SetMenuItemIcon(
         menu,
         reinterpret_cast<UINT_PTR>(
-            nameMenu), L"");
+            nameMenu),
+        snowdesktop::menu_fluent_glyphs::kSortName,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(nameMenu, kContextWidgetSortByName,
+        snowdesktop::menu_fluent_glyphs::kSortNameAscending,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(nameMenu, kContextWidgetSortByNameDesc,
+        snowdesktop::menu_fluent_glyphs::kSortNameDescending,
+        MenuIconFont::FluentRegular);
     SetMenuItemIcon(
         menu,
         reinterpret_cast<UINT_PTR>(
-            typeMenu), L"");
+            typeMenu),
+        snowdesktop::menu_fluent_glyphs::kSortType,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(typeMenu, kContextWidgetSortByType,
+        snowdesktop::menu_fluent_glyphs::kSortTypeAscending,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(typeMenu, kContextWidgetSortByTypeDesc,
+        snowdesktop::menu_fluent_glyphs::kSortTypeDescending,
+        MenuIconFont::FluentRegular);
     SetMenuItemIcon(
         menu,
         reinterpret_cast<UINT_PTR>(
-            dateMenu), L"");
+            dateMenu),
+        snowdesktop::menu_fluent_glyphs::kSortDate,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(dateMenu, kContextWidgetSortByDate,
+        snowdesktop::menu_fluent_glyphs::kSortDateAscending,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(dateMenu, kContextWidgetSortByDateDesc,
+        snowdesktop::menu_fluent_glyphs::kSortDateDescending,
+        MenuIconFont::FluentRegular);
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     FocusDesktopInputWindow();

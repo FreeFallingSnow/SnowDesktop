@@ -48,6 +48,7 @@
 #include "floating_dock_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
+#include "../menu_quick_icon.h"
 #include "everything_search.h"
 #include "data_paths.h"
 #include "utils.h"
@@ -1121,8 +1122,19 @@ private:
         POINT screenPoint);
     /** @brief 清理旧菜单状态，并记录弹出点所在显示器的主题和 DPI。 */
     void PrepareMenuIconsForPoint(POINT screenPoint);
-    /** @brief 为菜单项设置自定义图标。 @param menu 菜单句柄 @param command 命令 ID @param text 图标文字 */
-    void SetMenuItemIcon(HMENU menu, UINT_PTR command, const wchar_t* text);
+    enum class MenuIconFont
+    {
+        /** 兼容现有内置调用：将旧 Font Awesome 语义映射为 Fluent。 */
+        BuiltinFluentFromLegacy,
+        FluentRegular,
+        FontAwesomeSolid,
+    };
+    /** @brief 为菜单项设置自定义图标。 */
+    void SetMenuItemIcon(HMENU menu, UINT_PTR command,
+        const wchar_t* text,
+        MenuIconFont font = MenuIconFont::BuiltinFluentFromLegacy);
+    /** @brief 将根菜单项移到 Windows 11 风格的顶部快捷操作区。 */
+    void SetMenuItemQuickAction(HMENU menu, UINT_PTR command);
     /** @brief 将 HMENU 数据模型显示为完全自绘的现代弹窗，并返回命令 ID。 */
     UINT ShowModernMenu(HMENU menu, POINT screenPoint, HWND owner,
         bool placeOutsideDock = false,
@@ -1955,11 +1967,13 @@ private:
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
+    ComPtr<IDWriteTextFormat> fluentIconTextFormat_;
     ComPtr<ID2D1Bitmap1> privacyFileIconBitmap_;
     ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
     HANDLE faFontHandle_ = nullptr;
+    HANDLE fluentIconFontHandle_ = nullptr;
     UINT menuIconDpi_ = USER_DEFAULT_SCREEN_DPI;
     bool menuLightTheme_ = true;
     int menuAppearanceStyle_ = 0;
@@ -1968,6 +1982,10 @@ private:
         HMENU menu = nullptr;
         UINT position = 0;
         std::wstring glyph;
+        bool fontAwesome = false;
+        bool quickAction = false;
+        snowdesktop::MenuQuickIcon quickIcon =
+            snowdesktop::MenuQuickIcon::FontGlyph;
     };
     std::vector<std::unique_ptr<MenuIconEntry>> menuIconPool_;
     std::unique_ptr<SettingsWindow> settingsWindow_;

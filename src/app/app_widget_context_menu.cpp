@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
 #include "../widgets/collection_group_rules.h"
 
 // Widget editor, group-tab and generic widget context menus.
@@ -46,7 +47,8 @@ void DesktopApp::ShowCollectionGroupTabContextMenu(
         kContextWidgetRename,
         _LW("app.menu.rename"));
     SetMenuItemIcon(
-        menu, kContextWidgetRename, L"");
+        menu, kContextWidgetRename, L"\U000F0A39",
+        MenuIconFont::FluentRegular);
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     FocusDesktopInputWindow();
@@ -105,7 +107,8 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
         kContextWidgetRename,
         _LW("app.menu.rename"));
     SetMenuItemIcon(
-        menu, kContextWidgetRename, L"");
+        menu, kContextWidgetRename, L"\U000F0A39",
+        MenuIconFont::FluentRegular);
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     FocusDesktopInputWindow();
@@ -143,6 +146,11 @@ void DesktopApp::ShowWidgetContextMenu(
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
+    const auto setFluentIcon = [this](
+        HMENU targetMenu, UINT_PTR item, const wchar_t* glyph) {
+        SetMenuItemIcon(targetMenu, item, glyph,
+            MenuIconFont::FluentRegular);
+    };
 
     const auto& widget = widgets_[widgetIndex];
     size_t effectiveSourceIndex = widgetIndex;
@@ -155,6 +163,34 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     const DesktopWidget& effectiveSource =
         widgets_[effectiveSourceIndex];
+    const auto statusLabel = [](const wchar_t* title,
+                                const wchar_t* status) {
+        std::wstring label = title;
+        label += L"\t";
+        label += status;
+        return label;
+    };
+    const auto visibilityLabel = [&](const wchar_t* title,
+                                     bool visible) {
+        return statusLabel(title,
+            visible
+                ? _LW("app.interact.shown")
+                : _LW("app.interact.hidden"));
+    };
+    const std::wstring displayTypeLabel = statusLabel(
+        _LW("app.interact.display_type"),
+        widget.listMode
+            ? _LW("app.interact.list_view_state")
+            : _LW("app.interact.icon_view_state"));
+    const std::wstring categoryVisibilityLabel = visibilityLabel(
+        _LW("app.interact.file_categories"),
+        widget.showFileCategories);
+    const std::wstring searchVisibilityLabel = visibilityLabel(
+        _LW("app.interact.search_box"),
+        widget.showSearchBox);
+    const std::wstring dateVisibilityLabel = visibilityLabel(
+        _LW("app.interact.date_header"),
+        widget.dateHeaders);
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     HMENU displayModeMenu = nullptr;
 
@@ -173,21 +209,17 @@ void DesktopApp::ShowWidgetContextMenu(
         if (widget.scrollContainerMode)
         {
             AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
-                widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
+                displayTypeLabel.c_str());
         }
     }
     else if (widget.type == DesktopWidgetType::CollectionGroup)
     {
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
-            widget.listMode
-                ? _LW("app.interact.icon_display")
-                : _LW("app.interact.list_display"));
-        AppendMenuW(menu, MF_STRING | (widget.showSearchBox ? MF_CHECKED : 0),
+            displayTypeLabel.c_str());
+        AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleSearchBox,
-            widget.showSearchBox
-                ? _LW("app.interact.hide_search_box")
-                : _LW("app.interact.show_search_box"));
+            searchVisibilityLabel.c_str());
     }
     else if (widget.type == DesktopWidgetType::FileGroup)
     {
@@ -197,12 +229,14 @@ void DesktopApp::ShowWidgetContextMenu(
             AppendMenuW(menu, MF_STRING,
                 kContextWidgetManualCollect,
                 _LW("app.interact.collect_now"));
-            AppendMenuW(menu,
-                MF_STRING |
-                    (effectiveSource.autoCollect
-                        ? MF_CHECKED : 0),
+            const std::wstring autoCollectLabel = statusLabel(
+                _LW("app.interact.auto_collect"),
+                effectiveSource.autoCollect
+                    ? _LW("app.interact.on")
+                    : _LW("app.interact.off"));
+            AppendMenuW(menu, MF_STRING,
                 kContextWidgetToggleAutoCollect,
-                _LW("app.interact.auto_collect"));
+                autoCollectLabel.c_str());
         }
         else if (effectiveSource.type ==
                  DesktopWidgetType::FolderMapping)
@@ -213,24 +247,16 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
-            widget.listMode
-                ? _LW("app.interact.icon_display")
-                : _LW("app.interact.list_display"));
+            displayTypeLabel.c_str());
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
-            widget.showFileCategories
-                ? _LW("app.interact.hide_file_categories")
-                : _LW("app.interact.show_file_categories"));
+            categoryVisibilityLabel.c_str());
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleSearchBox,
-            widget.showSearchBox
-                ? _LW("app.interact.hide_search_box")
-                : _LW("app.interact.show_search_box"));
+            searchVisibilityLabel.c_str());
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleDateGroup,
-            widget.dateHeaders
-                ? _LW("app.interact.hide_date_header")
-                : _LW("app.interact.show_date_header"));
+            dateVisibilityLabel.c_str());
         if (effectiveSource.type ==
             DesktopWidgetType::FolderMapping)
         {
@@ -244,29 +270,31 @@ void DesktopApp::ShowWidgetContextMenu(
     else if (widget.type == DesktopWidgetType::FileCategories)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, _LW("app.interact.collect_now"));
-        AppendMenuW(menu, MF_STRING | (widget.autoCollect ? MF_CHECKED : 0), kContextWidgetToggleAutoCollect, _LW("app.interact.auto_collect"));
-        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
+        const std::wstring autoCollectLabel = statusLabel(
+            _LW("app.interact.auto_collect"),
+            widget.autoCollect
+                ? _LW("app.interact.on")
+                : _LW("app.interact.off"));
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleAutoCollect,
+            autoCollectLabel.c_str());
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
+            displayTypeLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
-            widget.dateHeaders ? _LW("app.interact.hide_date_header") : _LW("app.interact.show_date_header"));
+            dateVisibilityLabel.c_str());
     }
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
-        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode, widget.listMode ? _LW("app.interact.icon_display") : _LW("app.interact.list_display"));
-        AppendMenuW(menu, MF_STRING | (widget.showFileCategories ? MF_CHECKED : 0),
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
+            displayTypeLabel.c_str());
+        AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
-            widget.showFileCategories
-                ? _LW("app.interact.hide_file_categories")
-                : _LW("app.interact.show_file_categories"));
-        AppendMenuW(menu, MF_STRING | (widget.showSearchBox ? MF_CHECKED : 0),
+            categoryVisibilityLabel.c_str());
+        AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleSearchBox,
-            widget.showSearchBox
-                ? _LW("app.interact.hide_search_box")
-                : _LW("app.interact.show_search_box"));
+            searchVisibilityLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
-            widget.dateHeaders
-                ? _LW("app.interact.hide_date_header")
-                : _LW("app.interact.show_date_header"));
+            dateVisibilityLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
         AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     }
@@ -293,9 +321,15 @@ void DesktopApp::ShowWidgetContextMenu(
                 if (!item.icon.empty())
                 {
                     std::wstring icon = Utf8ToWide(item.icon);
+                    const bool useFluent =
+                        _stricmp(item.iconFont.c_str(), "fluent") == 0 ||
+                        _stricmp(item.iconFont.c_str(), "fluent-regular") == 0;
                     SetMenuItemIcon(menu,
                         kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
-                        icon.c_str());
+                        icon.c_str(),
+                        useFluent
+                            ? MenuIconFont::FluentRegular
+                            : MenuIconFont::FontAwesomeSolid);
                 }
             }
         }
@@ -382,56 +416,87 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, _LW("app.interact.delete_widget"));
 
-    SetMenuItemIcon(menu, kContextWidgetOpen, L"");
-    SetMenuItemIcon(menu, kContextWidgetManualCollect, L"");
-    SetMenuItemIcon(menu, kContextWidgetToggleListMode, widget.listMode ? L"" : L"");
-    SetMenuItemIcon(menu, kContextWidgetToggleDateGroup, L"");
-    SetMenuItemIcon(menu, kContextWidgetOpenFolder, L"");
-    SetMenuItemIcon(menu, kContextWidgetToggleFileCategories, L"");
-    SetMenuItemIcon(menu, kContextWidgetToggleSearchBox, L"");
-    SetMenuItemIcon(menu, kContextNewMenu, L"");
-    SetMenuItemIcon(menu, kContextMoreCommand, L"");
-    SetMenuItemIcon(menu, kContextWidgetEdit, L"");
-    SetMenuItemIcon(menu, kContextWidgetRename, L"");
-    SetMenuItemIcon(menu, kContextWidgetDelete, L"");
-    SetMenuItemIcon(menu, hoverToggleCommand, L"");
-    SetMenuItemIcon(menu, keepToggleCommand, L"");
+    setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
+    setFluentIcon(menu, kContextWidgetManualCollect, L"\uF150");
+    setFluentIcon(menu, kContextWidgetToggleAutoCollect, L"\uF190");
+    setFluentIcon(menu, kContextWidgetToggleListMode,
+        widget.listMode ? L"\uF4ED" : L"\uF462");
+    setFluentIcon(menu, kContextWidgetToggleDateGroup,
+        snowdesktop::menu_fluent_glyphs::kDateHeader);
+    setFluentIcon(menu, kContextWidgetOpenFolder, L"\uF42E");
+    setFluentIcon(menu, kContextWidgetToggleFileCategories,
+        L"\U000F0129");
+    setFluentIcon(menu, kContextWidgetToggleSearchBox, L"\uF68F");
+    setFluentIcon(menu, kContextNewMenu,
+        snowdesktop::menu_fluent_glyphs::kNewItem);
+    setFluentIcon(menu, kContextMoreCommand, L"\uE824");
+    setFluentIcon(menu, kContextWidgetEdit, L"\uF6A9");
+    setFluentIcon(menu, kContextWidgetRename, L"\U000F0A39");
+    setFluentIcon(menu, kContextWidgetDelete, L"\uF34C");
+    SetMenuItemQuickAction(menu, kContextWidgetEdit);
+    SetMenuItemQuickAction(menu, kContextNewMenu);
+    SetMenuItemQuickAction(menu, kContextWidgetRename);
+    SetMenuItemQuickAction(menu, kContextWidgetDelete);
+    setFluentIcon(menu, hoverToggleCommand, L"\uE5F2");
+    setFluentIcon(menu, keepToggleCommand, L"\uF359");
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
         widget.type == DesktopWidgetType::CollectionGroup ||
         widget.type == DesktopWidgetType::FileGroup)
     {
-        SetMenuItemIcon(menu, privacyToggleCommand,
-            widget.privacyMode ? L"" : L"");
+        setFluentIcon(menu, privacyToggleCommand,
+            widget.privacyMode ? L"\uE78F" : L"\uE795");
     }
     if (sortMenu)
     {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
+        setFluentIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu),
+            snowdesktop::menu_fluent_glyphs::kSort);
         if (wNameMenu)
         {
-            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wNameMenu), L"");
-            SetMenuItemIcon(wNameMenu, kContextWidgetSortByName, L"");
-            SetMenuItemIcon(wNameMenu, kContextWidgetSortByNameDesc, L"");
+            setFluentIcon(sortMenu,
+                reinterpret_cast<UINT_PTR>(wNameMenu),
+                snowdesktop::menu_fluent_glyphs::kSortName);
+            setFluentIcon(wNameMenu,
+                kContextWidgetSortByName,
+                snowdesktop::menu_fluent_glyphs::kSortNameAscending);
+            setFluentIcon(wNameMenu,
+                kContextWidgetSortByNameDesc,
+                snowdesktop::menu_fluent_glyphs::kSortNameDescending);
         }
         if (wTypeMenu)
         {
-            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wTypeMenu), L"");
-            SetMenuItemIcon(wTypeMenu, kContextWidgetSortByType, L"");
-            SetMenuItemIcon(wTypeMenu, kContextWidgetSortByTypeDesc, L"");
+            setFluentIcon(sortMenu,
+                reinterpret_cast<UINT_PTR>(wTypeMenu),
+                snowdesktop::menu_fluent_glyphs::kSortType);
+            setFluentIcon(wTypeMenu,
+                kContextWidgetSortByType,
+                snowdesktop::menu_fluent_glyphs::kSortTypeAscending);
+            setFluentIcon(wTypeMenu,
+                kContextWidgetSortByTypeDesc,
+                snowdesktop::menu_fluent_glyphs::kSortTypeDescending);
         }
         if (wDateMenu)
         {
-            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(wDateMenu), L"");
-            SetMenuItemIcon(wDateMenu, kContextWidgetSortByDate, L"");
-            SetMenuItemIcon(wDateMenu, kContextWidgetSortByDateDesc, L"");
+            setFluentIcon(sortMenu,
+                reinterpret_cast<UINT_PTR>(wDateMenu),
+                snowdesktop::menu_fluent_glyphs::kSortDate);
+            setFluentIcon(wDateMenu,
+                kContextWidgetSortByDate,
+                snowdesktop::menu_fluent_glyphs::kSortDateAscending);
+            setFluentIcon(wDateMenu,
+                kContextWidgetSortByDateDesc,
+                snowdesktop::menu_fluent_glyphs::kSortDateDescending);
         }
     }
     if (displayModeMenu)
     {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displayModeMenu), L"");
-        SetMenuItemIcon(displayModeMenu, kContextWidgetCollModeLargeFolder, L"");
-        SetMenuItemIcon(displayModeMenu, kContextWidgetCollModeScrollContainer, L"");
+        setFluentIcon(menu,
+            reinterpret_cast<UINT_PTR>(displayModeMenu), L"\uF133");
+        setFluentIcon(displayModeMenu,
+            kContextWidgetCollModeLargeFolder, L"\uF418");
+        setFluentIcon(displayModeMenu,
+            kContextWidgetCollModeScrollContainer, L"\uF8CB");
     }
 
     SetForegroundWindow(hwnd_);

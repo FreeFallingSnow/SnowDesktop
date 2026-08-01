@@ -52,10 +52,17 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
     AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
-    AppendMenuW(menu, selectedCount == 1 && canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextRenameCommand, _LW("app.menu.rename"));
+    AppendMenuW(menu,
+        selectedCount == 1 && canFile && !dockMapping
+            ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextRenameCommand, _LW("app.menu.rename"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCutCommand, _LW("app.menu.cut"));
-    AppendMenuW(menu, canFile ? MF_STRING : MF_STRING | MF_GRAYED, kContextCopyCommand, _LW("app.menu.copy"));
+    AppendMenuW(menu,
+        canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextCutCommand, _LW("app.menu.cut"));
+    AppendMenuW(menu,
+        canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextCopyCommand, _LW("app.menu.copy"));
     AppendMenuW(menu,
         (canFile || dockMapping)
             ? MF_STRING
@@ -87,6 +94,10 @@ void DesktopApp::ShowItemContextMenu(
     SetMenuItemIcon(menu, kContextCutCommand, L"");
     SetMenuItemIcon(menu, kContextCopyCommand, L"");
     SetMenuItemIcon(menu, kContextDeleteCommand, L"");
+    SetMenuItemQuickAction(menu, kContextRenameCommand);
+    SetMenuItemQuickAction(menu, kContextCutCommand);
+    SetMenuItemQuickAction(menu, kContextCopyCommand);
+    SetMenuItemQuickAction(menu, kContextDeleteCommand);
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
     if (dockFrequentItem)
         SetMenuItemIcon(menu, kContextDockRemoveFrequentItem, L"");

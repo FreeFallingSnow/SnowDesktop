@@ -1140,11 +1140,11 @@ void CollectionGroup::DrawButtons(
     const bool light = app_->IsLightContentTheme();
     const float scale = GetBarScale();
     IDWriteTextFormat* format =
-        GetCuFaTextFormat(14.0f * scale);
+        GetCuFluentTextFormat(14.0f * scale);
     IDWriteTextFormat* fallback = format
         ? format
-        : (app_->faTextFormat_
-            ? app_->faTextFormat_.Get()
+        : (app_->fluentIconTextFormat_
+            ? app_->fluentIconTextFormat_.Get()
             : app_->listItemTextFormat_.Get());
 
     RECT listToggle =
@@ -1154,7 +1154,7 @@ void CollectionGroup::DrawButtons(
             &listToggle, app_->lastMousePoint_) != FALSE;
     app_->DrawD2DText(
         context,
-        data_->listMode ? L"" : L"",
+        data_->listMode ? L"\uF462" : L"\uF4ED",
         listToggle, fallback,
         light
             ? D2D1::ColorF(

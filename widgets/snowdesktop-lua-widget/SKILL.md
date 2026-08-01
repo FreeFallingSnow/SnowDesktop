@@ -171,10 +171,15 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 - Add `ui.input` before defining `imguiRender`; otherwise `imgui` is absent from the sandbox.
 - Add `ui.contextMenu` before defining custom menu callbacks; otherwise the host ignores them.
 - Context-menu items may set `icon` to a Font Awesome 6 Free Solid glyph, for
-  example `{ id = 1, label = "刷新", icon = "" }`. Leave it out for no icon.
+  example `{ id = 1, label = "刷新", icon = "" }`. They may instead set
+  `iconFont = "fluent"` and use a Fluent System Icons Regular glyph. The default
+  remains Font Awesome for compatibility; leave `icon` out for no icon.
+- Use `draw.fluent(glyph, x, y, size, color)` for matching in-component Fluent
+  controls; `draw.fa` remains available for existing component compatibility.
 - To unlock the debug page, open **设置 → 关于** and click the version number
-  five times. Then open **调试 → Font Awesome 图标字符**; clicking an icon copies
-  it to the clipboard.
+  five times. Then open **调试 → Font Awesome 图标字符** or
+  **Fluent System Icons Regular 图标字符**; clicking an icon copies it to the
+  clipboard.
 - Use `imguiRender()` for the host **详细设置** panel.
 - Prefer declarative manifest `settings` for simple text, bool, integer, float,
   select, and color fields; keep `imguiRender()` for custom editors.

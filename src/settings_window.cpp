@@ -42,8 +42,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <initializer_list>
 #include <optional>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -60,6 +62,37 @@ constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
 constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
+
+std::string CodepointToUtf8(unsigned int codepoint)
+{
+    std::string result;
+    if (codepoint <= 0x7F)
+    {
+        result.push_back(static_cast<char>(codepoint));
+    }
+    else if (codepoint <= 0x7FF)
+    {
+        result.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+        result.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+    else if (codepoint <= 0xFFFF)
+    {
+        result.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+        result.push_back(static_cast<char>(
+            0x80 | ((codepoint >> 6) & 0x3F)));
+        result.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+    else if (codepoint <= 0x10FFFF)
+    {
+        result.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+        result.push_back(static_cast<char>(
+            0x80 | ((codepoint >> 12) & 0x3F)));
+        result.push_back(static_cast<char>(
+            0x80 | ((codepoint >> 6) & 0x3F)));
+        result.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+    return result;
+}
 
 std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
     const wchar_t* title, const COMDLG_FILTERSPEC* filters,
@@ -4316,54 +4349,92 @@ void SettingsWindow::DrawWidgetDeveloperTools()
         ImGui::Spacing();
     }
 
-    if (DrawCollapsingHeaderWithHelp(_L("app.settings.fa_icons"),
-        _L("app.settings.fa_icon_hint")))
-    {
-        if (faDebugFont_ && faDebugCodepoints_.empty())
+    const auto drawIconGrid = [&](const char* titleKey,
+        const char* hintKey, const char* notFoundKey,
+        const char* countKey, const char* tooltipKey,
+        const char* childId, const char* itemIdPrefix,
+        ImFont* font, std::vector<unsigned int>& codepoints,
+        std::initializer_list<std::pair<unsigned int, unsigned int>> ranges) {
+        if (!DrawCollapsingHeaderWithHelp(_L(titleKey), _L(hintKey)))
+            return;
+        if (font && codepoints.empty())
         {
-            for (unsigned int codepoint = 0xE000; codepoint <= 0xF8FF; ++codepoint)
+            for (const auto& [first, last] : ranges)
             {
-                if (faDebugFont_->IsGlyphInFont(static_cast<ImWchar>(codepoint)))
-                    faDebugCodepoints_.push_back(codepoint);
+                for (unsigned int codepoint = first;
+                    codepoint <= last; ++codepoint)
+                {
+                    if (font->IsGlyphInFont(
+                            static_cast<ImWchar>(codepoint)))
+                        codepoints.push_back(codepoint);
+                }
             }
         }
-
-        if (!faDebugFont_ || faDebugCodepoints_.empty())
+        if (!font || codepoints.empty())
         {
-            ImGui::TextDisabled("%s", _L("app.settings.fa_not_found"));
+            ImGui::TextDisabled("%s", _L(notFoundKey));
+            ImGui::Spacing();
+            return;
         }
-        else
-        {
-            ImGui::Text(_L("app.settings.fa_valid_chars"),
-                static_cast<int>(faDebugCodepoints_.size()));
-            const float buttonSize = 38.0f * dpiScale_;
-            const float spacing = ImGui::GetStyle().ItemSpacing.x;
-            const int columns = std::max(1, static_cast<int>(
-                ImGui::GetContentRegionAvail().x / (buttonSize + spacing)));
 
-            ImGui::BeginChild("##FontAwesomeGlyphs", ImVec2(0, 220.0f * dpiScale_), true);
-            for (size_t i = 0; i < faDebugCodepoints_.size(); ++i)
+        ImGui::Text(_L(countKey), static_cast<int>(codepoints.size()));
+        const float buttonSize = 38.0f * dpiScale_;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const int columns = std::max(1, static_cast<int>(
+            ImGui::GetContentRegionAvail().x / (buttonSize + spacing)));
+        ImGui::BeginChild(childId, ImVec2(0, 220.0f * dpiScale_), true);
+        const int rowCount = static_cast<int>(
+            (codepoints.size() + static_cast<size_t>(columns) - 1) /
+            static_cast<size_t>(columns));
+        ImGuiListClipper clipper;
+        clipper.Begin(rowCount,
+            buttonSize + ImGui::GetStyle().ItemSpacing.y);
+        while (clipper.Step())
+        {
+            for (int row = clipper.DisplayStart;
+                row < clipper.DisplayEnd; ++row)
             {
-                unsigned int codepoint = faDebugCodepoints_[i];
-                wchar_t wide[2] = { static_cast<wchar_t>(codepoint), L'\0' };
-                std::string glyph = WideToUtf8(wide);
-                std::string buttonLabel = glyph + "##fa" + std::to_string(codepoint);
-
-                ImGui::PushFont(faDebugFont_, 18.0f * dpiScale_);
-                bool clicked = ImGui::Button(buttonLabel.c_str(), ImVec2(buttonSize, buttonSize));
-                ImGui::PopFont();
-                if (clicked)
-                    ImGui::SetClipboardText(glyph.c_str());
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(_L("app.settings.fa_copy_tooltip"), codepoint);
-
-                if ((static_cast<int>(i) + 1) % columns != 0)
-                    ImGui::SameLine();
+                for (int column = 0; column < columns; ++column)
+                {
+                    const size_t i = static_cast<size_t>(
+                        row * columns + column);
+                    if (i >= codepoints.size())
+                        break;
+                    const unsigned int codepoint = codepoints[i];
+                    const std::string glyph = CodepointToUtf8(codepoint);
+                    const std::string buttonLabel = glyph + itemIdPrefix +
+                        std::to_string(codepoint);
+                    ImGui::PushFont(font, 18.0f * dpiScale_);
+                    const bool clicked = ImGui::Button(buttonLabel.c_str(),
+                        ImVec2(buttonSize, buttonSize));
+                    ImGui::PopFont();
+                    if (clicked)
+                        ImGui::SetClipboardText(glyph.c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(_L(tooltipKey), codepoint);
+                    if (column + 1 < columns && i + 1 < codepoints.size())
+                        ImGui::SameLine();
+                }
             }
-            ImGui::EndChild();
         }
+        ImGui::EndChild();
         ImGui::Spacing();
-    }
+    };
+
+    drawIconGrid("app.settings.fluent_icons",
+        "app.settings.fluent_icon_hint",
+        "app.settings.fluent_not_found",
+        "app.settings.fluent_valid_chars",
+        "app.settings.fluent_copy_tooltip",
+        "##FluentRegularGlyphs", "##fluent",
+        fluentDebugFont_, fluentDebugCodepoints_,
+        { { 0xE000, 0xF8FF }, { 0xF0000, 0xF0CCE } });
+    drawIconGrid("app.settings.fa_icons",
+        "app.settings.fa_icon_hint", "app.settings.fa_not_found",
+        "app.settings.fa_valid_chars",
+        "app.settings.fa_copy_tooltip",
+        "##FontAwesomeGlyphs", "##fa",
+        faDebugFont_, faDebugCodepoints_, { { 0xE000, 0xF8FF } });
 
     ImGui::Separator();
 
@@ -5517,6 +5588,24 @@ void SettingsWindow::SetupFonts()
         strcpy_s(config.Name, "Font Awesome 6 Free Solid");
         faDebugFont_ = io.Fonts->AddFontFromMemoryTTF(fontData, static_cast<int>(fontSize),
             18.0f * dpiScale_, &config, iconRanges);
+    }
+
+    resource = FindResourceW(instance_,
+        MAKEINTRESOURCEW(IDR_FLUENT_REGULAR_FONT), RT_RCDATA);
+    resourceHandle = resource ? LoadResource(instance_, resource) : nullptr;
+    fontData = resourceHandle ? LockResource(resourceHandle) : nullptr;
+    fontSize = resource ? SizeofResource(instance_, resource) : 0;
+    if (fontData && fontSize > 0)
+    {
+        static const ImWchar iconRanges[] = {
+            0xE000, 0xF8FF, 0xF0000, 0xF0CCE, 0,
+        };
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = false;
+        strcpy_s(config.Name, "FluentSystemIcons-Regular");
+        fluentDebugFont_ = io.Fonts->AddFontFromMemoryTTF(fontData,
+            static_cast<int>(fontSize), 18.0f * dpiScale_,
+            &config, iconRanges);
     }
 }
 

@@ -131,10 +131,13 @@ HICON LoadAppIcon()
  *
  * @return 成功时返回字体句柄，失败时返回 nullptr。
  */
-HANDLE LoadFontAwesome()
+namespace
+{
+HANDLE LoadEmbeddedFont(int resourceId)
 {
     HMODULE module = GetModuleHandleW(nullptr);
-    HRSRC res = FindResourceW(module, MAKEINTRESOURCEW(IDR_FA_FONT), RT_RCDATA);
+    HRSRC res = FindResourceW(
+        module, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
     if (res == nullptr) return nullptr;
     HGLOBAL handle = LoadResource(module, res);
     if (handle == nullptr) return nullptr;
@@ -146,11 +149,24 @@ HANDLE LoadFontAwesome()
     HANDLE fontHandle = AddFontMemResourceEx(data, size, nullptr, &count);
     return fontHandle;
 }
+}
+
+HANDLE LoadFontAwesome()
+{
+    return LoadEmbeddedFont(IDR_FA_FONT);
+}
+
+HANDLE LoadFluentSystemIconsRegular()
+{
+    return LoadEmbeddedFont(IDR_FLUENT_REGULAR_FONT);
+}
 
 namespace
 {
     const void* g_faFontData = nullptr;
     DWORD g_faFontSize = 0;
+    const void* g_fluentFontData = nullptr;
+    DWORD g_fluentFontSize = 0;
 
     /**
      * @brief 构建 Font Awesome 内存字体的 DirectWrite 字体集合。
@@ -161,7 +177,8 @@ namespace
      * @param factory IDWriteFactory 接口指针。
      * @return 成功时返回字体集合，失败时返回 nullptr。
      */
-    ComPtr<IDWriteFontCollection1> BuildFaFontCollection(IDWriteFactory* factory)
+    ComPtr<IDWriteFontCollection1> BuildMemoryFontCollection(
+        IDWriteFactory* factory, const void* fontData, DWORD fontSize)
     {
         ComPtr<IDWriteFactory5> factory5;
         if (FAILED(factory->QueryInterface(IID_PPV_ARGS(&factory5))))
@@ -182,8 +199,8 @@ namespace
         ComPtr<IDWriteFontFile> fontFile;
         if (FAILED(loader->CreateInMemoryFontFileReference(
                 factory5.Get(),
-                g_faFontData,
-                g_faFontSize,
+                fontData,
+                fontSize,
                 nullptr,
                 &fontFile)))
         {
@@ -250,7 +267,8 @@ IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize)
             fontCollection = s_faFontCollection;
         else
         {
-            fontCollection = BuildFaFontCollection(factory);
+            fontCollection = BuildMemoryFontCollection(
+                factory, g_faFontData, g_faFontSize);
             s_faFontCollection = fontCollection;
         }
     }
@@ -269,6 +287,49 @@ IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize)
 
     format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    return format;
+}
+
+IDWriteTextFormat* CreateFluentTextFormat(
+    IDWriteFactory* factory, float fontSize)
+{
+    if (factory == nullptr) return nullptr;
+
+    if (g_fluentFontData == nullptr)
+    {
+        HMODULE module = GetModuleHandleW(nullptr);
+        HRSRC resource = FindResourceW(module,
+            MAKEINTRESOURCEW(IDR_FLUENT_REGULAR_FONT), RT_RCDATA);
+        if (resource != nullptr)
+        {
+            HGLOBAL handle = LoadResource(module, resource);
+            if (handle != nullptr)
+            {
+                g_fluentFontData = LockResource(handle);
+                g_fluentFontSize = SizeofResource(module, resource);
+            }
+        }
+    }
+
+    static ComPtr<IDWriteFontCollection1> fluentCollection;
+    if (!fluentCollection && g_fluentFontData != nullptr)
+    {
+        fluentCollection = BuildMemoryFontCollection(
+            factory, g_fluentFontData, g_fluentFontSize);
+    }
+
+    IDWriteTextFormat* format = nullptr;
+    const HRESULT hr = factory->CreateTextFormat(
+        L"FluentSystemIcons-Regular", fluentCollection.Get(),
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        fontSize, L"", &format);
+    if (FAILED(hr)) return nullptr;
+
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     return format;
 }
 

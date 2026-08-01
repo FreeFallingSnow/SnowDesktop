@@ -113,6 +113,10 @@ struct Popup
     int windowHeight = 0;
     POINT panelScreenOrigin{};
     std::vector<RECT> itemRects;
+    std::vector<int> navigationOrder;
+    RECT quickSeparatorRect{};
+    int quickActionRight = 0;
+    int quickActionCellWidth = 0;
 };
 
 class MenuController
@@ -133,26 +137,55 @@ public:
           panelPadding_(Scale(5, options.dpi)),
           panelRadius_(Scale(8, options.dpi))
     {
-        const int textHeight = -Scale(14, options.dpi);
-        const int iconHeight = -Scale(14, options.dpi);
+        const int textHeight = -Scale(13, options.dpi);
+        const int iconHeight = -metrics_.iconFontHeight;
+        const int quickTextHeight = -Scale(10, options.dpi);
+        const int quickIconHeight = -metrics_.quickActionFontHeight;
         textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        iconFont_ = CreateFontW(iconHeight, 0, 0, 0, FW_NORMAL,
+        // Only the official Regular face is embedded.  Requesting Semibold
+        // makes GDI synthesize thicker outlines, which distorts the 20px
+        // Fluent masters most visibly on 96-DPI / low-resolution screens.
+        fluentIconFont_ = CreateFontW(iconHeight, 0, 0, 0, FW_NORMAL,
+            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_ONLY_PRECIS,
+            CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
+        fontAwesomeIconFont_ = CreateFontW(iconHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE,
-            options.iconFontFamily && *options.iconFontFamily
-                ? options.iconFontFamily
-                : L"Segoe UI Symbol");
+            L"Font Awesome 6 Free Solid");
+        quickTextFont_ = CreateFontW(quickTextHeight, 0, 0, 0, FW_NORMAL,
+            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        quickFluentIconFont_ = CreateFontW(quickIconHeight, 0, 0, 0,
+            FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+            L"FluentSystemIcons-Regular");
+        quickFontAwesomeIconFont_ = CreateFontW(quickIconHeight, 0, 0, 0,
+            FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+            L"Font Awesome 6 Free Solid");
     }
 
     ~MenuController()
     {
         CloseFromDepth(0);
-        if (iconFont_)
-            DeleteObject(iconFont_);
+        if (fontAwesomeIconFont_)
+            DeleteObject(fontAwesomeIconFont_);
+        if (fluentIconFont_)
+            DeleteObject(fluentIconFont_);
+        if (quickFontAwesomeIconFont_)
+            DeleteObject(quickFontAwesomeIconFont_);
+        if (quickFluentIconFont_)
+            DeleteObject(quickFluentIconFont_);
+        if (quickTextFont_)
+            DeleteObject(quickTextFont_);
         if (textFont_)
             DeleteObject(textFont_);
     }
@@ -343,6 +376,8 @@ public:
         for (size_t i = 0; i < popup.items->size(); ++i)
         {
             RECT row = popup.itemRects[i];
+            if (row.right <= row.left || row.bottom <= row.top)
+                continue;
             OffsetRect(&row, 0, -popup.scrollOffset);
             RECT clipped{};
             if (!IntersectRect(&clipped, &row, &viewport))
@@ -359,8 +394,56 @@ public:
             if (static_cast<int>(i) == popup.hoveredItem ||
                 static_cast<int>(i) == popup.keyboardItem)
                 state |= ODS_SELECTED;
-            menu_icon::DrawItem(memoryDc, textFont_, iconFont_, view,
-                row, state, palette_, metrics_);
+            HFONT iconFont = item.iconFont == IconFont::FontAwesomeSolid
+                ? fontAwesomeIconFont_ : fluentIconFont_;
+            if (popup.depth == 0 && item.quickAction)
+            {
+                HFONT quickIconFont =
+                    item.iconFont == IconFont::FontAwesomeSolid
+                    ? quickFontAwesomeIconFont_
+                    : quickFluentIconFont_;
+                menu_icon::DrawQuickAction(memoryDc, quickTextFont_,
+                    quickIconFont, item.quickIcon, view, row, state,
+                    palette_, metrics_);
+                if (row.right < popup.quickActionRight)
+                {
+                    RECT verticalSeparator{
+                        row.right - 1,
+                        row.top + metrics_.outerInset * 2,
+                        row.right,
+                        row.bottom - metrics_.outerInset * 2,
+                    };
+                    HBRUSH separatorBrush = CreateSolidBrush(
+                        palette_.separator);
+                    if (separatorBrush)
+                    {
+                        FillRect(memoryDc, &verticalSeparator,
+                            separatorBrush);
+                        DeleteObject(separatorBrush);
+                    }
+                }
+            }
+            else
+            {
+                menu_icon::DrawItem(memoryDc, textFont_, iconFont, view,
+                    row, state, palette_, metrics_);
+            }
+        }
+        if (popup.quickSeparatorRect.right >
+            popup.quickSeparatorRect.left)
+        {
+            RECT separator = popup.quickSeparatorRect;
+            OffsetRect(&separator, 0, -popup.scrollOffset);
+            RECT clipped{};
+            if (IntersectRect(&clipped, &separator, &viewport))
+            {
+                const menu_icon::ItemView separatorView{
+                    L"", L"", true, false, false,
+                };
+                menu_icon::DrawItem(memoryDc, textFont_,
+                    fluentIconFont_, separatorView, separator, 0,
+                    palette_, metrics_);
+            }
         }
         RestoreDC(memoryDc, savedDc);
 
@@ -469,11 +552,29 @@ private:
     {
         HDC screenDc = GetDC(nullptr);
         int width = metrics_.minimumWidth;
-        int contentTop = shadowSize_ + panelPadding_;
-        popup.itemRects.clear();
-        popup.itemRects.reserve(popup.items->size());
-        for (const Item& item : *popup.items)
+        std::vector<int> quickIndices;
+        std::vector<int> regularIndices;
+        int pendingSeparator = -1;
+        for (size_t i = 0; i < popup.items->size(); ++i)
         {
+            const Item& item = (*popup.items)[i];
+            if (popup.depth == 0 && item.quickAction && !item.separator)
+            {
+                quickIndices.push_back(static_cast<int>(i));
+                continue;
+            }
+            if (item.separator)
+            {
+                if (!regularIndices.empty())
+                    pendingSeparator = static_cast<int>(i);
+                continue;
+            }
+            if (pendingSeparator >= 0)
+            {
+                regularIndices.push_back(pendingSeparator);
+                pendingSeparator = -1;
+            }
+            regularIndices.push_back(static_cast<int>(i));
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
@@ -481,20 +582,89 @@ private:
             const SIZE measured = menu_icon::MeasureItem(
                 screenDc, textFont_, view, metrics_);
             width = std::max(width, static_cast<int>(measured.cx));
-            RECT row{
-                shadowSize_, contentTop,
-                shadowSize_ + width,
-                contentTop + static_cast<int>(measured.cy),
-            };
-            popup.itemRects.push_back(row);
-            contentTop = row.bottom;
+        }
+        if (!quickIndices.empty())
+        {
+            int quickCellWidth = metrics_.quickActionMinimumWidth;
+            if (screenDc)
+            {
+                HGDIOBJ oldFont = SelectObject(screenDc, quickTextFont_);
+                for (int index : quickIndices)
+                {
+                    std::wstring_view label =
+                        (*popup.items)[index].label;
+                    const size_t tab = label.find(L'\t');
+                    label = label.substr(0, tab);
+                    SIZE labelSize{};
+                    GetTextExtentPoint32W(screenDc, label.data(),
+                        static_cast<int>(label.size()), &labelSize);
+                    quickCellWidth = std::max(quickCellWidth,
+                        static_cast<int>(labelSize.cx) +
+                            metrics_.outerInset * 4);
+                }
+                if (oldFont)
+                    SelectObject(screenDc, oldFont);
+            }
+            quickCellWidth = std::min(quickCellWidth,
+                metrics_.quickActionMaximumWidth);
+            width = std::max(width,
+                quickCellWidth *
+                    static_cast<int>(quickIndices.size()) +
+                    metrics_.outerInset * 2);
+            popup.quickActionCellWidth = quickCellWidth;
         }
         if (screenDc)
             ReleaseDC(nullptr, screenDc);
 
-        // A later, wider item must expand every previously measured row.
-        for (RECT& row : popup.itemRects)
-            row.right = shadowSize_ + width;
+        popup.itemRects.assign(popup.items->size(), RECT{});
+        popup.navigationOrder.clear();
+        popup.quickSeparatorRect = {};
+        popup.quickActionRight = 0;
+        if (quickIndices.empty())
+            popup.quickActionCellWidth = 0;
+        int contentTop = shadowSize_ + panelPadding_;
+        if (!quickIndices.empty())
+        {
+            const int actionLeft = shadowSize_ + metrics_.outerInset;
+            const int actionWidth = popup.quickActionCellWidth *
+                static_cast<int>(quickIndices.size());
+            popup.quickActionRight = actionLeft + actionWidth;
+            const int count = static_cast<int>(quickIndices.size());
+            for (int column = 0; column < count; ++column)
+            {
+                const int left = actionLeft +
+                    popup.quickActionCellWidth * column;
+                const int right = left + popup.quickActionCellWidth;
+                popup.itemRects[quickIndices[column]] = {
+                    left, contentTop, right,
+                    contentTop + metrics_.quickActionHeight,
+                };
+                popup.navigationOrder.push_back(quickIndices[column]);
+            }
+            contentTop += metrics_.quickActionHeight;
+            if (!regularIndices.empty())
+            {
+                popup.quickSeparatorRect = {
+                    shadowSize_, contentTop,
+                    shadowSize_ + width,
+                    contentTop + metrics_.separatorHeight,
+                };
+                contentTop += metrics_.separatorHeight;
+            }
+        }
+        for (int index : regularIndices)
+        {
+            const Item& item = (*popup.items)[index];
+            const int height = item.separator
+                ? metrics_.separatorHeight : metrics_.rowHeight;
+            popup.itemRects[index] = {
+                shadowSize_, contentTop,
+                shadowSize_ + width, contentTop + height,
+            };
+            contentTop += height;
+            if (!item.separator)
+                popup.navigationOrder.push_back(index);
+        }
         popup.panelWidth = width;
         popup.contentHeight = contentTop - shadowSize_ - panelPadding_;
 
@@ -818,15 +988,21 @@ private:
 
     void SelectNext(Popup& popup, int direction, bool fromBoundary)
     {
-        const int count = static_cast<int>(popup.items->size());
+        const int count = static_cast<int>(popup.navigationOrder.size());
         if (count == 0)
             return;
-        int index = fromBoundary
+        const int current = CurrentItem(popup);
+        const auto found = std::find(
+            popup.navigationOrder.begin(),
+            popup.navigationOrder.end(), current);
+        int position = fromBoundary || found == popup.navigationOrder.end()
             ? (direction > 0 ? -1 : count)
-            : CurrentItem(popup);
+            : static_cast<int>(std::distance(
+                popup.navigationOrder.begin(), found));
         for (int attempt = 0; attempt < count; ++attempt)
         {
-            index = (index + direction + count) % count;
+            position = (position + direction + count) % count;
+            const int index = popup.navigationOrder[position];
             if (IsSelectable((*popup.items)[index]))
             {
                 EnsureVisible(popup, index);
@@ -838,10 +1014,11 @@ private:
 
     void SelectBoundary(Popup& popup, bool end)
     {
-        const int count = static_cast<int>(popup.items->size());
+        const int count = static_cast<int>(popup.navigationOrder.size());
         for (int step = 0; step < count; ++step)
         {
-            const int index = end ? count - 1 - step : step;
+            const int position = end ? count - 1 - step : step;
+            const int index = popup.navigationOrder[position];
             if (IsSelectable((*popup.items)[index]))
             {
                 EnsureVisible(popup, index);
@@ -857,11 +1034,19 @@ private:
         if (!popup || !std::iswalnum(character))
             return;
         const wchar_t target = static_cast<wchar_t>(std::towlower(character));
-        const int count = static_cast<int>(popup->items->size());
-        int start = std::max(0, CurrentItem(*popup) + 1);
+        const int count = static_cast<int>(popup->navigationOrder.size());
+        if (count == 0)
+            return;
+        const auto found = std::find(
+            popup->navigationOrder.begin(),
+            popup->navigationOrder.end(), CurrentItem(*popup));
+        const int start = found == popup->navigationOrder.end()
+            ? 0
+            : (static_cast<int>(std::distance(
+                popup->navigationOrder.begin(), found)) + 1) % count;
         for (int step = 0; step < count; ++step)
         {
-            const int index = (start + step) % count;
+            const int index = popup->navigationOrder[(start + step) % count];
             const Item& item = (*popup->items)[index];
             std::wstring_view label = item.label;
             while (!label.empty() && (label.front() == L'&' ||
@@ -975,7 +1160,7 @@ private:
         // The acrylic backdrop already supplies its own tint.  Keeping the
         // custom surface comparatively translucent lets the blurred desktop
         // remain visible instead of stacking two nearly opaque colour layers.
-        constexpr float blurPanelAlpha = 92.0f;
+        const float blurPanelAlpha = lightTheme_ ? 70.0f : 76.0f;
         constexpr float blurHoverAlpha = 146.0f;
         constexpr float blurContentAlpha = 246.0f;
         constexpr float shadowAlpha = 34.0f;
@@ -1129,7 +1314,7 @@ private:
             return;
 
         const COLORREF tint = palette_.background;
-        const DWORD tintAlpha = lightTheme_ ? 0x70 : 0x7A;
+        const DWORD tintAlpha = lightTheme_ ? 0x58 : 0x60;
         AccentPolicy accent;
         accent.state = AccentState::AcrylicBlurBehind;
         accent.flags = 2;
@@ -1158,7 +1343,11 @@ private:
     int panelPadding_ = 0;
     int panelRadius_ = 0;
     HFONT textFont_ = nullptr;
-    HFONT iconFont_ = nullptr;
+    HFONT fluentIconFont_ = nullptr;
+    HFONT fontAwesomeIconFont_ = nullptr;
+    HFONT quickTextFont_ = nullptr;
+    HFONT quickFluentIconFont_ = nullptr;
+    HFONT quickFontAwesomeIconFont_ = nullptr;
     std::vector<std::unique_ptr<Popup>> popups_;
     int activeDepth_ = 0;
     bool done_ = false;

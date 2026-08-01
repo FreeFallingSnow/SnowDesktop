@@ -938,12 +938,16 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
         handleRect.top + (handleRect.bottom - handleRect.top + btnSize) / 2
     };
 
-    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f * bs);
+    IDWriteTextFormat* fluentFormat =
+        GetCuFluentTextFormat(14.0f * bs);
 
     bool hot = PtInRect(&toggleBtn, app_->lastMousePoint_) != FALSE;
-    app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggleBtn,
-        faFormat ? faFormat :
-            (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+    app_->DrawD2DText(context,
+        data_->listMode ? L"\uF462" : L"\uF4ED", toggleBtn,
+        fluentFormat ? fluentFormat :
+            (app_->fluentIconTextFormat_
+                ? app_->fluentIconTextFormat_.Get()
+                : app_->listItemTextFormat_.Get()),
         app_->IsLightContentTheme()
             ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
             : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f)));

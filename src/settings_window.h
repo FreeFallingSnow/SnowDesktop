@@ -679,6 +679,12 @@ private:
     /// 内嵌 Font Awesome 字体中实际存在的私有区字符
     std::vector<unsigned int> faDebugCodepoints_;
 
+    /// 调试页使用的 Fluent System Icons Regular 字体
+    ImFont* fluentDebugFont_ = nullptr;
+
+    /// 内嵌 Fluent Regular 字体中实际存在的私有区字符
+    std::vector<unsigned int> fluentDebugCodepoints_;
+
     /** @} */
 
     /** @name 回调函数

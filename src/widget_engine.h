@@ -150,7 +150,8 @@ struct LuaWidgetMenuItem
 {
     int id = 0;                ///< 菜单项标识符，回调时回传
     std::string label;         ///< 菜单项显示文本
-    std::string icon;          ///< 可选 Font Awesome 图标字符
+    std::string icon;          ///< 可选图标字符
+    std::string iconFont = "fa"; ///< "fa"（兼容默认）或 "fluent"
     bool enabled = true;       ///< 是否可用（灰显）
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
 };

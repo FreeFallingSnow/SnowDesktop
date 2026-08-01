@@ -14,6 +14,7 @@
 #include "types.h"
 #include "app.h"
 #include "collection_group_rules.h"
+#include "../menu_fluent_glyphs.h"
 #include "drop_model.h"
 #include "search_match.h"
 #include "../category_settings.h"
@@ -1215,7 +1216,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
  * - 日期按钮：开启或关闭按修改日期分组
  * - 切换按钮：在图标模式（网格）和列表模式之间切换
  * - 打开文件夹按钮：打开当前映射的磁盘文件夹
- * 按钮使用 Font Awesome 图标，并具有悬停高亮效果。
+ * 按钮使用 Fluent System Icons Regular，并具有悬停高亮效果。
  */
 void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
@@ -1247,13 +1248,16 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
         handleRect.top + (h + btnSize) / 2
     };
 
-    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f * bs);
+    IDWriteTextFormat* fluentFormat =
+        GetCuFluentTextFormat(14.0f * bs);
 
-    auto drawFaButton = [&](RECT rect, const std::wstring& glyph, bool active) {
+    auto drawFluentButton = [&](RECT rect, const std::wstring& glyph, bool active) {
         bool hot = PtInRect(&rect, app_->lastMousePoint_) != FALSE;
         app_->DrawD2DText(context, glyph, rect,
-            faFormat ? faFormat :
-                (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+            fluentFormat ? fluentFormat :
+                (app_->fluentIconTextFormat_
+                    ? app_->fluentIconTextFormat_.Get()
+                    : app_->listItemTextFormat_.Get()),
             lt
                 ? (active
                     ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f)
@@ -1267,9 +1271,12 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
                            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f))));
     };
 
-    drawFaButton(dateBtn, L"", data_->dateHeaders);
-    drawFaButton(toggleBtn, data_->listMode ? L"" : L"", true);
-    drawFaButton(openBtn, L"", true);
+    drawFluentButton(dateBtn,
+        snowdesktop::menu_fluent_glyphs::kDateHeader,
+        data_->dateHeaders);
+    drawFluentButton(toggleBtn,
+        data_->listMode ? L"\uF462" : L"\uF4ED", true);
+    drawFluentButton(openBtn, L"\uF42E", true);
     (void)hovered;
 }
 

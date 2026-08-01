@@ -14,6 +14,7 @@
 #include "collection_group_rules.h"
 #include "drop_model.h"
 #include "search_match.h"
+#include "../menu_fluent_glyphs.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -1334,10 +1335,16 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     RECT dateToggle = FileCategoryDateToggleRect(this);
     bool dateHot = PtInRect(&dateToggle, app_->lastMousePoint_) != FALSE;
     const float bs = GetBarScale();
-    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f * bs);
-    app_->DrawD2DText(context, L"", dateToggle,
-        faFormat ? faFormat :
-            (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+    IDWriteTextFormat* fluentFormat =
+        GetCuFluentTextFormat(14.0f * bs);
+    IDWriteTextFormat* iconFormat = fluentFormat
+        ? fluentFormat
+        : (app_->fluentIconTextFormat_
+            ? app_->fluentIconTextFormat_.Get()
+            : app_->listItemTextFormat_.Get());
+    app_->DrawD2DText(context,
+        snowdesktop::menu_fluent_glyphs::kDateHeader, dateToggle,
+        iconFormat,
         lt
             ? (data_->dateHeaders
                 ? (dateHot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
@@ -1348,9 +1355,9 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
 
     RECT toggle = FileCategoryToggleRect(this);
     bool hot = PtInRect(&toggle, app_->lastMousePoint_) != FALSE;
-    app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggle,
-        faFormat ? faFormat :
-            (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+    app_->DrawD2DText(context,
+        data_->listMode ? L"\uF462" : L"\uF4ED", toggle,
+        iconFormat,
         lt
             ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
             : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f)));

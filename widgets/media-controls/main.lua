@@ -3,6 +3,10 @@ useCustomStyle = true
 followPersonalizationDefault = true
 bottomBarHover = true
 
+local fluent = {
+    settings = utf8.char(0xF6A9),
+}
+
 bg = 0x0F172A
 border = 0xFFFFFF
 alpha = 0.42
@@ -171,10 +175,10 @@ end
 
 function getContextMenu()
     return {
-        { id = 1, label = l10n.tr("lua_widget.media_control.configure_launcher"), icon = "" },
+        { id = 1, label = l10n.tr("lua_widget.media_control.configure_launcher"), icon = fluent.settings, iconFont = "fluent" },
     }
 end
 
 function onMenu(id)
-    if id == 1 then widget.invalidate() end
+    if id == 1 then widget.openSettings() end
 end

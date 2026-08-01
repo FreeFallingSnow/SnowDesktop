@@ -9,6 +9,7 @@
 #include "app.h"
 #include "drop_model.h"
 #include "collection_group_rules.h"
+#include "../menu_fluent_glyphs.h"
 #include "../search_match.h"
 #include "../l10n.h"
 
@@ -1916,11 +1917,11 @@ void FileGroup::DrawButtons(
         GetFileGroupButtonRects(this, includeOpen);
     const bool light = app_->IsLightContentTheme();
     IDWriteTextFormat* format =
-        GetCuFaTextFormat(14.0f * GetBarScale());
+        GetCuFluentTextFormat(14.0f * GetBarScale());
     IDWriteTextFormat* fallback = format
         ? format
-        : (app_->faTextFormat_
-            ? app_->faTextFormat_.Get()
+        : (app_->fluentIconTextFormat_
+            ? app_->fluentIconTextFormat_.Get()
             : app_->listItemTextFormat_.Get());
     auto draw = [&](RECT rect, const wchar_t* glyph, bool active) {
         if (IsRectEmptyRect(rect)) return;
@@ -1944,7 +1945,10 @@ void FileGroup::DrawButtons(
                         1.0f, 1.0f, 1.0f,
                         hot ? 0.50f : 0.28f)));
     };
-    draw(buttons.date, L"", data_->dateHeaders);
-    draw(buttons.list, data_->listMode ? L"" : L"", true);
-    if (includeOpen) draw(buttons.open, L"", true);
+    draw(buttons.date,
+        snowdesktop::menu_fluent_glyphs::kDateHeader,
+        data_->dateHeaders);
+    draw(buttons.list,
+        data_->listMode ? L"\uF462" : L"\uF4ED", true);
+    if (includeOpen) draw(buttons.open, L"\uF42E", true);
 }

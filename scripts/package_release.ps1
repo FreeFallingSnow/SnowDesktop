@@ -106,6 +106,18 @@ function Copy-Payload {
         Copy-Item -LiteralPath $file -Destination $Destination -Force
     }
 
+    $licensesDestination = Join-Path $Destination "licenses"
+    New-Item -ItemType Directory -Path $licensesDestination -Force |
+        Out-Null
+    $fluentIconsLicense = Join-Path $repositoryRoot `
+        "third_party\fluentui-system-icons\LICENSE"
+    if (-not (Test-Path -LiteralPath $fluentIconsLicense -PathType Leaf)) {
+        throw "Required Fluent System Icons license was not found: $fluentIconsLicense"
+    }
+    Copy-Item -LiteralPath $fluentIconsLicense `
+        -Destination (Join-Path $licensesDestination `
+            "FluentSystemIcons-LICENSE.txt") -Force
+
     Copy-Directory `
         -Source (Join-Path $repositoryRoot "widgets") `
         -Destination (Join-Path $Destination "widgets")

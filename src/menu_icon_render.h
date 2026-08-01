@@ -1,5 +1,7 @@
 #pragma once
 
+#include "menu_quick_icon.h"
+
 #include <windows.h>
 
 namespace snowdesktop::menu_icon
@@ -12,21 +14,29 @@ struct Palette
     COLORREF text = RGB(26, 26, 26);
     COLORREF disabledText = RGB(118, 118, 118);
     COLORREF separator = RGB(225, 225, 225);
+    COLORREF accent = RGB(0, 120, 212);
 };
 
 struct Metrics
 {
-    int rowHeight = 34;
-    int separatorHeight = 9;
-    int minimumWidth = 200;
+    int rowHeight = 32;
+    int separatorHeight = 8;
+    int minimumWidth = 192;
     int outerInset = 4;
     int selectionInsetY = 2;
     int selectionRadius = 4;
     int leftPadding = 10;
     int iconColumnWidth = 22;
-    int textGap = 8;
-    int rightPadding = 10;
-    int arrowColumnWidth = 18;
+    int textGap = 7;
+    int rightPadding = 9;
+    int arrowColumnWidth = 16;
+    int quickActionHeight = 52;
+    int quickActionMinimumWidth = 46;
+    int quickActionMaximumWidth = 64;
+    int quickActionIconHeight = 20;
+    int quickActionLabelGap = 1;
+    int iconFontHeight = 18;
+    int quickActionFontHeight = 18;
 };
 
 struct ItemView
@@ -52,5 +62,10 @@ SIZE MeasureItem(HDC dc, HFONT textFont, const ItemView& item,
 bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
     const Palette& palette, const Metrics& metrics);
+
+/** @brief 绘制顶部快捷操作按钮；标签由菜单项用于键盘和辅助说明。 */
+bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
+    MenuQuickIcon quickIcon, const ItemView& item, const RECT& bounds,
+    UINT itemState, const Palette& palette, const Metrics& metrics);
 
 } // namespace snowdesktop::menu_icon

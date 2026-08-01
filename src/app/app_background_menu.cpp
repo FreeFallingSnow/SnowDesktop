@@ -1,7 +1,24 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
 #include "../modern_menu.h"
 
 // Grid adjustment and desktop-background context menus.
+
+namespace
+{
+
+bool HasPasteableFileClipboardData()
+{
+    ComPtr<IDataObject> clipboard;
+    if (FAILED(OleGetClipboard(&clipboard)) || !clipboard)
+        return false;
+    FORMATETC format{
+        CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL,
+    };
+    return SUCCEEDED(clipboard->QueryGetData(&format));
+}
+
+} // namespace
 
 void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
 {
@@ -68,20 +85,20 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
         items.push_back({ 0, std::move(status), L"", false });
         items.push_back({ 0, L"", L"", false, false, true });
         items.push_back({ kContextGridAddRow,
-            _LW("app.menu.add_row"), L"", true });
+            _LW("app.menu.add_row"), L"\uF109", true });
         items.push_back({ kContextGridRemoveRow,
-            _LW("app.menu.remove_row"), L"", true });
+            _LW("app.menu.remove_row"), L"\uEBD0", true });
         items.push_back({ kContextGridAddColumn,
-            _LW("app.menu.add_col"), L"", true });
+            _LW("app.menu.add_col"), L"\uF109", true });
         items.push_back({ kContextGridRemoveColumn,
-            _LW("app.menu.remove_col"), L"", true });
+            _LW("app.menu.remove_col"), L"\uEBD0", true });
         items.push_back({ 0, L"", L"", false, false, true });
 
         auto appendRecommendedItem = [&](int aspectHeight,
             UINT firstCommand, const wchar_t* label) {
             Item parent;
             parent.label = label;
-            parent.glyph = L"";
+            parent.glyph = L"\uF462";
             for (size_t i = 0; i < std::size(kMonitorSizeRanges); ++i)
             {
                 const GridSpan recommended = CalculateRecommendedGridDimensions(
@@ -94,7 +111,7 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
                 Item child;
                 child.command = firstCommand + static_cast<UINT>(i);
                 child.label = std::move(childLabel);
-                child.glyph = L"";
+                child.glyph = L"\uF462";
                 child.checked = page &&
                     page->columns == recommended.columns &&
                     page->rows == recommended.rows;
@@ -108,7 +125,7 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
             _LW("app.menu.recommend_1610"));
         items.push_back({ 0, L"", L"", false, false, true });
         items.push_back({ kContextGridAdjustmentDone,
-            _LW("app.menu.end_adjust"), L"", true });
+            _LW("app.menu.end_adjust"), L"\uF294", true });
         return items;
     };
 
@@ -150,7 +167,10 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     PrepareMenuIconsForPoint(screenPoint);
 
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, kContextPasteCommand, _LW("app.menu.paste"));
+    AppendMenuW(menu,
+        HasPasteableFileClipboardData()
+            ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextPasteCommand, _LW("app.menu.paste"));
     AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
     AppendMenuW(menu, MF_STRING, kContextRefreshCommand, _LW("app.menu.refresh"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -384,24 +404,45 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextSettingsCommand, _LW("app.menu.settings"));
 
-    SetMenuItemIcon(menu, kContextNewMenu, L"");
+    SetMenuItemIcon(menu, kContextNewMenu,
+        snowdesktop::menu_fluent_glyphs::kNewItem,
+        MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextRefreshCommand, L"");
     SetMenuItemIcon(menu, kContextPasteCommand, L"");
+    SetMenuItemQuickAction(menu, kContextPasteCommand);
+    SetMenuItemQuickAction(menu, kContextNewMenu);
+    SetMenuItemQuickAction(menu, kContextRefreshCommand);
     SetMenuItemIcon(menu, kContextMoreCommand, L"");
     if (sortMenu)
     {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu),
+            snowdesktop::menu_fluent_glyphs::kSort,
+            MenuIconFont::FluentRegular);
         if (nameSortMenu)
         {
-            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(nameSortMenu), L"");
-            SetMenuItemIcon(nameSortMenu, kContextSortByNameCommand, L"");
-            SetMenuItemIcon(nameSortMenu, kContextSortByNameDescCommand, L"");
+            SetMenuItemIcon(sortMenu,
+                reinterpret_cast<UINT_PTR>(nameSortMenu),
+                snowdesktop::menu_fluent_glyphs::kSortName,
+                MenuIconFont::FluentRegular);
+            SetMenuItemIcon(nameSortMenu, kContextSortByNameCommand,
+                snowdesktop::menu_fluent_glyphs::kSortNameAscending,
+                MenuIconFont::FluentRegular);
+            SetMenuItemIcon(nameSortMenu, kContextSortByNameDescCommand,
+                snowdesktop::menu_fluent_glyphs::kSortNameDescending,
+                MenuIconFont::FluentRegular);
         }
         if (typeSortMenu)
         {
-            SetMenuItemIcon(sortMenu, reinterpret_cast<UINT_PTR>(typeSortMenu), L"");
-            SetMenuItemIcon(typeSortMenu, kContextSortByTypeCommand, L"");
-            SetMenuItemIcon(typeSortMenu, kContextSortByTypeDescCommand, L"");
+            SetMenuItemIcon(sortMenu,
+                reinterpret_cast<UINT_PTR>(typeSortMenu),
+                snowdesktop::menu_fluent_glyphs::kSortType,
+                MenuIconFont::FluentRegular);
+            SetMenuItemIcon(typeSortMenu, kContextSortByTypeCommand,
+                snowdesktop::menu_fluent_glyphs::kSortTypeAscending,
+                MenuIconFont::FluentRegular);
+            SetMenuItemIcon(typeSortMenu, kContextSortByTypeDescCommand,
+                snowdesktop::menu_fluent_glyphs::kSortTypeDescending,
+                MenuIconFont::FluentRegular);
         }
     }
     if (widgetMenu)

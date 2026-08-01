@@ -1,8 +1,10 @@
 #include "modern_menu.h"
+#include "resource.h"
 
 #include <windows.h>
 
 #include <algorithm>
+#include <iterator>
 #include <vector>
 
 namespace
@@ -12,31 +14,49 @@ constexpr wchar_t kPreviewClass[] = L"SnowDesktop.ModernMenuPreview";
 constexpr wchar_t kPreviewTitle[] = L"SnowDesktop Modern Menu Preview";
 constexpr UINT_PTR kOpenTimer = 1;
 UINT gLastCommand = 0;
+HANDLE gFluentFontHandle = nullptr;
 snowdesktop::modern_menu::Appearance gAppearance =
-    snowdesktop::modern_menu::Appearance::SystemLightBlur;
+    snowdesktop::modern_menu::Appearance::SystemDarkBlur;
+UINT gPreviewDpi = USER_DEFAULT_SCREEN_DPI;
 
 std::vector<snowdesktop::modern_menu::Item> BuildPreviewItems()
 {
     using snowdesktop::modern_menu::Item;
-    return {
-        { 1, L"详细设置", L"\xE713", true },
-        { 2, L"新增日程", L"\xE710", true },
-        { 3, L"编辑日程", L"\xE70F", false },
-        { 4, L"删除日程", L"\xE74D", false },
+    std::vector<Item> items{
+        { 1, L"剪切", L"\uF33A", true },
+        { 2, L"复制", L"\uF32B", true },
+        { 15, L"新建", L"\uF10C", true },
+        { 3, L"重命名", L"\U000F0A39", true },
+        { 4, L"编辑", L"\uF3DD", true },
+        { 5, L"删除", L"\uF34C", false },
         { 0, L"", L"", false, false, true },
-        { 5, L"今天", L"\xE787", true, true },
-        { 6, L"前一天", L"\xE76B", true },
-        { 0, L"后一天", L"\xE76C", true, false, false,
+        { 6, L"详细设置", L"\uF6A9", true },
+        { 7, L"今天", L"\uF21D", true, true },
+        { 8, L"前一天", L"\uF15B", true },
+        { 0, L"后一天", L"\uF181", true, false, false,
             {
-                { 7, L"明天", L"\xE893", true },
-                { 8, L"下周", L"\xE8D1", true },
+                { 9, L"明天", L"\uF21D", true },
+                { 10, L"下周", L"\uF181", true },
             } },
         { 0, L"", L"", false, false, true },
-        { 9, L"仅在悬停时显示\t开", L"\xE890", true },
-        { 10, L"隐藏桌面时保留\t关", L"\xE9A9", true },
-        { 11, L"隐私模式\t开", L"\xE72E", true },
-        { 12, L"删除组件", L"\xE74D", true },
+        { 11, L"仅在悬停时显示\t开", L"\uE5F2", true },
+        { 12, L"隐藏桌面时保留\t关", L"\uE5F5", true },
+        { 13, L"隐私模式\t开", L"\uE78F", true },
+        { 14, L"删除组件", L"\uF34C", true },
     };
+    items[0].quickAction = true;
+    items[0].quickIcon = snowdesktop::MenuQuickIcon::Cut;
+    items[1].quickAction = true;
+    items[1].quickIcon = snowdesktop::MenuQuickIcon::Copy;
+    items[2].quickAction = true;
+    items[2].quickIcon = snowdesktop::MenuQuickIcon::NewItem;
+    items[3].quickAction = true;
+    items[3].quickIcon = snowdesktop::MenuQuickIcon::Rename;
+    items[4].quickAction = true;
+    items[4].quickIcon = snowdesktop::MenuQuickIcon::Edit;
+    items[5].quickAction = true;
+    items[5].quickIcon = snowdesktop::MenuQuickIcon::Delete;
+    return items;
 }
 
 void OpenPreviewMenu(HWND hwnd)
@@ -46,11 +66,12 @@ void OpenPreviewMenu(HWND hwnd)
     snowdesktop::modern_menu::Options options;
     options.owner = hwnd;
     options.anchor = { windowRect.left + 48, windowRect.top + 72 };
-    options.dpi = GetDpiForWindow(hwnd);
+    // Keep the default preview at 96 DPI so low-resolution rasterization can
+    // be inspected even when the development monitor uses display scaling.
+    options.dpi = gPreviewDpi;
     options.lightTheme =
         gAppearance != snowdesktop::modern_menu::Appearance::SystemDarkBlur;
     options.appearance = gAppearance;
-    options.iconFontFamily = L"Segoe Fluent Icons";
     const auto items = BuildPreviewItems();
     gLastCommand = snowdesktop::modern_menu::Show(items, options).command;
     InvalidateRect(hwnd, nullptr, TRUE);
@@ -81,6 +102,19 @@ LRESULT CALLBACK WindowProc(
             : snowdesktop::modern_menu::Appearance::SystemLightBlur;
         OpenPreviewMenu(hwnd);
         return 0;
+    case WM_MBUTTONUP:
+    {
+        constexpr UINT previewDpis[] = { 96, 120, 144, 192 };
+        const auto current = std::find(std::begin(previewDpis),
+            std::end(previewDpis), gPreviewDpi);
+        const size_t next = current == std::end(previewDpis)
+            ? 0
+            : (static_cast<size_t>(current - std::begin(previewDpis)) + 1) %
+                std::size(previewDpis);
+        gPreviewDpi = previewDpis[next];
+        OpenPreviewMenu(hwnd);
+        return 0;
+    }
     case WM_PAINT:
     {
         PAINTSTRUCT paint{};
@@ -108,7 +142,9 @@ LRESULT CALLBACK WindowProc(
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(255, 255, 255));
         std::wstring displayText =
-            L"单击重开菜单，右键切换深浅模糊\n最近命令：";
+            L"单击重开，右键切换深浅，中键切换 DPI\n当前 DPI：";
+        displayText += std::to_wstring(gPreviewDpi);
+        displayText += L"  最近命令：";
         displayText += gLastCommand == 0
             ? L"无" : std::to_wstring(gLastCommand);
         DrawTextW(dc, displayText.c_str(), -1, &client,
@@ -129,6 +165,19 @@ LRESULT CALLBACK WindowProc(
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    HRSRC resource = FindResourceW(instance,
+        MAKEINTRESOURCEW(IDR_FLUENT_REGULAR_FONT), RT_RCDATA);
+    HGLOBAL resourceHandle = resource
+        ? LoadResource(instance, resource) : nullptr;
+    void* fontData = resourceHandle ? LockResource(resourceHandle) : nullptr;
+    const DWORD fontSize = resource
+        ? SizeofResource(instance, resource) : 0;
+    if (fontData && fontSize > 0)
+    {
+        DWORD fontCount = 0;
+        gFluentFontHandle = AddFontMemResourceEx(
+            fontData, fontSize, nullptr, &fontCount);
+    }
     WNDCLASSEXW windowClass{ sizeof(windowClass) };
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance;
@@ -153,5 +202,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    if (gFluentFontHandle)
+        RemoveFontMemResourceEx(gFluentFontHandle);
     return static_cast<int>(message.wParam);
 }

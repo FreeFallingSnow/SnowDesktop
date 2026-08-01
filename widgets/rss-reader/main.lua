@@ -3,6 +3,12 @@ useCustomStyle = true
 followPersonalizationDefault = true
 bottomBarHover = false
 
+local fluent = {
+    refresh = utf8.char(0xF13D),
+    clear = utf8.char(0xF201),
+    open = utf8.char(0xF582),
+}
+
 bg = 0x0F172A
 border = 0xFFFFFF
 alpha = 0.38
@@ -363,10 +369,10 @@ end
 
 function getContextMenu()
     return {
-        { id = 1, label = l10n.tr("lua_widget.rss_reader.refresh_now"), icon = "" },
-        { id = 2, label = l10n.tr("lua_widget.rss_reader.clear_cache"), icon = "" },
+        { id = 1, label = l10n.tr("lua_widget.rss_reader.refresh_now"), icon = fluent.refresh, iconFont = "fluent" },
+        { id = 2, label = l10n.tr("lua_widget.rss_reader.clear_cache"), icon = fluent.clear, iconFont = "fluent" },
         { separator = true },
-        { id = 3, label = l10n.tr("lua_widget.rss_reader.open_source"), icon = "" },
+        { id = 3, label = l10n.tr("lua_widget.rss_reader.open_source"), icon = fluent.open, iconFont = "fluent" },
     }
 end
 

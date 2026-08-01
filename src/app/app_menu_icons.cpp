@@ -6,6 +6,92 @@
 namespace
 {
 
+bool TranslateLegacyBuiltinGlyph(
+    const wchar_t* glyph, std::wstring& translated)
+{
+    if (!glyph || glyph[0] == L'\0' || glyph[1] != L'\0')
+        return false;
+    const wchar_t* fluent = nullptr;
+    switch (glyph[0])
+    {
+    case 0xE494: fluent = L"\uF41C"; break; // folder add
+    case 0xF002: fluent = L"\uF68F"; break; // search
+    case 0xF00A: fluent = L"\uF462"; break; // grid
+    case 0xF00C: fluent = L"\uF294"; break; // checkmark
+    case 0xF00D: fluent = L"\uF369"; break; // dismiss
+    case 0xF013: fluent = L"\uF6A9"; break; // settings
+    case 0xF017: fluent = L"\uF21D"; break; // calendar clock
+    case 0xF019: fluent = L"\uF150"; break; // download
+    case 0xF021: fluent = L"\uF13D"; break; // refresh
+    case 0xF023: fluent = L"\uE78F"; break; // lock
+    case 0xF031: fluent = L"\uF7E4"; break; // font
+    case 0xF032: fluent = L"\uF7A4"; break; // bold
+    case 0xF03A: fluent = L"\uF4ED"; break; // list
+    case 0xF044: fluent = L"\uF669"; break; // rename
+    case 0xF067: fluent = L"\uF109"; break; // add
+    case 0xF068: fluent = L"\uEBD0"; break; // subtract
+    case 0xF06E: fluent = L"\uE5F2"; break; // eye
+    case 0xF070: fluent = L"\uE5F5"; break; // eye off
+    case 0xF073: fluent = L"\uF21D"; break; // calendar
+    case 0xF07B: fluent = L"\uF418"; break; // folder
+    case 0xF07C: fluent = L"\uF42E"; break; // folder open
+    case 0xF08D: fluent = L"\uF601"; break; // pin
+    case 0xF08E: fluent = L"\uF582"; break; // open
+    case 0xF09C: fluent = L"\uE795"; break; // lock open
+    case 0xF0AE: fluent = L"\uF4ED"; break; // list/checklist
+    case 0xF0B2: fluent = L"\uF8E5"; break; // move
+    case 0xF0C4: fluent = L"\uF33A"; break; // cut
+    case 0xF0C5: fluent = L"\uF32B"; break; // copy
+    case 0xF0CA: fluent = L"\uE6CA"; break; // grouped list
+    case 0xF0EA: fluent = L"\uF2D5"; break; // paste
+    case 0xF108: fluent = L"\uF359"; break; // desktop
+    case 0xF12E: fluent = L"\uE9E9"; break; // puzzle piece
+    case 0xF141: fluent = L"\uE824"; break; // more horizontal
+    case 0xF15B: fluent = L"\uF378"; break; // document
+    case 0xF15D: fluent = L"\uF802"; break; // sort ascending
+    case 0xF160: fluent = L"\uF803"; break; // sort descending
+    case 0xF177: fluent = L"\uF15B"; break; // arrow left
+    case 0xF178: fluent = L"\uF181"; break; // arrow right
+    case 0xF1B3: fluent = L"\uF2F1"; break; // collections
+    case 0xF1D8: fluent = L"\uF699"; break; // send
+    case 0xF1DE: fluent = L"\uF587"; break; // options
+    case 0xF2ED: fluent = L"\uF34C"; break; // delete
+    case 0xF2F1: fluent = L"\uF13D"; break; // restart
+    case 0xF337: fluent = L"\uEC45"; break; // spacing
+    case 0xF35D: fluent = L"\uF582"; break; // open
+    case 0xF53F: fluent = L"\uF2F5"; break; // color
+    case 0xF58D: fluent = L"\uF8CB"; break; // layout/list
+    case 0xF802: fluent = L"\uF418"; break; // folder category
+    default: return false;
+    }
+    translated = fluent;
+    return true;
+}
+
+snowdesktop::MenuQuickIcon ResolveQuickIcon(UINT_PTR command)
+{
+    using snowdesktop::MenuQuickIcon;
+    if (command == kContextPasteCommand)
+        return MenuQuickIcon::Paste;
+    if (command == kContextNewMenu)
+        return MenuQuickIcon::NewItem;
+    if (command == kContextRefreshCommand)
+        return MenuQuickIcon::Refresh;
+    if (command == kContextCutCommand)
+        return MenuQuickIcon::Cut;
+    if (command == kContextCopyCommand)
+        return MenuQuickIcon::Copy;
+    if (command == kContextRenameCommand ||
+        command == kContextWidgetRename)
+        return MenuQuickIcon::Rename;
+    if (command == kContextDeleteCommand ||
+        command == kContextWidgetDelete)
+        return MenuQuickIcon::Delete;
+    if (command == kContextWidgetEdit)
+        return MenuQuickIcon::Settings;
+    return MenuQuickIcon::FontGlyph;
+}
+
 bool IsWindowsAppLightThemeEnabled()
 {
     DWORD value = 1;
@@ -246,7 +332,8 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
 }
 
 void DesktopApp::SetMenuItemIcon(
-    HMENU menu, UINT_PTR command, const wchar_t* text)
+    HMENU menu, UINT_PTR command, const wchar_t* text,
+    MenuIconFont font)
 {
     if (!menu || !text || !*text)
         return;
@@ -262,10 +349,72 @@ void DesktopApp::SetMenuItemIcon(
             reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
             continue;
 
+        MenuIconEntry* entry = nullptr;
+        for (auto& existing : menuIconPool_)
+        {
+            if (existing->menu == menu &&
+                existing->position == static_cast<UINT>(i))
+            {
+                entry = existing.get();
+                break;
+            }
+        }
+        if (!entry)
+        {
+            auto created = std::make_unique<MenuIconEntry>();
+            created->menu = menu;
+            created->position = static_cast<UINT>(i);
+            entry = created.get();
+            menuIconPool_.push_back(std::move(created));
+        }
+
+        entry->glyph.clear();
+        entry->fontAwesome = font == MenuIconFont::FontAwesomeSolid;
+        if (font == MenuIconFont::BuiltinFluentFromLegacy &&
+            !TranslateLegacyBuiltinGlyph(text, entry->glyph))
+        {
+            // A yet-unmapped built-in remains readable using the old font.
+            entry->glyph = text;
+            entry->fontAwesome = true;
+        }
+        else if (font != MenuIconFont::BuiltinFluentFromLegacy)
+        {
+            entry->glyph = text;
+        }
+        return;
+    }
+}
+
+void DesktopApp::SetMenuItemQuickAction(
+    HMENU menu, UINT_PTR command)
+{
+    if (!menu)
+        return;
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+        for (auto& entry : menuIconPool_)
+        {
+            if (entry->menu == menu &&
+                entry->position == static_cast<UINT>(i))
+            {
+                entry->quickAction = true;
+                entry->quickIcon = ResolveQuickIcon(command);
+                return;
+            }
+        }
         auto entry = std::make_unique<MenuIconEntry>();
         entry->menu = menu;
         entry->position = static_cast<UINT>(i);
-        entry->glyph = text;
+        entry->quickAction = true;
+        entry->quickIcon = ResolveQuickIcon(command);
         menuIconPool_.push_back(std::move(entry));
         return;
     }
@@ -321,6 +470,11 @@ UINT DesktopApp::ShowModernMenu(
                     icon->position == static_cast<UINT>(i))
                 {
                     item.glyph = icon->glyph;
+                    item.iconFont = icon->fontAwesome
+                        ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
+                        : snowdesktop::modern_menu::IconFont::FluentRegular;
+                    item.quickAction = icon->quickAction;
+                    item.quickIcon = icon->quickIcon;
                     break;
                 }
             }

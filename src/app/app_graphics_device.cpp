@@ -109,6 +109,22 @@ bool DesktopApp::InitGraphics()
         // 自绘菜单在显示时按 DPI 创建临时 GDI 字体。
     }
 
+    fluentIconFontHandle_ = LoadFluentSystemIconsRegular();
+    if (fluentIconFontHandle_)
+    {
+        fluentIconTextFormat_.Attach(
+            CreateFluentTextFormat(dwriteFactory_.Get(), 14.0f));
+        if (fluentIconTextFormat_)
+        {
+            fluentIconTextFormat_->SetTextAlignment(
+                DWRITE_TEXT_ALIGNMENT_CENTER);
+            fluentIconTextFormat_->SetParagraphAlignment(
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            fluentIconTextFormat_->SetWordWrapping(
+                DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+    }
+
     return true;
 }
 

@@ -52,7 +52,8 @@ normally first. To clear the lock automatically, use
 - Direct2D + Direct3D 11 + DirectComposition
 - Dear ImGui (settings window)
 - Lua 5.4 (script engine)
-- Font Awesome 6 Free (icons)
+- Fluent System Icons Regular (modern context-menu and widget-menu icons)
+- Font Awesome 6 Free (backward-compatible widget icons)
 - WinHTTP (Lua HTTP runtime)
 
 ## 📄 License

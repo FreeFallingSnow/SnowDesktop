@@ -96,6 +96,7 @@ public:
     IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;
     IDWriteTextFormat* GetCuTextFormatWeight(float value, DWRITE_FONT_WEIGHT weight, bool centered) const;
     IDWriteTextFormat* GetCuFaTextFormat(float value) const;
+    IDWriteTextFormat* GetCuFluentTextFormat(float value) const;
     float GetBarHeight() const;
     float GetBarScale() const;
 
@@ -104,6 +105,7 @@ protected:
     DesktopApp* app_;
     mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuTextFormatCache_;
     mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuFaTextFormatCache_;
+    mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuFluentTextFormatCache_;
 };
 
 /**

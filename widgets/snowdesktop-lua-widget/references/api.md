@@ -151,8 +151,9 @@ Menu example:
 function getContextMenu()
     return {
         { id = 1, label = "执行操作", icon = "" },
+        { id = 2, label = "刷新", icon = "", iconFont = "fluent" },
         { separator = true },
-        { id = 2, label = "不可用项", icon = "", enabled = false }
+        { id = 3, label = "不可用项", icon = "", enabled = false }
     }
 end
 
@@ -165,14 +166,18 @@ Menu item fields:
 
 - `id`: integer passed to `onMenu(id)`.
 - `label`: displayed text.
-- `icon`: optional Font Awesome 6 Free Solid glyph rendered by the host menu.
+- `icon`: optional icon glyph rendered by the host menu.
+- `iconFont`: optional `"fa"` or `"fluent"`. It defaults to `"fa"` for
+  compatibility; `"fluent"` selects the embedded Fluent System Icons Regular
+  font.
 - `enabled`: optional boolean; defaults to `true`.
 - `separator`: set to `true` for a separator and omit the other fields.
 
 The built-in Lua widget settings command is labeled **详细设置** and opens
 `imguiRender()`.
-Use the debug page's **Font Awesome 图标字符** grid to preview the embedded font
-and click-copy a glyph for the `icon` field. To unlock **调试**, open
+Use the debug page's **Font Awesome 图标字符** or
+**Fluent System Icons Regular 图标字符** grid to preview the embedded fonts and
+click-copy a glyph for the `icon` field. To unlock **调试**, open
 **设置 → 关于** and click the version number five times.
 
 ## Drawing
@@ -233,6 +238,17 @@ Renders a single Font Awesome 6 Free Solid glyph at the given position.
 Defaults: `size=20`, `color=0xFFFFFF`. The glyph is drawn centered in a square
 of `size × size` pixels. Useful glyph codes include media controls (`` `` `` ``)
 and icons (`` `` ``).
+
+### `draw.fluent`
+
+```lua
+draw.fluent(glyph, x, y, size?, color?)
+```
+
+Renders one embedded Fluent System Icons Regular glyph with the same centering
+and defaults as `draw.fa`. Prefer this for new controls when a Fluent glyph has
+the same action semantics. The complete glyph list is available on the
+SnowDesktop debug settings page.
 
 ### Images and shell icons
 
