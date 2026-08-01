@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_hover_rules.h"
 
 // Pointer leave, Dock click release and primary-button drag completion.
 
@@ -40,14 +41,89 @@ void DesktopApp::OnMouseLeave()
     const bool ownsInteractionCapture =
         captureWindow == hwnd_ ||
         captureWindow == floatingDockHwnd_;
-    if (!ownsInteractionCapture && !mouseDown_ &&
-        !dragSession_.IsActive() &&
-        widgetAction_ == WidgetAction::None)
+    const bool canClearPassiveHover =
+        snowdesktop::desktop_hover_rules::CanClearPassiveHover(
+            ownsInteractionCapture,
+            mouseDown_,
+            dragSession_.IsActive(),
+            widgetAction_ != WidgetAction::None ||
+                middleButtonWidgetMove_ ||
+                luaWidgetPanelMouseDown_);
+    if (canClearPassiveHover)
     {
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
+        CommitPassiveHoverVisualEnd();
+        return;
     }
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void DesktopApp::ReconcileDesktopHoverState()
+{
+    if (!hwnd_ || !IsWindow(hwnd_))
+        return;
+
+    const DWORD foregroundTick =
+        dockForegroundChangedTick_.load();
+    POINT cursorPoint{};
+    if (TryGetDesktopHoverPointFromCursor(cursorPoint))
+    {
+        desktopHoverForegroundObservedTick_ = foregroundTick;
+        if (lastMousePoint_.x == LONG_MIN &&
+            lastMousePoint_.y == LONG_MIN)
+        {
+            lastMousePoint_ = cursorPoint;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
+
+    const HWND captureWindow = GetCapture();
+    DWORD captureProcessId = 0;
+    if (captureWindow)
+    {
+        GetWindowThreadProcessId(
+            captureWindow, &captureProcessId);
+    }
+    const bool ownsInteractionCapture =
+        captureProcessId != 0 &&
+        captureProcessId == GetCurrentProcessId();
+    if (!snowdesktop::desktop_hover_rules::CanClearPassiveHover(
+            ownsInteractionCapture,
+            mouseDown_,
+            dragSession_.IsActive(),
+            widgetAction_ != WidgetAction::None ||
+                middleButtonWidgetMove_ ||
+                luaWidgetPanelMouseDown_))
+    {
+        // Do not mark this foreground state as reconciled. The periodic
+        // fallback will retry after the active interaction has ended.
+        return;
+    }
+
+    const bool pointerAlreadyCleared =
+        lastMousePoint_.x == LONG_MIN &&
+        lastMousePoint_.y == LONG_MIN;
+    const bool previewVisible =
+        dockWindowPreview_ &&
+        dockWindowPreview_->IsVisible();
+    const bool foregroundAlreadyReconciled =
+        foregroundTick != 0 &&
+        desktopHoverForegroundObservedTick_ == foregroundTick;
+    if (foregroundAlreadyReconciled &&
+        pointerAlreadyCleared &&
+        navHoverSide_ == 0 &&
+        !previewVisible)
+    {
+        return;
+    }
+
+    desktopHoverForegroundObservedTick_ = foregroundTick;
+    // An external application terminates the Dock-preview bridge even when its
+    // old screen rectangle still contains the cursor.
+    HideDockWindowPreview();
+    OnMouseLeave();
 }
 
 bool DesktopApp::HandleDockClickRelease(POINT point)

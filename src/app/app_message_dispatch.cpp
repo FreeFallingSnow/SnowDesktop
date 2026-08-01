@@ -608,6 +608,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
         return 0;
+    case kForegroundInteractionChangedMessage:
+        ReconcileDesktopHoverState();
+        return 0;
     case WM_TIMER:
         OnTimer(wp);
         return 0;

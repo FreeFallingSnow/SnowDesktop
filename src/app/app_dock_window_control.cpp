@@ -331,6 +331,15 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
         {
             dockPreviousForegroundWindow_.store(previous);
             dockForegroundChangedTick_.store(GetTickCount());
+            if (const HWND target =
+                    dockForegroundNotificationWindow_.load())
+            {
+                PostMessageW(
+                    target,
+                    kForegroundInteractionChangedMessage,
+                    0,
+                    0);
+            }
         }
     }
 

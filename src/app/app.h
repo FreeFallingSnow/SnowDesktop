@@ -563,6 +563,8 @@ private:
     void EndDragSession();
     /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */
     void CommitDragVisualEndBeforeShellOperation();
+    /** @brief 同步提交被动悬浮结束帧，并移除不再可见的组件毛玻璃。 */
+    void CommitPassiveHoverVisualEnd(bool forceCompositionFlush = false);
     /** @brief 在控件重建后重新绑定拖拽源。 */
     void RebindDragSourceAfterRebuild();
     /**
@@ -667,6 +669,8 @@ private:
     void OnDockWindowPreviewHoverTimer();
     void HideDockWindowPreview();
     void DismissDockWindowPreviewUntilLeave();
+    /** @brief 根据当前指针所在窗口清理不应继续显示的桌面悬浮状态。 */
+    void ReconcileDesktopHoverState();
     void StartDockForegroundMonitor();
     void StopDockForegroundMonitor();
     void UpdateSystemTaskbarRevealGuard();
@@ -2082,6 +2086,8 @@ private:
     inline static std::atomic<HWND> dockForegroundWindow_{ nullptr };
     inline static std::atomic<HWND> dockPreviousForegroundWindow_{ nullptr };
     inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
+    inline static std::atomic<HWND>
+        dockForegroundNotificationWindow_{ nullptr };
     inline static std::atomic<DWORD> systemTaskbarWindowStateChangedTick_{ 0 };
     inline static std::atomic<DWORD> dockWindowListChangedTick_{ 0 };
     struct SystemTaskbarWindowObservation
@@ -2095,6 +2101,7 @@ private:
         systemTaskbarWindowObservations_;
     DWORD systemTaskbarWindowStateObservedTick_ = 0;
     DWORD dockRunningWindowsForegroundTick_ = 0;
+    DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
     DWORD dockRunningWindowsRefreshTick_ = 0;
     struct SystemTaskbarMonitorWindowState
@@ -2264,7 +2271,10 @@ private:
 
     /** @name 鼠标/交互状态 */
     /** @{ */
-    POINT lastMousePoint_{};
+    // No pointer hover exists until the visible desktop surface has sampled
+    // the real cursor. Treating the zero-initialized point as input makes the
+    // first frame spuriously hover whatever happens to occupy (0, 0).
+    POINT lastMousePoint_{ LONG_MIN, LONG_MIN };
     SelectionController selectionController_;
     // per-widget 独立定时器：timerId -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
@@ -2353,6 +2363,10 @@ private:
     bool IsExternalDropWindowAt(POINT clientPoint) const;
     /** @brief 判断指定窗口是否为已知的桌面表面窗口。 @param window 窗口句柄 @return 是则返回 true */
     bool IsKnownDesktopSurfaceWindow(HWND window) const;
+    /** @brief 判断窗口是否属于会产生桌面 hover 的 SnowDesktop 交互表面。 */
+    bool IsDesktopInteractionSurfaceWindow(HWND window) const;
+    /** @brief 读取光标并在其位于桌面交互表面时转换为主窗口客户区坐标。 */
+    bool TryGetDesktopHoverPointFromCursor(POINT& point) const;
     /** @brief 判断两个窗口是否位于同一窗口树中。 @param parent 父窗口 @param window 子窗口 @return 是则返回 true */
     static bool IsSameWindowTree(HWND parent, HWND window);
     /**

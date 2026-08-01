@@ -230,6 +230,7 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         }
     }
     desktopBackdropCompositor_.SetVisible(true);
+    ReconcileDesktopHoverState();
     if (inputHwnd_ && IsWindow(inputHwnd_))
         ShowWindow(inputHwnd_, SW_SHOWNA);
     if (controlHwnd_ && IsWindow(controlHwnd_))

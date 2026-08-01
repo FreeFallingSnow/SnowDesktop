@@ -1,4 +1,5 @@
 #include "widgets/collection_group_rules.h"
+#include "desktop_hover_rules.h"
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
 
@@ -13,6 +14,8 @@ namespace rules =
     snowdesktop::collection_group_rules;
 namespace visibilityRules =
     snowdesktop::widget_visibility_rules;
+namespace hoverRules =
+    snowdesktop::desktop_hover_rules;
 
 namespace
 {
@@ -514,6 +517,30 @@ void TestHoverOnlyWidgetVisibility()
         "a selected hover-only widget retains its backdrop after drag");
 }
 
+void TestDesktopHoverDeactivation()
+{
+    Check(
+        hoverRules::CanClearPassiveHover(
+            false, false, false, false),
+        "idle passive hover can be cleared immediately");
+    Check(
+        !hoverRules::CanClearPassiveHover(
+            true, false, false, false),
+        "capture-based pointer interaction must survive foreground changes");
+    Check(
+        !hoverRules::CanClearPassiveHover(
+            false, true, false, false),
+        "a pressed pointer must survive foreground changes");
+    Check(
+        !hoverRules::CanClearPassiveHover(
+            false, false, true, false),
+        "an active drag must survive foreground changes");
+    Check(
+        !hoverRules::CanClearPassiveHover(
+            false, false, false, true),
+        "widget move or resize must survive foreground changes");
+}
+
 void TestNestedWidgetScrolling()
 {
     using snowdesktop::widget_scroll_rules::
@@ -551,6 +578,7 @@ int main()
     TestFileGroupRules();
     TestGridPlacementInvariants();
     TestHoverOnlyWidgetVisibility();
+    TestDesktopHoverDeactivation();
     TestNestedWidgetScrolling();
     if (failures != 0)
     {

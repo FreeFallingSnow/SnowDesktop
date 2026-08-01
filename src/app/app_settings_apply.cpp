@@ -83,6 +83,7 @@ void DesktopApp::EndDesktopPassthroughHold(
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     desktopBackdropCompositor_.SetVisible(true);
+    ReconcileDesktopHoverState();
     InvalidateRect(hwnd_, nullptr, FALSE);
     UpdateWindow(hwnd_);
 }

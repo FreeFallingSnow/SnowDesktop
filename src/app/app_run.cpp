@@ -662,7 +662,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     SetSoftwareDesktopEnabled(customDesktopVisible_, false);
     if (customDesktopVisible_)
+    {
+        ReconcileDesktopHoverState();
         UpdateWindow(hwnd_);
+    }
     WriteDiagnosticLogEntry(customDesktopVisible_
         ? L"Window shown, entering loop"
         : L"Native desktop active, entering loop");

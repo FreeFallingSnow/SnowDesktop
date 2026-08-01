@@ -416,6 +416,7 @@ bool DesktopApp::CreateDesktopOverlayWindow()
     StartDockForegroundMonitor();
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    ReconcileDesktopHoverState();
     InvalidateRect(hwnd_, nullptr, TRUE);
     UpdateWindow(hwnd_);
     return true;

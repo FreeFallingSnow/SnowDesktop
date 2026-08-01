@@ -4,6 +4,9 @@
 
 void DesktopApp::StartDockForegroundMonitor()
 {
+    dockForegroundNotificationWindow_.store(
+        controlHwnd_ && IsWindow(controlHwnd_)
+            ? controlHwnd_ : hwnd_);
     if (dockForegroundEventHook_) return;
     const HWND foreground = GetForegroundWindow();
     dockForegroundWindow_.store(foreground);
@@ -45,6 +48,7 @@ void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
 
 void DesktopApp::StopDockForegroundMonitor()
 {
+    dockForegroundNotificationWindow_.store(nullptr);
     if (dockForegroundEventHook_)
     {
         UnhookWinEvent(dockForegroundEventHook_);
@@ -66,6 +70,7 @@ void DesktopApp::StopDockForegroundMonitor()
         systemTaskbarWindowObservations_.clear();
     }
     dockRunningWindowsForegroundTick_ = 0;
+    desktopHoverForegroundObservedTick_ = 0;
     dockRunningWindowsStateTick_ = 0;
     dockRunningWindowsRefreshTick_ = 0;
     systemTaskbarMonitorWindowStates_.clear();

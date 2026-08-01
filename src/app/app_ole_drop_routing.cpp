@@ -35,6 +35,52 @@ bool DesktopApp::IsKnownDesktopSurfaceWindow(HWND window) const
     return window == desktop || root == desktop;
 }
 
+bool DesktopApp::IsDesktopInteractionSurfaceWindow(
+    HWND window) const
+{
+    if (!window)
+        return false;
+    if (IsKnownDesktopSurfaceWindow(window))
+        return true;
+
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root)
+        root = window;
+    const auto belongsTo = [window, root](HWND candidate) {
+        return candidate &&
+            (window == candidate || root == candidate ||
+                IsChild(candidate, window));
+    };
+
+    if (belongsTo(floatingDockHwnd_) ||
+        belongsTo(quickNavigationHwnd_))
+        return true;
+    if (dockWindowPreview_ &&
+        belongsTo(dockWindowPreview_->GetWindow()))
+        return true;
+    return desktopBackdropCompositor_.IsBackdropWindow(window) ||
+        desktopBackdropCompositor_.IsBackdropWindow(root) ||
+        floatingDockBackdropCompositor_.IsBackdropWindow(window) ||
+        floatingDockBackdropCompositor_.IsBackdropWindow(root) ||
+        quickNavBackdropCompositor_.IsBackdropWindow(window) ||
+        quickNavBackdropCompositor_.IsBackdropWindow(root);
+}
+
+bool DesktopApp::TryGetDesktopHoverPointFromCursor(
+    POINT& point) const
+{
+    POINT screenPoint{};
+    if (!hwnd_ || !IsWindow(hwnd_) ||
+        !GetCursorPos(&screenPoint))
+        return false;
+    if (!IsDesktopInteractionSurfaceWindow(
+            WindowFromPoint(screenPoint)))
+        return false;
+
+    point = screenPoint;
+    return ScreenToClient(hwnd_, &point) != FALSE;
+}
+
 /**
  * @brief 判断指定点是否位于外部可放置窗口上
  * @param clientPoint 客户端坐标点

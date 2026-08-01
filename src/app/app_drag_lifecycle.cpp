@@ -97,6 +97,13 @@ void DesktopApp::EndDragSession()
 void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
     dragRenderCache_.Reset();
+    CommitPassiveHoverVisualEnd(true);
+}
+
+void DesktopApp::CommitPassiveHoverVisualEnd(
+    bool forceCompositionFlush)
+{
+    bool backdropRemoved = false;
     for (size_t widgetIndex = 0;
          widgetIndex < widgets_.size();
          ++widgetIndex)
@@ -105,7 +112,9 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
         if (IsRectEmptyRect(widget.bounds))
             continue;
         const bool popupOpen =
-            popupWidgetIndex_ == widgetIndex;
+            popupWidgetIndex_ == widgetIndex ||
+            (!interactionPinnedWidgetId_.empty() &&
+                interactionPinnedWidgetId_ == widget.id);
         const bool pointerInside =
             PtInRect(
                 &widget.bounds,
@@ -117,8 +126,10 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
                     popupOpen,
                     pointerInside))
             continue;
-        desktopBackdropCompositor_.RemovePanel(
-            GetStandaloneWidgetFrameRect(widget));
+        backdropRemoved =
+            desktopBackdropCompositor_.RemovePanel(
+                GetStandaloneWidgetFrameRect(widget)) ||
+            backdropRemoved;
     }
 
     if (hwnd_ && IsWindow(hwnd_))
@@ -127,10 +138,11 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
         if (!compositionPaintInProgress_)
             UpdateWindow(hwnd_);
     }
-    // The backdrop uses a separate composition tree. Flush it before a Shell
-    // drop handler can enter a nested progress loop, otherwise its stale panel
-    // can remain visible while the main content frame has already disappeared.
-    DwmFlush();
+    // Hover-only backdrops live in a separate composition tree. Flush when a
+    // panel was removed, or unconditionally before a Shell operation can enter
+    // a nested progress loop, so the two visual trees cannot diverge.
+    if (backdropRemoved || forceCompositionFlush)
+        DwmFlush();
     InvalidateFloatingDockWindow(true);
 }
 

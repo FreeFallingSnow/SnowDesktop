@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_hover_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
 
@@ -500,6 +501,46 @@ void DesktopApp::RenderFrame(
     const RECT* updateRect,
     bool hiddenMode)
 {
+    POINT physicalPointer{};
+    const HWND captureWindow = GetCapture();
+    DWORD captureProcessId = 0;
+    if (captureWindow)
+    {
+        GetWindowThreadProcessId(
+            captureWindow, &captureProcessId);
+    }
+    const bool ownsInteractionCapture =
+        captureProcessId != 0 &&
+        captureProcessId == GetCurrentProcessId();
+    const bool canSuppressPassiveHover =
+        snowdesktop::desktop_hover_rules::CanClearPassiveHover(
+            ownsInteractionCapture,
+            mouseDown_,
+            dragSession_.IsActive(),
+            widgetAction_ != WidgetAction::None ||
+                middleButtonWidgetMove_ ||
+                luaWidgetPanelMouseDown_);
+    const bool suppressPassiveHover =
+        canSuppressPassiveHover &&
+        !TryGetDesktopHoverPointFromCursor(physicalPointer);
+    const POINT interactionPointer = lastMousePoint_;
+    if (suppressPassiveHover)
+        lastMousePoint_ = { LONG_MIN, LONG_MIN };
+    struct PointerRestore final
+    {
+        POINT& target;
+        POINT value;
+        bool restore;
+        ~PointerRestore()
+        {
+            if (restore)
+                target = value;
+        }
+    } pointerRestore{
+        lastMousePoint_, interactionPointer,
+        suppressPassiveHover
+    };
+
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
     {
         brushCache_.clear();
