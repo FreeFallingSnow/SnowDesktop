@@ -1,170 +1,211 @@
 /**
  * @file guide_widget.cpp
- * @brief GuideWidget —— 分页使用指南组件的实现
+ * @brief GuideWidget —— 新页面欢迎卡片的实现
  */
 
 #include "widget.h"
 #include "app.h"
-#include "constants.h"
-#include "utils.h"
 #include "../l10n.h"
 
-#include <sstream>
 #include <algorithm>
 
-/**
- * @brief 根据当前分页状态动态生成指南文本（UTF-16）。
- *
- * 文本包含：当前页 / 总页数 / 显示器数、双锚点锁定状态、
- * 翻页/跳转/新增页/首末屏锁定 等操作说明，以及空页清理规则。
- */
-std::wstring GuideWidget::BuildGuideText(const DesktopApp *app)
+RECT GuideWidget::GetPrimaryButtonRect(RECT body) const
 {
-    const auto &savedPageIds = app->savedPageIds_;
-    const auto &gridPages = app->gridPages_;
-    const int pageOffset = app->pageOffset_;
-    const size_t N = gridPages.size();
-    const size_t total = savedPageIds.size();
-    // 末屏当前显示页 index = (N-1) + pageOffset
-    const int currentLastIdx = (N >= 1)
-                                   ? static_cast<int>(N) - 1 + pageOffset
-                                   : 0;
-
-    auto pageLabel = [&](size_t i) -> std::wstring
-    {
-        return _LFW("app.guide.page_num", std::to_wstring(i + 1));
+    const int pad = Cu(22.0f);
+    const int gap = Cu(10.0f);
+    const int height = Cu(42.0f);
+    const int bottom = body.bottom - Cu(32.0f);
+    const int available = std::max(
+        2, static_cast<int>(body.right - body.left) - pad * 2 - gap);
+    const int primaryWidth = available / 2;
+    return {
+        body.left + pad,
+        bottom - height,
+        body.left + pad + primaryWidth,
+        bottom,
     };
-
-    std::wostringstream ss;
-    // The guide is rendered as one continuous document. Keep its static prose
-    // in one message so translators can reorder headings and paragraphs.
-    ss << _LW("guide.content") << L"\n\n";
-
-    // ── 状态信息 ──
-    ss << _LW("guide.status_section") << L"\n";
-    ss << _LFW("guide.monitor_count", std::to_wstring(N)) << L"\n";
-    ss << _LFW("guide.total_pages", std::to_wstring(total)) << L"\n";
-    ss << _LFW("guide.last_screen_shows",
-        pageLabel(static_cast<size_t>(std::max(0,
-            std::min(currentLastIdx, static_cast<int>(total) - 1))))) << L"\n";
-    // 首末屏锁定状态
-    const std::wstring &firstPin = app->firstPageMonitorId_;
-    const std::wstring &lastPin = app->lastPageMonitorId_;
-    auto monitorShortName = [&](const std::wstring &id) -> std::wstring
-    {
-        if (id.empty())
-            return _LW("guide.not_set");
-        // 截取友好显示名：去掉 \\.\ 前缀
-        std::wstring s = id;
-        if (s.starts_with(L"\\.\\"))
-            s = s.substr(4);
-        return s;
-    };
-    ss << _LFW("guide.first_locked", monitorShortName(firstPin))
-       << (firstPin.empty() ? _LW("guide.default_primary") : L"") << L"\n";
-    ss << _LFW("guide.last_locked", monitorShortName(lastPin))
-       << (lastPin.empty() ? _LW("guide.default_rightmost") : L"") << L"\n";
-    ss << L"\n";
-
-    return ss.str();
 }
 
-void GuideWidget::DrawContent(ID2D1DeviceContext *context, RECT body)
+RECT GuideWidget::GetSecondaryButtonRect(RECT body) const
 {
-    if (!context || !app_ || !data_)
-        return;
-
-    auto *dwrite = app_->GetDWriteFactory();
-    if (!dwrite)
-        return;
-
-    const LONG bodyWidth = (std::max)(1L, body.right - body.left);
-    const LONG bodyHeight = (std::max)(1L, body.bottom - body.top);
-
-    const std::wstring wtext = BuildGuideText(app_);
-
-    const float bodyFontSize = FontCu(15.0f);
-    const float titleFontSize = FontCu(20.0f);
-    const float padX = static_cast<float>(Cu(14.0f));
-    const float padY = static_cast<float>(Cu(12.0f));
-
-    ComPtr<IDWriteTextFormat> fmt;
-    if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
-                                        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                                        DWRITE_FONT_STRETCH_NORMAL, bodyFontSize, L"", &fmt)) ||
-        !fmt)
-        return;
-
-    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-
-    const float maxWidth = static_cast<float>(bodyWidth) - padX * 2.0f;
-    ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(dwrite->CreateTextLayout(wtext.c_str(), static_cast<UINT32>(wtext.size()),
-                                        fmt.Get(), maxWidth, 10000.0f, &layout)) ||
-        !layout)
-        return;
-
-    // 第一行（标题）加粗放大：通过 text range 设置
-    if (wtext.find(L'\n') != std::wstring::npos)
-    {
-        DWRITE_TEXT_RANGE titleRange{0, static_cast<UINT32>(wtext.find(L'\n'))};
-        layout->SetFontSize(titleFontSize, titleRange);
-        layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, titleRange);
-    }
-    // 分隔线行（━━━ 开头）用稍小灰色：保持默认即可
-
-    DWRITE_TEXT_METRICS metrics{};
-    layout->GetMetrics(&metrics);
-    totalTextHeight_ = metrics.height + padY * 2.0f;
-    lastBodyHeight_ = bodyHeight;
-
-    int maxScroll = (std::max)(0, static_cast<int>(totalTextHeight_ - static_cast<float>(bodyHeight)));
-    if (maxScroll > 0)
-        data_->scrollOffset = std::clamp(data_->scrollOffset, 0, maxScroll);
-    else
-        data_->scrollOffset = 0;
-
-    float textX = static_cast<float>(body.left) + padX;
-    float textY = static_cast<float>(body.top) + padY - static_cast<float>(data_->scrollOffset);
-
-    ComPtr<ID2D1SolidColorBrush> textBrush;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.93f, 0.93f, 0.93f, 0.96f), &textBrush);
-    if (textBrush)
-    {
-        ComPtr<ID2D1SolidColorBrush> shadowBrush;
-        context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f), &shadowBrush);
-        if (shadowBrush)
-            context->DrawTextLayout(D2D1::Point2F(textX + 1.0f, textY + 1.0f),
-                                    layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-
-        context->DrawTextLayout(D2D1::Point2F(textX, textY),
-                                layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    }
+    const RECT primary = GetPrimaryButtonRect(body);
+    const int gap = Cu(10.0f);
+    return {
+        primary.right + gap,
+        primary.top,
+        body.right - Cu(22.0f),
+        primary.bottom,
+    };
 }
 
-void GuideWidget::DrawScrollbar(ID2D1DeviceContext *context, bool hovered) const
+WidgetHit GuideWidget::HitTestWidget(POINT pt) const
 {
-    if (!context || !data_)
+    const WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (base != WidgetHit::Content)
+        return base;
+
+    const RECT body = GetBodyRect();
+    const RECT primary = GetPrimaryButtonRect(body);
+    if (PtInRect(&primary, pt))
+        return WidgetHit::GuideAddWidgetBtn;
+
+    const RECT secondary = GetSecondaryButtonRect(body);
+    if (PtInRect(&secondary, pt))
+        return WidgetHit::GuideDetailsBtn;
+
+    return base;
+}
+
+void GuideWidget::DrawContent(ID2D1DeviceContext* context, RECT body)
+{
+    if (!context || !app_ || !data_ || IsRectEmptyRect(body))
         return;
 
-    RECT body = GetBodyRect();
-    RECT frame = GetFrameRect();
-    LONG bodyHeight = (std::max)(1L, body.bottom - body.top);
+    data_->scrollOffset = 0;
 
-    int contentHeight = (std::max)(static_cast<int>(bodyHeight), static_cast<int>(totalTextHeight_));
-    int scrollOffset = GetMaxScrollOffset() > 0 ? data_->scrollOffset : 0;
+    // Guide has a product-defined light acrylic appearance and deliberately
+    // does not inherit the global component preset.
+    constexpr bool lightTheme = true;
+    const D2D1_COLOR_F primaryText = lightTheme
+        ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.94f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f);
+    const D2D1_COLOR_F secondaryText = lightTheme
+        ? D2D1::ColorF(0.10f, 0.13f, 0.18f, 0.64f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.66f);
+    const D2D1_COLOR_F hintText = lightTheme
+        ? D2D1::ColorF(0.10f, 0.13f, 0.18f, 0.48f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
+    const D2D1_COLOR_F accent = D2D1::ColorF(0.18f, 0.47f, 0.96f, 0.96f);
 
-    const LONG sbWidth = Cu(6.0f);
-    RECT sbRect = {
-        frame.right - sbWidth - Cu(2.0f),
-        body.top,
-        frame.right - Cu(2.0f),
-        body.bottom};
+    size_t pageIndex = 0;
+    const auto page = std::find(
+        app_->savedPageIds_.begin(), app_->savedPageIds_.end(),
+        data_->gridCell.pageId);
+    if (page != app_->savedPageIds_.end())
+        pageIndex = static_cast<size_t>(page - app_->savedPageIds_.begin());
+    const size_t pageCount = std::max<size_t>(1, app_->savedPageIds_.size());
+    const size_t monitorCount = app_->gridPages_.size();
 
-    if (sbRect.right <= sbRect.left || contentHeight <= static_cast<int>(bodyHeight))
+    const RECT primaryButton = GetPrimaryButtonRect(body);
+    const RECT secondaryButton = GetSecondaryButtonRect(body);
+    const bool primaryHovered =
+        PtInRect(&primaryButton, app_->lastMousePoint_) != FALSE;
+    const bool secondaryHovered =
+        PtInRect(&secondaryButton, app_->lastMousePoint_) != FALSE;
+    const bool primaryPressed = primaryHovered && app_->mouseDown_ &&
+        app_->pendingGuideAction_ == WidgetHit::GuideAddWidgetBtn;
+    const bool secondaryPressed = secondaryHovered && app_->mouseDown_ &&
+        app_->pendingGuideAction_ == WidgetHit::GuideDetailsBtn;
+
+    const D2D1_COLOR_F secondaryFill = lightTheme
+        ? D2D1::ColorF(0.04f, 0.08f, 0.14f,
+            secondaryPressed ? 0.16f : (secondaryHovered ? 0.11f : 0.065f))
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f,
+            secondaryPressed ? 0.20f : (secondaryHovered ? 0.14f : 0.085f));
+    const D2D1_COLOR_F secondaryStroke = lightTheme
+        ? D2D1::ColorF(0.05f, 0.09f, 0.16f, 0.13f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+    app_->DrawD2DRoundedRectangle(
+        context, primaryButton, static_cast<float>(Cu(10.0f)),
+        primaryPressed
+            ? D2D1::ColorF(0.13f, 0.39f, 0.84f, 1.0f)
+            : (primaryHovered
+            ? D2D1::ColorF(0.23f, 0.52f, 1.0f, 1.0f)
+            : accent),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f));
+    app_->DrawD2DRoundedRectangle(
+        context, secondaryButton, static_cast<float>(Cu(10.0f)),
+        secondaryFill, secondaryStroke);
+
+    IDWriteTextFormat* buttonFormat = GetCuTextFormatWeight(
+        15.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, true);
+    app_->DrawD2DText(
+        context, _LW("guide.add_widget"), primaryButton, buttonFormat,
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f));
+    app_->DrawD2DText(
+        context,
+        detailsExpanded_ ? _LW("guide.back") : _LW("guide.learn_more"),
+        secondaryButton, buttonFormat, primaryText);
+
+    RECT hintRect{
+        body.left + Cu(16.0f), primaryButton.bottom + Cu(3.0f),
+        body.right - Cu(16.0f), body.bottom - Cu(1.0f),
+    };
+    app_->DrawD2DText(
+        context, _LW("guide.remove_hint"), hintRect,
+        GetCuTextFormatWeight(12.0f, DWRITE_FONT_WEIGHT_NORMAL, true),
+        hintText);
+
+    if (!detailsExpanded_)
+    {
+        RECT title{
+            body.left + Cu(26.0f), body.top + Cu(17.0f),
+            body.right - Cu(26.0f), body.top + Cu(57.0f),
+        };
+        app_->DrawD2DText(
+            context,
+            _LFW("guide.new_page_title", std::to_wstring(pageIndex + 1)),
+            title,
+            GetCuTextFormatWeight(25.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, false),
+            primaryText);
+
+        RECT subtitle{
+            title.left, title.bottom,
+            body.right - Cu(26.0f), primaryButton.top - Cu(10.0f),
+        };
+        app_->DrawD2DText(
+            context, _LW("guide.new_page_subtitle"), subtitle,
+            GetCuTextFormatWeight(15.5f, DWRITE_FONT_WEIGHT_NORMAL, false),
+            secondaryText, DWRITE_WORD_WRAPPING_WRAP);
         return;
+    }
 
-    DrawScrollbarAt(context, sbRect, contentHeight, static_cast<int>(bodyHeight),
-                    scrollOffset, hovered, app_->IsLightContentTheme(), GetCellScale());
+    RECT title{
+        body.left + Cu(24.0f), body.top + Cu(14.0f),
+        body.right - Cu(24.0f), body.top + Cu(50.0f),
+    };
+    app_->DrawD2DText(
+        context, _LW("guide.details_title"), title,
+        GetCuTextFormatWeight(23.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, false),
+        primaryText);
+
+    RECT status{
+        body.left + Cu(24.0f), title.bottom,
+        body.right - Cu(24.0f), title.bottom + Cu(25.0f),
+    };
+    app_->DrawD2DText(
+        context,
+        _LFW("guide.page_status",
+            std::to_wstring(pageIndex + 1),
+            std::to_wstring(pageCount),
+            std::to_wstring(monitorCount)),
+        status,
+        GetCuTextFormatWeight(12.5f, DWRITE_FONT_WEIGHT_NORMAL, false),
+        hintText);
+
+    const char* detailKeys[] = {
+        "guide.details_pages",
+        "guide.details_drag",
+        "guide.details_remove",
+    };
+    constexpr size_t detailCount = sizeof(detailKeys) / sizeof(detailKeys[0]);
+    const int detailTop = status.bottom + Cu(2.0f);
+    const int detailBottom = primaryButton.top - Cu(7.0f);
+    const int rowHeight = std::max(
+        1, (detailBottom - detailTop) / static_cast<int>(detailCount));
+    for (size_t i = 0; i < detailCount; ++i)
+    {
+        RECT bullet{
+            body.left + Cu(26.0f),
+            detailTop + static_cast<int>(i) * rowHeight,
+            body.right - Cu(26.0f),
+            detailTop + static_cast<int>(i + 1) * rowHeight,
+        };
+        std::wstring text = L"•  ";
+        text += _LW(detailKeys[i]);
+        app_->DrawD2DText(
+            context, text, bullet,
+            GetCuTextFormatWeight(14.0f, DWRITE_FONT_WEIGHT_NORMAL, false),
+            secondaryText, DWRITE_WORD_WRAPPING_WRAP);
+    }
 }

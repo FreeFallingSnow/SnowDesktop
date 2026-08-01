@@ -53,6 +53,8 @@ enum class WidgetHit {
     CategoryTab,        ///< FileCategories / FolderMapping：分类标签页
     SearchBox,          ///< FileCategories / FolderMapping：搜索框
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
+    GuideAddWidgetBtn,  ///< Guide：打开“添加组件”菜单
+    GuideDetailsBtn,    ///< Guide：展开或收起分页说明
 };
 
 /**
@@ -830,9 +832,8 @@ private:
  * @class GuideWidget
  * @brief 分页系统使用指南组件
  *
- * GuideWidget 继承 WidgetContainer，以可滚动 DWrite 文本展示
- * 多屏幕多分页系统的介绍和操作说明。无子项、不接受拖放，
- * 仅作为信息展示和页面占位用途。
+ * GuideWidget 继承 WidgetContainer，作为新页面的欢迎卡片和操作入口。
+ * 无子项、不接受拖放；删除卡片后，现有空页清理流程会移除该页面。
  */
 class GuideWidget : public WidgetContainer
 {
@@ -849,17 +850,18 @@ public:
     size_t GetSlotCount() const override { return 0; }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override { return {}; }
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
-    void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const override;
-    int GetMaxScrollOffset() const override { return std::max(0, static_cast<int>(totalTextHeight_ - lastBodyHeight_)); }
+    WidgetHit HitTestWidget(POINT pt) const override;
+    int GetMaxScrollOffset() const override { return 0; }
     HitRegion HitTestDrag(POINT /*pt*/, Slot*& outSlot) override { outSlot = nullptr; return HitRegion::None; }
     std::wstring GetDragHint(Slot*, HitRegion, const std::vector<Item*>&, Container*, int) const override { return L""; }
     void OnItemsDropped(const std::vector<Item*>&, Container*, Slot*, HitRegion, int) override {}
     std::vector<Item*> GetSelectedItems() const override { return {}; }
+    void ToggleDetails() { detailsExpanded_ = !detailsExpanded_; }
 
 private:
-    static std::wstring BuildGuideText(const DesktopApp* app);
-    mutable float totalTextHeight_ = 0;
-    mutable LONG lastBodyHeight_ = 0;
+    RECT GetPrimaryButtonRect(RECT body) const;
+    RECT GetSecondaryButtonRect(RECT body) const;
+    bool detailsExpanded_ = false;
 };
 
 /**

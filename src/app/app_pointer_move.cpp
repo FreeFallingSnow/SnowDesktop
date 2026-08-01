@@ -205,9 +205,16 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             {
                 return;
             }
+            std::vector<RECT> visualItemBounds;
+            visualItemBounds.reserve(sourceItems.size());
+            for (Item* item : sourceItems)
+                visualItemBounds.push_back(
+                    item ? item->GetBounds() : RECT{});
             ClearDockBackdropForDragTransition(oldMouse, current);
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
+            dragSession_.SetVisualItemBounds(
+                std::move(visualItemBounds));
             // From this point the drag session owns the logical interaction.
             // Do not retain the original wrapper pointer across object rebuilds.
             mouseDownHit_ = nullptr;
@@ -426,6 +433,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                         dragGroupOriginY_ += dy;
                         mouseDownPoint_.x += dx;
                         mouseDownPoint_.y += dy;
+                        InvalidateDragStaticScene();
                         InvalidateRect(hwnd_, nullptr, TRUE);
                     }
                     navAutoFlipTick_ = now;
@@ -635,7 +643,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         return;
     }
 
-    if (mouseDown_ && !mouseDownHit_)
+    if (mouseDown_ && !mouseDownHit_ &&
+        pendingGuideAction_ == WidgetHit::None)
     {
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)

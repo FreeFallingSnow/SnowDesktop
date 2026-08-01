@@ -1,6 +1,7 @@
 #include "core/container.h"
 #include "core/drag_session.h"
 #include "core/drag_target_resolver.h"
+#include "core/item.h"
 #include "core/slot.h"
 #include "app/drag_drop_controller.h"
 #include "app/ole_drag_drop_adapter.h"
@@ -120,6 +121,30 @@ private:
     BarStyle style_;
     snowdesktop::slot_contract::
         SlotSurfaceKind surface_;
+};
+
+class ContractItem final : public Item
+{
+public:
+    explicit ContractItem(RECT bounds) : bounds_(bounds) {}
+
+    std::wstring GetTitle() const override { return L"item"; }
+    std::wstring GetPath() const override { return L""; }
+    HBITMAP GetIconBitmap() const override { return nullptr; }
+    RECT GetBounds() const override { return bounds_; }
+    void SetBounds(RECT bounds) override { bounds_ = bounds; }
+    bool IsSelected() const override { return selected_; }
+    void SetSelected(bool selected) override { selected_ = selected; }
+    Container* GetContainer() const override { return nullptr; }
+    void Draw(ID2D1DeviceContext*, RECT, int) override {}
+    Microsoft::WRL::ComPtr<IDataObject> CreateDataObject() override
+    {
+        return {};
+    }
+
+private:
+    RECT bounds_{};
+    bool selected_ = false;
 };
 
 class FakeOleDragDropHandler final : public OleDragDropHandler
@@ -559,6 +584,49 @@ void TestDropActionModifiers()
         "reapplying the same action must not invalidate state");
 }
 
+void TestDragTargetPointUsesAdjustedSessionOrigin()
+{
+    DragSession session;
+    ContractItem item(RECT{50, 40, 130, 120});
+    session.Begin(nullptr, {&item}, {}, POINT{100, 80}, POINT{420, 220});
+    session.SetVisualItemBounds({item.GetBounds()});
+
+    const POINT groupOrigin{40, 30};
+    const POINT beforeFlip = session.ResolveTargetPoint(
+        groupOrigin, POINT{420, 220});
+    Check(beforeFlip.x == 360 && beforeFlip.y == 170,
+        "drag target coordinates must start from the session mouse-down point");
+
+    // The first item's rendered bounds can move by a different amount from the
+    // grid-group origin on monitors with different cell metrics. Rebase from
+    // the group origins themselves so that landing hit-testing remains stable.
+    const POINT nextGroupOrigin{1960, 150};
+    session.AdjustForGroupOriginChange(groupOrigin, nextGroupOrigin);
+    item.SetBounds(RECT{1980, 170, 2070, 260});
+    const POINT afterFlip = session.ResolveTargetPoint(
+        nextGroupOrigin, POINT{420, 220});
+    Check(afterFlip.x == beforeFlip.x && afterFlip.y == beforeFlip.y,
+        "cross-screen page migration must keep drag visuals and hit testing on the same adjusted origin");
+
+    const RECT ghost = session.ResolveDraggedBounds(
+        0, item.GetBounds(), POINT{420, 220});
+    Check(ghost.left == 370 && ghost.top == 180 &&
+            ghost.right == 450 && ghost.bottom == 260,
+        "drag ghost must follow its start snapshot instead of migrated cross-screen bounds");
+
+    session.DeactivateForDrop();
+    Check(!session.IsActive() && session.HasContext(),
+        "drop deactivation must retain the adjusted coordinate context");
+    const POINT duringCommit = session.ResolveTargetPoint(
+        nextGroupOrigin, POINT{420, 220});
+    Check(duringCommit.x == beforeFlip.x &&
+            duringCommit.y == beforeFlip.y,
+        "drop commit must use the same target point as the visible preview");
+    session.End();
+    Check(!session.HasContext(),
+        "ending the drag must release the retained drop context");
+}
+
 void TestDragTargetResolutionUsesContractAndZOrder()
 {
     namespace contract = snowdesktop::slot_contract;
@@ -865,6 +933,7 @@ int main()
     TestEverySurfaceRetainsStableDragMetadata();
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
+    TestDragTargetPointUsesAdjustedSessionOrigin();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestDragDropControllerOwnsTransportTransitions();
     TestOleAdapterOwnsComBoundary();

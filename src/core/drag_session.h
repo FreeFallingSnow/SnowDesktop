@@ -29,6 +29,9 @@ public:
     /** @brief 判断当前是否处于拖拽激活状态 */
     bool IsActive() const { return active_; }
 
+    /** @brief 拖拽是否仍保留可供释放提交使用的坐标上下文。 */
+    bool HasContext() const { return hasContext_; }
+
     /** @brief 获取拖拽源容器指针 */
     Container* Source() const { return source_; }
 
@@ -92,11 +95,14 @@ public:
         POINT mouseDown, POINT current)
     {
         active_ = true;
+        hasContext_ = true;
         source_ = source;
         items_ = std::move(items);
         sourceList_ = std::move(sourceList);
         mouseDownPoint_ = mouseDown;
+        visualMouseDownPoint_ = mouseDown;
         currentPoint_ = current;
+        visualItemBounds_.clear();
         action_ = DropAction::Move;
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
@@ -114,6 +120,12 @@ public:
         currentPoint_ = current;
     }
 
+    /** @brief 设置由应用层在真实渲染项上采集的拖拽视觉边界。 */
+    void SetVisualItemBounds(std::vector<RECT> bounds)
+    {
+        visualItemBounds_ = std::move(bounds);
+    }
+
     /**
      * @brief 平移鼠标按下基准点（用于跨页迁移后保持视觉连续性）。
      * @param delta 基准点平移量。
@@ -122,6 +134,62 @@ public:
     {
         mouseDownPoint_.x += delta.x;
         mouseDownPoint_.y += delta.y;
+    }
+
+    /**
+     * @brief 拖拽组因跨屏翻页迁移时，按组原点的实际变化重设按下基准点。
+     *
+     * 命中坐标以拖拽组原点为锚点，因此这里不能使用任意单个项目的 bounds
+     * 变化量。不同监视器的网格尺寸或单元格内边距不同时，两者并不相等。
+     */
+    void AdjustForGroupOriginChange(POINT previousOrigin, POINT nextOrigin)
+    {
+        AdjustMouseDownPoint({
+            nextOrigin.x - previousOrigin.x,
+            nextOrigin.y - previousOrigin.y
+        });
+    }
+
+    /**
+     * @brief 按当前会话的按下基准点，将拖拽组原点平移到当前指针位置。
+     *
+     * 跨屏翻页会通过 AdjustForGroupOriginChange 修正会话基准点；所有拖拽
+     * 可视位置与桌面网格命中都必须复用这里的同一份坐标状态。
+     */
+    POINT ResolveTargetPoint(POINT groupOrigin, POINT current) const
+    {
+        return {
+            groupOrigin.x + current.x - mouseDownPoint_.x,
+            groupOrigin.y + current.y - mouseDownPoint_.y
+        };
+    }
+
+    /**
+     * @brief 根据拖拽开始时的视觉快照计算虚影位置。
+     *
+     * 翻页会迁移项目的模型 bounds。虚影不能再以迁移后的 bounds 为基准，
+     * 否则跨屏时会额外叠加一次屏幕位移并留在错误的显示器上。
+     */
+    RECT ResolveDraggedBounds(
+        size_t itemIndex, RECT fallbackBounds,
+        POINT current) const
+    {
+        RECT base = fallbackBounds;
+        if (itemIndex < visualItemBounds_.size())
+        {
+            const RECT snapshot = visualItemBounds_[itemIndex];
+            if (snapshot.right > snapshot.left &&
+                snapshot.bottom > snapshot.top)
+                base = snapshot;
+        }
+        const LONG dx = current.x - visualMouseDownPoint_.x;
+        const LONG dy = current.y - visualMouseDownPoint_.y;
+        return {
+            base.left + dx,
+            base.top + dy,
+            base.right + dx,
+            base.bottom + dy
+        };
     }
 
     /**
@@ -234,8 +302,10 @@ public:
     void End()
     {
         active_ = false;
+        hasContext_ = false;
         source_ = nullptr;
         items_.clear();
+        visualItemBounds_.clear();
         sourceList_ = {};
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
@@ -243,6 +313,7 @@ public:
         targetRegion_ = HitRegion::None;
         action_ = DropAction::Move;
         mouseDownPoint_ = {};
+        visualMouseDownPoint_ = {};
         currentPoint_ = {};
         InvalidateStaticScene();
     }
@@ -258,11 +329,14 @@ private:
     }
 
     bool active_ = false;                    /**< 拖拽会话是否处于激活状态 */
+    bool hasContext_ = false;                /**< 是否保留释放提交所需的拖拽上下文 */
     Container* source_ = nullptr;            /**< 拖拽源容器指针 */
     std::vector<Item*> items_;              /**< 被拖拽的 Item 指针列表 */
     DragSourceList sourceList_;              /**< 拖拽源列表 */
     POINT mouseDownPoint_{};                 /**< 鼠标按下时的屏幕坐标 */
+    POINT visualMouseDownPoint_{};           /**< 虚影固定使用的原始按下坐标 */
     POINT currentPoint_{};                   /**< 鼠标当前的屏幕坐标 */
+    std::vector<RECT> visualItemBounds_;     /**< 拖拽开始时的虚影边界快照 */
     DropAction action_ = DropAction::Move;   /**< 当前拖拽动作类型，默认为 Move */
     Container* targetContainer_ = nullptr;   /**< 目标容器指针 */
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */

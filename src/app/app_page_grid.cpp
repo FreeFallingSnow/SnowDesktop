@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../widgets/collection_group_rules.h"
+#include "../widgets/guide_widget_rules.h"
 
 // Desktop page topology, grid settings and page-to-monitor mapping.
 
@@ -570,6 +571,43 @@ bool DesktopApp::PageHasContent(const std::wstring& pageId) const
     return false;
 }
 
+bool DesktopApp::RemoveRedundantGuideWidgets()
+{
+    std::unordered_set<std::wstring> pagesWithVisibleItems;
+    std::unordered_set<std::wstring> pagesWithOtherWidgets;
+
+    for (const auto& item : items_)
+    {
+        if (!item.name.empty() &&
+            !item.gridCell.pageId.empty() &&
+            item.gridCell.pageId != kDockPageId &&
+            !IsItemInAnyWidget(item))
+        {
+            pagesWithVisibleItems.insert(item.gridCell.pageId);
+        }
+    }
+    for (const auto& widget : widgets_)
+    {
+        if (widget.type != DesktopWidgetType::Guide &&
+            !IsGroupedWidget(widget) &&
+            !widget.gridCell.pageId.empty() &&
+            widget.gridCell.pageId != kDockPageId)
+        {
+            pagesWithOtherWidgets.insert(widget.gridCell.pageId);
+        }
+    }
+
+    const size_t previousCount = widgets_.size();
+    std::erase_if(widgets_, [&](const DesktopWidget& widget) {
+        if (widget.type != DesktopWidgetType::Guide)
+            return false;
+        return snowdesktop::guide_widget_rules::ShouldRemove(
+            pagesWithVisibleItems.contains(widget.gridCell.pageId),
+            pagesWithOtherWidgets.contains(widget.gridCell.pageId));
+    });
+    return widgets_.size() != previousCount;
+}
+
 /**
  * @brief 从当前偏移位置沿指定方向查找下一个非空页面的偏移量。
  * @param fromOffset 起始偏移量。
@@ -692,13 +730,16 @@ void DesktopApp::PlaceGuideWidgetOnPage(const std::wstring& pageId)
     w.id = MakeNewWidgetId();
     w.type = DesktopWidgetType::Guide;
     w.title = _LW("app.guide.title");
-    w.showTitle = true;
+    w.showTitle = false;
     w.bottomBarHover = true;
-    w.gridSpan = { 4, 3 };
 
     const auto* page = FindGridPage(gridPages_, pageId);
     int cols = page ? page->columns : (savedPageColumns_.count(pageId) ? savedPageColumns_[pageId] : 4);
     int rows = page ? page->rows : (savedPageRows_.count(pageId) ? savedPageRows_[pageId] : 4);
+    w.gridSpan = {
+        std::clamp(4, 1, std::max(1, cols)),
+        std::clamp(2, 1, std::max(1, rows)),
+    };
 
     std::unordered_set<std::wstring> used;
     for (auto& item : items_)
@@ -712,6 +753,18 @@ void DesktopApp::PlaceGuideWidgetOnPage(const std::wstring& pageId)
             MarkGridArea(used, ow.gridCell, ow.gridSpan);
 
     w.gridCell.pageId = pageId;
+    {
+        GridCell centered{
+            pageId,
+            std::max(0, (cols - w.gridSpan.columns) / 2),
+            std::max(0, (rows - w.gridSpan.rows) / 2),
+        };
+        if (!AreGridSlotsMarked(used, centered, w.gridSpan))
+        {
+            w.gridCell = centered;
+            goto placed;
+        }
+    }
     for (int r = 0; r < rows; ++r)
         for (int c = 0; c < cols; ++c)
         {

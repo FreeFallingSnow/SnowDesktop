@@ -155,6 +155,96 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
 }
 
 /**
+ * @brief 显示只包含可添加组件的精简菜单。
+ *
+ * 新页面欢迎卡片使用这个入口，避免用户先打开完整桌面菜单，
+ * 再进入“添加组件”二级菜单。
+ */
+void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
+{
+    lastContextMenuScreenPoint_ = screenPoint;
+    PrepareMenuIconsForPoint(screenPoint);
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+    {
+        ClearMenuIcons();
+        RestoreDesktopWindowLayer();
+        return;
+    }
+
+    AppendMenuW(menu, MF_STRING, kContextAddCollectionWidget,
+        _LW("app.menu.collection"));
+    AppendMenuW(menu, MF_STRING, kContextAddFileCategoryWidget,
+        _LW("app.menu.file_categories"));
+    AppendMenuW(menu, MF_STRING, kContextAddFolderMappingWidget,
+        _LW("app.menu.folder_mapping"));
+    AppendMenuW(menu, MF_STRING, kContextAddCollectionGroupWidget,
+        _LW("app.menu.collection_group"));
+    AppendMenuW(menu, MF_STRING, kContextAddFileGroupWidget,
+        _LW("app.menu.file_group"));
+
+    const std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
+    if (!luaWidgets.empty())
+    {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        for (size_t i = 0; i < luaWidgets.size() && i < 48; ++i)
+        {
+            std::wstring label = WidgetEngine::GetWidgetDisplayName(luaWidgets[i]);
+            if (label.empty())
+                label = luaWidgets[i];
+            AppendMenuW(menu, MF_STRING,
+                kContextAddLuaWidgetFirst + static_cast<UINT>(i),
+                label.c_str());
+        }
+    }
+
+    SetMenuItemIcon(menu, kContextAddCollectionWidget, L"");
+    SetMenuItemIcon(menu, kContextAddCollectionGroupWidget, L"");
+    SetMenuItemIcon(menu, kContextAddFileGroupWidget, L"");
+    SetMenuItemIcon(menu, kContextAddFileCategoryWidget, L"");
+    SetMenuItemIcon(menu, kContextAddFolderMappingWidget, L"");
+
+    SetForegroundWindow(hwnd_);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    FocusDesktopInputWindow();
+
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+
+    if (command >= kContextAddLuaWidgetFirst &&
+        command < kContextAddLuaWidgetFirst +
+            static_cast<UINT>(std::min<size_t>(luaWidgets.size(), 48)))
+    {
+        AddLuaWidgetAt(screenPoint,
+            luaWidgets[command - kContextAddLuaWidgetFirst]);
+        return;
+    }
+
+    switch (command)
+    {
+    case kContextAddCollectionWidget:
+        AddCollectionWidgetAt(screenPoint);
+        break;
+    case kContextAddCollectionGroupWidget:
+        AddCollectionGroupWidgetAt(screenPoint);
+        break;
+    case kContextAddFileGroupWidget:
+        AddFileGroupWidgetAt(screenPoint);
+        break;
+    case kContextAddFileCategoryWidget:
+        AddFileCategoryWidgetAt(screenPoint);
+        break;
+    case kContextAddFolderMappingWidget:
+        AddFolderMappingWidgetAt(screenPoint);
+        break;
+    default:
+        break;
+    }
+}
+
+/**
  * @brief 显示桌面背景右键菜单。
  *        在屏幕坐标处弹出菜单，包含粘贴、新建、刷新、排序方式、
  *        行列调整、添加组件、图标间距等选项。菜单项均带图标。

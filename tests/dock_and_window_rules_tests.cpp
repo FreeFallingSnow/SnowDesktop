@@ -86,33 +86,42 @@ int main()
     const RECT partialBackdropUpdate{0, 0, 1920, 400};
     Check(
         backdropUpdate::ShouldCollectAllPanels(
-            false, false, false, nullptr, backdropClientRect),
+            false, false, false, false, nullptr, backdropClientRect),
         "an unbounded paint reconciles every backdrop panel");
     Check(
         backdropUpdate::ShouldCollectAllPanels(
-            false, false, false, &fullBackdropUpdate, backdropClientRect),
+            false, false, false, false,
+            &fullBackdropUpdate, backdropClientRect),
         "a full WM_PAINT update reconciles every backdrop panel");
     Check(
         backdropUpdate::ShouldCollectAllPanels(
-            false, false, false, &oversizedBackdropUpdate,
+            false, false, false, false, &oversizedBackdropUpdate,
             backdropClientRect),
         "an update covering the client area reconciles backdrop panels");
     Check(
         !backdropUpdate::ShouldCollectAllPanels(
-            false, false, false, &partialBackdropUpdate,
+            false, false, false, false, &partialBackdropUpdate,
             backdropClientRect),
         "a partial paint preserves backdrop panels outside the dirty area");
     Check(
         !backdropUpdate::ShouldCollectAllPanels(
-            true, false, false, &fullBackdropUpdate,
+            false, true, false, false, &fullBackdropUpdate,
             backdropClientRect) &&
         !backdropUpdate::ShouldCollectAllPanels(
-            false, true, false, &fullBackdropUpdate,
+            false, false, true, false, &fullBackdropUpdate,
             backdropClientRect) &&
         !backdropUpdate::ShouldCollectAllPanels(
-            false, false, true, &fullBackdropUpdate,
+            false, false, false, true, &fullBackdropUpdate,
             backdropClientRect),
         "interactive preview paints preserve retained backdrop panels");
+    Check(
+        backdropUpdate::ShouldCollectAllPanels(
+            true, true, false, false, &partialBackdropUpdate,
+            backdropClientRect) &&
+        backdropUpdate::ShouldCollectAllPanels(
+            true, false, true, false, &partialBackdropUpdate,
+            backdropClientRect),
+        "an invalidated drag scene must fully reconcile backdrop panels");
 
     Check(
         displayRefresh::ResolveAction(false, false, false) ==

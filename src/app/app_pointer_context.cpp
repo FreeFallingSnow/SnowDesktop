@@ -26,21 +26,8 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     if (newOffset == pageOffset_) return false;
 
     bool wasDragging = dragSession_.IsActive();
-    // 保存迁移前第一个选中项的实际 bounds（含页面渲染尺寸差异）
-    RECT oldFirstBounds{};
-    bool hasOldBounds = false;
-    if (wasDragging)
-    {
-        for (const auto& item : items_)
-        {
-            if (item.selected && !item.name.empty())
-            {
-                oldFirstBounds = item.bounds;
-                hasOldBounds = !IsRectEmptyRect(oldFirstBounds);
-                break;
-            }
-        }
-    }
+    const POINT oldGroupOrigin{
+        dragGroupOriginX_, dragGroupOriginY_ };
     pageOffset_ = newOffset;
     ApplyPageMapping();
     if (wasDragging) MigrateSelectedItemsToLastMonitorPage();
@@ -55,21 +42,9 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     if (wasDragging)
     {
         UpdateDragGroupOrigin();
-        // 用实际 bounds 差值补偿 mouseDown，消除跨页渲染尺寸差异导致的视觉跳动
-        if (hasOldBounds)
-        {
-            for (const auto& item : items_)
-            {
-                if (item.selected && !item.name.empty())
-                {
-                    dragSession_.AdjustMouseDownPoint({
-                        item.bounds.left - oldFirstBounds.left,
-                        item.bounds.top  - oldFirstBounds.top
-                    });
-                    break;
-                }
-            }
-        }
+        dragSession_.AdjustForGroupOriginChange(
+            oldGroupOrigin,
+            { dragGroupOriginX_, dragGroupOriginY_ });
     }
     // 页面迁移后预览缓存失效
     cachedDropPreview_ = {};

@@ -423,6 +423,58 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         return;
     }
 
+    // Guide buttons open modal UI only after the initiating click has been
+    // released. Opening the menu from WM_LBUTTONDOWN lets that same click's
+    // button-up event immediately dismiss the newly-created menu.
+    if (pendingGuideAction_ != WidgetHit::None)
+    {
+        const WidgetHit pendingAction = pendingGuideAction_;
+        const size_t widgetIndex = mouseDownWidgetIndex_;
+        GuideWidget* guide = nullptr;
+        if (widgetIndex < widgets_.size() &&
+            widgets_[widgetIndex].type == DesktopWidgetType::Guide)
+        {
+            for (auto& container : containers_)
+            {
+                auto* candidate = dynamic_cast<GuideWidget*>(container.get());
+                if (candidate &&
+                    candidate->GetWidgetData() == &widgets_[widgetIndex])
+                {
+                    guide = candidate;
+                    break;
+                }
+            }
+        }
+        const bool invoke = guide &&
+            guide->HitTestWidget(upPoint) == pendingAction;
+        const RECT guideBounds = widgetIndex < widgets_.size()
+            ? widgets_[widgetIndex].bounds : RECT{};
+
+        pendingGuideAction_ = WidgetHit::None;
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        marqueeActive_ = false;
+        marqueeWidgetIndex_ = static_cast<size_t>(-1);
+        ReleaseCapture();
+        if (!IsRectEmpty(&guideBounds))
+            InvalidateRect(hwnd_, &guideBounds, FALSE);
+
+        if (!invoke)
+            return;
+        if (pendingAction == WidgetHit::GuideDetailsBtn)
+        {
+            guide->ToggleDetails();
+            InvalidateRect(hwnd_, &guideBounds, FALSE);
+            return;
+        }
+
+        POINT screenPoint = upPoint;
+        ClientToScreen(hwnd_, &screenPoint);
+        ShowAddWidgetMenu(screenPoint);
+        return;
+    }
+
     // ── Widget action completion ────────────────────────────
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {

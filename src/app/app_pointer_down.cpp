@@ -8,6 +8,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (renameEdit_ != nullptr) return;
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
+    pendingGuideAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelAnimation_.IsInteractive())
@@ -666,6 +667,24 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        else if (wh == WidgetHit::GuideAddWidgetBtn)
+        {
+            pendingGuideAction_ = wh;
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
+            return;
+        }
+        else if (wh == WidgetHit::GuideDetailsBtn)
+        {
+            pendingGuideAction_ = wh;
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
             return;
         }
         else if (wh == WidgetHit::Content)

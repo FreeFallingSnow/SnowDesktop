@@ -3,6 +3,7 @@
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
 #include "widgets/widget_chrome_rules.h"
+#include "widgets/guide_widget_rules.h"
 
 #include <algorithm>
 #include <iostream>
@@ -19,6 +20,8 @@ namespace hoverRules =
     snowdesktop::desktop_hover_rules;
 namespace chromeRules =
     snowdesktop::widget_chrome_rules;
+namespace guideRules =
+    snowdesktop::guide_widget_rules;
 
 namespace
 {
@@ -243,6 +246,19 @@ void TestBottomBarWidthFollowsCornerAndHeight()
     Check(
         chromeRules::BottomBarSideInset(56, 32, 8, 4) == 26,
         "bottom-bar side insets must scale with widget cell size");
+}
+
+void TestGuidePlaceholderLifecycle()
+{
+    Check(
+        !guideRules::ShouldRemove(false, false),
+        "a guide must remain while it is the page's only visible content");
+    Check(
+        guideRules::ShouldRemove(true, false),
+        "a visible desktop item must replace the guide placeholder");
+    Check(
+        guideRules::ShouldRemove(false, true),
+        "a standalone widget must replace the guide placeholder");
 }
 
 void TestFileGroupRules()
@@ -597,6 +613,7 @@ int main()
     TestActiveItemFallback();
     TestTabWidthDistribution();
     TestBottomBarWidthFollowsCornerAndHeight();
+    TestGuidePlaceholderLifecycle();
     TestStableReorder();
     TestFileGroupRules();
     TestGridPlacementInvariants();

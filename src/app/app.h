@@ -1082,6 +1082,8 @@ private:
     // ── Context menus ───────────────────────────────────────
     /** @brief 显示桌面背景上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowBackgroundContextMenu(POINT screenPoint);
+    /** @brief 显示精简的“添加组件”菜单。 @param screenPoint 菜单锚点 */
+    void ShowAddWidgetMenu(POINT screenPoint);
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
@@ -1219,6 +1221,8 @@ private:
     void ApplyPageMapping();
     /** @brief 清理溢出区空页（保留前 N-1 槽位页与末屏当前显示的空页）。 */
     void PruneEmptyOverflowPages();
+    /** @brief 删除所在页面已经出现其他可见内容的 Guide 占位组件。 */
+    bool RemoveRedundantGuideWidgets();
     /** @brief 按显示器数量补齐前 N-1 个槽位页。 */
     void PadPagesToMonitorCount();
     /** @brief 将页面 ID 重排为连续的 __page:1,2,3...（封装 NormalizePageIds 的有变动才执行）。 */
@@ -1982,6 +1986,8 @@ private:
     bool compositionPaintInProgress_ = false;
     /** @brief DWM 原生 backdrop 子窗口。 */
     DesktopBackdropCompositor desktopBackdropCompositor_;
+    /** @brief 拖拽静态场景变化后，下一帧必须完整核对原生毛玻璃面板。 */
+    bool desktopBackdropFullCollectionPending_ = false;
     /** @brief 是否已经记录过本次合成目标的首个原生玻璃面板。 */
     bool nativeGlassPanelReadyLogged_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
@@ -2282,6 +2288,7 @@ private:
     bool mouseDown_ = false;
     POINT mouseDownPoint_{};
     Item* mouseDownHit_ = nullptr;
+    WidgetHit pendingGuideAction_ = WidgetHit::None;
     bool marqueeActive_ = false;
     RECT marqueeRect_{};
     size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);

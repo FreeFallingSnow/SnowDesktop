@@ -68,9 +68,12 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             marqueeActive_ &&
             !marqueeDockFolderPopup_ &&
             marqueeWidgetIndex_ >= widgets_.size();
+        const bool forceCompleteGlassCollection =
+            desktopBackdropFullCollectionPending_;
         const bool completeGlassCollection =
             snowdesktop::desktop_backdrop_update_rules::
                 ShouldCollectAllPanels(
+                    forceCompleteGlassCollection,
                     dragSession_.IsActive(),
                     widgetPreviewActive,
                     desktopMarqueeActive,
@@ -85,7 +88,8 @@ void DesktopApp::OnPaint(const RECT* updateRect)
 
         if (!desktopIconsHidden_ || HasRetainedElements())
             RenderFrame(
-                context.Get(), dcompUpdate,
+                context.Get(),
+                forceCompleteGlassCollection ? nullptr : dcompUpdate,
                 desktopIconsHidden_);
         if (desktopIconsHidden_ && showHiddenHint_)
             DrawHiddenHintOverlay(context.Get());
@@ -94,6 +98,8 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             DrawWidgetAddedHintOverlay(context.Get());
 
         desktopBackdropCompositor_.EndFrame();
+        if (forceCompleteGlassCollection)
+            desktopBackdropFullCollectionPending_ = false;
         if (!nativeGlassPanelReadyLogged_ &&
             desktopBackdropCompositor_.IsAvailable() &&
             desktopBackdropCompositor_.PanelCount() > 0)

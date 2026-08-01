@@ -80,7 +80,9 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 
     std::unordered_set<std::wstring> usedSlots;
     for (const auto& w : widgets_)
-        if (!IsGroupedWidget(w))
+        if (!IsGroupedWidget(w) &&
+            !(w.type == DesktopWidgetType::Guide &&
+                w.gridCell.pageId == cell.pageId))
             MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
     for (const auto& item : items_)
     {

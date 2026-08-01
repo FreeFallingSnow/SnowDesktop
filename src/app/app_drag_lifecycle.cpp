@@ -26,6 +26,10 @@ void DesktopApp::InvalidateDragStaticScene()
 {
     dragSession_.InvalidateStaticScene();
     dragRenderCache_.Reset();
+    // 原生毛玻璃面板位于独立的 Composition 视觉树中，不包含在 D2D
+    // 静态位图里。页面或布局变化时必须在下一帧完整核对一次，否则
+    // 交互帧的“保留旧面板”策略会让上一页的玻璃区域残留。
+    desktopBackdropFullCollectionPending_ = true;
 }
 
 /**

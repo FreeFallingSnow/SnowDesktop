@@ -425,19 +425,17 @@ void DesktopApp::DrawDynamicOverlays(
     if (dragSession_.IsActive() && !dragSession_.Items().empty())
     {
         POINT current = dragSession_.CurrentPoint();
-        POINT mouseDown = dragSession_.MouseDownPoint();
-        int dx = current.x - mouseDown.x;
-        int dy = current.y - mouseDown.y;
-
-        for (auto* item : dragSession_.Items())
+        const auto& dragItems = dragSession_.Items();
+        for (size_t itemIndex = 0;
+            itemIndex < dragItems.size(); ++itemIndex)
         {
+            Item* item = dragItems[itemIndex];
             if (!item) continue;
             RECT bounds = item->GetBounds();
             if (IsRectEmptyRect(bounds)) continue;
 
-            RECT draggedBounds = MakeRect(
-                bounds.left + dx, bounds.top + dy,
-                bounds.right + dx, bounds.bottom + dy);
+            RECT draggedBounds = dragSession_.ResolveDraggedBounds(
+                itemIndex, bounds, current);
             item->Draw(ctx, draggedBounds, 3);
         }
     }

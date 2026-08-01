@@ -19,16 +19,18 @@ inline bool CoversClientArea(
 }
 
 inline bool ShouldCollectAllPanels(
+    bool forceCompleteCollection,
     bool dragSessionActive,
     bool widgetPreviewActive,
     bool desktopMarqueeActive,
     const RECT* updateRect,
     const RECT& clientRect) noexcept
 {
-    return !dragSessionActive &&
+    return forceCompleteCollection ||
+        (!dragSessionActive &&
         !widgetPreviewActive &&
         !desktopMarqueeActive &&
-        CoversClientArea(updateRect, clientRect);
+        CoversClientArea(updateRect, clientRect));
 }
 
 } // namespace snowdesktop::desktop_backdrop_update_rules

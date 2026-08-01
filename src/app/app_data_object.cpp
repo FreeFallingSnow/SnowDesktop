@@ -4,6 +4,13 @@
 
 POINT DesktopApp::GetDragTargetPoint(POINT current) const
 {
+    // DeactivateForDrop only ends interactive rendering; the adjusted session
+    // coordinates remain authoritative until the drop plan has been committed.
+    if (dragSession_.HasContext())
+    {
+        return dragSession_.ResolveTargetPoint(
+            { dragGroupOriginX_, dragGroupOriginY_ }, current);
+    }
     return {
         dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
         dragGroupOriginY_ + (current.y - mouseDownPoint_.y)

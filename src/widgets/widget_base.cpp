@@ -1825,13 +1825,35 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     const bool selected = data_->selected;
     const bool hovered = PtInRect(&frame, mousePt) != FALSE;
-    const bool lightTheme = app_->IsLightContentTheme();
+    const bool fixedGuideAppearance =
+        data_->type == DesktopWidgetType::Guide;
+    const bool lightTheme = fixedGuideAppearance
+        ? true : app_->IsLightContentTheme();
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
     float cornerRadiusCu = 12.0f;
-    if (app_->settingsWindow_)
+    PersonalizationSettings guideAppearance;
+    const PersonalizationSettings* appearanceOverride = nullptr;
+    if (fixedGuideAppearance)
+    {
+        guideAppearance = PersonalizationSettings::AcrylicLightPreset();
+        appearanceOverride = &guideAppearance;
+        fillColor = D2D1::ColorF(
+            guideAppearance.widgetBgR,
+            guideAppearance.widgetBgG,
+            guideAppearance.widgetBgB,
+            guideAppearance.widgetAlpha);
+        borderColor = D2D1::ColorF(
+            guideAppearance.widgetBorderR,
+            guideAppearance.widgetBorderG,
+            guideAppearance.widgetBorderB,
+            guideAppearance.widgetBorderAlpha);
+        gradientEndA = guideAppearance.gradientEndA;
+        cornerRadiusCu = guideAppearance.cornerRadius;
+    }
+    else if (app_->settingsWindow_)
     {
         const auto& p = app_->settingsWindow_->GetPersonalization();
         fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
@@ -1857,7 +1879,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     // ── 1. Background + border ────────────────────────────────
     app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, borderColor,
-        selected, strokeW);
+        selected, strokeW, appearanceOverride);
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {
@@ -1880,7 +1902,6 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         data_->type == DesktopWidgetType::FolderMapping ||
         data_->type == DesktopWidgetType::CollectionGroup ||
         data_->type == DesktopWidgetType::FileGroup ||
-        data_->type == DesktopWidgetType::Guide ||
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
