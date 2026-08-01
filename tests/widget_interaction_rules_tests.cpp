@@ -474,36 +474,44 @@ void TestHoverOnlyWidgetVisibility()
 {
     Check(
         visibilityRules::ShouldRenderWidget(
-            false, false, false, false, false, false),
+            false, false, false, false, false, false, false),
         "regular widget remains visible while idle");
     Check(
         !visibilityRules::ShouldRenderWidget(
-            true, false, false, false, false, false),
+            true, false, false, false, false, false, false),
         "hover-only widget remains hidden while idle");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, true, false, false, false, false),
+            true, true, false, false, false, false, false),
         "item drag reveals hover-only widget");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, true, false, false),
+            true, false, false, true, false, false, false),
         "widget move reveals hover-only widget");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, false, false, true),
+            true, false, false, false, true, false, false),
+        "selected hover-only widget remains visible");
+    Check(
+        visibilityRules::ShouldRenderWidget(
+            true, false, false, false, false, false, true),
         "pointer hover reveals hover-only widget");
     Check(
         !visibilityRules::ShouldRetainBackdropAfterDrag(
-            true, false, false),
+            true, false, false, false),
         "hover-only widget backdrop must be removed as soon as drag ends");
     Check(
         visibilityRules::ShouldRetainBackdropAfterDrag(
-            true, true, false),
+            true, false, true, false),
         "an open popup must retain its hover-only widget backdrop after drag");
     Check(
         visibilityRules::ShouldRetainBackdropAfterDrag(
-            true, false, true),
+            true, false, false, true),
         "a hovered widget must retain its backdrop after drag");
+    Check(
+        visibilityRules::ShouldRetainBackdropAfterDrag(
+            true, true, false, false),
+        "a selected hover-only widget retains its backdrop after drag");
 }
 
 void TestNestedWidgetScrolling()

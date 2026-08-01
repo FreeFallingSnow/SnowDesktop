@@ -89,6 +89,7 @@ void DesktopApp::DrawStaticBackground(
                 dragSession_.IsActive(),
                 dragDropController_.IsExternalDragActive(),
                 widgetAction_ == WidgetAction::Move,
+                widgetData.selected,
                 popupOpen || interactionPinned,
                 PtInRect(&widgetData.bounds, lastMousePoint_) != FALSE))
             continue;

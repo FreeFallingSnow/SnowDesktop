@@ -113,6 +113,7 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
         if (snowdesktop::widget_visibility_rules::
                 ShouldRetainBackdropAfterDrag(
                     widget.showOnHoverOnly,
+                    widget.selected,
                     popupOpen,
                     pointerInside))
             continue;
