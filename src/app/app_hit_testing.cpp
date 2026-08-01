@@ -1,4 +1,5 @@
 #include "app.h"
+#include "widgets/widget_chrome_rules.h"
 
 // Desktop-item and standalone-widget hit testing.
 
@@ -85,13 +86,24 @@ RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) 
 {
     RECT frame = GetStandaloneWidgetFrameRect(widget);
     const float cellScale = GetWidgetCellScale(widget);
-    const float barHeight = settingsWindow_ ? settingsWindow_->GetPersonalization().barHeight : 24.0f;
+    const auto personalization = settingsWindow_
+        ? settingsWindow_->GetPersonalization()
+        : PersonalizationSettings{};
+    const float barHeight = personalization.barHeight;
     const int handleHeight = ScaleWidgetCu(barHeight, cellScale);
+    const int sideInset = snowdesktop::widget_chrome_rules::BottomBarSideInset(
+        ScaleWidgetCu(personalization.cornerRadius, cellScale),
+        handleHeight,
+        ScaleWidgetCu(4.0f, cellScale),
+        ScaleWidgetCu(2.0f, cellScale));
+    const int maxSideInset = std::max<int>(
+        0, (frame.right - frame.left - 1) / 2);
+    const int clampedSideInset = std::min(sideInset, maxSideInset);
     return {
-        frame.left + ScaleWidgetCu(4.0f, cellScale),
+        frame.left + clampedSideInset,
         std::max<LONG>(frame.top,
             frame.bottom - handleHeight - ScaleWidgetCu(2.0f, cellScale)),
-        frame.right - ScaleWidgetCu(4.0f, cellScale),
+        frame.right - clampedSideInset,
         frame.bottom - ScaleWidgetCu(2.0f, cellScale)
     };
 }

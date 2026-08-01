@@ -2,6 +2,7 @@
 #include "desktop_hover_rules.h"
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
+#include "widgets/widget_chrome_rules.h"
 
 #include <algorithm>
 #include <iostream>
@@ -16,6 +17,8 @@ namespace visibilityRules =
     snowdesktop::widget_visibility_rules;
 namespace hoverRules =
     snowdesktop::desktop_hover_rules;
+namespace chromeRules =
+    snowdesktop::widget_chrome_rules;
 
 namespace
 {
@@ -221,6 +224,25 @@ void TestStableReorder()
             }
         }
     }
+}
+
+void TestBottomBarWidthFollowsCornerAndHeight()
+{
+    Check(
+        chromeRules::BottomBarSideInset(12, 24, 4, 2) == 4,
+        "default bottom-bar geometry must retain its established width");
+    Check(
+        chromeRules::BottomBarSideInset(28, 16, 4, 2) == 13,
+        "large corners and a short bar must narrow the bottom-bar width");
+    Check(
+        chromeRules::BottomBarSideInset(28, 24, 4, 2) == 11,
+        "a taller bar must recover width that remains inside the corner");
+    Check(
+        chromeRules::BottomBarSideInset(28, 48, 4, 2) == 7,
+        "the maximum bar height must still retain rounded-corner clearance");
+    Check(
+        chromeRules::BottomBarSideInset(56, 32, 8, 4) == 26,
+        "bottom-bar side insets must scale with widget cell size");
 }
 
 void TestFileGroupRules()
@@ -574,6 +596,7 @@ int main()
     TestViewportClipping();
     TestActiveItemFallback();
     TestTabWidthDistribution();
+    TestBottomBarWidthFollowsCornerAndHeight();
     TestStableReorder();
     TestFileGroupRules();
     TestGridPlacementInvariants();

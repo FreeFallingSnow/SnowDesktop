@@ -17,6 +17,7 @@
 #include "utils.h"
 #include "app.h"
 #include "collection_group_rules.h"
+#include "widget_chrome_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -319,10 +320,18 @@ RECT WidgetContainer::GetMoveHandleRect() const
 {
     RECT frame = GetFrameRect();
     const int handleHeight = Cu(GetBarHeight());
+    const float cornerRadius = app_ && app_->settingsWindow_
+        ? app_->settingsWindow_->GetPersonalization().cornerRadius
+        : 12.0f;
+    const int sideInset = snowdesktop::widget_chrome_rules::BottomBarSideInset(
+        Cu(cornerRadius), handleHeight, Cu(4.0f), Cu(2.0f));
+    const int maxSideInset = std::max<int>(
+        0, (frame.right - frame.left - 1) / 2);
+    const int clampedSideInset = std::min(sideInset, maxSideInset);
     return {
-        frame.left + Cu(4.0f),
+        frame.left + clampedSideInset,
         std::max<LONG>(frame.top, frame.bottom - handleHeight - Cu(2.0f)),
-        frame.right - Cu(4.0f),
+        frame.right - clampedSideInset,
         frame.bottom - Cu(2.0f)
     };
 }
