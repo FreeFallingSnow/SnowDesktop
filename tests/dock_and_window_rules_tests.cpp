@@ -589,6 +589,25 @@ int main()
             0, 0, 0, 3, 80, 18) ==
             3 * 80,
         "folder-only Dock content must not reserve a phantom group separator");
+    Check(folderRules::ScrollableExtentForLayout(
+            false, 2, 1, 1, 3, 80, 18) ==
+            7 * 80 + 3 * 18,
+        "floating Dock folders must remain in the shared scrollable strip");
+    Check(folderRules::ScrollableExtentForLayout(
+            true, 2, 1, 1, 3, 80, 18) ==
+            4 * 80 + 2 * 18,
+        "edge-attached Dock folders must stay out of the leading scroll strip");
+    Check(folderRules::EdgeAttachedTrailingReserve(
+            3, 2, true, 80, 18) ==
+            5 * 80 + 18,
+        "edge-attached Dock must reserve a packed folder/search control area");
+    Check(folderRules::FolderAxisStartBeforeSearch(
+            1000, 3, 0, 80) == 760 &&
+            folderRules::FolderAxisStartBeforeSearch(
+                1000, 3, 1, 80) == 840 &&
+            folderRules::FolderAxisStartBeforeSearch(
+                1000, 3, 2, 80) == 920,
+        "edge-attached Dock folders must preserve order immediately before Search");
     Check(dockDrop::ExternalMappingAction() ==
             DropAction::Link,
         "external resources dropped on Dock must create a link mapping");

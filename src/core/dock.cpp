@@ -1063,9 +1063,16 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds) const
     const bool hasMainItems = SortableEntryCount() > 0 ||
         runningCount > 0 || frequentCount > 0;
     const bool hasFolders = FolderEntryCount() > 0;
-    const int trailingLength =
-        static_cast<int>(1 + hasRecycleBin) * ItemPitch() +
-        (hasMainItems && !hasFolders ? ScaledSeparatorGap() : 0);
+    const int trailingLength = IsEdgeAttached()
+        ? static_cast<int>(
+            snowdesktop::dock_folder_rules::
+                EdgeAttachedTrailingReserve(
+                    FolderEntryCount(),
+                    1 + static_cast<size_t>(hasRecycleBin),
+                    hasMainItems,
+                    ItemPitch(), ScaledSeparatorGap()))
+        : static_cast<int>(1 + hasRecycleBin) * ItemPitch() +
+            (hasMainItems && !hasFolders ? ScaledSeparatorGap() : 0);
     if (IsVertical())
     {
         viewport.top += halfGap + leadingLength;
@@ -1091,7 +1098,8 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const long long contentExtent =
         snowdesktop::dock_folder_rules::
-            SharedScrollableExtent(
+            ScrollableExtentForLayout(
+                IsEdgeAttached(),
                 fixedCount, runningCount,
                 frequentCount, folderCount,
                 ItemPitch(),
@@ -1221,6 +1229,30 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         return cell;
     };
     auto makeFolderCell = [&](size_t folderIndex) {
+        if (IsEdgeAttached())
+        {
+            const RECT searchCell = makeTrailingCell(0);
+            RECT cell = searchCell;
+            if (IsVertical())
+            {
+                cell.top = static_cast<LONG>(
+                    snowdesktop::dock_folder_rules::
+                        FolderAxisStartBeforeSearch(
+                            searchCell.top, folderCount,
+                            folderIndex, slotLength));
+                cell.bottom = cell.top + slotLength;
+            }
+            else
+            {
+                cell.left = static_cast<LONG>(
+                    snowdesktop::dock_folder_rules::
+                        FolderAxisStartBeforeSearch(
+                            searchCell.left, folderCount,
+                            folderIndex, slotLength));
+                cell.right = cell.left + slotLength;
+            }
+            return cell;
+        }
         return makeCell(
             fixedCount + runningCount +
                 frequentCount + folderIndex +
@@ -1308,7 +1340,9 @@ size_t DockContainer::GetInsertIndexAtPoint(POINT pt) const
                 FolderEntryCount());
     const size_t begin = range.begin;
     const size_t end = range.end;
-    if (!IsPointInScrollViewport(pt)) return end;
+    if (!IsPointInScrollViewport(pt) &&
+        !(folderSource && IsEdgeAttached()))
+        return end;
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
     for (size_t i = begin; i < end && i < slots.size(); ++i)
     {
@@ -1356,8 +1390,11 @@ void DockContainer::DrawInsertionPreview(
         }
         const float axis = static_cast<float>(
             IsVertical() ? boundary.top : boundary.left);
-        if ((IsVertical() && (axis < viewport.top || axis > viewport.bottom)) ||
-            (!IsVertical() && (axis < viewport.left || axis > viewport.right)))
+        if (!IsEdgeAttached() &&
+            ((IsVertical() &&
+                (axis < viewport.top || axis > viewport.bottom)) ||
+             (!IsVertical() &&
+                (axis < viewport.left || axis > viewport.right))))
             return;
         if (IsVertical())
             context->FillRoundedRectangle(D2D1::RoundedRect(
@@ -1585,12 +1622,15 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             if (item)
                 includeScrollable(item->GetBounds());
         }
-        for (size_t index = folderBegin;
-            index < folderEnd && index < slots.size(); ++index)
+        if (!IsEdgeAttached())
         {
-            if (slots[index])
-                includeScrollable(
-                    slots[index]->GetBounds());
+            for (size_t index = folderBegin;
+                index < folderEnd && index < slots.size(); ++index)
+            {
+                if (slots[index])
+                    includeScrollable(
+                        slots[index]->GetBounds());
+            }
         }
 
         const MagnificationZone focusZone =
@@ -1616,8 +1656,14 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 IsRectEmpty(&windowsButton)
                 ? RECT{}
                 : visualRectFor(windowsButton);
+            RECT trailingFixed = search;
+            if (IsEdgeAttached() && folderCount > 0 &&
+                folderBegin < slots.size() && slots[folderBegin])
+            {
+                trailingFixed = slots[folderBegin]->GetBounds();
+            }
             const RECT trailingVisual =
-                visualRectFor(search);
+                visualRectFor(trailingFixed);
             scrollViewport = snowdesktop::dock_magnification::
                 FitOverflowViewportToFixedVisuals(
                     scrollViewport,
@@ -1754,14 +1800,17 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             if (item)
                 drawScrollableItem(
                     item.get(), item->GetBounds(), focusedPass);
-        for (size_t i = folderBegin;
-             i < folderEnd && i < slots.size(); ++i)
+        if (!IsEdgeAttached())
         {
-            if (slots[i])
-                drawScrollableItem(
-                    slots[i]->GetItem(),
-                    slots[i]->GetBounds(),
-                    focusedPass);
+            for (size_t i = folderBegin;
+                 i < folderEnd && i < slots.size(); ++i)
+            {
+                if (slots[i])
+                    drawScrollableItem(
+                        slots[i]->GetItem(),
+                        slots[i]->GetBounds(),
+                        focusedPass);
+            }
         }
     };
     drawScrollablePass(false);
@@ -1824,7 +1873,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             preceding,
             frequentItems_.front()->GetBounds());
     }
-    if (hasScrollableItems && folderCount > 0 &&
+    if (!IsEdgeAttached() &&
+        hasScrollableItems && folderCount > 0 &&
         folderBegin < slots.size() &&
         slots[folderBegin])
     {
@@ -1844,26 +1894,55 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (scrollClipPushed)
         context->PopAxisAlignedClip();
 
+    if (IsEdgeAttached())
+    {
+        auto drawFixedFolderPass = [&](bool focusedPass) {
+            for (size_t i = folderBegin;
+                 i < folderEnd && i < slots.size(); ++i)
+            {
+                if (!slots[i]) continue;
+                Item* item = slots[i]->GetItem();
+                if (!item) continue;
+                const RECT itemBounds = slots[i]->GetBounds();
+                const bool hovered = isFocused(itemBounds);
+                if (hovered != focusedPass) continue;
+                item->Draw(context, visualRectFor(itemBounds),
+                    item->IsSelected() ? 2 : 0);
+                if (hovered && !app_->dragSession_.IsActive())
+                    hoveredTitle = item->GetTitle();
+            }
+        };
+        drawFixedFolderPass(false);
+        drawFixedFolderPass(true);
+    }
+
     if (!IsRectEmpty(&windowsButton))
     {
-        RECT following = search;
+        RECT following{};
         if (fixedCount > 0 && !slots.empty() && slots[0])
             following = slots[0]->GetBounds();
         else if (!runningItems_.empty() && runningItems_.front())
             following = runningItems_.front()->GetBounds();
         else if (!frequentItems_.empty() && frequentItems_.front())
             following = frequentItems_.front()->GetBounds();
-        else if (folderCount > 0 &&
+        else if (!IsEdgeAttached() && folderCount > 0 &&
             folderBegin < slots.size() &&
             slots[folderBegin])
             following =
                 slots[folderBegin]->GetBounds();
-        drawSeparatorBetween(
-            windowsButton, following);
+        if (!IsRectEmpty(&following))
+            drawSeparatorBetween(
+                windowsButton, following);
     }
-    if (hasScrollableItems && folderCount == 0)
+    if (hasScrollableItems &&
+        (folderCount == 0 || IsEdgeAttached()))
     {
         RECT following = search;
+        if (IsEdgeAttached() && folderCount > 0 &&
+            folderBegin < slots.size() && slots[folderBegin])
+        {
+            following = slots[folderBegin]->GetBounds();
+        }
         const RECT followingVisual = visualRectFor(following);
         ComPtr<ID2D1SolidColorBrush> separatorBrush;
         context->CreateSolidColorBrush(
@@ -2059,11 +2138,10 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
             dockEntry->GetEntryIndex() < app_->dockEntries_.size() &&
             app_->IsFolderDockEntry(
                 app_->dockEntries_[dockEntry->GetEntryIndex()]);
-        if (!pointInScrollViewport &&
-            !searchSlot && !recycleBinSlot)
-            continue;
-        if (!folderSlot && !searchSlot && !recycleBinSlot &&
-            !pointInScrollViewport)
+        const bool fixedTrailingSlot =
+            searchSlot || recycleBinSlot ||
+            (folderSlot && IsEdgeAttached());
+        if (!pointInScrollViewport && !fixedTrailingSlot)
             continue;
         outSlot = slot.get();
         if (!targetItem)
@@ -2289,7 +2367,7 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
                 return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
         }
     }
-    if (IsPointInScrollViewport(pt))
+    if (IsPointInScrollViewport(pt) || IsEdgeAttached())
     {
         const size_t end = FolderEntryBegin() + FolderEntryCount();
         for (size_t i = FolderEntryBegin();

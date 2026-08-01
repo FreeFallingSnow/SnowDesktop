@@ -85,4 +85,43 @@ constexpr long long SharedScrollableExtent(
             separatorGap;
 }
 
+constexpr long long ScrollableExtentForLayout(
+    bool edgeAttached,
+    std::size_t mainCount,
+    std::size_t runningCount,
+    std::size_t frequentCount,
+    std::size_t folderCount,
+    int itemPitch,
+    int separatorGap)
+{
+    return SharedScrollableExtent(
+        mainCount, runningCount, frequentCount,
+        edgeAttached ? 0 : folderCount,
+        itemPitch, separatorGap);
+}
+
+constexpr long long EdgeAttachedTrailingReserve(
+    std::size_t folderCount,
+    std::size_t trailingControlCount,
+    bool hasLeadingItems,
+    int itemPitch,
+    int separatorGap)
+{
+    return static_cast<long long>(
+               folderCount + trailingControlCount) *
+            itemPitch +
+        (hasLeadingItems ? separatorGap : 0);
+}
+
+constexpr long long FolderAxisStartBeforeSearch(
+    long long searchStart,
+    std::size_t folderCount,
+    std::size_t folderIndex,
+    int itemPitch)
+{
+    return searchStart -
+        static_cast<long long>(folderCount - folderIndex) *
+            itemPitch;
+}
+
 } // namespace snowdesktop::dock_folder_rules

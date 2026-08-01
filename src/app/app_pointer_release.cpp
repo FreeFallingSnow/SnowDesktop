@@ -547,6 +547,10 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
                 dockFolderPopupOpen_ &&
                 targetItem->GetContainer() ==
                     dockFolderPopupContainer_.get();
+            const bool dockFolderPopupSource =
+                dockFolderPopupOpen_ &&
+                dragSession_.Source() ==
+                    dockFolderPopupContainer_.get();
             bool explicitDockFolderTarget =
                 dockFolderPopupTarget;
             if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
@@ -655,7 +659,8 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             SaveLayoutSlots();
             ClearSelection();
             EndDragSession();
-            if (dockFolderPopupTarget)
+            if (dockFolderPopupTarget ||
+                dockFolderPopupSource)
                 RefreshDockFolderPopup();
             ReloadItems();
             goto cleanup;
