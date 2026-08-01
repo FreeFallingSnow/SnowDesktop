@@ -2,6 +2,23 @@
 
 // ── Tray ────────────────────────────────────────────────────
 
+namespace
+{
+
+bool CaptureTraySurfaceAtPoint(POINT screenPoint, RECT& surfaceRect)
+{
+    HWND window = WindowFromPoint(screenPoint);
+    if (!window)
+        return false;
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root || !IsWindowVisible(root) ||
+        !GetWindowRect(root, &surfaceRect))
+        return false;
+    return PtInRect(&surfaceRect, screenPoint) != FALSE;
+}
+
+} // namespace
+
 /**
  * @brief 添加系统托盘图标
  * @param force 是否强制重新添加
@@ -61,7 +78,11 @@ void DesktopApp::OnTrayCallback(LPARAM lParam)
  */
 void DesktopApp::ShowTrayMenu(POINT screenPoint)
 {
-    ClearMenuIcons();
+    // Capture before SetForegroundWindow closes the hidden-icons flyout.
+    RECT traySurface{};
+    const bool hasTraySurface =
+        CaptureTraySurfaceAtPoint(screenPoint, traySurface);
+    PrepareMenuIconsForPoint(screenPoint);
     HMENU menu = CreatePopupMenu();
 
     HMENU iconMenu = CreatePopupMenu();
@@ -111,9 +132,19 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
     AppendMenuW(menu, MF_STRING, kTrayRestartCommand, _LW("app.interact.restart_app"));
     AppendMenuW(menu, MF_STRING, kTrayExitCommand, _LW("app.interact.exit_app"));
 
-    SetForegroundWindow(controlHwnd_ ? controlHwnd_ : hwnd_);
-    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, controlHwnd_ ? controlHwnd_ : hwnd_, nullptr);
+    if (iconMenu)
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(iconMenu), L"");
+    SetMenuItemIcon(menu, kTraySwitchNativeCommand, L"");
+    SetMenuItemIcon(menu, kTraySwitchCustomCommand, L"");
+    SetMenuItemIcon(menu, kTraySettingsCommand, L"");
+    SetMenuItemIcon(menu, kTrayRestartExplorerCommand, L"");
+    SetMenuItemIcon(menu, kTrayRestartCommand, L"");
+    SetMenuItemIcon(menu, kTrayExitCommand, L"");
+    HWND menuOwner = controlHwnd_ ? controlHwnd_ : hwnd_;
+    SetForegroundWindow(menuOwner);
+    UINT command = ShowModernMenu(
+        menu, screenPoint, menuOwner, false, true,
+        hasTraySurface ? &traySurface : nullptr);
 
     if (iconMenu) DestroyMenu(iconMenu);
     DestroyMenu(menu);

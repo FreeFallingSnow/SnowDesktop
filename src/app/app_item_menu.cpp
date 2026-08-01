@@ -10,7 +10,7 @@ void DesktopApp::ShowItemContextMenu(
     bool dockApplicationItem)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
-    ClearMenuIcons();
+    PrepareMenuIconsForPoint(screenPoint);
 
     const bool dockMapping =
         dockMappingEntryIndex &&
@@ -101,8 +101,10 @@ void DesktopApp::ShowItemContextMenu(
         ? quickNavigationHwnd_
         : hwnd_;
     SetForegroundWindow(menuOwner);
-    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    const bool placeOutsideDock = dockRenameAnchor.has_value() ||
+        dockFrequentItem || dockApplicationItem;
+    UINT command = ShowModernMenu(
+        menu, screenPoint, menuOwner, placeOutsideDock);
     if (!keepQuickNavigationOpen)
         FocusDesktopInputWindow();
     DestroyMenu(menu);

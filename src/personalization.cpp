@@ -308,6 +308,8 @@ bool LoadPersonalization(
         s.backgroundPreset = NormalizeAppearancePresetId((int)v);
     }
     if (ReadDoubleField(text, "cornerRadius", v)) s.cornerRadius = (float)v;
+    if (ReadDoubleField(text, "contextMenuStyle", v))
+        s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 2);
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
@@ -324,11 +326,13 @@ bool LoadPersonalization(
         const float barHeight = s.barHeight;
         const float categorizedTabFontSize =
             s.categorizedTabFontSize;
+        const int contextMenuStyle = s.contextMenuStyle;
         s = MakeAppearancePreset(s.backgroundPreset);
         s.cornerRadius = cornerRadius;
         s.barHeight = barHeight;
         s.categorizedTabFontSize =
             categorizedTabFontSize;
+        s.contextMenuStyle = contextMenuStyle;
     }
     return true;
 }
@@ -366,6 +370,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
+    file << "  \"contextMenuStyle\": "
+         << std::clamp(s.contextMenuStyle, 0, 2) << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";
     file << "  \"contentTheme\": " << s.contentTheme << ",\n";

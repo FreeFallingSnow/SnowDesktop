@@ -1081,7 +1081,7 @@ private:
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
     void ShowDockRunningAppContextMenu(
         POINT screenPoint, size_t runningIndex);
-    /** @brief 连续显示行列调整菜单，直到用户取消。 */
+    /** @brief 显示可连续调整参数的自绘行列菜单。 */
     void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex,
@@ -1119,15 +1119,16 @@ private:
     void ShowShellItemContextMenuForPath(
         const std::wstring& itemPath,
         POINT screenPoint);
-    /**
-     * @brief 创建用于菜单图标的位图（包含文本渲染）。
-     * @param text 图标文字
-     * @return 位图句柄
-     */
-    HBITMAP CreateMenuIconBitmap(const wchar_t* text);
+    /** @brief 清理旧菜单状态，并记录弹出点所在显示器的主题和 DPI。 */
+    void PrepareMenuIconsForPoint(POINT screenPoint);
     /** @brief 为菜单项设置自定义图标。 @param menu 菜单句柄 @param command 命令 ID @param text 图标文字 */
     void SetMenuItemIcon(HMENU menu, UINT_PTR command, const wchar_t* text);
-    /** @brief 清除所有菜单图标，释放位图资源。 */
+    /** @brief 将 HMENU 数据模型显示为完全自绘的现代弹窗，并返回命令 ID。 */
+    UINT ShowModernMenu(HMENU menu, POINT screenPoint, HWND owner,
+        bool placeOutsideDock = false,
+        bool placeAwayFromTaskbar = false,
+        const RECT* capturedTraySurface = nullptr);
+    /** @brief 清除当前菜单使用的图标映射。 */
     void ClearMenuIcons();
     /** @brief 恢复桌面窗口层叠顺序。 */
     void RestoreDesktopWindowLayer();
@@ -1959,8 +1960,16 @@ private:
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
     HANDLE faFontHandle_ = nullptr;
-    HFONT faMenuFont_ = nullptr;
-    std::vector<HBITMAP> menuIconPool_;
+    UINT menuIconDpi_ = USER_DEFAULT_SCREEN_DPI;
+    bool menuLightTheme_ = true;
+    int menuAppearanceStyle_ = 0;
+    struct MenuIconEntry
+    {
+        HMENU menu = nullptr;
+        UINT position = 0;
+        std::wstring glyph;
+    };
+    std::vector<std::unique_ptr<MenuIconEntry>> menuIconPool_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     NavigationSettings navigationSettings_;
@@ -2124,7 +2133,6 @@ private:
     bool pageNotifyActive_ = false;
     POINT lastContextMenuScreenPoint_{};
     POINT gridAdjustmentMenuAnchor_{};
-    HMENU gridAdjustmentParentMenu_ = nullptr;
     bool gridAdjustmentMenuAnchorValid_ = false;
     /** @} */
 
@@ -2325,6 +2333,8 @@ private:
     HFONT renameFont_ = nullptr;
     bool renameCommitPending_ = false;
     RenameController renameController_;
+    /** 右键菜单或内联编辑期间强制保持可见的组件 ID。 */
+    std::wstring interactionPinnedWidgetId_;
     /** @brief 开始重命名选中的项。 */
     void BeginRenameSelected(
         std::optional<RECT> dockRenameAnchor = std::nullopt);

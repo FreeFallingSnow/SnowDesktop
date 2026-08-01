@@ -730,6 +730,12 @@ void SettingsWindow::ShowDockSettings()
     Show();
 }
 
+void SettingsWindow::ShowAppearanceSettings()
+{
+    activePage_ = 1;
+    Show();
+}
+
 void SettingsWindow::ShowWidgetMigration()
 {
     activePage_ = 8;
@@ -2736,6 +2742,8 @@ void SettingsWindow::DrawPersonalizationPage()
         const float barHeight = personalization_.barHeight;
         const float categorizedTabFontSize =
             personalization_.categorizedTabFontSize;
+        const int contextMenuStyle =
+            personalization_.contextMenuStyle;
         if (presetIds[presetIndex] == kAppearancePresetCustom)
         {
             switch (NormalizeAppearancePresetId(previousPreset))
@@ -2756,6 +2764,7 @@ void SettingsWindow::DrawPersonalizationPage()
         personalization_.barHeight = barHeight;
         personalization_.categorizedTabFontSize =
             categorizedTabFontSize;
+        personalization_.contextMenuStyle = contextMenuStyle;
         markChanged(true);
     }
 
@@ -2872,6 +2881,26 @@ void SettingsWindow::DrawPersonalizationPage()
     }
 
     ImGui::Unindent(8.0f * dpiScale_);
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.context_menu_appearance"));
+    ImGui::Spacing();
+
+    const char* contextMenuStyleNames[] = {
+        _L("app.settings.context_menu_follow_system"),
+        _L("app.settings.context_menu_system_light_blur"),
+        _L("app.settings.context_menu_system_dark_blur")
+    };
+    BeginSettingRow(_L("app.settings.context_menu_style"), controlW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##ContextMenuStyle",
+        &personalization_.contextMenuStyle,
+        contextMenuStyleNames, IM_ARRAYSIZE(contextMenuStyleNames)))
+    {
+        personalization_.contextMenuStyle = std::clamp(
+            personalization_.contextMenuStyle, 0, 2);
+        markChanged(true);
     }
 
     ImGui::Spacing();

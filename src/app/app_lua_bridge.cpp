@@ -312,6 +312,7 @@ void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& request)
         return;
 
     luaInlineEditWidgetId_ = request.widgetId;
+    interactionPinnedWidgetId_ = request.widgetId;
     luaInlineEditStorageKey_ = request.storageKey;
     luaInlineEditOriginalText_ = initial;
     luaInlineEditMultiline_ = request.multiline;
@@ -411,6 +412,8 @@ void DesktopApp::CommitLuaInlineTextEdit(bool cancel)
     luaInlineEditLiveUpdate_ = false;
     luaInlineEditTextColor_ = RGB(0, 0, 0);
     luaInlineEditBackgroundColor_ = RGB(255, 255, 255);
+    interactionPinnedWidgetId_.clear();
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 /**

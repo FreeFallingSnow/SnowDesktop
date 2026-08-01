@@ -81,12 +81,15 @@ void DesktopApp::DrawStaticBackground(
         const bool popupOpen =
             popupWidgetIndex_ < widgets_.size() &&
             &widgetData == &widgets_[popupWidgetIndex_];
+        const bool interactionPinned =
+            !interactionPinnedWidgetId_.empty() &&
+            widgetData.id == interactionPinnedWidgetId_;
         if (!snowdesktop::widget_visibility_rules::ShouldRenderWidget(
                 widgetData.showOnHoverOnly,
                 dragSession_.IsActive(),
                 dragDropController_.IsExternalDragActive(),
                 widgetAction_ == WidgetAction::Move,
-                popupOpen,
+                popupOpen || interactionPinned,
                 PtInRect(&widgetData.bounds, lastMousePoint_) != FALSE))
             continue;
 

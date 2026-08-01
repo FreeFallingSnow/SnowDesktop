@@ -200,6 +200,77 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         }
     }
 
+    // A hover-only widget must remain visible while any context menu opened
+    // from its frame, contents, tabs, or collection popup is active.  The
+    // guard deliberately keeps the pin when the selected command starts an
+    // inline rename editor; CommitRename releases it when editing ends.
+    size_t contextWidgetIndex = static_cast<size_t>(-1);
+    if (!dockFolderPopupOpen_ &&
+        IsCollectionPopupInteractive() &&
+        popupWidgetIndex_ < widgets_.size())
+    {
+        const RECT popup =
+            GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+        if (PtInRect(&popup, pt))
+            contextWidgetIndex = popupWidgetIndex_;
+    }
+    if (contextWidgetIndex >= widgets_.size())
+    {
+        for (auto it = containers_.rbegin();
+            it != containers_.rend(); ++it)
+        {
+            auto* container =
+                dynamic_cast<WidgetContainer*>(it->get());
+            if (!container)
+                continue;
+            const RECT frame = container->GetFrameRect();
+            if (IsRectEmptyRect(frame) || !PtInRect(&frame, pt))
+                continue;
+            DesktopWidget* data = container->GetWidgetData();
+            if (!data)
+                continue;
+            for (size_t i = 0; i < widgets_.size(); ++i)
+            {
+                if (&widgets_[i] == data)
+                {
+                    contextWidgetIndex = i;
+                    break;
+                }
+            }
+            if (contextWidgetIndex < widgets_.size())
+                break;
+        }
+    }
+    if (contextWidgetIndex >= widgets_.size())
+        contextWidgetIndex = HitTestStandaloneWidgetIndex(pt);
+
+    struct ContextWidgetVisibilityGuard
+    {
+        std::wstring& pinnedId;
+        HWND owner;
+        HWND& renameEdit;
+        HWND& luaInlineEdit;
+        std::wstring previousId;
+        bool active = false;
+
+        ~ContextWidgetVisibilityGuard()
+        {
+            if (!active || renameEdit || luaInlineEdit)
+                return;
+            pinnedId = std::move(previousId);
+            InvalidateRect(owner, nullptr, FALSE);
+        }
+    } visibilityGuard{
+        interactionPinnedWidgetId_, hwnd_, renameEdit_, luaInlineEdit_,
+        interactionPinnedWidgetId_
+    };
+    if (contextWidgetIndex < widgets_.size())
+    {
+        visibilityGuard.active = true;
+        interactionPinnedWidgetId_ = widgets_[contextWidgetIndex].id;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_)
     {

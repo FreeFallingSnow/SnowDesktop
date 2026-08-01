@@ -115,6 +115,8 @@ public:
 
     /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
     void ShowDockSettings();
+    /** @brief 显示设置窗口并直接切换到外观页面。 */
+    void ShowAppearanceSettings();
     void ShowWidgetMigration();
 
     /**

@@ -37,6 +37,8 @@ void DesktopApp::ShowCollectionGroupTabContextMenu(
             widgets_[groupIndex].childWidgetIds.end())
         return;
 
+    PrepareMenuIconsForPoint(screenPoint);
+
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
     AppendMenuW(
@@ -46,11 +48,7 @@ void DesktopApp::ShowCollectionGroupTabContextMenu(
     SetMenuItemIcon(
         menu, kContextWidgetRename, L"");
     SetForegroundWindow(hwnd_);
-    const UINT command = TrackPopupMenuEx(
-        menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y,
-        hwnd_, nullptr);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -99,6 +97,8 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
             widgets_[groupIndex].childWidgetIds.end())
         return;
 
+    PrepareMenuIconsForPoint(screenPoint);
+
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
     AppendMenuW(menu, MF_STRING,
@@ -107,11 +107,7 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
     SetMenuItemIcon(
         menu, kContextWidgetRename, L"");
     SetForegroundWindow(hwnd_);
-    const UINT command = TrackPopupMenuEx(
-        menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y,
-        hwnd_, nullptr);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -143,7 +139,7 @@ void DesktopApp::ShowWidgetContextMenu(
     std::optional<RECT> dockRenameAnchor)
 {
     if (widgetIndex >= widgets_.size()) return;
-    ClearMenuIcons();
+    PrepareMenuIconsForPoint(screenPoint);
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
@@ -161,9 +157,6 @@ void DesktopApp::ShowWidgetContextMenu(
         widgets_[effectiveSourceIndex];
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     HMENU displayModeMenu = nullptr;
-    HMENU hoverMenu = nullptr;
-    HMENU keepMenu = nullptr;
-    HMENU privacyMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
     {
@@ -352,39 +345,40 @@ void DesktopApp::ShowWidgetContextMenu(
         AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
-    hoverMenu = CreatePopupMenu();
-    if (hoverMenu)
-    {
-        AppendMenuW(hoverMenu, MF_STRING | (widget.showOnHoverOnly ? MF_CHECKED : 0),
-            kContextWidgetShowOnHoverOn, _LW("app.interact.on"));
-        AppendMenuW(hoverMenu, MF_STRING | (!widget.showOnHoverOnly ? MF_CHECKED : 0),
-            kContextWidgetShowOnHoverOff, _LW("app.interact.off"));
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hoverMenu), _LW("app.interact.hover_only"));
-    }
-    keepMenu = CreatePopupMenu();
-    if (keepMenu)
-    {
-        AppendMenuW(keepMenu, MF_STRING | (widget.keepWhenDesktopHidden ? MF_CHECKED : 0),
-            kContextWidgetKeepWhenHiddenOn, _LW("app.interact.on"));
-        AppendMenuW(keepMenu, MF_STRING | (!widget.keepWhenDesktopHidden ? MF_CHECKED : 0),
-            kContextWidgetKeepWhenHiddenOff, _LW("app.interact.off"));
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(keepMenu), _LW("app.interact.keep_when_hidden"));
-    }
+    auto toggleLabel = [](const wchar_t* title, bool enabled) {
+        std::wstring label = title;
+        label += L"\t";
+        label += enabled
+            ? _LW("app.interact.on")
+            : _LW("app.interact.off");
+        return label;
+    };
+    const UINT hoverToggleCommand = widget.showOnHoverOnly
+        ? kContextWidgetShowOnHoverOff
+        : kContextWidgetShowOnHoverOn;
+    const UINT keepToggleCommand = widget.keepWhenDesktopHidden
+        ? kContextWidgetKeepWhenHiddenOff
+        : kContextWidgetKeepWhenHiddenOn;
+    const UINT privacyToggleCommand = widget.privacyMode
+        ? kContextWidgetPrivacyModeOff
+        : kContextWidgetPrivacyModeOn;
+    const std::wstring hoverLabel = toggleLabel(
+        _LW("app.interact.hover_only"), widget.showOnHoverOnly);
+    const std::wstring keepLabel = toggleLabel(
+        _LW("app.interact.keep_when_hidden"),
+        widget.keepWhenDesktopHidden);
+    AppendMenuW(menu, MF_STRING, hoverToggleCommand, hoverLabel.c_str());
+    AppendMenuW(menu, MF_STRING, keepToggleCommand, keepLabel.c_str());
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
         widget.type == DesktopWidgetType::CollectionGroup ||
         widget.type == DesktopWidgetType::FileGroup)
     {
-        privacyMenu = CreatePopupMenu();
-        if (privacyMenu)
-        {
-            AppendMenuW(privacyMenu, MF_STRING | (widget.privacyMode ? MF_CHECKED : 0),
-                kContextWidgetPrivacyModeOn, _LW("app.interact.on"));
-            AppendMenuW(privacyMenu, MF_STRING | (!widget.privacyMode ? MF_CHECKED : 0),
-                kContextWidgetPrivacyModeOff, _LW("app.interact.off"));
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(privacyMenu), _LW("app.interact.privacy_mode"));
-        }
+        const std::wstring privacyLabel = toggleLabel(
+            _LW("app.interact.privacy_mode"), widget.privacyMode);
+        AppendMenuW(menu, MF_STRING,
+            privacyToggleCommand, privacyLabel.c_str());
     }
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, _LW("app.interact.delete_widget"));
 
@@ -400,12 +394,17 @@ void DesktopApp::ShowWidgetContextMenu(
     SetMenuItemIcon(menu, kContextWidgetEdit, L"");
     SetMenuItemIcon(menu, kContextWidgetRename, L"");
     SetMenuItemIcon(menu, kContextWidgetDelete, L"");
-    if (hoverMenu)
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(hoverMenu), L"");
-    if (keepMenu)
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(keepMenu), L"");
-    if (privacyMenu)
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(privacyMenu), widget.privacyMode ? L"" : L"");
+    SetMenuItemIcon(menu, hoverToggleCommand, L"");
+    SetMenuItemIcon(menu, keepToggleCommand, L"");
+    if (widget.type == DesktopWidgetType::Collection ||
+        widget.type == DesktopWidgetType::FileCategories ||
+        widget.type == DesktopWidgetType::FolderMapping ||
+        widget.type == DesktopWidgetType::CollectionGroup ||
+        widget.type == DesktopWidgetType::FileGroup)
+    {
+        SetMenuItemIcon(menu, privacyToggleCommand,
+            widget.privacyMode ? L"" : L"");
+    }
     if (sortMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu), L"");
@@ -436,8 +435,8 @@ void DesktopApp::ShowWidgetContextMenu(
     }
 
     SetForegroundWindow(hwnd_);
-    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    UINT command = ShowModernMenu(
+        menu, screenPoint, hwnd_, dockRenameAnchor.has_value());
     FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();

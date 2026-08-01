@@ -190,6 +190,8 @@ void DesktopApp::CommitRename(bool cancel)
 
     DestroyWindow(edit);
     if (renameFont_) { DeleteObject(renameFont_); renameFont_ = nullptr; }
+    interactionPinnedWidgetId_.clear();
+    InvalidateRect(hwnd_, nullptr, FALSE);
 
     if (renameController_.IsFolderEntry())
     {

@@ -1,9 +1,12 @@
 #include "app.h"
+#include "../modern_menu.h"
 
 // Grid adjustment and desktop-background context menus.
 
 void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
 {
+    PrepareMenuIconsForPoint(screenPoint);
+
     struct MonitorSizeRange
     {
         const wchar_t* label;
@@ -34,100 +37,103 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
             kMonitorSizeRanges[rangeIndex].representativeInches);
     };
 
-    UINT command = initialCommand;
-    while (true)
-    {
-        const bool validCommand =
-            command == 0 ||
-            command == kContextGridAddRow ||
-            command == kContextGridRemoveRow ||
-            command == kContextGridAddColumn ||
-            command == kContextGridRemoveColumn ||
-            isRecommendedCommand(command);
-        if (!validCommand) break;
-
+    auto applyAdjustment = [&](UINT command) {
         if (isRecommendedCommand(command))
         {
             const GridSpan recommended = recommendedDimensions(command);
             SetGridDimensions(recommended.columns, recommended.rows);
+            return true;
         }
         switch (command)
         {
-        case kContextGridAddRow: AdjustGridRows(1); break;
-        case kContextGridRemoveRow: AdjustGridRows(-1); break;
-        case kContextGridAddColumn: AdjustGridColumns(1); break;
-        case kContextGridRemoveColumn: AdjustGridColumns(-1); break;
-        default: break;
+        case kContextGridAddRow: AdjustGridRows(1); return true;
+        case kContextGridRemoveRow: AdjustGridRows(-1); return true;
+        case kContextGridAddColumn: AdjustGridColumns(1); return true;
+        case kContextGridRemoveColumn: AdjustGridColumns(-1); return true;
+        default: return false;
         }
+    };
 
-        HMENU menu = CreatePopupMenu();
-        if (!menu) break;
-
+    auto buildItems = [&]() {
+        using snowdesktop::modern_menu::Item;
+        std::vector<Item> items;
         POINT clientPoint = lastContextMenuScreenPoint_;
         ScreenToClient(hwnd_, &clientPoint);
         const GridPage* page = GridPageFromPoint(clientPoint);
-        const std::wstring status = _LFW("app.menu.grid_current",
-            std::to_wstring(page ? page->columns : 0),
-            std::to_wstring(page ? page->rows : 0));
+        std::wstring status = _LW("app.menu.grid_current_label");
+        status += L"\t";
+        status += std::to_wstring(page ? page->columns : 0);
+        status += L" × ";
+        status += std::to_wstring(page ? page->rows : 0);
+        items.push_back({ 0, std::move(status), L"", false });
+        items.push_back({ 0, L"", L"", false, false, true });
+        items.push_back({ kContextGridAddRow,
+            _LW("app.menu.add_row"), L"", true });
+        items.push_back({ kContextGridRemoveRow,
+            _LW("app.menu.remove_row"), L"", true });
+        items.push_back({ kContextGridAddColumn,
+            _LW("app.menu.add_col"), L"", true });
+        items.push_back({ kContextGridRemoveColumn,
+            _LW("app.menu.remove_col"), L"", true });
+        items.push_back({ 0, L"", L"", false, false, true });
 
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status.c_str());
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kContextGridAddRow, _LW("app.menu.add_row"));
-        AppendMenuW(menu, MF_STRING, kContextGridRemoveRow, _LW("app.menu.remove_row"));
-        AppendMenuW(menu, MF_STRING, kContextGridAddColumn, _LW("app.menu.add_col"));
-        AppendMenuW(menu, MF_STRING, kContextGridRemoveColumn, _LW("app.menu.remove_col"));
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-
-        auto appendRecommendedMenu = [&](HMENU submenu, int aspectHeight, UINT firstCommand) {
-            if (!submenu) return;
+        auto appendRecommendedItem = [&](int aspectHeight,
+            UINT firstCommand, const wchar_t* label) {
+            Item parent;
+            parent.label = label;
+            parent.glyph = L"";
             for (size_t i = 0; i < std::size(kMonitorSizeRanges); ++i)
             {
                 const GridSpan recommended = CalculateRecommendedGridDimensions(
                     16, aspectHeight, kMonitorSizeRanges[i].representativeInches);
-                const std::wstring label = _LFW("app.menu.grid_format",
-                    kMonitorSizeRanges[i].label,
-                    std::to_wstring(recommended.columns),
-                    std::to_wstring(recommended.rows));
-                UINT flags = MF_STRING;
-                if (page &&
+                std::wstring childLabel = kMonitorSizeRanges[i].label;
+                childLabel += L"\t";
+                childLabel += std::to_wstring(recommended.columns);
+                childLabel += L" × ";
+                childLabel += std::to_wstring(recommended.rows);
+                Item child;
+                child.command = firstCommand + static_cast<UINT>(i);
+                child.label = std::move(childLabel);
+                child.glyph = L"";
+                child.checked = page &&
                     page->columns == recommended.columns &&
-                    page->rows == recommended.rows)
-                    flags |= MF_CHECKED;
-                AppendMenuW(submenu, flags,
-                    firstCommand + static_cast<UINT>(i), label.c_str());
-                SetMenuItemIcon(submenu,
-                    firstCommand + static_cast<UINT>(i), L"");
+                    page->rows == recommended.rows;
+                parent.children.push_back(std::move(child));
             }
+            items.push_back(std::move(parent));
         };
+        appendRecommendedItem(9, kContextGridRecommended169First,
+            _LW("app.menu.recommend_169"));
+        appendRecommendedItem(10, kContextGridRecommended1610First,
+            _LW("app.menu.recommend_1610"));
+        items.push_back({ 0, L"", L"", false, false, true });
+        items.push_back({ kContextGridAdjustmentDone,
+            _LW("app.menu.end_adjust"), L"", true });
+        return items;
+    };
 
-        HMENU recommended169Menu = CreatePopupMenu();
-        HMENU recommended1610Menu = CreatePopupMenu();
-        appendRecommendedMenu(recommended169Menu, 9, kContextGridRecommended169First);
-        appendRecommendedMenu(recommended1610Menu, 10, kContextGridRecommended1610First);
-        if (recommended169Menu)
-            AppendMenuW(menu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(recommended169Menu), _LW("app.menu.recommend_169"));
-        if (recommended1610Menu)
-            AppendMenuW(menu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(recommended1610Menu), _LW("app.menu.recommend_1610"));
+    if (initialCommand != 0)
+        applyAdjustment(initialCommand);
 
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kContextGridAdjustmentDone, _LW("app.menu.end_adjust"));
+    std::vector<snowdesktop::modern_menu::Item> items = buildItems();
+    snowdesktop::modern_menu::Options options;
+    options.owner = hwnd_;
+    options.anchor = screenPoint;
+    options.dpi = menuIconDpi_;
+    options.lightTheme = menuLightTheme_;
+    options.appearance = static_cast<
+        snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
+    options.onCommand = [&](UINT command, auto& currentItems) {
+        if (!applyAdjustment(command))
+            return false;
+        currentItems = buildItems();
+        return true;
+    };
 
-        SetMenuItemIcon(menu, kContextGridAddRow, L"");
-        SetMenuItemIcon(menu, kContextGridRemoveRow, L"");
-        SetMenuItemIcon(menu, kContextGridAddColumn, L"");
-        SetMenuItemIcon(menu, kContextGridRemoveColumn, L"");
-        SetMenuItemIcon(menu, kContextGridAdjustmentDone, L"");
-
-        SetForegroundWindow(hwnd_);
-        command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-            screenPoint.x, screenPoint.y, hwnd_, nullptr);
-        FocusDesktopInputWindow();
-        DestroyMenu(menu);
-        ClearMenuIcons();
-        if (command == 0 || command == kContextGridAdjustmentDone) break;
-    }
+    SetForegroundWindow(hwnd_);
+    snowdesktop::modern_menu::Show(items, options);
+    FocusDesktopInputWindow();
+    ClearMenuIcons();
     RestoreDesktopWindowLayer();
 }
 
@@ -141,7 +147,7 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
 void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
-    ClearMenuIcons();
+    PrepareMenuIconsForPoint(screenPoint);
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, kContextPasteCommand, _LW("app.menu.paste"));
@@ -251,6 +257,13 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 reinterpret_cast<UINT_PTR>(fontWeightMenu), weightLabel);
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontWeightMenu), L"");
         }
+
+        AppendMenuW(displaySettingsMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(displaySettingsMenu, MF_STRING,
+            kContextDisplayAppearanceMore,
+            _LW("app.menu.more_appearance_options"));
+        SetMenuItemIcon(displaySettingsMenu,
+            kContextDisplayAppearanceMore, L"");
 
         AppendMenuW(menu, MF_POPUP,
             reinterpret_cast<UINT_PTR>(displaySettingsMenu), _LW("app.menu.display_settings"));
@@ -413,14 +426,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
 
-    gridAdjustmentParentMenu_ = displaySettingsMenu;
     gridAdjustmentMenuAnchorValid_ = false;
     SetForegroundWindow(hwnd_);
-    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     FocusDesktopInputWindow();
 
-    gridAdjustmentParentMenu_ = nullptr;
     POINT adjustmentMenuPoint = gridAdjustmentMenuAnchorValid_
         ? gridAdjustmentMenuAnchor_ : screenPoint;
 
@@ -583,6 +593,12 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
     case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
     case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
+    case kContextDisplayAppearanceMore:
+        if (settingsWindow_)
+            settingsWindow_->ShowAppearanceSettings();
+        else
+            ShowSettingsWindow();
+        break;
     case kContextPagePrev: NavigatePageOffset(-1); break;
     case kContextPageNext: NavigatePageOffset(1); break;
     case kContextPageAdd: AddNewPage(); break;

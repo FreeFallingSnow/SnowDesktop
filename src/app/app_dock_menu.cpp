@@ -4,6 +4,8 @@
 
 void DesktopApp::ShowDockContextMenu(POINT screenPoint)
 {
+    PrepareMenuIconsForPoint(screenPoint);
+
     HMENU menu = CreatePopupMenu();
     HMENU positionMenu = CreatePopupMenu();
     HMENU layoutMenu = CreatePopupMenu();
@@ -60,8 +62,7 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
 
     SetForegroundWindow(hwnd_);
-    const UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
     FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -147,6 +148,8 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         identity.executablePath.empty())
         return;
 
+    PrepareMenuIconsForPoint(screenPoint);
+
     HMENU menu = CreatePopupMenu();
     if (!menu)
         return;
@@ -160,11 +163,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
 
     DismissDockWindowPreviewUntilLeave();
     SetForegroundWindow(hwnd_);
-    const UINT command = TrackPopupMenuEx(
-        menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y,
-        hwnd_, nullptr);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
     FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();

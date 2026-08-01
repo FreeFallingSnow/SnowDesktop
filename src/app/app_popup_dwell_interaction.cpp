@@ -369,6 +369,8 @@ ShowDockFolderPopupContextMenu(
 {
     if (!dockFolderPopupOpen_) return;
 
+    PrepareMenuIconsForPoint(screenPoint);
+
     const bool itemMenu =
         memberIndex &&
         *memberIndex <
@@ -601,14 +603,7 @@ ShowDockFolderPopupContextMenu(
             L"");
 
     SetForegroundWindow(hwnd_);
-    const UINT command =
-        TrackPopupMenuEx(
-            menu,
-            TPM_RETURNCMD |
-                TPM_RIGHTBUTTON,
-            screenPoint.x,
-            screenPoint.y,
-            hwnd_, nullptr);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();

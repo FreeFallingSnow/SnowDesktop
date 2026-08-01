@@ -28,11 +28,6 @@ DesktopApp::~DesktopApp()
     items_oo_.clear();
     containers_.clear();
     ClearMenuIcons();
-    if (faMenuFont_)
-    {
-        DeleteObject(faMenuFont_);
-        faMenuFont_ = nullptr;
-    }
     if (faFontHandle_)
     {
         RemoveFontMemResourceEx(faFontHandle_);

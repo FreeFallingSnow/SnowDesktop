@@ -1,0 +1,71 @@
+#pragma once
+
+#include <windows.h>
+
+#include <functional>
+#include <string>
+#include <vector>
+
+namespace snowdesktop::modern_menu
+{
+
+enum class RootPlacement
+{
+    Default,
+    AboveAnchorRect,
+    BelowAnchorRect,
+    LeftOfAnchorRect,
+    RightOfAnchorRect,
+};
+
+/** 右键菜单的独立模糊外观，不跟随组件主题。 */
+enum class Appearance
+{
+    /** 根据 Windows 应用/菜单主题自动选择浅色或深色模糊。 */
+    FollowSystem = 0,
+    SystemLightBlur = 1,
+    SystemDarkBlur = 2,
+};
+
+struct Item
+{
+    UINT command = 0;
+    std::wstring label;
+    std::wstring glyph;
+    bool enabled = true;
+    bool checked = false;
+    bool separator = false;
+    std::vector<Item> children;
+};
+
+struct Options
+{
+    HWND owner = nullptr;
+    POINT anchor{};
+    UINT dpi = USER_DEFAULT_SCREEN_DPI;
+    bool lightTheme = true;
+    /** 托盘菜单使用；确保根菜单和子菜单位于任务栏之上。 */
+    bool topmost = false;
+    Appearance appearance = Appearance::FollowSystem;
+    const wchar_t* iconFontFamily = L"Font Awesome 6 Free Solid";
+    RootPlacement rootPlacement = RootPlacement::Default;
+    RECT anchorRect{};
+    /** 返回 true 时应用命令并保持根菜单打开。 */
+    std::function<bool(UINT, std::vector<Item>&)> onCommand;
+};
+
+struct Result
+{
+    UINT command = 0;
+    RECT itemScreenRect{};
+};
+
+/**
+ * @brief 使用完全自绘的分层弹窗显示现代菜单。
+ *
+ * 不创建或显示 HMENU 窗口；定位、绘制、命中测试、滚动、键盘导航和
+ * 级联子菜单均由该组件管理。调用会像 TrackPopupMenuEx 一样同步返回。
+ */
+Result Show(const std::vector<Item>& items, const Options& options);
+
+} // namespace snowdesktop::modern_menu

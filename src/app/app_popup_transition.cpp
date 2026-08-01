@@ -258,6 +258,8 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
 {
     if (!dockFolderPopupOpen_) return;
 
+    PrepareMenuIconsForPoint(screenPoint);
+
     HMENU menu = CreatePopupMenu();
     HMENU nameMenu = CreatePopupMenu();
     HMENU typeMenu = CreatePopupMenu();
@@ -363,11 +365,7 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
         reinterpret_cast<UINT_PTR>(
             dateMenu), L"");
     SetForegroundWindow(hwnd_);
-    const UINT command = TrackPopupMenuEx(
-        menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y,
-        hwnd_, nullptr);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();

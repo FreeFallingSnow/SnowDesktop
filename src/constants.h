@@ -150,6 +150,7 @@ constexpr UINT kContextGridRecommended169First = 41414;
 constexpr UINT kContextGridRecommended169Last = 41418;
 constexpr UINT kContextGridRecommended1610First = 41419;
 constexpr UINT kContextGridRecommended1610Last = 41423;
+constexpr UINT kContextDisplayAppearanceMore = 41424;
 constexpr UINT kContextPageJumpFirst = 41500;
 constexpr UINT kContextPageJumpLast  = 41550;
 constexpr UINT kContextDockPositionBottom = 41800;

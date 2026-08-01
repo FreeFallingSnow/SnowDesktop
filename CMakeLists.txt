@@ -201,6 +201,8 @@ set(SNOWDESKTOP_SOURCES
     src/l10n.cpp
     src/item_location.cpp
     src/layout_storage.cpp
+    src/menu_icon_render.cpp
+    src/modern_menu.cpp
     src/search_match.cpp
     src/everything_search.cpp
     src/widget_engine.cpp
@@ -662,6 +664,45 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 dwrite dwmapi gdi32 shcore user32
         LABELS rules window)
+
+    snowdesktop_add_test(
+        SnowDesktopMenuIconRenderTests
+        menu_icon_render
+        SOURCES
+            tests/menu_icon_render_tests.cpp
+            src/menu_icon_render.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES gdi32 user32
+        LABELS contract ui)
+
+    snowdesktop_add_test(
+        SnowDesktopModernMenuInteractionTests
+        modern_menu_interaction
+        SOURCES
+            tests/modern_menu_interaction_tests.cpp
+            src/menu_icon_render.cpp
+            src/modern_menu.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES gdi32 user32
+        LABELS integration ui)
+
+    # Interactive visual smoke harness. It is excluded from normal builds and
+    # CTest; run the target explicitly when reviewing the modern popup menu.
+    add_executable(SnowDesktopModernMenuPreview WIN32 EXCLUDE_FROM_ALL
+        tests/modern_menu_preview.cpp
+        src/menu_icon_render.cpp
+        src/modern_menu.cpp)
+    target_compile_features(SnowDesktopModernMenuPreview PRIVATE cxx_std_20)
+    target_include_directories(SnowDesktopModernMenuPreview PRIVATE src)
+    target_link_libraries(SnowDesktopModernMenuPreview PRIVATE gdi32 user32)
+    if (MSVC)
+        set_property(TARGET SnowDesktopModernMenuPreview PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(SnowDesktopModernMenuPreview PRIVATE
+            /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(SnowDesktopModernMenuPreview PRIVATE
+            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
 
     snowdesktop_add_test(
         SnowDesktopPopupAnimationRulesTests

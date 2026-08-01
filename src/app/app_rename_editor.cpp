@@ -60,6 +60,8 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
             widgets_[widgetIndex].folderEntries[memberIndex].name,
             widgets_[widgetIndex].folderEntries[memberIndex].isDirectory));
     SetFocus(renameEdit_);
+    interactionPinnedWidgetId_ = widgets_[widgetIndex].id;
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 bool DesktopApp::BeginDockAnchoredRename(

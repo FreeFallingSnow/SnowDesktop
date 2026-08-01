@@ -47,6 +47,7 @@ void DesktopApp::BeginRenameSelected(
     {
         if (!CanRenameWidget(widgets_[selectedWidgetIndex])) return;
 
+        size_t visibilityWidgetIndex = selectedWidgetIndex;
         renameController_.BeginWidget(
             selectedWidgetIndex);
         if (dockRenameAnchor)
@@ -72,6 +73,7 @@ void DesktopApp::BeginRenameSelected(
                     widgets_[selectedWidgetIndex].id);
             if (groupIndex < widgets_.size())
             {
+                visibilityWidgetIndex = groupIndex;
                 for (const auto& c : containers_)
                 {
                     auto* group =
@@ -100,6 +102,7 @@ void DesktopApp::BeginRenameSelected(
                     widgets_[selectedWidgetIndex].id);
             if (groupIndex < widgets_.size())
             {
+                visibilityWidgetIndex = groupIndex;
                 for (const auto& c : containers_)
                 {
                     auto* group =
@@ -198,6 +201,12 @@ void DesktopApp::BeginRenameSelected(
             screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
         SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
         SetFocus(renameEdit_);
+        if (visibilityWidgetIndex < widgets_.size())
+        {
+            interactionPinnedWidgetId_ =
+                widgets_[visibilityWidgetIndex].id;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         return;
     }
 

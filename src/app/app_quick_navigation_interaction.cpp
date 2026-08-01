@@ -688,6 +688,7 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
 {
     if (!entry.absolutePidl.get())
         return;
+    PrepareMenuIconsForPoint(screenPoint);
 
     enum : UINT
     {
@@ -708,14 +709,16 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
         kAppReveal, _LW("app.menu.open_file_location"));
     AppendMenuW(menu, MF_STRING, kAppCreateShortcut, _LW("app.nav.send_to_desktop"));
 
+    SetMenuItemIcon(menu, kAppOpen, L"");
+    SetMenuItemIcon(menu, kAppReveal, L"");
+    SetMenuItemIcon(menu, kAppCreateShortcut, L"");
     HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
     SetForegroundWindow(owner);
-    const UINT command = TrackPopupMenuEx(menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN,
-        screenPoint.x, screenPoint.y, owner, nullptr);
+    const UINT command = ShowModernMenu(menu, screenPoint, owner);
     DestroyMenu(menu);
+    ClearMenuIcons();
 
     switch (command)
     {
@@ -742,6 +745,7 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
 {
     if (entry.path.empty())
         return;
+    PrepareMenuIconsForPoint(screenPoint);
 
     enum : UINT
     {
@@ -765,14 +769,17 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     AppendMenuW(menu, MF_STRING, kEverythingCreateShortcut, _LW("app.nav.send_to_desktop"));
     AppendMenuW(menu, MF_STRING, kEverythingCopyPath, _LW("app.nav.copy_path"));
 
+    SetMenuItemIcon(menu, kEverythingOpen, L"");
+    SetMenuItemIcon(menu, kEverythingReveal, L"");
+    SetMenuItemIcon(menu, kEverythingCreateShortcut, L"");
+    SetMenuItemIcon(menu, kEverythingCopyPath, L"");
     HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
     SetForegroundWindow(owner);
-    const UINT command = TrackPopupMenuEx(menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN,
-        screenPoint.x, screenPoint.y, owner, nullptr);
+    const UINT command = ShowModernMenu(menu, screenPoint, owner);
     DestroyMenu(menu);
+    ClearMenuIcons();
 
     switch (command)
     {

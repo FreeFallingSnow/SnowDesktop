@@ -82,6 +82,13 @@ struct PersonalizationSettings
     float cornerRadius = 12.0f;
 
     /**
+     * @brief 自绘右键菜单样式，不属于主题预设。
+     * @details 0=跟随 Windows 菜单主题的模糊样式，1=系统浅色模糊，
+     *          2=系统深色模糊。
+     */
+    int contextMenuStyle = 0;
+
+    /**
      * @brief 毛玻璃背景开关（苹果 Dock 效果）
      * @details 开启后由 DWM 原生合成器模糊面板背后的桌面内容，
      *          填充色作为半透明色调叠加，边框切换为玻璃边缘光渐变描边。
