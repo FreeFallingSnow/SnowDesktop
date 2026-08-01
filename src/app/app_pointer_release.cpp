@@ -288,6 +288,8 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     if (middleButtonWidgetMove_) return;
     (void)wp;
     POINT upPoint{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    int dropPreviewMods = 0;
+    bool commitVisualBeforeDrop = false;
     HideDragHintWindow();
 
     if (luaWidgetPanelMouseDown_ &&
@@ -524,20 +526,40 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         goto cleanup;
     }
 
-    // Shell drop handlers may synchronously show a progress window. End the
-    // interactive/visual phase before entering them, while retaining the
-    // source and target context until EndDragSession() performs final cleanup.
+    dropPreviewMods = 0;
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+        dropPreviewMods |= MK_CONTROL;
+    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+        dropPreviewMods |= MK_ALT;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+        dropPreviewMods |= MK_SHIFT;
+    commitVisualBeforeDrop =
+        dragSession_.TargetRegion() == HitRegion::Handoff;
+    if (!commitVisualBeforeDrop)
+    {
+        const DropPreviewList dropPreview = BuildDropPreviewList(
+            dragSession_.SourceList(),
+            dragSession_.TargetContainer(),
+            dragSession_.TargetSlot(),
+            dragSession_.TargetRegion(),
+            dropPreviewMods,
+            dragSession_.CurrentPoint());
+        commitVisualBeforeDrop = dropPreview.fileBacked;
+    }
+
+    // Shell/file-backed drop handlers may synchronously show a progress
+    // window. Commit their visual end up front, but keep pure internal moves
+    // in the current frame until the model has its final position. Otherwise
+    // the source item is synchronously painted once at its old location.
     dragSession_.DeactivateForDrop();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     ReleaseCapture();
-    CommitDragVisualEndBeforeShellOperation();
+    if (commitVisualBeforeDrop)
+        CommitDragVisualEndBeforeShellOperation();
 
     {
-        int mods = 0;
-        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
-        if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
+        const int mods = dropPreviewMods;
 
         if (dragSession_.TargetRegion() == HitRegion::Handoff && dragSession_.TargetSlot()
             && dragSession_.TargetSlot()->GetItem())

@@ -424,8 +424,27 @@ HRESULT DesktopApp::HandleOleDrop(
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         ReleaseCapture();
+        int dropPreviewMods = 0;
+        if (keyState & MK_CONTROL) dropPreviewMods |= MK_CONTROL;
+        if (keyState & MK_ALT)     dropPreviewMods |= MK_ALT;
+        if (keyState & MK_SHIFT)   dropPreviewMods |= MK_SHIFT;
+        bool commitVisualBeforeDrop =
+            dragSession_.TargetRegion() == HitRegion::Handoff;
+        if (!commitVisualBeforeDrop &&
+            dragSession_.TargetContainer())
+        {
+            const DropPreviewList dropPreview = BuildDropPreviewList(
+                dragSession_.SourceList(),
+                dragSession_.TargetContainer(),
+                dragSession_.TargetSlot(),
+                dragSession_.TargetRegion(),
+                dropPreviewMods,
+                clientPoint);
+            commitVisualBeforeDrop = dropPreview.fileBacked;
+        }
         dragSession_.DeactivateForDrop();
-        CommitDragVisualEndBeforeShellOperation();
+        if (commitVisualBeforeDrop)
+            CommitDragVisualEndBeforeShellOperation();
 
         if (!GetDockDragOutRemovalHint(clientPoint).empty())
         {
@@ -451,12 +470,9 @@ HRESULT DesktopApp::HandleOleDrop(
             {
                 if (dockTarget->GetEntryType() == DockEntryType::Collection)
                 {
-                    int mods = 0;
-                    if (keyState & MK_CONTROL) mods |= MK_CONTROL;
-                    if (keyState & MK_ALT) mods |= MK_ALT;
-                    if (keyState & MK_SHIFT) mods |= MK_SHIFT;
                     const bool executed = DropItemsIntoDockCollection(
-                        dragSession_.Items(), dragSession_.Source(), dockTarget, mods);
+                        dragSession_.Items(), dragSession_.Source(), dockTarget,
+                        dropPreviewMods);
                     SaveLayoutSlots();
                     ClearSelection();
                     EndDragSession();
@@ -556,15 +572,11 @@ HRESULT DesktopApp::HandleOleDrop(
         // ── OO dispatch ────────────────────────────────────
         if (dragSession_.TargetContainer())
         {
-            int mods = 0;
-            if (keyState & MK_CONTROL) mods |= MK_CONTROL;
-            if (keyState & MK_ALT)     mods |= MK_ALT;
-            if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-
             Container* targetContainer = dragSession_.TargetContainer();
             bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
             targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
-                dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
+                dragSession_.TargetSlot(), dragSession_.TargetRegion(),
+                dropPreviewMods);
 
             SaveLayoutSlots();
             ClearSelection();
