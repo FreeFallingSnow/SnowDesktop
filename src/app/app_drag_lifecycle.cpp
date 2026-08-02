@@ -106,13 +106,13 @@ void DesktopApp::EndDragSession()
 void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
     dragRenderCache_.Reset();
-    CommitPassiveHoverVisualEnd(true);
+    CommitPassiveHoverVisualEnd();
 }
 
-void DesktopApp::CommitPassiveHoverVisualEnd(
-    bool forceCompositionFlush)
+void DesktopApp::CommitPassiveHoverVisualEnd()
 {
-    bool backdropRemoved = false;
+    std::vector<RECT> hiddenBackdropFrames;
+    hiddenBackdropFrames.reserve(widgets_.size());
     for (size_t widgetIndex = 0;
          widgetIndex < widgets_.size();
          ++widgetIndex)
@@ -134,31 +134,35 @@ void DesktopApp::CommitPassiveHoverVisualEnd(
                     widget.selected,
                     popupOpen,
                     pointerInside))
+        {
             continue;
-        backdropRemoved =
-            desktopBackdropCompositor_.RemovePanel(
-                GetStandaloneWidgetFrameRect(widget)) ||
-            backdropRemoved;
+        }
+        hiddenBackdropFrames.push_back(
+            GetStandaloneWidgetFrameRect(widget));
     }
 
+    // Reconcile content and backdrop from the same full render pass. Removing
+    // backdrop panels here, ahead of the D2D frame, reintroduced the ordering
+    // race this function is meant to close.
+    desktopBackdropFullCollectionPending_ = true;
     if (hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         if (!compositionPaintInProgress_)
             UpdateWindow(hwnd_);
     }
-    // Hover-only backdrops live in a separate Windows Composition tree. DWM
-    // flushing alone does not start that tree's pending commit cycle, so a
-    // synchronous Shell/COM operation could leave the old glass visible until
-    // it returned even though the explicitly committed DComp content was
-    // already gone. Request and observe the composition commit first, then
-    // flush DWM so both visual trees reach the drag-end frame together.
-    if (backdropRemoved || forceCompositionFlush)
-    {
-        desktopBackdropCompositor_.CommitPendingChanges(
-            kCompositionCommitTimeoutMilliseconds);
-        DwmFlush();
-    }
+    // The Windows Composition commit can complete before DWM has retired the
+    // previous SpriteVisual. Clip hidden panels at the helper HWND boundary so
+    // an old blur frame cannot remain visible after the D2D content commit.
+    for (const RECT& frame : hiddenBackdropFrames)
+        desktopBackdropCompositor_.ExcludePanelFromWindow(frame);
+    // Only visibility-ending paths pay this synchronization cost. Keeping it
+    // out of the normal paint transaction avoids serializing unrelated
+    // content and backdrop updates while still forcing this full hide frame
+    // through both composition trees before input processing resumes.
+    desktopBackdropCompositor_.CommitPendingChanges(
+        kCompositionCommitTimeoutMilliseconds);
+    DwmFlush();
     InvalidateFloatingDockWindow(true);
 }
 

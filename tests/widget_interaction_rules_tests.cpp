@@ -553,6 +553,22 @@ void TestHoverOnlyWidgetVisibility()
         visibilityRules::ShouldRetainBackdropAfterDrag(
             true, true, false, false),
         "a selected hover-only widget retains its backdrop after drag");
+    Check(
+        visibilityRules::BecomesHiddenAfterPointerMove(
+            true, false, false, true, false),
+        "leaving an idle hover-only widget requires a synchronized hide");
+    Check(
+        !visibilityRules::BecomesHiddenAfterPointerMove(
+            true, false, false, false, true),
+        "entering a hover-only widget is not a hide transition");
+    Check(
+        !visibilityRules::BecomesHiddenAfterPointerMove(
+            true, true, false, true, false),
+        "a selected hover-only widget does not hide on pointer exit");
+    Check(
+        !visibilityRules::BecomesHiddenAfterPointerMove(
+            true, false, true, true, false),
+        "a popup-pinned hover-only widget does not hide on pointer exit");
 }
 
 void TestDesktopHoverDeactivation()

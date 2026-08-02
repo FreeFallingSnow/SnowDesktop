@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widget_visibility_rules.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
@@ -845,18 +846,40 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
         if (invalidateDesktopHover)
         {
-            for (auto& w : widgets_)
+            bool hoverOnlyVisibilityChanged = false;
+            bool hoverOnlyWidgetBecameHidden = false;
+            for (size_t widgetIndex = 0;
+                 widgetIndex < widgets_.size();
+                 ++widgetIndex)
             {
+                const auto& w = widgets_[widgetIndex];
                 if (!w.showOnHoverOnly)
                     continue;
-                if (PtInRect(&w.bounds, oldMouse) !=
-                    PtInRect(&w.bounds, current))
-                {
-                    InvalidateRect(
-                        hwnd_, nullptr, FALSE);
-                    break;
-                }
+                const bool pointerWasInside =
+                    PtInRect(&w.bounds, oldMouse) != FALSE;
+                const bool pointerIsInside =
+                    PtInRect(&w.bounds, current) != FALSE;
+                if (pointerWasInside == pointerIsInside)
+                    continue;
+                hoverOnlyVisibilityChanged = true;
+                const bool popupOpen =
+                    popupWidgetIndex_ == widgetIndex ||
+                    (!interactionPinnedWidgetId_.empty() &&
+                        interactionPinnedWidgetId_ == w.id);
+                hoverOnlyWidgetBecameHidden =
+                    snowdesktop::widget_visibility_rules::
+                        BecomesHiddenAfterPointerMove(
+                            true,
+                            w.selected,
+                            popupOpen,
+                            pointerWasInside,
+                            pointerIsInside) ||
+                    hoverOnlyWidgetBecameHidden;
             }
+            if (hoverOnlyWidgetBecameHidden)
+                CommitPassiveHoverVisualEnd();
+            else if (hoverOnlyVisibilityChanged)
+                InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }
 }

@@ -699,6 +699,78 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
     }
 }
 
+bool DesktopBackdropCompositor::ExcludePanelFromWindow(
+    const RECT& frame)
+{
+    if (!impl_->available || !impl_->backdropWindow ||
+        !IsWindow(impl_->backdropWindow) ||
+        frame.right <= frame.left || frame.bottom <= frame.top)
+    {
+        return false;
+    }
+
+    HRGN visibleRegion =
+        CreateRectRgn(0, 0, 0, 0);
+    if (!visibleRegion)
+        return false;
+
+    const int existingRegionType =
+        GetWindowRgn(
+            impl_->backdropWindow,
+            visibleRegion);
+    if (existingRegionType == ERROR)
+    {
+        RECT client{};
+        if (!GetClientRect(
+                impl_->backdropWindow,
+                &client))
+        {
+            DeleteObject(visibleRegion);
+            return false;
+        }
+        SetRectRgn(
+            visibleRegion,
+            client.left, client.top,
+            client.right, client.bottom);
+    }
+
+    HRGN excludedRegion =
+        CreateRectRgn(
+            frame.left, frame.top,
+            frame.right, frame.bottom);
+    if (!excludedRegion)
+    {
+        DeleteObject(visibleRegion);
+        return false;
+    }
+
+    const int combineResult =
+        CombineRgn(
+            visibleRegion,
+            visibleRegion,
+            excludedRegion,
+            RGN_DIFF);
+    DeleteObject(excludedRegion);
+    if (combineResult == ERROR)
+    {
+        DeleteObject(visibleRegion);
+        return false;
+    }
+
+    // SetWindowRgn takes ownership only on success. SyncWindowPlacement will
+    // restore the content window's normal region at the beginning of the next
+    // frame, after the stale Composition visual has been committed away.
+    if (!SetWindowRgn(
+            impl_->backdropWindow,
+            visibleRegion,
+            FALSE))
+    {
+        DeleteObject(visibleRegion);
+        return false;
+    }
+    return true;
+}
+
 void DesktopBackdropCompositor::EndFrame()
 {
     if (!impl_->available || !impl_->completeCollection)

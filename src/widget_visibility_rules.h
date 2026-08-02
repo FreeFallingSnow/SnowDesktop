@@ -35,4 +35,23 @@ constexpr bool ShouldRetainBackdropAfterDrag(
         popupOpen,
         pointerInside);
 }
+
+constexpr bool BecomesHiddenAfterPointerMove(
+    bool showOnHoverOnly,
+    bool widgetSelected,
+    bool popupOpen,
+    bool pointerWasInside,
+    bool pointerIsInside)
+{
+    return ShouldRetainBackdropAfterDrag(
+               showOnHoverOnly,
+               widgetSelected,
+               popupOpen,
+               pointerWasInside) &&
+        !ShouldRetainBackdropAfterDrag(
+            showOnHoverOnly,
+            widgetSelected,
+            popupOpen,
+            pointerIsInside);
+}
 }

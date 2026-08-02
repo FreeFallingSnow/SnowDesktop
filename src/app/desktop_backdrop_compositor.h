@@ -51,6 +51,11 @@ public:
     bool AddPanel(const RECT& frame, float cornerRadius, float blurRadius);
     /** @brief 立即移除指定矩形对应的玻璃面板。 */
     bool RemovePanel(const RECT& frame);
+    /**
+     * @brief 在下一次布局同步前从辅助窗口区域中裁掉指定面板。
+     * @details 用作可见性结束帧的 HWND 级栅栏，防止旧视觉晚一帧退出。
+     */
+    bool ExcludePanelFromWindow(const RECT& frame);
     /** @brief 提交本帧面板集合。 */
     void EndFrame();
     /**
