@@ -2,19 +2,10 @@
 
 // Floating-Dock paint and window-message dispatch.
 
-void DesktopApp::PaintFloatingDockWindow(
-    HWND hwnd)
+bool DesktopApp::RenderFloatingDockCompositionFrame()
 {
-    PAINTSTRUCT paint{};
-    HDC dc = BeginPaint(hwnd, &paint);
-    if (!dc)
-        return;
     if (floatingDockCompositionPaintInProgress_)
-    {
-        EndPaint(hwnd, &paint);
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return;
-    }
+        return false;
     floatingDockCompositionPaintInProgress_ = true;
     struct FloatingPaintScope final
     {
@@ -30,8 +21,7 @@ void DesktopApp::PaintFloatingDockWindow(
     {
         RecoverFloatingDockCompositionFailure(
             L"CreateOrResize", hr);
-        EndPaint(hwnd, &paint);
-        return;
+        return false;
     }
 
     ID2D1DeviceContext* rawContext = nullptr;
@@ -48,8 +38,7 @@ void DesktopApp::PaintFloatingDockWindow(
     {
         RecoverFloatingDockCompositionFailure(
             L"BeginDraw", hr);
-        EndPaint(hwnd, &paint);
-        return;
+        return false;
     }
 
     ComPtr<ID2D1DeviceContext> context;
@@ -95,20 +84,33 @@ void DesktopApp::PaintFloatingDockWindow(
     {
         RecoverFloatingDockCompositionFailure(
             L"EndDraw", hr);
-        EndPaint(hwnd, &paint);
-        return;
+        return false;
     }
     hr = dcompDevice_->Commit();
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
             L"Commit", hr);
-        EndPaint(hwnd, &paint);
-        return;
+        return false;
     }
+    floatingDockFrameReady_ = true;
     floatingDockCompositionRenderRecoveryPending_ =
         false;
+    return true;
+}
+
+void DesktopApp::PaintFloatingDockWindow(
+    HWND hwnd)
+{
+    PAINTSTRUCT paint{};
+    HDC dc = BeginPaint(hwnd, &paint);
+    if (!dc)
+        return;
+    const bool rendered =
+        RenderFloatingDockCompositionFrame();
     EndPaint(hwnd, &paint);
+    if (!rendered)
+        InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 LRESULT DesktopApp::HandleFloatingDockMessage(
@@ -144,6 +146,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_MOUSEMOVE:
     {
+        floatingDockHoverHandoffPending_ = false;
+        floatingDockHoverHandoffRect_ = {};
         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
         tracking.dwFlags = TME_LEAVE;
         tracking.hwndTrack = hwnd;
@@ -160,6 +164,22 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     }
     case WM_MOUSELEAVE:
     {
+        // Hiding the floating HWND generates a synthetic leave before the
+        // desktop HWND receives its hand-off move. Preserve the already-hot
+        // Dock item across that window boundary instead of clearing and then
+        // replaying the same hover transition.
+        if (floatingDockHoverHandoffPending_ &&
+            !floatingDockVisible_)
+        {
+            floatingDockHoverHandoffPending_ = false;
+            floatingDockHoverHandoffRect_ = {};
+            return 0;
+        }
+        if (floatingDockHoverHandoffPending_)
+        {
+            floatingDockHoverHandoffPending_ = false;
+            floatingDockHoverHandoffRect_ = {};
+        }
         POINT cursor{};
         if (GetCursorPos(&cursor))
         {
@@ -215,10 +235,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_DISPLAYCHANGE:
     case WM_DPICHANGED:
-        CloseFloatingDock();
+        CloseFloatingDock(true, true);
         return 0;
     case WM_CLOSE:
-        CloseFloatingDock();
+        CloseFloatingDock(true, true);
         return 0;
     case WM_DESTROY:
         if (floatingDockHwnd_ == hwnd)

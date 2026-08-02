@@ -51,6 +51,22 @@ public:
     bool AddPanel(const RECT& frame, float cornerRadius, float blurRadius);
     /** @brief 立即移除指定矩形对应的玻璃面板并同步辅助窗口区域。 */
     bool RemovePanel(const RECT& frame);
+    /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */
+    bool KeepPanel(const RECT& frame);
+    /** @brief 修改指定面板透明度；由 CommitVisualChanges 统一提交。 */
+    bool SetPanelOpacity(const RECT& frame, float opacity);
+    /** @brief 修改根视觉透明度；由 CommitVisualChanges 统一提交。 */
+    bool SetVisualOpacity(float opacity);
+    /** @brief 提交同线程所有 backdrop 目标的共享视觉事务。 */
+    void CommitVisualChanges();
+    /**
+     * @brief 提交共享视觉事务，并在该批次真正完成后投递窗口消息。
+     *
+     * 用于跨 HWND 的视觉交接；接收方可在通知后安全回收旧目标，避免
+     * RequestCommitAsync 尚未落屏时提前隐藏旧玻璃层。
+     */
+    bool CommitVisualChangesAndNotify(
+        HWND notifyWindow, UINT message, WPARAM token);
     /** @brief 提交本帧面板集合、同步辅助窗口区域并请求非阻塞合成提交。 */
     void EndFrame();
     /** @brief 销毁合成目标和辅助窗口。 */

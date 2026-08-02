@@ -153,6 +153,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case kFloatingDockBackdropCommitMessage:
+        FinalizeFloatingDockBackdropCleanup(
+            static_cast<UINT_PTR>(wp));
+        return 0;
     case kForegroundInteractionChangedMessage:
         ReconcileDesktopHoverState();
         return 0;

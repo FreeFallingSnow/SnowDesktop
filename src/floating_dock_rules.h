@@ -277,11 +277,23 @@ inline RECT ReserveCollectionPopupEnvelope(
 }
 
 inline bool ShouldRenderDesktopDock(
-    bool floatingDockVisible,
+    bool floatingDockOwnsVisual,
     bool selectedForFloatingHost)
 {
-    return !floatingDockVisible ||
+    return !floatingDockOwnsVisual ||
         !selectedForFloatingHost;
+}
+
+/**
+ * @brief The source copy can be retired only after a valid replacement frame
+ * has crossed the compositor presentation barrier.
+ */
+inline bool ShouldRetireDesktopDockCopy(
+    bool floatingFrameReady,
+    bool presentationBarrierSucceeded)
+{
+    return floatingFrameReady &&
+        presentationBarrierSucceeded;
 }
 
 /**

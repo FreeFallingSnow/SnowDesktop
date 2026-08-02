@@ -30,7 +30,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
                 dockSettings_.floatingShortcutMode,
                 dockSettings_.floatingEdgeSwipeEnabled))
     {
-        CloseFloatingDock();
+        CloseFloatingDock(true, true);
         return;
     }
 

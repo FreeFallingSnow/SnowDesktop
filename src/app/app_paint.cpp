@@ -97,6 +97,16 @@ void DesktopApp::OnPaint(const RECT* updateRect)
         if (showWidgetAddedHint_)
             DrawWidgetAddedHintOverlay(context.Get());
 
+        if (!IsRectEmpty(
+                &floatingDockDesktopBackdropHandoffRect_))
+        {
+            // The D2D ownership switch and the native backdrop switch use
+            // different composition APIs. Retain the source glass panel for
+            // this one desktop frame so the shared backdrop compositor can
+            // transfer its opacity atomically afterward.
+            desktopBackdropCompositor_.KeepPanel(
+                floatingDockDesktopBackdropHandoffRect_);
+        }
         desktopBackdropCompositor_.EndFrame();
         if (forceCompleteGlassCollection)
             desktopBackdropFullCollectionPending_ = false;

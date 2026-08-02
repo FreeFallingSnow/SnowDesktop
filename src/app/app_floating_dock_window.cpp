@@ -31,18 +31,107 @@ bool DesktopApp::CreateFloatingDockWindow()
 
 void DesktopApp::ResetFloatingDockCompositionResources()
 {
+    floatingDockFrameReady_ = false;
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     if (floatingDockDcompVisual_)
         floatingDockDcompVisual_->SetContent(nullptr);
+    if (floatingDockDesktopCacheVisual_)
+        floatingDockDesktopCacheVisual_->SetContent(nullptr);
+    if (floatingDockDesktopCacheEffect_)
+        floatingDockDesktopCacheEffect_->SetOpacity(0.0f);
     floatingDockDcompSurface_.Reset();
     floatingDockCompWidth_ = 0;
     floatingDockCompHeight_ = 0;
 }
 
+HRESULT DesktopApp::EnsureFloatingDockDesktopCacheVisual()
+{
+    if (!dcompDevice_ || !dcompVisual_)
+        return E_UNEXPECTED;
+    if (!floatingDockDesktopCacheVisual_)
+    {
+        ComPtr<IDCompositionVisual2> visual;
+        HRESULT hr = dcompDevice_->CreateVisual(&visual);
+        if (FAILED(hr) || !visual)
+            return FAILED(hr) ? hr : E_FAIL;
+
+        ComPtr<IDCompositionEffectGroup> effect;
+        hr = dcompDevice_->CreateEffectGroup(&effect);
+        if (FAILED(hr) || !effect)
+            return FAILED(hr) ? hr : E_FAIL;
+        hr = effect->SetOpacity(0.0f);
+        if (SUCCEEDED(hr))
+            hr = visual->SetEffect(effect.Get());
+        if (SUCCEEDED(hr))
+            hr = dcompVisual_->AddVisual(
+                visual.Get(), TRUE, nullptr);
+        if (FAILED(hr))
+            return hr;
+
+        floatingDockDesktopCacheVisual_ = visual;
+        floatingDockDesktopCacheEffect_ = effect;
+    }
+
+    HRESULT hr = floatingDockDesktopCacheVisual_->SetOffsetX(
+        static_cast<float>(floatingDockSourceRect_.left));
+    if (SUCCEEDED(hr))
+    {
+        hr = floatingDockDesktopCacheVisual_->SetOffsetY(
+            static_cast<float>(floatingDockSourceRect_.top));
+    }
+    return hr;
+}
+
+void DesktopApp::FinalizeFloatingDockBackdropCleanup(
+    UINT_PTR commitToken)
+{
+    if (commitToken != 0)
+    {
+        if (!floatingDockBackdropCleanupPending_ ||
+            commitToken != floatingDockBackdropCommitToken_)
+            return;
+    }
+    if (commitToken != 0 && floatingDockClosePending_)
+    {
+        floatingDockBackdropCleanupPending_ = false;
+        floatingDockClosePending_ = false;
+        CompleteFloatingDockCloseHandoff();
+        return;
+    }
+    floatingDockBackdropCleanupPending_ = false;
+    floatingDockBackdropCompositor_.SetVisible(false);
+    floatingDockBackdropCompositor_.Reset();
+    const bool hadCompositionSurface =
+        floatingDockDcompSurface_ != nullptr;
+    ResetFloatingDockCompositionResources();
+    if (hadCompositionSurface && dcompDevice_)
+    {
+        // The target can release its last full-size surface only after the
+        // backdrop ownership transaction has completed. Releasing it in the
+        // close call raced WinComp and exposed a one-frame glass hole.
+        const HRESULT hr = dcompDevice_->Commit();
+        if (FAILED(hr))
+        {
+            wchar_t message[160]{};
+            wsprintfW(message,
+                L"FloatingDock release surface commit FAILED hr=0x%08X",
+                static_cast<unsigned>(hr));
+            WriteDiagnosticLogEntry(message);
+        }
+    }
+}
+
 void DesktopApp::DestroyFloatingDockWindow()
 {
+    ++floatingDockBackdropCommitToken_;
+    floatingDockBackdropCleanupPending_ = false;
+    floatingDockClosePending_ = false;
+    floatingDockHoverHandoffPending_ = false;
+    floatingDockHoverHandoffRect_ = {};
+    floatingDockCloseDesktopRect_ = {};
     floatingDockVisible_ = false;
+    floatingDockDesktopCopySuppressed_ = false;
     floatingDockRevealPending_ = false;
     floatingDockContainer_ = nullptr;
     floatingDockMonitor_ = nullptr;
@@ -50,6 +139,7 @@ void DesktopApp::DestroyFloatingDockWindow()
     floatingDockRect_ = {};
     floatingDockPopupRect_ = {};
     floatingDockTooltipRect_ = {};
+    floatingDockDesktopBackdropHandoffRect_ = {};
     floatingDockBackdropCompositor_.Reset();
     if (floatingDockDropTargetRegistered_ &&
         floatingDockHwnd_ &&
@@ -57,6 +147,14 @@ void DesktopApp::DestroyFloatingDockWindow()
         RevokeDragDrop(floatingDockHwnd_);
     floatingDockDropTargetRegistered_ = false;
     ResetFloatingDockCompositionResources();
+    if (dcompVisual_ && floatingDockDesktopCacheVisual_)
+    {
+        dcompVisual_->RemoveVisual(
+            floatingDockDesktopCacheVisual_.Get());
+    }
+    floatingDockDesktopCacheEffect_.Reset();
+    floatingDockDesktopCacheVisual_.Reset();
+    floatingDockDcompEffect_.Reset();
     floatingDockDcompVisual_.Reset();
     floatingDockDcompTarget_.Reset();
     if (floatingDockHwnd_ && IsWindow(floatingDockHwnd_))
@@ -288,7 +386,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             CalculateFloatingDockStableSourceRect();
     if (IsRectEmpty(&floatingDockSourceRect_))
     {
-        CloseFloatingDock();
+        CloseFloatingDock(true, true);
         return;
     }
     const bool dockGeometryChanged =

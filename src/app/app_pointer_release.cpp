@@ -284,7 +284,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
                         floatingDockVisible_,
                         pressedWindowAction))
                 return;
-            CloseFloatingDock();
+            CloseFloatingDock(true, true);
             // ShowWindow(SW_HIDE) 与 DComp 提交不在同一个时序域。等待
             // 顶层 Dock 真正退出合成场景后再抓屏，避免快照残留 Dock。
             DwmFlush();

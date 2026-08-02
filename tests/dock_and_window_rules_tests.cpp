@@ -805,6 +805,16 @@ int main()
     Check(floatingDock::ShouldRenderDesktopDock(
             true, false),
         "Docks on other monitors must remain visible");
+    Check(floatingDock::ShouldRenderDesktopDock(
+            false, true),
+        "the desktop Dock must remain during the floating first-frame hand-off");
+    Check(floatingDock::ShouldRetireDesktopDockCopy(
+            true, true) &&
+            !floatingDock::ShouldRetireDesktopDockCopy(
+                false, true) &&
+            !floatingDock::ShouldRetireDesktopDockCopy(
+                true, false),
+        "the desktop Dock copy must survive until a valid floating frame crosses the presentation barrier");
     Check(!floatingDock::
             ShouldInvalidateDesktopHover(true) &&
             floatingDock::

@@ -32,6 +32,14 @@ void DesktopApp::ShowFloatingDock()
         MessageBeep(MB_ICONWARNING);
         return;
     }
+    // A completion notification from the previous close must not retire the
+    // targets being reused by this reveal.
+    ++floatingDockBackdropCommitToken_;
+    floatingDockBackdropCleanupPending_ = false;
+    floatingDockClosePending_ = false;
+    floatingDockCloseDesktopRect_ = {};
+    floatingDockHoverHandoffPending_ = false;
+    floatingDockHoverHandoffRect_ = {};
     const RECT selectedDockBounds =
         floatingDockContainer_->GetBounds();
     const POINT selectedDockCenterScreen{
@@ -61,30 +69,71 @@ void DesktopApp::ShowFloatingDock()
         LoadPersonalization(
             GetPersonalizationPath().c_str(),
             floatingDockPersonalization_);
-    const bool wasFloatingDockVisible =
-        floatingDockVisible_;
     floatingDockVisible_ = true;
+    floatingDockDesktopCopySuppressed_ = false;
     floatingDockLastPointerPresentTick_ = 0;
-    if (snowdesktop::floating_dock_rules::
-            FloatingVisibilityChangesStaticScene(
-                wasFloatingDockVisible,
-                floatingDockVisible_))
-    {
-        // A drag frame caches the desktop Dock as part of its static layer.
-        // Remove both that bitmap and its independent backdrop panel before
-        // presenting the top-level copy, otherwise both Docks remain visible.
-        InvalidateDragStaticScene();
-        desktopBackdropCompositor_.RemovePanel(
-            desktopDockPanelRect);
-    }
     floatingDockRevealPending_ = true;
     UpdateFloatingDockWindowBounds();
-    // Commit the floating copy before removing the corresponding desktop
-    // copy. A one-frame overlap is visually stable; the reverse order exposes
-    // the wallpaper and causes the switch flash reported by users.
-    InvalidateFloatingDockWindow(true);
-    floatingDockBackdropCompositor_.
-        SetVisible(true);
+    if (!floatingDockVisible_ ||
+        !floatingDockContainer_)
+        return;
+
+    // Render the replacement while the desktop copy is still owned by the
+    // desktop surface. Commit() only queues DirectComposition work, so a
+    // successfully returned paint is necessary but not yet sufficient to
+    // retire that source copy.
+    const bool firstFrameRendered =
+        RenderFloatingDockCompositionFrame();
+    if (!firstFrameRendered ||
+        !floatingDockFrameReady_)
+    {
+        WriteDiagnosticLogEntry(
+            L"Floating Dock first frame unavailable; desktop copy retained");
+        CloseFloatingDock(true, true);
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    // UpdateFloatingDockWindowBounds invalidated the hidden HWND while sizing
+    // it. The frame was submitted directly because hidden windows do not
+    // reliably receive synchronous WM_PAINT; consume that stale update now.
+    ValidateRect(floatingDockHwnd_, nullptr);
+
+    // Attach an already-rendered but fully transparent visual to the DWM
+    // scene first. The next desktop paint can then remove the desktop copy
+    // and reveal this visual in one DirectComposition transaction instead of
+    // displaying either an overlap frame or a wallpaper frame.
+    HRESULT stageHr = floatingDockDcompEffect_
+        ? floatingDockDcompEffect_->SetOpacity(0.0f)
+        : E_UNEXPECTED;
+    if (SUCCEEDED(stageHr))
+    {
+        stageHr = floatingDockDesktopCacheEffect_
+            ? floatingDockDesktopCacheEffect_->SetOpacity(0.0f)
+            : E_UNEXPECTED;
+    }
+    if (SUCCEEDED(stageHr))
+        stageHr = dcompDevice_->Commit();
+    if (SUCCEEDED(stageHr) &&
+        floatingDockBackdropCompositor_.IsAvailable())
+    {
+        if (!floatingDockBackdropCompositor_.
+                SetVisualOpacity(0.0f))
+            stageHr = E_FAIL;
+        else
+            floatingDockBackdropCompositor_.
+                CommitVisualChanges();
+    }
+    if (FAILED(stageHr))
+    {
+        wchar_t message[176]{};
+        wsprintfW(message,
+            L"Floating Dock transparent staging FAILED hr=0x%08X",
+            static_cast<unsigned>(stageHr));
+        WriteDiagnosticLogEntry(message);
+        CloseFloatingDock(true, true);
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
     SetWindowPos(
         floatingDockHwnd_, HWND_NOTOPMOST,
         0, 0, 0, 0,
@@ -94,22 +143,150 @@ void DesktopApp::ShowFloatingDock()
         Reattach(floatingDockHwnd_);
     floatingDockRevealPending_ = false;
     floatingDockLastPointerPresentTick_ = 0;
-    if (hwnd_)
+
+    // Showing the HWND and submitting its DComp surface live in different
+    // timing domains. This barrier only installs the transparent target; the
+    // currently visible desktop Dock remains the sole rendered copy.
+    const HRESULT presentationHr = DwmFlush();
+    const bool retireDesktopCopy =
+        snowdesktop::floating_dock_rules::
+            ShouldRetireDesktopDockCopy(
+                floatingDockFrameReady_,
+                SUCCEEDED(presentationHr));
+    if (!retireDesktopCopy)
+    {
+        wchar_t message[176]{};
+        wsprintfW(message,
+            L"Floating Dock presentation barrier FAILED hr=0x%08X; desktop copy retained",
+            static_cast<unsigned>(presentationHr));
+        WriteDiagnosticLogEntry(message);
+        CloseFloatingDock(true, true);
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+
+    const bool wasDesktopCopySuppressed =
+        floatingDockDesktopCopySuppressed_;
+    floatingDockDesktopBackdropHandoffRect_ =
+        desktopDockPanelRect;
+    HRESULT cacheHr = floatingDockDesktopCacheEffect_
+        ? floatingDockDesktopCacheEffect_->SetOpacity(1.0f)
+        : E_UNEXPECTED;
+    if (FAILED(cacheHr))
+    {
+        wchar_t message[176]{};
+        wsprintfW(message,
+            L"Floating Dock desktop cache staging FAILED hr=0x%08X",
+            static_cast<unsigned>(cacheHr));
+        WriteDiagnosticLogEntry(message);
+        CloseFloatingDock(true, true);
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    floatingDockDesktopCopySuppressed_ = true;
+    if (snowdesktop::floating_dock_rules::
+            FloatingVisibilityChangesStaticScene(
+                wasDesktopCopySuppressed,
+                floatingDockDesktopCopySuppressed_))
+    {
+        // A drag frame caches the desktop Dock as part of its static layer.
+        InvalidateDragStaticScene();
+    }
+    if (hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(
             hwnd_, &desktopDockRect, TRUE);
         UpdateWindow(hwnd_);
     }
+    // The popup backdrop target is already staged at zero opacity. It can be
+    // inserted now without sampling the retained desktop glass twice.
+    floatingDockBackdropCompositor_.
+        SetVisible(true);
+    floatingDockBackdropCompositor_.
+        Reattach(floatingDockHwnd_);
+    const HRESULT revealPresentationHr = DwmFlush();
+    if (FAILED(revealPresentationHr))
+    {
+        wchar_t message[176]{};
+        wsprintfW(message,
+            L"Floating Dock atomic reveal barrier FAILED hr=0x%08X",
+            static_cast<unsigned>(revealPresentationHr));
+        WriteDiagnosticLogEntry(message);
+    }
+
+    // The desktop main surface no longer owns the Dock, but the exact surface
+    // rendered for the floating host is now visible through the desktop cache
+    // child. Exchange those two identical copies without asking either HWND
+    // to repaint during the ownership switch.
+    HRESULT revealHr =
+        floatingDockDcompEffect_->SetOpacity(1.0f);
+    if (SUCCEEDED(revealHr))
+    {
+        revealHr = floatingDockDesktopCacheEffect_->
+            SetOpacity(0.0f);
+    }
+    if (SUCCEEDED(revealHr))
+        revealHr = dcompDevice_->Commit();
+    if (FAILED(revealHr))
+    {
+        wchar_t message[176]{};
+        wsprintfW(message,
+            L"Floating Dock atomic reveal FAILED hr=0x%08X",
+            static_cast<unsigned>(revealHr));
+        WriteDiagnosticLogEntry(message);
+        floatingDockDesktopCopySuppressed_ = false;
+        InvalidateDragStaticScene();
+        CloseFloatingDock(true, true);
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    DwmFlush();
+
+    // Both backdrop targets share one Windows Composition compositor. Flip
+    // their opacity together only after the D2D ownership transaction is on
+    // screen; until this transaction lands, the retained desktop panel keeps
+    // supplying exactly one glass layer beneath the floating D2D content.
+    const bool floatingGlassReady =
+        !floatingDockBackdropCompositor_.IsAvailable() ||
+        floatingDockBackdropCompositor_.
+            SetVisualOpacity(1.0f);
+    if (floatingGlassReady)
+    {
+        desktopBackdropCompositor_.SetPanelOpacity(
+            desktopDockPanelRect, 0.0f);
+        floatingDockBackdropCompositor_.
+            CommitVisualChanges();
+        DwmFlush();
+    }
+    // Keep the now-transparent desktop panel alive while floating. This is a
+    // deliberate standby source for the reverse transaction and prevents a
+    // later desktop repaint from retiring it before the asynchronous shared
+    // compositor commit has landed.
 }
 
 void DesktopApp::CloseFloatingDock(
-    bool closeDockPopup)
+    bool closeDockPopup,
+    bool forceImmediate)
 {
+    if (floatingDockClosePending_)
+    {
+        if (!forceImmediate)
+            return;
+        ++floatingDockBackdropCommitToken_;
+        floatingDockBackdropCleanupPending_ = false;
+        floatingDockClosePending_ = false;
+        CompleteFloatingDockCloseHandoff();
+        return;
+    }
     if (!floatingDockVisible_ &&
         (!floatingDockHwnd_ ||
             !IsWindowVisible(floatingDockHwnd_)))
         return;
-    HideDockWindowPreview();
+    // A preview that has already completed its hover dwell must not be armed
+    // again merely because input ownership moves from the floating HWND back
+    // to the desktop HWND. Suppress that same target until the real pointer
+    // leaves it.
+    DismissDockWindowPreviewUntilLeave();
     if (closeDockPopup && popupAnchoredToDock_ &&
         GetOpenPopupWidget())
     {
@@ -127,60 +304,231 @@ void DesktopApp::CloseFloatingDock(
             ? floatingDockContainer_->
                 GetInteractiveBounds()
             : floatingDockRect_;
-    // Restore the desktop copy first, then hide the floating copy. This keeps
-    // the hand-off free of a transparent intermediate frame.
-    const bool wasFloatingDockVisible =
-        floatingDockVisible_;
+    const RECT desktopDockPanelRect =
+        floatingDockContainer_
+            ? floatingDockContainer_->
+                GetVisualPanelBounds(
+                    lastMousePoint_)
+            : floatingDockRect_;
+    floatingDockCloseDesktopRect_ = desktopDockRect;
+
+    POINT handoffPointer{};
+    floatingDockHoverHandoffPending_ =
+        TryGetDesktopHoverPointFromCursor(
+            handoffPointer) &&
+        PtInRect(&desktopDockRect,
+            handoffPointer) != FALSE;
+    floatingDockHoverHandoffRect_ =
+        floatingDockHoverHandoffPending_
+            ? desktopDockRect : RECT{};
+    if (floatingDockHoverHandoffPending_)
+        lastMousePoint_ = handoffPointer;
+
+    // Freeze the hand-off cache from the final floating state after popup
+    // teardown and pointer reconciliation. Both HWND targets will reference
+    // this same surface until the desktop main surface has caught up.
+    if (!RenderFloatingDockCompositionFrame())
+    {
+        WriteDiagnosticLogEntry(
+            L"Floating Dock close cache refresh unavailable");
+    }
+
+    // Stage an invisible desktop glass panel, then exchange its opacity with
+    // the floating root in the shared Windows Composition transaction. The
+    // floating D2D content remains the only content copy during this glass
+    // hand-off and sees one continuous backdrop underneath it.
+    const PersonalizationSettings& glassSettings =
+        floatingDockPersonalization_;
+    const float desktopPanelRadius =
+        dockSettings_.edgeAttached
+            ? 0.0f
+            : glassSettings.cornerRadius;
+    const bool canTransferGlass =
+        glassSettings.glassEnabled &&
+        desktopBackdropCompositor_.IsAvailable() &&
+        floatingDockBackdropCompositor_.IsAvailable();
+    bool deferBackdropHandoff = false;
+    if (canTransferGlass)
+    {
+        desktopBackdropCompositor_.BeginFrame(false);
+        const bool stagedDesktopGlass =
+            desktopBackdropCompositor_.AddPanel(
+                desktopDockPanelRect,
+                desktopPanelRadius,
+                glassSettings.glassBlurRadius) &&
+            desktopBackdropCompositor_.SetPanelOpacity(
+                desktopDockPanelRect, 0.0f);
+        desktopBackdropCompositor_.EndFrame();
+        if (stagedDesktopGlass)
+        {
+            // Do not present the zero-opacity staging panel on its own. Queue
+            // the glass ownership exchange now, then let the desktop D2D
+            // paint below commit both hand-offs before the single final DWM
+            // barrier. Separate barriers here made close visibly happen in
+            // three steps: glass changed first, content followed later.
+            desktopBackdropCompositor_.SetPanelOpacity(
+                desktopDockPanelRect, 1.0f);
+            floatingDockBackdropCompositor_.
+                SetVisualOpacity(0.0f);
+            const HWND notifyWindow =
+                controlHwnd_ && IsWindow(controlHwnd_)
+                    ? controlHwnd_ : hwnd_;
+            const UINT_PTR commitToken =
+                ++floatingDockBackdropCommitToken_;
+            deferBackdropHandoff =
+                floatingDockBackdropCompositor_.
+                    CommitVisualChangesAndNotify(
+                        notifyWindow,
+                        kFloatingDockBackdropCommitMessage,
+                        commitToken);
+            floatingDockBackdropCleanupPending_ =
+                deferBackdropHandoff;
+            if (!deferBackdropHandoff)
+            {
+                // On systems without a completion fence, keep submitting the
+                // opacity exchange but retain the zero-opacity helper until
+                // the next reveal or final app teardown.
+                floatingDockBackdropCompositor_.
+                    CommitVisualChanges();
+            }
+        }
+        else
+        {
+            floatingDockBackdropCompositor_.
+                SetVisible(false);
+        }
+    }
+    else
+    {
+        floatingDockBackdropCompositor_.
+            SetVisible(false);
+    }
+
+    floatingDockRevealPending_ = false;
+    floatingDockLastPointerPresentTick_ = 0;
+    if (deferBackdropHandoff && !forceImmediate)
+    {
+        // Keep the floating content and its old glass paired until WinComp
+        // confirms that the desktop glass target is live. The completion
+        // message performs the DComp content exchange on the UI thread.
+        floatingDockClosePending_ = true;
+        return;
+    }
+    if (deferBackdropHandoff)
+    {
+        ++floatingDockBackdropCommitToken_;
+        floatingDockBackdropCleanupPending_ = false;
+    }
+    CompleteFloatingDockCloseHandoff();
+}
+
+void DesktopApp::CompleteFloatingDockCloseHandoff()
+{
+    const RECT desktopDockRect =
+        floatingDockCloseDesktopRect_;
+
+    // First move the exact floating surface to the desktop child visual. If
+    // DWM presents the two HWND targets on adjacent frames, both copies are
+    // pixel-identical (including the current hover state), so no second Dock
+    // or empty panel can be perceived.
+    HRESULT concealHr = floatingDockDesktopCacheEffect_
+        ? floatingDockDesktopCacheEffect_->SetOpacity(1.0f)
+        : E_UNEXPECTED;
+    if (SUCCEEDED(concealHr))
+    {
+        concealHr = floatingDockDcompEffect_
+            ? floatingDockDcompEffect_->SetOpacity(0.0f)
+            : E_UNEXPECTED;
+    }
+    if (SUCCEEDED(concealHr))
+        concealHr = dcompDevice_->Commit();
+    if (FAILED(concealHr))
+    {
+        wchar_t message[176]{};
+        wsprintfW(message,
+            L"Floating Dock cached conceal FAILED hr=0x%08X",
+            static_cast<unsigned>(concealHr));
+        WriteDiagnosticLogEntry(message);
+    }
+    else
+    {
+        DwmFlush();
+    }
+
     floatingDockVisible_ = false;
+    if (floatingDockHwnd_ &&
+        IsWindow(floatingDockHwnd_))
+    {
+        ShowWindow(floatingDockHwnd_, SW_HIDE);
+    }
+    floatingDockDesktopBackdropHandoffRect_ = {};
+
+    // Rebuild the ordinary desktop Dock behind the still-visible cache. Its
+    // first frame can no longer leak through with a different hover state.
+    const bool wasDesktopCopySuppressed =
+        floatingDockDesktopCopySuppressed_;
+    floatingDockDesktopCopySuppressed_ = false;
     if (snowdesktop::floating_dock_rules::
             FloatingVisibilityChangesStaticScene(
-                wasFloatingDockVisible,
-                floatingDockVisible_))
+                wasDesktopCopySuppressed,
+                floatingDockDesktopCopySuppressed_))
     {
         InvalidateDragStaticScene();
     }
-    floatingDockRevealPending_ = false;
-    floatingDockLastPointerPresentTick_ = 0;
-    if (hwnd_)
+    bool desktopFrameSubmitted = false;
+    if (hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(
             hwnd_,
             IsRectEmpty(&desktopDockRect)
                 ? nullptr : &desktopDockRect,
             TRUE);
-        UpdateWindow(hwnd_);
-    }
-    if (floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
-    {
-        ShowWindow(floatingDockHwnd_, SW_HIDE);
-    }
-    floatingDockBackdropCompositor_.Reset();
-    const bool hadCompositionSurface =
-        floatingDockDcompSurface_ != nullptr;
-    ResetFloatingDockCompositionResources();
-    if (hadCompositionSurface && dcompDevice_)
-    {
-        // The hidden host and its lightweight target/visual are reusable, but
-        // retaining the last full-size transparent surface needlessly pins
-        // GPU memory. Commit the null content while the HWND is hidden so the
-        // compositor can retire that allocation before the next reveal.
-        const HRESULT hr = dcompDevice_->Commit();
-        if (FAILED(hr))
+        if (!compositionPaintInProgress_)
         {
-            wchar_t message[160]{};
+            UpdateWindow(hwnd_);
+            desktopFrameSubmitted = true;
+        }
+    }
+    if (desktopFrameSubmitted)
+    {
+        const HRESULT presentationHr = DwmFlush();
+        if (FAILED(presentationHr))
+        {
+            wchar_t message[176]{};
             wsprintfW(message,
-                L"FloatingDock release surface commit FAILED hr=0x%08X",
-                static_cast<unsigned>(hr));
+                L"Desktop Dock presentation barrier FAILED hr=0x%08X",
+                static_cast<unsigned>(presentationHr));
             WriteDiagnosticLogEntry(message);
         }
     }
+    // Only after the main desktop surface is known to contain its Dock do we
+    // retire the hand-off cache.
+    if (floatingDockDesktopCacheEffect_)
+    {
+        HRESULT cacheRetireHr =
+            floatingDockDesktopCacheEffect_->SetOpacity(0.0f);
+        if (SUCCEEDED(cacheRetireHr) && dcompDevice_)
+            cacheRetireHr = dcompDevice_->Commit();
+        if (SUCCEEDED(cacheRetireHr))
+            DwmFlush();
+        else
+        {
+            wchar_t message[176]{};
+            wsprintfW(message,
+                L"Floating Dock desktop cache retire FAILED hr=0x%08X",
+                static_cast<unsigned>(cacheRetireHr));
+            WriteDiagnosticLogEntry(message);
+        }
+    }
+    FinalizeFloatingDockBackdropCleanup();
     floatingDockContainer_ = nullptr;
     floatingDockMonitor_ = nullptr;
     floatingDockSourceRect_ = {};
     floatingDockRect_ = {};
     floatingDockPopupRect_ = {};
     floatingDockTooltipRect_ = {};
+    floatingDockDesktopBackdropHandoffRect_ = {};
+    floatingDockCloseDesktopRect_ = {};
 }
 
 void DesktopApp::ToggleFloatingDock()
@@ -260,13 +608,30 @@ CreateOrResizeFloatingDockCompositionSurface()
         if (FAILED(hr))
             return hr;
     }
+    if (!floatingDockDcompEffect_)
+    {
+        HRESULT hr = dcompDevice_->CreateEffectGroup(
+            &floatingDockDcompEffect_);
+        if (FAILED(hr) || !floatingDockDcompEffect_)
+            return FAILED(hr) ? hr : E_FAIL;
+        hr = floatingDockDcompVisual_->SetEffect(
+            floatingDockDcompEffect_.Get());
+        if (FAILED(hr))
+        {
+            floatingDockDcompEffect_.Reset();
+            return hr;
+        }
+    }
+    HRESULT hr = EnsureFloatingDockDesktopCacheVisual();
+    if (FAILED(hr))
+        return hr;
     if (floatingDockDcompSurface_ &&
         floatingDockCompWidth_ == width &&
         floatingDockCompHeight_ == height)
         return S_OK;
 
     ComPtr<IDCompositionSurface> surface;
-    HRESULT hr = dcompDevice_->CreateSurface(
+    hr = dcompDevice_->CreateSurface(
         width, height,
         DXGI_FORMAT_B8G8R8A8_UNORM,
         DXGI_ALPHA_MODE_PREMULTIPLIED,
@@ -274,6 +639,10 @@ CreateOrResizeFloatingDockCompositionSurface()
     if (FAILED(hr))
         return hr;
     hr = floatingDockDcompVisual_->SetContent(
+        surface.Get());
+    if (FAILED(hr))
+        return hr;
+    hr = floatingDockDesktopCacheVisual_->SetContent(
         surface.Get());
     if (FAILED(hr))
         return hr;

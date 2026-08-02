@@ -199,7 +199,7 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
                 hwnd_, nullptr, FALSE);
         }
         else if (!(popupAnchoredToDock_ &&
-                   floatingDockVisible_) &&
+                   floatingDockDesktopCopySuppressed_) &&
                  !IsRectEmptyRect(popupRect_))
         {
             RECT dirty = popupRect_;

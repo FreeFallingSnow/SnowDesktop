@@ -126,7 +126,7 @@ void DesktopApp::DrawStaticBackground(
             (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
             !snowdesktop::floating_dock_rules::
                 ShouldRenderDesktopDock(
-                    floatingDockVisible_,
+                    floatingDockDesktopCopySuppressed_,
                     dock ==
                         floatingDockContainer_))
             continue;
@@ -206,7 +206,7 @@ void DesktopApp::DrawDynamicOverlays(
             ? popupAnchoredToDock_ &&
                 floatingDockVisible_
             : !(popupAnchoredToDock_ &&
-                floatingDockVisible_);
+                floatingDockDesktopCopySuppressed_);
     if (popupBelongsToCurrentSurface &&
         (!hiddenMode || IsOpenPopupRetained()) &&
         GetOpenPopupWidget())

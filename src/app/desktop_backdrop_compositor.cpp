@@ -190,6 +190,21 @@ struct GaussianBlurEffect : winrt::implements<GaussianBlurEffect,
 using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOptions,
     ABI::Windows::System::IDispatcherQueueController**);
 
+struct SharedBackdropCompositionContext
+{
+    ws::DispatcherQueueController dispatcherController{nullptr};
+    wuc::Compositor compositor{nullptr};
+};
+
+SharedBackdropCompositionContext& SharedBackdropContext()
+{
+    // Every DesktopBackdropCompositor is created and used on the desktop UI
+    // thread. Sharing one compositor lets desktop and popup targets change
+    // panel opacity in the same transactional visual update.
+    static thread_local SharedBackdropCompositionContext context;
+    return context;
+}
+
 } // namespace
 
 struct DesktopBackdropCompositor::Impl
@@ -229,39 +244,65 @@ struct DesktopBackdropCompositor::Impl
 
     bool EnsureDispatcherQueue()
     {
-        if (ws::DispatcherQueue::GetForCurrentThread())
-            return true;
+        SharedBackdropCompositionContext& shared =
+            SharedBackdropContext();
+        if (!ws::DispatcherQueue::GetForCurrentThread())
+        {
+            HMODULE coreMessaging = LoadLibraryW(L"CoreMessaging.dll");
+            if (!coreMessaging)
+            {
+                SetError(_LW("backdrop.load_core_msg"),
+                    HRESULT_FROM_WIN32(GetLastError()));
+                return false;
+            }
+            const auto createController =
+                reinterpret_cast<CreateDispatcherQueueControllerFn>(
+                    GetProcAddress(coreMessaging,
+                        "CreateDispatcherQueueController"));
+            if (!createController)
+            {
+                const HRESULT hr =
+                    HRESULT_FROM_WIN32(GetLastError());
+                FreeLibrary(coreMessaging);
+                SetError(_LW("backdrop.find_dispatch"), hr);
+                return false;
+            }
 
-        HMODULE coreMessaging = LoadLibraryW(L"CoreMessaging.dll");
-        if (!coreMessaging)
-        {
-            SetError(_LW("backdrop.load_core_msg"), HRESULT_FROM_WIN32(GetLastError()));
-            return false;
-        }
-        const auto createController = reinterpret_cast<CreateDispatcherQueueControllerFn>(
-            GetProcAddress(coreMessaging, "CreateDispatcherQueueController"));
-        if (!createController)
-        {
-            const HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+            DispatcherQueueOptions options{};
+            options.dwSize = sizeof(options);
+            options.threadType = DQTYPE_THREAD_CURRENT;
+            options.apartmentType = DQTAT_COM_STA;
+            ABI::Windows::System::IDispatcherQueueController*
+                rawController = nullptr;
+            const HRESULT hr = createController(
+                options, &rawController);
             FreeLibrary(coreMessaging);
-            SetError(_LW("backdrop.find_dispatch"), hr);
-            return false;
+            if (FAILED(hr) || !rawController)
+            {
+                SetError(_LW("backdrop.create_dispatch"),
+                    FAILED(hr) ? hr : E_FAIL);
+                return false;
+            }
+            shared.dispatcherController =
+                ws::DispatcherQueueController{
+                    rawController,
+                    winrt::take_ownership_from_abi };
         }
 
-        DispatcherQueueOptions options{};
-        options.dwSize = sizeof(options);
-        options.threadType = DQTYPE_THREAD_CURRENT;
-        options.apartmentType = DQTAT_COM_STA;
-        ABI::Windows::System::IDispatcherQueueController* rawController = nullptr;
-        const HRESULT hr = createController(options, &rawController);
-        FreeLibrary(coreMessaging);
-        if (FAILED(hr) || !rawController)
+        try
         {
-            SetError(_LW("backdrop.create_dispatch"), FAILED(hr) ? hr : E_FAIL);
+            if (!shared.compositor)
+                shared.compositor = wuc::Compositor();
+            compositor = shared.compositor;
+            dispatcherController =
+                shared.dispatcherController;
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            SetError(_LW("backdrop.activate_compositor"),
+                error.code());
             return false;
         }
-        dispatcherController = ws::DispatcherQueueController{
-            rawController, winrt::take_ownership_from_abi };
         return true;
     }
 
@@ -396,6 +437,39 @@ struct DesktopBackdropCompositor::Impl
         }
     }
 
+    bool RequestCommitAndNotify(
+        HWND notifyWindow, UINT message,
+        WPARAM token) noexcept
+    {
+        if (!available || !compositor ||
+            !notifyWindow || !IsWindow(notifyWindow))
+            return false;
+        try
+        {
+            wf::IAsyncAction pendingCommit =
+                compositor.RequestCommitAsync();
+            pendingCommit.Completed(
+                [notifyWindow, message, token](
+                    const wf::IAsyncAction&,
+                    wf::AsyncStatus status) noexcept {
+                    if (IsWindow(notifyWindow))
+                    {
+                        PostMessageW(
+                            notifyWindow, message, token,
+                            static_cast<LPARAM>(status));
+                    }
+                });
+            return true;
+        }
+        catch (const winrt::hresult_error&)
+        {
+            // Keep the normal implicit compositor cycle as the compatibility
+            // fallback. The caller will retain the old target instead of
+            // destroying it before an unavailable completion fence.
+            return false;
+        }
+    }
+
     wuc::CompositionEffectFactory GetBlurFactory(int blurRadius)
     {
         const auto found = blurFactories.find(blurRadius);
@@ -432,8 +506,9 @@ struct DesktopBackdropCompositor::Impl
             target.Root(nullptr);
         root = nullptr;
         target = nullptr;
-        if (compositor)
-            compositor.Close();
+        // The compositor and dispatcher queue are shared by every backdrop
+        // target on this UI thread. Releasing one target must not invalidate
+        // the desktop/floating counterpart during a hand-off.
         compositor = nullptr;
         dispatcherController = nullptr;
         if (backdropWindow && IsWindow(backdropWindow))
@@ -529,17 +604,6 @@ bool DesktopBackdropCompositor::InitializeInternal(
         impl_->lastError = FormatHresult(_LW("backdrop.create_window"),
             HRESULT_FROM_WIN32(GetLastError()));
         impl_->contentWindow = nullptr;
-        return false;
-    }
-
-    try
-    {
-        impl_->compositor = wuc::Compositor();
-    }
-    catch (const winrt::hresult_error& error)
-    {
-        impl_->SetError(_LW("backdrop.activate_compositor"), error.code());
-        impl_->Reset();
         return false;
     }
 
@@ -725,6 +789,81 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
         impl_->SetError(_LW("backdrop.remove_panel"), error.code());
         return false;
     }
+}
+
+bool DesktopBackdropCompositor::KeepPanel(
+    const RECT& frame)
+{
+    if (!impl_->available)
+        return false;
+    const auto existing = std::find_if(
+        impl_->panels.begin(), impl_->panels.end(),
+        [&frame](const Impl::PanelVisual& panel) {
+            return EqualRect(&panel.frame, &frame) != FALSE;
+        });
+    if (existing == impl_->panels.end())
+        return false;
+    existing->seen = true;
+    return true;
+}
+
+bool DesktopBackdropCompositor::SetPanelOpacity(
+    const RECT& frame, float opacity)
+{
+    if (!impl_->available)
+        return false;
+    const auto existing = std::find_if(
+        impl_->panels.begin(), impl_->panels.end(),
+        [&frame](const Impl::PanelVisual& panel) {
+            return EqualRect(&panel.frame, &frame) != FALSE;
+        });
+    if (existing == impl_->panels.end())
+        return false;
+    try
+    {
+        existing->visual.Opacity(
+            std::clamp(opacity, 0.0f, 1.0f));
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(
+            _LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::SetVisualOpacity(
+    float opacity)
+{
+    if (!impl_->available || !impl_->root)
+        return false;
+    try
+    {
+        impl_->root.Opacity(
+            std::clamp(opacity, 0.0f, 1.0f));
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(
+            _LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+void DesktopBackdropCompositor::CommitVisualChanges()
+{
+    if (impl_)
+        impl_->RequestCommit();
+}
+
+bool DesktopBackdropCompositor::
+CommitVisualChangesAndNotify(
+    HWND notifyWindow, UINT message, WPARAM token)
+{
+    return impl_ && impl_->RequestCommitAndNotify(
+        notifyWindow, message, token);
 }
 
 void DesktopBackdropCompositor::EndFrame()

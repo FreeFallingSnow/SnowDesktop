@@ -641,7 +641,10 @@ private:
     bool CreateFloatingDockWindow();
     void DestroyFloatingDockWindow();
     void ShowFloatingDock();
-    void CloseFloatingDock(bool closeDockPopup = true);
+    void CloseFloatingDock(
+        bool closeDockPopup = true,
+        bool forceImmediate = false);
+    void CompleteFloatingDockCloseHandoff();
     void ToggleFloatingDock();
     void ApplyFloatingDockHotkey();
     void UnregisterFloatingDockHotkey();
@@ -654,9 +657,13 @@ private:
         bool immediatePresent = true);
     void InvalidateFloatingDockWindow(bool immediate = false) const;
     HRESULT CreateOrResizeFloatingDockCompositionSurface();
+    HRESULT EnsureFloatingDockDesktopCacheVisual();
     void ResetFloatingDockCompositionResources();
+    void FinalizeFloatingDockBackdropCleanup(
+        UINT_PTR commitToken = 0);
     void RecoverFloatingDockCompositionFailure(
         const wchar_t* stage, HRESULT hr);
+    bool RenderFloatingDockCompositionFrame();
     void PaintFloatingDockWindow(HWND hwnd);
     POINT FloatingDockClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
@@ -2283,16 +2290,35 @@ private:
     RECT floatingDockRect_{};
     RECT floatingDockPopupRect_{};
     RECT floatingDockTooltipRect_{};
+    RECT floatingDockDesktopBackdropHandoffRect_{};
+    RECT floatingDockHoverHandoffRect_{};
+    RECT floatingDockCloseDesktopRect_{};
     bool floatingDockVisible_ = false;
+    // The top-level host may be visible for one hand-off frame while the
+    // desktop copy is deliberately retained underneath it. Keep rendering
+    // ownership separate from interaction visibility so either direction can
+    // cross a DWM presentation barrier before retiring the source copy.
+    bool floatingDockDesktopCopySuppressed_ = false;
     bool floatingDockRevealPending_ = false;
+    bool floatingDockFrameReady_ = false;
+    bool floatingDockBackdropCleanupPending_ = false;
+    bool floatingDockHoverHandoffPending_ = false;
+    bool floatingDockClosePending_ = false;
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
     ULONGLONG floatingDockLastPointerPresentTick_ = 0;
+    UINT_PTR floatingDockBackdropCommitToken_ = 0;
     PersonalizationSettings floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();
     DesktopBackdropCompositor floatingDockBackdropCompositor_;
     ComPtr<IDCompositionTarget> floatingDockDcompTarget_;
     ComPtr<IDCompositionVisual2> floatingDockDcompVisual_;
+    ComPtr<IDCompositionEffectGroup> floatingDockDcompEffect_;
+    // The floating surface is also attached to this child of the desktop
+    // target. During close it is the pixel-identical hand-off cache that
+    // masks rebuilding the Dock inside the full desktop surface.
+    ComPtr<IDCompositionVisual2> floatingDockDesktopCacheVisual_;
+    ComPtr<IDCompositionEffectGroup> floatingDockDesktopCacheEffect_;
     ComPtr<IDCompositionSurface> floatingDockDcompSurface_;
     UINT floatingDockCompWidth_ = 0;
     UINT floatingDockCompHeight_ = 0;

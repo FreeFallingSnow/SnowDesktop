@@ -150,6 +150,20 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_MOUSELEAVE:
+        if (floatingDockHoverHandoffPending_)
+        {
+            POINT cursorPoint{};
+            if (TryGetDesktopHoverPointFromCursor(cursorPoint) &&
+                PtInRect(
+                    &floatingDockHoverHandoffRect_,
+                    cursorPoint))
+            {
+                lastMousePoint_ = cursorPoint;
+                return 0;
+            }
+            floatingDockHoverHandoffPending_ = false;
+            floatingDockHoverHandoffRect_ = {};
+        }
         if (floatingDockVisible_)
         {
             POINT cursor{};
@@ -610,6 +624,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case kForegroundInteractionChangedMessage:
         ReconcileDesktopHoverState();
+        return 0;
+    case kFloatingDockBackdropCommitMessage:
+        FinalizeFloatingDockBackdropCleanup(
+            static_cast<UINT_PTR>(wp));
         return 0;
     case WM_TIMER:
         OnTimer(wp);

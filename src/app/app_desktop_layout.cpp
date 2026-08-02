@@ -148,7 +148,7 @@ void DesktopApp::RebuildContainersAndItems()
         if (floatingDockContainer_)
             UpdateFloatingDockWindowBounds();
         else
-            CloseFloatingDock();
+            CloseFloatingDock(true, true);
     }
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())

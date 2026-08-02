@@ -120,7 +120,7 @@ void DesktopApp::BeginDesktopPassthroughHold()
         CloseQuickNavigation();
         FinalizeCloseQuickNavigation();
     }
-    CloseFloatingDock();
+    CloseFloatingDock(true, true);
     HideDockWindowPreview();
     HideDragHintWindow();
 
