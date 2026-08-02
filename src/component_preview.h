@@ -123,6 +123,13 @@ public:
         OptionSetting setting, bool value) const;
     RECT ApplyBoundsForTesting() const { return applyRect_; }
     RECT CloseBoundsForTesting() const { return closeRect_; }
+    RECT PreviousBoundsForTesting() const { return previousButton_; }
+    RECT PreviousGlyphBoundsForTesting() const
+    {
+        return previousGlyphRect_;
+    }
+    RECT NextBoundsForTesting() const { return nextButton_; }
+    RECT NextGlyphBoundsForTesting() const { return nextGlyphRect_; }
 
 private:
     bool EnsureCreated(HWND owner);
@@ -151,6 +158,8 @@ private:
     RECT previewRect_{};
     RECT applyRect_{};
     RECT closeRect_{};
+    RECT previousGlyphRect_{};
+    RECT nextGlyphRect_{};
     struct OptionHit
     {
         RECT bounds{};

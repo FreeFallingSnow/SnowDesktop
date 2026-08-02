@@ -18,6 +18,17 @@ void Expect(bool condition, const char* message)
     std::exit(1);
 }
 
+bool IsVisuallyCentered(const RECT& inner, const RECT& outer)
+{
+    if (IsRectEmpty(&inner) || IsRectEmpty(&outer)) return false;
+    return std::abs(
+               (inner.left + inner.right) -
+               (outer.left + outer.right)) <= 1 &&
+        std::abs(
+            (inner.top + inner.bottom) -
+            (outer.top + outer.bottom)) <= 1;
+}
+
 snowdesktop::component_preview::Bitmap SolidBitmap(
     int width, int height, std::uint32_t color)
 {
@@ -204,6 +215,11 @@ int wmain()
         "preview hit testing stays inside the companion window");
     Expect(firstPageRenders == 1 && secondPageRenders == 0,
         "only the current preview page is rendered");
+    Expect(IsVisuallyCentered(window.PreviousGlyphBoundsForTesting(),
+               window.PreviousBoundsForTesting()) &&
+            IsVisuallyCentered(window.NextGlyphBoundsForTesting(),
+                window.NextBoundsForTesting()),
+        "the visible paging chevrons are centered in their buttons");
     RECT pagedBounds{};
     GetClientRect(window.Handle(), &pagedBounds);
     SendMessageW(window.Handle(), WM_MOUSEMOVE, 0,

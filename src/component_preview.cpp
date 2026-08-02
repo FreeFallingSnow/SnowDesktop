@@ -78,6 +78,55 @@ void DrawCenteredText(HDC dc, HFONT font, COLORREF color,
     if (oldFont) SelectObject(dc, oldFont);
 }
 
+void DrawCenteredGlyph(HDC dc, HFONT font, COLORREF color,
+    wchar_t glyph, const RECT& rect, RECT& inkBounds)
+{
+    inkBounds = {};
+    HGDIOBJ oldFont = SelectObject(dc, font);
+    const COLORREF oldColor = SetTextColor(dc, color);
+    const int oldMode = SetBkMode(dc, TRANSPARENT);
+
+    MAT2 identity{};
+    identity.eM11.value = 1;
+    identity.eM22.value = 1;
+    GLYPHMETRICS metrics{};
+    if (GetGlyphOutlineW(dc, static_cast<UINT>(glyph), GGO_METRICS,
+            &metrics, 0, nullptr, &identity) != GDI_ERROR &&
+        metrics.gmBlackBoxX > 0 && metrics.gmBlackBoxY > 0)
+    {
+        const int inkWidth = static_cast<int>(metrics.gmBlackBoxX);
+        const int inkHeight = static_cast<int>(metrics.gmBlackBoxY);
+        inkBounds.left = rect.left +
+            (rect.right - rect.left - inkWidth) / 2;
+        inkBounds.top = rect.top +
+            (rect.bottom - rect.top - inkHeight) / 2;
+        inkBounds.right = inkBounds.left + inkWidth;
+        inkBounds.bottom = inkBounds.top + inkHeight;
+
+        // DrawText centers the font's full line box.  Symbol glyphs have
+        // asymmetric side bearings and ascender space, so their visible ink
+        // can still look displaced.  Position the baseline from the glyph's
+        // actual black box instead.
+        const int originX = inkBounds.left - metrics.gmptGlyphOrigin.x;
+        const int baselineY = inkBounds.top + metrics.gmptGlyphOrigin.y;
+        const UINT oldAlignment = SetTextAlign(
+            dc, TA_LEFT | TA_BASELINE | TA_NOUPDATECP);
+        ExtTextOutW(dc, originX, baselineY, ETO_CLIPPED, &rect,
+            &glyph, 1, nullptr);
+        SetTextAlign(dc, oldAlignment);
+    }
+    else
+    {
+        RECT fallbackRect = rect;
+        DrawTextW(dc, &glyph, 1, &fallbackRect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    SetBkMode(dc, oldMode);
+    SetTextColor(dc, oldColor);
+    if (oldFont) SelectObject(dc, oldFont);
+}
+
 void DrawWrappedText(HDC dc, HFONT font, COLORREF color,
     const std::wstring& text, RECT rect, UINT flags = DT_LEFT | DT_WORDBREAK)
 {
@@ -545,9 +594,8 @@ bool Window::RenderCurrent()
     titleRect.right = closeRect_.left - Scale(8, dpi_);
     DrawWrappedText(dc, titleFont, palette.text, model_.title, titleRect,
         DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-    RoundedBox(dc, closeRect_, Scale(6, dpi_),
-        palette.hoverBackground, palette.separator);
-    DrawCenteredText(dc, glyphFont, palette.text, L"\u00D7", closeRect_);
+    DrawWrappedText(dc, titleFont, palette.text, L"\u00D7", closeRect_,
+        DT_CENTER | DT_SINGLELINE);
     cursorY = titleRect.bottom;
     if (introductionHeight)
     {
@@ -604,6 +652,8 @@ bool Window::RenderCurrent()
     int controlsY = previewRect_.bottom;
     previousButton_ = {};
     nextButton_ = {};
+    previousGlyphRect_ = {};
+    nextGlyphRect_ = {};
     pagerRect_ = {};
     if (pagerHeight)
     {
@@ -621,16 +671,16 @@ bool Window::RenderCurrent()
             palette.hoverBackground, palette.separator);
         RoundedBox(dc, nextButton_, Scale(6, dpi_),
             palette.hoverBackground, palette.separator);
-        DrawCenteredText(dc, glyphFont,
+        DrawCenteredGlyph(dc, glyphFont,
             currentCard_ > 0 ? palette.text : palette.disabledText,
-            L"\u2039", previousButton_);
+            L'\u2039', previousButton_, previousGlyphRect_);
         DrawCenteredText(dc, bodyFont, palette.text,
             std::to_wstring(currentCard_ + 1) + L" / " +
                 std::to_wstring(model_.cards.size()), statusRect);
-        DrawCenteredText(dc, glyphFont,
+        DrawCenteredGlyph(dc, glyphFont,
             currentCard_ + 1 < model_.cards.size()
                 ? palette.text : palette.disabledText,
-            L"\u203a", nextButton_);
+            L'\u203a', nextButton_, nextGlyphRect_);
         controlsY = pagerRect_.bottom + controlMargin;
     }
 
