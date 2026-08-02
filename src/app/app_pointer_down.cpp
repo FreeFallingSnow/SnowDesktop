@@ -913,6 +913,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             if (searchable)
             {
+                // Search focus belongs to the widget interaction, not merely
+                // to the shared hidden IME input HWND. Keep the owning widget
+                // selected so a hover-only widget remains visible while the
+                // pointer temporarily enters the IME candidate window.
+                SelectWidgetOnly(wi);
                 searchable->BeginSearchPointerSelection(
                     pt, (wp & MK_SHIFT) != 0);
                 mouseDownWidgetIndex_ = wi;
