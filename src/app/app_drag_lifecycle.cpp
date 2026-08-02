@@ -3,6 +3,11 @@
 
 // Drag-scene invalidation, presentation and session teardown.
 
+namespace
+{
+constexpr DWORD kCompositionCommitTimeoutMilliseconds = 250;
+}
+
 bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 {
     for (auto& c : containers_)
@@ -142,11 +147,18 @@ void DesktopApp::CommitPassiveHoverVisualEnd(
         if (!compositionPaintInProgress_)
             UpdateWindow(hwnd_);
     }
-    // Hover-only backdrops live in a separate composition tree. Flush when a
-    // panel was removed, or unconditionally before a Shell operation can enter
-    // a nested progress loop, so the two visual trees cannot diverge.
+    // Hover-only backdrops live in a separate Windows Composition tree. DWM
+    // flushing alone does not start that tree's pending commit cycle, so a
+    // synchronous Shell/COM operation could leave the old glass visible until
+    // it returned even though the explicitly committed DComp content was
+    // already gone. Request and observe the composition commit first, then
+    // flush DWM so both visual trees reach the drag-end frame together.
     if (backdropRemoved || forceCompositionFlush)
+    {
+        desktopBackdropCompositor_.CommitPendingChanges(
+            kCompositionCommitTimeoutMilliseconds);
         DwmFlush();
+    }
     InvalidateFloatingDockWindow(true);
 }
 

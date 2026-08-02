@@ -53,6 +53,12 @@ public:
     bool RemovePanel(const RECT& frame);
     /** @brief 提交本帧面板集合。 */
     void EndFrame();
+    /**
+     * @brief 请求提交当前 Windows Composition 视觉树并等待提交周期开始。
+     * @param timeoutMilliseconds 最长等待时间；超时后返回 false，不阻塞后续操作。
+     * @return 提交请求成功完成时返回 true。
+     */
+    bool CommitPendingChanges(DWORD timeoutMilliseconds);
     /** @brief 销毁合成目标和辅助窗口。 */
     void Reset();
 

@@ -26,6 +26,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -704,6 +705,60 @@ void DesktopBackdropCompositor::EndFrame()
         }
         children.Remove(iterator->visual);
         iterator = impl_->panels.erase(iterator);
+    }
+}
+
+bool DesktopBackdropCompositor::CommitPendingChanges(
+    DWORD timeoutMilliseconds)
+{
+    if (!impl_->available || !impl_->compositor)
+        return false;
+
+    struct CommitWaitState final
+    {
+        HANDLE event = CreateEventW(
+            nullptr, TRUE, FALSE, nullptr);
+
+        ~CommitWaitState()
+        {
+            if (event)
+                CloseHandle(event);
+        }
+    };
+
+    try
+    {
+        auto waitState = std::make_shared<CommitWaitState>();
+        if (!waitState->event)
+            return false;
+
+        wf::IAsyncAction commit =
+            impl_->compositor.RequestCommitAsync();
+        commit.Completed(
+            [waitState](const wf::IAsyncAction&,
+                wf::AsyncStatus) noexcept {
+                SetEvent(waitState->event);
+            });
+
+        HANDLE event = waitState->event;
+        DWORD signaledIndex = 0;
+        const HRESULT waitResult = CoWaitForMultipleHandles(
+            COWAIT_DEFAULT, timeoutMilliseconds,
+            1, &event, &signaledIndex);
+        if (waitResult != S_OK || signaledIndex != 0 ||
+            commit.Status() != wf::AsyncStatus::Completed)
+            return false;
+
+        // Status is already Completed, so GetResults cannot block the STA.
+        commit.GetResults();
+        return true;
+    }
+    catch (const winrt::hresult_error&)
+    {
+        // RequestCommitAsync is unavailable before Windows 10 version 1803
+        // and may also fail during compositor recovery. The caller retains its
+        // existing DWM-flush fallback in both cases.
+        return false;
     }
 }
 
