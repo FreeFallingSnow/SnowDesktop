@@ -313,42 +313,68 @@ int DesktopApp::GetQuickNavigationGap(const RECT& overlay) const
 
 RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t linearIndex) const
 {
+    const QuickNavigationContentModel model =
+        BuildQuickNavigationContentModel();
+    const std::vector<RECT> rects =
+        GetQuickNavigationItemRects(
+            overlay, model);
+    if (linearIndex >= rects.size())
+        return MakeRect(0, 0, 0, 0);
+    return rects[linearIndex];
+}
+
+std::vector<RECT> DesktopApp::
+GetQuickNavigationItemRects(
+    const RECT& overlay,
+    const QuickNavigationContentModel& model) const
+{
     RECT content = GetQuickNavigationContentRect(overlay);
     const int cellW = QuickNavScale(kCellWidth);
     const int cellH = QuickNavScale(kQuickNavigationCellHeight);
     const int rowGap = QuickNavScale(kQuickNavigationItemRowGap);
     const int rowPitch = cellH + rowGap;
     const int columns = GetQuickNavigationColumnCount(overlay);
-    int col = static_cast<int>(
-        linearIndex %
-        static_cast<size_t>(columns));
-    int row = static_cast<int>(
-        linearIndex /
-        static_cast<size_t>(columns));
-    int itemTop = content.top;
-    if (GetQuickNavigationEffectiveSearchText().empty())
+    const bool searching =
+        !GetQuickNavigationEffectiveSearchText().empty();
+    std::vector<snowdesktop::quick_navigation_rules::
+        SectionLayout> sectionLayouts;
+    if (!searching && model.IsSectioned())
     {
-        const QuickNavigationContentModel model =
-            BuildQuickNavigationContentModel();
-        if (model.IsSectioned())
+        std::vector<size_t> counts;
+        counts.reserve(model.sections.size());
+        for (const auto& section : model.sections)
+            counts.push_back(section.entryCount);
+        sectionLayouts =
+            snowdesktop::quick_navigation_rules::
+                BuildSectionLayouts(
+                    counts, columns, cellH, rowGap,
+                    QuickNavScale(28),
+                    QuickNavScale(8),
+                    QuickNavScale(12));
+    }
+
+    const int gap = GetQuickNavigationGap(overlay);
+    const int halfPad = gap / 2;
+    std::vector<RECT> result;
+    result.reserve(model.entries.size());
+    for (size_t linearIndex = 0;
+        linearIndex < model.entries.size();
+        ++linearIndex)
+    {
+        int col = static_cast<int>(
+            linearIndex %
+            static_cast<size_t>(columns));
+        int row = static_cast<int>(
+            linearIndex /
+            static_cast<size_t>(columns));
+        int itemTop = content.top;
+        if (!searching && !sectionLayouts.empty())
         {
-            std::vector<size_t> counts;
-            counts.reserve(model.sections.size());
-            for (const auto& section : model.sections)
-                counts.push_back(section.entryCount);
-            const auto layouts =
-                snowdesktop::quick_navigation_rules::
-                    BuildSectionLayouts(
-                        counts, columns, cellH, rowGap,
-                        QuickNavScale(28),
-                        QuickNavScale(8),
-                        QuickNavScale(12));
             snowdesktop::quick_navigation_rules::
                 SectionItemCell cell;
-            if (
-                snowdesktop::quick_navigation_rules::
+            if (snowdesktop::quick_navigation_rules::
                     TryGetSectionItemCell(
-                        layouts, linearIndex,
+                        sectionLayouts, linearIndex,
                         columns, cellH, rowGap,
                         cell))
             {
@@ -358,20 +384,33 @@ RECT DesktopApp::GetQuickNavigationItemRect(const RECT& overlay, size_t linearIn
                     cell.top - row * rowPitch;
             }
         }
+        else if (searching)
+        {
+            itemTop +=
+                QuickNavScale(28) +
+                QuickNavScale(8);
+        }
+        result.push_back(MakeRect(
+            content.left + halfPad + col * (cellW + gap),
+            itemTop + row * rowPitch - quickNavigationScrollOffset_,
+            content.left + halfPad + col * (cellW + gap) + cellW,
+            itemTop + row * rowPitch + cellH - quickNavigationScrollOffset_));
     }
-    else
+    return result;
+}
+
+DesktopApp::QuickNavigationPointerTarget
+DesktopApp::HitTestQuickNavigationPointerTarget(
+    POINT point) const
+{
+    for (auto it = quickNavigationHoverRegions_.rbegin();
+        it != quickNavigationHoverRegions_.rend();
+        ++it)
     {
-        itemTop +=
-            QuickNavScale(28) +
-            QuickNavScale(8);
+        if (PtInRect(&it->bounds, point))
+            return it->target;
     }
-    const int gap = GetQuickNavigationGap(overlay);
-    int halfPad = gap / 2;
-    return MakeRect(
-        content.left + halfPad + col * (cellW + gap),
-        itemTop + row * rowPitch - quickNavigationScrollOffset_,
-        content.left + halfPad + col * (cellW + gap) + cellW,
-        itemTop + row * rowPitch + cellH - quickNavigationScrollOffset_);
+    return {};
 }
 
 RECT DesktopApp::GetQuickNavigationSectionHeaderRect(

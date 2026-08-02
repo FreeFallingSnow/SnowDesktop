@@ -230,6 +230,23 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         return;
     // hdc 仅用于验证绘制区域；实际绘制走 DComp surface。
     (void)hdc;
+    if (quickNavCompositionPaintInProgress_)
+    {
+        EndPaint(hwnd, &ps);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return;
+    }
+    quickNavCompositionPaintInProgress_ = true;
+    struct QuickNavigationPaintScope final
+    {
+        bool& active;
+        ~QuickNavigationPaintScope()
+        {
+            active = false;
+        }
+    } paintScope{
+        quickNavCompositionPaintInProgress_
+    };
 
     const QuickNavTheme& t = quickNavLightTheme_ ? kQuickNavLight : kQuickNavDark;
 
@@ -337,10 +354,33 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         BuildQuickNavigationContentModel();
     const std::vector<QuickNavigationEntry>& entries =
         contentModel.entries;
+    quickNavigationHoverRegions_.clear();
+    auto registerHoverRegion = [this](
+        RECT bounds,
+        QuickNavigationPointerTargetKind kind,
+        size_t index = 0) {
+        if (!IsRectEmpty(&bounds))
+            quickNavigationHoverRegions_.push_back(
+                { bounds, { kind, index } });
+    };
+    auto registerClippedHoverRegion =
+        [&registerHoverRegion](
+            RECT bounds, const RECT& clip,
+            QuickNavigationPointerTargetKind kind,
+            size_t index = 0) {
+            RECT visible{};
+            if (IntersectRect(
+                    &visible, &bounds, &clip))
+                registerHoverRegion(
+                    visible, kind, index);
+        };
     quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
         GetQuickNavigationMaxTabScrollOffset(overlay));
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
         GetQuickNavigationMaxScrollOffset(overlay));
+    const std::vector<RECT> itemRects =
+        GetQuickNavigationItemRects(
+            overlay, contentModel);
 
     const RECT searchRect = GetQuickNavigationSearchRect(overlay);
     DrawD2DRoundedRectangle(ctx.Get(),
@@ -411,6 +451,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         tabsStart + fixedWidth +
                         sepGap));
             }
+            if (!quickNavTabDragging_)
+                registerHoverRegion(
+                    tabRect,
+                    QuickNavigationPointerTargetKind::Tab,
+                    tab);
             const bool active = (tab == 0 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
                 || (tab == 1 && quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
                 || (tab > 1 && quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 2]);
@@ -536,6 +581,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 overlay);
         if (!IsRectEmpty(&modeButton))
         {
+            registerHoverRegion(
+                modeButton,
+                QuickNavigationPointerTargetKind::ViewMode);
             const bool hovered =
                 PtInRect(
                     &modeButton,
@@ -597,6 +645,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         const RECT backRect =
             GetQuickNavigationInitialJumpBackRect(
                 overlay);
+        registerHoverRegion(
+            backRect,
+            QuickNavigationPointerTargetKind::InitialBack);
         const bool backHovered =
             PtInRect(&backRect,
                 lastMousePoint_) != FALSE;
@@ -638,6 +689,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             const RECT cell =
                 GetQuickNavigationInitialJumpCellRect(
                     overlay, bucketIndex);
+            if (available[bucketIndex])
+                registerHoverRegion(
+                    cell,
+                    QuickNavigationPointerTargetKind::InitialBucket,
+                    bucketIndex);
             const bool hovered =
                 PtInRect(
                     &cell,
@@ -738,6 +794,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     navigationSettings_.desktopViewMode ==
                         QuickNavigationDesktopViewMode::
                             Initial;
+                if (initialJumpHeader)
+                    registerClippedHoverRegion(
+                        header, contentApp,
+                        QuickNavigationPointerTargetKind::SectionHeader,
+                        sectionIndex);
                 if (initialJumpHeader &&
                     PtInRect(
                         &header,
@@ -778,10 +839,15 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         // 桌面项直接走 D2D（ctx 为 ID2D1DeviceContext，与桌面共享 d2dDevice_ 缓存）
         for (size_t i = 0; i < entries.size(); ++i)
         {
-            RECT itemRectApp = GetQuickNavigationItemRect(overlay, i);
+            const RECT itemRectApp = itemRects[i];
             if (itemRectApp.bottom <= contentApp.top ||
                 itemRectApp.top >= contentApp.bottom)
                 continue;
+
+            registerClippedHoverRegion(
+                itemRectApp, contentApp,
+                QuickNavigationPointerTargetKind::Item,
+                i);
 
             const QuickNavigationEntry& entry = entries[i];
             const int state = (PtInRect(&itemRectApp, lastMousePoint_) != FALSE ||
@@ -853,6 +919,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
                         continue;
 
+                    registerClippedHoverRegion(
+                        rowRectApp, contentApp,
+                        QuickNavigationPointerTargetKind::App,
+                        i);
+
                     if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE ||
                         IsQuickNavigationKeyboardTarget(
                             QuickNavigationKeyboardTargetKind::App, i))
@@ -897,6 +968,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         contentApp.right - QuickNavScale(12), buttonTop + rowH);
                     if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
                     {
+                        registerClippedHoverRegion(
+                            buttonRectApp, contentApp,
+                            QuickNavigationPointerTargetKind::ExpandApps);
                         const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE ||
                             IsQuickNavigationKeyboardTarget(
                                 QuickNavigationKeyboardTargetKind::ExpandApps, 0);
@@ -953,6 +1027,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         contentApp.right - QuickNavScale(12), rowTop + rowH);
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
                         continue;
+
+                    registerClippedHoverRegion(
+                        rowRectApp, contentApp,
+                        QuickNavigationPointerTargetKind::Everything,
+                        i);
 
                     if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE ||
                         IsQuickNavigationKeyboardTarget(
@@ -1023,6 +1102,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         contentApp.right - QuickNavScale(12), buttonTop + rowH);
                     if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
                     {
+                        registerClippedHoverRegion(
+                            buttonRectApp, contentApp,
+                            QuickNavigationPointerTargetKind::LoadMoreEverything);
                         const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE ||
                             IsQuickNavigationKeyboardTarget(
                                 QuickNavigationKeyboardTargetKind::LoadMoreEverything, 0);
@@ -1043,6 +1125,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         GetQuickNavigationScrollbarGeometry(overlay,
         track, thumb, maxScroll, contentHeight))
     {
+        registerHoverRegion(
+            thumb,
+            QuickNavigationPointerTargetKind::Scrollbar);
         const int trackW = QuickNavScale(5);
         DrawD2DRoundedRectangle(ctx.Get(), track, static_cast<float>(trackW) / 2.0f,
             ToD2DColor(t.scrollTrack), ToD2DColor(t.scrollTrack));
@@ -1133,6 +1218,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
     if (windowClipPushed)
         ctx->PopLayer();
+    quickNavigationPointerTarget_ =
+        HitTestQuickNavigationPointerTarget(
+            lastMousePoint_);
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx.Reset();
     brushCache_.clear();

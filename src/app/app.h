@@ -398,6 +398,38 @@ public:
         RECT rect{};
     };
 
+    enum class QuickNavigationPointerTargetKind
+    {
+        None,
+        Tab,
+        ViewMode,
+        InitialBack,
+        InitialBucket,
+        SectionHeader,
+        Item,
+        App,
+        ExpandApps,
+        Everything,
+        LoadMoreEverything,
+        Scrollbar,
+    };
+
+    struct QuickNavigationPointerTarget
+    {
+        QuickNavigationPointerTargetKind kind =
+            QuickNavigationPointerTargetKind::None;
+        size_t index = 0;
+
+        bool operator==(
+            const QuickNavigationPointerTarget&) const = default;
+    };
+
+    struct QuickNavigationHoverRegion
+    {
+        RECT bounds{};
+        QuickNavigationPointerTarget target{};
+    };
+
     // ── OO 系统访问器（Object-Oriented System Accessors）────
     /** @brief 获取所有容器的引用（网格、部件等）。 @return 容器指针的 vector 引用 */
     std::vector<std::unique_ptr<Container>>& GetContainers() { return containers_; }
@@ -820,7 +852,8 @@ private:
     /** @brief 根据当前主题创建、同步或移除快捷导航原生毛玻璃层。 */
     void UpdateQuickNavigationBackdrop();
     /** @brief 使快速导航窗口失效并触发重绘。 */
-    void InvalidateQuickNavigationWindow();
+    void InvalidateQuickNavigationWindow(
+        bool immediate = false);
     /** @brief 创建或调整快捷导航 DComp 表面大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
     HRESULT CreateOrResizeQuickNavCompositionSurface();
     /** @brief 重置快捷导航 DComp 表面与缓存（设备丢失或尺寸变化时调用）。 */
@@ -1834,6 +1867,9 @@ private:
     RECT GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex) const;
     /** @brief 获取快速导航面板中指定项的矩形。 @param overlay 面板矩形 @param linearIndex 项索引 @return 项矩形 */
     RECT GetQuickNavigationItemRect(const RECT& overlay, size_t linearIndex) const;
+    std::vector<RECT> GetQuickNavigationItemRects(
+        const RECT& overlay,
+        const QuickNavigationContentModel& model) const;
     /** @brief 获取快速导航面板中的列数。 @param overlay 面板矩形 @return 列数 */
     int GetQuickNavigationColumnCount(const RECT& overlay) const;
     /** @brief 获取快速导航面板中项之间的间距。 @param overlay 面板矩形 @return 间距 */
@@ -1843,6 +1879,9 @@ private:
     int GetQuickNavigationContentHeight(const RECT& overlay) const;
     bool GetQuickNavigationScrollbarGeometry(const RECT& overlay,
         RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const;
+    QuickNavigationPointerTarget
+        HitTestQuickNavigationPointerTarget(
+            POINT point) const;
     /** @brief 处理快速导航面板的点击事件。 @param point 点击坐标 @return 是否已处理 */
     bool HandleQuickNavigationClick(POINT point);
     bool HandleQuickNavigationRightClick(POINT point, POINT screenPoint);
@@ -2239,6 +2278,7 @@ private:
     UINT quickNavCompWidth_ = 0;
     UINT quickNavCompHeight_ = 0;
     bool quickNavCompositionRenderRecoveryPending_ = false;
+    bool quickNavCompositionPaintInProgress_ = false;
     // 快捷导航 DirectWrite 文本格式（替代 GDI HFONT）
     ComPtr<IDWriteTextFormat> quickNavTabTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
@@ -2559,6 +2599,10 @@ private:
     int quickNavScrollbarDragThumbTop_ = 0;
     int quickNavScrollbarDragStartOffset_ = 0;
     bool quickNavScrollbarHovered_ = false;
+    std::vector<QuickNavigationHoverRegion>
+        quickNavigationHoverRegions_;
+    QuickNavigationPointerTarget
+        quickNavigationPointerTarget_{};
     HIMAGELIST quickNavigationSystemImageListSmall_ = nullptr;
     std::unordered_map<std::wstring, int> quickNavigationEverythingIconCache_;
     mutable EverythingSearchClient everythingSearch_;

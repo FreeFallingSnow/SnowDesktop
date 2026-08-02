@@ -199,14 +199,22 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         };
         POINT previousMouse = lastMousePoint_;
         lastMousePoint_ = appPoint;
-        if ((previousMouse.x != appPoint.x || previousMouse.y != appPoint.y) &&
-            quickNavigationKeyboardTargetKind_ != QuickNavigationKeyboardTargetKind::None)
+        const bool keyboardHoverCleared =
+            (previousMouse.x != appPoint.x ||
+                previousMouse.y != appPoint.y) &&
+            quickNavigationKeyboardTargetKind_ !=
+                QuickNavigationKeyboardTargetKind::None;
+        if (keyboardHoverCleared)
             ResetQuickNavigationKeyboardTarget();
         TRACKMOUSEEVENT mouseTrack{};
         mouseTrack.cbSize = sizeof(mouseTrack);
         mouseTrack.dwFlags = TME_LEAVE;
         mouseTrack.hwndTrack = hwnd;
         TrackMouseEvent(&mouseTrack);
+
+        auto queuePointerFrame = [&]() {
+            InvalidateQuickNavigationWindow(true);
+        };
 
         if (quickNavScrollbarDragging_)
         {
@@ -225,7 +233,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 quickNavigationScrollOffset_ = (newThumbTop - static_cast<int>(track.top))
                     * maxScroll / rangeH;
                 quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0, maxScroll);
-                InvalidateQuickNavigationWindow();
+                queuePointerFrame();
             }
             return 0;
         }
@@ -237,7 +245,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 quickNavTabDragging_ = true;
             if (quickNavTabDragging_)
                 quickNavTabDragDeltaX_ = dx;
-            InvalidateQuickNavigationWindow();
+            queuePointerFrame();
             return 0;
         }
 
@@ -264,17 +272,28 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 }
             }
         }
-        if (wasHovered != quickNavScrollbarHovered_)
-            InvalidateQuickNavigationWindow();
-        else if (previousMouse.x != appPoint.x || previousMouse.y != appPoint.y)
-            InvalidateQuickNavigationWindow();
+        const QuickNavigationPointerTarget pointerTarget =
+            HitTestQuickNavigationPointerTarget(
+                appPoint);
+        const bool hoverChanged =
+            pointerTarget !=
+                quickNavigationPointerTarget_;
+        const bool hoverMapMissing =
+            quickNavigationHoverRegions_.empty();
+        quickNavigationPointerTarget_ =
+            pointerTarget;
+        if (wasHovered != quickNavScrollbarHovered_ ||
+            hoverChanged || keyboardHoverCleared ||
+            hoverMapMissing)
+            queuePointerFrame();
         return 0;
     }
     case WM_MOUSELEAVE:
     {
         lastMousePoint_ = { -1000000, -1000000 };
         quickNavScrollbarHovered_ = false;
-        InvalidateQuickNavigationWindow();
+        quickNavigationPointerTarget_ = {};
+        InvalidateQuickNavigationWindow(true);
         return 0;
     }
     case WM_LBUTTONUP:

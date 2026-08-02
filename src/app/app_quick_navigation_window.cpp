@@ -68,6 +68,8 @@ void DesktopApp::DestroyQuickNavigationWindow()
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         DestroyWindow(quickNavigationHwnd_);
     quickNavigationHwnd_ = nullptr;
+    quickNavigationHoverRegions_.clear();
+    quickNavigationPointerTarget_ = {};
     quickNavigationAnimation_.ResetHidden();
 }
 
@@ -488,10 +490,21 @@ void DesktopApp::PositionQuickNavigationWindow()
 /**
  * @brief 使快捷导航窗口失效并触发重绘
  */
-void DesktopApp::InvalidateQuickNavigationWindow()
+void DesktopApp::InvalidateQuickNavigationWindow(
+    bool immediate)
 {
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+    {
         InvalidateRect(quickNavigationHwnd_, nullptr, FALSE);
+        // WM_MOUSEMOVE has higher dispatch priority than WM_PAINT. During a
+        // fast sweep, a plain invalidation can therefore leave hover one or
+        // more items behind the pointer. Hover callers synchronously present
+        // each target transition; movement inside the same target is filtered
+        // before reaching this function.
+        if (immediate &&
+            !quickNavCompositionPaintInProgress_)
+            UpdateWindow(quickNavigationHwnd_);
+    }
 }
 
 /**
