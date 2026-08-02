@@ -3,11 +3,6 @@
 
 // Drag-scene invalidation, presentation and session teardown.
 
-namespace
-{
-constexpr DWORD kCompositionCommitTimeoutMilliseconds = 250;
-}
-
 bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 {
     for (auto& c : containers_)
@@ -106,63 +101,28 @@ void DesktopApp::EndDragSession()
 void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
     dragRenderCache_.Reset();
-    CommitPassiveHoverVisualEnd();
+    PresentPassiveHoverVisualChange();
 }
 
-void DesktopApp::CommitPassiveHoverVisualEnd()
+void DesktopApp::PresentPassiveHoverVisualChange()
 {
-    std::vector<RECT> hiddenBackdropFrames;
-    hiddenBackdropFrames.reserve(widgets_.size());
-    for (size_t widgetIndex = 0;
-         widgetIndex < widgets_.size();
-         ++widgetIndex)
-    {
-        const DesktopWidget& widget = widgets_[widgetIndex];
-        if (IsRectEmptyRect(widget.bounds))
-            continue;
-        const bool popupOpen =
-            popupWidgetIndex_ == widgetIndex ||
-            (!interactionPinnedWidgetId_.empty() &&
-                interactionPinnedWidgetId_ == widget.id);
-        const bool pointerInside =
-            PtInRect(
-                &widget.bounds,
-                lastMousePoint_) != FALSE;
-        if (snowdesktop::widget_visibility_rules::
-                ShouldRetainBackdropAfterDrag(
-                    widget.showOnHoverOnly,
-                    widget.selected,
-                    popupOpen,
-                    pointerInside))
-        {
-            continue;
-        }
-        hiddenBackdropFrames.push_back(
-            GetStandaloneWidgetFrameRect(widget));
-    }
-
-    // Reconcile content and backdrop from the same full render pass. Removing
-    // backdrop panels here, ahead of the D2D frame, reintroduced the ordering
-    // race this function is meant to close.
+    // Content and backdrop are collected from the same full render pass. The
+    // backdrop compositor constrains its helper HWND to the resulting panel
+    // set, so stale blur pixels cannot outlive the content frame even if the
+    // Windows Composition commit completes later.
     desktopBackdropFullCollectionPending_ = true;
+    bool frameSubmitted = false;
     if (hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         if (!compositionPaintInProgress_)
+        {
             UpdateWindow(hwnd_);
+            frameSubmitted = true;
+        }
     }
-    // The Windows Composition commit can complete before DWM has retired the
-    // previous SpriteVisual. Clip hidden panels at the helper HWND boundary so
-    // an old blur frame cannot remain visible after the D2D content commit.
-    for (const RECT& frame : hiddenBackdropFrames)
-        desktopBackdropCompositor_.ExcludePanelFromWindow(frame);
-    // Only visibility-ending paths pay this synchronization cost. Keeping it
-    // out of the normal paint transaction avoids serializing unrelated
-    // content and backdrop updates while still forcing this full hide frame
-    // through both composition trees before input processing resumes.
-    desktopBackdropCompositor_.CommitPendingChanges(
-        kCompositionCommitTimeoutMilliseconds);
-    DwmFlush();
+    if (frameSubmitted)
+        DwmFlush();
     InvalidateFloatingDockWindow(true);
 }
 

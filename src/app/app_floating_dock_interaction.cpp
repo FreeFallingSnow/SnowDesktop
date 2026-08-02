@@ -156,6 +156,25 @@ void DesktopApp::CloseFloatingDock(
         ShowWindow(floatingDockHwnd_, SW_HIDE);
     }
     floatingDockBackdropCompositor_.Reset();
+    const bool hadCompositionSurface =
+        floatingDockDcompSurface_ != nullptr;
+    ResetFloatingDockCompositionResources();
+    if (hadCompositionSurface && dcompDevice_)
+    {
+        // The hidden host and its lightweight target/visual are reusable, but
+        // retaining the last full-size transparent surface needlessly pins
+        // GPU memory. Commit the null content while the HWND is hidden so the
+        // compositor can retire that allocation before the next reveal.
+        const HRESULT hr = dcompDevice_->Commit();
+        if (FAILED(hr))
+        {
+            wchar_t message[160]{};
+            wsprintfW(message,
+                L"FloatingDock release surface commit FAILED hr=0x%08X",
+                static_cast<unsigned>(hr));
+            WriteDiagnosticLogEntry(message);
+        }
+    }
     floatingDockContainer_ = nullptr;
     floatingDockMonitor_ = nullptr;
     floatingDockSourceRect_ = {};

@@ -314,62 +314,86 @@ struct DesktopBackdropCompositor::Impl
             size.cx, size.cy, SWP_NOACTIVATE |
             (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 
-        // Popup content windows can reserve a stable composition allocation
-        // while exposing only a compact Dock/popup HRGN. Mirror that region
-        // onto the helper window so its transparent reserve never becomes an
-        // input surface of its own.
-        HRGN contentRegion =
-            CreateRectRgn(0, 0, 0, 0);
-        if (contentRegion)
+        return true;
+    }
+
+    bool SyncPanelWindowRegion()
+    {
+        if (!available || !backdropWindow ||
+            !IsWindow(backdropWindow))
+            return false;
+
+        HRGN panelRegion = CreateRectRgn(0, 0, 0, 0);
+        if (!panelRegion)
+            return false;
+        for (const PanelVisual& panel : panels)
         {
-            const int contentRegionType =
-                GetWindowRgn(
-                    contentWindow,
-                    contentRegion);
-            if (contentRegionType == ERROR)
+            HRGN frameRegion = CreateRectRgn(
+                panel.frame.left,
+                panel.frame.top,
+                panel.frame.right,
+                panel.frame.bottom);
+            if (!frameRegion)
             {
-                DeleteObject(contentRegion);
-                HRGN backdropRegion =
-                    CreateRectRgn(0, 0, 0, 0);
-                const int backdropRegionType =
-                    backdropRegion
-                        ? GetWindowRgn(
-                              backdropWindow,
-                              backdropRegion)
-                        : ERROR;
-                if (backdropRegion)
-                    DeleteObject(backdropRegion);
-                if (backdropRegionType != ERROR)
-                    SetWindowRgn(
-                        backdropWindow,
-                        nullptr, FALSE);
+                DeleteObject(panelRegion);
+                return false;
             }
-            else
+            const int combineResult = CombineRgn(
+                panelRegion, panelRegion,
+                frameRegion, RGN_OR);
+            DeleteObject(frameRegion);
+            if (combineResult == ERROR)
             {
-                HRGN backdropRegion =
-                    CreateRectRgn(0, 0, 0, 0);
-                const int backdropRegionType =
-                    backdropRegion
-                        ? GetWindowRgn(
-                              backdropWindow,
-                              backdropRegion)
-                        : ERROR;
-                const bool unchanged =
-                    backdropRegionType != ERROR &&
-                    EqualRgn(
-                        contentRegion,
-                        backdropRegion);
-                if (backdropRegion)
-                    DeleteObject(backdropRegion);
-                if (unchanged)
-                    DeleteObject(contentRegion);
-                else if (!SetWindowRgn(
-                             backdropWindow,
-                             contentRegion, FALSE))
-                    DeleteObject(contentRegion);
+                DeleteObject(panelRegion);
+                return false;
             }
         }
+
+        HRGN currentRegion = CreateRectRgn(0, 0, 0, 0);
+        const int currentRegionType = currentRegion
+            ? GetWindowRgn(backdropWindow, currentRegion)
+            : ERROR;
+        const bool unchanged =
+            currentRegionType != ERROR &&
+            EqualRgn(panelRegion, currentRegion) != FALSE;
+        if (currentRegion)
+            DeleteObject(currentRegion);
+        if (unchanged)
+        {
+            DeleteObject(panelRegion);
+            return true;
+        }
+
+        // The helper HWND is a synchronous visibility fence for the separate
+        // Windows Composition tree. Its region always matches the current
+        // panel collection, so a retired SpriteVisual can never remain visible
+        // after the application has removed that panel from the scene.
+        if (!SetWindowRgn(backdropWindow, panelRegion, FALSE))
+        {
+            DeleteObject(panelRegion);
+            return false;
+        }
         return true;
+    }
+
+    void RequestCommit() noexcept
+    {
+        if (!available || !compositor)
+            return;
+        try
+        {
+            // Do not await this action on the UI thread. Requesting a cycle is
+            // enough to submit the transactional visual changes; the helper
+            // HWND region provides the synchronous visibility boundary.
+            const wf::IAsyncAction pendingCommit =
+                compositor.RequestCommitAsync();
+            (void)pendingCommit;
+        }
+        catch (const winrt::hresult_error&)
+        {
+            // Older Windows builds can lack RequestCommitAsync. Their normal
+            // implicit compositor cycle remains the fallback.
+        }
     }
 
     wuc::CompositionEffectFactory GetBlurFactory(int blurRadius)
@@ -546,6 +570,8 @@ bool DesktopBackdropCompositor::InitializeInternal(
         impl_->target.Root(impl_->root);
         impl_->available = true;
         impl_->SyncWindowPlacement();
+        impl_->SyncPanelWindowRegion();
+        impl_->RequestCommit();
         if (initiallyVisible)
             ShowWindow(
                 impl_->backdropWindow,
@@ -690,6 +716,8 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
     {
         impl_->root.Children().Remove(existing->visual);
         impl_->panels.erase(existing);
+        impl_->SyncPanelWindowRegion();
+        impl_->RequestCommit();
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -699,146 +727,33 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
     }
 }
 
-bool DesktopBackdropCompositor::ExcludePanelFromWindow(
-    const RECT& frame)
-{
-    if (!impl_->available || !impl_->backdropWindow ||
-        !IsWindow(impl_->backdropWindow) ||
-        frame.right <= frame.left || frame.bottom <= frame.top)
-    {
-        return false;
-    }
-
-    HRGN visibleRegion =
-        CreateRectRgn(0, 0, 0, 0);
-    if (!visibleRegion)
-        return false;
-
-    const int existingRegionType =
-        GetWindowRgn(
-            impl_->backdropWindow,
-            visibleRegion);
-    if (existingRegionType == ERROR)
-    {
-        RECT client{};
-        if (!GetClientRect(
-                impl_->backdropWindow,
-                &client))
-        {
-            DeleteObject(visibleRegion);
-            return false;
-        }
-        SetRectRgn(
-            visibleRegion,
-            client.left, client.top,
-            client.right, client.bottom);
-    }
-
-    HRGN excludedRegion =
-        CreateRectRgn(
-            frame.left, frame.top,
-            frame.right, frame.bottom);
-    if (!excludedRegion)
-    {
-        DeleteObject(visibleRegion);
-        return false;
-    }
-
-    const int combineResult =
-        CombineRgn(
-            visibleRegion,
-            visibleRegion,
-            excludedRegion,
-            RGN_DIFF);
-    DeleteObject(excludedRegion);
-    if (combineResult == ERROR)
-    {
-        DeleteObject(visibleRegion);
-        return false;
-    }
-
-    // SetWindowRgn takes ownership only on success. SyncWindowPlacement will
-    // restore the content window's normal region at the beginning of the next
-    // frame, after the stale Composition visual has been committed away.
-    if (!SetWindowRgn(
-            impl_->backdropWindow,
-            visibleRegion,
-            FALSE))
-    {
-        DeleteObject(visibleRegion);
-        return false;
-    }
-    return true;
-}
-
 void DesktopBackdropCompositor::EndFrame()
 {
-    if (!impl_->available || !impl_->completeCollection)
+    if (!impl_->available)
         return;
-    auto children = impl_->root.Children();
-    for (auto iterator = impl_->panels.begin(); iterator != impl_->panels.end();)
-    {
-        if (iterator->seen)
-        {
-            ++iterator;
-            continue;
-        }
-        children.Remove(iterator->visual);
-        iterator = impl_->panels.erase(iterator);
-    }
-}
-
-bool DesktopBackdropCompositor::CommitPendingChanges(
-    DWORD timeoutMilliseconds)
-{
-    if (!impl_->available || !impl_->compositor)
-        return false;
-
-    struct CommitWaitState final
-    {
-        HANDLE event = CreateEventW(
-            nullptr, TRUE, FALSE, nullptr);
-
-        ~CommitWaitState()
-        {
-            if (event)
-                CloseHandle(event);
-        }
-    };
-
     try
     {
-        auto waitState = std::make_shared<CommitWaitState>();
-        if (!waitState->event)
-            return false;
-
-        wf::IAsyncAction commit =
-            impl_->compositor.RequestCommitAsync();
-        commit.Completed(
-            [waitState](const wf::IAsyncAction&,
-                wf::AsyncStatus) noexcept {
-                SetEvent(waitState->event);
-            });
-
-        HANDLE event = waitState->event;
-        DWORD signaledIndex = 0;
-        const HRESULT waitResult = CoWaitForMultipleHandles(
-            COWAIT_DEFAULT, timeoutMilliseconds,
-            1, &event, &signaledIndex);
-        if (waitResult != S_OK || signaledIndex != 0 ||
-            commit.Status() != wf::AsyncStatus::Completed)
-            return false;
-
-        // Status is already Completed, so GetResults cannot block the STA.
-        commit.GetResults();
-        return true;
+        if (impl_->completeCollection)
+        {
+            auto children = impl_->root.Children();
+            for (auto iterator = impl_->panels.begin();
+                 iterator != impl_->panels.end();)
+            {
+                if (iterator->seen)
+                {
+                    ++iterator;
+                    continue;
+                }
+                children.Remove(iterator->visual);
+                iterator = impl_->panels.erase(iterator);
+            }
+        }
+        impl_->SyncPanelWindowRegion();
+        impl_->RequestCommit();
     }
-    catch (const winrt::hresult_error&)
+    catch (const winrt::hresult_error& error)
     {
-        // RequestCommitAsync is unavailable before Windows 10 version 1803
-        // and may also fail during compositor recovery. The caller retains its
-        // existing DWM-flush fallback in both cases.
-        return false;
+        impl_->SetError(_LW("backdrop.remove_panel"), error.code());
     }
 }
 

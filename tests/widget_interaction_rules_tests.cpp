@@ -537,42 +537,19 @@ void TestHoverOnlyWidgetVisibility()
         visibilityRules::ShouldRenderWidget(
             true, false, false, false, false, false, true),
         "pointer hover reveals hover-only widget");
-    Check(
-        !visibilityRules::ShouldRetainBackdropAfterDrag(
-            true, false, false, false),
-        "hover-only widget backdrop must be removed as soon as drag ends");
-    Check(
-        visibilityRules::ShouldRetainBackdropAfterDrag(
-            true, false, true, false),
-        "an open popup must retain its hover-only widget backdrop after drag");
-    Check(
-        visibilityRules::ShouldRetainBackdropAfterDrag(
-            true, false, false, true),
-        "a hovered widget must retain its backdrop after drag");
-    Check(
-        visibilityRules::ShouldRetainBackdropAfterDrag(
-            true, true, false, false),
-        "a selected hover-only widget retains its backdrop after drag");
-    Check(
-        visibilityRules::BecomesHiddenAfterPointerMove(
-            true, false, false, true, false),
-        "leaving an idle hover-only widget requires a synchronized hide");
-    Check(
-        !visibilityRules::BecomesHiddenAfterPointerMove(
-            true, false, false, false, true),
-        "entering a hover-only widget is not a hide transition");
-    Check(
-        !visibilityRules::BecomesHiddenAfterPointerMove(
-            true, true, false, true, false),
-        "a selected hover-only widget does not hide on pointer exit");
-    Check(
-        !visibilityRules::BecomesHiddenAfterPointerMove(
-            true, false, true, true, false),
-        "a popup-pinned hover-only widget does not hide on pointer exit");
 }
 
 void TestDesktopHoverDeactivation()
 {
+    Check(
+        !hoverRules::OwnsInteractionCapture(0, 1, 0),
+        "two null window handles must not imply owned capture");
+    Check(
+        hoverRules::OwnsInteractionCapture(1, 1, 0),
+        "desktop capture belongs to the interaction surface");
+    Check(
+        hoverRules::OwnsInteractionCapture(2, 1, 2),
+        "floating Dock capture belongs to the interaction surface");
     Check(
         hoverRules::CanClearPassiveHover(
             false, false, false, false),

@@ -39,8 +39,10 @@ void DesktopApp::OnMouseLeave()
     // Dock magnification can still be reset while the preview stays reachable.
     const HWND captureWindow = GetCapture();
     const bool ownsInteractionCapture =
-        captureWindow == hwnd_ ||
-        captureWindow == floatingDockHwnd_;
+        snowdesktop::desktop_hover_rules::
+            OwnsInteractionCapture(
+                captureWindow,
+                hwnd_, floatingDockHwnd_);
     const bool canClearPassiveHover =
         snowdesktop::desktop_hover_rules::CanClearPassiveHover(
             ownsInteractionCapture,
@@ -52,7 +54,7 @@ void DesktopApp::OnMouseLeave()
     if (canClearPassiveHover)
     {
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
-        CommitPassiveHoverVisualEnd();
+        PresentPassiveHoverVisualChange();
         return;
     }
     if (hwnd_)
@@ -74,7 +76,7 @@ void DesktopApp::ReconcileDesktopHoverState()
             lastMousePoint_.y == LONG_MIN)
         {
             lastMousePoint_ = cursorPoint;
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentPassiveHoverVisualChange();
         }
         return;
     }

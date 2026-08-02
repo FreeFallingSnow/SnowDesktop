@@ -600,8 +600,8 @@ private:
     void EndDragSession();
     /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */
     void CommitDragVisualEndBeforeShellOperation();
-    /** @brief 同步提交被动悬浮结束帧，并移除不再可见的组件毛玻璃。 */
-    void CommitPassiveHoverVisualEnd();
+    /** @brief 同步呈现被动悬浮可见性变化。 */
+    void PresentPassiveHoverVisualChange();
     /** @brief 在控件重建后重新绑定拖拽源。 */
     void RebindDragSourceAfterRebuild();
     /**

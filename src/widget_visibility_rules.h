@@ -20,38 +20,4 @@ constexpr bool ShouldRenderWidget(
         pointerInside;
 }
 
-constexpr bool ShouldRetainBackdropAfterDrag(
-    bool showOnHoverOnly,
-    bool widgetSelected,
-    bool popupOpen,
-    bool pointerInside)
-{
-    return ShouldRenderWidget(
-        showOnHoverOnly,
-        false,
-        false,
-        false,
-        widgetSelected,
-        popupOpen,
-        pointerInside);
-}
-
-constexpr bool BecomesHiddenAfterPointerMove(
-    bool showOnHoverOnly,
-    bool widgetSelected,
-    bool popupOpen,
-    bool pointerWasInside,
-    bool pointerIsInside)
-{
-    return ShouldRetainBackdropAfterDrag(
-               showOnHoverOnly,
-               widgetSelected,
-               popupOpen,
-               pointerWasInside) &&
-        !ShouldRetainBackdropAfterDrag(
-            showOnHoverOnly,
-            widgetSelected,
-            popupOpen,
-            pointerIsInside);
-}
 }

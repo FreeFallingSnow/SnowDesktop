@@ -847,7 +847,6 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         if (invalidateDesktopHover)
         {
             bool hoverOnlyVisibilityChanged = false;
-            bool hoverOnlyWidgetBecameHidden = false;
             for (size_t widgetIndex = 0;
                  widgetIndex < widgets_.size();
                  ++widgetIndex)
@@ -855,31 +854,35 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 const auto& w = widgets_[widgetIndex];
                 if (!w.showOnHoverOnly)
                     continue;
+                const RECT frame =
+                    GetStandaloneWidgetFrameRect(w);
                 const bool pointerWasInside =
-                    PtInRect(&w.bounds, oldMouse) != FALSE;
+                    PtInRect(&frame, oldMouse) != FALSE;
                 const bool pointerIsInside =
-                    PtInRect(&w.bounds, current) != FALSE;
-                if (pointerWasInside == pointerIsInside)
-                    continue;
-                hoverOnlyVisibilityChanged = true;
+                    PtInRect(&frame, current) != FALSE;
                 const bool popupOpen =
                     popupWidgetIndex_ == widgetIndex ||
                     (!interactionPinnedWidgetId_.empty() &&
                         interactionPinnedWidgetId_ == w.id);
-                hoverOnlyWidgetBecameHidden =
-                    snowdesktop::widget_visibility_rules::
-                        BecomesHiddenAfterPointerMove(
-                            true,
+                const auto shouldRender = [&](bool pointerInside) {
+                    return snowdesktop::widget_visibility_rules::
+                        ShouldRenderWidget(
+                            w.showOnHoverOnly,
+                            dragSession_.IsActive(),
+                            dragDropController_.IsExternalDragActive(),
+                            widgetAction_ == WidgetAction::Move,
                             w.selected,
                             popupOpen,
-                            pointerWasInside,
-                            pointerIsInside) ||
-                    hoverOnlyWidgetBecameHidden;
+                            pointerInside);
+                };
+                if (shouldRender(pointerWasInside) ==
+                    shouldRender(pointerIsInside))
+                    continue;
+                hoverOnlyVisibilityChanged = true;
+                break;
             }
-            if (hoverOnlyWidgetBecameHidden)
-                CommitPassiveHoverVisualEnd();
-            else if (hoverOnlyVisibilityChanged)
-                InvalidateRect(hwnd_, nullptr, FALSE);
+            if (hoverOnlyVisibilityChanged)
+                PresentPassiveHoverVisualChange();
         }
     }
 }

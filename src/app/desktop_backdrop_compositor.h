@@ -49,21 +49,10 @@ public:
     void BeginFrame(bool completeCollection);
     /** @brief 注册或更新一个圆角玻璃面板。 */
     bool AddPanel(const RECT& frame, float cornerRadius, float blurRadius);
-    /** @brief 立即移除指定矩形对应的玻璃面板。 */
+    /** @brief 立即移除指定矩形对应的玻璃面板并同步辅助窗口区域。 */
     bool RemovePanel(const RECT& frame);
-    /**
-     * @brief 在下一次布局同步前从辅助窗口区域中裁掉指定面板。
-     * @details 用作可见性结束帧的 HWND 级栅栏，防止旧视觉晚一帧退出。
-     */
-    bool ExcludePanelFromWindow(const RECT& frame);
-    /** @brief 提交本帧面板集合。 */
+    /** @brief 提交本帧面板集合、同步辅助窗口区域并请求非阻塞合成提交。 */
     void EndFrame();
-    /**
-     * @brief 请求提交当前 Windows Composition 视觉树并等待提交周期开始。
-     * @param timeoutMilliseconds 最长等待时间；超时后返回 false，不阻塞后续操作。
-     * @return 提交请求成功完成时返回 true。
-     */
-    bool CommitPendingChanges(DWORD timeoutMilliseconds);
     /** @brief 销毁合成目标和辅助窗口。 */
     void Reset();
 

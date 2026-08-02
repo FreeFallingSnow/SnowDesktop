@@ -2,6 +2,17 @@
 
 namespace snowdesktop::desktop_hover_rules
 {
+template<typename Handle>
+constexpr bool OwnsInteractionCapture(
+    Handle captureWindow,
+    Handle desktopWindow,
+    Handle floatingDockWindow)
+{
+    return captureWindow != Handle{} &&
+        (captureWindow == desktopWindow ||
+            captureWindow == floatingDockWindow);
+}
+
 constexpr bool CanClearPassiveHover(
     bool ownsInteractionCapture,
     bool mouseDown,
