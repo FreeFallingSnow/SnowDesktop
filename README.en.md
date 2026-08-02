@@ -58,6 +58,10 @@ normally first. To clear the lock automatically, use
 
 ## 📄 License
 
-GNU General Public License v3.0 — see [LICENSE](./LICENSE). Licenses for the
-third-party components and font distributed with SnowDesktop are listed in
-[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+The SnowDesktop core is licensed under GNU General Public License v3.0; see
+[LICENSE](./LICENSE). Parts of its taskbar and backdrop implementation are
+modified from TranslucentTB, with the pinned source, copyright attribution, and
+affected files recorded in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+The separate `steam_bridge/` Workshop bridge is MIT-licensed under
+[steam_bridge/LICENSE](./steam_bridge/LICENSE). The Steamworks SDK is not
+included in this repository and is not covered by either license.

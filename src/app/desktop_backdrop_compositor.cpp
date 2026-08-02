@@ -1,3 +1,11 @@
+// SPDX-FileCopyrightText: TranslucentTB contributors
+// SPDX-FileCopyrightText: 2026 SnowDesktop contributors
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// The graphics-effect wrapper contains modified portions derived from
+// TranslucentTB's ExplorerTAP effects at commit
+// 322e2b7395a51975150126276308b415970e080b.
+
 /**
  * @file desktop_backdrop_compositor.cpp
  * @brief Win32 DesktopWindowTarget + CompositionBackdropBrush 实现。

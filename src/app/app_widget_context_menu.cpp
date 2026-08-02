@@ -191,25 +191,28 @@ void DesktopApp::ShowWidgetContextMenu(
     const std::wstring dateVisibilityLabel = visibilityLabel(
         _LW("app.interact.date_header"),
         widget.dateHeaders);
+    const std::wstring collectionModeLabel = statusLabel(
+        _LW("app.interact.display_mode"),
+        widget.scrollContainerMode
+            ? _LW("app.interact.popup_container")
+            : _LW("app.interact.large_folder"));
     std::vector<LuaWidgetMenuItem> luaMenuItems;
-    HMENU displayModeMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
-        displayModeMenu = CreatePopupMenu();
-        if (displayModeMenu)
+        const bool compactCollection =
+            widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
+        if (!compactCollection)
         {
-            AppendMenuW(displayModeMenu, MF_STRING | (!widget.scrollContainerMode ? MF_CHECKED : 0),
-                kContextWidgetCollModeLargeFolder, _LW("app.interact.large_folder"));
-            AppendMenuW(displayModeMenu, MF_STRING | (widget.scrollContainerMode ? MF_CHECKED : 0),
-                kContextWidgetCollModeScrollContainer, _LW("app.interact.popup_container"));
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(displayModeMenu), _LW("app.interact.display_mode"));
-        }
-        if (widget.scrollContainerMode)
-        {
-            AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
-                displayTypeLabel.c_str());
+            AppendMenuW(menu, MF_STRING,
+                kContextWidgetToggleCollectionMode,
+                collectionModeLabel.c_str());
+            if (widget.scrollContainerMode)
+            {
+                AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
+                    displayTypeLabel.c_str());
+            }
         }
     }
     else if (widget.type == DesktopWidgetType::CollectionGroup)
@@ -279,6 +282,12 @@ void DesktopApp::ShowWidgetContextMenu(
             autoCollectLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        AppendMenuW(menu, MF_STRING,
+            kContextWidgetToggleFileCategories,
+            categoryVisibilityLabel.c_str());
+        AppendMenuW(menu, MF_STRING,
+            kContextWidgetToggleSearchBox,
+            searchVisibilityLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
             dateVisibilityLabel.c_str());
     }
@@ -417,15 +426,17 @@ void DesktopApp::ShowWidgetContextMenu(
     AppendMenuW(menu, MF_STRING, kContextWidgetDelete, _LW("app.interact.delete_widget"));
 
     setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
-    setFluentIcon(menu, kContextWidgetManualCollect, L"\uF150");
-    setFluentIcon(menu, kContextWidgetToggleAutoCollect, L"\uF190");
+    setFluentIcon(menu, kContextWidgetManualCollect,
+        snowdesktop::menu_fluent_glyphs::kCollectItems);
+    setFluentIcon(menu, kContextWidgetToggleAutoCollect,
+        snowdesktop::menu_fluent_glyphs::kAutoCollect);
     setFluentIcon(menu, kContextWidgetToggleListMode,
-        widget.listMode ? L"\uF4ED" : L"\uF462");
+        snowdesktop::menu_fluent_glyphs::kContentLayout);
     setFluentIcon(menu, kContextWidgetToggleDateGroup,
         snowdesktop::menu_fluent_glyphs::kDateHeader);
     setFluentIcon(menu, kContextWidgetOpenFolder, L"\uF42E");
     setFluentIcon(menu, kContextWidgetToggleFileCategories,
-        L"\U000F0129");
+        snowdesktop::menu_fluent_glyphs::kCategoryBar);
     setFluentIcon(menu, kContextWidgetToggleSearchBox, L"\uF68F");
     setFluentIcon(menu, kContextNewMenu,
         snowdesktop::menu_fluent_glyphs::kNewItem);
@@ -490,15 +501,9 @@ void DesktopApp::ShowWidgetContextMenu(
                 snowdesktop::menu_fluent_glyphs::kSortDateDescending);
         }
     }
-    if (displayModeMenu)
-    {
-        setFluentIcon(menu,
-            reinterpret_cast<UINT_PTR>(displayModeMenu), L"\uF133");
-        setFluentIcon(displayModeMenu,
-            kContextWidgetCollModeLargeFolder, L"\uF418");
-        setFluentIcon(displayModeMenu,
-            kContextWidgetCollModeScrollContainer, L"\uF8CB");
-    }
+    if (widget.type == DesktopWidgetType::Collection)
+        setFluentIcon(menu, kContextWidgetToggleCollectionMode,
+            snowdesktop::menu_fluent_glyphs::kCollection);
 
     SetForegroundWindow(hwnd_);
     UINT command = ShowModernMenu(
@@ -613,6 +618,8 @@ void DesktopApp::ShowWidgetContextMenu(
         break;
     case kContextWidgetToggleFileCategories:
         if (widgets_[widgetIndex].type ==
+                DesktopWidgetType::FileCategories ||
+            widgets_[widgetIndex].type ==
                 DesktopWidgetType::FolderMapping ||
             widgets_[widgetIndex].type ==
                 DesktopWidgetType::FileGroup)
@@ -629,7 +636,11 @@ void DesktopApp::ShowWidgetContextMenu(
                     scrolling->GetWidgetData() ==
                         &widgets_[widgetIndex])
                 {
-                    if (auto* mapping =
+                    if (auto* categories =
+                            dynamic_cast<FileCategories*>(
+                                scrolling))
+                        categories->InvalidateCategoryCache();
+                    else if (auto* mapping =
                             dynamic_cast<FolderMapping*>(
                                 scrolling))
                         mapping->InvalidateFilterCache();
@@ -645,7 +656,8 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         break;
     case kContextWidgetToggleSearchBox:
-        if (widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
+        if (widgets_[widgetIndex].type == DesktopWidgetType::FileCategories ||
+            widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
             widgets_[widgetIndex].type == DesktopWidgetType::CollectionGroup ||
             widgets_[widgetIndex].type == DesktopWidgetType::FileGroup)
         {
@@ -660,7 +672,10 @@ void DesktopApp::ShowWidgetContextMenu(
                 {
                     if (!widgets_[widgetIndex].showSearchBox)
                         scrolling->ClearSearchText();
-                    if (auto* mapping = dynamic_cast<FolderMapping*>(scrolling))
+                    if (auto* categories =
+                            dynamic_cast<FileCategories*>(scrolling))
+                        categories->InvalidateCategoryCache();
+                    else if (auto* mapping = dynamic_cast<FolderMapping*>(scrolling))
                         mapping->InvalidateFilterCache();
                     else if (auto* group = dynamic_cast<CollectionGroup*>(scrolling))
                         group->InvalidateFilterCache();
@@ -829,20 +844,11 @@ void DesktopApp::ShowWidgetContextMenu(
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
-    case kContextWidgetCollModeLargeFolder:
-        widgets_[widgetIndex].scrollContainerMode = false;
-        widgets_[widgetIndex].scrollOffset = 0;
-        for (auto& c : containers_)
-        {
-            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
-            if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
-            { wc->InvalidateSlots(); break; }
-        }
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
-        break;
-    case kContextWidgetCollModeScrollContainer:
-        widgets_[widgetIndex].scrollContainerMode = true;
+    case kContextWidgetToggleCollectionMode:
+        widgets_[widgetIndex].scrollContainerMode =
+            !widgets_[widgetIndex].scrollContainerMode;
+        if (!widgets_[widgetIndex].scrollContainerMode)
+            widgets_[widgetIndex].scrollOffset = 0;
         for (auto& c : containers_)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());

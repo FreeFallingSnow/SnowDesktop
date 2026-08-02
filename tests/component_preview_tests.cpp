@@ -1,0 +1,361 @@
+#include "component_preview.h"
+#include "widget_preview_scene.h"
+
+#include <windows.h>
+
+#include <cstdlib>
+#include <iostream>
+#include <optional>
+#include <string>
+
+namespace
+{
+
+void Expect(bool condition, const char* message)
+{
+    if (condition) return;
+    std::cerr << "FAILED: " << message << '\n';
+    std::exit(1);
+}
+
+snowdesktop::component_preview::Bitmap SolidBitmap(
+    int width, int height, std::uint32_t color)
+{
+    snowdesktop::component_preview::Bitmap bitmap;
+    bitmap.width = width;
+    bitmap.height = height;
+    bitmap.pixels.assign(
+        static_cast<size_t>(width) * height, color);
+    return bitmap;
+}
+
+} // namespace
+
+int wmain()
+{
+    using namespace snowdesktop::component_preview;
+
+    snowdesktop::WidgetPreviewScene scene;
+    scene.AddItem({ L"sample-a", L"Sample A", L"A",
+        L"documents", L"today", false });
+    scene.PreparePlaceholderModels(96, false);
+    DesktopWidget child;
+    child.id = L"child";
+    child.type = DesktopWidgetType::Collection;
+    child.itemKeys = { L"sample-a" };
+    scene.AddWidget(child);
+    DesktopWidget root;
+    root.id = L"root";
+    root.type = DesktopWidgetType::CollectionGroup;
+    root.childWidgetIds = { L"child" };
+    scene.AddWidget(root);
+    Expect(scene.FindItem(L"sample-a") != nullptr,
+        "preview scene resolves temporary items");
+    Expect(scene.FindDesktopItem(L"sample-a") != nullptr &&
+            scene.FindDesktopItem(L"sample-a")->iconBitmap != nullptr,
+        "preview scene materializes a real desktop item with generated icon");
+    Expect(scene.FindFolderEntry(L"sample-a") != nullptr &&
+            scene.FindFolderEntry(L"sample-a")->iconBitmap != nullptr,
+        "preview scene materializes a real folder entry with generated icon");
+    Expect(scene.FindWidget(L"child") != nullptr,
+        "preview scene resolves temporary child widgets");
+    Expect(scene.FindWidget(L"missing") == nullptr,
+        "preview scene never falls through to live data");
+
+    Window window;
+    const RECT menuBounds{ 120, 100, 280, 420 };
+    int renderCount = 0;
+    bool oldFrameVisibleDuringReplacement = false;
+    for (UINT dpi : { 96u, 120u, 144u, 192u })
+    {
+        Model model;
+        model.title = L"Preview";
+        Card card;
+        card.title = L"Actual component";
+        card.description = L"Exact-size render callback";
+        card.sizeLabel = L"3 x 2";
+        const int expectedWidth = 276 + static_cast<int>(dpi / 24);
+        const int expectedHeight = 232 + static_cast<int>(dpi / 32);
+        card.previewWidth = expectedWidth;
+        card.previewHeight = expectedHeight;
+        card.cacheKey = L"mode:" + std::to_wstring(dpi);
+        card.render = [&, expectedWidth, expectedHeight, dpi](
+            int width, int height, UINT callbackDpi,
+            const ApplySettings&, bool) {
+            ++renderCount;
+            Expect(width == expectedWidth && height == expectedHeight,
+                "renderer receives the exact desktop component size");
+            Expect(callbackDpi == dpi,
+                "renderer receives the current DPI");
+            if (renderCount > 1)
+                oldFrameVisibleDuringReplacement =
+                    IsWindowVisible(window.Handle()) != FALSE;
+            return SolidBitmap(width, height, 0xff304860u);
+        };
+        model.cards.push_back(std::move(card));
+        Expect(window.Show(model, menuBounds, nullptr, dpi,
+                (dpi / 24) % 2 == 0),
+            "preview frame commits successfully");
+        Expect(IsWindowVisible(window.Handle()) != FALSE,
+            "preview remains visible after commit");
+
+        const RECT closeButton = window.CloseBoundsForTesting();
+        Expect(!IsRectEmpty(&closeButton),
+            "preview exposes a title-bar close button");
+
+        RECT windowRect{};
+        Expect(GetWindowRect(window.Handle(), &windowRect) != FALSE,
+            "preview window rectangle is available");
+        Expect(windowRect.left != 0 || windowRect.top != 0,
+            "preview is never committed through screen origin");
+
+        const int beforeCachedShow = renderCount;
+        Expect(window.Show(model, menuBounds, nullptr, dpi,
+                (dpi / 24) % 2 == 0),
+            "cached preview frame recommits successfully");
+        Expect(renderCount == beforeCachedShow,
+            "component render callback is cached by mode and DPI");
+    }
+
+    Expect(oldFrameVisibleDuringReplacement,
+        "old frame stays visible while the replacement is rendered");
+
+    Model pagedModel;
+    pagedModel.title = L"Paged preview";
+    pagedModel.resizeHint = L"Resize after adding";
+    pagedModel.applyLabel = L"Add to Desktop";
+    int firstPageRenders = 0;
+    int secondPageRenders = 0;
+    Card firstPage;
+    firstPage.title = L"Grid";
+    firstPage.previewWidth = 220;
+    firstPage.previewHeight = 180;
+    firstPage.cacheKey = L"paged:grid";
+    firstPage.applySettings.kind = ApplyKind::Collection;
+    firstPage.applySettings.columns = 2;
+    firstPage.applySettings.rows = 2;
+    bool hoveredFrameRendered = false;
+    firstPage.render = [&](int width, int height, UINT,
+            const ApplySettings&, bool hovered) {
+        ++firstPageRenders;
+        hoveredFrameRendered = hoveredFrameRendered || hovered;
+        return SolidBitmap(width, height, 0xff204060u);
+    };
+    Card secondPage = firstPage;
+    secondPage.title = L"Scrolling list";
+    secondPage.cacheKey = L"paged:list";
+    secondPage.applySettings.columns = 3;
+    secondPage.applySettings.rows = 3;
+    secondPage.applySettings.listMode = true;
+    secondPage.applySettings.scrollContainerMode = true;
+    secondPage.render = [&](int width, int height, UINT,
+            const ApplySettings&, bool) {
+        ++secondPageRenders;
+        return SolidBitmap(width, height, 0xff604020u);
+    };
+    pagedModel.cards.push_back(std::move(firstPage));
+    pagedModel.cards.push_back(std::move(secondPage));
+    std::optional<ApplySettings> applied;
+    Expect(window.Show(pagedModel, menuBounds, nullptr, 96, false,
+            [&](const ApplySettings& settings) { applied = settings; }),
+        "interactive paged preview commits successfully");
+    const LONG_PTR extendedStyle = GetWindowLongPtrW(
+        window.Handle(), GWL_EXSTYLE);
+    Expect((extendedStyle & WS_EX_TRANSPARENT) == 0,
+        "preview accepts pointer input");
+    Expect(SendMessageW(window.Handle(), WM_NCHITTEST, 0, 0) == HTCLIENT,
+        "preview hit testing stays inside the companion window");
+    Expect(firstPageRenders == 1 && secondPageRenders == 0,
+        "only the current preview page is rendered");
+    RECT pagedBounds{};
+    GetClientRect(window.Handle(), &pagedBounds);
+    SendMessageW(window.Handle(), WM_MOUSEMOVE, 0,
+        MAKELPARAM((pagedBounds.right - pagedBounds.left) / 2,
+            (pagedBounds.bottom - pagedBounds.top) / 2));
+    Expect(hoveredFrameRendered,
+        "component hover produces the real hovered render state");
+    SendMessageW(window.Handle(), WM_KEYDOWN, VK_RIGHT, 0);
+    Expect(secondPageRenders == 1,
+        "switching pages renders the selected mode");
+    applied.reset();
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM(pagedBounds.right / 2, pagedBounds.bottom / 2));
+    Expect(!applied.has_value(),
+        "clicking the preview card itself never applies the component");
+    const RECT applyButton = window.ApplyBoundsForTesting();
+    Expect(!IsRectEmpty(&applyButton),
+        "preview exposes an explicit apply button");
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM((applyButton.left + applyButton.right) / 2,
+            (applyButton.top + applyButton.bottom) / 2));
+    Expect(applied.has_value() && applied->columns == 3 &&
+            applied->rows == 3 && applied->listMode &&
+            applied->scrollContainerMode,
+        "applying a page returns its exact size and mode settings");
+    const RECT closeButton = window.CloseBoundsForTesting();
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM((closeButton.left + closeButton.right) / 2,
+            (closeButton.top + closeButton.bottom) / 2));
+    Expect(IsWindowVisible(window.Handle()) == FALSE,
+        "the title-bar close button hides only the preview window");
+
+    Model optionModel;
+    optionModel.title = L"Same-size options";
+    optionModel.applyLabel = L"Add to Desktop";
+    Card optionCard;
+    optionCard.title = L"Configurable component";
+    optionCard.previewWidth = 220;
+    optionCard.previewHeight = 180;
+    optionCard.cacheKey = L"options:file-group";
+    optionCard.applySettings.kind = ApplyKind::FileGroup;
+    optionCard.applySettings.columns = 3;
+    optionCard.applySettings.rows = 3;
+    optionCard.options.push_back({ OptionSetting::ListMode,
+        L"Layout", L"Icons", L"List" });
+    bool optionRenderUsedListMode = false;
+    optionCard.render = [&](int width, int height, UINT,
+            const ApplySettings& settings, bool) {
+        optionRenderUsedListMode = settings.listMode;
+        return SolidBitmap(width, height, 0xff305070u);
+    };
+    optionModel.cards.push_back(std::move(optionCard));
+    applied.reset();
+    Expect(window.Show(optionModel, menuBounds, nullptr, 96, false,
+            [&](const ApplySettings& settings) { applied = settings; }),
+        "same-size option preview commits successfully");
+    // At 96 DPI the selected half of the first option occupies the lower
+    // right segment immediately below the 220 x 180 component viewport.
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM(300, 255));
+    Expect(optionRenderUsedListMode,
+        "same-size control rerenders the component with its new setting");
+    SendMessageW(window.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    Expect(applied.has_value() && applied->listMode,
+        "same-size control value is included when applying the preview");
+
+    Model collectionOptionsModel;
+    collectionOptionsModel.title = L"Collection constraints";
+    collectionOptionsModel.applyLabel = L"Add to Desktop";
+    Card collectionCard;
+    collectionCard.title = L"Expanded collection";
+    collectionCard.previewWidth = 220;
+    collectionCard.previewHeight = 180;
+    collectionCard.cacheKey = L"options:collection";
+    collectionCard.applySettings.kind = ApplyKind::Collection;
+    collectionCard.applySettings.columns = 2;
+    collectionCard.applySettings.rows = 2;
+    collectionCard.options.push_back({
+        OptionSetting::ScrollContainerMode,
+        L"Collection mode", L"Large folder", L"Scroll container" });
+    collectionCard.options.push_back({
+        OptionSetting::ListMode,
+        L"Layout", L"Icons", L"List" });
+    bool collectionRenderScrolling = false;
+    bool collectionRenderList = false;
+    collectionCard.render = [&](int width, int height, UINT,
+            const ApplySettings& settings, bool) {
+        collectionRenderScrolling = settings.scrollContainerMode;
+        collectionRenderList = settings.listMode;
+        return SolidBitmap(width, height, 0xff406080u);
+    };
+    collectionOptionsModel.cards.push_back(std::move(collectionCard));
+    applied.reset();
+    Expect(window.Show(collectionOptionsModel, menuBounds, nullptr, 96,
+            false,
+            [&](const ApplySettings& settings) { applied = settings; }),
+        "collection option constraints render successfully");
+    RECT largeFolderBounds{};
+    GetClientRect(window.Handle(), &largeFolderBounds);
+    Expect(!collectionRenderScrolling && !collectionRenderList,
+        "large-folder preview starts without a list layout");
+    RECT hiddenListModeButton = window.OptionBoundsForTesting(
+        OptionSetting::ListMode, true);
+    Expect(IsRectEmpty(&hiddenListModeButton),
+        "large-folder preview does not expose list controls");
+    RECT scrollingModeButton = window.OptionBoundsForTesting(
+        OptionSetting::ScrollContainerMode, true);
+    Expect(!IsRectEmpty(&scrollingModeButton),
+        "expanded collection exposes its scrolling mode control");
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM((scrollingModeButton.left + scrollingModeButton.right) / 2,
+            (scrollingModeButton.top + scrollingModeButton.bottom) / 2));
+    RECT scrollingBounds{};
+    GetClientRect(window.Handle(), &scrollingBounds);
+    Expect(collectionRenderScrolling &&
+            scrollingBounds.bottom > largeFolderBounds.bottom,
+        "list layout appears only after enabling scrolling-container mode");
+    RECT listModeButton = window.OptionBoundsForTesting(
+        OptionSetting::ListMode, true);
+    Expect(!IsRectEmpty(&listModeButton),
+        "scrolling-container preview exposes list controls");
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM((listModeButton.left + listModeButton.right) / 2,
+            (listModeButton.top + listModeButton.bottom) / 2));
+    Expect(collectionRenderList,
+        "scrolling-container mode accepts the list layout");
+    RECT largeFolderModeButton = window.OptionBoundsForTesting(
+        OptionSetting::ScrollContainerMode, false);
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM(
+            (largeFolderModeButton.left + largeFolderModeButton.right) / 2,
+            (largeFolderModeButton.top + largeFolderModeButton.bottom) / 2));
+    RECT restoredLargeFolderBounds{};
+    GetClientRect(window.Handle(), &restoredLargeFolderBounds);
+    Expect(restoredLargeFolderBounds.bottom == largeFolderBounds.bottom,
+        "returning to large-folder mode removes the list option row");
+    hiddenListModeButton = window.OptionBoundsForTesting(
+        OptionSetting::ListMode, true);
+    Expect(IsRectEmpty(&hiddenListModeButton),
+        "large-folder preview removes list click targets");
+    SendMessageW(window.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    Expect(applied.has_value() && !applied->scrollContainerMode &&
+            !applied->listMode,
+        "large-folder settings cannot apply a hidden list layout");
+
+    window.Hide();
+    const RECT itemBounds{ 130, 200, 260, 232 };
+    Expect(window.ScheduleShow(optionModel, menuBounds, nullptr, 96,
+            false, {}, itemBounds),
+        "preview accepts submenu-style delayed opening");
+    Expect(IsWindowVisible(window.Handle()) == FALSE,
+        "preview remains hidden during submenu dwell time");
+    SendMessageW(window.Handle(), WM_TIMER, 1, 0);
+    Expect(IsWindowVisible(window.Handle()) != FALSE,
+        "preview opens when the submenu dwell timer expires");
+    RECT delayedBounds{};
+    GetWindowRect(window.Handle(), &delayedBounds);
+    Expect(delayedBounds.top == itemBounds.top - 5,
+        "preview aligns to the hovered row like a submenu");
+
+    Model replacementModel = optionModel;
+    replacementModel.title = L"Replacement preview";
+    replacementModel.cards[0].cacheKey = L"options:replacement";
+    bool replacementRendered = false;
+    replacementModel.cards[0].render = [&](int width, int height, UINT,
+            const ApplySettings&, bool) {
+        replacementRendered = true;
+        return SolidBitmap(width, height, 0xff507030u);
+    };
+    Expect(window.ScheduleShow(replacementModel, menuBounds, nullptr, 96,
+            false, {}, itemBounds),
+        "hovering a sibling schedules its preview");
+    POINT savedCursor{};
+    GetCursorPos(&savedCursor);
+    SetCursorPos(0, 0);
+    SendMessageW(window.Handle(), WM_TIMER, 2, 0);
+    Expect(IsWindowVisible(window.Handle()) != FALSE,
+        "a stale close timer keeps the old frame while a sibling is pending");
+    SendMessageW(window.Handle(), WM_TIMER, 1, 0);
+    SetCursorPos(savedCursor.x, savedCursor.y);
+    Expect(replacementRendered && IsWindowVisible(window.Handle()) != FALSE,
+        "the sibling preview atomically replaces the old frame");
+
+    const auto& commits = window.CommittedPositionsForTesting();
+    Expect(commits.size() >= 8,
+        "every layered-window commit records its final position");
+    for (const POINT position : commits)
+        Expect(position.x != 0 || position.y != 0,
+            "no layered-window commit passes through (0,0)");
+    window.Close();
+    return 0;
+}

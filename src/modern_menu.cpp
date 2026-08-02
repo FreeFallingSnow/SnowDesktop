@@ -22,8 +22,6 @@ constexpr wchar_t kMenuWindowClass[] =
     L"SnowDesktop.ModernMenuPopup";
 constexpr UINT_PTR kSubmenuOpenTimer = 1;
 constexpr UINT_PTR kSubmenuCloseTimer = 2;
-constexpr UINT kSubmenuOpenDelayMs = 480;
-constexpr UINT kSubmenuCloseDelayMs = 420;
 constexpr UINT kCancelMessage = WM_APP + 0x311;
 std::atomic<HWND> gActiveRootMenu{ nullptr };
 
@@ -134,7 +132,7 @@ public:
           // the panel bounds exactly; DWM supplies the material shadow.
           shadowSize_(UsesSystemBlur(options)
               ? 0 : Scale(12, options.dpi)),
-          panelPadding_(Scale(5, options.dpi)),
+          panelPadding_(Scale(kSubmenuPanelPaddingDip, options.dpi)),
           panelRadius_(Scale(8, options.dpi))
     {
         const int textHeight = -Scale(13, options.dpi);
@@ -397,7 +395,7 @@ public:
                 state |= ODS_SELECTED;
             HFONT iconFont = item.iconFont == IconFont::FontAwesomeSolid
                 ? fontAwesomeIconFont_ : fluentIconFont_;
-            if (popup.depth == 0 && item.quickAction)
+            if (popup.depth == 0 && item.quickAction && !item.inlineAction)
             {
                 HFONT quickIconFont =
                     item.iconFont == IconFont::FontAwesomeSolid
@@ -423,6 +421,11 @@ public:
                         DeleteObject(separatorBrush);
                     }
                 }
+            }
+            else if (item.inlineAction)
+            {
+                menu_icon::DrawInlineAction(memoryDc, textFont_, iconFont,
+                    view, row, state, palette_, metrics_);
             }
             else
             {
@@ -559,7 +562,8 @@ private:
         for (size_t i = 0; i < popup.items->size(); ++i)
         {
             const Item& item = (*popup.items)[i];
-            if (popup.depth == 0 && item.quickAction && !item.separator)
+            if (popup.depth == 0 && item.quickAction && !item.separator &&
+                !item.inlineAction)
             {
                 quickIndices.push_back(static_cast<int>(i));
                 continue;
@@ -576,6 +580,12 @@ private:
                 pendingSeparator = -1;
             }
             regularIndices.push_back(static_cast<int>(i));
+            if (item.inlineAction)
+            {
+                width = std::max(width,
+                    metrics_.minimumWidth + metrics_.rowHeight);
+                continue;
+            }
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
@@ -653,9 +663,64 @@ private:
                 contentTop += metrics_.separatorHeight;
             }
         }
-        for (int index : regularIndices)
+        for (size_t position = 0; position < regularIndices.size(); ++position)
         {
+            const int index = regularIndices[position];
             const Item& item = (*popup.items)[index];
+            if (item.inlineAction)
+            {
+                size_t runEnd = position;
+                while (runEnd + 1 < regularIndices.size() &&
+                    (*popup.items)[regularIndices[runEnd + 1]].inlineAction &&
+                    (item.inlineGroup == 0 ||
+                        (*popup.items)[regularIndices[runEnd + 1]].inlineGroup ==
+                            item.inlineGroup))
+                    ++runEnd;
+                const int count = static_cast<int>(runEnd - position + 1);
+                const int narrowWidth = metrics_.rowHeight;
+                const int compactWidth = metrics_.rowHeight * 2;
+                int flexibleCount = 0;
+                int fixedWidth = 0;
+                for (size_t i = position; i <= runEnd; ++i)
+                {
+                    const Item& action =
+                        (*popup.items)[regularIndices[i]];
+                    if (action.label.empty())
+                        fixedWidth += narrowWidth;
+                    else if (action.compactInlineAction)
+                        fixedWidth += compactWidth;
+                    else
+                        ++flexibleCount;
+                }
+                const int flexibleWidth = flexibleCount > 0
+                    ? std::max(narrowWidth,
+                        (width - fixedWidth) / flexibleCount)
+                    : std::max(1, width / count);
+                int left = shadowSize_;
+                for (size_t i = position; i <= runEnd; ++i)
+                {
+                    const int actionIndex = regularIndices[i];
+                    const Item& action = (*popup.items)[actionIndex];
+                    const bool flexible = !action.label.empty() &&
+                        !action.compactInlineAction;
+                    const int requestedWidth = action.label.empty()
+                        ? narrowWidth
+                        : (action.compactInlineAction
+                            ? compactWidth : flexibleWidth);
+                    const int actionWidth = i == runEnd
+                        ? shadowSize_ + width - left
+                        : (flexible ? flexibleWidth : requestedWidth);
+                    popup.itemRects[actionIndex] = {
+                        left, contentTop, left + actionWidth,
+                        contentTop + metrics_.rowHeight,
+                    };
+                    left += actionWidth;
+                    popup.navigationOrder.push_back(actionIndex);
+                }
+                contentTop += metrics_.rowHeight;
+                position = runEnd;
+                continue;
+            }
             const int height = item.separator
                 ? metrics_.separatorHeight : metrics_.rowHeight;
             popup.itemRects[index] = {
@@ -736,11 +801,11 @@ private:
         if (parent)
         {
             left = parent->panelScreenOrigin.x + parent->panelWidth -
-                Scale(3, options_.dpi);
+                Scale(kSubmenuOverlapDip, options_.dpi);
             if (left + popup.panelWidth > monitorInfo.rcWork.right)
             {
                 left = parent->panelScreenOrigin.x - popup.panelWidth +
-                    Scale(3, options_.dpi);
+                    Scale(kSubmenuOverlapDip, options_.dpi);
             }
         }
         else
@@ -821,6 +886,34 @@ private:
         KillTimer(popup.hwnd, kSubmenuCloseTimer);
         popup.hoveredItem = keyboard ? -1 : index;
         popup.keyboardItem = keyboard ? index : -1;
+        if (options_.onHover)
+        {
+            HoverInfo info;
+            info.depth = popup.depth;
+            info.keyboard = keyboard;
+            info.popupScreenRect = {
+                popup.panelScreenOrigin.x,
+                popup.panelScreenOrigin.y,
+                popup.panelScreenOrigin.x + popup.panelWidth,
+                popup.panelScreenOrigin.y + popup.panelHeight,
+            };
+            if (index >= 0 &&
+                static_cast<size_t>(index) < popup.items->size())
+            {
+                const Item& hovered = (*popup.items)[index];
+                if (hovered.enabled && !hovered.separator &&
+                    hovered.children.empty())
+                {
+                    info.command = hovered.command;
+                    info.itemScreenRect = popup.itemRects[index];
+                    OffsetRect(&info.itemScreenRect,
+                        popup.panelScreenOrigin.x - shadowSize_,
+                        popup.panelScreenOrigin.y - shadowSize_ -
+                            popup.scrollOffset);
+                }
+            }
+            options_.onHover(info);
+        }
         if (index >= 0 &&
             static_cast<size_t>(index) < popup.items->size() &&
             !(*popup.items)[index].children.empty() &&
@@ -864,22 +957,19 @@ private:
         if (options_.onCommand &&
             options_.onCommand(command, rootItems_))
         {
-            CloseFromDepth(1);
-            activeDepth_ = 0;
-            if (!popups_.empty())
+            CloseFromDepth(popup.depth + 1);
+            popup.hoveredItem = -1;
+            popup.keyboardItem = -1;
+            CalculateLayout(popup);
+            if (popup.hwnd && IsWindow(popup.hwnd))
             {
-                Popup& root = *popups_.front();
-                root.hoveredItem = -1;
-                root.keyboardItem = -1;
-                CalculateLayout(root);
-                PlacePopup(root, options_.anchor, nullptr);
-                SetWindowPos(root.hwnd, nullptr,
-                    root.panelScreenOrigin.x - shadowSize_,
-                    root.panelScreenOrigin.y - shadowSize_,
-                    root.windowWidth, root.windowHeight,
+                SetWindowPos(popup.hwnd, nullptr,
+                    popup.panelScreenOrigin.x - shadowSize_,
+                    popup.panelScreenOrigin.y - shadowSize_,
+                    popup.windowWidth, popup.windowHeight,
                     SWP_NOACTIVATE | SWP_NOZORDER);
-                ApplyBlurClipRegion(root);
-                Render(root);
+                ApplyBlurClipRegion(popup);
+                Render(popup);
             }
             return;
         }
@@ -1363,6 +1453,13 @@ Result Show(const std::vector<Item>& items, const Options& options)
 {
     MenuController controller(items, options);
     return controller.Run();
+}
+
+void DismissActive()
+{
+    const HWND root = gActiveRootMenu.load();
+    if (root && IsWindow(root))
+        PostMessageW(root, kCancelMessage, 0, 0);
 }
 
 } // namespace snowdesktop::modern_menu

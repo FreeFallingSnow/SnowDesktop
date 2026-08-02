@@ -4935,10 +4935,12 @@ void SettingsWindow::DrawAboutPage()
     ImGui::SeparatorText(_L("app.settings.reference_programs"));
     ImGui::Spacing();
 
-    LinkButton("TranslucentTB", "https://github.com/TranslucentTB/TranslucentTB");
+    LinkButton("TranslucentTB (modified portions)",
+        "https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b");
     ImGui::SameLine();
-    ImGui::TextDisabled("(GPL-3.0)");
+    ImGui::TextDisabled("(GPL-3.0-only)");
     ImGui::TextDisabled("        Copyright (c) TranslucentTB contributors");
+    ImGui::TextDisabled("        Modified for SnowDesktop from upstream commit 322e2b7");
 
     ImGui::EndChild();
 }

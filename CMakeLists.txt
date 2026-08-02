@@ -61,6 +61,8 @@ file(MAKE_DIRECTORY "${SNOWDESKTOP_VERSION_RESOURCE_DIR}")
 set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop")
 set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktop.exe")
 set(SNOWDESKTOP_FILE_TYPE "VFT_APP")
+set(SNOWDESKTOP_LEGAL_COPYRIGHT
+    "Copyright (c) SnowDesktop contributors; portions copyright (c) TranslucentTB contributors")
 set(SNOWDESKTOP_EXE_VERSION_RESOURCE
     "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktop.version.rc")
 configure_file(
@@ -71,6 +73,8 @@ configure_file(
 set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop taskbar hook")
 set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktopTaskbarHook.dll")
 set(SNOWDESKTOP_FILE_TYPE "VFT_DLL")
+set(SNOWDESKTOP_LEGAL_COPYRIGHT
+    "Copyright (c) SnowDesktop contributors; portions copyright (c) TranslucentTB contributors")
 set(SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE
     "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktopTaskbarHook.version.rc")
 configure_file(
@@ -201,6 +205,9 @@ set(SNOWDESKTOP_SOURCES
     src/navigation_settings.cpp
     src/general_settings.cpp
     src/category_settings.cpp
+    src/component_preview.cpp
+    src/widget_preview_scene.cpp
+    src/widget_preview_scene_model.cpp
     src/l10n.cpp
     src/item_location.cpp
     src/layout_storage.cpp
@@ -466,6 +473,10 @@ target_link_libraries(SnowDesktop PRIVATE
     version wbemuuid
 )
 
+# The Steam bridge is a separate MIT-licensed executable. It deliberately does
+# not link SnowDesktop or any other GPL target from this build.
+add_subdirectory(steam_bridge)
+
 add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/widgets"
@@ -707,6 +718,19 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES gdi32 user32
         LABELS integration ui)
+
+    snowdesktop_add_test(
+        SnowDesktopComponentPreviewTests
+        component_preview
+        SOURCES
+            tests/component_preview_tests.cpp
+            src/component_preview.cpp
+            src/menu_icon_render.cpp
+            src/widget_preview_scene.cpp
+            src/widget_preview_scene_model.cpp
+        INCLUDE_DIRECTORIES src src/core
+        LINK_LIBRARIES gdi32 user32
+        LABELS integration ui preview)
 
     # Interactive visual smoke harness. It is excluded from normal builds and
     # CTest; run the target explicitly when reviewing the modern popup menu.

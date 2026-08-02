@@ -11,6 +11,13 @@
 namespace snowdesktop::modern_menu
 {
 
+// Shared by real submenus and companion previews so their dwell, grace
+// period and edge overlap feel identical.
+inline constexpr UINT kSubmenuOpenDelayMs = 480;
+inline constexpr UINT kSubmenuCloseDelayMs = 420;
+inline constexpr int kSubmenuOverlapDip = 3;
+inline constexpr int kSubmenuPanelPaddingDip = 5;
+
 enum class RootPlacement
 {
     Default,
@@ -48,6 +55,21 @@ struct Item
     /** 根菜单中以 Windows 11 风格的顶部快捷按钮显示。 */
     bool quickAction = false;
     MenuQuickIcon quickIcon = MenuQuickIcon::FontGlyph;
+    /** 与相邻的同类菜单项共用一行，用于分页等紧凑操作组。 */
+    bool inlineAction = false;
+    /** 非零值将连续的行内操作拆分为独立行组。 */
+    UINT inlineGroup = 0;
+    /** 行内操作使用适合短文本的固定宽度，其余空间留给主操作。 */
+    bool compactInlineAction = false;
+};
+
+struct HoverInfo
+{
+    UINT command = 0;
+    RECT itemScreenRect{};
+    RECT popupScreenRect{};
+    int depth = 0;
+    bool keyboard = false;
 };
 
 struct Options
@@ -63,6 +85,8 @@ struct Options
     RECT anchorRect{};
     /** 返回 true 时应用命令并保持根菜单打开。 */
     std::function<bool(UINT, std::vector<Item>&)> onCommand;
+    /** 鼠标或键盘高亮项变化；command=0 表示当前没有可预览项。 */
+    std::function<void(const HoverInfo&)> onHover;
 };
 
 struct Result
@@ -78,5 +102,8 @@ struct Result
  * 级联子菜单均由该组件管理。调用会像 TrackPopupMenuEx 一样同步返回。
  */
 Result Show(const std::vector<Item>& items, const Options& options);
+
+/** Close the currently active menu without activating a command. */
+void DismissActive();
 
 } // namespace snowdesktop::modern_menu

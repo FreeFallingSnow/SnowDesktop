@@ -225,6 +225,20 @@ std::string ManifestJson(const PackageManifest& manifest)
         }
         out << ']';
     };
+    auto appendStringMap = [](std::ostringstream& out,
+        const std::unordered_map<std::string, std::string>& values) {
+        bool first = true;
+        std::vector<std::pair<std::string, std::string>> sorted(
+            values.begin(), values.end());
+        std::sort(sorted.begin(), sorted.end());
+        for (const auto& [key, value] : sorted)
+        {
+            if (!first) out << ", ";
+            first = false;
+            out << '"' << JsonEscape(key) << "\": \""
+                << JsonEscape(value) << '"';
+        }
+    };
     std::ostringstream out;
     out << "{\n"
         << "  \"schemaVersion\": " << manifest.schemaVersion << ",\n"
@@ -240,6 +254,34 @@ std::string ManifestJson(const PackageManifest& manifest)
         << "  \"author\": \"" << JsonEscape(manifest.author) << "\",\n"
         << "  \"license\": \"" << JsonEscape(manifest.license) << "\",\n"
         << "  \"preview\": \"" << JsonEscape(manifest.preview) << "\",\n"
+        << "  \"previewData\": {\"storage\": {";
+    appendStringMap(out, manifest.previewStorage);
+    out << "}, \"storageKeys\": {";
+    appendStringMap(out, manifest.previewStorageKeys);
+    out << "}, \"introduction\": \""
+        << JsonEscape(manifest.previewIntroduction)
+        << "\", \"introductionKey\": \""
+        << JsonEscape(manifest.previewIntroductionKey)
+        << "\", \"variants\": [";
+    for (std::size_t i = 0; i < manifest.previewVariants.size(); ++i)
+    {
+        if (i) out << ", ";
+        const PreviewVariant& variant = manifest.previewVariants[i];
+        out << "{\"id\": \"" << JsonEscape(variant.id)
+            << "\", \"title\": \"" << JsonEscape(variant.title)
+            << "\", \"titleKey\": \"" << JsonEscape(variant.titleKey)
+            << "\", \"description\": \""
+            << JsonEscape(variant.description)
+            << "\", \"descriptionKey\": \""
+            << JsonEscape(variant.descriptionKey)
+            << "\", \"size\": {\"columns\": " << variant.columns
+            << ", \"rows\": " << variant.rows << "}, \"storage\": {";
+        appendStringMap(out, variant.storage);
+        out << "}, \"storageKeys\": {";
+        appendStringMap(out, variant.storageKeys);
+        out << "}}";
+    }
+    out << "]},\n"
         << "  \"defaultSize\": {\"columns\": " << manifest.defaultColumns
         << ", \"rows\": " << manifest.defaultRows << "},\n"
         << "  \"minSize\": {\"columns\": " << manifest.minColumns
@@ -576,6 +618,34 @@ PackageManifest LocalizedManifest(PackageManifest manifest,
         if (!selected->title.empty()) manifest.name = selected->title;
         if (!selected->description.empty())
             manifest.description = selected->description;
+        auto translate = [&](const std::string& key,
+            std::string& value) {
+            if (key.empty()) return;
+            if (const auto found = selected->strings.find(key);
+                found != selected->strings.end())
+                value = found->second;
+        };
+        translate(manifest.previewIntroductionKey,
+            manifest.previewIntroduction);
+        for (const auto& [storageKey, localizationKey] :
+            manifest.previewStorageKeys)
+        {
+            if (const auto value = manifest.previewStorage.find(storageKey);
+                value != manifest.previewStorage.end())
+                translate(localizationKey, value->second);
+        }
+        for (auto& variant : manifest.previewVariants)
+        {
+            translate(variant.titleKey, variant.title);
+            translate(variant.descriptionKey, variant.description);
+            for (const auto& [storageKey, localizationKey] :
+                variant.storageKeys)
+            {
+                if (const auto value = variant.storage.find(storageKey);
+                    value != variant.storage.end())
+                    translate(localizationKey, value->second);
+            }
+        }
     }
     return manifest;
 }
@@ -1097,6 +1167,172 @@ bool WidgetPackageValidator::ReadManifest(
         ReadString(root, "publisher", manifest.author);
     ReadString(root, "license", manifest.license);
     ReadString(root, "preview", manifest.preview);
+    if (const JsonValue* previewData = root.Find("previewData"))
+    {
+        if (!previewData->IsObject())
+        {
+            report.Add(ValidationSeverity::Error,
+                "manifest.previewData", manifestPath,
+                "previewData must be an object");
+        }
+        else
+        {
+            ReadString(*previewData, "introduction",
+                manifest.previewIntroduction);
+            ReadString(*previewData, "introductionKey",
+                manifest.previewIntroductionKey);
+            auto readPreviewStorage = [&](const JsonValue* storage,
+                std::unordered_map<std::string, std::string>& output,
+                const std::string& path) {
+                if (!storage) return;
+                if (!storage->IsObject())
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.previewStorage", manifestPath,
+                        path + " must be an object");
+                    return;
+                }
+                std::size_t totalPreviewBytes = 0;
+                for (const auto& [key, value] : storage->object)
+                {
+                    std::string serialized;
+                    if (value.IsString()) serialized = value.string;
+                    else if (value.IsBoolean())
+                        serialized = value.boolean ? "true" : "false";
+                    else if (value.IsNumber())
+                    {
+                        std::ostringstream stream;
+                        stream << value.number;
+                        serialized = stream.str();
+                    }
+                    else
+                    {
+                        report.Add(ValidationSeverity::Error,
+                            "manifest.previewStorageValue", manifestPath,
+                            path + " values must be strings, numbers, or booleans");
+                        continue;
+                    }
+                    totalPreviewBytes += key.size() + serialized.size();
+                    if (key.empty() || key.size() > 128 ||
+                        serialized.size() > 16 * 1024)
+                    {
+                        report.Add(ValidationSeverity::Error,
+                            "manifest.previewStorageSize", manifestPath,
+                            path + " keys or values exceed their size limit");
+                        continue;
+                    }
+                    output[key] = std::move(serialized);
+                }
+                if (output.size() > 64 ||
+                    totalPreviewBytes > 64 * 1024)
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.previewStorageQuota", manifestPath,
+                        path + " exceeds the 64-entry or 64-KiB limit");
+            };
+            auto readPreviewStorageKeys = [&](const JsonValue* storageKeys,
+                const std::unordered_map<std::string, std::string>& storage,
+                std::unordered_map<std::string, std::string>& output,
+                const std::string& path) {
+                if (!storageKeys) return;
+                if (!storageKeys->IsObject())
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.previewStorageKeys", manifestPath,
+                        path + " must be an object");
+                    return;
+                }
+                for (const auto& [storageKey, value] : storageKeys->object)
+                {
+                    if (storageKey.empty() || storageKey.size() > 128 ||
+                        !value.IsString() || value.string.empty() ||
+                        value.string.size() > 256)
+                    {
+                        report.Add(ValidationSeverity::Error,
+                            "manifest.previewStorageKey", manifestPath,
+                            path + " must map valid preview storage names to non-empty localization keys");
+                        continue;
+                    }
+                    if (!storage.contains(storageKey))
+                    {
+                        report.Add(ValidationSeverity::Error,
+                            "manifest.previewStorageFallback", manifestPath,
+                            path + " references a storage name without an English fallback value: " +
+                                storageKey);
+                        continue;
+                    }
+                    output[storageKey] = value.string;
+                }
+                if (output.size() > 64)
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.previewStorageKeysQuota", manifestPath,
+                        path + " supports at most 64 entries");
+            };
+            readPreviewStorage(previewData->Find("storage"),
+                manifest.previewStorage, "previewData.storage");
+            readPreviewStorageKeys(previewData->Find("storageKeys"),
+                manifest.previewStorage, manifest.previewStorageKeys,
+                "previewData.storageKeys");
+
+            if (const JsonValue* variants = previewData->Find("variants"))
+            {
+                if (!variants->IsArray())
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.previewVariants", manifestPath,
+                        "previewData.variants must be an array");
+                }
+                else
+                {
+                    if (variants->array.size() > 4)
+                    {
+                        report.Add(ValidationSeverity::Error,
+                            "manifest.previewVariantsQuota", manifestPath,
+                            "previewData.variants supports at most four entries");
+                    }
+                    std::set<std::string> ids;
+                    for (const JsonValue& value : variants->array)
+                    {
+                        if (!value.IsObject())
+                        {
+                            report.Add(ValidationSeverity::Error,
+                                "manifest.previewVariant", manifestPath,
+                                "each preview variant must be an object");
+                            continue;
+                        }
+                        PreviewVariant variant;
+                        ReadString(value, "id", variant.id);
+                        ReadString(value, "title", variant.title);
+                        ReadString(value, "titleKey", variant.titleKey);
+                        ReadString(value, "description", variant.description);
+                        ReadString(value, "descriptionKey",
+                            variant.descriptionKey);
+                        ReadSize(value, "size",
+                            variant.columns, variant.rows);
+                        if (variant.id.empty() || variant.id.size() > 64 ||
+                            !std::all_of(variant.id.begin(), variant.id.end(),
+                                [](unsigned char ch) {
+                                    return std::isalnum(ch) || ch == '-' ||
+                                        ch == '_';
+                                }) || !ids.insert(variant.id).second)
+                        {
+                            report.Add(ValidationSeverity::Error,
+                                "manifest.previewVariantId", manifestPath,
+                                "preview variant ids must be unique and contain only letters, digits, '-' or '_'");
+                        }
+                        readPreviewStorage(value.Find("storage"),
+                            variant.storage,
+                            "previewData.variants[].storage");
+                        readPreviewStorageKeys(value.Find("storageKeys"),
+                            variant.storage, variant.storageKeys,
+                            "previewData.variants[].storageKeys");
+                        if (manifest.previewVariants.size() < 4)
+                            manifest.previewVariants.push_back(
+                                std::move(variant));
+                    }
+                }
+            }
+        }
+    }
     ReadInteger(root, "refreshIntervalMs", manifest.refreshIntervalMs);
     ReadSize(root, "defaultSize", manifest.defaultColumns, manifest.defaultRows);
     ReadSize(root, "minSize", manifest.minColumns, manifest.minRows);
@@ -1136,6 +1372,8 @@ bool WidgetPackageValidator::ReadManifest(
                 continue;
             }
             LocalizedMetadata localized;
+            for (const auto& [key, value] : values.object)
+                localized.strings.emplace(key, value.string);
             ReadString(values, "name", localized.title);
             if (localized.title.empty()) ReadString(values, "title", localized.title);
             ReadString(values, "description", localized.description);
@@ -1184,6 +1422,21 @@ bool WidgetPackageValidator::ReadManifest(
     if (manifest.license.empty())
         report.Add(ValidationSeverity::Warning, "manifest.license",
             manifestPath, "a license identifier is recommended");
+    for (auto& variant : manifest.previewVariants)
+    {
+        if (variant.columns == 0) variant.columns = manifest.defaultColumns;
+        if (variant.rows == 0) variant.rows = manifest.defaultRows;
+        if (variant.columns < manifest.minColumns ||
+            variant.rows < manifest.minRows ||
+            (manifest.maxColumns > 0 &&
+                variant.columns > manifest.maxColumns) ||
+            (manifest.maxRows > 0 && variant.rows > manifest.maxRows))
+        {
+            report.Add(ValidationSeverity::Error,
+                "manifest.previewVariantSize", manifestPath,
+                "preview variant sizes must stay within the component's minSize and maxSize");
+        }
+    }
     if (!arraysValid)
         report.Add(ValidationSeverity::Error, "manifest.array", manifestPath,
             "permissions and networkDomains must be string arrays");

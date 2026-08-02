@@ -715,4 +715,74 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     return true;
 }
 
+bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
+    const ItemView& item, const RECT& bounds, UINT itemState,
+    const Palette& palette, const Metrics& metrics)
+{
+    if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
+        return false;
+
+    FillSolidRect(dc, bounds, palette.background);
+    const bool disabled =
+        (itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;
+    const bool selected = (itemState & ODS_SELECTED) != 0;
+    if (selected && !disabled)
+    {
+        RECT selection = bounds;
+        selection.left += metrics.outerInset;
+        selection.right -= metrics.outerInset;
+        selection.top += metrics.selectionInsetY;
+        selection.bottom -= metrics.selectionInsetY;
+        FillRoundedRect(dc, selection, metrics.selectionRadius,
+            palette.hoverBackground);
+    }
+
+    const COLORREF foreground = disabled
+        ? palette.disabledText : palette.text;
+    const int oldMode = SetBkMode(dc, TRANSPARENT);
+    const COLORREF oldColor = SetTextColor(dc, foreground);
+    const bool hasGlyph = item.glyph && *item.glyph;
+    const bool hasLabel = item.label && *item.label;
+    if (hasGlyph)
+    {
+        HGDIOBJ oldFont = SelectObject(dc,
+            iconFont ? static_cast<HGDIOBJ>(iconFont)
+                     : GetStockObject(DEFAULT_GUI_FONT));
+        RECT glyphBounds = bounds;
+        if (hasLabel)
+        {
+            glyphBounds.left += metrics.leftPadding;
+            glyphBounds.right =
+                glyphBounds.left + metrics.iconColumnWidth;
+        }
+        else
+        {
+            glyphBounds.left += metrics.outerInset * 2;
+            glyphBounds.right -= metrics.outerInset * 2;
+        }
+        DrawGlyphLayer(dc, item.glyph, glyphBounds, foreground, nullptr);
+        if (oldFont) SelectObject(dc, oldFont);
+    }
+    if (hasLabel)
+    {
+        HGDIOBJ oldFont = SelectObject(dc,
+            textFont ? static_cast<HGDIOBJ>(textFont)
+                     : GetStockObject(DEFAULT_GUI_FONT));
+        RECT labelBounds = bounds;
+        labelBounds.left += hasGlyph
+            ? metrics.leftPadding + metrics.iconColumnWidth +
+                metrics.textGap
+            : metrics.outerInset * 2;
+        labelBounds.right -= metrics.outerInset * 2;
+        DrawTextW(dc, item.label, -1, &labelBounds,
+            (hasGlyph ? DT_LEFT : DT_CENTER) |
+                DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS |
+                DT_NOPREFIX);
+        if (oldFont) SelectObject(dc, oldFont);
+    }
+    SetTextColor(dc, oldColor);
+    SetBkMode(dc, oldMode);
+    return true;
+}
+
 } // namespace snowdesktop::menu_icon

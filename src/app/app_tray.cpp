@@ -85,6 +85,14 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
     PrepareMenuIconsForPoint(screenPoint);
     HMENU menu = CreatePopupMenu();
 
+    const auto statusLabel = [](const wchar_t* title,
+                                const wchar_t* status) {
+        std::wstring label = title;
+        label += L"\t";
+        label += status;
+        return label;
+    };
+
     HMENU iconMenu = CreatePopupMenu();
     if (iconMenu)
     {
@@ -98,10 +106,10 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         };
         for (const auto& s : items)
         {
-            UINT flags = MF_STRING;
             DWORD val = 0;
+            bool visible = false;
             if (TryReadDesktopIconRegistryValueAnyRoot(s.clsid, val))
-            { if (val == 0) flags |= MF_CHECKED; }
+                visible = val == 0;
             else
             {
                 static const std::unordered_map<std::wstring, bool> defVis = {
@@ -110,20 +118,26 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                     { kDesktopIconClsidRecycleBin, true },
                 };
                 auto it = defVis.find(s.clsid);
-                if (it != defVis.end() && it->second) flags |= MF_CHECKED;
+                if (it != defVis.end())
+                    visible = it->second;
             }
-            AppendMenuW(iconMenu, flags, s.cmd, s.label);
+            const std::wstring label = statusLabel(s.label,
+                visible ? _LW("app.interact.shown")
+                        : _LW("app.interact.hidden"));
+            AppendMenuW(iconMenu, MF_STRING, s.cmd, label.c_str());
         }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("app.interact.desktop_icon_settings"));
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    const bool nativeActive = !customDesktopVisible_;
     {
-        bool nativeActive = !customDesktopVisible_;
-        AppendMenuW(menu, MF_STRING | (nativeActive ? MF_CHECKED : 0),
-            kTraySwitchNativeCommand, _LW("app.interact.switch_native_desktop"));
-        AppendMenuW(menu, MF_STRING | (nativeActive ? 0 : MF_CHECKED),
-            kTraySwitchCustomCommand, _LW("app.interact.switch_software_desktop"));
+        const std::wstring modeLabel = statusLabel(
+            _LW("app.interact.desktop_mode"),
+            nativeActive ? _LW("app.interact.native_desktop")
+                         : _LW("app.interact.software_desktop"));
+        AppendMenuW(menu, MF_STRING, kTrayToggleDesktopMode,
+            modeLabel.c_str());
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -134,8 +148,8 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     if (iconMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(iconMenu), L"");
-    SetMenuItemIcon(menu, kTraySwitchNativeCommand, L"");
-    SetMenuItemIcon(menu, kTraySwitchCustomCommand, L"");
+    SetMenuItemIcon(menu, kTrayToggleDesktopMode,
+        nativeActive ? L"" : L"");
     SetMenuItemIcon(menu, kTraySettingsCommand, L"");
     SetMenuItemIcon(menu, kTrayRestartExplorerCommand, L"");
     SetMenuItemIcon(menu, kTrayRestartCommand, L"");
@@ -153,11 +167,8 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     switch (command)
     {
-    case kTraySwitchNativeCommand:
-        SetSoftwareDesktopEnabled(false, true);
-        break;
-    case kTraySwitchCustomCommand:
-        SetSoftwareDesktopEnabled(true, true);
+    case kTrayToggleDesktopMode:
+        SetSoftwareDesktopEnabled(!customDesktopVisible_, true);
         break;
     case kTraySettingsCommand:
         ShowSettingsWindow();

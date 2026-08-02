@@ -15,6 +15,7 @@
 #include "types.h"
 #include "app.h"
 #include "drop_model.h"
+#include "widget_preview_scene.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -285,8 +286,9 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
     int col = (int)(slot % (size_t)columns);
     int rowIdx = (int)(slot / (size_t)columns);
     if (rowIdx >= rows) return {};
+    int width = std::max<int>(
+        1, (int)(body.right - body.left) / columns);
 
-    int width = std::max<int>(1, (int)(body.right - body.left) / columns);
     int startY = body.top + gapY / 2 - collection->Cu(8.0f);
     int rowStep = cellH + gapY;
     return { body.left + col * width, startY + rowIdx * rowStep,
@@ -377,6 +379,14 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     if (data_->itemKeys.empty()) return;
+    const bool preview = IsPreviewRendering();
+    auto resolveItem = [&](const std::wstring& key) -> DesktopItem* {
+        if (auto* scene = GetPreviewScene())
+            return scene->FindDesktopItem(key);
+        const size_t index = app_->FindItemIndexByKey(key);
+        return index == static_cast<size_t>(-1)
+            ? nullptr : &app_->GetDesktopItems()[index];
+    };
     const bool lt = app_->IsLightContentTheme();
 
     bool privacyActive = data_->privacyMode &&
@@ -390,7 +400,6 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         RECT content = GetContentViewportRect();
         context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
-        const auto& items = app_->GetDesktopItems();
         auto& slots = GetSlots();
         for (const auto& slot : slots)
         {
@@ -400,11 +409,10 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             RECT cell = slot->GetBounds();
             if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
 
-            size_t itemIdx =
-                app_->FindItemIndexByKey(
-                    data_->itemKeys[itemKeyIndex]);
-            if (itemIdx == static_cast<size_t>(-1)) continue;
-            const DesktopItem& di = items[itemIdx];
+            auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
+            DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
+            if (!item) continue;
+            const DesktopItem& di = *item;
 
             if (!data_->listMode)
             {
@@ -412,9 +420,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     DrawPrivacyPlaceholder(context, cell, di.name, false);
                 else
                 {
-                    bool hovered = !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
-                    DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
-                    icon.Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0),
+                    bool hovered = !preview && !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
+                    icon->Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0),
                         app_->IsLightContentTheme());
                 }
             }
@@ -432,17 +439,17 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     // ── Original: large folder / compact grid mode ────────────
     bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
-    const auto& items = app_->GetDesktopItems();
     auto& slots = GetSlots();
     size_t inlineCapacity = std::min(GetCollectionInlineCapacity(*data_), data_->itemKeys.size());
 
     for (size_t i = 0; i < inlineCapacity && i < slots.size(); ++i)
     {
         if (i >= data_->itemKeys.size()) break;
-        size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[i]);
-        if (itemIdx == static_cast<size_t>(-1)) continue;
-
-        const DesktopItem& di = items[itemIdx];
+        if (!slots[i]) continue;
+        auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
+        DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
+        if (!item) continue;
+        const DesktopItem& di = *item;
         RECT slotRect = slots[i]->GetBounds();
         if (IsRectEmptyRect(slotRect)) continue;
 
@@ -460,9 +467,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             else
             {
                 RECT bodyRect = GetBodyRect();
-                bool hovered = PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
-                DesktopIcon icon(const_cast<DesktopItem*>(&di), const_cast<Collection*>(this), app_);
-                icon.Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0),
+                bool hovered = !preview && PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
+                icon->Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0),
                     app_->IsLightContentTheme());
             }
         }
@@ -480,7 +486,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 size_t keyIdx = inlineCapacity + j;
                 if (keyIdx < data_->itemKeys.size() &&
-                    app_->FindItemIndexByKey(data_->itemKeys[keyIdx]) != static_cast<size_t>(-1))
+                    resolveItem(data_->itemKeys[keyIdx]) != nullptr)
                 {
                     hasRemainingIcon = true;
                     break;
@@ -498,10 +504,10 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 size_t keyIdx = inlineCapacity + (size_t)j;
                 if (keyIdx < data_->itemKeys.size())
                 {
-                    size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[keyIdx]);
-                    if (itemIdx != static_cast<size_t>(-1))
+                    if (DesktopItem* item =
+                            resolveItem(data_->itemKeys[keyIdx]))
                     {
-                        const DesktopItem& di = items[itemIdx];
+                        const DesktopItem& di = *item;
                         if (privacyActive)
                             DrawPrivacyPlaceholder(context, tile, di.name, false);
                         else
@@ -620,6 +626,17 @@ Item* Collection::GetSlotItem(size_t idx) const
 {
     if (!data_ || idx >= data_->itemKeys.size() || !app_) return nullptr;
     if (!data_->scrollContainerMode && idx >= GetCollectionInlineCapacity(*data_)) return nullptr;
+    if (auto* scene = GetPreviewScene())
+    {
+        DesktopItem* sample = scene->FindDesktopItem(data_->itemKeys[idx]);
+        if (!sample) return nullptr;
+        auto icon = std::make_unique<DesktopIcon>(
+            sample,
+            const_cast<Collection*>(this), app_);
+        Item* result = icon.get();
+        slotItemCache_.push_back(std::move(icon));
+        return result;
+    }
     size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[idx]);
     if (itemIdx == static_cast<size_t>(-1)) return nullptr;
     auto icon = std::make_unique<DesktopIcon>(&app_->GetDesktopItems()[itemIdx],

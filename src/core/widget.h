@@ -33,7 +33,14 @@
 struct DesktopWidget;
 struct CategorySettings;
 class DesktopApp;
+class WidgetEngine;
 struct GridPage;
+namespace snowdesktop
+{
+class WidgetPreviewScene;
+struct WidgetRenderOptions;
+struct WidgetPreviewItem;
+}
 
 /**
  * @enum WidgetHit
@@ -88,6 +95,8 @@ public:
     void SetSelected(bool selected) override;
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    virtual void DrawPreview(ID2D1DeviceContext* context, RECT frame,
+        const snowdesktop::WidgetRenderOptions& options);
     ComPtr<IDataObject> CreateDataObject() override;
 
     DesktopWidget* GetWidgetData() const { return data_; }
@@ -101,10 +110,25 @@ public:
     IDWriteTextFormat* GetCuFluentTextFormat(float value) const;
     float GetBarHeight() const;
     float GetBarScale() const;
+    void SetRenderOptions(
+        const snowdesktop::WidgetRenderOptions* options)
+    {
+        renderOptions_ = options;
+    }
+    const snowdesktop::WidgetRenderOptions* GetRenderOptions() const
+    {
+        return renderOptions_;
+    }
+    snowdesktop::WidgetPreviewScene* GetPreviewScene() const;
+    bool IsPreviewRendering() const;
+    bool IsPreviewInteractive() const;
+    bool ShouldRegisterBackdrop() const;
+    POINT GetRenderPointer() const;
 
 protected:
     DesktopWidget* data_;
     DesktopApp* app_;
+    const snowdesktop::WidgetRenderOptions* renderOptions_ = nullptr;
     mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuTextFormatCache_;
     mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuFaTextFormatCache_;
     mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuFluentTextFormatCache_;
@@ -154,6 +178,8 @@ public:
 
     // ── Rendering ────────────────────────────────────────
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
+    void DrawPreview(ID2D1DeviceContext* context, RECT frame,
+        const snowdesktop::WidgetRenderOptions& options) override;
 
     // ── Container drag virtuals ──────────────────────────
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
@@ -882,13 +908,21 @@ class LuaScript : public Widget
 public:
     using Widget::Widget;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    void DrawPreview(ID2D1DeviceContext* context, RECT frame,
+        const snowdesktop::WidgetRenderOptions& options) override;
 
 private:
     struct WidgetLoadResult { bool ok = false; bool customStyle = false; };
-    WidgetLoadResult SafeLoadWidget(const std::wstring& id, const std::wstring& scriptPath);
+    WidgetLoadResult SafeLoadWidget(WidgetEngine* engine,
+        const std::wstring& id, const std::wstring& scriptPath,
+        bool preview);
     bool SafeRenderWidget(const std::wstring& id, const std::wstring& scriptPath,
-        ID2D1DeviceContext* context, RECT frame, int columns, int rows);
-    bool SafeReadFlags(const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover);
+        WidgetEngine* engine, ID2D1DeviceContext* context,
+        RECT frame, int columns, int rows);
+    bool SafeReadFlags(WidgetEngine* engine, const std::wstring& scriptPath,
+        bool& showTitle, bool& bottomBarHover);
+    void DrawInternal(ID2D1DeviceContext* context, RECT rect, int state,
+        WidgetEngine* engine, bool preview);
 
     ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);

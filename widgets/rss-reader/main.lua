@@ -23,6 +23,19 @@ local lastUrl = nil
 local lastInterval = nil
 local lastMaxItems = nil
 
+feedTitle = storage.get("previewFeedTitle") or feedTitle
+for index = 1, 12 do
+    local title = storage.get("previewArticle" .. tostring(index) .. "Title")
+    if title and title ~= "" then
+        articles[#articles + 1] = {
+            title = title,
+            date = storage.get("previewArticle" .. tostring(index) .. "Date") or "",
+            link = storage.get("previewArticle" .. tostring(index) .. "Link") or "",
+            desc = storage.get("previewArticle" .. tostring(index) .. "Description") or "",
+        }
+    end
+end
+
 local function resolveTextColor()
     local tc = tonumber(storage.get("textColor")) or textColor
     local follows = storage.get("followPersonalization") == "1"

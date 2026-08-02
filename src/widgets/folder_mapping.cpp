@@ -17,6 +17,7 @@
 #include "../menu_fluent_glyphs.h"
 #include "drop_model.h"
 #include "search_match.h"
+#include "widget_preview_scene.h"
 #include "../category_settings.h"
 #include <algorithm>
 #include <shlobj.h>
@@ -716,6 +717,18 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
 Item* FolderMapping::GetSlotItem(size_t idx) const
 {
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
+    if (auto* scene = GetPreviewScene())
+    {
+        FolderEntry* sample = scene->FindFolderEntry(
+            data_->folderEntries[idx].fullPath);
+        if (!sample) return nullptr;
+        auto icon = std::make_unique<FolderEntryIcon>(
+            sample,
+            const_cast<FolderMapping*>(this), app_);
+        Item* result = icon.get();
+        slotItemCache_.push_back(std::move(icon));
+        return result;
+    }
     auto icon = std::make_unique<FolderEntryIcon>(&data_->folderEntries[idx],
         const_cast<FolderMapping*>(this), app_);
     Item* result = icon.get();
@@ -1066,6 +1079,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     (void)body;
+    const bool preview = IsPreviewRendering();
     bool privacyActive = data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
@@ -1102,7 +1116,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                 RECT tab = FolderMappingTabRect(this, i);
                 if (IsRectEmptyRect(tab)) continue;
                 bool active = visibleCategoryIds_[i] == activeCategory;
-                bool hovered = PtInRect(&tab, app_->lastMousePoint_) != FALSE;
+                bool hovered = !IsPreviewRendering() &&
+                    PtInRect(&tab, app_->lastMousePoint_) != FALSE;
                 DrawCategorizedTab(
                     context, tab,
                     FolderMappingTabDisplayText(this, visibleCategoryIds_[i]),
@@ -1178,7 +1193,10 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (visibleIndex >= visibleEntries.size()) continue;
         size_t entryIndex = visibleEntries[visibleIndex];
         if (entryIndex >= data_->folderEntries.size()) continue;
-        const FolderEntry& entry = data_->folderEntries[entryIndex];
+        auto* icon = dynamic_cast<FolderEntryIcon*>(slot->GetItem());
+        FolderEntry* item = icon ? icon->GetFolderEntry() : nullptr;
+        if (!item) continue;
+        const FolderEntry& entry = *item;
         RECT cell = slot->GetBounds();
         if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
 
@@ -1189,9 +1207,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             else
             {
                 RECT bodyRect = GetBodyRect();
-                bool hovered = !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
-                FolderEntryIcon icon(const_cast<FolderEntry*>(&entry), this, app_);
-                icon.Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0),
+                bool hovered = !preview && !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                icon->Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0),
                     app_->IsLightContentTheme());
             }
             continue;
@@ -1252,7 +1269,8 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
         GetCuFluentTextFormat(14.0f * bs);
 
     auto drawFluentButton = [&](RECT rect, const std::wstring& glyph, bool active) {
-        bool hot = PtInRect(&rect, app_->lastMousePoint_) != FALSE;
+        bool hot = !IsPreviewRendering() &&
+            PtInRect(&rect, app_->lastMousePoint_) != FALSE;
         app_->DrawD2DText(context, glyph, rect,
             fluentFormat ? fluentFormat :
                 (app_->fluentIconTextFormat_

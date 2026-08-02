@@ -127,20 +127,132 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 }
 
 /**
+ * @brief 按组件预览页所表达的尺寸与显示模式创建组件。
+ */
+void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
+    const snowdesktop::component_preview::ApplySettings& settings)
+{
+    using snowdesktop::component_preview::ApplyKind;
+    if (settings.kind == ApplyKind::None) return;
+
+    lastContextMenuScreenPoint_ = screenPoint;
+    const GridSpan span{
+        std::clamp(settings.columns, 1, 8),
+        std::clamp(settings.rows, 1, 8),
+    };
+    DesktopWidget widget;
+    widget.id = MakeNewWidgetId();
+    widget.listMode = settings.listMode;
+    widget.scrollContainerMode = settings.scrollContainerMode;
+    widget.dateHeaders = settings.dateHeaders;
+    widget.showFileCategories = settings.showFileCategories;
+    widget.showSearchBox = settings.showSearchBox;
+
+    switch (settings.kind)
+    {
+    case ApplyKind::Collection:
+        widget.type = DesktopWidgetType::Collection;
+        widget.title = _LW("widget.collection");
+        widget.showTitle = true;
+        widget.bottomBarHover = true;
+        break;
+    case ApplyKind::CollectionGroup:
+        widget.type = DesktopWidgetType::CollectionGroup;
+        widget.title = _LW("widget.collection_group");
+        widget.showTitle = true;
+        break;
+    case ApplyKind::FileGroup:
+        widget.type = DesktopWidgetType::FileGroup;
+        widget.title = _LW("widget.file_group");
+        widget.showTitle = true;
+        break;
+    case ApplyKind::FileCategories:
+        widget.type = DesktopWidgetType::FileCategories;
+        widget.title = _LW("widget.desktop_files");
+        widget.showTitle = true;
+        break;
+    case ApplyKind::FolderMapping:
+    {
+        std::wstring folderPath;
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        IFileOpenDialog* dialog = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+        {
+            dialog->SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+            dialog->SetTitle(_LW("app.interact.select_folder"));
+            if (SUCCEEDED(dialog->Show(hwnd_)))
+            {
+                IShellItem* item = nullptr;
+                if (SUCCEEDED(dialog->GetResult(&item)))
+                {
+                    PWSTR path = nullptr;
+                    if (SUCCEEDED(item->GetDisplayName(
+                            SIGDN_FILESYSPATH, &path)))
+                    {
+                        folderPath = path;
+                        CoTaskMemFree(path);
+                    }
+                    item->Release();
+                }
+            }
+            dialog->Release();
+        }
+        CoUninitialize();
+        if (folderPath.empty()) return;
+
+        std::wstring title = folderPath;
+        if (!title.empty() && title.back() == L'\\') title.pop_back();
+        const size_t lastSeparator = title.find_last_of(L"\\/");
+        if (lastSeparator != std::wstring::npos)
+            title = title.substr(lastSeparator + 1);
+        widget.type = DesktopWidgetType::FolderMapping;
+        widget.title = title;
+        widget.showTitle = true;
+        widget.sourceFolderPath = folderPath;
+        break;
+    }
+    case ApplyKind::LuaScript:
+        if (settings.packageId.empty()) return;
+        widget.type = DesktopWidgetType::LuaScript;
+        widget.packageId = settings.packageId;
+        widget.title = WidgetEngine::GetWidgetDisplayName(settings.packageId);
+        if (widget.title.empty()) widget.title = settings.packageId;
+        widget.bottomBarHover = true;
+        if (widgetEngine_)
+        {
+            widgetEngine_->EnsureWidgetLoaded(widget.id, settings.packageId);
+            widget.showTitle = widgetEngine_->ReadBoolFlag(
+                settings.packageId, "showTitle", false);
+            widget.bottomBarHover = widgetEngine_->ReadBoolFlag(
+                settings.packageId, "bottomBarHover", true);
+        }
+        break;
+    default:
+        return;
+    }
+
+    const bool enumerateFolder =
+        widget.type == DesktopWidgetType::FolderMapping;
+    const size_t oldWidgetCount = widgets_.size();
+    AddWidgetToGrid(std::move(widget), span);
+    if (enumerateFolder && widgets_.size() > oldWidgetCount)
+    {
+        EnumerateFolderMappingEntries(widgets_.back());
+        RebuildContainersAndItems();
+    }
+    ShowWidgetAddedHint();
+}
+
+/**
  * @brief 在右键菜单位置添加集合组件。
  * @param screenPoint 屏幕坐标点。
  */
 void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
 {
-    lastContextMenuScreenPoint_ = screenPoint;
-    DesktopWidget w;
-    w.id = MakeNewWidgetId();
-    w.type = DesktopWidgetType::Collection;
-    w.title = _LW("widget.collection");
-    w.showTitle = true;
-    w.bottomBarHover = true;
-    AddWidgetToGrid(std::move(w), { 1, 1 });
-    ShowWidgetAddedHint();
+    snowdesktop::component_preview::ApplySettings settings;
+    settings.kind = snowdesktop::component_preview::ApplyKind::Collection;
+    ApplyWidgetPreviewSettings(screenPoint, settings);
 }
 
 /**
@@ -149,30 +261,22 @@ void DesktopApp::AddCollectionWidgetAt(POINT screenPoint)
  */
 void DesktopApp::AddCollectionGroupWidgetAt(POINT screenPoint)
 {
-    lastContextMenuScreenPoint_ = screenPoint;
-    DesktopWidget widget;
-    widget.id = MakeNewWidgetId();
-    widget.type = DesktopWidgetType::CollectionGroup;
-    widget.title = _LW("widget.collection_group");
-    widget.showTitle = true;
-    AddWidgetToGrid(std::move(widget), { 2, 2 });
-    ShowWidgetAddedHint();
+    snowdesktop::component_preview::ApplySettings settings;
+    settings.kind =
+        snowdesktop::component_preview::ApplyKind::CollectionGroup;
+    settings.columns = 3;
+    settings.rows = 3;
+    ApplyWidgetPreviewSettings(screenPoint, settings);
 }
 
 void DesktopApp::AddFileGroupWidgetAt(POINT screenPoint)
 {
-    lastContextMenuScreenPoint_ = screenPoint;
-    DesktopWidget widget;
-    widget.id = MakeNewWidgetId();
-    widget.type = DesktopWidgetType::FileGroup;
-    widget.title = _LW("widget.file_group");
-    widget.showTitle = true;
-    widget.showFileCategories = true;
-    widget.showSearchBox = false;
-    widget.listMode = false;
-    widget.dateHeaders = false;
-    AddWidgetToGrid(std::move(widget), { 2, 2 });
-    ShowWidgetAddedHint();
+    snowdesktop::component_preview::ApplySettings settings;
+    settings.kind = snowdesktop::component_preview::ApplyKind::FileGroup;
+    settings.columns = 3;
+    settings.rows = 3;
+    settings.showFileCategories = true;
+    ApplyWidgetPreviewSettings(screenPoint, settings);
 }
 
 size_t DesktopApp::HitTestCollectionGroupIndex(
@@ -966,14 +1070,14 @@ void DesktopApp::ReleaseDesktopItemsFromWidget(
  */
 void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
 {
-    lastContextMenuScreenPoint_ = screenPoint;
-    DesktopWidget w;
-    w.id = MakeNewWidgetId();
-    w.type = DesktopWidgetType::FileCategories;
-    w.title = _LW("widget.desktop_files");
-    w.showTitle = true;
-    AddWidgetToGrid(std::move(w), { 2, 2 });
-    ShowWidgetAddedHint();
+    snowdesktop::component_preview::ApplySettings settings;
+    settings.kind =
+        snowdesktop::component_preview::ApplyKind::FileCategories;
+    settings.columns = 3;
+    settings.rows = 3;
+    settings.showFileCategories = true;
+    settings.showSearchBox = true;
+    ApplyWidgetPreviewSettings(screenPoint, settings);
 }
 
 /**
@@ -982,55 +1086,12 @@ void DesktopApp::AddFileCategoryWidgetAt(POINT screenPoint)
  */
 void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
 {
-    lastContextMenuScreenPoint_ = screenPoint;
-
-    // Pick source folder via modern file-explorer-style dialog
-    std::wstring folderPath;
-    {
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        IFileOpenDialog* pfd = nullptr;
-        if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
-                                        IID_PPV_ARGS(&pfd))))
-        {
-            pfd->SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-            pfd->SetTitle(_LW("app.interact.select_folder"));
-            if (SUCCEEDED(pfd->Show(hwnd_)))
-            {
-                IShellItem* psi = nullptr;
-                if (SUCCEEDED(pfd->GetResult(&psi)))
-                {
-                    PWSTR pszPath = nullptr;
-                    if (SUCCEEDED(psi->GetDisplayName(SIGDN_FILESYSPATH, &pszPath)))
-                    {
-                        folderPath = pszPath;
-                        CoTaskMemFree(pszPath);
-                    }
-                    psi->Release();
-                }
-            }
-            pfd->Release();
-        }
-        CoUninitialize();
-    }
-    if (folderPath.empty()) return;
-    std::wstring title = folderPath;
-    if (!title.empty() && title.back() == L'\\') title.pop_back();
-    size_t lastSep = title.find_last_of(L"\\/");
-    title = (lastSep != std::wstring::npos) ? title.substr(lastSep + 1) : title;
-
-    DesktopWidget w;
-    w.id = MakeNewWidgetId();
-    w.type = DesktopWidgetType::FolderMapping;
-    w.title = title;
-    w.showTitle = true;
-    w.sourceFolderPath = folderPath;
-    AddWidgetToGrid(std::move(w), { 2, 2 });
-
-    // Enumerate entries
-    size_t idx = widgets_.size() - 1;
-    EnumerateFolderMappingEntries(widgets_[idx]);
-    RebuildContainersAndItems();
-    ShowWidgetAddedHint();
+    snowdesktop::component_preview::ApplySettings settings;
+    settings.kind =
+        snowdesktop::component_preview::ApplyKind::FolderMapping;
+    settings.columns = 3;
+    settings.rows = 3;
+    ApplyWidgetPreviewSettings(screenPoint, settings);
 }
 
 /**
@@ -1041,29 +1102,15 @@ void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
 void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId)
 {
     if (packageId.empty()) return;
-    lastContextMenuScreenPoint_ = screenPoint;
-
-    DesktopWidget w;
-    w.id = MakeNewWidgetId();
-    w.type = DesktopWidgetType::LuaScript;
-    w.title = WidgetEngine::GetWidgetDisplayName(packageId);
-    if (w.title.empty())
-    {
-        w.title = packageId;
-    }
-    w.packageId = packageId;
-    w.bottomBarHover = true;
-    if (widgetEngine_)
-    {
-        widgetEngine_->EnsureWidgetLoaded(w.id, packageId);
-        w.showTitle = widgetEngine_->ReadBoolFlag(packageId, "showTitle", false);
-        w.bottomBarHover = widgetEngine_->ReadBoolFlag(packageId, "bottomBarHover", true);
-    }
     int defaultColumns = 1;
     int defaultRows = 1;
     WidgetEngine::GetWidgetDefaultSpan(packageId, defaultColumns, defaultRows);
-    AddWidgetToGrid(std::move(w), { defaultColumns, defaultRows });
-    ShowWidgetAddedHint();
+    snowdesktop::component_preview::ApplySettings settings;
+    settings.kind = snowdesktop::component_preview::ApplyKind::LuaScript;
+    settings.packageId = packageId;
+    settings.columns = defaultColumns;
+    settings.rows = defaultRows;
+    ApplyWidgetPreviewSettings(screenPoint, settings);
 }
 
 /**

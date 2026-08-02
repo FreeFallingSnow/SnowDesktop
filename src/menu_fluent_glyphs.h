@@ -5,6 +5,15 @@ namespace snowdesktop::menu_fluent_glyphs
 
 // Shared semantic glyphs keep widget controls and context menus visually
 // consistent. All code points come from FluentSystemIcons-Regular.ttf.
+inline constexpr wchar_t kCollection[] = L"\uF122";       // app_folder
+inline constexpr wchar_t kDesktopFiles[] = L"\uF418";     // folder
+inline constexpr wchar_t kFolderMapping[] = L"\uF425";    // folder_link
+inline constexpr wchar_t kCollectionGroup[] = L"\U000F0829"; // collections_empty
+inline constexpr wchar_t kFileGroup[] = L"\U000F0ADE";    // folder_multiple
+inline constexpr wchar_t kCollectItems[] = L"\uF159";     // arrow_import
+inline constexpr wchar_t kAutoCollect[] = L"\uF190";      // arrow_sync
+inline constexpr wchar_t kContentLayout[] = L"\uE064";    // apps_list_detail
+inline constexpr wchar_t kCategoryBar[] = L"\uEC7E";      // tag_multiple
 inline constexpr wchar_t kDateHeader[] = L"\uF22A";
 inline constexpr wchar_t kNewItem[] = L"\uF10C";
 inline constexpr wchar_t kMoreOptions[] = L"\uF582";

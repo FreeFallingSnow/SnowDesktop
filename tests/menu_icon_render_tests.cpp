@@ -290,6 +290,30 @@ int wmain(int argc, wchar_t** argv)
     Expect(accentColorPixels > 0,
         "quick-action Fluent icon contains a blue accent layer");
 
+    const snowdesktop::menu_icon::ItemView inlinePrevious{
+        L"", L"\uF15B", false, false, false,
+    };
+    const snowdesktop::menu_icon::ItemView inlineStatus{
+        L"1 / 3", L"", false, false, false,
+    };
+    const RECT inlinePreviousBounds{ 0, 0, 40, metrics96.rowHeight };
+    const RECT inlineStatusBounds{ 40, 0, 200, metrics96.rowHeight };
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawInlineAction(
+        dc, font, fluentFont, inlinePrevious, inlinePreviousBounds,
+        ODS_SELECTED, light, metrics96),
+        "selected inline paging arrow renders");
+    Expect(snowdesktop::menu_icon::DrawInlineAction(
+        dc, font, fluentFont, inlineStatus, inlineStatusBounds,
+        ODS_DISABLED | ODS_GRAYED, light, metrics96),
+        "disabled inline page status renders");
+    Expect(CountColorInRect(pixels, kWidth, kHeight,
+        inlinePreviousBounds, light.hoverBackground) > 0,
+        "inline paging button keeps the menu hover treatment");
+    Expect(CountColorInRect(pixels, kWidth, kHeight,
+        inlineStatusBounds, light.disabledText) > 0,
+        "inline page status uses disabled menu text");
+
     const std::array accentedQuickIcons{
         snowdesktop::MenuQuickIcon::NewItem,
         snowdesktop::MenuQuickIcon::Cut,

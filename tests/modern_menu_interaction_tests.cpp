@@ -13,7 +13,14 @@ constexpr wchar_t kOwnerClass[] =
     L"SnowDesktop.ModernMenuInteractionTestOwner";
 constexpr UINT_PTR kDriveTimer = 1;
 constexpr UINT_PTR kWatchdogTimer = 2;
-enum class DriveMode { Cascade, Simple, Persistent, Nested };
+enum class DriveMode
+{
+    Cascade,
+    Simple,
+    Persistent,
+    PersistentSubmenu,
+    Nested,
+};
 DriveMode gDriveMode = DriveMode::Cascade;
 int gDrivePhase = 0;
 bool gInputPosted = false;
@@ -24,6 +31,8 @@ bool gObservedTopmost = false;
 bool gNestedMenuCompleted = false;
 UINT gNestedMenuCommand = 0;
 bool gWatchdogFired = false;
+HWND gPersistentSubmenuWindow = nullptr;
+bool gPersistentSubmenuStayedOpen = false;
 
 struct MenuWindows
 {
@@ -126,6 +135,31 @@ LRESULT CALLBACK OwnerWindowProc(
             SendMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
             SendMessageW(menus.root, WM_KEYDOWN, VK_DOWN, 0);
             SendMessageW(menus.root, WM_KEYDOWN, VK_RETURN, 0);
+            gInputPosted = true;
+            KillTimer(hwnd, kDriveTimer);
+        }
+        else if (gDriveMode == DriveMode::PersistentSubmenu && menus.root &&
+            gDrivePhase == 0)
+        {
+            SendMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_RIGHT, 0);
+            gDrivePhase = 1;
+        }
+        else if (gDriveMode == DriveMode::PersistentSubmenu && menus.child &&
+            gDrivePhase == 1)
+        {
+            gPersistentSubmenuWindow = menus.child;
+            SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
+            gDrivePhase = 2;
+        }
+        else if (gDriveMode == DriveMode::PersistentSubmenu && menus.child &&
+            gDrivePhase == 2)
+        {
+            gPersistentSubmenuStayedOpen =
+                menus.child == gPersistentSubmenuWindow;
+            SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
             KillTimer(hwnd, kDriveTimer);
         }
@@ -329,6 +363,85 @@ int wmain()
     options.topmost = false;
     gCaptureTopmost = false;
 
+    std::vector<Item> inlinePagingItems(3);
+    inlinePagingItems[0].command = 61;
+    inlinePagingItems[0].glyph = L"<";
+    inlinePagingItems[0].inlineAction = true;
+    inlinePagingItems[1].command = 62;
+    inlinePagingItems[1].label = L"Page 1 / 3";
+    inlinePagingItems[1].enabled = false;
+    inlinePagingItems[1].inlineAction = true;
+    inlinePagingItems[2].command = 63;
+    inlinePagingItems[2].glyph = L">";
+    inlinePagingItems[2].inlineAction = true;
+    gDriveMode = DriveMode::Simple;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gCaptureRootRect = true;
+    gObservedRootRect = {};
+    gWatchdogFired = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto inlinePagingResult =
+        snowdesktop::modern_menu::Show(inlinePagingItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired, "inline paging popup did not time out");
+    Expect(inlinePagingResult.command == 61,
+        "inline paging group remains keyboard accessible");
+    const int inlinePagingHeight = gObservedRootRect.bottom -
+        gObservedRootRect.top;
+    Expect(inlinePagingHeight < regularHeight,
+        "three paging actions share one menu row");
+    Expect(inlinePagingResult.itemScreenRect.right -
+            inlinePagingResult.itemScreenRect.left <=
+            32,
+        "paging arrow uses a compact square cell");
+
+    std::vector<Item> previewRows(4);
+    previewRows[0].command = 71;
+    previewRows[0].label = L"Collection";
+    previewRows[0].glyph = L"C";
+    previewRows[0].inlineAction = true;
+    previewRows[0].inlineGroup = 1;
+    previewRows[1].command = 72;
+    previewRows[1].label = L"Preview";
+    previewRows[1].inlineAction = true;
+    previewRows[1].inlineGroup = 1;
+    previewRows[1].compactInlineAction = true;
+    previewRows[2].command = 73;
+    previewRows[2].label = L"Desktop Files";
+    previewRows[2].glyph = L"D";
+    previewRows[2].inlineAction = true;
+    previewRows[2].inlineGroup = 2;
+    previewRows[3].command = 74;
+    previewRows[3].label = L"Preview";
+    previewRows[3].inlineAction = true;
+    previewRows[3].inlineGroup = 2;
+    previewRows[3].compactInlineAction = true;
+    gDriveMode = DriveMode::Simple;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gCaptureRootRect = true;
+    gObservedRootRect = {};
+    gWatchdogFired = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto previewRowsResult =
+        snowdesktop::modern_menu::Show(previewRows, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired,
+        "grouped add/preview rows did not time out");
+    Expect(previewRowsResult.command == 71,
+        "the component-name side remains the primary command");
+    const int previewRowsHeight =
+        gObservedRootRect.bottom - gObservedRootRect.top;
+    Expect(previewRowsHeight > inlinePagingHeight,
+        "each component add/preview pair occupies its own menu row");
+    Expect(previewRowsResult.itemScreenRect.right -
+            previewRowsResult.itemScreenRect.left > 64,
+        "the component name receives more space than the preview action");
+    gCaptureRootRect = false;
+
     const std::vector<Item> persistentItems{
         { 41, L"Adjust once", L"+", true },
         { 42, L"Finish", L"F", true },
@@ -357,6 +470,42 @@ int wmain()
         "persistent command callback runs without closing the popup");
     Expect(persistentResult.command == 42,
         "persistent popup remains interactive until Finish is selected");
+
+    const std::vector<Item> persistentSubmenuItems{
+        { 0, L"Widgets", L"W", true, false, false,
+            {
+                { 51, L"Next page", L">", true },
+                { 52, L"Widget A", L"A", true },
+            } },
+    };
+    int persistentSubmenuCommandCount = 0;
+    options.onCommand = [&](UINT command, auto& currentItems) {
+        if (command != 51)
+            return false;
+        ++persistentSubmenuCommandCount;
+        currentItems.front().children = {
+            { 53, L"Widget B", L"B", true },
+        };
+        return true;
+    };
+    gDriveMode = DriveMode::PersistentSubmenu;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gPersistentSubmenuWindow = nullptr;
+    gPersistentSubmenuStayedOpen = false;
+    gWatchdogFired = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto persistentSubmenuResult =
+        snowdesktop::modern_menu::Show(persistentSubmenuItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired, "persistent submenu did not time out");
+    Expect(persistentSubmenuCommandCount == 1,
+        "submenu page command runs without closing the menu");
+    Expect(gPersistentSubmenuStayedOpen,
+        "submenu page update keeps the existing popup window visible");
+    Expect(persistentSubmenuResult.command == 53,
+        "updated submenu remains interactive after changing page");
 
     gCaptureRootRect = false;
     gDriveMode = DriveMode::Nested;

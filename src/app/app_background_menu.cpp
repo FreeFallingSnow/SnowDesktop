@@ -2,6 +2,8 @@
 #include "../menu_fluent_glyphs.h"
 #include "../modern_menu.h"
 
+#include <cstring>
+
 // Grid adjustment and desktop-background context menus.
 
 namespace
@@ -16,6 +18,169 @@ bool HasPasteableFileClipboardData()
         CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL,
     };
     return SUCCEEDED(clipboard->QueryGetData(&format));
+}
+
+constexpr size_t kLuaWidgetMenuPageSize = 8;
+
+size_t LuaWidgetMenuPageCount(size_t widgetCount)
+{
+    return std::max<size_t>(
+        1, (widgetCount + kLuaWidgetMenuPageSize - 1) /
+            kLuaWidgetMenuPageSize);
+}
+
+std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
+    const std::vector<std::wstring>& luaWidgets, size_t page)
+{
+    using snowdesktop::modern_menu::Item;
+
+    std::vector<Item> items;
+    UINT inlineGroup = 1;
+    auto appendPair = [&](UINT command, UINT previewCommand,
+                          const wchar_t* label, const wchar_t* glyph) {
+        Item item;
+        item.command = command;
+        item.label = label;
+        item.glyph = glyph;
+        item.inlineAction = true;
+        item.inlineGroup = inlineGroup;
+        items.push_back(std::move(item));
+
+        Item preview;
+        preview.command = previewCommand;
+        preview.label = _LW("app.menu.preview");
+        preview.inlineAction = true;
+        preview.inlineGroup = inlineGroup++;
+        preview.compactInlineAction = true;
+        items.push_back(std::move(preview));
+    };
+    appendPair(kContextAddCollectionWidget,
+        kContextPreviewCollectionWidget,
+        _LW("app.menu.collection"),
+        snowdesktop::menu_fluent_glyphs::kCollection);
+    appendPair(kContextAddFileCategoryWidget,
+        kContextPreviewFileCategoryWidget,
+        _LW("app.menu.file_categories"),
+        snowdesktop::menu_fluent_glyphs::kDesktopFiles);
+    appendPair(kContextAddFolderMappingWidget,
+        kContextPreviewFolderMappingWidget,
+        _LW("app.menu.folder_mapping"),
+        snowdesktop::menu_fluent_glyphs::kFolderMapping);
+    appendPair(kContextAddCollectionGroupWidget,
+        kContextPreviewCollectionGroupWidget,
+        _LW("app.menu.collection_group"),
+        snowdesktop::menu_fluent_glyphs::kCollectionGroup);
+    appendPair(kContextAddFileGroupWidget,
+        kContextPreviewFileGroupWidget,
+        _LW("app.menu.file_group"),
+        snowdesktop::menu_fluent_glyphs::kFileGroup);
+
+    if (luaWidgets.empty())
+        return items;
+
+    items.push_back({ 0, L"", L"", false, false, true });
+    const size_t pageCount = LuaWidgetMenuPageCount(luaWidgets.size());
+    page = std::min(page, pageCount - 1);
+    const size_t first = page * kLuaWidgetMenuPageSize;
+    const size_t last = std::min(
+        luaWidgets.size(), first + kLuaWidgetMenuPageSize);
+    for (size_t i = first; i < last; ++i)
+    {
+        Item item;
+        item.command = kContextAddLuaWidgetFirst +
+            static_cast<UINT>(i - first);
+        item.label = WidgetEngine::GetWidgetDisplayName(luaWidgets[i]);
+        if (item.label.empty()) item.label = luaWidgets[i];
+        item.glyph = L"\uEE65";
+        item.inlineAction = true;
+        item.inlineGroup = inlineGroup;
+        items.push_back(std::move(item));
+
+        Item preview;
+        preview.command = kContextPreviewLuaWidgetFirst +
+            static_cast<UINT>(i - first);
+        preview.label = _LW("app.menu.preview");
+        preview.inlineAction = true;
+        preview.inlineGroup = inlineGroup++;
+        preview.compactInlineAction = true;
+        items.push_back(std::move(preview));
+    }
+
+    if (pageCount > 1)
+    {
+        items.push_back({ 0, L"", L"", false, false, true });
+        Item previous;
+        previous.command = kContextAddLuaWidgetPreviousPage;
+        previous.glyph = L"\uF15B";
+        previous.enabled = page > 0;
+        previous.inlineAction = true;
+        previous.inlineGroup = inlineGroup;
+        items.push_back(std::move(previous));
+
+        Item status;
+        status.command = kContextAddLuaWidgetPageStatus;
+        status.label = _LFW("app.menu.lua_widgets_page",
+            std::to_wstring(page + 1), std::to_wstring(pageCount));
+        status.enabled = false;
+        status.inlineAction = true;
+        status.inlineGroup = inlineGroup;
+        items.push_back(std::move(status));
+
+        Item next;
+        next.command = kContextAddLuaWidgetNextPage;
+        next.glyph = L"\uF181";
+        next.enabled = page + 1 < pageCount;
+        next.inlineAction = true;
+        next.inlineGroup = inlineGroup;
+        items.push_back(std::move(next));
+    }
+    return items;
+}
+
+UINT AddCommandForPreviewCommand(UINT command)
+{
+    switch (command)
+    {
+    case kContextPreviewCollectionWidget:
+        return kContextAddCollectionWidget;
+    case kContextPreviewFileCategoryWidget:
+        return kContextAddFileCategoryWidget;
+    case kContextPreviewFolderMappingWidget:
+        return kContextAddFolderMappingWidget;
+    case kContextPreviewCollectionGroupWidget:
+        return kContextAddCollectionGroupWidget;
+    case kContextPreviewFileGroupWidget:
+        return kContextAddFileGroupWidget;
+    default:
+        break;
+    }
+    if (command >= kContextPreviewLuaWidgetFirst &&
+        command < kContextPreviewLuaWidgetFirst +
+            static_cast<UINT>(kLuaWidgetMenuPageSize))
+    {
+        return kContextAddLuaWidgetFirst +
+            (command - kContextPreviewLuaWidgetFirst);
+    }
+    return 0;
+}
+
+bool ReplaceAddWidgetSubmenu(
+    std::vector<snowdesktop::modern_menu::Item>& rootItems,
+    std::vector<snowdesktop::modern_menu::Item> replacement)
+{
+    for (auto& item : rootItems)
+    {
+        const bool isAddWidgetSubmenu = std::ranges::any_of(
+            item.children, [](const auto& child) {
+                return child.command == kContextAddCollectionWidget;
+            });
+        if (isAddWidgetSubmenu)
+        {
+            item.children = std::move(replacement);
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -154,91 +319,727 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
     RestoreDesktopWindowLayer();
 }
 
+snowdesktop::component_preview::Bitmap
+DesktopApp::RenderWidgetMenuPreview(
+    const std::shared_ptr<snowdesktop::WidgetPreviewScene>& scene,
+    const std::wstring& rootWidgetId,
+    const std::unordered_map<std::string, std::string>& previewStorage,
+    int width, int height, UINT dpi, bool hovered)
+{
+    using snowdesktop::component_preview::Bitmap;
+    Bitmap result;
+    if (!scene || !d2dDevice_ || !dwriteFactory_ ||
+        width <= 0 || height <= 0)
+        return result;
+    DesktopWidget* data = scene->FindWidget(rootWidgetId);
+    if (!data) return result;
+    result.width = width;
+    result.height = height;
+
+    ComPtr<ID2D1DeviceContext> context;
+    if (FAILED(d2dDevice_->CreateDeviceContext(
+            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)) || !context)
+    {
+        result = {};
+        return result;
+    }
+    const D2D1_BITMAP_PROPERTIES1 targetProperties =
+        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+    ComPtr<ID2D1Bitmap1> target;
+    const D2D1_SIZE_U size = D2D1::SizeU(
+        static_cast<UINT32>(result.width),
+        static_cast<UINT32>(result.height));
+    if (FAILED(context->CreateBitmap(size, nullptr, 0,
+            &targetProperties, &target)) || !target)
+    {
+        result = {};
+        return result;
+    }
+    context->SetTarget(target.Get());
+    const float renderDpi = static_cast<float>(
+        dpi ? dpi : USER_DEFAULT_SCREEN_DPI);
+    context->SetDpi(renderDpi, renderDpi);
+    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+
+    data->selected = false;
+    const RECT desktopFrame = GetStandaloneWidgetFrameRect(*data);
+    if (IsRectEmptyRect(desktopFrame) ||
+        desktopFrame.right - desktopFrame.left != width ||
+        desktopFrame.bottom - desktopFrame.top != height)
+        return {};
+    std::unique_ptr<WidgetEngine> previewEngine;
+    if (data->type == DesktopWidgetType::LuaScript)
+    {
+        previewEngine = std::make_unique<WidgetEngine>();
+        if (!previewEngine->InitPreview(context.Get(), dwriteFactory_.Get()) ||
+            !previewEngine->EnsureWidgetPreviewLoaded(
+                data->id, data->packageId, previewStorage))
+            return {};
+    }
+    std::unique_ptr<Widget> widget = CreateWidget(data, this);
+    if (!widget) return {};
+
+    context->BeginDraw();
+    context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+    context->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(-desktopFrame.left),
+        static_cast<float>(-desktopFrame.top)));
+    snowdesktop::WidgetRenderOptions options;
+    options.previewScene = scene.get();
+    options.luaEngine = previewEngine.get();
+    options.pointer = hovered
+        ? POINT{ (desktopFrame.left + desktopFrame.right) / 2,
+            (desktopFrame.top + desktopFrame.bottom) / 2 }
+        : POINT{ -32000, -32000 };
+    options.frame = desktopFrame;
+    options.interactive = true;
+    options.registerBackdrop = false;
+    widget->DrawPreview(context.Get(), options.frame, options);
+    const HRESULT drawResult = context->EndDraw();
+    context->SetTransform(D2D1::Matrix3x2F::Identity());
+    context->SetTarget(nullptr);
+    for (const auto& sample : scene->Items())
+    {
+        if (DesktopItem* item = scene->FindDesktopItem(sample.key))
+            EraseD2DIconCacheForBitmap(item->iconBitmap);
+        if (FolderEntry* entry = scene->FindFolderEntry(sample.key))
+            EraseD2DIconCacheForBitmap(entry->iconBitmap);
+    }
+    if (FAILED(drawResult))
+    {
+        result = {};
+        return result;
+    }
+
+    const D2D1_BITMAP_PROPERTIES1 readProperties =
+        D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_CPU_READ |
+                D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+    ComPtr<ID2D1Bitmap1> readback;
+    if (FAILED(context->CreateBitmap(size, nullptr, 0,
+            &readProperties, &readback)) || !readback ||
+        FAILED(readback->CopyFromBitmap(nullptr, target.Get(), nullptr)))
+    {
+        result = {};
+        return result;
+    }
+    D2D1_MAPPED_RECT mapped{};
+    if (FAILED(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped)))
+    {
+        result = {};
+        return result;
+    }
+    result.pixels.resize(static_cast<size_t>(result.width) * result.height);
+    for (int y = 0; y < result.height; ++y)
+    {
+        std::memcpy(result.pixels.data() +
+                static_cast<size_t>(y) * result.width,
+            mapped.bits + static_cast<size_t>(y) * mapped.pitch,
+            static_cast<size_t>(result.width) * sizeof(std::uint32_t));
+    }
+    readback->Unmap();
+    return result;
+}
+
+snowdesktop::component_preview::Model
+DesktopApp::BuildAddWidgetMenuPreview(
+    UINT command, const std::wstring& packageId)
+{
+    using snowdesktop::component_preview::Card;
+    using snowdesktop::component_preview::Model;
+    using snowdesktop::component_preview::ApplyKind;
+    using snowdesktop::component_preview::Option;
+    using snowdesktop::component_preview::OptionSetting;
+    Model model;
+    model.resizeHint = _LW("app.widget_preview.resize_hint");
+    model.applyLabel = _LW("app.widget_preview.add_to_desktop");
+
+    POINT previewPoint = lastContextMenuScreenPoint_;
+    ScreenToClient(hwnd_, &previewPoint);
+    const GridPage* previewPage = GridPageFromPoint(previewPoint);
+    GridCell previewCell = CellFromPoint(previewPoint);
+    if (!previewPage)
+    {
+        previewPage = GetFirstPageGridPage();
+        if (previewPage)
+        {
+            previewCell.pageId = previewPage->id;
+            previewCell.column = 0;
+            previewCell.row = 0;
+        }
+    }
+
+    const PersonalizationSettings appearance = settingsWindow_
+        ? settingsWindow_->GetPersonalization()
+        : PersonalizationSettings::DarkPreset();
+    const std::wstring appearanceKey =
+        std::to_wstring(menuIconDpi_) + L":" +
+        std::to_wstring(menuLightTheme_) + L":" +
+        std::to_wstring(appearance.widgetBgR) + L":" +
+        std::to_wstring(appearance.widgetBgG) + L":" +
+        std::to_wstring(appearance.widgetBgB) + L":" +
+        std::to_wstring(appearance.widgetAlpha) + L":" +
+        std::to_wstring(appearance.widgetBorderAlpha) + L":" +
+        std::to_wstring(appearance.cornerRadius) + L":" +
+        std::to_wstring(appearance.barHeight) + L":" +
+        std::to_wstring(appearance.categorizedTabFontSize) + L":" +
+        std::to_wstring(appearance.glassEnabled) + L":" +
+        std::to_wstring(appearance.acrylicEnabled) + L":" +
+        std::to_wstring(appearance.contentTheme);
+
+    auto makeScene = [&]() {
+        auto scene = std::make_shared<snowdesktop::WidgetPreviewScene>();
+        const std::wstring itemTitles[] = {
+            _LW("app.widget_preview.item_travel_plans"),
+            _LW("app.widget_preview.item_seaside_sunset"),
+            _LW("app.widget_preview.item_reading_list"),
+            _LW("app.widget_preview.item_weekend_photos"),
+            _LW("app.widget_preview.item_home_budget"),
+            _LW("app.widget_preview.item_favorite_cafe"),
+            _LW("app.widget_preview.item_birthday_list"),
+            _LW("app.widget_preview.item_travel_photos"),
+            _LW("app.widget_preview.item_fitness_notes"),
+            _LW("app.widget_preview.item_mountain_view"),
+            _LW("app.widget_preview.item_restaurants"),
+            _LW("app.widget_preview.item_city_lights"),
+        };
+        for (int i = 0; i < 12; ++i)
+        {
+            const std::wstring glyph(
+                1, static_cast<wchar_t>(L'A' + i));
+            snowdesktop::WidgetPreviewItem item;
+            item.key = L"__preview_item_" + glyph;
+            item.glyph = glyph;
+            item.title = itemTitles[i];
+            item.categoryId = i % 2 == 0
+                ? L"documents" : L"images";
+            item.dateGroup = i < 3 ? L"today" : L"earlier";
+            item.directory = i == 3 || i == 7;
+            scene->AddItem(std::move(item));
+        }
+        const int bitmapSize = previewPage
+            ? std::max(64, GetGridPageItemIconSize(*previewPage) * 2)
+            : 128;
+        scene->PreparePlaceholderModels(
+            bitmapSize, IsLightContentTheme());
+        return scene;
+    };
+
+    auto fillItemKeys = [](DesktopWidget& widget,
+        const snowdesktop::WidgetPreviewScene& scene, size_t count) {
+        for (size_t i = 0;
+             i < std::min(count, scene.Items().size()); ++i)
+            widget.itemKeys.push_back(scene.Items()[i].key);
+    };
+
+    auto addCard = [&](const char* titleKey, const char* descriptionKey,
+                       const std::wstring& modeKey,
+                       const std::shared_ptr<
+                           snowdesktop::WidgetPreviewScene>& scene,
+                       DesktopWidget root,
+                       std::unordered_map<std::string, std::string>
+                           storage = {}) {
+        root.id = L"__component_preview_" + modeKey;
+        root.selected = false;
+        root.showTitle = true;
+        if (previewPage)
+        {
+            root.gridSpan.columns = std::clamp(root.gridSpan.columns,
+                1, std::max(1, previewPage->columns));
+            root.gridSpan.rows = std::clamp(root.gridSpan.rows,
+                1, std::max(1, previewPage->rows));
+            root.gridCell = previewCell;
+            root.gridCell.pageId = previewPage->id;
+            root.gridCell.column = std::clamp(root.gridCell.column, 0,
+                std::max(0, previewPage->columns - root.gridSpan.columns));
+            root.gridCell.row = std::clamp(root.gridCell.row, 0,
+                std::max(0, previewPage->rows - root.gridSpan.rows));
+            root.cellScale = CalculateWidgetCellScale(
+                previewPage->cellWidth, previewPage->cellHeight);
+            root.bounds = GetGridRect(
+                gridPages_, root.gridCell, root.gridSpan);
+        }
+        else
+        {
+            root.gridCell = {};
+            root.cellScale = 1.0f;
+            root.bounds = { 0, 0,
+                std::max(1, root.gridSpan.columns) * kCellWidth,
+                std::max(1, root.gridSpan.rows) * kMinCellHeight };
+        }
+        const RECT desktopFrame = GetStandaloneWidgetFrameRect(root);
+        const std::wstring rootId = root.id;
+        scene->AddWidget(std::move(root));
+        Card card;
+        card.title = _LW(titleKey);
+        card.description = descriptionKey && *descriptionKey
+            ? _LW(descriptionKey) : L"";
+        const DesktopWidget* rootData = scene->FindWidget(rootId);
+        card.columns = rootData
+            ? std::max(1, rootData->gridSpan.columns) : 1;
+        card.rows = rootData
+            ? std::max(1, rootData->gridSpan.rows) : 1;
+        card.previewWidth = std::max<LONG>(
+            1, desktopFrame.right - desktopFrame.left);
+        card.previewHeight = std::max<LONG>(
+            1, desktopFrame.bottom - desktopFrame.top);
+        card.sizeLabel = _LFW("app.widget_preview.size",
+            std::to_wstring(card.columns), std::to_wstring(card.rows));
+        card.cacheKey = modeKey + L":" + appearanceKey + L":" +
+            (previewPage ? previewPage->id : L"fallback") + L":" +
+            std::to_wstring(card.previewWidth) + L"x" +
+            std::to_wstring(card.previewHeight) + L":" +
+            std::to_wstring(rootData ? rootData->cellScale : 1.0f);
+        card.render = [this, scene, rootId, storage](
+                int width, int height, UINT dpi,
+                const snowdesktop::component_preview::ApplySettings& settings,
+                bool hovered) {
+            if (DesktopWidget* preview = scene->FindWidget(rootId))
+            {
+                preview->listMode = settings.listMode;
+                preview->scrollContainerMode = settings.scrollContainerMode;
+                preview->dateHeaders = settings.dateHeaders;
+                preview->showFileCategories = settings.showFileCategories;
+                preview->showSearchBox = settings.showSearchBox;
+            }
+            return RenderWidgetMenuPreview(
+                scene, rootId, storage, width, height, dpi, hovered);
+        };
+        if (rootData)
+        {
+            switch (rootData->type)
+            {
+            case DesktopWidgetType::Collection:
+                card.applySettings.kind = ApplyKind::Collection; break;
+            case DesktopWidgetType::CollectionGroup:
+                card.applySettings.kind = ApplyKind::CollectionGroup; break;
+            case DesktopWidgetType::FileGroup:
+                card.applySettings.kind = ApplyKind::FileGroup; break;
+            case DesktopWidgetType::FileCategories:
+                card.applySettings.kind = ApplyKind::FileCategories; break;
+            case DesktopWidgetType::FolderMapping:
+                card.applySettings.kind = ApplyKind::FolderMapping; break;
+            case DesktopWidgetType::LuaScript:
+                card.applySettings.kind = ApplyKind::LuaScript; break;
+            default:
+                break;
+            }
+            card.applySettings.packageId = rootData->packageId;
+            card.applySettings.columns = card.columns;
+            card.applySettings.rows = card.rows;
+            card.applySettings.listMode = rootData->listMode;
+            card.applySettings.scrollContainerMode =
+                rootData->scrollContainerMode;
+            card.applySettings.dateHeaders = rootData->dateHeaders;
+            card.applySettings.showFileCategories =
+                rootData->showFileCategories;
+            card.applySettings.showSearchBox = rootData->showSearchBox;
+        }
+        model.cards.push_back(std::move(card));
+    };
+    auto option = [&](OptionSetting setting, const char* labelKey,
+                      const char* offKey, const char* onKey) {
+        Option value;
+        value.setting = setting;
+        value.label = _LW(labelKey);
+        value.offLabel = _LW(offKey);
+        value.onLabel = _LW(onKey);
+        return value;
+    };
+    auto layoutOption = [&]() {
+        return option(OptionSetting::ListMode,
+            "app.widget_preview.setting_layout",
+            "app.widget_preview.mode_icons",
+            "app.widget_preview.mode_list");
+    };
+    auto collectionModeOption = [&]() {
+        return option(OptionSetting::ScrollContainerMode,
+            "app.widget_preview.setting_collection_mode",
+            "app.widget_preview.mode_large_folder",
+            "app.widget_preview.mode_scroll_container");
+    };
+
+    switch (command)
+    {
+    case kContextAddCollectionWidget:
+    {
+        model.title = _LW("app.menu.collection");
+        model.introduction = _LW("app.widget_preview.collection_intro");
+        auto compactScene = makeScene();
+        DesktopWidget compact;
+        compact.type = DesktopWidgetType::Collection;
+        compact.title = model.title;
+        compact.gridSpan = { 1, 1 };
+        fillItemKeys(compact, *compactScene, 5);
+        addCard("app.widget_preview.collection_compact",
+            "app.widget_preview.collection_compact_hint", L"collection:compact",
+            compactScene, std::move(compact));
+
+        auto scrollGridScene = makeScene();
+        DesktopWidget scrollGrid;
+        scrollGrid.type = DesktopWidgetType::Collection;
+        scrollGrid.title = model.title;
+        scrollGrid.gridSpan = { 3, 3 };
+        fillItemKeys(scrollGrid, *scrollGridScene, 12);
+        addCard("app.widget_preview.collection_scroll_grid",
+            "app.widget_preview.collection_scroll_grid_hint",
+            L"collection:scroll-grid", scrollGridScene,
+            std::move(scrollGrid));
+        model.cards.back().options = {
+            collectionModeOption(), layoutOption() };
+        return model;
+    }
+    case kContextAddFileCategoryWidget:
+    {
+        model.title = _LW("app.menu.file_categories");
+        model.introduction = _LW("app.widget_preview.file_categories_intro");
+        auto gridScene = makeScene();
+        DesktopWidget grid;
+        grid.type = DesktopWidgetType::FileCategories;
+        grid.title = model.title;
+        grid.gridSpan = { 3, 3 };
+        grid.activeCategoryId = L"documents";
+        grid.showFileCategories = true;
+        grid.showSearchBox = true;
+        fillItemKeys(grid, *gridScene, 8);
+        addCard("app.widget_preview.category_grid",
+            "app.widget_preview.category_grid_hint", L"categories:grid",
+            gridScene, std::move(grid));
+        model.cards.back().options = {
+            layoutOption(),
+            option(OptionSetting::DateHeaders,
+                "app.widget_preview.setting_date_headers",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+            option(OptionSetting::ShowFileCategories,
+                "app.widget_preview.setting_category_tabs",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+            option(OptionSetting::ShowSearchBox,
+                "app.widget_preview.setting_search_box",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+        };
+        return model;
+    }
+    case kContextAddFolderMappingWidget:
+    {
+        model.title = _LW("app.menu.folder_mapping");
+        model.introduction = _LW("app.widget_preview.folder_mapping_intro");
+        auto addEntries = [](DesktopWidget& widget,
+            const snowdesktop::WidgetPreviewScene& scene) {
+            FILETIME now{};
+            GetSystemTimeAsFileTime(&now);
+            for (size_t i = 0; i < scene.Items().size(); ++i)
+            {
+                FolderEntry entry;
+                entry.name = scene.Items()[i].title +
+                    (i % 2 == 0 ? L".txt" : L".png");
+                entry.fullPath = scene.Items()[i].key;
+                entry.isDirectory = scene.Items()[i].directory;
+                entry.lastWriteTime = i < 3 ? now : FILETIME{};
+                widget.folderEntries.push_back(std::move(entry));
+            }
+        };
+        auto gridScene = makeScene();
+        DesktopWidget grid;
+        grid.type = DesktopWidgetType::FolderMapping;
+        grid.title = model.title;
+        grid.gridSpan = { 3, 3 };
+        addEntries(grid, *gridScene);
+        addCard("app.widget_preview.folder_grid",
+            "app.widget_preview.folder_grid_hint", L"folder:grid",
+            gridScene, std::move(grid));
+        model.cards.back().options = {
+            layoutOption(),
+            option(OptionSetting::DateHeaders,
+                "app.widget_preview.setting_date_headers",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+            option(OptionSetting::ShowFileCategories,
+                "app.widget_preview.setting_category_tabs",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+            option(OptionSetting::ShowSearchBox,
+                "app.widget_preview.setting_search_box",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+        };
+        return model;
+    }
+    case kContextAddCollectionGroupWidget:
+    {
+        model.title = _LW("app.menu.collection_group");
+        model.introduction = _LW("app.widget_preview.collection_group_intro");
+        auto addGroupCard = [&]() {
+            auto scene = makeScene();
+            DesktopWidget first;
+            first.id = L"__preview_collection_a";
+            first.type = DesktopWidgetType::Collection;
+            first.title = _LW("app.widget_preview.collection_a");
+            fillItemKeys(first, *scene, 5);
+            DesktopWidget second;
+            second.id = L"__preview_collection_b";
+            second.type = DesktopWidgetType::Collection;
+            second.title = _LW("app.widget_preview.collection_b");
+            for (size_t i = 3; i < scene->Items().size(); ++i)
+                second.itemKeys.push_back(scene->Items()[i].key);
+            scene->AddWidget(std::move(first));
+            scene->AddWidget(std::move(second));
+            DesktopWidget group;
+            group.type = DesktopWidgetType::CollectionGroup;
+            group.title = model.title;
+            group.gridSpan = { 3, 3 };
+            group.childWidgetIds = {
+                L"__preview_collection_a", L"__preview_collection_b" };
+            group.activeCategoryId = L"__preview_collection_a";
+            addCard("app.widget_preview.group_grid",
+                "app.widget_preview.group_grid_hint",
+                L"collection-group:grid",
+                scene, std::move(group));
+        };
+        addGroupCard();
+        model.cards.back().options = {
+            layoutOption(),
+            option(OptionSetting::ShowSearchBox,
+                "app.widget_preview.setting_search_box",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+        };
+        return model;
+    }
+    case kContextAddFileGroupWidget:
+    {
+        model.title = _LW("app.menu.file_group");
+        model.introduction = _LW("app.widget_preview.file_group_intro");
+        auto addFileGroupCard = [&]() {
+            auto scene = makeScene();
+            DesktopWidget categories;
+            categories.id = L"__preview_file_categories";
+            categories.type = DesktopWidgetType::FileCategories;
+            categories.title = _LW("app.widget_preview.desktop");
+            categories.activeCategoryId = L"documents";
+            fillItemKeys(categories, *scene, 8);
+            DesktopWidget folder;
+            folder.id = L"__preview_folder_source";
+            folder.type = DesktopWidgetType::FolderMapping;
+            folder.title = _LW("app.widget_preview.folder");
+            for (const auto& item : scene->Items())
+            {
+                FolderEntry entry;
+                entry.name = item.title + L".txt";
+                entry.fullPath = item.key;
+                entry.isDirectory = item.directory;
+                folder.folderEntries.push_back(std::move(entry));
+            }
+            scene->AddWidget(std::move(categories));
+            scene->AddWidget(std::move(folder));
+            DesktopWidget group;
+            group.type = DesktopWidgetType::FileGroup;
+            group.title = model.title;
+            group.gridSpan = { 3, 3 };
+            group.showFileCategories = true;
+            group.showSearchBox = false;
+            group.childWidgetIds = {
+                L"__preview_file_categories", L"__preview_folder_source" };
+            group.activeCategoryId = L"__preview_file_categories";
+            addCard("app.widget_preview.source_grid",
+                "app.widget_preview.source_grid_hint",
+                L"file-group:grid",
+                scene, std::move(group));
+        };
+        addFileGroupCard();
+        model.cards.back().options = {
+            layoutOption(),
+            option(OptionSetting::DateHeaders,
+                "app.widget_preview.setting_date_headers",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+            option(OptionSetting::ShowFileCategories,
+                "app.widget_preview.setting_category_tabs",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+            option(OptionSetting::ShowSearchBox,
+                "app.widget_preview.setting_search_box",
+                "app.widget_preview.setting_hide",
+                "app.widget_preview.setting_show"),
+        };
+        return model;
+    }
+    default:
+        break;
+    }
+
+    if (packageId.empty()) return model;
+    const LuaWidgetManifest manifest =
+        WidgetEngine::GetWidgetManifest(packageId);
+    model.title = Utf8ToWide(manifest.name);
+    if (model.title.empty()) model.title = packageId;
+    model.introduction = Utf8ToWide(
+        manifest.previewIntroduction.empty()
+            ? manifest.description : manifest.previewIntroduction);
+    std::vector<snowdesktop::widget::PreviewVariant> variants =
+        manifest.previewVariants;
+    if (variants.empty())
+    {
+        snowdesktop::widget::PreviewVariant variant;
+        variant.id = "default";
+        variant.title = WideToUtf8(
+            _LW("app.widget_preview.default_mode"));
+        variant.columns = manifest.defaultColumns;
+        variant.rows = manifest.defaultRows;
+        variants.push_back(std::move(variant));
+    }
+    for (size_t i = 0; i < variants.size() && i < 4; ++i)
+    {
+        auto& variant = variants[i];
+        auto scene = makeScene();
+        DesktopWidget root;
+        root.type = DesktopWidgetType::LuaScript;
+        root.packageId = packageId;
+        root.title = model.title;
+        root.gridSpan = {
+            std::clamp(variant.columns, 1, 8),
+            std::clamp(variant.rows, 1, 8) };
+        const std::wstring title = Utf8ToWide(variant.title).empty()
+            ? _LW("app.widget_preview.default_mode")
+            : Utf8ToWide(variant.title);
+        const std::wstring description =
+            Utf8ToWide(variant.description);
+        const std::wstring modeKey = L"lua:" + packageId + L":" +
+            Utf8ToWide(variant.id.empty()
+                ? std::to_string(i) : variant.id);
+        addCard("app.widget_preview.default_mode", nullptr, modeKey,
+            scene, std::move(root), variant.storage);
+        model.cards.back().title = title;
+        model.cards.back().description = description;
+    }
+    return model;
+}
+
 /**
- * @brief 显示只包含可添加组件的精简菜单。
- *
- * 新页面欢迎卡片使用这个入口，避免用户先打开完整桌面菜单，
- * 再进入“添加组件”二级菜单。
+ * @brief 打开保留原结构、支持 Lua 分页与显式预览操作的添加组件菜单。
  */
 void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
     PrepareMenuIconsForPoint(screenPoint);
-
-    HMENU menu = CreatePopupMenu();
-    if (!menu)
-    {
-        ClearMenuIcons();
-        RestoreDesktopWindowLayer();
-        return;
-    }
-
-    AppendMenuW(menu, MF_STRING, kContextAddCollectionWidget,
-        _LW("app.menu.collection"));
-    AppendMenuW(menu, MF_STRING, kContextAddFileCategoryWidget,
-        _LW("app.menu.file_categories"));
-    AppendMenuW(menu, MF_STRING, kContextAddFolderMappingWidget,
-        _LW("app.menu.folder_mapping"));
-    AppendMenuW(menu, MF_STRING, kContextAddCollectionGroupWidget,
-        _LW("app.menu.collection_group"));
-    AppendMenuW(menu, MF_STRING, kContextAddFileGroupWidget,
-        _LW("app.menu.file_group"));
-
-    const std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
-    if (!luaWidgets.empty())
-    {
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        for (size_t i = 0; i < luaWidgets.size() && i < 48; ++i)
+    const std::vector<std::wstring> luaWidgets =
+        WidgetEngine::ListAvailable();
+    size_t luaPage = 0;
+    auto items = BuildAddWidgetMenuItems(luaWidgets, luaPage);
+    snowdesktop::component_preview::Window previewWindow;
+    UINT previewCacheCommand = 0;
+    std::wstring previewCachePackage;
+    snowdesktop::component_preview::Model previewCache;
+    std::optional<snowdesktop::component_preview::ApplySettings>
+        previewApply;
+    auto applyPreview = [&](const auto& settings) {
+        previewApply = settings;
+        snowdesktop::modern_menu::DismissActive();
+    };
+    snowdesktop::modern_menu::HoverInfo previewAnchor;
+    auto showPreview = [&](UINT previewCommand) {
+        const UINT addCommand =
+            AddCommandForPreviewCommand(previewCommand);
+        if (addCommand == 0) return false;
+        std::wstring packageId;
+        if (addCommand >= kContextAddLuaWidgetFirst &&
+            addCommand < kContextAddLuaWidgetFirst +
+                static_cast<UINT>(kLuaWidgetMenuPageSize))
         {
-            std::wstring label = WidgetEngine::GetWidgetDisplayName(luaWidgets[i]);
-            if (label.empty())
-                label = luaWidgets[i];
-            AppendMenuW(menu, MF_STRING,
-                kContextAddLuaWidgetFirst + static_cast<UINT>(i),
-                label.c_str());
+            const size_t index = luaPage * kLuaWidgetMenuPageSize +
+                static_cast<size_t>(
+                    addCommand - kContextAddLuaWidgetFirst);
+            if (index >= luaWidgets.size()) return true;
+            packageId = luaWidgets[index];
         }
-    }
+        if (addCommand != previewCacheCommand ||
+            packageId != previewCachePackage)
+        {
+            previewCacheCommand = addCommand;
+            previewCachePackage = packageId;
+            previewCache = BuildAddWidgetMenuPreview(
+                addCommand, packageId);
+        }
+        if (!previewCache.Empty())
+        {
+            previewWindow.Show(previewCache,
+                previewAnchor.popupScreenRect, hwnd_, menuIconDpi_,
+                menuLightTheme_, applyPreview,
+                previewAnchor.itemScreenRect);
+        }
+        return true;
+    };
 
-    SetMenuItemIcon(menu, kContextAddCollectionWidget, L"");
-    SetMenuItemIcon(menu, kContextAddCollectionGroupWidget, L"");
-    SetMenuItemIcon(menu, kContextAddFileGroupWidget, L"");
-    SetMenuItemIcon(menu, kContextAddFileCategoryWidget, L"");
-    SetMenuItemIcon(menu, kContextAddFolderMappingWidget, L"");
+    snowdesktop::modern_menu::Options options;
+    options.owner = hwnd_;
+    options.anchor = screenPoint;
+    options.dpi = menuIconDpi_;
+    options.lightTheme = menuLightTheme_;
+    options.appearance = static_cast<
+        snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
+    options.onCommand = [&](UINT command, auto& currentItems) {
+        if (showPreview(command)) return true;
+        const size_t pageCount = LuaWidgetMenuPageCount(luaWidgets.size());
+        if (command == kContextAddLuaWidgetPreviousPage && luaPage > 0)
+            --luaPage;
+        else if (command == kContextAddLuaWidgetNextPage &&
+            luaPage + 1 < pageCount)
+            ++luaPage;
+        else
+            return false;
+        previewCacheCommand = 0;
+        previewCachePackage.clear();
+        previewCache = {};
+        currentItems = BuildAddWidgetMenuItems(luaWidgets, luaPage);
+        return true;
+    };
+    options.onHover = [&](const snowdesktop::modern_menu::HoverInfo& hover) {
+        if (hover.command != 0)
+            previewAnchor = hover;
+    };
 
     SetForegroundWindow(hwnd_);
-    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    const UINT command = snowdesktop::modern_menu::Show(items, options).command;
     FocusDesktopInputWindow();
-
-    DestroyMenu(menu);
+    previewWindow.Close();
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
 
+    if (previewApply)
+    {
+        ApplyWidgetPreviewSettings(screenPoint, *previewApply);
+        return;
+    }
+
     if (command >= kContextAddLuaWidgetFirst &&
         command < kContextAddLuaWidgetFirst +
-            static_cast<UINT>(std::min<size_t>(luaWidgets.size(), 48)))
+            static_cast<UINT>(kLuaWidgetMenuPageSize))
     {
-        AddLuaWidgetAt(screenPoint,
-            luaWidgets[command - kContextAddLuaWidgetFirst]);
+        const size_t index = luaPage * kLuaWidgetMenuPageSize +
+            static_cast<size_t>(command - kContextAddLuaWidgetFirst);
+        if (index < luaWidgets.size())
+            AddLuaWidgetAt(screenPoint, luaWidgets[index]);
         return;
     }
 
     switch (command)
     {
     case kContextAddCollectionWidget:
-        AddCollectionWidgetAt(screenPoint);
-        break;
+        AddCollectionWidgetAt(screenPoint); break;
     case kContextAddCollectionGroupWidget:
-        AddCollectionGroupWidgetAt(screenPoint);
-        break;
+        AddCollectionGroupWidgetAt(screenPoint); break;
     case kContextAddFileGroupWidget:
-        AddFileGroupWidgetAt(screenPoint);
-        break;
+        AddFileGroupWidgetAt(screenPoint); break;
     case kContextAddFileCategoryWidget:
-        AddFileCategoryWidgetAt(screenPoint);
-        break;
+        AddFileCategoryWidgetAt(screenPoint); break;
     case kContextAddFolderMappingWidget:
-        AddFolderMappingWidgetAt(screenPoint);
-        break;
+        AddFolderMappingWidgetAt(screenPoint); break;
     default:
         break;
     }
@@ -381,24 +1182,29 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(displaySettingsMenu, kContextGridAdjustmentMenu, L"");
     }
 
-    std::vector<std::wstring> luaWidgets = WidgetEngine::ListAvailable();
+    const std::vector<std::wstring> luaWidgets =
+        WidgetEngine::ListAvailable();
+    size_t luaPage = 0;
     HMENU widgetMenu = CreatePopupMenu();
     if (widgetMenu)
     {
-        AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionWidget, _LW("app.menu.collection"));
-        AppendMenuW(widgetMenu, MF_STRING, kContextAddFileCategoryWidget, _LW("app.menu.file_categories"));
-        AppendMenuW(widgetMenu, MF_STRING, kContextAddFolderMappingWidget, _LW("app.menu.folder_mapping"));
-        AppendMenuW(widgetMenu, MF_STRING, kContextAddCollectionGroupWidget, _LW("app.menu.collection_group"));
-        AppendMenuW(widgetMenu, MF_STRING, kContextAddFileGroupWidget, _LW("app.menu.file_group"));
-        if (!luaWidgets.empty())
+        const auto widgetItems =
+            BuildAddWidgetMenuItems(luaWidgets, luaPage);
+        for (const auto& item : widgetItems)
         {
-            AppendMenuW(widgetMenu, MF_SEPARATOR, 0, nullptr);
-            for (size_t i = 0; i < luaWidgets.size() && i < 48; ++i)
+            if (item.separator)
             {
-                std::wstring label = WidgetEngine::GetWidgetDisplayName(luaWidgets[i]);
-                if (label.empty()) label = luaWidgets[i];
-                AppendMenuW(widgetMenu, MF_STRING,
-                    kContextAddLuaWidgetFirst + static_cast<UINT>(i), label.c_str());
+                AppendMenuW(widgetMenu, MF_SEPARATOR, 0, nullptr);
+                continue;
+            }
+            const UINT flags = item.enabled
+                ? MF_STRING : MF_STRING | MF_GRAYED;
+            AppendMenuW(widgetMenu, flags, item.command,
+                item.label.c_str());
+            if (item.inlineAction)
+            {
+                SetMenuItemInlineAction(widgetMenu, item.command,
+                    item.inlineGroup, item.compactInlineAction);
             }
         }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(widgetMenu), _LW("app.menu.add_widget"));
@@ -539,12 +1345,32 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
     if (widgetMenu)
     {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu), L"");
-        SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget, L"");
-        SetMenuItemIcon(widgetMenu, kContextAddCollectionGroupWidget, L"");
-        SetMenuItemIcon(widgetMenu, kContextAddFileGroupWidget, L"");
-        SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget, L"");
-        SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget, L"");
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu),
+            L"\uF136", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget,
+            snowdesktop::menu_fluent_glyphs::kCollection,
+            MenuIconFont::FluentRegular);
+        SetMenuItemIcon(widgetMenu, kContextAddCollectionGroupWidget,
+            snowdesktop::menu_fluent_glyphs::kCollectionGroup,
+            MenuIconFont::FluentRegular);
+        SetMenuItemIcon(widgetMenu, kContextAddFileGroupWidget,
+            snowdesktop::menu_fluent_glyphs::kFileGroup,
+            MenuIconFont::FluentRegular);
+        SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget,
+            snowdesktop::menu_fluent_glyphs::kDesktopFiles,
+            MenuIconFont::FluentRegular);
+        SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget,
+            snowdesktop::menu_fluent_glyphs::kFolderMapping,
+            MenuIconFont::FluentRegular);
+        for (UINT i = 0; i < kLuaWidgetMenuPageSize; ++i)
+        {
+            SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetFirst + i,
+                L"\uEE65", MenuIconFont::FluentRegular);
+        }
+        SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetPreviousPage,
+            L"\uF15B", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetNextPage,
+            L"\uF181", MenuIconFont::FluentRegular);
     }
     if (pinPageMenu)
     {
@@ -561,8 +1387,74 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
     gridAdjustmentMenuAnchorValid_ = false;
     SetForegroundWindow(hwnd_);
-    UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    snowdesktop::component_preview::Window previewWindow;
+    UINT previewCacheCommand = 0;
+    std::wstring previewCachePackage;
+    snowdesktop::component_preview::Model previewCache;
+    std::optional<snowdesktop::component_preview::ApplySettings>
+        previewApply;
+    auto applyPreview = [&](const auto& settings) {
+        previewApply = settings;
+        snowdesktop::modern_menu::DismissActive();
+    };
+    snowdesktop::modern_menu::HoverInfo previewAnchor;
+    auto showPreview = [&](UINT previewCommand) {
+        const UINT addCommand =
+            AddCommandForPreviewCommand(previewCommand);
+        if (addCommand == 0) return false;
+        std::wstring packageId;
+        if (addCommand >= kContextAddLuaWidgetFirst &&
+            addCommand < kContextAddLuaWidgetFirst +
+                static_cast<UINT>(kLuaWidgetMenuPageSize))
+        {
+            const size_t index = luaPage * kLuaWidgetMenuPageSize +
+                static_cast<size_t>(
+                    addCommand - kContextAddLuaWidgetFirst);
+            if (index >= luaWidgets.size()) return true;
+            packageId = luaWidgets[index];
+        }
+        if (addCommand != previewCacheCommand ||
+            packageId != previewCachePackage)
+        {
+            previewCacheCommand = addCommand;
+            previewCachePackage = packageId;
+            previewCache = BuildAddWidgetMenuPreview(
+                addCommand, packageId);
+        }
+        if (!previewCache.Empty())
+        {
+            previewWindow.Show(previewCache,
+                previewAnchor.popupScreenRect, hwnd_, menuIconDpi_,
+                menuLightTheme_, applyPreview,
+                previewAnchor.itemScreenRect);
+        }
+        return true;
+    };
+    auto changeLuaWidgetPage = [&](UINT command, auto& rootItems) {
+        if (showPreview(command)) return true;
+        const size_t pageCount = LuaWidgetMenuPageCount(luaWidgets.size());
+        if (command == kContextAddLuaWidgetPreviousPage && luaPage > 0)
+            --luaPage;
+        else if (command == kContextAddLuaWidgetNextPage &&
+            luaPage + 1 < pageCount)
+            ++luaPage;
+        else
+            return false;
+        previewCacheCommand = 0;
+        previewCachePackage.clear();
+        previewCache = {};
+        return ReplaceAddWidgetSubmenu(rootItems,
+            BuildAddWidgetMenuItems(luaWidgets, luaPage));
+    };
+    auto previewWidgetMenuItem = [&](const snowdesktop::modern_menu::HoverInfo& hover) {
+        if (hover.command != 0)
+            previewAnchor = hover;
+    };
+    UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
+        false, false, nullptr, changeLuaWidgetPage,
+        previewWidgetMenuItem);
     FocusDesktopInputWindow();
+    previewWindow.Close();
 
     POINT adjustmentMenuPoint = gridAdjustmentMenuAnchorValid_
         ? gridAdjustmentMenuAnchor_ : screenPoint;
@@ -577,11 +1469,20 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
 
-    if (command >= kContextAddLuaWidgetFirst &&
-        command < kContextAddLuaWidgetFirst + static_cast<UINT>(std::min<size_t>(luaWidgets.size(), 48)))
+    if (previewApply)
     {
-        size_t scriptIndex = static_cast<size_t>(command - kContextAddLuaWidgetFirst);
-        AddLuaWidgetAt(screenPoint, luaWidgets[scriptIndex]);
+        ApplyWidgetPreviewSettings(screenPoint, *previewApply);
+        return;
+    }
+
+    if (command >= kContextAddLuaWidgetFirst &&
+        command < kContextAddLuaWidgetFirst +
+            static_cast<UINT>(kLuaWidgetMenuPageSize))
+    {
+        const size_t index = luaPage * kLuaWidgetMenuPageSize +
+            static_cast<size_t>(command - kContextAddLuaWidgetFirst);
+        if (index < luaWidgets.size())
+            AddLuaWidgetAt(screenPoint, luaWidgets[index]);
     }
     else if (command >= kContextSpacingPresetFirst &&
         command <= kContextSpacingPresetFirst + 200)

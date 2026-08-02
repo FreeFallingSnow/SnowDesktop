@@ -69,4 +69,9 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     MenuQuickIcon quickIcon, const ItemView& item, const RECT& bounds,
     UINT itemState, const Palette& palette, const Metrics& metrics);
 
+/** @brief 绘制位于普通菜单流中的紧凑横向操作按钮。 */
+bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
+    const ItemView& item, const RECT& bounds, UINT itemState,
+    const Palette& palette, const Metrics& metrics);
+
 } // namespace snowdesktop::menu_icon

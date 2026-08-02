@@ -117,6 +117,14 @@ struct LuaWidgetManifest
     std::string publisher;
     std::string minHostVersion;
     std::string preview;
+    std::string previewIntroduction;
+    std::string previewIntroductionKey;
+    /// Preview-only storage values supplied by the component author.
+    /// They are visible through storage.get() but never persisted.
+    std::unordered_map<std::string, std::string> previewStorage;
+    /// Maps preview storage names to keys in the manifest locale catalogs.
+    std::unordered_map<std::string, std::string> previewStorageKeys;
+    std::vector<snowdesktop::widget::PreviewVariant> previewVariants;
     std::string entry;
     std::string signature;
     bool signatureValid = true;
@@ -314,6 +322,8 @@ struct LuaWidget
     std::unordered_map<std::string, Timer> timers;
     std::vector<HostControl> hostControls;
     std::unordered_map<std::string, int> scrollOffsets;
+    bool preview = false;
+    std::unordered_map<std::string, std::string> previewStorage;
 };
 
 /**
@@ -348,6 +358,10 @@ public:
      * @return 初始化成功返回 true，否则返回 false
      */
     bool Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory);
+    /** Initialize a render-only engine without live services or disk state. */
+    bool InitPreview(ID2D1DeviceContext* d2dContext,
+        IDWriteFactory* dwriteFactory);
+    bool IsPreviewOnly() const { return previewOnly_; }
 
     /**
      * @brief 关闭引擎，释放所有资源，卸载所有已加载的小部件
@@ -419,6 +433,11 @@ public:
      * @return 加载成功或已存在返回 true，否则返回 false
      */
     bool EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& scriptPath);
+    /** Load an isolated, side-effect-free instance for the component picker. */
+    bool EnsureWidgetPreviewLoaded(const std::wstring& widgetId,
+        const std::wstring& packageId,
+        const std::unordered_map<std::string, std::string>&
+            storageOverrides = {});
 
     /**
      * @brief 卸载指定小部件实例
@@ -872,7 +891,11 @@ private:
      * @param widgetId 小部件实例 ID
      * @return 加载成功返回 true
      */
-    bool LoadWidget(const std::wstring& path, const std::wstring& widgetId);
+    bool LoadWidget(const std::wstring& path, const std::wstring& widgetId,
+        bool preview = false,
+        const std::unordered_map<std::string, std::string>*
+            previewStorageOverrides = nullptr);
+    bool IsPreviewWidget(const std::wstring& widgetId) const;
 
     /**
      * @brief 向 Lua 状态机注册绘制 API
@@ -932,6 +955,7 @@ private:
     std::atomic<bool> systemSnapshotChanged_{ false };
     std::atomic<bool> mediaSnapshotChanged_{ false };
     std::unique_ptr<AsyncHttpService> httpService_;
+    bool previewOnly_ = false;
     struct FocusedHostInput
     {
         bool active = false;

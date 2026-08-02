@@ -49,6 +49,9 @@
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "../menu_quick_icon.h"
+#include "../modern_menu.h"
+#include "../component_preview.h"
+#include "../widget_preview_scene.h"
 #include "../shell_file_operation_worker.h"
 #include "everything_search.h"
 #include "data_paths.h"
@@ -576,7 +579,8 @@ private:
     /** @brief 绘制组件面板背景（玻璃填充、色调与描边）。 */
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
-        const PersonalizationSettings* effectSettings = nullptr);
+        const PersonalizationSettings* effectSettings = nullptr,
+        bool registerBackdrop = true);
     /** @brief 在圆角区域内绘制稳定平铺的低透明亚克力颗粒。 */
     void DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame, float radius,
         bool lightTheme, POINT screenOrigin);
@@ -1117,6 +1121,15 @@ private:
     void ShowBackgroundContextMenu(POINT screenPoint);
     /** @brief 显示精简的“添加组件”菜单。 @param screenPoint 菜单锚点 */
     void ShowAddWidgetMenu(POINT screenPoint);
+    snowdesktop::component_preview::Model BuildAddWidgetMenuPreview(
+        UINT command, const std::wstring& packageId = {});
+    void ApplyWidgetPreviewSettings(POINT screenPoint,
+        const snowdesktop::component_preview::ApplySettings& settings);
+    snowdesktop::component_preview::Bitmap RenderWidgetMenuPreview(
+        const std::shared_ptr<snowdesktop::WidgetPreviewScene>& scene,
+        const std::wstring& rootWidgetId,
+        const std::unordered_map<std::string, std::string>& previewStorage,
+        int width, int height, UINT dpi, bool hovered);
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
@@ -1179,11 +1192,18 @@ private:
         MenuIconFont font = MenuIconFont::BuiltinFluentFromLegacy);
     /** @brief 将根菜单项移到 Windows 11 风格的顶部快捷操作区。 */
     void SetMenuItemQuickAction(HMENU menu, UINT_PTR command);
+    /** @brief 将连续菜单项标记为同一行的紧凑操作。 */
+    void SetMenuItemInlineAction(HMENU menu, UINT_PTR command,
+        UINT group = 0, bool compact = false);
     /** @brief 将 HMENU 数据模型显示为完全自绘的现代弹窗，并返回命令 ID。 */
     UINT ShowModernMenu(HMENU menu, POINT screenPoint, HWND owner,
         bool placeOutsideDock = false,
         bool placeAwayFromTaskbar = false,
-        const RECT* capturedTraySurface = nullptr);
+        const RECT* capturedTraySurface = nullptr,
+        std::function<bool(UINT,
+            std::vector<snowdesktop::modern_menu::Item>&)> onCommand = {},
+        std::function<void(const snowdesktop::modern_menu::HoverInfo&)>
+            onHover = {});
     /** @brief 清除当前菜单使用的图标映射。 */
     void ClearMenuIcons();
     /** @brief 恢复桌面窗口层叠顺序。 */
@@ -2052,6 +2072,9 @@ private:
         std::wstring glyph;
         bool fontAwesome = false;
         bool quickAction = false;
+        bool inlineAction = false;
+        UINT inlineGroup = 0;
+        bool compactInlineAction = false;
         snowdesktop::MenuQuickIcon quickIcon =
             snowdesktop::MenuQuickIcon::FontGlyph;
     };
@@ -2630,7 +2653,6 @@ private:
 
     /** @brief D2D 位图缓存 */
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
-
     /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
     ComPtr<ID2D1Bitmap> shortcutArrowBitmap_;
     SIZE shortcutArrowBitmapSize_{};

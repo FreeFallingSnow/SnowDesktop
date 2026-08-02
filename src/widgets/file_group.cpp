@@ -11,6 +11,7 @@
 #include "collection_group_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../search_match.h"
+#include "widget_preview_scene.h"
 #include "../l10n.h"
 
 #include <algorithm>
@@ -37,6 +38,18 @@ bool IsFileGroupSourceType(DesktopWidgetType type)
         type == DesktopWidgetType::FolderMapping;
 }
 
+DesktopWidget* FindFileGroupSource(
+    FileGroup* group, const std::wstring& id)
+{
+    if (!group) return nullptr;
+    if (auto* scene = group->GetPreviewScene())
+        return scene->FindWidget(id);
+    if (!group->GetApp()) return nullptr;
+    const size_t index = FindFileGroupSourceIndex(group, id);
+    auto& widgets = group->GetApp()->GetWidgets();
+    return index < widgets.size() ? &widgets[index] : nullptr;
+}
+
 RECT FileGroupSourceTabsRect(FileGroup* group)
 {
     return group
@@ -57,16 +70,14 @@ std::wstring FileGroupSourceTabText(
     if (!group || !group->GetApp()) return L"";
     const auto& sources = group->GetVisibleSourceIds();
     if (tabIndex >= sources.size()) return L"";
-    const size_t childIndex =
-        FindFileGroupSourceIndex(group, sources[tabIndex]);
-    const auto& widgets = group->GetApp()->GetWidgets();
-    if (childIndex >= widgets.size()) return L"";
-    const DesktopWidget& child = widgets[childIndex];
+    const DesktopWidget* child = FindFileGroupSource(
+        group, sources[tabIndex]);
+    if (!child) return L"";
     const size_t count =
-        child.type == DesktopWidgetType::FolderMapping
-            ? child.folderEntries.size()
-            : child.itemKeys.size();
-    return child.title + L" " + std::to_wstring(count);
+        child->type == DesktopWidgetType::FolderMapping
+            ? child->folderEntries.size()
+            : child->itemKeys.size();
+    return child->title + L" " + std::to_wstring(count);
 }
 
 std::vector<int> FileGroupSourceTabWidths(
@@ -506,6 +517,13 @@ FileGroup::GetVisibleSourceIds() const
     if (!data_ || !app_) return visibleSourceIds_;
     for (const auto& id : data_->childWidgetIds)
     {
+        if (auto* scene = GetPreviewScene())
+        {
+            const DesktopWidget* child = scene->FindWidget(id);
+            if (child && IsFileGroupSourceType(child->type))
+                visibleSourceIds_.push_back(id);
+            continue;
+        }
         const size_t index = app_->FindWidgetIndexById(id);
         if (index < app_->widgets_.size() &&
             IsFileGroupSourceType(app_->widgets_[index].type))
@@ -530,11 +548,16 @@ ScrollingItemWidget* FileGroup::GetSourceContainerById(
     const std::wstring& childId) const
 {
     if (!app_ || childId.empty()) return nullptr;
-    const size_t childIndex =
-        app_->FindWidgetIndexById(childId);
-    if (childIndex >= app_->widgets_.size())
-        return nullptr;
-    DesktopWidget* child = &app_->widgets_[childIndex];
+    auto* previewScene = GetPreviewScene();
+    DesktopWidget* child = previewScene
+        ? previewScene->FindWidget(childId) : nullptr;
+    if (!child && !previewScene)
+    {
+        const size_t childIndex = app_->FindWidgetIndexById(childId);
+        if (childIndex >= app_->widgets_.size()) return nullptr;
+        child = &app_->widgets_[childIndex];
+    }
+    if (!child) return nullptr;
     if (!IsFileGroupSourceType(child->type))
         return nullptr;
 
@@ -542,7 +565,10 @@ ScrollingItemWidget* FileGroup::GetSourceContainerById(
     if (cached != hostedSourceCache_.end() &&
         cached->second &&
         cached->second->GetWidgetData() == child)
+    {
+        cached->second->SetRenderOptions(GetRenderOptions());
         return cached->second.get();
+    }
 
     std::unique_ptr<ScrollingItemWidget> source;
     if (child->type == DesktopWidgetType::FileCategories)
@@ -552,6 +578,7 @@ ScrollingItemWidget* FileGroup::GetSourceContainerById(
         source = std::make_unique<FolderMapping>(
             child, app_);
     ScrollingItemWidget* result = source.get();
+    result->SetRenderOptions(GetRenderOptions());
     hostedSourceCache_[childId] = std::move(source);
     return result;
 }
@@ -1898,7 +1925,8 @@ void FileGroup::DrawContent(
             context, tab,
             FileGroupSourceTabText(this, i),
             sources[i] == active,
-            PtInRect(&tab, app_->lastMousePoint_) != FALSE);
+            !IsPreviewRendering() &&
+                PtInRect(&tab, app_->lastMousePoint_) != FALSE);
     }
     context->PopAxisAlignedClip();
 }
@@ -1907,12 +1935,17 @@ void FileGroup::DrawButtons(
     ID2D1DeviceContext* context, RECT, bool)
 {
     if (!data_ || !app_ || !context) return;
-    const size_t sourceIndex =
-        app_->FindWidgetIndexById(GetActiveSourceId());
-    const bool includeOpen =
-        sourceIndex < app_->widgets_.size() &&
-        app_->widgets_[sourceIndex].type ==
-            DesktopWidgetType::FolderMapping;
+    const std::wstring activeId = GetActiveSourceId();
+    const DesktopWidget* previewSource = GetPreviewScene()
+        ? GetPreviewScene()->FindWidget(activeId) : nullptr;
+    const size_t sourceIndex = previewSource
+        ? static_cast<size_t>(-1)
+        : app_->FindWidgetIndexById(activeId);
+    const bool includeOpen = previewSource
+        ? previewSource->type == DesktopWidgetType::FolderMapping
+        : (sourceIndex < app_->widgets_.size() &&
+            app_->widgets_[sourceIndex].type ==
+                DesktopWidgetType::FolderMapping);
     const FileGroupButtonRects buttons =
         GetFileGroupButtonRects(this, includeOpen);
     const bool light = app_->IsLightContentTheme();
@@ -1926,6 +1959,7 @@ void FileGroup::DrawButtons(
     auto draw = [&](RECT rect, const wchar_t* glyph, bool active) {
         if (IsRectEmptyRect(rect)) return;
         const bool hot =
+            !IsPreviewRendering() &&
             PtInRect(&rect, app_->lastMousePoint_) != FALSE;
         app_->DrawD2DText(
             context, glyph, rect, fallback,

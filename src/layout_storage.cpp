@@ -421,6 +421,9 @@ bool DecodeDocument(const JsonValue& root, Document& document,
     if (!ReadOptionalInteger(root, "widgetTitleSchemaVersion",
             "widgetTitleSchemaVersion",
             decoded.widgetTitleSchemaVersion, error) ||
+        !ReadOptionalInteger(root, "widgetContentOptionsSchemaVersion",
+            "widgetContentOptionsSchemaVersion",
+            decoded.widgetContentOptionsSchemaVersion, error) ||
         !ReadOptionalString(root, "firstPageMonitor", "firstPageMonitor",
             decoded.firstPageMonitor, error) ||
         !ReadOptionalString(root, "lastPageMonitor", "lastPageMonitor",

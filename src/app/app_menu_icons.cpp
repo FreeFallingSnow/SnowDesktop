@@ -426,10 +426,51 @@ void DesktopApp::SetMenuItemQuickAction(
     }
 }
 
+void DesktopApp::SetMenuItemInlineAction(
+    HMENU menu, UINT_PTR command, UINT group, bool compact)
+{
+    if (!menu)
+        return;
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+        for (auto& entry : menuIconPool_)
+        {
+            if (entry->menu == menu &&
+                entry->position == static_cast<UINT>(i))
+            {
+                entry->inlineAction = true;
+                entry->inlineGroup = group;
+                entry->compactInlineAction = compact;
+                return;
+            }
+        }
+        auto entry = std::make_unique<MenuIconEntry>();
+        entry->menu = menu;
+        entry->position = static_cast<UINT>(i);
+        entry->inlineAction = true;
+        entry->inlineGroup = group;
+        entry->compactInlineAction = compact;
+        menuIconPool_.push_back(std::move(entry));
+        return;
+    }
+}
+
 UINT DesktopApp::ShowModernMenu(
     HMENU rootMenu, POINT screenPoint, HWND owner,
     bool placeOutsideDock, bool placeAwayFromTaskbar,
-    const RECT* capturedTraySurface)
+    const RECT* capturedTraySurface,
+    std::function<bool(UINT,
+        std::vector<snowdesktop::modern_menu::Item>&)> onCommand,
+    std::function<void(const snowdesktop::modern_menu::HoverInfo&)>
+        onHover)
 {
     if (!rootMenu)
         return 0;
@@ -480,6 +521,10 @@ UINT DesktopApp::ShowModernMenu(
                         ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
                         : snowdesktop::modern_menu::IconFont::FluentRegular;
                     item.quickAction = icon->quickAction;
+                    item.inlineAction = icon->inlineAction;
+                    item.inlineGroup = icon->inlineGroup;
+                    item.compactInlineAction =
+                        icon->compactInlineAction;
                     item.quickIcon = icon->quickIcon;
                     break;
                 }
@@ -498,6 +543,8 @@ UINT DesktopApp::ShowModernMenu(
     options.lightTheme = menuLightTheme_;
     options.appearance = static_cast<
         snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
+    options.onCommand = std::move(onCommand);
+    options.onHover = std::move(onHover);
     if (placeAwayFromTaskbar)
     {
         options.topmost = true;

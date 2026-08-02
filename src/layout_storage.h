@@ -79,6 +79,7 @@ struct Document
     int sourceSchemaVersion = 0;
     int schemaVersion = kCurrentSchemaVersion;
     std::optional<int> widgetTitleSchemaVersion;
+    std::optional<int> widgetContentOptionsSchemaVersion;
     std::optional<std::string> firstPageMonitor;
     std::optional<std::string> lastPageMonitor;
     std::optional<bool> dockEnabled;

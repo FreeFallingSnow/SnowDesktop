@@ -120,8 +120,10 @@ void MakePackage(const std::filesystem::path& root, std::string version,
         "  \"minHostVersion\": \"1.0.1.0\",\n"
         "  \"name\": \"Package Test\",\n"
         "  \"description\": \"English fallback\",\n"
+        "  \"locales\": {\"zh-CN\": {\"preview.intro\": \"多尺寸介绍\", \"preview.message\": \"预览消息\", \"preview.compact\": \"紧凑模式\", \"preview.compact_hint\": \"紧凑说明\", \"preview.compact_mode\": \"紧凑数据\"}},\n"
         "  \"author\": \"SnowDesktop\",\n"
         "  \"license\": \"GPL-3.0-only\",\n"
+        "  \"previewData\": {\"introduction\": \"Multiple sizes\", \"introductionKey\": \"preview.intro\", \"storage\": {\"message\": \"Preview\", \"count\": 3}, \"storageKeys\": {\"message\": \"preview.message\"}, \"variants\": [{\"id\": \"compact\", \"title\": \"Compact\", \"titleKey\": \"preview.compact\", \"description\": \"Compact hint\", \"descriptionKey\": \"preview.compact_hint\", \"size\": {\"columns\": 1, \"rows\": 1}, \"storage\": {\"mode\": \"compact\"}, \"storageKeys\": {\"mode\": \"preview.compact_mode\"}}, {\"id\": \"wide\", \"title\": \"Wide\", \"description\": \"Wide hint\", \"size\": {\"columns\": 2, \"rows\": 1}}]},\n"
         "  \"permissions\": [" + permissions + "],\n"
         "  \"networkDomains\": [" + networkDomains + "]\n"
         "}\n");
@@ -386,6 +388,27 @@ int main()
     auto report = validator.ValidateDirectory(sourceV1, &manifest);
     Expect(report.Ok(), "valid folder package is accepted");
     Expect(manifest.entry == "main.lua", "entry is parsed");
+    Expect(manifest.previewStorage["message"] == "Preview" &&
+            manifest.previewStorage["count"] == "3" &&
+            manifest.previewStorageKeys["message"] == "preview.message",
+        "preview storage and its localization keys are validated and parsed");
+    Expect(manifest.previewIntroduction == "Multiple sizes" &&
+            manifest.previewVariants.size() == 2 &&
+            manifest.previewVariants[0].columns == 1 &&
+            manifest.previewVariants[0].storage["mode"] == "compact" &&
+            manifest.previewVariants[0].storageKeys["mode"] ==
+                "preview.compact_mode" &&
+            manifest.previewVariants[1].columns == 2,
+        "multi-size preview variants and per-variant storage are parsed");
+    const auto localizedPreview =
+        LocalizePackageManifest(manifest, "zh-CN");
+    Expect(localizedPreview.previewIntroduction == "多尺寸介绍" &&
+            localizedPreview.previewStorage.at("message") == "预览消息" &&
+            localizedPreview.previewVariants[0].title == "紧凑模式" &&
+            localizedPreview.previewVariants[0].description == "紧凑说明" &&
+            localizedPreview.previewVariants[0].storage.at("mode") ==
+                "紧凑数据",
+        "preview text and storage examples use manifest localization keys");
     Expect(WidgetPackageValidator::IsUuid(manifest.id), "UUID is valid");
     Expect(WidgetPackageValidator::IsSemVer("1.2.3-beta.1+build.7"),
         "SemVer prerelease is valid");

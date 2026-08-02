@@ -18,6 +18,7 @@
 #include "app.h"
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
+#include "widget_preview_scene.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -195,6 +196,41 @@ IDWriteTextFormat* Widget::GetCuFaTextFormat(float value) const
     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     return cuFaTextFormatCache_.emplace(key, std::move(format)).first->second.Get();
+}
+
+void Widget::DrawPreview(ID2D1DeviceContext* context, RECT frame,
+    const snowdesktop::WidgetRenderOptions& options)
+{
+    const auto* previous = renderOptions_;
+    renderOptions_ = &options;
+    Draw(context, frame, 0);
+    renderOptions_ = previous;
+}
+
+snowdesktop::WidgetPreviewScene* Widget::GetPreviewScene() const
+{
+    return renderOptions_ ? renderOptions_->previewScene : nullptr;
+}
+
+bool Widget::IsPreviewRendering() const
+{
+    return GetPreviewScene() != nullptr ||
+        (renderOptions_ && !renderOptions_->registerBackdrop);
+}
+
+bool Widget::IsPreviewInteractive() const
+{
+    return !renderOptions_ || renderOptions_->interactive;
+}
+
+bool Widget::ShouldRegisterBackdrop() const
+{
+    return !renderOptions_ || renderOptions_->registerBackdrop;
+}
+
+POINT Widget::GetRenderPointer() const
+{
+    return renderOptions_ ? renderOptions_->pointer : POINT{};
 }
 
 IDWriteTextFormat* Widget::GetCuFluentTextFormat(float value) const
@@ -1824,7 +1860,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (frame.right <= frame.left || body.bottom <= body.top) return;
 
     const bool selected = data_->selected;
-    const bool hovered = PtInRect(&frame, mousePt) != FALSE;
+    const bool hovered = IsPreviewInteractive() &&
+        PtInRect(&frame, mousePt) != FALSE;
     const bool fixedGuideAppearance =
         data_->type == DesktopWidgetType::Guide;
     const bool lightTheme = fixedGuideAppearance
@@ -1879,7 +1916,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     // ── 1. Background + border ────────────────────────────────
     app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, borderColor,
-        selected, strokeW, appearanceOverride);
+        selected, strokeW, appearanceOverride, ShouldRegisterBackdrop());
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {
@@ -1905,7 +1942,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
-    bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;
+    bool showGradient = persistentBottomBar ||
+        !data_->bottomBarHover || hovered;
     if (showGradient)
     {
         RECT gradRect = { frame.left, std::max<LONG>(body.top, frame.bottom - Cu(GetBarHeight() * 1.5f)),
@@ -1947,7 +1985,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     // ── 4. Bottom-bar items (on top of gradient, visibility per bottomBarHover) ──
-    bool showHandle = persistentBottomBar || (data_->bottomBarHover ? hovered : true);
+    bool showHandle = persistentBottomBar ||
+        (data_->bottomBarHover ? hovered : true);
 
     if (showHandle)
     {
@@ -2024,6 +2063,17 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     // ── Scrollbar (on top of everything, hover only) ──────────
     DrawScrollbar(context, hovered);
+}
+
+void WidgetContainer::DrawPreview(ID2D1DeviceContext* context, RECT frame,
+    const snowdesktop::WidgetRenderOptions& options)
+{
+    const auto* previous = renderOptions_;
+    renderOptions_ = &options;
+    SetHostedFrame(&frame);
+    DrawChrome(context, options.pointer);
+    SetHostedFrame(nullptr);
+    renderOptions_ = previous;
 }
 
 // ── Factory ─────────────────────────────────────────────────

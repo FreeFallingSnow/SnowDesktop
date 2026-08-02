@@ -99,6 +99,8 @@ void DesktopApp::LoadLayoutSlots()
     const int widgetTitleSchemaVersion =
         document.widgetTitleSchemaVersion.value_or(0);
     const bool hasTrustedWidgetTitleMode = widgetTitleSchemaVersion >= 1;
+    const bool hasTrustedWidgetContentOptions =
+        document.widgetContentOptionsSchemaVersion.value_or(0) >= 1;
 
     if (document.firstPageMonitor)
         firstPageMonitorId_ = Utf8ToWide(*document.firstPageMonitor);
@@ -265,8 +267,20 @@ void DesktopApp::LoadLayoutSlots()
         widget.dateHeaders =
             widget.type == DesktopWidgetType::CollectionGroup
                 ? false : saved.dateHeaders;
-        widget.showFileCategories = saved.showFileCategories;
-        widget.showSearchBox = saved.showSearchBox;
+        if (widget.type == DesktopWidgetType::FileCategories &&
+            !hasTrustedWidgetContentOptions)
+        {
+            // These fields existed in legacy files but were ignored by the
+            // standalone desktop-files component and were therefore always
+            // saved as false.  Preserve the old visible UI on first upgrade.
+            widget.showFileCategories = true;
+            widget.showSearchBox = true;
+        }
+        else
+        {
+            widget.showFileCategories = saved.showFileCategories;
+            widget.showSearchBox = saved.showSearchBox;
+        }
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
@@ -650,6 +664,7 @@ void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"layoutSchemaVersion\": 1"
          << ",\n  \"widgetTitleSchemaVersion\": 1"
+         << ",\n  \"widgetContentOptionsSchemaVersion\": 1"
          << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")

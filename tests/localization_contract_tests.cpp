@@ -922,6 +922,81 @@ size_t TestWidgetManifests(
             }
         }
 
+        auto collectOptionalKey = [&](const JsonValue& object,
+            std::string_view field, const std::string& location) {
+            const JsonValue* value = FindField(object, field);
+            if (value == nullptr) return;
+            Check(value->IsString() && !value->string.empty(),
+                location + " must be a non-empty string");
+            if (value->IsString() && !value->string.empty())
+                references[value->string].push_back(location);
+        };
+        auto collectStorageKeys = [&](const JsonValue& object,
+            const std::string& location) {
+            const JsonValue* storageKeys =
+                FindField(object, "storageKeys");
+            if (storageKeys == nullptr) return;
+            Check(storageKeys->IsObject(),
+                location + " must be an object");
+            if (!storageKeys->IsObject()) return;
+            const JsonValue* storage = FindField(object, "storage");
+            Check(storage != nullptr && storage->IsObject(),
+                location + " requires an adjacent storage object with English fallbacks");
+            for (const auto& [storageName, localizationKey] :
+                storageKeys->object)
+            {
+                Check(!storageName.empty() && localizationKey.IsString() &&
+                        !localizationKey.string.empty(),
+                    location + " must map storage names to non-empty localization keys");
+                if (storage != nullptr && storage->IsObject())
+                    Check(storage->Find(storageName) != nullptr,
+                        location + " has no English fallback for " + storageName);
+                if (localizationKey.IsString() &&
+                    !localizationKey.string.empty())
+                    references[localizationKey.string].push_back(
+                        location + "." + storageName);
+            }
+        };
+        if (const JsonValue* previewData =
+                FindField(manifest, "previewData"))
+        {
+            Check(previewData->IsObject(),
+                label + ": previewData must be an object");
+            if (previewData->IsObject())
+            {
+                collectOptionalKey(*previewData, "introductionKey",
+                    label + ":previewData.introductionKey");
+                collectStorageKeys(*previewData,
+                    label + ":previewData.storageKeys");
+                if (const JsonValue* variants =
+                        FindField(*previewData, "variants"))
+                {
+                    Check(variants->IsArray(),
+                        label + ": previewData.variants must be an array");
+                    if (variants->IsArray())
+                    {
+                        for (size_t index = 0;
+                            index < variants->array.size(); ++index)
+                        {
+                            const JsonValue& variant = variants->array[index];
+                            const std::string variantLocation = label +
+                                ":previewData.variants[" +
+                                std::to_string(index) + "]";
+                            Check(variant.IsObject(),
+                                variantLocation + " must be an object");
+                            if (!variant.IsObject()) continue;
+                            collectOptionalKey(variant, "titleKey",
+                                variantLocation + ".titleKey");
+                            collectOptionalKey(variant, "descriptionKey",
+                                variantLocation + ".descriptionKey");
+                            collectStorageKeys(variant,
+                                variantLocation + ".storageKeys");
+                        }
+                    }
+                }
+            }
+        }
+
         for (std::string_view field :
              {"name", "description"})
         {
@@ -1133,6 +1208,49 @@ void TestRuntimeCatalogMatrix(
             L"missing.translation.key",
         "missing keys must retain the visible diagnostic fallback");
 }
+
+void TestPreviewApiLocalizationContract(
+    const std::map<std::string, Catalog>& catalogs,
+    const References& references)
+{
+    constexpr std::string_view keys[] = {
+        "app.widget_preview.api.desktop_document",
+        "app.widget_preview.api.desktop_folder",
+        "app.widget_preview.api.desktop_shortcut",
+        "app.widget_preview.api.application",
+        "app.widget_preview.api.search_result",
+        "app.widget_preview.api.cpu",
+        "app.widget_preview.api.gpu",
+        "app.widget_preview.api.media_title",
+        "app.widget_preview.api.media_artist",
+        "app.widget_preview.api.media_album",
+        "app.widget_preview.api.media_genre",
+        "app.widget_preview.api.calendar_review",
+        "app.widget_preview.api.calendar_review_notes",
+        "app.widget_preview.api.calendar_publish",
+        "app.widget_preview.api.read_only",
+    };
+    const auto english = catalogs.find("en-US");
+    const auto chinese = catalogs.find("zh-CN");
+    Check(english != catalogs.end() && chinese != catalogs.end(),
+        "preview API localization requires en-US and zh-CN catalogs");
+    if (english == catalogs.end() || chinese == catalogs.end()) return;
+    for (const std::string_view key : keys)
+    {
+        const std::string value(key);
+        Check(references.contains(value),
+            value + ": preview API sample must be loaded through localization");
+        const auto englishValue = english->second.find(value);
+        const auto chineseValue = chinese->second.find(value);
+        Check(englishValue != english->second.end() &&
+                chineseValue != chinese->second.end(),
+            value + ": preview API sample is missing a bilingual value");
+        if (englishValue != english->second.end() &&
+            chineseValue != chinese->second.end())
+            Check(englishValue->second != chineseValue->second,
+                value + ": preview API sample must visibly follow the selected language");
+    }
+}
 }
 
 int wmain(int argc, wchar_t* argv[])
@@ -1194,6 +1312,8 @@ int wmain(int argc, wchar_t* argv[])
 
     const References globalReferences =
         CollectReferences(cppFiles, projectRoot, false);
+    TestPreviewApiLocalizationContract(
+        catalogs, globalReferences);
     TestGlobalSourceContract(
         catalogs, globalReferences, strictUnused);
     TestNoHardcodedChinese(
