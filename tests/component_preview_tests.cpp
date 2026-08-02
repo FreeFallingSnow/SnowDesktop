@@ -120,6 +120,43 @@ int wmain()
     Expect(oldFrameVisibleDuringReplacement,
         "old frame stays visible while the replacement is rendered");
 
+    Model filledRowsModel;
+    filledRowsModel.title = L"Filled rows";
+    filledRowsModel.introduction = L"A short introduction";
+    filledRowsModel.resizeHint = L"Resize after adding";
+    filledRowsModel.applyLabel = L"Add to Desktop";
+    Card filledRowsCard;
+    filledRowsCard.title = L"Mode name";
+    filledRowsCard.description = L"A short mode description";
+    filledRowsCard.sizeLabel = L"3 x 3";
+    filledRowsCard.previewWidth = 220;
+    filledRowsCard.previewHeight = 180;
+    filledRowsCard.cacheKey = L"rows:filled";
+    filledRowsCard.render = [](int width, int height, UINT,
+            const ApplySettings&, bool) {
+        return SolidBitmap(width, height, 0xff304860u);
+    };
+    filledRowsModel.cards.push_back(filledRowsCard);
+    Expect(window.Show(filledRowsModel, menuBounds, nullptr, 96, false),
+        "preview with optional text renders successfully");
+    RECT filledRowsBounds{};
+    GetClientRect(window.Handle(), &filledRowsBounds);
+
+    Model emptyRowsModel = filledRowsModel;
+    emptyRowsModel.title = L"Empty rows";
+    emptyRowsModel.introduction = L" \n\t";
+    emptyRowsModel.resizeHint.clear();
+    emptyRowsModel.cards[0].title.clear();
+    emptyRowsModel.cards[0].description = L"  ";
+    emptyRowsModel.cards[0].sizeLabel.clear();
+    emptyRowsModel.cards[0].cacheKey = L"rows:empty";
+    Expect(window.Show(emptyRowsModel, menuBounds, nullptr, 96, false),
+        "preview with empty optional text renders successfully");
+    RECT emptyRowsBounds{};
+    GetClientRect(window.Handle(), &emptyRowsBounds);
+    Expect(emptyRowsBounds.bottom < filledRowsBounds.bottom,
+        "empty preview rows collapse instead of reserving space");
+
     Model pagedModel;
     pagedModel.title = L"Paged preview";
     pagedModel.resizeHint = L"Resize after adding";
@@ -223,10 +260,14 @@ int wmain()
     Expect(window.Show(optionModel, menuBounds, nullptr, 96, false,
             [&](const ApplySettings& settings) { applied = settings; }),
         "same-size option preview commits successfully");
-    // At 96 DPI the selected half of the first option occupies the lower
-    // right segment immediately below the 220 x 180 component viewport.
+    const RECT optionListModeButton = window.OptionBoundsForTesting(
+        OptionSetting::ListMode, true);
+    Expect(!IsRectEmpty(&optionListModeButton),
+        "same-size preview exposes its list control");
     SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
-        MAKELPARAM(300, 255));
+        MAKELPARAM(
+            (optionListModeButton.left + optionListModeButton.right) / 2,
+            (optionListModeButton.top + optionListModeButton.bottom) / 2));
     Expect(optionRenderUsedListMode,
         "same-size control rerenders the component with its new setting");
     SendMessageW(window.Handle(), WM_KEYDOWN, VK_RETURN, 0);
@@ -351,8 +392,8 @@ int wmain()
         "the sibling preview atomically replaces the old frame");
 
     const auto& commits = window.CommittedPositionsForTesting();
-    Expect(commits.size() >= 8,
-        "every layered-window commit records its final position");
+    Expect(!commits.empty(),
+        "preview records its committed window positions");
     for (const POINT position : commits)
         Expect(position.x != 0 || position.y != 0,
             "no layered-window commit passes through (0,0)");

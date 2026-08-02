@@ -7,6 +7,7 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <cwctype>
 #include <memory>
 #include <string>
 
@@ -88,6 +89,26 @@ void DrawWrappedText(HDC dc, HFONT font, COLORREF color,
     SetBkMode(dc, oldMode);
     SetTextColor(dc, oldColor);
     if (oldFont) SelectObject(dc, oldFont);
+}
+
+bool HasVisibleText(const std::wstring& text)
+{
+    return std::any_of(text.begin(), text.end(), [](wchar_t character) {
+        return !std::iswspace(character);
+    });
+}
+
+int MeasureTextHeight(HDC dc, HFONT font, const std::wstring& text,
+    int width, UINT flags)
+{
+    if (!dc || !font || !HasVisibleText(text) || width <= 0)
+        return 0;
+    HGDIOBJ oldFont = SelectObject(dc, font);
+    RECT bounds{ 0, 0, width, 0 };
+    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &bounds,
+        flags | DT_NOPREFIX | DT_CALCRECT);
+    if (oldFont) SelectObject(dc, oldFont);
+    return std::max(0, static_cast<int>(bounds.bottom - bounds.top));
 }
 
 void DrawBitmap(HDC destination, const Bitmap& image, const RECT& bounds)
@@ -407,10 +428,6 @@ bool Window::RenderCurrent()
     const int gap = Scale(8, dpi_);
     const int previewInset = Scale(8, dpi_);
     const int titleHeight = Scale(24, dpi_);
-    const int introductionHeight = model_.introduction.empty()
-        ? 0 : Scale(46, dpi_);
-    const int resizeHintHeight = model_.resizeHint.empty()
-        ? 0 : Scale(20, dpi_);
     const int pagerHeight = model_.cards.size() > 1 ? Scale(28, dpi_) : 0;
     const int optionHeight = Scale(30, dpi_);
     const int controlMargin = Scale(4, dpi_);
@@ -423,12 +440,67 @@ bool Window::RenderCurrent()
         (pagerHeight ? pagerHeight + controlMargin * 2 : 0) +
         static_cast<int>(visibleOptionCount) *
             (optionHeight + controlMargin);
-    const int metadataHeight = Scale(
-        model_.applyLabel.empty() ? 70 : 112, dpi_);
     const int previewWidth = std::max(1, card.previewWidth);
     const int previewHeight = std::max(1, card.previewHeight);
     width_ = std::max(Scale(360, dpi_),
         previewWidth + (padding + previewInset) * 2);
+
+    HFONT titleFont = CreateFontW(-Scale(17, dpi_), 0, 0, 0, FW_SEMIBOLD,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT cardTitleFont = CreateFontW(-Scale(13, dpi_), 0, 0, 0, FW_SEMIBOLD,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT bodyFont = CreateFontW(-Scale(11, dpi_), 0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT glyphFont = CreateFontW(-Scale(15, dpi_), 0, 0, 0, FW_SEMIBOLD,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Symbol");
+
+    HDC measureDc = CreateCompatibleDC(nullptr);
+    const int textWidth = width_ - padding * 2;
+    const int introductionHeight = MeasureTextHeight(measureDc, bodyFont,
+        model_.introduction, textWidth, DT_LEFT | DT_WORDBREAK);
+    const int resizeHintHeight = MeasureTextHeight(measureDc, bodyFont,
+        model_.resizeHint, textWidth, DT_LEFT | DT_SINGLELINE);
+    const bool hasCardHeader = HasVisibleText(card.title) ||
+        HasVisibleText(card.sizeLabel);
+    const bool hasDescription = HasVisibleText(card.description);
+    const bool hasApplyButton = HasVisibleText(model_.applyLabel);
+    const int metadataHorizontalPadding = Scale(10, dpi_);
+    const int metadataTopPadding = Scale(8, dpi_);
+    const int metadataBottomPadding = Scale(8, dpi_);
+    const int cardHeaderHeight = hasCardHeader ? Scale(21, dpi_) : 0;
+    const int descriptionHeight = MeasureTextHeight(measureDc, bodyFont,
+        card.description,
+        width_ - (padding + metadataHorizontalPadding) * 2,
+        DT_LEFT | DT_WORDBREAK);
+    const int applyButtonHeight = hasApplyButton ? Scale(32, dpi_) : 0;
+    if (measureDc) DeleteDC(measureDc);
+
+    int metadataHeight = 0;
+    if (hasCardHeader || hasDescription || hasApplyButton)
+    {
+        metadataHeight = metadataTopPadding + metadataBottomPadding;
+        if (hasCardHeader)
+            metadataHeight += cardHeaderHeight;
+        if (hasDescription)
+        {
+            if (hasCardHeader) metadataHeight += Scale(2, dpi_);
+            metadataHeight += descriptionHeight;
+        }
+        if (hasApplyButton)
+        {
+            if (hasCardHeader || hasDescription)
+                metadataHeight += Scale(6, dpi_);
+            metadataHeight += applyButtonHeight;
+        }
+    }
     height_ = padding + titleHeight +
         (introductionHeight ? Scale(4, dpi_) + introductionHeight : 0) +
         (resizeHintHeight ? Scale(2, dpi_) + resizeHintHeight : 0) +
@@ -450,6 +522,10 @@ bool Window::RenderCurrent()
     {
         if (dc) DeleteDC(dc);
         if (bitmap) DeleteObject(bitmap);
+        if (titleFont) DeleteObject(titleFont);
+        if (cardTitleFont) DeleteObject(cardTitleFont);
+        if (bodyFont) DeleteObject(bodyFont);
+        if (glyphFont) DeleteObject(glyphFont);
         return false;
     }
     HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
@@ -459,23 +535,6 @@ bool Window::RenderCurrent()
     const auto palette = menu_icon::ResolvePalette(lightTheme_);
     RECT panel{ 0, 0, width_, height_ };
     Fill(dc, panel, palette.background);
-
-    HFONT titleFont = CreateFontW(-Scale(17, dpi_), 0, 0, 0, FW_SEMIBOLD,
-        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HFONT cardTitleFont = CreateFontW(-Scale(13, dpi_), 0, 0, 0, FW_SEMIBOLD,
-        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HFONT bodyFont = CreateFontW(-Scale(11, dpi_), 0, 0, 0, FW_NORMAL,
-        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HFONT glyphFont = CreateFontW(-Scale(15, dpi_), 0, 0, 0, FW_SEMIBOLD,
-        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Symbol");
 
     int cursorY = padding;
     RECT titleRect{ padding, cursorY, width_ - padding,
@@ -616,38 +675,46 @@ bool Window::RenderCurrent()
         metadataTop + metadataHeight + previewInset };
     applyRect_ = {};
     RoundedOutline(dc, cardRect, Scale(8, dpi_), palette.separator);
-    RECT cardTitle{ cardRect.left + Scale(10, dpi_),
-        metadataTop + Scale(8, dpi_),
-        cardRect.right - Scale(10, dpi_),
-        metadataTop + Scale(29, dpi_) };
-    if (!card.sizeLabel.empty())
+    const int metadataLeft = cardRect.left + metadataHorizontalPadding;
+    const int metadataRight = cardRect.right - metadataHorizontalPadding;
+    int metadataY = metadataTop +
+        (metadataHeight ? metadataTopPadding : 0);
+    if (hasCardHeader)
     {
-        RECT badge = cardTitle;
-        badge.left = std::max(badge.left, badge.right - Scale(58, dpi_));
-        RoundedBox(dc, badge, Scale(7, dpi_), palette.hoverBackground,
-            palette.separator);
-        DrawCenteredText(dc, bodyFont, palette.disabledText,
-            card.sizeLabel, badge);
-        cardTitle.right = badge.left - Scale(6, dpi_);
+        RECT cardTitle{ metadataLeft, metadataY, metadataRight,
+            metadataY + cardHeaderHeight };
+        if (HasVisibleText(card.sizeLabel))
+        {
+            RECT badge = cardTitle;
+            badge.left = std::max(
+                badge.left, badge.right - Scale(58, dpi_));
+            RoundedBox(dc, badge, Scale(7, dpi_),
+                palette.hoverBackground, palette.separator);
+            DrawCenteredText(dc, bodyFont, palette.disabledText,
+                card.sizeLabel, badge);
+            cardTitle.right = badge.left - Scale(6, dpi_);
+        }
+        if (HasVisibleText(card.title))
+        {
+            DrawWrappedText(dc, cardTitleFont, palette.text, card.title,
+                cardTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        metadataY += cardHeaderHeight;
     }
-    DrawWrappedText(dc, cardTitleFont, palette.text, card.title,
-        cardTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-    if (!model_.applyLabel.empty())
+    if (hasDescription)
     {
-        applyRect_ = { cardTitle.left,
-            cardRect.bottom - Scale(40, dpi_),
-            cardRect.right - Scale(10, dpi_),
-            cardRect.bottom - Scale(8, dpi_) };
+        if (hasCardHeader) metadataY += Scale(2, dpi_);
+        RECT descriptionRect{ metadataLeft, metadataY, metadataRight,
+            metadataY + descriptionHeight };
+        DrawWrappedText(dc, bodyFont, palette.disabledText,
+            card.description, descriptionRect);
+        metadataY = descriptionRect.bottom;
     }
-    RECT descriptionRect{ cardTitle.left,
-        cardTitle.bottom + Scale(2, dpi_), cardRect.right - Scale(10, dpi_),
-        model_.applyLabel.empty()
-            ? cardRect.bottom - Scale(7, dpi_)
-            : applyRect_.top - Scale(6, dpi_) };
-    DrawWrappedText(dc, bodyFont, palette.disabledText,
-        card.description, descriptionRect);
-    if (!model_.applyLabel.empty())
+    if (hasApplyButton)
     {
+        if (hasCardHeader || hasDescription) metadataY += Scale(6, dpi_);
+        applyRect_ = { metadataLeft, metadataY, metadataRight,
+            metadataY + applyButtonHeight };
         RoundedBox(dc, applyRect_, Scale(8, dpi_),
             palette.accent, palette.accent);
         DrawCenteredText(dc, cardTitleFont, RGB(255, 255, 255),

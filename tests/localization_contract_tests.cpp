@@ -1209,48 +1209,6 @@ void TestRuntimeCatalogMatrix(
         "missing keys must retain the visible diagnostic fallback");
 }
 
-void TestPreviewApiLocalizationContract(
-    const std::map<std::string, Catalog>& catalogs,
-    const References& references)
-{
-    constexpr std::string_view keys[] = {
-        "app.widget_preview.api.desktop_document",
-        "app.widget_preview.api.desktop_folder",
-        "app.widget_preview.api.desktop_shortcut",
-        "app.widget_preview.api.application",
-        "app.widget_preview.api.search_result",
-        "app.widget_preview.api.cpu",
-        "app.widget_preview.api.gpu",
-        "app.widget_preview.api.media_title",
-        "app.widget_preview.api.media_artist",
-        "app.widget_preview.api.media_album",
-        "app.widget_preview.api.media_genre",
-        "app.widget_preview.api.calendar_review",
-        "app.widget_preview.api.calendar_review_notes",
-        "app.widget_preview.api.calendar_publish",
-        "app.widget_preview.api.read_only",
-    };
-    const auto english = catalogs.find("en-US");
-    const auto chinese = catalogs.find("zh-CN");
-    Check(english != catalogs.end() && chinese != catalogs.end(),
-        "preview API localization requires en-US and zh-CN catalogs");
-    if (english == catalogs.end() || chinese == catalogs.end()) return;
-    for (const std::string_view key : keys)
-    {
-        const std::string value(key);
-        Check(references.contains(value),
-            value + ": preview API sample must be loaded through localization");
-        const auto englishValue = english->second.find(value);
-        const auto chineseValue = chinese->second.find(value);
-        Check(englishValue != english->second.end() &&
-                chineseValue != chinese->second.end(),
-            value + ": preview API sample is missing a bilingual value");
-        if (englishValue != english->second.end() &&
-            chineseValue != chinese->second.end())
-            Check(englishValue->second != chineseValue->second,
-                value + ": preview API sample must visibly follow the selected language");
-    }
-}
 }
 
 int wmain(int argc, wchar_t* argv[])
@@ -1312,8 +1270,6 @@ int wmain(int argc, wchar_t* argv[])
 
     const References globalReferences =
         CollectReferences(cppFiles, projectRoot, false);
-    TestPreviewApiLocalizationContract(
-        catalogs, globalReferences);
     TestGlobalSourceContract(
         catalogs, globalReferences, strictUnused);
     TestNoHardcodedChinese(

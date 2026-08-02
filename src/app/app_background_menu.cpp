@@ -491,9 +491,9 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.acrylicEnabled) + L":" +
         std::to_wstring(appearance.contentTheme);
 
-    auto makeScene = [&]() {
+    auto makeScene = [&](bool applications = false) {
         auto scene = std::make_shared<snowdesktop::WidgetPreviewScene>();
-        const std::wstring itemTitles[] = {
+        const std::wstring fileTitles[] = {
             _LW("app.widget_preview.item_travel_plans"),
             _LW("app.widget_preview.item_seaside_sunset"),
             _LW("app.widget_preview.item_reading_list"),
@@ -507,6 +507,20 @@ DesktopApp::BuildAddWidgetMenuPreview(
             _LW("app.widget_preview.item_restaurants"),
             _LW("app.widget_preview.item_city_lights"),
         };
+        const std::wstring applicationTitles[] = {
+            _LW("app.widget_preview.app_music"),
+            _LW("app.widget_preview.app_maps"),
+            _LW("app.widget_preview.app_photos"),
+            _LW("app.widget_preview.app_mail"),
+            _LW("app.widget_preview.app_calendar"),
+            _LW("app.widget_preview.app_weather"),
+            _LW("app.widget_preview.app_notes"),
+            _LW("app.widget_preview.app_podcasts"),
+            _LW("app.widget_preview.app_books"),
+            _LW("app.widget_preview.app_calculator"),
+            _LW("app.widget_preview.app_camera"),
+            _LW("app.widget_preview.app_browser"),
+        };
         for (int i = 0; i < 12; ++i)
         {
             const std::wstring glyph(
@@ -514,11 +528,13 @@ DesktopApp::BuildAddWidgetMenuPreview(
             snowdesktop::WidgetPreviewItem item;
             item.key = L"__preview_item_" + glyph;
             item.glyph = glyph;
-            item.title = itemTitles[i];
-            item.categoryId = i % 2 == 0
-                ? L"documents" : L"images";
+            item.title = applications
+                ? applicationTitles[i] : fileTitles[i];
+            item.categoryId = applications
+                ? L"others"
+                : (i % 2 == 0 ? L"documents" : L"images");
             item.dateGroup = i < 3 ? L"today" : L"earlier";
-            item.directory = i == 3 || i == 7;
+            item.directory = !applications && (i == 3 || i == 7);
             scene->AddItem(std::move(item));
         }
         const int bitmapSize = previewPage
@@ -669,7 +685,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
     {
         model.title = _LW("app.menu.collection");
         model.introduction = _LW("app.widget_preview.collection_intro");
-        auto compactScene = makeScene();
+        auto compactScene = makeScene(true);
         DesktopWidget compact;
         compact.type = DesktopWidgetType::Collection;
         compact.title = model.title;
@@ -679,7 +695,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             "app.widget_preview.collection_compact_hint", L"collection:compact",
             compactScene, std::move(compact));
 
-        auto scrollGridScene = makeScene();
+        auto scrollGridScene = makeScene(true);
         DesktopWidget scrollGrid;
         scrollGrid.type = DesktopWidgetType::Collection;
         scrollGrid.title = model.title;
@@ -737,8 +753,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             for (size_t i = 0; i < scene.Items().size(); ++i)
             {
                 FolderEntry entry;
-                entry.name = scene.Items()[i].title +
-                    (i % 2 == 0 ? L".txt" : L".png");
+                entry.name = scene.Items()[i].title;
                 entry.fullPath = scene.Items()[i].key;
                 entry.isDirectory = scene.Items()[i].directory;
                 entry.lastWriteTime = i < 3 ? now : FILETIME{};
@@ -776,7 +791,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         model.title = _LW("app.menu.collection_group");
         model.introduction = _LW("app.widget_preview.collection_group_intro");
         auto addGroupCard = [&]() {
-            auto scene = makeScene();
+            auto scene = makeScene(true);
             DesktopWidget first;
             first.id = L"__preview_collection_a";
             first.type = DesktopWidgetType::Collection;
@@ -831,7 +846,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             for (const auto& item : scene->Items())
             {
                 FolderEntry entry;
-                entry.name = item.title + L".txt";
+                entry.name = item.title;
                 entry.fullPath = item.key;
                 entry.isDirectory = item.directory;
                 folder.folderEntries.push_back(std::move(entry));
