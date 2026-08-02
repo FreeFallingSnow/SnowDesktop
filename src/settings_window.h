@@ -22,6 +22,7 @@
 #include "category_settings.h"
 #include "full_data_backup.h"
 #include "widget_package.h"
+#include "../widget_spacing_rules.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -224,12 +225,17 @@ public:
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 
+    void SetComponentSpacingMaximumProvider(
+        std::function<float()> provider)
+    { componentSpacingMaximumProvider_ = std::move(provider); }
+
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
 
     /** @brief 设置原生毛玻璃状态文本提供者（设置界面只读状态行）。 */
     void SetGlassStatusProvider(std::function<std::wstring()> provider) { glassStatusProvider_ = std::move(provider); }
 
-    void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight,
+    void SyncDisplaySettings(float spacingScale, float componentSpacingScale,
+        float fontSize, float fontWeight,
         int shortcutArrowMode,
         bool iconBeautifyEnabled,
         int iconBeautifyMode,
@@ -243,7 +249,16 @@ public:
         float iconBeautifyBgEndB,
         int iconBeautifyGradientDirection)
     {
-        iconSpacingScale_ = spacingScale;
+        iconSpacingScale_ = std::clamp(
+            spacingScale,
+            snowdesktop::widget_spacing_rules::kMinimumScale,
+            snowdesktop::widget_spacing_rules::kMaximumScale);
+        const float componentSpacingMaximum =
+            componentSpacingMaximumProvider_
+                ? componentSpacingMaximumProvider_()
+                : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
+        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
+            ClampComponentScale(componentSpacingScale, componentSpacingMaximum);
         itemFontSize_ = fontSize;
         itemFontWeight_ = fontWeight;
         shortcutArrowMode_ = std::clamp(shortcutArrowMode, 0, 2);
@@ -295,7 +310,10 @@ public:
             iconBeautifyBgPreset_ = 5;
         else
             iconBeautifyBgPreset_ = 0;
-        displaySpacingPct_ = static_cast<int>(std::round(spacingScale * 100.0f));
+        displaySpacingPct_ = static_cast<int>(std::round(
+            iconSpacingScale_ * 100.0f));
+        componentSpacingPct_ = static_cast<int>(std::round(
+            componentSpacingScale_ * 100.0f));
     }
 
     /** @} */
@@ -337,6 +355,7 @@ public:
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
+    float GetComponentSpacingScale() const { return componentSpacingScale_; }
     float GetItemFontSizeD() const { return itemFontSize_; }
     float GetItemFontWeightD() const { return itemFontWeight_; }
     int GetShortcutArrowMode() const { return shortcutArrowMode_; }
@@ -725,6 +744,7 @@ private:
 
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
+    std::function<float()> componentSpacingMaximumProvider_;
 
     /// 分类设置变更回调
     std::function<void()> categorySettingsChangedCallback_;
@@ -780,6 +800,7 @@ private:
 
     /// 当前图标间距缩放
     float iconSpacingScale_ = 1.0f;
+    float componentSpacingScale_ = 1.0f;
 
     /// 当前桌面项目字号
     float itemFontSize_ = 15.0f;
@@ -805,6 +826,7 @@ private:
     float iconBeautifyBgEndB_ = 240.0f / 255.0f;
 
     int displaySpacingPct_ = 100;
+    int componentSpacingPct_ = 100;
 
     struct CategoryRuleEditBuffer
     {

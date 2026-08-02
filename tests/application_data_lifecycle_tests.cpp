@@ -254,6 +254,8 @@ int main()
             "dockEnabled" },
         { "top-level number type", "{\"itemFontSize\":\"16\"}",
             "itemFontSize" },
+        { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
+            "componentSpacing" },
         { "integer exactness", "{\"shortcutArrowMode\":1.5}",
             "shortcutArrowMode" },
         { "page required field", "{\"pages\":[{\"columns\":4}]}",
@@ -298,8 +300,15 @@ int main()
             typedLayout.items.size() == 1 &&
             typedLayout.items[0].key == "item-a" &&
             typedLayout.widgets.size() == 1 &&
-            typedLayout.dockEntries.size() == 1,
+            typedLayout.dockEntries.size() == 1 &&
+            !typedLayout.componentSpacing.has_value(),
         "legacy schema and reordered fields decode into one typed document");
+    snowdesktop::layout_storage::Document spacingLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"componentSpacing\":1.5}", spacingLayout, &layoutError) &&
+            spacingLayout.componentSpacing.has_value() &&
+            *spacingLayout.componentSpacing == 1.5f,
+        "component spacing is decoded as an optional layout setting");
     Expect(snowdesktop::layout_storage::SaveDocument(
             layoutPath, firstLayout, &layoutError),
         "first layout document is written atomically");

@@ -102,6 +102,7 @@ public:
     DesktopWidget* GetWidgetData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
     float GetCellScale() const;
+    float GetComponentSpacingScale() const;
     int Cu(float value) const;
     float FontCu(float value) const;
     IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;

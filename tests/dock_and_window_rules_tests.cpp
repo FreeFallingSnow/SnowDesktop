@@ -17,6 +17,7 @@
 #include "app/desktop_backdrop_update_rules.h"
 #include "floating_dock_rules.h"
 #include "display_topology_refresh.h"
+#include "widget_spacing_rules.h"
 
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -215,6 +216,43 @@ int main()
         "the Dock running area must remain enabled after settings normalization");
     Check(showWindowPreviews,
         "Dock window previews must remain enabled after settings normalization");
+
+    namespace widgetSpacing = snowdesktop::widget_spacing_rules;
+    const float compactComponentLimit =
+        widgetSpacing::MaximumComponentScaleForPage(40, 40, 2, 2, 1.0f);
+    const float roomyComponentLimit =
+        widgetSpacing::MaximumComponentScaleForPage(40, 40, 20, 20, 1.0f);
+    Check(roomyComponentLimit > compactComponentLimit,
+        "larger actual grid gaps must expand the component range");
+    Check(widgetSpacing::MaximumComponentScaleForCollectionRows(
+            2, 16, 1.0f) == 3.0f,
+        "collection spacing must stop after row gaps are exhausted so the complete last-row title remains visible");
+    Check(widgetSpacing::MaximumComponentScaleForCollectionRows(
+            3, 16, 1.0f) >
+            widgetSpacing::MaximumComponentScaleForCollectionRows(
+                2, 16, 1.0f),
+        "additional collection rows must contribute their real shrinkable gaps to the component range");
+    Check(widgetSpacing::CollectionRowOffsetForComponentSpacing(
+            1, 2, 16, 1.0f, 0.5f) == 4,
+        "smaller component spacing must expand the large collection's vertical row gap symmetrically");
+    Check(widgetSpacing::CollectionRowOffsetForComponentSpacing(
+            1, 2, 16, 1.0f, 2.0f) == -8,
+        "larger component spacing must consume the large collection's vertical row gap before its content cells");
+    Check(widgetSpacing::ClampComponentScale(3.0f, 2.0f) == 2.0f,
+        "component spacing must respect the actual geometry limit");
+    Check(widgetSpacing::ClampComponentScale(
+            4.0f, roomyComponentLimit) == roomyComponentLimit,
+        "component spacing must accept the expanded geometry limit");
+    Check(widgetSpacing::ClampComponentScale(0.5f, roomyComponentLimit) == 0.5f,
+        "component spacing must retain the shared lower bound");
+    Check(widgetSpacing::EffectiveComponentEdgeGap(
+            14, 8, 1.0f, 1.0f) == 14,
+        "component edge gap must include the current visible component inset");
+    Check(widgetSpacing::EffectiveComponentEdgeGap(
+            14, 8, 1.0f, 1.5f) >
+            widgetSpacing::EffectiveComponentEdgeGap(
+                14, 8, 1.0f, 1.0f),
+        "larger component spacing must increase the visible edge gap");
 
     constexpr float standardLineHeight =
         14.0f * 7.0f / 6.0f;

@@ -436,6 +436,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.itemFontWeight, error) ||
         !ReadOptionalFloat(root, "iconSpacing", "iconSpacing",
             decoded.iconSpacing, error) ||
+        !ReadOptionalFloat(root, "componentSpacing", "componentSpacing",
+            decoded.componentSpacing, error) ||
         !ReadOptionalInteger(root, "shortcutArrowMode", "shortcutArrowMode",
             decoded.shortcutArrowMode, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",

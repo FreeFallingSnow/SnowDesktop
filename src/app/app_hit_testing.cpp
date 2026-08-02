@@ -56,6 +56,18 @@ float DesktopApp::GetWidgetCellScale(const DesktopWidget& widget) const
     return widget.cellScale;
 }
 
+int DesktopApp::GetComponentEdgeMargin(
+    const GridPage& page, bool vertical) const
+{
+    const float cellScale = CalculateWidgetCellScale(
+        page.cellWidth, page.cellHeight);
+    return snowdesktop::widget_spacing_rules::EffectiveComponentEdgeGap(
+        vertical ? page.marginX : page.marginY,
+        vertical ? page.gapX : page.gapY,
+        cellScale,
+        componentSpacingScale_);
+}
+
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
 {
     RECT rect = widget.bounds;
@@ -71,7 +83,8 @@ RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
         rect.bottom += halfGapY;
         break;
     }
-    const int inset = ScaleWidgetCu(4.0f, cellScale);
+    const int inset = snowdesktop::widget_spacing_rules::ScaledComponentInset(
+        cellScale, componentSpacingScale_);
     if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
         InflateRect(&rect, -inset, -inset);
     return rect;

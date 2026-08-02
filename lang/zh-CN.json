@@ -163,6 +163,8 @@
     "app.settings.context_menu_system_light_blur": "系统浅色（模糊）",
     "app.settings.context_menu_system_dark_blur": "系统深色（模糊）",
     "app.settings.icon_spacing": "图标间距",
+    "app.settings.component_spacing": "组件间距",
+    "app.settings.component_spacing_hint": "按组件外框实际间距调整，避免内容溢出。",
     "app.settings.title_font_size": "标题字号",
     "app.settings.title_font_weight": "标题粗细",
     "app.settings.shortcut_arrow": "快捷方式角标",

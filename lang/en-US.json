@@ -163,6 +163,8 @@
     "app.settings.context_menu_system_light_blur": "System Light (Blur)",
     "app.settings.context_menu_system_dark_blur": "System Dark (Blur)",
     "app.settings.icon_spacing": "Icon Spacing",
+    "app.settings.component_spacing": "Widget Spacing",
+    "app.settings.component_spacing_hint": "Adjusts widget frame spacing without overflowing content.",
     "app.settings.title_font_size": "Title Font Size",
     "app.settings.title_font_weight": "Title Font Weight",
     "app.settings.shortcut_arrow": "Shortcut Arrow",

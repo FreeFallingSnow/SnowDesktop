@@ -225,18 +225,15 @@ void DesktopApp::ApplyDockWorkAreaReservation()
             GridPage candidate = targetPage;
             reserveEdge(candidate, reserved, nullptr);
             ApplyIconSpacingToPage(candidate);
-            const int componentMargin = vertical
-                ? candidate.marginX : candidate.marginY;
+            const int componentMargin = GetComponentEdgeMargin(
+                candidate, vertical);
             const float dockScale = ClampDockScale(dockSettings_.thicknessScale);
             const int scaledIconSize = std::max(1, static_cast<int>(std::round(
                 GetGridPageItemIconSize(candidate) * dockScale)));
             const int scaledSpacing = std::max(1, static_cast<int>(std::round(
                 kDockSpacing * dockScale)));
-            const int edgeDistance =
-                std::max(
-                    scaledSpacing, componentMargin);
-            const int innerGap =
-                edgeDistance - componentMargin;
+            const int edgeDistance = componentMargin;
+            const int innerGap = 0;
             const int panelThickness = scaledIconSize + scaledSpacing * 2;
             const int desiredReservation = dockSettings_.edgeAttached
                 ? panelThickness + innerGap

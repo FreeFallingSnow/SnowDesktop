@@ -291,9 +291,14 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
 
     int startY = body.top + gapY / 2 - collection->Cu(8.0f);
     int rowStep = cellH + gapY;
-    return { body.left + col * width, startY + rowIdx * rowStep,
+    const int rowOffset = snowdesktop::widget_spacing_rules::
+        CollectionRowOffsetForComponentSpacing(
+            rowIdx, rows, gapY, collection->GetCellScale(),
+            collection->GetComponentSpacingScale());
+    const int rowTop = startY + rowIdx * rowStep + rowOffset;
+    return { body.left + col * width, rowTop,
              col + 1 == columns ? body.right : body.left + (col + 1) * width,
-             startY + rowIdx * rowStep + cellH };
+             rowTop + cellH };
 }
 
 /// @}

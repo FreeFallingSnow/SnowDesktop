@@ -65,6 +65,7 @@
 #include "desktop_backdrop_compositor.h"
 #include "drag_drop_controller.h"
 #include "grid_geometry.h"
+#include "../widget_spacing_rules.h"
 #include "ole_drag_drop_adapter.h"
 #include "popup_dwell_controller.h"
 #include "rename_controller.h"
@@ -1248,6 +1249,14 @@ private:
     void ToggleLastPagePin(POINT screenPoint);
     /** @brief 设置图标间距比例。 @param value 间距倍率 */
     void SetIconSpacing(float value);
+    /** @brief 设置组件外框间距比例。 @param value 间距倍率 */
+    void SetComponentSpacing(float value);
+    float GetComponentSpacingScale() const
+    {
+        return componentSpacingScale_;
+    }
+    /** @brief 根据当前网格单元和图标间距计算组件间距上限。 */
+    float GetMaximumComponentSpacingScale() const;
     /** @brief 调整图标间距比例。 @param delta 间距增量 */
     void AdjustIconSpacing(float delta);
     /** @brief 设置图标标题字号（12/14/16）。 @param value 字号 */
@@ -1938,6 +1947,7 @@ private:
     */
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
     float GetWidgetCellScale(const DesktopWidget& widget) const;
+    int GetComponentEdgeMargin(const GridPage& page, bool vertical) const;
     /**
      * @brief 获取独立模式部件的移动手柄矩形。
      * @param widget 部件引用
@@ -2211,6 +2221,7 @@ private:
     std::vector<std::wstring> savedPageIds_;
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
+    float componentSpacingScale_ = 1.0f;
     float itemFontSize_ = kItemFontSize;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int shortcutArrowMode_ = 0;

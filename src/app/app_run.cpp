@@ -422,7 +422,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     layoutChanged;
                 if (layoutChanged)
                 {
-                    InvalidateDockContainers();
+                    UpdateLayoutWorkArea();
+                    LayoutItems();
+                    InvalidateDragStaticScene();
                     if (hwnd_)
                     {
                         for (const RECT& rect :
@@ -476,6 +478,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
+            SetComponentSpacing(
+                settingsWindow_->GetComponentSpacingScale());
             SetItemFontSize(settingsWindow_->GetItemFontSizeD());
             SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
             SetShortcutArrowMode(settingsWindow_->GetShortcutArrowMode());
@@ -494,8 +498,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetCategorySettingsChangedCallback([this]() {
             LoadCategorySettingsAndApply();
         });
+        settingsWindow_->SetComponentSpacingMaximumProvider([this]() {
+            return GetMaximumComponentSpacingScale();
+        });
 
-        settingsWindow_->SyncDisplaySettings(iconSpacingScale_, itemFontSize_,
+        settingsWindow_->SyncDisplaySettings(iconSpacingScale_,
+            componentSpacingScale_, itemFontSize_,
             static_cast<float>(itemFontWeight_), shortcutArrowMode_, iconBeautifyEnabled_,
             iconBeautifyMode_,
             iconBeautifyBgOpacity_, iconBeautifyGradientEnabled_,

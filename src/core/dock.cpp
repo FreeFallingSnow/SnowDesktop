@@ -424,9 +424,14 @@ int DockContainer::EdgeMargin() const
             (area_.top + area_.bottom) / 2
         };
         const GridPage* page = app_->GridPageFromPoint(center);
-        if (page) return std::max(0, IsVertical() ? page->marginX : page->marginY);
+        if (page)
+            return app_->GetComponentEdgeMargin(*page, IsVertical());
     }
-    return IsVertical() ? kGridMarginX : kGridMarginY;
+    return snowdesktop::widget_spacing_rules::EffectiveComponentEdgeGap(
+        IsVertical() ? kGridMarginX : kGridMarginY,
+        0,
+        1.0f,
+        app_ ? app_->GetComponentSpacingScale() : 1.0f);
 }
 
 BarStyle DockContainer::GetInsertionStyle() const
@@ -489,10 +494,8 @@ RECT DockContainer::GetBounds() const
             return RECT{ area_.left, area_.bottom - thickness, area_.right, area_.bottom };
         }
     }
-    const int edgeDistance =
-        std::max(spacing, EdgeMargin());
-    const int innerGap =
-        edgeDistance - EdgeMargin();
+    const int edgeDistance = EdgeMargin();
+    const int innerGap = 0;
     if (vertical)
     {
         const int left = app_ && app_->dockSettings_.position == DockPosition::Left

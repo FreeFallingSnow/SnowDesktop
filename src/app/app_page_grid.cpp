@@ -247,11 +247,22 @@ void DesktopApp::ToggleLastPagePin(POINT screenPoint)
  */
 void DesktopApp::SetIconSpacing(float value)
 {
-    float clamped = std::clamp(value, 0.5f, 2.0f);
-    if (clamped == iconSpacingScale_) return;
+    const float clamped = std::clamp(
+        value,
+        snowdesktop::widget_spacing_rules::kMinimumScale,
+        snowdesktop::widget_spacing_rules::kMaximumScale);
+    const bool iconSpacingChanged = clamped != iconSpacingScale_;
+    if (!iconSpacingChanged &&
+        snowdesktop::widget_spacing_rules::ClampComponentScale(
+            componentSpacingScale_, GetMaximumComponentSpacingScale()) ==
+            componentSpacingScale_)
+        return;
     iconSpacingScale_ = clamped;
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
+    componentSpacingScale_ = snowdesktop::widget_spacing_rules::
+        ClampComponentScale(
+            componentSpacingScale_, GetMaximumComponentSpacingScale());
     ApplyDockWorkAreaReservation();
     LayoutItems();
     SaveLayoutSlots();
@@ -264,15 +275,68 @@ void DesktopApp::SetIconSpacing(float value)
  */
 void DesktopApp::AdjustIconSpacing(float delta)
 {
-    float newVal = std::clamp(iconSpacingScale_ + delta, 0.5f, 2.0f);
-    if (newVal == iconSpacingScale_) return;
-    iconSpacingScale_ = newVal;
-    for (auto& page : gridPages_)
-        ApplyIconSpacingToPage(page);
+    const float newValue = std::clamp(
+        iconSpacingScale_ + delta,
+        snowdesktop::widget_spacing_rules::kMinimumScale,
+        snowdesktop::widget_spacing_rules::kMaximumScale);
+    SetIconSpacing(newValue);
+}
+
+void DesktopApp::SetComponentSpacing(float value)
+{
+    const float clamped = snowdesktop::widget_spacing_rules::
+        ClampComponentScale(value, GetMaximumComponentSpacingScale());
+    if (clamped == componentSpacingScale_)
+        return;
+
+    componentSpacingScale_ = clamped;
     ApplyDockWorkAreaReservation();
     LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+float DesktopApp::GetMaximumComponentSpacingScale() const
+{
+    if (gridPages_.empty())
+        return snowdesktop::widget_spacing_rules::kMaximumComponentScale;
+
+    float maximum = snowdesktop::widget_spacing_rules::kMaximumComponentScale;
+    for (const auto& page : gridPages_)
+    {
+        maximum = std::min(maximum,
+            snowdesktop::widget_spacing_rules::MaximumComponentScaleForPage(
+                page.cellWidth, page.cellHeight, page.gapX, page.gapY,
+                CalculateWidgetCellScale(page.cellWidth, page.cellHeight)));
+    }
+
+    // Large Collection slots retain the complete desktop item cell, which
+    // already includes the icon-to-title gap and the whole title band. Only
+    // inter-row gaps may be compressed as the component frame moves inward.
+    for (const auto& widget : widgets_)
+    {
+        if (widget.type != DesktopWidgetType::Collection ||
+            widget.scrollContainerMode ||
+            (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1))
+            continue;
+        const GridPage* page = nullptr;
+        for (const auto& candidate : gridPages_)
+            if (candidate.id == widget.gridCell.pageId)
+            {
+                page = &candidate;
+                break;
+            }
+        if (!page) continue;
+
+        const float cellScale = CalculateWidgetCellScale(
+            page->cellWidth, page->cellHeight);
+        const int rows = std::max(1, widget.gridSpan.rows);
+        maximum = std::min(maximum,
+            snowdesktop::widget_spacing_rules::
+                MaximumComponentScaleForCollectionRows(
+                    rows, page->gapY, cellScale));
+    }
+    return maximum;
 }
 
 /**

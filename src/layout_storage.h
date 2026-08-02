@@ -86,6 +86,7 @@ struct Document
     std::optional<float> itemFontSize;
     std::optional<float> itemFontWeight;
     std::optional<float> iconSpacing;
+    std::optional<float> componentSpacing;
     std::optional<int> shortcutArrowMode;
     std::optional<bool> iconBeautifyEnabled;
     std::optional<int> iconBeautifyMode;

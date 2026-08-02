@@ -107,6 +107,11 @@ float Widget::GetCellScale() const
     return data_ ? data_->cellScale : 1.0f;
 }
 
+float Widget::GetComponentSpacingScale() const
+{
+    return app_ ? app_->GetComponentSpacingScale() : 1.0f;
+}
+
 int Widget::Cu(float value) const
 {
     return ScaleWidgetCu(value, GetCellScale());
@@ -330,7 +335,8 @@ RECT WidgetContainer::GetFrameRect() const
         }
     }
 
-    const int inset = Cu(4.0f);
+    const int inset = snowdesktop::widget_spacing_rules::ScaledComponentInset(
+        GetCellScale(), app_ ? app_->GetComponentSpacingScale() : 1.0f);
     if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
         InflateRect(&rect, -inset, -inset);
     return rect;
