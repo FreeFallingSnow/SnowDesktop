@@ -23,6 +23,7 @@
 #include "search_match.h"
 #include "personalization.h"
 #include "widget_package.h"
+#include "steam_workshop_source.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -213,6 +214,9 @@ GetWidgetPackageSources()
             std::make_shared<snowdesktop::widget::LocalDirectorySource>(
                 manager.Paths().development);
         sources[local->ProviderId()] = local;
+        auto steam =
+            std::make_shared<snowdesktop::widget::SteamWorkshopSource>();
+        sources[steam->ProviderId()] = steam;
         return true;
     }();
     (void)initialized;

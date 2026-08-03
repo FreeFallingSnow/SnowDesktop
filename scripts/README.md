@@ -10,6 +10,7 @@
 
 - `release_manager.ps1`：统一发布状态、打包、仓库同步、合并及发布流程；
 - `package_release.ps1`：生成携带版、MSIX、符号包和商店上传包；
+- `package_steam.ps1`：生成 Steam 专属载荷，只允许携带 `steam_api64.dll`，拒绝 SDK 头文件、导入库、工具和 `steam_appid.txt`；
 - `squash_release_to_main.bat`：只执行本地 squash、提交和标签；
 - `widget_dev.ps1`：组件校验、开发目录同步与监听实现。
 

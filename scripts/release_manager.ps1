@@ -5,6 +5,7 @@ param(
         "menu",
         "status",
         "package",
+        "package-steam",
         "sync-release",
         "prepare",
         "squash",
@@ -33,6 +34,7 @@ $repositoryRoot = [System.IO.Path]::GetFullPath(
 $releaseRepository = Join-Path $repositoryRoot "release"
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
 $packageScript = Join-Path $scriptDirectory "package_release.ps1"
+$steamPackageScript = Join-Path $scriptDirectory "package_steam.ps1"
 $buildScript = Join-Path $scriptDirectory "build.bat"
 $squashScript = Join-Path $scriptDirectory "squash_release_to_main.bat"
 $sourceRemote = "https://github.com/FreeFallingSnow/SnowDesktop.git"
@@ -910,6 +912,9 @@ function Invoke-CommandAction {
         "package" {
             [void](Invoke-Package -AskBeforeBuild:$isMenu)
         }
+        "package-steam" {
+            & $steamPackageScript
+        }
         "sync-release" {
             [void](Sync-ReleaseRepository)
         }
@@ -939,6 +944,7 @@ function Start-ReleaseMenu {
         [void](Show-Dashboard -Clear)
         Write-Host ""
         Write-Host "[1] 构建并生成全部发行包"
+        Write-Host "[S] 构建并生成 Steam 专属包"
         Write-Host "[2] 同步二进制 Release 仓库（不提交）"
         Write-Host "[3] 发布准备（构建打包 + 同步 Release 仓库）"
         Write-Host "[4] 压缩合并版本分支到本地 main，并创建标签"
@@ -955,6 +961,7 @@ function Start-ReleaseMenu {
         try {
             switch ($selection) {
                 "1" { Invoke-CommandAction -Name "package" }
+                "S" { Invoke-CommandAction -Name "package-steam" }
                 "2" { Invoke-CommandAction -Name "sync-release" }
                 "3" { Invoke-CommandAction -Name "prepare" }
                 "4" { Invoke-CommandAction -Name "squash" }

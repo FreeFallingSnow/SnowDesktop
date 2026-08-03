@@ -127,6 +127,41 @@ std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
     return result;
 }
 
+bool LaunchSteamWorkshopPublisher(
+    const std::filesystem::path& developmentRoot)
+{
+    const std::filesystem::path manager =
+        std::filesystem::path(GetExecutableDirectoryPath()) /
+        L"SnowDesktopWorkshopManager.exe";
+    std::error_code filesystemError;
+    if (!std::filesystem::is_regular_file(manager, filesystemError))
+        return false;
+    const DWORD attributes = GetFileAttributesW(manager.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        return false;
+    const std::string effectiveLanguage =
+        Locale::Instance().GetEffectiveLanguage();
+    const std::wstring managerLanguage(effectiveLanguage.begin(),
+        effectiveLanguage.end());
+    const std::wstring settingsFile = GetGeneralSettingsPath();
+    std::wstring commandLine = L"\"" + manager.wstring() +
+        L"\" --development-root \"" + developmentRoot.wstring() +
+        L"\" --language \"" + managerLanguage +
+        L"\" --settings-file \"" + settingsFile + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    const std::wstring workingDirectory = manager.parent_path().wstring();
+    if (!CreateProcessW(manager.c_str(), commandLine.data(), nullptr, nullptr,
+        FALSE, CREATE_UNICODE_ENVIRONMENT, nullptr,
+        workingDirectory.c_str(), &startup, &process))
+        return false;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
+
 std::optional<std::filesystem::path> SaveSettingsFile(HWND owner,
     const wchar_t* title, const wchar_t* defaultName,
     const wchar_t* defaultExtension,
@@ -3596,6 +3631,9 @@ void SettingsWindow::DrawWidgetPackagesPage()
         if (providerId == "static-catalog")
             return std::string(
                 _L("app.settings.widgets_source_catalog"));
+        if (providerId == "steam-workshop")
+            return std::string(
+                _L("app.settings.widgets_source_steam"));
         return providerId;
     };
     auto needsInstallConfirmation = [](const std::wstring& message)
@@ -3698,7 +3736,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
     std::vector<snowdesktop::widget::PackageSourceInfo> sources;
     for (const auto& source : allSources)
     {
-        if (!source.capabilities.query ||
+        if (!source.capabilities.query || !source.status.available ||
             source.providerId == "builtin" ||
             source.providerId == "local-directory")
             continue;
@@ -3725,9 +3763,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
         queryCatalog(false, false);
     }
 
-    // Component discovery belongs to the future Component Center, not the
-    // installed-component settings page.
-    if (false && !sources.empty())
+    if (!sources.empty())
     {
         ImGui::SeparatorText(
             _L("app.settings.widgets_catalog_results"));
@@ -3882,6 +3918,16 @@ void SettingsWindow::DrawWidgetPackagesPage()
             installLocalPackage(*selected, false);
         }
     }
+    ImGui::SameLine();
+    if (SecondaryButton(_L("app.settings.widgets_publish_steam")))
+    {
+        widgetPackageStatus_ = LaunchSteamWorkshopPublisher(
+            WidgetEngine::GetWidgetPackagePaths().development)
+            ? _L("app.settings.widgets_publisher_opened")
+            : _L("app.settings.widgets_publisher_launch_failed");
+    }
+    ImGui::TextDisabled("%s",
+        _L("app.settings.widgets_publish_steam_hint"));
     ImGui::Spacing();
 
     const auto legacy = WidgetEngine::ListLegacyWidgetPackages();

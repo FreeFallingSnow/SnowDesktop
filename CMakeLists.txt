@@ -218,6 +218,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_engine.cpp
     src/widget_package.cpp
     src/widget_package_paths.cpp
+    src/steam_workshop_source.cpp
     src/system_snapshot.cpp
     src/http_runtime.cpp
     src/widgets/widget_base.cpp
@@ -731,6 +732,18 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src src/core
         LINK_LIBRARIES gdi32 user32
         LABELS integration ui preview)
+
+    snowdesktop_add_test(
+        SnowDesktopSteamWorkshopManagerTests
+        steam_workshop_manager
+        SOURCES tests/steam_workshop_manager_tests.cpp
+        INCLUDE_DIRECTORIES steam_bridge/src
+        LINK_LIBRARIES SnowDesktopWorkshopManagerSupport
+        COMMAND_ARGUMENTS
+            "$<TARGET_FILE:snowwidget>"
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract integration security steam sdk-free)
+    add_dependencies(SnowDesktopSteamWorkshopManagerTests snowwidget)
 
     # Interactive visual smoke harness. It is excluded from normal builds and
     # CTest; run the target explicitly when reviewing the modern popup menu.
