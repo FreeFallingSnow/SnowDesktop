@@ -14,6 +14,47 @@ constexpr float kFocusScale = 1.28f;
 constexpr float kFirstNeighborScale = 1.14f;
 constexpr float kSecondNeighborScale = 1.05f;
 constexpr float kInfluenceRadiusInItems = 3.0f;
+constexpr int kMinimumFocusSwitchHysteresisPixels = 3;
+constexpr int kMaximumFocusSwitchHysteresisPixels = 8;
+constexpr int kFocusExitHysteresisPixels = 5;
+
+inline int FocusSwitchHysteresisPixels(int itemPitch)
+{
+    return std::clamp(
+        std::max(1, itemPitch) / 16,
+        kMinimumFocusSwitchHysteresisPixels,
+        kMaximumFocusSwitchHysteresisPixels);
+}
+
+/**
+ * @brief 判断指针是否明确越过相邻元素的切换边界。
+ *
+ * midpoint 两侧形成一个小型 Schmitt 区间：当前目标不同，越界方向也
+ * 不同，从而避免边界上的 1px 抖动让 focus 来回翻转。
+ */
+inline bool HasCrossedFocusSwitchBoundary(
+    int previousCenter, int nextCenter,
+    int pointerAxis, int itemPitch)
+{
+    if (previousCenter == nextCenter)
+        return true;
+    const int midpoint =
+        previousCenter + (nextCenter - previousCenter) / 2;
+    const int hysteresis =
+        FocusSwitchHysteresisPixels(itemPitch);
+    return nextCenter > previousCenter
+        ? pointerAxis >= midpoint + hysteresis
+        : pointerAxis <= midpoint - hysteresis;
+}
+
+inline RECT ExpandFocusRetentionBounds(RECT visualBounds)
+{
+    InflateRect(
+        &visualBounds,
+        kFocusExitHysteresisPixels,
+        kFocusExitHysteresisPixels);
+    return visualBounds;
+}
 
 inline float SmoothStep(float progress)
 {
@@ -257,6 +298,29 @@ inline RECT ExpandPerpendicularBounds(
         break;
     }
     return bounds;
+}
+
+/**
+ * @brief 扩展分隔区的 hover 走廊，使其覆盖图标向桌面侧放大的高度。
+ *
+ * 分割线本身没有可命中的元素矩形；指针从相邻图标斜向经过分割线上方时，
+ * 需要继续由最近的图标接管 focus，避免放大波形短暂归零。
+ */
+inline RECT ExpandSeparatorHoverBounds(
+    RECT bounds, DockPosition position, int baseIconSize)
+{
+    return ExpandPerpendicularBounds(
+        bounds, position, baseIconSize);
+}
+
+inline RECT ResolveFocusInteractionBounds(
+    RECT bounds, DockPosition position, int baseIconSize,
+    bool magnificationActive)
+{
+    return magnificationActive
+        ? ExpandSeparatorHoverBounds(
+            bounds, position, baseIconSize)
+        : bounds;
 }
 
 inline RECT FitOverflowViewportToFixedVisuals(

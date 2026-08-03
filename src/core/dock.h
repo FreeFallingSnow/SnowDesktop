@@ -200,4 +200,7 @@ private:
     mutable RECT hoveredTitleBoundsCache_{};
     mutable int hoveredTitleBoundsCachePosition_ = -1;
     mutable bool hoveredTitleBoundsCacheLightTheme_ = false;
+    // Magnification is a continuous pointer-distance field, but the semantic
+    // hover owner needs spatial hysteresis at item and Dock boundaries.
+    mutable RECT magnificationFocusRect_{};
 };

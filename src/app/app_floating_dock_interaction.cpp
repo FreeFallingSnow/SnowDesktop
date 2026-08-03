@@ -463,8 +463,23 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
     }
     floatingDockDesktopBackdropHandoffRect_ = {};
 
-    // Rebuild the ordinary desktop Dock behind the still-visible cache. Its
-    // first frame can no longer leak through with a different hover state.
+    // Mirror the reveal transaction on the same desktop target: retire the
+    // cache property before painting the ordinary Dock, then let OnPaint's
+    // single DComp commit publish both changes together. Presenting the main
+    // Dock while the cache was still at opacity 1 guaranteed one darkened
+    // overlap frame because both surfaces contain translucent pixels.
+    const HRESULT cacheRetireHr =
+        floatingDockDesktopCacheEffect_
+            ? floatingDockDesktopCacheEffect_->SetOpacity(0.0f)
+            : E_UNEXPECTED;
+    if (FAILED(cacheRetireHr))
+    {
+        wchar_t message[176]{};
+        wsprintfW(message,
+            L"Floating Dock desktop cache retire FAILED hr=0x%08X",
+            static_cast<unsigned>(cacheRetireHr));
+        WriteDiagnosticLogEntry(message);
+    }
     const bool wasDesktopCopySuppressed =
         floatingDockDesktopCopySuppressed_;
     floatingDockDesktopCopySuppressed_ = false;
@@ -501,25 +516,6 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
             WriteDiagnosticLogEntry(message);
         }
     }
-    // Only after the main desktop surface is known to contain its Dock do we
-    // retire the hand-off cache.
-    if (floatingDockDesktopCacheEffect_)
-    {
-        HRESULT cacheRetireHr =
-            floatingDockDesktopCacheEffect_->SetOpacity(0.0f);
-        if (SUCCEEDED(cacheRetireHr) && dcompDevice_)
-            cacheRetireHr = dcompDevice_->Commit();
-        if (SUCCEEDED(cacheRetireHr))
-            DwmFlush();
-        else
-        {
-            wchar_t message[176]{};
-            wsprintfW(message,
-                L"Floating Dock desktop cache retire FAILED hr=0x%08X",
-                static_cast<unsigned>(cacheRetireHr));
-            WriteDiagnosticLogEntry(message);
-        }
-    }
     FinalizeFloatingDockBackdropCleanup();
     floatingDockContainer_ = nullptr;
     floatingDockMonitor_ = nullptr;
@@ -534,7 +530,10 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
 void DesktopApp::ToggleFloatingDock()
 {
     if (floatingDockVisible_)
-        CloseFloatingDock();
+        // A hotkey toggle changes only the Dock host. Keep an anchored popup
+        // alive so the reverse hand-off mirrors ShowFloatingDock instead of
+        // turning a surface transition into a popup-close command.
+        CloseFloatingDock(false);
     else
         ShowFloatingDock();
 }

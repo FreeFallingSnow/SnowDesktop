@@ -1289,6 +1289,28 @@ int main()
         "the second Dock neighbor must receive the subtle scale");
     Check(magnification::ScaleForAxisDistance(228, 76) == 1.0f,
         "distant Dock elements must retain their normal scale");
+    Check(magnification::FocusSwitchHysteresisPixels(76) == 4 &&
+            magnification::FocusSwitchHysteresisPixels(16) == 3 &&
+            magnification::FocusSwitchHysteresisPixels(256) == 8,
+        "Dock focus hysteresis must scale within a small responsive range");
+    Check(!magnification::HasCrossedFocusSwitchBoundary(
+            100, 176, 141, 76) &&
+            magnification::HasCrossedFocusSwitchBoundary(
+                100, 176, 142, 76),
+        "forward focus changes must wait until the pointer clears the Schmitt boundary");
+    Check(!magnification::HasCrossedFocusSwitchBoundary(
+            176, 100, 135, 76) &&
+            magnification::HasCrossedFocusSwitchBoundary(
+                176, 100, 134, 76),
+        "reverse focus changes must use the mirrored Schmitt boundary");
+    const RECT retainedFocus =
+        magnification::ExpandFocusRetentionBounds(
+            RECT{ 100, 200, 176, 288 });
+    Check(retainedFocus.left == 95 &&
+            retainedFocus.top == 195 &&
+            retainedFocus.right == 181 &&
+            retainedFocus.bottom == 293,
+        "Dock focus must retain a small exit margin around its visual bounds");
     const float quarterScale =
         magnification::ScaleForAxisDistance(19, 76);
     const float halfScale =
@@ -1430,6 +1452,33 @@ int main()
             bottomViewport.top < baseIsland.top &&
             bottomViewport.bottom == baseIsland.bottom,
         "horizontal overflow clipping must preserve its Dock-axis boundaries");
+    const RECT bottomSeparatorHover =
+        magnification::ExpandSeparatorHoverBounds(
+            baseIsland, DockPosition::Bottom, 64);
+    Check(bottomSeparatorHover.left == baseIsland.left &&
+            bottomSeparatorHover.right == baseIsland.right &&
+            bottomSeparatorHover.top == bottomViewport.top &&
+            bottomSeparatorHover.bottom == baseIsland.bottom &&
+            PtInRect(
+                &bottomSeparatorHover,
+                POINT{ 190, baseIsland.top - 1 }),
+        "the separator hover corridor must continue above a bottom Dock");
+    const POINT desktopSidePoint{
+        190, baseIsland.top - 1
+    };
+    const RECT inactiveFocusBounds =
+        magnification::ResolveFocusInteractionBounds(
+            baseIsland, DockPosition::Bottom, 64, false);
+    const RECT activeFocusBounds =
+        magnification::ResolveFocusInteractionBounds(
+            baseIsland, DockPosition::Bottom, 64, true);
+    Check(!PtInRect(
+                &inactiveFocusBounds,
+                desktopSidePoint) &&
+            PtInRect(
+                &activeFocusBounds,
+                desktopSidePoint),
+        "desktop-side magnification bounds must retain active focus without acquiring it at a distance");
     const RECT leftViewport =
         magnification::ExpandPerpendicularBounds(
             baseIsland, DockPosition::Left, 64);

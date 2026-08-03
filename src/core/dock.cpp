@@ -609,9 +609,21 @@ std::vector<RECT> DockContainer::GetElementBaseRects() const
 RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
 {
     if (!app_ || app_->dragSession_.IsActive())
+    {
+        magnificationFocusRect_ = {};
         return RECT{};
+    }
 
     const std::vector<RECT> candidates = GetElementBaseRects();
+    const auto previous = std::find_if(
+        candidates.begin(), candidates.end(),
+        [&](const RECT& candidate) {
+            return EqualRect(
+                &candidate,
+                &magnificationFocusRect_) != FALSE;
+        });
+    const bool magnificationActive =
+        previous != candidates.end();
 
     auto centerDistanceSquared = [&](const RECT& rect) {
         const long long dx = static_cast<long long>(pointer.x) -
@@ -620,89 +632,163 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
             (static_cast<long long>(rect.top) + rect.bottom) / 2;
         return dx * dx + dy * dy;
     };
-    RECT best{};
-    long long bestDistance = std::numeric_limits<long long>::max();
-    for (const RECT& candidate : candidates)
-    {
-        if (!PtInRect(&candidate, pointer))
-            continue;
-        const long long distance = centerDistanceSquared(candidate);
-        if (distance < bestDistance)
-        {
-            best = candidate;
-            bestDistance = distance;
-        }
-    }
-    if (!IsRectEmpty(&best))
-        return best;
-
-    const RECT dockBounds = GetBounds();
-    if (PtInRect(&dockBounds, pointer))
-    {
-        RECT nearest{};
-        long long nearestDistance =
+    const auto resolveRawFocus = [&]() {
+        RECT best{};
+        long long bestDistance =
             std::numeric_limits<long long>::max();
-        int nearestAxisDistance =
-            std::numeric_limits<int>::max();
         for (const RECT& candidate : candidates)
         {
-            const int candidateAxisCenter =
-                IsVertical()
-                    ? (candidate.top +
-                        candidate.bottom) / 2
-                    : (candidate.left +
-                        candidate.right) / 2;
-            const int axisDistance = std::abs(
-                candidateAxisCenter -
-                (IsVertical()
-                    ? pointer.y : pointer.x));
+            if (!PtInRect(&candidate, pointer))
+                continue;
             const long long distance =
                 centerDistanceSquared(candidate);
-            if (distance < nearestDistance)
+            if (distance < bestDistance)
             {
-                nearest = candidate;
-                nearestDistance = distance;
-                nearestAxisDistance =
-                    axisDistance;
+                best = candidate;
+                bestDistance = distance;
             }
         }
-        const int separatorReach =
-            ItemPitch() / 2 +
-            ScaledSeparatorGap();
-        if (!IsRectEmpty(&nearest) &&
-            (!IsEdgeAttached() ||
-                nearestAxisDistance <=
-                    separatorReach))
+        if (!IsRectEmpty(&best))
+            return best;
+
+        const RECT separatorHoverBounds =
+            snowdesktop::dock_magnification::
+                ResolveFocusInteractionBounds(
+                    GetBounds(),
+                    app_->dockSettings_.position,
+                    ItemIconSize(),
+                    magnificationActive);
+        if (PtInRect(&separatorHoverBounds, pointer))
         {
-            return nearest;
+            RECT nearest{};
+            long long nearestDistance =
+                std::numeric_limits<long long>::max();
+            int nearestAxisDistance =
+                std::numeric_limits<int>::max();
+            for (const RECT& candidate : candidates)
+            {
+                const int candidateAxisCenter =
+                    IsVertical()
+                        ? (candidate.top +
+                            candidate.bottom) / 2
+                        : (candidate.left +
+                            candidate.right) / 2;
+                const int axisDistance = std::abs(
+                    candidateAxisCenter -
+                    (IsVertical()
+                        ? pointer.y : pointer.x));
+                const long long distance =
+                    centerDistanceSquared(candidate);
+                if (distance < nearestDistance)
+                {
+                    nearest = candidate;
+                    nearestDistance = distance;
+                    nearestAxisDistance =
+                        axisDistance;
+                }
+            }
+            const int separatorReach =
+                ItemPitch() / 2 +
+                ScaledSeparatorGap();
+            if (!IsRectEmpty(&nearest) &&
+                (!IsEdgeAttached() ||
+                    nearestAxisDistance <=
+                        separatorReach))
+            {
+                return nearest;
+            }
         }
-    }
 
-    const RECT interactive = snowdesktop::dock_magnification::
-        ExpandInteractionBounds(GetBounds(), app_->dockSettings_.position,
-            ItemIconSize());
-    if (!PtInRect(&interactive, pointer))
-        return RECT{};
+        // The expanded visual bounds are a retention area, not an
+        // acquisition area. Entering from the desktop must first reach the
+        // base Dock; otherwise the icons appear to magnify at a distance.
+        if (!magnificationActive)
+            return RECT{};
 
-    for (const RECT& candidate : candidates)
+        const RECT interactive =
+            snowdesktop::dock_magnification::
+                ExpandInteractionBounds(
+                    GetBounds(),
+                    app_->dockSettings_.position,
+                    ItemIconSize());
+        if (!PtInRect(&interactive, pointer))
+            return RECT{};
+
+        for (const RECT& candidate : candidates)
+        {
+            const RECT magnified =
+                snowdesktop::dock_magnification::
+                    MagnifyRect(
+                        candidate,
+                        app_->dockSettings_.position,
+                        GetMagnificationScale(
+                            candidate, candidate,
+                            pointer),
+                        ItemIconSize(),
+                        GetMagnificationAxisShift(
+                            candidate, candidate,
+                            pointer));
+            if (!PtInRect(&magnified, pointer))
+                continue;
+            const long long distance =
+                centerDistanceSquared(candidate);
+            if (distance < bestDistance)
+            {
+                best = candidate;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    };
+
+    RECT nextFocus = resolveRawFocus();
+    if (previous != candidates.end() &&
+        EqualRect(&nextFocus, &*previous) == FALSE)
     {
-        const RECT magnified = snowdesktop::dock_magnification::MagnifyRect(
-            candidate, app_->dockSettings_.position,
-            GetMagnificationScale(
-                candidate, candidate, pointer),
-            ItemIconSize(),
-            GetMagnificationAxisShift(
-                candidate, candidate, pointer));
-        if (!PtInRect(&magnified, pointer))
-            continue;
-        const long long distance = centerDistanceSquared(candidate);
-        if (distance < bestDistance)
+        if (IsRectEmpty(&nextFocus))
         {
-            best = candidate;
-            bestDistance = distance;
+            const RECT previousVisual =
+                snowdesktop::dock_magnification::
+                    MagnifyRect(
+                        *previous,
+                        app_->dockSettings_.position,
+                        GetMagnificationScale(
+                            *previous, *previous,
+                            pointer),
+                        ItemIconSize(),
+                        GetMagnificationAxisShift(
+                            *previous, *previous,
+                            pointer));
+            const RECT retention =
+                snowdesktop::dock_magnification::
+                    ExpandFocusRetentionBounds(
+                        previousVisual);
+            if (PtInRect(&retention, pointer))
+                nextFocus = *previous;
+        }
+        else
+        {
+            const bool vertical = IsVertical();
+            const int previousCenter = vertical
+                ? (previous->top + previous->bottom) / 2
+                : (previous->left + previous->right) / 2;
+            const int nextCenter = vertical
+                ? (nextFocus.top + nextFocus.bottom) / 2
+                : (nextFocus.left + nextFocus.right) / 2;
+            const int pointerAxis =
+                vertical ? pointer.y : pointer.x;
+            if (!snowdesktop::dock_magnification::
+                    HasCrossedFocusSwitchBoundary(
+                        previousCenter, nextCenter,
+                        pointerAxis, ItemPitch()))
+            {
+                nextFocus = *previous;
+            }
         }
     }
-    return best;
+
+    magnificationFocusRect_ = nextFocus;
+    return nextFocus;
 }
 
 float DockContainer::GetMagnificationScale(
