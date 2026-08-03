@@ -71,14 +71,14 @@ void TestViewModePersistenceValues()
     Check(
         rules::QuickNavigationDesktopViewModeGlyph(
             QuickNavigationDesktopViewMode::Tile) ==
-                L"\uf00a" &&
+                L"\uF462" &&
             rules::QuickNavigationDesktopViewModeGlyph(
                 QuickNavigationDesktopViewMode::Source) ==
-                L"\uf1b3" &&
+                L"\uE6CA" &&
             rules::QuickNavigationDesktopViewModeGlyph(
                 QuickNavigationDesktopViewMode::Initial) ==
-                L"\uf15d",
-        "each view mode must map to its Font Awesome glyph");
+                L"\uF802",
+        "each view mode must map to its Fluent System Icons glyph");
 }
 
 std::wstring MakeTemporarySettingsPath()
@@ -436,6 +436,14 @@ void TestAnimationRules()
     Check(state.IsHidden(),
         "reset returns to hidden");
 }
+
+void TestDeactivateRules()
+{
+    Check(!rules::ShouldCloseOnDeactivate(true),
+        "an owned context menu must keep quick navigation open");
+    Check(rules::ShouldCloseOnDeactivate(false),
+        "activation outside quick navigation must close it");
+}
 }
 
 int main()
@@ -447,6 +455,7 @@ int main()
     TestMappingSectionsFollowTabOrder();
     TestSectionLayout();
     TestAnimationRules();
+    TestDeactivateRules();
     if (failures == 0)
     {
         std::cout

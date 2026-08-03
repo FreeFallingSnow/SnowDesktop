@@ -40,26 +40,26 @@ void DesktopApp::EnsureQuickNavTextFormats()
     createOrRecreate(quickNavTabTextFormat_, L"Segoe UI", tabSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     createOrRecreate(quickNavItemTextFormat_, L"Segoe UI Variable", itemSize, itemWeight, DWRITE_TEXT_ALIGNMENT_LEADING);
     createOrRecreate(quickNavPathTextFormat_, L"Segoe UI", pathSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
-    if (!quickNavFaTextFormat_ ||
+    if (!quickNavFluentTextFormat_ ||
         std::abs(
-            quickNavFaTextFormat_->GetFontSize() -
+            quickNavFluentTextFormat_->GetFontSize() -
                 tabSize) > 0.01f)
     {
-        quickNavFaTextFormat_.Reset();
-        quickNavFaTextFormat_ =
+        quickNavFluentTextFormat_.Reset();
+        quickNavFluentTextFormat_ =
             ComPtr<IDWriteTextFormat>(
-                CreateFaTextFormat(
+                CreateFluentTextFormat(
                     dwriteFactory_.Get(),
                     tabSize));
-        if (quickNavFaTextFormat_)
+        if (quickNavFluentTextFormat_)
         {
-            quickNavFaTextFormat_->
+            quickNavFluentTextFormat_->
                 SetTextAlignment(
                     DWRITE_TEXT_ALIGNMENT_CENTER);
-            quickNavFaTextFormat_->
+            quickNavFluentTextFormat_->
                 SetParagraphAlignment(
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            quickNavFaTextFormat_->
+            quickNavFluentTextFormat_->
                 SetWordWrapping(
                     DWRITE_WORD_WRAPPING_NO_WRAP);
         }
@@ -615,10 +615,10 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 ctx.Get(),
                 std::wstring(glyph),
                 modeButton,
-                quickNavFaTextFormat_
-                ? quickNavFaTextFormat_.Get()
-                : (faTextFormat_
-                    ? faTextFormat_.Get()
+                quickNavFluentTextFormat_
+                ? quickNavFluentTextFormat_.Get()
+                : (fluentIconTextFormat_
+                    ? fluentIconTextFormat_.Get()
                     : quickNavTabTextFormat_.Get()),
                 ToD2DColor(t.tabText));
         }

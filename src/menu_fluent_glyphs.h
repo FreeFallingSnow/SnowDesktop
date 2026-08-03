@@ -21,6 +21,10 @@ inline constexpr wchar_t kShowFrequent[] = L"\uF70F";
 inline constexpr wchar_t kHideFrequent[] = L"\uF71A";
 inline constexpr wchar_t kKeepWhenDesktopHidden[] = L"\U000F05EB";
 
+inline constexpr wchar_t kQuickNavigationTileView[] = L"\uF462";    // grid_20
+inline constexpr wchar_t kQuickNavigationSourceView[] = L"\uE6CA";  // group_list_20
+inline constexpr wchar_t kQuickNavigationInitialView[] = L"\uF802"; // text_sort_ascending_20
+
 inline constexpr wchar_t kSort[] = L"\uF18A";
 inline constexpr wchar_t kSortName[] = L"\uF802";
 inline constexpr wchar_t kSortNameAscending[] = L"\uF802";

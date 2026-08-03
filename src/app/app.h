@@ -2343,7 +2343,7 @@ private:
     ComPtr<IDWriteTextFormat> quickNavTabTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
-    ComPtr<IDWriteTextFormat> quickNavFaTextFormat_;
+    ComPtr<IDWriteTextFormat> quickNavFluentTextFormat_;
     /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按 sysIconIndex）。 */
     std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
     std::vector<int> quickNavTabWidths_;

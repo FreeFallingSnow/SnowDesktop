@@ -1,6 +1,30 @@
 #include "app.h"
+#include "quick_navigation_rules.h"
 
 // Quick-navigation window and search-edit message dispatch.
+
+namespace
+{
+bool IsWindowOwnedBy(
+    HWND candidate, HWND expectedOwner)
+{
+    if (!candidate || !expectedOwner)
+        return false;
+
+    HWND current = candidate;
+    while (current)
+    {
+        if (current == expectedOwner)
+            return true;
+        const HWND owner =
+            GetWindow(current, GW_OWNER);
+        if (!owner || owner == current)
+            break;
+        current = owner;
+    }
+    return false;
+}
+}
 
 LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -397,11 +421,19 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         if (LOWORD(wp) == WA_INACTIVE)
         {
             const HWND activatedWindow = reinterpret_cast<HWND>(lp);
-            if (activatedWindow == quickNavigationSearchEdit_ ||
+            const bool retainedInteraction =
+                activatedWindow == quickNavigationSearchEdit_ ||
                 (renameController_.
                     IsQuickNavigationPresentation() &&
                     activatedWindow == renameEdit_) ||
-                quickNavBackdropCompositor_.IsBackdropWindow(activatedWindow))
+                quickNavBackdropCompositor_.IsBackdropWindow(
+                    activatedWindow) ||
+                IsWindowOwnedBy(
+                    activatedWindow,
+                    quickNavigationHwnd_);
+            if (!snowdesktop::quick_navigation_rules::
+                    ShouldCloseOnDeactivate(
+                        retainedInteraction))
                 return 0;
             if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
             {
@@ -445,8 +477,16 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     if (message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE)
     {
         const HWND activatedWindow = reinterpret_cast<HWND>(lParam);
-        if (activatedWindow != app->quickNavigationHwnd_ &&
-            !app->quickNavBackdropCompositor_.IsBackdropWindow(activatedWindow))
+        const bool retainedInteraction =
+            activatedWindow == app->quickNavigationHwnd_ ||
+            app->quickNavBackdropCompositor_.IsBackdropWindow(
+                activatedWindow) ||
+            IsWindowOwnedBy(
+                activatedWindow,
+                app->quickNavigationHwnd_);
+        if (snowdesktop::quick_navigation_rules::
+                ShouldCloseOnDeactivate(
+                    retainedInteraction))
         {
             app->CloseQuickNavigation();
             return 0;

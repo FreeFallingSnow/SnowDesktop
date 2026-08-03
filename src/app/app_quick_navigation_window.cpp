@@ -65,6 +65,7 @@ void DesktopApp::DestroyQuickNavigationWindow()
     quickNavTabTextFormat_.Reset();
     quickNavItemTextFormat_.Reset();
     quickNavPathTextFormat_.Reset();
+    quickNavFluentTextFormat_.Reset();
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         DestroyWindow(quickNavigationHwnd_);
     quickNavigationHwnd_ = nullptr;
