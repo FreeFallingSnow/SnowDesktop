@@ -203,8 +203,6 @@ constexpr DWORD kSteamWorkshopSubscriptionPollIntervalMs = 15000;
 constexpr UINT_PTR kCollectionPopupDwellTimerId = 6;
 constexpr UINT kCollectionPopupDwellIntervalMs = 50;
 constexpr DWORD kCollectionPopupDwellDelayMs = 600;
-constexpr UINT_PTR kPageNotifyTimerId = 7;
-constexpr UINT kPageNotifyTimerIntervalMs = 30;
 constexpr DWORD kPageNotifyVisibleMs = 1800;
 constexpr DWORD kPageNotifyFadeMs = 500;
 constexpr UINT_PTR kDisplayTopologyRefreshTimerId = 8;
@@ -222,19 +220,14 @@ constexpr DWORD kCollectionGroupTabDwellDelayMs = 420;
 constexpr UINT_PTR kDockWindowPreviewHoverTimerId = 13;
 constexpr UINT kDockWindowPreviewHoverFallbackMs = 400;
 constexpr ULONGLONG kDockWindowClosePendingTimeoutMs = 3000;
-constexpr UINT_PTR kDockLaunchBounceTimerId = 14;
 constexpr UINT_PTR kTaskbarRevealGuardTimerId = 15;
 constexpr UINT kTaskbarRevealGuardIntervalMs = 100;
-constexpr UINT_PTR kCollectionPopupAnimationTimerId = 17;
-constexpr UINT_PTR kQuickNavigationAnimationTimerId = 18;
-constexpr UINT_PTR kLuaWidgetPanelAnimationTimerId = 19;
 constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 
-// ── 组件独立刷新定时器 ────────────────────────
-// 由 manifest 的 refreshIntervalMs 声明驱动的 per-widget Win32 定时器 ID 基址，
-// 宿主从此值起递增分配，与上面固定定时器 ID 区分。
-constexpr UINT_PTR kWidgetTimerIdBase = 1000;
+// ── 组件刷新截止时间约束 ──────────────────────
+// manifest.refreshIntervalMs 与 widget.setTimer 均进入统一截止时间队列；
+// 这里仅保留公开计时语义原有的间隔上下限。
 constexpr UINT kWidgetRefreshMinIntervalMs = 16;      // 单组件声明刷新间隔下限
 constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
 

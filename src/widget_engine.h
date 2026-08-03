@@ -311,8 +311,8 @@ struct LuaWidget
     std::chrono::steady_clock::time_point notificationWindow{};
     std::uint32_t notificationsInWindow = 0;
     std::chrono::steady_clock::time_point lastRenderTime{};
-    UINT_PTR refreshTimerId = 0;        ///< 宿主分配的独立 Win32 定时器 ID（0 = 未开）
-    UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒 ID
+    UINT_PTR refreshTimerId = 0;        ///< 宿主统一截止时间队列分配的周期令牌（0 = 未开）
+    UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒令牌
     struct Timer
     {
         std::string name;
@@ -420,7 +420,7 @@ public:
     void SetCloseWidgetPanelCallback(WidgetPanelCloseCallback callback) { closeWidgetPanelCallback_ = std::move(callback); }
     /** @brief 设置系统通知回调 */
     void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
-    /** @brief 设置组件独立刷新定时器请求回调（宿主为该 widget 开 Win32 timer，返回 timerId） */
+    /** @brief 设置组件刷新截止时间请求回调（宿主返回统一调度令牌） */
     void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
     /** @brief 设置组件独立刷新定时器关闭回调 */
     void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
@@ -474,9 +474,9 @@ public:
         ID2D1DeviceContext* context, RECT bounds);
     void TickRuntime();
     /**
-     * @brief 处理宿主转发的组件独立定时器到期
+     * @brief 处理宿主转发的组件调度截止时间到期
      * @param widgetId 触发刷新的小部件实例 ID
-     * @param timerId 宿主触发的 Win32 定时器 ID
+     * @param timerId 宿主触发的调度令牌
      *
      * 同时处理 manifest.refreshIntervalMs 的周期刷新和 widget.setTimer 命名定时器。
      * 命名定时器只为最近一次到期时间申请单次宿主唤醒，避免全局轮询全部组件。

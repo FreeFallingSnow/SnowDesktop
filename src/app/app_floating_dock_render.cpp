@@ -86,7 +86,13 @@ bool DesktopApp::RenderFloatingDockCompositionFrame()
             L"EndDraw", hr);
         return false;
     }
+    const double commitStart =
+        snowdesktop::UiAnimationScheduler::
+            MonotonicMilliseconds();
     hr = dcompDevice_->Commit();
+    uiAnimationScheduler_.RecordCommitDuration(
+        snowdesktop::UiAnimationScheduler::
+            MonotonicMilliseconds() - commitStart);
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(

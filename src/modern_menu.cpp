@@ -216,10 +216,8 @@ public:
                 ShowWindow(previous, SW_HIDE);
                 PostMessageW(previous, kCancelMessage, TRUE, 0);
             }
-            ShowWindow(rootWindow, SW_SHOWNORMAL);
             SetForegroundWindow(rootWindow);
             SetFocus(rootWindow);
-            AnimateWindow(rootWindow, 80, AW_BLEND);
         }
 
         MSG message{};
@@ -557,12 +555,18 @@ public:
             popup.panelScreenOrigin.y - shadowSize_,
         };
         SIZE size{ popup.windowWidth, popup.windowHeight };
+        const bool wasVisible = IsWindowVisible(popup.hwnd) != FALSE;
         POINT source{};
         BLENDFUNCTION blend{
             AC_SRC_OVER, 0, 255, AC_SRC_ALPHA,
         };
-        UpdateLayeredWindow(popup.hwnd, nullptr, &destination, &size,
-            memoryDc, &source, 0, &blend, ULW_ALPHA);
+        const BOOL presented = UpdateLayeredWindow(
+            popup.hwnd, nullptr,
+            &destination, &size,
+            memoryDc, &source, 0,
+            &blend, ULW_ALPHA);
+        if (presented && !wasVisible)
+            ShowWindow(popup.hwnd, SW_SHOWNOACTIVATE);
 
         SelectObject(memoryDc, oldBitmap);
         DeleteDC(memoryDc);
@@ -646,12 +650,6 @@ private:
             }
         }
         Render(*rawPopup);
-        if (depth > 0)
-        {
-            ShowWindow(rawPopup->hwnd, SW_SHOWNOACTIVATE);
-            AnimateWindow(rawPopup->hwnd, 70,
-                AW_BLEND | AW_SLIDE | AW_HOR_POSITIVE);
-        }
         return true;
     }
 

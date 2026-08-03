@@ -42,16 +42,8 @@ bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
         false,
         nullptr
     };
-    if (!SetCoalescableTimer(
-            hwnd_, kDockLaunchBounceTimerId,
-            snowdesktop::dock_launch_animation::
-                kFrameIntervalMs, nullptr,
-            TIMERV_NO_COALESCING))
-    {
-        dockLaunchBounces_.erase(key);
-        return false;
-    }
-    InvalidateDockRects(FALSE);
+    EnsureUiAnimationFrame();
+    InvalidateDockLaunchBounceRects();
     return true;
 }
 
@@ -76,14 +68,16 @@ void DesktopApp::OnDockLaunchBounceTimer()
 {
     if (dockLaunchBounces_.empty())
     {
-        if (hwnd_)
-            KillTimer(hwnd_, kDockLaunchBounceTimerId);
         return;
     }
 
     const double now =
         snowdesktop::dock_launch_animation::
             MonotonicTimeMilliseconds();
+
+    // Include the previous frame before removing completed bounces so their
+    // last translated pixels are cleared by the same coalesced paint.
+    InvalidateDockLaunchBounceRects();
 
     for (auto bounce = dockLaunchBounces_.begin();
         bounce != dockLaunchBounces_.end();)
@@ -142,9 +136,50 @@ void DesktopApp::OnDockLaunchBounceTimer()
         ++bounce;
     }
 
-    InvalidateDockRects(FALSE);
-    if (dockLaunchBounces_.empty() && hwnd_)
-        KillTimer(hwnd_, kDockLaunchBounceTimerId);
+    InvalidateDockLaunchBounceRects();
+}
+
+void DesktopApp::InvalidateDockLaunchBounceRects()
+{
+    bool invalidateFloatingDock = false;
+    for (const auto& [key, _] : dockLaunchBounces_)
+    {
+        const size_t itemIndex = FindItemIndexByKey(key);
+        if (itemIndex >= items_.size())
+            continue;
+        for (const auto& container : containers_)
+        {
+            auto* dock = dynamic_cast<DockContainer*>(
+                container.get());
+            if (!dock)
+                continue;
+            RECT dirty = dock->GetDesktopItemVisualRect(
+                itemIndex, lastMousePoint_);
+            if (IsRectEmptyRect(dirty))
+                continue;
+            const int shortSide = std::max<LONG>(
+                1,
+                std::min(
+                    dirty.right - dirty.left,
+                    dirty.bottom - dirty.top));
+            const int padding = std::max(
+                4,
+                static_cast<int>(std::ceil(
+                    static_cast<double>(shortSide) * 0.42)));
+            InflateRect(&dirty, padding, padding);
+            if (floatingDockVisible_ &&
+                dock == floatingDockContainer_)
+            {
+                invalidateFloatingDock = true;
+            }
+            else if (hwnd_ && IsWindow(hwnd_))
+            {
+                InvalidateRect(hwnd_, &dirty, FALSE);
+            }
+        }
+    }
+    if (invalidateFloatingDock)
+        InvalidateFloatingDockWindow(false);
 }
 
 bool DesktopApp::LaunchDesktopItem(

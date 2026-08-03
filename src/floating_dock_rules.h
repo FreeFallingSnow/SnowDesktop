@@ -17,7 +17,6 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
-inline constexpr ULONGLONG kPointerFrameIntervalMs = 8;
 
 inline bool HasAnySummonTrigger(
     bool hotkeyEnabled, bool edgeSwipeEnabled)
@@ -319,20 +318,6 @@ inline bool NeedsImmediatePointerPresent(
     return itemDragActive ||
         widgetPreviewActive ||
         marqueeActive;
-}
-
-/**
- * @brief 限制被动 hover 的同步提交频率，同时保留拖动帧的即时反馈。
- */
-inline bool ShouldPresentPointerFrame(
-    ULONGLONG now,
-    ULONGLONG lastPresent,
-    bool forceImmediate)
-{
-    return forceImmediate ||
-        lastPresent == 0 ||
-        now < lastPresent ||
-        now - lastPresent >= kPointerFrameIntervalMs;
 }
 
 /**

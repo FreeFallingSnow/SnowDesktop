@@ -106,8 +106,66 @@ RECT DesktopApp::GetLuaWidgetPanelCloseRect() const
         panel.right - 14, panel.top + 48);
 }
 
+void DesktopApp::ResetLuaWidgetPanelAnimationCache()
+{
+    if (luaWidgetPanelAnimationCompletionToken_)
+    {
+        uiAnimationScheduler_.Cancel(
+            luaWidgetPanelAnimationCompletionToken_);
+    }
+    luaWidgetPanelAnimationCompletionToken_ = 0;
+    luaWidgetPanelAnimationCompositorDriven_ = false;
+    ResetCompositionAnimationOverlay(
+        luaWidgetPanelAnimationOverlay_);
+    luaWidgetPanelAnimationRenderCache_.Reset();
+    luaWidgetPanelAnimationCacheRect_ = {};
+}
+
+void DesktopApp::PrepareLuaWidgetPanelAnimationCache()
+{
+    ResetLuaWidgetPanelAnimationCache();
+    if (!d2dDevice_ ||
+        luaWidgetPanelRequest_.widgetId.empty())
+        return;
+
+    luaWidgetPanelAnimationCacheRect_ =
+        GetLuaWidgetPanelRect();
+    InflateRect(&luaWidgetPanelAnimationCacheRect_, 4, 4);
+    const UINT width = static_cast<UINT>(std::max<LONG>(
+        1,
+        luaWidgetPanelAnimationCacheRect_.right -
+            luaWidgetPanelAnimationCacheRect_.left));
+    const UINT height = static_cast<UINT>(std::max<LONG>(
+        1,
+        luaWidgetPanelAnimationCacheRect_.bottom -
+            luaWidgetPanelAnimationCacheRect_.top));
+
+    const bool ready =
+        luaWidgetPanelAnimationRenderCache_.Ensure(
+            d2dDevice_.Get(), D2D1::SizeU(width, height), 1,
+            [&](ID2D1DeviceContext* cacheContext) {
+                cacheContext->SetTransform(
+                    D2D1::Matrix3x2F::Translation(
+                        static_cast<float>(
+                            -luaWidgetPanelAnimationCacheRect_.left),
+                        static_cast<float>(
+                            -luaWidgetPanelAnimationCacheRect_.top)));
+                DrawLuaWidgetPanel(cacheContext, false);
+            });
+    if (!ready)
+        luaWidgetPanelAnimationCacheRect_ = {};
+    else
+        PrepareCompositionAnimationOverlay(
+            luaWidgetPanelAnimationOverlay_,
+            luaWidgetPanelAnimationRenderCache_,
+            luaWidgetPanelAnimationCacheRect_);
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+}
+
 void DesktopApp::DrawLuaWidgetPanel(
-    ID2D1DeviceContext* ctx)
+    ID2D1DeviceContext* ctx,
+    bool applyAnimation)
 {
     if (!ctx || !widgetEngine_ ||
         luaWidgetPanelRequest_.widgetId.empty())
@@ -121,11 +179,14 @@ void DesktopApp::DrawLuaWidgetPanel(
 
     const auto animation =
         luaWidgetPanelAnimation_.GetVisual();
-    if (!animation.visible)
+    if (applyAnimation && !animation.visible)
+        return;
+    if (applyAnimation &&
+        luaWidgetPanelAnimationOverlay_.active)
         return;
     D2D1_MATRIX_3X2_F previousTransform{};
     const bool animationApplied =
-        animation.progress < 1.0f;
+        applyAnimation && animation.progress < 1.0f;
     if (animationApplied)
     {
         ctx->GetTransform(&previousTransform);
@@ -151,6 +212,20 @@ void DesktopApp::DrawLuaWidgetPanel(
                 animation.scale,
                 origin) *
             previousTransform);
+        if (!IsRectEmptyRect(
+                luaWidgetPanelAnimationCacheRect_) &&
+            luaWidgetPanelAnimationRenderCache_.DrawAt(
+                ctx,
+                D2D1::Point2F(
+                    static_cast<float>(
+                        luaWidgetPanelAnimationCacheRect_.left),
+                    static_cast<float>(
+                        luaWidgetPanelAnimationCacheRect_.top)),
+                D2D1_INTERPOLATION_MODE_LINEAR))
+        {
+            ctx->SetTransform(previousTransform);
+            return;
+        }
     }
 
     const bool darkText =

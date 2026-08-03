@@ -25,6 +25,7 @@ bool DesktopApp::InitGraphics()
         WriteDiagnosticLogEntry(buf);
     }
     if (FAILED(hr)) return false;
+    uiAnimationScheduler_.SetSoftwareRendering(usingWarp);
     d3dDevice_->GetImmediateContext(&d3dImmediateContext_);
     if (!d3dImmediateContext_) return false;
 
@@ -152,6 +153,8 @@ void DesktopApp::ResetCompositionRenderCaches()
 {
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
+    ResetLuaWidgetPanelAnimationCache();
+    ResetPageNotifyAnimationCache();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     acrylicNoiseBrushCache_.clear();

@@ -35,7 +35,7 @@ void DesktopApp::InvalidateDockContainers()
     }
 }
 
-void DesktopApp::InvalidateDockRects(BOOL erase) const
+void DesktopApp::InvalidateDockRects(BOOL erase)
 {
     if (floatingDockVisible_)
         InvalidateFloatingDockWindow(true);

@@ -369,11 +369,7 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     ApplyWindowAppearance(lightTheme_);
     if (!RenderCurrent())
         return false;
-    if (!IsWindowVisible(hwnd_))
-        AnimateWindow(hwnd_, 70,
-            AW_BLEND | AW_SLIDE | AW_HOR_POSITIVE);
-    else
-        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     return true;
 }
 
@@ -807,9 +803,13 @@ bool Window::RenderCurrent()
     POINT destination = ResolvePosition(menuBounds_, dpi_);
     SIZE size{ width_, height_ };
     POINT source{};
-    BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    const BOOL updated = UpdateLayeredWindow(hwnd_, nullptr, &destination,
-        &size, dc, &source, 0, &blend, ULW_ALPHA);
+    BLENDFUNCTION blend{
+        AC_SRC_OVER, 0, 255, AC_SRC_ALPHA,
+    };
+    const BOOL updated = UpdateLayeredWindow(
+        hwnd_, nullptr, &destination,
+        &size, dc, &source, 0,
+        &blend, ULW_ALPHA);
     if (updated)
         committedPositions_.push_back(destination);
     if (oldBitmap) SelectObject(dc, oldBitmap);

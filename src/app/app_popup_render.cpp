@@ -18,6 +18,8 @@ void DesktopApp::DrawCollectionPopup(
         popupAnimation_.GetVisual();
     if (applyAnimation && !animation.visible)
         return;
+    if (applyAnimation && popupAnimationOverlay_.active)
+        return;
 
     D2D1_MATRIX_3X2_F previousTransform{};
     const bool animationApplied =

@@ -277,6 +277,13 @@ bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
 
 void DesktopApp::ResetCollectionPopupAnimationCache()
 {
+    if (popupAnimationCompletionToken_)
+        uiAnimationScheduler_.Cancel(
+            popupAnimationCompletionToken_);
+    popupAnimationCompletionToken_ = 0;
+    popupAnimationCompositorDriven_ = false;
+    ResetCompositionAnimationOverlay(
+        popupAnimationOverlay_);
     popupAnimationRenderCache_.Reset();
     popupAnimationCacheRect_ = {};
 }
@@ -320,6 +327,11 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
             });
     if (!ready)
         popupAnimationCacheRect_ = {};
+    else if (!floatingDockVisible_)
+        PrepareCompositionAnimationOverlay(
+            popupAnimationOverlay_,
+            popupAnimationRenderCache_,
+            popupAnimationCacheRect_);
 
     // The off-screen draw switches the shared brush cache to its context.
     // Restore lazy creation for the next desktop/floating-Dock frame.

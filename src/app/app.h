@@ -71,6 +71,7 @@
 #include "rename_controller.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
+#include "ui_animation_scheduler.h"
 #include "taskbar_dynamic/search_visibility_detector.h"
 #include "../crashlog.h"
 
@@ -264,6 +265,16 @@ private:
     UINT width_ = 0;                   /**< 缓存位图宽度 */
     UINT height_ = 0;                  /**< 缓存位图高度 */
     std::uint64_t revision_ = 0;       /**< 当前缓存的修订号，用于判断是否需要重绘 */
+};
+
+struct UiCompositionAnimationOverlay
+{
+    ComPtr<IDCompositionVisual2> visual;
+    ComPtr<IDCompositionEffectGroup> effect;
+    ComPtr<IDCompositionScaleTransform> scaleTransform;
+    ComPtr<IDCompositionSurface> surface;
+    RECT bounds{};
+    bool active = false;
 };
 
 /**
@@ -524,6 +535,12 @@ private:
     void RequestExit();
     /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
     void RequestRestart();
+    /** @brief 确保统一 UI 动画帧调度已启动。 */
+    void EnsureUiAnimationFrame();
+    /** @brief 取消统一 UI 动画帧调度。 */
+    void CancelUiAnimationFrame();
+    /** @brief 推进所有内置 UI 动画；仍有活动动画时返回 true。 */
+    bool AdvanceUiAnimationFrame(double nowMilliseconds);
     /** @brief 隐藏 Explorer 原生桌面图标。 */
     void HideExplorerIcons();
     /** @brief 恢复 Explorer 原生桌面图标。 */
@@ -580,7 +597,16 @@ private:
     /** @brief 绘制翻页导航按钮（左右箭头）。 @param ctx D2D 设备上下文 */
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
-    void DrawPageNotify(ID2D1DeviceContext* ctx);
+    void DrawPageNotify(
+        ID2D1DeviceContext* ctx,
+        bool applyAnimation = true);
+    void PreparePageNotifyTextCache();
+    void ResetPageNotifyTextCache();
+    void PreparePageNotifyAnimationCache();
+    void ResetPageNotifyAnimationCache();
+    bool UpdatePageNotifyCompositionAnimation(
+        float opacity, bool commit = true);
+    RECT GetPageNotifyBounds() const;
     /** @brief 绘制隐藏状态提示（双击取消隐藏）。 */
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 绘制添加组件操作提示。 */
@@ -598,7 +624,7 @@ private:
         D2D1_COLOR_F color, float strokeWidth);
     /** @brief 获取原生毛玻璃后端状态文本。 */
     std::wstring GetGlassBackendStatusText() const;
-    /** @brief 触发换页通知（记录文本与时间戳，启动定时器）。 @param text 通知文本 */
+    /** @brief 触发换页通知（记录文本与时间戳，安排淡出截止时间）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
     void GetNavButtonRects(RECT& outPrev, RECT& outNext) const;
@@ -641,8 +667,8 @@ private:
     DockContainer* GetDockContainer() const;
     DockContainer* GetDockContainerAtPoint(POINT point) const;
     void InvalidateDockContainers();
-    void InvalidateDockRects(BOOL erase = FALSE) const;
-    /** @brief 提交拖动帧，并按刷新间隔合并浮动 Dock 的被动 hover 帧。 */
+    void InvalidateDockRects(BOOL erase = FALSE);
+    /** @brief 按显示刷新节奏合并 Dock hover 与拖动交互帧。 */
     void PresentPointerInteractionFrame();
     void ClearDockBackdropForDragTransition(
         POINT previousPointer, POINT currentPointer);
@@ -653,6 +679,8 @@ private:
         bool closeDockPopup = true,
         bool forceImmediate = false);
     void CompleteFloatingDockCloseHandoff();
+    bool WaitForDCompCommitWithFallback(
+        const wchar_t* diagnosticContext);
     void ToggleFloatingDock();
     void ApplyFloatingDockHotkey();
     void UnregisterFloatingDockHotkey();
@@ -663,7 +691,7 @@ private:
     RECT CalculateFloatingDockStableSourceRect() const;
     void UpdateFloatingDockWindowBounds(
         bool immediatePresent = true);
-    void InvalidateFloatingDockWindow(bool immediate = false) const;
+    void InvalidateFloatingDockWindow(bool immediate = false);
     HRESULT CreateOrResizeFloatingDockCompositionSurface();
     HRESULT EnsureFloatingDockDesktopCacheVisual();
     void ResetFloatingDockCompositionResources();
@@ -686,6 +714,7 @@ private:
     float GetDockLaunchBounceOffset(
         size_t itemIndex, int iconSize) const;
     void OnDockLaunchBounceTimer();
+    void InvalidateDockLaunchBounceRects();
     bool ActivateOrToggleDockItem(size_t itemIndex,
         std::optional<snowdesktop::dock_window_rules::DockClickAction>
             pressedAction = std::nullopt,
@@ -1682,7 +1711,11 @@ private:
     RECT GetLuaWidgetPanelRect() const;
     RECT GetLuaWidgetPanelContentRect() const;
     RECT GetLuaWidgetPanelCloseRect() const;
-    void DrawLuaWidgetPanel(ID2D1DeviceContext* ctx);
+    void DrawLuaWidgetPanel(
+        ID2D1DeviceContext* ctx,
+        bool applyAnimation = true);
+    void PrepareLuaWidgetPanelAnimationCache();
+    void ResetLuaWidgetPanelAnimationCache();
     void OpenLuaWidgetPanel(
         const LuaWidgetPanelRequest& request);
     void CloseLuaWidgetPanel(
@@ -1693,6 +1726,31 @@ private:
     void PrepareCollectionPopupAnimationCache();
     /** @brief 释放弹窗动画位图。 */
     void ResetCollectionPopupAnimationCache();
+    bool PrepareCompositionAnimationOverlay(
+        UiCompositionAnimationOverlay& overlay,
+        const DragRenderCache& cache,
+        const RECT& bounds);
+    bool UpdateCompositionAnimationOverlay(
+        UiCompositionAnimationOverlay& overlay,
+        float scale, POINT anchor, float opacity,
+        bool commit = true);
+    bool AnimateCompositionAnimationOverlay(
+        UiCompositionAnimationOverlay& overlay,
+        float fromScale, float toScale,
+        POINT anchor,
+        float fromOpacity, float toOpacity,
+        UINT durationMilliseconds);
+    bool CommitCompositionAnimationFrame();
+    void ClearDesktopBehindCompositionAnimation(
+        const RECT& bounds);
+    void ResetCompositionAnimationOverlay(
+        UiCompositionAnimationOverlay& overlay);
+    bool UpdateCollectionPopupCompositionAnimation(
+        bool commit = true);
+    bool UpdateLuaWidgetPanelCompositionAnimation(
+        bool commit = true);
+    bool StartCollectionPopupCompositionAnimation();
+    bool StartLuaWidgetPanelCompositionAnimation();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
     static float GetBeautifiedIconCornerRadius(int width, int height);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
@@ -2049,6 +2107,10 @@ private:
     // ── Member variables ────────────────────────────────────
     /** @brief 应用程序实例句柄 */
     HINSTANCE instance_ = nullptr;
+    snowdesktop::UiAnimationScheduler uiAnimationScheduler_;
+    snowdesktop::UiScheduleToken uiAnimationFrameToken_ = 0;
+    bool desktopPointerPresentPending_ = false;
+    bool floatingDockPointerPresentPending_ = false;
     /** @brief 桌面覆盖窗口句柄 */
     HWND hwnd_ = nullptr;
     /** @brief 虚拟桌面区域（左、上、宽、高） */
@@ -2091,6 +2153,12 @@ private:
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
     ComPtr<IDWriteTextFormat> fluentIconTextFormat_;
+    ComPtr<IDWriteTextFormat> pageNotifyTextFormat_;
+    ComPtr<IDWriteTextLayout> pageNotifyTextLayout_;
+    DWRITE_TEXT_METRICS pageNotifyTextMetrics_{};
+    DragRenderCache pageNotifyAnimationRenderCache_;
+    RECT pageNotifyAnimationCacheRect_{};
+    UiCompositionAnimationOverlay pageNotifyAnimationOverlay_;
     ComPtr<ID2D1Bitmap1> privacyFileIconBitmap_;
     ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
@@ -2286,7 +2354,10 @@ private:
     // ── 换页通知覆盖层（电视台换台式角标） ──
     std::wstring pageNotifyText_;
     DWORD pageNotifyStartTick_ = 0;
+    snowdesktop::UiScheduleToken pageNotifyFadeOutToken_ = 0;
     bool pageNotifyActive_ = false;
+    bool pageNotifyUseAnimation_ = true;
+    bool pageNotifyCompositorDriven_ = false;
     POINT lastContextMenuScreenPoint_{};
     POINT gridAdjustmentMenuAnchor_{};
     bool gridAdjustmentMenuAnchorValid_ = false;
@@ -2328,11 +2399,11 @@ private:
     bool floatingDockRevealPending_ = false;
     bool floatingDockFrameReady_ = false;
     bool floatingDockBackdropCleanupPending_ = false;
+    bool floatingDockRevealCommitPending_ = false;
     bool floatingDockHoverHandoffPending_ = false;
     bool floatingDockClosePending_ = false;
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
-    ULONGLONG floatingDockLastPointerPresentTick_ = 0;
     UINT_PTR floatingDockBackdropCommitToken_ = 0;
     PersonalizationSettings floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();
@@ -2408,9 +2479,8 @@ private:
     // first frame spuriously hover whatever happens to occupy (0, 0).
     POINT lastMousePoint_{ LONG_MIN, LONG_MIN };
     SelectionController selectionController_;
-    // per-widget 独立定时器：timerId -> widgetId（manifest 刷新与命名定时器共用）
+    // 组件统一调度令牌：token -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
-    UINT_PTR nextWidgetTimerId_ = kWidgetTimerIdBase;
     bool mouseDown_ = false;
     POINT mouseDownPoint_{};
     Item* mouseDownHit_ = nullptr;
@@ -2594,6 +2664,10 @@ private:
         popupAnimation_;
     DragRenderCache popupAnimationRenderCache_;
     RECT popupAnimationCacheRect_{};
+    UiCompositionAnimationOverlay popupAnimationOverlay_;
+    snowdesktop::UiScheduleToken
+        popupAnimationCompletionToken_ = 0;
+    bool popupAnimationCompositorDriven_ = false;
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
     bool popupHasAnchor_ = false;
@@ -2632,6 +2706,12 @@ private:
     LuaWidgetPanelRequest luaWidgetPanelRequest_{};
     snowdesktop::popup_animation_rules::State
         luaWidgetPanelAnimation_;
+    DragRenderCache luaWidgetPanelAnimationRenderCache_;
+    RECT luaWidgetPanelAnimationCacheRect_{};
+    UiCompositionAnimationOverlay luaWidgetPanelAnimationOverlay_;
+    snowdesktop::UiScheduleToken
+        luaWidgetPanelAnimationCompletionToken_ = 0;
+    bool luaWidgetPanelAnimationCompositorDriven_ = false;
     RECT luaWidgetPanelRect_{};
     POINT luaWidgetPanelAnchorPoint_{};
     bool luaWidgetPanelMouseDown_ = false;
@@ -2657,6 +2737,9 @@ private:
     POINT quickNavigationOpenPoint_{};
     /** @brief 快速导航缩放动画锚点（app 坐标，通常为 Dock 搜索图标中心）。 */
     POINT quickNavigationAnimationAnchorPoint_{};
+    RECT quickNavigationLastEditAnimationRect_{};
+    BYTE quickNavigationLastEditAnimationOpacity_ = 0;
+    bool quickNavigationHasLastEditAnimationFrame_ = false;
     RECT quickNavigationRect_{};
     /** @brief 快速导航合成宿主范围，覆盖目标面板与 Dock 动画锚点。 */
     RECT quickNavigationHostRect_{};

@@ -234,6 +234,16 @@ public:
     /** @brief 设置原生毛玻璃状态文本提供者（设置界面只读状态行）。 */
     void SetGlassStatusProvider(std::function<std::wstring()> provider) { glassStatusProvider_ = std::move(provider); }
 
+    /** @brief 设置动画性能诊断文本提供者。 */
+    void SetAnimationDiagnosticsProvider(
+        std::function<std::wstring()> provider)
+    { animationDiagnosticsProvider_ = std::move(provider); }
+
+    /** @brief 设置仅本次运行有效的动画诊断开关。 */
+    void SetAnimationDiagnosticsToggleCallback(
+        std::function<void(bool)> callback)
+    { animationDiagnosticsToggleCallback_ = std::move(callback); }
+
     void SyncDisplaySettings(float spacingScale, float componentSpacingScale,
         float fontSize, float fontWeight,
         int shortcutArrowMode,
@@ -665,6 +675,7 @@ private:
 
     /// 是否已解锁调试页面（通过版本号点击彩蛋激活）
     bool debugUnlocked_ = false;
+    bool animationDiagnosticsEnabled_ = false;
 
     /// 版本号点击计数（用于激活调试页面的彩蛋逻辑）
     int versionClickCount_ = 0;
@@ -720,6 +731,8 @@ private:
 
     /// 缓存失效回调（设置变更后通知主窗口）
     std::function<void()> invalidateCallback_;
+    std::function<std::wstring()> animationDiagnosticsProvider_;
+    std::function<void(bool)> animationDiagnosticsToggleCallback_;
 
     /// 导航设置变更回调
     std::function<void()> navigationSettingsChangedCallback_;

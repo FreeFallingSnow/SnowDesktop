@@ -5717,9 +5717,9 @@ void WidgetEngine::RebindHostTimers()
 {
     for (auto& widget : widgets_)
     {
-        // The old HWND and all timers owned by it have already been destroyed.
-        // Do not route the stale IDs through the kill callback, which now
-        // targets the replacement HWND and may have started reusing IDs.
+        // The host retires all old deadline tokens before rebinding. Do not
+        // route stale IDs through the kill callback because another host
+        // implementation may already have reused them for the new surface.
         widget.refreshTimerId = 0;
         widget.namedTimerId = 0;
 

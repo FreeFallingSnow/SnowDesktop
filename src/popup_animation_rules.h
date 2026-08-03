@@ -7,10 +7,8 @@ namespace snowdesktop::popup_animation_rules
 {
 constexpr std::uint64_t kOpenDurationMs = 90;
 constexpr std::uint64_t kCloseDurationMs = 90;
-// Request frames faster than a 60 Hz refresh cycle. Win32 may coalesce timer
-// messages, but the animation remains time-based and therefore never slows
-// down when a frame is skipped.
-constexpr unsigned int kFrameIntervalMs = 8;
+// The shared QPC scheduler advances directly to the current time, so a delayed
+// frame never causes catch-up rendering or stretches the transition.
 constexpr float kMinimumScale = 0.18f;
 
 inline float ClampUnit(float value)

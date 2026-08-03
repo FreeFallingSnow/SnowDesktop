@@ -33,7 +33,7 @@ void DesktopApp::InvalidateDragStaticScene()
 }
 
 /**
- * @brief 同步提交快速拖动帧，避免连续 WM_MOUSEMOVE 让 WM_PAINT 饥饿。
+ * @brief 合并 Dock hover 与快速拖动帧，在显示刷新周期消费最新指针状态。
  */
 void DesktopApp::PresentPointerInteractionFrame()
 {
@@ -50,22 +50,11 @@ void DesktopApp::PresentPointerInteractionFrame()
         hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
-        if (!compositionPaintInProgress_)
-            UpdateWindow(hwnd_);
+        desktopPointerPresentPending_ = true;
+        EnsureUiAnimationFrame();
     }
     if (floatingDockVisible_)
-    {
-        const ULONGLONG now = GetTickCount64();
-        const bool presentNow =
-            snowdesktop::floating_dock_rules::
-                ShouldPresentPointerFrame(
-                    now,
-                    floatingDockLastPointerPresentTick_,
-                    immediateDesktopPresent);
-        if (presentNow)
-            floatingDockLastPointerPresentTick_ = now;
-        InvalidateFloatingDockWindow(presentNow);
-    }
+        InvalidateFloatingDockWindow(true);
 }
 
 /**

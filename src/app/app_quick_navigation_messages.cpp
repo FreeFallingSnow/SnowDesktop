@@ -41,30 +41,36 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     case WM_NCHITTEST:
         if (!quickNavigationOpen_)
             return HTTRANSPARENT;
-        break;
-    case WM_TIMER:
-        if (wp == kQuickNavigationAnimationTimerId)
         {
-            quickNavigationAnimation_.Advance(
-                GetTickCount64());
-            ApplyQuickNavigationAnimationFrame();
-            if (!quickNavigationAnimation_.
-                    IsAnimating())
-            {
-                KillTimer(
-                    hwnd,
-                    kQuickNavigationAnimationTimerId);
-                if (quickNavigationAnimation_.
-                        IsHidden())
-                {
-                    FinalizeCloseQuickNavigation();
-                }
-                else
-                {
-                    InvalidateQuickNavigationWindow();
-                }
-            }
-            return 0;
+            POINT point{
+                GET_X_LPARAM(lp) - virtualLeft_,
+                GET_Y_LPARAM(lp) - virtualTop_
+            };
+            const auto visual =
+                quickNavigationAnimation_.GetVisual();
+            const auto scaled = [scale = visual.scale](
+                LONG value, LONG anchor) {
+                return static_cast<LONG>(std::lround(
+                    static_cast<double>(anchor) +
+                    static_cast<double>(value - anchor) *
+                        static_cast<double>(scale)));
+            };
+            RECT visible{
+                scaled(
+                    quickNavigationRect_.left,
+                    quickNavigationAnimationAnchorPoint_.x),
+                scaled(
+                    quickNavigationRect_.top,
+                    quickNavigationAnimationAnchorPoint_.y),
+                scaled(
+                    quickNavigationRect_.right,
+                    quickNavigationAnimationAnchorPoint_.x),
+                scaled(
+                    quickNavigationRect_.bottom,
+                    quickNavigationAnimationAnchorPoint_.y)
+            };
+            if (!PtInRect(&visible, point))
+                return HTTRANSPARENT;
         }
         break;
     case WM_PAINT:

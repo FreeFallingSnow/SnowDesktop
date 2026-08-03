@@ -36,6 +36,7 @@ void DesktopApp::ShowFloatingDock()
     // targets being reused by this reveal.
     ++floatingDockBackdropCommitToken_;
     floatingDockBackdropCleanupPending_ = false;
+    floatingDockRevealCommitPending_ = false;
     floatingDockClosePending_ = false;
     floatingDockCloseDesktopRect_ = {};
     floatingDockHoverHandoffPending_ = false;
@@ -71,7 +72,6 @@ void DesktopApp::ShowFloatingDock()
             floatingDockPersonalization_);
     floatingDockVisible_ = true;
     floatingDockDesktopCopySuppressed_ = false;
-    floatingDockLastPointerPresentTick_ = 0;
     floatingDockRevealPending_ = true;
     UpdateFloatingDockWindowBounds();
     if (!floatingDockVisible_ ||
@@ -142,23 +142,23 @@ void DesktopApp::ShowFloatingDock()
     floatingDockBackdropCompositor_.
         Reattach(floatingDockHwnd_);
     floatingDockRevealPending_ = false;
-    floatingDockLastPointerPresentTick_ = 0;
 
     // Showing the HWND and submitting its DComp surface live in different
     // timing domains. This barrier only installs the transparent target; the
     // currently visible desktop Dock remains the sole rendered copy.
-    const HRESULT presentationHr = DwmFlush();
+    const bool presentationCompleted =
+        WaitForDCompCommitWithFallback(
+            L"Floating Dock transparent staging");
     const bool retireDesktopCopy =
         snowdesktop::floating_dock_rules::
             ShouldRetireDesktopDockCopy(
                 floatingDockFrameReady_,
-                SUCCEEDED(presentationHr));
+                presentationCompleted);
     if (!retireDesktopCopy)
     {
         wchar_t message[176]{};
         wsprintfW(message,
-            L"Floating Dock presentation barrier FAILED hr=0x%08X; desktop copy retained",
-            static_cast<unsigned>(presentationHr));
+            L"Floating Dock transparent staging did not complete; desktop copy retained");
         WriteDiagnosticLogEntry(message);
         CloseFloatingDock(true, true);
         MessageBeep(MB_ICONWARNING);
@@ -204,16 +204,6 @@ void DesktopApp::ShowFloatingDock()
         SetVisible(true);
     floatingDockBackdropCompositor_.
         Reattach(floatingDockHwnd_);
-    const HRESULT revealPresentationHr = DwmFlush();
-    if (FAILED(revealPresentationHr))
-    {
-        wchar_t message[176]{};
-        wsprintfW(message,
-            L"Floating Dock atomic reveal barrier FAILED hr=0x%08X",
-            static_cast<unsigned>(revealPresentationHr));
-        WriteDiagnosticLogEntry(message);
-    }
-
     // The desktop main surface no longer owns the Dock, but the exact surface
     // rendered for the floating host is now visible through the desktop cache
     // child. Exchange those two identical copies without asking either HWND
@@ -240,12 +230,10 @@ void DesktopApp::ShowFloatingDock()
         MessageBeep(MB_ICONWARNING);
         return;
     }
-    DwmFlush();
-
-    // Both backdrop targets share one Windows Composition compositor. Flip
-    // their opacity together only after the D2D ownership transaction is on
-    // screen; until this transaction lands, the retained desktop panel keeps
-    // supplying exactly one glass layer beneath the floating D2D content.
+    // Both backdrop targets share one Windows Composition compositor. Queue
+    // their opacity exchange as one transaction and observe its asynchronous
+    // completion; the retained desktop panel remains the compatibility source
+    // until both composition queues settle.
     const bool floatingGlassReady =
         !floatingDockBackdropCompositor_.IsAvailable() ||
         floatingDockBackdropCompositor_.
@@ -254,9 +242,26 @@ void DesktopApp::ShowFloatingDock()
     {
         desktopBackdropCompositor_.SetPanelOpacity(
             desktopDockPanelRect, 0.0f);
-        floatingDockBackdropCompositor_.
-            CommitVisualChanges();
-        DwmFlush();
+        const HWND notifyWindow =
+            controlHwnd_ && IsWindow(controlHwnd_)
+                ? controlHwnd_ : hwnd_;
+        const UINT_PTR commitToken =
+            ++floatingDockBackdropCommitToken_;
+        floatingDockRevealCommitPending_ =
+            floatingDockBackdropCompositor_.
+                CommitVisualChangesAndNotify(
+                    notifyWindow,
+                    kFloatingDockBackdropCommitMessage,
+                    commitToken);
+        if (!floatingDockRevealCommitPending_)
+        {
+            // Older Windows Composition implementations do not expose a
+            // completion callback. Preserve one compatibility barrier only
+            // on that path.
+            floatingDockBackdropCompositor_.
+                CommitVisualChanges();
+            DwmFlush();
+        }
     }
     // Keep the now-transparent desktop panel alive while floating. This is a
     // deliberate standby source for the reverse transaction and prevents a
@@ -274,6 +279,7 @@ void DesktopApp::CloseFloatingDock(
             return;
         ++floatingDockBackdropCommitToken_;
         floatingDockBackdropCleanupPending_ = false;
+        floatingDockRevealCommitPending_ = false;
         floatingDockClosePending_ = false;
         CompleteFloatingDockCloseHandoff();
         return;
@@ -282,6 +288,11 @@ void DesktopApp::CloseFloatingDock(
         (!floatingDockHwnd_ ||
             !IsWindowVisible(floatingDockHwnd_)))
         return;
+    if (floatingDockRevealCommitPending_)
+    {
+        ++floatingDockBackdropCommitToken_;
+        floatingDockRevealCommitPending_ = false;
+    }
     // A preview that has already completed its hover dwell must not be armed
     // again merely because input ownership moves from the floating HWND back
     // to the desktop HWND. Suppress that same target until the real pointer
@@ -405,7 +416,6 @@ void DesktopApp::CloseFloatingDock(
     }
 
     floatingDockRevealPending_ = false;
-    floatingDockLastPointerPresentTick_ = 0;
     if (deferBackdropHandoff && !forceImmediate)
     {
         // Keep the floating content and its old glass paired until WinComp
@@ -451,11 +461,11 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
         WriteDiagnosticLogEntry(message);
     }
     else
-    {
-        DwmFlush();
-    }
+        WaitForDCompCommitWithFallback(
+            L"Floating Dock cached conceal");
 
     floatingDockVisible_ = false;
+    floatingDockPointerPresentPending_ = false;
     if (floatingDockHwnd_ &&
         IsWindow(floatingDockHwnd_))
     {
@@ -506,15 +516,8 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
     }
     if (desktopFrameSubmitted)
     {
-        const HRESULT presentationHr = DwmFlush();
-        if (FAILED(presentationHr))
-        {
-            wchar_t message[176]{};
-            wsprintfW(message,
-                L"Desktop Dock presentation barrier FAILED hr=0x%08X",
-                static_cast<unsigned>(presentationHr));
-            WriteDiagnosticLogEntry(message);
-        }
+        WaitForDCompCommitWithFallback(
+            L"Desktop Dock handoff");
     }
     FinalizeFloatingDockBackdropCleanup();
     floatingDockContainer_ = nullptr;
@@ -539,7 +542,7 @@ void DesktopApp::ToggleFloatingDock()
 }
 
 void DesktopApp::InvalidateFloatingDockWindow(
-    bool immediate) const
+    bool immediate)
 {
     if (floatingDockVisible_ &&
         floatingDockHwnd_ &&
@@ -547,14 +550,14 @@ void DesktopApp::InvalidateFloatingDockWindow(
     {
         InvalidateRect(
             floatingDockHwnd_, nullptr, FALSE);
-        // WM_MOUSEMOVE and OLE DragOver can keep the UI thread's input queue
-        // continuously busy. A plain invalidation is then painted only after
-        // the queue becomes idle, which makes Dock magnification and insertion
-        // previews appear frozen. Force only the already-invalid floating
-        // surface to paint; do not resize or rebuild its composition resources.
-        if (immediate &&
-            !floatingDockCompositionPaintInProgress_)
-            UpdateWindow(floatingDockHwnd_);
+        // Input can outpace WM_PAINT. Consume only the newest state on the
+        // scheduler's next display-aligned frame instead of synchronously
+        // repainting once for every WM_MOUSEMOVE/DragOver notification.
+        if (immediate)
+        {
+            floatingDockPointerPresentPending_ = true;
+            EnsureUiAnimationFrame();
+        }
     }
 }
 

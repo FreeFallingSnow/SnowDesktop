@@ -14,16 +14,25 @@ void DesktopApp::OpenLuaWidgetPanel(
             luaWidgetPanelAnimation_.IsClosing())
         {
             luaWidgetPanelRequest_ = request;
-            luaWidgetPanelAnimation_.Open(
-                GetTickCount64());
-            SetTimer(
-                hwnd_,
-                kLuaWidgetPanelAnimationTimerId,
-                snowdesktop::popup_animation_rules::
-                    kFrameIntervalMs,
-                nullptr);
-            InvalidateRect(
-                hwnd_, nullptr, FALSE);
+            if (snowdesktop::dock_launch_animation::
+                    SystemAnimationsEnabled())
+            {
+                luaWidgetPanelAnimation_.Open(
+                    static_cast<std::uint64_t>(
+                        snowdesktop::UiAnimationScheduler::
+                            MonotonicMilliseconds()));
+                if (!StartLuaWidgetPanelCompositionAnimation())
+                {
+                    UpdateLuaWidgetPanelCompositionAnimation();
+                    EnsureUiAnimationFrame();
+                }
+            }
+            else
+            {
+                luaWidgetPanelAnimation_.ShowImmediately();
+                ResetLuaWidgetPanelAnimationCache();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
             return;
         }
         FinalizeCloseLuaWidgetPanel();
@@ -57,16 +66,19 @@ void DesktopApp::OpenLuaWidgetPanel(
     luaWidgetPanelRect_ = GetLuaWidgetPanelRect();
     luaWidgetPanelMouseDown_ = false;
     luaWidgetPanelAnimation_.ResetHidden();
-    luaWidgetPanelAnimation_.Open(
-        GetTickCount64());
-    if (hwnd_ && IsWindow(hwnd_))
+    const bool animate =
+        snowdesktop::dock_launch_animation::
+            SystemAnimationsEnabled();
+    if (animate)
     {
-        SetTimer(
-            hwnd_,
-            kLuaWidgetPanelAnimationTimerId,
-            snowdesktop::popup_animation_rules::
-                kFrameIntervalMs,
-            nullptr);
+        luaWidgetPanelAnimation_.Open(
+            static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::
+                    MonotonicMilliseconds()));
+    }
+    else
+    {
+        luaWidgetPanelAnimation_.ShowImmediately();
     }
     if (widgetEngine_)
     {
@@ -74,17 +86,22 @@ void DesktopApp::OpenLuaWidgetPanel(
             request.widgetId, "onPanelOpened",
             0, 0, 0, 0);
     }
+    PrepareLuaWidgetPanelAnimationCache();
+    if (animate)
+    {
+        if (!StartLuaWidgetPanelCompositionAnimation())
+        {
+            UpdateLuaWidgetPanelCompositionAnimation();
+            EnsureUiAnimationFrame();
+        }
+    }
+    else
+        ResetLuaWidgetPanelAnimationCache();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void DesktopApp::FinalizeCloseLuaWidgetPanel()
 {
-    if (hwnd_ && IsWindow(hwnd_))
-    {
-        KillTimer(
-            hwnd_,
-            kLuaWidgetPanelAnimationTimerId);
-    }
     const std::wstring closingId =
         luaWidgetPanelRequest_.widgetId;
     if (!closingId.empty() && widgetEngine_)
@@ -94,6 +111,7 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel()
             0, 0, 0, 0);
     }
     luaWidgetPanelAnimation_.ResetHidden();
+    ResetLuaWidgetPanelAnimationCache();
     luaWidgetPanelRequest_ = {};
     luaWidgetPanelRect_ = {};
     luaWidgetPanelAnchorPoint_ = {};
@@ -121,21 +139,31 @@ void DesktopApp::CloseLuaWidgetPanel(
     luaWidgetPanelMouseDown_ = false;
     ReleaseCapture();
     UpdateHostInputImePosition();
+    PrepareLuaWidgetPanelAnimationCache();
+    if (!snowdesktop::dock_launch_animation::
+            SystemAnimationsEnabled())
+    {
+        FinalizeCloseLuaWidgetPanel();
+        return;
+    }
+    if (luaWidgetPanelAnimationOverlay_.active)
+    {
+        ClearDesktopBehindCompositionAnimation(
+            luaWidgetPanelAnimationCacheRect_);
+    }
     luaWidgetPanelAnimation_.Close(
-        GetTickCount64());
+        static_cast<std::uint64_t>(
+            snowdesktop::UiAnimationScheduler::
+                MonotonicMilliseconds()));
     if (luaWidgetPanelAnimation_.IsHidden())
     {
         FinalizeCloseLuaWidgetPanel();
         return;
     }
-    if (hwnd_ && IsWindow(hwnd_))
+    if (!StartLuaWidgetPanelCompositionAnimation())
     {
-        SetTimer(
-            hwnd_,
-            kLuaWidgetPanelAnimationTimerId,
-            snowdesktop::popup_animation_rules::
-                kFrameIntervalMs,
-            nullptr);
+        UpdateLuaWidgetPanelCompositionAnimation();
+        EnsureUiAnimationFrame();
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
 }

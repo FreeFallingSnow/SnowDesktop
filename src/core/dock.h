@@ -131,6 +131,8 @@ public:
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
     RECT GetVisualPanelBounds(POINT pointer) const;
     RECT GetHoveredTitleBounds(POINT pointer) const;
+    RECT GetDesktopItemVisualRect(
+        size_t itemIndex, POINT pointer) const;
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
@@ -174,6 +176,10 @@ private:
         const RECT& hoveredBounds,
         IDWriteTextFormat* measurementFormat =
             nullptr) const;
+    RECT PositionTitleTooltipBounds(
+        const RECT& hoveredBounds,
+        int tooltipWidth,
+        int tooltipHeight) const;
     bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
     // Folder entries share the Dock's single scroll viewport/offset. These
@@ -192,9 +198,9 @@ private:
     mutable size_t mainEntryCount_ = 0;
     mutable size_t folderEntryCount_ = 0;
     mutable int scrollOffset_ = 0;
-    // Tooltip anchors are stable slot rectangles. Cache the measured chip
-    // bounds so rapid pointer scans do not create a DirectWrite layout for
-    // every individual WM_MOUSEMOVE.
+    // Cache the measured tooltip size separately from its visual anchor so
+    // pointer-driven magnification can move the chip without rebuilding a
+    // DirectWrite layout for every WM_MOUSEMOVE.
     mutable std::wstring hoveredTitleBoundsCacheText_;
     mutable RECT hoveredTitleBoundsCacheAnchor_{};
     mutable RECT hoveredTitleBoundsCache_{};

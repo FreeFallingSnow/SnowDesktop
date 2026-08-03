@@ -4713,6 +4713,30 @@ void SettingsWindow::DrawDebugPage()
     ImGui::Text("%s", _L("app.settings.debug_page"));
     ImGui::Separator();
     ImGui::Spacing();
+    if (ImGui::Checkbox(
+            _L("app.settings.animation_diagnostics"),
+            &animationDiagnosticsEnabled_))
+    {
+        if (animationDiagnosticsToggleCallback_)
+        {
+            animationDiagnosticsToggleCallback_(
+                animationDiagnosticsEnabled_);
+        }
+    }
+    ImGui::TextWrapped(
+        "%s", _L("app.settings.animation_diagnostics_desc"));
+    if (animationDiagnosticsEnabled_ &&
+        animationDiagnosticsProvider_)
+    {
+        const std::wstring status =
+            animationDiagnosticsProvider_();
+        if (!status.empty())
+        {
+            const std::string utf8 = WideToUtf8(status);
+            ImGui::TextWrapped("%s", utf8.c_str());
+        }
+    }
+    ImGui::Spacing();
     if (DrawCollapsingHeaderWithHelp(
         _L("app.settings.crash_test"),
         _L("app.settings.crash_test_desc")))

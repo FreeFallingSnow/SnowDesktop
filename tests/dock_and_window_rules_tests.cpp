@@ -871,17 +871,6 @@ int main()
                 NeedsImmediatePointerPresent(
                     false, false, false),
         "item drags, widget previews and marquees must synchronously present pointer frames");
-    Check(floatingDock::ShouldPresentPointerFrame(
-            100, 0, false) &&
-            !floatingDock::ShouldPresentPointerFrame(
-                104, 100, false) &&
-            floatingDock::ShouldPresentPointerFrame(
-                108, 100, false) &&
-            floatingDock::ShouldPresentPointerFrame(
-                104, 100, true) &&
-            floatingDock::ShouldPresentPointerFrame(
-                2, 100, false),
-        "passive Dock hover frames are throttled while drag frames and clock resets present immediately");
     Check(floatingDock::
             FloatingVisibilityChangesStaticScene(
                 false, true) &&
@@ -1196,9 +1185,8 @@ int main()
         "small window snapshots must not be enlarged");
     Check(kDockWindowSnapshotRenderDpi == 96.0f,
         "snapshot render coordinates must remain physical pixels at every monitor DPI");
-    Check(kDockWindowSnapshotPresentOptions ==
-            D2D1_PRESENT_OPTIONS_NONE,
-        "snapshot frames must synchronize presentation to the display refresh");
+    Check(kDockWindowSnapshotUsesComposition,
+        "normal snapshot frames must use the composition visual path");
     Check(kDockWindowTransitionCornerPreference ==
                 DWMWCP_DONOTROUND &&
             kDockWindowTransitionNcRenderingPolicy ==
@@ -1209,10 +1197,12 @@ int main()
     Check((kDockWindowTransitionExStyle &
                 WS_EX_LAYERED) != 0 &&
             (kDockWindowTransitionExStyle &
+                WS_EX_NOREDIRECTIONBITMAP) != 0 &&
+            (kDockWindowTransitionExStyle &
                 WS_EX_TRANSPARENT) != 0 &&
             (kDockWindowTransitionExStyle &
                 WS_EX_NOACTIVATE) != 0,
-        "the transition host must use a non-activating layered surface without a DWM shadow");
+        "the transition host must use a transparent no-redirection composition surface without a DWM shadow");
     Check(ResolveDockWindowTransitionSurface(
             true, true) ==
             DockWindowTransitionSurface::Snapshot,
@@ -1406,6 +1396,34 @@ int main()
     Check(bottomMagnified.left < baseDockElement.left &&
             bottomMagnified.right > baseDockElement.right,
         "horizontal Dock magnification must remain centered on its slot");
+
+    constexpr int tooltipWidth = 120;
+    constexpr int tooltipHeight = 30;
+    constexpr int tooltipGap = 8;
+    const RECT bottomBaseTooltip =
+        magnification::AnchorTooltipBounds(
+            baseDockElement, DockPosition::Bottom,
+            tooltipWidth, tooltipHeight, tooltipGap);
+    const RECT bottomMagnifiedTooltip =
+        magnification::AnchorTooltipBounds(
+            bottomMagnified, DockPosition::Bottom,
+            tooltipWidth, tooltipHeight, tooltipGap);
+    Check(bottomMagnifiedTooltip.top ==
+            bottomMagnified.top - tooltipGap - tooltipHeight &&
+            bottomMagnifiedTooltip.top < bottomBaseTooltip.top,
+        "the Dock title tooltip must follow perpendicular icon magnification");
+
+    const RECT shiftedBottomMagnified =
+        magnification::MagnifyRect(
+            baseDockElement, DockPosition::Bottom,
+            magnification::kFocusScale, 64, 13);
+    const RECT shiftedBottomTooltip =
+        magnification::AnchorTooltipBounds(
+            shiftedBottomMagnified, DockPosition::Bottom,
+            tooltipWidth, tooltipHeight, tooltipGap);
+    Check(shiftedBottomTooltip.left ==
+            bottomMagnifiedTooltip.left + 13,
+        "the Dock title tooltip must follow icon displacement along the Dock axis");
 
     const RECT leftMagnified = magnification::MagnifyRect(
         baseDockElement, DockPosition::Left,

@@ -241,6 +241,50 @@ inline RECT MagnifyRect(
     return base;
 }
 
+inline RECT AnchorTooltipBounds(
+    const RECT& visualBounds, DockPosition position,
+    int tooltipWidth, int tooltipHeight, int gap)
+{
+    tooltipWidth = std::max(0, tooltipWidth);
+    tooltipHeight = std::max(0, tooltipHeight);
+    gap = std::max(0, gap);
+
+    RECT tooltip{};
+    switch (position)
+    {
+    case DockPosition::Top:
+        tooltip.left =
+            (visualBounds.left + visualBounds.right -
+                tooltipWidth) / 2;
+        tooltip.top = visualBounds.bottom + gap;
+        break;
+    case DockPosition::Left:
+        tooltip.left = visualBounds.right + gap;
+        tooltip.top =
+            (visualBounds.top + visualBounds.bottom -
+                tooltipHeight) / 2;
+        break;
+    case DockPosition::Right:
+        tooltip.left =
+            visualBounds.left - gap - tooltipWidth;
+        tooltip.top =
+            (visualBounds.top + visualBounds.bottom -
+                tooltipHeight) / 2;
+        break;
+    case DockPosition::Bottom:
+    default:
+        tooltip.left =
+            (visualBounds.left + visualBounds.right -
+                tooltipWidth) / 2;
+        tooltip.top =
+            visualBounds.top - gap - tooltipHeight;
+        break;
+    }
+    tooltip.right = tooltip.left + tooltipWidth;
+    tooltip.bottom = tooltip.top + tooltipHeight;
+    return tooltip;
+}
+
 inline RECT ExpandInteractionBounds(
     RECT bounds, DockPosition position, int baseIconSize)
 {

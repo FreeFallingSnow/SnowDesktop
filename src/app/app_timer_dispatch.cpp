@@ -98,18 +98,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
         return;
     }
 
-    if (timerId >= kWidgetTimerIdBase)
-    {
-        auto it = widgetTimerIds_.find(static_cast<UINT_PTR>(timerId));
-        if (it != widgetTimerIds_.end())
-        {
-            if (widgetEngine_)
-                widgetEngine_->OnWidgetTimer(
-                    it->second, static_cast<UINT_PTR>(timerId));
-            return;
-        }
-    }
-
     if (timerId == kDisplayTopologyRefreshTimerId)
     {
         if (controlHwnd_ && IsWindow(controlHwnd_))
@@ -190,10 +178,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
     {
         OnDockWindowPreviewHoverTimer();
     }
-    else if (timerId == kDockLaunchBounceTimerId)
-    {
-        OnDockLaunchBounceTimer();
-    }
     else if (timerId == kFloatingDockEdgeSwipeTimerId)
     {
         UpdateFloatingDockEdgeSwipe();
@@ -227,41 +211,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 hwnd_ && IsWindow(hwnd_))
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }
-    }
-    else if (timerId ==
-        kCollectionPopupAnimationTimerId)
-    {
-        popupAnimation_.Advance(GetTickCount64());
-        if (!popupAnimation_.IsAnimating())
-        {
-            KillTimer(
-                hwnd_,
-                kCollectionPopupAnimationTimerId);
-            if (popupAnimation_.IsHidden())
-            {
-                FinalizeCloseCollectionPopup();
-                return;
-            }
-        }
-        InvalidateCollectionPopupAnimation();
-    }
-    else if (timerId ==
-        kLuaWidgetPanelAnimationTimerId)
-    {
-        luaWidgetPanelAnimation_.Advance(
-            GetTickCount64());
-        if (!luaWidgetPanelAnimation_.IsAnimating())
-        {
-            KillTimer(
-                hwnd_,
-                kLuaWidgetPanelAnimationTimerId);
-            if (luaWidgetPanelAnimation_.IsHidden())
-            {
-                FinalizeCloseLuaWidgetPanel();
-                return;
-            }
-        }
-        InvalidateRect(hwnd_, nullptr, FALSE);
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
@@ -368,25 +317,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     dragSession_.CurrentPoint().x, dragSession_.CurrentPoint().y));
             InvalidateRect(hwnd_, nullptr, FALSE);
             InvalidateFloatingDockWindow(true);
-        }
-    }
-    else if (timerId == kPageNotifyTimerId)
-    {
-        // 换页通知覆盖层：定期触发重绘以驱动淡入淡出动画
-        if (pageNotifyActive_)
-        {
-            const DWORD elapsed = GetTickCount() - pageNotifyStartTick_;
-            if (elapsed >= kPageNotifyVisibleMs)
-            {
-                pageNotifyActive_ = false;
-                pageNotifyText_.clear();
-                KillTimer(hwnd_, kPageNotifyTimerId);
-            }
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        else
-        {
-            KillTimer(hwnd_, kPageNotifyTimerId);
         }
     }
     else if (timerId == kHiddenHintTimerId)

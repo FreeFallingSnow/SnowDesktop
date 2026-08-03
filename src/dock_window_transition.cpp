@@ -181,9 +181,15 @@ SIZE ConstrainDockWindowSnapshotSize(
 DockWindowTransition::~DockWindowTransition()
 {
     Cancel();
-    activeSnapshotBitmap_.Reset();
-    snapshotRenderTarget_.Reset();
-    d2dFactory_.Reset();
+    if (compositionTarget_)
+        compositionTarget_->SetRoot(nullptr);
+    compositionClip_.Reset();
+    compositionEffect_.Reset();
+    compositionScaleTransform_.Reset();
+    compositionVisual_.Reset();
+    compositionTarget_.Reset();
+    compositionDevice_.Reset();
+    d2dDevice_.Reset();
     if (hwnd_)
         DestroyWindow(hwnd_);
     hwnd_ = nullptr;
@@ -192,9 +198,16 @@ DockWindowTransition::~DockWindowTransition()
             kDockWindowTransitionClassName, instance_);
 }
 
-bool DockWindowTransition::Initialize(HINSTANCE instance)
+bool DockWindowTransition::Initialize(
+    HINSTANCE instance,
+    snowdesktop::UiAnimationScheduler* animationScheduler,
+    ID2D1Device* d2dDevice,
+    IDCompositionDesktopDevice* compositionDevice)
 {
     instance_ = instance;
+    animationScheduler_ = animationScheduler;
+    d2dDevice_ = d2dDevice;
+    compositionDevice_ = compositionDevice;
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = WindowProc;
@@ -206,8 +219,8 @@ bool DockWindowTransition::Initialize(HINSTANCE instance)
     const bool registered =
         RegisterClassExW(&windowClass) != 0 ||
         GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-    if (registered && EnsureWindow())
-        EnsureSnapshotRenderer();
+    if (registered)
+        EnsureWindow();
     return registered;
 }
 
@@ -227,13 +240,6 @@ bool DockWindowTransition::EnsureWindow()
         nullptr, nullptr, instance_, this);
     if (!hwnd_)
         return false;
-    if (!SetLayeredWindowAttributes(
-            hwnd_, 0, 255, LWA_ALPHA))
-    {
-        DestroyWindow(hwnd_);
-        hwnd_ = nullptr;
-        return false;
-    }
 
     const DWM_WINDOW_CORNER_PREFERENCE corner =
         kDockWindowTransitionCornerPreference;
@@ -406,12 +412,9 @@ bool DockWindowTransition::Start(
     }
 
     bool snapshotAvailable = false;
-    if (snapshot &&
-        EnsureSnapshotRenderer())
-    {
+    if (snapshot)
         snapshotAvailable =
-            CreateActiveSnapshotBitmap(*snapshot);
-    }
+            CreateCompositionSnapshot(*snapshot);
 
     bool liveThumbnailAvailable = false;
     if (!snapshotAvailable)
@@ -469,9 +472,17 @@ bool DockWindowTransition::Start(
     }
     nativeTransitionsDisabled_ = true;
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    UpdateWindow(hwnd_);
-    if (RequiresDockWindowTransitionCompositionBarrier(direction_) &&
-        FAILED(DwmFlush()))
+    HRESULT presentationHr = S_OK;
+    if (RequiresDockWindowTransitionCompositionBarrier(direction_))
+    {
+        presentationHr = compositionSnapshotActive_ &&
+                compositionDevice_
+            ? compositionDevice_->WaitForCommitCompletion()
+            : E_NOTIMPL;
+        if (FAILED(presentationHr))
+            presentationHr = DwmFlush();
+    }
+    if (FAILED(presentationHr))
     {
         Cancel();
         return false;
@@ -481,15 +492,41 @@ bool DockWindowTransition::Start(
         MonotonicTimeMilliseconds();
     awaitingRestoreVisibility_ = false;
     restoreCleanupDeadlineMs_ = 0.0;
-    if (!SetCoalescableTimer(
-            hwnd_, kAnimationTimerId,
-            kAnimationTimerIntervalMs, nullptr,
-            TIMERV_NO_COALESCING))
+    if (!ScheduleAnimationWake())
     {
         Cancel();
         return false;
     }
     return true;
+}
+
+HRESULT CreateSmoothStepAnimation(
+    IDCompositionDesktopDevice* device,
+    float from, float to,
+    double durationMilliseconds,
+    IDCompositionAnimation** animation)
+{
+    if (!device || !animation || durationMilliseconds <= 0.0)
+        return E_INVALIDARG;
+    *animation = nullptr;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> result;
+    HRESULT hr = device->CreateAnimation(&result);
+    const double duration = durationMilliseconds / 1000.0;
+    const float delta = to - from;
+    if (SUCCEEDED(hr))
+    {
+        hr = result->AddCubic(
+            0.0, from, 0.0f,
+            static_cast<float>(3.0 * delta /
+                (duration * duration)),
+            static_cast<float>(-2.0 * delta /
+                (duration * duration * duration)));
+    }
+    if (SUCCEEDED(hr))
+        hr = result->End(duration, to);
+    if (SUCCEEDED(hr))
+        *animation = result.Detach();
+    return hr;
 }
 
 bool DockWindowTransition::Reverse(
@@ -500,6 +537,18 @@ bool DockWindowTransition::Reverse(
         !hasLastFrame_ ||
         awaitingRestoreVisibility_)
         return false;
+
+    if (surface_ == DockWindowTransitionSurface::Snapshot &&
+        compositionTimelineActive_)
+    {
+        const double progress = std::clamp(
+            (MonotonicTimeMilliseconds() - animationStartTimeMs_) /
+                std::max(1.0, animationDurationMs_),
+            0.0, 1.0);
+        if (!ApplyFrame(progress))
+            return false;
+        compositionTimelineActive_ = false;
+    }
 
     const RECT currentFrame = lastFrameRect_;
     const RECT targetFrame =
@@ -564,6 +613,12 @@ bool DockWindowTransition::Reverse(
         MonotonicTimeMilliseconds();
     restoreCleanupDeadlineMs_ = 0.0;
     awaitingRestoreVisibility_ = false;
+    if (!ScheduleAnimationWake())
+    {
+        CompleteRestoreAfterRenderFailure();
+        Finish();
+        return false;
+    }
     return true;
 }
 
@@ -828,145 +883,285 @@ DockWindowTransition::PrepareSnapshot(
     return &cached->second;
 }
 
-bool DockWindowTransition::EnsureSnapshotRenderer()
-{
-    if (!hwnd_ || !IsWindow(hwnd_))
-        return false;
-    if (!d2dFactory_)
-    {
-        if (FAILED(D2D1CreateFactory(
-                D2D1_FACTORY_TYPE_SINGLE_THREADED,
-                d2dFactory_.ReleaseAndGetAddressOf())))
-            return false;
-    }
-    if (snapshotRenderTarget_)
-        return true;
-
-    const D2D1_RENDER_TARGET_PROPERTIES
-        renderProperties =
-            D2D1::RenderTargetProperties(
-                D2D1_RENDER_TARGET_TYPE_HARDWARE,
-                D2D1::PixelFormat(
-                    DXGI_FORMAT_B8G8R8A8_UNORM,
-                    D2D1_ALPHA_MODE_IGNORE));
-    const D2D1_HWND_RENDER_TARGET_PROPERTIES
-        windowProperties =
-            D2D1::HwndRenderTargetProperties(
-                hwnd_, D2D1::SizeU(1, 1),
-                kDockWindowSnapshotPresentOptions);
-    HRESULT result =
-        d2dFactory_->CreateHwndRenderTarget(
-            renderProperties,
-            windowProperties,
-            snapshotRenderTarget_.
-                ReleaseAndGetAddressOf());
-    if (FAILED(result))
-    {
-        const auto fallbackProperties =
-            D2D1::RenderTargetProperties(
-                D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                D2D1::PixelFormat(
-                    DXGI_FORMAT_B8G8R8A8_UNORM,
-                    D2D1_ALPHA_MODE_IGNORE));
-        result =
-            d2dFactory_->CreateHwndRenderTarget(
-                fallbackProperties,
-                windowProperties,
-                snapshotRenderTarget_.
-                    ReleaseAndGetAddressOf());
-    }
-    if (SUCCEEDED(result) &&
-        snapshotRenderTarget_)
-    {
-        snapshotRenderTarget_->SetDpi(
-            kDockWindowSnapshotRenderDpi,
-            kDockWindowSnapshotRenderDpi);
-        return true;
-    }
-    return false;
-}
-
-bool DockWindowTransition::CreateActiveSnapshotBitmap(
+bool DockWindowTransition::CreateCompositionSnapshot(
     const CachedSnapshot& snapshot)
 {
-    activeSnapshotBitmap_.Reset();
-    if (!snapshotRenderTarget_ ||
+    compositionSnapshotActive_ = false;
+    compositionSurface_.Reset();
+    compositionSnapshotSize_ = {};
+    if (!compositionDevice_ || !d2dDevice_ ||
+        !hwnd_ || !IsWindow(hwnd_) ||
         snapshot.pixelSize.cx <= 0 ||
         snapshot.pixelSize.cy <= 0 ||
         snapshot.pixels.empty())
         return false;
 
-    const D2D1_BITMAP_PROPERTIES properties =
-        D2D1::BitmapProperties(
+    HRESULT hr = S_OK;
+    if (!compositionTarget_)
+    {
+        hr = compositionDevice_->CreateTargetForHwnd(
+            hwnd_, TRUE, &compositionTarget_);
+        if (SUCCEEDED(hr))
+            hr = compositionDevice_->CreateVisual(
+                &compositionVisual_);
+        if (SUCCEEDED(hr))
+            hr = compositionDevice_->CreateEffectGroup(
+                &compositionEffect_);
+        if (SUCCEEDED(hr))
+            hr = compositionDevice_->CreateScaleTransform(
+                &compositionScaleTransform_);
+        if (SUCCEEDED(hr))
+            hr = compositionDevice_->CreateRectangleClip(
+                &compositionClip_);
+        if (SUCCEEDED(hr))
+            hr = compositionVisual_->SetEffect(
+                compositionEffect_.Get());
+        if (SUCCEEDED(hr))
+            hr = compositionVisual_->SetClip(
+                compositionClip_.Get());
+        if (SUCCEEDED(hr))
+            hr = compositionVisual_->SetTransform(
+                compositionScaleTransform_.Get());
+        if (SUCCEEDED(hr))
+            hr = compositionTarget_->SetRoot(
+                compositionVisual_.Get());
+        if (FAILED(hr))
+        {
+            compositionClip_.Reset();
+            compositionEffect_.Reset();
+            compositionScaleTransform_.Reset();
+            compositionVisual_.Reset();
+            compositionTarget_.Reset();
+            return false;
+        }
+    }
+
+    const UINT width = static_cast<UINT>(snapshot.pixelSize.cx);
+    const UINT height = static_cast<UINT>(snapshot.pixelSize.cy);
+    hr = compositionDevice_->CreateSurface(
+        width, height,
+        DXGI_FORMAT_B8G8R8A8_UNORM,
+        DXGI_ALPHA_MODE_PREMULTIPLIED,
+        &compositionSurface_);
+    if (FAILED(hr) || !compositionSurface_)
+        return false;
+
+    ID2D1DeviceContext* rawContext = nullptr;
+    POINT updateOffset{};
+    hr = compositionSurface_->BeginDraw(
+        nullptr, __uuidof(ID2D1DeviceContext),
+        reinterpret_cast<void**>(&rawContext),
+        &updateOffset);
+    if (FAILED(hr) || !rawContext)
+    {
+        compositionSurface_.Reset();
+        return false;
+    }
+
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> context;
+    context.Attach(rawContext);
+    context->SetDpi(
+        kDockWindowSnapshotRenderDpi,
+        kDockWindowSnapshotRenderDpi);
+    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(updateOffset.x),
+        static_cast<float>(updateOffset.y)));
+    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;
+    const D2D1_BITMAP_PROPERTIES1 properties =
+        D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_NONE,
             D2D1::PixelFormat(
                 DXGI_FORMAT_B8G8R8A8_UNORM,
                 D2D1_ALPHA_MODE_IGNORE),
             kDockWindowSnapshotRenderDpi,
             kDockWindowSnapshotRenderDpi);
-    return SUCCEEDED(
-        snapshotRenderTarget_->CreateBitmap(
-            D2D1::SizeU(
-                static_cast<UINT32>(
-                    snapshot.pixelSize.cx),
-                static_cast<UINT32>(
-                    snapshot.pixelSize.cy)),
-            snapshot.pixels.data(),
-            static_cast<UINT32>(
-                snapshot.pixelSize.cx *
-                sizeof(std::uint32_t)),
-            properties,
-            activeSnapshotBitmap_.
-                ReleaseAndGetAddressOf())) &&
-        activeSnapshotBitmap_;
+    hr = context->CreateBitmap(
+        D2D1::SizeU(width, height),
+        snapshot.pixels.data(),
+        width * sizeof(std::uint32_t),
+        &properties, &bitmap);
+    if (SUCCEEDED(hr) && bitmap)
+    {
+        context->DrawBitmap(
+            bitmap.Get(),
+            D2D1::RectF(
+                0.0f, 0.0f,
+                static_cast<float>(width),
+                static_cast<float>(height)),
+            1.0f,
+            D2D1_INTERPOLATION_MODE_LINEAR);
+    }
+    context.Reset();
+    const HRESULT endDrawHr =
+        compositionSurface_->EndDraw();
+    if (FAILED(hr) || FAILED(endDrawHr))
+    {
+        compositionSurface_.Reset();
+        return false;
+    }
+
+    compositionSnapshotSize_ = snapshot.pixelSize;
+    compositionVisual_->SetContent(compositionSurface_.Get());
+    compositionEffect_->SetOpacity(0.0f);
+    compositionClip_->SetLeft(0.0f);
+    compositionClip_->SetTop(0.0f);
+    compositionClip_->SetRight(static_cast<float>(width));
+    compositionClip_->SetBottom(static_cast<float>(height));
+    compositionSnapshotActive_ = true;
+    return true;
 }
 
-bool DockWindowTransition::DrawSnapshotFrame(
-    const RECT& destinationRect)
+bool DockWindowTransition::StartCompositionTimeline()
 {
-    if (!snapshotRenderTarget_ ||
-        !activeSnapshotBitmap_ ||
-        !hwnd_ || !IsWindow(hwnd_))
-        return false;
-    RECT client{};
-    if (!GetClientRect(hwnd_, &client))
-        return false;
-    const UINT32 width = static_cast<UINT32>(
-        std::max(1L, client.right - client.left));
-    const UINT32 height = static_cast<UINT32>(
-        std::max(1L, client.bottom - client.top));
-    const D2D1_SIZE_U currentSize =
-        snapshotRenderTarget_->GetPixelSize();
-    if ((currentSize.width != width ||
-            currentSize.height != height) &&
-        FAILED(snapshotRenderTarget_->Resize(
-            D2D1::SizeU(width, height))))
+    if (!compositionSnapshotActive_ || !compositionDevice_ ||
+        !compositionVisual_ || !compositionScaleTransform_ ||
+        !compositionEffect_ || !compositionClip_ ||
+        compositionSnapshotSize_.cx <= 0 ||
+        compositionSnapshotSize_.cy <= 0 ||
+        animationDurationMs_ <= 0.0)
         return false;
 
-    snapshotRenderTarget_->BeginDraw();
-    snapshotRenderTarget_->SetTransform(
-        D2D1::Matrix3x2F::Identity());
-    snapshotRenderTarget_->DrawBitmap(
-        activeSnapshotBitmap_.Get(),
-        D2D1::RectF(
-            static_cast<float>(
-                destinationRect.left),
-            static_cast<float>(
-                destinationRect.top),
-            static_cast<float>(
-                destinationRect.right),
-            static_cast<float>(
-                destinationRect.bottom)),
-        1.0f,
-        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    const HRESULT result =
-        snapshotRenderTarget_->EndDraw();
-    ValidateRect(hwnd_, nullptr);
-    if (result == D2DERR_RECREATE_TARGET)
+    const auto width = [](const RECT& rect) {
+        return std::max(1L, rect.right - rect.left);
+    };
+    const auto height = [](const RECT& rect) {
+        return std::max(1L, rect.bottom - rect.top);
+    };
+    const float fromScaleX = static_cast<float>(width(fromRect_)) /
+        static_cast<float>(compositionSnapshotSize_.cx);
+    const float fromScaleY = static_cast<float>(height(fromRect_)) /
+        static_cast<float>(compositionSnapshotSize_.cy);
+    const float toScaleX = static_cast<float>(width(toRect_)) /
+        static_cast<float>(compositionSnapshotSize_.cx);
+    const float toScaleY = static_cast<float>(height(toRect_)) /
+        static_cast<float>(compositionSnapshotSize_.cy);
+    const float fromRadiusX = static_cast<float>(
+        ResolveDockWindowTransitionCornerRadius(
+            fromRect_, dockRect_)) / fromScaleX;
+    const float fromRadiusY = static_cast<float>(
+        ResolveDockWindowTransitionCornerRadius(
+            fromRect_, dockRect_)) / fromScaleY;
+    const float toRadiusX = static_cast<float>(
+        ResolveDockWindowTransitionCornerRadius(
+            toRect_, dockRect_)) / toScaleX;
+    const float toRadiusY = static_cast<float>(
+        ResolveDockWindowTransitionCornerRadius(
+            toRect_, dockRect_)) / toScaleY;
+
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> offsetX;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> offsetY;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleX;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleY;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> opacity;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> radiusX;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> radiusY;
+    auto create = [&](float from, float to,
+                      IDCompositionAnimation** animation) {
+        return CreateSmoothStepAnimation(
+            compositionDevice_.Get(), from, to,
+            animationDurationMs_, animation);
+    };
+    HRESULT hr = create(
+        static_cast<float>(fromRect_.left - snapshotHostRect_.left),
+        static_cast<float>(toRect_.left - snapshotHostRect_.left),
+        &offsetX);
+    if (SUCCEEDED(hr))
+        hr = create(
+            static_cast<float>(fromRect_.top - snapshotHostRect_.top),
+            static_cast<float>(toRect_.top - snapshotHostRect_.top),
+            &offsetY);
+    if (SUCCEEDED(hr))
+        hr = create(fromScaleX, toScaleX, &scaleX);
+    if (SUCCEEDED(hr))
+        hr = create(fromScaleY, toScaleY, &scaleY);
+    if (SUCCEEDED(hr))
+        hr = create(
+            static_cast<float>(animationFromOpacity_) / 255.0f,
+            static_cast<float>(animationToOpacity_) / 255.0f,
+            &opacity);
+    if (SUCCEEDED(hr))
+        hr = create(fromRadiusX, toRadiusX, &radiusX);
+    if (SUCCEEDED(hr))
+        hr = create(fromRadiusY, toRadiusY, &radiusY);
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetOffsetX(offsetX.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetOffsetY(offsetY.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionScaleTransform_->SetScaleX(scaleX.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionScaleTransform_->SetScaleY(scaleY.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionEffect_->SetOpacity(opacity.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionClip_->SetTopLeftRadiusX(radiusX.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionClip_->SetTopLeftRadiusY(radiusY.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionClip_->SetTopRightRadiusX(radiusX.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionClip_->SetTopRightRadiusY(radiusY.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionClip_->SetBottomLeftRadiusX(radiusX.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionClip_->SetBottomLeftRadiusY(radiusY.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionClip_->SetBottomRightRadiusX(radiusX.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionClip_->SetBottomRightRadiusY(radiusY.Get());
+    if (SUCCEEDED(hr))
+        hr = compositionDevice_->Commit();
+    compositionTimelineActive_ = SUCCEEDED(hr);
+    return compositionTimelineActive_;
+}
+
+bool DockWindowTransition::ScheduleAnimationWake()
+{
+    if (!animationScheduler_)
+        return false;
+    if (animationToken_)
+        animationScheduler_->Cancel(animationToken_);
+    animationToken_ = 0;
+
+    if (surface_ == DockWindowTransitionSurface::Snapshot)
     {
-        activeSnapshotBitmap_.Reset();
-        snapshotRenderTarget_.Reset();
+        if (!StartCompositionTimeline())
+            return false;
+        animationToken_ = animationScheduler_->ScheduleOnce(
+            static_cast<UINT>(std::ceil(animationDurationMs_)) + 2,
+            [this](snowdesktop::UiScheduleToken token) {
+                if (animationToken_ != token)
+                    return;
+                animationToken_ = 0;
+                compositionTimelineActive_ = false;
+                const bool keep = OnAnimationFrame(
+                    MonotonicTimeMilliseconds());
+                if (keep && awaitingRestoreVisibility_ &&
+                    animationScheduler_)
+                {
+                    animationToken_ =
+                        animationScheduler_->StartAnimation(
+                            snowdesktop::UiAnimationSurface::
+                                WindowTransition,
+                            [this](double nowMilliseconds) {
+                                return OnAnimationFrame(
+                                    nowMilliseconds);
+                            });
+                }
+            });
     }
-    return SUCCEEDED(result);
+    else
+    {
+        animationToken_ = animationScheduler_->StartAnimation(
+            snowdesktop::UiAnimationSurface::WindowTransition,
+            [this](double nowMilliseconds) {
+                return OnAnimationFrame(nowMilliseconds);
+            });
+    }
+    return animationToken_ != 0;
 }
 
 bool DockWindowTransition::ApplyFrame(double progress)
@@ -1009,32 +1204,66 @@ bool DockWindowTransition::ApplyFrame(double progress)
     if (surface_ ==
         DockWindowTransitionSurface::Snapshot)
     {
-        if (opacityChanged &&
-            !SetLayeredWindowAttributes(
-                hwnd_, 0, frameOpacity,
-                LWA_ALPHA))
+        if (!compositionSnapshotActive_ ||
+            !compositionDevice_ ||
+            !compositionVisual_ ||
+            !compositionScaleTransform_ ||
+            !compositionEffect_ ||
+            !compositionClip_ ||
+            compositionSnapshotSize_.cx <= 0 ||
+            compositionSnapshotSize_.cy <= 0)
             return false;
+
+        const float scaleX =
+            static_cast<float>(width) /
+            static_cast<float>(compositionSnapshotSize_.cx);
+        const float scaleY =
+            static_cast<float>(height) /
+            static_cast<float>(compositionSnapshotSize_.cy);
+        HRESULT hr = S_OK;
         if (geometryChanged)
         {
-            RECT localFrame = frame;
-            OffsetRect(
-                &localFrame,
-                -snapshotHostRect_.left,
-                -snapshotHostRect_.top);
-            HRGN visibleRegion =
-                CreateDockWindowTransitionRegion(
-                    localFrame, cornerRadius);
-            if (!visibleRegion)
-                return false;
-            if (!SetWindowRgn(
-                    hwnd_, visibleRegion, FALSE))
-            {
-                DeleteObject(visibleRegion);
-                return false;
-            }
-            if (!DrawSnapshotFrame(localFrame))
-                return false;
+            hr = compositionVisual_->SetOffsetX(
+                static_cast<float>(
+                    frame.left - snapshotHostRect_.left));
+            if (SUCCEEDED(hr))
+                hr = compositionVisual_->SetOffsetY(
+                    static_cast<float>(
+                        frame.top - snapshotHostRect_.top));
+            if (SUCCEEDED(hr))
+                hr = compositionScaleTransform_->SetScaleX(scaleX);
+            if (SUCCEEDED(hr))
+                hr = compositionScaleTransform_->SetScaleY(scaleY);
+            const float radiusX = scaleX > 0.0f
+                ? static_cast<float>(cornerRadius) / scaleX
+                : 0.0f;
+            const float radiusY = scaleY > 0.0f
+                ? static_cast<float>(cornerRadius) / scaleY
+                : 0.0f;
+            if (SUCCEEDED(hr))
+                hr = compositionClip_->SetTopLeftRadiusX(radiusX);
+            if (SUCCEEDED(hr))
+                hr = compositionClip_->SetTopLeftRadiusY(radiusY);
+            if (SUCCEEDED(hr))
+                hr = compositionClip_->SetTopRightRadiusX(radiusX);
+            if (SUCCEEDED(hr))
+                hr = compositionClip_->SetTopRightRadiusY(radiusY);
+            if (SUCCEEDED(hr))
+                hr = compositionClip_->SetBottomLeftRadiusX(radiusX);
+            if (SUCCEEDED(hr))
+                hr = compositionClip_->SetBottomLeftRadiusY(radiusY);
+            if (SUCCEEDED(hr))
+                hr = compositionClip_->SetBottomRightRadiusX(radiusX);
+            if (SUCCEEDED(hr))
+                hr = compositionClip_->SetBottomRightRadiusY(radiusY);
         }
+        if (SUCCEEDED(hr) && opacityChanged)
+            hr = compositionEffect_->SetOpacity(
+                static_cast<float>(frameOpacity) / 255.0f);
+        if (SUCCEEDED(hr))
+            hr = compositionDevice_->Commit();
+        if (FAILED(hr))
+            return false;
     }
     else
     {
@@ -1088,22 +1317,25 @@ bool DockWindowTransition::ApplyFrame(double progress)
     return true;
 }
 
-void DockWindowTransition::OnTimer()
+bool DockWindowTransition::OnAnimationFrame(
+    double nowMilliseconds)
 {
     if (!sourceWindow_ || !IsWindow(sourceWindow_))
     {
         Finish();
-        return;
+        return false;
     }
 
-    const double now =
-        MonotonicTimeMilliseconds();
+    const double now = nowMilliseconds;
     if (awaitingRestoreVisibility_)
     {
         if (!IsIconic(sourceWindow_) ||
             now >= restoreCleanupDeadlineMs_)
+        {
             Finish();
-        return;
+            return false;
+        }
+        return true;
     }
 
     const double progress = std::min(
@@ -1114,10 +1346,10 @@ void DockWindowTransition::OnTimer()
     {
         CompleteRestoreAfterRenderFailure();
         Finish();
-        return;
+        return false;
     }
     if (progress < 1.0)
-        return;
+        return true;
 
     if (direction_ == DockWindowTransitionDirection::Restore &&
         restoreCallback_)
@@ -1129,9 +1361,10 @@ void DockWindowTransition::OnTimer()
         restoreCleanupDeadlineMs_ =
             now + static_cast<double>(
                 kRestoreCleanupTimeoutMs);
-        return;
+        return true;
     }
     Finish();
+    return false;
 }
 
 void DockWindowTransition::
@@ -1173,28 +1406,46 @@ void DockWindowTransition::UnregisterThumbnail()
 
 void DockWindowTransition::Finish()
 {
+    if (animationScheduler_ && animationToken_)
+        animationScheduler_->Cancel(animationToken_);
+    animationToken_ = 0;
     HWND transitionWindow = hwnd_;
     if (transitionWindow)
     {
-        KillTimer(
-            transitionWindow,
-            kAnimationTimerId);
         ShowWindow(
             transitionWindow, SW_HIDE);
         SetWindowRgn(
             transitionWindow, nullptr, FALSE);
-        SetLayeredWindowAttributes(
-            transitionWindow, 0, 255,
-            LWA_ALPHA);
     }
     UnregisterThumbnail();
-    activeSnapshotBitmap_.Reset();
+    const bool hadCompositionSnapshot =
+        compositionSnapshotActive_;
+    if (compositionEffect_)
+        compositionEffect_->SetOpacity(0.0f);
+    if (compositionScaleTransform_)
+    {
+        compositionScaleTransform_->SetScaleX(1.0f);
+        compositionScaleTransform_->SetScaleY(1.0f);
+    }
+    if (compositionVisual_)
+        compositionVisual_->SetContent(nullptr);
+    compositionSurface_.Reset();
+    compositionSnapshotSize_ = {};
+    if (compositionSnapshotActive_ && compositionDevice_)
+        compositionDevice_->Commit();
+    compositionSnapshotActive_ = false;
+    compositionTimelineActive_ = false;
     if (nativeTransitionsDisabled_)
     {
         // Keep native transitions disabled until DWM has committed the
         // real minimized/restored state. Re-enabling too early lets the
         // system animation trail the snapshot as a dark second window.
-        DwmFlush();
+        HRESULT completionHr =
+            hadCompositionSnapshot && compositionDevice_
+            ? compositionDevice_->WaitForCommitCompletion()
+            : E_NOTIMPL;
+        if (FAILED(completionHr))
+            DwmFlush();
         SetNativeTransitionsDisabled(false);
     }
     sourceWindow_ = nullptr;
@@ -1269,13 +1520,6 @@ LRESULT CALLBACK DockWindowTransition::WindowProc(
 
     switch (message)
     {
-    case WM_TIMER:
-        if (self && wParam == kAnimationTimerId)
-        {
-            self->OnTimer();
-            return 0;
-        }
-        break;
     case WM_NCHITTEST:
         return HTTRANSPARENT;
     case WM_MOUSEACTIVATE:
@@ -1286,20 +1530,6 @@ LRESULT CALLBACK DockWindowTransition::WindowProc(
     {
         PAINTSTRUCT paint{};
         BeginPaint(window, &paint);
-        if (self &&
-            self->surface_ ==
-                DockWindowTransitionSurface::Snapshot &&
-            self->hasLastFrame_)
-        {
-            RECT localFrame =
-                self->lastFrameRect_;
-            OffsetRect(
-                &localFrame,
-                -self->snapshotHostRect_.left,
-                -self->snapshotHostRect_.top);
-            self->DrawSnapshotFrame(
-                localFrame);
-        }
         EndPaint(window, &paint);
         return 0;
     }

@@ -88,7 +88,9 @@ set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/app/app_bitmap_cache.cpp
     src/app/app_background_menu.cpp
+    src/app/app_animation_scheduler.cpp
     src/app/app_clipboard_interaction.cpp
+    src/app/app_composition_animation_overlay.cpp
     src/app/app_container_navigation.cpp
     src/app/app_data_object.cpp
     src/app/app_desktop_enumeration.cpp
@@ -200,6 +202,7 @@ set(SNOWDESKTOP_SOURCES
     src/deployment_context.cpp
     src/utils.cpp
     src/settings_window.cpp
+    src/ui_animation_scheduler.cpp
     src/personalization.cpp
     src/dock_settings.cpp
     src/navigation_settings.cpp
@@ -695,9 +698,20 @@ if (BUILD_TESTING)
             tests/dock_and_window_rules_tests.cpp
             src/dock_window_preview.cpp
             src/dock_window_transition.cpp
+            src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 dwrite dwmapi gdi32 shcore user32
         LABELS rules window)
+
+    snowdesktop_add_test(
+        SnowDesktopUiAnimationSchedulerTests
+        ui_animation_scheduler
+        SOURCES
+            tests/ui_animation_scheduler_tests.cpp
+            src/ui_animation_scheduler.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS rules animation)
 
     snowdesktop_add_test(
         SnowDesktopMenuIconRenderTests

@@ -4,6 +4,11 @@
 
 DesktopApp::~DesktopApp()
 {
+    uiAnimationScheduler_.CancelAll();
+    uiAnimationFrameToken_ = 0;
+    desktopPointerPresentPending_ = false;
+    floatingDockPointerPresentPending_ = false;
+    pageNotifyFadeOutToken_ = 0;
     StopShellFileOperationWorker();
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
@@ -133,13 +138,13 @@ void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
-        KillTimer(hwnd_, kCollectionPopupAnimationTimerId);
-        KillTimer(hwnd_, kLuaWidgetPanelAnimationTimerId);
-        KillTimer(hwnd_, kPageNotifyTimerId);
-        KillTimer(hwnd_, kDockLaunchBounceTimerId);
+        CancelUiAnimationFrame();
+        if (pageNotifyFadeOutToken_)
+            uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);
+        pageNotifyFadeOutToken_ = 0;
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
-            KillTimer(hwnd_, timerId);
+            uiAnimationScheduler_.Cancel(timerId);
         if (popupAnimation_.IsClosing())
             FinalizeCloseCollectionPopup();
         else if (popupWidgetIndex_ < widgets_.size() ||
@@ -157,7 +162,6 @@ void DesktopApp::ResetDesktopWindowResources()
     StopDockForegroundMonitor();
     widgetTimerIds_.clear();
     dockLaunchBounces_.clear();
-    nextWidgetTimerId_ = kWidgetTimerIdBase;
     dropTargetRegistered_ = false;
 
     if (shellChangeRegId_ != 0)
@@ -174,6 +178,14 @@ void DesktopApp::ResetDesktopWindowResources()
     inputHwnd_ = nullptr;
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
+    ResetLuaWidgetPanelAnimationCache();
+    ResetPageNotifyTextCache();
+    popupAnimationOverlay_.visual.Reset();
+    popupAnimationOverlay_.effect.Reset();
+    luaWidgetPanelAnimationOverlay_.visual.Reset();
+    luaWidgetPanelAnimationOverlay_.effect.Reset();
+    pageNotifyAnimationOverlay_.visual.Reset();
+    pageNotifyAnimationOverlay_.effect.Reset();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();

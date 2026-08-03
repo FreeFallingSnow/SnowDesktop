@@ -243,6 +243,27 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
 DockContainer::DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area)
     : app_(app), entries_(entries), area_(area) {}
 
+RECT DockContainer::GetDesktopItemVisualRect(
+    size_t itemIndex, POINT pointer) const
+{
+    if (!app_ || itemIndex >= app_->items_.size())
+        return {};
+    for (const auto& item : entryItems_)
+    {
+        if (!item ||
+            item->GetEntryType() != DockEntryType::DesktopItem ||
+            app_->FindItemIndexByKey(item->GetReference()) != itemIndex)
+            continue;
+        return GetElementVisualRect(item->GetBounds(), pointer);
+    }
+    for (const auto& item : frequentItems_)
+    {
+        if (item && item->GetItemIndex() == itemIndex)
+            return GetElementVisualRect(item->GetBounds(), pointer);
+    }
+    return {};
+}
+
 bool DockContainer::IsVertical() const
 {
     return app_ && (app_->dockSettings_.position == DockPosition::Left ||
@@ -965,44 +986,27 @@ RECT DockContainer::CalculateTitleTooltipBounds(
             metrics.widthIncludingTrailingWhitespace)) + 20,
         48, 260);
     constexpr int tooltipHeight = 30;
+    return PositionTitleTooltipBounds(
+        hoveredBounds, tooltipWidth, tooltipHeight);
+}
+
+RECT DockContainer::PositionTitleTooltipBounds(
+    const RECT& hoveredBounds,
+    int tooltipWidth,
+    int tooltipHeight) const
+{
+    if (!app_ || IsRectEmpty(&hoveredBounds) ||
+        tooltipWidth <= 0 || tooltipHeight <= 0)
+        return RECT{};
+
     constexpr int tooltipGap = 8;
-    RECT tooltip{};
-    switch (app_->dockSettings_.position)
-    {
-    case DockPosition::Top:
-        tooltip.left =
-            (hoveredBounds.left + hoveredBounds.right -
-                tooltipWidth) / 2;
-        tooltip.top =
-            hoveredBounds.bottom + tooltipGap;
-        break;
-    case DockPosition::Left:
-        tooltip.left =
-            hoveredBounds.right + tooltipGap;
-        tooltip.top =
-            (hoveredBounds.top + hoveredBounds.bottom -
-                tooltipHeight) / 2;
-        break;
-    case DockPosition::Right:
-        tooltip.left =
-            hoveredBounds.left - tooltipGap -
-                tooltipWidth;
-        tooltip.top =
-            (hoveredBounds.top + hoveredBounds.bottom -
-                tooltipHeight) / 2;
-        break;
-    case DockPosition::Bottom:
-    default:
-        tooltip.left =
-            (hoveredBounds.left + hoveredBounds.right -
-                tooltipWidth) / 2;
-        tooltip.top =
-            hoveredBounds.top - tooltipGap -
-                tooltipHeight;
-        break;
-    }
-    tooltip.right = tooltip.left + tooltipWidth;
-    tooltip.bottom = tooltip.top + tooltipHeight;
+    RECT tooltip = snowdesktop::dock_magnification::
+        AnchorTooltipBounds(
+            hoveredBounds,
+            app_->dockSettings_.position,
+            tooltipWidth,
+            tooltipHeight,
+            tooltipGap);
 
     POINT dockCenter{
         (hoveredBounds.left + hoveredBounds.right) / 2,
@@ -1079,33 +1083,54 @@ RECT DockContainer::GetHoveredTitleBounds(
     if (title.empty() || IsRectEmpty(&baseBounds))
         return RECT{};
 
+    const RECT visualBounds =
+        GetElementVisualRect(baseBounds, pointer);
+
     const int position = static_cast<int>(
         app_->dockSettings_.position);
     const bool lightTheme =
         app_->IsLightContentTheme();
-    if (title ==
-            hoveredTitleBoundsCacheText_ &&
-        EqualRect(
-            &baseBounds,
-            &hoveredTitleBoundsCacheAnchor_) &&
+    const bool cachedMeasurement =
+        title == hoveredTitleBoundsCacheText_ &&
         position ==
             hoveredTitleBoundsCachePosition_ &&
         lightTheme ==
-            hoveredTitleBoundsCacheLightTheme_)
+            hoveredTitleBoundsCacheLightTheme_ &&
+        !IsRectEmpty(&hoveredTitleBoundsCache_);
+    if (cachedMeasurement)
     {
+        if (EqualRect(
+                &visualBounds,
+                &hoveredTitleBoundsCacheAnchor_))
+        {
+            return hoveredTitleBoundsCache_;
+        }
+
+        const int tooltipWidth =
+            hoveredTitleBoundsCache_.right -
+            hoveredTitleBoundsCache_.left;
+        const int tooltipHeight =
+            hoveredTitleBoundsCache_.bottom -
+            hoveredTitleBoundsCache_.top;
+        hoveredTitleBoundsCacheAnchor_ = visualBounds;
+        hoveredTitleBoundsCache_ =
+            PositionTitleTooltipBounds(
+                visualBounds,
+                tooltipWidth,
+                tooltipHeight);
         return hoveredTitleBoundsCache_;
     }
 
     hoveredTitleBoundsCacheText_ = title;
     hoveredTitleBoundsCacheAnchor_ =
-        baseBounds;
+        visualBounds;
     hoveredTitleBoundsCachePosition_ =
         position;
     hoveredTitleBoundsCacheLightTheme_ =
         lightTheme;
     hoveredTitleBoundsCache_ =
         CalculateTitleTooltipBounds(
-            title, baseBounds);
+            title, visualBounds);
     return hoveredTitleBoundsCache_;
 }
 

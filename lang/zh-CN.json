@@ -307,6 +307,8 @@
     "app.settings.crash_test_desc": "点击下方按钮会立即触发一次访问违规崩溃，用于验证 crash.log 与 crashdumps\\*.dmp 是否正常生成。",
     "app.settings.open_widget_folder": "打开组件目录",
     "app.settings.debug_page": "调试页",
+    "app.settings.animation_diagnostics": "动画性能诊断（本次运行）",
+    "app.settings.animation_diagnostics_desc": "仅在本机聚合帧间隔、UI 与合成提交耗时；关闭后不记录高频样本，也不会上传数据。",
     "app.settings.audio_devices": "系统多媒体信息",
     "app.settings.fa_icons": "Font Awesome 图标字符",
     "app.settings.fluent_icons": "Fluent System Icons Regular 图标字符",

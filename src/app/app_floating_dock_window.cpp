@@ -86,6 +86,13 @@ HRESULT DesktopApp::EnsureFloatingDockDesktopCacheVisual()
 void DesktopApp::FinalizeFloatingDockBackdropCleanup(
     UINT_PTR commitToken)
 {
+    if (commitToken != 0 &&
+        floatingDockRevealCommitPending_ &&
+        commitToken == floatingDockBackdropCommitToken_)
+    {
+        floatingDockRevealCommitPending_ = false;
+        return;
+    }
     if (commitToken != 0)
     {
         if (!floatingDockBackdropCleanupPending_ ||
@@ -122,11 +129,40 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
     }
 }
 
+bool DesktopApp::WaitForDCompCommitWithFallback(
+    const wchar_t* diagnosticContext)
+{
+    const double waitStart =
+        snowdesktop::UiAnimationScheduler::
+            MonotonicMilliseconds();
+    HRESULT completionHr = dcompDevice_
+        ? dcompDevice_->WaitForCommitCompletion()
+        : E_UNEXPECTED;
+    if (FAILED(completionHr))
+        completionHr = DwmFlush();
+    uiAnimationScheduler_.RecordCommitDuration(
+        snowdesktop::UiAnimationScheduler::
+            MonotonicMilliseconds() - waitStart);
+    if (SUCCEEDED(completionHr))
+        return true;
+
+    wchar_t message[192]{};
+    wsprintfW(
+        message,
+        L"%s composition completion FAILED hr=0x%08X",
+        diagnosticContext ? diagnosticContext : L"Floating Dock",
+        static_cast<unsigned>(completionHr));
+    WriteDiagnosticLogEntry(message);
+    return false;
+}
+
 void DesktopApp::DestroyFloatingDockWindow()
 {
     ++floatingDockBackdropCommitToken_;
     floatingDockBackdropCleanupPending_ = false;
+    floatingDockRevealCommitPending_ = false;
     floatingDockClosePending_ = false;
+    floatingDockPointerPresentPending_ = false;
     floatingDockHoverHandoffPending_ = false;
     floatingDockHoverHandoffRect_ = {};
     floatingDockCloseDesktopRect_ = {};

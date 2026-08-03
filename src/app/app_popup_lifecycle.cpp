@@ -172,15 +172,20 @@ void DesktopApp::StartCollectionPopupAnimation(
     if (!reverseClosingAnimation)
         popupAnimation_.ResetHidden();
     PrepareCollectionPopupAnimationCache();
-    popupAnimation_.Open(GetTickCount64());
-    if (hwnd_ && IsWindow(hwnd_))
+    if (!snowdesktop::dock_launch_animation::
+            SystemAnimationsEnabled())
     {
-        SetTimer(
-            hwnd_,
-            kCollectionPopupAnimationTimerId,
-            snowdesktop::popup_animation_rules::
-                kFrameIntervalMs,
-            nullptr);
+        popupAnimation_.ShowImmediately();
+        ResetCollectionPopupAnimationCache();
+        return;
+    }
+    popupAnimation_.Open(static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::
+            MonotonicMilliseconds()));
+    if (!StartCollectionPopupCompositionAnimation())
+    {
+        UpdateCollectionPopupCompositionAnimation();
+        EnsureUiAnimationFrame();
     }
 }
 
@@ -217,10 +222,6 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
-    if (hwnd_ && IsWindow(hwnd_))
-        KillTimer(
-            hwnd_,
-            kCollectionPopupAnimationTimerId);
     popupAnimation_.ResetHidden();
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
@@ -279,20 +280,29 @@ void DesktopApp::CloseCollectionPopup(
     dockFolderPopupMarqueeInitialSelection_.clear();
 
     PrepareCollectionPopupAnimationCache();
-    popupAnimation_.Close(GetTickCount64());
+    if (!snowdesktop::dock_launch_animation::
+            SystemAnimationsEnabled())
+    {
+        FinalizeCloseCollectionPopup();
+        return;
+    }
+    if (popupAnimationOverlay_.active)
+    {
+        ClearDesktopBehindCompositionAnimation(
+            popupAnimationCacheRect_);
+    }
+    popupAnimation_.Close(static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::
+            MonotonicMilliseconds()));
     if (popupAnimation_.IsHidden())
     {
         FinalizeCloseCollectionPopup();
         return;
     }
-    if (hwnd_ && IsWindow(hwnd_))
+    if (!StartCollectionPopupCompositionAnimation())
     {
-        SetTimer(
-            hwnd_,
-            kCollectionPopupAnimationTimerId,
-            snowdesktop::popup_animation_rules::
-                kFrameIntervalMs,
-            nullptr);
+        UpdateCollectionPopupCompositionAnimation();
+        EnsureUiAnimationFrame();
     }
     InvalidateCollectionPopupAnimation(true);
 }

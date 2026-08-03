@@ -427,6 +427,12 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         // on monitor hot-add, Windows can retain the old DirectComposition
         // input allocation. Recreate the HWND and its DComp target exactly as
         // startup does so the added pixels participate in hit testing.
+        // Scheduler deadlines are independent of HWND lifetime. Retire the
+        // old widget tokens before RebindHostTimers creates replacements for
+        // the recreated desktop host.
+        for (const auto& [timerId, _] : widgetTimerIds_)
+            uiAnimationScheduler_.Cancel(timerId);
+        widgetTimerIds_.clear();
         const HWND previousWindow = hwnd_;
         DestroyWindow(previousWindow);
         if (!CreateDesktopOverlayWindow())
@@ -477,6 +483,7 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
 
     if (topologyChanged)
     {
+        uiAnimationScheduler_.RefreshDisplayRate();
         displayTopologySignature_ = currentSignature;
 
         // Monitor APIs can settle before Explorer has finished resizing and

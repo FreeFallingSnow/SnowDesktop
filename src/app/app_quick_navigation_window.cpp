@@ -42,10 +42,7 @@ _LW("app.interact.snow_nav_title"),
  */
 void DesktopApp::DestroyQuickNavigationWindow()
 {
-    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
-        KillTimer(
-            quickNavigationHwnd_,
-            kQuickNavigationAnimationTimerId);
+    quickNavigationHasLastEditAnimationFrame_ = false;
     quickNavBackdropCompositor_.Reset();
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
     {
@@ -650,6 +647,7 @@ int DesktopApp::GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const
 void DesktopApp::OpenQuickNavigation(
     bool fromDockSearch)
 {
+    quickNavigationHasLastEditAnimationFrame_ = false;
     if (dragSession_.IsActive() ||
         dragDropController_.IsExternalDragActive())
         return;
@@ -674,22 +672,15 @@ void DesktopApp::OpenQuickNavigation(
                 SystemAnimationsEnabled())
         {
             quickNavigationAnimation_.Open(
-                GetTickCount64());
-            SetTimer(
-                quickNavigationHwnd_,
-                kQuickNavigationAnimationTimerId,
-                snowdesktop::
-                    quick_navigation_animation_rules::
-                        kFrameIntervalMs,
-                nullptr);
+                static_cast<std::uint64_t>(
+                    snowdesktop::UiAnimationScheduler::
+                        MonotonicMilliseconds()));
+            EnsureUiAnimationFrame();
         }
         else
         {
             quickNavigationAnimation_.
                 ShowImmediately();
-            KillTimer(
-                quickNavigationHwnd_,
-                kQuickNavigationAnimationTimerId);
         }
         ApplyQuickNavigationAnimationFrame();
         if (quickNavigationSearchEdit_ &&
@@ -805,14 +796,10 @@ void DesktopApp::OpenQuickNavigation(
             SystemAnimationsEnabled())
     {
         quickNavigationAnimation_.Open(
-            GetTickCount64());
-        SetTimer(
-            quickNavigationHwnd_,
-            kQuickNavigationAnimationTimerId,
-            snowdesktop::
-                quick_navigation_animation_rules::
-                    kFrameIntervalMs,
-            nullptr);
+            static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::
+                    MonotonicMilliseconds()));
+        EnsureUiAnimationFrame();
     }
     else
     {
@@ -890,7 +877,9 @@ void DesktopApp::CloseQuickNavigation()
             SystemAnimationsEnabled())
     {
         quickNavigationAnimation_.Close(
-            GetTickCount64());
+            static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::
+                    MonotonicMilliseconds()));
     }
     else
     {
@@ -901,13 +890,7 @@ void DesktopApp::CloseQuickNavigation()
         FinalizeCloseQuickNavigation();
         return;
     }
-    SetTimer(
-        quickNavigationHwnd_,
-        kQuickNavigationAnimationTimerId,
-        snowdesktop::
-            quick_navigation_animation_rules::
-                kFrameIntervalMs,
-        nullptr);
+    EnsureUiAnimationFrame();
     InvalidateQuickNavigationWindow();
     ApplyQuickNavigationAnimationFrame();
     InvalidateDragStaticScene();
@@ -924,75 +907,6 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
     const float anchorY = static_cast<float>(
         quickNavigationAnimationAnchorPoint_.y -
         quickNavigationHostRect_.top);
-
-    if (quickNavigationHwnd_ &&
-        IsWindow(quickNavigationHwnd_))
-    {
-        const auto scaleCoordinate =
-            [scale = visual.scale](
-                float value, float anchor) {
-                return snowdesktop::
-                    quick_navigation_animation_rules::
-                        ScaleCoordinate(
-                            value, anchor, scale);
-            };
-        const float panelLeft =
-            static_cast<float>(
-                quickNavigationRect_.left -
-                quickNavigationHostRect_.left);
-        const float panelTop =
-            static_cast<float>(
-                quickNavigationRect_.top -
-                quickNavigationHostRect_.top);
-        const float panelRight =
-            static_cast<float>(
-                quickNavigationRect_.right -
-                quickNavigationHostRect_.left);
-        const float panelBottom =
-            static_cast<float>(
-                quickNavigationRect_.bottom -
-                quickNavigationHostRect_.top);
-        const int visibleLeft = static_cast<int>(
-            std::floor(
-                scaleCoordinate(
-                    panelLeft, anchorX)));
-        const int visibleTop = static_cast<int>(
-            std::floor(
-                scaleCoordinate(
-                    panelTop, anchorY)));
-        const int visibleRight = static_cast<int>(
-            std::ceil(
-                scaleCoordinate(
-                    panelRight, anchorX)));
-        const int visibleBottom = static_cast<int>(
-            std::ceil(
-                scaleCoordinate(
-                    panelBottom, anchorY)));
-        const int cornerDiameter =
-            std::max(
-                2,
-                static_cast<int>(
-                    std::lround(
-                        static_cast<float>(
-                            QuickNavScale(16)) *
-                        visual.scale)));
-        if (HRGN visibleRegion =
-                CreateRoundRectRgn(
-                    visibleLeft,
-                    visibleTop,
-                    visibleRight + 1,
-                    visibleBottom + 1,
-                    cornerDiameter,
-                    cornerDiameter))
-        {
-            if (!SetWindowRgn(
-                    quickNavigationHwnd_,
-                    visibleRegion, FALSE))
-            {
-                DeleteObject(visibleRegion);
-            }
-        }
-    }
 
     quickNavBackdropCompositor_.SetVisualTransform(
         visual.scale, visual.opacity,
@@ -1032,7 +946,15 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
                     visual.opacity);
             }
             if (dcompDevice_)
+            {
+                const double commitStart =
+                    snowdesktop::UiAnimationScheduler::
+                        MonotonicMilliseconds();
                 dcompDevice_->Commit();
+                uiAnimationScheduler_.RecordCommitDuration(
+                    snowdesktop::UiAnimationScheduler::
+                        MonotonicMilliseconds() - commitStart);
+            }
         }
     }
 
@@ -1118,50 +1040,59 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
                         static_cast<float>(
                             QuickNavScale(8)) *
                         visual.scale)));
-        if (HRGN editRegion =
-                CreateRoundRectRgn(
+        const RECT editFrame{
+            left, top,
+            left + editWidth,
+            top + editHeight
+        };
+        const bool geometryChanged =
+            !quickNavigationHasLastEditAnimationFrame_ ||
+            EqualRect(
+                &editFrame,
+                &quickNavigationLastEditAnimationRect_) == FALSE;
+        const BYTE opacity = static_cast<BYTE>(std::clamp(
+            std::lround(visual.opacity * 255.0f),
+            0L, 255L));
+        if (geometryChanged)
+        {
+            if (HRGN editRegion = CreateRoundRectRgn(
                     0, 0,
                     editWidth + 1,
                     editHeight + 1,
                     editCornerDiameter,
                     editCornerDiameter))
-        {
-            if (!SetWindowRgn(
-                    quickNavigationSearchEdit_,
-                    editRegion, FALSE))
             {
-                DeleteObject(editRegion);
+                if (!SetWindowRgn(
+                        quickNavigationSearchEdit_,
+                        editRegion, FALSE))
+                    DeleteObject(editRegion);
             }
+            SetWindowPos(
+                quickNavigationSearchEdit_,
+                quickNavigationTopmost_
+                    ? HWND_TOPMOST
+                    : HWND_NOTOPMOST,
+                left, top,
+                editWidth,
+                editHeight,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
-        SetLayeredWindowAttributes(
-            quickNavigationSearchEdit_,
-            0,
-            static_cast<BYTE>(std::clamp(
-                std::lround(
-                    visual.opacity * 255.0f),
-                0L, 255L)),
-            LWA_ALPHA);
-        SetWindowPos(
-            quickNavigationSearchEdit_,
-            quickNavigationTopmost_
-                ? HWND_TOPMOST
-                : HWND_NOTOPMOST,
-            left, top,
-            editWidth,
-            editHeight,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if (!quickNavigationHasLastEditAnimationFrame_ ||
+            opacity != quickNavigationLastEditAnimationOpacity_)
+        {
+            SetLayeredWindowAttributes(
+                quickNavigationSearchEdit_,
+                0, opacity, LWA_ALPHA);
+        }
+        quickNavigationLastEditAnimationRect_ = editFrame;
+        quickNavigationLastEditAnimationOpacity_ = opacity;
+        quickNavigationHasLastEditAnimationFrame_ = true;
     }
 }
 
 void DesktopApp::FinalizeCloseQuickNavigation()
 {
-    if (quickNavigationHwnd_ &&
-        IsWindow(quickNavigationHwnd_))
-    {
-        KillTimer(
-            quickNavigationHwnd_,
-            kQuickNavigationAnimationTimerId);
-    }
+    quickNavigationHasLastEditAnimationFrame_ = false;
     if (quickNavigationSearchEdit_ &&
         IsWindow(quickNavigationSearchEdit_))
     {

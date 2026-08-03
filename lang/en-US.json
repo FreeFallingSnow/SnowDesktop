@@ -307,6 +307,8 @@
     "app.settings.crash_test_desc": "Click the button below to trigger an access violation. Verify that crash.log and crashdumps\\*.dmp are generated correctly.",
     "app.settings.open_widget_folder": "Open Widgets Folder",
     "app.settings.debug_page": "Debug Page",
+    "app.settings.animation_diagnostics": "Animation diagnostics (this session)",
+    "app.settings.animation_diagnostics_desc": "Aggregates frame intervals and UI/composition timing locally. No high-frequency samples are recorded while disabled, and no data is uploaded.",
     "app.settings.audio_devices": "System Multimedia Info",
     "app.settings.fa_icons": "Font Awesome Icon Characters",
     "app.settings.fluent_icons": "Fluent System Icons Regular Characters",

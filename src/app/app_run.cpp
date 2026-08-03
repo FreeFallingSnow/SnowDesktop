@@ -27,6 +27,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     HRESULT hr = OleInitialize(nullptr);
     WriteDiagnosticLogEntry(SUCCEEDED(hr) ? L"OleInit ok" : L"OleInit FAILED");
 
+    if (!uiAnimationScheduler_.Initialize())
+    {
+        WriteDiagnosticLogEntry(
+            L"UiAnimationScheduler initialization failed");
+        OleUninitialize();
+        return __LINE__;
+    }
+
     instance_ = instance;
 
     // Resolve the persisted desktop mode before touching Explorer's icon layer.
@@ -143,10 +151,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 CloseDockWindowFromPreview(window);
             }))
         dockWindowPreview_.reset();
-    dockWindowTransition_ =
-        std::make_unique<DockWindowTransition>();
-    if (!dockWindowTransition_->Initialize(instance_))
-        dockWindowTransition_.reset();
     if (!CreateDesktopInputWindow(parent))
     {
         WriteDiagnosticLogEntry(L"CreateInputWindow FAILED");
@@ -163,6 +167,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     if (!InitGraphics()) { WriteDiagnosticLogEntry(L"InitGraphics FAILED"); return __LINE__; }
     WriteDiagnosticLogEntry(L"InitGraphics ok");
+    dockWindowTransition_ =
+        std::make_unique<DockWindowTransition>();
+    if (!dockWindowTransition_->Initialize(
+            instance_, &uiAnimationScheduler_,
+            d2dDevice_.Get(), dcompDevice_.Get()))
+        dockWindowTransition_.reset();
 
     // Create control window for tray icon ownership
     {
@@ -292,6 +302,42 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetGlassStatusProvider([this]() {
             return GetGlassBackendStatusText();
+        });
+        settingsWindow_->SetAnimationDiagnosticsToggleCallback(
+            [this](bool enabled) {
+                uiAnimationScheduler_.SetDiagnosticsEnabled(enabled);
+            });
+        settingsWindow_->SetAnimationDiagnosticsProvider([this]() {
+            const auto metrics = uiAnimationScheduler_.Metrics();
+            wchar_t text[768]{};
+            swprintf_s(
+                text,
+                L"Target %.1f Hz | effective %.1f Hz\n"
+                L"frames requested %llu | delivered %llu | skipped %llu\n"
+                L"active animations %zu | timers %zu\n"
+                L"interval p50/p95/p99 %.2f / %.2f / %.2f ms\n"
+                L"UI p50/p95/p99 %.2f / %.2f / %.2f ms\n"
+                L"Commit p50/p95/p99 %.2f / %.2f / %.2f ms",
+                metrics.targetRefreshHz,
+                metrics.effectiveRefreshHz,
+                static_cast<unsigned long long>(
+                    metrics.requestedFrames),
+                static_cast<unsigned long long>(
+                    metrics.deliveredFrames),
+                static_cast<unsigned long long>(
+                    metrics.skippedFrames),
+                metrics.activeAnimations,
+                metrics.activeTimers,
+                metrics.frameIntervalP50Ms,
+                metrics.frameIntervalP95Ms,
+                metrics.frameIntervalP99Ms,
+                metrics.uiWorkP50Ms,
+                metrics.uiWorkP95Ms,
+                metrics.uiWorkP99Ms,
+                metrics.commitP50Ms,
+                metrics.commitP95Ms,
+                metrics.commitP99Ms);
+            return std::wstring(text);
         });
         settingsWindow_->SetHotkeyAvailabilityCallback(
             [this](HotkeySettingTarget target,
@@ -566,28 +612,43 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (!hwnd_) return;
             if (widgetId.empty())
             {
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                if (customDesktopVisible_)
+                    InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
+            bool invalidated = false;
             if (luaWidgetPanelRequest_.widgetId ==
-                    widgetId)
+                    widgetId &&
+                !luaWidgetPanelAnimation_.IsHidden())
             {
                 RECT dirty =
                     GetLuaWidgetPanelRect();
                 InflateRect(&dirty, 3, 3);
                 InvalidateRect(
                     hwnd_, &dirty, FALSE);
+                invalidated = true;
             }
             for (const auto& widget : widgets_)
             {
                 if (widget.id != widgetId || widget.type != DesktopWidgetType::LuaScript)
                     continue;
-                RECT dirty = GetStandaloneWidgetFrameRect(widget);
-                InflateRect(&dirty, 3, 3);
-                InvalidateRect(hwnd_, &dirty, FALSE);
+                if (customDesktopVisible_ &&
+                    (!desktopIconsHidden_ ||
+                        widget.keepWhenDesktopHidden))
+                {
+                    RECT dirty =
+                        GetStandaloneWidgetFrameRect(widget);
+                    if (!IsRectEmpty(&dirty))
+                    {
+                        InflateRect(&dirty, 3, 3);
+                        InvalidateRect(hwnd_, &dirty, FALSE);
+                        invalidated = true;
+                    }
+                }
                 return;
             }
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (!invalidated && customDesktopVisible_)
+                InvalidateRect(hwnd_, nullptr, FALSE);
         });
         widgetEngine_->SetDesktopOpenCallback([this](const std::wstring& path) {
             return LuaOpenPath(path);
@@ -617,15 +678,29 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         widgetEngine_->SetWidgetTimerRequestCallback([this](const std::wstring& widgetId, UINT intervalMs) -> UINT_PTR {
             if (!hwnd_) return 0;
-            UINT_PTR tid = nextWidgetTimerId_++;
-            if (SetTimer(hwnd_, tid, intervalMs, nullptr) == 0)
+            const snowdesktop::UiScheduleToken token =
+                uiAnimationScheduler_.ScheduleInterval(
+                    intervalMs,
+                    [this, widgetId](
+                        snowdesktop::UiScheduleToken dueToken) {
+                        if (widgetEngine_)
+                        {
+                            widgetEngine_->OnWidgetTimer(
+                                widgetId,
+                                static_cast<UINT_PTR>(dueToken));
+                        }
+                    });
+            if (!token)
                 return 0;
-            widgetTimerIds_[tid] = widgetId;
-            return tid;
+            const UINT_PTR timerId =
+                static_cast<UINT_PTR>(token);
+            widgetTimerIds_[timerId] = widgetId;
+            return timerId;
         });
         widgetEngine_->SetWidgetTimerKillCallback([this](UINT_PTR timerId) {
-            if (!hwnd_ || !timerId) return;
-            KillTimer(hwnd_, timerId);
+            if (!timerId) return;
+            uiAnimationScheduler_.Cancel(
+                static_cast<snowdesktop::UiScheduleToken>(timerId));
             widgetTimerIds_.erase(timerId);
         });
         widgetEngine_->SetOpenWidgetSettingsCallback([this](const std::wstring& widgetId, const std::wstring&) {
@@ -679,14 +754,47 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         : L"Native desktop active, entering loop");
 
     MSG msg{};
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0)
+    bool running = true;
+    while (running)
     {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+        HANDLE animationWait = uiAnimationScheduler_.WaitHandle();
+        const DWORD handleCount = animationWait ? 1U : 0U;
+        const DWORD waitResult = MsgWaitForMultipleObjectsEx(
+            handleCount,
+            animationWait ? &animationWait : nullptr,
+            INFINITE,
+            QS_ALLINPUT,
+            MWMO_INPUTAVAILABLE);
+        if (waitResult == WAIT_FAILED)
+            break;
+        if (handleCount == 1 && waitResult == WAIT_OBJECT_0)
+            uiAnimationScheduler_.DispatchDue();
+
+        unsigned processedMessages = 0;
+        while (processedMessages < 64 &&
+            PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (msg.message == WM_QUIT)
+            {
+                running = false;
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+            ++processedMessages;
+
+            if (animationWait &&
+                WaitForSingleObject(animationWait, 0) ==
+                    WAIT_OBJECT_0)
+            {
+                uiAnimationScheduler_.DispatchDue();
+            }
+        }
         if (settingsWindow_ && settingsWindow_->IsVisible() &&
             settingsWindow_->NeedsRender())
             settingsWindow_->Render();
     }
+    uiAnimationScheduler_.Shutdown();
     OleUninitialize();
     return static_cast<int>(msg.wParam);
 }

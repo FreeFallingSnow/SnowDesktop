@@ -817,9 +817,6 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const MouseHoverVisual oldVisual = findHoverVisual(oldMouse);
         const MouseHoverVisual newVisual = findHoverVisual(current);
         const bool hoverChanged = !sameHoverVisual(oldVisual, newVisual);
-        const bool dockHoverChanged = hoverChanged &&
-            ((oldVisual.kind >= 8 && oldVisual.kind <= 13) ||
-             (newVisual.kind >= 8 && newVisual.kind <= 13));
         const bool needsContinuousHoverPaint =
             (oldVisual.owner && oldVisual.continuous) ||
             (newVisual.owner && newVisual.continuous);
@@ -827,22 +824,57 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             snowdesktop::floating_dock_rules::
                 ShouldInvalidateDesktopHover(
                     handlingFloatingDockInput_);
-        if (invalidateDesktopHover &&
-            (marqueeActive_ || hoverChanged ||
-                needsContinuousHoverPaint))
-            InvalidateRect(hwnd_, nullptr, FALSE);
         const bool dockHoverActive =
             (oldVisual.kind >= 8 &&
                 oldVisual.kind <= 13) ||
             (newVisual.kind >= 8 &&
                 newVisual.kind <= 13);
         if (invalidateDesktopHover &&
-            dockHoverActive &&
-            (dockHoverChanged ||
-                needsContinuousHoverPaint) &&
-            hwnd_ && IsWindow(hwnd_) &&
-            !compositionPaintInProgress_)
-            UpdateWindow(hwnd_);
+            (marqueeActive_ || hoverChanged ||
+                needsContinuousHoverPaint))
+        {
+            RECT dirty{};
+            if (dockHoverActive && !marqueeActive_)
+            {
+                for (const auto& container : containers_)
+                {
+                    auto* dock = dynamic_cast<DockContainer*>(
+                        container.get());
+                    if (!dock)
+                        continue;
+                    const RECT oldPanel =
+                        dock->GetVisualPanelBounds(oldMouse);
+                    const RECT newPanel =
+                        dock->GetVisualPanelBounds(current);
+                    const RECT oldTitle =
+                        dock->GetHoveredTitleBounds(oldMouse);
+                    const RECT newTitle =
+                        dock->GetHoveredTitleBounds(current);
+                    for (const RECT candidate : {
+                            oldPanel, newPanel,
+                            oldTitle, newTitle })
+                    {
+                        if (IsRectEmptyRect(candidate))
+                            continue;
+                        if (IsRectEmptyRect(dirty))
+                            dirty = candidate;
+                        else
+                            UnionRect(&dirty, &dirty, &candidate);
+                    }
+                }
+                if (!IsRectEmptyRect(dirty))
+                    InflateRect(&dirty, 4, 4);
+            }
+            InvalidateRect(
+                hwnd_,
+                IsRectEmptyRect(dirty) ? nullptr : &dirty,
+                FALSE);
+            if (dockHoverActive && !marqueeActive_)
+            {
+                desktopPointerPresentPending_ = true;
+                EnsureUiAnimationFrame();
+            }
+        }
 
         if (invalidateDesktopHover)
         {
