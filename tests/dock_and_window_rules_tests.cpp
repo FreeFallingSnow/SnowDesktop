@@ -512,6 +512,22 @@ int main()
         "only popup-owned drop feedback may render above the popup");
     const RECT popupItemBounds{
         120, 160, 220, 280 };
+    const RECT popupIconBounds{
+        140, 170, 200, 230 };
+    const RECT popupHandoffActivation =
+        popupDrag::HandoffActivationBounds(
+            popupIconBounds);
+    Check(
+        popupHandoffActivation.left == 136 &&
+            popupHandoffActivation.top == 168 &&
+            popupHandoffActivation.right == 204 &&
+            popupHandoffActivation.bottom == 234,
+        "popup handoff activation must use the shared expanded icon bounds");
+    Check(
+        popupDrag::CanHandoffToItem(true, false) &&
+            !popupDrag::CanHandoffToItem(true, true) &&
+            !popupDrag::CanHandoffToItem(false, false),
+        "popup handoff must accept unselected items and reject missing or selected items");
     const RECT popupHandoffBounds =
         popupDrag::HandoffIndicatorBounds(
             popupItemBounds);

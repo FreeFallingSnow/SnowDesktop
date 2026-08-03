@@ -474,23 +474,7 @@ void DesktopApp::RefreshDockFolderPopup()
     if (dockFolderPopupAvailable_)
     {
         EnumerateFolderMappingEntries(
-            dockFolderPopupWidget_, false);
-        for (auto& entry :
-             dockFolderPopupWidget_.folderEntries)
-        {
-            const wchar_t* extension =
-                PathFindExtensionW(
-                    entry.fullPath.c_str());
-            entry.isShortcut =
-                extension &&
-                _wcsicmp(
-                    extension, L".lnk") == 0;
-            // The transient popup is not part of widgets_; use the system
-            // image-list icon immediately instead of waiting for an async
-            // callback keyed to a persistent widget id.
-            entry.iconState =
-                IconState::IconReady;
-        }
+            dockFolderPopupWidget_, true);
     }
     else
         dockFolderPopupWidget_.folderEntries.clear();

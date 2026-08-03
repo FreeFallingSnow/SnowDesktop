@@ -592,9 +592,13 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
     }
     else
     {
-        for (auto& widget : widgets_)
+        auto applyFolderResult =
+            [&](DesktopWidget& widget,
+                bool dockFolderPopup) -> bool
         {
-            if (widget.id != result->widgetId || widget.sourceFolderPath.empty()) continue;
+            if (widget.id != result->widgetId ||
+                widget.sourceFolderPath.empty())
+                return false;
             for (auto& entry : widget.folderEntries)
             {
                 if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath))
@@ -634,10 +638,33 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     if (quickNavigationOpen_)
                         InvalidateQuickNavigationWindow();
-                    break;
+                    if (dockFolderPopup)
+                    {
+                        InvalidateDragStaticScene();
+                        InvalidateFloatingDockWindow(false);
+                    }
+                    return true;
                 }
             }
-            break;
+            return false;
+        };
+
+        bool popupMatched = false;
+        if (dockFolderPopupOpen_ &&
+            result->widgetId ==
+                kDockFolderPopupWidgetId)
+        {
+            popupMatched = applyFolderResult(
+                dockFolderPopupWidget_, true);
+        }
+        if (!popupMatched)
+        {
+            for (auto& widget : widgets_)
+            {
+                if (applyFolderResult(
+                        widget, false))
+                    break;
+            }
         }
     }
 

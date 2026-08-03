@@ -34,7 +34,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     dockFolderPopupWidget_.type =
         DesktopWidgetType::FolderMapping;
     dockFolderPopupWidget_.id =
-        L"__dock_folder_popup__";
+        kDockFolderPopupWidgetId;
     dockFolderPopupWidget_.sourceFolderPath =
         target.path;
     dockFolderPopupWidget_.folderSortMode =

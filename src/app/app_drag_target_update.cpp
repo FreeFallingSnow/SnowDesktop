@@ -198,12 +198,20 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
 
             FolderEntry& entry =
                 dockFolderPopupWidget_.folderEntries[i];
-            RECT handoffRect =
-                GetItemIconRect(itemRect);
-            InflateRect(&handoffRect, -4, -4);
-            if (entry.isDirectory &&
+            const RECT handoffRect =
+                snowdesktop::popup_drag_rules::
+                    HandoffActivationBounds(
+                        GetItemIconRect(itemRect));
+            if (snowdesktop::popup_drag_rules::
+                    CanHandoffToItem(
+                        true, entry.selected) &&
                 PtInRect(&handoffRect, client))
             {
+                Item* handoffItem =
+                    dockFolderPopupContainer_->
+                        GetMemberItem(i);
+                if (!handoffItem)
+                    continue;
                 popupDragTargetSlot_ =
                     std::make_unique<Slot>(
                         targetContainer,
@@ -212,8 +220,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                                 itemRect),
                         i);
                 popupDragTargetSlot_->SetItem(
-                    dockFolderPopupContainer_->
-                        GetMemberItem(i));
+                    handoffItem);
                 targetSlot =
                     popupDragTargetSlot_.get();
                 targetRegion = HitRegion::Handoff;
@@ -372,11 +379,16 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             continue;
 
         size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
-        if (itemIndex != static_cast<size_t>(-1) && !items_[itemIndex].selected)
+        if (snowdesktop::popup_drag_rules::
+                CanHandoffToItem(
+                    itemIndex != static_cast<size_t>(-1),
+                    itemIndex != static_cast<size_t>(-1) &&
+                        items_[itemIndex].selected))
         {
             RECT iconRect = GetItemIconRect(itemRect);
-            RECT handoffRect = { iconRect.left - 4, iconRect.top - 2,
-                                 iconRect.right + 4, iconRect.bottom + 4 };
+            const RECT handoffRect =
+                snowdesktop::popup_drag_rules::
+                    HandoffActivationBounds(iconRect);
             if (PtInRect(&handoffRect, client))
             {
                 region = HitRegion::Handoff;
