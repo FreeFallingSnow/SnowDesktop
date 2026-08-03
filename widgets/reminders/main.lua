@@ -172,7 +172,7 @@ local function getPalette()
             muted = 0x000000,
             completed = 0x6F6F6F,
             accent = 0x000000,
-            add = 0xFFFFFF,
+            add = 0x000000,
             card = 0x000000,
             divider = 0x000000,
             inputText = 0x000000,
