@@ -245,7 +245,9 @@ std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
     if (luaWidgets.empty())
     {
         Item empty;
+        empty.command = kContextAddLuaWidgetEmpty;
         empty.label = _LW("app.settings.widgets_filter_empty");
+        empty.glyph = snowdesktop::menu_fluent_glyphs::kCollectionGroup;
         empty.enabled = false;
         items.push_back(std::move(empty));
         return items;
@@ -1597,6 +1599,9 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             MenuIconFont::FluentRegular);
         SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetSearch,
             L"\uF68F", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetEmpty,
+            snowdesktop::menu_fluent_glyphs::kCollectionGroup,
+            MenuIconFont::FluentRegular);
         for (UINT i = 0; i < kLuaWidgetMenuPageSize; ++i)
         {
             SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetFirst + i,

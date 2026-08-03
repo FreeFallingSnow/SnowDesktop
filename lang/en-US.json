@@ -63,7 +63,7 @@
     "app.settings.widgets_filter_builtin": "Included",
     "app.settings.widgets_filter_installed": "Installed",
     "app.settings.widgets_filter_development": "Development",
-    "app.settings.widgets_filter_empty": "There are no components in this category.",
+    "app.settings.widgets_filter_empty": "No components",
     "app.settings.widgets_advanced": "Advanced Options",
     "app.settings.widgets_developer_tools": "Component Developer Tools",
     "app.settings.widgets_open_development_folder": "Open Development Components Folder",

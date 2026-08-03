@@ -111,6 +111,7 @@ constexpr UINT kContextAddLuaWidgetFilterAll = 41491;
 constexpr UINT kContextAddLuaWidgetFilterBuiltin = 41492;
 constexpr UINT kContextAddLuaWidgetFilterInstalled = 41493;
 constexpr UINT kContextAddLuaWidgetFilterDevelopment = 41494;
+constexpr UINT kContextAddLuaWidgetEmpty = 41496;
 constexpr UINT kContextAddLuaWidgetPageStatus = 41497;
 constexpr UINT kContextAddLuaWidgetPreviousPage = 41498;
 constexpr UINT kContextAddLuaWidgetNextPage = 41499;

@@ -440,8 +440,18 @@ public:
             RECT clipped{};
             if (!IntersectRect(&clipped, &row, &viewport))
                 continue;
+            if ((*popup.items)[i].horizontalScrollAction)
+            {
+                RECT horizontalClip = popup.horizontalScrollRect;
+                OffsetRect(&horizontalClip, 0, -popup.scrollOffset);
+                if (!IntersectRect(&clipped, &clipped, &horizontalClip))
+                    continue;
+            }
 
             const Item& item = (*popup.items)[i];
+            const int savedRowDc = SaveDC(memoryDc);
+            IntersectClipRect(memoryDc, clipped.left, clipped.top,
+                clipped.right, clipped.bottom);
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
@@ -508,8 +518,9 @@ public:
                 menu_icon::DrawItem(memoryDc, textFont_, iconFont, view,
                     row, state, palette_, metrics_);
             }
+            RestoreDC(memoryDc, savedRowDc);
         }
-        if (popup.horizontalScrollContentWidth > popup.panelWidth)
+        if (MaxHorizontalScroll(popup) > 0)
         {
             if (popup.horizontalScrollOffset > 0)
                 DrawHorizontalScrollIndicator(memoryDc, popup, true);
@@ -791,7 +802,10 @@ private:
                 const int count = static_cast<int>(runEnd - position + 1);
                 if (item.horizontalScrollAction)
                 {
-                    int left = shadowSize_;
+                    const int trackLeft = shadowSize_ + panelPadding_;
+                    const int trackRight = shadowSize_ + width -
+                        panelPadding_;
+                    int left = trackLeft;
                     for (size_t i = position; i <= runEnd; ++i)
                     {
                         const int actionIndex = regularIndices[i];
@@ -806,12 +820,12 @@ private:
                         popup.navigationOrder.push_back(actionIndex);
                     }
                     popup.horizontalScrollRect = {
-                        shadowSize_, contentTop,
-                        shadowSize_ + width,
+                        trackLeft, contentTop,
+                        trackRight,
                         contentTop + metrics_.rowHeight,
                     };
                     popup.horizontalScrollContentWidth =
-                        left - shadowSize_;
+                        left - trackLeft;
                     contentTop += metrics_.rowHeight;
                     position = runEnd;
                     continue;
@@ -862,9 +876,12 @@ private:
             }
             const int height = item.separator
                 ? metrics_.separatorHeight : metrics_.rowHeight;
+            const int horizontalPadding = item.textInput
+                ? panelPadding_ : 0;
             popup.itemRects[index] = {
-                shadowSize_, contentTop,
-                shadowSize_ + width, contentTop + height,
+                shadowSize_ + horizontalPadding, contentTop,
+                shadowSize_ + width - horizontalPadding,
+                contentTop + height,
             };
             contentTop += height;
             if (!item.separator && !item.textInput)
@@ -1003,7 +1020,11 @@ private:
         {
             POINT itemPoint = contentPoint;
             if ((*popup.items)[i].horizontalScrollAction)
+            {
+                if (!PtInRect(&popup.horizontalScrollRect, contentPoint))
+                    continue;
                 itemPoint.x += popup.horizontalScrollOffset;
+            }
             if (PtInRect(&popup.itemRects[i], itemPoint))
                 return static_cast<int>(i);
         }
@@ -1840,8 +1861,8 @@ private:
             popup.scrollOffset, 0, MaxScroll(popup));
         if ((*popup.items)[index].horizontalScrollAction)
         {
-            const int viewportLeft = shadowSize_;
-            const int viewportRight = shadowSize_ + popup.panelWidth;
+            const int viewportLeft = popup.horizontalScrollRect.left;
+            const int viewportRight = popup.horizontalScrollRect.right;
             if (row.left - popup.horizontalScrollOffset < viewportLeft)
                 popup.horizontalScrollOffset = row.left - viewportLeft;
             else if (row.right - popup.horizontalScrollOffset > viewportRight)
@@ -1888,8 +1909,10 @@ private:
 
     int MaxHorizontalScroll(const Popup& popup) const
     {
+        const int viewportWidth = popup.horizontalScrollRect.right -
+            popup.horizontalScrollRect.left;
         return std::max(0,
-            popup.horizontalScrollContentWidth - popup.panelWidth);
+            popup.horizontalScrollContentWidth - viewportWidth);
     }
 
     int ActiveDepth() const

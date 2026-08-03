@@ -63,7 +63,7 @@
     "app.settings.widgets_filter_builtin": "自带",
     "app.settings.widgets_filter_installed": "安装",
     "app.settings.widgets_filter_development": "开发中",
-    "app.settings.widgets_filter_empty": "这个分类还没有组件。",
+    "app.settings.widgets_filter_empty": "暂无组件",
     "app.settings.widgets_advanced": "高级选项",
     "app.settings.widgets_developer_tools": "组件开发工具",
     "app.settings.widgets_open_development_folder": "打开开发组件目录",
