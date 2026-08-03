@@ -37,6 +37,8 @@ public:
     bool InitializePopup(
         HWND contentWindow, bool topmost = true,
         bool initiallyVisible = true);
+    /** @brief 临时切换顶层 popup backdrop 所在的 Z 序带。 */
+    void SetPopupTopmost(bool topmost);
     /** @brief 内容窗口更换桌面宿主后，同步 backdrop 窗口的 parent 和层级。 */
     void Reattach(HWND contentWindow);
     /** @brief 显示或隐藏独立的 backdrop 辅助窗口。 */

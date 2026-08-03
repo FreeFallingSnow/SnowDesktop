@@ -98,10 +98,15 @@ void DesktopApp::ShowFolderEntryContextMenu(
     contextMenu.As(&activeContextMenu2_);
     contextMenu.As(&activeContextMenu3_);
 
+    if (keepQuickNavigationOpen)
+        SetQuickNavigationTopmost(false);
     SetForegroundWindow(menuOwner);
-    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+    UINT command = TrackPopupMenuEx(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, menuOwner, nullptr);
-    if (!keepQuickNavigationOpen)
+    if (keepQuickNavigationOpen)
+        SetQuickNavigationTopmost(true);
+    else
         FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();

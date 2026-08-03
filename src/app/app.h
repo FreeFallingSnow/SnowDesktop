@@ -871,6 +871,8 @@ private:
     void PositionQuickNavigationWindow();
     /** @brief 根据当前主题创建、同步或移除快捷导航原生毛玻璃层。 */
     void UpdateQuickNavigationBackdrop();
+    /** @brief 同步切换快捷导航窗口族所在的 Z 序带。 */
+    void SetQuickNavigationTopmost(bool topmost);
     /** @brief 使快速导航窗口失效并触发重绘。 */
     void InvalidateQuickNavigationWindow(
         bool immediate = false);
@@ -2628,6 +2630,7 @@ private:
     /** @name 快速导航 */
     /** @{ */
     bool quickNavigationOpen_ = false;
+    bool quickNavigationTopmost_ = true;
     snowdesktop::quick_navigation_animation_rules::State
         quickNavigationAnimation_;
     snowdesktop::quick_navigation_animation_rules::AnchorMode

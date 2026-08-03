@@ -546,6 +546,24 @@ bool DesktopBackdropCompositor::InitializePopup(
         initiallyVisible);
 }
 
+void DesktopBackdropCompositor::SetPopupTopmost(
+    bool topmost)
+{
+    if (!impl_ || !impl_->popupMode)
+        return;
+    impl_->popupTopmost = topmost;
+    if (!impl_->available || !impl_->backdropWindow ||
+        !IsWindow(impl_->backdropWindow))
+        return;
+
+    SetWindowPos(
+        impl_->backdropWindow,
+        topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    impl_->SyncWindowPlacement();
+}
+
 bool DesktopBackdropCompositor::InitializeInternal(
     HWND contentWindow, bool popupMode,
     bool popupTopmost,

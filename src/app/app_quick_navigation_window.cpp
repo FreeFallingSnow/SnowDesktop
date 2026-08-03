@@ -23,7 +23,9 @@ bool DesktopApp::CreateQuickNavigationWindow()
         return true;
 
     quickNavigationHwnd_ = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
+        WS_EX_TOOLWINDOW |
+            (quickNavigationTopmost_ ? WS_EX_TOPMOST : 0) |
+            WS_EX_NOREDIRECTIONBITMAP,
         kQuickNavigationWindowClassName,
 _LW("app.interact.snow_nav_title"),
         WS_POPUP | WS_CLIPCHILDREN,
@@ -72,6 +74,34 @@ void DesktopApp::DestroyQuickNavigationWindow()
     quickNavigationHoverRegions_.clear();
     quickNavigationPointerTarget_ = {};
     quickNavigationAnimation_.ResetHidden();
+    quickNavigationTopmost_ = true;
+}
+
+void DesktopApp::SetQuickNavigationTopmost(
+    bool topmost)
+{
+    quickNavigationTopmost_ = topmost;
+    const HWND insertAfter =
+        topmost ? HWND_TOPMOST : HWND_NOTOPMOST;
+    constexpr UINT flags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+
+    if (quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_))
+    {
+        SetWindowPos(
+            quickNavigationHwnd_, insertAfter,
+            0, 0, 0, 0, flags);
+    }
+    quickNavBackdropCompositor_.SetPopupTopmost(
+        topmost);
+    if (quickNavigationSearchEdit_ &&
+        IsWindow(quickNavigationSearchEdit_))
+    {
+        SetWindowPos(
+            quickNavigationSearchEdit_, insertAfter,
+            0, 0, 0, 0, flags);
+    }
 }
 
 /**
@@ -91,7 +121,8 @@ void DesktopApp::UpdateQuickNavigationBackdrop()
         const bool initiallyVisible =
             quickNavigationAnimation_.GetVisual().visible;
         if (!quickNavBackdropCompositor_.InitializePopup(
-                quickNavigationHwnd_, true, initiallyVisible))
+                quickNavigationHwnd_, quickNavigationTopmost_,
+                initiallyVisible))
         {
             std::wstring message = L"Quick navigation native backdrop unavailable: ";
             message += quickNavBackdropCompositor_.LastError();
@@ -148,7 +179,9 @@ void DesktopApp::EnsureQuickNavigationSearchEdit()
     // 无重定向的 DComp 主窗口不能可靠承载 GDI 子控件，因此搜索框使用
     // 由快捷导航拥有的独立 popup HWND；它仍与主窗口位于同一 UI 线程。
     quickNavigationSearchEdit_ = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
+        WS_EX_TOOLWINDOW |
+            (quickNavigationTopmost_ ? WS_EX_TOPMOST : 0) |
+            WS_EX_LAYERED,
         L"EDIT", L"", WS_POPUP | ES_AUTOHSCROLL,
         0, 0, 1, 1, quickNavigationHwnd_, nullptr,
         instance_, nullptr);
@@ -177,7 +210,11 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
         return;
     RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
-    SetWindowPos(quickNavigationSearchEdit_, HWND_TOPMOST,
+    SetWindowPos(
+        quickNavigationSearchEdit_,
+        quickNavigationTopmost_
+            ? HWND_TOPMOST
+            : HWND_NOTOPMOST,
         search.left + virtualLeft_ + QuickNavScale(4),
         search.top + virtualTop_ + QuickNavScale(6),
         std::max<LONG>(1, search.right - search.left - QuickNavScale(8)),
@@ -477,7 +514,11 @@ void DesktopApp::PositionQuickNavigationWindow()
         &cornerPreference,
         sizeof(cornerPreference));
 
-    SetWindowPos(quickNavigationHwnd_, HWND_TOPMOST,
+    SetWindowPos(
+        quickNavigationHwnd_,
+        quickNavigationTopmost_
+            ? HWND_TOPMOST
+            : HWND_NOTOPMOST,
         quickNavigationHostRect_.left + virtualLeft_,
         quickNavigationHostRect_.top + virtualTop_,
         width, height,
@@ -1102,7 +1143,9 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
             LWA_ALPHA);
         SetWindowPos(
             quickNavigationSearchEdit_,
-            HWND_TOPMOST,
+            quickNavigationTopmost_
+                ? HWND_TOPMOST
+                : HWND_NOTOPMOST,
             left, top,
             editWidth,
             editHeight,
