@@ -201,48 +201,6 @@ void DesktopApp::DrawDynamicOverlays(
         ctx->SetTransform(previousTransform);
     };
 
-    const bool popupBelongsToCurrentSurface =
-        renderingFloatingDock_
-            ? popupAnchoredToDock_ &&
-                floatingDockVisible_
-            : !(popupAnchoredToDock_ &&
-                floatingDockDesktopCopySuppressed_);
-    if (popupBelongsToCurrentSurface &&
-        (!hiddenMode || IsOpenPopupRetained()) &&
-        GetOpenPopupWidget())
-    {
-        const bool suppressPopupHover =
-            SuppressDesktopWidgetDragTargets();
-        const POINT interactionPoint =
-            lastMousePoint_;
-        if (suppressPopupHover)
-            lastMousePoint_ = {
-                LONG_MIN, LONG_MIN };
-        DrawCollectionPopup(ctx);
-        if (suppressPopupHover)
-            lastMousePoint_ =
-                interactionPoint;
-    }
-
-    if (!renderingFloatingDock_ &&
-        !luaWidgetPanelRequest_.widgetId.empty())
-    {
-        bool renderLuaPanel = !hiddenMode;
-        if (hiddenMode)
-        {
-            const auto source = std::find_if(
-                widgets_.begin(), widgets_.end(),
-                [&](const DesktopWidget& widget) {
-                    return widget.id ==
-                        luaWidgetPanelRequest_.widgetId;
-                });
-            renderLuaPanel = source != widgets_.end() &&
-                source->keepWhenDesktopHidden;
-        }
-        if (renderLuaPanel)
-            DrawLuaWidgetPanel(ctx);
-    }
-
     // Widget drag/resize preview
     if ((widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize) && mouseDownWidgetIndex_ < widgets_.size())
     {
@@ -325,15 +283,24 @@ void DesktopApp::DrawDynamicOverlays(
         }
     }
 
-    // Drop preview (blue bars / green Handoff box)
-    Container* targetContainer = dragSession_.TargetContainer();
-    Slot* targetSlot = dragSession_.TargetSlot();
-    HitRegion targetRegion = dragSession_.TargetRegion();
-    if ((dragSession_.IsActive() ||
-            dragDropController_.IsExternalDragActive()) && targetContainer
-        && (!hiddenMode || IsRetainedContainer(targetContainer))
-        && targetRegion != HitRegion::None)
-    {
+    // Drop previews are split around the popup draw. Desktop/widget targets
+    // belong below foreground popups; only a popup's own target indicator is
+    // allowed above its contents.
+    auto drawDropPreviewLayer = [&](bool popupLayer) {
+        Container* targetContainer =
+            dragSession_.TargetContainer();
+        Slot* targetSlot =
+            dragSession_.TargetSlot();
+        HitRegion targetRegion =
+            dragSession_.TargetRegion();
+        if (!(dragSession_.IsActive() ||
+                dragDropController_.IsExternalDragActive()) ||
+            !targetContainer ||
+            (hiddenMode &&
+                !IsRetainedContainer(targetContainer)) ||
+            targetRegion == HitRegion::None)
+            return;
+
         RECT clipViewport{};
         RECT popupTargetRect{};
         auto* wc = dynamic_cast<WidgetContainer*>(targetContainer);
@@ -342,6 +309,13 @@ void DesktopApp::DrawDynamicOverlays(
         const bool popupTarget = wc && openPopupWidget &&
             wc->GetWidgetData() == openPopupWidget &&
             targetSlot == popupDragTargetSlot_.get();
+        const bool targetUsesPopupLayer =
+            snowdesktop::popup_drag_rules::
+                ResolveDropPreviewLayer(popupTarget) ==
+            snowdesktop::popup_drag_rules::
+                DropPreviewLayer::Popup;
+        if (targetUsesPopupLayer != popupLayer)
+            return;
         const bool groupEntryTarget =
             wc &&
             ((dragSession_.SourceList().
@@ -419,6 +393,56 @@ void DesktopApp::DrawDynamicOverlays(
         endPopupAnimationTransform(
             popupTargetAnimationApplied,
             popupTargetPreviousTransform);
+    };
+
+    // Blue insertion bars and green handoff boxes for the desktop, widgets and
+    // Dock are part of the background interaction layer.
+    drawDropPreviewLayer(false);
+
+    const bool popupBelongsToCurrentSurface =
+        renderingFloatingDock_
+            ? popupAnchoredToDock_ &&
+                floatingDockVisible_
+            : !(popupAnchoredToDock_ &&
+                floatingDockDesktopCopySuppressed_);
+    if (popupBelongsToCurrentSurface &&
+        (!hiddenMode || IsOpenPopupRetained()) &&
+        GetOpenPopupWidget())
+    {
+        const bool suppressPopupHover =
+            SuppressDesktopWidgetDragTargets();
+        const POINT interactionPoint =
+            lastMousePoint_;
+        if (suppressPopupHover)
+            lastMousePoint_ = {
+                LONG_MIN, LONG_MIN };
+        DrawCollectionPopup(ctx);
+        if (suppressPopupHover)
+            lastMousePoint_ =
+                interactionPoint;
+    }
+
+    // A target resolved inside the open popup must remain visible on top of
+    // that popup, while every other target stays covered by it.
+    drawDropPreviewLayer(true);
+
+    if (!renderingFloatingDock_ &&
+        !luaWidgetPanelRequest_.widgetId.empty())
+    {
+        bool renderLuaPanel = !hiddenMode;
+        if (hiddenMode)
+        {
+            const auto source = std::find_if(
+                widgets_.begin(), widgets_.end(),
+                [&](const DesktopWidget& widget) {
+                    return widget.id ==
+                        luaWidgetPanelRequest_.widgetId;
+                });
+            renderLuaPanel = source != widgets_.end() &&
+                source->keepWhenDesktopHidden;
+        }
+        if (renderLuaPanel)
+            DrawLuaWidgetPanel(ctx);
     }
 
     // Dragged items at offset

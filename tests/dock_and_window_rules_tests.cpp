@@ -505,6 +505,28 @@ int main()
         "first-column and last-column popup insertion bars must remain fully visible");
 
     Check(
+        popupDrag::ResolveDropPreviewLayer(false) ==
+                popupDrag::DropPreviewLayer::Background &&
+            popupDrag::ResolveDropPreviewLayer(true) ==
+                popupDrag::DropPreviewLayer::Popup,
+        "only popup-owned drop feedback may render above the popup");
+    const RECT popupItemBounds{
+        120, 160, 220, 280 };
+    const RECT popupHandoffBounds =
+        popupDrag::HandoffIndicatorBounds(
+            popupItemBounds);
+    Check(
+        popupHandoffBounds.left ==
+                popupItemBounds.left &&
+            popupHandoffBounds.top ==
+                popupItemBounds.top &&
+            popupHandoffBounds.right ==
+                popupItemBounds.right &&
+            popupHandoffBounds.bottom ==
+                popupItemBounds.bottom,
+        "popup handoff feedback must cover the full item cell");
+
+    Check(
         shellVisibility::IsAlwaysHidden(
             L"desktop.ini") &&
             shellVisibility::IsAlwaysHidden(

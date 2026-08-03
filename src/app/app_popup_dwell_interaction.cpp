@@ -18,6 +18,15 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
         return;
     }
 
+    // The popup is rendered above Dock and desktop widgets. Do not let its
+    // contents start a dwell timer for an opener tile hidden underneath it.
+    if (popupDwellController_.CancelIfOccluded(
+            IsPointInsideOpenPopup(point)))
+    {
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        return;
+    }
+
     size_t hoveredCollection = static_cast<size_t>(-1);
     if (DockContainer* dock = GetDockContainerAtPoint(point))
     {
@@ -81,6 +90,11 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
 {
     if (SuppressDesktopWidgetDragTargets())
         return false;
+    // Recheck at timer delivery so a candidate captured before another popup
+    // opened cannot replace it through the foreground popup.
+    if (popupDwellController_.CancelIfOccluded(
+            IsPointInsideOpenPopup(lastMousePoint_)))
+        return false;
     const size_t candidate =
         popupDwellController_.Candidate();
     if (candidate >= widgets_.size())
@@ -120,6 +134,12 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
           sourceList.hasExternalFiles) ||
         sourceList.hasCollectionGroupEntries ||
         sourceList.hasFileGroupEntries)
+    {
+        clearDwell();
+        return;
+    }
+
+    if (IsPointInsideOpenPopup(point))
     {
         clearDwell();
         return;
@@ -223,6 +243,15 @@ bool DesktopApp::TryActivateCollectionGroupTab(
         now - collectionGroupTabDwellTick_ <
             kCollectionGroupTabDwellDelayMs)
         return false;
+
+    if (IsPointInsideOpenPopup(lastMousePoint_))
+    {
+        collectionGroupTabDwellWidgetIndex_ =
+            static_cast<size_t>(-1);
+        collectionGroupTabDwellId_.clear();
+        collectionGroupTabDwellTick_ = 0;
+        return false;
+    }
 
     DesktopWidget& data =
         widgets_[collectionGroupTabDwellWidgetIndex_];

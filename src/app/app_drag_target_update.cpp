@@ -204,21 +204,13 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             if (entry.isDirectory &&
                 PtInRect(&handoffRect, client))
             {
-                RECT handoffVisual =
-                    GetItemIconRect(itemRect);
-                InflateRect(
-                    &handoffVisual, 4, 4);
-                RECT clippedVisual{};
-                if (IntersectRect(
-                        &clippedVisual,
-                        &handoffVisual,
-                        &content))
-                    handoffVisual =
-                        clippedVisual;
                 popupDragTargetSlot_ =
                     std::make_unique<Slot>(
                         targetContainer,
-                        handoffVisual, i);
+                        snowdesktop::popup_drag_rules::
+                            HandoffIndicatorBounds(
+                                itemRect),
+                        i);
                 popupDragTargetSlot_->SetItem(
                     dockFolderPopupContainer_->
                         GetMemberItem(i));
@@ -389,13 +381,12 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             {
                 region = HitRegion::Handoff;
                 handoffItem = popupContainer->GetMemberItem(i);
-                RECT clippedHandoff{};
-                if (IntersectRect(
-                        &clippedHandoff,
-                        &handoffRect,
-                        &content))
-                    slotBounds =
-                        clippedHandoff;
+                // Keep the icon-sized activation area, but present the same
+                // full-cell handoff feedback used by desktop widgets.
+                slotBounds =
+                    snowdesktop::popup_drag_rules::
+                        HandoffIndicatorBounds(
+                            itemRect);
             }
         }
 

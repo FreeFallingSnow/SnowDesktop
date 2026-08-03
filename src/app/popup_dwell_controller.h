@@ -26,6 +26,18 @@ public:
         startedAt_ = 0;
     }
 
+    /**
+     * Cancels the pending candidate when a foreground surface owns the
+     * pointer. Returning true lets the caller stop the associated timer.
+     */
+    bool CancelIfOccluded(bool occluded)
+    {
+        if (!occluded)
+            return false;
+        Reset();
+        return true;
+    }
+
     bool IsReady(DWORD now, DWORD delay) const
     {
         return candidate_ != NoCandidate &&

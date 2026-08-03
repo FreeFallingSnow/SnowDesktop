@@ -916,6 +916,15 @@ void TestPopupDwellControllerHandlesCandidateChanges()
             controller.Candidate() == 7 &&
             !controller.IsReady(199, 50),
         "changing popup candidate must atomically restart dwell timing");
+    Check(!controller.CancelIfOccluded(false) &&
+            controller.Candidate() == 7,
+        "an unobscured dwell candidate must remain active");
+    Check(controller.CancelIfOccluded(true) &&
+            controller.Candidate() ==
+                PopupDwellController::NoCandidate &&
+            !controller.IsReady(1000, 0),
+        "a foreground popup must cancel the opener tile hidden below it");
+    controller.Track(9, 200);
     controller.Reset();
     Check(controller.Candidate() ==
             PopupDwellController::NoCandidate &&
