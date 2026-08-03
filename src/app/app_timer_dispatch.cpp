@@ -2,6 +2,81 @@
 
 // Desktop animation, dwell and maintenance timer dispatch.
 
+void DesktopApp::PollSteamWorkshopSubscriptions()
+{
+    if (!widgetEngine_ || !WidgetEngine::IsSteamWorkshopBridgeAvailable())
+        return;
+
+    std::optional<snowdesktop::widget::SteamWorkshopSubscriptionSnapshot>
+        ready;
+    {
+        std::lock_guard lock(steamWorkshopSubscriptionPollState_->mutex);
+        if (steamWorkshopSubscriptionPollState_->ready)
+        {
+            ready = std::move(steamWorkshopSubscriptionPollState_->ready);
+            steamWorkshopSubscriptionPollState_->ready.reset();
+        }
+    }
+    if (ready)
+    {
+        if (ready->authoritative)
+        {
+            const auto result =
+                widgetEngine_->ApplySteamWorkshopSubscriptions(*ready);
+            if (result.Changed()) ReloadItems(false);
+            if (result.errors.empty())
+            {
+                steamWorkshopSubscriptionLastError_.clear();
+            }
+            else
+            {
+                std::string combined;
+                for (const auto& error : result.errors)
+                {
+                    if (!combined.empty()) combined += " | ";
+                    combined += error;
+                }
+                if (combined != steamWorkshopSubscriptionLastError_)
+                {
+                    steamWorkshopSubscriptionLastError_ = combined;
+                    const std::wstring message = Utf8ToWide(
+                        "Steam Workshop subscription sync: " + combined);
+                    WriteDiagnosticLogEntry(message.c_str());
+                }
+            }
+        }
+        else if (!ready->error.empty() &&
+            ready->error != steamWorkshopSubscriptionLastError_)
+        {
+            steamWorkshopSubscriptionLastError_ = ready->error;
+            const std::wstring message = Utf8ToWide(
+                "Steam Workshop subscription query: " + ready->error);
+            WriteDiagnosticLogEntry(message.c_str());
+        }
+    }
+
+    const DWORD now = GetTickCount();
+    if (steamWorkshopSubscriptionPollState_->queryInFlight.load() ||
+        (steamWorkshopSubscriptionLastQueryTick_ != 0 &&
+            now - steamWorkshopSubscriptionLastQueryTick_ <
+                kSteamWorkshopSubscriptionPollIntervalMs))
+        return;
+    steamWorkshopSubscriptionLastQueryTick_ = now;
+    const std::string locale = Locale::Instance().GetEffectiveLanguage();
+    const auto state = steamWorkshopSubscriptionPollState_;
+    state->queryInFlight.store(true);
+    std::thread([state, locale]
+    {
+        auto snapshot =
+            WidgetEngine::QuerySteamWorkshopSubscriptions(locale);
+        {
+            std::lock_guard lock(state->mutex);
+            state->ready = std::move(snapshot);
+        }
+        state->queryInFlight.store(false);
+    }).detach();
+}
+
 void DesktopApp::OnTimer(WPARAM timerId)
 {
     if (timerId == kDesktopPassthroughHoldTimerId)
@@ -95,6 +170,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         PollDisplayTopology();
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
+        PollSteamWorkshopSubscriptions();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick =
             dockForegroundChangedTick_.load();

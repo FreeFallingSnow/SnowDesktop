@@ -7359,6 +7359,90 @@ WidgetEngine::QueryWidgetPackageSource(const std::string& providerId,
     return source->second->Query(query, error);
 }
 
+bool WidgetEngine::IsSteamWorkshopBridgeAvailable()
+{
+    const std::filesystem::path bridge =
+        std::filesystem::path(GetExecutableDirectoryPath()) /
+        L"SnowDesktopSteamBridge.exe";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(bridge, error) || error)
+        return false;
+    const DWORD attributes = GetFileAttributesW(bridge.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+}
+
+snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
+WidgetEngine::QuerySteamWorkshopSubscriptions(const std::string& locale)
+{
+    snowdesktop::widget::SteamWorkshopSubscriptionSnapshot snapshot;
+    if (!IsSteamWorkshopBridgeAvailable())
+    {
+        snapshot.error = "SnowDesktopSteamBridge.exe is missing";
+        return snapshot;
+    }
+    snowdesktop::widget::SteamWorkshopSource source;
+    snowdesktop::widget::PackageQuery query;
+    query.locale = locale;
+    query.limit = std::numeric_limits<std::size_t>::max();
+    std::string error;
+    snapshot = source.QuerySubscriptions(query, error);
+    if (!error.empty()) snapshot.error = std::move(error);
+    return snapshot;
+}
+
+snowdesktop::widget::SteamWorkshopSyncResult
+WidgetEngine::ApplySteamWorkshopSubscriptions(
+    const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot)
+{
+    auto& manager = GetWidgetPackageManager();
+    const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
+        manager.ListPackages(), snapshot);
+    snowdesktop::widget::SteamWorkshopSyncResult result;
+    result.errors = plan.conflicts;
+    for (const auto& action : plan.actions)
+    {
+        if (action.kind ==
+            snowdesktop::widget::SteamWorkshopSyncActionKind::Uninstall)
+        {
+            std::vector<std::wstring> instances;
+            for (const auto& widget : widgets_)
+                if (widget.packageId == action.packageId)
+                    instances.push_back(widget.widgetId);
+            for (const auto& instance : instances) UnloadWidget(instance);
+            std::string error;
+            if (manager.Uninstall(action.packageId, error))
+            {
+                ++result.uninstalled;
+            }
+            else
+            {
+                for (const auto& instance : instances)
+                    (void)ReloadWidget(instance);
+                result.errors.push_back(action.packageId + ": " + error);
+            }
+            continue;
+        }
+
+        std::wstring error;
+        if (InstallAndVerifyWidgetPackageFromSource("steam-workshop",
+            action.externalItemId, action.version, error, false, false))
+        {
+            if (action.kind ==
+                snowdesktop::widget::SteamWorkshopSyncActionKind::Install)
+                ++result.installed;
+            else
+                ++result.updated;
+        }
+        else
+        {
+            result.errors.push_back(action.packageId + ": " +
+                WidgetWideToUtf8(error));
+        }
+    }
+    return result;
+}
+
 int WidgetEngine::ApplySafeWidgetPackageUpdates(
     const std::string& providerId, std::string& report)
 {

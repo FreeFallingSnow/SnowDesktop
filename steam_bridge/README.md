@@ -76,7 +76,11 @@ SnowDesktopSteamBridge.exe workshop eula-status
 ```
 
 Discovery, subscription, unsubscription, voting, comments, and moderation stay
-on the Steam Workshop website. The local client consumes subscribed items only.
+on the Steam Workshop website. SnowDesktop periodically reconciles a successful
+subscription snapshot: subscribing installs the validated package, updates follow
+the published package version, and unsubscribing removes the managed package.
+Layouts and per-instance storage are retained across unsubscription. Failed Steam
+queries and items that are still downloading never trigger automatic removal.
 
 ## Publisher command
 

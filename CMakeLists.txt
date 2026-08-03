@@ -219,6 +219,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_package.cpp
     src/widget_package_paths.cpp
     src/steam_workshop_source.cpp
+    src/steam_workshop_sync.cpp
     src/system_snapshot.cpp
     src/http_runtime.cpp
     src/widgets/widget_base.cpp
@@ -736,8 +737,10 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopSteamWorkshopManagerTests
         steam_workshop_manager
-        SOURCES tests/steam_workshop_manager_tests.cpp
-        INCLUDE_DIRECTORIES steam_bridge/src
+        SOURCES
+            tests/steam_workshop_manager_tests.cpp
+            src/steam_workshop_sync.cpp
+        INCLUDE_DIRECTORIES steam_bridge/src src
         LINK_LIBRARIES SnowDesktopWorkshopManagerSupport
         COMMAND_ARGUMENTS
             "$<TARGET_FILE:snowwidget>"

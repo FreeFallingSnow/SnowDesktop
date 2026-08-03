@@ -517,9 +517,14 @@ int ListSubscribedWorkshopItems(const ParsedOptions& options)
     if (!steam.IsInitialized()) return PrintInitializationFailure(steam);
     ISteamUGC* ugc = SteamUGC();
     ISteamUtils* utils = SteamUtils();
-    if (!ugc || !utils)
+    ISteamUser* user = SteamUser();
+    if (!ugc || !utils || !user)
         return PrintError(kSteamInitializationFailed,
             "steam_ugc_unavailable", "Steam UGC interfaces are unavailable");
+    if (!user->BLoggedOn())
+        return PrintError(kSteamInitializationFailed,
+            "steam_not_logged_on",
+            "Steam is offline; subscription state is not authoritative");
 
     const std::uint32_t count = ugc->GetNumSubscribedItems();
     std::vector<PublishedFileId_t> itemIds(count);

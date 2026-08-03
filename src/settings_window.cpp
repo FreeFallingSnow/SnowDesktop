@@ -130,6 +130,7 @@ std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
 bool LaunchSteamWorkshopPublisher(
     const std::filesystem::path& developmentRoot)
 {
+    if (!WidgetEngine::IsSteamWorkshopBridgeAvailable()) return false;
     const std::filesystem::path manager =
         std::filesystem::path(GetExecutableDirectoryPath()) /
         L"SnowDesktopWorkshopManager.exe";
@@ -160,6 +161,20 @@ bool LaunchSteamWorkshopPublisher(
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
     return true;
+}
+
+bool IsSteamWorkshopPublisherAvailable()
+{
+    if (!WidgetEngine::IsSteamWorkshopBridgeAvailable()) return false;
+    const std::filesystem::path manager =
+        std::filesystem::path(GetExecutableDirectoryPath()) /
+        L"SnowDesktopWorkshopManager.exe";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(manager, error) || error)
+        return false;
+    const DWORD attributes = GetFileAttributesW(manager.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 }
 
 std::optional<std::filesystem::path> SaveSettingsFile(HWND owner,
@@ -3550,6 +3565,10 @@ void SettingsWindow::DrawWidgetPackagesPage()
     ImGui::PopStyleVar();
 
     const auto packages = WidgetEngine::ListWidgetPackages();
+    const bool steamBridgeAvailable =
+        WidgetEngine::IsSteamWorkshopBridgeAvailable();
+    const bool workshopPublisherAvailable =
+        steamBridgeAvailable && IsSteamWorkshopPublisherAvailable();
     const std::string currentLocale =
         Locale::Instance().GetEffectiveLanguage();
     auto localizedManifest = [&](snowdesktop::widget::PackageManifest manifest)
@@ -3918,16 +3937,16 @@ void SettingsWindow::DrawWidgetPackagesPage()
             installLocalPackage(*selected, false);
         }
     }
-    ImGui::SameLine();
-    if (SecondaryButton(_L("app.settings.widgets_publish_steam")))
+    if (steamBridgeAvailable)
     {
-        widgetPackageStatus_ = LaunchSteamWorkshopPublisher(
-            WidgetEngine::GetWidgetPackagePaths().development)
-            ? _L("app.settings.widgets_publisher_opened")
-            : _L("app.settings.widgets_publisher_launch_failed");
+        ImGui::SameLine();
+        if (SecondaryButton(_L("app.settings.widgets_open_steam_workshop")))
+        {
+            ShellExecuteW(nullptr, L"open",
+                L"https://steamcommunity.com/workshop/", nullptr, nullptr,
+                SW_SHOWNORMAL);
+        }
     }
-    ImGui::TextDisabled("%s",
-        _L("app.settings.widgets_publish_steam_hint"));
     ImGui::Spacing();
 
     const auto legacy = WidgetEngine::ListLegacyWidgetPackages();
@@ -4139,6 +4158,20 @@ void SettingsWindow::DrawWidgetPackagesPage()
     if (ImGui::CollapsingHeader(
         _L("app.settings.widgets_advanced")))
     {
+        if (workshopPublisherAvailable)
+        {
+            if (SecondaryButton(
+                _L("app.settings.widgets_publish_steam")))
+            {
+                if (LaunchSteamWorkshopPublisher(
+                    WidgetEngine::GetWidgetPackagePaths().development))
+                    widgetPackageStatus_.clear();
+                else
+                    widgetPackageStatus_ =
+                        _L("app.settings.widgets_publisher_launch_failed");
+            }
+            ImGui::Spacing();
+        }
         if (!legacy.empty())
         {
             ImGui::SeparatorText(

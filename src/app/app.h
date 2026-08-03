@@ -95,6 +95,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -110,6 +111,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -141,6 +143,12 @@ struct RecycleBinPollState {
     std::atomic<int64_t> itemCount{ -1 };
     std::atomic<bool> queryInFlight{ false };
     std::atomic<HWND> targetWindow{ nullptr };
+};
+struct SteamWorkshopSubscriptionPollState {
+    std::atomic<bool> queryInFlight{ false };
+    std::mutex mutex;
+    std::optional<snowdesktop::widget::SteamWorkshopSubscriptionSnapshot>
+        ready;
 };
 enum class DockWindowVisualState
 {
@@ -1041,6 +1049,7 @@ private:
     void ScrollWidgetToMember(size_t widgetIndex, int memberIndex);
     /** @brief 处理定时器事件。 @param timerId 定时器标识 */
     void OnTimer(WPARAM timerId);
+    void PollSteamWorkshopSubscriptions();
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */
     void UpdateCollectionPopupDwell(POINT point);
     /** @brief 拖动条目时更新集合组标签的悬停切换计时。 */
@@ -2098,6 +2107,11 @@ private:
     std::vector<std::unique_ptr<MenuIconEntry>> menuIconPool_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
+    std::shared_ptr<SteamWorkshopSubscriptionPollState>
+        steamWorkshopSubscriptionPollState_ =
+            std::make_shared<SteamWorkshopSubscriptionPollState>();
+    DWORD steamWorkshopSubscriptionLastQueryTick_ = 0;
+    std::string steamWorkshopSubscriptionLastError_;
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
     DockSettings dockSettings_;

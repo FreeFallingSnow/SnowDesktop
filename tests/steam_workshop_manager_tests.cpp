@@ -2,6 +2,7 @@
 #include "manager_localization.h"
 #include "package_tool.h"
 #include "publish_lifecycle.h"
+#include "steam_workshop_sync.h"
 #include "workshop_project.h"
 
 #include <windows.h>
@@ -14,6 +15,7 @@
 #include <vector>
 
 using namespace snowdesktop::steam_bridge;
+using namespace snowdesktop::widget;
 
 namespace
 {
@@ -85,6 +87,86 @@ void TestManagerLocalization()
     Check(std::string(localization.Translate("Open Workshop", "内置中文")) ==
         "Open Workshop",
         "manager localization follows a selected main catalog");
+}
+
+PackageDetails WorkshopDetails(std::string packageId, std::string version,
+    std::string itemId)
+{
+    PackageDetails details;
+    details.manifest.id = std::move(packageId);
+    details.manifest.version = std::move(version);
+    details.source = { "steam-workshop", std::move(itemId) + "@42" };
+    return details;
+}
+
+InstalledPackage Installed(std::string packageId, std::string version,
+    std::string provider, std::string itemId)
+{
+    InstalledPackage package;
+    package.manifest.id = std::move(packageId);
+    package.manifest.version = std::move(version);
+    package.source = { std::move(provider), std::move(itemId) };
+    package.active = true;
+    return package;
+}
+
+void TestSteamSubscriptionSyncPlan()
+{
+    SteamWorkshopSubscriptionSnapshot snapshot;
+    snapshot.authoritative = true;
+    snapshot.subscribedPublishedFileIds = { "100" };
+    snapshot.installable.push_back(
+        WorkshopDetails("package-a", "1.0.0", "100"));
+    auto plan = BuildSteamWorkshopSyncPlan({}, snapshot);
+    Check(plan.actions.size() == 1 && plan.actions[0].kind ==
+        SteamWorkshopSyncActionKind::Install,
+        "a newly subscribed Workshop component is installed automatically");
+
+    auto current = Installed("package-a", "1.0.0",
+        "steam-workshop", "100@42");
+    SteamWorkshopSubscriptionSnapshot downloading;
+    downloading.authoritative = true;
+    downloading.subscribedPublishedFileIds = { "100" };
+    plan = BuildSteamWorkshopSyncPlan({ current }, downloading);
+    Check(plan.actions.empty(),
+        "a subscribed item still downloading is not mistaken for an unsubscribe");
+
+    SteamWorkshopSubscriptionSnapshot unsubscribed;
+    unsubscribed.authoritative = true;
+    auto shadowed = current;
+    shadowed.active = false;
+    plan = BuildSteamWorkshopSyncPlan({ shadowed }, unsubscribed);
+    Check(plan.actions.size() == 1 && plan.actions[0].kind ==
+        SteamWorkshopSyncActionKind::Uninstall,
+        "unsubscription removes a Workshop package hidden by a development copy");
+
+    snapshot.installable[0].manifest.version = "1.1.0";
+    plan = BuildSteamWorkshopSyncPlan({ shadowed }, snapshot);
+    Check(plan.actions.size() == 1 && plan.actions[0].kind ==
+        SteamWorkshopSyncActionKind::Update,
+        "a shadowed Workshop component still follows the published version");
+
+    plan = BuildSteamWorkshopSyncPlan({ current }, unsubscribed);
+    Check(plan.actions.size() == 1 && plan.actions[0].kind ==
+        SteamWorkshopSyncActionKind::Uninstall,
+        "an unsubscribed Workshop component is uninstalled automatically");
+    auto previousVersion = current;
+    previousVersion.manifest.version = "0.9.0";
+    previousVersion.active = false;
+    plan = BuildSteamWorkshopSyncPlan(
+        { current, previousVersion }, unsubscribed);
+    Check(plan.actions.size() == 1,
+        "unsubscription schedules one removal for all retained versions");
+
+    unsubscribed.authoritative = false;
+    plan = BuildSteamWorkshopSyncPlan({ current }, unsubscribed);
+    Check(plan.actions.empty(),
+        "a failed/non-authoritative Steam query never removes components");
+
+    auto local = Installed("package-a", "1.0.0", "local-import", "package-a");
+    plan = BuildSteamWorkshopSyncPlan({ local }, snapshot);
+    Check(plan.actions.empty() && plan.conflicts.size() == 1,
+        "automatic subscription sync does not replace another package source");
 }
 
 void TestProjectStore()
@@ -280,6 +362,7 @@ int wmain(int argc, wchar_t** argv)
 {
     TestJson();
     TestManagerLocalization();
+    TestSteamSubscriptionSyncPlan();
     TestProjectStore();
     TestMetadataBinding();
     TestCommandLineQuoting();

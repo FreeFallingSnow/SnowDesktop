@@ -552,13 +552,17 @@ SteamWorkshopSource::ResolveCurrent(const std::string& externalItemId,
     return std::nullopt;
 }
 
-std::vector<PackageDetails> SteamWorkshopSource::Query(
+SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
     const PackageQuery& query, std::string& error)
 {
+    SteamWorkshopSubscriptionSnapshot snapshot;
     BridgeResult result;
     if (!RunBridge({ L"workshop", L"list-subscribed", L"--details" },
         40, result, error))
-        return {};
+    {
+        snapshot.error = error;
+        return snapshot;
+    }
     const JsonValue* items = JsonField(
         result.finalObject, "items", JsonValue::Type::Array);
     const auto appId = JsonUint32(result.finalObject, "appId");
@@ -566,19 +570,21 @@ std::vector<PackageDetails> SteamWorkshopSource::Query(
         !appId || *appId == 0u)
     {
         error = "Steam bridge returned an incompatible subscription result";
-        return {};
+        snapshot.error = error;
+        return snapshot;
     }
 
-    std::vector<PackageDetails> matches;
+    snapshot.authoritative = true;
     std::size_t matched = 0;
     for (const JsonValue& item : items->array)
     {
         if (!item.IsObject()) continue;
         const auto publishedFileId = JsonString(item, "publishedFileId");
+        if (!publishedFileId || !DigitsOnly(*publishedFileId)) continue;
+        snapshot.subscribedPublishedFileIds.push_back(*publishedFileId);
         const JsonValue* details = JsonField(
             item, "details", JsonValue::Type::Object);
-        if (!publishedFileId || !DigitsOnly(*publishedFileId) ||
-            !details || JsonUint32(*details, "result") != 1u ||
+        if (!details || JsonUint32(*details, "result") != 1u ||
             JsonUint32(*details, "consumerAppId") != appId ||
             JsonBoolean(*details, "banned").value_or(true))
             continue;
@@ -605,11 +611,18 @@ std::vector<PackageDetails> SteamWorkshopSource::Query(
             std::move(resolved->details.manifest), query.locale);
         if (!QueryMatches(resolved->details.manifest, query)) continue;
         if (matched++ < query.offset) continue;
-        if (matches.size() >= query.limit) break;
-        matches.push_back(std::move(resolved->details));
+        if (snapshot.installable.size() < query.limit)
+            snapshot.installable.push_back(std::move(resolved->details));
     }
     error.clear();
-    return matches;
+    return snapshot;
+}
+
+std::vector<PackageDetails> SteamWorkshopSource::Query(
+    const PackageQuery& query, std::string& error)
+{
+    auto snapshot = QuerySubscriptions(query, error);
+    return std::move(snapshot.installable);
 }
 
 std::optional<PackageDetails> SteamWorkshopSource::GetDetails(

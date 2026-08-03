@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "widget_package.h"
+#include "steam_workshop_sync.h"
 
 #include <chrono>
 #include <filesystem>
@@ -24,6 +24,8 @@ public:
     std::string ProviderId() const override;
     ProviderCapabilities Capabilities() const override;
     ProviderStatus Status() override;
+    SteamWorkshopSubscriptionSnapshot QuerySubscriptions(
+        const PackageQuery& query, std::string& error);
     std::vector<PackageDetails> Query(const PackageQuery& query,
         std::string& error) override;
     std::optional<PackageDetails> GetDetails(

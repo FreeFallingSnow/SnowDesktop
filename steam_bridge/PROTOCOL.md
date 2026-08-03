@@ -46,8 +46,14 @@ The SnowDesktop process must:
 6. bind `(providerId, PublishedFileId, ownerSteamId)` to the package UUID;
 7. require confirmation for source, permission, or network-domain expansion.
 
-Unsubscription must not silently delete layouts or per-instance storage. The
-host should mark the source unavailable and let the user explicitly uninstall.
+The host treats Steam subscription state as authoritative only after a complete,
+successful query. A newly subscribed package is copied, validated, and installed
+automatically; a changed package is updated automatically unless permissions or
+network domains expand; an unsubscribed package is removed from the managed
+package store automatically. Unsubscription unloads live instances but must not
+delete their layout records or per-instance storage, so subscribing again can
+restore them. Failed, offline, partial, or in-progress download queries must
+never trigger removal.
 
 ## Progress objects
 
