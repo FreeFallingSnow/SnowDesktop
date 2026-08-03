@@ -61,6 +61,12 @@ struct Item
     UINT inlineGroup = 0;
     /** 行内操作使用适合短文本的固定宽度，其余空间留给主操作。 */
     bool compactInlineAction = false;
+    /** 行内操作按内容宽度排列，并在固定宽度标签栏内横向滚动。 */
+    bool horizontalScrollAction = false;
+    /** 将该行绘制为菜单内搜索框；label 用作空值提示。 */
+    bool textInput = false;
+    /** 搜索框当前文本。 */
+    std::wstring inputText;
 };
 
 struct HoverInfo
@@ -85,6 +91,9 @@ struct Options
     RECT anchorRect{};
     /** 返回 true 时应用命令并保持根菜单打开。 */
     std::function<bool(UINT, std::vector<Item>&)> onCommand;
+    /** 菜单内文本变化；回调可重建 rootItems 中受筛选的条目。 */
+    std::function<void(UINT, const std::wstring&, std::vector<Item>&)>
+        onTextChanged;
     /** 鼠标或键盘高亮项变化；command=0 表示当前没有可预览项。 */
     std::function<void(const HoverInfo&)> onHover;
 };

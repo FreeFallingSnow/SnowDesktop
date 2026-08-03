@@ -725,7 +725,7 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     FillSolidRect(dc, bounds, palette.background);
     const bool disabled =
         (itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;
-    const bool selected = (itemState & ODS_SELECTED) != 0;
+    const bool selected = (itemState & ODS_SELECTED) != 0 || item.checked;
     if (selected && !disabled)
     {
         RECT selection = bounds;
@@ -738,7 +738,8 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     }
 
     const COLORREF foreground = disabled
-        ? palette.disabledText : palette.text;
+        ? palette.disabledText
+        : (item.checked ? palette.accent : palette.text);
     const int oldMode = SetBkMode(dc, TRANSPARENT);
     const COLORREF oldColor = SetTextColor(dc, foreground);
     const bool hasGlyph = item.glyph && *item.glyph;
@@ -780,6 +781,164 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
                 DT_NOPREFIX);
         if (oldFont) SelectObject(dc, oldFont);
     }
+    SetTextColor(dc, oldColor);
+    SetBkMode(dc, oldMode);
+    return true;
+}
+
+bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
+    const ItemView& item, const TextInputView& input,
+    const RECT& bounds, const Palette& palette, const Metrics& metrics)
+{
+    if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
+        return false;
+
+    FillSolidRect(dc, bounds, palette.background);
+    RECT field = bounds;
+    field.left += metrics.outerInset;
+    field.right -= metrics.outerInset;
+    field.top += metrics.selectionInsetY;
+    field.bottom -= metrics.selectionInsetY;
+
+    HBRUSH brush = CreateSolidBrush(palette.hoverBackground);
+    HPEN pen = CreatePen(PS_SOLID, 1,
+        input.focused ? palette.accent : palette.separator);
+    if (brush && pen)
+    {
+        HGDIOBJ oldBrush = SelectObject(dc, brush);
+        HGDIOBJ oldPen = SelectObject(dc, pen);
+        const int radius = metrics.selectionRadius * 2;
+        RoundRect(dc, field.left, field.top, field.right, field.bottom,
+            radius, radius);
+        SelectObject(dc, oldPen);
+        SelectObject(dc, oldBrush);
+    }
+    if (pen) DeleteObject(pen);
+    if (brush) DeleteObject(brush);
+
+    const int oldMode = SetBkMode(dc, TRANSPARENT);
+    RECT glyphBounds = field;
+    glyphBounds.left += metrics.leftPadding / 2;
+    glyphBounds.right = glyphBounds.left + metrics.iconColumnWidth;
+    HGDIOBJ oldFont = SelectObject(dc,
+        iconFont ? static_cast<HGDIOBJ>(iconFont)
+                 : GetStockObject(DEFAULT_GUI_FONT));
+    DrawGlyphLayer(dc, item.glyph, glyphBounds, palette.disabledText,
+        &field);
+    if (oldFont) SelectObject(dc, oldFont);
+
+    const std::wstring committed = input.text ? input.text : L"";
+    const size_t cursor = std::min(input.cursor, committed.size());
+    const size_t anchor = std::min(
+        input.selectionAnchor, committed.size());
+    const size_t selectionStart = std::min(cursor, anchor);
+    const size_t selectionEnd = std::max(cursor, anchor);
+    const std::wstring composition = input.compositionText
+        ? input.compositionText : L"";
+    std::wstring display = committed;
+    size_t displayCursor = cursor;
+    size_t compositionStart = 0;
+    if (!composition.empty())
+    {
+        display = committed.substr(0, selectionStart);
+        display += composition;
+        display += committed.substr(selectionEnd);
+        compositionStart = selectionStart;
+        displayCursor = compositionStart + std::min(
+            input.compositionCursor, composition.size());
+    }
+    const bool showingPlaceholder = display.empty() && !input.focused;
+    const std::wstring visibleText = showingPlaceholder
+        ? std::wstring(item.label ? item.label : L"") : display;
+    RECT textBounds = field;
+    textBounds.left = glyphBounds.right + metrics.textGap;
+    textBounds.right -= metrics.rightPadding;
+    const COLORREF oldColor = SetTextColor(dc,
+        showingPlaceholder ? palette.disabledText : palette.text);
+    oldFont = SelectObject(dc,
+        textFont ? static_cast<HGDIOBJ>(textFont)
+                 : GetStockObject(DEFAULT_GUI_FONT));
+
+    const auto measurePrefix = [&](size_t length) {
+        SIZE size{};
+        const size_t safeLength = std::min(length, display.size());
+        if (safeLength > 0)
+        {
+            GetTextExtentPoint32W(dc, display.data(),
+                static_cast<int>(safeLength), &size);
+        }
+        return static_cast<int>(size.cx);
+    };
+    const int availableWidth = std::max<LONG>(
+        1, textBounds.right - textBounds.left);
+    const int caretAdvance = measurePrefix(displayCursor);
+    const int horizontalOffset = std::max(
+        0, caretAdvance - availableWidth + metrics.outerInset * 2);
+    RECT drawBounds = textBounds;
+    drawBounds.left -= horizontalOffset;
+    drawBounds.right += horizontalOffset;
+    const int savedDc = SaveDC(dc);
+    IntersectClipRect(dc, textBounds.left, textBounds.top,
+        textBounds.right, textBounds.bottom);
+
+    if (input.focused && composition.empty() && cursor != anchor)
+    {
+        RECT selection = textBounds;
+        selection.left += measurePrefix(selectionStart) - horizontalOffset;
+        selection.right = textBounds.left +
+            measurePrefix(selectionEnd) - horizontalOffset;
+        selection.top += metrics.outerInset;
+        selection.bottom -= metrics.outerInset;
+        HBRUSH selectionBrush = CreateSolidBrush(palette.separator);
+        if (selectionBrush)
+        {
+            FillRect(dc, &selection, selectionBrush);
+            DeleteObject(selectionBrush);
+        }
+    }
+
+    DrawTextW(dc, visibleText.c_str(), static_cast<int>(visibleText.size()),
+        &drawBounds, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    if (input.focused && !composition.empty())
+    {
+        const int compositionLeft = textBounds.left +
+            measurePrefix(compositionStart) - horizontalOffset;
+        const int compositionRight = textBounds.left +
+            measurePrefix(compositionStart + composition.size()) -
+                horizontalOffset;
+        HPEN compositionPen = CreatePen(PS_SOLID, 1, palette.text);
+        if (compositionPen)
+        {
+            HGDIOBJ oldCompositionPen = SelectObject(dc, compositionPen);
+            const int y = textBounds.bottom - metrics.outerInset;
+            MoveToEx(dc, compositionLeft, y, nullptr);
+            LineTo(dc, std::max(compositionLeft + 1, compositionRight), y);
+            SelectObject(dc, oldCompositionPen);
+            DeleteObject(compositionPen);
+        }
+    }
+
+    if (input.focused && input.caretVisible)
+    {
+        const int caretX = std::clamp(
+            static_cast<int>(textBounds.left) + caretAdvance -
+                horizontalOffset,
+            static_cast<int>(textBounds.left),
+            std::max(static_cast<int>(textBounds.left),
+                static_cast<int>(textBounds.right) - 1));
+        HPEN caretPen = CreatePen(PS_SOLID, 1, palette.accent);
+        if (caretPen)
+        {
+            HGDIOBJ oldCaretPen = SelectObject(dc, caretPen);
+            MoveToEx(dc, caretX, field.top + metrics.outerInset, nullptr);
+            LineTo(dc, caretX, field.bottom - metrics.outerInset);
+            SelectObject(dc, oldCaretPen);
+            DeleteObject(caretPen);
+        }
+    }
+    RestoreDC(dc, savedDc);
+    if (oldFont) SelectObject(dc, oldFont);
     SetTextColor(dc, oldColor);
     SetBkMode(dc, oldMode);
     return true;

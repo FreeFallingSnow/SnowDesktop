@@ -3,11 +3,13 @@
 #include "menu_icon_render.h"
 
 #include <dwmapi.h>
+#include <imm.h>
 #include <windowsx.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <cwctype>
 #include <memory>
@@ -22,6 +24,8 @@ constexpr wchar_t kMenuWindowClass[] =
     L"SnowDesktop.ModernMenuPopup";
 constexpr UINT_PTR kSubmenuOpenTimer = 1;
 constexpr UINT_PTR kSubmenuCloseTimer = 2;
+constexpr UINT_PTR kTextCaretTimer = 3;
+constexpr UINT kTextCaretBlinkMs = 530;
 constexpr UINT kCancelMessage = WM_APP + 0x311;
 std::atomic<HWND> gActiveRootMenu{ nullptr };
 
@@ -33,7 +37,7 @@ int Scale(int value, UINT dpi)
 
 bool IsSelectable(const Item& item)
 {
-    return !item.separator && item.enabled;
+    return !item.separator && !item.textInput && item.enabled;
 }
 
 bool ResolveLightTheme(const Options& options)
@@ -96,13 +100,16 @@ class MenuController;
 struct Popup
 {
     MenuController* controller = nullptr;
-    const std::vector<Item>* items = nullptr;
+    std::vector<Item>* items = nullptr;
     HWND hwnd = nullptr;
     int depth = 0;
     int parentItem = -1;
     int hoveredItem = -1;
     int keyboardItem = -1;
     int scrollOffset = 0;
+    int horizontalScrollOffset = 0;
+    int horizontalScrollContentWidth = 0;
+    RECT horizontalScrollRect{};
     int contentHeight = 0;
     int viewportHeight = 0;
     int panelWidth = 0;
@@ -263,23 +270,50 @@ public:
         case WM_LBUTTONUP:
         {
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            ActivateItem(popup, HitTest(popup, point), false);
+            const int index = HitTest(popup, point);
+            if (index >= 0 &&
+                (*popup.items)[index].textInput)
+                FocusTextInputFromPoint(popup, index, point);
+            else
+                ActivateItem(popup, index, false);
             return 0;
         }
         case WM_MOUSEWHEEL:
         {
             const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-            Scroll(popup, delta > 0 ? -1 : 1);
+            POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            ScreenToClient(hwnd, &point);
+            RECT horizontalTrack = popup.horizontalScrollRect;
+            OffsetRect(&horizontalTrack, 0, -popup.scrollOffset);
+            if (PtInRect(&horizontalTrack, point) &&
+                MaxHorizontalScroll(popup) > 0)
+                ScrollHorizontal(popup, delta > 0 ? -1 : 1);
+            else
+                Scroll(popup, delta > 0 ? -1 : 1);
+            return 0;
+        }
+        case WM_MOUSEHWHEEL:
+        {
+            const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+            ScrollHorizontal(popup, delta > 0 ? 1 : -1);
             return 0;
         }
         case WM_KEYDOWN:
-            HandleKey(wParam);
+            if (!HandleTextInputKey(wParam))
+                HandleKey(wParam);
             return 0;
         case WM_CHAR:
-            SelectByCharacter(static_cast<wchar_t>(wParam));
+            if (!HandleTextInputCharacter(static_cast<wchar_t>(wParam)))
+                SelectByCharacter(static_cast<wchar_t>(wParam));
             return 0;
         case WM_TIMER:
-            if (wParam == kSubmenuOpenTimer)
+            if (wParam == kTextCaretTimer)
+            {
+                textCaretVisible_ = !textCaretVisible_;
+                if (Popup* active = ActivePopup())
+                    Render(*active);
+            }
+            else if (wParam == kSubmenuOpenTimer)
             {
                 KillTimer(hwnd, kSubmenuOpenTimer);
                 if (popup.hoveredItem >= 0)
@@ -292,6 +326,20 @@ public:
                 if (popup.hwnd && IsWindow(popup.hwnd))
                     Render(popup);
             }
+            return 0;
+        case WM_IME_STARTCOMPOSITION:
+            textInputComposition_.clear();
+            textInputCompositionCursor_ = 0;
+            ResetTextCaret(popup);
+            UpdateTextInputImePosition(hwnd);
+            return 0;
+        case WM_IME_COMPOSITION:
+            HandleTextInputImeComposition(hwnd, lParam);
+            return 0;
+        case WM_IME_ENDCOMPOSITION:
+            textInputComposition_.clear();
+            textInputCompositionCursor_ = 0;
+            ResetTextCaret(popup);
             return 0;
         case WM_ACTIVATE:
             if (popup.depth == 0 && LOWORD(wParam) == WA_INACTIVE &&
@@ -315,8 +363,18 @@ public:
         case WM_ERASEBKGND:
             return 1;
         case WM_SETCURSOR:
-            SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        {
+            POINT point{};
+            GetCursorPos(&point);
+            ScreenToClient(hwnd, &point);
+            const int index = HitTest(popup, point);
+            const bool overTextInput = index >= 0 &&
+                static_cast<size_t>(index) < popup.items->size() &&
+                (*popup.items)[index].textInput;
+            SetCursor(LoadCursorW(nullptr,
+                overTextInput ? IDC_IBEAM : IDC_ARROW));
             return TRUE;
+        }
         case WM_NCHITTEST:
             return HTCLIENT;
         default:
@@ -377,6 +435,8 @@ public:
             if (row.right <= row.left || row.bottom <= row.top)
                 continue;
             OffsetRect(&row, 0, -popup.scrollOffset);
+            if ((*popup.items)[i].horizontalScrollAction)
+                OffsetRect(&row, -popup.horizontalScrollOffset, 0);
             RECT clipped{};
             if (!IntersectRect(&clipped, &row, &viewport))
                 continue;
@@ -395,7 +455,23 @@ public:
                 state |= ODS_SELECTED;
             HFONT iconFont = item.iconFont == IconFont::FontAwesomeSolid
                 ? fontAwesomeIconFont_ : fluentIconFont_;
-            if (popup.depth == 0 && item.quickAction && !item.inlineAction)
+            if (item.textInput)
+            {
+                const bool focused = IsTextInputFocused(popup, item);
+                const menu_icon::TextInputView inputView{
+                    item.inputText.c_str(),
+                    focused ? textInputCursor_ : item.inputText.size(),
+                    focused ? textInputSelectionAnchor_ :
+                        item.inputText.size(),
+                    focused ? textInputComposition_.c_str() : L"",
+                    focused ? textInputCompositionCursor_ : 0,
+                    focused,
+                    focused && textCaretVisible_,
+                };
+                menu_icon::DrawTextInput(memoryDc, textFont_, iconFont,
+                    view, inputView, row, palette_, metrics_);
+            }
+            else if (popup.depth == 0 && item.quickAction && !item.inlineAction)
             {
                 HFONT quickIconFont =
                     item.iconFont == IconFont::FontAwesomeSolid
@@ -432,6 +508,13 @@ public:
                 menu_icon::DrawItem(memoryDc, textFont_, iconFont, view,
                     row, state, palette_, metrics_);
             }
+        }
+        if (popup.horizontalScrollContentWidth > popup.panelWidth)
+        {
+            if (popup.horizontalScrollOffset > 0)
+                DrawHorizontalScrollIndicator(memoryDc, popup, true);
+            if (popup.horizontalScrollOffset < MaxHorizontalScroll(popup))
+                DrawHorizontalScrollIndicator(memoryDc, popup, false);
         }
         if (popup.quickSeparatorRect.right >
             popup.quickSeparatorRect.left)
@@ -510,7 +593,7 @@ private:
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
-    bool OpenPopup(const std::vector<Item>& items, int depth,
+    bool OpenPopup(std::vector<Item>& items, int depth,
         int parentItem, POINT anchor, const Popup* parent)
     {
         CloseFromDepth(depth);
@@ -542,6 +625,15 @@ private:
 
         Popup* rawPopup = popup.get();
         popups_.push_back(std::move(popup));
+        for (size_t i = 0; i < items.size(); ++i)
+        {
+            if (items[i].textInput && items[i].enabled)
+            {
+                FocusTextInput(*rawPopup, static_cast<int>(i),
+                    items[i].inputText.size(), false);
+                break;
+            }
+        }
         Render(*rawPopup);
         if (depth > 0)
         {
@@ -558,6 +650,7 @@ private:
         int width = metrics_.minimumWidth;
         std::vector<int> quickIndices;
         std::vector<int> regularIndices;
+        std::vector<int> inlineWidths(popup.items->size(), 0);
         int pendingSeparator = -1;
         for (size_t i = 0; i < popup.items->size(); ++i)
         {
@@ -580,10 +673,27 @@ private:
                 pendingSeparator = -1;
             }
             regularIndices.push_back(static_cast<int>(i));
+            if (item.textInput)
+            {
+                width = std::max(width, Scale(280, options_.dpi));
+                continue;
+            }
             if (item.inlineAction)
             {
                 width = std::max(width,
                     metrics_.minimumWidth + metrics_.rowHeight);
+                if (item.horizontalScrollAction && screenDc)
+                {
+                    HGDIOBJ oldFont = SelectObject(screenDc, textFont_);
+                    SIZE labelSize{};
+                    GetTextExtentPoint32W(screenDc, item.label.c_str(),
+                        static_cast<int>(item.label.size()), &labelSize);
+                    if (oldFont) SelectObject(screenDc, oldFont);
+                    inlineWidths[i] = std::max(
+                        metrics_.rowHeight,
+                        static_cast<int>(labelSize.cx) +
+                            metrics_.outerInset * 4);
+                }
                 continue;
             }
             const menu_icon::ItemView view{
@@ -630,6 +740,8 @@ private:
         popup.itemRects.assign(popup.items->size(), RECT{});
         popup.navigationOrder.clear();
         popup.quickSeparatorRect = {};
+        popup.horizontalScrollRect = {};
+        popup.horizontalScrollContentWidth = 0;
         popup.quickActionRight = 0;
         if (quickIndices.empty())
             popup.quickActionCellWidth = 0;
@@ -677,6 +789,33 @@ private:
                             item.inlineGroup))
                     ++runEnd;
                 const int count = static_cast<int>(runEnd - position + 1);
+                if (item.horizontalScrollAction)
+                {
+                    int left = shadowSize_;
+                    for (size_t i = position; i <= runEnd; ++i)
+                    {
+                        const int actionIndex = regularIndices[i];
+                        const int actionWidth = std::max(
+                            metrics_.rowHeight,
+                            inlineWidths[actionIndex]);
+                        popup.itemRects[actionIndex] = {
+                            left, contentTop, left + actionWidth,
+                            contentTop + metrics_.rowHeight,
+                        };
+                        left += actionWidth;
+                        popup.navigationOrder.push_back(actionIndex);
+                    }
+                    popup.horizontalScrollRect = {
+                        shadowSize_, contentTop,
+                        shadowSize_ + width,
+                        contentTop + metrics_.rowHeight,
+                    };
+                    popup.horizontalScrollContentWidth =
+                        left - shadowSize_;
+                    contentTop += metrics_.rowHeight;
+                    position = runEnd;
+                    continue;
+                }
                 const int narrowWidth = metrics_.rowHeight;
                 const int compactWidth = metrics_.rowHeight * 2;
                 int flexibleCount = 0;
@@ -728,10 +867,13 @@ private:
                 shadowSize_ + width, contentTop + height,
             };
             contentTop += height;
-            if (!item.separator)
+            if (!item.separator && !item.textInput)
                 popup.navigationOrder.push_back(index);
         }
         popup.panelWidth = width;
+        popup.horizontalScrollOffset = std::clamp(
+            popup.horizontalScrollOffset, 0,
+            MaxHorizontalScroll(popup));
         popup.contentHeight = contentTop - shadowSize_ - panelPadding_;
 
         HMONITOR monitor = MonitorFromPoint(options_.anchor,
@@ -859,7 +1001,10 @@ private:
         contentPoint.y += popup.scrollOffset;
         for (size_t i = 0; i < popup.itemRects.size(); ++i)
         {
-            if (PtInRect(&popup.itemRects[i], contentPoint))
+            POINT itemPoint = contentPoint;
+            if ((*popup.items)[i].horizontalScrollAction)
+                itemPoint.x += popup.horizontalScrollOffset;
+            if (PtInRect(&popup.itemRects[i], itemPoint))
                 return static_cast<int>(i);
         }
         return -1;
@@ -906,6 +1051,11 @@ private:
                 {
                     info.command = hovered.command;
                     info.itemScreenRect = popup.itemRects[index];
+                    if (hovered.horizontalScrollAction)
+                    {
+                        OffsetRect(&info.itemScreenRect,
+                            -popup.horizontalScrollOffset, 0);
+                    }
                     OffsetRect(&info.itemScreenRect,
                         popup.panelScreenOrigin.x - shadowSize_,
                         popup.panelScreenOrigin.y - shadowSize_ -
@@ -951,26 +1101,15 @@ private:
 
         const UINT command = item.command;
         RECT rect = popup.itemRects[index];
+        if (item.horizontalScrollAction)
+            OffsetRect(&rect, -popup.horizontalScrollOffset, 0);
         OffsetRect(&rect,
             popup.panelScreenOrigin.x - shadowSize_,
             popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset);
         if (options_.onCommand &&
             options_.onCommand(command, rootItems_))
         {
-            CloseFromDepth(popup.depth + 1);
-            popup.hoveredItem = -1;
-            popup.keyboardItem = -1;
-            CalculateLayout(popup);
-            if (popup.hwnd && IsWindow(popup.hwnd))
-            {
-                SetWindowPos(popup.hwnd, nullptr,
-                    popup.panelScreenOrigin.x - shadowSize_,
-                    popup.panelScreenOrigin.y - shadowSize_,
-                    popup.windowWidth, popup.windowHeight,
-                    SWP_NOACTIVATE | SWP_NOZORDER);
-                ApplyBlurClipRegion(popup);
-                Render(popup);
-            }
+            RefreshPopup(popup);
             return;
         }
 
@@ -984,7 +1123,7 @@ private:
         KillTimer(popup.hwnd, kSubmenuCloseTimer);
         if (index < 0 || static_cast<size_t>(index) >= popup.items->size())
             return;
-        const Item& item = (*popup.items)[index];
+        Item& item = (*popup.items)[index];
         if (!item.enabled || item.children.empty())
             return;
         if (popup.depth + 1 < static_cast<int>(popups_.size()) &&
@@ -996,6 +1135,8 @@ private:
         }
 
         RECT row = popup.itemRects[index];
+        if (item.horizontalScrollAction)
+            OffsetRect(&row, -popup.horizontalScrollOffset, 0);
         OffsetRect(&row,
             popup.panelScreenOrigin.x - shadowSize_,
             popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset);
@@ -1051,8 +1192,16 @@ private:
             }
             break;
         case VK_RETURN:
-        case VK_SPACE:
             ActivateItem(*popup, CurrentItem(*popup), true);
+            break;
+        case VK_SPACE:
+            if (std::ranges::none_of(*popup->items,
+                    [](const Item& item) {
+                        return item.textInput && item.enabled;
+                    }))
+            {
+                ActivateItem(*popup, CurrentItem(*popup), true);
+            }
             break;
         case VK_ESCAPE:
             if (popup->depth > 0)
@@ -1153,6 +1302,491 @@ private:
         }
     }
 
+    bool IsTextInputFocused(const Popup& popup, const Item& item) const
+    {
+        return item.textInput && item.enabled &&
+            item.command == textInputCommand_ &&
+            popup.depth == ActiveDepth();
+    }
+
+    Item* FindFocusedTextInput(Popup& popup, int* index = nullptr)
+    {
+        if (!popup.items || textInputCommand_ == 0)
+            return nullptr;
+        for (size_t i = 0; i < popup.items->size(); ++i)
+        {
+            Item& item = (*popup.items)[i];
+            if (item.textInput && item.enabled &&
+                item.command == textInputCommand_)
+            {
+                if (index) *index = static_cast<int>(i);
+                return &item;
+            }
+        }
+        return nullptr;
+    }
+
+    void FocusTextInput(Popup& popup, int index, size_t cursor,
+        bool render)
+    {
+        if (index < 0 || static_cast<size_t>(index) >= popup.items->size())
+            return;
+        Item& item = (*popup.items)[index];
+        if (!item.textInput || !item.enabled)
+            return;
+        activeDepth_ = popup.depth;
+        textInputCommand_ = item.command;
+        textInputCursor_ = std::min(cursor, item.inputText.size());
+        textInputSelectionAnchor_ = textInputCursor_;
+        textInputComposition_.clear();
+        textInputCompositionCursor_ = 0;
+        ResetTextCaret(popup);
+        if (render)
+            Render(popup);
+        if (!popups_.empty())
+            UpdateTextInputImePosition(popups_.front()->hwnd);
+    }
+
+    int TextInputHorizontalOffset(
+        HDC dc, const std::wstring& text, size_t cursor,
+        int availableWidth) const
+    {
+        SIZE prefix{};
+        const size_t safeCursor = std::min(cursor, text.size());
+        if (safeCursor > 0)
+        {
+            GetTextExtentPoint32W(dc, text.data(),
+                static_cast<int>(safeCursor), &prefix);
+        }
+        return std::max(0, static_cast<int>(prefix.cx) -
+            availableWidth + metrics_.outerInset * 2);
+    }
+
+    void FocusTextInputFromPoint(
+        Popup& popup, int index, POINT point)
+    {
+        Item& item = (*popup.items)[index];
+        RECT row = popup.itemRects[index];
+        OffsetRect(&row, 0, -popup.scrollOffset);
+        RECT field = row;
+        field.left += metrics_.outerInset;
+        field.right -= metrics_.outerInset;
+        RECT glyphBounds = field;
+        glyphBounds.left += metrics_.leftPadding / 2;
+        glyphBounds.right = glyphBounds.left + metrics_.iconColumnWidth;
+        const int textLeft = glyphBounds.right + metrics_.textGap;
+        const int textRight = field.right - metrics_.rightPadding;
+
+        HDC dc = GetDC(nullptr);
+        size_t position = item.inputText.size();
+        if (dc)
+        {
+            HGDIOBJ oldFont = SelectObject(dc, textFont_);
+            const int offset = TextInputHorizontalOffset(dc,
+                item.inputText, textInputCursor_,
+                std::max(1, textRight - textLeft));
+            const int target = std::max(0,
+                static_cast<int>(point.x) - textLeft + offset);
+            for (size_t i = 0; i <= item.inputText.size(); ++i)
+            {
+                SIZE prefix{};
+                if (i > 0)
+                {
+                    GetTextExtentPoint32W(dc, item.inputText.data(),
+                        static_cast<int>(i), &prefix);
+                }
+                if (static_cast<int>(prefix.cx) >= target)
+                {
+                    position = i;
+                    break;
+                }
+            }
+            if (oldFont) SelectObject(dc, oldFont);
+            ReleaseDC(nullptr, dc);
+        }
+        FocusTextInput(popup, index, position, true);
+    }
+
+    void ResetTextCaret(Popup& popup)
+    {
+        textCaretVisible_ = true;
+        if (popup.hwnd && IsWindow(popup.hwnd))
+        {
+            KillTimer(popup.hwnd, kTextCaretTimer);
+            SetTimer(popup.hwnd, kTextCaretTimer,
+                kTextCaretBlinkMs, nullptr);
+        }
+    }
+
+    size_t TextSelectionStart(const Item& item) const
+    {
+        return std::min(
+            std::min(textInputCursor_, item.inputText.size()),
+            std::min(textInputSelectionAnchor_, item.inputText.size()));
+    }
+
+    size_t TextSelectionEnd(const Item& item) const
+    {
+        return std::max(
+            std::min(textInputCursor_, item.inputText.size()),
+            std::min(textInputSelectionAnchor_, item.inputText.size()));
+    }
+
+    bool ReplaceTextSelection(Item& item, std::wstring text)
+    {
+        constexpr size_t kMaximumInputLength = 96;
+        const size_t start = TextSelectionStart(item);
+        const size_t end = TextSelectionEnd(item);
+        const size_t retainedLength =
+            item.inputText.size() - (end - start);
+        const size_t available = retainedLength < kMaximumInputLength
+            ? kMaximumInputLength - retainedLength : 0;
+        if (text.size() > available)
+            text.resize(available);
+        if (start == end && text.empty())
+            return false;
+        item.inputText.replace(start, end - start, text);
+        textInputCursor_ = start + text.size();
+        textInputSelectionAnchor_ = textInputCursor_;
+        textInputComposition_.clear();
+        textInputCompositionCursor_ = 0;
+        return true;
+    }
+
+    void NotifyTextInputChanged(Popup& popup, Item& item)
+    {
+        const UINT command = item.command;
+        const std::wstring text = item.inputText;
+        if (options_.onTextChanged)
+            options_.onTextChanged(command, text, rootItems_);
+        RefreshPopup(popup);
+        ResetTextCaret(popup);
+        if (!popups_.empty())
+            UpdateTextInputImePosition(popups_.front()->hwnd);
+    }
+
+    bool HandleTextInputCharacter(wchar_t character)
+    {
+        Popup* popup = ActivePopup();
+        if (!popup || !popup->items)
+            return false;
+        Item* input = FindFocusedTextInput(*popup);
+        if (!input)
+            return false;
+        if (character == L'\b' || character < L' ' || character == 0x7F ||
+            (GetKeyState(VK_CONTROL) & 0x8000) != 0)
+            return true;
+        if (ReplaceTextSelection(*input, std::wstring(1, character)))
+            NotifyTextInputChanged(*popup, *input);
+        return true;
+    }
+
+    bool CopyTextSelection(const Item& item, bool cut, Popup& popup)
+    {
+        const size_t start = TextSelectionStart(item);
+        const size_t end = TextSelectionEnd(item);
+        if (start == end || !OpenClipboard(popup.hwnd))
+            return false;
+        EmptyClipboard();
+        const std::wstring selected = item.inputText.substr(start, end - start);
+        const SIZE_T bytes = (selected.size() + 1) * sizeof(wchar_t);
+        HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        bool copied = false;
+        if (memory)
+        {
+            if (void* destination = GlobalLock(memory))
+            {
+                memcpy(destination, selected.c_str(), bytes);
+                GlobalUnlock(memory);
+                if (SetClipboardData(CF_UNICODETEXT, memory))
+                    copied = true;
+                else
+                    GlobalFree(memory);
+            }
+            else
+                GlobalFree(memory);
+        }
+        CloseClipboard();
+        return copied && cut;
+    }
+
+    std::wstring ReadClipboardText(HWND owner) const
+    {
+        std::wstring result;
+        if (!OpenClipboard(owner))
+            return result;
+        HANDLE data = GetClipboardData(CF_UNICODETEXT);
+        if (data)
+        {
+            if (const auto* text = static_cast<const wchar_t*>(
+                    GlobalLock(data)))
+            {
+                result = text;
+                GlobalUnlock(data);
+            }
+        }
+        CloseClipboard();
+        return result;
+    }
+
+    bool HandleTextInputKey(WPARAM key)
+    {
+        Popup* popup = ActivePopup();
+        if (!popup)
+            return false;
+        Item* input = FindFocusedTextInput(*popup);
+        if (!input)
+            return false;
+        if (!textInputComposition_.empty())
+            return true;
+
+        const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        textInputCursor_ = std::min(textInputCursor_, input->inputText.size());
+        textInputSelectionAnchor_ = std::min(
+            textInputSelectionAnchor_, input->inputText.size());
+        bool changed = false;
+
+        if (control && key == 'A')
+        {
+            textInputSelectionAnchor_ = 0;
+            textInputCursor_ = input->inputText.size();
+        }
+        else if (control && (key == 'C' || key == 'X'))
+        {
+            if (CopyTextSelection(*input, key == 'X', *popup))
+                changed = ReplaceTextSelection(*input, L"");
+        }
+        else if (control && key == 'V')
+        {
+            changed = ReplaceTextSelection(
+                *input, ReadClipboardText(popup->hwnd));
+        }
+        else if (key == VK_BACK)
+        {
+            if (TextSelectionStart(*input) != TextSelectionEnd(*input))
+                changed = ReplaceTextSelection(*input, L"");
+            else if (textInputCursor_ > 0)
+            {
+                textInputSelectionAnchor_ = textInputCursor_ - 1;
+                changed = ReplaceTextSelection(*input, L"");
+            }
+        }
+        else if (key == VK_DELETE)
+        {
+            if (TextSelectionStart(*input) != TextSelectionEnd(*input))
+                changed = ReplaceTextSelection(*input, L"");
+            else if (textInputCursor_ < input->inputText.size())
+            {
+                textInputSelectionAnchor_ = textInputCursor_ + 1;
+                changed = ReplaceTextSelection(*input, L"");
+            }
+        }
+        else if (key == VK_LEFT || key == VK_RIGHT ||
+            key == VK_HOME || key == VK_END)
+        {
+            if (key == VK_HOME)
+                textInputCursor_ = 0;
+            else if (key == VK_END)
+                textInputCursor_ = input->inputText.size();
+            else if (!shift &&
+                TextSelectionStart(*input) != TextSelectionEnd(*input))
+            {
+                textInputCursor_ = key == VK_LEFT
+                    ? TextSelectionStart(*input)
+                    : TextSelectionEnd(*input);
+            }
+            else if (key == VK_LEFT && textInputCursor_ > 0)
+                --textInputCursor_;
+            else if (key == VK_RIGHT &&
+                textInputCursor_ < input->inputText.size())
+                ++textInputCursor_;
+            if (!shift)
+                textInputSelectionAnchor_ = textInputCursor_;
+        }
+        else if (key == VK_ESCAPE && !input->inputText.empty())
+        {
+            textInputCursor_ = input->inputText.size();
+            textInputSelectionAnchor_ = 0;
+            changed = ReplaceTextSelection(*input, L"");
+        }
+        else if (key == VK_SPACE)
+        {
+            return false;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (changed)
+            NotifyTextInputChanged(*popup, *input);
+        else
+        {
+            ResetTextCaret(*popup);
+            Render(*popup);
+            if (!popups_.empty())
+                UpdateTextInputImePosition(popups_.front()->hwnd);
+        }
+        return true;
+    }
+
+    std::wstring ReadImeString(HIMC context, DWORD index) const
+    {
+        std::wstring result;
+        const LONG bytes = ImmGetCompositionStringW(
+            context, index, nullptr, 0);
+        if (bytes <= 0)
+            return result;
+        result.resize(static_cast<size_t>(bytes) / sizeof(wchar_t));
+        const LONG copied = ImmGetCompositionStringW(
+            context, index, result.data(), static_cast<DWORD>(bytes));
+        if (copied < 0)
+            result.clear();
+        else
+            result.resize(static_cast<size_t>(copied) / sizeof(wchar_t));
+        return result;
+    }
+
+    void HandleTextInputImeComposition(HWND hwnd, LPARAM flags)
+    {
+        Popup* popup = ActivePopup();
+        if (!popup)
+            return;
+        Item* input = FindFocusedTextInput(*popup);
+        if (!input)
+            return;
+        HIMC context = ImmGetContext(hwnd);
+        if (!context)
+            return;
+        bool changed = false;
+        if ((flags & GCS_RESULTSTR) != 0)
+        {
+            changed = ReplaceTextSelection(
+                *input, ReadImeString(context, GCS_RESULTSTR));
+        }
+        if ((flags & (GCS_COMPSTR | GCS_CURSORPOS)) != 0)
+        {
+            textInputComposition_ = ReadImeString(context, GCS_COMPSTR);
+            const LONG cursor = ImmGetCompositionStringW(
+                context, GCS_CURSORPOS, nullptr, 0);
+            textInputCompositionCursor_ = cursor >= 0
+                ? std::min(static_cast<size_t>(cursor),
+                    textInputComposition_.size())
+                : textInputComposition_.size();
+        }
+        else if (flags == 0)
+        {
+            textInputComposition_.clear();
+            textInputCompositionCursor_ = 0;
+        }
+        ImmReleaseContext(hwnd, context);
+        if (changed)
+            NotifyTextInputChanged(*popup, *input);
+        else
+        {
+            ResetTextCaret(*popup);
+            Render(*popup);
+        }
+        UpdateTextInputImePosition(hwnd);
+    }
+
+    void UpdateTextInputImePosition(HWND focusWindow)
+    {
+        Popup* popup = ActivePopup();
+        if (!popup || !focusWindow || !IsWindow(focusWindow))
+            return;
+        int index = -1;
+        Item* input = FindFocusedTextInput(*popup, &index);
+        if (!input || index < 0)
+            return;
+
+        const size_t cursor = std::min(
+            textInputCursor_, input->inputText.size());
+        const size_t anchor = std::min(
+            textInputSelectionAnchor_, input->inputText.size());
+        const size_t start = std::min(cursor, anchor);
+        const size_t end = std::max(cursor, anchor);
+        std::wstring display = input->inputText;
+        size_t displayCursor = cursor;
+        if (!textInputComposition_.empty())
+        {
+            display = input->inputText.substr(0, start);
+            display += textInputComposition_;
+            display += input->inputText.substr(end);
+            displayCursor = start + std::min(
+                textInputCompositionCursor_, textInputComposition_.size());
+        }
+
+        RECT row = popup->itemRects[index];
+        OffsetRect(&row, 0, -popup->scrollOffset);
+        RECT field = row;
+        field.left += metrics_.outerInset;
+        field.right -= metrics_.outerInset;
+        const int textLeft = field.left + metrics_.leftPadding / 2 +
+            metrics_.iconColumnWidth + metrics_.textGap;
+        const int textRight = field.right - metrics_.rightPadding;
+        HDC dc = GetDC(nullptr);
+        int advance = 0;
+        int horizontalOffset = 0;
+        if (dc)
+        {
+            HGDIOBJ oldFont = SelectObject(dc, textFont_);
+            SIZE prefix{};
+            if (displayCursor > 0)
+            {
+                GetTextExtentPoint32W(dc, display.data(),
+                    static_cast<int>(displayCursor), &prefix);
+            }
+            advance = static_cast<int>(prefix.cx);
+            horizontalOffset = TextInputHorizontalOffset(dc,
+                display, displayCursor,
+                std::max(1, textRight - textLeft));
+            if (oldFont) SelectObject(dc, oldFont);
+            ReleaseDC(nullptr, dc);
+        }
+        POINT caret{
+            popup->panelScreenOrigin.x - shadowSize_ +
+                std::clamp(textLeft + advance - horizontalOffset,
+                    textLeft, std::max(textLeft, textRight - 1)),
+            popup->panelScreenOrigin.y - shadowSize_ + field.bottom,
+        };
+        ScreenToClient(focusWindow, &caret);
+        HIMC context = ImmGetContext(focusWindow);
+        if (!context)
+            return;
+        COMPOSITIONFORM composition{};
+        composition.dwStyle = CFS_POINT;
+        composition.ptCurrentPos = caret;
+        ImmSetCompositionWindow(context, &composition);
+        CANDIDATEFORM candidate{};
+        candidate.dwIndex = 0;
+        candidate.dwStyle = CFS_CANDIDATEPOS;
+        candidate.ptCurrentPos = caret;
+        candidate.ptCurrentPos.y += metrics_.rowHeight;
+        ImmSetCandidateWindow(context, &candidate);
+        ImmReleaseContext(focusWindow, context);
+    }
+
+    void RefreshPopup(Popup& popup)
+    {
+        CloseFromDepth(popup.depth + 1);
+        popup.hoveredItem = -1;
+        popup.keyboardItem = -1;
+        popup.scrollOffset = 0;
+        CalculateLayout(popup);
+        if (popup.hwnd && IsWindow(popup.hwnd))
+        {
+            SetWindowPos(popup.hwnd, nullptr,
+                popup.panelScreenOrigin.x - shadowSize_,
+                popup.panelScreenOrigin.y - shadowSize_,
+                popup.windowWidth, popup.windowHeight,
+                SWP_NOACTIVATE | SWP_NOZORDER);
+            ApplyBlurClipRegion(popup);
+            Render(popup);
+        }
+    }
+
     void EnsureVisible(Popup& popup, int index)
     {
         const RECT row = popup.itemRects[index];
@@ -1164,6 +1798,18 @@ private:
             popup.scrollOffset = row.bottom - viewportBottom;
         popup.scrollOffset = std::clamp(
             popup.scrollOffset, 0, MaxScroll(popup));
+        if ((*popup.items)[index].horizontalScrollAction)
+        {
+            const int viewportLeft = shadowSize_;
+            const int viewportRight = shadowSize_ + popup.panelWidth;
+            if (row.left - popup.horizontalScrollOffset < viewportLeft)
+                popup.horizontalScrollOffset = row.left - viewportLeft;
+            else if (row.right - popup.horizontalScrollOffset > viewportRight)
+                popup.horizontalScrollOffset = row.right - viewportRight;
+            popup.horizontalScrollOffset = std::clamp(
+                popup.horizontalScrollOffset, 0,
+                MaxHorizontalScroll(popup));
+        }
     }
 
     void Scroll(Popup& popup, int direction)
@@ -1182,6 +1828,28 @@ private:
     int MaxScroll(const Popup& popup) const
     {
         return std::max(0, popup.contentHeight - popup.viewportHeight);
+    }
+
+    void ScrollHorizontal(Popup& popup, int direction)
+    {
+        const int oldOffset = popup.horizontalScrollOffset;
+        popup.horizontalScrollOffset = std::clamp(
+            popup.horizontalScrollOffset +
+                direction * metrics_.rowHeight * 2,
+            0, MaxHorizontalScroll(popup));
+        if (popup.horizontalScrollOffset != oldOffset)
+        {
+            CloseFromDepth(popup.depth + 1);
+            popup.hoveredItem = -1;
+            popup.keyboardItem = -1;
+            Render(popup);
+        }
+    }
+
+    int MaxHorizontalScroll(const Popup& popup) const
+    {
+        return std::max(0,
+            popup.horizontalScrollContentWidth - popup.panelWidth);
     }
 
     int ActiveDepth() const
@@ -1209,6 +1877,15 @@ private:
         }
         activeDepth_ = std::min(activeDepth_,
             std::max(0, static_cast<int>(popups_.size()) - 1));
+        Popup* active = ActivePopup();
+        if (!active || !FindFocusedTextInput(*active))
+        {
+            textInputCommand_ = 0;
+            textInputCursor_ = 0;
+            textInputSelectionAnchor_ = 0;
+            textInputComposition_.clear();
+            textInputCompositionCursor_ = 0;
+        }
         closing_ = false;
     }
 
@@ -1234,6 +1911,41 @@ private:
             centerY + (top ? -half / 2 : half / 2));
         LineTo(dc, centerX + half,
             centerY + (top ? half / 2 : -half / 2));
+        SelectObject(dc, oldPen);
+        DeleteObject(pen);
+    }
+
+    void DrawHorizontalScrollIndicator(
+        HDC dc, const Popup& popup, bool left)
+    {
+        RECT track = popup.horizontalScrollRect;
+        OffsetRect(&track, 0, -popup.scrollOffset);
+        const int indicatorWidth = Scale(14, options_.dpi);
+        RECT background = track;
+        if (left)
+            background.right = background.left + indicatorWidth;
+        else
+            background.left = background.right - indicatorWidth;
+        HBRUSH brush = CreateSolidBrush(palette_.background);
+        if (brush)
+        {
+            FillRect(dc, &background, brush);
+            DeleteObject(brush);
+        }
+
+        const int centerX = (background.left + background.right) / 2;
+        const int centerY = (background.top + background.bottom) / 2;
+        const int half = Scale(3, options_.dpi);
+        HPEN pen = CreatePen(PS_SOLID, 1,
+            lightTheme_ ? RGB(95, 95, 95) : RGB(190, 190, 190));
+        if (!pen)
+            return;
+        HGDIOBJ oldPen = SelectObject(dc, pen);
+        MoveToEx(dc, centerX + (left ? half / 2 : -half / 2),
+            centerY - half, nullptr);
+        LineTo(dc, centerX + (left ? -half / 2 : half / 2), centerY);
+        LineTo(dc, centerX + (left ? half / 2 : -half / 2),
+            centerY + half);
         SelectObject(dc, oldPen);
         DeleteObject(pen);
     }
@@ -1441,6 +2153,12 @@ private:
     HFONT quickFontAwesomeIconFont_ = nullptr;
     std::vector<std::unique_ptr<Popup>> popups_;
     int activeDepth_ = 0;
+    UINT textInputCommand_ = 0;
+    size_t textInputCursor_ = 0;
+    size_t textInputSelectionAnchor_ = 0;
+    std::wstring textInputComposition_;
+    size_t textInputCompositionCursor_ = 0;
+    bool textCaretVisible_ = true;
     bool done_ = false;
     bool closing_ = false;
     bool superseded_ = false;

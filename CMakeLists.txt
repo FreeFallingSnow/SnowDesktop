@@ -718,7 +718,7 @@ if (BUILD_TESTING)
             src/menu_icon_render.cpp
             src/modern_menu.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES gdi32 user32
+        LINK_LIBRARIES gdi32 imm32 user32
         LABELS integration ui)
 
     snowdesktop_add_test(

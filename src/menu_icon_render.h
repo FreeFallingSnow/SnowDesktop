@@ -49,6 +49,17 @@ struct ItemView
     MenuQuickIcon semanticIcon = MenuQuickIcon::FontGlyph;
 };
 
+struct TextInputView
+{
+    const wchar_t* text = L"";
+    size_t cursor = 0;
+    size_t selectionAnchor = 0;
+    const wchar_t* compositionText = L"";
+    size_t compositionCursor = 0;
+    bool focused = false;
+    bool caretVisible = false;
+};
+
 /** @brief 返回接近 Windows 11 原生上下文菜单的明暗配色。 */
 Palette ResolvePalette(bool lightTheme);
 
@@ -73,5 +84,10 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
 bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
     const Palette& palette, const Metrics& metrics);
+
+/** @brief 绘制菜单内的单行文本搜索框。 */
+bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
+    const ItemView& item, const TextInputView& input,
+    const RECT& bounds, const Palette& palette, const Metrics& metrics);
 
 } // namespace snowdesktop::menu_icon

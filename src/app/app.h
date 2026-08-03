@@ -1213,7 +1213,11 @@ private:
     void SetMenuItemQuickAction(HMENU menu, UINT_PTR command);
     /** @brief 将连续菜单项标记为同一行的紧凑操作。 */
     void SetMenuItemInlineAction(HMENU menu, UINT_PTR command,
-        UINT group = 0, bool compact = false);
+        UINT group = 0, bool compact = false,
+        bool horizontalScroll = false);
+    /** @brief 将菜单项标记为可输入的搜索框。 */
+    void SetMenuItemTextInput(HMENU menu, UINT_PTR command,
+        const std::wstring& text = {});
     /** @brief 将 HMENU 数据模型显示为完全自绘的现代弹窗，并返回命令 ID。 */
     UINT ShowModernMenu(HMENU menu, POINT screenPoint, HWND owner,
         bool placeOutsideDock = false,
@@ -1222,7 +1226,10 @@ private:
         std::function<bool(UINT,
             std::vector<snowdesktop::modern_menu::Item>&)> onCommand = {},
         std::function<void(const snowdesktop::modern_menu::HoverInfo&)>
-            onHover = {});
+            onHover = {},
+        std::function<void(UINT, const std::wstring&,
+            std::vector<snowdesktop::modern_menu::Item>&)>
+            onTextChanged = {});
     /** @brief 清除当前菜单使用的图标映射。 */
     void ClearMenuIcons();
     /** @brief 恢复桌面窗口层叠顺序。 */
@@ -2103,6 +2110,9 @@ private:
         bool inlineAction = false;
         UINT inlineGroup = 0;
         bool compactInlineAction = false;
+        bool horizontalScrollAction = false;
+        bool textInput = false;
+        std::wstring inputText;
         snowdesktop::MenuQuickIcon quickIcon =
             snowdesktop::MenuQuickIcon::FontGlyph;
     };

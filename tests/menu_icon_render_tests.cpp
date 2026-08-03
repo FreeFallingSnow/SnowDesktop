@@ -314,6 +314,47 @@ int wmain(int argc, wchar_t** argv)
         inlineStatusBounds, light.disabledText) > 0,
         "inline page status uses disabled menu text");
 
+    const snowdesktop::menu_icon::ItemView checkedFilter{
+        L"Installed 3", L"", false, false, true,
+    };
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawInlineAction(
+        dc, font, fluentFont, checkedFilter, inlineStatusBounds,
+        0, light, metrics96),
+        "checked source filter renders");
+    Expect(CountColorInRect(pixels, kWidth, kHeight,
+        inlineStatusBounds, light.hoverBackground) > 0 &&
+        CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
+            inlineStatusBounds) > 0,
+        "checked source filter keeps a persistent accented tag state");
+
+    const snowdesktop::menu_icon::ItemView searchInput{
+        L"Search components", L"\uF68F", false, false, false,
+    };
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    const snowdesktop::menu_icon::TextInputView activeSearch{
+        L"clock", 3, 3, L"shi", 2, true, true,
+    };
+    Expect(snowdesktop::menu_icon::DrawTextInput(
+        dc, font, fluentFont, searchInput, activeSearch,
+        normalBounds, light, metrics96),
+        "active component search input renders");
+    Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
+        normalBounds) > 0,
+        "active component search input uses an accent border and caret");
+
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    const snowdesktop::menu_icon::TextInputView emptySearch{
+        L"", 0, 0, L"", 0, true, true,
+    };
+    Expect(snowdesktop::menu_icon::DrawTextInput(
+        dc, font, fluentFont, searchInput, emptySearch,
+        normalBounds, light, metrics96),
+        "focused empty component search input renders");
+    Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
+        normalBounds) > 0,
+        "focused empty search input keeps a visible caret");
+
     const std::array accentedQuickIcons{
         snowdesktop::MenuQuickIcon::NewItem,
         snowdesktop::MenuQuickIcon::Cut,

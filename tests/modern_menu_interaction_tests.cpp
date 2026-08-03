@@ -19,6 +19,7 @@ enum class DriveMode
     Simple,
     Persistent,
     PersistentSubmenu,
+    TextInput,
     Nested,
 };
 DriveMode gDriveMode = DriveMode::Cascade;
@@ -28,6 +29,7 @@ bool gCaptureRootRect = false;
 RECT gObservedRootRect{};
 bool gCaptureTopmost = false;
 bool gObservedTopmost = false;
+bool gSelectEnd = false;
 bool gNestedMenuCompleted = false;
 UINT gNestedMenuCommand = 0;
 bool gWatchdogFired = false;
@@ -117,7 +119,8 @@ LRESULT CALLBACK OwnerWindowProc(
             // Dispatch synchronously: CI runners can briefly transfer the
             // foreground window after popup creation, so queued keystrokes
             // may otherwise arrive only after the menu has deactivated.
-            SendMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.root, WM_KEYDOWN,
+                gSelectEnd ? VK_END : VK_HOME, 0);
             SendMessageW(menus.root, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
             KillTimer(hwnd, kDriveTimer);
@@ -160,6 +163,29 @@ LRESULT CALLBACK OwnerWindowProc(
                 menus.child == gPersistentSubmenuWindow;
             SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
             SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
+            gInputPosted = true;
+            KillTimer(hwnd, kDriveTimer);
+        }
+        else if (gDriveMode == DriveMode::TextInput && menus.root &&
+            gDrivePhase == 0)
+        {
+            SendMessageW(menus.root, WM_CHAR, L'x', 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_BACK, 0);
+            SendMessageW(menus.root, WM_CHAR, L's', 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.root, WM_CHAR, L'a', 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_DELETE, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_END, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_SPACE, 0);
+            SendMessageW(menus.root, WM_CHAR, L' ', 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_BACK, 0);
+            gDrivePhase = 1;
+        }
+        else if (gDriveMode == DriveMode::TextInput && menus.root &&
+            gDrivePhase == 1)
+        {
+            SendMessageW(menus.root, WM_KEYDOWN, VK_DOWN, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
             KillTimer(hwnd, kDriveTimer);
         }
@@ -397,6 +423,40 @@ int wmain()
             32,
         "paging arrow uses a compact square cell");
 
+    std::vector<Item> horizontalTagItems(4);
+    for (size_t i = 0; i < horizontalTagItems.size(); ++i)
+    {
+        horizontalTagItems[i].command = 64 + static_cast<UINT>(i);
+        horizontalTagItems[i].label =
+            L"Intentionally wide source label " + std::to_wstring(i + 1);
+        horizontalTagItems[i].inlineAction = true;
+        horizontalTagItems[i].inlineGroup = 1;
+        horizontalTagItems[i].horizontalScrollAction = true;
+    }
+    gDriveMode = DriveMode::Simple;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gCaptureRootRect = true;
+    gObservedRootRect = {};
+    gSelectEnd = true;
+    gWatchdogFired = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto horizontalTagResult =
+        snowdesktop::modern_menu::Show(horizontalTagItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    gSelectEnd = false;
+    Expect(!gWatchdogFired, "horizontal tag popup did not time out");
+    Expect(horizontalTagResult.command == 67,
+        "keyboard navigation reaches the final horizontally scrolled tag");
+    const int horizontalTagMenuWidth =
+        gObservedRootRect.right - gObservedRootRect.left;
+    Expect(horizontalTagMenuWidth <= 280,
+        "wide source tags do not expand the menu panel");
+    Expect(horizontalTagResult.itemScreenRect.left >= gObservedRootRect.left &&
+            horizontalTagResult.itemScreenRect.right <= gObservedRootRect.right,
+        "the selected tag is scrolled fully into the visible tag bar");
+
     std::vector<Item> previewRows(4);
     previewRows[0].command = 71;
     previewRows[0].label = L"Collection";
@@ -507,6 +567,39 @@ int wmain()
     Expect(persistentSubmenuResult.command == 53,
         "updated submenu remains interactive after changing page");
 
+    std::vector<Item> textInputItems(2);
+    textInputItems[0].command = 81;
+    textInputItems[0].label = L"Search components";
+    textInputItems[0].glyph = L"S";
+    textInputItems[0].textInput = true;
+    textInputItems[1].command = 82;
+    textInputItems[1].label = L"Initial result";
+    std::wstring observedSearch;
+    int textChangeCount = 0;
+    options.onCommand = {};
+    options.onTextChanged = [&](UINT command, const std::wstring& text,
+                                auto& currentItems) {
+        Expect(command == 81,
+            "text callback receives the search row command");
+        observedSearch = text;
+        ++textChangeCount;
+        currentItems[1].label = L"Filtered result";
+    };
+    gDriveMode = DriveMode::TextInput;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gWatchdogFired = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto textInputResult =
+        snowdesktop::modern_menu::Show(textInputItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired, "text-input popup did not time out");
+    Expect(textChangeCount == 7 && observedSearch == L"a",
+        "caret insertion, delete, spaces, and backspace update search in place");
+    Expect(textInputResult.command == 82,
+        "search input stays outside keyboard result navigation");
+
     gCaptureRootRect = false;
     gDriveMode = DriveMode::Nested;
     gDrivePhase = 0;
@@ -516,6 +609,7 @@ int wmain()
     gWatchdogFired = false;
     options.rootPlacement = snowdesktop::modern_menu::RootPlacement::Default;
     options.onCommand = {};
+    options.onTextChanged = {};
     SetTimer(owner, kDriveTimer, 10, nullptr);
     SetTimer(owner, kWatchdogTimer, 3000, nullptr);
     const auto replacedResult =

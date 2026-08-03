@@ -427,7 +427,8 @@ void DesktopApp::SetMenuItemQuickAction(
 }
 
 void DesktopApp::SetMenuItemInlineAction(
-    HMENU menu, UINT_PTR command, UINT group, bool compact)
+    HMENU menu, UINT_PTR command, UINT group, bool compact,
+    bool horizontalScroll)
 {
     if (!menu)
         return;
@@ -449,6 +450,7 @@ void DesktopApp::SetMenuItemInlineAction(
                 entry->inlineAction = true;
                 entry->inlineGroup = group;
                 entry->compactInlineAction = compact;
+                entry->horizontalScrollAction = horizontalScroll;
                 return;
             }
         }
@@ -458,6 +460,42 @@ void DesktopApp::SetMenuItemInlineAction(
         entry->inlineAction = true;
         entry->inlineGroup = group;
         entry->compactInlineAction = compact;
+        entry->horizontalScrollAction = horizontalScroll;
+        menuIconPool_.push_back(std::move(entry));
+        return;
+    }
+}
+
+void DesktopApp::SetMenuItemTextInput(
+    HMENU menu, UINT_PTR command, const std::wstring& text)
+{
+    if (!menu)
+        return;
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+        for (auto& entry : menuIconPool_)
+        {
+            if (entry->menu == menu &&
+                entry->position == static_cast<UINT>(i))
+            {
+                entry->textInput = true;
+                entry->inputText = text;
+                return;
+            }
+        }
+        auto entry = std::make_unique<MenuIconEntry>();
+        entry->menu = menu;
+        entry->position = static_cast<UINT>(i);
+        entry->textInput = true;
+        entry->inputText = text;
         menuIconPool_.push_back(std::move(entry));
         return;
     }
@@ -470,7 +508,9 @@ UINT DesktopApp::ShowModernMenu(
     std::function<bool(UINT,
         std::vector<snowdesktop::modern_menu::Item>&)> onCommand,
     std::function<void(const snowdesktop::modern_menu::HoverInfo&)>
-        onHover)
+        onHover,
+    std::function<void(UINT, const std::wstring&,
+        std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged)
 {
     if (!rootMenu)
         return 0;
@@ -525,6 +565,10 @@ UINT DesktopApp::ShowModernMenu(
                     item.inlineGroup = icon->inlineGroup;
                     item.compactInlineAction =
                         icon->compactInlineAction;
+                    item.horizontalScrollAction =
+                        icon->horizontalScrollAction;
+                    item.textInput = icon->textInput;
+                    item.inputText = icon->inputText;
                     item.quickIcon = icon->quickIcon;
                     break;
                 }
@@ -544,6 +588,7 @@ UINT DesktopApp::ShowModernMenu(
     options.appearance = static_cast<
         snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
     options.onCommand = std::move(onCommand);
+    options.onTextChanged = std::move(onTextChanged);
     options.onHover = std::move(onHover);
     if (placeAwayFromTaskbar)
     {
