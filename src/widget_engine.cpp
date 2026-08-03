@@ -7752,6 +7752,26 @@ static int lua_ImGuiSameLine(lua_State* L)
     return 0;
 }
 
+static int lua_ImGuiSettingRow(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    const float requestedWidth = static_cast<float>(
+        luaL_optnumber(L, 2, 300.0));
+    const float rowStart = ImGui::GetCursorPosX();
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const float rowRight = rowStart + availableWidth;
+    const float maximumWidth = std::max(
+        ImGui::GetFrameHeight(), availableWidth * 0.58f);
+    const float controlWidth = std::min(
+        std::max(ImGui::GetFrameHeight(), requestedWidth), maximumWidth);
+    const float controlX = std::max(rowStart, rowRight - controlWidth);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(controlX);
+    ImGui::SetNextItemWidth(controlWidth);
+    return 0;
+}
+
 static int lua_ImGuiSpacing(lua_State* L)
 {
     (void)L;
@@ -8237,6 +8257,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_ImGuiTextWrapped); lua_setfield(L, -2, "textWrapped");
     lua_pushcfunction(L, lua_ImGuiSeparator); lua_setfield(L, -2, "separator");
     lua_pushcfunction(L, lua_ImGuiSameLine);  lua_setfield(L, -2, "sameLine");
+    lua_pushcfunction(L, lua_ImGuiSettingRow); lua_setfield(L, -2, "settingRow");
     lua_pushcfunction(L, lua_ImGuiSpacing);   lua_setfield(L, -2, "spacing");
     lua_pushcfunction(L, lua_ImGuiCollapsingHeader); lua_setfield(L, -2, "collapsingHeader");
     lua_pushcfunction(L, lua_ImGuiTreeNode);  lua_setfield(L, -2, "treeNode");

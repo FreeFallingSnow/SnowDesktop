@@ -615,6 +615,7 @@ imgui.text(text)
 imgui.textWrapped(text)
 imgui.separator()
 imgui.sameLine(offset?, spacing?)
+imgui.settingRow(label, width?) -- right-aligns the next control
 imgui.spacing()
 
 local open = imgui.collapsingHeader(label)
