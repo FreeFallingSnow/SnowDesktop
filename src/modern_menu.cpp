@@ -1109,7 +1109,7 @@ private:
         if (options_.onCommand &&
             options_.onCommand(command, rootItems_))
         {
-            RefreshPopup(popup);
+            RefreshAfterCommand(popup);
             return;
         }
 
@@ -1785,6 +1785,46 @@ private:
             ApplyBlurClipRegion(popup);
             Render(popup);
         }
+    }
+
+    int FirstDetachedPopupDepth() const
+    {
+        if (popups_.empty() || !popups_.front() ||
+            popups_.front()->items != &rootItems_)
+            return 0;
+
+        for (size_t i = 1; i < popups_.size(); ++i)
+        {
+            const Popup& parent = *popups_[i - 1];
+            const Popup& child = *popups_[i];
+            if (!parent.items || child.parentItem < 0 ||
+                static_cast<size_t>(child.parentItem) >=
+                    parent.items->size())
+                return static_cast<int>(i);
+
+            const Item& parentItem = (*parent.items)[child.parentItem];
+            if (&parentItem.children != child.items)
+                return static_cast<int>(i);
+        }
+        return -1;
+    }
+
+    void RefreshAfterCommand(Popup& commandPopup)
+    {
+        const int detachedDepth = FirstDetachedPopupDepth();
+        if (detachedDepth > 0)
+        {
+            // A callback may rebuild rootItems_.  Any cascaded popup then
+            // points into the destroyed old tree and must not be rendered.
+            // Keep the root menu open, but rebuild it and discard all stale
+            // child popups.
+            CloseFromDepth(1);
+            if (!popups_.empty())
+                RefreshPopup(*popups_.front());
+            return;
+        }
+
+        RefreshPopup(commandPopup);
     }
 
     void EnsureVisible(Popup& popup, int index)

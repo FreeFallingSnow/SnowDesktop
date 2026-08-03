@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <utility>
 #include <vector>
 
 namespace
@@ -19,6 +20,7 @@ enum class DriveMode
     Simple,
     Persistent,
     PersistentSubmenu,
+    RebuiltRootSubmenu,
     TextInput,
     Nested,
 };
@@ -35,6 +37,7 @@ UINT gNestedMenuCommand = 0;
 bool gWatchdogFired = false;
 HWND gPersistentSubmenuWindow = nullptr;
 bool gPersistentSubmenuStayedOpen = false;
+bool gRebuiltRootSubmenuClosed = false;
 
 struct MenuWindows
 {
@@ -161,6 +164,45 @@ LRESULT CALLBACK OwnerWindowProc(
         {
             gPersistentSubmenuStayedOpen =
                 menus.child == gPersistentSubmenuWindow;
+            SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
+            gInputPosted = true;
+            KillTimer(hwnd, kDriveTimer);
+        }
+        else if (gDriveMode == DriveMode::RebuiltRootSubmenu && menus.root &&
+            gDrivePhase == 0)
+        {
+            SendMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_RIGHT, 0);
+            gDrivePhase = 1;
+        }
+        else if (gDriveMode == DriveMode::RebuiltRootSubmenu && menus.child &&
+            gDrivePhase == 1)
+        {
+            SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
+            gDrivePhase = 2;
+        }
+        else if (gDriveMode == DriveMode::RebuiltRootSubmenu && menus.root &&
+            gDrivePhase == 2)
+        {
+            MenuWindows afterCommand;
+            EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows,
+                reinterpret_cast<LPARAM>(&afterCommand));
+            gRebuiltRootSubmenuClosed = afterCommand.child == nullptr;
+            if (!gRebuiltRootSubmenuClosed)
+            {
+                gInputPosted = true;
+                KillTimer(hwnd, kDriveTimer);
+                return 0;
+            }
+            SendMessageW(menus.root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(menus.root, WM_KEYDOWN, VK_RIGHT, 0);
+            gDrivePhase = 3;
+        }
+        else if (gDriveMode == DriveMode::RebuiltRootSubmenu && menus.child &&
+            gDrivePhase == 3)
+        {
             SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
             SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
@@ -566,6 +608,45 @@ int wmain()
         "submenu page update keeps the existing popup window visible");
     Expect(persistentSubmenuResult.command == 53,
         "updated submenu remains interactive after changing page");
+
+    const std::vector<Item> rebuiltRootSubmenuItems{
+        { 0, L"Widgets", L"W", true, false, false,
+            {
+                { 91, L"Rebuild root", L">", true },
+            } },
+    };
+    int rebuiltRootSubmenuCommandCount = 0;
+    options.onCommand = [&](UINT command, auto& currentItems) {
+        if (command != 91)
+            return false;
+        ++rebuiltRootSubmenuCommandCount;
+        std::vector<Item> replacement{
+            { 0, L"Widgets", L"W", true, false, false,
+                {
+                    { 93, L"Updated widget", L"U", true },
+                } },
+        };
+        currentItems = std::move(replacement);
+        return true;
+    };
+    options.onTextChanged = {};
+    gDriveMode = DriveMode::RebuiltRootSubmenu;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gRebuiltRootSubmenuClosed = false;
+    gWatchdogFired = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto rebuiltRootSubmenuResult =
+        snowdesktop::modern_menu::Show(rebuiltRootSubmenuItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired, "rebuilt-root submenu did not time out");
+    Expect(rebuiltRootSubmenuCommandCount == 1,
+        "root rebuild command runs from a submenu");
+    Expect(gRebuiltRootSubmenuClosed,
+        "root rebuild closes the stale submenu popup");
+    Expect(rebuiltRootSubmenuResult.command == 93,
+        "rebuilt root submenu remains interactive after refresh");
 
     std::vector<Item> textInputItems(2);
     textInputItems[0].command = 81;
