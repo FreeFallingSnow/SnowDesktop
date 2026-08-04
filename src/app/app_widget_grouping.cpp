@@ -550,13 +550,6 @@ bool DesktopApp::ReleaseWidgetFromFileGroup(
 
     DesktopWidget& child = widgets_[childIndex];
     child.selected = false;
-    const GridPage* page =
-        FindGridPage(gridPages_, preferredCell.pageId);
-    if (!page)
-    {
-        preferredCell = group.gridCell;
-        page = FindGridPage(gridPages_, preferredCell.pageId);
-    }
     auto restoreMembership = [&]() {
         group.childWidgetIds.insert(
             group.childWidgetIds.begin() +
@@ -566,11 +559,47 @@ bool DesktopApp::ReleaseWidgetFromFileGroup(
             childId);
         group.activeCategoryId = previousActive;
     };
-    if (!page)
+
+    std::unordered_set<std::wstring> usedSlots;
+    GridSpan span{};
+    const auto landing = FindFileGroupReleaseLanding(
+        childIndex, preferredCell, usedSlots, &span);
+    if (!landing)
     {
         restoreMembership();
         return false;
     }
+
+    child.gridCell = *landing;
+    child.gridSpan = span;
+    EnsureNavTabOrder();
+    LayoutItems();
+    RebuildContainersAndItems();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    return true;
+}
+
+std::optional<GridCell> DesktopApp::FindFileGroupReleaseLanding(
+    size_t childIndex, GridCell preferredCell,
+    std::unordered_set<std::wstring>& usedSlots,
+    GridSpan* outSpan) const
+{
+    if (childIndex >= widgets_.size()) return std::nullopt;
+    const DesktopWidget& child = widgets_[childIndex];
+
+    const GridPage* page =
+        FindGridPage(gridPages_, preferredCell.pageId);
+    if (!page)
+    {
+        const size_t groupIndex =
+            FindFileGroupIndexForChild(child.id);
+        if (groupIndex >= widgets_.size())
+            return std::nullopt;
+        preferredCell = widgets_[groupIndex].gridCell;
+        page = FindGridPage(gridPages_, preferredCell.pageId);
+    }
+    if (!page) return std::nullopt;
 
     GridSpan span = ClampWidgetGridSpan(
         child, child.gridSpan, page->columns, page->rows);
@@ -580,47 +609,31 @@ bool DesktopApp::ReleaseWidgetFromFileGroup(
     preferredCell.row = std::clamp(
         preferredCell.row, 0,
         std::max(0, page->rows - span.rows));
+    if (outSpan) *outSpan = span;
 
-    std::unordered_set<std::wstring> usedSlots;
-    for (size_t i = 0; i < widgets_.size(); ++i)
+    if (usedSlots.empty())
     {
-        if (i == childIndex || IsGroupedWidget(widgets_[i]))
-            continue;
-        MarkGridArea(
-            usedSlots, widgets_[i].gridCell,
-            widgets_[i].gridSpan);
-    }
-    for (const auto& item : items_)
-    {
-        if (item.name.empty() || IsItemInAnyWidget(item)) continue;
-        MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (i == childIndex || IsGroupedWidget(widgets_[i]))
+                continue;
+            MarkGridArea(
+                usedSlots, widgets_[i].gridCell,
+                widgets_[i].gridSpan);
+        }
+        for (const auto& item : items_)
+        {
+            if (item.name.empty() || IsItemInAnyWidget(item)) continue;
+            MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+        }
     }
 
     GridCell landing = preferredCell;
     if (!IsGridAreaValid(landing, span) ||
         AreGridSlotsMarked(usedSlots, landing, span))
-    {
-        const int startSlot =
-            SlotFromCell(gridPages_, preferredCell);
-        if (!TryFindFreeCell(
-                span, usedSlots, landing,
-                preferredCell.pageId, startSlot) &&
-            !TryFindFreeCell(
-                span, usedSlots, landing, L"", 0))
-        {
-            restoreMembership();
-            return false;
-        }
-    }
-
-    child.gridCell = landing;
-    child.gridSpan = span;
-    EnsureNavTabOrder();
-    LayoutItems();
-    RebuildContainersAndItems();
-    SaveLayoutSlots();
-    InvalidateRect(hwnd_, nullptr, TRUE);
-    return true;
+        return std::nullopt;
+    MarkGridArea(usedSlots, landing, span);
+    return landing;
 }
 
 bool DesktopApp::AddCollectionToGroup(

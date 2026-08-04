@@ -1877,6 +1877,17 @@ private:
         size_t groupIndex, size_t insertIndex);
     bool ReleaseWidgetFromFileGroup(const std::wstring& childId,
         GridCell preferredCell);
+    /** @brief 计算从文件组释放子组件到桌面的落点（与 ReleaseWidgetFromFileGroup 完全一致）。
+     *  @param childIndex 子组件索引
+     *  @param preferredCell 首选网格单元格
+     *  @param[in,out] usedSlots 已占用集合；首次为空时自动按当前场景填充
+     *  @param[out] outSpan 子组件实际使用的网格跨度
+     *  @return 落点；首选格被占用或无有效页时返回 nullopt（不做就近搜索，
+     *          与桌面文件组件标签的精确落位一致） */
+    std::optional<GridCell> FindFileGroupReleaseLanding(
+        size_t childIndex, GridCell preferredCell,
+        std::unordered_set<std::wstring>& usedSlots,
+        GridSpan* outSpan) const;
     void ReleaseFileGroupChildren(size_t groupIndex);
     size_t HitTestFileGroupIndex(POINT point,
         size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;

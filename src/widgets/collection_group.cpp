@@ -794,7 +794,7 @@ size_t CollectionGroup::GetDropInsertIndex(
     Slot* targetSlot, HitRegion region) const
 {
     if (!data_) return 0;
-    if (targetSlot == tabDropSlot_.get())
+    if (targetSlot && targetSlot == tabDropSlot_.get())
     {
         size_t index = std::min(
             targetSlot->GetIndex(),

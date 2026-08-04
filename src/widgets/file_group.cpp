@@ -1212,7 +1212,7 @@ size_t FileGroup::GetDropInsertIndex(
     Slot* targetSlot, HitRegion region) const
 {
     if (!data_) return 0;
-    if (targetSlot == sourceTabDropSlot_.get())
+    if (targetSlot && targetSlot == sourceTabDropSlot_.get())
     {
         if (app_ &&
             app_->dragSession_.SourceList().
