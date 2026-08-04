@@ -1,4 +1,5 @@
 #include "core/container.h"
+#include "core/drag_source_rebind.h"
 #include "core/drag_session.h"
 #include "core/drag_target_resolver.h"
 #include "core/item.h"
@@ -584,47 +585,225 @@ void TestDropActionModifiers()
         "reapplying the same action must not invalidate state");
 }
 
-void TestDragTargetPointUsesAdjustedSessionOrigin()
+void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
 {
-    DragSession session;
-    ContractItem item(RECT{50, 40, 130, 120});
-    session.Begin(nullptr, {&item}, {}, POINT{100, 80}, POINT{420, 220});
-    session.SetVisualItemBounds({item.GetBounds()});
+    namespace contract = snowdesktop::slot_contract;
+    struct PageTurnCase
+    {
+        const char* name;
+        POINT nextGroupOrigin;
+        RECT reboundBounds;
+        bool sourcePageHidden;
+    };
+    constexpr POINT pointerDown{100, 80};
+    constexpr POINT pointerCurrent{120, 90};
+    constexpr POINT originalGroupOrigin{40, 30};
+    constexpr RECT originalBounds{50, 40, 130, 120};
+    constexpr std::array pageTurns{
+        PageTurnCase{
+            "same-display page replacement",
+            originalGroupOrigin,
+            RECT{},
+            true,
+        },
+        PageTurnCase{
+            "cross-display migration with page replacement",
+            POINT{1960, 150},
+            RECT{1970, 160, 2060, 250},
+            false,
+        },
+    };
 
-    const POINT groupOrigin{40, 30};
-    const POINT beforeFlip = session.ResolveTargetPoint(
-        groupOrigin, POINT{420, 220});
-    Check(beforeFlip.x == 360 && beforeFlip.y == 170,
-        "drag target coordinates must start from the session mouse-down point");
+    for (const auto& descriptor :
+         contract::kSurfaceDescriptors)
+    {
+        if (!descriptor.buildsSlots) continue;
+        for (const PageTurnCase& pageTurn : pageTurns)
+        {
+            const std::string caseName =
+                std::string(descriptor.name) + " / " +
+                pageTurn.name;
+            auto original =
+                std::make_unique<ContractContainer>(
+                    BarStyle::VBar, descriptor.kind);
+            auto originalItem =
+                std::make_unique<ContractItem>(
+                    originalBounds);
+            DragSourceList originalList;
+            originalList.BindRuntimeOrigin(
+                original.get());
+            for (const auto& widgetDescriptor :
+                 contract::kWidgetContractDescriptors)
+            {
+                if (widgetDescriptor.role !=
+                        contract::WidgetContainerRole::
+                            SlotContainer ||
+                    widgetDescriptor.surface !=
+                        descriptor.kind)
+                {
+                    continue;
+                }
+                originalList.hasOriginWidget = true;
+                originalList.originWidgetId =
+                    L"matrix-source";
+                originalList.originWidgetType =
+                    widgetDescriptor.type;
+                break;
+            }
+            DragSourceEntry originalEntry;
+            originalEntry.item = originalItem.get();
+            originalEntry.memberIndex = 3;
+            originalList.entries.push_back(originalEntry);
 
-    // The first item's rendered bounds can move by a different amount from the
-    // grid-group origin on monitors with different cell metrics. Rebase from
-    // the group origins themselves so that landing hit-testing remains stable.
-    const POINT nextGroupOrigin{1960, 150};
-    session.AdjustForGroupOriginChange(groupOrigin, nextGroupOrigin);
-    item.SetBounds(RECT{1980, 170, 2070, 260});
-    const POINT afterFlip = session.ResolveTargetPoint(
-        nextGroupOrigin, POINT{420, 220});
-    Check(afterFlip.x == beforeFlip.x && afterFlip.y == beforeFlip.y,
-        "cross-screen page migration must keep drag visuals and hit testing on the same adjusted origin");
+            DragSession session;
+            session.Begin(
+                original.get(), {originalItem.get()},
+                std::move(originalList),
+                pointerDown, pointerCurrent);
+            session.SetVisualItemBounds(
+                {originalItem->GetBounds()});
+            const POINT targetBeforeTurn =
+                session.ResolveTargetPoint(
+                    originalGroupOrigin,
+                    pointerCurrent);
+            Check(targetBeforeTurn.x == 60 &&
+                    targetBeforeTurn.y == 40,
+                caseName +
+                    ": the pre-turn landing point must use the drag-start origin");
 
-    const RECT ghost = session.ResolveDraggedBounds(
-        0, item.GetBounds(), POINT{420, 220});
-    Check(ghost.left == 370 && ghost.top == 180 &&
-            ghost.right == 450 && ghost.bottom == 260,
-        "drag ghost must follow its start snapshot instead of migrated cross-screen bounds");
+            ContractContainer staleTarget(
+                BarStyle::VBar,
+                contract::SlotSurfaceKind::Desktop);
+            session.UpdateTarget(
+                &staleTarget,
+                staleTarget.GetSlots().front().get(),
+                HitRegion::Empty);
 
-    session.DeactivateForDrop();
-    Check(!session.IsActive() && session.HasContext(),
-        "drop deactivation must retain the adjusted coordinate context");
-    const POINT duringCommit = session.ResolveTargetPoint(
-        nextGroupOrigin, POINT{420, 220});
-    Check(duringCommit.x == beforeFlip.x &&
-            duringCommit.y == beforeFlip.y,
-        "drop commit must use the same target point as the visible preview");
-    session.End();
-    Check(!session.HasContext(),
-        "ending the drag must release the retained drop context");
+            // ApplyPageMapping + LayoutItems destroys the runtime tree before
+            // a cross-display origin adjustment is known. Mirror that order:
+            // detach, rebuild the source, then compensate the group origin.
+            session.DetachRuntimeBindings();
+            originalItem.reset();
+            original.reset();
+            Check(session.TargetContainer() == nullptr &&
+                    session.TargetSlot() == nullptr &&
+                    session.TargetRegion() == HitRegion::None,
+                caseName +
+                    ": a page rebuild must discard the stale pre-turn hit target");
+
+            ContractContainer rebuilt(
+                BarStyle::VBar, descriptor.kind);
+            ContractItem reboundItem(pageTurn.reboundBounds);
+            const bool needsRecordedMemberRestore =
+                pageTurn.sourcePageHidden &&
+                snowdesktop::drag_source_rebind::
+                    CanRestoreRecordedWidgetMembers(
+                        session.SourceList());
+            std::vector<Item*> runtimeItems;
+            if (!needsRecordedMemberRestore)
+                runtimeItems.push_back(&reboundItem);
+            int resolvedMemberCount = 0;
+            std::vector<Item*> reboundItems =
+                snowdesktop::drag_source_rebind::
+                    ResolveItemsAfterRebuild(
+                        std::move(runtimeItems),
+                        session.SourceList(),
+                        [&](size_t memberIndex) -> Item* {
+                            ++resolvedMemberCount;
+                            return memberIndex == 3
+                                ? &reboundItem
+                                : nullptr;
+                        });
+            Check(reboundItems.size() == 1 &&
+                    reboundItems.front() ==
+                        &reboundItem &&
+                    resolvedMemberCount ==
+                        (needsRecordedMemberRestore
+                            ? 1 : 0),
+                caseName +
+                    ": runtime source recovery must use visible wrappers or the exact recorded member as appropriate");
+
+            DragSourceList reboundList =
+                session.SourceList();
+            reboundList.BindRuntimeOrigin(&rebuilt);
+            reboundList.entries.front().item =
+                &reboundItem;
+            session.RebindSource(
+                &rebuilt, std::move(reboundItems),
+                std::move(reboundList));
+            session.AdjustForGroupOriginChange(
+                originalGroupOrigin,
+                pageTurn.nextGroupOrigin);
+
+            const RECT actualBounds =
+                reboundItem.GetBounds();
+            const RECT expectedBounds =
+                pageTurn.sourcePageHidden
+                    ? originalBounds
+                    : pageTurn.reboundBounds;
+            Check(actualBounds.left == expectedBounds.left &&
+                    actualBounds.top == expectedBounds.top &&
+                    actualBounds.right == expectedBounds.right &&
+                    actualBounds.bottom == expectedBounds.bottom,
+                caseName +
+                    ": source runtime bounds must survive the page replacement policy");
+            Check(session.IsActive() &&
+                    session.Items().size() == 1 &&
+                    session.Items().front() == &reboundItem &&
+                    session.Source() == &rebuilt &&
+                    session.SourceList().SourceSurfaceKind() ==
+                        descriptor.kind,
+                caseName +
+                    ": every registered drag source must rebind without ending the session");
+
+            const POINT targetAfterTurn =
+                session.ResolveTargetPoint(
+                    pageTurn.nextGroupOrigin,
+                    pointerCurrent);
+            Check(targetAfterTurn.x == targetBeforeTurn.x &&
+                    targetAfterTurn.y == targetBeforeTurn.y,
+                caseName +
+                    ": page replacement and monitor migration must preserve the landing coordinate");
+
+            ContractContainer newTarget(
+                BarStyle::VBar,
+                contract::SlotSurfaceKind::Desktop);
+            Slot* targetSlot = nullptr;
+            const HitRegion targetRegion =
+                newTarget.HitTestDrag(
+                    targetAfterTurn, targetSlot);
+            session.UpdateTarget(
+                &newTarget, targetSlot, targetRegion);
+            Check(targetSlot != nullptr &&
+                    targetRegion != HitRegion::None &&
+                    session.TargetSlot() == targetSlot &&
+                    session.TargetRegion() == targetRegion,
+                caseName +
+                    ": the first post-turn hit-test must bind a slot at the preserved coordinate");
+
+            const RECT ghost =
+                session.ResolveDraggedBounds(
+                    0, reboundItem.GetBounds(),
+                    pointerCurrent);
+            Check(ghost.left == 70 && ghost.top == 50 &&
+                    ghost.right == 150 && ghost.bottom == 130,
+                caseName +
+                    ": the drag ghost must remain anchored to the start snapshot");
+
+            session.DeactivateForDrop();
+            const POINT commitPoint =
+                session.ResolveTargetPoint(
+                    pageTurn.nextGroupOrigin,
+                    pointerCurrent);
+            Check(!session.IsActive() &&
+                    session.HasContext() &&
+                    commitPoint.x == targetBeforeTurn.x &&
+                    commitPoint.y == targetBeforeTurn.y,
+                caseName +
+                    ": drop commit must retain the same post-turn hit context");
+            session.End();
+        }
+    }
 }
 
 void TestDragTargetResolutionUsesContractAndZOrder()
@@ -942,7 +1121,7 @@ int main()
     TestEverySurfaceRetainsStableDragMetadata();
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
-    TestDragTargetPointUsesAdjustedSessionOrigin();
+    TestEveryDragSourceSurvivesPageTurnRebindMatrix();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestDragDropControllerOwnsTransportTransitions();
     TestOleAdapterOwnsComBoundary();

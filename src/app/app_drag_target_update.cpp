@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../core/drag_source_rebind.h"
 
 // Drag-target resolution, popup hit testing and page-navigation dwell.
 
@@ -119,6 +120,26 @@ void DesktopApp::RebindDragSourceAfterRebuild()
                 GetHostedSelectedItemsForSource(
                     oldSourceList.originWidgetId)
             : source->GetSelectedItems();
+
+    // When the page turn replaces the page on the same physical monitor,
+    // the source widget is rebuilt after its model bounds become empty.  A
+    // Collection/FolderMapping normally materializes drag items from visible
+    // slots, so there are no selected runtime wrappers to rebind even though
+    // the stable source entries still identify the exact members that began
+    // the drag.  Recreate only those recorded members; do not broaden the drag
+    // to other selected items that happened to be hidden at drag start.
+    auto* widgetSource =
+        dynamic_cast<WidgetContainer*>(source);
+    reboundItems = snowdesktop::drag_source_rebind::
+        ResolveItemsAfterRebuild(
+            std::move(reboundItems),
+            oldSourceList,
+            [&](size_t memberIndex) -> Item* {
+                return widgetSource
+                    ? widgetSource->
+                        GetMemberItem(memberIndex)
+                    : nullptr;
+            });
     if (reboundItems.empty())
     {
         EndDragSession();

@@ -238,6 +238,31 @@ public:
     {
         source_ = source;
         items_ = std::move(items);
+        // A widget on the page being replaced can only recreate its logical
+        // member wrappers after the turn; their new layout bounds are empty
+        // because the source page is no longer visible.  Keep the drag-start
+        // bounds on those transient wrappers so the existing visual snapshot
+        // and hit-coordinate context remain usable until the drop completes.
+        const size_t retainedBounds = std::min(
+            items_.size(), visualItemBounds_.size());
+        for (size_t i = 0; i < retainedBounds; ++i)
+        {
+            if (!items_[i])
+                continue;
+            const RECT currentBounds = items_[i]->GetBounds();
+            const RECT retained = visualItemBounds_[i];
+            const bool currentHasArea =
+                currentBounds.right > currentBounds.left &&
+                currentBounds.bottom > currentBounds.top;
+            const bool retainedHasArea =
+                retained.right > retained.left &&
+                retained.bottom > retained.top;
+            if (currentHasArea || !retainedHasArea)
+            {
+                continue;
+            }
+            items_[i]->SetBounds(retained);
+        }
         sourceList_ = std::move(sourceList);
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
