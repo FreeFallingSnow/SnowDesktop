@@ -11,17 +11,6 @@
 namespace
 {
 
-bool HasPasteableFileClipboardData()
-{
-    ComPtr<IDataObject> clipboard;
-    if (FAILED(OleGetClipboard(&clipboard)) || !clipboard)
-        return false;
-    FORMATETC format{
-        CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL,
-    };
-    return SUCCEEDED(clipboard->QueryGetData(&format));
-}
-
 constexpr size_t kLuaWidgetMenuPageSize = 8;
 
 enum class LuaWidgetMenuSource
@@ -1813,90 +1802,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         break;
     }
     case kContextPasteCommand:
-    {
-        bool fromDesktop = false;
-        std::unordered_set<std::wstring> clipPaths;
-
-        ComPtr<IDataObject> clipObj;
-        if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj)
-        {
-            CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-            FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-            STGMEDIUM medPref{};
-            if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
-            {
-                DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
-                bool isMove = pEffect && (*pEffect & DROPEFFECT_MOVE);
-                if (pEffect) GlobalUnlock(medPref.hGlobal);
-                if (isMove)
-                {
-                    FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-                    STGMEDIUM medDrop{};
-                    if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
-                    {
-                        HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
-                        UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
-                        for (UINT i = 0; i < count; ++i)
-                        {
-                            wchar_t path[MAX_PATH]{};
-                            if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
-                                clipPaths.insert(path);
-                        }
-                        ReleaseStgMedium(&medDrop);
-                    }
-                }
-                ReleaseStgMedium(&medPref);
-            }
-        }
-
-        if (!clipPaths.empty())
-        {
-            for (const auto& item : items_)
-            {
-                wchar_t path[MAX_PATH]{};
-                if (SHGetPathFromIDListW(item.absolutePidl.get(), path) && clipPaths.contains(path))
-                {
-                    fromDesktop = true;
-                    break;
-                }
-            }
-        }
-
-        if (fromDesktop)
-        {
-            cutPaths_.clear();
-            if (OpenClipboard(hwnd_))
-            {
-                EmptyClipboard();
-                CloseClipboard();
-            }
-            UpdateCutState();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        else
-        {
-            wchar_t desktopPath[MAX_PATH]{};
-            if (SHGetSpecialFolderPathW(
-                    nullptr, desktopPath,
-                    CSIDL_DESKTOPDIRECTORY, FALSE) &&
-                PasteClipboardToFolderPath(desktopPath))
-                break;
-
-            ComPtr<IContextMenu> bgMenu;
-            if (SUCCEEDED(desktopFolder_->CreateViewObject(hwnd_, IID_IContextMenu,
-                reinterpret_cast<void**>(bgMenu.GetAddressOf()))) && bgMenu)
-            {
-                CMINVOKECOMMANDINFO info{};
-                info.cbSize = sizeof(info);
-                info.hwnd = ShellDialogOwnerHwnd();
-                info.lpVerb = "paste";
-                info.nShow = SW_SHOWNORMAL;
-                SafeInvokeCommand(bgMenu.Get(), &info);
-                ReloadItems();
-            }
-        }
+        PasteClipboardToDesktop();
         break;
-    }
     case kContextMoreCommand:
         ShowDesktopBackgroundContextMenu(screenPoint);
         break;

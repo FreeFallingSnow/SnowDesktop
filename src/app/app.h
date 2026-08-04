@@ -1062,6 +1062,10 @@ private:
     bool PasteClipboardToFolderMapping(size_t widgetIndex);
     bool PasteClipboardToFolderPath(
         const std::wstring& targetFolderPath);
+    /** @brief 将剪贴板文件粘贴到桌面目录。 */
+    bool PasteClipboardToDesktop();
+    /** @brief 判断剪贴板当前是否包含可粘贴的文件数据。 */
+    bool HasPasteableFileClipboardData() const;
     /** @brief 根据方向键在桌面网格上进行 2D 空间导航。 @param arrowKey 方向键的虚拟键码 */
     void NavigateDesktopGrid(WPARAM arrowKey);
     /** @brief 在组件内部导航成员项。 @param arrowKey 方向键的虚拟键码 */

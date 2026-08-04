@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../right_click_contract.h"
 
 // Page-navigation clicks and right-button context dispatch.
 
@@ -461,16 +462,59 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (!PtInRect(&bounds, pt)) continue;
             if (!PtInRect(&bodyRect, pt)) continue;
 
-            auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
-            DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
+            auto* desktopIcon =
+                dynamic_cast<DesktopIcon*>(slot->GetItem());
+            DesktopItem* item = desktopIcon
+                ? desktopIcon->GetDesktopItem()
+                : nullptr;
+            auto* folderIcon =
+                dynamic_cast<FolderEntryIcon*>(
+                    slot->GetItem());
+            const auto itemKind = desktopIcon
+                ? snowdesktop::right_click_contract::
+                    SlotItemKind::DesktopItem
+                : folderIcon
+                ? snowdesktop::right_click_contract::
+                    SlotItemKind::FolderEntry
+                : snowdesktop::right_click_contract::
+                    SlotItemKind::None;
+            const auto itemMenuKind =
+                snowdesktop::right_click_contract::
+                    ResolveSlotItemMenu(
+                        wc->GetSlotSurfaceKind(),
+                        itemKind,
+                        desktopIcon && item &&
+                            IsProtectedDesktopIcon(*item));
             if (!item)
             {
-                auto* folderIcon = dynamic_cast<FolderEntryIcon*>(slot->GetItem());
                 FolderEntry* entry = folderIcon ? folderIcon->GetFolderEntry() : nullptr;
                 if (!entry) break;
+                if (itemMenuKind !=
+                    snowdesktop::right_click_contract::
+                        ContextMenuKind::FolderEntry)
+                    break;
 
                 auto* folderWidget = dynamic_cast<WidgetContainer*>(wc);
-                DesktopWidget* data = folderWidget ? folderWidget->GetWidgetData() : nullptr;
+                DesktopWidget* data = nullptr;
+                if (folderWidget)
+                {
+                    if (auto* fileGroup =
+                            dynamic_cast<FileGroup*>(folderWidget))
+                    {
+                        // FileGroup slots clone hosted entries; resolve the
+                        // real source widget before matching the member index.
+                        auto* source =
+                            fileGroup->GetSourceContainerForItem(
+                                folderIcon);
+                        data = source
+                            ? source->GetWidgetData()
+                            : nullptr;
+                    }
+                    else
+                    {
+                        data = folderWidget->GetWidgetData();
+                    }
+                }
                 size_t widgetIndex = static_cast<size_t>(-1);
                 size_t memberIndex = static_cast<size_t>(-1);
                 for (size_t wi = 0; wi < widgets_.size(); ++wi)
@@ -491,10 +535,44 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     memberIndex == static_cast<size_t>(-1))
                     break;
 
-                if (!entry->selected)
+                size_t parentWidgetIndex =
+                    static_cast<size_t>(-1);
+                if (folderWidget)
+                {
+                    DesktopWidget* parentData =
+                        folderWidget->GetWidgetData();
+                    for (size_t wi = 0;
+                         wi < widgets_.size(); ++wi)
+                    {
+                        if (&widgets_[wi] == parentData)
+                        {
+                            parentWidgetIndex = wi;
+                            break;
+                        }
+                    }
+                }
+                if (parentWidgetIndex >= widgets_.size())
+                    break;
+
+                // Keep the owning hover-only component selected while the
+                // member menu is used, matching widget-level right-click.
+                if (snowdesktop::right_click_contract::
+                        ShouldPreserveSelectionOnRightClick(
+                            entry->selected))
+                {
+                    ClearSelectionOutsideWidget(
+                        parentWidgetIndex);
+                }
+                else
                 {
                     ClearSelection();
-                    widgets_[widgetIndex].folderEntries[memberIndex].selected = true;
+                }
+                widgets_[parentWidgetIndex].selected = true;
+                if (!entry->selected)
+                {
+                    widgets_[widgetIndex].
+                        folderEntries[memberIndex].
+                            selected = true;
                 }
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 ShowFolderEntryContextMenu(screenPt, widgetIndex, memberIndex);
@@ -503,6 +581,13 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
 
             size_t itemIndex = FindItemIndexByKey(item->layoutKey);
             if (itemIndex == static_cast<size_t>(-1)) break;
+            if (itemMenuKind !=
+                    snowdesktop::right_click_contract::
+                        ContextMenuKind::DesktopItem &&
+                itemMenuKind !=
+                    snowdesktop::right_click_contract::
+                        ContextMenuKind::ShellDesktopItem)
+                break;
 
             if (!items_[itemIndex].selected)
                 SelectOnly(static_cast<int>(itemIndex));
@@ -537,12 +622,28 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
 
     if (hitWidget != static_cast<size_t>(-1))
     {
-        // Select the widget and show its context menu
-        SelectWidgetOnly(hitWidget);
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        for (auto& c : containers_)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+            if (!wc ||
+                wc->GetWidgetData() != &widgets_[hitWidget])
+                continue;
+            if (snowdesktop::right_click_contract::
+                    ResolveContainerMenu(
+                        wc->GetSlotSurfaceKind()) !=
+                snowdesktop::right_click_contract::
+                    ContextMenuKind::Widget)
+            {
+                hitWidget = static_cast<size_t>(-1);
+                break;
+            }
 
-        ShowWidgetContextMenu(screenPt, hitWidget);
-        return;
+            // Select the widget and show its context menu
+            SelectWidgetOnly(hitWidget);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            ShowWidgetContextMenu(screenPt, hitWidget);
+            return;
+        }
     }
 
     size_t hitStandaloneWidget = HitTestStandaloneWidgetIndex(pt);
@@ -569,11 +670,24 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         ClearSelection();
     InvalidateRect(hwnd_, nullptr, FALSE);
 
+    const auto desktopItemMenuKind =
+        snowdesktop::right_click_contract::
+            ResolveSlotItemMenu(
+                snowdesktop::slot_contract::
+                    SlotSurfaceKind::Desktop,
+                snowdesktop::right_click_contract::
+                    SlotItemKind::DesktopItem,
+                hit >= 0 &&
+                    IsProtectedDesktopIcon(items_[hit]));
     if (hit >= 0)
     {
-        if (IsProtectedDesktopIcon(items_[hit]))
+        if (desktopItemMenuKind ==
+            snowdesktop::right_click_contract::
+                ContextMenuKind::ShellDesktopItem)
             ShowShellContextMenu(screenPt, hit);
-        else
+        else if (desktopItemMenuKind ==
+                 snowdesktop::right_click_contract::
+                     ContextMenuKind::DesktopItem)
             ShowItemContextMenu(screenPt, hit);
     }
     else

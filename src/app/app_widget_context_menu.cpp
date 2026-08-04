@@ -229,6 +229,13 @@ void DesktopApp::ShowWidgetContextMenu(
         if (effectiveSource.type ==
             DesktopWidgetType::FileCategories)
         {
+            AppendMenuW(menu,
+                HasPasteableFileClipboardData()
+                    ? MF_STRING : MF_STRING | MF_GRAYED,
+                kContextPasteCommand, _LW("app.menu.paste"));
+            AppendMenuW(menu, MF_STRING,
+                kContextNewMenu, _LW("app.menu.new"));
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING,
                 kContextWidgetManualCollect,
                 _LW("app.interact.collect_now"));
@@ -247,6 +254,10 @@ void DesktopApp::ShowWidgetContextMenu(
             AppendMenuW(menu, MF_STRING,
                 kContextWidgetOpenFolder,
                 _LW("app.interact.open_folder"));
+            AppendMenuW(menu,
+                HasPasteableFileClipboardData()
+                    ? MF_STRING : MF_STRING | MF_GRAYED,
+                kContextPasteCommand, _LW("app.menu.paste"));
         }
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
@@ -272,6 +283,13 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     else if (widget.type == DesktopWidgetType::FileCategories)
     {
+        AppendMenuW(menu,
+            HasPasteableFileClipboardData()
+                ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextPasteCommand, _LW("app.menu.paste"));
+        AppendMenuW(menu, MF_STRING,
+            kContextNewMenu, _LW("app.menu.new"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, _LW("app.interact.collect_now"));
         const std::wstring autoCollectLabel = statusLabel(
             _LW("app.interact.auto_collect"),
@@ -294,6 +312,10 @@ void DesktopApp::ShowWidgetContextMenu(
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
+        AppendMenuW(menu,
+            HasPasteableFileClipboardData()
+                ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextPasteCommand, _LW("app.menu.paste"));
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
         AppendMenuW(menu, MF_STRING,
@@ -438,6 +460,7 @@ void DesktopApp::ShowWidgetContextMenu(
     setFluentIcon(menu, kContextWidgetToggleFileCategories,
         snowdesktop::menu_fluent_glyphs::kCategoryBar);
     setFluentIcon(menu, kContextWidgetToggleSearchBox, L"\uF68F");
+    SetMenuItemIcon(menu, kContextPasteCommand, L"");
     setFluentIcon(menu, kContextNewMenu,
         snowdesktop::menu_fluent_glyphs::kNewItem);
     setFluentIcon(menu, kContextMoreCommand,
@@ -447,6 +470,7 @@ void DesktopApp::ShowWidgetContextMenu(
     setFluentIcon(menu, kContextWidgetDelete, L"\uF34C");
     SetMenuItemQuickAction(menu, kContextWidgetEdit);
     SetMenuItemQuickAction(menu, kContextNewMenu);
+    SetMenuItemQuickAction(menu, kContextPasteCommand);
     SetMenuItemQuickAction(menu, kContextWidgetRename);
     SetMenuItemQuickAction(menu, kContextWidgetDelete);
     setFluentIcon(menu, hoverToggleCommand, L"\uE5F2");
@@ -767,6 +791,24 @@ void DesktopApp::ShowWidgetContextMenu(
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     }
+    case kContextPasteCommand:
+        if (effectiveSourceIndex < widgets_.size())
+        {
+            if (widgets_[effectiveSourceIndex].type ==
+                    DesktopWidgetType::FolderMapping &&
+                !widgets_[effectiveSourceIndex].
+                    sourceFolderPath.empty())
+            {
+                PasteClipboardToFolderMapping(
+                    effectiveSourceIndex);
+            }
+            else if (widgets_[effectiveSourceIndex].type ==
+                     DesktopWidgetType::FileCategories)
+            {
+                PasteClipboardToDesktop();
+            }
+        }
+        break;
     case kContextNewMenu:
         if (effectiveSourceIndex < widgets_.size() &&
             widgets_[effectiveSourceIndex].type ==
@@ -782,6 +824,20 @@ void DesktopApp::ShowWidgetContextMenu(
             RebuildContainersAndItems();
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+        else if (effectiveSourceIndex < widgets_.size() &&
+                 widgets_[effectiveSourceIndex].type ==
+                     DesktopWidgetType::FileCategories)
+        {
+            wchar_t desktopPath[MAX_PATH]{};
+            if (SHGetSpecialFolderPathW(
+                    nullptr, desktopPath,
+                    CSIDL_DESKTOPDIRECTORY, FALSE))
+            {
+                ShowNewMenuAndInvoke(
+                    screenPoint, desktopPath);
+                ReloadItems();
+            }
         }
         break;
     case kContextMoreCommand:

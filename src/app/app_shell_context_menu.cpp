@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
 
@@ -33,116 +34,88 @@ void DesktopApp::ShowFolderEntryContextMenu(
         memberIndex >= widgets_[widgetIndex].folderEntries.size())
         return;
 
-    const std::wstring fullPath = widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
-    PIDLIST_ABSOLUTE pidl = nullptr;
-    if (FAILED(SHParseDisplayName(fullPath.c_str(), nullptr, &pidl, 0, nullptr)) || !pidl)
-        return;
+    PrepareMenuIconsForPoint(screenPoint);
 
-    IShellFolder* parentFolder = nullptr;
-    PCUITEMID_CHILD child = nullptr;
-    if (FAILED(SHBindToParent(pidl, IID_IShellFolder,
-        reinterpret_cast<void**>(&parentFolder), &child)) || !parentFolder)
-    {
-        ILFree(pidl);
-        return;
-    }
-
+    const std::wstring fullPath =
+        widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
+    const std::vector<std::wstring> selectedPaths =
+        GetSelectedFolderEntryPaths();
+    const bool hasSelection = !selectedPaths.empty();
+    const bool singleSelection = selectedPaths.size() == 1;
     HWND menuOwner = keepQuickNavigationOpen &&
         quickNavigationHwnd_ &&
         IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
-    snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(parentFolder, menuOwner);
-    HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : menuOwner;
-    ComPtr<IContextMenu> contextMenu;
-    HRESULT hr = parentFolder->GetUIObjectOf(shellOwner, 1, &child, IID_IContextMenu,
-        nullptr, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
-    if (SUCCEEDED(hr) && contextMenu)
-        menuSite.Attach(contextMenu.Get());
-    parentFolder->Release();
-    if (FAILED(hr) || !contextMenu)
-    {
-        ILFree(pidl);
-        return;
-    }
-
     HMENU menu = CreatePopupMenu();
-    if (!menu)
-    {
-        ILFree(pidl);
-        return;
-    }
+    if (!menu) return;
 
-    constexpr UINT kFirstCmd = 1;
-    constexpr UINT kLastCmd = 0x7FFF;
-    hr = contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd,
-        CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU);
-    if (FAILED(hr))
-    {
-        DestroyMenu(menu);
-        ILFree(pidl);
-        RestoreDesktopWindowLayer();
-        return;
-    }
-
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
-        snowdesktop::item_location::CanReveal(fullPath)
+        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextOpenCommand, _LW("app.menu.open"));
+    AppendMenuW(menu,
+        singleSelection &&
+                snowdesktop::item_location::CanReveal(fullPath)
             ? MF_STRING
             : MF_STRING | MF_GRAYED,
         kContextRevealLocationCommand,
         _LW("app.menu.open_file_location"));
+    AppendMenuW(menu,
+        singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextRenameCommand, _LW("app.menu.rename"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu,
+        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextCutCommand, _LW("app.menu.cut"));
+    AppendMenuW(menu,
+        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextCopyCommand, _LW("app.menu.copy"));
+    AppendMenuW(menu,
+        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextDeleteCommand, _LW("app.settings.delete"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu,
+        singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextMoreCommand, _LW("app.menu.more_options"));
 
-    contextMenu.As(&activeContextMenu2_);
-    contextMenu.As(&activeContextMenu3_);
+    SetMenuItemIcon(menu, kContextOpenCommand, L"");
+    SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
+    SetMenuItemIcon(menu, kContextRenameCommand, L"");
+    SetMenuItemIcon(menu, kContextCutCommand, L"");
+    SetMenuItemIcon(menu, kContextCopyCommand, L"");
+    SetMenuItemIcon(menu, kContextDeleteCommand, L"");
+    SetMenuItemIcon(menu, kContextMoreCommand,
+        snowdesktop::menu_fluent_glyphs::kMoreOptions,
+        MenuIconFont::FluentRegular);
+    SetMenuItemQuickAction(menu, kContextRenameCommand);
+    SetMenuItemQuickAction(menu, kContextCutCommand);
+    SetMenuItemQuickAction(menu, kContextCopyCommand);
+    SetMenuItemQuickAction(menu, kContextDeleteCommand);
 
-    if (keepQuickNavigationOpen)
-        SetQuickNavigationTopmost(false);
     SetForegroundWindow(menuOwner);
-    UINT command = TrackPopupMenuEx(
-        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, menuOwner, nullptr);
-    if (keepQuickNavigationOpen)
-        SetQuickNavigationTopmost(true);
-    else
+    UINT command = ShowModernMenu(
+        menu, screenPoint, menuOwner);
+    if (!keepQuickNavigationOpen)
         FocusDesktopInputWindow();
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
 
-    activeContextMenu2_.Reset();
-    activeContextMenu3_.Reset();
-
-    if (command == kContextRevealLocationCommand)
+    switch (command)
     {
-        DestroyMenu(menu);
-        RestoreDesktopWindowLayer();
-        ILFree(pidl);
-        snowdesktop::item_location::Reveal(hwnd_, fullPath);
-        return;
-    }
-
-    if (command >= kFirstCmd && command <= kLastCmd)
-    {
-        UINT commandOffset = command - kFirstCmd;
-        wchar_t menuText[128]{};
-        bool renameCommand = IsShellRenameCommand(contextMenu.Get(), commandOffset);
-        bool deleteCommand = IsShellDeleteCommand(
-            contextMenu.Get(), commandOffset);
-        if (!renameCommand &&
-            GetMenuStringW(menu, command, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
-        {
-            renameCommand = StrStrIW(menuText, L"重命名") != nullptr || // l10n-allow: match Chinese Windows shell verb
-                StrStrIW(menuText, L"Rename") != nullptr;
-            deleteCommand = deleteCommand ||
-                StrStrIW(menuText, L"删除") != nullptr || // l10n-allow: match Chinese Windows shell verb
-                StrStrIW(menuText, L"Delete") != nullptr;
-        }
-
-        DestroyMenu(menu);
-        RestoreDesktopWindowLayer();
-        ILFree(pidl);
-
-        if (renameCommand)
+    case kContextOpenCommand:
+        for (const auto& path : selectedPaths)
+            ShellExecuteW(hwnd_, L"open",
+                path.c_str(), nullptr, nullptr,
+                SW_SHOWNORMAL);
+        break;
+    case kContextRevealLocationCommand:
+        if (singleSelection)
+            snowdesktop::item_location::Reveal(
+                hwnd_, fullPath);
+        break;
+    case kContextRenameCommand:
+        if (singleSelection)
         {
             if (keepQuickNavigationOpen)
                 BeginQuickNavigationFolderEntryRename(
@@ -150,55 +123,31 @@ void DesktopApp::ShowFolderEntryContextMenu(
             else
                 BeginRenameFolderEntry(
                     widgetIndex, memberIndex);
-            return;
         }
-
-        if (deleteCommand)
+        break;
+    case kContextCutCommand:
+        CopyCutSelectedFolderEntries(true);
+        break;
+    case kContextCopyCommand:
+        CopyCutSelectedFolderEntries(false);
+        break;
+    case kContextDeleteCommand:
+        DeleteSelectedFolderEntries(false);
+        break;
+    case kContextMoreCommand:
+        if (singleSelection)
         {
-            DestroyMenu(menu);
-            RestoreDesktopWindowLayer();
-            ILFree(pidl);
-            std::vector<snowdesktop::ShellFileOperationStep> steps;
-            steps.push_back({
-                FO_DELETE,
-                { fullPath },
-                {},
-                static_cast<FILEOP_FLAGS>(
-                    FOF_ALLOWUNDO |
-                    FOF_NOCONFIRMATION) });
-            QueueShellFileOperation(
-                std::move(steps),
-                [this](bool succeeded) {
-                    if (succeeded)
-                        ReloadItems(false);
-                });
-            return;
+            if (keepQuickNavigationOpen)
+                SetQuickNavigationTopmost(false);
+            ShowShellItemContextMenuForPath(
+                fullPath, screenPoint);
+            if (keepQuickNavigationOpen)
+                SetQuickNavigationTopmost(true);
         }
-
-        CMINVOKECOMMANDINFOEX invoke{};
-        invoke.cbSize = sizeof(invoke);
-        invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
-        invoke.hwnd = ShellDialogOwnerHwnd();
-        invoke.lpVerb = MAKEINTRESOURCEA(commandOffset);
-        invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
-        const std::wstring invocationDirectory =
-            snowdesktop::ShellInvocationDirectoryForItem(fullPath);
-        std::string invocationDirectoryA;
-        snowdesktop::SetShellInvocationDirectory(
-            invoke, invocationDirectory, invocationDirectoryA);
-        invoke.nShow = SW_SHOWNORMAL;
-        invoke.ptInvoke = screenPoint;
-        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
-        RefreshFolderMappingWidget(widgetIndex);
-        RebuildContainersAndItems();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
-        return;
+        break;
+    default:
+        break;
     }
-
-    DestroyMenu(menu);
-    RestoreDesktopWindowLayer();
-    ILFree(pidl);
 }
 
 /**

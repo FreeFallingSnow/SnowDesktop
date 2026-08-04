@@ -654,6 +654,13 @@ if (BUILD_TESTING)
         LABELS rules widget)
 
     snowdesktop_add_test(
+        SnowDesktopRightClickContractTests
+        right_click_contract
+        SOURCES tests/right_click_contract_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS rules interaction)
+
+    snowdesktop_add_test(
         SnowDesktopQuickNavigationRulesTests
         quick_navigation_rules
         SOURCES
