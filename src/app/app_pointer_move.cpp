@@ -166,6 +166,12 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 current.x - frame.left, current.y - frame.top,
                 (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
         }
+
+        // Lua content owns the pointer interaction. Do not fall through to
+        // the desktop marquee-selection state machine: a drag inside a Lua
+        // widget has meaning only to the widget or its host input control.
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     }
 
     const bool pressedDockEntryWithoutSelection =

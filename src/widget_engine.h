@@ -876,6 +876,7 @@ public:
     void ClearHostInputComposition();
     bool HasFocusedHostInput() const;
     bool GetFocusedHostInputCaretRect(RECT& rect) const;
+    bool IsHostInputAt(const std::wstring& widgetId, int x, int y) const;
     bool IsFocusedHostInputAt(const std::wstring& widgetId, int x, int y) const;
     bool HandleHostInputPointerMove(const std::wstring& widgetId, int x, int y);
     bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y);

@@ -1792,12 +1792,44 @@ static void DrawHostTextSelection(D2DState* state,
         static_cast<UINT32>(boundedLength), 0.0f, 0.0f,
         metrics.data(), count, &count)))
         return;
+    // DirectWrite may return one metric per glyph/run. Drawing every metric
+    // independently makes adjacent selection pieces overlap, especially for
+    // proportional text, and produces visible rounded blue boxes while the
+    // selection is being dragged. Merge contiguous pieces on each line and
+    // draw one flat highlight per line so the selection remains stable.
+    std::vector<D2D1_RECT_F> selectionRects;
+    selectionRects.reserve(count);
     for (UINT32 i = 0; i < count; ++i)
     {
         const auto& hit = metrics[i];
-        DrawHostRect(state, originX + hit.left,
-            originY + hit.top, std::max(1.5f, hit.width),
-            std::max(1.0f, hit.height), color, 1.5f, 0.32f);
+        const D2D1_RECT_F rect = D2D1::RectF(
+            hit.left, hit.top,
+            hit.left + std::max(1.5f, hit.width),
+            hit.top + std::max(1.0f, hit.height));
+        if (!selectionRects.empty())
+        {
+            auto& previous = selectionRects.back();
+            const bool sameLine =
+                std::abs(previous.top - rect.top) < 0.5f &&
+                std::abs(previous.bottom - rect.bottom) < 0.5f;
+            const bool contiguous = rect.left <= previous.right + 0.5f;
+            if (sameLine && contiguous)
+            {
+                previous.left = std::min(previous.left, rect.left);
+                previous.right = std::max(previous.right, rect.right);
+                previous.top = std::min(previous.top, rect.top);
+                previous.bottom = std::max(previous.bottom, rect.bottom);
+                continue;
+            }
+        }
+        selectionRects.push_back(rect);
+    }
+
+    for (const auto& rect : selectionRects)
+    {
+        DrawHostRect(state, originX + rect.left,
+            originY + rect.top, rect.right - rect.left,
+            rect.bottom - rect.top, color, 0.0f, 0.32f);
     }
 }
 
@@ -1950,6 +1982,9 @@ static int lua_UiTextInput(lua_State* L)
         if (focused)
             value = WidgetWideToUtf8(focusedText);
     }
+    const bool widgetSelected = s && s->engine &&
+        s->engine->RuntimeIsWidgetSelected(BoundWidgetId(L));
+    const bool drawFocusedBorder = focused && !widgetSelected;
     const HostInputDisplayText focusedDisplay =
         BuildHostInputDisplayText(focusedText, cursor,
             selectionAnchor, compositionText,
@@ -1958,8 +1993,9 @@ static int lua_UiTextInput(lua_State* L)
     DrawHostRect(s, x, y, width, height, backgroundColor, radius,
         focused ? focusedBackgroundAlpha : backgroundAlpha);
     DrawHostStrokeRect(s, x, y, width, height,
-        focused ? focusedBorderColor : borderColor, radius, borderThickness,
-        focused ? focusedBorderAlpha : borderAlpha);
+        drawFocusedBorder ? focusedBorderColor : borderColor, radius,
+        borderThickness,
+        drawFocusedBorder ? focusedBorderAlpha : borderAlpha);
     const bool showingPlaceholder = value.empty() && !focused;
     const std::wstring displayText = focused
         ? focusedDisplay.text
@@ -2150,6 +2186,9 @@ static int lua_UiTextArea(lua_State* L)
         if (focused)
             value = WidgetWideToUtf8(focusedText);
     }
+    const bool widgetSelected = s && s->engine &&
+        s->engine->RuntimeIsWidgetSelected(BoundWidgetId(L));
+    const bool drawFocusedBorder = focused && !widgetSelected;
     const HostInputDisplayText focusedDisplay =
         BuildHostInputDisplayText(focusedText, cursor,
             selectionAnchor, compositionText,
@@ -2158,9 +2197,9 @@ static int lua_UiTextArea(lua_State* L)
     DrawHostRect(s, x, y, width, height, backgroundColor, radius,
         focused ? focusedBackgroundAlpha : backgroundAlpha);
     DrawHostStrokeRect(s, x, y, width, height,
-        focused ? focusedBorderColor : borderColor, radius,
+        drawFocusedBorder ? focusedBorderColor : borderColor, radius,
         borderThickness,
-        focused ? focusedBorderAlpha : borderAlpha);
+        drawFocusedBorder ? focusedBorderAlpha : borderAlpha);
 
     const std::wstring valueText = focused
         ? focusedDisplay.text : Utf8ToWideLocal(value);
@@ -6006,6 +6045,23 @@ std::wstring WidgetEngine::RuntimeSelectedWidgetPackageId() const
 bool WidgetEngine::HasFocusedHostInput() const
 {
     return focusedHostInput_.active;
+}
+
+bool WidgetEngine::IsHostInputAt(
+    const std::wstring& widgetId, int x, int y) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return false;
+    const POINT point{ x, y };
+    for (auto it = widgets_[index].hostControls.rbegin();
+        it != widgets_[index].hostControls.rend(); ++it)
+    {
+        if (it->type == LuaWidget::HostControl::Type::Input &&
+            PtInRect(&it->rect, point))
+            return true;
+    }
+    return false;
 }
 
 bool WidgetEngine::GetFocusedHostInputCaretRect(RECT& rect) const

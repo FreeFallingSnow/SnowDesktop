@@ -598,16 +598,35 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             return;
         }
 
-        SelectWidgetOnly(wi);
+        bool hostInputArea = false;
+        RECT luaFrame{};
+        if (widgetEngine_ &&
+            widgets_[wi].type == DesktopWidgetType::LuaScript)
+        {
+            luaFrame = GetStandaloneWidgetFrameRect(widgets_[wi]);
+            widgetEngine_->EnsureWidgetLoaded(
+                widgets_[wi].id, widgets_[wi].packageId);
+            hostInputArea = widgetEngine_->IsHostInputAt(
+                widgets_[wi].id, pt.x - luaFrame.left,
+                pt.y - luaFrame.top);
+        }
+
+        // An input field owns its pointer interaction. Do not select the
+        // containing Lua widget here, otherwise the outer blue selection
+        // frame appears on top of the field and disrupts live editing.
+        if (hostInputArea)
+            ClearSelection();
+        else
+            SelectWidgetOnly(wi);
         mouseDownWidgetIndex_ = wi;
         mouseDownHit_ = nullptr;
         SetCapture(hwnd_);
         if (widgetEngine_ && widgets_[wi].type == DesktopWidgetType::LuaScript)
         {
-            RECT frame = GetStandaloneWidgetFrameRect(widgets_[wi]);
-            widgetEngine_->EnsureWidgetLoaded(widgets_[wi].id, widgets_[wi].packageId);
-            int localX = pt.x - frame.left;
-            int localY = pt.y - frame.top;
+            if (IsRectEmptyRect(luaFrame))
+                luaFrame = GetStandaloneWidgetFrameRect(widgets_[wi]);
+            int localX = pt.x - luaFrame.left;
+            int localY = pt.y - luaFrame.top;
             if (!widgetEngine_->HandleHostUiPointer(
                     widgets_[wi].id, localX, localY, 0, false))
                 widgetEngine_->InvokeMouseEvent(widgets_[wi].id, "onMouseDown",
