@@ -146,6 +146,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnMouseMove(wp, lp);
         // Internal drags capture this HWND. Commit the cheap cached drag frame
         // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
+        // Keep this synchronous; routing pointer feedback through
+        // UiAnimationScheduler makes drag/Dock hover trail the pointer
+        // (f29a882 regression).
         PresentPointerInteractionFrame();
         return 0;
     }

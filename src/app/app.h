@@ -2124,6 +2124,9 @@ private:
     HINSTANCE instance_ = nullptr;
     snowdesktop::UiAnimationScheduler uiAnimationScheduler_;
     snowdesktop::UiScheduleToken uiAnimationFrameToken_ = 0;
+    // 指针反馈同步提交的兜底：仅当当前 WM_PAINT/合成绘制重入时，才把帧交给
+    // UiAnimationScheduler 补绘。常规指针路径必须直接 UpdateWindow，不能把
+    // 拖拽/Dock hover 也改成异步调度（f29a882 曾引入该回归）。
     bool desktopPointerPresentPending_ = false;
     bool floatingDockPointerPresentPending_ = false;
     /** @brief 桌面覆盖窗口句柄 */
@@ -2419,6 +2422,8 @@ private:
     bool floatingDockClosePending_ = false;
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
+    /** @brief 浮动 Dock 被动 hover 最近一次同步提交时刻（8ms 限频用）。 */
+    ULONGLONG floatingDockLastPointerPresentTick_ = 0;
     UINT_PTR floatingDockBackdropCommitToken_ = 0;
     PersonalizationSettings floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();

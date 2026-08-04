@@ -877,8 +877,17 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 FALSE);
             if (dockHoverActive && !marqueeActive_)
             {
-                desktopPointerPresentPending_ = true;
-                EnsureUiAnimationFrame();
+                // Dock hover 必须同步提交：WM_MOUSEMOVE 的调度优先级高于
+                // WM_PAINT，只 InvalidateRect 会让放大效果在快速扫过时落后。
+                // f29a882 曾改成 pending + EnsureUiAnimationFrame()，正是
+                // 这次“不跟手”回归的来源。
+                if (!compositionPaintInProgress_)
+                    UpdateWindow(hwnd_);
+                else
+                {
+                    desktopPointerPresentPending_ = true;
+                    EnsureUiAnimationFrame();
+                }
             }
         }
 

@@ -871,6 +871,24 @@ int main()
                 NeedsImmediatePointerPresent(
                     false, false, false),
         "item drags, widget previews and marquees must synchronously present pointer frames");
+    // 回归保护：f29a882 删掉 ShouldPresentPointerFrame 后，hover/拖拽帧全部
+    // 交给 UiAnimationScheduler，快速扫过时 Dock 放大和拖拽虚影晚一帧。
+    Check(floatingDock::
+            ShouldPresentPointerFrame(
+                1000, 0, false) &&
+            floatingDock::
+                ShouldPresentPointerFrame(
+                    1000, 996, true) &&
+            !floatingDock::
+                ShouldPresentPointerFrame(
+                    1000, 996, false) &&
+            floatingDock::
+                ShouldPresentPointerFrame(
+                    1000, 992, false) &&
+            floatingDock::
+                ShouldPresentPointerFrame(
+                    100, 200, false),
+        "passive floating Dock hover is rate-limited but pointer feedback stays synchronous");
     Check(floatingDock::
             FloatingVisibilityChangesStaticScene(
                 false, true) &&

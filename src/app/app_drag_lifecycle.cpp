@@ -33,7 +33,12 @@ void DesktopApp::InvalidateDragStaticScene()
 }
 
 /**
- * @brief 合并 Dock hover 与快速拖动帧，在显示刷新周期消费最新指针状态。
+ * @brief 同步提交快速拖动帧，避免连续 WM_MOUSEMOVE 让 WM_PAINT 饥饿。
+ *
+ * 拖拽虚影、组件预览和 marquee 都属于指针反馈，必须在本消息内同步提交。
+ * 不要改成 desktopPointerPresentPending_ + EnsureUiAnimationFrame()：
+ * f29a882 曾这样改，密集鼠标事件下所有反馈都晚一帧。真实逐帧动画才走
+ * UiAnimationScheduler。
  */
 void DesktopApp::PresentPointerInteractionFrame()
 {
@@ -50,11 +55,28 @@ void DesktopApp::PresentPointerInteractionFrame()
         hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
-        desktopPointerPresentPending_ = true;
-        EnsureUiAnimationFrame();
+        if (!compositionPaintInProgress_)
+            UpdateWindow(hwnd_);
+        else
+        {
+            // 同步绘制重入中不能再次 UpdateWindow，交给 scheduler 兜底补一帧。
+            desktopPointerPresentPending_ = true;
+            EnsureUiAnimationFrame();
+        }
     }
     if (floatingDockVisible_)
-        InvalidateFloatingDockWindow(true);
+    {
+        const ULONGLONG now = GetTickCount64();
+        const bool presentNow =
+            snowdesktop::floating_dock_rules::
+                ShouldPresentPointerFrame(
+                    now,
+                    floatingDockLastPointerPresentTick_,
+                    immediateDesktopPresent);
+        if (presentNow)
+            floatingDockLastPointerPresentTick_ = now;
+        InvalidateFloatingDockWindow(presentNow);
+    }
 }
 
 /**

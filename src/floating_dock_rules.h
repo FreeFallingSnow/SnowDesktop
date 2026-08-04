@@ -18,6 +18,10 @@ inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
 
+// 被动 Dock hover 的同步提交限频窗口。hover 必须跟手，但也不需要每个
+// WM_MOUSEMOVE 都同步重绘整个浮动 Dock。
+inline constexpr ULONGLONG kPointerFrameIntervalMs = 8;
+
 inline bool HasAnySummonTrigger(
     bool hotkeyEnabled, bool edgeSwipeEnabled)
 {
@@ -318,6 +322,24 @@ inline bool NeedsImmediatePointerPresent(
     return itemDragActive ||
         widgetPreviewActive ||
         marqueeActive;
+}
+
+/**
+ * @brief 限制被动 Dock hover 的同步提交频率，同时保留拖动帧的即时反馈。
+ *
+ * 指针反馈必须同步提交，不能改成等待 UiAnimationScheduler 的下一帧。
+ * f29a882 曾把所有 hover/拖拽帧改为 EnsureUiAnimationFrame()，导致快速
+ * 扫过时 Dock 放大和拖拽虚影明显落后指针。
+ */
+inline bool ShouldPresentPointerFrame(
+    ULONGLONG now,
+    ULONGLONG lastPresent,
+    bool forceImmediate)
+{
+    return forceImmediate ||
+        lastPresent == 0 ||
+        now < lastPresent ||
+        now - lastPresent >= kPointerFrameIntervalMs;
 }
 
 /**

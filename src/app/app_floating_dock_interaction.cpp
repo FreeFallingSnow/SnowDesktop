@@ -72,6 +72,7 @@ void DesktopApp::ShowFloatingDock()
             floatingDockPersonalization_);
     floatingDockVisible_ = true;
     floatingDockDesktopCopySuppressed_ = false;
+    floatingDockLastPointerPresentTick_ = 0;
     floatingDockRevealPending_ = true;
     UpdateFloatingDockWindowBounds();
     if (!floatingDockVisible_ ||
@@ -142,6 +143,7 @@ void DesktopApp::ShowFloatingDock()
     floatingDockBackdropCompositor_.
         Reattach(floatingDockHwnd_);
     floatingDockRevealPending_ = false;
+    floatingDockLastPointerPresentTick_ = 0;
 
     // Showing the HWND and submitting its DComp surface live in different
     // timing domains. This barrier only installs the transparent target; the
@@ -416,6 +418,7 @@ void DesktopApp::CloseFloatingDock(
     }
 
     floatingDockRevealPending_ = false;
+    floatingDockLastPointerPresentTick_ = 0;
     if (deferBackdropHandoff && !forceImmediate)
     {
         // Keep the floating content and its old glass paired until WinComp
@@ -550,13 +553,20 @@ void DesktopApp::InvalidateFloatingDockWindow(
     {
         InvalidateRect(
             floatingDockHwnd_, nullptr, FALSE);
-        // Input can outpace WM_PAINT. Consume only the newest state on the
-        // scheduler's next display-aligned frame instead of synchronously
-        // repainting once for every WM_MOUSEMOVE/DragOver notification.
+        // WM_MOUSEMOVE 和 OLE DragOver 会持续占满输入队列，只 InvalidateRect
+        // 会让放大/插入预览等队列空闲才绘制，快速扫过时明显落后指针。
+        // immediate 必须同步 UpdateWindow。历史回归：f29a882 曾改成
+        // floatingDockPointerPresentPending_ + EnsureUiAnimationFrame()，
+        // 导致浮动 Dock hover 和拖放反馈晚一帧；仅当合成绘制重入时才允许兜底。
         if (immediate)
         {
-            floatingDockPointerPresentPending_ = true;
-            EnsureUiAnimationFrame();
+            if (!floatingDockCompositionPaintInProgress_)
+                UpdateWindow(floatingDockHwnd_);
+            else
+            {
+                floatingDockPointerPresentPending_ = true;
+                EnsureUiAnimationFrame();
+            }
         }
     }
 }

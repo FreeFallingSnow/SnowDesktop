@@ -149,6 +149,11 @@ bool DesktopApp::AdvanceUiAnimationFrame(double nowMilliseconds)
         }
     }
 
+    // 这两个 pending 只用于“同步提交被 WM_PAINT/合成绘制重入挡住”时的兜底
+    // 补帧，不是常规指针帧路径。不要把 PresentPointerInteractionFrame 或
+    // InvalidateFloatingDockWindow(true) 改成只置 pending +
+    // EnsureUiAnimationFrame()；f29a882 曾这样把拖拽/Dock hover 回归成
+    // “晚一帧”。指针反馈必须保持同步 UpdateWindow。
     bool desktopFrameSubmitted = false;
     if (desktopPointerPresentPending_ &&
         (!hwnd_ || !IsWindow(hwnd_)))
