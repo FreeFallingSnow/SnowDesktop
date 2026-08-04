@@ -1068,6 +1068,12 @@ void DesktopApp::ApplyPageMapping()
     CompactPageIds();
     MapPagesToMonitors();
     ApplySavedGridDimensions();
+
+    // The Dock reservation depends on the active page's grid dimensions.
+    // Page navigation changes the mapped page without rebuilding monitor
+    // geometry, so refresh the reservation before LayoutItems() rebuilds the
+    // Dock containers from dockAreas_.
+    ApplyDockWorkAreaReservation();
 }
 
 /**
