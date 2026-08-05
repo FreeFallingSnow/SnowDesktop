@@ -180,15 +180,14 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     // from its frame, contents, tabs, or collection popup is active.  The
     // guard deliberately keeps the pin when the selected command starts an
     // inline rename editor; CommitRename releases it when editing ends.
+    const bool popupOccludesPoint =
+        IsPointOccludedByOpenPopup(pt);
     size_t contextWidgetIndex = static_cast<size_t>(-1);
     if (!dockFolderPopupOpen_ &&
-        IsCollectionPopupInteractive() &&
-        popupWidgetIndex_ < widgets_.size())
+        popupWidgetIndex_ < widgets_.size() &&
+        popupOccludesPoint)
     {
-        const RECT popup =
-            GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
-        if (PtInRect(&popup, pt))
-            contextWidgetIndex = popupWidgetIndex_;
+        contextWidgetIndex = popupWidgetIndex_;
     }
     if (contextWidgetIndex >= widgets_.size())
     {
@@ -247,8 +246,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
-    if (IsCollectionPopupInteractive() &&
-        dockFolderPopupOpen_)
+    if (dockFolderPopupOpen_ &&
+        popupOccludesPoint)
     {
         RECT popup = GetCollectionPopupRect(
             dockFolderPopupWidget_);
@@ -293,8 +292,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             return;
         }
     }
-    else if (IsCollectionPopupInteractive() &&
-        popupWidgetIndex_ < widgets_.size())
+    else if (popupWidgetIndex_ < widgets_.size() &&
+        popupOccludesPoint)
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
         if (PtInRect(&popup, pt))
@@ -322,6 +321,11 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     return;
                 }
             }
+            // 弹窗背景（标题栏/内边距/item 间隙）的右键归属弹窗所属组件，
+            // 不得穿透到被遮挡的下层元素。与 Dock 文件夹弹窗的背景菜单行为对齐。
+            ShowWidgetContextMenu(
+                screenPt, popupWidgetIndex_);
+            return;
         }
     }
 

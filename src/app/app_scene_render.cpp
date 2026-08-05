@@ -24,8 +24,15 @@ void DesktopApp::DrawStaticBackground(
     };
 
     const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
+    const bool popupOccludesPointer =
+        IsPointOccludedByOpenPopup(lastMousePoint_);
     const POINT interactionMousePoint = lastMousePoint_;
     if (suppressDesktopWidgetTargets)
+        lastMousePoint_ = { LONG_MIN, LONG_MIN };
+    // 集合弹窗（含开/关动画期间）遮挡指针时，被遮挡元素不得渲染 hover
+    // 反馈（图标高亮、组件 chrome、Dock 放大），但弹窗自身在动态层仍可用
+    // lastMousePoint_ 绘制 item hover。
+    if (popupOccludesPointer)
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
 
     // Desktop icons
@@ -115,9 +122,6 @@ void DesktopApp::DrawStaticBackground(
         }
     }
 
-    if (suppressDesktopWidgetTargets)
-        lastMousePoint_ = interactionMousePoint;
-
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(
@@ -147,6 +151,8 @@ void DesktopApp::DrawStaticBackground(
         dock->DrawContents(ctx);
     }
 
+    if (suppressDesktopWidgetTargets || popupOccludesPointer)
+        lastMousePoint_ = interactionMousePoint;
 }
 
 // ── Dynamic overlays (drag preview, dragged items, marquee, nav) ──

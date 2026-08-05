@@ -410,8 +410,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
 
-        if (IsCollectionPopupInteractive() &&
-            dockFolderPopupOpen_)
+        if (dockFolderPopupOpen_ &&
+            IsPointOccludedByOpenPopup(pt))
         {
             RECT popup = GetCollectionPopupRect(
                 dockFolderPopupWidget_);
@@ -444,10 +444,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     CloseCollectionPopup();
                     return 0;
                 }
+                return 0;
             }
         }
-        else if (IsCollectionPopupInteractive() &&
-            popupWidgetIndex_ < widgets_.size())
+        else if (popupWidgetIndex_ < widgets_.size() &&
+            IsPointOccludedByOpenPopup(pt))
         {
             RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
             if (PtInRect(&popup, pt))
@@ -469,6 +470,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         return 0;
                     }
                 }
+                return 0;
             }
         }
 

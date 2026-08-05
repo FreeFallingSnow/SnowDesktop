@@ -1968,6 +1968,14 @@ private:
      */
     bool IsPointInsideOpenPopup(POINT point) const;
     /**
+     * @brief 判断坐标点是否被当前打开的弹出面板遮挡。
+     * 与 IsPointInsideOpenPopup 不同，这里以弹窗可见性为准（含开/关动画全程），
+     * 用于阻止被遮挡元素的 hover、右键与双击穿透。
+     * @param point 客户端坐标
+     * @return 被可见弹窗遮挡返回 true
+     */
+    bool IsPointOccludedByOpenPopup(POINT point) const;
+    /**
      * @brief 获取指定部件中弹出面板要显示的项键列表。
      * @param widget 部件引用
      * @return 项键值列表

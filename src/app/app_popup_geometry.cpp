@@ -275,6 +275,16 @@ bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
     return PtInRect(&popup, point) != FALSE;
 }
 
+bool DesktopApp::IsPointOccludedByOpenPopup(POINT point) const
+{
+    if (popupAnimation_.IsHidden())
+        return false;
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    if (!widget) return false;
+    RECT popup = GetCollectionPopupRect(*widget);
+    return PtInRect(&popup, point) != FALSE;
+}
+
 void DesktopApp::ResetCollectionPopupAnimationCache()
 {
     if (popupAnimationCompletionToken_)
