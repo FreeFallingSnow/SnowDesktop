@@ -231,13 +231,13 @@ constexpr bool IsTaskWindowStyleEligible(
 }
 
 /**
- * @brief 判断从预览缩略图恢复窗口时是否播放图标到窗口的过渡动画。
+ * @brief 判断恢复窗口时是否播放图标到窗口的过渡动画。
  *
- * 主 Dock 图标点击在窗口最小化时播放 DockWindowTransition 恢复动画，
- * 预览缩略图点击必须复用同一行为。锚点缺失（例如预览从未成功显示）
- * 时只能回退到无动画的直接恢复。
+ * Dock 图标点击与预览缩略图点击共用同一条窗口命令路径：窗口最小化
+ * （或反向取消最小化动画）且过渡层与锚点都可用时播放恢复动画，否则
+ * 只能回退到无动画的直接恢复。
  */
-constexpr bool ShouldAnimateDockPreviewRestore(
+constexpr bool ShouldAnimateDockWindowRestore(
     bool minimized,
     bool transitionAvailable,
     bool anchorAvailable) noexcept

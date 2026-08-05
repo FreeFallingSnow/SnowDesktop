@@ -1910,16 +1910,16 @@ int main()
     Check(!transition.armTimer,
         "pending activation suppression must block immediate reopening");
 
-    // Preview restore must reuse the Dock icon's minimize/restore transition
+    // Restore must reuse the Dock icon's minimize/restore transition
     // animation; without a transition or an anchor only plain activation
     // works.
-    Check(rules::ShouldAnimateDockPreviewRestore(true, true, true),
-        "minimized preview click with transition and anchor must animate restore");
-    Check(!rules::ShouldAnimateDockPreviewRestore(false, true, true),
-        "non-minimized preview click must not animate restore");
-    Check(!rules::ShouldAnimateDockPreviewRestore(true, false, true),
+    Check(rules::ShouldAnimateDockWindowRestore(true, true, true),
+        "minimized restore with transition and anchor must animate");
+    Check(!rules::ShouldAnimateDockWindowRestore(false, true, true),
+        "non-minimized restore must not animate");
+    Check(!rules::ShouldAnimateDockWindowRestore(true, false, true),
         "missing transition must fall back to plain restore");
-    Check(!rules::ShouldAnimateDockPreviewRestore(true, true, false),
+    Check(!rules::ShouldAnimateDockWindowRestore(true, true, false),
         "missing anchor must fall back to plain restore");
 
     // Dock magnification shifts the icon anchor while the preview is open;

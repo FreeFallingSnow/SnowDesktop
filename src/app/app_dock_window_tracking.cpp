@@ -606,10 +606,14 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             transitionActiveForTarget &&
             activeTransitionDirection ==
                 DockWindowTransitionDirection::Minimize;
+        const bool animateRestore =
+            snowdesktop::dock_window_rules::
+                ShouldAnimateDockWindowRestore(
+                    minimized || reverseMinimize,
+                    dockWindowTransition_ != nullptr,
+                    pressedAnchorScreen.has_value());
         if (action == DockClickAction::Restore &&
-            (minimized || reverseMinimize) &&
-            dockWindowTransition_ &&
-            pressedAnchorScreen &&
+            animateRestore &&
             dockWindowTransition_->StartRestore(
                 target, *pressedAnchorScreen,
                 [this](HWND restoreTarget) {
@@ -670,34 +674,16 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
 {
     if (!window || !IsWindow(window))
         return;
-    if (snowdesktop::dock_window_rules::
-            ShouldSuppressDockWindowCommand(
-                IsDockWindowClosePending(window)))
-        return;
-    HWND target = GetAncestor(window, GA_ROOT);
-    if (!target)
-        target = window;
-
-    // The preview stores the icon anchor at show time and keeps it while
-    // hovering. Read it before any dismissal path clears it.
+    // Reuse the exact Dock-icon command path: restoring plays the icon-to-
+    // window transition, activating moves the window to the foreground and
+    // clicking a foreground window minimizes it back into the Dock. The
+    // preview keeps the icon anchor fresh while visible; read it before the
+    // dismissal inside the command path clears it.
     const RECT anchor = dockWindowPreviewAnchorScreen_;
-    const bool minimized = IsIconic(target) != FALSE;
-    const bool anchorAvailable = !IsRectEmpty(&anchor);
-    if (snowdesktop::dock_window_rules::
-            ShouldAnimateDockPreviewRestore(
-                minimized,
-                dockWindowTransition_ != nullptr,
-                anchorAvailable) &&
-        dockWindowTransition_->StartRestore(
-            target, anchor,
-            [this](HWND restoreTarget) {
-                ActivateDockWindowFromPreview(
-                    restoreTarget);
-            }))
-    {
-        InvalidateDockRects();
+    if (!IsRectEmpty(&anchor) &&
+        ActivateOrToggleDockWindow(
+            window, std::nullopt, nullptr, anchor))
         return;
-    }
     ActivateDockWindowFromPreview(window);
 }
 
