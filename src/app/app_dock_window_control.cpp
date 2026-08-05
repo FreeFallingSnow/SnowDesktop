@@ -215,7 +215,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     MapWindowPoints(hwnd_, nullptr,
         reinterpret_cast<POINT*>(&target.anchorScreen), 2);
     target.targetToken = DockWindowPreviewTargetToken(
-        target.identityKey, target.anchorScreen);
+        target.identityKey);
     return !target.targetToken.empty();
 }
 
@@ -236,6 +236,26 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
         dockWindowPreview_->IsVisible();
     const bool previewMatchesTarget =
         hasTarget && dockWindowPreviewKey_ == target.targetToken;
+    // The target token covers only the app identity. Dock magnification
+    // keeps shifting the icon's visual rect while the preview is open, so a
+    // matching identity with a moved anchor must follow in place instead of
+    // tearing the preview down and re-showing it.
+    if (previewMatchesTarget && previewVisible)
+    {
+        const bool anchorChanged =
+            EqualRect(&dockWindowPreviewAnchorScreen_,
+                &target.anchorScreen) == FALSE;
+        if (snowdesktop::dock_window_rules::
+                ShouldFollowDockPreviewAnchor(
+                    previewVisible, previewMatchesTarget,
+                    anchorChanged))
+        {
+            dockWindowPreview_->UpdateAnchor(
+                target.anchorScreen, dockSettings_.position);
+            dockWindowPreviewAnchorScreen_ =
+                target.anchorScreen;
+        }
+    }
     const DockPreviewHoverTransition transition =
         dockWindowPreviewHover_.UpdateTarget(
             hasTarget ? target.targetToken : std::wstring{},

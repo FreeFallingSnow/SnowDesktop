@@ -666,6 +666,41 @@ bool DesktopApp::ActivateOrToggleDockWindow(
     return true;
 }
 
+void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
+{
+    if (!window || !IsWindow(window))
+        return;
+    if (snowdesktop::dock_window_rules::
+            ShouldSuppressDockWindowCommand(
+                IsDockWindowClosePending(window)))
+        return;
+    HWND target = GetAncestor(window, GA_ROOT);
+    if (!target)
+        target = window;
+
+    // The preview stores the icon anchor at show time and keeps it while
+    // hovering. Read it before any dismissal path clears it.
+    const RECT anchor = dockWindowPreviewAnchorScreen_;
+    const bool minimized = IsIconic(target) != FALSE;
+    const bool anchorAvailable = !IsRectEmpty(&anchor);
+    if (snowdesktop::dock_window_rules::
+            ShouldAnimateDockPreviewRestore(
+                minimized,
+                dockWindowTransition_ != nullptr,
+                anchorAvailable) &&
+        dockWindowTransition_->StartRestore(
+            target, anchor,
+            [this](HWND restoreTarget) {
+                ActivateDockWindowFromPreview(
+                    restoreTarget);
+            }))
+    {
+        InvalidateDockRects();
+        return;
+    }
+    ActivateDockWindowFromPreview(window);
+}
+
 void DesktopApp::ActivateDockWindowFromPreview(HWND window)
 {
     DismissDockWindowPreviewUntilLeave();

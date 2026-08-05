@@ -230,4 +230,34 @@ constexpr bool IsTaskWindowStyleEligible(
         !hasOwner;
 }
 
+/**
+ * @brief 判断从预览缩略图恢复窗口时是否播放图标到窗口的过渡动画。
+ *
+ * 主 Dock 图标点击在窗口最小化时播放 DockWindowTransition 恢复动画，
+ * 预览缩略图点击必须复用同一行为。锚点缺失（例如预览从未成功显示）
+ * 时只能回退到无动画的直接恢复。
+ */
+constexpr bool ShouldAnimateDockPreviewRestore(
+    bool minimized,
+    bool transitionAvailable,
+    bool anchorAvailable) noexcept
+{
+    return minimized && transitionAvailable && anchorAvailable;
+}
+
+/**
+ * @brief 判断可见预览是否应跟随悬停锚点漂移而不重建。
+ *
+ * Dock 放大让图标视觉矩形随指针逐像素变化；预览可见且身份仍匹配时，
+ * 只移动预览窗口即可，重新弹窗会反复重注册缩略图。仅当身份变化或
+ * 预览不可见时才回到重新挂起定时器的路径。
+ */
+constexpr bool ShouldFollowDockPreviewAnchor(
+    bool previewVisible,
+    bool identityMatched,
+    bool anchorChanged) noexcept
+{
+    return previewVisible && identityMatched && anchorChanged;
+}
+
 } // namespace snowdesktop::dock_window_rules

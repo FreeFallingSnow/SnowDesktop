@@ -145,7 +145,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (!dockWindowPreview_->Initialize(
             instance_,
             [this](HWND window) {
-                ActivateDockWindowFromPreview(window);
+                ActivateDockWindowFromPreviewAnimated(window);
             },
             [this](HWND window) {
                 CloseDockWindowFromPreview(window);

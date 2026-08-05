@@ -1910,6 +1910,29 @@ int main()
     Check(!transition.armTimer,
         "pending activation suppression must block immediate reopening");
 
+    // Preview restore must reuse the Dock icon's minimize/restore transition
+    // animation; without a transition or an anchor only plain activation
+    // works.
+    Check(rules::ShouldAnimateDockPreviewRestore(true, true, true),
+        "minimized preview click with transition and anchor must animate restore");
+    Check(!rules::ShouldAnimateDockPreviewRestore(false, true, true),
+        "non-minimized preview click must not animate restore");
+    Check(!rules::ShouldAnimateDockPreviewRestore(true, false, true),
+        "missing transition must fall back to plain restore");
+    Check(!rules::ShouldAnimateDockPreviewRestore(true, true, false),
+        "missing anchor must fall back to plain restore");
+
+    // Dock magnification shifts the icon anchor while the preview is open;
+    // the visible preview must follow in place instead of rebuilding.
+    Check(rules::ShouldFollowDockPreviewAnchor(true, true, true),
+        "visible matching preview must follow an anchor move");
+    Check(!rules::ShouldFollowDockPreviewAnchor(false, true, true),
+        "hidden preview must not follow anchors");
+    Check(!rules::ShouldFollowDockPreviewAnchor(true, false, true),
+        "different identity must not reuse the visible preview");
+    Check(!rules::ShouldFollowDockPreviewAnchor(true, true, false),
+        "stable anchor must not move the preview");
+
     if (failures == 0)
         std::cout << "All Dock and window rule tests passed.\n";
     return failures == 0 ? 0 : 1;

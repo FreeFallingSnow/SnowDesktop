@@ -728,6 +728,7 @@ private:
         std::optional<RECT> pressedAnchorScreen =
             std::nullopt);
     void ActivateDockWindowFromPreview(HWND window);
+    void ActivateDockWindowFromPreviewAnimated(HWND window);
     bool HandleDockClickRelease(POINT point);
     void ToggleWindowsStartMenu();
     DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);

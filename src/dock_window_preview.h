@@ -97,6 +97,7 @@ public:
     void Show(const std::vector<DockWindowPreviewItem>& items,
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
         HWND dockLayerOwner = nullptr);
+    void UpdateAnchor(RECT anchorScreen, DockPosition dockPosition);
     void Hide();
     void ScheduleHide();
     void KeepVisible();

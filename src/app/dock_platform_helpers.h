@@ -562,15 +562,11 @@ inline std::wstring DockWindowPreviewIdentityKey(
 }
 
 inline std::wstring DockWindowPreviewTargetToken(
-    const std::wstring& identityKey, const RECT& anchorScreen)
+    const std::wstring& identityKey)
 {
     if (identityKey.empty())
         return {};
-    return identityKey + L"@" +
-        std::to_wstring(anchorScreen.left) + L"," +
-        std::to_wstring(anchorScreen.top) + L"," +
-        std::to_wstring(anchorScreen.right) + L"," +
-        std::to_wstring(anchorScreen.bottom);
+    return identityKey;
 }
 
 inline UINT QueryDockWindowPreviewHoverTime()
