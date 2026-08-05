@@ -105,6 +105,24 @@ constexpr DockClickAction ResolveDockClickAction(
 }
 
 /**
+ * @brief 将预览缩略图点击转换为窗口级点击动作。
+ *
+ * 与 Dock 图标的应用级判定不同，缩略图点击针对具体窗口：Dock 图标在
+ * 应用任一窗口处于前台时判定为前台（点击即最小化整个应用），而缩略图
+ * 必须只看被点窗口自身。同一应用多窗口场景下，点击非前台窗口的卡片
+ * 应激活该窗口，而不是把整组窗口误判为前台而最小化。
+ */
+constexpr DockClickAction ResolveDockWindowPreviewClickAction(
+    bool minimized, bool windowForeground) noexcept
+{
+    if (minimized)
+        return DockClickAction::Restore;
+    if (windowForeground)
+        return DockClickAction::Minimize;
+    return DockClickAction::Activate;
+}
+
+/**
  * @brief 关闭请求尚未完成时，禁止 Dock 再向同一窗口或应用分发命令。
  *
  * WM_CLOSE 是异步消息；目标窗口在真正销毁前仍会通过 IsWindow 检查。

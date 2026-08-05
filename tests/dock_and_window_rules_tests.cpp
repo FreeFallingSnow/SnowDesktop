@@ -1041,6 +1041,18 @@ int main()
     Check(rules::ResolveDockClickAction(true, true, true) ==
             rules::DockClickAction::Restore,
         "minimized state must take precedence over stale foreground state");
+    Check(rules::ResolveDockWindowPreviewClickAction(false, false) ==
+            rules::DockClickAction::Activate,
+        "a background preview card must activate its own window");
+    Check(rules::ResolveDockWindowPreviewClickAction(false, true) ==
+            rules::DockClickAction::Minimize,
+        "a foreground preview card must minimize the window");
+    Check(rules::ResolveDockWindowPreviewClickAction(true, false) ==
+            rules::DockClickAction::Restore,
+        "a minimized preview card must restore the window");
+    Check(rules::ResolveDockWindowPreviewClickAction(true, true) ==
+            rules::DockClickAction::Restore,
+        "a minimized preview card must win over foreground state");
     constexpr auto lightTextForegroundIndicator =
         rules::ResolveDockRunningIndicatorColor(
             false, true, false);

@@ -679,10 +679,25 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
     // clicking a foreground window minimizes it back into the Dock. The
     // preview keeps the icon anchor fresh while visible; read it before the
     // dismissal inside the command path clears it.
+    //
+    // Unlike a Dock icon, a preview card targets one concrete window, so the
+    // action must be resolved per-window: a background card of a multi-window
+    // app must activate its window instead of being read as app-foreground
+    // and minimized.
+    HWND target = GetAncestor(window, GA_ROOT);
+    if (!target)
+        target = window;
+    const bool windowForeground =
+        GetAncestor(GetForegroundWindow(), GA_ROOT) == target;
+    const auto action =
+        snowdesktop::dock_window_rules::
+            ResolveDockWindowPreviewClickAction(
+                IsIconic(target) != FALSE,
+                windowForeground);
     const RECT anchor = dockWindowPreviewAnchorScreen_;
     if (!IsRectEmpty(&anchor) &&
         ActivateOrToggleDockWindow(
-            window, std::nullopt, nullptr, anchor))
+            window, action, nullptr, anchor))
         return;
     ActivateDockWindowFromPreview(window);
 }
