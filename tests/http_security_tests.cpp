@@ -18,6 +18,20 @@ int main()
 {
     using snowdesktop::http_security::IsAllowedRemoteIpLiteral;
     using snowdesktop::http_security::IsAllowedHttpsUrlForDomains;
+    using snowdesktop::http_security::IsResolutionPinningSupportedVersion;
+
+    Expect(!IsResolutionPinningSupportedVersion(6, 9600),
+        "Windows 8.1 does not support resolution hostname pinning");
+    Expect(!IsResolutionPinningSupportedVersion(10, 14393),
+        "Windows 10 before 1709 does not support resolution hostname pinning");
+    Expect(IsResolutionPinningSupportedVersion(10, 16299),
+        "Windows 10 1709 supports resolution hostname pinning");
+    Expect(IsResolutionPinningSupportedVersion(10, 19045),
+        "Windows 10 22H2 supports resolution hostname pinning");
+    Expect(IsResolutionPinningSupportedVersion(10, 22631),
+        "Windows 11 supports resolution hostname pinning");
+    Expect(IsResolutionPinningSupportedVersion(11, 0),
+        "future Windows versions support resolution hostname pinning");
 
     Expect(IsAllowedRemoteIpLiteral(L"8.8.8.8"),
         "a public IPv4 address is accepted");

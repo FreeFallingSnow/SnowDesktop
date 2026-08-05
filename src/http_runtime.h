@@ -18,6 +18,7 @@ namespace snowdesktop::http_security
 bool IsAllowedRemoteIpLiteral(std::wstring_view address);
 bool IsAllowedHttpsUrlForDomains(const std::wstring& url,
     const std::vector<std::string>& domains);
+bool IsResolutionPinningSupportedVersion(int majorVersion, int buildNumber);
 }
 
 struct HttpRequestOptions

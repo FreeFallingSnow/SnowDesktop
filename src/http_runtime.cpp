@@ -15,6 +15,8 @@ namespace
 {
 constexpr DWORD kMaxResponseBytes = 1024 * 1024;
 
+constexpr DWORD kResolutionPinningMinBuild = 16299; // Windows 10 1709
+
 bool IsBlockedIpv4(const IN_ADDR& address)
 {
     const std::uint32_t value = ntohl(address.S_un.S_addr);
@@ -185,6 +187,28 @@ bool IsIpLiteral(std::wstring_view address)
     IN6_ADDR ipv6{};
     return InetPtonW(AF_INET6, value.c_str(), &ipv6) == 1;
 }
+
+bool WinHttpSupportsResolutionPinning()
+{
+    // RtlGetVersion reports the real OS version regardless of the app
+    // manifest, unlike GetVersionExW which can be shimmed to 6.2. The SDK
+    // headers do not declare it, so resolve it from ntdll at run time.
+    using RtlGetVersionProc = LONG(NTAPI*)(OSVERSIONINFOW*);
+    static RtlGetVersionProc rtlGetVersion = []() -> RtlGetVersionProc
+    {
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        return ntdll ? reinterpret_cast<RtlGetVersionProc>(
+            GetProcAddress(ntdll, "RtlGetVersion")) : nullptr;
+    }();
+    if (!rtlGetVersion) return false;
+    OSVERSIONINFOW version{};
+    version.dwOSVersionInfoSize = sizeof(version);
+    if (rtlGetVersion(&version) != 0) return false;
+    return snowdesktop::http_security::
+        IsResolutionPinningSupportedVersion(
+            static_cast<int>(version.dwMajorVersion),
+            static_cast<int>(version.dwBuildNumber));
+}
 }
 
 bool snowdesktop::http_security::IsAllowedRemoteIpLiteral(
@@ -199,6 +223,14 @@ bool snowdesktop::http_security::IsAllowedRemoteIpLiteral(
     if (InetPtonW(AF_INET6, value.c_str(), &ipv6) == 1)
         return !IsBlockedIpv6(ipv6);
     return false;
+}
+
+bool snowdesktop::http_security::IsResolutionPinningSupportedVersion(
+    int majorVersion, int buildNumber)
+{
+    if (majorVersion > 10) return true;
+    return majorVersion == 10 && buildNumber >=
+        static_cast<int>(kResolutionPinningMinBuild);
 }
 
 AsyncHttpService::~AsyncHttpService()
@@ -444,16 +476,25 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             response.error = "WinHttpOpenRequest failed";
             break;
         }
-        const DWORD pinnedAddressBytes = static_cast<DWORD>(
-            (pinnedAddress.size() + 1) * sizeof(wchar_t));
-        if (!WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
-                pinnedAddress.data(), pinnedAddressBytes))
+        // WINHTTP_OPTION_RESOLUTION_HOSTNAME only exists on Windows 10
+        // version 1709 (build 16299) and later. On older systems the option
+        // is unknown and WinHttpSetOption always fails, which would break
+        // every widget request. Fall back to the unpinned connection there;
+        // the pre-connect DNS check above and the post-connect
+        // WINHTTP_OPTION_CONNECTION_INFO check below still ensure the
+        // request never reaches a private or local address.
+        if (WinHttpSupportsResolutionPinning())
         {
-            response.error =
-                "This Windows version cannot securely pin the resolved host";
-            WinHttpCloseHandle(request);
-            WinHttpCloseHandle(connection);
-            break;
+            const DWORD pinnedAddressBytes = static_cast<DWORD>(
+                (pinnedAddress.size() + 1) * sizeof(wchar_t));
+            if (!WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
+                    pinnedAddress.data(), pinnedAddressBytes))
+            {
+                response.error = "Cannot securely pin the resolved host";
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                break;
+            }
         }
         DWORD disabledFeatures =
             WINHTTP_DISABLE_AUTHENTICATION | WINHTTP_DISABLE_COOKIES;
