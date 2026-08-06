@@ -1579,6 +1579,17 @@ private:
      */
     bool MaterializeFilesToFolder(const DragSourceList& sourceList, const std::wstring& folder,
         DropAction action, FileOperationCompletion completion);
+    /**
+     * @brief 目标文件夹是否为某个源文件夹自身或其子目录（含 .lnk 解析）。
+     *
+     * 与 Explorer 一致：文件夹不能拖入它自身或它内部的子目录，
+     * 否则 Shell 会把文件夹递归复制进自己。
+     * @param sourcePaths 拖拽源路径列表
+     * @param targetFolder 目标文件夹路径
+     * @return 命中自包含时返回 true
+     */
+    bool IsSelfContainedFolderDrop(const std::vector<std::wstring>& sourcePaths,
+        const std::wstring& targetFolder) const;
     /** @brief 将路径操作加入独立 Shell STA 队列。 */
     bool QueueShellFileOperation(
         std::vector<snowdesktop::ShellFileOperationStep> steps,

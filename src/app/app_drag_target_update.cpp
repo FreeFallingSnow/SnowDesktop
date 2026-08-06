@@ -173,6 +173,19 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         if (!PtInRect(&popup, client))
             return false;
 
+        // 文件夹不能拖入自身弹窗：目标即源文件夹本身或其子目录，
+        // 直接整窗标记 Blocked，避免递归复制进自己并清掉 Dock 引用。
+        if (IsSelfContainedFolderDrop(
+                dragSession_.SourceList().FilePaths(),
+                dockFolderPopupWidget_.sourceFolderPath))
+        {
+            targetContainer =
+                dockFolderPopupContainer_.get();
+            targetSlot = nullptr;
+            targetRegion = HitRegion::Blocked;
+            return true;
+        }
+
         const RECT content =
             GetCollectionPopupContentRect(popup);
         targetContainer =

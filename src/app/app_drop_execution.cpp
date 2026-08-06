@@ -1,7 +1,42 @@
 #include "app.h"
 #include "../widgets/collection_group_rules.h"
+#include "../folder_self_drop_rules.h"
+#include "../item_location.h"
 
 // Internal and file-backed drop-plan execution.
+
+bool DesktopApp::IsSelfContainedFolderDrop(
+    const std::vector<std::wstring>& sourcePaths,
+    const std::wstring& targetFolder) const
+{
+    if (sourcePaths.empty() || targetFolder.empty())
+        return false;
+
+    std::vector<std::wstring> candidates;
+    candidates.reserve(sourcePaths.size() * 2);
+    for (const auto& path : sourcePaths)
+    {
+        if (path.empty())
+            continue;
+        candidates.push_back(path);
+        // 仅对 .lnk 源做目标解析（普通目录直接用原路径比较），
+        // 避免每次拖拽悬停都创建 IShellLink COM 对象。
+        const wchar_t* extension =
+            PathFindExtensionW(path.c_str());
+        if (extension &&
+            _wcsicmp(extension, L".lnk") == 0)
+        {
+            const snowdesktop::item_location::FolderTarget resolved =
+                snowdesktop::item_location::
+                    ResolveFolderTarget(path);
+            if (!resolved.path.empty())
+                candidates.push_back(
+                    resolved.path);
+        }
+    }
+    return snowdesktop::folder_self_drop_rules::
+        IsSelfContainedFolderDrop(candidates, targetFolder);
+}
 
 bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     const DropPreviewList& preview,
@@ -620,6 +655,11 @@ bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
 {
     std::vector<std::wstring> paths = sourceList.FilePaths();
     if (paths.empty() || folderPath.empty()) return false;
+    // 文件夹不能拖进它自身或其子目录：SHFileOperation 会成功地把
+    // 文件夹递归复制进自己（如 foo 拖入自身弹窗产生 foo\foo），
+    // 而 Explorer 会直接拒绝。这里统一拦截所有落地入口。
+    if (IsSelfContainedFolderDrop(paths, folderPath))
+        return false;
 
     std::wstring folder = folderPath;
     if (!folder.empty() && folder.back() != L'\\') folder += L'\\';

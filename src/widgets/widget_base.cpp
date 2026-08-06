@@ -513,6 +513,9 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
     const std::vector<Item*>& sourceItems, Container* origin, int mods) const
 {
+    if (region == HitRegion::None ||
+        region == HitRegion::Blocked)
+        return L"";
     DropAction action = DropActionFromMods(mods, sourceItems.empty() ? DropAction::Copy : DropAction::Move);
     if (data_ && data_->type == DesktopWidgetType::FileCategories)
     {

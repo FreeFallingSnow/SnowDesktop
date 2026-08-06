@@ -593,6 +593,14 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             preview.targetWidget->type == DesktopWidgetType::FolderMapping
                 ? DropTargetKind::FolderMapping
                 : DropTargetKind::KeyedWidget;
+        // 文件夹拖入自身（或自身子目录）的映射/弹窗：不生成落点计划，
+        // 执行层也会拦截，避免把文件夹递归复制进自己。
+        if (preview.targetKind == DropTargetKind::FolderMapping &&
+            preview.targetWidget &&
+            IsSelfContainedFolderDrop(
+                sourceList.FilePaths(),
+                preview.targetWidget->sourceFolderPath))
+            return preview;
         const bool sourceFromDock = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
             [](const DragSourceEntry& entry) { return entry.fromDock; });
         if (preview.targetKind == DropTargetKind::FolderMapping && sourceFromDock &&
