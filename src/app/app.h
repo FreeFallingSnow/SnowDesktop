@@ -141,9 +141,9 @@ struct IconLoadTask {
     IconLoadPhase phase = IconLoadPhase::Phase1;
 };
 struct RecycleBinPollState {
-    std::atomic<int64_t> itemCount{ -1 };
+    std::atomic<int64_t> hasItems{ -1 };   ///< -1 未知，0 空，1 非空
     std::atomic<bool> queryInFlight{ false };
-    std::atomic<HWND> targetWindow{ nullptr };
+    std::atomic<DWORD> lastQueryDurationMs{ 0 };
 };
 struct SteamWorkshopSubscriptionPollState {
     std::atomic<bool> queryInFlight{ false };
@@ -1816,6 +1816,14 @@ private:
     static void ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSize);
     /** @brief 注册外壳变更通知，监听文件系统变化。 */
     void RegisterShellChangeNotifications();
+    /** @brief 异步检测回收站空/满状态，状态切换时触发桌面刷新。 */
+    void CheckRecycleBinStatus();
+    /** @brief 启动回收站目录文件系统监听线程。 */
+    void StartRecycleBinWatcher();
+    /** @brief 停止回收站目录文件系统监听线程。 */
+    void StopRecycleBinWatcher();
+    /** @brief 回收站目录监听线程入口。 */
+    static DWORD WINAPI RecycleBinWatcherThreadProc(LPVOID param);
 
     // ── Layout serialization helpers ───────────────────────
     /**
@@ -2609,9 +2617,15 @@ private:
      */
     DWORD ChooseDropEffect(DWORD keyState, DWORD allowed) const;
 
-    /** @brief 回收站项计数（用于轮询检测回收站状态变化） */
+    /** @brief 回收站状态异步查询共享状态（防并发查询） */
     std::shared_ptr<RecycleBinPollState> recycleBinPollState_ =
         std::make_shared<RecycleBinPollState>();
+    /** @brief 回收站轮询当前生效间隔（按查询耗时自适应调整） */
+    UINT recycleBinPollIntervalMs_ = kRecycleBinPollIntervalMs;
+    /** @brief 回收站目录文件系统监听（事件驱动即时刷新，轮询仅作兜底） */
+    HANDLE recycleBinWatcherThread_ = nullptr;
+    HANDLE recycleBinWatcherStopEvent_ = nullptr;
+    std::atomic<bool> recycleBinWatcherActive_{ false };
 
     /** @brief 剪贴板剪切追踪的路径集合 */
     std::unordered_set<std::wstring> cutPaths_;

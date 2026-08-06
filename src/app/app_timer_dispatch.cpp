@@ -114,24 +114,27 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kRecycleBinPollTimerId)
     {
-        const auto pollState = recycleBinPollState_;
-        if (pollState->queryInFlight.exchange(true))
-            return;
-        const HWND target = hwnd_;
-        pollState->targetWindow = target;
-        std::thread([target, pollState] {
-            SHQUERYRBINFO info{};
-            info.cbSize = sizeof(info);
-            const HRESULT result = SHQueryRecycleBinW(nullptr, &info);
-            if (SUCCEEDED(result))
-            {
-                const int64_t previousCount = pollState->itemCount.exchange(info.i64NumItems);
-                if (previousCount >= 0 && previousCount != info.i64NumItems &&
-                    pollState->targetWindow.load() == target)
-                    PostMessageW(target, kShellChangeMessage, 0, 0);
-            }
-            pollState->queryInFlight = false;
-        }).detach();
+        // 兜底轮询。当前轻量检测为毫秒级，间隔保持 2s；
+        // 自适应退避为防御性兜底：若未来检测变慢（如恢复
+        // SHQueryRecycleBinW 全量统计），间隔按耗时自动拉长，
+        // 保证每秒 CPU 占用率不随回收站内容膨胀而增长。
+        const DWORD duration =
+            recycleBinPollState_->lastQueryDurationMs.load();
+        UINT nextInterval = kRecycleBinPollIntervalMs;
+        if (duration >= 30000)
+            nextInterval = kRecycleBinPollHugeIntervalMs;
+        else if (duration >= 5000)
+            nextInterval = kRecycleBinPollVeryLongIntervalMs;
+        else if (duration >= 1000)
+            nextInterval = kRecycleBinPollLongIntervalMs;
+        else if (duration >= 200)
+            nextInterval = kRecycleBinPollMediumIntervalMs;
+        if (nextInterval != recycleBinPollIntervalMs_ &&
+            hwnd_ && IsWindow(hwnd_))
+            SetTimer(hwnd_, kRecycleBinPollTimerId,
+                nextInterval, nullptr);
+        recycleBinPollIntervalMs_ = nextInterval;
+        CheckRecycleBinStatus();
     }
     else if (timerId == kDesktopHostWatchTimerId)
     {

@@ -612,8 +612,22 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         ReloadItems(false);
         return 0;
     case kShellChangeMessage:
+    {
+        // SHCNRF_NewDelivery 模式下 lParam 携带通知句柄，
+        // 必须 Lock/Unlock 消费释放，否则每次事件泄漏句柄。
+        // 本应用不依赖事件 PIDL 细节（debounce 后全量刷新），
+        // 因此只消费不处理。自身 PostMessage(0, 0) 的 lParam 为 0。
+        const HANDLE notify = reinterpret_cast<HANDLE>(lp);
+        if (notify)
+        {
+            LONG eventId = 0;
+            PIDLIST_ABSOLUTE* pidls = nullptr;
+            if (SHChangeNotification_Lock(notify, 1, &pidls, &eventId))
+                SHChangeNotification_Unlock(notify);
+        }
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
         return 0;
+    }
     case kIconLoadedMessage:
         OnIconLoaded(wp, lp);
         return 0;

@@ -127,7 +127,6 @@ void DesktopApp::ResetDesktopWindowResources()
     if (dockWindowTransition_)
         dockWindowTransition_->Cancel();
     nativeGlassPanelReadyLogged_ = false;
-    recycleBinPollState_->targetWindow = nullptr;
     if (hwnd_ && IsWindow(hwnd_))
     {
         UnregisterNavigationHotkey();
@@ -136,6 +135,7 @@ void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kDisplayTopologyRefreshTimerId);
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(hwnd_, kWidgetRefreshTimerId);
+        StopRecycleBinWatcher();
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
         CancelUiAnimationFrame();
@@ -486,12 +486,14 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         AttachWindowToDesktopHost(desktopWindows_.host);
         RegisterOleDropTarget();
         RegisterShellChangeNotifications();
+        StartRecycleBinWatcher();
     }
     else
     {
         ResetDesktopWindowResources();
         if (!CreateDesktopOverlayWindow())
             return;
+        StartRecycleBinWatcher();
     }
     explorerDesktopRecreatePending_ = false;
     GetWindowThreadProcessId(desktopWindows_.host,

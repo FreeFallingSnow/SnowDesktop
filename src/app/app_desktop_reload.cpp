@@ -1,5 +1,108 @@
 #include "app.h"
 
+// SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
+// 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
+static std::wstring FormatSidString(PSID sid)
+{
+    if (!sid) return {};
+    const auto* raw = static_cast<const BYTE*>(sid);
+    const BYTE revision = raw[0];
+    const BYTE count = raw[1];
+    std::wstring text = L"S-";
+    text += std::to_wstring(revision);
+    text += L"-";
+    ULONGLONG authority = 0;
+    for (int i = 0; i < 6; ++i)
+        authority = (authority << 8) | raw[2 + i];
+    text += std::to_wstring(authority);
+    const BYTE* subAuthority = raw + 8;
+    for (BYTE i = 0; i < count; ++i)
+    {
+        const DWORD value =
+            (static_cast<DWORD>(subAuthority[i * 4])) |
+            (static_cast<DWORD>(subAuthority[i * 4 + 1]) << 8) |
+            (static_cast<DWORD>(subAuthority[i * 4 + 2]) << 16) |
+            (static_cast<DWORD>(subAuthority[i * 4 + 3]) << 24);
+        text += L"-";
+        text += std::to_wstring(value);
+    }
+    return text;
+}
+
+// 当前用户 SID 字符串（空表示获取失败）。
+static std::wstring CurrentUserSidString()
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return {};
+    std::wstring sidString;
+    DWORD size = 0;
+    // 第一次调用用于查询所需缓冲区大小，仅接受缓冲区不足错误。
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size == 0)
+    {
+        CloseHandle(token);
+        return {};
+    }
+    std::vector<BYTE> buffer(size);
+    if (GetTokenInformation(token, TokenUser,
+            buffer.data(), size, &size))
+    {
+        const auto* user =
+            reinterpret_cast<TOKEN_USER*>(buffer.data());
+        sidString = FormatSidString(user->User.Sid);
+    }
+    CloseHandle(token);
+    return sidString;
+}
+
+// 当前用户在各固定盘上的回收站目录列表。
+static std::vector<std::wstring> EnumerateRecycleBinDirectories()
+{
+    std::vector<std::wstring> directories;
+    const std::wstring sidString = CurrentUserSidString();
+    if (sidString.empty())
+        return directories;
+    wchar_t root[] = L"A:\\";
+    for (wchar_t drive = L'A'; drive <= L'Z'; ++drive)
+    {
+        root[0] = drive;
+        if (GetDriveTypeW(root) != DRIVE_FIXED)
+            continue;
+        const std::wstring dir =
+            std::wstring(root) + L"$Recycle.Bin\\" + sidString;
+        const DWORD attrs = GetFileAttributesW(dir.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES &&
+            (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0)
+            directories.push_back(dir);
+    }
+    return directories;
+}
+
+/**
+ * @brief 轻量检测回收站是否非空。
+ * @details 仅需空/满两种图标状态，用 FindFirstFile 查找任意 $R 数据文件，
+ *          找到第一个即返回，不遍历全部条目；万级条目时耗时毫秒级，
+ *          远快于必须全量统计的 SHQueryRecycleBinW。
+ *          注意按 $R 而非 $I 判定：清空回收站时 $R 必被删除，
+ *          而 $I 元数据可能作为孤儿残留，不能作为“有内容”信号。
+ */
+static bool RecycleBinContainsItems()
+{
+    for (const auto& dir : EnumerateRecycleBinDirectories())
+    {
+        WIN32_FIND_DATAW findData{};
+        HANDLE find = FindFirstFileW(
+            (dir + L"\\$R*").c_str(), &findData);
+        if (find != INVALID_HANDLE_VALUE)
+        {
+            FindClose(find);
+            return true;
+        }
+    }
+    return false;
+}
+
 // Explorer change tracking, desktop reload and asynchronous icon completion.
 
 void DesktopApp::RegisterShellChangeNotifications()
@@ -31,6 +134,190 @@ void DesktopApp::RegisterShellChangeNotifications()
         SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
         SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES | SHCNE_ASSOCCHANGED,
         kShellChangeMessage, entryCount, entries);
+}
+
+/**
+ * @brief 异步检测回收站空/满状态，状态切换时触发桌面刷新。
+ * @details 检测在后台线程执行；queryInFlight 防止并发查询堆叠，
+ *          并记录单次耗时供轮询间隔自适应调整。
+ */
+void DesktopApp::CheckRecycleBinStatus()
+{
+    const auto pollState = recycleBinPollState_;
+    if (pollState->queryInFlight.exchange(true))
+        return;
+    const HWND target = hwnd_;
+    std::thread([target, pollState] {
+        const DWORD64 started = GetTickCount64();
+        const bool hasItems = RecycleBinContainsItems();
+        pollState->lastQueryDurationMs.store(
+            static_cast<DWORD>(GetTickCount64() - started));
+        const int64_t previous =
+            pollState->hasItems.exchange(hasItems ? 1 : 0);
+        if (previous >= 0 &&
+            previous != (hasItems ? 1 : 0) &&
+            IsWindow(target))
+            PostMessageW(target, kShellChangeMessage, 0, 0);
+        pollState->queryInFlight = false;
+    }).detach();
+}
+
+void DesktopApp::StartRecycleBinWatcher()
+{
+    if (recycleBinWatcherActive_.load())
+        return;
+    StopRecycleBinWatcher();
+    if (!recycleBinWatcherStopEvent_)
+        recycleBinWatcherStopEvent_ =
+            CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!recycleBinWatcherStopEvent_)
+        return;
+    recycleBinWatcherActive_ = true;
+    recycleBinWatcherThread_ = CreateThread(nullptr, 0,
+        &DesktopApp::RecycleBinWatcherThreadProc, this, 0, nullptr);
+    if (!recycleBinWatcherThread_)
+    {
+        CloseHandle(recycleBinWatcherStopEvent_);
+        recycleBinWatcherStopEvent_ = nullptr;
+        recycleBinWatcherActive_ = false;
+    }
+}
+
+void DesktopApp::StopRecycleBinWatcher()
+{
+    if (recycleBinWatcherStopEvent_)
+    {
+        SetEvent(recycleBinWatcherStopEvent_);
+        if (recycleBinWatcherThread_)
+        {
+            // 监听线程收到停止事件后会在一个事件循环内退出；
+            // 超时则放弃等待并跳过 CloseHandle，避免监听线程仍在使用
+            // 已关闭句柄（句柄重用/use-after-free 风险），
+            // 让线程自然退出后由系统回收线程资源。
+            if (WaitForSingleObject(
+                    recycleBinWatcherThread_, 2000) == WAIT_OBJECT_0)
+            {
+                CloseHandle(recycleBinWatcherThread_);
+            }
+            recycleBinWatcherThread_ = nullptr;
+        }
+        CloseHandle(recycleBinWatcherStopEvent_);
+        recycleBinWatcherStopEvent_ = nullptr;
+    }
+    recycleBinWatcherActive_ = false;
+}
+
+DWORD WINAPI DesktopApp::RecycleBinWatcherThreadProc(LPVOID param)
+{
+    auto* self = static_cast<DesktopApp*>(param);
+
+    // 当前用户 SID 下的回收站目录（所有固定盘）。
+    std::vector<std::wstring> directories =
+        EnumerateRecycleBinDirectories();
+    if (directories.empty() ||
+        !self->recycleBinWatcherStopEvent_)
+        return 0; // 无目录可监视，仅靠轮询兜底
+
+    struct WatchEntry
+    {
+        HANDLE dir = nullptr;
+        HANDLE event = nullptr;
+        OVERLAPPED overlapped{};
+        std::vector<BYTE> buffer;
+    };
+    std::vector<WatchEntry> watches;
+    for (const auto& dir : directories)
+    {
+        WatchEntry entry;
+        entry.dir = CreateFileW(dir.c_str(), FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+            nullptr);
+        if (entry.dir == INVALID_HANDLE_VALUE || !entry.dir)
+            continue;
+        entry.event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!entry.event)
+        {
+            CloseHandle(entry.dir);
+            continue;
+        }
+        entry.overlapped.hEvent = entry.event;
+        entry.buffer.resize(64 * 1024);
+        if (!ReadDirectoryChangesW(entry.dir,
+                entry.buffer.data(),
+                static_cast<DWORD>(entry.buffer.size()), TRUE,
+                FILE_NOTIFY_CHANGE_FILE_NAME |
+                    FILE_NOTIFY_CHANGE_DIR_NAME |
+                    FILE_NOTIFY_CHANGE_SIZE |
+                    FILE_NOTIFY_CHANGE_LAST_WRITE,
+                nullptr, &entry.overlapped, nullptr))
+        {
+            CloseHandle(entry.event);
+            CloseHandle(entry.dir);
+            continue;
+        }
+        watches.push_back(std::move(entry));
+    }
+    if (watches.empty())
+        return 0;
+
+    std::vector<HANDLE> waitHandles;
+    waitHandles.reserve(watches.size() + 1);
+    DWORD64 lastTriggerTick = 0;
+    for (;;)
+    {
+        waitHandles.clear();
+        waitHandles.push_back(self->recycleBinWatcherStopEvent_);
+        for (const auto& watch : watches)
+            waitHandles.push_back(watch.event);
+        const DWORD waitResult = WaitForMultipleObjects(
+            static_cast<DWORD>(waitHandles.size()),
+            waitHandles.data(), FALSE, INFINITE);
+        if (waitResult == WAIT_FAILED ||
+            waitResult == WAIT_TIMEOUT)
+            break;
+        const DWORD index = waitResult - WAIT_OBJECT_0;
+        if (index == 0)
+            break; // 停止事件
+        const size_t watchIndex = index - 1;
+        if (watchIndex >= watches.size())
+            break;
+        DWORD bytesReturned = 0;
+        if (GetOverlappedResult(
+                watches[watchIndex].dir,
+                &watches[watchIndex].overlapped,
+                &bytesReturned, FALSE))
+        {
+            // 合并 500ms 内的连续事件，避免批量删除时查询风暴。
+            const DWORD64 now = GetTickCount64();
+            if (now - lastTriggerTick >= 500)
+            {
+                lastTriggerTick = now;
+                self->CheckRecycleBinStatus();
+            }
+        }
+        ResetEvent(watches[watchIndex].event);
+        if (!ReadDirectoryChangesW(
+                watches[watchIndex].dir,
+                watches[watchIndex].buffer.data(),
+                static_cast<DWORD>(
+                    watches[watchIndex].buffer.size()),
+                TRUE,
+                FILE_NOTIFY_CHANGE_FILE_NAME |
+                    FILE_NOTIFY_CHANGE_DIR_NAME |
+                    FILE_NOTIFY_CHANGE_SIZE |
+                    FILE_NOTIFY_CHANGE_LAST_WRITE,
+                nullptr, &watches[watchIndex].overlapped,
+                nullptr))
+            break; // 监听失败：退出，轮询兜底
+    }
+    for (auto& watch : watches)
+    {
+        if (watch.event) CloseHandle(watch.event);
+        if (watch.dir) CloseHandle(watch.dir);
+    }
+    return 0;
 }
 
 // ── 过滤与键值 ───────────────────────────────────────────────

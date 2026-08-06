@@ -195,6 +195,10 @@ constexpr UINT kShellChangeDebounceMs = 500;
 // ── 定时器ID与间隔 ────────────────────────────
 constexpr UINT_PTR kRecycleBinPollTimerId = 3;
 constexpr UINT kRecycleBinPollIntervalMs = 2000;
+constexpr UINT kRecycleBinPollMediumIntervalMs = 15000;
+constexpr UINT kRecycleBinPollLongIntervalMs = 120000;
+constexpr UINT kRecycleBinPollVeryLongIntervalMs = 300000;
+constexpr UINT kRecycleBinPollHugeIntervalMs = 600000;
 constexpr UINT_PTR kDesktopHostWatchTimerId = 4;
 constexpr UINT kDesktopHostWatchIntervalMs = 2000;
 constexpr UINT_PTR kWidgetRefreshTimerId = 5;

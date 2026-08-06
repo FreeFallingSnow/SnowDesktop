@@ -240,6 +240,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
 
     RegisterShellChangeNotifications();
+    StartRecycleBinWatcher();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
     ApplyFloatingDockHotkey();
