@@ -503,17 +503,23 @@ bool DesktopApp::ActivateOrToggleDockItem(
         HWND activationTarget = GetLastActivePopup(target);
         if (!activationTarget || !IsWindow(activationTarget))
             activationTarget = target;
-        if (snowdesktop::dock_window_rules::
-                NeedsDockWindowSwitchFallback(
-                    minimized,
-                    showAccepted != FALSE))
+        // 同步激活调用（SwitchToThisWindow/BringWindowToTop）会等待目标
+        // 进程的窗口线程，目标进程挂起时会在内核无限阻塞整个 UI 线程。
+        // 挂起场景下只保留异步 ShowWindowAsync 与非阻塞 SetForegroundWindow。
+        if (!ShouldSkipSynchronousWindowActivation(target))
         {
-            SwitchToThisWindow(target, TRUE);
-            if (activationTarget != target)
-                SwitchToThisWindow(
-                    activationTarget, TRUE);
+            if (snowdesktop::dock_window_rules::
+                    NeedsDockWindowSwitchFallback(
+                        minimized,
+                        showAccepted != FALSE))
+            {
+                SwitchToThisWindow(target, TRUE);
+                if (activationTarget != target)
+                    SwitchToThisWindow(
+                        activationTarget, TRUE);
+            }
+            BringWindowToTop(activationTarget);
         }
-        BringWindowToTop(activationTarget);
         SetForegroundWindow(activationTarget);
         found->second.minimized = false;
         found->second.foreground = true;
@@ -639,17 +645,23 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         HWND activationTarget = GetLastActivePopup(target);
         if (!activationTarget || !IsWindow(activationTarget))
             activationTarget = target;
-        if (snowdesktop::dock_window_rules::
-                NeedsDockWindowSwitchFallback(
-                    minimized,
-                    showAccepted != FALSE))
+        // 同步激活调用会等待目标进程的窗口线程，目标进程挂起时无限阻塞
+        // UI 线程；挂起场景下只保留异步 ShowWindowAsync 与非阻塞
+        // SetForegroundWindow。
+        if (!ShouldSkipSynchronousWindowActivation(target))
         {
-            SwitchToThisWindow(target, TRUE);
-            if (activationTarget != target)
-                SwitchToThisWindow(
-                    activationTarget, TRUE);
+            if (snowdesktop::dock_window_rules::
+                    NeedsDockWindowSwitchFallback(
+                        minimized,
+                        showAccepted != FALSE))
+            {
+                SwitchToThisWindow(target, TRUE);
+                if (activationTarget != target)
+                    SwitchToThisWindow(
+                        activationTarget, TRUE);
+            }
+            BringWindowToTop(activationTarget);
         }
-        BringWindowToTop(activationTarget);
         SetForegroundWindow(activationTarget);
         nowForeground = true;
     }
@@ -738,24 +750,36 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
     HWND activationTarget = GetLastActivePopup(target);
     if (!activationTarget || !IsWindow(activationTarget))
         activationTarget = target;
-    if (snowdesktop::dock_window_rules::
-            NeedsDockWindowSwitchFallback(
-                minimized,
-                showAccepted != FALSE))
+    // 同步激活调用会等待目标进程的窗口线程，目标进程挂起时无限阻塞 UI
+    // 线程（已通过调用栈确认卡在 NtUserSetWindowPos）；挂起场景下只保留
+    // 异步 ShowWindowAsync 与非阻塞 SetForegroundWindow。
+    const bool activationSafe =
+        !ShouldSkipSynchronousWindowActivation(target);
+    if (activationSafe)
     {
-        SwitchToThisWindow(target, TRUE);
-        if (activationTarget != target)
-            SwitchToThisWindow(activationTarget, TRUE);
+        if (snowdesktop::dock_window_rules::
+                NeedsDockWindowSwitchFallback(
+                    minimized,
+                    showAccepted != FALSE))
+        {
+            SwitchToThisWindow(target, TRUE);
+            if (activationTarget != target)
+                SwitchToThisWindow(activationTarget, TRUE);
+        }
     }
     if (floatingDockVisible_)
         CloseFloatingDock();
-    BringWindowToTop(activationTarget);
+    if (activationSafe)
+        BringWindowToTop(activationTarget);
     SetForegroundWindow(activationTarget);
 
-    // ShowWindowAsync has not necessarily updated IsIconic yet. Update the
-    // known target optimistically instead of doing a synchronous EnumWindows
-    // scan that can both block the animation handoff and write the old state
-    // straight back into the cache.
+    // ShowWindowAsync 是异步投递，不能立即反映到 IsIconic。对恢复命令做
+    // 有界验证：窗口在短时间内真正退出最小化才算恢复成功；目标进程挂起
+    // （例如求解器无法处理 SW_RESTORE）时窗口会一直保持最小化，此时必须
+    // 保持 dock 状态为最小化，避免把失败误报为已恢复导致指示器与点击动作
+    // 失真。
+    const bool restored =
+        !minimized || WaitForDockWindowRestoreCompletion(target);
     for (auto& [key, state] : dockRunningWindows_)
     {
         (void)key;
@@ -770,7 +794,7 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
         {
             state.window = target;
             state.running = true;
-            state.minimized = false;
+            state.minimized = !restored;
         }
     }
     for (DockRunningAppInfo& app :
@@ -786,7 +810,7 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
         if (matchesTarget)
         {
             app.window = target;
-            app.minimized = false;
+            app.minimized = !restored;
         }
     }
     InvalidateDockRects();

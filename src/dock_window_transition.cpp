@@ -377,7 +377,11 @@ bool DockWindowTransition::Start(
     }
     else
     {
-        if (!ResolveRestoreWindowRect(sourceWindow_, windowRect))
+        // 失败检查：恢复动画只应在窗口确实处于最小化时播放。最小化命令
+        // 可能被无响应进程丢弃（窗口从未进入 IsIconic），此时播放动画只会
+        // 在幻影位置等待一个永远不会发生的恢复，看起来像动画卡死。
+        if (!ResolveRestoreWindowRect(sourceWindow_, windowRect) ||
+            !IsIconic(sourceWindow_))
         {
             Cancel();
             return false;
@@ -1329,6 +1333,10 @@ bool DockWindowTransition::OnAnimationFrame(
     const double now = nowMilliseconds;
     if (awaitingRestoreVisibility_)
     {
+        // 失败检查：恢复回调已执行，但窗口必须在清理超时内真正退出最小化。
+        // 目标进程挂起（例如求解器无法处理 SW_RESTORE）时 IsIconic 会一直
+        // 保持为真，此时必须中止动画而不是无限等待，否则过渡层会永久停留
+        // 在窗口位置，表现为 Dock 卡死。
         if (!IsIconic(sourceWindow_) ||
             now >= restoreCleanupDeadlineMs_)
         {

@@ -519,6 +519,50 @@ inline bool RequestDockWindowMinimize(HWND window)
 }
 
 /**
+ * @brief 有界等待窗口真正退出最小化状态。
+ *
+ * ShowWindowAsync 只完成异步投递，IsIconic 必须由目标进程处理恢复命令后
+ * 才会清除。无响应进程（例如挂起的求解器）永远无法处理 SW_RESTORE，窗口
+ * 会一直保持最小化；此函数在有限时间内轮询验证恢复是否真的发生，超时视为
+ * 失败。用于避免把失败的最小化恢复误报为成功。
+ */
+inline bool WaitForDockWindowRestoreCompletion(
+    HWND window, ULONGLONG timeoutMilliseconds = 120)
+{
+    if (!window || !IsWindow(window))
+        return false;
+    const ULONGLONG start = GetTickCount64();
+    for (;;)
+    {
+        if (!IsWindow(window))
+            return false;
+        if (!IsIconic(window))
+            return true;
+        if (GetTickCount64() - start >= timeoutMilliseconds)
+            return false;
+        Sleep(8);
+    }
+}
+
+/**
+ * @brief 判断对目标窗口执行同步激活是否安全。
+ *
+ * BringWindowToTop / SwitchToThisWindow 通过 SetWindowPos 同步等待目标
+ * 进程的窗口线程处理；目标进程挂起（例如求解器无法泵消息）时该调用会在
+ * 内核 NtUserSetWindowPos 上无限阻塞 UI 线程，导致整个软件卡死。此时只能
+ * 依赖异步的 ShowWindowAsync 与不等待目标线程的 SetForegroundWindow。
+ */
+inline bool ShouldSkipSynchronousWindowActivation(HWND window)
+{
+    if (!window || !IsWindow(window))
+        return true;
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root)
+        root = window;
+    return IsHungAppWindow(root) != FALSE;
+}
+
+/**
  * @brief 请求窗口正常关闭，保留应用自己的保存确认与退出处理。
  */
 inline bool RequestDockWindowClose(HWND window)
