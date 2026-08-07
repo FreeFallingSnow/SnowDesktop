@@ -136,13 +136,36 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             desktopPoint.x -= virtualLeft_;
             desktopPoint.y -= virtualTop_;
         }
+        // The thumbnail preview panel belongs to the Dock's interactive
+        // surface. A press there (card click or close button) must not be
+        // read as an outside click that tears the host down mid-click; the
+        // preview's own button-up handler owns that click.
+        RECT previewDesktopRect{};
+        if (dockWindowPreview_ &&
+            dockWindowPreview_->IsVisible() &&
+            hwnd_ && IsWindow(hwnd_))
+        {
+            RECT previewScreenRect{};
+            if (GetWindowRect(
+                    dockWindowPreview_->GetWindow(),
+                    &previewScreenRect))
+            {
+                MapWindowPoints(
+                    nullptr, hwnd_,
+                    reinterpret_cast<POINT*>(
+                        &previewScreenRect),
+                    2);
+                previewDesktopRect = previewScreenRect;
+            }
+        }
         if (snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
                     dragSession_.IsActive() ||
                         dragDropController_.IsExternalDragActive(),
                     desktopPoint,
                     floatingDockRect_,
-                    floatingDockPopupRect_))
+                    floatingDockPopupRect_,
+                    previewDesktopRect))
         {
             CloseFloatingDock();
             floatingDockEdgeSwipeDetector_.Reset();

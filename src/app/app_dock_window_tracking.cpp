@@ -694,7 +694,14 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
             ResolveDockWindowPreviewClickAction(
                 IsIconic(target) != FALSE,
                 windowForeground);
+    // Mirror the Dock-icon command path: the floating layer must leave the
+    // composition scene before any window command so activation snapshots
+    // and restore animations capture the desktop Dock copy instead of the
+    // floating overlay. Closing the host also dismisses the preview and
+    // clears the stored anchor, so the anchor snapshot must be read first.
     const RECT anchor = dockWindowPreviewAnchorScreen_;
+    if (floatingDockVisible_)
+        CloseFloatingDock(true, true);
     if (!IsRectEmpty(&anchor) &&
         ActivateOrToggleDockWindow(
             window, action, nullptr, anchor))

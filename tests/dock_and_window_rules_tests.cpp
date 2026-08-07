@@ -800,21 +800,36 @@ int main()
     Check(mappedFloatingPoint.x == 112 &&
             mappedFloatingPoint.y == 534,
         "floating-window input must map back to desktop coordinates");
+    const RECT previewPanelRect{ 260, 620, 540, 860 };
     Check(!floatingDock::ShouldDismissForPointerDown(
             false, POINT{ 150, 930 },
-            floatingDockRect, floatingPopupRect),
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
         "a click in the Dock must keep the floating host open");
     Check(!floatingDock::ShouldDismissForPointerDown(
             false, POINT{ 300, 600 },
-            floatingDockRect, floatingPopupRect),
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
         "a click in the collection popup must keep the host open");
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            false, POINT{ 300, 700 },
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
+        "a press on the thumbnail preview panel must keep the floating host open");
     Check(floatingDock::ShouldDismissForPointerDown(
             false, POINT{ 20, 20 },
-            floatingDockRect, floatingPopupRect),
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
         "an external click must dismiss the floating host");
+    Check(floatingDock::ShouldDismissForPointerDown(
+            false, POINT{ 300, 400 },
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
+        "a press between the preview panel and the Dock must still dismiss");
     Check(!floatingDock::ShouldDismissForPointerDown(
             true, POINT{ 20, 20 },
-            floatingDockRect, floatingPopupRect),
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
         "active drags must suspend floating-host auto dismissal");
     Check(floatingDock::HasNewPointerButtonPress(
             1, 0, 0),

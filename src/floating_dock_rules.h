@@ -401,13 +401,20 @@ inline bool ShouldDismissForPointerDown(
     bool dragging,
     POINT desktopPoint,
     const RECT& dockRect,
-    const RECT& popupRect)
+    const RECT& popupRect,
+    const RECT& previewRect)
 {
     if (dragging)
         return false;
-    return !PtInRect(&dockRect, desktopPoint) &&
-        (IsRectEmpty(&popupRect) ||
-            !PtInRect(&popupRect, desktopPoint));
+    // The thumbnail preview panel is part of the Dock's interactive surface:
+    // a press there (card click or close button) must reach the preview's own
+    // button-up handler instead of tearing the floating host down mid-click.
+    if (PtInRect(&dockRect, desktopPoint) ||
+        (!IsRectEmpty(&previewRect) &&
+            PtInRect(&previewRect, desktopPoint)))
+        return false;
+    return IsRectEmpty(&popupRect) ||
+        !PtInRect(&popupRect, desktopPoint);
 }
 
 inline bool IsPointInVisibleLayer(
