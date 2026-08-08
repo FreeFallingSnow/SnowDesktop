@@ -1,0 +1,37 @@
+// SPDX-FileCopyrightText: 2026 SnowDesktop contributors
+// SPDX-License-Identifier: MIT
+
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @SNOWDESKTOP_VERSION_MAJOR@,@SNOWDESKTOP_VERSION_MINOR@,@SNOWDESKTOP_VERSION_PATCH@,@SNOWDESKTOP_VERSION_REVISION@
+ PRODUCTVERSION @SNOWDESKTOP_VERSION_MAJOR@,@SNOWDESKTOP_VERSION_MINOR@,@SNOWDESKTOP_VERSION_PATCH@,@SNOWDESKTOP_VERSION_REVISION@
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "FreeFallingSnow\0"
+            VALUE "FileDescription", "SnowDesktop Steam bridge\0"
+            VALUE "FileVersion", "@SNOWDESKTOP_VERSION@\0"
+            VALUE "InternalName", "SnowDesktopSteamBridge.exe\0"
+            VALUE "LegalCopyright", "Copyright (c) 2026 SnowDesktop contributors\0"
+            VALUE "OriginalFilename", "SnowDesktopSteamBridge.exe\0"
+            VALUE "ProductName", "SnowDesktop Steam Bridge\0"
+            VALUE "ProductVersion", "@SNOWDESKTOP_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

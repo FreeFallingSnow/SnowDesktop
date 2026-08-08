@@ -9,11 +9,26 @@ TestResults/
 build/
 .build_debug/
 release/
-docs/
+/docs/html/
 SnowDesktop_crash.log
+SnowDesktop.log
+SnowDesktop.log.1
 .claude/
+.codex-probes/
 imgui.ini
 out/
 .tmp/
 artifacts/
 /luac.obj
+
+# Steamworks partner-only materials must stay outside the repository. The
+# bridge may link an external SDK and copy Valve's redistributable DLL only to
+# ignored build/release staging directories.
+/sdk/
+/steamworks_sdk*/
+/steam_bridge/sdk/
+steam_api.h
+steam_api64.lib
+steam_api64.dll
+steam_appid.txt
+CMakeUserPresets.json

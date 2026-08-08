@@ -5,6 +5,7 @@ param(
         "menu",
         "status",
         "package",
+        "package-steam",
         "sync-release",
         "prepare",
         "squash",
@@ -16,7 +17,9 @@ param(
     [string]$Message = "",
     [string]$ConfirmVersion = "",
     [string]$CertificatePath = "",
-    [string]$CertificatePassword = "",
+    [string]$CertificateThumbprint = "",
+    [ValidateSet("CurrentUser", "LocalMachine")]
+    [string]$CertificateStoreLocation = "CurrentUser",
     [switch]$Development,
     [switch]$Json,
     [switch]$Yes
@@ -31,7 +34,8 @@ $repositoryRoot = [System.IO.Path]::GetFullPath(
 $releaseRepository = Join-Path $repositoryRoot "release"
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
 $packageScript = Join-Path $scriptDirectory "package_release.ps1"
-$buildScript = Join-Path $repositoryRoot "build.bat"
+$steamPackageScript = Join-Path $scriptDirectory "package_steam.ps1"
+$buildScript = Join-Path $scriptDirectory "build.bat"
 $squashScript = Join-Path $scriptDirectory "squash_release_to_main.bat"
 $sourceRemote = "https://github.com/FreeFallingSnow/SnowDesktop.git"
 $binaryRemote =
@@ -365,12 +369,6 @@ function Invoke-Package {
     param([switch]$AskBeforeBuild)
 
     $context = Get-ReleaseContext
-    if ($AskBeforeBuild -and -not (Confirm-Interactive `
-        "构建会关闭 SnowDesktop 并短暂重启 Explorer，继续吗？")) {
-        Write-Host "已取消构建。"
-        return $false
-    }
-
     New-Item -ItemType Directory `
         -Path $context.VersionDirectory -Force | Out-Null
     $logsDirectory = Get-LogsDirectory -Context $context
@@ -379,19 +377,12 @@ function Invoke-Package {
     $packageLog = Join-Path $logsDirectory "package-$timestamp.log"
 
     Write-Host ""
-    Write-Host "[1/2] 使用 build.bat 构建 Release" -ForegroundColor Cyan
-    $previousNonInteractive = $env:SNOWDESKTOP_NONINTERACTIVE
-    try {
-        $env:SNOWDESKTOP_NONINTERACTIVE = "1"
-        $buildExitCode = Invoke-BatchWithLiveLog `
-            -BatchPath $buildScript `
-            -LogPath $buildLog
-    }
-    finally {
-        $env:SNOWDESKTOP_NONINTERACTIVE = $previousNonInteractive
-    }
+    Write-Host "[1/2] 使用 scripts/build.bat 构建 Release" -ForegroundColor Cyan
+    $buildExitCode = Invoke-BatchWithLiveLog `
+        -BatchPath $buildScript `
+        -LogPath $buildLog
     if ($buildExitCode -ne 0) {
-        throw "build.bat failed with exit code $buildExitCode. See $buildLog"
+        throw "scripts/build.bat failed with exit code $buildExitCode. See $buildLog"
     }
     $releaseExecutable = Join-Path `
         $repositoryRoot ".build\Release\SnowDesktop.exe"
@@ -416,8 +407,10 @@ function Invoke-Package {
     if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
         $packageArguments += @("-CertificatePath", $CertificatePath)
     }
-    if (-not [string]::IsNullOrEmpty($CertificatePassword)) {
-        $packageArguments += @("-CertificatePassword", $CertificatePassword)
+    if (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+        $packageArguments += @(
+            "-CertificateThumbprint", $CertificateThumbprint,
+            "-CertificateStoreLocation", $CertificateStoreLocation)
     }
     & $powershell @packageArguments 2>&1 |
         Tee-Object -FilePath $packageLog
@@ -919,6 +912,9 @@ function Invoke-CommandAction {
         "package" {
             [void](Invoke-Package -AskBeforeBuild:$isMenu)
         }
+        "package-steam" {
+            & $steamPackageScript
+        }
         "sync-release" {
             [void](Sync-ReleaseRepository)
         }
@@ -948,6 +944,7 @@ function Start-ReleaseMenu {
         [void](Show-Dashboard -Clear)
         Write-Host ""
         Write-Host "[1] 构建并生成全部发行包"
+        Write-Host "[S] 构建并生成 Steam 专属包"
         Write-Host "[2] 同步二进制 Release 仓库（不提交）"
         Write-Host "[3] 发布准备（构建打包 + 同步 Release 仓库）"
         Write-Host "[4] 压缩合并版本分支到本地 main，并创建标签"
@@ -964,6 +961,7 @@ function Start-ReleaseMenu {
         try {
             switch ($selection) {
                 "1" { Invoke-CommandAction -Name "package" }
+                "S" { Invoke-CommandAction -Name "package-steam" }
                 "2" { Invoke-CommandAction -Name "sync-release" }
                 "3" { Invoke-CommandAction -Name "prepare" }
                 "4" { Invoke-CommandAction -Name "squash" }

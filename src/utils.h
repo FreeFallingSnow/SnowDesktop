@@ -56,6 +56,12 @@ HICON LoadAppIcon();
 HANDLE LoadFontAwesome();
 
 /**
+ * @brief 加载内嵌的 Fluent System Icons Regular 字体资源
+ * @return 成功返回字体资源句柄，失败返回 nullptr
+ */
+HANDLE LoadFluentSystemIconsRegular();
+
+/**
  * @brief 创建 Font Awesome 文本格式对象
  * @details 创建 DirectWrite 文本格式对象，配置 Font Awesome 字体族和字号，
  *          用于在 Direct2D 中渲染图标字符。
@@ -64,6 +70,12 @@ HANDLE LoadFontAwesome();
  * @return 成功返回 IDWriteTextFormat 指针，失败返回 nullptr
  */
 IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize = 14.0f);
+
+/**
+ * @brief 使用内嵌 Fluent Regular 字体集合创建 DirectWrite 文本格式。
+ */
+IDWriteTextFormat* CreateFluentTextFormat(
+    IDWriteFactory* factory, float fontSize = 14.0f);
 
 /**
  * @brief 查找桌面相关窗口
@@ -349,4 +361,13 @@ std::string JsonEscapeUtf8(const std::wstring& value);
  */
 bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value, size_t& end);
 
-void WriteCrashLogEntry(const wchar_t* message);
+enum class DiagnosticLogLevel
+{
+    Debug,
+    Info,
+    Warning,
+    Error,
+};
+
+void WriteDiagnosticLogEntry(const wchar_t* message,
+    DiagnosticLogLevel level = DiagnosticLogLevel::Info);

@@ -15,6 +15,8 @@ namespace
 {
 constexpr DWORD kMaxResponseBytes = 1024 * 1024;
 
+constexpr DWORD kResolutionPinningMinBuild = 16299; // Windows 10 1709
+
 bool IsBlockedIpv4(const IN_ADDR& address)
 {
     const std::uint32_t value = ntohl(address.S_un.S_addr);
@@ -161,6 +163,52 @@ std::wstring Lower(std::wstring value)
     std::transform(value.begin(), value.end(), value.begin(), towlower);
     return value;
 }
+
+std::wstring NormalizeHostname(std::wstring value)
+{
+    value = Lower(std::move(value));
+    if (value.size() >= 2 &&
+        value.front() == L'[' && value.back() == L']')
+    {
+        value = value.substr(1, value.size() - 2);
+    }
+    while (!value.empty() && value.back() == L'.')
+        value.pop_back();
+    return value;
+}
+
+bool IsIpLiteral(std::wstring_view address)
+{
+    if (!EnsureWinsock()) return false;
+    const std::wstring value(address);
+    IN_ADDR ipv4{};
+    if (InetPtonW(AF_INET, value.c_str(), &ipv4) == 1)
+        return true;
+    IN6_ADDR ipv6{};
+    return InetPtonW(AF_INET6, value.c_str(), &ipv6) == 1;
+}
+
+bool WinHttpSupportsResolutionPinning()
+{
+    // RtlGetVersion reports the real OS version regardless of the app
+    // manifest, unlike GetVersionExW which can be shimmed to 6.2. The SDK
+    // headers do not declare it, so resolve it from ntdll at run time.
+    using RtlGetVersionProc = LONG(NTAPI*)(OSVERSIONINFOW*);
+    static RtlGetVersionProc rtlGetVersion = []() -> RtlGetVersionProc
+    {
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        return ntdll ? reinterpret_cast<RtlGetVersionProc>(
+            GetProcAddress(ntdll, "RtlGetVersion")) : nullptr;
+    }();
+    if (!rtlGetVersion) return false;
+    OSVERSIONINFOW version{};
+    version.dwOSVersionInfoSize = sizeof(version);
+    if (rtlGetVersion(&version) != 0) return false;
+    return snowdesktop::http_security::
+        IsResolutionPinningSupportedVersion(
+            static_cast<int>(version.dwMajorVersion),
+            static_cast<int>(version.dwBuildNumber));
+}
 }
 
 bool snowdesktop::http_security::IsAllowedRemoteIpLiteral(
@@ -177,12 +225,21 @@ bool snowdesktop::http_security::IsAllowedRemoteIpLiteral(
     return false;
 }
 
+bool snowdesktop::http_security::IsResolutionPinningSupportedVersion(
+    int majorVersion, int buildNumber)
+{
+    if (majorVersion > 10) return true;
+    return majorVersion == 10 && buildNumber >=
+        static_cast<int>(kResolutionPinningMinBuild);
+}
+
 AsyncHttpService::~AsyncHttpService()
 {
     Stop();
 }
 
-bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
+bool snowdesktop::http_security::IsAllowedHttpsUrlForDomains(
+    const std::wstring& url,
     const std::vector<std::string>& domains)
 {
     URL_COMPONENTS components{ sizeof(components) };
@@ -192,7 +249,9 @@ bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components)) return false;
     if (components.nScheme != INTERNET_SCHEME_HTTPS)
         return false;
-    std::wstring actual = Lower(std::wstring(host, components.dwHostNameLength));
+    std::wstring actual = NormalizeHostname(
+        std::wstring(host, components.dwHostNameLength));
+    if (actual.empty()) return false;
     if (actual == L"localhost" || actual == L"::1" ||
         actual.ends_with(L".localhost") || actual.ends_with(L".local") ||
         actual.starts_with(L"127.") || actual.starts_with(L"10.") ||
@@ -209,10 +268,25 @@ bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
             if (secondOctet >= 16 && secondOctet <= 31) return false;
         }
     }
+    if (IsIpLiteral(actual) &&
+        !IsAllowedRemoteIpLiteral(actual))
+        return false;
     for (const auto& raw : domains)
     {
+        if (raw.empty() || std::any_of(
+                raw.begin(), raw.end(),
+                [](unsigned char ch) {
+                    return ch > 0x7f;
+                }))
+            continue;
         std::wstring allowed(raw.begin(), raw.end());
-        allowed = Lower(allowed);
+        allowed = NormalizeHostname(std::move(allowed));
+        if (allowed.empty() ||
+            allowed.find_first_of(L"/*?@#[]") !=
+                std::wstring::npos ||
+            (allowed.find(L':') != std::wstring::npos &&
+                !IsIpLiteral(allowed)))
+            continue;
         if (allowed == actual) return true;
     }
     return false;
@@ -220,7 +294,10 @@ bool AsyncHttpService::IsDomainAllowed(const std::wstring& url,
 
 int AsyncHttpService::Submit(HttpRequestOptions options)
 {
-    if (!IsDomainAllowed(options.url, options.allowedDomains)) return 0;
+    if (!snowdesktop::http_security::
+            IsAllowedHttpsUrlForDomains(
+                options.url, options.allowedDomains))
+        return 0;
     std::scoped_lock lock(mutex_);
     int activeForWidget = 0;
     for (const auto& [id, request] : requests_)
@@ -349,7 +426,9 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     std::wstring currentUrl = options.url;
     for (int redirectCount = 0; redirectCount <= 3 && !token.stop_requested(); ++redirectCount)
     {
-        if (!IsDomainAllowed(currentUrl, options.allowedDomains))
+        if (!snowdesktop::http_security::
+                IsAllowedHttpsUrlForDomains(
+                    currentUrl, options.allowedDomains))
         {
             response.error = "Redirect domain is not allowed";
             break;
@@ -397,16 +476,25 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             response.error = "WinHttpOpenRequest failed";
             break;
         }
-        const DWORD pinnedAddressBytes = static_cast<DWORD>(
-            (pinnedAddress.size() + 1) * sizeof(wchar_t));
-        if (!WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
-                pinnedAddress.data(), pinnedAddressBytes))
+        // WINHTTP_OPTION_RESOLUTION_HOSTNAME only exists on Windows 10
+        // version 1709 (build 16299) and later. On older systems the option
+        // is unknown and WinHttpSetOption always fails, which would break
+        // every widget request. Fall back to the unpinned connection there;
+        // the pre-connect DNS check above and the post-connect
+        // WINHTTP_OPTION_CONNECTION_INFO check below still ensure the
+        // request never reaches a private or local address.
+        if (WinHttpSupportsResolutionPinning())
         {
-            response.error =
-                "This Windows version cannot securely pin the resolved host";
-            WinHttpCloseHandle(request);
-            WinHttpCloseHandle(connection);
-            break;
+            const DWORD pinnedAddressBytes = static_cast<DWORD>(
+                (pinnedAddress.size() + 1) * sizeof(wchar_t));
+            if (!WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
+                    pinnedAddress.data(), pinnedAddressBytes))
+            {
+                response.error = "Cannot securely pin the resolved host";
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                break;
+            }
         }
         DWORD disabledFeatures =
             WINHTTP_DISABLE_AUTHENTICATION | WINHTTP_DISABLE_COOKIES;

@@ -39,6 +39,8 @@ constexpr int kTextHeight = kTextCollapsedHeight;
 constexpr float kGapPercentX = 0.16f;
 constexpr float kGapPercentY = 0.14f;
 constexpr wchar_t kDockPageId[] = L"__snowdesktop_dock__";
+constexpr wchar_t kDockFolderPopupWidgetId[] =
+    L"__dock_folder_popup__";
 constexpr int kDockSpacing = 12;
 constexpr int kDockSeparatorGap = 16;
 
@@ -53,8 +55,7 @@ constexpr UINT_PTR kTrayIconId = 1;
 // ── 托盘右键菜单命令 ──────────────────────────
 constexpr UINT kTrayReloadCommand = 40001;
 constexpr UINT kTraySortByNameCommand = 40002;
-constexpr UINT kTraySwitchNativeCommand = 40003;
-constexpr UINT kTraySwitchCustomCommand = 40004;
+constexpr UINT kTrayToggleDesktopMode = 40003;
 constexpr UINT kTrayExitCommand = 40005;
 constexpr UINT kTraySortByTypeCommand = 40006;
 constexpr UINT kTraySettingsCommand = 40012;
@@ -105,6 +106,15 @@ constexpr UINT kContextWidgetToggleAutoCollect = 41024;
 constexpr UINT kContextWidgetToggleListMode = 41025;
 constexpr UINT kContextAddFolderMappingWidget = 41026;
 constexpr UINT kContextAddLuaWidgetFirst = 41450;
+constexpr UINT kContextAddLuaWidgetSearch = 41490;
+constexpr UINT kContextAddLuaWidgetFilterAll = 41491;
+constexpr UINT kContextAddLuaWidgetFilterBuiltin = 41492;
+constexpr UINT kContextAddLuaWidgetFilterInstalled = 41493;
+constexpr UINT kContextAddLuaWidgetFilterDevelopment = 41494;
+constexpr UINT kContextAddLuaWidgetEmpty = 41496;
+constexpr UINT kContextAddLuaWidgetPageStatus = 41497;
+constexpr UINT kContextAddLuaWidgetPreviousPage = 41498;
+constexpr UINT kContextAddLuaWidgetNextPage = 41499;
 constexpr UINT kContextLuaWidgetMenuFirst = 41600;
 constexpr UINT kContextLuaWidgetMenuLast = 41799;
 constexpr UINT kContextWidgetOpenFolder = 41027;
@@ -128,8 +138,7 @@ constexpr UINT kContextWidgetToggleFileCategories = 41045;
 constexpr UINT kContextWidgetToggleSearchBox = 41046;
 constexpr UINT kContextWidgetToggleDateGroup = 41042;
 constexpr UINT kContextWidgetShowOnHoverOff = 41041;
-constexpr UINT kContextWidgetCollModeLargeFolder = 41039;
-constexpr UINT kContextWidgetCollModeScrollContainer = 41040;
+constexpr UINT kContextWidgetToggleCollectionMode = 41039;
 constexpr UINT kContextSpacingPresetFirst = 41150;
 constexpr UINT kContextNewMenu = 41400;
 constexpr UINT kContextSettingsCommand = 41401;
@@ -141,6 +150,12 @@ constexpr UINT kContextFontSizeLarge = 41406;
 constexpr UINT kContextFontWeightBold = 41427;
 constexpr UINT kContextFontWeightMedium = 41428;
 constexpr UINT kContextFontWeightFine = 41429;
+constexpr UINT kContextPreviewCollectionWidget = 41430;
+constexpr UINT kContextPreviewFileCategoryWidget = 41431;
+constexpr UINT kContextPreviewFolderMappingWidget = 41432;
+constexpr UINT kContextPreviewCollectionGroupWidget = 41433;
+constexpr UINT kContextPreviewFileGroupWidget = 41434;
+constexpr UINT kContextPreviewLuaWidgetFirst = 41440;
 constexpr UINT kContextPagePrev = 41407;
 constexpr UINT kContextPageNext = 41408;
 constexpr UINT kContextPageAdd = 41409;
@@ -150,6 +165,7 @@ constexpr UINT kContextGridRecommended169First = 41414;
 constexpr UINT kContextGridRecommended169Last = 41418;
 constexpr UINT kContextGridRecommended1610First = 41419;
 constexpr UINT kContextGridRecommended1610Last = 41423;
+constexpr UINT kContextDisplayAppearanceMore = 41424;
 constexpr UINT kContextPageJumpFirst = 41500;
 constexpr UINT kContextPageJumpLast  = 41550;
 constexpr UINT kContextDockPositionBottom = 41800;
@@ -170,21 +186,27 @@ constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT kIconLoadedMessage = WM_APP + 3;
 constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
 constexpr UINT kCommitRenameMessage = WM_APP + 5;
+constexpr UINT kShellFileOperationCompletedMessage = WM_APP + 7;
+constexpr UINT kForegroundInteractionChangedMessage = WM_APP + 8;
+constexpr UINT kFloatingDockBackdropCommitMessage = WM_APP + 9;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 
 // ── 定时器ID与间隔 ────────────────────────────
 constexpr UINT_PTR kRecycleBinPollTimerId = 3;
 constexpr UINT kRecycleBinPollIntervalMs = 2000;
+constexpr UINT kRecycleBinPollMediumIntervalMs = 15000;
+constexpr UINT kRecycleBinPollLongIntervalMs = 120000;
+constexpr UINT kRecycleBinPollVeryLongIntervalMs = 300000;
+constexpr UINT kRecycleBinPollHugeIntervalMs = 600000;
 constexpr UINT_PTR kDesktopHostWatchTimerId = 4;
 constexpr UINT kDesktopHostWatchIntervalMs = 2000;
 constexpr UINT_PTR kWidgetRefreshTimerId = 5;
 constexpr UINT kWidgetRefreshIntervalMs = 1000;
+constexpr DWORD kSteamWorkshopSubscriptionPollIntervalMs = 15000;
 constexpr UINT_PTR kCollectionPopupDwellTimerId = 6;
 constexpr UINT kCollectionPopupDwellIntervalMs = 50;
 constexpr DWORD kCollectionPopupDwellDelayMs = 600;
-constexpr UINT_PTR kPageNotifyTimerId = 7;
-constexpr UINT kPageNotifyTimerIntervalMs = 30;
 constexpr DWORD kPageNotifyVisibleMs = 1800;
 constexpr DWORD kPageNotifyFadeMs = 500;
 constexpr UINT_PTR kDisplayTopologyRefreshTimerId = 8;
@@ -202,19 +224,14 @@ constexpr DWORD kCollectionGroupTabDwellDelayMs = 420;
 constexpr UINT_PTR kDockWindowPreviewHoverTimerId = 13;
 constexpr UINT kDockWindowPreviewHoverFallbackMs = 400;
 constexpr ULONGLONG kDockWindowClosePendingTimeoutMs = 3000;
-constexpr UINT_PTR kDockLaunchBounceTimerId = 14;
 constexpr UINT_PTR kTaskbarRevealGuardTimerId = 15;
 constexpr UINT kTaskbarRevealGuardIntervalMs = 100;
-constexpr UINT_PTR kCollectionPopupAnimationTimerId = 17;
-constexpr UINT_PTR kQuickNavigationAnimationTimerId = 18;
-constexpr UINT_PTR kLuaWidgetPanelAnimationTimerId = 19;
 constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 
-// ── 组件独立刷新定时器 ────────────────────────
-// 由 manifest 的 refreshIntervalMs 声明驱动的 per-widget Win32 定时器 ID 基址，
-// 宿主从此值起递增分配，与上面固定定时器 ID 区分。
-constexpr UINT_PTR kWidgetTimerIdBase = 1000;
+// ── 组件刷新截止时间约束 ──────────────────────
+// manifest.refreshIntervalMs 与 widget.setTimer 均进入统一截止时间队列；
+// 这里仅保留公开计时语义原有的间隔上下限。
 constexpr UINT kWidgetRefreshMinIntervalMs = 16;      // 单组件声明刷新间隔下限
 constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
 

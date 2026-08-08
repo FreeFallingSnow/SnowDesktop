@@ -4,7 +4,9 @@
 
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -12,6 +14,7 @@ void PrintUsage()
 {
     std::cout
         << "SnowDesktop widget package tool\n"
+        << "  snowwidget inspect <package-directory>\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
         << "  snowwidget publish-local <package-directory> <catalog-directory>\n";
@@ -26,6 +29,49 @@ std::string WideToUtf8(const std::wstring& value)
     WideCharToMultiByte(CP_UTF8, 0, value.data(),
         static_cast<int>(value.size()), result.data(), size, nullptr, nullptr);
     return result;
+}
+
+std::string JsonEscape(std::string_view value)
+{
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string output;
+    output.push_back('"');
+    for (const unsigned char character : value)
+    {
+        switch (character)
+        {
+        case '"': output += "\\\""; break;
+        case '\\': output += "\\\\"; break;
+        case '\b': output += "\\b"; break;
+        case '\f': output += "\\f"; break;
+        case '\n': output += "\\n"; break;
+        case '\r': output += "\\r"; break;
+        case '\t': output += "\\t"; break;
+        default:
+            if (character < 0x20)
+            {
+                output += "\\u00";
+                output.push_back(hex[character >> 4]);
+                output.push_back(hex[character & 0x0f]);
+            }
+            else output.push_back(static_cast<char>(character));
+            break;
+        }
+    }
+    output.push_back('"');
+    return output;
+}
+
+void WriteStringArray(std::ostream& output,
+    const std::vector<std::string>& values)
+{
+    output << '[';
+    for (std::size_t index = 0; index < values.size(); ++index)
+    {
+        if (index) output << ',';
+        output << JsonEscape(values[index]);
+    }
+    output << ']';
 }
 }
 
@@ -44,6 +90,35 @@ int wmain(int argc, wchar_t** argv)
     snowdesktop::widget::ValidationReport report;
     snowdesktop::widget::PackageArtifact artifact;
     std::string error;
+
+    if (command == L"inspect")
+    {
+        if (argc != 3 || source.extension() == L".snowwidget")
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"inspect requires an unpacked component directory\"}\n";
+            return 2;
+        }
+        snowdesktop::widget::PackageManifest manifest;
+        report = manager.ValidateDirectory(source, &manifest);
+        std::cout << "{\"ok\":" << (report.Ok() ? "true" : "false")
+            << ",\"manifest\":{"
+            << "\"schemaVersion\":" << manifest.schemaVersion
+            << ",\"apiVersion\":" << manifest.apiVersion
+            << ",\"id\":" << JsonEscape(manifest.id)
+            << ",\"slug\":" << JsonEscape(manifest.slug)
+            << ",\"version\":" << JsonEscape(manifest.version)
+            << ",\"name\":" << JsonEscape(manifest.name)
+            << ",\"description\":" << JsonEscape(manifest.description)
+            << ",\"author\":" << JsonEscape(manifest.author)
+            << ",\"license\":" << JsonEscape(manifest.license)
+            << ",\"preview\":" << JsonEscape(manifest.preview)
+            << ",\"permissions\":";
+        WriteStringArray(std::cout, manifest.permissions);
+        std::cout << ",\"networkDomains\":";
+        WriteStringArray(std::cout, manifest.networkDomains);
+        std::cout << "},\"validation\":" << report.ToJson() << "}\n";
+        return report.Ok() ? 0 : 1;
+    }
 
     if (command == L"validate")
     {
@@ -65,11 +140,12 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << report.ToJson() << '\n' << error << '\n';
             return 1;
         }
-        std::cout << "{\"ok\":true,\"packageId\":\"" << artifact.packageId
-            << "\",\"version\":\"" << artifact.version
-            << "\",\"sha256\":\"" << artifact.sha256
-            << "\",\"path\":\""
-            << WideToUtf8(artifact.localPath.wstring()) << "\"}\n";
+        std::cout << "{\"ok\":true,\"packageId\":"
+            << JsonEscape(artifact.packageId)
+            << ",\"version\":" << JsonEscape(artifact.version)
+            << ",\"sha256\":" << JsonEscape(artifact.sha256)
+            << ",\"path\":"
+            << JsonEscape(WideToUtf8(artifact.localPath.wstring())) << "}\n";
         return 0;
     }
     if (command == L"publish-local")

@@ -17,12 +17,55 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
+
+// 被动 Dock hover 的同步提交限频窗口。hover 必须跟手，但也不需要每个
+// WM_MOUSEMOVE 都同步重绘整个浮动 Dock。
 inline constexpr ULONGLONG kPointerFrameIntervalMs = 8;
 
 inline bool HasAnySummonTrigger(
     bool hotkeyEnabled, bool edgeSwipeEnabled)
 {
     return hotkeyEnabled || edgeSwipeEnabled;
+}
+
+inline bool ShouldUseFloatingDockLogicalForeground(
+    bool keyboardSessionActive,
+    bool actualWindowOwnedByCurrentProcess,
+    bool shellFileOperationInFlight,
+    bool actualWindowIsTaskWindow)
+{
+    const bool shellTransientWindow =
+        shellFileOperationInFlight &&
+        !actualWindowIsTaskWindow;
+    return keyboardSessionActive &&
+        (actualWindowOwnedByCurrentProcess ||
+            shellTransientWindow ||
+            !actualWindowIsTaskWindow);
+}
+
+inline bool ShouldRefocusFloatingDockKeyboardSession(
+    bool floatingDockVisible,
+    bool keyboardSessionActive,
+    int shellFileOperationInFlight,
+    int shellPopupMenuLayerDepth)
+{
+    return floatingDockVisible && keyboardSessionActive &&
+        shellFileOperationInFlight == 0 &&
+        shellPopupMenuLayerDepth == 0;
+}
+
+inline bool ShouldFloatingDockBeTopmost(
+    bool floatingDockVisible,
+    int shellPopupMenuLayerDepth)
+{
+    return floatingDockVisible && shellPopupMenuLayerDepth == 0;
+}
+
+inline bool ShouldChangeFloatingDockTopmost(
+    bool currentlyTopmost,
+    bool shouldBeTopmost)
+{
+    return currentlyTopmost != shouldBeTopmost;
 }
 
 inline int ScaleEdgeSwipeDip(int value, UINT dpi)
@@ -277,11 +320,23 @@ inline RECT ReserveCollectionPopupEnvelope(
 }
 
 inline bool ShouldRenderDesktopDock(
-    bool floatingDockVisible,
+    bool floatingDockOwnsVisual,
     bool selectedForFloatingHost)
 {
-    return !floatingDockVisible ||
+    return !floatingDockOwnsVisual ||
         !selectedForFloatingHost;
+}
+
+/**
+ * @brief The source copy can be retired only after a valid replacement frame
+ * has crossed the compositor presentation barrier.
+ */
+inline bool ShouldRetireDesktopDockCopy(
+    bool floatingFrameReady,
+    bool presentationBarrierSucceeded)
+{
+    return floatingFrameReady &&
+        presentationBarrierSucceeded;
 }
 
 /**
@@ -310,7 +365,11 @@ inline bool NeedsImmediatePointerPresent(
 }
 
 /**
- * @brief 限制被动 hover 的同步提交频率，同时保留拖动帧的即时反馈。
+ * @brief 限制被动 Dock hover 的同步提交频率，同时保留拖动帧的即时反馈。
+ *
+ * 指针反馈必须同步提交，不能改成等待 UiAnimationScheduler 的下一帧。
+ * f29a882 曾把所有 hover/拖拽帧改为 EnsureUiAnimationFrame()，导致快速
+ * 扫过时 Dock 放大和拖拽虚影明显落后指针。
  */
 inline bool ShouldPresentPointerFrame(
     ULONGLONG now,
@@ -380,15 +439,26 @@ inline RECT DesktopRectToWindowRect(
 
 inline bool ShouldDismissForPointerDown(
     bool dragging,
+    bool contextMenuActive,
     POINT desktopPoint,
     const RECT& dockRect,
-    const RECT& popupRect)
+    const RECT& popupRect,
+    const RECT& previewRect)
 {
-    if (dragging)
+    if (dragging || contextMenuActive)
         return false;
-    return !PtInRect(&dockRect, desktopPoint) &&
-        (IsRectEmpty(&popupRect) ||
-            !PtInRect(&popupRect, desktopPoint));
+    // While a menu owns the mouse loop, its item presses are outside the Dock
+    // rects but must still reach the menu command instead of tearing the host
+    // down. The menu itself handles outside-click dismissal.
+    // The thumbnail preview panel is part of the Dock's interactive surface:
+    // a press there (card click or close button) must reach the preview's own
+    // button-up handler instead of tearing the floating host down mid-click.
+    if (PtInRect(&dockRect, desktopPoint) ||
+        (!IsRectEmpty(&previewRect) &&
+            PtInRect(&previewRect, desktopPoint)))
+        return false;
+    return IsRectEmpty(&popupRect) ||
+        !PtInRect(&popupRect, desktopPoint);
 }
 
 inline bool IsPointInVisibleLayer(

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <d2d1.h>
+#include <d2d1_1.h>
+#include <dcomp.h>
 #include <dwmapi.h>
 #include <windows.h>
 #include <wrl/client.h>
@@ -9,6 +11,8 @@
 #include <functional>
 #include <unordered_map>
 #include <vector>
+
+#include "ui_animation_scheduler.h"
 
 enum class DockWindowTransitionDirection
 {
@@ -63,13 +67,11 @@ RECT ResolveDockWindowSnapshotHostRect(
 inline constexpr LONG kDockWindowSnapshotMaxWidth = 4096;
 inline constexpr LONG kDockWindowSnapshotMaxHeight = 4096;
 inline constexpr FLOAT kDockWindowSnapshotRenderDpi = 96.0f;
-inline constexpr D2D1_PRESENT_OPTIONS
-    kDockWindowSnapshotPresentOptions =
-        D2D1_PRESENT_OPTIONS_NONE;
+inline constexpr bool kDockWindowSnapshotUsesComposition = true;
 inline constexpr DWORD kDockWindowTransitionExStyle =
     WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
     WS_EX_NOACTIVATE | WS_EX_TRANSPARENT |
-    WS_EX_LAYERED;
+    WS_EX_LAYERED | WS_EX_NOREDIRECTIONBITMAP;
 inline constexpr DWM_WINDOW_CORNER_PREFERENCE
     kDockWindowTransitionCornerPreference =
         DWMWCP_DONOTROUND;
@@ -121,7 +123,11 @@ public:
     DockWindowTransition(const DockWindowTransition&) = delete;
     DockWindowTransition& operator=(const DockWindowTransition&) = delete;
 
-    bool Initialize(HINSTANCE instance);
+    bool Initialize(
+        HINSTANCE instance,
+        snowdesktop::UiAnimationScheduler* animationScheduler,
+        ID2D1Device* d2dDevice,
+        IDCompositionDesktopDevice* compositionDevice);
     bool PrimeMinimizeSnapshot(HWND sourceWindow);
     bool StartMinimize(HWND sourceWindow, RECT dockRect);
     bool StartRestore(
@@ -133,8 +139,6 @@ public:
     DockWindowTransitionDirection GetDirection() const;
 
 private:
-    static constexpr UINT_PTR kAnimationTimerId = 1;
-    static constexpr UINT kAnimationTimerIntervalMs = 8;
     static constexpr ULONGLONG kAnimationDurationMs = 240;
     static constexpr ULONGLONG
         kMinimumReverseDurationMs = 80;
@@ -177,29 +181,43 @@ private:
         DockWindowTransitionDirection direction,
         bool allowFreshMinimizeSnapshot);
     void PurgeSnapshotCache();
-    bool EnsureSnapshotRenderer();
-    bool CreateActiveSnapshotBitmap(
+    bool CreateCompositionSnapshot(
         const CachedSnapshot& snapshot);
-    bool DrawSnapshotFrame(
-        const RECT& destinationRect);
+    bool StartCompositionTimeline();
+    bool ScheduleAnimationWake();
     bool ApplyFrame(double progress);
-    void OnTimer();
+    bool OnAnimationFrame(double nowMilliseconds);
     void Finish();
     void CompleteRestoreAfterRenderFailure();
     void SetNativeTransitionsDisabled(bool disabled);
     void UnregisterThumbnail();
 
     HINSTANCE instance_ = nullptr;
+    snowdesktop::UiAnimationScheduler* animationScheduler_ = nullptr;
+    snowdesktop::UiScheduleToken animationToken_ = 0;
     HWND hwnd_ = nullptr;
     HWND sourceWindow_ = nullptr;
     HTHUMBNAIL thumbnail_ = nullptr;
     DockWindowTransitionSurface surface_ =
         DockWindowTransitionSurface::None;
-    Microsoft::WRL::ComPtr<ID2D1Factory> d2dFactory_;
-    Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget>
-        snapshotRenderTarget_;
-    Microsoft::WRL::ComPtr<ID2D1Bitmap>
-        activeSnapshotBitmap_;
+    Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
+    Microsoft::WRL::ComPtr<IDCompositionDesktopDevice>
+        compositionDevice_;
+    Microsoft::WRL::ComPtr<IDCompositionTarget>
+        compositionTarget_;
+    Microsoft::WRL::ComPtr<IDCompositionVisual2>
+        compositionVisual_;
+    Microsoft::WRL::ComPtr<IDCompositionScaleTransform>
+        compositionScaleTransform_;
+    Microsoft::WRL::ComPtr<IDCompositionEffectGroup>
+        compositionEffect_;
+    Microsoft::WRL::ComPtr<IDCompositionRectangleClip>
+        compositionClip_;
+    Microsoft::WRL::ComPtr<IDCompositionSurface>
+        compositionSurface_;
+    SIZE compositionSnapshotSize_{};
+    bool compositionSnapshotActive_ = false;
+    bool compositionTimelineActive_ = false;
     DockWindowTransitionDirection direction_ =
         DockWindowTransitionDirection::Minimize;
     RECT fromRect_{};

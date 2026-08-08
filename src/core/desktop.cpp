@@ -295,7 +295,9 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
         (app_->dragSession_.SourceList().
                 hasCollectionGroupEntries ||
             app_->dragSession_.SourceList().
-                hasFileGroupEntries))
+                hasFileGroupEntries ||
+            app_->dragSession_.SourceList().
+                UsesFileGroupSourceInsertion()))
     {
         outSlot = nullptr;
         return region == HitRegion::None
@@ -379,6 +381,45 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
                 dragPoint);
         return preview.landings.size() ==
                 sourceList.entries.size()
+            ? _LW("core.drag.release_move_here")
+            : _LW("core.drag.release_occupied");
+    }
+
+    // 文件组里的文件夹映射标签：这类载荷保持 Widget 家族，BuildDropPreviewList
+    // 不会生成落点，这里按 ReleaseWidgetFromFileGroup 的同一算法判断是否可放置，
+    // 避免 1x1 网格占用判断与真实落位不一致。
+    if (dynamic_cast<FileGroup*>(origin) &&
+        sourceList.UsesFileGroupSourceInsertion())
+    {
+        std::unordered_set<std::wstring> usedSlots;
+        GridCell requested =
+            app_->CellFromPointForDrag(dragPoint);
+        bool placed = !sourceList.entries.empty();
+        for (const auto& entry : sourceList.entries)
+        {
+            if (entry.kind != DropSourceKind::Widget ||
+                entry.widgetId.empty())
+            {
+                placed = false;
+                break;
+            }
+            const size_t widgetIndex =
+                app_->FindWidgetIndexById(entry.widgetId);
+            if (widgetIndex >= app_->widgets_.size() ||
+                app_->widgets_[widgetIndex].type !=
+                    DesktopWidgetType::FolderMapping)
+            {
+                placed = false;
+                break;
+            }
+            if (!app_->FindFileGroupReleaseLanding(
+                    widgetIndex, requested, usedSlots, nullptr))
+            {
+                placed = false;
+                break;
+            }
+        }
+        return placed
             ? _LW("core.drag.release_move_here")
             : _LW("core.drag.release_occupied");
     }
@@ -513,6 +554,113 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f), 2.0f);
                 app_->MarkGridArea(usedSlots, landing, span);
                 ++startSlot;
+            }
+            return;
+        }
+    }
+
+    // 文件组里的文件夹映射标签拖到桌面：此类载荷被归类为 Widget（hasWidgets），
+    // BuildDropPreviewList 会直接返回空，因此这里按 ReleaseWidgetFromFileGroup
+    // 的同一落点算法绘制蓝色位置预览；有条目找不到空位时在指针格绘制红色占用提示。
+    if (hasItemDrag &&
+        dynamic_cast<FileGroup*>(app_->dragSession_.Source()) &&
+        app_->dragSession_.SourceList().
+            UsesFileGroupSourceInsertion())
+    {
+        const DragSourceList& sourceList =
+            app_->dragSession_.SourceList();
+        const bool allFolderMappingLabels =
+            !sourceList.entries.empty() &&
+            std::all_of(
+                sourceList.entries.begin(),
+                sourceList.entries.end(),
+                [&](const DragSourceEntry& entry) {
+                    if (entry.kind !=
+                            DropSourceKind::Widget ||
+                        entry.widgetId.empty())
+                        return false;
+                    const size_t widgetIndex =
+                        app_->FindWidgetIndexById(
+                            entry.widgetId);
+                    return widgetIndex <
+                            app_->widgets_.size() &&
+                        app_->widgets_[widgetIndex].type ==
+                            DesktopWidgetType::FolderMapping;
+                });
+        if (allFolderMappingLabels)
+        {
+            const GridCell requested =
+                app_->CellFromPointForDrag(dragPoint);
+            std::unordered_set<std::wstring> usedSlots;
+            bool anyFailed = false;
+            for (const auto& entry : sourceList.entries)
+            {
+                const size_t widgetIndex =
+                    app_->FindWidgetIndexById(
+                        entry.widgetId);
+                GridSpan span{};
+                const auto landing =
+                    app_->FindFileGroupReleaseLanding(
+                        widgetIndex, requested,
+                        usedSlots, &span);
+                if (!landing)
+                {
+                    anyFailed = true;
+                    continue;
+                }
+                RECT bounds = GetGridRect(
+                    app_->gridPages_, *landing, span);
+                app_->DrawD2DRoundedRectangle(
+                    ctx, bounds, 8.0f,
+                    D2D1::ColorF(
+                        0.39f, 0.66f, 1.0f, 0.15f),
+                    D2D1::ColorF(
+                        0.39f, 0.66f, 1.0f, 0.78f),
+                    2.0f);
+            }
+            if (anyFailed)
+            {
+                const auto& first =
+                    sourceList.entries.front();
+                const size_t widgetIndex =
+                    app_->FindWidgetIndexById(
+                        first.widgetId);
+                GridSpan span{};
+                if (widgetIndex < app_->widgets_.size())
+                {
+                    std::unordered_set<std::wstring> probe;
+                    (void)app_->FindFileGroupReleaseLanding(
+                        widgetIndex, requested,
+                        probe, &span);
+                }
+                GridCell cell = requested;
+                if (const GridPage* page =
+                        FindGridPage(app_->gridPages_,
+                            cell.pageId))
+                {
+                    span.columns = std::max(
+                        1, span.columns);
+                    span.rows = std::max(1, span.rows);
+                    span.columns = std::min(
+                        span.columns, page->columns);
+                    span.rows = std::min(
+                        span.rows, page->rows);
+                    cell.column = std::clamp(
+                        cell.column, 0,
+                        page->columns - span.columns);
+                    cell.row = std::clamp(
+                        cell.row, 0,
+                        page->rows - span.rows);
+                    RECT bounds = GetGridRect(
+                        app_->gridPages_, cell, span);
+                    app_->DrawD2DRoundedRectangle(
+                        ctx, bounds, 8.0f,
+                        D2D1::ColorF(
+                            1.0f, 0.30f, 0.30f, 0.18f),
+                        D2D1::ColorF(
+                            1.0f, 0.25f, 0.25f, 0.85f),
+                        2.0f);
+                }
             }
             return;
         }

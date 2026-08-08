@@ -1,5 +1,6 @@
 #pragma once
 
+#include "menu_fluent_glyphs.h"
 #include "name_pinyin.h"
 #include "navigation_settings.h"
 
@@ -36,12 +37,15 @@ QuickNavigationDesktopViewModeGlyph(
     switch (mode)
     {
     case QuickNavigationDesktopViewMode::Source:
-        return L"\uf1b3";
+        return menu_fluent_glyphs::
+            kQuickNavigationSourceView;
     case QuickNavigationDesktopViewMode::Initial:
-        return L"\uf15d";
+        return menu_fluent_glyphs::
+            kQuickNavigationInitialView;
     case QuickNavigationDesktopViewMode::Tile:
     default:
-        return L"\uf00a";
+        return menu_fluent_glyphs::
+            kQuickNavigationTileView;
     }
 }
 
@@ -314,5 +318,15 @@ inline int TabStripMaxScrollOffset(
         std::max(1, clipRight - scrollLeft);
     return std::max(
         0, contentWidth - available);
+}
+
+/**
+ * Quick Navigation stays open while activation moves to one of its owned
+ * interaction surfaces, such as a context menu or inline editor.
+ */
+constexpr bool ShouldCloseOnDeactivate(
+    bool activatedWithinInteractionSurface)
+{
+    return !activatedWithinInteractionSurface;
 }
 }

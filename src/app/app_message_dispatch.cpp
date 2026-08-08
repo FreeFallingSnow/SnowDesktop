@@ -1,0 +1,682 @@
+#include "app.h"
+
+#include <imm.h>
+
+// Main desktop-window message dispatch.
+
+bool DesktopApp::HandleShellContextMenuMessage(
+    UINT message, WPARAM wParam, LPARAM lParam,
+    LRESULT& result)
+{
+    const bool supportsContextMenu2 =
+        message == WM_INITMENUPOPUP ||
+        message == WM_DRAWITEM ||
+        message == WM_MEASUREITEM;
+    const bool supportsContextMenu3 =
+        supportsContextMenu2 || message == WM_MENUCHAR;
+    if (!supportsContextMenu3)
+        return false;
+
+    if (newMenuContextMenu_ && supportsContextMenu2 &&
+        newMenuContextMenu_->HandleMenuMsg(
+            message, wParam, lParam) == S_OK)
+    {
+        result = 0;
+        return true;
+    }
+    if (activeContextMenu3_ &&
+        activeContextMenu3_->HandleMenuMsg2(
+            message, wParam, lParam, &result) == S_OK)
+    {
+        return true;
+    }
+    if (activeContextMenu2_ && supportsContextMenu2 &&
+        activeContextMenu2_->HandleMenuMsg(
+            message, wParam, lParam) == S_OK)
+    {
+        result = 0;
+        return true;
+    }
+    return false;
+}
+
+LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    LRESULT shellMenuResult = 0;
+    if (HandleShellContextMenuMessage(
+            msg, wp, lp, shellMenuResult))
+        return shellMenuResult;
+
+    switch (msg)
+    {
+    case WM_NCHITTEST:
+        // The desktop overlay intentionally owns input across its complete
+        // client area. Be explicit for the resized portion of the layered
+        // child window after a monitor is added at runtime.
+        return HTCLIENT;
+    case WM_MOUSEACTIVATE:
+    {
+        POINT point{};
+        if (GetCursorPos(&point))
+        {
+            ScreenToClient(hwnd_, &point);
+            if (DockContainer* dock = GetDockContainerAtPoint(point))
+            {
+                if (dock->ContainsInteractivePoint(point))
+                    return MA_NOACTIVATE;
+            }
+        }
+        break;
+    }
+    case WM_CTLCOLOREDIT:
+        if (reinterpret_cast<HWND>(lp) == luaInlineEdit_)
+        {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetTextColor(dc, luaInlineEditTextColor_);
+            SetBkColor(dc, luaInlineEditBackgroundColor_);
+            return reinterpret_cast<LRESULT>(luaInlineEditBackgroundBrush_
+                ? luaInlineEditBackgroundBrush_ : GetStockObject(WHITE_BRUSH));
+        }
+        break;
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        BeginPaint(hwnd_, &ps);
+        EndPaint(hwnd_, &ps);
+        OnPaint(&ps.rcPaint);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_SIZE:
+    {
+        if (updatingDisplayTopology_)
+        {
+            virtualWidth_ = LOWORD(lp);
+            virtualHeight_ = HIWORD(lp);
+            return 0;
+        }
+        bool wasDragging = dragSession_.IsActive();
+        virtualWidth_ = LOWORD(lp);
+        virtualHeight_ = HIWORD(lp);
+        dcompSurface_.Reset();
+        UpdateLayoutWorkArea();
+        LayoutItems();
+        if (wasDragging && !dragSession_.IsActive())
+        {
+            mouseDownHit_ = nullptr;
+            mouseDown_ = false;
+        }
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        {
+            ShowHiddenHint();
+            return 0;
+        }
+        OnLeftButtonDown(wp, lp);
+        return 0;
+    }
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONDBLCLK:
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+            return 0;
+        OnMiddleButtonDown(wp, lp);
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !middleButtonWidgetMove_ && !dragSession_.IsActive() &&
+            widgetAction_ == WidgetAction::None &&
+            !luaWidgetPanelMouseDown_)
+        {
+            if (IsPointOnRetainedElement(lastMousePoint_))
+                OnMouseLeave();
+            return 0;
+        }
+        OnMouseMove(wp, lp);
+        // Internal drags capture this HWND. Commit the cheap cached drag frame
+        // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
+        // Keep this synchronous; routing pointer feedback through
+        // UiAnimationScheduler makes drag/Dock hover trail the pointer
+        // (f29a882 regression).
+        PresentPointerInteractionFrame();
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        if (floatingDockHoverHandoffPending_)
+        {
+            POINT cursorPoint{};
+            if (TryGetDesktopHoverPointFromCursor(cursorPoint) &&
+                PtInRect(
+                    &floatingDockHoverHandoffRect_,
+                    cursorPoint))
+            {
+                lastMousePoint_ = cursorPoint;
+                return 0;
+            }
+            floatingDockHoverHandoffPending_ = false;
+            floatingDockHoverHandoffRect_ = {};
+        }
+        if (floatingDockVisible_)
+        {
+            POINT cursor{};
+            if (GetCursorPos(&cursor))
+            {
+                ScreenToClient(hwnd_, &cursor);
+                const bool inFloatingLayer =
+                    PtInRect(
+                        &floatingDockRect_,
+                        cursor) ||
+                    (!IsRectEmpty(
+                            &floatingDockPopupRect_) &&
+                        PtInRect(
+                            &floatingDockPopupRect_,
+                            cursor)) ||
+                    (!IsRectEmpty(
+                            &floatingDockTooltipRect_) &&
+                        PtInRect(
+                            &floatingDockTooltipRect_,
+                            cursor));
+                if (inFloatingLayer)
+                    return 0;
+            }
+        }
+        OnMouseLeave();
+        return 0;
+    case WM_LBUTTONUP:
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !dragSession_.IsActive() &&
+            widgetAction_ == WidgetAction::None &&
+            !luaWidgetPanelMouseDown_)
+            return 0;
+        OnLeftButtonUp(wp, lp);
+        InvalidateFloatingDockWindow(true);
+        return 0;
+    }
+    case WM_MBUTTONUP:
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            GetCapture() != hwnd_ && !mouseDown_ &&
+            !middleButtonWidgetMove_ &&
+            widgetAction_ == WidgetAction::None)
+            return 0;
+        OnMiddleButtonUp(wp, lp);
+        return 0;
+    }
+    case WM_MOUSEWHEEL:
+    {
+        POINT wheelPt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_)
+        {
+            ScreenToClient(hwnd_, &wheelPt);
+            if (!IsPointOnRetainedElement(wheelPt))
+                return 0;
+        }
+        OnMouseWheel(wp, lp);
+        return 0;
+    }
+    case WM_RBUTTONUP:
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        {
+            ShowHiddenHint();
+            return 0;
+        }
+        OnRightButtonUp(lp);
+        return 0;
+    }
+    case WM_LBUTTONDBLCLK:
+    {
+        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        {
+            ToggleDesktopIconsVisibility();
+            return 0;
+        }
+
+        if (quickNavigationOpen_)
+        {
+            HandleQuickNavigationClick(pt);
+            return 0;
+        }
+
+        if (DockContainer* dock = GetDockContainerAtPoint(pt))
+        {
+            RECT dockBounds = dock->GetInteractiveBounds();
+            if (dock->ContainsInteractivePoint(pt))
+            {
+                if (dock->IsSearchPoint(pt))
+                {
+                    OpenQuickNavigation(true);
+                    return 0;
+                }
+                if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
+                {
+                    const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
+                    const size_t entryIndex =
+                        dockItem->GetEntryIndex();
+                    bool specialDoubleClickHandled = false;
+                    if (entryIndex < dockEntries_.size() &&
+                        IsFolderDockEntry(
+                            dockEntries_[entryIndex]) &&
+                        dockPendingDoubleClickEntry_ ==
+                            entryIndex &&
+                        elapsed <= GetDoubleClickTime())
+                    {
+                        const auto target =
+                            ResolveDockFolderTarget(
+                                dockEntries_[entryIndex]);
+                        dockSuppressClickReleaseEntry_ =
+                            entryIndex;
+                        dockPressedContainer_ = dock;
+                        dockPressedEntry_ = entryIndex;
+                        mouseDownPoint_ = pt;
+                        mouseDown_ = true;
+                        dockPendingDoubleClickEntry_ =
+                            static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ =
+                            static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        CloseCollectionPopup();
+                        ClearSelection();
+                        if (target.available)
+                            ShellExecuteW(
+                                hwnd_, L"open",
+                                target.path.c_str(),
+                                nullptr, nullptr,
+                                SW_SHOWNORMAL);
+                        InvalidateRect(
+                            hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
+                    }
+                    else if (dockItem->GetEntryType() == DockEntryType::DesktopItem &&
+                        dockPendingDoubleClickEntry_ == dockItem->GetEntryIndex() &&
+                        elapsed <= GetDoubleClickTime())
+                    {
+                        dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        ClearSelection();
+                        if (entryIndex < dockEntries_.size())
+                        {
+                            const size_t itemIndex =
+                                FindItemIndexByKey(dockEntries_[entryIndex].reference);
+                            if (itemIndex < items_.size())
+                                LaunchDesktopItem(itemIndex, true);
+                        }
+                        InvalidateRect(hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
+                    }
+                    if (snowdesktop::dock_window_rules::
+                            ShouldDispatchDockDoubleClickPress(
+                                specialDoubleClickHandled))
+                    {
+                        OnLeftButtonDown(wp, lp);
+                    }
+                    return 0;
+                }
+                if (dock->RunningItemAtPoint(pt))
+                {
+                    // WM_LBUTTONDBLCLK replaces the second button-down. Replay
+                    // it so the following button-up can reverse an animation.
+                    OnLeftButtonDown(wp, lp);
+                    return 0;
+                }
+                if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
+                {
+                    const size_t itemIndex = frequentItem->GetItemIndex();
+                    const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
+                    bool specialDoubleClickHandled = false;
+                    if (dockPendingDoubleClickFrequentItem_ == itemIndex &&
+                        elapsed <= GetDoubleClickTime())
+                    {
+                        dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+                        dockPendingDoubleClickTick_ = 0;
+                        ClearSelection();
+                        if (itemIndex < items_.size())
+                            LaunchDesktopItem(itemIndex, true);
+                        InvalidateRect(hwnd_, &dockBounds, FALSE);
+                        specialDoubleClickHandled = true;
+                    }
+                    if (snowdesktop::dock_window_rules::
+                            ShouldDispatchDockDoubleClickPress(
+                                specialDoubleClickHandled))
+                    {
+                        OnLeftButtonDown(wp, lp);
+                    }
+                    return 0;
+                }
+                return 0;
+            }
+        }
+
+        bool collectionOpenButtonHit = false;
+        for (const auto& container : containers_)
+        {
+            auto* widgetContainer =
+                dynamic_cast<WidgetContainer*>(
+                    container.get());
+            const DesktopWidget* widget =
+                widgetContainer
+                ? widgetContainer->GetWidgetData()
+                : nullptr;
+            if (widget &&
+                widget->type ==
+                    DesktopWidgetType::Collection &&
+                widgetContainer->HitTestWidget(pt) ==
+                    WidgetHit::CollectionOpenBtn)
+            {
+                collectionOpenButtonHit = true;
+                break;
+            }
+        }
+        bool pointerInsideInteractivePopup = false;
+        if (IsCollectionPopupInteractive())
+        {
+            if (const DesktopWidget* popupWidget =
+                    GetOpenPopupWidget())
+            {
+                const RECT popup =
+                    GetCollectionPopupRect(*popupWidget);
+                pointerInsideInteractivePopup =
+                    PtInRect(&popup, pt) != FALSE;
+            }
+        }
+        if (snowdesktop::popup_animation_rules::
+                ShouldDispatchCollectionDoubleClickPress(
+                    collectionOpenButtonHit,
+                    pointerInsideInteractivePopup))
+        {
+            // Restore the second button-down so a rapid third click can
+            // reverse a close animation before its 90 ms duration ends.
+            OnLeftButtonDown(wp, lp);
+            return 0;
+        }
+
+        if (dockFolderPopupOpen_ &&
+            IsPointOccludedByOpenPopup(pt))
+        {
+            RECT popup = GetCollectionPopupRect(
+                dockFolderPopupWidget_);
+            if (PtInRect(&popup, pt))
+            {
+                RECT content =
+                    GetCollectionPopupContentRect(popup);
+                for (size_t i = 0;
+                     i < dockFolderPopupWidget_.
+                        folderEntries.size(); ++i)
+                {
+                    RECT itemRect =
+                        GetCollectionPopupItemRect(
+                            popup, i);
+                    RECT clipped = itemRect;
+                    clipped.top = std::max(
+                        clipped.top, content.top);
+                    clipped.bottom = std::min(
+                        clipped.bottom,
+                        content.bottom);
+                    if (clipped.bottom <= clipped.top ||
+                        !PtInRect(&clipped, pt))
+                        continue;
+                    const std::wstring path =
+                        dockFolderPopupWidget_.
+                            folderEntries[i].fullPath;
+                    ShellExecuteW(
+                        hwnd_, L"open", path.c_str(),
+                        nullptr, nullptr, SW_SHOWNORMAL);
+                    CloseCollectionPopup();
+                    return 0;
+                }
+                return 0;
+            }
+        }
+        else if (popupWidgetIndex_ < widgets_.size() &&
+            IsPointOccludedByOpenPopup(pt))
+        {
+            RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
+            if (PtInRect(&popup, pt))
+            {
+                std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
+                RECT content = GetCollectionPopupContentRect(popup);
+                for (size_t i = 0; i < popupKeys.size(); ++i)
+                {
+                    RECT itemRect = GetCollectionPopupItemRect(popup, i);
+                    RECT clipped = itemRect;
+                    clipped.top = std::max(clipped.top, content.top);
+                    clipped.bottom = std::min(clipped.bottom, content.bottom);
+                    if (clipped.bottom <= clipped.top || !PtInRect(&clipped, pt)) continue;
+                    size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
+                    if (itemIndex != static_cast<size_t>(-1))
+                    {
+                        LaunchDesktopItem(itemIndex);
+                        CloseCollectionPopup();
+                        return 0;
+                    }
+                }
+                return 0;
+            }
+        }
+
+        size_t standaloneWidget = HitTestStandaloneWidgetIndex(pt);
+        if (standaloneWidget != static_cast<size_t>(-1) &&
+            widgets_[standaloneWidget].type == DesktopWidgetType::LuaScript)
+        {
+            if (HitTestStandaloneWidget(standaloneWidget, pt) == WidgetHit::Content && widgetEngine_)
+            {
+                RECT frame = GetStandaloneWidgetFrameRect(widgets_[standaloneWidget]);
+                widgetEngine_->EnsureWidgetLoaded(widgets_[standaloneWidget].id,
+                    widgets_[standaloneWidget].packageId);
+                widgetEngine_->InvokeMouseEvent(widgets_[standaloneWidget].id, "onDoubleClick",
+                    pt.x - frame.left, pt.y - frame.top, 1, 0);
+            }
+            return 0;
+        }
+
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        {
+            auto* wc = dynamic_cast<WidgetContainer*>(it->get());
+            if (!wc) continue;
+            RECT bodyRect = wc->GetBodyRect();
+            for (auto& slot : wc->GetSlots())
+            {
+                if (!slot) continue;
+                RECT slotBounds = slot->GetBounds();
+                if (!PtInRect(&slotBounds, pt)) continue;
+                if (!PtInRect(&bodyRect, pt)) continue;
+                if (auto* groupEntry =
+                    dynamic_cast<CollectionGroupEntryItem*>(
+                        slot->GetItem()))
+                {
+                    const size_t collectionIndex =
+                        FindWidgetIndexById(
+                            groupEntry->GetCollectionId());
+                    if (collectionIndex < widgets_.size())
+                        OpenCollectionPopupAt(collectionIndex, pt);
+                    return 0;
+                }
+                if (auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem()))
+                {
+                    DesktopItem* item = icon->GetDesktopItem();
+                    if (item)
+                    {
+                        const size_t itemIndex = FindItemIndexByKey(item->layoutKey);
+                        if (itemIndex < items_.size())
+                            LaunchDesktopItem(itemIndex);
+                        return 0;
+                    }
+                }
+                if (auto* folderIcon = dynamic_cast<FolderEntryIcon*>(slot->GetItem()))
+                {
+                    FolderEntry* entry = folderIcon->GetFolderEntry();
+                    if (entry)
+                    {
+                        ShellExecuteW(nullptr, L"open", entry->fullPath.c_str(),
+                            nullptr, nullptr, SW_SHOWNORMAL);
+                        return 0;
+                    }
+                }
+            }
+        }
+
+        int hit = HitTestItem(pt);
+        if (hit >= 0)
+        {
+            LaunchDesktopItem(static_cast<size_t>(hit));
+            return 0;
+        }
+
+        // Double-click on empty desktop area (exclude widget areas): toggle visibility
+        bool overWidgetArea = (HitTestStandaloneWidgetIndex(pt) != static_cast<size_t>(-1));
+        if (!overWidgetArea)
+        {
+            for (auto& c : containers_)
+            {
+                auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+                if (!wc) continue;
+                RECT bodyRect = wc->GetBodyRect();
+                if (PtInRect(&bodyRect, pt))
+                {
+                    overWidgetArea = true;
+                    break;
+                }
+            }
+        }
+        if (!overWidgetArea)
+            overWidgetArea = IsPointOverWidgetChrome(pt);
+
+        if (!overWidgetArea && generalSettings_.doubleClickHideDesktop)
+            ToggleDesktopIconsVisibility();
+
+        return 0;
+    }
+    case WM_GETDLGCODE:
+        return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
+    case WM_KEYDOWN:
+        OnKeyDown(wp);
+        return 0;
+    case WM_HOTKEY:
+        if (settingsWindow_ &&
+            settingsWindow_->IsHotkeyCaptureActive())
+        {
+            settingsWindow_->CaptureRegisteredHotkey(
+                LOWORD(lp), HIWORD(lp));
+            return 0;
+        }
+        if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
+        {
+            ToggleQuickNavigation();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kFloatingDockHotkeyId)
+        {
+            ToggleFloatingDock();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kDesktopPassthroughHotkeyId)
+        {
+            BeginDesktopPassthroughHold();
+            return 0;
+        }
+        break;
+    case WM_KEYUP:
+        RefreshDragHintFromKeyboard();
+        return 0;
+    case WM_DISPLAYCHANGE:
+        ScheduleDisplayTopologyRefresh();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
+    case WM_SETTINGCHANGE:
+        ScheduleDisplayTopologyRefresh();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        // Explorer broadcasts this message when view options such as
+        // "Hidden items" change. Re-enumerate both desktop and mapped folders.
+        ReloadItems(false);
+        return 0;
+    case kShellChangeMessage:
+    {
+        // SHCNRF_NewDelivery 模式下 lParam 携带通知句柄，
+        // 必须 Lock/Unlock 消费释放，否则每次事件泄漏句柄。
+        // 本应用不依赖事件 PIDL 细节（debounce 后全量刷新），
+        // 因此只消费不处理。自身 PostMessage(0, 0) 的 lParam 为 0。
+        const HANDLE notify = reinterpret_cast<HANDLE>(lp);
+        if (notify)
+        {
+            LONG eventId = 0;
+            PIDLIST_ABSOLUTE* pidls = nullptr;
+            if (SHChangeNotification_Lock(notify, 1, &pidls, &eventId))
+                SHChangeNotification_Unlock(notify);
+        }
+        SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+        return 0;
+    }
+    case kIconLoadedMessage:
+        OnIconLoaded(wp, lp);
+        return 0;
+    case kQuickNavigationAppsIndexedMessage:
+        OnQuickNavigationAppsIndexed(wp, lp);
+        return 0;
+    case kCommitRenameMessage:
+        renameCommitPending_ = false;
+        CommitRename(wp != 0);
+        return 0;
+    case kShellFileOperationCompletedMessage:
+        OnShellFileOperationCompleted(lp);
+        return 0;
+    case kForegroundInteractionChangedMessage:
+        ReconcileDesktopHoverState();
+        return 0;
+    case kFloatingDockBackdropCommitMessage:
+        FinalizeFloatingDockBackdropCleanup(
+            static_cast<UINT_PTR>(wp));
+        return 0;
+    case WM_TIMER:
+        OnTimer(wp);
+        return 0;
+    case kTrayCallbackMessage:
+        OnTrayCallback(lp);
+        return 0;
+    case WM_CLOSE:
+        RequestExit();
+        return 0;
+    case WM_DESTROY:
+        if (luaInlineEdit_)
+            CommitLuaInlineTextEdit(false);
+        UnregisterNavigationHotkey();
+        UnregisterFloatingDockHotkey();
+        if (!exitRequested_)
+        {
+            ResetDesktopWindowResources();
+            if (controlHwnd_ && IsWindow(controlHwnd_))
+                SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
+            return 0;
+        }
+        SaveLayoutSlots();
+        RemoveTrayIcon();
+        ResetDesktopWindowResources();
+        if (controlHwnd_ && IsWindow(controlHwnd_))
+            KillTimer(controlHwnd_, kDesktopHostWatchTimerId);
+        RestoreExplorerIcons();
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}

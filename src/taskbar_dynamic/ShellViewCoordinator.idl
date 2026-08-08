@@ -1,6 +1,11 @@
+// SPDX-FileCopyrightText: TranslucentTB contributors
+// SPDX-FileCopyrightText: 2026 SnowDesktop contributors
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// Modified for SnowDesktop from TranslucentTB's ShellViewCoordinator metadata:
+// https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
+//
 // Minimal WindowsUdk projection required to observe Windows 11 Search.
-// Interface and factory identifiers are derived from TranslucentTB's
-// ShellViewCoordinator metadata at commit 322e2b7.
 namespace WindowsUdk.UI.Shell
 {
     [contractversion(8.0)]

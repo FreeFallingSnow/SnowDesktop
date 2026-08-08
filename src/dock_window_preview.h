@@ -26,6 +26,16 @@ struct DockWindowPreviewGrid
     int panelHeight = 0;
 };
 
+struct DockWindowPreviewZOrderPolicy
+{
+    HWND insertAfter = nullptr;
+    UINT flags = 0;
+};
+
+DockWindowPreviewZOrderPolicy
+ResolveDockWindowPreviewZOrderPolicy(
+    bool useDockLayer, bool wasVisible);
+
 DockWindowPreviewGrid CalculateDockWindowPreviewGrid(
     size_t itemCount, int maximumWidth, int maximumHeight, UINT dpi);
 std::vector<RECT> CalculateDockWindowPreviewCardRects(
@@ -97,6 +107,7 @@ public:
     void Show(const std::vector<DockWindowPreviewItem>& items,
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
         HWND dockLayerOwner = nullptr);
+    void UpdateAnchor(RECT anchorScreen, DockPosition dockPosition);
     void Hide();
     void ScheduleHide();
     void KeepVisible();

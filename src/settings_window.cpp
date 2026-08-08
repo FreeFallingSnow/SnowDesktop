@@ -42,8 +42,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <initializer_list>
 #include <optional>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -60,6 +62,37 @@ constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
 constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
+
+std::string CodepointToUtf8(unsigned int codepoint)
+{
+    std::string result;
+    if (codepoint <= 0x7F)
+    {
+        result.push_back(static_cast<char>(codepoint));
+    }
+    else if (codepoint <= 0x7FF)
+    {
+        result.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+        result.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+    else if (codepoint <= 0xFFFF)
+    {
+        result.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+        result.push_back(static_cast<char>(
+            0x80 | ((codepoint >> 6) & 0x3F)));
+        result.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+    else if (codepoint <= 0x10FFFF)
+    {
+        result.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+        result.push_back(static_cast<char>(
+            0x80 | ((codepoint >> 12) & 0x3F)));
+        result.push_back(static_cast<char>(
+            0x80 | ((codepoint >> 6) & 0x3F)));
+        result.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+    return result;
+}
 
 std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
     const wchar_t* title, const COMDLG_FILTERSPEC* filters,
@@ -92,6 +125,56 @@ std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
     std::filesystem::path result(selected);
     CoTaskMemFree(selected);
     return result;
+}
+
+bool LaunchSteamWorkshopPublisher(
+    const std::filesystem::path& developmentRoot)
+{
+    if (!WidgetEngine::IsSteamWorkshopBridgeAvailable()) return false;
+    const std::filesystem::path manager =
+        std::filesystem::path(GetExecutableDirectoryPath()) /
+        L"SnowDesktopWorkshopManager.exe";
+    std::error_code filesystemError;
+    if (!std::filesystem::is_regular_file(manager, filesystemError))
+        return false;
+    const DWORD attributes = GetFileAttributesW(manager.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        return false;
+    const std::string effectiveLanguage =
+        Locale::Instance().GetEffectiveLanguage();
+    const std::wstring managerLanguage(effectiveLanguage.begin(),
+        effectiveLanguage.end());
+    const std::wstring settingsFile = GetGeneralSettingsPath();
+    std::wstring commandLine = L"\"" + manager.wstring() +
+        L"\" --development-root \"" + developmentRoot.wstring() +
+        L"\" --language \"" + managerLanguage +
+        L"\" --settings-file \"" + settingsFile + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    const std::wstring workingDirectory = manager.parent_path().wstring();
+    if (!CreateProcessW(manager.c_str(), commandLine.data(), nullptr, nullptr,
+        FALSE, CREATE_UNICODE_ENVIRONMENT, nullptr,
+        workingDirectory.c_str(), &startup, &process))
+        return false;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
+
+bool IsSteamWorkshopPublisherAvailable()
+{
+    if (!WidgetEngine::IsSteamWorkshopBridgeAvailable()) return false;
+    const std::filesystem::path manager =
+        std::filesystem::path(GetExecutableDirectoryPath()) /
+        L"SnowDesktopWorkshopManager.exe";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(manager, error) || error)
+        return false;
+    const DWORD attributes = GetFileAttributesW(manager.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 }
 
 std::optional<std::filesystem::path> SaveSettingsFile(HWND owner,
@@ -727,6 +810,12 @@ void SettingsWindow::ApplyLanguageChange()
 void SettingsWindow::ShowDockSettings()
 {
     activePage_ = 0;
+    Show();
+}
+
+void SettingsWindow::ShowAppearanceSettings()
+{
+    activePage_ = 1;
     Show();
 }
 
@@ -2312,6 +2401,14 @@ void SettingsWindow::DrawDisplayPage()
     {
         iconSpacingScale_ = displaySpacingPct_ / 100.0f;
         markChanged();
+        const float componentSpacingMaximum =
+            componentSpacingMaximumProvider_
+                ? componentSpacingMaximumProvider_()
+                : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
+        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
+            ClampComponentScale(componentSpacingScale_, componentSpacingMaximum);
+        componentSpacingPct_ = static_cast<int>(std::round(
+            componentSpacingScale_ * 100.0f));
     }
     ImGui::SameLine();
     if (BlueButton((std::string(_L("app.settings.restore_default")) +
@@ -2320,7 +2417,16 @@ void SettingsWindow::DrawDisplayPage()
         displaySpacingPct_ = 100;
         iconSpacingScale_ = 1.0f;
         markChanged();
+        const float componentSpacingMaximum =
+            componentSpacingMaximumProvider_
+                ? componentSpacingMaximumProvider_()
+                : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
+        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
+            ClampComponentScale(componentSpacingScale_, componentSpacingMaximum);
+        componentSpacingPct_ = static_cast<int>(std::round(
+            componentSpacingScale_ * 100.0f));
     }
+
     BeginSettingRow(_L("app.settings.title_font_size"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##ItemFontSize", &itemFontSize_,
@@ -2736,6 +2842,8 @@ void SettingsWindow::DrawPersonalizationPage()
         const float barHeight = personalization_.barHeight;
         const float categorizedTabFontSize =
             personalization_.categorizedTabFontSize;
+        const int contextMenuStyle =
+            personalization_.contextMenuStyle;
         if (presetIds[presetIndex] == kAppearancePresetCustom)
         {
             switch (NormalizeAppearancePresetId(previousPreset))
@@ -2756,6 +2864,7 @@ void SettingsWindow::DrawPersonalizationPage()
         personalization_.barHeight = barHeight;
         personalization_.categorizedTabFontSize =
             categorizedTabFontSize;
+        personalization_.contextMenuStyle = contextMenuStyle;
         markChanged(true);
     }
 
@@ -2875,8 +2984,63 @@ void SettingsWindow::DrawPersonalizationPage()
     }
 
     ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.context_menu_appearance"));
+    ImGui::Spacing();
+
+    const char* contextMenuStyleNames[] = {
+        _L("app.settings.context_menu_follow_system"),
+        _L("app.settings.context_menu_system_light_blur"),
+        _L("app.settings.context_menu_system_dark_blur")
+    };
+    BeginSettingRow(_L("app.settings.context_menu_style"), controlW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##ContextMenuStyle",
+        &personalization_.contextMenuStyle,
+        contextMenuStyleNames, IM_ARRAYSIZE(contextMenuStyleNames)))
+    {
+        personalization_.contextMenuStyle = std::clamp(
+            personalization_.contextMenuStyle, 0, 2);
+        markChanged(true);
+    }
+
+    ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.widget_layout"));
     ImGui::Spacing();
+
+    const float componentSpacingMaximum =
+        componentSpacingMaximumProvider_
+            ? componentSpacingMaximumProvider_()
+            : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
+    const int componentSpacingMax = std::max(50, static_cast<int>(std::round(
+        componentSpacingMaximum * 100.0f)));
+    componentSpacingScale_ = snowdesktop::widget_spacing_rules::
+        ClampComponentScale(componentSpacingScale_, componentSpacingMaximum);
+    componentSpacingPct_ = std::clamp(
+        static_cast<int>(std::round(componentSpacingScale_ * 100.0f)),
+        50, componentSpacingMax);
+    BeginSettingRow(_L("app.settings.component_spacing"), sliderActionW,
+        _L("app.settings.component_spacing_hint"));
+    ImGui::SetNextItemWidth(actionSliderW);
+    if (ImGui::SliderInt("##ComponentSpacing", &componentSpacingPct_,
+        50, componentSpacingMax, "%d%%", ImGuiSliderFlags_None))
+    {
+        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
+            ClampComponentScale(
+                componentSpacingPct_ / 100.0f, componentSpacingMaximum);
+        if (displaySettingsChangedCallback_)
+            displaySettingsChangedCallback_();
+    }
+    ImGui::SameLine();
+    if (BlueButton((std::string(_L("app.settings.restore_default")) +
+        "##ComponentSpacingDefault").c_str(), ImVec2(resetW, 0)))
+    {
+        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
+            ClampComponentScale(1.0f, componentSpacingMaximum);
+        componentSpacingPct_ = static_cast<int>(std::round(
+            componentSpacingScale_ * 100.0f));
+        if (displaySettingsChangedCallback_)
+            displaySettingsChangedCallback_();
+    }
 
     BeginSettingRow(_L("app.settings.corner_radius"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
@@ -3401,6 +3565,10 @@ void SettingsWindow::DrawWidgetPackagesPage()
     ImGui::PopStyleVar();
 
     const auto packages = WidgetEngine::ListWidgetPackages();
+    const bool steamBridgeAvailable =
+        WidgetEngine::IsSteamWorkshopBridgeAvailable();
+    const bool workshopPublisherAvailable =
+        steamBridgeAvailable && IsSteamWorkshopPublisherAvailable();
     const std::string currentLocale =
         Locale::Instance().GetEffectiveLanguage();
     auto localizedManifest = [&](snowdesktop::widget::PackageManifest manifest)
@@ -3482,6 +3650,9 @@ void SettingsWindow::DrawWidgetPackagesPage()
         if (providerId == "static-catalog")
             return std::string(
                 _L("app.settings.widgets_source_catalog"));
+        if (providerId == "steam-workshop")
+            return std::string(
+                _L("app.settings.widgets_source_steam"));
         return providerId;
     };
     auto needsInstallConfirmation = [](const std::wstring& message)
@@ -3584,7 +3755,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
     std::vector<snowdesktop::widget::PackageSourceInfo> sources;
     for (const auto& source : allSources)
     {
-        if (!source.capabilities.query ||
+        if (!source.capabilities.query || !source.status.available ||
             source.providerId == "builtin" ||
             source.providerId == "local-directory")
             continue;
@@ -3611,9 +3782,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
         queryCatalog(false, false);
     }
 
-    // Component discovery belongs to the future Component Center, not the
-    // installed-component settings page.
-    if (false && !sources.empty())
+    if (!sources.empty())
     {
         ImGui::SeparatorText(
             _L("app.settings.widgets_catalog_results"));
@@ -3766,6 +3935,16 @@ void SettingsWindow::DrawWidgetPackagesPage()
             static_cast<UINT>(std::size(packageFilters))))
         {
             installLocalPackage(*selected, false);
+        }
+    }
+    if (steamBridgeAvailable)
+    {
+        ImGui::SameLine();
+        if (SecondaryButton(_L("app.settings.widgets_open_steam_workshop")))
+        {
+            ShellExecuteW(nullptr, L"open",
+                L"https://steamcommunity.com/workshop/", nullptr, nullptr,
+                SW_SHOWNORMAL);
         }
     }
     ImGui::Spacing();
@@ -3979,6 +4158,20 @@ void SettingsWindow::DrawWidgetPackagesPage()
     if (ImGui::CollapsingHeader(
         _L("app.settings.widgets_advanced")))
     {
+        if (workshopPublisherAvailable)
+        {
+            if (SecondaryButton(
+                _L("app.settings.widgets_publish_steam")))
+            {
+                if (LaunchSteamWorkshopPublisher(
+                    WidgetEngine::GetWidgetPackagePaths().development))
+                    widgetPackageStatus_.clear();
+                else
+                    widgetPackageStatus_ =
+                        _L("app.settings.widgets_publisher_launch_failed");
+            }
+            ImGui::Spacing();
+        }
         if (!legacy.empty())
         {
             ImGui::SeparatorText(
@@ -4121,12 +4314,13 @@ void SettingsWindow::DrawWidgetPackagesPage()
                     _L("app.settings.widgets_new_permission"),
                     permissionLabel(permission));
             }
-            else if (const auto position = rawReason.find(domainMarker);
-                position != std::string::npos)
+            else if (const auto domainPosition = rawReason.find(domainMarker);
+                domainPosition != std::string::npos)
             {
                 ImGui::TextWrapped(
                     _L("app.settings.widgets_new_website"),
-                    rawReason.substr(position + domainMarker.size()).c_str());
+                    rawReason.substr(
+                        domainPosition + domainMarker.size()).c_str());
             }
             else
             {
@@ -4286,54 +4480,92 @@ void SettingsWindow::DrawWidgetDeveloperTools()
         ImGui::Spacing();
     }
 
-    if (DrawCollapsingHeaderWithHelp(_L("app.settings.fa_icons"),
-        _L("app.settings.fa_icon_hint")))
-    {
-        if (faDebugFont_ && faDebugCodepoints_.empty())
+    const auto drawIconGrid = [&](const char* titleKey,
+        const char* hintKey, const char* notFoundKey,
+        const char* countKey, const char* tooltipKey,
+        const char* childId, const char* itemIdPrefix,
+        ImFont* font, std::vector<unsigned int>& codepoints,
+        std::initializer_list<std::pair<unsigned int, unsigned int>> ranges) {
+        if (!DrawCollapsingHeaderWithHelp(_L(titleKey), _L(hintKey)))
+            return;
+        if (font && codepoints.empty())
         {
-            for (unsigned int codepoint = 0xE000; codepoint <= 0xF8FF; ++codepoint)
+            for (const auto& [first, last] : ranges)
             {
-                if (faDebugFont_->IsGlyphInFont(static_cast<ImWchar>(codepoint)))
-                    faDebugCodepoints_.push_back(codepoint);
+                for (unsigned int codepoint = first;
+                    codepoint <= last; ++codepoint)
+                {
+                    if (font->IsGlyphInFont(
+                            static_cast<ImWchar>(codepoint)))
+                        codepoints.push_back(codepoint);
+                }
             }
         }
-
-        if (!faDebugFont_ || faDebugCodepoints_.empty())
+        if (!font || codepoints.empty())
         {
-            ImGui::TextDisabled("%s", _L("app.settings.fa_not_found"));
+            ImGui::TextDisabled("%s", _L(notFoundKey));
+            ImGui::Spacing();
+            return;
         }
-        else
-        {
-            ImGui::Text(_L("app.settings.fa_valid_chars"),
-                static_cast<int>(faDebugCodepoints_.size()));
-            const float buttonSize = 38.0f * dpiScale_;
-            const float spacing = ImGui::GetStyle().ItemSpacing.x;
-            const int columns = std::max(1, static_cast<int>(
-                ImGui::GetContentRegionAvail().x / (buttonSize + spacing)));
 
-            ImGui::BeginChild("##FontAwesomeGlyphs", ImVec2(0, 220.0f * dpiScale_), true);
-            for (size_t i = 0; i < faDebugCodepoints_.size(); ++i)
+        ImGui::Text(_L(countKey), static_cast<int>(codepoints.size()));
+        const float buttonSize = 38.0f * dpiScale_;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const int columns = std::max(1, static_cast<int>(
+            ImGui::GetContentRegionAvail().x / (buttonSize + spacing)));
+        ImGui::BeginChild(childId, ImVec2(0, 220.0f * dpiScale_), true);
+        const int rowCount = static_cast<int>(
+            (codepoints.size() + static_cast<size_t>(columns) - 1) /
+            static_cast<size_t>(columns));
+        ImGuiListClipper clipper;
+        clipper.Begin(rowCount,
+            buttonSize + ImGui::GetStyle().ItemSpacing.y);
+        while (clipper.Step())
+        {
+            for (int row = clipper.DisplayStart;
+                row < clipper.DisplayEnd; ++row)
             {
-                unsigned int codepoint = faDebugCodepoints_[i];
-                wchar_t wide[2] = { static_cast<wchar_t>(codepoint), L'\0' };
-                std::string glyph = WideToUtf8(wide);
-                std::string buttonLabel = glyph + "##fa" + std::to_string(codepoint);
-
-                ImGui::PushFont(faDebugFont_, 18.0f * dpiScale_);
-                bool clicked = ImGui::Button(buttonLabel.c_str(), ImVec2(buttonSize, buttonSize));
-                ImGui::PopFont();
-                if (clicked)
-                    ImGui::SetClipboardText(glyph.c_str());
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(_L("app.settings.fa_copy_tooltip"), codepoint);
-
-                if ((static_cast<int>(i) + 1) % columns != 0)
-                    ImGui::SameLine();
+                for (int column = 0; column < columns; ++column)
+                {
+                    const size_t i = static_cast<size_t>(
+                        row * columns + column);
+                    if (i >= codepoints.size())
+                        break;
+                    const unsigned int codepoint = codepoints[i];
+                    const std::string glyph = CodepointToUtf8(codepoint);
+                    const std::string buttonLabel = glyph + itemIdPrefix +
+                        std::to_string(codepoint);
+                    ImGui::PushFont(font, 18.0f * dpiScale_);
+                    const bool clicked = ImGui::Button(buttonLabel.c_str(),
+                        ImVec2(buttonSize, buttonSize));
+                    ImGui::PopFont();
+                    if (clicked)
+                        ImGui::SetClipboardText(glyph.c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(_L(tooltipKey), codepoint);
+                    if (column + 1 < columns && i + 1 < codepoints.size())
+                        ImGui::SameLine();
+                }
             }
-            ImGui::EndChild();
         }
+        ImGui::EndChild();
         ImGui::Spacing();
-    }
+    };
+
+    drawIconGrid("app.settings.fluent_icons",
+        "app.settings.fluent_icon_hint",
+        "app.settings.fluent_not_found",
+        "app.settings.fluent_valid_chars",
+        "app.settings.fluent_copy_tooltip",
+        "##FluentRegularGlyphs", "##fluent",
+        fluentDebugFont_, fluentDebugCodepoints_,
+        { { 0xE000, 0xF8FF }, { 0xF0000, 0xF0CCE } });
+    drawIconGrid("app.settings.fa_icons",
+        "app.settings.fa_icon_hint", "app.settings.fa_not_found",
+        "app.settings.fa_valid_chars",
+        "app.settings.fa_copy_tooltip",
+        "##FontAwesomeGlyphs", "##fa",
+        faDebugFont_, faDebugCodepoints_, { { 0xE000, 0xF8FF } });
 
     ImGui::Separator();
 
@@ -4480,6 +4712,30 @@ void SettingsWindow::DrawDebugPage()
 
     ImGui::Text("%s", _L("app.settings.debug_page"));
     ImGui::Separator();
+    ImGui::Spacing();
+    if (ImGui::Checkbox(
+            _L("app.settings.animation_diagnostics"),
+            &animationDiagnosticsEnabled_))
+    {
+        if (animationDiagnosticsToggleCallback_)
+        {
+            animationDiagnosticsToggleCallback_(
+                animationDiagnosticsEnabled_);
+        }
+    }
+    ImGui::TextWrapped(
+        "%s", _L("app.settings.animation_diagnostics_desc"));
+    if (animationDiagnosticsEnabled_ &&
+        animationDiagnosticsProvider_)
+    {
+        const std::wstring status =
+            animationDiagnosticsProvider_();
+        if (!status.empty())
+        {
+            const std::string utf8 = WideToUtf8(status);
+            ImGui::TextWrapped("%s", utf8.c_str());
+        }
+    }
     ImGui::Spacing();
     if (DrawCollapsingHeaderWithHelp(
         _L("app.settings.crash_test"),
@@ -4747,58 +5003,38 @@ void SettingsWindow::DrawAboutPage()
         }
     }
 
-    if (!updateCheckStatus_.empty())
+    if (snowdesktop::deployment::IsPackaged())
     {
         ImGui::SameLine();
-        if (updateCheckStatus_ == "checking")
+        if (!updateCheckStatus_.empty())
         {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", _L("app.settings.checking"));
+            if (updateCheckStatus_ == "checking")
+            {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", _L("app.settings.checking"));
+            }
+            else if (updateAvailable_)
+            {
+                ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
+            }
         }
-        else if (updateAvailable_)
-        {
-            ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
-        }
-        else
-        {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
-        }
-    }
 
-    ImGui::SameLine();
-    float updateButtonW = SettingButtonWidth(_L("app.settings.check_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
-    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - updateButtonW);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-    ImGui::BeginDisabled(updateCheckRequestId_ != 0);
-    if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
-    {
-        PerformUpdateCheck();
-    }
-    ImGui::EndDisabled();
-    ImGui::PopStyleColor(4);
-
-    if (!updateCheckStatus_.empty() &&
-        updateCheckStatus_ != "checking" && updateAvailable_)
-    {
-        ImGui::Spacing();
-        ImGui::TextWrapped("%s", _L("app.settings.download_latest_hint"));
-        ImGui::Spacing();
-        ImGui::Text("    ");
-        ImGui::SameLine();
-        std::string dlLabel = downloadUrl_.empty() ?
-            "https://github.com/FreeFallingSnow/SnowDesktop_Release/releases" : downloadUrl_;
-        ImGui::TextColored(ImVec4(0.30f, 0.60f, 0.95f, 1.00f), "%s", dlLabel.c_str());
-        if (ImGui::IsItemHovered())
+        float updateButtonW = SettingButtonWidth(_L("app.settings.check_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - updateButtonW);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        ImGui::BeginDisabled(updateCheckRequestId_ != 0);
+        if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
         {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            ImGui::SetTooltip("%s", dlLabel.c_str());
+            PerformUpdateCheck();
         }
-        if (ImGui::IsItemClicked())
-        {
-            ShellExecuteW(nullptr, L"open", Utf8ToWide(dlLabel).c_str(), nullptr, nullptr, SW_SHOW);
-        }
+        ImGui::EndDisabled();
+        ImGui::PopStyleColor(4);
     }
 
     ImGui::Spacing();
@@ -4834,10 +5070,12 @@ void SettingsWindow::DrawAboutPage()
     ImGui::SeparatorText(_L("app.settings.reference_programs"));
     ImGui::Spacing();
 
-    LinkButton("TranslucentTB", "https://github.com/TranslucentTB/TranslucentTB");
+    LinkButton("TranslucentTB (modified portions)",
+        "https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b");
     ImGui::SameLine();
-    ImGui::TextDisabled("(GPL-3.0)");
+    ImGui::TextDisabled("(GPL-3.0-only)");
     ImGui::TextDisabled("        Copyright (c) TranslucentTB contributors");
+    ImGui::TextDisabled("        Modified for SnowDesktop from upstream commit 322e2b7");
 
     ImGui::EndChild();
 }
@@ -5487,6 +5725,24 @@ void SettingsWindow::SetupFonts()
         strcpy_s(config.Name, "Font Awesome 6 Free Solid");
         faDebugFont_ = io.Fonts->AddFontFromMemoryTTF(fontData, static_cast<int>(fontSize),
             18.0f * dpiScale_, &config, iconRanges);
+    }
+
+    resource = FindResourceW(instance_,
+        MAKEINTRESOURCEW(IDR_FLUENT_REGULAR_FONT), RT_RCDATA);
+    resourceHandle = resource ? LoadResource(instance_, resource) : nullptr;
+    fontData = resourceHandle ? LockResource(resourceHandle) : nullptr;
+    fontSize = resource ? SizeofResource(instance_, resource) : 0;
+    if (fontData && fontSize > 0)
+    {
+        static const ImWchar iconRanges[] = {
+            0xE000, 0xF8FF, 0xF0000, 0xF0CCE, 0,
+        };
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = false;
+        strcpy_s(config.Name, "FluentSystemIcons-Regular");
+        fluentDebugFont_ = io.Fonts->AddFontFromMemoryTTF(fontData,
+            static_cast<int>(fontSize), 18.0f * dpiScale_,
+            &config, iconRanges);
     }
 }
 

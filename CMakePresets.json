@@ -1,0 +1,76 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "Release",
+      "binaryDir": "${sourceDir}/.build",
+      "cacheVariables": {
+        "BUILD_TESTING": false
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/.build_debug"
+    },
+    {
+      "name": "tests",
+      "displayName": "Release tests",
+      "inherits": "release",
+      "cacheVariables": {
+        "BUILD_TESTING": true
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release",
+      "jobs": 2,
+      "targets": [
+        "SnowDesktop",
+        "SnowDesktopSteamBridge",
+        "SnowDesktopWorkshopManager",
+        "snowwidget"
+      ]
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "configuration": "Debug",
+      "jobs": 2,
+      "targets": [
+        "SnowDesktop",
+        "SnowDesktopSteamBridge",
+        "SnowDesktopWorkshopManager"
+      ]
+    },
+    {
+      "name": "tests",
+      "configurePreset": "tests",
+      "configuration": "Release",
+      "jobs": 2,
+      "targets": [
+        "SnowDesktopTests"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "tests",
+      "configurePreset": "tests",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

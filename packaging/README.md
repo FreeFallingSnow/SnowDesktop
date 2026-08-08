@@ -1,10 +1,10 @@
 # SnowDesktop 统一发布流程
 
-根目录的 `release.bat` 是人工发布入口。它打开一个无需额外依赖的
+`scripts\release.bat` 是人工发布入口。它打开一个无需额外依赖的
 PowerShell TUI，集中显示当前版本、源码分支、工作区、二进制 Release 仓库和
 发行包状态，并提供以下动作：
 
-1. 使用仓库标准入口 `build.bat` 构建 Release；
+1. 使用仓库标准入口 `scripts\build.bat` 构建 Release；
 2. 生成携带版、MSIX、调试符号和 Partner Center 上传包；
 3. 将携带版内容同步到 `release\` 二进制仓库，但不立即提交；
 4. 将 `release/vA.B.C.0` 压缩合并到本地 `main` 并创建本地标签；
@@ -16,17 +16,17 @@ PowerShell TUI，集中显示当前版本、源码分支、工作区、二进制
 
 ## Agent/CLI 入口
 
-`release.bat` 无参数时进入 TUI，带命令时使用同一个
+`scripts\release.bat` 无参数时进入 TUI，带命令时使用同一个
 `scripts/release_manager.ps1` 引擎进入 CLI。CLI 不会等待按键，适合
 Agent、CI 或其他自动化调用：
 
 ```bat
-release.bat status
-release.bat status -Json
-release.bat package
-release.bat sync-release
-release.bat prepare
-release.bat open
+scripts\release.bat status
+scripts\release.bat status -Json
+scripts\release.bat package
+scripts\release.bat sync-release
+scripts\release.bat prepare
+scripts\release.bat open
 ```
 
 其中 `prepare` 等价于“构建打包 + 本地同步二进制 Release 仓库”，不会创建
@@ -37,12 +37,12 @@ release.bat open
 会改变源码 Git 历史或远程状态的命令必须显式确认版本：
 
 ```bat
-release.bat squash -Message "v1.0.0.0 - 更新说明" ^
+scripts\release.bat squash -Message "v1.0.0.0 - 更新说明" ^
   -Yes -ConfirmVersion 1.0.0.0
 
-release.bat publish -Yes -ConfirmVersion 1.0.0.0
+scripts\release.bat publish -Yes -ConfirmVersion 1.0.0.0
 
-release.bat github-release -Yes -ConfirmVersion 1.0.0.0
+scripts\release.bat github-release -Yes -ConfirmVersion 1.0.0.0
 ```
 
 `squash` 只执行本地压缩合并和本地标签创建。`publish` 仅适用于已经测试过的
@@ -78,7 +78,7 @@ artifacts\
 `release-notes.md` 首次打包时生成模板，后续重新打包不会覆盖人工填写的内容。
 其他摘要、哈希和状态文件由脚本更新。临时打包目录会在成功后自动删除。
 
-只需要生成安装包时，使用 `release.bat package`。底层实现位于
+只需要生成安装包时，使用 `scripts\release.bat package`。底层实现位于
 `scripts\package_release.ps1`，通常无需直接调用。
 
 ## 包内容与运行模式
@@ -117,11 +117,13 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 证书；如需旁加载测试，证书主题必须与清单 Publisher 完全一致，并在测试机
 信任该证书。
 
-可选 PFX 签名可直接传给统一发布入口：
+推荐先通过 Windows 的安全证书导入界面将 PFX 导入个人证书库，再按指纹签名：
 
 ```powershell
-.\release.bat package -CertificatePath C:\secure\SnowDesktop.pfx
+.\scripts\release.bat package -CertificateThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
 ```
 
-如果 PFX 有密码，可同时传入 `-CertificatePassword`。PFX、密码和 Partner
+机器证书库可额外传入 `-CertificateStoreLocation LocalMachine`。这种方式不会把
+PFX 密码放进 PowerShell 或 SignTool 的子进程命令行。无密码 PFX 仍可使用
+`-CertificatePath`，但脚本不再接受明文 `-CertificatePassword`。PFX 和 Partner
 Center 登录材料不得提交到仓库。

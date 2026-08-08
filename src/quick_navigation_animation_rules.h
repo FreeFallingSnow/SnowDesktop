@@ -7,7 +7,6 @@ namespace snowdesktop::quick_navigation_animation_rules
 {
 constexpr std::uint64_t kOpenDurationMs = 140;
 constexpr std::uint64_t kCloseDurationMs = 110;
-constexpr unsigned int kFrameIntervalMs = 8;
 constexpr float kMinimumScale = 0.08f;
 
 inline float ClampUnit(float value)

@@ -5,6 +5,49 @@
 namespace snowdesktop::popup_drag_rules
 {
 
+enum class DropPreviewLayer
+{
+    Background,
+    Popup,
+};
+
+/** Keeps non-popup hit feedback below a foreground popup. */
+constexpr DropPreviewLayer ResolveDropPreviewLayer(
+    bool popupTarget)
+{
+    return popupTarget
+        ? DropPreviewLayer::Popup
+        : DropPreviewLayer::Background;
+}
+
+/** Uses the same forgiving icon-sized activation area for every popup host. */
+template <typename Rect>
+constexpr Rect HandoffActivationBounds(
+    Rect iconBounds)
+{
+    iconBounds.left -= 4;
+    iconBounds.top -= 2;
+    iconBounds.right += 4;
+    iconBounds.bottom += 4;
+    return iconBounds;
+}
+
+/** Selected source items must remain sortable instead of targeting themselves. */
+constexpr bool CanHandoffToItem(
+    bool itemAvailable,
+    bool itemSelected)
+{
+    return itemAvailable && !itemSelected;
+}
+
+/** Popup handoff activation may be icon-sized, but its feedback is cell-sized. */
+template <typename Rect>
+constexpr Rect HandoffIndicatorBounds(
+    const Rect& itemBounds)
+{
+    return itemBounds;
+}
+
 /**
  * @brief 为网格弹窗的左右插入指示器保留裁剪空间。
  *

@@ -55,6 +55,20 @@ struct LocalizedMetadata
 {
     std::string title;
     std::string description;
+    std::unordered_map<std::string, std::string> strings;
+};
+
+struct PreviewVariant
+{
+    std::string id;
+    std::string title;
+    std::string titleKey;
+    std::string description;
+    std::string descriptionKey;
+    int columns = 0;
+    int rows = 0;
+    std::unordered_map<std::string, std::string> storage;
+    std::unordered_map<std::string, std::string> storageKeys;
 };
 
 struct PackageManifest
@@ -74,6 +88,11 @@ struct PackageManifest
     std::string author;
     std::string license;
     std::string preview;
+    std::string previewIntroduction;
+    std::string previewIntroductionKey;
+    std::unordered_map<std::string, std::string> previewStorage;
+    std::unordered_map<std::string, std::string> previewStorageKeys;
+    std::vector<PreviewVariant> previewVariants;
     int defaultColumns = 1;
     int defaultRows = 1;
     int minColumns = 1;

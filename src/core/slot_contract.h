@@ -6,8 +6,9 @@
  * 新增槽位面时必须：
  *  1. 在 SlotSurfaceKind 中增加枚举；
  *  2. 在 kSurfaceDescriptors 中登记其可发出的载荷；
- *  3. 在 EvaluateSlotDrop 中声明接受规则；
- *  4. 由 slot_contract_tests 的全有向矩阵覆盖。
+ *  3. 声明预览、提交、插入指示、父级视觉度量和跨屏坐标能力；
+ *  4. 在 EvaluateSlotDropUnchecked 中声明接受规则；
+ *  5. 由 slot_contract_matrix_tests 的全有向矩阵覆盖。
  *
  * 运行时命中测试和自动化测试共同调用本文件中的规则，避免测试复制实现。
  */
@@ -77,6 +78,29 @@ enum class DropRoute : std::uint8_t
     ExportToExternal,
 };
 
+enum class InteractionCapability : std::uint8_t
+{
+    Preview,
+    Commit,
+    InsertionIndicator,
+    ParentVisualMetrics,
+    CrossDisplayCoordinates,
+};
+
+constexpr std::uint32_t CapabilityBit(
+    InteractionCapability capability)
+{
+    return std::uint32_t{1} <<
+        static_cast<std::uint8_t>(capability);
+}
+
+inline constexpr std::uint32_t kInteractiveSlotCapabilities =
+    CapabilityBit(InteractionCapability::Preview) |
+    CapabilityBit(InteractionCapability::Commit) |
+    CapabilityBit(InteractionCapability::InsertionIndicator) |
+    CapabilityBit(InteractionCapability::ParentVisualMetrics) |
+    CapabilityBit(InteractionCapability::CrossDisplayCoordinates);
+
 struct DragPayloadFlags
 {
     bool desktopItems = false;
@@ -144,6 +168,7 @@ struct SurfaceDescriptor
     bool buildsSlots;
     bool externalBoundary;
     std::uint32_t emittedPayloads;
+    std::uint32_t interactionCapabilities;
 };
 
 inline constexpr std::array<
@@ -159,6 +184,7 @@ inline constexpr std::array<
             PayloadBit(DragPayloadKind::FolderMappingWidget) |
             PayloadBit(DragPayloadKind::FileSourceWidget) |
             PayloadBit(DragPayloadKind::OtherWidget),
+        kInteractiveSlotCapabilities,
     },
         {
             SlotSurfaceKind::Dock,
@@ -169,6 +195,7 @@ inline constexpr std::array<
                 PayloadBit(DragPayloadKind::CollectionWidget) |
                 PayloadBit(DragPayloadKind::FolderMappingWidget) |
                 PayloadBit(DragPayloadKind::FolderEntry),
+            kInteractiveSlotCapabilities,
     },
     {
         SlotSurfaceKind::Collection,
@@ -176,6 +203,7 @@ inline constexpr std::array<
         true,
         false,
         PayloadBit(DragPayloadKind::DesktopItem),
+        kInteractiveSlotCapabilities,
     },
     {
         SlotSurfaceKind::FileCategories,
@@ -183,6 +211,7 @@ inline constexpr std::array<
         true,
         false,
         PayloadBit(DragPayloadKind::DesktopItem),
+        kInteractiveSlotCapabilities,
     },
     {
         SlotSurfaceKind::FolderMapping,
@@ -190,14 +219,16 @@ inline constexpr std::array<
         true,
         false,
         PayloadBit(DragPayloadKind::FolderEntry),
+        kInteractiveSlotCapabilities,
     },
     {
         SlotSurfaceKind::CollectionGroup,
         "collection_group",
         true,
         false,
-        PayloadBit(DragPayloadKind::DesktopItem) |
+            PayloadBit(DragPayloadKind::DesktopItem) |
             PayloadBit(DragPayloadKind::CollectionGroupLabel),
+        kInteractiveSlotCapabilities,
     },
     {
         SlotSurfaceKind::FileGroup,
@@ -208,12 +239,14 @@ inline constexpr std::array<
             PayloadBit(DragPayloadKind::FolderMappingWidget) |
             PayloadBit(DragPayloadKind::FolderEntry) |
             PayloadBit(DragPayloadKind::FileGroupLabel),
+        kInteractiveSlotCapabilities,
     },
     {
         SlotSurfaceKind::Guide,
         "guide",
         false,
         false,
+        0,
         0,
     },
     {
@@ -222,6 +255,9 @@ inline constexpr std::array<
         false,
         true,
         PayloadBit(DragPayloadKind::ExternalFile),
+        CapabilityBit(InteractionCapability::Commit) |
+            CapabilityBit(
+                InteractionCapability::CrossDisplayCoordinates),
     },
 }};
 
@@ -346,6 +382,63 @@ constexpr bool SurfaceEmits(
             PayloadBit(payload)) != 0;
 }
 
+constexpr bool SurfaceSupports(
+    SlotSurfaceKind surface,
+    InteractionCapability capability)
+{
+    return IsKnownSurface(surface) &&
+        (Describe(surface).interactionCapabilities &
+            CapabilityBit(capability)) != 0;
+}
+
+struct SurfaceFrame
+{
+    double screenOriginX = 0.0;
+    double screenOriginY = 0.0;
+    double parentScale = 1.0;
+};
+
+struct SurfacePoint
+{
+    double x = 0.0;
+    double y = 0.0;
+};
+
+constexpr SurfacePoint ScreenToParent(
+    SurfacePoint point, SurfaceFrame frame)
+{
+    const double scale = frame.parentScale > 0.0
+        ? frame.parentScale : 1.0;
+    return {
+        (point.x - frame.screenOriginX) / scale,
+        (point.y - frame.screenOriginY) / scale,
+    };
+}
+
+constexpr SurfacePoint ParentToScreen(
+    SurfacePoint point, SurfaceFrame frame)
+{
+    const double scale = frame.parentScale > 0.0
+        ? frame.parentScale : 1.0;
+    return {
+        frame.screenOriginX + point.x * scale,
+        frame.screenOriginY + point.y * scale,
+    };
+}
+
+constexpr double ResolvePreviewScale(
+    SlotSurfaceKind target,
+    double sourceParentScale,
+    double targetParentScale)
+{
+    return SurfaceSupports(
+            target,
+            InteractionCapability::ParentVisualMetrics) &&
+            targetParentScale > 0.0
+        ? targetParentScale
+        : sourceParentScale;
+}
+
 constexpr DragRelation ClassifyRelation(
     SlotSurfaceKind source,
     SlotSurfaceKind target,
@@ -389,7 +482,7 @@ constexpr bool RelationMatches(
     return false;
 }
 
-constexpr DropRoute EvaluateSlotDrop(
+constexpr DropRoute EvaluateSlotDropUnchecked(
     SlotSurfaceKind source,
     DragPayloadKind payload,
     SlotSurfaceKind target,
@@ -540,6 +633,74 @@ constexpr DropRoute EvaluateSlotDrop(
     return DropRoute::Reject;
 }
 
+constexpr bool RouteRequiresInsertionIndicator(
+    DropRoute route)
+{
+    switch (route)
+    {
+    case DropRoute::ReorderWithinContainer:
+    case DropRoute::AddToDock:
+    case DropRoute::InsertLogicalItem:
+    case DropRoute::MoveCollectionIntoGroup:
+    case DropRoute::MoveFileSourceIntoGroup:
+    case DropRoute::TransferGroupedLabel:
+        return true;
+    default:
+        return false;
+    }
+}
+
+constexpr bool SurfaceSupportsRoute(
+    SlotSurfaceKind target,
+    DropRoute route)
+{
+    if (route == DropRoute::Reject)
+        return true;
+    if (!SurfaceSupports(
+            target, InteractionCapability::Commit))
+        return false;
+    if (route != DropRoute::ExportToExternal &&
+        !SurfaceSupports(
+            target, InteractionCapability::Preview))
+        return false;
+    if (route != DropRoute::ExportToExternal &&
+        !Describe(target).externalBoundary &&
+        !SurfaceSupports(
+            target,
+            InteractionCapability::ParentVisualMetrics))
+        return false;
+    return !RouteRequiresInsertionIndicator(route) ||
+        SurfaceSupports(
+            target,
+            InteractionCapability::InsertionIndicator);
+}
+
+constexpr DropRoute EvaluateSlotDrop(
+    SlotSurfaceKind source,
+    DragPayloadKind payload,
+    SlotSurfaceKind target,
+    DragRelation relation)
+{
+    const DropRoute route = EvaluateSlotDropUnchecked(
+        source, payload, target, relation);
+    const bool crossesSurfaceFrame =
+        relation == DragRelation::CrossSurface ||
+        relation == DragRelation::ExternalIngress ||
+        relation == DragRelation::ExternalEgress;
+    if (crossesSurfaceFrame &&
+        (!SurfaceSupports(
+            source,
+            InteractionCapability::CrossDisplayCoordinates) ||
+         !SurfaceSupports(
+            target,
+            InteractionCapability::CrossDisplayCoordinates)))
+    {
+        return DropRoute::Reject;
+    }
+    return SurfaceSupportsRoute(target, route)
+        ? route : DropRoute::Reject;
+}
+
 constexpr bool AcceptsSlotDrop(
     SlotSurfaceKind source,
     DragPayloadKind payload,
@@ -559,7 +720,21 @@ consteval bool RegistryIsComplete()
         const auto& descriptor =
             kSurfaceDescriptors[i];
         if (ToIndex(descriptor.kind) != i ||
-            descriptor.name.empty())
+            descriptor.name.empty() ||
+            (descriptor.buildsSlots &&
+                descriptor.externalBoundary))
+            return false;
+        if (descriptor.buildsSlots &&
+            descriptor.interactionCapabilities !=
+                kInteractiveSlotCapabilities)
+            return false;
+        if (descriptor.externalBoundary &&
+            (!SurfaceSupports(
+                descriptor.kind,
+                InteractionCapability::Commit) ||
+             !SurfaceSupports(
+                descriptor.kind,
+                InteractionCapability::CrossDisplayCoordinates)))
             return false;
         for (std::size_t j = i + 1;
             j < kSurfaceDescriptors.size(); ++j)

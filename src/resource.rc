@@ -5,3 +5,6 @@ IDI_APPICON_SMALL ICON   "../assets/icon/icon_small.ico"
 
 // Font Awesome Solid font, embedded as binary resource
 IDR_FA_FONT RCDATA "../assets/fonts/fa-solid-900.ttf"
+
+// Microsoft Fluent System Icons Regular, embedded under the MIT license
+IDR_FLUENT_REGULAR_FONT RCDATA "../assets/fonts/FluentSystemIcons-Regular.ttf"

@@ -17,6 +17,8 @@
 #include "utils.h"
 #include "app.h"
 #include "collection_group_rules.h"
+#include "widget_chrome_rules.h"
+#include "widget_preview_scene.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -103,6 +105,11 @@ ComPtr<IDataObject> Widget::CreateDataObject()
 float Widget::GetCellScale() const
 {
     return data_ ? data_->cellScale : 1.0f;
+}
+
+float Widget::GetComponentSpacingScale() const
+{
+    return app_ ? app_->GetComponentSpacingScale() : 1.0f;
 }
 
 int Widget::Cu(float value) const
@@ -196,6 +203,63 @@ IDWriteTextFormat* Widget::GetCuFaTextFormat(float value) const
     return cuFaTextFormatCache_.emplace(key, std::move(format)).first->second.Get();
 }
 
+void Widget::DrawPreview(ID2D1DeviceContext* context, RECT frame,
+    const snowdesktop::WidgetRenderOptions& options)
+{
+    const auto* previous = renderOptions_;
+    renderOptions_ = &options;
+    Draw(context, frame, 0);
+    renderOptions_ = previous;
+}
+
+snowdesktop::WidgetPreviewScene* Widget::GetPreviewScene() const
+{
+    return renderOptions_ ? renderOptions_->previewScene : nullptr;
+}
+
+bool Widget::IsPreviewRendering() const
+{
+    return GetPreviewScene() != nullptr ||
+        (renderOptions_ && !renderOptions_->registerBackdrop);
+}
+
+bool Widget::IsPreviewInteractive() const
+{
+    return !renderOptions_ || renderOptions_->interactive;
+}
+
+bool Widget::ShouldRegisterBackdrop() const
+{
+    return !renderOptions_ || renderOptions_->registerBackdrop;
+}
+
+POINT Widget::GetRenderPointer() const
+{
+    return renderOptions_ ? renderOptions_->pointer : POINT{};
+}
+
+IDWriteTextFormat* Widget::GetCuFluentTextFormat(float value) const
+{
+    if (!app_ || !app_->dwriteFactory_)
+        return nullptr;
+    const float size = FontCu(value);
+    const int key = static_cast<int>(std::round(size * 100.0f));
+    auto found = cuFluentTextFormatCache_.find(key);
+    if (found != cuFluentTextFormatCache_.end())
+        return found->second.Get();
+
+    ComPtr<IDWriteTextFormat> format;
+    format.Attach(CreateFluentTextFormat(
+        app_->dwriteFactory_.Get(), size));
+    if (!format)
+        return nullptr;
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    return cuFluentTextFormatCache_.emplace(
+        key, std::move(format)).first->second.Get();
+}
+
 // ── WidgetContainer geometry ──────────────────────────────────
 
 /**
@@ -271,7 +335,8 @@ RECT WidgetContainer::GetFrameRect() const
         }
     }
 
-    const int inset = Cu(4.0f);
+    const int inset = snowdesktop::widget_spacing_rules::ScaledComponentInset(
+        GetCellScale(), app_ ? app_->GetComponentSpacingScale() : 1.0f);
     if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
         InflateRect(&rect, -inset, -inset);
     return rect;
@@ -297,10 +362,18 @@ RECT WidgetContainer::GetMoveHandleRect() const
 {
     RECT frame = GetFrameRect();
     const int handleHeight = Cu(GetBarHeight());
+    const float cornerRadius = app_ && app_->settingsWindow_
+        ? app_->settingsWindow_->GetPersonalization().cornerRadius
+        : 12.0f;
+    const int sideInset = snowdesktop::widget_chrome_rules::BottomBarSideInset(
+        Cu(cornerRadius), handleHeight, Cu(4.0f), Cu(2.0f));
+    const int maxSideInset = std::max<int>(
+        0, (frame.right - frame.left - 1) / 2);
+    const int clampedSideInset = std::min(sideInset, maxSideInset);
     return {
-        frame.left + Cu(4.0f),
+        frame.left + clampedSideInset,
         std::max<LONG>(frame.top, frame.bottom - handleHeight - Cu(2.0f)),
-        frame.right - Cu(4.0f),
+        frame.right - clampedSideInset,
         frame.bottom - Cu(2.0f)
     };
 }
@@ -440,6 +513,9 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
     const std::vector<Item*>& sourceItems, Container* origin, int mods) const
 {
+    if (region == HitRegion::None ||
+        region == HitRegion::Blocked)
+        return L"";
     DropAction action = DropActionFromMods(mods, sourceItems.empty() ? DropAction::Copy : DropAction::Move);
     if (data_ && data_->type == DesktopWidgetType::FileCategories)
     {
@@ -447,8 +523,9 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
             return _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
         };
 
-        bool sourceHasShortcut = sourceItems.empty() && app_ && app_->externalDragActive_ &&
-            app_->externalDropHasShortcut_;
+        bool sourceHasShortcut = sourceItems.empty() && app_ &&
+            app_->dragDropController_.IsExternalDragActive() &&
+            app_->dragDropController_.ExternalSummary().hasShortcut;
         for (auto* item : sourceItems)
         {
             if (!item) continue;
@@ -1792,14 +1869,37 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (frame.right <= frame.left || body.bottom <= body.top) return;
 
     const bool selected = data_->selected;
-    const bool hovered = PtInRect(&frame, mousePt) != FALSE;
-    const bool lightTheme = app_->IsLightContentTheme();
+    const bool hovered = IsPreviewInteractive() &&
+        PtInRect(&frame, mousePt) != FALSE;
+    const bool fixedGuideAppearance =
+        data_->type == DesktopWidgetType::Guide;
+    const bool lightTheme = fixedGuideAppearance
+        ? true : app_->IsLightContentTheme();
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
     float cornerRadiusCu = 12.0f;
-    if (app_->settingsWindow_)
+    PersonalizationSettings guideAppearance;
+    const PersonalizationSettings* appearanceOverride = nullptr;
+    if (fixedGuideAppearance)
+    {
+        guideAppearance = PersonalizationSettings::AcrylicLightPreset();
+        appearanceOverride = &guideAppearance;
+        fillColor = D2D1::ColorF(
+            guideAppearance.widgetBgR,
+            guideAppearance.widgetBgG,
+            guideAppearance.widgetBgB,
+            guideAppearance.widgetAlpha);
+        borderColor = D2D1::ColorF(
+            guideAppearance.widgetBorderR,
+            guideAppearance.widgetBorderG,
+            guideAppearance.widgetBorderB,
+            guideAppearance.widgetBorderAlpha);
+        gradientEndA = guideAppearance.gradientEndA;
+        cornerRadiusCu = guideAppearance.cornerRadius;
+    }
+    else if (app_->settingsWindow_)
     {
         const auto& p = app_->settingsWindow_->GetPersonalization();
         fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
@@ -1825,7 +1925,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     // ── 1. Background + border ────────────────────────────────
     app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, borderColor,
-        selected, strokeW);
+        selected, strokeW, appearanceOverride, ShouldRegisterBackdrop());
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {
@@ -1848,11 +1948,11 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         data_->type == DesktopWidgetType::FolderMapping ||
         data_->type == DesktopWidgetType::CollectionGroup ||
         data_->type == DesktopWidgetType::FileGroup ||
-        data_->type == DesktopWidgetType::Guide ||
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
-    bool showGradient = persistentBottomBar || !data_->bottomBarHover || hovered;
+    bool showGradient = persistentBottomBar ||
+        !data_->bottomBarHover || hovered;
     if (showGradient)
     {
         RECT gradRect = { frame.left, std::max<LONG>(body.top, frame.bottom - Cu(GetBarHeight() * 1.5f)),
@@ -1894,7 +1994,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     // ── 4. Bottom-bar items (on top of gradient, visibility per bottomBarHover) ──
-    bool showHandle = persistentBottomBar || (data_->bottomBarHover ? hovered : true);
+    bool showHandle = persistentBottomBar ||
+        (data_->bottomBarHover ? hovered : true);
 
     if (showHandle)
     {
@@ -1971,6 +2072,17 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     // ── Scrollbar (on top of everything, hover only) ──────────
     DrawScrollbar(context, hovered);
+}
+
+void WidgetContainer::DrawPreview(ID2D1DeviceContext* context, RECT frame,
+    const snowdesktop::WidgetRenderOptions& options)
+{
+    const auto* previous = renderOptions_;
+    renderOptions_ = &options;
+    SetHostedFrame(&frame);
+    DrawChrome(context, options.pointer);
+    SetHostedFrame(nullptr);
+    renderOptions_ = previous;
 }
 
 // ── Factory ─────────────────────────────────────────────────

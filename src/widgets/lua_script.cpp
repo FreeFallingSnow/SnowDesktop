@@ -11,6 +11,13 @@
 #include "widget.h"
 #include "types.h"
 #include "app.h"
+#include "widget_preview_scene.h"
+
+namespace
+{
+const std::unordered_map<std::string, std::string>
+    kEmptyPreviewStorage;
+}
 
 ID2D1RoundedRectangleGeometry* LuaScript::GetCachedClipGeometry(
     ID2D1Factory1* factory, const RECT& frame, float radius)
@@ -37,13 +44,19 @@ ID2D1RoundedRectangleGeometry* LuaScript::GetCachedClipGeometry(
     return cachedClipGeometry_.Get();
 }
 
-LuaScript::WidgetLoadResult LuaScript::SafeLoadWidget(const std::wstring& id, const std::wstring& scriptPath)
+LuaScript::WidgetLoadResult LuaScript::SafeLoadWidget(WidgetEngine* engine,
+    const std::wstring& id, const std::wstring& scriptPath, bool preview)
 {
     WidgetLoadResult result;
+    if (!engine) return result;
     __try
     {
-        result.ok = app_->widgetEngine_->EnsureWidgetLoaded(id, scriptPath);
-        result.customStyle = app_->widgetEngine_->HasCustomStyle(id);
+        if (preview)
+            result.ok = engine->EnsureWidgetPreviewLoaded(
+                id, scriptPath, kEmptyPreviewStorage);
+        else
+            result.ok = engine->EnsureWidgetLoaded(id, scriptPath);
+        result.customStyle = engine->HasCustomStyle(id);
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
@@ -53,11 +66,13 @@ LuaScript::WidgetLoadResult LuaScript::SafeLoadWidget(const std::wstring& id, co
 }
 
 bool LuaScript::SafeRenderWidget(const std::wstring& id, const std::wstring& scriptPath,
-    ID2D1DeviceContext* context, RECT frame, int columns, int rows)
+    WidgetEngine* engine, ID2D1DeviceContext* context, RECT frame,
+    int columns, int rows)
 {
+    if (!engine) return false;
     __try
     {
-        app_->widgetEngine_->RenderWidget(id, scriptPath, context, frame, columns, rows);
+        engine->RenderWidget(id, scriptPath, context, frame, columns, rows);
         return true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
@@ -67,12 +82,14 @@ bool LuaScript::SafeRenderWidget(const std::wstring& id, const std::wstring& scr
     }
 }
 
-bool LuaScript::SafeReadFlags(const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover)
+bool LuaScript::SafeReadFlags(WidgetEngine* engine,
+    const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover)
 {
+    if (!engine) return false;
     __try
     {
-        showTitle = app_->widgetEngine_->ReadBoolFlag(scriptPath, "showTitle", false);
-        bottomBarHover = app_->widgetEngine_->ReadBoolFlag(scriptPath, "bottomBarHover", true);
+        showTitle = engine->ReadBoolFlag(scriptPath, "showTitle", false);
+        bottomBarHover = engine->ReadBoolFlag(scriptPath, "bottomBarHover", true);
         return true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
@@ -105,14 +122,31 @@ bool LuaScript::SafeReadFlags(const std::wstring& scriptPath, bool& showTitle, b
  */
 void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
-    (void)rect;
+    DrawInternal(context, rect, state,
+        app_ ? app_->widgetEngine_.get() : nullptr, false);
+}
+
+void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
+    const snowdesktop::WidgetRenderOptions& options)
+{
+    const auto* previous = renderOptions_;
+    renderOptions_ = &options;
+    DrawInternal(context, frame, 0, options.luaEngine, true);
+    renderOptions_ = previous;
+}
+
+void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
+    int state, WidgetEngine* engine, bool preview)
+{
     if (!context || !data_ || !app_) return;
 
-    RECT frame = app_->GetStandaloneWidgetFrameRect(*data_);
+    RECT frame = preview ? rect : app_->GetStandaloneWidgetFrameRect(*data_);
     if (IsRectEmptyRect(frame)) return;
 
     const bool selected = data_->selected || state == 2;
-    const bool hovered = PtInRect(&frame, app_->lastMousePoint_) != FALSE;
+    const POINT renderPointer = preview
+        ? GetRenderPointer() : app_->lastMousePoint_;
+    const bool hovered = PtInRect(&frame, renderPointer) != FALSE;
     const bool lightTheme = app_->IsLightContentTheme();
     int globalContentTheme = 0;
     if (app_->settingsWindow_)
@@ -136,15 +170,16 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
     bool customStyle = false;
     bool widgetOk = false;
-    if (app_->widgetEngine_)
+    if (engine)
     {
-        auto loadResult = SafeLoadWidget(data_->id, data_->packageId);
+        auto loadResult = SafeLoadWidget(
+            engine, data_->id, data_->packageId, preview);
         widgetOk = loadResult.ok;
         customStyle = loadResult.customStyle;
 
         if (customStyle && widgetOk)
         {
-            std::string fp = app_->widgetEngine_->RuntimeGetStorageValue(data_->id, "followPersonalization");
+            std::string fp = engine->RuntimeGetStorageValue(data_->id, "followPersonalization");
             if (fp == "1" || fp == "true")
                 customStyle = false;
         }
@@ -157,7 +192,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             float luaGradientEndA = gradientEndA;
             bool luaGlassEnabled = false;
             bool luaAcrylicEnabled = false;
-            if (app_->widgetEngine_->ReadCustomColors(data_->id,
+            if (engine->ReadCustomColors(data_->id,
                 bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
                 luaGradientEndA, luaGlassEnabled, luaAcrylicEnabled))
             {
@@ -176,7 +211,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         if (customStyle && app_->settingsWindow_)
         {
             int ct = globalContentTheme;
-            std::string stored = app_->widgetEngine_->RuntimeGetStorageValue(data_->id, "__contentTheme");
+            std::string stored = engine->RuntimeGetStorageValue(data_->id, "__contentTheme");
             if (!stored.empty())
                 ct = std::clamp(std::stoi(stored), 0, 1);
             effectSettings.contentTheme = ct;
@@ -204,57 +239,85 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             theme.gradientEndA = gradientEndA;
             theme.cornerRadius = cornerRadiusCu;
             theme.contentTheme = effectSettings.contentTheme;
-            app_->widgetEngine_->SetWidgetTheme(data_->id, theme);
+            engine->SetWidgetTheme(data_->id, theme);
         }
     }
 
     app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
         fillColor, borderColor, selected, selected ? 1.6f : 1.0f,
-        customStyle ? &effectSettings : nullptr);
+        customStyle ? &effectSettings : nullptr, !preview);
 
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (app_->widgetEngine_ && widgetOk)
+    if (engine && widgetOk)
     {
         const POINT center = { (frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2 };
         const GridPage* realPage = nullptr;
-        for (const auto& p : app_->gridPages_)
+        if (preview)
         {
-            if (PtInRect(&p.bounds, center)) { realPage = &p; break; }
-        }
-        if (!realPage)
-            realPage = FindGridPage(app_->gridPages_, data_->gridCell.pageId);
-        if (realPage)
-        {
-            app_->widgetEngine_->SetGridCellSize(realPage->cellWidth, realPage->cellHeight);
-            app_->widgetEngine_->SetGridCellGap(realPage->gapY);
-            app_->widgetEngine_->SetBarHeight(static_cast<int>(GetBarHeight()));
-            app_->widgetEngine_->SetItemFontWeight(app_->GetItemFontWeight());
-            app_->widgetEngine_->SetItemFontSizeScale(app_->itemFontSize_ / kItemFontSize);
-            if (data_->gridCell.pageId != realPage->id)
+            realPage = FindGridPage(
+                app_->gridPages_, data_->gridCell.pageId);
+            if (realPage)
             {
-                data_->gridCell.pageId = realPage->id;
-                RECT correctBounds = GetGridRect(app_->gridPages_, data_->gridCell, data_->gridSpan);
-                int hgx = std::max(Cu(2.0f), realPage->gapX / 2);
-                int hgy = std::max(Cu(2.0f), realPage->gapY / 2);
-                frame = correctBounds;
-                frame.left   -= hgx; frame.top    -= hgy;
-                frame.right  += hgx; frame.bottom += hgy;
-                const int inset = Cu(4.0f);
-                if (frame.right - frame.left > inset * 4 && frame.bottom - frame.top > inset * 4)
-                    InflateRect(&frame, -inset, -inset);
+                engine->SetGridCellSize(
+                    realPage->cellWidth, realPage->cellHeight);
+                engine->SetGridCellGap(realPage->gapY);
+            }
+            else
+            {
+                engine->SetGridCellSize(
+                    std::max(1, static_cast<int>(frame.right - frame.left) /
+                        std::max(1, data_->gridSpan.columns)),
+                    std::max(1, static_cast<int>(frame.bottom - frame.top) /
+                        std::max(1, data_->gridSpan.rows)));
+                engine->SetGridCellGap(Cu(8.0f));
+            }
+            engine->SetBarHeight(static_cast<int>(GetBarHeight()));
+            engine->SetItemFontWeight(app_->GetItemFontWeight());
+            engine->SetItemFontSizeScale(
+                app_->itemFontSize_ / kItemFontSize);
+        }
+        else
+        {
+            for (const auto& p : app_->gridPages_)
+            {
+                if (PtInRect(&p.bounds, center)) { realPage = &p; break; }
+            }
+            if (!realPage)
+                realPage = FindGridPage(app_->gridPages_, data_->gridCell.pageId);
+            if (realPage)
+            {
+                engine->SetGridCellSize(realPage->cellWidth, realPage->cellHeight);
+                engine->SetGridCellGap(realPage->gapY);
+                engine->SetBarHeight(static_cast<int>(GetBarHeight()));
+                engine->SetItemFontWeight(app_->GetItemFontWeight());
+                engine->SetItemFontSizeScale(app_->itemFontSize_ / kItemFontSize);
+                if (data_->gridCell.pageId != realPage->id)
+                {
+                    data_->gridCell.pageId = realPage->id;
+                    RECT correctBounds = GetGridRect(app_->gridPages_, data_->gridCell, data_->gridSpan);
+                    int hgx = std::max(Cu(2.0f), realPage->gapX / 2);
+                    int hgy = std::max(Cu(2.0f), realPage->gapY / 2);
+                    frame = correctBounds;
+                    frame.left   -= hgx; frame.top    -= hgy;
+                    frame.right  += hgx; frame.bottom += hgy;
+                    const int inset = Cu(4.0f);
+                    if (frame.right - frame.left > inset * 4 && frame.bottom - frame.top > inset * 4)
+                        InflateRect(&frame, -inset, -inset);
+                }
             }
         }
-        SafeRenderWidget(data_->id, data_->packageId, context, frame,
+        SafeRenderWidget(data_->id, data_->packageId, engine, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows);
     }
     context->PopAxisAlignedClip();
 
-    if (app_->widgetEngine_ && widgetOk)
-        SafeReadFlags(data_->packageId, data_->showTitle, data_->bottomBarHover);
+    if (engine && widgetOk)
+        SafeReadFlags(engine, data_->packageId,
+            data_->showTitle, data_->bottomBarHover);
 
-    if (app_->widgetEngine_ && widgetOk)
+    if (engine && widgetOk)
     {
-        auto scrollControls = app_->widgetEngine_->GetScrollControls(data_->id);
+        auto scrollControls = engine->GetScrollControls(data_->id);
         for (const auto& ctrl : scrollControls)
         {
             if (ctrl.contentHeight <= ctrl.viewportHeight)
@@ -266,7 +329,7 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 frame.right - Cu(2.0f),
                 frame.top + ctrl.rect.bottom
             };
-            int scrollOff = app_->widgetEngine_->RuntimeGetScrollOffset(data_->id, ctrl.id);
+            int scrollOff = engine->RuntimeGetScrollOffset(data_->id, ctrl.id);
             bool showScrollbar = hovered || !data_->bottomBarHover;
             DrawScrollbarAt(context, sbRect, ctrl.contentHeight, ctrl.viewportHeight,
                 scrollOff, showScrollbar, app_->IsLightContentTheme(), GetCellScale());

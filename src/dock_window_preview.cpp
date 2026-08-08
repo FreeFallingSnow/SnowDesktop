@@ -63,7 +63,95 @@ RECT FitThumbnailRect(RECT bounds, SIZE sourceSize)
     return { left, top, left + width, top + height };
 }
 
+struct DockWindowPreviewMonitorContext
+{
+    UINT dpi = 96;
+    RECT workArea{};
+};
+
+DockWindowPreviewMonitorContext ResolveDockWindowPreviewMonitorContext(
+    POINT anchorCenter)
+{
+    DockWindowPreviewMonitorContext context;
+    const HMONITOR monitor = MonitorFromPoint(
+        anchorCenter, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+    if (!GetMonitorInfoW(monitor, &monitorInfo))
+        monitorInfo.rcWork = {
+            0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)
+        };
+
+    UINT dpiX = 96;
+    UINT dpiY = 96;
+    if (FAILED(GetDpiForMonitor(
+            monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)))
+        dpiX = 96;
+    context.dpi = std::max<UINT>(96, dpiX);
+    context.workArea = monitorInfo.rcWork;
+    return context;
+}
+
+RECT ResolveDockWindowPreviewPanelPlacement(
+    RECT anchorScreen, DockPosition dockPosition, SIZE panelSize,
+    const RECT& workArea, UINT dpi)
+{
+    if (IsRectEmpty(&anchorScreen) ||
+        panelSize.cx <= 0 || panelSize.cy <= 0)
+        return {};
+
+    const int panelWidth = std::max(1L, panelSize.cx);
+    const int panelHeight = std::max(1L, panelSize.cy);
+    const POINT anchorCenter{
+        (anchorScreen.left + anchorScreen.right) / 2,
+        (anchorScreen.top + anchorScreen.bottom) / 2
+    };
+    const int gap = ScaleForDpi(10, dpi);
+    int left = anchorCenter.x - panelWidth / 2;
+    int top = anchorScreen.top - gap - panelHeight;
+    switch (dockPosition)
+    {
+    case DockPosition::Top:
+        top = anchorScreen.bottom + gap;
+        break;
+    case DockPosition::Left:
+        left = anchorScreen.right + gap;
+        top = anchorCenter.y - panelHeight / 2;
+        break;
+    case DockPosition::Right:
+        left = anchorScreen.left - gap - panelWidth;
+        top = anchorCenter.y - panelHeight / 2;
+        break;
+    case DockPosition::Bottom:
+    default:
+        break;
+    }
+    left = std::clamp(left, static_cast<int>(workArea.left),
+        static_cast<int>(std::max<LONG>(
+            workArea.left, workArea.right - panelWidth)));
+    top = std::clamp(top, static_cast<int>(workArea.top),
+        static_cast<int>(std::max<LONG>(
+            workArea.top, workArea.bottom - panelHeight)));
+    return { left, top, left + panelWidth, top + panelHeight };
+}
+
 } // namespace
+
+DockWindowPreviewZOrderPolicy
+ResolveDockWindowPreviewZOrderPolicy(
+    bool useDockLayer, bool wasVisible)
+{
+    DockWindowPreviewZOrderPolicy policy;
+    policy.insertAfter = useDockLayer
+        ? nullptr : HWND_TOPMOST;
+    policy.flags = SWP_NOACTIVATE |
+        (wasVisible ? 0 : SWP_NOREDRAW);
+    if (useDockLayer)
+    {
+        policy.flags |=
+            SWP_NOZORDER | SWP_NOOWNERZORDER;
+    }
+    return policy;
+}
 
 DockWindowPreviewGrid CalculateDockWindowPreviewGrid(
     size_t itemCount, int maximumWidth, int maximumHeight, UINT dpi)
@@ -495,53 +583,16 @@ void DockWindowPreview::Show(
     }
     KeepVisible();
 
-    const HMONITOR monitor = MonitorFromPoint(
-        anchorCenter, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
-    if (!GetMonitorInfoW(monitor, &monitorInfo))
-        monitorInfo.rcWork = {
-            0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)
-        };
-
-    UINT dpiX = 96;
-    UINT dpiY = 96;
-    if (FAILED(GetDpiForMonitor(
-            monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)))
-        dpiX = 96;
-    dpi_ = std::max<UINT>(96, dpiX);
-    Layout(monitorInfo.rcWork, dpi_);
+    const DockWindowPreviewMonitorContext context =
+        ResolveDockWindowPreviewMonitorContext(anchorCenter);
+    dpi_ = context.dpi;
+    Layout(context.workArea, dpi_);
 
     const int panelWidth = std::max(1L, panelSize_.cx);
     const int panelHeight = std::max(1L, panelSize_.cy);
-
-    const int gap = ScaleForDpi(10, dpi_);
-    int left = anchorCenter.x - panelWidth / 2;
-    int top = anchorScreen.top - gap - panelHeight;
-    switch (dockPosition_)
-    {
-    case DockPosition::Top:
-        top = anchorScreen.bottom + gap;
-        break;
-    case DockPosition::Left:
-        left = anchorScreen.right + gap;
-        top = anchorCenter.y - panelHeight / 2;
-        break;
-    case DockPosition::Right:
-        left = anchorScreen.left - gap - panelWidth;
-        top = anchorCenter.y - panelHeight / 2;
-        break;
-    case DockPosition::Bottom:
-    default:
-        break;
-    }
-    left = std::clamp(left, static_cast<int>(monitorInfo.rcWork.left),
-        static_cast<int>(std::max<LONG>(
-            monitorInfo.rcWork.left,
-            monitorInfo.rcWork.right - panelWidth)));
-    top = std::clamp(top, static_cast<int>(monitorInfo.rcWork.top),
-        static_cast<int>(std::max<LONG>(
-            monitorInfo.rcWork.top,
-            monitorInfo.rcWork.bottom - panelHeight)));
+    const RECT panelRect = ResolveDockWindowPreviewPanelPlacement(
+        anchorScreen_, dockPosition_, panelSize_,
+        context.workArea, dpi_);
 
     const BOOL darkMode = lightTheme_ ? FALSE : TRUE;
     DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -555,32 +606,50 @@ void DockWindowPreview::Show(
     const bool useDockLayer =
         dockLayerOwner &&
         IsWindow(dockLayerOwner);
-    SetWindowLongPtrW(
-        hwnd_, GWLP_HWNDPARENT,
-        reinterpret_cast<LONG_PTR>(
-            useDockLayer
-                ? dockLayerOwner : nullptr));
+    const HWND requestedOwner =
+        useDockLayer ? dockLayerOwner : nullptr;
+    const HWND currentOwner = reinterpret_cast<HWND>(
+        GetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT));
+    const bool ownerChanging =
+        currentOwner != requestedOwner;
+    if (ownerChanging && wasVisible)
+        ShowWindow(hwnd_, SW_HIDE);
+    if (ownerChanging)
+    {
+        SetWindowLongPtrW(
+            hwnd_, GWLP_HWNDPARENT,
+            reinterpret_cast<LONG_PTR>(requestedOwner));
+    }
+    const bool visibleForUpdate =
+        IsWindowVisible(hwnd_) != FALSE;
 
     // Prepare the complete preview while it is still hidden. Showing the
     // HWND before applying its region and registering the DWM thumbnails
     // exposes one empty rectangular frame; the floating Dock made that frame
     // especially noticeable because it also performed a second visible
     // Z-order transition.
+    // A popup owned by a topmost window is promoted with its owner. Never
+    // pass HWND_NOTOPMOST here: Windows would demote the owner and every
+    // window in the owned chain, exposing the desktop Dock copy again.
+    const DockWindowPreviewZOrderPolicy zOrder =
+        ResolveDockWindowPreviewZOrderPolicy(
+            useDockLayer, visibleForUpdate);
     SetWindowPos(
-        hwnd_,
-        useDockLayer ? HWND_NOTOPMOST : HWND_TOPMOST,
-        left, top, panelWidth, panelHeight,
-        SWP_NOACTIVATE |
-            (wasVisible ? 0 : SWP_NOREDRAW));
+        hwnd_, zOrder.insertAfter,
+        panelRect.left, panelRect.top,
+        panelWidth, panelHeight,
+        zOrder.flags);
     HRGN region = CreateRoundRectRgn(
         0, 0, panelWidth + 1, panelHeight + 1,
         ScaleForDpi(14, dpi_), ScaleForDpi(14, dpi_));
     if (region)
-        SetWindowRgn(hwnd_, region, wasVisible ? TRUE : FALSE);
+        SetWindowRgn(
+            hwnd_, region,
+            visibleForUpdate ? TRUE : FALSE);
 
     RegisterThumbnails();
     InvalidateRect(hwnd_, nullptr, TRUE);
-    if (!wasVisible)
+    if (!visibleForUpdate)
     {
         // Ownership already keeps the preview above the floating Dock. Reveal
         // it without another Z-order mutation so the Dock and preview enter
@@ -589,7 +658,8 @@ void DockWindowPreview::Show(
             hwnd_, nullptr,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
-                SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                SWP_NOOWNERZORDER | SWP_NOACTIVATE |
+                SWP_SHOWWINDOW);
     }
     UpdateWindow(hwnd_);
 }
@@ -669,6 +739,49 @@ void DockWindowPreview::UnregisterThumbnails()
         if (thumbnail)
             DwmUnregisterThumbnail(thumbnail);
     thumbnails_.clear();
+}
+
+void DockWindowPreview::UpdateAnchor(
+    RECT anchorScreen, DockPosition dockPosition)
+{
+    if (!hwnd_ || !IsWindowVisible(hwnd_) ||
+        IsRectEmpty(&anchorScreen) ||
+        panelSize_.cx <= 0 || panelSize_.cy <= 0)
+        return;
+
+    anchorScreen_ = anchorScreen;
+    dockPosition_ = dockPosition;
+    POINT pointer{};
+    if (GetCursorPos(&pointer) &&
+        RectContainsScreenPoint(anchorScreen_, pointer))
+    {
+        transitionOriginScreen_ = pointer;
+        hasTransitionOrigin_ = true;
+    }
+
+    const POINT anchorCenter{
+        (anchorScreen_.left + anchorScreen_.right) / 2,
+        (anchorScreen_.top + anchorScreen_.bottom) / 2
+    };
+    const DockWindowPreviewMonitorContext context =
+        ResolveDockWindowPreviewMonitorContext(anchorCenter);
+    if (context.dpi != dpi_)
+    {
+        // 跨监视器 DPI 变化：卡片与缩略图目标必须按新 DPI 重新布局。
+        dpi_ = context.dpi;
+        Layout(context.workArea, dpi_);
+        RegisterThumbnails();
+    }
+    const RECT panelRect = ResolveDockWindowPreviewPanelPlacement(
+        anchorScreen_, dockPosition_, panelSize_,
+        context.workArea, dpi_);
+    SetWindowPos(
+        hwnd_, nullptr,
+        panelRect.left, panelRect.top,
+        panelSize_.cx, panelSize_.cy,
+        SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+            SWP_NOSENDCHANGING | SWP_NOREDRAW);
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void DockWindowPreview::Hide()

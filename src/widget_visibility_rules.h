@@ -7,6 +7,7 @@ constexpr bool ShouldRenderWidget(
     bool itemDragActive,
     bool externalDragActive,
     bool widgetMoveActive,
+    bool widgetSelected,
     bool popupOpen,
     bool pointerInside)
 {
@@ -14,21 +15,9 @@ constexpr bool ShouldRenderWidget(
         itemDragActive ||
         externalDragActive ||
         widgetMoveActive ||
+        widgetSelected ||
         popupOpen ||
         pointerInside;
 }
 
-constexpr bool ShouldRetainBackdropAfterDrag(
-    bool showOnHoverOnly,
-    bool popupOpen,
-    bool pointerInside)
-{
-    return ShouldRenderWidget(
-        showOnHoverOnly,
-        false,
-        false,
-        false,
-        popupOpen,
-        pointerInside);
-}
 }

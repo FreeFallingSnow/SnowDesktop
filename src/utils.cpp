@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
 #include <unordered_set>
 #include <vector>
 
@@ -130,10 +131,13 @@ HICON LoadAppIcon()
  *
  * @return 成功时返回字体句柄，失败时返回 nullptr。
  */
-HANDLE LoadFontAwesome()
+namespace
+{
+HANDLE LoadEmbeddedFont(int resourceId)
 {
     HMODULE module = GetModuleHandleW(nullptr);
-    HRSRC res = FindResourceW(module, MAKEINTRESOURCEW(IDR_FA_FONT), RT_RCDATA);
+    HRSRC res = FindResourceW(
+        module, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
     if (res == nullptr) return nullptr;
     HGLOBAL handle = LoadResource(module, res);
     if (handle == nullptr) return nullptr;
@@ -145,11 +149,24 @@ HANDLE LoadFontAwesome()
     HANDLE fontHandle = AddFontMemResourceEx(data, size, nullptr, &count);
     return fontHandle;
 }
+}
+
+HANDLE LoadFontAwesome()
+{
+    return LoadEmbeddedFont(IDR_FA_FONT);
+}
+
+HANDLE LoadFluentSystemIconsRegular()
+{
+    return LoadEmbeddedFont(IDR_FLUENT_REGULAR_FONT);
+}
 
 namespace
 {
     const void* g_faFontData = nullptr;
     DWORD g_faFontSize = 0;
+    const void* g_fluentFontData = nullptr;
+    DWORD g_fluentFontSize = 0;
 
     /**
      * @brief 构建 Font Awesome 内存字体的 DirectWrite 字体集合。
@@ -160,7 +177,8 @@ namespace
      * @param factory IDWriteFactory 接口指针。
      * @return 成功时返回字体集合，失败时返回 nullptr。
      */
-    ComPtr<IDWriteFontCollection1> BuildFaFontCollection(IDWriteFactory* factory)
+    ComPtr<IDWriteFontCollection1> BuildMemoryFontCollection(
+        IDWriteFactory* factory, const void* fontData, DWORD fontSize)
     {
         ComPtr<IDWriteFactory5> factory5;
         if (FAILED(factory->QueryInterface(IID_PPV_ARGS(&factory5))))
@@ -181,8 +199,8 @@ namespace
         ComPtr<IDWriteFontFile> fontFile;
         if (FAILED(loader->CreateInMemoryFontFileReference(
                 factory5.Get(),
-                g_faFontData,
-                g_faFontSize,
+                fontData,
+                fontSize,
                 nullptr,
                 &fontFile)))
         {
@@ -249,7 +267,8 @@ IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize)
             fontCollection = s_faFontCollection;
         else
         {
-            fontCollection = BuildFaFontCollection(factory);
+            fontCollection = BuildMemoryFontCollection(
+                factory, g_faFontData, g_faFontSize);
             s_faFontCollection = fontCollection;
         }
     }
@@ -268,6 +287,49 @@ IDWriteTextFormat* CreateFaTextFormat(IDWriteFactory* factory, float fontSize)
 
     format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    return format;
+}
+
+IDWriteTextFormat* CreateFluentTextFormat(
+    IDWriteFactory* factory, float fontSize)
+{
+    if (factory == nullptr) return nullptr;
+
+    if (g_fluentFontData == nullptr)
+    {
+        HMODULE module = GetModuleHandleW(nullptr);
+        HRSRC resource = FindResourceW(module,
+            MAKEINTRESOURCEW(IDR_FLUENT_REGULAR_FONT), RT_RCDATA);
+        if (resource != nullptr)
+        {
+            HGLOBAL handle = LoadResource(module, resource);
+            if (handle != nullptr)
+            {
+                g_fluentFontData = LockResource(handle);
+                g_fluentFontSize = SizeofResource(module, resource);
+            }
+        }
+    }
+
+    static ComPtr<IDWriteFontCollection1> fluentCollection;
+    if (!fluentCollection && g_fluentFontData != nullptr)
+    {
+        fluentCollection = BuildMemoryFontCollection(
+            factory, g_fluentFontData, g_fluentFontSize);
+    }
+
+    IDWriteTextFormat* format = nullptr;
+    const HRESULT hr = factory->CreateTextFormat(
+        L"FluentSystemIcons-Regular", fluentCollection.Get(),
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        fontSize, L"", &format);
+    if (FAILED(hr)) return nullptr;
+
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     return format;
 }
 
@@ -1267,54 +1329,75 @@ bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value
 }
 
 // ============================================================================
-// 日志写入（自动裁剪至最新 500 条）
+// 诊断日志写入（按文件大小轮转）
 // ============================================================================
 
-void WriteCrashLogEntry(const wchar_t* message)
+void WriteDiagnosticLogEntry(
+    const wchar_t* message, DiagnosticLogLevel level)
 {
+    if (!message) return;
+    static std::mutex logMutex;
+    std::scoped_lock lock(logMutex);
+
+    constexpr LONGLONG kMaximumLogBytes = 1024 * 1024;
     const std::wstring filename =
-        GetDataFilePath(L"SnowDesktop_crash.log");
+        GetDataFilePath(L"SnowDesktop.log");
+    const std::wstring previousFilename = filename + L".1";
 
-    HANDLE f = CreateFileW(filename.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f != INVALID_HANDLE_VALUE)
+    HANDLE file = CreateFileW(filename.c_str(), GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+
+    LARGE_INTEGER size{};
+    if (GetFileSizeEx(file, &size) &&
+        size.QuadPart >= kMaximumLogBytes)
     {
-        DWORD w;
-        WriteFile(f, message, static_cast<DWORD>(wcslen(message) * sizeof(wchar_t)), &w, nullptr);
-        WriteFile(f, L"\r\n", 2 * sizeof(wchar_t), &w, nullptr);
-        CloseHandle(f);
+        CloseHandle(file);
+        if (MoveFileExW(filename.c_str(), previousFilename.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            file = CreateFileW(filename.c_str(), GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
+        else
+        {
+            file = CreateFileW(filename.c_str(), GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
+        if (file == INVALID_HANDLE_VALUE) return;
     }
 
-    f = CreateFileW(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-
-    DWORD size = GetFileSize(f, nullptr);
-    if (size == INVALID_FILE_SIZE || size < sizeof(wchar_t)) { CloseHandle(f); return; }
-
-    std::vector<wchar_t> content(size / sizeof(wchar_t) + 1);
-    DWORD read;
-    SetFilePointer(f, 0, nullptr, FILE_BEGIN);
-    if (!ReadFile(f, content.data(), size, &read, nullptr)) { CloseHandle(f); return; }
-    DWORD numChars = read / sizeof(wchar_t);
-
-    int totalLines = 0;
-    for (DWORD i = 0; i < numChars; i++)
-        if (content[i] == L'\n') totalLines++;
-
-    if (totalLines <= 500) { CloseHandle(f); return; }
-
-    int linesToSkip = totalLines - 500;
-    DWORD startIdx = 0;
-    while (startIdx < numChars && linesToSkip > 0)
+    const wchar_t* levelName = L"INFO";
+    switch (level)
     {
-        if (content[startIdx] == L'\n') linesToSkip--;
-        startIdx++;
+    case DiagnosticLogLevel::Debug: levelName = L"DEBUG"; break;
+    case DiagnosticLogLevel::Warning: levelName = L"WARN"; break;
+    case DiagnosticLogLevel::Error: levelName = L"ERROR"; break;
+    case DiagnosticLogLevel::Info:
+    default: break;
     }
 
-    DWORD tailBytes = (numChars - startIdx) * sizeof(wchar_t);
-    SetFilePointer(f, 0, nullptr, FILE_BEGIN);
-    WriteFile(f, content.data() + startIdx, tailBytes, &read, nullptr);
-    SetEndOfFile(f);
-    CloseHandle(f);
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    wchar_t prefix[96]{};
+    swprintf_s(prefix,
+        L"[%04u-%02u-%02u %02u:%02u:%02u.%03u] [%ls] ",
+        now.wYear, now.wMonth, now.wDay,
+        now.wHour, now.wMinute, now.wSecond,
+        now.wMilliseconds, levelName);
+    std::wstring line = prefix;
+    line += message;
+    line += L"\r\n";
+
+    LARGE_INTEGER end{};
+    end.QuadPart = 0;
+    SetFilePointerEx(file, end, nullptr, FILE_END);
+    DWORD written = 0;
+    WriteFile(file, line.data(),
+        static_cast<DWORD>(line.size() * sizeof(wchar_t)),
+        &written, nullptr);
+    CloseHandle(file);
 }

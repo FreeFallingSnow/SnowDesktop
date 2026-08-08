@@ -1,3 +1,11 @@
+// SPDX-FileCopyrightText: TranslucentTB contributors
+// SPDX-FileCopyrightText: 2026 SnowDesktop contributors
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// The graphics-effect wrapper contains modified portions derived from
+// TranslucentTB's ExplorerTAP effects at commit
+// 322e2b7395a51975150126276308b415970e080b.
+
 /**
  * @file desktop_backdrop_compositor.cpp
  * @brief Win32 DesktopWindowTarget + CompositionBackdropBrush 实现。
@@ -26,6 +34,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -181,6 +190,21 @@ struct GaussianBlurEffect : winrt::implements<GaussianBlurEffect,
 using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOptions,
     ABI::Windows::System::IDispatcherQueueController**);
 
+struct SharedBackdropCompositionContext
+{
+    ws::DispatcherQueueController dispatcherController{nullptr};
+    wuc::Compositor compositor{nullptr};
+};
+
+SharedBackdropCompositionContext& SharedBackdropContext()
+{
+    // Every DesktopBackdropCompositor is created and used on the desktop UI
+    // thread. Sharing one compositor lets desktop and popup targets change
+    // panel opacity in the same transactional visual update.
+    static thread_local SharedBackdropCompositionContext context;
+    return context;
+}
+
 } // namespace
 
 struct DesktopBackdropCompositor::Impl
@@ -203,7 +227,7 @@ struct DesktopBackdropCompositor::Impl
     wuc::Compositor compositor{nullptr};
     wucd::DesktopWindowTarget target{nullptr};
     wuc::ContainerVisual root{nullptr};
-    std::unordered_map<int, wuc::CompositionEffectBrush> blurBrushes;
+    std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     std::vector<PanelVisual> panels;
     std::wstring lastError;
     bool completeCollection = true;
@@ -220,39 +244,65 @@ struct DesktopBackdropCompositor::Impl
 
     bool EnsureDispatcherQueue()
     {
-        if (ws::DispatcherQueue::GetForCurrentThread())
-            return true;
+        SharedBackdropCompositionContext& shared =
+            SharedBackdropContext();
+        if (!ws::DispatcherQueue::GetForCurrentThread())
+        {
+            HMODULE coreMessaging = LoadLibraryW(L"CoreMessaging.dll");
+            if (!coreMessaging)
+            {
+                SetError(_LW("backdrop.load_core_msg"),
+                    HRESULT_FROM_WIN32(GetLastError()));
+                return false;
+            }
+            const auto createController =
+                reinterpret_cast<CreateDispatcherQueueControllerFn>(
+                    GetProcAddress(coreMessaging,
+                        "CreateDispatcherQueueController"));
+            if (!createController)
+            {
+                const HRESULT hr =
+                    HRESULT_FROM_WIN32(GetLastError());
+                FreeLibrary(coreMessaging);
+                SetError(_LW("backdrop.find_dispatch"), hr);
+                return false;
+            }
 
-        HMODULE coreMessaging = LoadLibraryW(L"CoreMessaging.dll");
-        if (!coreMessaging)
-        {
-            SetError(_LW("backdrop.load_core_msg"), HRESULT_FROM_WIN32(GetLastError()));
-            return false;
-        }
-        const auto createController = reinterpret_cast<CreateDispatcherQueueControllerFn>(
-            GetProcAddress(coreMessaging, "CreateDispatcherQueueController"));
-        if (!createController)
-        {
-            const HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+            DispatcherQueueOptions options{};
+            options.dwSize = sizeof(options);
+            options.threadType = DQTYPE_THREAD_CURRENT;
+            options.apartmentType = DQTAT_COM_STA;
+            ABI::Windows::System::IDispatcherQueueController*
+                rawController = nullptr;
+            const HRESULT hr = createController(
+                options, &rawController);
             FreeLibrary(coreMessaging);
-            SetError(_LW("backdrop.find_dispatch"), hr);
-            return false;
+            if (FAILED(hr) || !rawController)
+            {
+                SetError(_LW("backdrop.create_dispatch"),
+                    FAILED(hr) ? hr : E_FAIL);
+                return false;
+            }
+            shared.dispatcherController =
+                ws::DispatcherQueueController{
+                    rawController,
+                    winrt::take_ownership_from_abi };
         }
 
-        DispatcherQueueOptions options{};
-        options.dwSize = sizeof(options);
-        options.threadType = DQTYPE_THREAD_CURRENT;
-        options.apartmentType = DQTAT_COM_STA;
-        ABI::Windows::System::IDispatcherQueueController* rawController = nullptr;
-        const HRESULT hr = createController(options, &rawController);
-        FreeLibrary(coreMessaging);
-        if (FAILED(hr) || !rawController)
+        try
         {
-            SetError(_LW("backdrop.create_dispatch"), FAILED(hr) ? hr : E_FAIL);
+            if (!shared.compositor)
+                shared.compositor = wuc::Compositor();
+            compositor = shared.compositor;
+            dispatcherController =
+                shared.dispatcherController;
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            SetError(_LW("backdrop.activate_compositor"),
+                error.code());
             return false;
         }
-        dispatcherController = ws::DispatcherQueueController{
-            rawController, winrt::take_ownership_from_abi };
         return true;
     }
 
@@ -305,77 +355,145 @@ struct DesktopBackdropCompositor::Impl
             size.cx, size.cy, SWP_NOACTIVATE |
             (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 
-        // Popup content windows can reserve a stable composition allocation
-        // while exposing only a compact Dock/popup HRGN. Mirror that region
-        // onto the helper window so its transparent reserve never becomes an
-        // input surface of its own.
-        HRGN contentRegion =
-            CreateRectRgn(0, 0, 0, 0);
-        if (contentRegion)
+        return true;
+    }
+
+    bool SyncPanelWindowRegion()
+    {
+        if (!available || !backdropWindow ||
+            !IsWindow(backdropWindow))
+            return false;
+
+        HRGN panelRegion = CreateRectRgn(0, 0, 0, 0);
+        if (!panelRegion)
+            return false;
+        for (const PanelVisual& panel : panels)
         {
-            const int contentRegionType =
-                GetWindowRgn(
-                    contentWindow,
-                    contentRegion);
-            if (contentRegionType == ERROR)
+            HRGN frameRegion = CreateRectRgn(
+                panel.frame.left,
+                panel.frame.top,
+                panel.frame.right,
+                panel.frame.bottom);
+            if (!frameRegion)
             {
-                DeleteObject(contentRegion);
-                HRGN backdropRegion =
-                    CreateRectRgn(0, 0, 0, 0);
-                const int backdropRegionType =
-                    backdropRegion
-                        ? GetWindowRgn(
-                              backdropWindow,
-                              backdropRegion)
-                        : ERROR;
-                if (backdropRegion)
-                    DeleteObject(backdropRegion);
-                if (backdropRegionType != ERROR)
-                    SetWindowRgn(
-                        backdropWindow,
-                        nullptr, FALSE);
+                DeleteObject(panelRegion);
+                return false;
             }
-            else
+            const int combineResult = CombineRgn(
+                panelRegion, panelRegion,
+                frameRegion, RGN_OR);
+            DeleteObject(frameRegion);
+            if (combineResult == ERROR)
             {
-                HRGN backdropRegion =
-                    CreateRectRgn(0, 0, 0, 0);
-                const int backdropRegionType =
-                    backdropRegion
-                        ? GetWindowRgn(
-                              backdropWindow,
-                              backdropRegion)
-                        : ERROR;
-                const bool unchanged =
-                    backdropRegionType != ERROR &&
-                    EqualRgn(
-                        contentRegion,
-                        backdropRegion);
-                if (backdropRegion)
-                    DeleteObject(backdropRegion);
-                if (unchanged)
-                    DeleteObject(contentRegion);
-                else if (!SetWindowRgn(
-                             backdropWindow,
-                             contentRegion, FALSE))
-                    DeleteObject(contentRegion);
+                DeleteObject(panelRegion);
+                return false;
             }
+        }
+
+        HRGN currentRegion = CreateRectRgn(0, 0, 0, 0);
+        const int currentRegionType = currentRegion
+            ? GetWindowRgn(backdropWindow, currentRegion)
+            : ERROR;
+        const bool unchanged =
+            currentRegionType != ERROR &&
+            EqualRgn(panelRegion, currentRegion) != FALSE;
+        if (currentRegion)
+            DeleteObject(currentRegion);
+        if (unchanged)
+        {
+            DeleteObject(panelRegion);
+            return true;
+        }
+
+        // The helper HWND is a synchronous visibility fence for the separate
+        // Windows Composition tree. Its region always matches the current
+        // panel collection, so a retired SpriteVisual can never remain visible
+        // after the application has removed that panel from the scene.
+        if (!SetWindowRgn(backdropWindow, panelRegion, FALSE))
+        {
+            DeleteObject(panelRegion);
+            return false;
         }
         return true;
     }
 
-    wuc::CompositionEffectBrush GetBlurBrush(int blurRadius)
+    void RequestCommit() noexcept
     {
-        const auto found = blurBrushes.find(blurRadius);
-        if (found != blurBrushes.end())
+        if (!available || !compositor)
+            return;
+        try
+        {
+            // Do not await this action on the UI thread. Requesting a cycle is
+            // enough to submit the transactional visual changes; the helper
+            // HWND region provides the synchronous visibility boundary.
+            const wf::IAsyncAction pendingCommit =
+                compositor.RequestCommitAsync();
+            (void)pendingCommit;
+        }
+        catch (const winrt::hresult_error&)
+        {
+            // Older Windows builds can lack RequestCommitAsync. Their normal
+            // implicit compositor cycle remains the fallback.
+        }
+    }
+
+    bool RequestCommitAndNotify(
+        HWND notifyWindow, UINT message,
+        WPARAM token) noexcept
+    {
+        if (!available || !compositor ||
+            !notifyWindow || !IsWindow(notifyWindow))
+            return false;
+        try
+        {
+            wf::IAsyncAction pendingCommit =
+                compositor.RequestCommitAsync();
+            pendingCommit.Completed(
+                [notifyWindow, message, token](
+                    const wf::IAsyncAction&,
+                    wf::AsyncStatus status) noexcept {
+                    if (IsWindow(notifyWindow))
+                    {
+                        PostMessageW(
+                            notifyWindow, message, token,
+                            static_cast<LPARAM>(status));
+                    }
+                });
+            return true;
+        }
+        catch (const winrt::hresult_error&)
+        {
+            // Keep the normal implicit compositor cycle as the compatibility
+            // fallback. The caller will retain the old target instead of
+            // destroying it before an unavailable completion fence.
+            return false;
+        }
+    }
+
+    wuc::CompositionEffectFactory GetBlurFactory(int blurRadius)
+    {
+        const auto found = blurFactories.find(blurRadius);
+        if (found != blurFactories.end())
             return found->second;
 
-        auto backdrop = compositor.CreateBackdropBrush();
         auto blur = winrt::make_self<GaussianBlurEffect>();
         blur->effectSource = wuc::CompositionEffectSourceParameter(L"backdrop");
         blur->blurAmount = static_cast<float>(blurRadius);
-        auto brush = compositor.CreateEffectFactory(*blur).CreateBrush();
-        brush.SetSourceParameter(L"backdrop", backdrop);
-        blurBrushes.emplace(blurRadius, brush);
+        auto factory = compositor.CreateEffectFactory(*blur);
+        blurFactories.emplace(blurRadius, factory);
+        return factory;
+    }
+
+    wuc::CompositionEffectBrush CreateBlurBrush(int blurRadius)
+    {
+        // A backdrop effect brush is sized for the SpriteVisual that consumes
+        // it. Sharing one brush between differently-sized panels can retain
+        // the shorter effect surface and stretch its final row over a taller
+        // panel. Factories are safe to cache, but every panel needs its own
+        // effect brush and backdrop source.
+        auto brush = GetBlurFactory(blurRadius).CreateBrush();
+        brush.SetSourceParameter(
+            L"backdrop", compositor.CreateBackdropBrush());
         return brush;
     }
 
@@ -383,13 +501,14 @@ struct DesktopBackdropCompositor::Impl
     {
         available = false;
         panels.clear();
-        blurBrushes.clear();
+        blurFactories.clear();
         if (target)
             target.Root(nullptr);
         root = nullptr;
         target = nullptr;
-        if (compositor)
-            compositor.Close();
+        // The compositor and dispatcher queue are shared by every backdrop
+        // target on this UI thread. Releasing one target must not invalidate
+        // the desktop/floating counterpart during a hand-off.
         compositor = nullptr;
         dispatcherController = nullptr;
         if (backdropWindow && IsWindow(backdropWindow))
@@ -425,6 +544,35 @@ bool DesktopBackdropCompositor::InitializePopup(
     return InitializeInternal(
         contentWindow, true, topmost,
         initiallyVisible);
+}
+
+void DesktopBackdropCompositor::SetPopupTopmost(
+    bool topmost)
+{
+    if (!impl_ || !impl_->popupMode)
+        return;
+    if (!impl_->available || !impl_->backdropWindow ||
+        !IsWindow(impl_->backdropWindow))
+    {
+        impl_->popupTopmost = topmost;
+        return;
+    }
+
+    const bool isTopmost =
+        (GetWindowLongPtrW(
+            impl_->backdropWindow,
+            GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    if (impl_->popupTopmost == topmost &&
+        isTopmost == topmost)
+        return;
+
+    impl_->popupTopmost = topmost;
+    SetWindowPos(
+        impl_->backdropWindow,
+        topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    impl_->SyncWindowPlacement();
 }
 
 bool DesktopBackdropCompositor::InitializeInternal(
@@ -490,17 +638,6 @@ bool DesktopBackdropCompositor::InitializeInternal(
 
     try
     {
-        impl_->compositor = wuc::Compositor();
-    }
-    catch (const winrt::hresult_error& error)
-    {
-        impl_->SetError(_LW("backdrop.activate_compositor"), error.code());
-        impl_->Reset();
-        return false;
-    }
-
-    try
-    {
         auto interop = impl_->compositor.as<awucd::ICompositorDesktopInterop>();
         const HRESULT hr = interop->CreateDesktopWindowTarget(
             impl_->backdropWindow, FALSE,
@@ -526,6 +663,8 @@ bool DesktopBackdropCompositor::InitializeInternal(
         impl_->target.Root(impl_->root);
         impl_->available = true;
         impl_->SyncWindowPlacement();
+        impl_->SyncPanelWindowRegion();
+        impl_->RequestCommit();
         if (initiallyVisible)
             ShowWindow(
                 impl_->backdropWindow,
@@ -633,7 +772,7 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
         if (existing->blurRadius != blurKey || !existing->visual.Brush())
         {
             existing->blurRadius = blurKey;
-            existing->visual.Brush(impl_->GetBlurBrush(blurKey));
+            existing->visual.Brush(impl_->CreateBlurBrush(blurKey));
         }
         existing->cornerRadius = cornerKey;
         existing->visual.Offset(wfn::float3{
@@ -670,6 +809,8 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
     {
         impl_->root.Children().Remove(existing->visual);
         impl_->panels.erase(existing);
+        impl_->SyncPanelWindowRegion();
+        impl_->RequestCommit();
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -679,20 +820,108 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
     }
 }
 
+bool DesktopBackdropCompositor::KeepPanel(
+    const RECT& frame)
+{
+    if (!impl_->available)
+        return false;
+    const auto existing = std::find_if(
+        impl_->panels.begin(), impl_->panels.end(),
+        [&frame](const Impl::PanelVisual& panel) {
+            return EqualRect(&panel.frame, &frame) != FALSE;
+        });
+    if (existing == impl_->panels.end())
+        return false;
+    existing->seen = true;
+    return true;
+}
+
+bool DesktopBackdropCompositor::SetPanelOpacity(
+    const RECT& frame, float opacity)
+{
+    if (!impl_->available)
+        return false;
+    const auto existing = std::find_if(
+        impl_->panels.begin(), impl_->panels.end(),
+        [&frame](const Impl::PanelVisual& panel) {
+            return EqualRect(&panel.frame, &frame) != FALSE;
+        });
+    if (existing == impl_->panels.end())
+        return false;
+    try
+    {
+        existing->visual.Opacity(
+            std::clamp(opacity, 0.0f, 1.0f));
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(
+            _LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::SetVisualOpacity(
+    float opacity)
+{
+    if (!impl_->available || !impl_->root)
+        return false;
+    try
+    {
+        impl_->root.Opacity(
+            std::clamp(opacity, 0.0f, 1.0f));
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(
+            _LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+void DesktopBackdropCompositor::CommitVisualChanges()
+{
+    if (impl_)
+        impl_->RequestCommit();
+}
+
+bool DesktopBackdropCompositor::
+CommitVisualChangesAndNotify(
+    HWND notifyWindow, UINT message, WPARAM token)
+{
+    return impl_ && impl_->RequestCommitAndNotify(
+        notifyWindow, message, token);
+}
+
 void DesktopBackdropCompositor::EndFrame()
 {
-    if (!impl_->available || !impl_->completeCollection)
+    if (!impl_->available)
         return;
-    auto children = impl_->root.Children();
-    for (auto iterator = impl_->panels.begin(); iterator != impl_->panels.end();)
+    try
     {
-        if (iterator->seen)
+        if (impl_->completeCollection)
         {
-            ++iterator;
-            continue;
+            auto children = impl_->root.Children();
+            for (auto iterator = impl_->panels.begin();
+                 iterator != impl_->panels.end();)
+            {
+                if (iterator->seen)
+                {
+                    ++iterator;
+                    continue;
+                }
+                children.Remove(iterator->visual);
+                iterator = impl_->panels.erase(iterator);
+            }
         }
-        children.Remove(iterator->visual);
-        iterator = impl_->panels.erase(iterator);
+        impl_->SyncPanelWindowRegion();
+        impl_->RequestCommit();
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.remove_panel"), error.code());
     }
 }
 

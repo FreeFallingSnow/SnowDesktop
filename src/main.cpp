@@ -65,12 +65,25 @@ std::wstring DisplayDataDirectory(const std::wstring& path)
         : path;
 }
 
-std::wstring DeploymentName(
+std::wstring DeploymentSuffix(
     const snowdesktop::single_instance::InstanceInfo& instance)
 {
-    return instance.packaged
-        ? std::wstring(_LW("app.run.other_version_installed"))
-        : std::wstring(_LW("app.run.other_version_portable"));
+    if (!instance.packaged)
+        return {};
+    return _LFW(
+        "app.run.other_version_deployment_suffix",
+        _LW("app.run.other_version_installed"));
+}
+
+bool SameDeployment(
+    const snowdesktop::single_instance::InstanceInfo& left,
+    const snowdesktop::single_instance::InstanceInfo& right)
+{
+    if (left.processId != 0 && left.processId == right.processId)
+        return true;
+    return !left.dataDirectory.empty() && !right.dataDirectory.empty() &&
+        snowdesktop::single_instance::DataDirectoriesMatch(
+            left.dataDirectory, right.dataDirectory);
 }
 
 VersionConflictChoice ShowVersionConflictPrompt(
@@ -85,10 +98,10 @@ VersionConflictChoice ShowVersionConflictPrompt(
     std::wstring content = _LFW(
         "app.run.other_version_details",
         running.version,
-        DeploymentName(running),
+        DeploymentSuffix(running),
         DisplayDataDirectory(running.dataDirectory),
         requested.version,
-        DeploymentName(requested),
+        DeploymentSuffix(requested),
         DisplayDataDirectory(requested.dataDirectory));
     content += L"\n\n";
     content += sharedData
@@ -98,15 +111,15 @@ VersionConflictChoice ShowVersionConflictPrompt(
     const std::wstring instruction = _LFW(
         "app.run.other_version_instruction",
         running.version,
-        DeploymentName(running));
+        DeploymentSuffix(running));
     const std::wstring switchButton = _LFW(
         "app.run.other_version_switch",
         requested.version,
-        DeploymentName(requested));
+        DeploymentSuffix(requested));
     const std::wstring keepButton = _LFW(
         "app.run.other_version_keep",
         running.version,
-        DeploymentName(running));
+        DeploymentSuffix(running));
     const TASKDIALOG_BUTTON buttons[] = {
         { 100, switchButton.c_str() },
         { 101, keepButton.c_str() },
@@ -151,7 +164,8 @@ VersionConflictChoice ShowVersionConflictPrompt(
 
 ExistingInstanceResolution ResolveExistingInstance(
     const snowdesktop::single_instance::InstanceInfo& running,
-    const snowdesktop::single_instance::InstanceInfo& requested)
+    const snowdesktop::single_instance::InstanceInfo& requested,
+    snowdesktop::single_instance::InstanceInfo* switchTarget)
 {
     const bool versionsMatch =
         running.version.empty() || requested.version.empty() ||
@@ -181,13 +195,15 @@ ExistingInstanceResolution ResolveExistingInstance(
     if (snowdesktop::single_instance::RequestExistingInstanceExit(
             running, 30000))
     {
+        if (switchTarget)
+            *switchTarget = running;
         return ExistingInstanceResolution::RetryLaunch;
     }
 
     const std::wstring message = _LFW(
         "app.run.other_version_switch_failed",
         running.version,
-        DeploymentName(running));
+        DeploymentSuffix(running));
     MessageBoxW(nullptr, message.c_str(),
         _LW("app.run.other_version_title"),
         MB_OK | MB_ICONERROR);
@@ -297,6 +313,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
             kCurrentVersion);
     auto acquisition =
         snowdesktop::single_instance::AcquireResult::Existing;
+    snowdesktop::single_instance::InstanceInfo switchTarget;
+    bool switchHandoff = false;
     for (int attempt = 0; attempt < 3; ++attempt)
     {
         // Older builds do not own the mutex but do expose the stable control
@@ -306,12 +324,30 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
                 snowdesktop::single_instance::
                     FindExistingInstance(0))
         {
-            if (ResolveExistingInstance(
-                    *running, requestedInstance) ==
-                ExistingInstanceResolution::ExitNewInstance)
+            if (switchHandoff && SameDeployment(*running, switchTarget))
+            {
+                if (snowdesktop::single_instance::RequestExistingInstanceExit(
+                        *running, 30000))
+                    continue;
+
+                const std::wstring message = _LFW(
+                    "app.run.other_version_switch_failed",
+                    running->version,
+                    DeploymentSuffix(*running));
+                MessageBoxW(nullptr, message.c_str(),
+                    _LW("app.run.other_version_title"),
+                    MB_OK | MB_ICONERROR);
+                return 0;
+            }
+
+            const auto resolution = ResolveExistingInstance(
+                *running, requestedInstance, &switchTarget);
+            if (resolution == ExistingInstanceResolution::ExitNewInstance)
             {
                 return 0;
             }
+            switchHandoff =
+                resolution == ExistingInstanceResolution::RetryLaunch;
             // The user chose to close the running version. Retry the
             // stable lock after its process has fully exited.
             continue;

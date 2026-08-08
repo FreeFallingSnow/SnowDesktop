@@ -21,6 +21,7 @@ BEGIN
             VALUE "FileDescription", "@SNOWDESKTOP_FILE_DESCRIPTION@\0"
             VALUE "FileVersion", "@SNOWDESKTOP_VERSION@\0"
             VALUE "InternalName", "@SNOWDESKTOP_ORIGINAL_FILENAME@\0"
+            VALUE "LegalCopyright", "@SNOWDESKTOP_LEGAL_COPYRIGHT@\0"
             VALUE "OriginalFilename", "@SNOWDESKTOP_ORIGINAL_FILENAME@\0"
             VALUE "ProductName", "SnowDesktop\0"
             VALUE "ProductVersion", "@SNOWDESKTOP_VERSION@\0"

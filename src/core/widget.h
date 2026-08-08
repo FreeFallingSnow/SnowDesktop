@@ -33,7 +33,14 @@
 struct DesktopWidget;
 struct CategorySettings;
 class DesktopApp;
+class WidgetEngine;
 struct GridPage;
+namespace snowdesktop
+{
+class WidgetPreviewScene;
+struct WidgetRenderOptions;
+struct WidgetPreviewItem;
+}
 
 /**
  * @enum WidgetHit
@@ -53,6 +60,8 @@ enum class WidgetHit {
     CategoryTab,        ///< FileCategories / FolderMapping：分类标签页
     SearchBox,          ///< FileCategories / FolderMapping：搜索框
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
+    GuideAddWidgetBtn,  ///< Guide：打开“添加组件”菜单
+    GuideDetailsBtn,    ///< Guide：展开或收起分页说明
 };
 
 /**
@@ -86,24 +95,44 @@ public:
     void SetSelected(bool selected) override;
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    virtual void DrawPreview(ID2D1DeviceContext* context, RECT frame,
+        const snowdesktop::WidgetRenderOptions& options);
     ComPtr<IDataObject> CreateDataObject() override;
 
     DesktopWidget* GetWidgetData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
     float GetCellScale() const;
+    float GetComponentSpacingScale() const;
     int Cu(float value) const;
     float FontCu(float value) const;
     IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;
     IDWriteTextFormat* GetCuTextFormatWeight(float value, DWRITE_FONT_WEIGHT weight, bool centered) const;
     IDWriteTextFormat* GetCuFaTextFormat(float value) const;
+    IDWriteTextFormat* GetCuFluentTextFormat(float value) const;
     float GetBarHeight() const;
     float GetBarScale() const;
+    void SetRenderOptions(
+        const snowdesktop::WidgetRenderOptions* options)
+    {
+        renderOptions_ = options;
+    }
+    const snowdesktop::WidgetRenderOptions* GetRenderOptions() const
+    {
+        return renderOptions_;
+    }
+    snowdesktop::WidgetPreviewScene* GetPreviewScene() const;
+    bool IsPreviewRendering() const;
+    bool IsPreviewInteractive() const;
+    bool ShouldRegisterBackdrop() const;
+    POINT GetRenderPointer() const;
 
 protected:
     DesktopWidget* data_;
     DesktopApp* app_;
+    const snowdesktop::WidgetRenderOptions* renderOptions_ = nullptr;
     mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuTextFormatCache_;
     mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuFaTextFormatCache_;
+    mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuFluentTextFormatCache_;
 };
 
 /**
@@ -150,6 +179,8 @@ public:
 
     // ── Rendering ────────────────────────────────────────
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
+    void DrawPreview(ID2D1DeviceContext* context, RECT frame,
+        const snowdesktop::WidgetRenderOptions& options) override;
 
     // ── Container drag virtuals ──────────────────────────
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
@@ -828,9 +859,8 @@ private:
  * @class GuideWidget
  * @brief 分页系统使用指南组件
  *
- * GuideWidget 继承 WidgetContainer，以可滚动 DWrite 文本展示
- * 多屏幕多分页系统的介绍和操作说明。无子项、不接受拖放，
- * 仅作为信息展示和页面占位用途。
+ * GuideWidget 继承 WidgetContainer，作为新页面的欢迎卡片和操作入口。
+ * 无子项、不接受拖放；删除卡片后，现有空页清理流程会移除该页面。
  */
 class GuideWidget : public WidgetContainer
 {
@@ -847,17 +877,18 @@ public:
     size_t GetSlotCount() const override { return 0; }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override { return {}; }
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
-    void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const override;
-    int GetMaxScrollOffset() const override { return std::max(0, static_cast<int>(totalTextHeight_ - lastBodyHeight_)); }
+    WidgetHit HitTestWidget(POINT pt) const override;
+    int GetMaxScrollOffset() const override { return 0; }
     HitRegion HitTestDrag(POINT /*pt*/, Slot*& outSlot) override { outSlot = nullptr; return HitRegion::None; }
     std::wstring GetDragHint(Slot*, HitRegion, const std::vector<Item*>&, Container*, int) const override { return L""; }
     void OnItemsDropped(const std::vector<Item*>&, Container*, Slot*, HitRegion, int) override {}
     std::vector<Item*> GetSelectedItems() const override { return {}; }
+    void ToggleDetails() { detailsExpanded_ = !detailsExpanded_; }
 
 private:
-    static std::wstring BuildGuideText(const DesktopApp* app);
-    mutable float totalTextHeight_ = 0;
-    mutable LONG lastBodyHeight_ = 0;
+    RECT GetPrimaryButtonRect(RECT body) const;
+    RECT GetSecondaryButtonRect(RECT body) const;
+    bool detailsExpanded_ = false;
 };
 
 /**
@@ -878,13 +909,21 @@ class LuaScript : public Widget
 public:
     using Widget::Widget;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    void DrawPreview(ID2D1DeviceContext* context, RECT frame,
+        const snowdesktop::WidgetRenderOptions& options) override;
 
 private:
     struct WidgetLoadResult { bool ok = false; bool customStyle = false; };
-    WidgetLoadResult SafeLoadWidget(const std::wstring& id, const std::wstring& scriptPath);
+    WidgetLoadResult SafeLoadWidget(WidgetEngine* engine,
+        const std::wstring& id, const std::wstring& scriptPath,
+        bool preview);
     bool SafeRenderWidget(const std::wstring& id, const std::wstring& scriptPath,
-        ID2D1DeviceContext* context, RECT frame, int columns, int rows);
-    bool SafeReadFlags(const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover);
+        WidgetEngine* engine, ID2D1DeviceContext* context,
+        RECT frame, int columns, int rows);
+    bool SafeReadFlags(WidgetEngine* engine, const std::wstring& scriptPath,
+        bool& showTitle, bool& bottomBarHover);
+    void DrawInternal(ID2D1DeviceContext* context, RECT rect, int state,
+        WidgetEngine* engine, bool preview);
 
     ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);

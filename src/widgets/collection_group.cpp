@@ -10,6 +10,7 @@
 #include "drop_model.h"
 #include "collection_group_rules.h"
 #include "search_match.h"
+#include "widget_preview_scene.h"
 #include "../l10n.h"
 #include <algorithm>
 #include <unordered_set>
@@ -27,17 +28,26 @@ size_t FindCollectionWidgetIndex(
     return static_cast<size_t>(-1);
 }
 
+DesktopWidget* FindCollectionWidget(
+    CollectionGroup* widget, const std::wstring& id)
+{
+    if (!widget) return nullptr;
+    if (auto* scene = widget->GetPreviewScene())
+        return scene->FindWidget(id);
+    if (!widget->GetApp()) return nullptr;
+    const size_t index = FindCollectionWidgetIndex(widget, id);
+    auto& widgets = widget->GetApp()->GetWidgets();
+    return index < widgets.size() ? &widgets[index] : nullptr;
+}
+
 DesktopWidget* CollectionGroupActiveCollection(
     CollectionGroup* widget)
 {
     if (!widget || !widget->GetApp()) return nullptr;
     const std::wstring id = widget->GetActiveCollectionId();
-    const size_t index = FindCollectionWidgetIndex(widget, id);
-    auto& widgets = widget->GetApp()->GetWidgets();
-    return index < widgets.size() &&
-        widgets[index].type == DesktopWidgetType::Collection
-        ? &widgets[index]
-        : nullptr;
+    DesktopWidget* child = FindCollectionWidget(widget, id);
+    return child && child->type == DesktopWidgetType::Collection
+        ? child : nullptr;
 }
 
 RECT CollectionGroupTabsRect(CollectionGroup* widget)
@@ -83,12 +93,9 @@ std::wstring CollectionGroupTabTitle(
         return L"";
     const auto& children = widget->GetVisibleCollectionIds();
     if (tabIndex >= children.size()) return L"";
-    const size_t index =
-        FindCollectionWidgetIndex(widget, children[tabIndex]);
-    const auto& widgets = widget->GetApp()->GetWidgets();
-    return index < widgets.size()
-        ? widgets[index].title
-        : L"";
+    DesktopWidget* child = FindCollectionWidget(
+        widget, children[tabIndex]);
+    return child ? child->title : L"";
 }
 
 size_t CollectionGroupTabItemCount(
@@ -98,12 +105,10 @@ size_t CollectionGroupTabItemCount(
     std::unordered_set<std::wstring> keys;
     const auto& children = widget->GetVisibleCollectionIds();
     if (tabIndex >= children.size()) return 0;
-    const size_t index =
-        FindCollectionWidgetIndex(widget, children[tabIndex]);
-    const auto& widgets = widget->GetApp()->GetWidgets();
-    if (index < widgets.size())
+    if (DesktopWidget* child = FindCollectionWidget(
+            widget, children[tabIndex]))
     {
-        for (const auto& key : widgets[index].itemKeys)
+        for (const auto& key : child->itemKeys)
             keys.insert(ToUpperInvariant(key));
     }
     return keys.size();
@@ -381,6 +386,13 @@ CollectionGroup::GetVisibleCollectionIds() const
     if (!data_ || !app_) return visibleCollectionIds_;
     for (const auto& id : data_->childWidgetIds)
     {
+        if (auto* scene = GetPreviewScene())
+        {
+            const DesktopWidget* child = scene->FindWidget(id);
+            if (child && child->type == DesktopWidgetType::Collection)
+                visibleCollectionIds_.push_back(id);
+            continue;
+        }
         const size_t index = app_->FindWidgetIndexById(id);
         if (index < app_->widgets_.size() &&
             app_->widgets_[index].type ==
@@ -405,23 +417,37 @@ CollectionGroup::GetVisibleItemKeys() const
     visibleSearchText_ = query;
 
     std::unordered_set<std::wstring> seen;
-    const size_t childIndex =
-        app_->FindWidgetIndexById(active);
-    if (childIndex < app_->widgets_.size())
+    auto* previewScene = GetPreviewScene();
+    const DesktopWidget* child = previewScene
+        ? previewScene->FindWidget(active) : nullptr;
+    const size_t childIndex = previewScene
+        ? static_cast<size_t>(-1)
+        : app_->FindWidgetIndexById(active);
+    if (child || (!previewScene && childIndex < app_->widgets_.size()))
     {
+        const auto& itemKeys = child
+            ? child->itemKeys : app_->widgets_[childIndex].itemKeys;
         for (const auto& rawKey :
-            app_->widgets_[childIndex].itemKeys)
+            itemKeys)
         {
             const std::wstring key =
                 ToUpperInvariant(rawKey);
             if (!seen.insert(key).second) continue;
-            const size_t itemIndex =
-                app_->FindItemIndexByKey(key);
-            if (itemIndex >= app_->items_.size()) continue;
-            if (!query.empty() &&
-                !NameMatchesQuery(
-                    app_->items_[itemIndex].name, query))
-                continue;
+            if (auto* scene = GetPreviewScene())
+            {
+                const auto* sample = scene->FindItem(rawKey);
+                if (!sample || (!query.empty() &&
+                    !NameMatchesQuery(sample->title, query)))
+                    continue;
+            }
+            else
+            {
+                const size_t itemIndex = app_->FindItemIndexByKey(key);
+                if (itemIndex >= app_->items_.size()) continue;
+                if (!query.empty() &&
+                    !NameMatchesQuery(app_->items_[itemIndex].name, query))
+                    continue;
+            }
             visibleItemKeys_.push_back(rawKey);
         }
     }
@@ -591,6 +617,17 @@ Item* CollectionGroup::GetSlotItem(size_t idx) const
 {
     const auto& keys = GetVisibleItemKeys();
     if (!app_ || idx >= keys.size()) return nullptr;
+    if (auto* scene = GetPreviewScene())
+    {
+        DesktopItem* sample = scene->FindDesktopItem(keys[idx]);
+        if (!sample) return nullptr;
+        auto item = std::make_unique<DesktopIcon>(
+            sample,
+            const_cast<CollectionGroup*>(this), app_);
+        Item* result = item.get();
+        slotItemCache_.push_back(std::move(item));
+        return result;
+    }
     const size_t itemIndex =
         app_->FindItemIndexByKey(keys[idx]);
     if (itemIndex >= app_->items_.size()) return nullptr;
@@ -757,7 +794,7 @@ size_t CollectionGroup::GetDropInsertIndex(
     Slot* targetSlot, HitRegion region) const
 {
     if (!data_) return 0;
-    if (targetSlot == tabDropSlot_.get())
+    if (targetSlot && targetSlot == tabDropSlot_.get())
     {
         size_t index = std::min(
             targetSlot->GetIndex(),
@@ -1008,7 +1045,7 @@ void CollectionGroup::DrawContent(
     const bool privacyActive =
         data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
-        !app_->externalDragActive_ &&
+        !app_->dragDropController_.IsExternalDragActive() &&
         !PtInRect(
             &data_->bounds, app_->lastMousePoint_);
     DrawSearchBox(context);
@@ -1030,6 +1067,7 @@ void CollectionGroup::DrawContent(
             const std::wstring& id = children[i];
             const bool selected = id == active;
             const bool hovered =
+                !IsPreviewRendering() &&
                 PtInRect(&tab, app_->lastMousePoint_) != FALSE;
             DrawCategorizedTab(
                 context,
@@ -1117,6 +1155,7 @@ void CollectionGroup::DrawContent(
         {
             RECT body = GetBodyRect();
             const bool hovered =
+                !IsPreviewRendering() &&
                 !item->selected &&
                 PtInRect(
                     &row, app_->lastMousePoint_) &&
@@ -1140,21 +1179,21 @@ void CollectionGroup::DrawButtons(
     const bool light = app_->IsLightContentTheme();
     const float scale = GetBarScale();
     IDWriteTextFormat* format =
-        GetCuFaTextFormat(14.0f * scale);
+        GetCuFluentTextFormat(14.0f * scale);
     IDWriteTextFormat* fallback = format
         ? format
-        : (app_->faTextFormat_
-            ? app_->faTextFormat_.Get()
+        : (app_->fluentIconTextFormat_
+            ? app_->fluentIconTextFormat_.Get()
             : app_->listItemTextFormat_.Get());
 
     RECT listToggle =
         CollectionGroupListToggleRect(this);
     const bool listHot =
-        PtInRect(
+        !IsPreviewRendering() && PtInRect(
             &listToggle, app_->lastMousePoint_) != FALSE;
     app_->DrawD2DText(
         context,
-        data_->listMode ? L"" : L"",
+        data_->listMode ? L"\uF462" : L"\uF4ED",
         listToggle, fallback,
         light
             ? D2D1::ColorF(

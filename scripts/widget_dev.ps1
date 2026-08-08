@@ -13,9 +13,9 @@ $ErrorActionPreference = "Stop"
 
 function Write-Usage {
     Write-Host "Usage:"
-    Write-Host "  widget-dev.bat widgets\my-widget"
-    Write-Host "  widget-dev.bat widgets\my-widget -Once"
-    Write-Host "  widget-dev.bat widgets\my-widget -RestartHost"
+    Write-Host "  scripts\widget-dev.bat widgets\my-widget"
+    Write-Host "  scripts\widget-dev.bat widgets\my-widget -Once"
+    Write-Host "  scripts\widget-dev.bat widgets\my-widget -RestartHost"
 }
 
 if ([string]::IsNullOrWhiteSpace($WidgetPath)) {

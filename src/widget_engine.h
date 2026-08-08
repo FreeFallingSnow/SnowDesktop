@@ -28,6 +28,7 @@
 #include "http_runtime.h"
 #include "calendar_service.h"
 #include "widget_package.h"
+#include "steam_workshop_sync.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -117,6 +118,14 @@ struct LuaWidgetManifest
     std::string publisher;
     std::string minHostVersion;
     std::string preview;
+    std::string previewIntroduction;
+    std::string previewIntroductionKey;
+    /// Preview-only storage values supplied by the component author.
+    /// They are visible through storage.get() but never persisted.
+    std::unordered_map<std::string, std::string> previewStorage;
+    /// Maps preview storage names to keys in the manifest locale catalogs.
+    std::unordered_map<std::string, std::string> previewStorageKeys;
+    std::vector<snowdesktop::widget::PreviewVariant> previewVariants;
     std::string entry;
     std::string signature;
     bool signatureValid = true;
@@ -150,7 +159,8 @@ struct LuaWidgetMenuItem
 {
     int id = 0;                ///< 菜单项标识符，回调时回传
     std::string label;         ///< 菜单项显示文本
-    std::string icon;          ///< 可选 Font Awesome 图标字符
+    std::string icon;          ///< 可选图标字符
+    std::string iconFont = "fa"; ///< "fa"（兼容默认）或 "fluent"
     bool enabled = true;       ///< 是否可用（灰显）
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
 };
@@ -301,8 +311,8 @@ struct LuaWidget
     std::chrono::steady_clock::time_point notificationWindow{};
     std::uint32_t notificationsInWindow = 0;
     std::chrono::steady_clock::time_point lastRenderTime{};
-    UINT_PTR refreshTimerId = 0;        ///< 宿主分配的独立 Win32 定时器 ID（0 = 未开）
-    UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒 ID
+    UINT_PTR refreshTimerId = 0;        ///< 宿主统一截止时间队列分配的周期令牌（0 = 未开）
+    UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒令牌
     struct Timer
     {
         std::string name;
@@ -313,6 +323,8 @@ struct LuaWidget
     std::unordered_map<std::string, Timer> timers;
     std::vector<HostControl> hostControls;
     std::unordered_map<std::string, int> scrollOffsets;
+    bool preview = false;
+    std::unordered_map<std::string, std::string> previewStorage;
 };
 
 /**
@@ -347,6 +359,10 @@ public:
      * @return 初始化成功返回 true，否则返回 false
      */
     bool Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory);
+    /** Initialize a render-only engine without live services or disk state. */
+    bool InitPreview(ID2D1DeviceContext* d2dContext,
+        IDWriteFactory* dwriteFactory);
+    bool IsPreviewOnly() const { return previewOnly_; }
 
     /**
      * @brief 关闭引擎，释放所有资源，卸载所有已加载的小部件
@@ -404,10 +420,12 @@ public:
     void SetCloseWidgetPanelCallback(WidgetPanelCloseCallback callback) { closeWidgetPanelCallback_ = std::move(callback); }
     /** @brief 设置系统通知回调 */
     void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
-    /** @brief 设置组件独立刷新定时器请求回调（宿主为该 widget 开 Win32 timer，返回 timerId） */
+    /** @brief 设置组件刷新截止时间请求回调（宿主返回统一调度令牌） */
     void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
     /** @brief 设置组件独立刷新定时器关闭回调 */
     void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
+    /** @brief 主宿主窗口重建后，将组件刷新与命名定时器重新绑定到新 HWND。 */
+    void RebindHostTimers();
 
     /**
      * @brief 确保小部件已加载到沙箱中
@@ -416,6 +434,11 @@ public:
      * @return 加载成功或已存在返回 true，否则返回 false
      */
     bool EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& scriptPath);
+    /** Load an isolated, side-effect-free instance for the component picker. */
+    bool EnsureWidgetPreviewLoaded(const std::wstring& widgetId,
+        const std::wstring& packageId,
+        const std::unordered_map<std::string, std::string>&
+            storageOverrides = {});
 
     /**
      * @brief 卸载指定小部件实例
@@ -451,9 +474,9 @@ public:
         ID2D1DeviceContext* context, RECT bounds);
     void TickRuntime();
     /**
-     * @brief 处理宿主转发的组件独立定时器到期
+     * @brief 处理宿主转发的组件调度截止时间到期
      * @param widgetId 触发刷新的小部件实例 ID
-     * @param timerId 宿主触发的 Win32 定时器 ID
+     * @param timerId 宿主触发的调度令牌
      *
      * 同时处理 manifest.refreshIntervalMs 的周期刷新和 widget.setTimer 命名定时器。
      * 命名定时器只为最近一次到期时间申请单次宿主唤醒，避免全局轮询全部组件。
@@ -621,6 +644,13 @@ public:
         QueryWidgetPackageSource(const std::string& providerId,
             const snowdesktop::widget::PackageQuery& query,
             std::string& error);
+    static bool IsSteamWorkshopBridgeAvailable();
+    static snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
+        QuerySteamWorkshopSubscriptions(const std::string& locale);
+    snowdesktop::widget::SteamWorkshopSyncResult
+        ApplySteamWorkshopSubscriptions(
+            const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot&
+                snapshot);
     bool InstallAndVerifyWidgetPackageFromSource(
         const std::string& providerId, const std::string& externalItemId,
         const std::string& version, std::wstring& error,
@@ -846,6 +876,7 @@ public:
     void ClearHostInputComposition();
     bool HasFocusedHostInput() const;
     bool GetFocusedHostInputCaretRect(RECT& rect) const;
+    bool IsHostInputAt(const std::wstring& widgetId, int x, int y) const;
     bool IsFocusedHostInputAt(const std::wstring& widgetId, int x, int y) const;
     bool HandleHostInputPointerMove(const std::wstring& widgetId, int x, int y);
     bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y);
@@ -869,7 +900,11 @@ private:
      * @param widgetId 小部件实例 ID
      * @return 加载成功返回 true
      */
-    bool LoadWidget(const std::wstring& path, const std::wstring& widgetId);
+    bool LoadWidget(const std::wstring& path, const std::wstring& widgetId,
+        bool preview = false,
+        const std::unordered_map<std::string, std::string>*
+            previewStorageOverrides = nullptr);
+    bool IsPreviewWidget(const std::wstring& widgetId) const;
 
     /**
      * @brief 向 Lua 状态机注册绘制 API
@@ -929,6 +964,7 @@ private:
     std::atomic<bool> systemSnapshotChanged_{ false };
     std::atomic<bool> mediaSnapshotChanged_{ false };
     std::unique_ptr<AsyncHttpService> httpService_;
+    bool previewOnly_ = false;
     struct FocusedHostInput
     {
         bool active = false;

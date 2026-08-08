@@ -14,6 +14,8 @@
 #include "collection_group_rules.h"
 #include "drop_model.h"
 #include "search_match.h"
+#include "widget_preview_scene.h"
+#include "../menu_fluent_glyphs.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -201,6 +203,35 @@ static bool IsCollectable(DesktopApp* app, const DesktopItem& item)
 void FileCategories::EnsureCategorySnapshot() const
 {
     if (!data_ || !app_) return;
+    if (auto* scene = GetPreviewScene())
+    {
+        if (categorySnapshot_.valid &&
+            categorySnapshot_.sourceKeys == data_->itemKeys)
+            return;
+        categorySnapshot_ = {};
+        categorySnapshot_.sourceKeys = data_->itemKeys;
+        std::unordered_set<std::wstring> seen;
+        for (const auto& key : data_->itemKeys)
+        {
+            const auto* sample = scene->FindItem(key);
+            if (!sample || !seen.insert(key).second) continue;
+            categorySnapshot_.keysByCategory[L"all"].push_back(key);
+            const std::wstring category = sample->categoryId.empty()
+                ? L"all" : sample->categoryId;
+            categorySnapshot_.keysByCategory[category].push_back(key);
+            if (category != L"all" &&
+                std::find(categorySnapshot_.visibleCategoryIds.begin(),
+                    categorySnapshot_.visibleCategoryIds.end(), category) ==
+                    categorySnapshot_.visibleCategoryIds.end())
+                categorySnapshot_.visibleCategoryIds.push_back(category);
+        }
+        if (categorySnapshot_.visibleCategoryIds.empty() &&
+            !categorySnapshot_.keysByCategory[L"all"].empty())
+            categorySnapshot_.visibleCategoryIds.push_back(L"all");
+        categorySnapshot_.valid = true;
+        layoutCache_.clear();
+        return;
+    }
     if (categorySnapshot_.valid &&
         categorySnapshot_.desktopItemCount == app_->GetDesktopItems().size() &&
         categorySnapshot_.sourceKeys == data_->itemKeys)
@@ -315,6 +346,7 @@ const std::vector<std::wstring>& FileCategories::CachedVisibleCategoryIds() cons
 std::wstring FileCategories::CachedActiveCategoryId() const
 {
     if (!data_) return L"";
+    if (!data_->showFileCategories) return L"all";
     const auto& visible = CachedVisibleCategoryIds();
     if (!data_->activeCategoryId.empty() &&
         std::find(visible.begin(), visible.end(), data_->activeCategoryId) != visible.end())
@@ -355,9 +387,19 @@ void FileCategories::EnsureLayout() const
         std::wstring curGroup;
         if (i < keys.size())
         {
-            size_t itemIdx = app_->FindItemIndexByKey(keys[i]);
-            if (itemIdx == static_cast<size_t>(-1)) continue;
-            curGroup = FileCategoryIdForItemByDate(app_->GetDesktopItems()[itemIdx]);
+            if (auto* scene = GetPreviewScene())
+            {
+                const auto* sample = scene->FindItem(keys[i]);
+                curGroup = sample && !sample->dateGroup.empty()
+                    ? sample->dateGroup : L"earlier";
+            }
+            else
+            {
+                size_t itemIdx = app_->FindItemIndexByKey(keys[i]);
+                if (itemIdx == static_cast<size_t>(-1)) continue;
+                curGroup = FileCategoryIdForItemByDate(
+                    app_->GetDesktopItems()[itemIdx]);
+            }
         }
 
         if (i == keys.size() || (i > groupStart && curGroup != prevGroup))
@@ -366,7 +408,11 @@ void FileCategories::EnsureLayout() const
             if (groupCount == 0) { groupStart = i; if (i < keys.size()) prevGroup = curGroup; continue; }
             LayoutSegment header;
             header.isHeader = true;
-            header.label = FileCategoryLabelByDate(prevGroup);
+            header.label = IsPreviewRendering()
+                ? (prevGroup == L"today"
+                    ? _LW("app.widget_preview.today")
+                    : _LW("app.widget_preview.earlier"))
+                : FileCategoryLabelByDate(prevGroup);
             header.y = y;
             header.height = headerH;
             layoutCache_.push_back(header);
@@ -395,13 +441,20 @@ void FileCategories::EnsureLayout() const
 
 const std::vector<std::wstring>& FileCategories::GetSearchResultKeys() const
 {
-    if (searchText_.empty())
+    if (!data_ || !data_->showSearchBox || searchText_.empty())
         return CachedCategoryKeys(CachedActiveCategoryId());
     EnsureCategorySnapshot();
     const auto& allKeys = CachedCategoryKeys(L"all");
     searchResultCache_.clear();
     for (const auto& key : allKeys)
     {
+        if (auto* scene = GetPreviewScene())
+        {
+            const auto* sample = scene->FindItem(key);
+            if (sample && NameMatchesQuery(sample->title, searchText_))
+                searchResultCache_.push_back(key);
+            continue;
+        }
         size_t itemIdx = app_->FindItemIndexByKey(key);
         if (itemIdx == static_cast<size_t>(-1)) continue;
         if (NameMatchesQuery(app_->GetDesktopItems()[itemIdx].name, searchText_))
@@ -486,7 +539,7 @@ bool FileCategories::PruneUncollectableItems()
 RECT FileCategories::GetSearchBoxRect() const
 {
     return GetCategorizedSearchBoxRect(
-        data_ && app_);
+        data_ && app_ && data_->showSearchBox);
 }
 
 /**
@@ -496,8 +549,11 @@ RECT FileCategories::GetSearchBoxRect() const
  */
 static RECT FileCategoryTabsRect(FileCategories* widget)
 {
+    DesktopWidget* data = widget
+        ? widget->GetWidgetData() : nullptr;
     return widget
-        ? widget->GetCategorizedTabsRect(true)
+        ? widget->GetCategorizedTabsRect(
+            data && data->showFileCategories)
         : RECT{};
 }
 
@@ -518,7 +574,9 @@ static RECT FileCategoryContentRect(FileCategories* widget)
         snowdesktop::collection_group_rules::
             ResolveCategorizedContentTop(
                 body.top, body.bottom,
-                !widget->IsSearchActive() &&
+                !(widget->GetWidgetData() &&
+                    widget->GetWidgetData()->showSearchBox &&
+                    widget->IsSearchActive()) &&
                     !IsRectEmptyRect(tabs),
                 tabs.bottom,
                 !IsRectEmptyRect(search), search.bottom,
@@ -664,7 +722,8 @@ static int FileCategoryContentHeight(FileCategories* widget, size_t itemCount)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data) return 0;
-    if (data->dateHeaders && !widget->IsSearchActive())
+    if (data->dateHeaders &&
+        (!data->showSearchBox || !widget->IsSearchActive()))
     {
         widget->EnsureLayout();
         const auto& segs = widget->GetLayoutCache();
@@ -708,7 +767,8 @@ static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex)
     RECT content = FileCategoryContentRect(widget);
     int scroll = std::clamp(data->scrollOffset, 0, FileCategoryMaxScrollOffset(widget));
 
-    if (data->dateHeaders && !widget->IsSearchActive())
+    if (data->dateHeaders &&
+        (!data->showSearchBox || !widget->IsSearchActive()))
     {
         widget->EnsureLayout();
         const auto& segs = widget->GetLayoutCache();
@@ -848,7 +908,8 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
     const int scroll = std::clamp(data_->scrollOffset, 0, FileCategoryMaxScrollOffset(this));
 
-    if (data_->dateHeaders && searchText_.empty())
+    if (data_->dateHeaders &&
+        (!data_->showSearchBox || searchText_.empty()))
     {
         EnsureLayout();
         const auto& segs = GetLayoutCache();
@@ -948,6 +1009,17 @@ Item* FileCategories::GetSlotItem(size_t idx) const
     if (!data_ || !app_) return nullptr;
     const auto& keys = GetSearchResultKeys();
     if (idx >= keys.size()) return nullptr;
+    if (auto* scene = GetPreviewScene())
+    {
+        DesktopItem* sample = scene->FindDesktopItem(keys[idx]);
+        if (!sample) return nullptr;
+        auto icon = std::make_unique<DesktopIcon>(
+            sample,
+            const_cast<FileCategories*>(this), app_);
+        Item* result = icon.get();
+        slotItemCache_.push_back(std::move(icon));
+        return result;
+    }
     size_t itemIdx = app_->FindItemIndexByKey(keys[idx]);
     if (itemIdx == static_cast<size_t>(-1)) return nullptr;
     auto icon = std::make_unique<DesktopIcon>(&app_->GetDesktopItems()[itemIdx],
@@ -998,50 +1070,36 @@ std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
 
 /**
  * @brief 重新排序成员项目：将选中的项目移动到指定可见索引之前。
- * @param indices 未使用的参数，保留以匹配接口。实际使用选中状态来确定移动项目。
- * @param insertBefore 目标插入位置的可见索引。
+ * @param indices 拖拽开始时捕获的 data_->itemKeys 成员索引。
+ * @param insertBefore data_->itemKeys 中的目标插入边界。
  */
 void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
     if (!data_ || !app_) return;
     if (data_->dateHeaders) return;
-    (void)indices;
 
-    const auto& activeKeys = GetSearchResultKeys();
-    std::vector<std::wstring> selectedKeys;
-    for (const auto& key : activeKeys)
+    std::vector<size_t> movingIndices = indices;
+    if (movingIndices.empty())
     {
-        size_t itemIdx = app_->FindItemIndexByKey(key);
-        if (itemIdx != static_cast<size_t>(-1) && app_->GetDesktopItems()[itemIdx].selected)
-            selectedKeys.push_back(ToUpperInvariant(key));
+        // Compatibility fallback for callers that do not carry a captured
+        // DragSourceList.  The normal file-group path always supplies the
+        // stable indices, so a proxy rebuild or selection reset cannot turn
+        // the drop into a no-op.
+        for (size_t i = 0; i < data_->itemKeys.size(); ++i)
+        {
+            const size_t itemIndex =
+                app_->FindItemIndexByKey(data_->itemKeys[i]);
+            if (itemIndex < app_->GetDesktopItems().size() &&
+                app_->GetDesktopItems()[itemIndex].selected)
+                movingIndices.push_back(i);
+        }
     }
-    if (selectedKeys.empty()) return;
+    if (movingIndices.empty()) return;
 
-    std::unordered_set<std::wstring> selectedSet(selectedKeys.begin(), selectedKeys.end());
-    size_t insertAt = data_->itemKeys.size();
-    if (insertBefore < activeKeys.size())
-    {
-        size_t anchorIdx = insertBefore;
-        while (anchorIdx < activeKeys.size() &&
-            selectedSet.contains(ToUpperInvariant(activeKeys[anchorIdx])))
-            ++anchorIdx;
-        if (anchorIdx < activeKeys.size())
-            insertAt = InsertIndexForVisibleSlot(this, anchorIdx);
-    }
-
-    size_t before = 0;
-    for (size_t i = 0; i < std::min(insertAt, data_->itemKeys.size()); ++i)
-        if (selectedSet.contains(ToUpperInvariant(data_->itemKeys[i]))) ++before;
-    insertAt -= std::min(insertAt, before);
-
-    data_->itemKeys.erase(
-        std::remove_if(data_->itemKeys.begin(), data_->itemKeys.end(),
-            [&](const std::wstring& key) { return selectedSet.contains(ToUpperInvariant(key)); }),
-        data_->itemKeys.end());
-
-    insertAt = std::min(insertAt, data_->itemKeys.size());
-    for (const auto& key : selectedKeys)
-        data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt++), key);
+    data_->itemKeys =
+        snowdesktop::collection_group_rules::ReorderItems(
+            data_->itemKeys, std::move(movingIndices),
+            insertBefore);
     InvalidateCategorySnapshot();
     InvalidateSlots();
 }
@@ -1161,13 +1219,17 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
     (void)body;
-    bool privacyActive = data_->privacyMode && !app_->dragSession_.IsActive() && !app_->externalDragActive_ && !PtInRect(&data_->bounds, app_->lastMousePoint_);
+    const bool preview = IsPreviewRendering();
+    bool privacyActive = data_->privacyMode &&
+        !app_->dragSession_.IsActive() &&
+        !app_->dragDropController_.IsExternalDragActive() &&
+        !PtInRect(&data_->bounds, app_->lastMousePoint_);
     const bool lt = app_->IsLightContentTheme();
 
     const auto& categoryIds = CachedVisibleCategoryIds();
     IDWriteTextFormat* normalFormat = GetCuTextFormat(13.0f, false, true);
     IDWriteTextFormat* lightHintFormat = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true) : nullptr;
-    bool searching = !searchText_.empty();
+    const bool searching = data_->showSearchBox && !searchText_.empty();
 
     DrawSearchBox(context);
 
@@ -1178,8 +1240,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (IsRectEmptyRect(content)) return;
 
         const auto& slots = GetSlots();
-        const auto& items = app_->GetDesktopItems();
-
         if (keys.empty())
         {
             RECT empty = GetBodyRect();
@@ -1201,9 +1261,10 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             RECT itemRect = slots[i]->GetBounds();
             if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
 
-            size_t itemIdx = app_->FindItemIndexByKey(keys[idx]);
-            if (itemIdx == static_cast<size_t>(-1)) continue;
-            const DesktopItem& di = items[itemIdx];
+            auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
+            DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
+            if (!item) continue;
+            const DesktopItem& di = *item;
 
             if (!data_->listMode)
             {
@@ -1212,9 +1273,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 else
                 {
                     RECT bodyRect = GetBodyRect();
-                    bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
-                    DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
-                    icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
+                    bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                    icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
                         app_->IsLightContentTheme());
                 }
                 continue;
@@ -1253,7 +1313,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             if (IsRectEmptyRect(tab)) continue;
 
             bool active = categoryIds[i] == activeCategory;
-            bool hovered = PtInRect(&tab, app_->lastMousePoint_) != FALSE;
+            bool hovered = !IsPreviewRendering() &&
+                PtInRect(&tab, app_->lastMousePoint_) != FALSE;
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
             DrawCategorizedTab(
                 context, tab, label,
@@ -1267,11 +1328,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (IsRectEmptyRect(content)) return;
 
     const auto& slots = GetSlots();
-    const auto& items = app_->GetDesktopItems();
-
     context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
-    if (data_->dateHeaders && searchText_.empty())
+    if (data_->dateHeaders && !searching)
     {
         EnsureLayout();
         IDWriteTextFormat* headerFormat = GetCuTextFormat(13.0f, false, false);
@@ -1303,9 +1362,10 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         RECT itemRect = slots[i]->GetBounds();
         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
 
-        size_t itemIdx = app_->FindItemIndexByKey(keys[idx]);
-        if (itemIdx == static_cast<size_t>(-1)) continue;
-        const DesktopItem& di = items[itemIdx];
+        auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
+        DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
+        if (!item) continue;
+        const DesktopItem& di = *item;
 
         if (!data_->listMode)
         {
@@ -1314,9 +1374,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             else
             {
                 RECT bodyRect = GetBodyRect();
-                bool hovered = !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
-                DesktopIcon icon(const_cast<DesktopItem*>(&di), this, app_);
-                icon.Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
+                bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
                     app_->IsLightContentTheme());
             }
             continue;
@@ -1343,12 +1402,19 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     const bool lt = app_->IsLightContentTheme();
 
     RECT dateToggle = FileCategoryDateToggleRect(this);
-    bool dateHot = PtInRect(&dateToggle, app_->lastMousePoint_) != FALSE;
+    bool dateHot = !IsPreviewRendering() &&
+        PtInRect(&dateToggle, app_->lastMousePoint_) != FALSE;
     const float bs = GetBarScale();
-    IDWriteTextFormat* faFormat = GetCuFaTextFormat(14.0f * bs);
-    app_->DrawD2DText(context, L"", dateToggle,
-        faFormat ? faFormat :
-            (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+    IDWriteTextFormat* fluentFormat =
+        GetCuFluentTextFormat(14.0f * bs);
+    IDWriteTextFormat* iconFormat = fluentFormat
+        ? fluentFormat
+        : (app_->fluentIconTextFormat_
+            ? app_->fluentIconTextFormat_.Get()
+            : app_->listItemTextFormat_.Get());
+    app_->DrawD2DText(context,
+        snowdesktop::menu_fluent_glyphs::kDateHeader, dateToggle,
+        iconFormat,
         lt
             ? (data_->dateHeaders
                 ? (dateHot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
@@ -1358,10 +1424,11 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
                 : (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f))));
 
     RECT toggle = FileCategoryToggleRect(this);
-    bool hot = PtInRect(&toggle, app_->lastMousePoint_) != FALSE;
-    app_->DrawD2DText(context, data_->listMode ? L"" : L"", toggle,
-        faFormat ? faFormat :
-            (app_->faTextFormat_ ? app_->faTextFormat_.Get() : app_->listItemTextFormat_.Get()),
+    bool hot = !IsPreviewRendering() &&
+        PtInRect(&toggle, app_->lastMousePoint_) != FALSE;
+    app_->DrawD2DText(context,
+        data_->listMode ? L"\uF462" : L"\uF4ED", toggle,
+        iconFormat,
         lt
             ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
             : (hot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f)));
@@ -1379,7 +1446,8 @@ WidgetHit FileCategories::HitTestWidget(POINT pt) const
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
     if (base == WidgetHit::None || !data_) return base;
 
-    if (searchText_.empty() && !CategoryIdAtPoint(pt).empty())
+    if ((!data_->showSearchBox || searchText_.empty()) &&
+        !CategoryIdAtPoint(pt).empty())
         return WidgetHit::CategoryTab;
 
     RECT searchRect = GetSearchBoxRect();
@@ -1405,6 +1473,7 @@ WidgetHit FileCategories::HitTestWidget(POINT pt) const
  */
 std::wstring FileCategories::CategoryIdAtPoint(POINT pt) const
 {
+    if (!data_ || !data_->showFileCategories) return L"";
     const auto& categories = CachedVisibleCategoryIds();
     for (size_t i = 0; i < categories.size(); ++i)
     {
@@ -1434,7 +1503,7 @@ bool FileCategories::IsPointInTabsRect(POINT pt) const
  */
 bool FileCategories::TryScrollTabs(POINT pt, int delta)
 {
-    if (!data_ || !app_) return false;
+    if (!data_ || !app_ || !data_->showFileCategories) return false;
     RECT tabs = FileCategoryTabsRect(this);
     if (IsRectEmptyRect(tabs) || !PtInRect(&tabs, pt)) return false;
 

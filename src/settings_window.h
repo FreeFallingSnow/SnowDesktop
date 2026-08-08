@@ -22,6 +22,7 @@
 #include "category_settings.h"
 #include "full_data_backup.h"
 #include "widget_package.h"
+#include "../widget_spacing_rules.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -115,6 +116,8 @@ public:
 
     /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
     void ShowDockSettings();
+    /** @brief 显示设置窗口并直接切换到外观页面。 */
+    void ShowAppearanceSettings();
     void ShowWidgetMigration();
 
     /**
@@ -222,12 +225,27 @@ public:
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
 
+    void SetComponentSpacingMaximumProvider(
+        std::function<float()> provider)
+    { componentSpacingMaximumProvider_ = std::move(provider); }
+
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
 
     /** @brief 设置原生毛玻璃状态文本提供者（设置界面只读状态行）。 */
     void SetGlassStatusProvider(std::function<std::wstring()> provider) { glassStatusProvider_ = std::move(provider); }
 
-    void SyncDisplaySettings(float spacingScale, float fontSize, float fontWeight,
+    /** @brief 设置动画性能诊断文本提供者。 */
+    void SetAnimationDiagnosticsProvider(
+        std::function<std::wstring()> provider)
+    { animationDiagnosticsProvider_ = std::move(provider); }
+
+    /** @brief 设置仅本次运行有效的动画诊断开关。 */
+    void SetAnimationDiagnosticsToggleCallback(
+        std::function<void(bool)> callback)
+    { animationDiagnosticsToggleCallback_ = std::move(callback); }
+
+    void SyncDisplaySettings(float spacingScale, float componentSpacingScale,
+        float fontSize, float fontWeight,
         int shortcutArrowMode,
         bool iconBeautifyEnabled,
         int iconBeautifyMode,
@@ -241,7 +259,16 @@ public:
         float iconBeautifyBgEndB,
         int iconBeautifyGradientDirection)
     {
-        iconSpacingScale_ = spacingScale;
+        iconSpacingScale_ = std::clamp(
+            spacingScale,
+            snowdesktop::widget_spacing_rules::kMinimumScale,
+            snowdesktop::widget_spacing_rules::kMaximumScale);
+        const float componentSpacingMaximum =
+            componentSpacingMaximumProvider_
+                ? componentSpacingMaximumProvider_()
+                : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
+        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
+            ClampComponentScale(componentSpacingScale, componentSpacingMaximum);
         itemFontSize_ = fontSize;
         itemFontWeight_ = fontWeight;
         shortcutArrowMode_ = std::clamp(shortcutArrowMode, 0, 2);
@@ -293,7 +320,10 @@ public:
             iconBeautifyBgPreset_ = 5;
         else
             iconBeautifyBgPreset_ = 0;
-        displaySpacingPct_ = static_cast<int>(std::round(spacingScale * 100.0f));
+        displaySpacingPct_ = static_cast<int>(std::round(
+            iconSpacingScale_ * 100.0f));
+        componentSpacingPct_ = static_cast<int>(std::round(
+            componentSpacingScale_ * 100.0f));
     }
 
     /** @} */
@@ -335,6 +365,7 @@ public:
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
+    float GetComponentSpacingScale() const { return componentSpacingScale_; }
     float GetItemFontSizeD() const { return itemFontSize_; }
     float GetItemFontWeightD() const { return itemFontWeight_; }
     int GetShortcutArrowMode() const { return shortcutArrowMode_; }
@@ -644,6 +675,7 @@ private:
 
     /// 是否已解锁调试页面（通过版本号点击彩蛋激活）
     bool debugUnlocked_ = false;
+    bool animationDiagnosticsEnabled_ = false;
 
     /// 版本号点击计数（用于激活调试页面的彩蛋逻辑）
     int versionClickCount_ = 0;
@@ -677,6 +709,12 @@ private:
     /// 内嵌 Font Awesome 字体中实际存在的私有区字符
     std::vector<unsigned int> faDebugCodepoints_;
 
+    /// 调试页使用的 Fluent System Icons Regular 字体
+    ImFont* fluentDebugFont_ = nullptr;
+
+    /// 内嵌 Fluent Regular 字体中实际存在的私有区字符
+    std::vector<unsigned int> fluentDebugCodepoints_;
+
     /** @} */
 
     /** @name 回调函数
@@ -693,6 +731,8 @@ private:
 
     /// 缓存失效回调（设置变更后通知主窗口）
     std::function<void()> invalidateCallback_;
+    std::function<std::wstring()> animationDiagnosticsProvider_;
+    std::function<void(bool)> animationDiagnosticsToggleCallback_;
 
     /// 导航设置变更回调
     std::function<void()> navigationSettingsChangedCallback_;
@@ -717,6 +757,7 @@ private:
 
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
+    std::function<float()> componentSpacingMaximumProvider_;
 
     /// 分类设置变更回调
     std::function<void()> categorySettingsChangedCallback_;
@@ -772,6 +813,7 @@ private:
 
     /// 当前图标间距缩放
     float iconSpacingScale_ = 1.0f;
+    float componentSpacingScale_ = 1.0f;
 
     /// 当前桌面项目字号
     float itemFontSize_ = 15.0f;
@@ -797,6 +839,7 @@ private:
     float iconBeautifyBgEndB_ = 240.0f / 255.0f;
 
     int displaySpacingPct_ = 100;
+    int componentSpacingPct_ = 100;
 
     struct CategoryRuleEditBuffer
     {

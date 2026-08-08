@@ -1,0 +1,169 @@
+#include "app.h"
+
+// Lua widget panel lifecycle.
+
+void DesktopApp::OpenLuaWidgetPanel(
+    const LuaWidgetPanelRequest& request)
+{
+    if (request.widgetId.empty())
+        return;
+    if (!luaWidgetPanelRequest_.widgetId.empty())
+    {
+        if (luaWidgetPanelRequest_.widgetId ==
+                request.widgetId &&
+            luaWidgetPanelAnimation_.IsClosing())
+        {
+            luaWidgetPanelRequest_ = request;
+            if (snowdesktop::dock_launch_animation::
+                    SystemAnimationsEnabled())
+            {
+                luaWidgetPanelAnimation_.Open(
+                    static_cast<std::uint64_t>(
+                        snowdesktop::UiAnimationScheduler::
+                            MonotonicMilliseconds()));
+                if (!StartLuaWidgetPanelCompositionAnimation())
+                {
+                    UpdateLuaWidgetPanelCompositionAnimation();
+                    EnsureUiAnimationFrame();
+                }
+            }
+            else
+            {
+                luaWidgetPanelAnimation_.ShowImmediately();
+                ResetLuaWidgetPanelAnimationCache();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            return;
+        }
+        FinalizeCloseLuaWidgetPanel();
+    }
+    if (IsCollectionPopupInteractive())
+        CloseCollectionPopup(false);
+    if (quickNavigationOpen_)
+        CloseQuickNavigation();
+    luaWidgetPanelRequest_ = request;
+    luaWidgetPanelAnchorPoint_ =
+        lastMousePoint_;
+    const auto source = std::find_if(
+        widgets_.begin(), widgets_.end(),
+        [&](const DesktopWidget& widget) {
+            return widget.id == request.widgetId;
+        });
+    if (source != widgets_.end())
+    {
+        const RECT sourceRect =
+            GetStandaloneWidgetFrameRect(*source);
+        if (!PtInRect(
+                &sourceRect,
+                luaWidgetPanelAnchorPoint_))
+        {
+            luaWidgetPanelAnchorPoint_ = {
+                (sourceRect.left + sourceRect.right) / 2,
+                (sourceRect.top + sourceRect.bottom) / 2
+            };
+        }
+    }
+    luaWidgetPanelRect_ = GetLuaWidgetPanelRect();
+    luaWidgetPanelMouseDown_ = false;
+    luaWidgetPanelAnimation_.ResetHidden();
+    const bool animate =
+        snowdesktop::dock_launch_animation::
+            SystemAnimationsEnabled();
+    if (animate)
+    {
+        luaWidgetPanelAnimation_.Open(
+            static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::
+                    MonotonicMilliseconds()));
+    }
+    else
+    {
+        luaWidgetPanelAnimation_.ShowImmediately();
+    }
+    if (widgetEngine_)
+    {
+        widgetEngine_->InvokeMouseEvent(
+            request.widgetId, "onPanelOpened",
+            0, 0, 0, 0);
+    }
+    PrepareLuaWidgetPanelAnimationCache();
+    if (animate)
+    {
+        if (!StartLuaWidgetPanelCompositionAnimation())
+        {
+            UpdateLuaWidgetPanelCompositionAnimation();
+            EnsureUiAnimationFrame();
+        }
+    }
+    else
+        ResetLuaWidgetPanelAnimationCache();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void DesktopApp::FinalizeCloseLuaWidgetPanel()
+{
+    const std::wstring closingId =
+        luaWidgetPanelRequest_.widgetId;
+    if (!closingId.empty() && widgetEngine_)
+    {
+        widgetEngine_->InvokeMouseEvent(
+            closingId, "onPanelClosed",
+            0, 0, 0, 0);
+    }
+    luaWidgetPanelAnimation_.ResetHidden();
+    ResetLuaWidgetPanelAnimationCache();
+    luaWidgetPanelRequest_ = {};
+    luaWidgetPanelRect_ = {};
+    luaWidgetPanelAnchorPoint_ = {};
+    luaWidgetPanelMouseDown_ = false;
+    ReleaseCapture();
+    UpdateHostInputImePosition();
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void DesktopApp::CloseLuaWidgetPanel(
+    const std::wstring& widgetId,
+    const char* reason)
+{
+    (void)reason;
+    if (luaWidgetPanelRequest_.widgetId.empty() ||
+        (!widgetId.empty() &&
+         widgetId !=
+            luaWidgetPanelRequest_.widgetId))
+        return;
+    if (luaWidgetPanelAnimation_.IsClosing())
+        return;
+    if (widgetEngine_)
+        widgetEngine_->BlurHostInput(false);
+    luaWidgetPanelMouseDown_ = false;
+    ReleaseCapture();
+    UpdateHostInputImePosition();
+    PrepareLuaWidgetPanelAnimationCache();
+    if (!snowdesktop::dock_launch_animation::
+            SystemAnimationsEnabled())
+    {
+        FinalizeCloseLuaWidgetPanel();
+        return;
+    }
+    if (luaWidgetPanelAnimationOverlay_.active)
+    {
+        ClearDesktopBehindCompositionAnimation(
+            luaWidgetPanelAnimationCacheRect_);
+    }
+    luaWidgetPanelAnimation_.Close(
+        static_cast<std::uint64_t>(
+            snowdesktop::UiAnimationScheduler::
+                MonotonicMilliseconds()));
+    if (luaWidgetPanelAnimation_.IsHidden())
+    {
+        FinalizeCloseLuaWidgetPanel();
+        return;
+    }
+    if (!StartLuaWidgetPanelCompositionAnimation())
+    {
+        UpdateLuaWidgetPanelCompositionAnimation();
+        EnsureUiAnimationFrame();
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}

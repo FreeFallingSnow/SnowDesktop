@@ -8,10 +8,8 @@
 namespace snowdesktop::dock_launch_animation
 {
 
-// Request frames faster than a 60 Hz refresh cycle. The animation is driven by
-// the performance counter, so coalesced/skipped frames advance to the correct
-// position instead of slowing the bounce down.
-constexpr UINT kFrameIntervalMs = 8;
+// The shared scheduler follows the active display refresh rate. QPC-based
+// progress makes skipped frames advance to the correct position.
 constexpr ULONGLONG kBouncePeriodMs = 340;
 constexpr ULONGLONG kMinimumDurationMs = kBouncePeriodMs * 2;
 constexpr ULONGLONG kMaximumDurationMs = kBouncePeriodMs * 5;

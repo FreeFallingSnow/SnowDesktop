@@ -31,6 +31,14 @@ int main()
     state.Open(1000);
     Check(state.IsAnimating(), "opening starts an animation");
     Check(state.IsInteractive(), "opening popup accepts input immediately");
+    Check(OccludesSurface(state),
+        "opening popup still occludes covered elements");
+    Check(ShouldConsumePointerInsidePopup(true, true),
+        "a visible popup consumes input inside its rect");
+    Check(!ShouldConsumePointerInsidePopup(true, false),
+        "input outside a visible popup keeps its normal routing");
+    Check(!ShouldConsumePointerInsidePopup(false, true),
+        "a hidden popup never consumes input");
     state.Advance(1000 + kOpenDurationMs / 2);
     const Visual halfOpen = state.GetVisual();
     Check(halfOpen.visible, "half-open popup is visible");
@@ -63,6 +71,11 @@ int main()
     state.Close(2000);
     Check(state.IsClosing(), "closing state is reported");
     Check(!state.IsInteractive(), "closing popup stops accepting input");
+    Check(OccludesSurface(state),
+        "closing popup still occludes covered elements while visible");
+    Check(ShouldConsumePointerInsidePopup(
+            OccludesSurface(state), true),
+        "input inside a closing popup is consumed instead of falling through");
     state.Advance(2000 + kCloseDurationMs / 2);
     const Visual halfClosed = state.GetVisual();
     Check(NearlyEqual(halfClosed.progress, 0.5f),
@@ -73,6 +86,8 @@ int main()
     state.Advance(2000 + kCloseDurationMs);
     Check(state.IsHidden(), "closing reaches hidden");
     Check(!state.IsAnimating(), "closing animation stops when hidden");
+    Check(!OccludesSurface(state),
+        "a fully hidden popup no longer occludes covered elements");
 
     state.Open(3000);
     state.Advance(3060);

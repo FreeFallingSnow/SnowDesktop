@@ -7,10 +7,8 @@ namespace snowdesktop::popup_animation_rules
 {
 constexpr std::uint64_t kOpenDurationMs = 90;
 constexpr std::uint64_t kCloseDurationMs = 90;
-// Request frames faster than a 60 Hz refresh cycle. Win32 may coalesce timer
-// messages, but the animation remains time-based and therefore never slows
-// down when a frame is skipped.
-constexpr unsigned int kFrameIntervalMs = 8;
+// The shared QPC scheduler advances directly to the current time, so a delayed
+// frame never causes catch-up rendering or stretches the transition.
 constexpr float kMinimumScale = 0.18f;
 
 inline float ClampUnit(float value)
@@ -179,4 +177,26 @@ private:
     bool animating_ = false;
     std::uint64_t lastTick_ = 0;
 };
+
+/**
+ * @brief 弹窗是否仍占据屏幕区域并遮挡下层元素。
+ * 以"已打开或仍可见"为准：Open() 一经调用桌面层即开始绘制全尺寸弹窗
+ * （此时 progress 可能仍为 0），关闭动画期间弹窗也仍在绘制上层，被遮挡
+ * 元素的 hover/右键/双击都不得穿透；仅完全隐藏后才解除遮挡。
+ */
+inline bool OccludesSurface(const State& state)
+{
+    return state.IsInteractive() || !state.IsHidden();
+}
+
+/**
+ * @brief 可见弹窗遮挡坐标点时，该输入应被弹窗消费而不是穿透到下层元素。
+ * @param popupVisible    弹窗仍可见（含开/关动画）
+ * @param pointInsidePopup 坐标点位于弹窗矩形内
+ */
+inline bool ShouldConsumePointerInsidePopup(
+    bool popupVisible, bool pointInsidePopup)
+{
+    return popupVisible && pointInsidePopup;
+}
 }

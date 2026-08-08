@@ -180,56 +180,6 @@ std::vector<T> ReorderItems(
     return remaining;
 }
 
-enum class CollectionLabelDropSurface
-{
-    Desktop,
-    CollectionGroup,
-    FileGroup,
-    FileList,
-    Other,
-};
-
-constexpr bool AcceptsCollectionLabelDrop(
-    CollectionLabelDropSurface surface)
-{
-    return surface ==
-            CollectionLabelDropSurface::Desktop ||
-        surface ==
-            CollectionLabelDropSurface::CollectionGroup;
-}
-
-enum class GroupedDragKind
-{
-    CollectionLabel,
-    FileGroupLabel,
-    FileEntry,
-};
-
-constexpr bool AcceptsGroupedDrag(
-    GroupedDragKind drag,
-    CollectionLabelDropSurface surface)
-{
-    switch (drag)
-    {
-    case GroupedDragKind::CollectionLabel:
-        return surface ==
-                CollectionLabelDropSurface::Desktop ||
-            surface ==
-                CollectionLabelDropSurface::CollectionGroup;
-    case GroupedDragKind::FileGroupLabel:
-        return surface ==
-                CollectionLabelDropSurface::Desktop ||
-            surface ==
-                CollectionLabelDropSurface::FileGroup;
-    case GroupedDragKind::FileEntry:
-        return surface ==
-                CollectionLabelDropSurface::Desktop ||
-            surface ==
-                CollectionLabelDropSurface::FileList;
-    }
-    return false;
-}
-
 enum class FileGroupChildKind
 {
     DesktopFileCategories,

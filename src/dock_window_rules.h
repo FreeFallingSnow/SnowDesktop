@@ -105,6 +105,24 @@ constexpr DockClickAction ResolveDockClickAction(
 }
 
 /**
+ * @brief 将预览缩略图点击转换为窗口级点击动作。
+ *
+ * 与 Dock 图标的应用级判定不同，缩略图点击针对具体窗口：Dock 图标在
+ * 应用任一窗口处于前台时判定为前台（点击即最小化整个应用），而缩略图
+ * 必须只看被点窗口自身。同一应用多窗口场景下，点击非前台窗口的卡片
+ * 应激活该窗口，而不是把整组窗口误判为前台而最小化。
+ */
+constexpr DockClickAction ResolveDockWindowPreviewClickAction(
+    bool minimized, bool windowForeground) noexcept
+{
+    if (minimized)
+        return DockClickAction::Restore;
+    if (windowForeground)
+        return DockClickAction::Minimize;
+    return DockClickAction::Activate;
+}
+
+/**
  * @brief 关闭请求尚未完成时，禁止 Dock 再向同一窗口或应用分发命令。
  *
  * WM_CLOSE 是异步消息；目标窗口在真正销毁前仍会通过 IsWindow 检查。
@@ -228,6 +246,36 @@ constexpr bool IsTaskWindowStyleEligible(
         return true;
     return (extendedStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) == 0 &&
         !hasOwner;
+}
+
+/**
+ * @brief 判断恢复窗口时是否播放图标到窗口的过渡动画。
+ *
+ * Dock 图标点击与预览缩略图点击共用同一条窗口命令路径：窗口最小化
+ * （或反向取消最小化动画）且过渡层与锚点都可用时播放恢复动画，否则
+ * 只能回退到无动画的直接恢复。
+ */
+constexpr bool ShouldAnimateDockWindowRestore(
+    bool minimized,
+    bool transitionAvailable,
+    bool anchorAvailable) noexcept
+{
+    return minimized && transitionAvailable && anchorAvailable;
+}
+
+/**
+ * @brief 判断可见预览是否应跟随悬停锚点漂移而不重建。
+ *
+ * Dock 放大让图标视觉矩形随指针逐像素变化；预览可见且身份仍匹配时，
+ * 只移动预览窗口即可，重新弹窗会反复重注册缩略图。仅当身份变化或
+ * 预览不可见时才回到重新挂起定时器的路径。
+ */
+constexpr bool ShouldFollowDockPreviewAnchor(
+    bool previewVisible,
+    bool identityMatched,
+    bool anchorChanged) noexcept
+{
+    return previewVisible && identityMatched && anchorChanged;
 }
 
 } // namespace snowdesktop::dock_window_rules

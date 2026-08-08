@@ -23,6 +23,7 @@
 #include "search_match.h"
 #include "personalization.h"
 #include "widget_package.h"
+#include "steam_workshop_source.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -213,6 +214,9 @@ GetWidgetPackageSources()
             std::make_shared<snowdesktop::widget::LocalDirectorySource>(
                 manager.Paths().development);
         sources[local->ProviderId()] = local;
+        auto steam =
+            std::make_shared<snowdesktop::widget::SteamWorkshopSource>();
+        sources[steam->ProviderId()] = steam;
         return true;
     }();
     (void)initialized;
@@ -306,6 +310,41 @@ static std::unordered_map<std::string, std::string>& ActiveStorage()
 {
     return g_storageOverlay ? *g_storageOverlay : g_storage;
 }
+
+class PreviewExecutionScope final
+{
+public:
+    explicit PreviewExecutionScope(LuaWidget* widget)
+        : previousOverlay_(g_storageOverlay), previousDryLoad_(g_widgetDryLoad)
+    {
+        if (widget && widget->preview)
+        {
+            g_storageOverlay = &widget->previewStorage;
+            g_widgetDryLoad = true;
+        }
+    }
+
+    explicit PreviewExecutionScope(
+        std::unordered_map<std::string, std::string>* previewStorage)
+        : previousOverlay_(g_storageOverlay), previousDryLoad_(g_widgetDryLoad)
+    {
+        if (previewStorage)
+        {
+            g_storageOverlay = previewStorage;
+            g_widgetDryLoad = true;
+        }
+    }
+
+    ~PreviewExecutionScope()
+    {
+        g_storageOverlay = previousOverlay_;
+        g_widgetDryLoad = previousDryLoad_;
+    }
+
+private:
+    std::unordered_map<std::string, std::string>* previousOverlay_;
+    bool previousDryLoad_;
+};
 
 static std::string EscapeStorageJson(std::string_view value)
 {
@@ -649,7 +688,8 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
     bool centered = false,
     DWRITE_WORD_WRAPPING wrapping = DWRITE_WORD_WRAPPING_WRAP,
     bool fontAwesome = false,
-    bool verticallyCentered = false)
+    bool verticallyCentered = false,
+    bool fluent = false)
 {
     if (!state || !state->dwrite) return nullptr;
     const auto sizeKey = static_cast<std::uint64_t>(std::clamp(
@@ -659,12 +699,17 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
         (static_cast<std::uint64_t>(centered) << 36) |
         (static_cast<std::uint64_t>(wrapping) << 37) |
         (static_cast<std::uint64_t>(fontAwesome) << 40) |
-        (static_cast<std::uint64_t>(verticallyCentered) << 41);
+        (static_cast<std::uint64_t>(verticallyCentered) << 41) |
+        (static_cast<std::uint64_t>(fluent) << 42);
     if (auto found = state->textFormatCache.find(key); found != state->textFormatCache.end())
         return found->second.Get();
 
     ComPtr<IDWriteTextFormat> format;
-    if (fontAwesome)
+    if (fluent)
+    {
+        format.Attach(CreateFluentTextFormat(state->dwrite, size));
+    }
+    else if (fontAwesome)
     {
         format.Attach(CreateFaTextFormat(state->dwrite, size));
     }
@@ -1747,12 +1792,44 @@ static void DrawHostTextSelection(D2DState* state,
         static_cast<UINT32>(boundedLength), 0.0f, 0.0f,
         metrics.data(), count, &count)))
         return;
+    // DirectWrite may return one metric per glyph/run. Drawing every metric
+    // independently makes adjacent selection pieces overlap, especially for
+    // proportional text, and produces visible rounded blue boxes while the
+    // selection is being dragged. Merge contiguous pieces on each line and
+    // draw one flat highlight per line so the selection remains stable.
+    std::vector<D2D1_RECT_F> selectionRects;
+    selectionRects.reserve(count);
     for (UINT32 i = 0; i < count; ++i)
     {
         const auto& hit = metrics[i];
-        DrawHostRect(state, originX + hit.left,
-            originY + hit.top, std::max(1.5f, hit.width),
-            std::max(1.0f, hit.height), color, 1.5f, 0.32f);
+        const D2D1_RECT_F rect = D2D1::RectF(
+            hit.left, hit.top,
+            hit.left + std::max(1.5f, hit.width),
+            hit.top + std::max(1.0f, hit.height));
+        if (!selectionRects.empty())
+        {
+            auto& previous = selectionRects.back();
+            const bool sameLine =
+                std::abs(previous.top - rect.top) < 0.5f &&
+                std::abs(previous.bottom - rect.bottom) < 0.5f;
+            const bool contiguous = rect.left <= previous.right + 0.5f;
+            if (sameLine && contiguous)
+            {
+                previous.left = std::min(previous.left, rect.left);
+                previous.right = std::max(previous.right, rect.right);
+                previous.top = std::min(previous.top, rect.top);
+                previous.bottom = std::max(previous.bottom, rect.bottom);
+                continue;
+            }
+        }
+        selectionRects.push_back(rect);
+    }
+
+    for (const auto& rect : selectionRects)
+    {
+        DrawHostRect(state, originX + rect.left,
+            originY + rect.top, rect.right - rect.left,
+            rect.bottom - rect.top, color, 0.0f, 0.32f);
     }
 }
 
@@ -1905,6 +1982,9 @@ static int lua_UiTextInput(lua_State* L)
         if (focused)
             value = WidgetWideToUtf8(focusedText);
     }
+    const bool widgetSelected = s && s->engine &&
+        s->engine->RuntimeIsWidgetSelected(BoundWidgetId(L));
+    const bool drawFocusedBorder = focused && !widgetSelected;
     const HostInputDisplayText focusedDisplay =
         BuildHostInputDisplayText(focusedText, cursor,
             selectionAnchor, compositionText,
@@ -1913,8 +1993,9 @@ static int lua_UiTextInput(lua_State* L)
     DrawHostRect(s, x, y, width, height, backgroundColor, radius,
         focused ? focusedBackgroundAlpha : backgroundAlpha);
     DrawHostStrokeRect(s, x, y, width, height,
-        focused ? focusedBorderColor : borderColor, radius, borderThickness,
-        focused ? focusedBorderAlpha : borderAlpha);
+        drawFocusedBorder ? focusedBorderColor : borderColor, radius,
+        borderThickness,
+        drawFocusedBorder ? focusedBorderAlpha : borderAlpha);
     const bool showingPlaceholder = value.empty() && !focused;
     const std::wstring displayText = focused
         ? focusedDisplay.text
@@ -2105,6 +2186,9 @@ static int lua_UiTextArea(lua_State* L)
         if (focused)
             value = WidgetWideToUtf8(focusedText);
     }
+    const bool widgetSelected = s && s->engine &&
+        s->engine->RuntimeIsWidgetSelected(BoundWidgetId(L));
+    const bool drawFocusedBorder = focused && !widgetSelected;
     const HostInputDisplayText focusedDisplay =
         BuildHostInputDisplayText(focusedText, cursor,
             selectionAnchor, compositionText,
@@ -2113,9 +2197,9 @@ static int lua_UiTextArea(lua_State* L)
     DrawHostRect(s, x, y, width, height, backgroundColor, radius,
         focused ? focusedBackgroundAlpha : backgroundAlpha);
     DrawHostStrokeRect(s, x, y, width, height,
-        focused ? focusedBorderColor : borderColor, radius,
+        drawFocusedBorder ? focusedBorderColor : borderColor, radius,
         borderThickness,
-        focused ? focusedBorderAlpha : borderAlpha);
+        drawFocusedBorder ? focusedBorderAlpha : borderAlpha);
 
     const std::wstring valueText = focused
         ? focusedDisplay.text : Utf8ToWideLocal(value);
@@ -3159,6 +3243,86 @@ static void DrainShellIconResults(D2DState* state)
     }
 }
 
+static std::wstring ReadLuaPreviewIconTitle(
+    lua_State* state, int index, const std::wstring& fallback)
+{
+    if (lua_istable(state, index))
+    {
+        const int table = lua_absindex(state, index);
+        lua_getfield(state, table, "title");
+        const char* title = lua_isstring(state, -1)
+            ? lua_tostring(state, -1) : nullptr;
+        const std::wstring result = Utf8ToWideLocal(title ? title : "");
+        lua_pop(state, 1);
+        if (!result.empty()) return result;
+    }
+    std::wstring result = fallback;
+    const size_t separator = result.find_last_of(L"\\/");
+    if (separator != std::wstring::npos)
+        result.erase(0, separator + 1);
+    const size_t dot = result.find(L'.');
+    if (dot != std::wstring::npos) result.erase(dot);
+    return result;
+}
+
+static void DrawSimulatedPreviewIcon(D2DState* state,
+    const std::wstring& identity, const std::wstring& title,
+    float x, float y, float size, float alpha)
+{
+    if (!state || !state->ctx || size <= 0.0f) return;
+    static constexpr int colors[] = {
+        0x3B82F6, 0x8B5CF6, 0xEC4899, 0xF97316,
+        0x14B8A6, 0x22C55E, 0xEAB308, 0x6366F1,
+    };
+    std::uint32_t hash = 2166136261u;
+    for (wchar_t value : identity)
+    {
+        hash ^= static_cast<std::uint32_t>(value);
+        hash *= 16777619u;
+    }
+    const int background = colors[hash % std::size(colors)];
+    ID2D1SolidColorBrush* fill = GetCachedBrush(
+        state, background, std::clamp(alpha, 0.0f, 1.0f));
+    ID2D1SolidColorBrush* border = GetCachedBrush(
+        state, 0xFFFFFF, std::clamp(alpha * 0.42f, 0.0f, 1.0f));
+    ID2D1SolidColorBrush* text = GetCachedBrush(
+        state, 0xFFFFFF, std::clamp(alpha, 0.0f, 1.0f));
+    const D2D1_RECT_F rect = D2D1::RectF(
+        x + state->widgetRect.left, y + state->widgetRect.top,
+        x + state->widgetRect.left + size,
+        y + state->widgetRect.top + size);
+    const float radius = std::max(3.0f, size * 0.22f);
+    const D2D1_ROUNDED_RECT rounded =
+        D2D1::RoundedRect(rect, radius, radius);
+    if (fill) state->ctx->FillRoundedRectangle(rounded, fill);
+    if (border)
+        state->ctx->DrawRoundedRectangle(
+            rounded, border, std::max(1.0f, size / 24.0f));
+
+    std::wstring letter;
+    for (wchar_t value : title)
+    {
+        if (value != L' ' && value != L'\t' &&
+            value != L'\r' && value != L'\n')
+        {
+            letter.assign(1, value);
+            break;
+        }
+    }
+    if (letter.empty()) letter = L"?";
+    CharUpperBuffW(letter.data(), static_cast<DWORD>(letter.size()));
+    IDWriteTextFormat* format = GetCachedTextFormat(
+        state, std::max(11.0f, size * 0.46f),
+        DWRITE_FONT_WEIGHT_BOLD, true,
+        DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
+    if (format && text)
+    {
+        state->ctx->DrawTextW(letter.c_str(),
+            static_cast<UINT32>(letter.size()), format,
+            rect, text, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+}
+
 static int lua_DrawIcon(lua_State* L)
 {
     if (!RequirePermission(L, "desktop.read")) return 0;
@@ -3169,6 +3333,14 @@ static int lua_DrawIcon(lua_State* L)
     float alpha = static_cast<float>(luaL_optnumber(L, 5, 1.0));
     auto* s = GetD2D(L);
     if (!s || !s->ctx || path.empty()) return 0;
+
+    if (s->engine && s->engine->IsPreviewOnly())
+    {
+        DrawSimulatedPreviewIcon(s, path,
+            ReadLuaPreviewIconTitle(L, 1, path),
+            x, y, size, alpha);
+        return 0;
+    }
 
     EnsureBitmapCachesForCurrentDevice(s);
     if (s->shellIconFailures.contains(path))
@@ -3279,6 +3451,7 @@ WidgetEngine::~WidgetEngine()
 
 bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory)
 {
+    previewOnly_ = false;
     d2dContext_ = d2dContext;
     dwriteFactory_ = dwriteFactory;
 
@@ -3323,6 +3496,22 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
     httpService_ = std::make_unique<AsyncHttpService>();
     return true;
+}
+
+bool WidgetEngine::InitPreview(
+    ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory)
+{
+    previewOnly_ = true;
+    d2dContext_ = d2dContext;
+    dwriteFactory_ = dwriteFactory;
+    d2dState_ = new D2DState{};
+    d2dState_->dwrite = dwriteFactory_.Get();
+    d2dState_->engine = this;
+    // Package metadata and Lua files remain readable.  Shell icon loading,
+    // storage, calendar, system snapshots and HTTP workers are deliberately
+    // absent in this render-only engine.
+    (void)GetWidgetPackageManager();
+    return d2dState_ != nullptr;
 }
 
 void WidgetEngine::Shutdown()
@@ -3370,6 +3559,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
+    PreviewExecutionScope previewScope(&widgets_[idx]);
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId)
         focusedHostInput_ = {};
     if (widgets_[idx].hostVisible)
@@ -3531,7 +3721,28 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
         LoadWidget(fallback, widgetId);
 }
 
-bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widgetId)
+bool WidgetEngine::EnsureWidgetPreviewLoaded(
+    const std::wstring& widgetId, const std::wstring& packageId,
+    const std::unordered_map<std::string, std::string>& storageOverrides)
+{
+    if (int index = FindWidget(widgetId); index >= 0)
+        return widgets_[index].preview &&
+            widgets_[index].packageId == WidgetWideToUtf8(packageId);
+    const std::wstring path = ResolveWidgetPath(packageId);
+    return !path.empty() && LoadWidget(
+        path, widgetId, true, &storageOverrides);
+}
+
+bool WidgetEngine::IsPreviewWidget(const std::wstring& widgetId) const
+{
+    const int index = FindWidget(widgetId);
+    return index >= 0 && widgets_[index].preview;
+}
+
+bool WidgetEngine::LoadWidget(const std::wstring& path,
+    const std::wstring& widgetId, bool preview,
+    const std::unordered_map<std::string, std::string>*
+        previewStorageOverrides)
 {
     std::string source = ReadTextFile(path);
     if (source.empty()) return false;
@@ -3541,6 +3752,20 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     pending.filePath = path;
     pending.manifest = GetWidgetManifest(path);
     pending.packageId = pending.manifest.packageId;
+    pending.preview = preview;
+    if (preview)
+    {
+        const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
+        for (const auto& [key, value] : pending.manifest.previewStorage)
+            pending.previewStorage[prefix + key] = value;
+        if (previewStorageOverrides)
+        {
+            for (const auto& [key, value] : *previewStorageOverrides)
+                pending.previewStorage[prefix + key] = value;
+        }
+    }
+    PreviewExecutionScope previewScope(
+        preview ? &pending.previewStorage : nullptr);
     if (const auto package =
         GetWidgetPackageManager().ResolveEntryPath(path))
         pending.packageRoot = package->root;
@@ -3772,6 +3997,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
     w.followPersonalizationDefault = followPersonalizationDefault;
     w.scriptSettings = std::move(scriptSettings);
     w.scriptPresets = std::move(scriptPresets);
+    w.preview = preview;
+    w.previewStorage = std::move(pending.previewStorage);
     WIN32_FILE_ATTRIBUTE_DATA attr{};
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
@@ -3786,7 +4013,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path, const std::wstring& widg
         SaveStorageFile();
     }
 
-    if (widgets_.back().manifest.refreshIntervalMs > 0 && widgetTimerRequestCallback_)
+    if (!preview && widgets_.back().manifest.refreshIntervalMs > 0 &&
+        widgetTimerRequestCallback_)
     {
         UINT_PTR tid = widgetTimerRequestCallback_(widgetId,
             static_cast<UINT>(widgets_.back().manifest.refreshIntervalMs));
@@ -4285,8 +4513,10 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     LuaWidget* found = &widgets_[idx];
+    PreviewExecutionScope previewScope(found);
 
     // Hot-reload: check if file changed or deleted
+    if (!found->preview)
     {
         WIN32_FILE_ATTRIBUTE_DATA attr{};
         bool exists = GetFileAttributesExW(found->filePath.c_str(), GetFileExInfoStandard, &attr) != 0;
@@ -4497,7 +4727,7 @@ void WidgetEngine::TickRuntime()
         std::unordered_set<std::wstring> dirtyWidgets;
         for (const auto& widget : widgets_)
         {
-            if (!widget.valid) continue;
+            if (!widget.valid || widget.preview) continue;
             if ((systemChanged && widget.usesSystemSnapshot) ||
                 (mediaChanged && widget.usesMediaSnapshot))
             {
@@ -4549,7 +4779,7 @@ void WidgetEngine::TickRuntime()
     const auto now = std::chrono::steady_clock::now();
     for (auto& widget : widgets_)
     {
-        if (!widget.valid) continue;
+        if (!widget.valid || widget.preview) continue;
         if (widget.hostVisible && widget.lastRenderTime.time_since_epoch().count() > 0 &&
             now - widget.lastRenderTime > std::chrono::milliseconds(2500))
         {
@@ -4753,6 +4983,10 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(const std::wstring& 
                     lua_pop(L_, 1);
                     lua_getfield(L_, -1, "icon");
                     item.icon = lua_isstring(L_, -1) ? lua_tostring(L_, -1) : "";
+                    lua_pop(L_, 1);
+                    lua_getfield(L_, -1, "iconFont");
+                    item.iconFont = lua_isstring(L_, -1)
+                        ? lua_tostring(L_, -1) : "fa";
                     lua_pop(L_, 1);
                     lua_getfield(L_, -1, "enabled");
                     item.enabled = lua_isnil(L_, -1) ? true : (lua_toboolean(L_, -1) != 0);
@@ -5026,9 +5260,13 @@ bool WidgetEngine::RuntimeHasPermission(const std::wstring& widgetId, const char
 void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::string& message)
 {
     std::string idUtf8 = WidgetWideToUtf8(widgetId);
-    g_storage[idUtf8 + ".lastError"] = message;
-    SaveStorageFile();
     const int index = FindWidget(widgetId);
+    if (!g_widgetDryLoad &&
+        (index < 0 || !widgets_[index].preview))
+    {
+        g_storage[idUtf8 + ".lastError"] = message;
+        SaveStorageFile();
+    }
     if (index >= 0)
     {
         auto& widget = widgets_[index];
@@ -5055,11 +5293,39 @@ void WidgetEngine::RuntimeAddLog(const std::wstring& widgetId, const std::string
 
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopItems() const
 {
+    if (g_widgetDryLoad || previewOnly_)
+    {
+        const std::string document =
+            _L("app.widget_preview.api.desktop_document");
+        const std::string folder =
+            _L("app.widget_preview.api.desktop_folder");
+        const std::string shortcut =
+            _L("app.widget_preview.api.desktop_shortcut");
+        return {
+            { "preview-document", document,
+                "C:\\Users\\Maya\\Desktop\\" + document,
+                "desktop", "file", false },
+            { "preview-folder", folder,
+                "C:\\Users\\Maya\\Desktop\\" + folder,
+                "desktop", "folder", false },
+            { "preview-shortcut", shortcut,
+                "C:\\Users\\Maya\\Desktop\\" + shortcut + ".lnk",
+                "desktop", "shortcut", false },
+        };
+    }
     return desktopSnapshotProvider_ ? desktopSnapshotProvider_() : std::vector<LuaDesktopItemInfo>{};
 }
 
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopSelection() const
 {
+    if (g_widgetDryLoad || previewOnly_)
+    {
+        const std::string document =
+            _L("app.widget_preview.api.desktop_document");
+        return { { "preview-document", document,
+            "C:\\Users\\Maya\\Desktop\\" + document,
+            "desktop", "file", true } };
+    }
     return selectionProvider_ ? selectionProvider_() : std::vector<LuaDesktopItemInfo>{};
 }
 
@@ -5068,7 +5334,7 @@ void WidgetEngine::NotifyCalendarChanged(
 {
     for (const auto& widget : widgets_)
     {
-        if (!widget.valid ||
+        if (!widget.valid || widget.preview ||
             !RuntimeHasPermission(
                 widget.widgetId, "calendar.read"))
             continue;
@@ -5112,6 +5378,12 @@ void WidgetEngine::NotifyCalendarChanged(
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeApplicationSearch(
     const std::string& query, int maxResults) const
 {
+    if ((g_widgetDryLoad || previewOnly_) &&
+        !query.empty() && maxResults > 0)
+        return { { "preview-app",
+            _L("app.widget_preview.api.application"),
+            "C:\\Program Files\\Travel Journal\\TravelJournal.exe",
+            "startmenu", "application", false } };
     return applicationSearchProvider_
         ? applicationSearchProvider_(query, maxResults)
         : std::vector<LuaDesktopItemInfo>{};
@@ -5119,6 +5391,15 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeApplicationSearch(
 
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeEverythingSearch(const std::string& query, int maxResults) const
 {
+    if ((g_widgetDryLoad || previewOnly_) &&
+        !query.empty() && maxResults > 0)
+    {
+        const std::string title =
+            _L("app.widget_preview.api.search_result");
+        return { { "preview-search", title,
+            "C:\\Users\\Maya\\Documents\\" + title,
+            "everything", "file", false } };
+    }
     return everythingSearchProvider_
         ? everythingSearchProvider_(query, maxResults)
         : std::vector<LuaDesktopItemInfo>{};
@@ -5160,12 +5441,13 @@ void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId)
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
 {
     std::string fullKey = WidgetWideToUtf8(widgetId) + "." + key;
-    auto& storage = ActiveStorage();
+    int idx = FindWidget(widgetId);
+    auto& storage = idx >= 0 && widgets_[idx].preview
+        ? widgets_[idx].previewStorage : ActiveStorage();
     auto it = storage.find(fullKey);
     if (it != storage.end())
         return it->second;
 
-    int idx = FindWidget(widgetId);
     if (idx < 0) return {};
     const LuaWidget& widget = widgets_[idx];
     if (key == "followPersonalization" && widget.customStyle &&
@@ -5181,6 +5463,12 @@ void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const st
     if (!StorageWriteWithinQuota(prefix, key, value))
     {
         RuntimeRecordError(widgetId, "Widget storage quota exceeded");
+        return;
+    }
+    const int index = FindWidget(widgetId);
+    if (index >= 0 && widgets_[index].preview)
+    {
+        widgets_[index].previewStorage[prefix + "." + key] = value;
         return;
     }
     ActiveStorage()[prefix + "." + key] = value;
@@ -5237,6 +5525,9 @@ void WidgetEngine::EnsureSystemSnapshotServiceStarted()
 
 CpuSnapshot WidgetEngine::RuntimeGetCpuSnapshot(const std::wstring& widgetId)
 {
+    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+        return { true, 42.0, 12,
+            _L("app.widget_preview.api.cpu") };
     EnsureSystemSnapshotServiceStarted();
     if (int index = FindWidget(widgetId); index >= 0)
         widgets_[index].usesSystemSnapshot = true;
@@ -5245,6 +5536,10 @@ CpuSnapshot WidgetEngine::RuntimeGetCpuSnapshot(const std::wstring& widgetId)
 
 MemorySnapshot WidgetEngine::RuntimeGetMemorySnapshot(const std::wstring& widgetId)
 {
+    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+        return { true, 16ull * 1024 * 1024 * 1024,
+            9ull * 1024 * 1024 * 1024,
+            7ull * 1024 * 1024 * 1024, 56.25 };
     EnsureSystemSnapshotServiceStarted();
     if (int index = FindWidget(widgetId); index >= 0)
         widgets_[index].usesSystemSnapshot = true;
@@ -5253,6 +5548,8 @@ MemorySnapshot WidgetEngine::RuntimeGetMemorySnapshot(const std::wstring& widget
 
 BatterySnapshot WidgetEngine::RuntimeGetBatterySnapshot(const std::wstring& widgetId)
 {
+    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+        return { true, 78.0, true, true, false };
     EnsureSystemSnapshotServiceStarted();
     if (int index = FindWidget(widgetId); index >= 0)
         widgets_[index].usesSystemSnapshot = true;
@@ -5261,6 +5558,10 @@ BatterySnapshot WidgetEngine::RuntimeGetBatterySnapshot(const std::wstring& widg
 
 NetworkSnapshot WidgetEngine::RuntimeGetNetworkSnapshot(const std::wstring& widgetId)
 {
+    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+        return { true, true, 3ull * 1024 * 1024,
+            640ull * 1024, 8ull * 1024 * 1024 * 1024,
+            2ull * 1024 * 1024 * 1024 };
     EnsureSystemSnapshotServiceStarted();
     if (int index = FindWidget(widgetId); index >= 0)
         widgets_[index].usesSystemSnapshot = true;
@@ -5269,6 +5570,10 @@ NetworkSnapshot WidgetEngine::RuntimeGetNetworkSnapshot(const std::wstring& widg
 
 GpuSnapshot WidgetEngine::RuntimeGetGpuSnapshot(const std::wstring& widgetId)
 {
+    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+        return { true, _L("app.widget_preview.api.gpu"), 36.0,
+            8ull * 1024 * 1024 * 1024,
+            3ull * 1024 * 1024 * 1024 };
     EnsureSystemSnapshotServiceStarted();
     if (int index = FindWidget(widgetId); index >= 0)
         widgets_[index].usesSystemSnapshot = true;
@@ -5277,6 +5582,13 @@ GpuSnapshot WidgetEngine::RuntimeGetGpuSnapshot(const std::wstring& widgetId)
 
 MediaSnapshot WidgetEngine::RuntimeGetMediaSnapshot(const std::wstring& widgetId)
 {
+    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+        return { true,
+            _LW("app.widget_preview.api.media_title"),
+            _LW("app.widget_preview.api.media_artist"),
+            _LW("app.widget_preview.api.media_album"),
+            _LW("app.widget_preview.api.media_genre"),
+            "playing", true, true, true };
     EnsureSystemSnapshotServiceStarted();
     if (int index = FindWidget(widgetId); index >= 0)
         widgets_[index].usesMediaSnapshot = true;
@@ -5326,6 +5638,7 @@ bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::stri
 
 std::string WidgetEngine::RuntimeCalendarSelectedDate() const
 {
+    if (g_widgetDryLoad) return "2026-08-02";
     return calendarService_
         ? calendarService_->SelectedDate()
         : std::string();
@@ -5334,6 +5647,8 @@ std::string WidgetEngine::RuntimeCalendarSelectedDate() const
 bool WidgetEngine::RuntimeCalendarSetSelectedDate(
     const std::string& date)
 {
+    if (g_widgetDryLoad)
+        return snowdesktop::calendar::CalendarService::GetDateInfo(date).has_value();
     return calendarService_ &&
         calendarService_->SetSelectedDate(date);
 }
@@ -5359,6 +5674,23 @@ WidgetEngine::RuntimeCalendarEvents(
     const std::string& fromDate,
     const std::string& toDate) const
 {
+    if (g_widgetDryLoad)
+    {
+        const std::vector<snowdesktop::calendar::CalendarEvent> samples = {
+            { "preview-1", 1,
+                _L("app.widget_preview.api.calendar_review"), "2026-08-02",
+                false, 600, 660,
+                _L("app.widget_preview.api.calendar_review_notes"), 15, {} },
+            { "preview-2", 1,
+                _L("app.widget_preview.api.calendar_publish"), "2026-08-03",
+                true, 0, 0, {}, -1, {} },
+        };
+        std::vector<snowdesktop::calendar::CalendarEvent> result;
+        for (const auto& event : samples)
+            if (event.date >= fromDate && event.date <= toDate)
+                result.push_back(event);
+        return result;
+    }
     return calendarService_
         ? calendarService_->Events(fromDate, toDate)
         : std::vector<
@@ -5369,6 +5701,9 @@ snowdesktop::calendar::MutationResult
 WidgetEngine::RuntimeCalendarCreate(
     snowdesktop::calendar::CalendarEvent event)
 {
+    if (g_widgetDryLoad)
+        return { false, {}, 0,
+            _L("app.widget_preview.api.read_only") };
     return calendarService_
         ? calendarService_->Create(std::move(event))
         : snowdesktop::calendar::MutationResult{
@@ -5382,6 +5717,9 @@ WidgetEngine::RuntimeCalendarUpdate(
     int expectedRevision,
     snowdesktop::calendar::CalendarEvent event)
 {
+    if (g_widgetDryLoad)
+        return { false, id, 0,
+            _L("app.widget_preview.api.read_only") };
     return calendarService_
         ? calendarService_->Update(
             id, expectedRevision, std::move(event))
@@ -5394,6 +5732,9 @@ snowdesktop::calendar::MutationResult
 WidgetEngine::RuntimeCalendarRemove(
     const std::string& id)
 {
+    if (g_widgetDryLoad)
+        return { false, id, 0,
+            _L("app.widget_preview.api.read_only") };
     return calendarService_
         ? calendarService_->Remove(id)
         : snowdesktop::calendar::MutationResult{
@@ -5409,6 +5750,30 @@ bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::s
     if (removed)
         RescheduleNamedTimer(widgets_[index]);
     return removed;
+}
+
+void WidgetEngine::RebindHostTimers()
+{
+    for (auto& widget : widgets_)
+    {
+        // The host retires all old deadline tokens before rebinding. Do not
+        // route stale IDs through the kill callback because another host
+        // implementation may already have reused them for the new surface.
+        widget.refreshTimerId = 0;
+        widget.namedTimerId = 0;
+
+        if (widget.preview)
+            continue;
+
+        if (widget.manifest.refreshIntervalMs > 0 &&
+            widgetTimerRequestCallback_)
+        {
+            widget.refreshTimerId = widgetTimerRequestCallback_(
+                widget.widgetId,
+                static_cast<UINT>(widget.manifest.refreshIntervalMs));
+        }
+        RescheduleNamedTimer(widget);
+    }
 }
 
 void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
@@ -5680,6 +6045,23 @@ std::wstring WidgetEngine::RuntimeSelectedWidgetPackageId() const
 bool WidgetEngine::HasFocusedHostInput() const
 {
     return focusedHostInput_.active;
+}
+
+bool WidgetEngine::IsHostInputAt(
+    const std::wstring& widgetId, int x, int y) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return false;
+    const POINT point{ x, y };
+    for (auto it = widgets_[index].hostControls.rbegin();
+        it != widgets_[index].hostControls.rend(); ++it)
+    {
+        if (it->type == LuaWidget::HostControl::Type::Input &&
+            PtInRect(&it->rect, point))
+            return true;
+    }
+    return false;
 }
 
 bool WidgetEngine::GetFocusedHostInputCaretRect(RECT& rect) const
@@ -6430,7 +6812,7 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
     const std::wstring& widgetId, std::wstring title,
     int width, int height)
 {
-    if (!openWidgetPanelCallback_)
+    if (g_widgetDryLoad || !openWidgetPanelCallback_)
         return;
     LuaWidgetPanelRequest request;
     request.widgetId = widgetId;
@@ -6443,7 +6825,7 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
 void WidgetEngine::RuntimeCloseWidgetPanel(
     const std::wstring& widgetId)
 {
-    if (closeWidgetPanelCallback_)
+    if (!g_widgetDryLoad && closeWidgetPanelCallback_)
         closeWidgetPanelCallback_(widgetId);
 }
 
@@ -6595,6 +6977,91 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     readString(root, "publisher", manifest.publisher);
     readString(root, "minHostVersion", manifest.minHostVersion);
     readString(root, "preview", manifest.preview);
+    if (const JsonValue* previewData = root.Find("previewData");
+        previewData && previewData->IsObject())
+    {
+        readString(*previewData, "introduction",
+            manifest.previewIntroduction);
+        readString(*previewData, "introductionKey",
+            manifest.previewIntroductionKey);
+        if (const JsonValue* storage = previewData->Find("storage");
+            storage && storage->IsObject())
+        {
+            for (const auto& [key, value] : storage->object)
+            {
+                if (!key.empty() &&
+                    (value.IsString() || value.IsNumber() || value.IsBoolean()))
+                    manifest.previewStorage[key] = valueString(value);
+            }
+        }
+        if (const JsonValue* storageKeys = previewData->Find("storageKeys");
+            storageKeys && storageKeys->IsObject())
+        {
+            for (const auto& [storageKey, localizationKey] :
+                storageKeys->object)
+            {
+                if (!storageKey.empty() && localizationKey.IsString() &&
+                    !localizationKey.string.empty() &&
+                    manifest.previewStorage.contains(storageKey))
+                    manifest.previewStorageKeys[storageKey] =
+                        localizationKey.string;
+            }
+        }
+        if (const JsonValue* variants = previewData->Find("variants");
+            variants && variants->IsArray())
+        {
+            for (const JsonValue& value : variants->array)
+            {
+                if (!value.IsObject() || manifest.previewVariants.size() >= 4)
+                    continue;
+                snowdesktop::widget::PreviewVariant variant;
+                readString(value, "id", variant.id);
+                readString(value, "title", variant.title);
+                readString(value, "titleKey", variant.titleKey);
+                readString(value, "description", variant.description);
+                readString(value, "descriptionKey", variant.descriptionKey);
+                if (const JsonValue* size = value.Find("size");
+                    size && size->IsObject())
+                {
+                    double number = 0;
+                    if (readNumber(*size, "columns", number) &&
+                        std::isfinite(number))
+                        variant.columns = std::clamp(
+                            static_cast<int>(number), 1, 8);
+                    if (readNumber(*size, "rows", number) &&
+                        std::isfinite(number))
+                        variant.rows = std::clamp(
+                            static_cast<int>(number), 1, 8);
+                }
+                if (const JsonValue* variantStorage = value.Find("storage");
+                    variantStorage && variantStorage->IsObject())
+                {
+                    for (const auto& [key, stored] : variantStorage->object)
+                    {
+                        if (!key.empty() && (stored.IsString() ||
+                            stored.IsNumber() || stored.IsBoolean()))
+                            variant.storage[key] = valueString(stored);
+                    }
+                }
+                if (const JsonValue* variantStorageKeys =
+                        value.Find("storageKeys");
+                    variantStorageKeys && variantStorageKeys->IsObject())
+                {
+                    for (const auto& [storageKey, localizationKey] :
+                        variantStorageKeys->object)
+                    {
+                        if (!storageKey.empty() &&
+                            localizationKey.IsString() &&
+                            !localizationKey.string.empty() &&
+                            variant.storage.contains(storageKey))
+                            variant.storageKeys[storageKey] =
+                                localizationKey.string;
+                    }
+                }
+                manifest.previewVariants.push_back(std::move(variant));
+            }
+        }
+    }
     readString(root, "entry", manifest.entry);
     readString(root, "signature", manifest.signature);
     manifest.permissions = readStringArray(root, "permissions");
@@ -6694,6 +7161,38 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         manifest.defaultColumns = std::min(manifest.defaultColumns, manifest.maxColumns);
     if (manifest.maxRows > 0)
         manifest.defaultRows = std::min(manifest.defaultRows, manifest.maxRows);
+    if (!manifest.previewIntroductionKey.empty())
+    {
+        manifest.previewIntroduction = TranslateManifest(manifest,
+            manifest.previewIntroductionKey,
+            manifest.previewIntroduction);
+    }
+    for (const auto& [storageKey, localizationKey] :
+        manifest.previewStorageKeys)
+    {
+        if (auto value = manifest.previewStorage.find(storageKey);
+            value != manifest.previewStorage.end())
+            value->second = TranslateManifest(
+                manifest, localizationKey, value->second);
+    }
+    for (auto& variant : manifest.previewVariants)
+    {
+        if (variant.columns <= 0) variant.columns = manifest.defaultColumns;
+        if (variant.rows <= 0) variant.rows = manifest.defaultRows;
+        if (!variant.titleKey.empty())
+            variant.title = TranslateManifest(
+                manifest, variant.titleKey, variant.title);
+        if (!variant.descriptionKey.empty())
+            variant.description = TranslateManifest(
+                manifest, variant.descriptionKey, variant.description);
+        for (const auto& [storageKey, localizationKey] : variant.storageKeys)
+        {
+            if (auto value = variant.storage.find(storageKey);
+                value != variant.storage.end())
+                value->second = TranslateManifest(
+                    manifest, localizationKey, value->second);
+        }
+    }
 
     if (manifest.permissions.empty())
         manifest.permissions = {};
@@ -6914,6 +7413,90 @@ WidgetEngine::QueryWidgetPackageSource(const std::string& providerId,
         return {};
     }
     return source->second->Query(query, error);
+}
+
+bool WidgetEngine::IsSteamWorkshopBridgeAvailable()
+{
+    const std::filesystem::path bridge =
+        std::filesystem::path(GetExecutableDirectoryPath()) /
+        L"SnowDesktopSteamBridge.exe";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(bridge, error) || error)
+        return false;
+    const DWORD attributes = GetFileAttributesW(bridge.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+}
+
+snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
+WidgetEngine::QuerySteamWorkshopSubscriptions(const std::string& locale)
+{
+    snowdesktop::widget::SteamWorkshopSubscriptionSnapshot snapshot;
+    if (!IsSteamWorkshopBridgeAvailable())
+    {
+        snapshot.error = "SnowDesktopSteamBridge.exe is missing";
+        return snapshot;
+    }
+    snowdesktop::widget::SteamWorkshopSource source;
+    snowdesktop::widget::PackageQuery query;
+    query.locale = locale;
+    query.limit = std::numeric_limits<std::size_t>::max();
+    std::string error;
+    snapshot = source.QuerySubscriptions(query, error);
+    if (!error.empty()) snapshot.error = std::move(error);
+    return snapshot;
+}
+
+snowdesktop::widget::SteamWorkshopSyncResult
+WidgetEngine::ApplySteamWorkshopSubscriptions(
+    const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot)
+{
+    auto& manager = GetWidgetPackageManager();
+    const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
+        manager.ListPackages(), snapshot);
+    snowdesktop::widget::SteamWorkshopSyncResult result;
+    result.errors = plan.conflicts;
+    for (const auto& action : plan.actions)
+    {
+        if (action.kind ==
+            snowdesktop::widget::SteamWorkshopSyncActionKind::Uninstall)
+        {
+            std::vector<std::wstring> instances;
+            for (const auto& widget : widgets_)
+                if (widget.packageId == action.packageId)
+                    instances.push_back(widget.widgetId);
+            for (const auto& instance : instances) UnloadWidget(instance);
+            std::string error;
+            if (manager.Uninstall(action.packageId, error))
+            {
+                ++result.uninstalled;
+            }
+            else
+            {
+                for (const auto& instance : instances)
+                    (void)ReloadWidget(instance);
+                result.errors.push_back(action.packageId + ": " + error);
+            }
+            continue;
+        }
+
+        std::wstring error;
+        if (InstallAndVerifyWidgetPackageFromSource("steam-workshop",
+            action.externalItemId, action.version, error, false, false))
+        {
+            if (action.kind ==
+                snowdesktop::widget::SteamWorkshopSyncActionKind::Install)
+                ++result.installed;
+            else
+                ++result.updated;
+        }
+        else
+        {
+            result.errors.push_back(action.packageId + ": " +
+                WidgetWideToUtf8(error));
+        }
+    }
+    return result;
 }
 
 int WidgetEngine::ApplySafeWidgetPackageUpdates(
@@ -7162,7 +7745,7 @@ static int lua_DrawCircle(lua_State* L)
     return 0;
 }
 
-static int lua_DrawFa(lua_State* L)
+static int LuaDrawFontGlyph(lua_State* L, bool fluent)
 {
     const char* glyph = luaL_checkstring(L, 1);
     float x = static_cast<float>(luaL_checknumber(L, 2));
@@ -7179,7 +7762,8 @@ static int lua_DrawFa(lua_State* L)
     MultiByteToWideChar(CP_UTF8, 0, glyph, -1, wtext.data(), wlen);
 
     IDWriteTextFormat* format = GetCachedTextFormat(s, size,
-        DWRITE_FONT_WEIGHT_NORMAL, true, DWRITE_WORD_WRAPPING_NO_WRAP, true);
+        DWRITE_FONT_WEIGHT_NORMAL, true, DWRITE_WORD_WRAPPING_NO_WRAP,
+        !fluent, false, fluent);
     if (!format) return 0;
 
     ID2D1SolidColorBrush* brush = GetCachedBrush(s, color);
@@ -7220,6 +7804,16 @@ static int lua_DrawFa(lua_State* L)
 
     s->ctx->DrawTextLayout(D2D1::Point2F(drawX, drawY), layout.Get(), brush);
     return 0;
+}
+
+static int lua_DrawFa(lua_State* L)
+{
+    return LuaDrawFontGlyph(L, false);
+}
+
+static int lua_DrawFluent(lua_State* L)
+{
+    return LuaDrawFontGlyph(L, true);
 }
 
 static int lua_StorageGet(lua_State* L)
@@ -7299,6 +7893,26 @@ static int lua_ImGuiSameLine(lua_State* L)
     float offset = (float)luaL_optnumber(L, 1, 0.0);
     float spacing = (float)luaL_optnumber(L, 2, -1.0);
     ImGui::SameLine(offset, spacing);
+    return 0;
+}
+
+static int lua_ImGuiSettingRow(lua_State* L)
+{
+    const char* label = luaL_checkstring(L, 1);
+    const float requestedWidth = static_cast<float>(
+        luaL_optnumber(L, 2, 300.0));
+    const float rowStart = ImGui::GetCursorPosX();
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const float rowRight = rowStart + availableWidth;
+    const float maximumWidth = std::max(
+        ImGui::GetFrameHeight(), availableWidth * 0.58f);
+    const float controlWidth = std::min(
+        std::max(ImGui::GetFrameHeight(), requestedWidth), maximumWidth);
+    const float controlX = std::max(rowStart, rowRight - controlWidth);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(controlX);
+    ImGui::SetNextItemWidth(controlWidth);
     return 0;
 }
 
@@ -7682,6 +8296,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
     lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");
     lua_pushcfunction(L, lua_DrawFa);    lua_setfield(L, -2, "fa");
+    lua_pushcfunction(L, lua_DrawFluent);lua_setfield(L, -2, "fluent");
     lua_pushcfunction(L, lua_DrawImage); lua_setfield(L, -2, "image");
     lua_pushcfunction(L, lua_DrawIcon);  lua_setfield(L, -2, "icon");
     lua_setglobal(L, "draw");
@@ -7786,6 +8401,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_ImGuiTextWrapped); lua_setfield(L, -2, "textWrapped");
     lua_pushcfunction(L, lua_ImGuiSeparator); lua_setfield(L, -2, "separator");
     lua_pushcfunction(L, lua_ImGuiSameLine);  lua_setfield(L, -2, "sameLine");
+    lua_pushcfunction(L, lua_ImGuiSettingRow); lua_setfield(L, -2, "settingRow");
     lua_pushcfunction(L, lua_ImGuiSpacing);   lua_setfield(L, -2, "spacing");
     lua_pushcfunction(L, lua_ImGuiCollapsingHeader); lua_setfield(L, -2, "collapsingHeader");
     lua_pushcfunction(L, lua_ImGuiTreeNode);  lua_setfield(L, -2, "treeNode");

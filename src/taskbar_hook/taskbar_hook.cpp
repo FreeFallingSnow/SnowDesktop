@@ -1,4 +1,10 @@
-// Reference implementation: https://github.com/TranslucentTB/TranslucentTB
+// SPDX-FileCopyrightText: TranslucentTB contributors
+// SPDX-FileCopyrightText: 2026 SnowDesktop contributors
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// Contains modified portions derived from TranslucentTB's ExplorerTAP,
+// effects, XamlBlurBrush, visual-tree watcher, and TAP initialization code at:
+// https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
 
 #include "taskbar_hook_protocol.h"
 #include "taskview_visibility.h"
