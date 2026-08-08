@@ -7,6 +7,21 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $algorithm.ComputeHash($stream)
+        return [System.BitConverter]::ToString($bytes).Replace("-", "")
+    }
+    finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+}
+
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $scriptDirectory ".."))
@@ -124,7 +139,7 @@ if (Test-Path -LiteralPath $zip) {
 }
 Compress-Archive -LiteralPath $payload -DestinationPath $zip `
     -CompressionLevel Optimal
-$hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+$hash = Get-Sha256 -Path $zip
 "$hash  $([System.IO.Path]::GetFileName($zip))" |
     Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
 Write-Host "Steam payload generated: $zip" -ForegroundColor Green

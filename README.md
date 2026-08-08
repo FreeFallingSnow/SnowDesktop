@@ -54,11 +54,12 @@
 - Font Awesome 6 Free（组件兼容图标）
 - WinHTTP（Lua HTTP 运行时）
 
-## 📄 协议
+## 📄 许可证
 
-SnowDesktop 核心使用 GNU General Public License v3.0，详见 [LICENSE](./LICENSE)。
-其中部分任务栏与背景实现修改自 TranslucentTB，固定来源、版权人与涉及文件记录在
-[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。独立的
-`steam_bridge/` 创意工坊桥接程序使用 MIT 许可证，详见
-[steam_bridge/LICENSE](./steam_bridge/LICENSE)；Steamworks SDK 本身不包含在本仓库内，
+SnowDesktop 核心代码采用 GNU General Public License v3.0，详见 [LICENSE](./LICENSE)。
+仓库中包含的第三方组件及其版权和许可信息，统一记录在
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+
+独立的 `steam_bridge/` 创意工坊桥接程序采用 MIT 许可证，详见
+[steam_bridge/LICENSE](./steam_bridge/LICENSE)。Steamworks SDK 本身不包含在本仓库内，
 也不适用上述 GPL 或 MIT 许可证。
