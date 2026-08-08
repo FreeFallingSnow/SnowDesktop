@@ -209,6 +209,7 @@ bool DesktopApp::CopyCutSelectedFolderEntries(bool cut)
     OleFlushClipboard();
     UpdateCutState();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateFloatingDockWindow();
     return true;
 }
 

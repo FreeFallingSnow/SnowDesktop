@@ -81,7 +81,8 @@ void DesktopApp::RefreshDockRunningWindows(
 
     const HWND preferredRoot = preferredWindow && IsWindow(preferredWindow)
         ? GetAncestor(preferredWindow, GA_ROOT) : nullptr;
-    const HWND actualForeground = GetAncestor(GetForegroundWindow(), GA_ROOT);
+    const HWND actualForeground =
+        ResolveDockSemanticForegroundWindow();
     const HWND scoringForeground = preferredRoot ? preferredRoot : actualForeground;
     struct EnumContext
     {
@@ -562,7 +563,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         pressedAction.value_or(DockClickAction::None);
     if (action == DockClickAction::None)
     {
-        const HWND foreground = GetForegroundWindow();
+        const HWND foreground =
+            ResolveDockSemanticForegroundWindow();
         action =
             snowdesktop::dock_window_rules::ResolveDockClickAction(
                 true, minimized,
@@ -700,7 +702,7 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
     if (!target)
         target = window;
     const bool windowForeground =
-        GetAncestor(GetForegroundWindow(), GA_ROOT) == target;
+        ResolveDockSemanticForegroundWindow() == target;
     const auto action =
         snowdesktop::dock_window_rules::
             ResolveDockWindowPreviewClickAction(
@@ -713,7 +715,9 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
     // clears the stored anchor, so the anchor snapshot must be read first.
     const RECT anchor = dockWindowPreviewAnchorScreen_;
     if (floatingDockVisible_)
-        CloseFloatingDock(true, true);
+        CloseFloatingDock(
+            true, true,
+            FloatingDockCloseFocusPolicy::PreserveCurrent);
     if (!IsRectEmpty(&anchor) &&
         ActivateOrToggleDockWindow(
             window, action, nullptr, anchor))
@@ -768,7 +772,9 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
         }
     }
     if (floatingDockVisible_)
-        CloseFloatingDock();
+        CloseFloatingDock(
+            true, false,
+            FloatingDockCloseFocusPolicy::PreserveCurrent);
     if (activationSafe)
         BringWindowToTop(activationTarget);
     SetForegroundWindow(activationTarget);

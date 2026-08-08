@@ -158,11 +158,14 @@ bool DesktopApp::WaitForDCompCommitWithFallback(
 
 void DesktopApp::DestroyFloatingDockWindow()
 {
+    EndFloatingDockKeyboardSession(
+        FloatingDockCloseFocusPolicy::PreserveCurrent);
     ++floatingDockBackdropCommitToken_;
     floatingDockBackdropCleanupPending_ = false;
     floatingDockRevealCommitPending_ = false;
     floatingDockClosePending_ = false;
     floatingDockPointerPresentPending_ = false;
+    shellPopupMenuLayerDepth_ = 0;
     floatingDockHoverHandoffPending_ = false;
     floatingDockHoverHandoffRect_ = {};
     floatingDockCloseDesktopRect_ = {};
@@ -196,6 +199,10 @@ void DesktopApp::DestroyFloatingDockWindow()
     if (floatingDockHwnd_ && IsWindow(floatingDockHwnd_))
         DestroyWindow(floatingDockHwnd_);
     floatingDockHwnd_ = nullptr;
+    if (floatingDockInputHwnd_ &&
+        IsWindow(floatingDockInputHwnd_))
+        DestroyWindow(floatingDockInputHwnd_);
+    floatingDockInputHwnd_ = nullptr;
 }
 
 DockContainer*
@@ -402,6 +409,11 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !IsWindow(floatingDockHwnd_) ||
         !floatingDockContainer_)
         return;
+    const bool floatingLayerTopmost =
+        snowdesktop::floating_dock_rules::
+            ShouldFloatingDockBeTopmost(
+                true,
+                shellPopupMenuLayerDepth_);
 
     const RECT nextDockRect =
         floatingDockContainer_->GetInteractiveBounds();
@@ -417,9 +429,36 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             nextPopupRect =
                 GetCollectionPopupRect(*popupWidget);
     }
+    // The host allocation must always contain the real popup envelope. Dock
+    // entries can gain items, or the popup can anchor to a hovered slot, after
+    // the initial reveal, so expand the stable source rect instead of keeping
+    // a stale smaller host that clips the popup until the next refresh.
+    RECT requiredSourceRect =
+        CalculateFloatingDockStableSourceRect();
+    if (!IsRectEmpty(&nextPopupRect))
+    {
+        requiredSourceRect =
+            snowdesktop::floating_dock_rules::
+                UnionNonEmptyRects(
+                    requiredSourceRect,
+                    nextPopupRect);
+    }
+    const RECT previousSourceRect =
+        floatingDockSourceRect_;
     if (IsRectEmpty(&floatingDockSourceRect_))
-        floatingDockSourceRect_ =
-            CalculateFloatingDockStableSourceRect();
+        floatingDockSourceRect_ = requiredSourceRect;
+    else
+    {
+        const RECT expandedSourceRect =
+            snowdesktop::floating_dock_rules::
+                UnionNonEmptyRects(
+                    floatingDockSourceRect_,
+                    requiredSourceRect);
+        if (!EqualRect(&expandedSourceRect,
+                &floatingDockSourceRect_))
+            floatingDockSourceRect_ =
+                expandedSourceRect;
+    }
     if (IsRectEmpty(&floatingDockSourceRect_))
     {
         CloseFloatingDock(true, true);
@@ -434,9 +473,13 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     const bool titleRegionChanged =
         !EqualRect(&nextTooltipRect,
             &floatingDockTooltipRect_);
+    const bool sourceRectChanged =
+        !EqualRect(&previousSourceRect,
+            &floatingDockSourceRect_);
     if (!dockGeometryChanged &&
         !popupRegionChanged &&
-        !titleRegionChanged)
+        !titleRegionChanged &&
+        !sourceRectChanged)
     {
         InvalidateFloatingDockWindow();
         return;
@@ -518,6 +561,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     // stable host allocation. Do not resize the HWND or recreate its DComp
     // surface after the floating Dock has been revealed.
     if (!dockGeometryChanged &&
+        !sourceRectChanged &&
         IsWindowVisible(floatingDockHwnd_))
     {
         InvalidateFloatingDockWindow(
@@ -531,10 +575,12 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     if (firstReveal)
     {
         // A no-activate popup can otherwise remain underneath the foreground
-        // process. Promote it only for its initial reveal, then return it to
-        // the ordinary non-topmost band.
+        // process. Keep the floating host topmost for its entire visible
+        // lifetime so shell operations and app windows cannot bury it.
         SetWindowPos(
-            floatingDockHwnd_, HWND_TOPMOST,
+            floatingDockHwnd_,
+            floatingLayerTopmost
+                ? HWND_TOPMOST : HWND_NOTOPMOST,
             floatingDockSourceRect_.left +
                 virtualLeft_,
             floatingDockSourceRect_.top +
@@ -546,9 +592,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     }
     else
     {
-        // Opening or closing a collection popup only changes the compact
-        // host's geometry. Preserve its existing Z band to avoid a visible
-        // TOPMOST -> NOTOPMOST flash.
+        // Resize within the current Z band. Popup-only changes normally keep
+        // the stable allocation, while a larger data set can expand it.
         SetWindowPos(
             floatingDockHwnd_, nullptr,
             floatingDockSourceRect_.left +
@@ -559,12 +604,38 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             SWP_NOZORDER | SWP_NOACTIVATE |
                 SWP_SHOWWINDOW);
     }
+    bool renderedResizeFrame = false;
+    if (!firstReveal && sourceRectChanged)
+    {
+        // The host is now resized to the expanded source rect. Submit the
+        // replacement frame synchronously so the new region never presents
+        // the stale pre-resize surface (blank/empty panel) before the next
+        // paint. The frame renderer is reentrancy-guarded; on failure the
+        // ordinary invalidation below remains the fallback.
+        renderedResizeFrame =
+            RenderFloatingDockCompositionFrame();
+    }
+
+    if (sourceRectChanged &&
+        floatingDockBackdropCompositor_.IsAvailable())
+    {
+        // The native backdrop helper is a sibling sized to the content HWND.
+        // Keep its window placement in sync after the host expands so glass
+        // panels are not clipped to the old host bounds.
+        floatingDockBackdropCompositor_.
+            SetPopupTopmost(floatingLayerTopmost);
+        floatingDockBackdropCompositor_.
+            Reattach(floatingDockHwnd_);
+        WaitForDCompCommitWithFallback(
+            L"Floating Dock source rect reattach");
+    }
 
     if (!floatingDockBackdropCompositor_.IsAvailable())
     {
         if (!floatingDockBackdropCompositor_.
                 InitializePopup(
-                    floatingDockHwnd_, false,
+                    floatingDockHwnd_,
+                    floatingLayerTopmost,
                     !floatingDockRevealPending_))
         {
             std::wstring message =
@@ -577,7 +648,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     if (firstReveal)
     {
         SetWindowPos(
-            floatingDockHwnd_, HWND_NOTOPMOST,
+            floatingDockHwnd_,
+            floatingLayerTopmost
+                ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE |
                 SWP_NOACTIVATE |
@@ -597,6 +670,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             floatingDockHwnd_, GWL_EXSTYLE) &
             WS_EX_TOPMOST) != 0);
     WriteDiagnosticLogEntry(message);
-    InvalidateFloatingDockWindow(
-        immediatePresent);
+    if (!renderedResizeFrame)
+        InvalidateFloatingDockWindow(
+            immediatePresent);
 }

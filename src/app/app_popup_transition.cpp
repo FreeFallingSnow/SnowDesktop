@@ -133,6 +133,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         widgets_[widgetIndex].type != DesktopWidgetType::Collection)
         return;
 
+    DismissActiveContextMenuForPopupTransition();
+
     const bool samePopupSource =
         !dockFolderPopupOpen_ &&
         popupWidgetIndex_ == widgetIndex;
@@ -391,7 +393,6 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
         MenuIconFont::FluentRegular);
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
-    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
 
@@ -430,6 +431,8 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
     default:
         break;
     }
+    RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
 }
 
 
@@ -482,6 +485,62 @@ void DesktopApp::RefreshDockFolderPopup()
         std::make_unique<FolderMapping>(
             &dockFolderPopupWidget_, this);
     dockFolderPopupContainer_->InvalidateFilterCache();
+    RefreshDockFolderPopupGeometry();
+}
+
+void DesktopApp::RefreshDockFolderPopupGeometry()
+{
+    popupRect_ =
+        GetCollectionPopupRect(
+            dockFolderPopupWidget_);
+    dockFolderPopupWidget_.bounds =
+        popupRect_;
+    popupScrollOffset_ = std::clamp(
+        popupScrollOffset_, 0,
+        GetCollectionPopupMaxScrollOffset(
+            dockFolderPopupWidget_,
+            popupRect_));
+    InvalidateDragStaticScene();
+    if (floatingDockVisible_)
+    {
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+void DesktopApp::RefreshOpenCollectionPopupGeometry()
+{
+    if (!floatingDockVisible_ ||
+        !floatingDockHwnd_ ||
+        !IsWindow(floatingDockHwnd_) ||
+        !popupAnchoredToDock_ ||
+        !GetOpenPopupWidget())
+        return;
+
+    if (dockFolderPopupOpen_)
+    {
+        RefreshDockFolderPopupGeometry();
+        return;
+    }
+
+    if (popupWidgetIndex_ >= widgets_.size())
+        return;
+
+    popupRect_ =
+        GetCollectionPopupRect(
+            widgets_[popupWidgetIndex_]);
+    popupScrollOffset_ = std::clamp(
+        popupScrollOffset_, 0,
+        GetCollectionPopupMaxScrollOffset(
+            widgets_[popupWidgetIndex_],
+            popupRect_));
+    InvalidateDragStaticScene();
+    UpdateFloatingDockWindowBounds();
+    InvalidateFloatingDockWindow(true);
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 void DesktopApp::
@@ -604,16 +663,5 @@ void DesktopApp::SortDockFolderPopupContents(
     }
 
     popupScrollOffset_ = 0;
-    popupRect_ =
-        GetCollectionPopupRect(
-            dockFolderPopupWidget_);
-    dockFolderPopupWidget_.bounds =
-        popupRect_;
-    InvalidateDragStaticScene();
-    if (floatingDockVisible_)
-    {
-        UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
-    }
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    RefreshDockFolderPopupGeometry();
 }

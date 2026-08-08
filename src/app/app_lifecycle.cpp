@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_platform_helpers.h"
 
 // Desktop host lifecycle.
 
@@ -293,6 +294,229 @@ void DesktopApp::FocusDesktopInputWindow()
         SetFocus(inputHwnd_);
     else if (hwnd_ && IsWindow(hwnd_))
         SetFocus(hwnd_);
+}
+
+bool DesktopApp::EnsureFloatingDockInputWindow()
+{
+    if (floatingDockInputHwnd_ &&
+        IsWindow(floatingDockInputHwnd_))
+        return true;
+    if (!instance_)
+        return false;
+
+    floatingDockInputHwnd_ = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        kInputWindowClassName,
+        L"SnowDesktopFloatingDockInput",
+        WS_POPUP,
+        -32000, -32000, 1, 1,
+        nullptr, nullptr, instance_, this);
+    return floatingDockInputHwnd_ != nullptr;
+}
+
+void DesktopApp::BeginFloatingDockKeyboardSession()
+{
+    if (floatingDockKeyboardSessionActive_)
+    {
+        RefocusFloatingDockKeyboardSession();
+        return;
+    }
+
+    HWND foreground = GetForegroundWindow();
+    if (foreground)
+    {
+        if (HWND root = GetAncestor(foreground, GA_ROOT))
+            foreground = root;
+    }
+    DWORD foregroundProcess = 0;
+    if (foreground)
+        GetWindowThreadProcessId(
+            foreground, &foregroundProcess);
+    if (foreground &&
+        foregroundProcess != GetCurrentProcessId() &&
+        IsDockTaskWindow(foreground))
+    {
+        floatingDockLogicalForegroundWindow_ = foreground;
+    }
+    else
+    {
+        HWND previous = dockPreviousForegroundWindow_.load();
+        if (previous)
+        {
+            if (HWND root = GetAncestor(previous, GA_ROOT))
+                previous = root;
+        }
+        DWORD previousProcess = 0;
+        if (previous)
+            GetWindowThreadProcessId(
+                previous, &previousProcess);
+        floatingDockLogicalForegroundWindow_ =
+            shellFileOperationInFlight_ > 0 &&
+                previous &&
+                previousProcess != GetCurrentProcessId() &&
+                IsDockTaskWindow(previous)
+            ? previous : nullptr;
+    }
+
+    if (!EnsureFloatingDockInputWindow())
+    {
+        WriteDiagnosticLogEntry(
+            L"Floating Dock input proxy creation FAILED");
+        return;
+    }
+    floatingDockKeyboardSessionActive_ = true;
+    ShowWindow(
+        floatingDockInputHwnd_, SW_SHOWNOACTIVATE);
+    RefocusFloatingDockKeyboardSession();
+}
+
+void DesktopApp::RefocusFloatingDockKeyboardSession()
+{
+    if (!snowdesktop::floating_dock_rules::
+            ShouldRefocusFloatingDockKeyboardSession(
+                floatingDockVisible_,
+                floatingDockKeyboardSessionActive_,
+                shellFileOperationInFlight_,
+                shellPopupMenuLayerDepth_) ||
+        !EnsureFloatingDockInputWindow())
+        return;
+
+    // Capture a genuine external switch before the input proxy becomes the
+    // real foreground window again. Internal/menu foreground changes resolve
+    // back to the existing logical snapshot.
+    ResolveDockSemanticForegroundWindow();
+
+    if (!IsWindowVisible(floatingDockInputHwnd_))
+        ShowWindow(
+            floatingDockInputHwnd_, SW_SHOWNOACTIVATE);
+
+    BOOL activated =
+        SetForegroundWindow(floatingDockInputHwnd_);
+    if (!activated)
+    {
+        const HWND foreground = GetForegroundWindow();
+        const DWORD foregroundThread = foreground
+            ? GetWindowThreadProcessId(
+                foreground, nullptr)
+            : 0;
+        const DWORD currentThread = GetCurrentThreadId();
+        if (foregroundThread != 0 &&
+            foregroundThread != currentThread &&
+            AttachThreadInput(
+                foregroundThread, currentThread, TRUE))
+        {
+            activated =
+                SetForegroundWindow(
+                    floatingDockInputHwnd_);
+            AttachThreadInput(
+                foregroundThread, currentThread, FALSE);
+        }
+    }
+    SetFocus(floatingDockInputHwnd_);
+    if (!activated ||
+        GetFocus() != floatingDockInputHwnd_)
+    {
+        wchar_t message[192]{};
+        wsprintfW(
+            message,
+            L"Floating Dock input proxy focus FAILED hwnd=%p activated=%d focus=%p",
+            floatingDockInputHwnd_,
+            activated != FALSE,
+            GetFocus());
+        WriteDiagnosticLogEntry(message);
+    }
+}
+
+void DesktopApp::EndFloatingDockKeyboardSession(
+    FloatingDockCloseFocusPolicy focusPolicy)
+{
+    if (!floatingDockKeyboardSessionActive_)
+    {
+        floatingDockLogicalForegroundWindow_ = nullptr;
+        return;
+    }
+
+    HWND restoreWindow =
+        focusPolicy ==
+                FloatingDockCloseFocusPolicy::RestorePrevious
+            ? ResolveDockSemanticForegroundWindow()
+            : nullptr;
+    DWORD restoreProcess = 0;
+    if (restoreWindow)
+        GetWindowThreadProcessId(
+            restoreWindow, &restoreProcess);
+    if (!restoreWindow ||
+        restoreProcess == GetCurrentProcessId() ||
+        !IsDockTaskWindow(restoreWindow))
+    {
+        restoreWindow = nullptr;
+    }
+    floatingDockKeyboardSessionActive_ = false;
+    if (floatingDockInputHwnd_ &&
+        IsWindow(floatingDockInputHwnd_))
+    {
+        ShowWindow(floatingDockInputHwnd_, SW_HIDE);
+    }
+    floatingDockLogicalForegroundWindow_ = nullptr;
+
+    if (focusPolicy ==
+            FloatingDockCloseFocusPolicy::RestorePrevious &&
+        restoreWindow && IsWindow(restoreWindow) &&
+        !IsIconic(restoreWindow))
+    {
+        SetForegroundWindow(restoreWindow);
+    }
+}
+
+void DesktopApp::RestoreInteractionInputFocus()
+{
+    if (floatingDockKeyboardSessionActive_ &&
+        floatingDockVisible_)
+    {
+        RefocusFloatingDockKeyboardSession();
+        return;
+    }
+    FocusDesktopInputWindow();
+}
+
+HWND DesktopApp::ResolveDockSemanticForegroundWindow()
+{
+    HWND actual = GetForegroundWindow();
+    if (!actual || !IsWindow(actual))
+        actual = dockForegroundWindow_.load();
+    if (actual)
+    {
+        if (HWND root = GetAncestor(actual, GA_ROOT))
+            actual = root;
+    }
+    if (!floatingDockKeyboardSessionActive_)
+        return actual;
+
+    DWORD processId = 0;
+    if (actual)
+        GetWindowThreadProcessId(actual, &processId);
+    const bool ownedByCurrentProcess =
+        processId != 0 &&
+        processId == GetCurrentProcessId();
+    const bool taskWindow =
+        actual && IsDockTaskWindow(actual);
+    if (snowdesktop::floating_dock_rules::
+            ShouldUseFloatingDockLogicalForeground(
+                true,
+                ownedByCurrentProcess,
+                shellFileOperationInFlight_ > 0,
+                taskWindow))
+    {
+        return floatingDockLogicalForegroundWindow_ &&
+                IsWindow(
+                    floatingDockLogicalForegroundWindow_)
+            ? floatingDockLogicalForegroundWindow_
+            : nullptr;
+    }
+
+    if (actual && !ownedByCurrentProcess && taskWindow)
+        floatingDockLogicalForegroundWindow_ = actual;
+    return actual;
 }
 
 /**

@@ -136,7 +136,12 @@ void DesktopApp::ShowFloatingDock()
         return;
     }
     SetWindowPos(
-        floatingDockHwnd_, HWND_NOTOPMOST,
+        floatingDockHwnd_,
+        snowdesktop::floating_dock_rules::
+                ShouldFloatingDockBeTopmost(
+                    true,
+                    shellPopupMenuLayerDepth_)
+            ? HWND_TOPMOST : HWND_NOTOPMOST,
         0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE |
             SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -269,12 +274,16 @@ void DesktopApp::ShowFloatingDock()
     // deliberate standby source for the reverse transaction and prevents a
     // later desktop repaint from retiring it before the asynchronous shared
     // compositor commit has landed.
+    BeginFloatingDockKeyboardSession();
 }
 
 void DesktopApp::CloseFloatingDock(
     bool closeDockPopup,
-    bool forceImmediate)
+    bool forceImmediate,
+    FloatingDockCloseFocusPolicy focusPolicy)
 {
+    if (floatingDockKeyboardSessionActive_)
+        EndFloatingDockKeyboardSession(focusPolicy);
     if (floatingDockClosePending_)
     {
         if (!forceImmediate)

@@ -121,11 +121,8 @@ void DesktopApp::ShowItemContextMenu(
         dockFrequentItem || dockApplicationItem;
     UINT command = ShowModernMenu(
         menu, screenPoint, menuOwner, placeOutsideDock);
-    if (!keepQuickNavigationOpen)
-        FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
-    RestoreDesktopWindowLayer();
 
     switch (command)
     {
@@ -273,6 +270,9 @@ void DesktopApp::ShowItemContextMenu(
                     itemIndex)));
         break;
     }
+    RestoreDesktopWindowLayer();
+    if (!keepQuickNavigationOpen)
+        RestoreInteractionInputFocus();
 }
 
 /**
@@ -327,13 +327,12 @@ void DesktopApp::ShowShellContextMenu(
     if (keepQuickNavigationOpen)
         SetQuickNavigationTopmost(false);
     SetForegroundWindow(menuOwner);
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT cmd = TrackPopupMenuEx(
         menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, menuOwner, nullptr);
     if (keepQuickNavigationOpen)
         SetQuickNavigationTopmost(true);
-    else
-        FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -359,6 +358,8 @@ void DesktopApp::ShowShellContextMenu(
         {
             DestroyMenu(menu);
             RestoreDesktopWindowLayer();
+            if (!keepQuickNavigationOpen)
+                RestoreInteractionInputFocus();
             if (keepQuickNavigationOpen)
                 BeginQuickNavigationDesktopItemRename(
                     static_cast<size_t>(
@@ -375,6 +376,8 @@ void DesktopApp::ShowShellContextMenu(
         {
             DestroyMenu(menu);
             RestoreDesktopWindowLayer();
+            if (!keepQuickNavigationOpen)
+                RestoreInteractionInputFocus();
             return;
         }
 
@@ -441,6 +444,8 @@ void DesktopApp::ShowShellContextMenu(
     }
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
+    if (!keepQuickNavigationOpen)
+        RestoreInteractionInputFocus();
 }
 
 /**

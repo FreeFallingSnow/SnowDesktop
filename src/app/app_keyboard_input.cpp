@@ -40,6 +40,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
 
     bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool restoreFloatingDockLayer = false;
 
     switch (key)
     {
@@ -50,10 +51,12 @@ void DesktopApp::OnKeyDown(WPARAM key)
             BeginRenameSelected();
         break;
     case VK_F5:
+        restoreFloatingDockLayer = true;
         ReloadItems();
         break;
     case VK_DELETE:
     {
+        restoreFloatingDockLayer = true;
         if (DockContainer* dock = GetDockContainer())
         {
             std::vector<Item*> selectedDockItems = dock->GetSelectedItems();
@@ -108,6 +111,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     }
     case 'C':
         if (!ctrl) break;
+        restoreFloatingDockLayer = true;
         if (CopyCutSelectedFolderEntries(false))
             break;
         InvokeSelectedShellVerb("copy");
@@ -115,6 +119,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     case 'X':
         if (!ctrl) break;
     {
+        restoreFloatingDockLayer = true;
         if (CopyCutSelectedFolderEntries(true))
             break;
 
@@ -167,6 +172,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     case 'V':
         if (!ctrl) break;
     {
+        restoreFloatingDockLayer = true;
         if (dockFolderPopupOpen_ &&
             dockFolderPopupAvailable_ &&
             PasteClipboardToFolderPath(
@@ -255,6 +261,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     break;
     case 'A':
         if (!ctrl) break;
+        restoreFloatingDockLayer = true;
     {
         if (IsCollectionPopupInteractive() &&
             dockFolderPopupOpen_)
@@ -281,6 +288,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     }
     break;
     case VK_RETURN:
+        restoreFloatingDockLayer = true;
         if (keyboardNavInsideWidget_)
         {
             if (keyboardNavWidgetIndex_ < widgets_.size() &&
@@ -304,6 +312,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
             OpenSelectedDesktopItem();
         break;
     case VK_ESCAPE:
+        restoreFloatingDockLayer = true;
         if (!luaWidgetPanelRequest_.widgetId.empty())
             CloseLuaWidgetPanel(
                 luaWidgetPanelRequest_.widgetId,
@@ -329,6 +338,14 @@ void DesktopApp::OnKeyDown(WPARAM key)
         break;
     default:
         break;
+    }
+
+    if (restoreFloatingDockLayer)
+    {
+        // Asynchronous Shell operations restore the floating input proxy
+        // after the final completion. Synchronous actions can retain it now.
+        if (shellFileOperationInFlight_ == 0)
+            RestoreInteractionInputFocus();
     }
 }
 

@@ -2,12 +2,126 @@
 
 // Popup open/close lifecycle and animation.
 
+bool DesktopApp::HasActiveContextMenuSession() const
+{
+    return snowdesktop::modern_menu::IsActive() ||
+        shellPopupMenuLayerDepth_ > 0 ||
+        newMenuContextMenu_.Get() != nullptr ||
+        activeContextMenu2_.Get() != nullptr ||
+        activeContextMenu3_.Get() != nullptr;
+}
+
+void DesktopApp::
+DismissActiveContextMenuForPopupTransition()
+{
+    snowdesktop::modern_menu::DismissActive();
+    if (shellPopupMenuLayerDepth_ > 0 ||
+        newMenuContextMenu_.Get() != nullptr ||
+        activeContextMenu2_.Get() != nullptr ||
+        activeContextMenu3_.Get() != nullptr)
+    {
+        // EndMenu is safe from the UI thread while TrackPopupMenuEx pumps its
+        // nested loop. The RAII layer guard remains responsible for restoring
+        // the floating Dock after TrackPopupMenuEx unwinds.
+        EndMenu();
+    }
+}
+
+bool DesktopApp::
+TryActivateDockPopupFromMenuPointerPress(
+    POINT desktopPoint,
+    POINT screenPoint,
+    bool suppressPointerRelease)
+{
+    if (!HasActiveContextMenuSession())
+        return false;
+    if (!floatingDockHwnd_ ||
+        !IsWindow(floatingDockHwnd_) ||
+        WindowFromPoint(screenPoint) !=
+            floatingDockHwnd_)
+    {
+        return false;
+    }
+
+    DockContainer* dock =
+        GetDockContainerAtPoint(desktopPoint);
+    if (!dock ||
+        !dock->ContainsInteractivePoint(desktopPoint))
+        return false;
+    DockEntryItem* item =
+        dock->EntryAtPoint(desktopPoint);
+    if (!item)
+        return false;
+
+    const size_t entryIndex = item->GetEntryIndex();
+    if (entryIndex >= dockEntries_.size())
+        return false;
+    const DockEntry& entry = dockEntries_[entryIndex];
+    const bool collectionEntry =
+        entry.type == DockEntryType::Collection;
+    const bool folderEntry = IsFolderDockEntry(entry);
+    if (!collectionEntry && !folderEntry)
+        return false;
+
+    size_t collectionWidgetIndex =
+        static_cast<size_t>(-1);
+    if (collectionEntry)
+    {
+        collectionWidgetIndex =
+            FindWidgetIndexById(entry.reference);
+        if (collectionWidgetIndex >= widgets_.size())
+            return false;
+    }
+
+    DismissActiveContextMenuForPopupTransition();
+    if (suppressPointerRelease)
+        dockSuppressClickReleaseEntry_ = entryIndex;
+
+    if (collectionEntry)
+    {
+        if (IsCollectionPopupInteractive() &&
+            snowdesktop::floating_dock_rules::
+                ShouldCloseCollectionPopup(
+                    popupWidgetIndex_,
+                    collectionWidgetIndex))
+        {
+            CloseCollectionPopup();
+        }
+        else
+        {
+            OpenCollectionPopupAt(
+                collectionWidgetIndex,
+                desktopPoint);
+        }
+        return true;
+    }
+
+    const std::wstring sourceId =
+        std::to_wstring(
+            static_cast<int>(entry.type)) +
+        L":" + ToUpperInvariant(entry.reference);
+    if (IsCollectionPopupInteractive() &&
+        dockFolderPopupOpen_ &&
+        dockFolderPopupSourceId_ == sourceId)
+    {
+        CloseCollectionPopup();
+    }
+    else
+    {
+        OpenDockFolderPopupAt(
+            entryIndex, desktopPoint);
+    }
+    return true;
+}
+
 void DesktopApp::OpenDockFolderPopupAt(
     size_t entryIndex, POINT anchorPoint)
 {
     if (entryIndex >= dockEntries_.size() ||
         !IsFolderDockEntry(dockEntries_[entryIndex]))
         return;
+
+    DismissActiveContextMenuForPopupTransition();
 
     PreserveDockFolderPopupDragSourceForTransition();
     const DockEntry entry = dockEntries_[entryIndex];
@@ -142,13 +256,6 @@ void DesktopApp::OpenDockFolderPopupAt(
     if (dockPage) popupPageId_ = dockPage->id;
 
     RefreshDockFolderPopup();
-    popupRect_ =
-        GetCollectionPopupRect(dockFolderPopupWidget_);
-    dockFolderPopupWidget_.bounds = popupRect_;
-    popupScrollOffset_ = std::clamp(
-        popupScrollOffset_, 0,
-        GetCollectionPopupMaxScrollOffset(
-            dockFolderPopupWidget_, popupRect_));
     StartCollectionPopupAnimation(
         reverseClosingAnimation);
     if (floatingDockVisible_)

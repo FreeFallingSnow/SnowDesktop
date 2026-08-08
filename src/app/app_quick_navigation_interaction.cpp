@@ -719,6 +719,7 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     const UINT command = ShowModernMenu(menu, screenPoint, owner);
     DestroyMenu(menu);
     ClearMenuIcons();
+    RestoreDesktopWindowLayer();
 
     switch (command)
     {
@@ -780,6 +781,7 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     const UINT command = ShowModernMenu(menu, screenPoint, owner);
     DestroyMenu(menu);
     ClearMenuIcons();
+    RestoreDesktopWindowLayer();
 
     switch (command)
     {

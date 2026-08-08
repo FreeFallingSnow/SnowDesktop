@@ -22,7 +22,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
         else
         {
-            FocusDesktopInputWindow();
+            RestoreInteractionInputFocus();
             const RECT closeRect =
                 GetLuaWidgetPanelCloseRect();
             if (PtInRect(&closeRect, pt))
@@ -123,7 +123,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     // deciding whether this click should minimize or restore it. The decision
     // itself is captured from the indicator state during hit testing below.
     if (!pointInDock)
-        FocusDesktopInputWindow();
+        RestoreInteractionInputFocus();
     if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
     {
         bool keepFocusedInput = false;
@@ -401,7 +401,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDown_ = false;
                 ToggleWindowsStartMenu();
                 if (floatingDockVisible_)
-                    CloseFloatingDock();
+                    CloseFloatingDock(
+                        true, false,
+                        FloatingDockCloseFocusPolicy::PreserveCurrent);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -410,7 +412,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDown_ = false;
                 OpenQuickNavigation(true);
                 if (floatingDockVisible_)
-                    CloseFloatingDock();
+                    CloseFloatingDock(
+                        true, false,
+                        FloatingDockCloseFocusPolicy::PreserveCurrent);
                 return;
             }
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))

@@ -51,9 +51,9 @@ void DesktopApp::ShowCollectionGroupTabContextMenu(
         MenuIconFont::FluentRegular);
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
-    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
+    RestoreDesktopWindowLayer();
 
     if (command == kContextWidgetRename)
     {
@@ -74,6 +74,10 @@ void DesktopApp::ShowCollectionGroupTabContextMenu(
                         it));
         keyboardNavCollectionGroupTabs_ = true;
         BeginRenameSelected();
+    }
+    else
+    {
+        RestoreInteractionInputFocus();
     }
 }
 
@@ -111,9 +115,9 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
         MenuIconFont::FluentRegular);
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
-    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
+    RestoreDesktopWindowLayer();
 
     if (command == kContextWidgetRename)
     {
@@ -134,6 +138,10 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
                             childWidgetIds.begin(), it));
         keyboardNavCollectionGroupTabs_ = true;
         BeginRenameSelected();
+    }
+    else
+    {
+        RestoreInteractionInputFocus();
     }
 }
 
@@ -532,7 +540,6 @@ void DesktopApp::ShowWidgetContextMenu(
     SetForegroundWindow(hwnd_);
     UINT command = ShowModernMenu(
         menu, screenPoint, hwnd_, dockRenameAnchor.has_value());
-    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
 
@@ -544,9 +551,12 @@ void DesktopApp::ShowWidgetContextMenu(
             widgetEngine_->InvokeMenu(widgets_[widgetIndex].id, luaMenuItems[itemIndex].id);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
         return;
     }
 
+    bool needsDesktopFocus = true;
     switch (command)
     {
     case kContextWidgetOpen:
@@ -557,6 +567,7 @@ void DesktopApp::ShowWidgetContextMenu(
         break;
     }
     case kContextWidgetOpenFolder:
+        needsDesktopFocus = false;
         if (effectiveSource.type ==
                 DesktopWidgetType::FolderMapping &&
             !effectiveSource.sourceFolderPath.empty())
@@ -720,6 +731,7 @@ void DesktopApp::ShowWidgetContextMenu(
             MessageBeep(MB_ICONINFORMATION);
         break;
     case kContextWidgetRename:
+        needsDesktopFocus = false;
         if (CanRenameWidget(widgets_[widgetIndex]))
         {
             SelectWidgetOnly(widgetIndex);
@@ -727,6 +739,7 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         break;
     case kContextWidgetEdit:
+        needsDesktopFocus = false;
         ShowWidgetEditorHost(widgetIndex);
         break;
     case kContextWidgetDelete:
@@ -841,6 +854,7 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         break;
     case kContextMoreCommand:
+        needsDesktopFocus = false;
         if (effectiveSourceIndex < widgets_.size() &&
             widgets_[effectiveSourceIndex].type ==
                 DesktopWidgetType::FolderMapping &&
@@ -917,6 +931,9 @@ void DesktopApp::ShowWidgetContextMenu(
     default:
         break;
     }
+    RestoreDesktopWindowLayer();
+    if (needsDesktopFocus)
+        RestoreInteractionInputFocus();
 }
 
 // Tray implementation lives in app_tray.cpp.

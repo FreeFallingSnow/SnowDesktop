@@ -82,6 +82,7 @@ void DesktopApp::RebuildContainersAndItems()
     popupDragTargetSlot_.reset();
     popupMouseDownItem_.reset();
 
+    floatingDockContainer_ = nullptr;
     containers_.clear();
     items_oo_.clear();
 

@@ -78,10 +78,8 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
 
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
-    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
-    RestoreDesktopWindowLayer();
 
     DockSettings updated = dockSettings_;
     bool layoutChanged = false;
@@ -114,6 +112,7 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         updated.keepWhenDesktopHidden = false;
         break;
     case kContextDockDetailedSettings:
+        RestoreDesktopWindowLayer();
         if (settingsWindow_)
         {
             settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
@@ -122,8 +121,13 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         }
         return;
     default:
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
         return;
     }
+
+    RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
 
     dockSettings_ = updated;
     SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
@@ -179,10 +183,10 @@ void DesktopApp::ShowDockRunningAppContextMenu(
     DismissDockWindowPreviewUntilLeave();
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
-    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
 
     if (command ==
         kContextDockCloseApplication)

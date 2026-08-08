@@ -590,6 +590,19 @@ UINT DesktopApp::ShowModernMenu(
     options.onCommand = std::move(onCommand);
     options.onTextChanged = std::move(onTextChanged);
     options.onHover = std::move(onHover);
+    if (floatingDockVisible_ &&
+        floatingDockHwnd_ &&
+        IsWindow(floatingDockHwnd_))
+    {
+        // The floating Dock lives in the topmost band for its whole visible
+        // lifetime. Joining that band is insufficient because its internal
+        // order can still leave a menu below the expanded collection popup,
+        // which is rendered inside the Dock HWND. Make the menu an owned
+        // popup of the floating host so Windows keeps it above that host,
+        // while Options::owner continues to receive focus after dismissal.
+        options.topmost = true;
+        options.zOrderOwner = floatingDockHwnd_;
+    }
     if (placeAwayFromTaskbar)
     {
         options.topmost = true;

@@ -551,11 +551,22 @@ void DesktopBackdropCompositor::SetPopupTopmost(
 {
     if (!impl_ || !impl_->popupMode)
         return;
-    impl_->popupTopmost = topmost;
     if (!impl_->available || !impl_->backdropWindow ||
         !IsWindow(impl_->backdropWindow))
+    {
+        impl_->popupTopmost = topmost;
+        return;
+    }
+
+    const bool isTopmost =
+        (GetWindowLongPtrW(
+            impl_->backdropWindow,
+            GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    if (impl_->popupTopmost == topmost &&
+        isTopmost == topmost)
         return;
 
+    impl_->popupTopmost = topmost;
     SetWindowPos(
         impl_->backdropWindow,
         topmost ? HWND_TOPMOST : HWND_NOTOPMOST,

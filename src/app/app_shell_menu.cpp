@@ -4,6 +4,19 @@
 
 // Shell New menu, desktop host restoration and protected-icon handling.
 
+DesktopApp::ShellPopupMenuLayerGuard::
+ShellPopupMenuLayerGuard(DesktopApp& app)
+    : app_(app)
+{
+    app_.BeginShellPopupMenuLayer();
+}
+
+DesktopApp::ShellPopupMenuLayerGuard::
+~ShellPopupMenuLayerGuard()
+{
+    app_.EndShellPopupMenuLayer();
+}
+
 void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir)
 {
     ComPtr<IContextMenu> ctxMenu;
@@ -33,9 +46,9 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
 
     ctxMenu.As(&newMenuContextMenu_);
     SetForegroundWindow(hwnd_);
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT cmd = TrackPopupMenuEx(newSub, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
-    FocusDesktopInputWindow();
     newMenuContextMenu_.Reset();
 
     if (cmd != 0 && cmd >= 1)
@@ -59,6 +72,8 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
             RemoveMenu(tmpMenu, i, MF_BYPOSITION);
     }
     DestroyMenu(tmpMenu);
+    RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
 }
 
 /**
@@ -93,9 +108,9 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     contextMenu.As(&activeContextMenu3_);
 
     SetForegroundWindow(hwnd_);
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
-    FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -120,6 +135,7 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     }
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
 }
 
 /**
@@ -129,7 +145,9 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
  */
 void DesktopApp::RestoreDesktopWindowLayer()
 {
-    if (!hwnd_ || !IsWindow(hwnd_)) return;
+    ApplyFloatingDockLayerPolicy();
+    if (!hwnd_ || !IsWindow(hwnd_))
+        return;
     POINT origin{ virtualLeft_, virtualTop_ };
     HWND parent = GetParent(hwnd_);
     if (parent)
@@ -141,6 +159,53 @@ void DesktopApp::RestoreDesktopWindowLayer()
     {
         SetWindowPos(hwnd_, HWND_BOTTOM, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
     }
+}
+
+void DesktopApp::ApplyFloatingDockLayerPolicy()
+{
+    if (!floatingDockVisible_ ||
+        !floatingDockHwnd_ ||
+        !IsWindow(floatingDockHwnd_))
+        return;
+    const bool shouldBeTopmost =
+        snowdesktop::floating_dock_rules::
+            ShouldFloatingDockBeTopmost(
+                true,
+                shellPopupMenuLayerDepth_);
+    const bool isTopmost =
+        (GetWindowLongPtrW(
+            floatingDockHwnd_, GWL_EXSTYLE) &
+            WS_EX_TOPMOST) != 0;
+    if (snowdesktop::floating_dock_rules::
+            ShouldChangeFloatingDockTopmost(
+                isTopmost, shouldBeTopmost))
+    {
+        SetWindowPos(
+            floatingDockHwnd_,
+            shouldBeTopmost
+                ? HWND_TOPMOST : HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE |
+                SWP_NOACTIVATE);
+    }
+    floatingDockBackdropCompositor_.
+        SetPopupTopmost(shouldBeTopmost);
+}
+
+void DesktopApp::BeginShellPopupMenuLayer()
+{
+    ++shellPopupMenuLayerDepth_;
+    ApplyFloatingDockLayerPolicy();
+}
+
+void DesktopApp::EndShellPopupMenuLayer()
+{
+    if (shellPopupMenuLayerDepth_ > 0)
+        --shellPopupMenuLayerDepth_;
+    else
+        shellPopupMenuLayerDepth_ = 0;
+    ApplyFloatingDockLayerPolicy();
+    RefocusFloatingDockKeyboardSession();
 }
 
 /**
@@ -228,9 +293,9 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
     contextMenu.As(&activeContextMenu3_);
 
     SetForegroundWindow(hwnd_);
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint.x, screenPoint.y, hwnd_, nullptr);
-    FocusDesktopInputWindow();
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -254,6 +319,7 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
 
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
     ILFree(pidl);
 }
 
@@ -330,6 +396,7 @@ ShowShellItemContextMenuForPath(
     contextMenu.As(
         &activeContextMenu3_);
     SetForegroundWindow(hwnd_);
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const UINT command =
         TrackPopupMenuEx(
             menu,
@@ -338,7 +405,6 @@ ShowShellItemContextMenuForPath(
             screenPoint.x,
             screenPoint.y,
             hwnd_, nullptr);
-    FocusDesktopInputWindow();
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
 
@@ -413,5 +479,6 @@ ShowShellItemContextMenuForPath(
 
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
     ILFree(pidl);
 }

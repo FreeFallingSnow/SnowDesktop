@@ -346,6 +346,8 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         if (inputHwnd_ == hwnd)
             inputHwnd_ = nullptr;
+        if (floatingDockInputHwnd_ == hwnd)
+            floatingDockInputHwnd_ = nullptr;
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);

@@ -625,7 +625,11 @@ private:
             (options_.topmost ? WS_EX_TOPMOST : 0) |
             (depth > 0 ? WS_EX_NOACTIVATE : 0);
         HWND owner = depth > 0 && !popups_.empty()
-            ? popups_.front()->hwnd : options_.owner;
+            ? popups_.front()->hwnd
+            : (options_.zOrderOwner &&
+                    IsWindow(options_.zOrderOwner)
+                ? options_.zOrderOwner
+                : options_.owner);
         popup->hwnd = CreateWindowExW(extendedStyle,
             kMenuWindowClass, L"", WS_POPUP,
             popup->panelScreenOrigin.x - shadowSize_,
@@ -2234,11 +2238,24 @@ Result Show(const std::vector<Item>& items, const Options& options)
     return controller.Run();
 }
 
+bool IsActive()
+{
+    const HWND root = gActiveRootMenu.load();
+    return root && IsWindow(root);
+}
+
 void DismissActive()
 {
     const HWND root = gActiveRootMenu.load();
     if (root && IsWindow(root))
+    {
+        // Popup transitions can begin reentrantly from the Dock's control
+        // timer while this menu owns a nested message loop. Hide immediately
+        // so the replacement popup never appears underneath a stale menu;
+        // the posted cancellation then unwinds Show() safely.
+        ShowWindow(root, SW_HIDE);
         PostMessageW(root, kCancelMessage, 0, 0);
+    }
 }
 
 } // namespace snowdesktop::modern_menu

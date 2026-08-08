@@ -80,7 +80,14 @@ struct HoverInfo
 
 struct Options
 {
+    /** 激活和菜单关闭后恢复焦点的窗口。 */
     HWND owner = nullptr;
+    /**
+     * 根菜单用于维持 Z 序的 owner；为空时回退到 owner。
+     * 该字段允许菜单归还焦点给输入宿主，同时作为浮动窗口的 owned
+     * popup 稳定保持在其上方。
+     */
+    HWND zOrderOwner = nullptr;
     POINT anchor{};
     UINT dpi = USER_DEFAULT_SCREEN_DPI;
     bool lightTheme = true;
@@ -111,6 +118,9 @@ struct Result
  * 级联子菜单均由该组件管理。调用会像 TrackPopupMenuEx 一样同步返回。
  */
 Result Show(const std::vector<Item>& items, const Options& options);
+
+/** Whether a modern popup menu is currently running in this process. */
+bool IsActive();
 
 /** Close the currently active menu without activating a command. */
 void DismissActive();

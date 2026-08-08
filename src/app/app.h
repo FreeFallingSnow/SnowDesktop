@@ -159,6 +159,12 @@ enum class DockWindowVisualState
     Minimized,
 };
 
+enum class FloatingDockCloseFocusPolicy
+{
+    RestorePrevious,
+    PreserveCurrent,
+};
+
 enum class DockAppIdentityKind
 {
     None,
@@ -677,8 +683,17 @@ private:
     void ShowFloatingDock();
     void CloseFloatingDock(
         bool closeDockPopup = true,
-        bool forceImmediate = false);
+        bool forceImmediate = false,
+        FloatingDockCloseFocusPolicy focusPolicy =
+            FloatingDockCloseFocusPolicy::RestorePrevious);
     void CompleteFloatingDockCloseHandoff();
+    bool EnsureFloatingDockInputWindow();
+    void BeginFloatingDockKeyboardSession();
+    void RefocusFloatingDockKeyboardSession();
+    void EndFloatingDockKeyboardSession(
+        FloatingDockCloseFocusPolicy focusPolicy);
+    void RestoreInteractionInputFocus();
+    HWND ResolveDockSemanticForegroundWindow();
     bool WaitForDCompCommitWithFallback(
         const wchar_t* diagnosticContext);
     void ToggleFloatingDock();
@@ -1268,6 +1283,23 @@ private:
     void ClearMenuIcons();
     /** @brief 恢复桌面窗口层叠顺序。 */
     void RestoreDesktopWindowLayer();
+    /** @brief 按当前可见性和原生菜单会话统一应用悬浮 Dock 层级。 */
+    void ApplyFloatingDockLayerPolicy();
+    void BeginShellPopupMenuLayer();
+    void EndShellPopupMenuLayer();
+    class ShellPopupMenuLayerGuard
+    {
+    public:
+        explicit ShellPopupMenuLayerGuard(DesktopApp& app);
+        ~ShellPopupMenuLayerGuard();
+        ShellPopupMenuLayerGuard(
+            const ShellPopupMenuLayerGuard&) = delete;
+        ShellPopupMenuLayerGuard& operator=(
+            const ShellPopupMenuLayerGuard&) = delete;
+
+    private:
+        DesktopApp& app_;
+    };
     /**
      * @brief 判断桌面项是否为受保护的系统图标（如回收站）。
      * @param item 桌面项
@@ -1942,6 +1974,11 @@ private:
         const std::wstring& categoryId = L"",
         bool closingStartedByCurrentPress = false);
     void OpenDockFolderPopupAt(size_t entryIndex, POINT anchorPoint);
+    bool HasActiveContextMenuSession() const;
+    void DismissActiveContextMenuForPopupTransition();
+    bool TryActivateDockPopupFromMenuPointerPress(
+        POINT desktopPoint, POINT screenPoint,
+        bool suppressPointerRelease);
     bool IsDockFolderPopupOpen() const
     {
         return dockFolderPopupOpen_ &&
@@ -1965,6 +2002,9 @@ private:
     /** @brief 释放拖拽期间保存的 Dock 文件夹弹窗来源快照。 */
     void ClearDockFolderPopupDragSourceSnapshot();
     void RefreshDockFolderPopup();
+    void RefreshDockFolderPopupGeometry();
+    /** @brief 刷新当前悬浮 Dock 集合弹窗的几何与宿主裁剪。 */
+    void RefreshOpenCollectionPopupGeometry();
     void CommitDockFolderPopupStateToSource();
     void SortDockFolderPopupContents(int mode, bool ascending);
     void ShowDockFolderPopupSortMenu(POINT screenPoint);
@@ -2419,6 +2459,7 @@ private:
     };
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
     HWND inputHwnd_ = nullptr;
+    HWND floatingDockInputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
     HWND floatingDockHwnd_ = nullptr;
     HWND floatingDockHotkeyHwnd_ = nullptr;
@@ -2437,6 +2478,12 @@ private:
     RECT floatingDockHoverHandoffRect_{};
     RECT floatingDockCloseDesktopRect_{};
     bool floatingDockVisible_ = false;
+    bool floatingDockKeyboardSessionActive_ = false;
+    HWND floatingDockLogicalForegroundWindow_ = nullptr;
+    int shellPopupMenuLayerDepth_ = 0;
+    // Queued worker operations that have not yet reported completion on the
+    // UI thread. The last completion restores the floating keyboard session.
+    int shellFileOperationInFlight_ = 0;
     // The top-level host may be visible for one hand-off frame while the
     // desktop copy is deliberately retained underneath it. Keep rendering
     // ownership separate from interaction visibility so either direction can

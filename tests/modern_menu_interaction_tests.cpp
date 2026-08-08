@@ -31,6 +31,10 @@ bool gCaptureRootRect = false;
 RECT gObservedRootRect{};
 bool gCaptureTopmost = false;
 bool gObservedTopmost = false;
+bool gCaptureRootOwner = false;
+HWND gObservedRootOwner = nullptr;
+bool gDismissOnDrive = false;
+bool gObservedDismissHidden = false;
 bool gSelectEnd = false;
 bool gNestedMenuCompleted = false;
 UINT gNestedMenuCommand = 0;
@@ -118,6 +122,18 @@ LRESULT CALLBACK OwnerWindowProc(
                 gObservedTopmost =
                     (GetWindowLongPtrW(menus.root, GWL_EXSTYLE) &
                         WS_EX_TOPMOST) != 0;
+            }
+            if (gCaptureRootOwner)
+                gObservedRootOwner =
+                    GetWindow(menus.root, GW_OWNER);
+            if (gDismissOnDrive)
+            {
+                snowdesktop::modern_menu::DismissActive();
+                gObservedDismissHidden =
+                    IsWindowVisible(menus.root) == FALSE;
+                gInputPosted = true;
+                KillTimer(hwnd, kDriveTimer);
+                return 0;
             }
             // Dispatch synchronously: CI runners can briefly transfer the
             // foreground window after popup creation, so queued keystrokes
@@ -392,6 +408,64 @@ int wmain()
         "follow-system menu uses the blur menu's shadow-free HWND height");
     Expect(gObservedTopmost,
         "a topmost modern menu is created above taskbar windows");
+
+    HWND zOrderOwner = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        kOwnerClass, L"", WS_POPUP,
+        2, 2, 1, 1, nullptr, nullptr,
+        GetModuleHandleW(nullptr), nullptr);
+    Expect(zOrderOwner != nullptr,
+        "the independent Z-order owner window is created");
+    ShowWindow(zOrderOwner, SW_SHOWNOACTIVATE);
+    gDriveMode = DriveMode::Simple;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gCaptureRootRect = false;
+    gCaptureTopmost = true;
+    gObservedTopmost = false;
+    gCaptureRootOwner = true;
+    gObservedRootOwner = nullptr;
+    gWatchdogFired = false;
+    options.anchor = { 220, 220 };
+    options.topmost = true;
+    options.zOrderOwner = zOrderOwner;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto ownedMenuResult =
+        snowdesktop::modern_menu::Show(
+            adjustmentItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired,
+        "owned topmost menu did not time out");
+    Expect(ownedMenuResult.command == 21,
+        "owned topmost menu returns its command");
+    Expect(gObservedTopmost &&
+            gObservedRootOwner == zOrderOwner,
+        "a floating-host menu is topmost and owned by its Z-order host");
+    options.zOrderOwner = nullptr;
+    gCaptureRootOwner = false;
+    DestroyWindow(zOrderOwner);
+
+    gDriveMode = DriveMode::Simple;
+    gDrivePhase = 0;
+    gInputPosted = false;
+    gCaptureTopmost = false;
+    gDismissOnDrive = true;
+    gObservedDismissHidden = false;
+    gWatchdogFired = false;
+    options.topmost = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto dismissedMenuResult =
+        snowdesktop::modern_menu::Show(
+            adjustmentItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired,
+        "programmatically dismissed menu did not time out");
+    Expect(dismissedMenuResult.command == 0 &&
+            gObservedDismissHidden,
+        "popup transitions hide the active menu before its loop unwinds");
+    gDismissOnDrive = false;
 
     auto quickAdjustmentItems = adjustmentItems;
     quickAdjustmentItems[2].label =

@@ -476,9 +476,9 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
 
     SetForegroundWindow(hwnd_);
     snowdesktop::modern_menu::Show(items, options);
-    FocusDesktopInputWindow();
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
 }
 
 snowdesktop::component_preview::Bitmap
@@ -1219,7 +1219,6 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
 
     SetForegroundWindow(hwnd_);
     const UINT command = snowdesktop::modern_menu::Show(items, options).command;
-    FocusDesktopInputWindow();
     previewWindow.Close();
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
@@ -1238,6 +1237,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
             static_cast<size_t>(command - kContextAddLuaWidgetFirst);
         if (index < luaWidgets.size())
             AddLuaWidgetAt(screenPoint, luaWidgets[index].packageId);
+        RestoreInteractionInputFocus();
         return;
     }
 
@@ -1256,6 +1256,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
     default:
         break;
     }
+    RestoreInteractionInputFocus();
 }
 
 /**
@@ -1715,7 +1716,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeLuaWidgetPage,
         previewWidgetMenuItem, searchLuaWidgets);
-    FocusDesktopInputWindow();
     previewWindow.Close();
 
     POINT adjustmentMenuPoint = gridAdjustmentMenuAnchorValid_
@@ -1729,14 +1729,15 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     DestroyMenu(menu);
     newMenuContextMenu_.Reset();
     ClearMenuIcons();
-    RestoreDesktopWindowLayer();
 
     if (previewApply)
     {
+        RestoreDesktopWindowLayer();
         ApplyWidgetPreviewSettings(screenPoint, *previewApply);
         return;
     }
 
+    bool needsDesktopFocus = true;
     if (command >= kContextAddLuaWidgetFirst &&
         command < kContextAddLuaWidgetFirst +
             static_cast<UINT>(kLuaWidgetMenuPageSize))
@@ -1762,69 +1763,81 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             JumpToPageOffset(targetOffset);
         }
     }
-    else switch (command)
+    else
     {
-    case kContextRefreshCommand: ReloadItems(); break;
-    case kContextSortByNameCommand: SortIconsByName(true); break;
-    case kContextSortByNameDescCommand: SortIconsByName(false); break;
-    case kContextSortByTypeCommand: SortIconsByType(true); break;
-    case kContextSortByTypeDescCommand: SortIconsByType(false); break;
-    case kContextGridAdjustmentMenu:
-        ShowGridAdjustmentMenu(adjustmentMenuPoint, 0);
-        break;
-    case kContextGridAddRow:
-    case kContextGridRemoveRow:
-    case kContextGridAddColumn:
-    case kContextGridRemoveColumn:
-    {
-        POINT legacyAdjustmentMenuPoint{};
-        GetCursorPos(&legacyAdjustmentMenuPoint);
-        ShowGridAdjustmentMenu(legacyAdjustmentMenuPoint, command);
-        break;
-    }
-    case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
-    case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
-    case kContextPinFirstPage: ToggleFirstPagePin(screenPoint); break;
-    case kContextPinLastPage:  ToggleLastPagePin(screenPoint);  break;
-    case kContextAddCollectionWidget: AddCollectionWidgetAt(screenPoint); break;
-    case kContextAddCollectionGroupWidget: AddCollectionGroupWidgetAt(screenPoint); break;
-    case kContextAddFileGroupWidget: AddFileGroupWidgetAt(screenPoint); break;
-    case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;
-    case kContextAddFolderMappingWidget: AddFolderMappingWidgetAt(screenPoint); break;
-    case kContextNewMenu:
-    {
-        wchar_t desktopPath[MAX_PATH]{};
-        if (SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
+        switch (command)
         {
-            ShowNewMenuAndInvoke(screenPoint, desktopPath);
-            ReloadItems();
+        case kContextRefreshCommand: ReloadItems(); break;
+        case kContextSortByNameCommand: SortIconsByName(true); break;
+        case kContextSortByNameDescCommand: SortIconsByName(false); break;
+        case kContextSortByTypeCommand: SortIconsByType(true); break;
+        case kContextSortByTypeDescCommand: SortIconsByType(false); break;
+        case kContextGridAdjustmentMenu:
+            needsDesktopFocus = false;
+            ShowGridAdjustmentMenu(adjustmentMenuPoint, 0);
+            break;
+        case kContextGridAddRow:
+        case kContextGridRemoveRow:
+        case kContextGridAddColumn:
+        case kContextGridRemoveColumn:
+        {
+            POINT legacyAdjustmentMenuPoint{};
+            GetCursorPos(&legacyAdjustmentMenuPoint);
+            needsDesktopFocus = false;
+            ShowGridAdjustmentMenu(legacyAdjustmentMenuPoint, command);
+            break;
         }
-        break;
+        case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
+        case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
+        case kContextPinFirstPage: ToggleFirstPagePin(screenPoint); break;
+        case kContextPinLastPage:  ToggleLastPagePin(screenPoint);  break;
+        case kContextAddCollectionWidget: AddCollectionWidgetAt(screenPoint); break;
+        case kContextAddCollectionGroupWidget: AddCollectionGroupWidgetAt(screenPoint); break;
+        case kContextAddFileGroupWidget: AddFileGroupWidgetAt(screenPoint); break;
+        case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;
+        case kContextAddFolderMappingWidget: AddFolderMappingWidgetAt(screenPoint); break;
+        case kContextNewMenu:
+        {
+            wchar_t desktopPath[MAX_PATH]{};
+            if (SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
+            {
+                ShowNewMenuAndInvoke(screenPoint, desktopPath);
+                ReloadItems();
+            }
+            break;
+        }
+        case kContextPasteCommand:
+            PasteClipboardToDesktop();
+            break;
+        case kContextMoreCommand:
+            needsDesktopFocus = false;
+            ShowDesktopBackgroundContextMenu(screenPoint);
+            break;
+        case kContextSettingsCommand:
+            needsDesktopFocus = false;
+            ShowSettingsWindow(); break;
+        case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
+        case kContextFontSizeMedium: SetItemFontSize(15.0f); break;
+        case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
+        case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
+        case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
+        case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
+        case kContextDisplayAppearanceMore:
+            needsDesktopFocus = false;
+            if (settingsWindow_)
+                settingsWindow_->ShowAppearanceSettings();
+            else
+                ShowSettingsWindow();
+            break;
+        case kContextPagePrev: NavigatePageOffset(-1); break;
+        case kContextPageNext: NavigatePageOffset(1); break;
+        case kContextPageAdd: AddNewPage(); break;
+        default: break;
+        }
     }
-    case kContextPasteCommand:
-        PasteClipboardToDesktop();
-        break;
-    case kContextMoreCommand:
-        ShowDesktopBackgroundContextMenu(screenPoint);
-        break;
-    case kContextSettingsCommand: ShowSettingsWindow(); break;
-    case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
-    case kContextFontSizeMedium: SetItemFontSize(15.0f); break;
-    case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
-    case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
-    case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
-    case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
-    case kContextDisplayAppearanceMore:
-        if (settingsWindow_)
-            settingsWindow_->ShowAppearanceSettings();
-        else
-            ShowSettingsWindow();
-        break;
-    case kContextPagePrev: NavigatePageOffset(-1); break;
-    case kContextPageNext: NavigatePageOffset(1); break;
-    case kContextPageAdd: AddNewPage(); break;
-    default: break;
-    }
+    RestoreDesktopWindowLayer();
+    if (needsDesktopFocus)
+        RestoreInteractionInputFocus();
 }
 
 /**

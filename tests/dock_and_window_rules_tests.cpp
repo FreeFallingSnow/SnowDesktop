@@ -206,6 +206,37 @@ int main()
         "the floating Dock edge swipe must work without the hotkey");
     Check(!floatingDock::HasAnySummonTrigger(false, false),
         "the floating Dock must stop its trigger sampler when both triggers are disabled");
+    Check(floatingDock::ShouldUseFloatingDockLogicalForeground(
+            true, true, false, true) &&
+            floatingDock::ShouldUseFloatingDockLogicalForeground(
+                true, false, true, false) &&
+            floatingDock::ShouldUseFloatingDockLogicalForeground(
+                true, false, false, false),
+        "internal and Shell-transient foreground changes must retain the floating Dock logical foreground");
+    Check(!floatingDock::ShouldUseFloatingDockLogicalForeground(
+            true, false, false, true) &&
+            !floatingDock::ShouldUseFloatingDockLogicalForeground(
+                true, false, true, true) &&
+            !floatingDock::ShouldUseFloatingDockLogicalForeground(
+                false, true, true, false),
+        "a genuine external task switch must replace the logical foreground even while a Shell operation is in flight");
+    Check(floatingDock::ShouldRefocusFloatingDockKeyboardSession(
+            true, true, 0, 0) &&
+            !floatingDock::ShouldRefocusFloatingDockKeyboardSession(
+                true, true, 1, 0) &&
+            !floatingDock::ShouldRefocusFloatingDockKeyboardSession(
+                true, true, 0, 1) &&
+            !floatingDock::ShouldRefocusFloatingDockKeyboardSession(
+                false, true, 0, 0),
+        "floating keyboard input must return only after the final Shell operation and native menu complete");
+    Check(floatingDock::ShouldFloatingDockBeTopmost(true, 0) &&
+            !floatingDock::ShouldFloatingDockBeTopmost(true, 1) &&
+            !floatingDock::ShouldFloatingDockBeTopmost(false, 0),
+        "native Shell menu sessions must be the only visible-time topmost override");
+    Check(!floatingDock::ShouldChangeFloatingDockTopmost(true, true) &&
+            !floatingDock::ShouldChangeFloatingDockTopmost(false, false) &&
+            floatingDock::ShouldChangeFloatingDockTopmost(false, true),
+        "reapplying the current Dock topmost state must not reorder the topmost band");
 
     bool showRunningApps = false;
     bool showWindowPreviews = false;
@@ -714,9 +745,20 @@ int main()
             false),
         "regular Dock items must retain the sortable insertion indicator");
     Check((floatingDock::kWindowExStyle & WS_EX_TOPMOST) == 0,
-        "the floating Dock must never use permanent topmost style");
+        "floating Dock uses SetWindowPos to stay topmost instead of fixing WS_EX_TOPMOST to its window style");
     Check((floatingDock::kWindowExStyle & WS_EX_NOACTIVATE) != 0,
         "the floating Dock must not steal foreground activation");
+    const DockWindowPreviewZOrderPolicy floatingPreviewZOrder =
+        ResolveDockWindowPreviewZOrderPolicy(true, false);
+    Check(floatingPreviewZOrder.insertAfter == nullptr &&
+            (floatingPreviewZOrder.flags & SWP_NOZORDER) != 0 &&
+            (floatingPreviewZOrder.flags & SWP_NOOWNERZORDER) != 0,
+        "a preview owned by the floating Dock must preserve its topmost owner Z order");
+    const DockWindowPreviewZOrderPolicy desktopPreviewZOrder =
+        ResolveDockWindowPreviewZOrderPolicy(false, false);
+    Check(desktopPreviewZOrder.insertAfter == HWND_TOPMOST &&
+            (desktopPreviewZOrder.flags & SWP_NOZORDER) == 0,
+        "a desktop-hosted preview must still enter the topmost band explicitly");
     const RECT floatingDockRect{ 100, 900, 700, 980 };
     const RECT floatingPopupRect{ 240, 500, 560, 892 };
     const RECT floatingHostRect =
@@ -802,32 +844,37 @@ int main()
         "floating-window input must map back to desktop coordinates");
     const RECT previewPanelRect{ 260, 620, 540, 860 };
     Check(!floatingDock::ShouldDismissForPointerDown(
-            false, POINT{ 150, 930 },
+            false, false, POINT{ 150, 930 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a click in the Dock must keep the floating host open");
     Check(!floatingDock::ShouldDismissForPointerDown(
-            false, POINT{ 300, 600 },
+            false, false, POINT{ 300, 600 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a click in the collection popup must keep the host open");
     Check(!floatingDock::ShouldDismissForPointerDown(
-            false, POINT{ 300, 700 },
+            false, false, POINT{ 300, 700 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a press on the thumbnail preview panel must keep the floating host open");
     Check(floatingDock::ShouldDismissForPointerDown(
-            false, POINT{ 20, 20 },
+            false, false, POINT{ 20, 20 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "an external click must dismiss the floating host");
     Check(floatingDock::ShouldDismissForPointerDown(
-            false, POINT{ 300, 400 },
+            false, false, POINT{ 300, 400 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a press between the preview panel and the Dock must still dismiss");
     Check(!floatingDock::ShouldDismissForPointerDown(
-            true, POINT{ 20, 20 },
+            false, true, POINT{ 20, 20 },
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
+        "an active context menu must suspend floating-host auto dismissal");
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            true, false, POINT{ 20, 20 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "active drags must suspend floating-host auto dismissal");

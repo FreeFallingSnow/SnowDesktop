@@ -117,7 +117,21 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 buttonsDown,
                 floatingDockPointerButtonsDown_,
                 pressedSinceLastSample);
+    const bool leftButtonPressed =
+        ((buttonsDown & leftButtonBit) != 0 &&
+            (floatingDockPointerButtonsDown_ &
+                leftButtonBit) == 0) ||
+        (pressedSinceLastSample & leftButtonBit) != 0;
     floatingDockPointerButtonsDown_ = buttonsDown;
+    if ((buttonsDown & leftButtonBit) == 0 &&
+        !mouseDown_)
+    {
+        // A menu can consume the original Dock button-down completely. In
+        // that case no Dock button-up handler will clear the one-shot release
+        // suppression, so retire it after the physical press has ended.
+        dockSuppressClickReleaseEntry_ =
+            static_cast<size_t>(-1);
+    }
 
     POINT cursor{};
     if (!GetCursorPos(&cursor))
@@ -135,6 +149,15 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         {
             desktopPoint.x -= virtualLeft_;
             desktopPoint.y -= virtualTop_;
+        }
+        if (leftButtonPressed &&
+            TryActivateDockPopupFromMenuPointerPress(
+                desktopPoint,
+                cursor,
+                (buttonsDown & leftButtonBit) != 0))
+        {
+            floatingDockEdgeSwipeDetector_.Reset();
+            return;
         }
         // The thumbnail preview panel belongs to the Dock's interactive
         // surface. A press there (card click or close button) must not be
@@ -162,6 +185,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 ShouldDismissForPointerDown(
                     dragSession_.IsActive() ||
                         dragDropController_.IsExternalDragActive(),
+                    HasActiveContextMenuSession(),
                     desktopPoint,
                     floatingDockRect_,
                     floatingDockPopupRect_,

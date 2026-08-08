@@ -394,6 +394,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                     moving.begin(), moving.end());
                 collectionGroupProxy->InvalidateFilterCache();
                 RefreshCollectedKeysCache();
+                RefreshOpenCollectionPopupGeometry();
                 SaveLayoutSlots();
                 InvalidateRect(hwnd_, nullptr, TRUE);
                 return true;
@@ -447,6 +448,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         targetWidget->InvalidateSlots();
         if (GetDesktopGrid()) GetDesktopGrid()->InvalidateSlots();
         RefreshCollectedKeysCache();
+        RefreshOpenCollectionPopupGeometry();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         return true;

@@ -136,6 +136,23 @@ RECT ResolveDockWindowPreviewPanelPlacement(
 
 } // namespace
 
+DockWindowPreviewZOrderPolicy
+ResolveDockWindowPreviewZOrderPolicy(
+    bool useDockLayer, bool wasVisible)
+{
+    DockWindowPreviewZOrderPolicy policy;
+    policy.insertAfter = useDockLayer
+        ? nullptr : HWND_TOPMOST;
+    policy.flags = SWP_NOACTIVATE |
+        (wasVisible ? 0 : SWP_NOREDRAW);
+    if (useDockLayer)
+    {
+        policy.flags |=
+            SWP_NOZORDER | SWP_NOOWNERZORDER;
+    }
+    return policy;
+}
+
 DockWindowPreviewGrid CalculateDockWindowPreviewGrid(
     size_t itemCount, int maximumWidth, int maximumHeight, UINT dpi)
 {
@@ -589,33 +606,50 @@ void DockWindowPreview::Show(
     const bool useDockLayer =
         dockLayerOwner &&
         IsWindow(dockLayerOwner);
-    SetWindowLongPtrW(
-        hwnd_, GWLP_HWNDPARENT,
-        reinterpret_cast<LONG_PTR>(
-            useDockLayer
-                ? dockLayerOwner : nullptr));
+    const HWND requestedOwner =
+        useDockLayer ? dockLayerOwner : nullptr;
+    const HWND currentOwner = reinterpret_cast<HWND>(
+        GetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT));
+    const bool ownerChanging =
+        currentOwner != requestedOwner;
+    if (ownerChanging && wasVisible)
+        ShowWindow(hwnd_, SW_HIDE);
+    if (ownerChanging)
+    {
+        SetWindowLongPtrW(
+            hwnd_, GWLP_HWNDPARENT,
+            reinterpret_cast<LONG_PTR>(requestedOwner));
+    }
+    const bool visibleForUpdate =
+        IsWindowVisible(hwnd_) != FALSE;
 
     // Prepare the complete preview while it is still hidden. Showing the
     // HWND before applying its region and registering the DWM thumbnails
     // exposes one empty rectangular frame; the floating Dock made that frame
     // especially noticeable because it also performed a second visible
     // Z-order transition.
+    // A popup owned by a topmost window is promoted with its owner. Never
+    // pass HWND_NOTOPMOST here: Windows would demote the owner and every
+    // window in the owned chain, exposing the desktop Dock copy again.
+    const DockWindowPreviewZOrderPolicy zOrder =
+        ResolveDockWindowPreviewZOrderPolicy(
+            useDockLayer, visibleForUpdate);
     SetWindowPos(
-        hwnd_,
-        useDockLayer ? HWND_NOTOPMOST : HWND_TOPMOST,
+        hwnd_, zOrder.insertAfter,
         panelRect.left, panelRect.top,
         panelWidth, panelHeight,
-        SWP_NOACTIVATE |
-            (wasVisible ? 0 : SWP_NOREDRAW));
+        zOrder.flags);
     HRGN region = CreateRoundRectRgn(
         0, 0, panelWidth + 1, panelHeight + 1,
         ScaleForDpi(14, dpi_), ScaleForDpi(14, dpi_));
     if (region)
-        SetWindowRgn(hwnd_, region, wasVisible ? TRUE : FALSE);
+        SetWindowRgn(
+            hwnd_, region,
+            visibleForUpdate ? TRUE : FALSE);
 
     RegisterThumbnails();
     InvalidateRect(hwnd_, nullptr, TRUE);
-    if (!wasVisible)
+    if (!visibleForUpdate)
     {
         // Ownership already keeps the preview above the floating Dock. Reveal
         // it without another Z-order mutation so the Dock and preview enter
@@ -624,7 +658,8 @@ void DockWindowPreview::Show(
             hwnd_, nullptr,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
-                SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                SWP_NOOWNERZORDER | SWP_NOACTIVATE |
+                SWP_SHOWWINDOW);
     }
     UpdateWindow(hwnd_);
 }
@@ -744,8 +779,8 @@ void DockWindowPreview::UpdateAnchor(
         hwnd_, nullptr,
         panelRect.left, panelRect.top,
         panelSize_.cx, panelSize_.cy,
-        SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSENDCHANGING |
-            SWP_NOREDRAW);
+        SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+            SWP_NOSENDCHANGING | SWP_NOREDRAW);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 

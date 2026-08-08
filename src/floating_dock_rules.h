@@ -28,6 +28,46 @@ inline bool HasAnySummonTrigger(
     return hotkeyEnabled || edgeSwipeEnabled;
 }
 
+inline bool ShouldUseFloatingDockLogicalForeground(
+    bool keyboardSessionActive,
+    bool actualWindowOwnedByCurrentProcess,
+    bool shellFileOperationInFlight,
+    bool actualWindowIsTaskWindow)
+{
+    const bool shellTransientWindow =
+        shellFileOperationInFlight &&
+        !actualWindowIsTaskWindow;
+    return keyboardSessionActive &&
+        (actualWindowOwnedByCurrentProcess ||
+            shellTransientWindow ||
+            !actualWindowIsTaskWindow);
+}
+
+inline bool ShouldRefocusFloatingDockKeyboardSession(
+    bool floatingDockVisible,
+    bool keyboardSessionActive,
+    int shellFileOperationInFlight,
+    int shellPopupMenuLayerDepth)
+{
+    return floatingDockVisible && keyboardSessionActive &&
+        shellFileOperationInFlight == 0 &&
+        shellPopupMenuLayerDepth == 0;
+}
+
+inline bool ShouldFloatingDockBeTopmost(
+    bool floatingDockVisible,
+    int shellPopupMenuLayerDepth)
+{
+    return floatingDockVisible && shellPopupMenuLayerDepth == 0;
+}
+
+inline bool ShouldChangeFloatingDockTopmost(
+    bool currentlyTopmost,
+    bool shouldBeTopmost)
+{
+    return currentlyTopmost != shouldBeTopmost;
+}
+
 inline int ScaleEdgeSwipeDip(int value, UINT dpi)
 {
     return std::max(1, MulDiv(
@@ -399,13 +439,17 @@ inline RECT DesktopRectToWindowRect(
 
 inline bool ShouldDismissForPointerDown(
     bool dragging,
+    bool contextMenuActive,
     POINT desktopPoint,
     const RECT& dockRect,
     const RECT& popupRect,
     const RECT& previewRect)
 {
-    if (dragging)
+    if (dragging || contextMenuActive)
         return false;
+    // While a menu owns the mouse loop, its item presses are outside the Dock
+    // rects but must still reach the menu command instead of tearing the host
+    // down. The menu itself handles outside-click dismissal.
     // The thumbnail preview panel is part of the Dock's interactive surface:
     // a press there (card click or close button) must reach the preview's own
     // button-up handler instead of tearing the floating host down mid-click.

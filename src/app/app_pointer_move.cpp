@@ -52,7 +52,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     }
     if (widgetIndex >= widgets_.size()) return;
 
-    FocusDesktopInputWindow();
+    RestoreInteractionInputFocus();
     SelectWidgetOnly(widgetIndex);
     mouseDown_ = true;
     mouseDownPoint_ = pt;

@@ -671,7 +671,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 if (searchable)
                     searchable->SetSearchFocused(false);
             }
-            FocusDesktopInputWindow();
+            RestoreInteractionInputFocus();
             UpdateHostInputImePosition();
         });
         widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {

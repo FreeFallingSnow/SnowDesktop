@@ -95,11 +95,8 @@ void DesktopApp::ShowFolderEntryContextMenu(
     SetForegroundWindow(menuOwner);
     UINT command = ShowModernMenu(
         menu, screenPoint, menuOwner);
-    if (!keepQuickNavigationOpen)
-        FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
-    RestoreDesktopWindowLayer();
 
     switch (command)
     {
@@ -148,6 +145,9 @@ void DesktopApp::ShowFolderEntryContextMenu(
     default:
         break;
     }
+    RestoreDesktopWindowLayer();
+    if (!keepQuickNavigationOpen)
+        RestoreInteractionInputFocus();
 }
 
 /**

@@ -675,7 +675,6 @@ ShowDockFolderPopupContextMenu(
 
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
-    FocusDesktopInputWindow();
     DestroyMenu(menu);
     ClearMenuIcons();
 
@@ -812,4 +811,6 @@ ShowDockFolderPopupContextMenu(
     default:
         break;
     }
+    RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
 }
