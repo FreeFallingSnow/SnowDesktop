@@ -5003,58 +5003,38 @@ void SettingsWindow::DrawAboutPage()
         }
     }
 
-    if (!updateCheckStatus_.empty())
+    if (snowdesktop::deployment::IsPackaged())
     {
         ImGui::SameLine();
-        if (updateCheckStatus_ == "checking")
+        if (!updateCheckStatus_.empty())
         {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", _L("app.settings.checking"));
+            if (updateCheckStatus_ == "checking")
+            {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", _L("app.settings.checking"));
+            }
+            else if (updateAvailable_)
+            {
+                ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
+            }
         }
-        else if (updateAvailable_)
-        {
-            ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
-        }
-        else
-        {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
-        }
-    }
 
-    ImGui::SameLine();
-    float updateButtonW = SettingButtonWidth(_L("app.settings.check_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
-    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - updateButtonW);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-    ImGui::BeginDisabled(updateCheckRequestId_ != 0);
-    if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
-    {
-        PerformUpdateCheck();
-    }
-    ImGui::EndDisabled();
-    ImGui::PopStyleColor(4);
-
-    if (!updateCheckStatus_.empty() &&
-        updateCheckStatus_ != "checking" && updateAvailable_)
-    {
-        ImGui::Spacing();
-        ImGui::TextWrapped("%s", _L("app.settings.download_latest_hint"));
-        ImGui::Spacing();
-        ImGui::Text("    ");
-        ImGui::SameLine();
-        std::string dlLabel = downloadUrl_.empty() ?
-            "https://github.com/FreeFallingSnow/SnowDesktop_Release/releases" : downloadUrl_;
-        ImGui::TextColored(ImVec4(0.30f, 0.60f, 0.95f, 1.00f), "%s", dlLabel.c_str());
-        if (ImGui::IsItemHovered())
+        float updateButtonW = SettingButtonWidth(_L("app.settings.check_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - updateButtonW);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        ImGui::BeginDisabled(updateCheckRequestId_ != 0);
+        if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
         {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            ImGui::SetTooltip("%s", dlLabel.c_str());
+            PerformUpdateCheck();
         }
-        if (ImGui::IsItemClicked())
-        {
-            ShellExecuteW(nullptr, L"open", Utf8ToWide(dlLabel).c_str(), nullptr, nullptr, SW_SHOW);
-        }
+        ImGui::EndDisabled();
+        ImGui::PopStyleColor(4);
     }
 
     ImGui::Spacing();
