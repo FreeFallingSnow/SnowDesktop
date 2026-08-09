@@ -6,6 +6,8 @@
 DesktopApp::~DesktopApp()
 {
     uiAnimationScheduler_.CancelAll();
+    dockWindowActivationObservationToken_ = 0;
+    dockWindowActivationObservations_.clear();
     popupAnimationFrameToken_ = 0;
     luaPanelAnimationFrameToken_ = 0;
     quickNavigationAnimationFrameToken_ = 0;
@@ -133,6 +135,7 @@ void DesktopApp::ResetDesktopWindowResources()
     desktopBackdropCompositor_.Reset();
     if (dockWindowTransition_)
         dockWindowTransition_->Cancel();
+    CancelAllDockWindowActivationObservations();
     nativeGlassPanelReadyLogged_ = false;
     if (hwnd_ && IsWindow(hwnd_))
     {

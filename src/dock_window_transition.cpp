@@ -1,4 +1,5 @@
 #include "dock_window_transition.h"
+#include "dock_window_rules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -515,6 +516,8 @@ bool DockWindowTransition::Start(
         MonotonicTimeMilliseconds();
     awaitingRestoreVisibility_ = false;
     restoreCleanupDeadlineMs_ = 0.0;
+    restoreVisibleTimeMs_ = 0.0;
+    restoreFadeStartTimeMs_ = 0.0;
     if (!ScheduleAnimationWake())
     {
         Cancel();
@@ -635,6 +638,8 @@ bool DockWindowTransition::Reverse(
     animationStartTimeMs_ =
         MonotonicTimeMilliseconds();
     restoreCleanupDeadlineMs_ = 0.0;
+    restoreVisibleTimeMs_ = 0.0;
+    restoreFadeStartTimeMs_ = 0.0;
     awaitingRestoreVisibility_ = false;
     if (!ScheduleAnimationWake())
     {
@@ -673,7 +678,9 @@ bool DockWindowTransition::ResolveRestoreWindowRect(
     if (!GetWindowPlacement(window, &placement))
         return false;
 
-    if ((placement.flags & WPF_RESTORETOMAXIMIZED) != 0)
+    if (snowdesktop::dock_window_rules::
+            ShouldRestoreDockWindowMaximized(
+                placement.flags, placement.showCmd))
     {
         MONITORINFO monitorInfo{ sizeof(monitorInfo) };
         const HMONITOR monitor = MonitorFromWindow(
@@ -1352,12 +1359,76 @@ bool DockWindowTransition::OnAnimationFrame(
     const double now = nowMilliseconds;
     if (awaitingRestoreVisibility_)
     {
+        if (restoreFadeStartTimeMs_ > 0.0)
+        {
+            const double fadeProgress = std::min(
+                1.0,
+                (now - restoreFadeStartTimeMs_) /
+                    static_cast<double>(
+                        kRestoreSnapshotFadeDurationMs));
+            if (!ApplyFrame(fadeProgress))
+            {
+                // The real window is already restored and activated. If the
+                // retiring overlay fails to render, remove it immediately
+                // instead of invoking another restore command.
+                ActivateRestoredWindowForHandoff();
+                Finish();
+                return false;
+            }
+            if (fadeProgress < 1.0)
+                return true;
+
+            // Ensure the transparent last frame reaches DWM before destroying
+            // the topmost handoff surface. This prevents a one-frame exposure
+            // of the previously maximized application underneath it.
+            HRESULT presentationHr =
+                compositionSnapshotActive_ && compositionDevice_
+                ? compositionDevice_->WaitForCommitCompletion()
+                : E_NOTIMPL;
+            if (FAILED(presentationHr))
+                DwmFlush();
+            ActivateRestoredWindowForHandoff();
+            Finish();
+            return false;
+        }
+
+        if (restoreVisibleTimeMs_ > 0.0)
+        {
+            if (now - restoreVisibleTimeMs_ <
+                static_cast<double>(
+                    kRestorePresentationDelayMs))
+            {
+                return true;
+            }
+
+            // IsIconic clearing precedes the first composed frame of some
+            // applications. Hold the opaque snapshot for one presentation,
+            // then retire it without changing its final full-window geometry.
+            ActivateRestoredWindowForHandoff();
+            DwmFlush();
+            fromRect_ = windowRect_;
+            toRect_ = windowRect_;
+            animationFromOpacity_ = lastFrameOpacity_;
+            animationToOpacity_ = 0;
+            animationStartTimeMs_ = now;
+            animationDurationMs_ = static_cast<double>(
+                kRestoreSnapshotFadeDurationMs);
+            restoreFadeStartTimeMs_ = now;
+            compositionTimelineActive_ = false;
+            return true;
+        }
+
         // 失败检查：恢复回调已执行，但窗口必须在清理超时内真正退出最小化。
         // 目标进程挂起（例如求解器无法处理 SW_RESTORE）时 IsIconic 会一直
         // 保持为真，此时必须中止动画而不是无限等待，否则过渡层会永久停留
         // 在窗口位置，表现为 Dock 卡死。
-        if (!IsIconic(sourceWindow_) ||
-            now >= restoreCleanupDeadlineMs_)
+        if (!IsIconic(sourceWindow_))
+        {
+            ActivateRestoredWindowForHandoff();
+            restoreVisibleTimeMs_ = now;
+            return true;
+        }
+        if (now >= restoreCleanupDeadlineMs_)
         {
             Finish();
             return false;
@@ -1381,9 +1452,9 @@ bool DockWindowTransition::OnAnimationFrame(
     if (direction_ == DockWindowTransitionDirection::Restore &&
         restoreCallback_)
     {
-        RestoreCallback callback =
-            std::move(restoreCallback_);
-        callback(sourceWindow_);
+        restoreCallback_(
+            sourceWindow_,
+            DockWindowRestoreTransitionPhase::RequestRestore);
         awaitingRestoreVisibility_ = true;
         restoreCleanupDeadlineMs_ =
             now + static_cast<double>(
@@ -1405,7 +1476,21 @@ CompleteRestoreAfterRenderFailure()
         return;
     RestoreCallback callback =
         std::move(restoreCallback_);
-    callback(sourceWindow_);
+    callback(
+        sourceWindow_,
+        DockWindowRestoreTransitionPhase::
+            FallbackWithoutAnimation);
+}
+
+void DockWindowTransition::
+ActivateRestoredWindowForHandoff()
+{
+    if (!restoreCallback_ || !sourceWindow_ ||
+        !IsWindow(sourceWindow_) || IsIconic(sourceWindow_))
+        return;
+    restoreCallback_(
+        sourceWindow_,
+        DockWindowRestoreTransitionPhase::ActivateRestored);
 }
 
 void DockWindowTransition::SetNativeTransitionsDisabled(
@@ -1491,6 +1576,8 @@ void DockWindowTransition::Finish()
         static_cast<double>(
             kAnimationDurationMs);
     restoreCleanupDeadlineMs_ = 0.0;
+    restoreVisibleTimeMs_ = 0.0;
+    restoreFadeStartTimeMs_ = 0.0;
     animationFromOpacity_ = 255;
     animationToOpacity_ = 0;
     awaitingRestoreVisibility_ = false;

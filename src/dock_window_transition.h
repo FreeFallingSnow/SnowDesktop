@@ -20,6 +20,13 @@ enum class DockWindowTransitionDirection
     Restore,
 };
 
+enum class DockWindowRestoreTransitionPhase
+{
+    RequestRestore,
+    ActivateRestored,
+    FallbackWithoutAnimation,
+};
+
 enum class DockWindowTransitionStartAction
 {
     StartNew,
@@ -131,7 +138,8 @@ constexpr DockWindowTransitionSurface ResolveDockWindowTransitionSurface(
 class DockWindowTransition
 {
 public:
-    using RestoreCallback = std::function<void(HWND)>;
+    using RestoreCallback = std::function<void(
+        HWND, DockWindowRestoreTransitionPhase)>;
 
     DockWindowTransition() = default;
     ~DockWindowTransition();
@@ -166,6 +174,10 @@ private:
     static constexpr ULONGLONG
         kPrimedSnapshotLifetimeMs = 500;
     static constexpr ULONGLONG kRestoreCleanupTimeoutMs = 240;
+    static constexpr ULONGLONG
+        kRestorePresentationDelayMs = 16;
+    static constexpr ULONGLONG
+        kRestoreSnapshotFadeDurationMs = 56;
     static constexpr std::size_t kMaximumCachedSnapshots = 3;
     static constexpr std::size_t
         kMaximumCachedSnapshotBytes =
@@ -212,6 +224,7 @@ private:
     bool OnAnimationFrame(double nowMilliseconds);
     void Finish();
     void CompleteRestoreAfterRenderFailure();
+    void ActivateRestoredWindowForHandoff();
     void SetNativeTransitionsDisabled(bool disabled);
     void UnregisterThumbnail();
 
@@ -255,6 +268,8 @@ private:
     double animationDurationMs_ =
         static_cast<double>(kAnimationDurationMs);
     double restoreCleanupDeadlineMs_ = 0.0;
+    double restoreVisibleTimeMs_ = 0.0;
+    double restoreFadeStartTimeMs_ = 0.0;
     BYTE animationFromOpacity_ = 255;
     BYTE animationToOpacity_ = 0;
     bool awaitingRestoreVisibility_ = false;

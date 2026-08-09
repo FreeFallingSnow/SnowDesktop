@@ -1224,12 +1224,78 @@ int main()
     Check(rules::NeedsDockCloseSystemCommandFallback(false) &&
             !rules::NeedsDockCloseSystemCommandFallback(true),
         "a rejected graceful close must use the system-command fallback");
-    Check(rules::NeedsDockWindowSwitchFallback(false, true),
+    Check(!rules::NeedsDockRestoreRequestFallback(
+            false, false) &&
+            !rules::NeedsDockRestoreRequestFallback(
+                true, true) &&
+            rules::NeedsDockRestoreRequestFallback(
+                true, false),
+        "only a rejected minimized-window restore may use the one-shot switch fallback");
+    Check(rules::ShouldSwitchDockWindowAfterShow(
+            false, true),
         "a visible background window must always switch to the foreground");
-    Check(rules::NeedsDockWindowSwitchFallback(true, false),
-        "a minimized elevated window must switch when its restore request is rejected");
-    Check(!rules::NeedsDockWindowSwitchFallback(true, true),
-        "an accepted minimized-window restore must not be issued twice");
+    Check(!rules::ShouldSwitchDockWindowAfterShow(
+            true, false),
+        "every asynchronous restore must defer foreground switching until the window is visible");
+    Check(rules::ShouldSwitchDockWindowAfterShow(
+            true, true),
+        "a restored window must switch above an existing maximized foreground application");
+    Check(rules::IsDockWindowActivationPopupEligible(
+            true, true, false, false) &&
+            !rules::IsDockWindowActivationPopupEligible(
+                true, false, false, false) &&
+            !rules::IsDockWindowActivationPopupEligible(
+                true, true, true, false) &&
+            !rules::IsDockWindowActivationPopupEligible(
+                true, true, false, true),
+        "only a visible restorable popup may replace the root activation target");
+    Check(rules::ShouldRetryDockWindowForegroundActivation(
+            false, true) &&
+            !rules::ShouldRetryDockWindowForegroundActivation(
+                true, true) &&
+            !rules::ShouldRetryDockWindowForegroundActivation(
+                false, false),
+        "input queues may be shared only after a safe ordinary foreground request fails");
+    Check(rules::IsDockWindowSynchronousActivationSafe(
+            true, true) &&
+            !rules::IsDockWindowSynchronousActivationSafe(
+                false, true) &&
+            !rules::IsDockWindowSynchronousActivationSafe(
+                true, false),
+        "synchronous activation must require both the root and actual popup threads to respond");
+    using ObservationAction =
+        rules::DockWindowActivationObservationAction;
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            true, false, true, true, true, false, false) ==
+            ObservationAction::WaitForRestore,
+        "a valid asynchronous restore must remain observed while the window is iconic");
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            true, false, true, true, false, false, false) ==
+            ObservationAction::Activate &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, false, true, false, false, false, false) ==
+            ObservationAction::Activate,
+        "restored and already-visible requests must use the same foreground activation path");
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            false, false, true, true, true, false, false) ==
+            ObservationAction::Stop &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, true, true, true, true, false, false) ==
+            ObservationAction::Stop &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, false, false, true, true, false, false) ==
+            ObservationAction::Stop &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, false, true, false, false, true, false) ==
+            ObservationAction::Stop &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, false, true, false, false, false, true) ==
+            ObservationAction::Stop,
+        "activation observation must stop for stale, closing, hung, foreground or superseded requests");
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            true, false, true, false, true, false, false) ==
+            ObservationAction::Stop,
+        "a visible-window activation request must not wait forever if the window becomes minimized");
     Check(rules::RequiresFloatingDockMinimizeCaptureIsolation(
             true, rules::DockClickAction::Minimize),
         "floating minimize animations must exclude the top-level Dock");
@@ -1252,6 +1318,13 @@ int main()
     Check(rules::ResolveDockRestoreShowCommand(
             0, SW_SHOWMINIMIZED) == SW_RESTORE,
         "an ordinary minimized window must restore to its normal rectangle");
+    Check(rules::ShouldRestoreDockWindowMaximized(
+            WPF_RESTORETOMAXIMIZED, SW_SHOWMINIMIZED) &&
+            rules::ShouldRestoreDockWindowMaximized(
+                0, SW_SHOWMAXIMIZED) &&
+            !rules::ShouldRestoreDockWindowMaximized(
+                0, SW_SHOWMINIMIZED),
+        "restore animation geometry and the real show command must agree on maximized placement");
 
     Check(EaseDockWindowTransition(-1.0) == 0.0 &&
             EaseDockWindowTransition(2.0) == 1.0,

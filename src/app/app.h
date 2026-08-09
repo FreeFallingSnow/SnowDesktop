@@ -760,6 +760,30 @@ private:
             DockWindowTransitionCapturePolicy::SnapshotPreferred);
     void ActivateDockWindowFromPreview(HWND window);
     void ActivateDockWindowFromPreviewAnimated(HWND window);
+    struct DockWindowActivationOutcome
+    {
+        bool restored = false;
+        bool foreground = false;
+        bool synchronousActivationSafe = false;
+    };
+    DockWindowActivationOutcome RequestDockWindowActivation(
+        HWND target, bool wasMinimized);
+    DockWindowActivationOutcome ActivateDockWindowAfterShow(
+        HWND target, bool wasMinimized);
+    void BeginDockWindowActivationObservation(
+        HWND target, bool awaitingRestore);
+    void UpdateDockWindowActivationObservation(
+        HWND target,
+        const DockWindowActivationOutcome& outcome);
+    void CancelDockWindowActivationObservation(HWND target);
+    void CancelAllDockWindowActivationObservations();
+    void OnDockWindowActivationObservationTimer(
+        snowdesktop::UiScheduleToken token);
+    void HandleDockWindowRestoreTransition(
+        HWND window,
+        DockWindowRestoreTransitionPhase phase);
+    void UpdateDockWindowActivationState(
+        HWND target, bool restored, bool foreground);
     bool HandleDockClickRelease(POINT point);
     void ToggleWindowsStartMenu();
     DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
@@ -2390,6 +2414,15 @@ private:
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
     std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
     std::unordered_map<HWND, ULONGLONG> dockPendingCloseWindows_;
+    struct DockWindowActivationObservation
+    {
+        bool awaitingRestore = false;
+        ULONGLONG activationRetryDeadline = 0;
+    };
+    std::unordered_map<HWND, DockWindowActivationObservation>
+        dockWindowActivationObservations_;
+    snowdesktop::UiScheduleToken
+        dockWindowActivationObservationToken_ = 0;
     std::unique_ptr<DockWindowPreview> dockWindowPreview_;
     std::unique_ptr<DockWindowTransition>
         dockWindowTransition_;
