@@ -17,7 +17,7 @@ void Expect(bool condition, const char* message)
 int main()
 {
     using snowdesktop::http_security::IsAllowedRemoteIpLiteral;
-    using snowdesktop::http_security::IsAllowedHttpsUrlForDomains;
+    using snowdesktop::http_security::IsAllowedUrlForDomains;
 
     Expect(IsAllowedRemoteIpLiteral(L"8.8.8.8"),
         "a public IPv4 address is accepted");
@@ -95,29 +95,38 @@ int main()
     };
     for (const auto& test : urlCases)
     {
-        Expect(IsAllowedHttpsUrlForDomains(
+        Expect(IsAllowedUrlForDomains(
                 test.url, test.domains) == test.expected,
             test.message);
     }
 
-    Expect(IsAllowedHttpsUrlForDomains(
+    Expect(IsAllowedUrlForDomains(
             L"https://hnrss.org/frontpage", {}, true),
-        "widget HTTP mode accepts an arbitrary public HTTPS domain");
-    Expect(IsAllowedHttpsUrlForDomains(
+        "widget HTTP mode accepts an arbitrary HTTPS domain");
+    Expect(IsAllowedUrlForDomains(
             L"https://feeds.example.net/rss", {"unrelated.example"}, true),
         "widget HTTP mode bypasses the declared domain allowlist");
-    Expect(!IsAllowedHttpsUrlForDomains(
+    Expect(IsAllowedUrlForDomains(
             L"http://hnrss.org/frontpage", {}, true),
-        "widget HTTP mode still rejects plaintext HTTP");
-    Expect(!IsAllowedHttpsUrlForDomains(
+        "widget HTTP mode accepts plaintext HTTP");
+    Expect(IsAllowedUrlForDomains(
             L"https://localhost/feed", {}, true),
-        "widget HTTP mode still rejects localhost");
-    Expect(!IsAllowedHttpsUrlForDomains(
+        "widget HTTP mode accepts localhost");
+    Expect(IsAllowedUrlForDomains(
             L"https://192.168.1.10/feed", {}, true),
-        "widget HTTP mode still rejects private IPv4 targets");
-    Expect(!IsAllowedHttpsUrlForDomains(
+        "widget HTTP mode accepts private IPv4 targets");
+    Expect(IsAllowedUrlForDomains(
             L"https://[fc00::1]/feed", {}, true),
-        "widget HTTP mode still rejects private IPv6 targets");
+        "widget HTTP mode accepts private IPv6 targets");
+    Expect(IsAllowedUrlForDomains(
+            L"http://nas.local/feed", {}, true),
+        "widget HTTP mode accepts local HTTP hosts");
+    Expect(!IsAllowedUrlForDomains(
+            L"ftp://example.com/feed", {}, true),
+        "widget HTTP mode rejects non-HTTP URL schemes");
+    Expect(!IsAllowedUrlForDomains(
+            L"not a URL", {}, true),
+        "widget HTTP mode rejects malformed URLs");
 
     if (failures == 0)
         std::cout << "HTTP security tests passed\n";

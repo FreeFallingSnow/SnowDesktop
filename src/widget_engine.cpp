@@ -5798,7 +5798,7 @@ int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOp
     int index = FindWidget(widgetId);
     if (index < 0 || !httpService_) return 0;
     options.widgetId = widgetId;
-    options.allowAnyPublicHttpsHost = true;
+    options.allowAnyHttpOrHttpsUrl = true;
     options.timeoutMs = std::clamp(options.timeoutMs, 1000, 30000);
     options.cacheSeconds = std::clamp(options.cacheSeconds, 0, 86400);
     if (options.body.size() > 64 * 1024) return 0;

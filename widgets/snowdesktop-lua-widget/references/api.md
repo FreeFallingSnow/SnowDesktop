@@ -397,9 +397,9 @@ as the third argument.
 
 ## Asynchronous HTTP
 
-Declare `network.http`. Requests may target any public HTTPS host;
-`networkDomains` is retained only as optional compatibility metadata and is not
-used as a runtime allowlist.
+Declare `network.http`. Requests may target any HTTP or HTTPS address, including
+localhost and private-network hosts. `networkDomains` is retained only as
+optional compatibility metadata and is not used as a runtime allowlist.
 
 ```lua
 local requestId = http.request({
@@ -421,8 +421,7 @@ http.cancel(requestId)
 The host permits at most four concurrent requests per widget, a 64 KiB request
 body, a 1 MiB response, three redirects, and a 30-second maximum timeout.
 Callbacks are dispatched on the Lua host thread. Initial URLs and redirect
-targets must use HTTPS and cannot resolve to localhost or private network
-addresses. `response.ok` is true only for HTTP 2xx.
+targets may use HTTP or HTTPS. `response.ok` is true only for HTTP 2xx.
 
 ## Host controls
 
