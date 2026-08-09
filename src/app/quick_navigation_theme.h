@@ -35,9 +35,9 @@ inline const QuickNavTheme kQuickNavDark = {
     // GDI
     RGB(18, 22, 30),    // windowBg
     RGB(120, 130, 150),  // windowBorder
-    RGB(30, 36, 46),     // searchBg (follows the dark panel, was white)
+    RGB(255, 255, 255),  // searchBg
     RGB(92, 105, 128),   // searchBorder
-    RGB(24, 29, 38),     // searchEditBg
+    RGB(18, 22, 30),     // searchEditBg
     RGB(48, 112, 215),   // tabActiveFill
     RGB(82, 140, 235),   // tabActiveStroke
     RGB(66, 72, 84),     // tabHoverFill

@@ -435,8 +435,6 @@ public:
         Everything,
         LoadMoreEverything,
         Scrollbar,
-        TabScrollLeft,
-        TabScrollRight,
     };
 
     struct QuickNavigationPointerTarget
@@ -2047,7 +2045,6 @@ private:
     RECT GetQuickNavigationSearchRect(const RECT& overlay) const;
     /** @brief 获取快速导航面板中标签页的矩形。 @param overlay 面板矩形 @return 标签页矩形 */
     RECT GetQuickNavigationTabsRect(const RECT& overlay) const;
-RECT GetQuickNavigationTabScrollButtonRect(bool left) const;
     /** @brief 获取快速导航面板中内容区域的矩形。 @param overlay 面板矩形 @return 内容矩形 */
     RECT GetQuickNavigationContentRect(const RECT& overlay) const;
     /** @brief 获取快速导航面板中标签栏内容的宽度。 @param overlay 面板矩形 @return 内容宽度 */
@@ -2824,8 +2821,6 @@ RECT GetQuickNavigationTabScrollButtonRect(bool left) const;
     size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
     int quickNavigationScrollOffset_ = 0;
     int quickNavigationTabScrollOffset_ = 0;
-    bool quickNavTabScrollLeftPressed_ = false;
-    bool quickNavTabScrollRightPressed_ = false;
     bool quickNavigationInitialJumpOpen_ = false;
     size_t quickNavigationInitialJumpSelection_ = 0;
     POINT quickNavigationOpenPoint_{};

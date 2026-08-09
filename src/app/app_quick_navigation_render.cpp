@@ -322,13 +322,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 quickNavAppearance_.
                     widgetBorderAlpha,
                 0.0f, 1.0f);
-    // 毛玻璃 backdrop 不可用（无合成器支持的环境）时退化为不透明主题色，
-    // 避免半透明面板与窗口黑底混合成黑色。
-    const float effectiveBgAlpha =
-        quickNavAppearance_.glassEnabled &&
-            !quickNavBackdropCompositor_.IsAvailable()
-        ? std::max(windowAlpha, 0.95f)
-        : windowAlpha;
     DrawD2DRoundedRectangle(
         ctx.Get(), overlay,
         windowCornerRadius,
@@ -336,7 +329,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             quickNavAppearance_.widgetBgR,
             quickNavAppearance_.widgetBgG,
             quickNavAppearance_.widgetBgB,
-            effectiveBgAlpha),
+            windowAlpha),
         D2D1::ColorF(0, 0, 0, 0));
     if (quickNavAppearance_.glassEnabled &&
         quickNavAppearance_.acrylicEnabled)
@@ -628,104 +621,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     ? fluentIconTextFormat_.Get()
                     : quickNavTabTextFormat_.Get()),
                 ToD2DColor(t.tabText));
-        }
-
-        // Tab strip overflow arrows: indicate and scroll hidden tabs.
-        const int maxTabScroll =
-            GetQuickNavigationMaxTabScrollOffset(
-                overlay);
-        if (maxTabScroll > 0)
-        {
-            const RECT rightBtn =
-                GetQuickNavigationTabScrollButtonRect(
-                    false);
-            registerHoverRegion(
-                rightBtn,
-                QuickNavigationPointerTargetKind::
-                    TabScrollRight);
-            const bool rightHovered =
-                PtInRect(
-                    &rightBtn,
-                    lastMousePoint_) != FALSE;
-            const bool rightPressed =
-                quickNavTabScrollRightPressed_;
-            const D2D1_COLOR_F rightFill =
-                rightPressed
-                ? ToD2DColor(
-                    t.tabActiveFill, 1.0f)
-                : rightHovered
-                ? ToD2DColor(
-                    t.tabHoverFill, 1.0f)
-                : ToD2DColor(
-                    t.tabDefaultFill, 1.0f);
-            const D2D1_COLOR_F rightStroke =
-                rightPressed
-                ? ToD2DColor(
-                    t.tabActiveStroke, 1.0f)
-                : rightHovered
-                ? ToD2DColor(
-                    t.tabHoverStroke, 1.0f)
-                : ToD2DColor(
-                    t.tabDefaultStroke, 1.0f);
-            DrawD2DRoundedRectangle(
-                ctx.Get(), rightBtn,
-                static_cast<float>(
-                    QuickNavScale(8)),
-                rightFill, rightStroke);
-            DrawD2DText(
-                ctx.Get(), L"\u203A", rightBtn,
-                quickNavTabTextFormat_.Get(),
-                ToD2DColor(
-                    t.tabText,
-                    rightHovered || rightPressed
-                        ? 1.0f : 1.0f));
-
-            if (quickNavigationTabScrollOffset_ > 0)
-            {
-                const RECT leftBtn =
-                    GetQuickNavigationTabScrollButtonRect(
-                        true);
-                registerHoverRegion(
-                    leftBtn,
-                    QuickNavigationPointerTargetKind::
-                        TabScrollLeft);
-                const bool leftHovered =
-                    PtInRect(
-                        &leftBtn,
-                        lastMousePoint_) != FALSE;
-                const bool leftPressed =
-                    quickNavTabScrollLeftPressed_;
-                const D2D1_COLOR_F leftFill =
-                    leftPressed
-                    ? ToD2DColor(
-                        t.tabActiveFill, 1.0f)
-                    : leftHovered
-                    ? ToD2DColor(
-                        t.tabHoverFill, 1.0f)
-                    : ToD2DColor(
-                        t.tabDefaultFill, 1.0f);
-                const D2D1_COLOR_F leftStroke =
-                    leftPressed
-                    ? ToD2DColor(
-                        t.tabActiveStroke, 1.0f)
-                    : leftHovered
-                    ? ToD2DColor(
-                        t.tabHoverStroke, 1.0f)
-                    : ToD2DColor(
-                        t.tabDefaultStroke, 1.0f);
-                DrawD2DRoundedRectangle(
-                    ctx.Get(), leftBtn,
-                    static_cast<float>(
-                        QuickNavScale(8)),
-                    leftFill, leftStroke);
-                DrawD2DText(
-                    ctx.Get(), L"\u2039", leftBtn,
-                    quickNavTabTextFormat_.Get(),
-                    ToD2DColor(
-                        t.tabText,
-                        leftHovered || leftPressed
-                            ? 1.0f : 1.0f));
-            }
         }
     }
 
