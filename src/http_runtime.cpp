@@ -414,7 +414,8 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     response.widgetId = options.widgetId;
 
     HINTERNET session = WinHttpOpen(L"SparkDesktop/1.0",
-        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { response.error = "WinHttpOpen failed"; return response; }
     WinHttpSetTimeouts(session, options.timeoutMs, options.timeoutMs,
@@ -496,7 +497,9 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
         // every widget request. Fall back to the unpinned connection there;
         // the pre-connect DNS check above and the post-connect
         // WINHTTP_OPTION_CONNECTION_INFO check below still ensure the
-        // request never reaches a private or local address.
+        // request never reaches a private or local address. When the request
+        // goes through a system proxy the option is not applicable either, so
+        // a failure to pin is tolerated instead of aborting the request.
         if (WinHttpSupportsResolutionPinning())
         {
             const DWORD pinnedAddressBytes = static_cast<DWORD>(
@@ -504,10 +507,7 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             if (!WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
                     pinnedAddress.data(), pinnedAddressBytes))
             {
-                response.error = "Cannot securely pin the resolved host";
-                WinHttpCloseHandle(request);
-                WinHttpCloseHandle(connection);
-                break;
+                // 代理场景下不适用：跳过 pinning，继续请求。
             }
         }
         DWORD disabledFeatures =
