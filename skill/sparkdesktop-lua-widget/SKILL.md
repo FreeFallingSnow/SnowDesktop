@@ -1,11 +1,11 @@
 ---
-name: snowdesktop-lua-widget
-description: Create, modify, debug, validate, and package Lua desktop widget folders for SnowDesktop. Use when writing a widget package with widget.json and main.lua, adding drawing or mouse behavior, using widget storage and settings UI, querying desktop items, declaring permissions, or diagnosing a SnowDesktop Lua widget that does not load or render.
+name: sparkdesktop-lua-widget
+description: Create, modify, debug, validate, and package Lua desktop widget folders for SparkDesktop. Use when writing a widget package with widget.json and main.lua, adding drawing or mouse behavior, using widget storage and settings UI, querying desktop items, declaring permissions, or diagnosing a SparkDesktop Lua widget that does not load or render.
 ---
 
-# SnowDesktop Lua Widget
+# SparkDesktop Lua Widget
 
-Create widgets against SnowDesktop's built-in sandboxed Lua API. Every runnable component is one package directory:
+Create widgets against SparkDesktop's built-in sandboxed Lua API. Every runnable component is one package directory:
 
 ```text
 widgets/
@@ -17,7 +17,7 @@ widgets/
     └── locales/
 ```
 
-SnowDesktop discovers validated package folders, never loose `.lua + .widget.json`
+SparkDesktop discovers validated package folders, never loose `.lua + .widget.json`
 pairs. Built-ins live under the read-only executable `widgets` directory.
 Installed and development packages live under `data\widgets\installed` and
 `data\widgets\dev`. Layouts store the immutable package UUID, not a path.
@@ -148,7 +148,7 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 
 ## Implementation rules
 
-- SnowDesktop uses a **design unit** system where `layout.cu(15)` converts grid-cell-relative
+- SparkDesktop uses a **design unit** system where `layout.cu(15)` converts grid-cell-relative
   design values to DPI-scaled pixels. Prefer `layout.cu()` over hardcoded pixel values so widgets
   scale correctly across monitors and DPI settings. See [references/api.md](references/api.md) for the full layout API.
 - Treat `render()` as a hot path. Do not write storage or perform desktop queries repeatedly unless necessary.
@@ -227,14 +227,14 @@ For repository development:
 2. Run `scripts/test.bat` to catch untranslated Lua strings and missing keys through the CTest localization contract.
 3. Build the host once, then run `scripts\widget-dev.bat widgets\my-widget`.
    It validates and mirrors the source package into the active development
-   directory. When the override is first created, SnowDesktop restarts once to
+   directory. When the override is first created, SparkDesktop restarts once to
    discover it; subsequent `main.lua`, manifest, locale, module, and asset saves
    are synced and trigger the host's transactional Lua hot reload.
 4. Use `-Once` for a one-time sync or `-RestartHost` when package discovery
    needs to be forced. Stop watch mode with `Ctrl+C`; the development override
    remains available for the next session.
 5. Run `.build\Release\snowwidget.exe validate widgets\my-widget`.
-6. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
+6. In SparkDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
 7. Exercise click, double-click, wheel, editor, context-menu, and language-switch behavior as applicable.
 8. Run `scripts\build.bat` only for final delivery verification. The release process
    copies the complete built `widgets` tree, including this skill and its

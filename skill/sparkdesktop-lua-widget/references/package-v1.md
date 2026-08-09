@@ -1,6 +1,6 @@
-# SnowDesktop Lua 组件包 v1
+# SparkDesktop Lua 组件包 v1
 
-SnowDesktop 将 Lua 组件作为渠道无关的文件夹包运行。布局只保存不可变的
+SparkDesktop 将 Lua 组件作为渠道无关的文件夹包运行。布局只保存不可变的
 `packageId` 和实例 `id`，不会保存或执行 Lua 文件路径。自有社区、静态目录和
 Steam Workshop 只能提供包制品，安装和更新必须进入统一的暂存校验流程。
 
@@ -28,7 +28,7 @@ store method，导入器拒绝加密、data descriptor、ZIP64 和其他压缩 m
 
 ## 旧散文件迁移
 
-升级时，SnowDesktop 会按旧清单中的官方本地化键识别自带组件，将布局中的旧
+升级时，SparkDesktop 会按旧清单中的官方本地化键识别自带组件，将布局中的旧
 文件名映射为新版不可变 UUID，保留原实例 `id` 和以该实例为前缀的存储数据，
 并在一次性存储快照成功提交后直接删除旧 `.lua + .widget.json`。临时存储
 快照在 Lua 引擎完成合并和原子写回后立即消费，不进入 `migrations`。这个过程

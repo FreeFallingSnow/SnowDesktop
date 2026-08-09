@@ -1,0 +1,4 @@
+interface:
+  display_name: "SparkDesktop Lua 组件"
+  short_description: "编写、调试和打包 SparkDesktop Lua 桌面组件"
+  default_prompt: "Use $sparkdesktop-lua-widget to create a SparkDesktop Lua widget from my requirements."

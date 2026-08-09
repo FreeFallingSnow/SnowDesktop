@@ -1,4 +1,4 @@
--- Copy this directory as a complete SnowDesktop widget package.
+-- Copy this directory as a complete SparkDesktop widget package.
 name = l10n.tr("lua_widget.template.name")
 useCustomStyle = true
 
@@ -78,7 +78,7 @@ end
 
 function onMenu(id)
     if id == 1 then
-        storage.set("message", "Hello, SnowDesktop!")
+        storage.set("message", "Hello, SparkDesktop!")
     end
 end
 

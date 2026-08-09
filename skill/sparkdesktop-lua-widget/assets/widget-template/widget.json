@@ -11,12 +11,12 @@
   "name": "Example Widget",
   "nameKey": "lua_widget.template.name",
   "version": "1.0.0",
-  "description": "Starter template for a SnowDesktop Lua widget.",
+  "description": "Starter template for a SparkDesktop Lua widget.",
   "descriptionKey": "lua_widget.template.description",
   "locales": {
     "zh-CN": {
       "lua_widget.template.name": "示例组件",
-      "lua_widget.template.description": "用于创建 SnowDesktop Lua 组件的最小示例。",
+      "lua_widget.template.description": "用于创建 SparkDesktop Lua 组件的最小示例。",
       "lua_widget.template.preview_intro": "选择你喜欢的样式，添加后仍可随时调整大小。",
       "lua_widget.template.preview_compact": "一目了然",
       "lua_widget.template.preview_compact_hint": "把今天最重要的事放在眼前。",
@@ -31,7 +31,7 @@
     },
     "en-US": {
       "lua_widget.template.name": "Example Widget",
-      "lua_widget.template.description": "A minimal example for creating a SnowDesktop Lua widget.",
+      "lua_widget.template.description": "A minimal example for creating a SparkDesktop Lua widget.",
       "lua_widget.template.preview_intro": "Choose the style you like. You can resize it anytime after adding.",
       "lua_widget.template.preview_compact": "At a Glance",
       "lua_widget.template.preview_compact_hint": "Keep today's highlight close at hand.",

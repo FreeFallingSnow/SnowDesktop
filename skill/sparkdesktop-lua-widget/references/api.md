@@ -1,4 +1,4 @@
-# SnowDesktop Lua Widget API
+# SparkDesktop Lua Widget API
 
 ## Contents
 
@@ -248,7 +248,7 @@ draw.fluent(glyph, x, y, size?, color?)
 Renders one embedded Fluent System Icons Regular glyph with the same centering
 and defaults as `draw.fa`. Prefer this for new controls when a Fluent glyph has
 the same action semantics. The complete glyph list is available on the
-SnowDesktop debug settings page.
+SparkDesktop debug settings page.
 
 ### Images and shell icons
 
@@ -512,7 +512,7 @@ and debounce live input so large folder-backed components do not create a large
 Lua table for every keystroke.
 
 `desktop.findApplications` searches the Windows `shell:AppsFolder` application
-index used by SnowDesktop's native search popup. It returns the same item shape
+index used by SparkDesktop's native search popup. It returns the same item shape
 with `source = "Applications"` and `type = "application"`, requires
 `desktop.read`, and accepts a result limit clamped to 1–200. The first call can
 start background indexing; widgets receive `onDesktopChanged("applications")`

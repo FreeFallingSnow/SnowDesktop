@@ -60,9 +60,9 @@
 
 ## 仓库内容边界
 
-- `widgets/` 同时包含内置 Lua 组件与面向用户提供的
-  `snowdesktop-lua-widget` Agent Skill；后者是产品的组件开发功能，必须继续随软件分发，
-  不得当作临时 Agent 文件删除。
+- `widgets/` 仅包含内置 Lua 组件，随软件分发。
+- `skill/sparkdesktop-lua-widget` 是组件开发的 Agent Skill，作为仓库级开发文档
+  保存，不随软件分发；不得当作临时 Agent 文件删除。
 - `tests/` 仅保存测试源码，测试目标统一在 `CMakeLists.txt` 注册。
 - `scripts/` 保存人工与自动化入口；根目录不再新增脚本副本。
 - `.build/`、`.build_debug/`、`artifacts/` 和 `docs/html/` 是生成目录，不得提交。
