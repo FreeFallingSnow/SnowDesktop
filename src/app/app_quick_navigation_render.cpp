@@ -88,6 +88,7 @@ void DesktopApp::ResetQuickNavCompositionResources()
     quickNavDcompSurface_.Reset();
     quickNavCompWidth_ = 0;
     quickNavCompHeight_ = 0;
+    quickNavCompositionCommitPending_ = false;
 }
 
 /**
@@ -115,8 +116,27 @@ void DesktopApp::RecoverQuickNavCompositionFailure(const wchar_t* stage, HRESULT
  */
 HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
 {
-    if (!dcompDevice_ || !quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
+    if (!d2dDevice_ || !quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
         return E_UNEXPECTED;
+
+    if (!quickNavDcompDevice_)
+    {
+        HRESULT hr = DCompositionCreateDevice2(
+            d2dDevice_.Get(),
+            __uuidof(IDCompositionDesktopDevice),
+            reinterpret_cast<void**>(
+                quickNavDcompDevice_.GetAddressOf()));
+        if (FAILED(hr) || !quickNavDcompDevice_)
+        {
+            wchar_t buf[160];
+            wsprintfW(
+                buf,
+                L"QuickNav create isolated DComp device FAILED hr=0x%08X",
+                static_cast<unsigned>(hr));
+            WriteDiagnosticLogEntry(buf);
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+    }
 
     const UINT width = static_cast<UINT>(
         std::max<LONG>(
@@ -131,7 +151,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
 
     if (!quickNavDcompTarget_)
     {
-        HRESULT hr = dcompDevice_->CreateTargetForHwnd(quickNavigationHwnd_, FALSE, &quickNavDcompTarget_);
+        HRESULT hr = quickNavDcompDevice_->CreateTargetForHwnd(quickNavigationHwnd_, FALSE, &quickNavDcompTarget_);
         if (FAILED(hr))
         {
             wchar_t buf[128];
@@ -142,7 +162,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     }
     if (!quickNavDcompVisual_)
     {
-        HRESULT hr = dcompDevice_->CreateVisual(&quickNavDcompVisual_);
+        HRESULT hr = quickNavDcompDevice_->CreateVisual(&quickNavDcompVisual_);
         if (FAILED(hr) || !quickNavDcompVisual_)
         {
             wchar_t buf[128];
@@ -155,7 +175,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     if (!quickNavDcompEffect_)
     {
         HRESULT hr =
-            dcompDevice_->CreateEffectGroup(
+            quickNavDcompDevice_->CreateEffectGroup(
                 &quickNavDcompEffect_);
         if (FAILED(hr) || !quickNavDcompEffect_)
         {
@@ -185,7 +205,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         return S_OK;
 
     ComPtr<IDCompositionSurface> surface;
-    HRESULT hr = dcompDevice_->CreateSurface(width, height,
+    HRESULT hr = quickNavDcompDevice_->CreateSurface(width, height,
         DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);
     if (FAILED(hr))
     {
@@ -202,13 +222,12 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         WriteDiagnosticLogEntry(buf);
         return hr;
     }
-    hr = dcompDevice_->Commit();
-    if (FAILED(hr))
+    if (!CommitQuickNavigationCompositionFrame())
     {
         wchar_t buf[128];
-        wsprintfW(buf, L"QuickNav CreateSurface Commit FAILED hr=0x%08X", static_cast<unsigned>(hr));
+        wsprintfW(buf, L"QuickNav CreateSurface queue commit FAILED");
         WriteDiagnosticLogEntry(buf);
-        return hr;
+        return E_FAIL;
     }
 
     quickNavDcompSurface_ = surface;
@@ -461,7 +480,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 || (tab > 1 && quickNavigationActiveWidgetIndex_ == collectionIndices[tab - 2]);
             bool hovered = false;
             if (!quickNavTabDragging_)
-                hovered = PtInRect(&tabRect, lastMousePoint_) != FALSE;
+                hovered = PtInRect(
+                    &tabRect,
+                    quickNavigationLastMousePoint_) != FALSE;
 
             D2D1_COLOR_F fill, stroke;
             if (quickNavTabDragging_ && tab == quickNavTabDragIndex_)
@@ -587,7 +608,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             const bool hovered =
                 PtInRect(
                     &modeButton,
-                    lastMousePoint_) != FALSE;
+                    quickNavigationLastMousePoint_) != FALSE;
             const D2D1_COLOR_F fill =
                 hovered
                     ? ToD2DColor(
@@ -650,7 +671,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             QuickNavigationPointerTargetKind::InitialBack);
         const bool backHovered =
             PtInRect(&backRect,
-                lastMousePoint_) != FALSE;
+                quickNavigationLastMousePoint_) != FALSE;
         if (backHovered)
             DrawD2DRoundedRectangle(
                 ctx.Get(), backRect,
@@ -697,7 +718,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             const bool hovered =
                 PtInRect(
                     &cell,
-                    lastMousePoint_) != FALSE;
+                    quickNavigationLastMousePoint_) != FALSE;
             const bool selected =
                 bucketIndex ==
                     quickNavigationInitialJumpSelection_;
@@ -802,7 +823,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 if (initialJumpHeader &&
                     PtInRect(
                         &header,
-                        lastMousePoint_) != FALSE)
+                        quickNavigationLastMousePoint_) != FALSE)
                     DrawD2DRoundedRectangle(
                         ctx.Get(), header,
                         static_cast<float>(
@@ -850,7 +871,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 i);
 
             const QuickNavigationEntry& entry = entries[i];
-            const int state = (PtInRect(&itemRectApp, lastMousePoint_) != FALSE ||
+            const int state = (PtInRect(
+                    &itemRectApp,
+                    quickNavigationLastMousePoint_) != FALSE ||
                 IsQuickNavigationKeyboardTarget(
                     QuickNavigationKeyboardTargetKind::Item, i)) ? 1 : 0;
             // 图标本体复用桌面绘制，标题由快捷导航自绘，避免桌面标题布局和字重互相影响。
@@ -924,7 +947,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         QuickNavigationPointerTargetKind::App,
                         i);
 
-                    if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE ||
+                    if (PtInRect(
+                            &rowRectApp,
+                            quickNavigationLastMousePoint_) != FALSE ||
                         IsQuickNavigationKeyboardTarget(
                             QuickNavigationKeyboardTargetKind::App, i))
                         DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
@@ -971,7 +996,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         registerClippedHoverRegion(
                             buttonRectApp, contentApp,
                             QuickNavigationPointerTargetKind::ExpandApps);
-                        const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE ||
+                        const bool hovered = PtInRect(
+                                &buttonRectApp,
+                                quickNavigationLastMousePoint_) != FALSE ||
                             IsQuickNavigationKeyboardTarget(
                                 QuickNavigationKeyboardTargetKind::ExpandApps, 0);
                         std::wstring expandLabel = _LFW("app.interact.expand_apps_fmt",
@@ -1033,7 +1060,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         QuickNavigationPointerTargetKind::Everything,
                         i);
 
-                    if (PtInRect(&rowRectApp, lastMousePoint_) != FALSE ||
+                    if (PtInRect(
+                            &rowRectApp,
+                            quickNavigationLastMousePoint_) != FALSE ||
                         IsQuickNavigationKeyboardTarget(
                             QuickNavigationKeyboardTargetKind::Everything, i))
                         DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
@@ -1105,7 +1134,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         registerClippedHoverRegion(
                             buttonRectApp, contentApp,
                             QuickNavigationPointerTargetKind::LoadMoreEverything);
-                        const bool hovered = PtInRect(&buttonRectApp, lastMousePoint_) != FALSE ||
+                        const bool hovered = PtInRect(
+                                &buttonRectApp,
+                                quickNavigationLastMousePoint_) != FALSE ||
                             IsQuickNavigationKeyboardTarget(
                                 QuickNavigationKeyboardTargetKind::LoadMoreEverything, 0);
                         DrawD2DTextEllipsis(ctx.Get(), _LW("app.nav.load_more_everything"), buttonRectApp,
@@ -1143,7 +1174,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     if (!IsRectEmpty(&modeButton) &&
         PtInRect(
             &modeButton,
-            lastMousePoint_) != FALSE)
+            quickNavigationLastMousePoint_) != FALSE)
     {
         auto modeLabel = [](
             QuickNavigationDesktopViewMode mode) {
@@ -1220,7 +1251,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         ctx->PopLayer();
     quickNavigationPointerTarget_ =
         HitTestQuickNavigationPointerTarget(
-            lastMousePoint_);
+            quickNavigationLastMousePoint_);
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx.Reset();
     brushCache_.clear();
@@ -1233,10 +1264,10 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    hr = dcompDevice_->Commit();
-    if (FAILED(hr))
+    if (!CommitQuickNavigationCompositionFrame())
     {
-        RecoverQuickNavCompositionFailure(L"Paint Commit", hr);
+        RecoverQuickNavCompositionFailure(
+            L"Queue Paint Commit", E_FAIL);
         EndPaint(hwnd, &ps);
         return;
     }

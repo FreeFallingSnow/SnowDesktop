@@ -69,8 +69,12 @@ public:
      */
     bool CommitVisualChangesAndNotify(
         HWND notifyWindow, UINT message, WPARAM token);
-    /** @brief 提交本帧面板集合、同步辅助窗口区域并请求非阻塞合成提交。 */
-    void EndFrame();
+    /**
+     * @brief 结束本帧面板集合并同步辅助窗口区域。
+     * @param requestCommit 是否立即请求非阻塞合成提交；跨目标交接可延后到
+     *        两侧属性全部设置后，通过 CommitVisualChangesAndNotify 一次提交。
+     */
+    void EndFrame(bool requestCommit = true);
     /** @brief 销毁合成目标和辅助窗口。 */
     void Reset();
 

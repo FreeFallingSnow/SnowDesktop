@@ -1376,9 +1376,17 @@ static const std::unordered_map<std::string, std::string>*
 SelectManifestLocale(const LuaWidgetManifest& manifest)
 {
     const std::string language = Locale::Instance().GetEffectiveLanguage();
-    auto catalog = manifest.locales.find(language);
-    if (catalog != manifest.locales.end())
-        return &catalog->second;
+    std::vector<std::string> available;
+    available.reserve(manifest.locales.size());
+    for (const auto& [code, catalog] : manifest.locales)
+    {
+        (void)catalog;
+        available.push_back(code);
+    }
+    const std::string selected =
+        snowdesktop::localization::ResolveBestLanguage(available, language);
+    auto catalog = manifest.locales.find(selected);
+    if (catalog != manifest.locales.end()) return &catalog->second;
     catalog = manifest.locales.find("en-US");
     if (catalog != manifest.locales.end())
         return &catalog->second;
@@ -3797,14 +3805,6 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         for (const auto& permission : pending.manifest.permissions)
             if (grantedPermissions.contains(permission))
                 pending.permissions.insert(permission);
-        const std::set<std::string> grantedDomains(
-            package->grantedNetworkDomains.begin(),
-            package->grantedNetworkDomains.end());
-        std::erase_if(pending.manifest.networkDomains,
-            [&](const std::string& domain)
-            {
-                return !grantedDomains.contains(domain);
-            });
     }
     else
     {
@@ -5806,7 +5806,7 @@ int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOp
     int index = FindWidget(widgetId);
     if (index < 0 || !httpService_) return 0;
     options.widgetId = widgetId;
-    options.allowedDomains = widgets_[index].manifest.networkDomains;
+    options.allowAnyHttpOrHttpsUrl = true;
     options.timeoutMs = std::clamp(options.timeoutMs, 1000, 30000);
     options.cacheSeconds = std::clamp(options.cacheSeconds, 0, 86400);
     if (options.body.size() > 64 * 1024) return 0;

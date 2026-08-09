@@ -61,6 +61,8 @@ void DesktopApp::DestroyQuickNavigationWindow()
         quickNavDcompVisual_ = nullptr;
     if (quickNavDcompTarget_)
         quickNavDcompTarget_ = nullptr;
+    quickNavDcompDevice_.Reset();
+    quickNavCompositionCommitPending_ = false;
     quickNavTabTextFormat_.Reset();
     quickNavItemTextFormat_.Reset();
     quickNavPathTextFormat_.Reset();
@@ -68,6 +70,7 @@ void DesktopApp::DestroyQuickNavigationWindow()
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         DestroyWindow(quickNavigationHwnd_);
     quickNavigationHwnd_ = nullptr;
+    quickNavigationWindowRegionExpanded_ = false;
     quickNavigationHoverRegions_.clear();
     quickNavigationPointerTarget_ = {};
     quickNavigationAnimation_.ResetHidden();
@@ -207,6 +210,10 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
         return;
     RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
+    const int width = std::max<LONG>(
+        1, search.right - search.left - QuickNavScale(8));
+    const int height = std::max<LONG>(
+        1, search.bottom - search.top - QuickNavScale(10));
     SetWindowPos(
         quickNavigationSearchEdit_,
         quickNavigationTopmost_
@@ -214,9 +221,17 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
             : HWND_NOTOPMOST,
         search.left + virtualLeft_ + QuickNavScale(4),
         search.top + virtualTop_ + QuickNavScale(6),
-        std::max<LONG>(1, search.right - search.left - QuickNavScale(8)),
-        std::max<LONG>(1, search.bottom - search.top - QuickNavScale(10)),
+        width, height,
         SWP_NOACTIVATE);
+    if (HRGN editRegion = CreateRoundRectRgn(
+            0, 0, width + 1, height + 1,
+            QuickNavScale(8), QuickNavScale(8)))
+    {
+        if (!SetWindowRgn(
+                quickNavigationSearchEdit_,
+                editRegion, FALSE))
+            DeleteObject(editRegion);
+    }
 }
 
 std::wstring DesktopApp::GetQuickNavigationEffectiveSearchText() const
@@ -462,32 +477,17 @@ void DesktopApp::PositionQuickNavigationWindow()
         return;
 
     quickNavigationRect_ = GetQuickNavigationRect();
-    if (quickNavigationAnimationAnchorMode_ ==
-            snowdesktop::
-                quick_navigation_animation_rules::
-                    AnchorMode::Pointer &&
-        virtualWidth_ > 0 && virtualHeight_ > 0)
-    {
-        quickNavigationHostRect_ =
-            MakeRect(
-                0, 0,
-                virtualWidth_,
-                virtualHeight_);
-    }
-    else
-    {
-        const RECT anchorRect = MakeRect(
-            quickNavigationAnimationAnchorPoint_.x - 1,
-            quickNavigationAnimationAnchorPoint_.y - 1,
-            quickNavigationAnimationAnchorPoint_.x + 2,
-            quickNavigationAnimationAnchorPoint_.y + 2);
-        UnionRect(
-            &quickNavigationHostRect_,
-            &quickNavigationRect_,
-            &anchorRect);
-        InflateRect(
-            &quickNavigationHostRect_, 2, 2);
-    }
+    const RECT anchorRect = MakeRect(
+        quickNavigationAnimationAnchorPoint_.x - 1,
+        quickNavigationAnimationAnchorPoint_.y - 1,
+        quickNavigationAnimationAnchorPoint_.x + 2,
+        quickNavigationAnimationAnchorPoint_.y + 2);
+    UnionRect(
+        &quickNavigationHostRect_,
+        &quickNavigationRect_,
+        &anchorRect);
+    InflateRect(
+        &quickNavigationHostRect_, 2, 2);
     const int width = std::max<LONG>(
         1,
         quickNavigationHostRect_.right -
@@ -497,11 +497,9 @@ void DesktopApp::PositionQuickNavigationWindow()
         quickNavigationHostRect_.bottom -
             quickNavigationHostRect_.top);
 
-    // Reserve the complete path between the Dock search icon and the panel.
-    // ApplyQuickNavigationAnimationFrame narrows the actual HWND region to the
-    // current rounded card, so this transparent reserve never captures input.
-    SetWindowRgn(
-        quickNavigationHwnd_, nullptr, FALSE);
+    // Reserve the complete animation path once. ApplyQuickNavigationAnimationFrame
+    // shrinks the region to the final panel once the transform reaches rest.
+    UpdateQuickNavigationWindowRegion(true);
     const DWM_WINDOW_CORNER_PREFERENCE
         cornerPreference =
             DWMWCP_DONOTROUND;
@@ -524,6 +522,43 @@ void DesktopApp::PositionQuickNavigationWindow()
     EnsureQuickNavigationSearchEdit();
     UpdateQuickNavigationSearchEditRect();
     ApplyQuickNavigationAnimationFrame();
+}
+
+void DesktopApp::UpdateQuickNavigationWindowRegion(
+    bool expanded)
+{
+    if (!quickNavigationHwnd_ ||
+        !IsWindow(quickNavigationHwnd_) ||
+        quickNavigationWindowRegionExpanded_ == expanded)
+        return;
+    if (expanded)
+    {
+        if (SetWindowRgn(
+                quickNavigationHwnd_, nullptr, FALSE))
+            quickNavigationWindowRegionExpanded_ = true;
+        return;
+    }
+
+    const RECT panelRegionRect{
+        quickNavigationRect_.left - quickNavigationHostRect_.left,
+        quickNavigationRect_.top - quickNavigationHostRect_.top,
+        quickNavigationRect_.right - quickNavigationHostRect_.left,
+        quickNavigationRect_.bottom - quickNavigationHostRect_.top
+    };
+    if (HRGN panelRegion = CreateRoundRectRgn(
+            panelRegionRect.left,
+            panelRegionRect.top,
+            panelRegionRect.right + 1,
+            panelRegionRect.bottom + 1,
+            QuickNavScale(16), QuickNavScale(16)))
+    {
+        if (!SetWindowRgn(
+                quickNavigationHwnd_,
+                panelRegion, FALSE))
+            DeleteObject(panelRegion);
+        else
+            quickNavigationWindowRegionExpanded_ = false;
+    }
 }
 
 /**
@@ -645,13 +680,16 @@ int DesktopApp::GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const
  */
 
 void DesktopApp::OpenQuickNavigation(
-    bool fromDockSearch)
+    QuickNavigationInvocationSource source)
 {
+    if (quickNavigationOpen_)
+        return;
+    quickNavigationPostCloseAction_ = {};
     quickNavigationHasLastEditAnimationFrame_ = false;
     if (dragSession_.IsActive() ||
         dragDropController_.IsExternalDragActive())
         return;
-    CloseCollectionPopup();
+    quickNavigationInvocationSource_ = source;
 
     const bool reversingClose =
         quickNavigationAnimation_.IsClosing() &&
@@ -659,6 +697,31 @@ void DesktopApp::OpenQuickNavigation(
         IsWindow(quickNavigationHwnd_);
     if (reversingClose)
     {
+        if (source == QuickNavigationInvocationSource::DockSearch)
+        {
+            POINT cursor{};
+            if (GetCursorPos(&cursor))
+            {
+                const POINT appPoint{
+                    cursor.x - virtualLeft_,
+                    cursor.y - virtualTop_,
+                };
+                if (DockContainer* dock =
+                        GetDockContainerAtPoint(appPoint);
+                    dock && dock->IsSearchPoint(appPoint))
+                {
+                    const RECT searchRect = dock->GetSearchRect();
+                    if (!IsRectEmptyRect(searchRect))
+                    {
+                        quickNavigationAnimationAnchorPoint_ = {
+                            (searchRect.left + searchRect.right) / 2,
+                            (searchRect.top + searchRect.bottom) / 2,
+                        };
+                        PositionQuickNavigationWindow();
+                    }
+                }
+            }
+        }
         quickNavigationOpen_ = true;
         if (quickNavigationSearchEdit_ &&
             IsWindow(quickNavigationSearchEdit_))
@@ -706,7 +769,8 @@ void DesktopApp::OpenQuickNavigation(
     if (GetCursorPos(&cursor))
     {
         quickNavigationOpenPoint_ = { cursor.x - virtualLeft_, cursor.y - virtualTop_ };
-        lastMousePoint_ = quickNavigationOpenPoint_;
+        quickNavigationLastMousePoint_ =
+            quickNavigationOpenPoint_;
         HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
         UINT dpiX = 96, dpiY = 96;
         if (monitor)
@@ -716,37 +780,26 @@ void DesktopApp::OpenQuickNavigation(
     else
     {
         quickNavigationOpenPoint_ = lastMousePoint_;
+        quickNavigationLastMousePoint_ =
+            quickNavigationOpenPoint_;
     }
     quickNavigationAnimationAnchorPoint_ =
         quickNavigationOpenPoint_;
-    quickNavigationAnimationAnchorMode_ =
-        snowdesktop::
-            quick_navigation_animation_rules::
-                AnchorMode::Pointer;
-    if (fromDockSearch)
+    if (source == QuickNavigationInvocationSource::DockSearch)
     {
         if (DockContainer* dock =
                 GetDockContainerAtPoint(
                     quickNavigationOpenPoint_);
-            dock &&
-            dock->IsSearchPoint(
+            dock && dock->IsSearchPoint(
                 quickNavigationOpenPoint_))
         {
-            const RECT searchRect =
-                dock->GetSearchRect();
+            const RECT searchRect = dock->GetSearchRect();
             if (!IsRectEmptyRect(searchRect))
             {
                 quickNavigationAnimationAnchorPoint_ = {
-                    (searchRect.left +
-                        searchRect.right) / 2,
-                    (searchRect.top +
-                        searchRect.bottom) / 2
+                    (searchRect.left + searchRect.right) / 2,
+                    (searchRect.top + searchRect.bottom) / 2,
                 };
-                quickNavigationAnimationAnchorMode_ =
-                    snowdesktop::
-                        quick_navigation_animation_rules::
-                            AnchorMode::
-                                DockSearch;
             }
         }
     }
@@ -784,10 +837,19 @@ void DesktopApp::OpenQuickNavigation(
     PositionQuickNavigationWindow();
     if (quickNavigationSearchEdit_)
         SetWindowTextW(quickNavigationSearchEdit_, L"");
+    // Positioning deliberately leaves every quick-navigation visual at zero
+    // opacity. Build and present the first content surface while it is still
+    // hidden; attaching an empty DComp surface after the open animation has
+    // started otherwise exposes a transparent frame when opened from the
+    // floating Dock.
+    InvalidateQuickNavigationWindow(true);
     if (quickNavigationSearchEdit_ &&
         IsWindow(quickNavigationSearchEdit_))
     {
         EnableWindow(quickNavigationSearchEdit_, TRUE);
+        SetLayeredWindowAttributes(
+            quickNavigationSearchEdit_,
+            0, 0, LWA_ALPHA);
         ShowWindow(
             quickNavigationSearchEdit_,
             SW_SHOWNOACTIVATE);
@@ -818,9 +880,6 @@ void DesktopApp::OpenQuickNavigation(
         SetForegroundWindow(quickNavigationHwnd_);
         SetFocus(quickNavigationHwnd_);
     }
-    InvalidateQuickNavigationWindow();
-    InvalidateDragStaticScene();
-    InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 /**
@@ -833,27 +892,33 @@ void DesktopApp::CloseQuickNavigation()
             IsQuickNavigationPresentation() &&
         renameEdit_ && IsWindow(renameEdit_))
         CommitRename(false);
-    if (snowdesktop::
-            quick_navigation_animation_rules::
-                ShouldRefreshCloseAnchor(
-                    quickNavigationAnimationAnchorMode_))
+    bool animationAnchorChanged = false;
+    POINT cursor{};
+    if (quickNavigationInvocationSource_ !=
+            QuickNavigationInvocationSource::DockSearch &&
+        GetCursorPos(&cursor))
     {
-        POINT cursor{};
-        if (GetCursorPos(&cursor))
+        const POINT currentPointer = {
+            cursor.x - virtualLeft_,
+            cursor.y - virtualTop_
+        };
+        if (currentPointer.x !=
+                quickNavigationAnimationAnchorPoint_.x ||
+            currentPointer.y !=
+                quickNavigationAnimationAnchorPoint_.y)
         {
-            const POINT currentPointer = {
-                cursor.x - virtualLeft_,
-                cursor.y - virtualTop_
-            };
-            if (currentPointer.x !=
-                    quickNavigationAnimationAnchorPoint_.x ||
-                currentPointer.y !=
-                    quickNavigationAnimationAnchorPoint_.y)
-            {
-                quickNavigationAnimationAnchorPoint_ =
-                    currentPointer;
-            }
+            quickNavigationAnimationAnchorPoint_ =
+                currentPointer;
+            animationAnchorChanged = true;
         }
+    }
+    if (animationAnchorChanged &&
+        quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_))
+    {
+        // Pointer-mode close animations collapse toward the current pointer.
+        // Recompute the compact host so that new anchor remains inside it.
+        PositionQuickNavigationWindow();
     }
     quickNavigationOpen_ = false;
     ResetQuickNavigationKeyboardTarget();
@@ -893,8 +958,20 @@ void DesktopApp::CloseQuickNavigation()
     EnsureUiAnimationFrame();
     InvalidateQuickNavigationWindow();
     ApplyQuickNavigationAnimationFrame();
-    InvalidateDragStaticScene();
-    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+void DesktopApp::CloseQuickNavigationThen(
+    std::function<void()> action)
+{
+    if (!quickNavigationOpen_)
+    {
+        if (action)
+            action();
+        return;
+    }
+    quickNavigationPostCloseAction_ =
+        std::move(action);
+    CloseQuickNavigation();
 }
 
 void DesktopApp::ApplyQuickNavigationAnimationFrame()
@@ -913,6 +990,9 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         anchorX, anchorY);
     quickNavBackdropCompositor_.SetVisible(
         visual.visible);
+    UpdateQuickNavigationWindowRegion(
+        quickNavigationAnimation_.IsAnimating() ||
+            !visual.visible);
 
     if (quickNavDcompVisual_)
     {
@@ -945,16 +1025,8 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
                 quickNavDcompEffect_->SetOpacity(
                     visual.opacity);
             }
-            if (dcompDevice_)
-            {
-                const double commitStart =
-                    snowdesktop::UiAnimationScheduler::
-                        MonotonicMilliseconds();
-                dcompDevice_->Commit();
-                uiAnimationScheduler_.RecordCommitDuration(
-                    snowdesktop::UiAnimationScheduler::
-                        MonotonicMilliseconds() - commitStart);
-            }
+            if (quickNavDcompDevice_)
+                CommitQuickNavigationCompositionFrame();
         }
     }
 
@@ -966,117 +1038,13 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
             ShowWindow(
                 quickNavigationSearchEdit_,
                 SW_HIDE);
+            quickNavigationLastEditAnimationOpacity_ = 0;
+            quickNavigationHasLastEditAnimationFrame_ = true;
             return;
         }
-
-        const RECT search =
-            GetQuickNavigationSearchRect(
-                quickNavigationRect_);
-        const float screenAnchorX =
-            static_cast<float>(
-                quickNavigationAnimationAnchorPoint_.x +
-                virtualLeft_);
-        const float screenAnchorY =
-            static_cast<float>(
-                quickNavigationAnimationAnchorPoint_.y +
-                virtualTop_);
-        const float targetLeft =
-            static_cast<float>(
-                search.left + virtualLeft_ +
-                QuickNavScale(4));
-        const float targetTop =
-            static_cast<float>(
-                search.top + virtualTop_ +
-                QuickNavScale(6));
-        const float targetRight =
-            static_cast<float>(
-                search.right + virtualLeft_ -
-                QuickNavScale(4));
-        const float targetBottom =
-            static_cast<float>(
-                search.bottom + virtualTop_ -
-                QuickNavScale(4));
-        const int left = static_cast<int>(
-            std::lround(
-                snowdesktop::
-                    quick_navigation_animation_rules::
-                        ScaleCoordinate(
-                            targetLeft,
-                            screenAnchorX,
-                            visual.scale)));
-        const int top = static_cast<int>(
-            std::lround(
-                snowdesktop::
-                    quick_navigation_animation_rules::
-                        ScaleCoordinate(
-                            targetTop,
-                            screenAnchorY,
-                            visual.scale)));
-        const int right = static_cast<int>(
-            std::lround(
-                snowdesktop::
-                    quick_navigation_animation_rules::
-                        ScaleCoordinate(
-                            targetRight,
-                            screenAnchorX,
-                            visual.scale)));
-        const int bottom = static_cast<int>(
-            std::lround(
-                snowdesktop::
-                    quick_navigation_animation_rules::
-                        ScaleCoordinate(
-                            targetBottom,
-                            screenAnchorY,
-                            visual.scale)));
-        const int editWidth =
-            std::max(1, right - left);
-        const int editHeight =
-            std::max(1, bottom - top);
-        const int editCornerDiameter =
-            std::max(
-                2,
-                static_cast<int>(
-                    std::lround(
-                        static_cast<float>(
-                            QuickNavScale(8)) *
-                        visual.scale)));
-        const RECT editFrame{
-            left, top,
-            left + editWidth,
-            top + editHeight
-        };
-        const bool geometryChanged =
-            !quickNavigationHasLastEditAnimationFrame_ ||
-            EqualRect(
-                &editFrame,
-                &quickNavigationLastEditAnimationRect_) == FALSE;
-        const BYTE opacity = static_cast<BYTE>(std::clamp(
-            std::lround(visual.opacity * 255.0f),
-            0L, 255L));
-        if (geometryChanged)
-        {
-            if (HRGN editRegion = CreateRoundRectRgn(
-                    0, 0,
-                    editWidth + 1,
-                    editHeight + 1,
-                    editCornerDiameter,
-                    editCornerDiameter))
-            {
-                if (!SetWindowRgn(
-                        quickNavigationSearchEdit_,
-                        editRegion, FALSE))
-                    DeleteObject(editRegion);
-            }
-            SetWindowPos(
-                quickNavigationSearchEdit_,
-                quickNavigationTopmost_
-                    ? HWND_TOPMOST
-                    : HWND_NOTOPMOST,
-                left, top,
-                editWidth,
-                editHeight,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        }
+        const BYTE opacity =
+            quickNavigationAnimation_.IsAnimating()
+                ? 0 : 255;
         if (!quickNavigationHasLastEditAnimationFrame_ ||
             opacity != quickNavigationLastEditAnimationOpacity_)
         {
@@ -1084,7 +1052,6 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
                 quickNavigationSearchEdit_,
                 0, opacity, LWA_ALPHA);
         }
-        quickNavigationLastEditAnimationRect_ = editFrame;
         quickNavigationLastEditAnimationOpacity_ = opacity;
         quickNavigationHasLastEditAnimationFrame_ = true;
     }
@@ -1092,6 +1059,11 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
 
 void DesktopApp::FinalizeCloseQuickNavigation()
 {
+    std::function<void()> postCloseAction =
+        std::move(quickNavigationPostCloseAction_);
+    quickNavigationPostCloseAction_ = {};
+    quickNavigationLastMousePoint_ = {
+        LONG_MIN, LONG_MIN };
     quickNavigationHasLastEditAnimationFrame_ = false;
     if (quickNavigationSearchEdit_ &&
         IsWindow(quickNavigationSearchEdit_))
@@ -1118,7 +1090,8 @@ void DesktopApp::FinalizeCloseQuickNavigation()
     quickNavigationHostRect_ = {};
     quickNavigationAnimation_.ResetHidden();
     DestroyQuickNavigationWindow();
-    InvalidateDragStaticScene();
-    if (hwnd_ && IsWindow(hwnd_))
-        InvalidateRect(hwnd_, nullptr, TRUE);
+    quickNavigationInvocationSource_ =
+        QuickNavigationInvocationSource::Pointer;
+    if (postCloseAction)
+        postCloseAction();
 }

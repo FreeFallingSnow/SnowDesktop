@@ -17,7 +17,8 @@ add_library(SnowDesktopWorkshopManagerSupport STATIC
     src/workshop_project.cpp)
 target_compile_features(SnowDesktopWorkshopManagerSupport PUBLIC cxx_std_20)
 target_include_directories(SnowDesktopWorkshopManagerSupport PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(SnowDesktopWorkshopManagerSupport PUBLIC
     ole32 shell32)
 

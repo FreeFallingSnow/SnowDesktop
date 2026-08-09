@@ -1054,8 +1054,9 @@ void TestRenameControllerKeepsTargetsExclusive()
     Check(controller.IsWidget() &&
             controller.Index() == 4 &&
             controller.OwnerIndex() ==
-                RenameController::InvalidIndex,
-        "widget rename must expose one unambiguous target");
+                RenameController::InvalidIndex &&
+            controller.BlocksScrolling(),
+        "widget rename must expose one unambiguous target and lock scrolling");
 
     controller.BeginFolderEntry(2, 7);
     Check(controller.IsFolderEntry() &&
@@ -1064,8 +1065,9 @@ void TestRenameControllerKeepsTargetsExclusive()
             controller.Index() == 7,
         "starting a folder-entry rename must replace every prior target");
     controller.SetQuickNavigationPresentation(true);
-    Check(controller.IsQuickNavigationPresentation(),
-        "quick navigation is a presentation of the same logical rename target");
+    Check(controller.IsQuickNavigationPresentation() &&
+            controller.BlocksScrolling(),
+        "quick navigation rename presentation must keep scrolling locked");
 
     controller.BeginDockFolderEntry(3);
     Check(controller.IsDockFolderEntry() &&
@@ -1077,8 +1079,9 @@ void TestRenameControllerKeepsTargetsExclusive()
     controller.Reset();
     controller.SetQuickNavigationPresentation(true);
     Check(!controller.IsActive() &&
-            !controller.IsQuickNavigationPresentation(),
-        "an inactive rename cannot acquire a detached presentation state");
+            !controller.IsQuickNavigationPresentation() &&
+            !controller.BlocksScrolling(),
+        "an inactive rename cannot acquire presentation state or lock scrolling");
 }
 
 void TestPopupDwellControllerHandlesCandidateChanges()

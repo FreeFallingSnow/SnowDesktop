@@ -15,6 +15,8 @@
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
+#include "app/native_menu_presentation_rules.h"
+#include "desktop_window_discovery_rules.h"
 #include "floating_dock_rules.h"
 #include "display_topology_refresh.h"
 #include "widget_spacing_rules.h"
@@ -80,6 +82,38 @@ int main()
         snowdesktop::display_topology_refresh;
     namespace backdropUpdate =
         snowdesktop::desktop_backdrop_update_rules;
+    namespace nativeMenuPresentation =
+        snowdesktop::native_menu_presentation_rules;
+    namespace desktopWindowDiscovery =
+        snowdesktop::desktop_window_discovery_rules;
+
+    Check(
+        desktopWindowDiscovery::IsExplorerDesktopViewProcess(
+            4120, 4120),
+        "desktop discovery must accept Explorer-owned DefView windows");
+    Check(
+        !desktopWindowDiscovery::IsExplorerDesktopViewProcess(
+            7280, 4120) &&
+        !desktopWindowDiscovery::IsExplorerDesktopViewProcess(
+            0, 4120) &&
+        !desktopWindowDiscovery::IsExplorerDesktopViewProcess(
+            4120, 0),
+        "desktop discovery must reject transient in-process Shell views");
+
+    Check(
+        nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            true, false, false, false),
+        "native Shell menu messages must flush pending composition commits");
+    Check(
+        !nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            false, false, false, false) &&
+        !nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            true, true, false, false) &&
+        !nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            true, false, true, false) &&
+        !nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            true, false, false, true),
+        "native Shell presentation must wait until every active surface exits BeginDraw");
 
     const RECT backdropClientRect{0, 0, 1920, 1080};
     const RECT fullBackdropUpdate{0, 0, 1920, 1080};
@@ -858,6 +892,17 @@ int main()
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a press on the thumbnail preview panel must keep the floating host open");
+    const RECT quickNavigationRect{ 600, 200, 1000, 700 };
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            false, false, POINT{ 800, 300 },
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect, quickNavigationRect),
+        "a press in Quick Navigation must keep its floating Dock host open");
+    Check(floatingDock::ShouldDismissForPointerDown(
+            false, false, POINT{ 800, 300 },
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
+        "the floating Dock independently dismisses presses on another surface");
     Check(floatingDock::ShouldDismissForPointerDown(
             false, false, POINT{ 20, 20 },
             floatingDockRect, floatingPopupRect,
@@ -915,6 +960,22 @@ int main()
             !floatingDock::ShouldRetireDesktopDockCopy(
                 true, false),
         "the desktop Dock copy must survive until a valid floating frame crosses the presentation barrier");
+    Check(floatingDock::ShouldRenderFloatingDockFrame(
+            true, false) &&
+            !floatingDock::ShouldRenderFloatingDockFrame(
+                true, true) &&
+            !floatingDock::ShouldRenderFloatingDockFrame(
+                false, false),
+        "a pending close must freeze the floating Dock hand-off surface");
+    Check(floatingDock::CanRunPostCloseActionImmediately(
+            false, false, false) &&
+            !floatingDock::CanRunPostCloseActionImmediately(
+                true, false, true) &&
+            !floatingDock::CanRunPostCloseActionImmediately(
+                false, true, true) &&
+            !floatingDock::CanRunPostCloseActionImmediately(
+                false, false, true),
+        "window commands must wait until every floating Dock close layer is gone");
     Check(!floatingDock::
             ShouldInvalidateDesktopHover(true) &&
             floatingDock::
@@ -951,6 +1012,13 @@ int main()
                 ShouldPresentPointerFrame(
                     100, 200, false),
         "passive floating Dock hover is rate-limited but pointer feedback stays synchronous");
+    Check(floatingDock::RemainingPointerFrameDelay(
+                1000, 996) == 4 &&
+            floatingDock::RemainingPointerFrameDelay(
+                1000, 992) == 0 &&
+            floatingDock::RemainingPointerFrameDelay(
+                100, 200) == 0,
+        "a throttled Dock hover sample schedules its final tail frame at the remaining deadline");
     Check(floatingDock::
             FloatingVisibilityChangesStaticScene(
                 false, true) &&
@@ -1156,24 +1224,90 @@ int main()
     Check(rules::NeedsDockCloseSystemCommandFallback(false) &&
             !rules::NeedsDockCloseSystemCommandFallback(true),
         "a rejected graceful close must use the system-command fallback");
-    Check(rules::NeedsDockWindowSwitchFallback(false, true),
+    Check(!rules::NeedsDockRestoreRequestFallback(
+            false, false) &&
+            !rules::NeedsDockRestoreRequestFallback(
+                true, true) &&
+            rules::NeedsDockRestoreRequestFallback(
+                true, false),
+        "only a rejected minimized-window restore may use the one-shot switch fallback");
+    Check(rules::ShouldSwitchDockWindowAfterShow(
+            false, true),
         "a visible background window must always switch to the foreground");
-    Check(rules::NeedsDockWindowSwitchFallback(true, false),
-        "a minimized elevated window must switch when its restore request is rejected");
-    Check(!rules::NeedsDockWindowSwitchFallback(true, true),
-        "an accepted minimized-window restore must not be issued twice");
-    Check(rules::MustCloseFloatingDockBeforeWindowCommand(
-            true, rules::DockClickAction::Minimize) &&
-            rules::MustCloseFloatingDockBeforeWindowCommand(
-                true, rules::DockClickAction::Restore) &&
-            rules::MustCloseFloatingDockBeforeWindowCommand(
-                true, rules::DockClickAction::Activate),
-        "the top-level Dock must leave composition before any running-window command");
-    Check(!rules::MustCloseFloatingDockBeforeWindowCommand(
+    Check(!rules::ShouldSwitchDockWindowAfterShow(
+            true, false),
+        "every asynchronous restore must defer foreground switching until the window is visible");
+    Check(rules::ShouldSwitchDockWindowAfterShow(
+            true, true),
+        "a restored window must switch above an existing maximized foreground application");
+    Check(rules::IsDockWindowActivationPopupEligible(
+            true, true, false, false) &&
+            !rules::IsDockWindowActivationPopupEligible(
+                true, false, false, false) &&
+            !rules::IsDockWindowActivationPopupEligible(
+                true, true, true, false) &&
+            !rules::IsDockWindowActivationPopupEligible(
+                true, true, false, true),
+        "only a visible restorable popup may replace the root activation target");
+    Check(rules::ShouldRetryDockWindowForegroundActivation(
+            false, true) &&
+            !rules::ShouldRetryDockWindowForegroundActivation(
+                true, true) &&
+            !rules::ShouldRetryDockWindowForegroundActivation(
+                false, false),
+        "input queues may be shared only after a safe ordinary foreground request fails");
+    Check(rules::IsDockWindowSynchronousActivationSafe(
+            true, true) &&
+            !rules::IsDockWindowSynchronousActivationSafe(
+                false, true) &&
+            !rules::IsDockWindowSynchronousActivationSafe(
+                true, false),
+        "synchronous activation must require both the root and actual popup threads to respond");
+    using ObservationAction =
+        rules::DockWindowActivationObservationAction;
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            true, false, true, true, true, false, false) ==
+            ObservationAction::WaitForRestore,
+        "a valid asynchronous restore must remain observed while the window is iconic");
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            true, false, true, true, false, false, false) ==
+            ObservationAction::Activate &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, false, true, false, false, false, false) ==
+            ObservationAction::Activate,
+        "restored and already-visible requests must use the same foreground activation path");
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            false, false, true, true, true, false, false) ==
+            ObservationAction::Stop &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, true, true, true, true, false, false) ==
+            ObservationAction::Stop &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, false, false, true, true, false, false) ==
+            ObservationAction::Stop &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, false, true, false, false, true, false) ==
+            ObservationAction::Stop &&
+            rules::ResolveDockWindowActivationObservationAction(
+                true, false, true, false, false, false, true) ==
+            ObservationAction::Stop,
+        "activation observation must stop for stale, closing, hung, foreground or superseded requests");
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            true, false, true, false, true, false, false) ==
+            ObservationAction::Stop,
+        "a visible-window activation request must not wait forever if the window becomes minimized");
+    Check(rules::RequiresFloatingDockMinimizeCaptureIsolation(
+            true, rules::DockClickAction::Minimize),
+        "floating minimize animations must exclude the top-level Dock");
+    Check(!rules::RequiresFloatingDockMinimizeCaptureIsolation(
             false, rules::DockClickAction::Minimize) &&
-            !rules::MustCloseFloatingDockBeforeWindowCommand(
+            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
+                true, rules::DockClickAction::Activate) &&
+            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
+                true, rules::DockClickAction::Restore) &&
+            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
                 true, rules::DockClickAction::Launch),
-        "desktop-layer Docks and application launches must not add a capture synchronization");
+        "desktop-layer Docks, restore, foreground activation and launches must keep the floating Dock visible");
     Check(rules::ResolveDockRestoreShowCommand(
             WPF_RESTORETOMAXIMIZED,
             SW_SHOWMINIMIZED) == SW_SHOWMAXIMIZED,
@@ -1184,6 +1318,13 @@ int main()
     Check(rules::ResolveDockRestoreShowCommand(
             0, SW_SHOWMINIMIZED) == SW_RESTORE,
         "an ordinary minimized window must restore to its normal rectangle");
+    Check(rules::ShouldRestoreDockWindowMaximized(
+            WPF_RESTORETOMAXIMIZED, SW_SHOWMINIMIZED) &&
+            rules::ShouldRestoreDockWindowMaximized(
+                0, SW_SHOWMAXIMIZED) &&
+            !rules::ShouldRestoreDockWindowMaximized(
+                0, SW_SHOWMINIMIZED),
+        "restore animation geometry and the real show command must agree on maximized placement");
 
     Check(EaseDockWindowTransition(-1.0) == 0.0 &&
             EaseDockWindowTransition(2.0) == 1.0,
@@ -1307,6 +1448,16 @@ int main()
             false, false) ==
             DockWindowTransitionSurface::None,
         "a transition must stop safely when neither rendering surface is available");
+    Check(ResolveDockWindowTransitionSurface(
+            true, true,
+            DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
+            DockWindowTransitionSurface::LiveThumbnail,
+        "floating minimize must prefer the target-only DWM thumbnail over a screen snapshot");
+    Check(ResolveDockWindowTransitionSurface(
+            true, false,
+            DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
+            DockWindowTransitionSurface::None,
+        "floating minimize must reject a screen snapshot when no DWM thumbnail is available");
     Check(rules::ResolveDockWindowIconSource(
             true, true, false, true) ==
             rules::DockWindowIconSource::AppUserModel,

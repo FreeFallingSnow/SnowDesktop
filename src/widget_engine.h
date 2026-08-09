@@ -112,7 +112,7 @@ struct LuaWidgetManifest
     int maxColumns = 0;                ///< 最多占据列数，0 表示不限制
     int maxRows = 0;                   ///< 最多占据行数，0 表示不限制
     int refreshIntervalMs = 0;          ///< manifest 声明的自动刷新间隔（ms），0 = 不自动刷新
-    std::vector<std::string> networkDomains; ///< network.http 允许访问的域名
+    std::vector<std::string> networkDomains; ///< 兼容保留的网络域名元数据
     std::vector<Setting> settings;        ///< 宿主生成的声明式设置
     std::vector<SettingPreset> presets;   ///< 宿主生成的声明式预设
     std::string publisher;

@@ -510,12 +510,14 @@ struct DesktopWindows
 
 /**
  * @brief DefView 搜索结果
- * @details 存储通过 FindWindow 搜索 DefView 窗口的结果
+ * @details 存储通过 FindWindow 搜索 DefView 窗口的结果，并限定为
+ * Explorer Shell 进程创建的真实桌面视图。
  */
 struct DefViewSearch
 {
     HWND defView = nullptr;
     HWND parent = nullptr;
+    DWORD shellProcessId = 0;
 };
 
 /**

@@ -1,4 +1,5 @@
 #include "right_click_contract.h"
+#include "app/shell_item_action_rules.h"
 
 #include <iostream>
 #include <string>
@@ -171,6 +172,37 @@ void TestSelectionContract()
         "right-clicking a selected item must preserve multi-selection");
 }
 
+void TestMenuFocusRestoreContract()
+{
+    Check(
+        contract::ShouldRestoreInteractionFocusAfterMenu(
+            false, false),
+        "a completed desktop menu must restore interaction focus");
+    Check(
+        !contract::ShouldRestoreInteractionFocusAfterMenu(
+            true, false),
+        "an open interaction surface must retain its own focus");
+    Check(
+        !contract::ShouldRestoreInteractionFocusAfterMenu(
+            false, true),
+        "a newly started inline editor must retain focus");
+}
+
+void TestShellItemActionContract()
+{
+    namespace actions =
+        snowdesktop::shell_item_action_rules;
+    Check(
+        actions::IsAdministratorRunnableExtension(L".exe") &&
+        actions::IsAdministratorRunnableExtension(L".lnk") &&
+        actions::IsAdministratorRunnableExtension(L".cmd"),
+        "executable Shell items must expose the administrator action");
+    Check(
+        !actions::IsAdministratorRunnableExtension(L".txt") &&
+        !actions::IsAdministratorRunnableExtension(L""),
+        "ordinary documents must not expose the administrator action");
+}
+
 } // namespace
 
 int main()
@@ -178,6 +210,8 @@ int main()
     TestContainerMenuMatrix();
     TestSlotItemMenuMatrix();
     TestSelectionContract();
+    TestMenuFocusRestoreContract();
+    TestShellItemActionContract();
     if (failures != 0)
     {
         std::cerr << failures

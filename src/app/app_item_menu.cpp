@@ -1,9 +1,98 @@
 #include "app.h"
 #include "../menu_fluent_glyphs.h"
+#include "../right_click_contract.h"
+#include "shell_item_action_rules.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
 
 // Desktop-item and Shell-backed context menus.
+
+bool DesktopApp::IsAdministratorRunnablePath(
+    const std::wstring& path) const
+{
+    if (path.empty())
+        return false;
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        return false;
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    if (!extension)
+        return false;
+    std::wstring normalizedExtension(extension);
+    CharLowerBuffW(
+        normalizedExtension.data(),
+        static_cast<DWORD>(normalizedExtension.size()));
+    return
+        snowdesktop::shell_item_action_rules::
+            IsAdministratorRunnableExtension(normalizedExtension);
+}
+
+void DesktopApp::CopyPathsToClipboard(
+    const std::vector<std::wstring>& paths)
+{
+    std::wstring text;
+    for (const auto& path : paths)
+    {
+        if (path.empty())
+            continue;
+        if (!text.empty())
+            text += L"\r\n";
+        text += path;
+    }
+    if (text.empty() || !OpenClipboard(ShellDialogOwnerHwnd()))
+        return;
+
+    EmptyClipboard();
+    const SIZE_T byteCount =
+        (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, byteCount);
+    if (!memory)
+    {
+        CloseClipboard();
+        return;
+    }
+
+    void* target = GlobalLock(memory);
+    if (!target)
+    {
+        GlobalFree(memory);
+        CloseClipboard();
+        return;
+    }
+    CopyMemory(target, text.c_str(), byteCount);
+    GlobalUnlock(memory);
+
+    if (!SetClipboardData(CF_UNICODETEXT, memory))
+        GlobalFree(memory);
+    CloseClipboard();
+}
+
+void DesktopApp::RunPathAsAdministrator(
+    const std::wstring& path)
+{
+    if (!IsAdministratorRunnablePath(path))
+        return;
+
+    SHELLEXECUTEINFOW executeInfo{};
+    executeInfo.cbSize = sizeof(executeInfo);
+    executeInfo.fMask = SEE_MASK_FLAG_NO_UI;
+    executeInfo.hwnd = ShellDialogOwnerHwnd();
+    executeInfo.lpVerb = L"runas";
+    executeInfo.lpFile = path.c_str();
+    executeInfo.nShow = SW_SHOWNORMAL;
+    ShellExecuteExW(&executeInfo);
+}
+
+void DesktopApp::ShowPathProperties(
+    const std::wstring& path)
+{
+    if (path.empty())
+        return;
+    SHObjectProperties(
+        ShellDialogOwnerHwnd(), SHOP_FILEPATH,
+        path.c_str(), nullptr);
+}
 
 void DesktopApp::ShowItemContextMenu(
     POINT screenPoint, int itemIndex, bool dockFrequentItem,
@@ -33,6 +122,16 @@ void DesktopApp::ShowItemContextMenu(
     int selectedCount = 0;
     for (const auto& item : items_) if (item.selected) ++selectedCount;
 
+    std::vector<std::wstring> selectedFilePaths;
+    for (const auto& item : items_)
+    {
+        if (!item.selected)
+            continue;
+        wchar_t path[MAX_PATH]{};
+        if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
+            selectedFilePaths.emplace_back(path);
+    }
+
     bool canFile = !items_[itemIndex].desktopIconClsid.empty() ? false : true;
     std::wstring itemPath;
     if (canFile)
@@ -45,6 +144,14 @@ void DesktopApp::ShowItemContextMenu(
     }
     const bool canReveal = selectedCount == 1 && canFile &&
         snowdesktop::item_location::CanReveal(itemPath);
+    const bool canCopyPath =
+        selectedCount > 0 &&
+        selectedFilePaths.size() == static_cast<size_t>(selectedCount);
+    const bool canRunAsAdministrator =
+        selectedCount == 1 &&
+        IsAdministratorRunnablePath(itemPath);
+    const bool canShowProperties =
+        selectedCount == 1 && canFile && !itemPath.empty();
     const bool canCloseDockApplication =
         dockApplicationItem &&
         GetDockWindowVisualState(
@@ -53,8 +160,19 @@ void DesktopApp::ShowItemContextMenu(
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
+    AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextCopyPathCommand, _LW("app.menu.copy_path"));
     AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu,
+        canRunAsAdministrator ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextRunAsAdministratorCommand,
+        _LW("app.menu.run_as_administrator"));
+    AppendMenuW(menu,
+        canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextPropertiesCommand, _LW("app.menu.properties"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
         selectedCount == 1 && canFile && !dockMapping
             ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -93,6 +211,15 @@ void DesktopApp::ShowItemContextMenu(
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
     SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
+    SetMenuItemIcon(menu, kContextCopyPathCommand,
+        snowdesktop::menu_fluent_glyphs::kCopy,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextRunAsAdministratorCommand,
+        snowdesktop::menu_fluent_glyphs::kShield,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextPropertiesCommand,
+        snowdesktop::menu_fluent_glyphs::kInfo,
+        MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextRenameCommand, L"");
     SetMenuItemIcon(menu, kContextCutCommand, L"");
     SetMenuItemIcon(menu, kContextCopyCommand, L"");
@@ -123,6 +250,7 @@ void DesktopApp::ShowItemContextMenu(
         menu, screenPoint, menuOwner, placeOutsideDock);
     DestroyMenu(menu);
     ClearMenuIcons();
+    bool inlineEditorStarted = false;
 
     switch (command)
     {
@@ -138,12 +266,24 @@ void DesktopApp::ShowItemContextMenu(
     case kContextRevealLocationCommand:
         snowdesktop::item_location::Reveal(hwnd_, itemPath);
         break;
+    case kContextCopyPathCommand:
+        CopyPathsToClipboard(selectedFilePaths);
+        break;
+    case kContextRunAsAdministratorCommand:
+        if (canRunAsAdministrator)
+            RunPathAsAdministrator(itemPath);
+        break;
+    case kContextPropertiesCommand:
+        if (canShowProperties)
+            ShowPathProperties(itemPath);
+        break;
     case kContextRenameCommand:
         if (keepQuickNavigationOpen)
             BeginQuickNavigationDesktopItemRename(
                 static_cast<size_t>(itemIndex));
         else
             BeginRenameSelected(dockRenameAnchor);
+        inlineEditorStarted = renameEdit_ != nullptr;
         break;
     case kContextCutCommand:
     case kContextCopyCommand:
@@ -271,7 +411,10 @@ void DesktopApp::ShowItemContextMenu(
         break;
     }
     RestoreDesktopWindowLayer();
-    if (!keepQuickNavigationOpen)
+    if (snowdesktop::right_click_contract::
+            ShouldRestoreInteractionFocusAfterMenu(
+                keepQuickNavigationOpen,
+                inlineEditorStarted))
         RestoreInteractionInputFocus();
 }
 
@@ -299,11 +442,7 @@ void DesktopApp::ShowShellContextMenu(
     }
     if (pidls.empty()) return;
 
-    HWND menuOwner = keepQuickNavigationOpen &&
-        quickNavigationHwnd_ &&
-        IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_
-        : hwnd_;
+    const HWND menuOwner = ShellDialogOwnerHwnd();
     snowdesktop::ShellContextMenuSite menuSite;
     menuSite.Initialize(desktopFolder_.Get(), menuOwner);
     HWND shellOwner = menuSite.HostWindow()

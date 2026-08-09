@@ -47,7 +47,9 @@ void DesktopApp::BeginRenameSelected(
     {
         if (!CanRenameWidget(widgets_[selectedWidgetIndex])) return;
 
-        size_t visibilityWidgetIndex = selectedWidgetIndex;
+        size_t visibilityWidgetIndex =
+            ResolveRenameVisibilityWidgetIndex(
+                selectedWidgetIndex);
         renameController_.BeginWidget(
             selectedWidgetIndex);
         if (dockRenameAnchor)
@@ -73,7 +75,6 @@ void DesktopApp::BeginRenameSelected(
                     widgets_[selectedWidgetIndex].id);
             if (groupIndex < widgets_.size())
             {
-                visibilityWidgetIndex = groupIndex;
                 for (const auto& c : containers_)
                 {
                     auto* group =
@@ -102,7 +103,6 @@ void DesktopApp::BeginRenameSelected(
                     widgets_[selectedWidgetIndex].id);
             if (groupIndex < widgets_.size())
             {
-                visibilityWidgetIndex = groupIndex;
                 for (const auto& c : containers_)
                 {
                     auto* group =
@@ -252,11 +252,18 @@ void DesktopApp::BeginRenameSelected(
         }
         return;
     }
+    size_t visibilityWidgetIndex =
+        RenameController::InvalidIndex;
     RECT itemBounds = GetVisibleCollectionItemBounds(
-        renameController_.Index());
+        renameController_.Index(),
+        &visibilityWidgetIndex);
     if (IsRectEmptyRect(itemBounds))
         itemBounds = items_[selectedIndex].bounds;
-    if (IsRectEmptyRect(itemBounds)) return;
+    if (IsRectEmptyRect(itemBounds))
+    {
+        renameController_.Reset();
+        return;
+    }
     RECT textRect = GetItemTextRect(itemBounds, true);
     InflateRect(&textRect, 2, 2);
     RECT screenRect = textRect;
@@ -295,4 +302,10 @@ void DesktopApp::BeginRenameSelected(
     SendMessageW(renameEdit_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(items_[selectedIndex].name, isDirectory));
     SetFocus(renameEdit_);
+    if (visibilityWidgetIndex < widgets_.size())
+    {
+        interactionPinnedWidgetId_ =
+            widgets_[visibilityWidgetIndex].id;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
 }

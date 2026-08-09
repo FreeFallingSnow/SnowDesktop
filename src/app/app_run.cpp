@@ -749,6 +749,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     {
         ReconcileDesktopHoverState();
         UpdateWindow(hwnd_);
+        FlushPendingCompositionCommit();
     }
     WriteDiagnosticLogEntry(customDesktopVisible_
         ? L"Window shown, entering loop"
@@ -768,9 +769,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             MWMO_INPUTAVAILABLE);
         if (waitResult == WAIT_FAILED)
             break;
-        if (handleCount == 1 && waitResult == WAIT_OBJECT_0)
-            uiAnimationScheduler_.DispatchDue();
-
+        const bool animationWasReady =
+            handleCount == 1 &&
+            waitResult == WAIT_OBJECT_0;
+        // Drain a bounded batch of queued input/window work first. When the
+        // waitable animation timer and mouse input are both ready, Windows
+        // reports the lower-indexed handle first; advancing animation here
+        // and again after every message lets a costly frame repeatedly jump
+        // ahead of pointer feedback.
         unsigned processedMessages = 0;
         while (processedMessages < 64 &&
             PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
@@ -782,14 +788,26 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+            // Pointer-driven desktop/Dock pixels must enter their own DComp
+            // channel first. Quick Navigation is flushed independently so a
+            // panel animation transaction cannot delay this presentation.
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
             ++processedMessages;
-
-            if (animationWait &&
+        }
+        if (animationWait &&
+            (animationWasReady ||
                 WaitForSingleObject(animationWait, 0) ==
-                    WAIT_OBJECT_0)
-            {
-                uiAnimationScheduler_.DispatchDue();
-            }
+                    WAIT_OBJECT_0))
+        {
+            // UiAnimationScheduler advances from the current monotonic time
+            // and skips missed deadlines, so one callback batch per pump
+            // iteration is sufficient and never creates catch-up bursts. The
+            // initial wait result must be retained because the high-resolution
+            // waitable timer is auto-reset and that wait consumes its signal.
+            uiAnimationScheduler_.DispatchDue();
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
         }
         if (settingsWindow_ && settingsWindow_->IsVisible() &&
             settingsWindow_->NeedsRender())

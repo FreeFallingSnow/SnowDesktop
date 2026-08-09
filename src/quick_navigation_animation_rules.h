@@ -34,18 +34,6 @@ struct Visual
     bool visible = false;
 };
 
-enum class AnchorMode
-{
-    Pointer,
-    DockSearch,
-};
-
-constexpr bool ShouldRefreshCloseAnchor(
-    AnchorMode mode)
-{
-    return mode == AnchorMode::Pointer;
-}
-
 class State
 {
 public:
@@ -133,6 +121,11 @@ public:
     [[nodiscard]] bool IsClosing() const
     {
         return !targetVisible_ && progress_ > 0.0f;
+    }
+
+    [[nodiscard]] bool IsOpening() const
+    {
+        return targetVisible_ && animating_;
     }
 
     [[nodiscard]] bool IsHidden() const

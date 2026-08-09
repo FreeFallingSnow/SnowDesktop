@@ -253,7 +253,12 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         InvalidateFloatingDockWindow(true);
     }
     InvalidateDragStaticScene();
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        RECT dirty = popupRect_;
+        InflateRect(&dirty, 6, 6);
+        InvalidateRect(hwnd_, &dirty, FALSE);
+    }
 }
 
 void DesktopApp::ShowDockFolderPopupSortMenu(

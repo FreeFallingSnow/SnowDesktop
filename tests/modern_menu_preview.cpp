@@ -19,6 +19,25 @@ snowdesktop::modern_menu::Appearance gAppearance =
     snowdesktop::modern_menu::Appearance::SystemDarkBlur;
 UINT gPreviewDpi = USER_DEFAULT_SCREEN_DPI;
 
+const wchar_t* AppearanceName(
+    snowdesktop::modern_menu::Appearance appearance)
+{
+    using snowdesktop::modern_menu::Appearance;
+    switch (appearance)
+    {
+    case Appearance::SystemLightBlur:
+        return L"浅色";
+    case Appearance::SystemDarkBlur:
+        return L"深色";
+    case Appearance::OpaqueLight:
+        return L"浅色（不透明）";
+    case Appearance::OpaqueDark:
+        return L"深色（不透明）";
+    default:
+        return L"跟随系统";
+    }
+}
+
 std::vector<snowdesktop::modern_menu::Item> BuildPreviewItems()
 {
     using snowdesktop::modern_menu::Item;
@@ -69,8 +88,9 @@ void OpenPreviewMenu(HWND hwnd)
     // Keep the default preview at 96 DPI so low-resolution rasterization can
     // be inspected even when the development monitor uses display scaling.
     options.dpi = gPreviewDpi;
-    options.lightTheme =
-        gAppearance != snowdesktop::modern_menu::Appearance::SystemDarkBlur;
+    options.lightTheme = gAppearance !=
+            snowdesktop::modern_menu::Appearance::SystemDarkBlur &&
+        gAppearance != snowdesktop::modern_menu::Appearance::OpaqueDark;
     options.appearance = gAppearance;
     const auto items = BuildPreviewItems();
     gLastCommand = snowdesktop::modern_menu::Show(items, options).command;
@@ -96,12 +116,26 @@ LRESULT CALLBACK WindowProc(
         OpenPreviewMenu(hwnd);
         return 0;
     case WM_RBUTTONUP:
-        gAppearance = gAppearance ==
-                snowdesktop::modern_menu::Appearance::SystemLightBlur
-            ? snowdesktop::modern_menu::Appearance::SystemDarkBlur
-            : snowdesktop::modern_menu::Appearance::SystemLightBlur;
+    {
+        using snowdesktop::modern_menu::Appearance;
+        constexpr Appearance previewAppearances[] = {
+            Appearance::SystemLightBlur,
+            Appearance::SystemDarkBlur,
+            Appearance::OpaqueLight,
+            Appearance::OpaqueDark,
+        };
+        const auto current = std::find(
+            std::begin(previewAppearances), std::end(previewAppearances),
+            gAppearance);
+        const size_t next = current == std::end(previewAppearances)
+            ? 0
+            : (static_cast<size_t>(
+                current - std::begin(previewAppearances)) + 1) %
+                std::size(previewAppearances);
+        gAppearance = previewAppearances[next];
         OpenPreviewMenu(hwnd);
         return 0;
+    }
     case WM_MBUTTONUP:
     {
         constexpr UINT previewDpis[] = { 96, 120, 144, 192 };
@@ -142,7 +176,9 @@ LRESULT CALLBACK WindowProc(
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(255, 255, 255));
         std::wstring displayText =
-            L"单击重开，右键切换深浅，中键切换 DPI\n当前 DPI：";
+            L"单击重开，右键切换主题，中键切换 DPI\n当前主题：";
+        displayText += AppearanceName(gAppearance);
+        displayText += L"  当前 DPI：";
         displayText += std::to_wstring(gPreviewDpi);
         displayText += L"  最近命令：";
         displayText += gLastCommand == 0

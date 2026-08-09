@@ -120,13 +120,20 @@ void DesktopApp::BeginDesktopPassthroughHold()
         CloseQuickNavigation();
         FinalizeCloseQuickNavigation();
     }
-    CloseFloatingDock(true, true);
     HideDockWindowPreview();
     HideDragHintWindow();
 
     desktopPassthroughHoldActive_ = true;
-    desktopBackdropCompositor_.SetVisible(false);
-    ShowWindow(hwnd_, SW_HIDE);
+    CloseFloatingDockThen(
+        [this]() {
+            // The hotkey may have been released while the compositor hand-off
+            // was pending. In that case the desktop must remain visible.
+            if (!desktopPassthroughHoldActive_ ||
+                !hwnd_ || !IsWindow(hwnd_))
+                return;
+            desktopBackdropCompositor_.SetVisible(false);
+            ShowWindow(hwnd_, SW_HIDE);
+        });
 }
 
 void DesktopApp::UnregisterDesktopPassthroughHotkey()

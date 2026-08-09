@@ -20,6 +20,13 @@ enum class DockWindowTransitionDirection
     Restore,
 };
 
+enum class DockWindowRestoreTransitionPhase
+{
+    RequestRestore,
+    ActivateRestored,
+    FallbackWithoutAnimation,
+};
+
 enum class DockWindowTransitionStartAction
 {
     StartNew,
@@ -94,10 +101,25 @@ enum class DockWindowTransitionSurface
     LiveThumbnail,
 };
 
+enum class DockWindowTransitionCapturePolicy
+{
+    SnapshotPreferred,
+    LiveThumbnailOnly,
+};
+
 constexpr DockWindowTransitionSurface ResolveDockWindowTransitionSurface(
     bool snapshotAvailable,
-    bool liveThumbnailAvailable) noexcept
+    bool liveThumbnailAvailable,
+    DockWindowTransitionCapturePolicy capturePolicy =
+        DockWindowTransitionCapturePolicy::SnapshotPreferred) noexcept
 {
+    if (capturePolicy ==
+        DockWindowTransitionCapturePolicy::LiveThumbnailOnly)
+    {
+        return liveThumbnailAvailable
+            ? DockWindowTransitionSurface::LiveThumbnail
+            : DockWindowTransitionSurface::None;
+    }
     return snapshotAvailable
         ? DockWindowTransitionSurface::Snapshot
         : (liveThumbnailAvailable
@@ -108,14 +130,16 @@ constexpr DockWindowTransitionSurface ResolveDockWindowTransitionSurface(
 /**
  * @brief 使用静态窗口快照在应用窗口与 Dock 图标之间播放过渡。
  *
- * 最小化前仅捕获一次窗口帧，恢复时优先复用缓存帧，动画期间由 GPU
- * 缩放静态位图，避免持续重采样实时 DWM 表面。没有可用快照时仍保留
- * DWM 缩略图回退。该窗口不抢焦点且鼠标穿透。
+ * 普通桌面 Dock 最小化前仅捕获一次窗口帧，恢复时优先复用缓存帧，
+ * 动画期间由 GPU 缩放静态位图。悬浮 Dock 可要求仅使用目标 HWND 的
+ * DWM 缩略图，避免把顶层 Dock 写入屏幕快照；注册失败时由调用方决定
+ * 是否关闭 Dock 后重试静态快照。该窗口不抢焦点且鼠标穿透。
  */
 class DockWindowTransition
 {
 public:
-    using RestoreCallback = std::function<void(HWND)>;
+    using RestoreCallback = std::function<void(
+        HWND, DockWindowRestoreTransitionPhase)>;
 
     DockWindowTransition() = default;
     ~DockWindowTransition();
@@ -129,10 +153,15 @@ public:
         ID2D1Device* d2dDevice,
         IDCompositionDesktopDevice* compositionDevice);
     bool PrimeMinimizeSnapshot(HWND sourceWindow);
-    bool StartMinimize(HWND sourceWindow, RECT dockRect);
+    bool StartMinimize(
+        HWND sourceWindow, RECT dockRect,
+        DockWindowTransitionCapturePolicy capturePolicy =
+            DockWindowTransitionCapturePolicy::SnapshotPreferred,
+        HWND keepBelowWindow = nullptr);
     bool StartRestore(
         HWND sourceWindow, RECT dockRect,
-        RestoreCallback restoreCallback);
+        RestoreCallback restoreCallback,
+        HWND keepBelowWindow = nullptr);
     void Cancel();
     bool IsActive() const;
     bool IsActiveFor(HWND window) const;
@@ -145,6 +174,10 @@ private:
     static constexpr ULONGLONG
         kPrimedSnapshotLifetimeMs = 500;
     static constexpr ULONGLONG kRestoreCleanupTimeoutMs = 240;
+    static constexpr ULONGLONG
+        kRestorePresentationDelayMs = 16;
+    static constexpr ULONGLONG
+        kRestoreSnapshotFadeDurationMs = 56;
     static constexpr std::size_t kMaximumCachedSnapshots = 3;
     static constexpr std::size_t
         kMaximumCachedSnapshotBytes =
@@ -167,7 +200,9 @@ private:
     bool Start(
         HWND sourceWindow, RECT dockRect,
         DockWindowTransitionDirection direction,
-        RestoreCallback restoreCallback);
+        RestoreCallback restoreCallback,
+        DockWindowTransitionCapturePolicy capturePolicy,
+        HWND keepBelowWindow);
     bool Reverse(
         DockWindowTransitionDirection direction,
         RestoreCallback restoreCallback);
@@ -189,6 +224,7 @@ private:
     bool OnAnimationFrame(double nowMilliseconds);
     void Finish();
     void CompleteRestoreAfterRenderFailure();
+    void ActivateRestoredWindowForHandoff();
     void SetNativeTransitionsDisabled(bool disabled);
     void UnregisterThumbnail();
 
@@ -232,6 +268,8 @@ private:
     double animationDurationMs_ =
         static_cast<double>(kAnimationDurationMs);
     double restoreCleanupDeadlineMs_ = 0.0;
+    double restoreVisibleTimeMs_ = 0.0;
+    double restoreFadeStartTimeMs_ = 0.0;
     BYTE animationFromOpacity_ = 255;
     BYTE animationToOpacity_ = 0;
     bool awaitingRestoreVisibility_ = false;

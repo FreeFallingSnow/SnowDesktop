@@ -1,4 +1,5 @@
 #include "modern_menu.h"
+#include "modern_menu_appearance_rules.h"
 
 #include <windows.h>
 
@@ -284,6 +285,29 @@ void Expect(bool condition, const char* message)
 
 int wmain()
 {
+    using snowdesktop::modern_menu::Appearance;
+    using snowdesktop::modern_menu::appearance_rules::ResolveForWindows;
+    Expect(ResolveForWindows(
+            Appearance::FollowSystem, true, 10, 19045) ==
+            Appearance::OpaqueLight,
+        "Windows 10 follows the system light theme with an opaque menu");
+    Expect(ResolveForWindows(
+            Appearance::FollowSystem, false, 10, 19045) ==
+            Appearance::OpaqueDark,
+        "Windows 10 follows the system dark theme with an opaque menu");
+    Expect(ResolveForWindows(
+            Appearance::FollowSystem, true, 10, 22621) ==
+            Appearance::FollowSystem,
+        "Windows 11 keeps the system backdrop for follow-system menus");
+    Expect(ResolveForWindows(
+            Appearance::SystemLightBlur, true, 10, 19045) ==
+            Appearance::SystemLightBlur,
+        "an explicitly selected blur theme remains available on Windows 10");
+    Expect(ResolveForWindows(
+            Appearance::OpaqueDark, false, 10, 22621) ==
+            Appearance::OpaqueDark,
+        "an explicitly selected opaque theme remains available on Windows 11");
+
     WNDCLASSEXW windowClass{ sizeof(windowClass) };
     windowClass.lpfnWndProc = OwnerWindowProc;
     windowClass.hInstance = GetModuleHandleW(nullptr);
@@ -323,13 +347,30 @@ int wmain()
     options.owner = owner;
     options.anchor = { 80, 80 };
     options.dpi = USER_DEFAULT_SCREEN_DPI;
+    HANDLE scheduledWork = CreateEventW(
+        nullptr, FALSE, FALSE, nullptr);
+    int scheduledWorkCalls = 0;
+    int presentationFlushes = 0;
+    options.eventPump.scheduledWorkHandle = scheduledWork;
+    options.eventPump.dispatchScheduledWork = [&]() {
+        ++scheduledWorkCalls;
+    };
+    options.eventPump.flushPresentation = [&]() {
+        ++presentationFlushes;
+    };
+    SetEvent(scheduledWork);
     const auto result = snowdesktop::modern_menu::Show(items, options);
+    options.eventPump = {};
+    CloseHandle(scheduledWork);
     KillTimer(owner, kWatchdogTimer);
 
     Expect(!gWatchdogFired, "cascaded popup did not time out");
     Expect(gInputPosted, "test input reached the cascaded popup");
     Expect(result.command == 7,
         "a command selected from a cascaded submenu is returned");
+    Expect(scheduledWorkCalls == 1 &&
+            presentationFlushes > 0,
+        "the synchronous menu loop pumps scheduled animation work and presentation flushes");
 
     const std::vector<Item> adjustmentItems{
         { 0, L"Current: 8 x 6", L"", false },
@@ -398,14 +439,16 @@ int wmain()
     };
     const RECT followSystemMenuRect = captureMenuWindowRect(
         snowdesktop::modern_menu::Appearance::FollowSystem, false);
+    const RECT opaqueMenuRect = captureMenuWindowRect(
+        snowdesktop::modern_menu::Appearance::OpaqueLight, false);
     const RECT blurMenuRect = captureMenuWindowRect(
         snowdesktop::modern_menu::Appearance::SystemLightBlur, true);
-    Expect((followSystemMenuRect.right - followSystemMenuRect.left) ==
+    Expect((opaqueMenuRect.right - opaqueMenuRect.left) >
             (blurMenuRect.right - blurMenuRect.left),
-        "follow-system menu uses the blur menu's shadow-free HWND width");
-    Expect((followSystemMenuRect.bottom - followSystemMenuRect.top) ==
+        "opaque menus reserve an HWND margin for the analytic shadow");
+    Expect((opaqueMenuRect.bottom - opaqueMenuRect.top) >
             (blurMenuRect.bottom - blurMenuRect.top),
-        "follow-system menu uses the blur menu's shadow-free HWND height");
+        "opaque menus reserve vertical space for the analytic shadow");
     Expect(gObservedTopmost,
         "a topmost modern menu is created above taskbar windows");
 

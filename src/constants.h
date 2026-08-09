@@ -139,6 +139,9 @@ constexpr UINT kContextWidgetToggleSearchBox = 41046;
 constexpr UINT kContextWidgetToggleDateGroup = 41042;
 constexpr UINT kContextWidgetShowOnHoverOff = 41041;
 constexpr UINT kContextWidgetToggleCollectionMode = 41039;
+constexpr UINT kContextCopyPathCommand = 41052;
+constexpr UINT kContextRunAsAdministratorCommand = 41053;
+constexpr UINT kContextPropertiesCommand = 41054;
 constexpr UINT kContextSpacingPresetFirst = 41150;
 constexpr UINT kContextNewMenu = 41400;
 constexpr UINT kContextSettingsCommand = 41401;
@@ -242,6 +245,11 @@ constexpr int kDesktopPassthroughHotkeyId = 103;
 constexpr int kSettingsHotkeyProbeId = 104;
 constexpr UINT_PTR kDesktopPassthroughHoldTimerId = 20;
 constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
+// DoDragDrop owns a nested message loop, so the waitable animation timer in
+// the outer application pump needs a WM_TIMER bridge while a local drag is
+// visiting another process.
+constexpr UINT_PTR kOleDragUiPumpTimerId = 21;
+constexpr UINT kOleDragUiPumpIntervalMs = USER_TIMER_MINIMUM;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

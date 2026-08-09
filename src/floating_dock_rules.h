@@ -340,6 +340,36 @@ inline bool ShouldRetireDesktopDockCopy(
 }
 
 /**
+ * @brief A pending close owns a frozen hand-off surface.
+ *
+ * Once the backdrop transaction has been submitted, ordinary HWND paints or
+ * pointer-message tail redraws must not mutate that shared surface before the
+ * desktop copy has taken ownership.
+ */
+inline bool ShouldRenderFloatingDockFrame(
+    bool floatingDockVisible,
+    bool closePending)
+{
+    return floatingDockVisible && !closePending;
+}
+
+/**
+ * @brief 仅当两个 Dock 之间已不存在任何可见或待完成的交接时执行后续动作。
+ *
+ * 最小化等延后命令会抓取或改变桌面画面；只检查逻辑 visible 会在
+ * 异步合成回调尚未完成时提前执行，因此还必须检查待完成状态与 HWND。
+ */
+inline bool CanRunPostCloseActionImmediately(
+    bool floatingDockVisible,
+    bool closePending,
+    bool floatingDockWindowVisible)
+{
+    return !floatingDockVisible &&
+        !closePending &&
+        !floatingDockWindowVisible;
+}
+
+/**
  * @brief 浮动层接收鼠标时，其 hover 帧只应提交到浮动窗口。
  *
  * 顶层 Dock 已替代对应的桌面 Dock；继续让每个浮动 WM_MOUSEMOVE 排队
@@ -380,6 +410,19 @@ inline bool ShouldPresentPointerFrame(
         lastPresent == 0 ||
         now < lastPresent ||
         now - lastPresent >= kPointerFrameIntervalMs;
+}
+
+inline UINT RemainingPointerFrameDelay(
+    ULONGLONG now,
+    ULONGLONG lastPresent)
+{
+    if (lastPresent == 0 || now < lastPresent)
+        return 0;
+    const ULONGLONG elapsed = now - lastPresent;
+    if (elapsed >= kPointerFrameIntervalMs)
+        return 0;
+    return static_cast<UINT>(
+        kPointerFrameIntervalMs - elapsed);
 }
 
 /**
@@ -443,19 +486,21 @@ inline bool ShouldDismissForPointerDown(
     POINT desktopPoint,
     const RECT& dockRect,
     const RECT& popupRect,
-    const RECT& previewRect)
+    const RECT& previewRect,
+    const RECT& siblingInteractionRect = RECT{})
 {
     if (dragging || contextMenuActive)
         return false;
     // While a menu owns the mouse loop, its item presses are outside the Dock
     // rects but must still reach the menu command instead of tearing the host
     // down. The menu itself handles outside-click dismissal.
-    // The thumbnail preview panel is part of the Dock's interactive surface:
-    // a press there (card click or close button) must reach the preview's own
-    // button-up handler instead of tearing the floating host down mid-click.
+    // Dock-owned auxiliary surfaces receive their own clicks without tearing
+    // down the floating host. Other top-level surfaces decide independently.
     if (PtInRect(&dockRect, desktopPoint) ||
         (!IsRectEmpty(&previewRect) &&
-            PtInRect(&previewRect, desktopPoint)))
+            PtInRect(&previewRect, desktopPoint)) ||
+        (!IsRectEmpty(&siblingInteractionRect) &&
+            PtInRect(&siblingInteractionRect, desktopPoint)))
         return false;
     return IsRectEmpty(&popupRect) ||
         !PtInRect(&popupRect, desktopPoint);

@@ -90,6 +90,156 @@ struct GlyphAlphaMask
 using GlyphMaskKey = std::tuple<
     LONG, LONG, LONG, int, int, std::wstring>;
 
+using TextAlignmentKey = std::tuple<
+    LONG, LONG, LONG, BYTE, BYTE, BYTE, int,
+    std::wstring, std::wstring>;
+
+int ComputeOpticalTextOffset(HDC dc, const std::wstring& text,
+    int boundsHeight)
+{
+    if (!dc || text.empty() || boundsHeight <= 0)
+        return 0;
+
+    HFONT font = static_cast<HFONT>(GetCurrentObject(dc, OBJ_FONT));
+    TEXTMETRICW textMetrics{};
+    SIZE extent{};
+    if (!font || !GetTextMetricsW(dc, &textMetrics) ||
+        !GetTextExtentPoint32W(dc, text.c_str(),
+            static_cast<int>(text.size()), &extent))
+    {
+        return 0;
+    }
+
+    // DT_VCENTER centers the selected font's line box.  With GDI font
+    // linking, fallback glyph ink (notably CJK) can sit several physical
+    // pixels below that centre at fractional DPI scales.  Render a small
+    // monochrome probe so the visible ink, rather than the nominal line box,
+    // determines the correction.
+    constexpr int padding = 4;
+    constexpr int maximumWidth = 4096;
+    const int bitmapWidth = std::clamp(
+        static_cast<int>(extent.cx) + padding * 2,
+        padding * 2 + 1, maximumWidth);
+    const int bitmapHeight = std::max(
+        boundsHeight + padding * 2,
+        static_cast<int>(textMetrics.tmHeight) + padding * 2);
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+    bitmapInfo.bmiHeader.biWidth = bitmapWidth;
+    bitmapInfo.bmiHeader.biHeight = -bitmapHeight;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    void* rawPixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(nullptr, &bitmapInfo,
+        DIB_RGB_COLORS, &rawPixels, nullptr, 0);
+    HDC maskDc = bitmap ? CreateCompatibleDC(dc) : nullptr;
+    if (!bitmap || !maskDc || !rawPixels)
+    {
+        if (maskDc)
+            DeleteDC(maskDc);
+        if (bitmap)
+            DeleteObject(bitmap);
+        return 0;
+    }
+
+    HGDIOBJ oldBitmap = SelectObject(maskDc, bitmap);
+    HGDIOBJ oldFont = SelectObject(maskDc, font);
+    std::fill_n(static_cast<std::uint32_t*>(rawPixels),
+        static_cast<size_t>(bitmapWidth) * bitmapHeight, 0u);
+    SetBkMode(maskDc, TRANSPARENT);
+    SetTextColor(maskDc, RGB(255, 255, 255));
+    RECT drawBounds{
+        padding,
+        padding,
+        bitmapWidth - padding,
+        padding + boundsHeight,
+    };
+    DrawTextW(maskDc, text.c_str(), static_cast<int>(text.size()),
+        &drawBounds,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    const auto* pixels = static_cast<const std::uint32_t*>(rawPixels);
+    int inkTop = bitmapHeight;
+    int inkBottom = -1;
+    for (int y = 0; y < bitmapHeight; ++y)
+    {
+        for (int x = 0; x < bitmapWidth; ++x)
+        {
+            if ((pixels[static_cast<size_t>(y) * bitmapWidth + x] &
+                    0x00FFFFFFu) == 0)
+            {
+                continue;
+            }
+            inkTop = std::min(inkTop, y);
+            inkBottom = std::max(inkBottom, y);
+        }
+    }
+
+    if (oldFont && oldFont != HGDI_ERROR)
+        SelectObject(maskDc, oldFont);
+    if (oldBitmap && oldBitmap != HGDI_ERROR)
+        SelectObject(maskDc, oldBitmap);
+    DeleteDC(maskDc);
+    DeleteObject(bitmap);
+    if (inkBottom < inkTop)
+        return 0;
+
+    const int desiredCenterTwice = padding * 2 + boundsHeight - 1;
+    const int inkCenterTwice = inkTop + inkBottom;
+    const int deltaTwice = desiredCenterTwice - inkCenterTwice;
+    const int roundedOffset = deltaTwice >= 0
+        ? (deltaTwice + 1) / 2
+        : (deltaTwice - 1) / 2;
+    return std::clamp(roundedOffset,
+        -boundsHeight / 4, boundsHeight / 4);
+}
+
+int OpticalTextOffset(HDC dc, std::wstring_view text, int boundsHeight)
+{
+    if (!dc || text.empty() || boundsHeight <= 0)
+        return 0;
+    HFONT font = static_cast<HFONT>(GetCurrentObject(dc, OBJ_FONT));
+    LOGFONTW logFont{};
+    if (!font || GetObjectW(font, sizeof(logFont), &logFont) == 0)
+        return 0;
+
+    constexpr size_t maximumSampleLength = 128;
+    std::wstring sample(text.substr(0, maximumSampleLength));
+    const TextAlignmentKey key{
+        logFont.lfHeight,
+        logFont.lfWidth,
+        logFont.lfWeight,
+        logFont.lfItalic,
+        logFont.lfCharSet,
+        logFont.lfQuality,
+        boundsHeight,
+        std::wstring(logFont.lfFaceName),
+        sample,
+    };
+    static std::mutex cacheMutex;
+    static std::map<TextAlignmentKey, int> cache;
+    {
+        std::lock_guard lock(cacheMutex);
+        const auto found = cache.find(key);
+        if (found != cache.end())
+            return found->second;
+    }
+
+    const int offset = ComputeOpticalTextOffset(dc, sample, boundsHeight);
+    std::lock_guard lock(cacheMutex);
+    if (cache.size() >= 512)
+        cache.clear();
+    return cache.try_emplace(key, offset).first->second;
+}
+
+void OpticallyCenterTextBounds(HDC dc, std::wstring_view text, RECT& bounds)
+{
+    const int height = static_cast<int>(bounds.bottom - bounds.top);
+    OffsetRect(&bounds, 0, OpticalTextOffset(dc, text, height));
+}
+
 GlyphAlphaMask BuildOpticallyWeightedMask(const LOGFONTW& sourceFont,
     const wchar_t* glyph, int width, int height)
 {
@@ -208,6 +358,45 @@ GlyphAlphaMask BuildOpticallyWeightedMask(const LOGFONTW& sourceFont,
             }
             result.alpha[static_cast<size_t>(y) * width + x] =
                 static_cast<std::uint8_t>((sum + 8) / 16);
+        }
+    }
+
+    // Fluent glyph masters do not all share the same visible vertical
+    // bearings.  Centre the final raster mask so every leading menu icon
+    // aligns with the row independently of glyph choice and DPI.
+    int inkTop = height;
+    int inkBottom = -1;
+    for (int y = 0; y < height; ++y)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            if (result.alpha[static_cast<size_t>(y) * width + x] == 0)
+                continue;
+            inkTop = std::min(inkTop, y);
+            inkBottom = std::max(inkBottom, y);
+        }
+    }
+    if (inkBottom >= inkTop)
+    {
+        const int deltaTwice = height - 1 - inkTop - inkBottom;
+        const int verticalOffset = deltaTwice >= 0
+            ? (deltaTwice + 1) / 2
+            : (deltaTwice - 1) / 2;
+        if (verticalOffset != 0)
+        {
+            std::vector<std::uint8_t> centered(result.alpha.size(), 0);
+            for (int y = 0; y < height; ++y)
+            {
+                const int destinationY = y + verticalOffset;
+                if (destinationY < 0 || destinationY >= height)
+                    continue;
+                std::copy_n(
+                    result.alpha.begin() + static_cast<size_t>(y) * width,
+                    width,
+                    centered.begin() +
+                        static_cast<size_t>(destinationY) * width);
+            }
+            result.alpha.swap(centered);
         }
     }
 
@@ -338,12 +527,26 @@ void DrawGlyphLayer(HDC dc, const wchar_t* glyph,
     {
         return;
     }
-    const int savedDc = SaveDC(dc);
+
+    RECT alignedBounds = bounds;
+    OpticallyCenterTextBounds(dc, glyph, alignedBounds);
+    const int verticalOffset = alignedBounds.top - bounds.top;
+    RECT alignedClip{};
+    const RECT* effectiveClip = nullptr;
     if (clip)
-        IntersectClipRect(dc, clip->left, clip->top,
-            clip->right, clip->bottom);
+    {
+        alignedClip = *clip;
+        OffsetRect(&alignedClip, 0, verticalOffset);
+        effectiveClip = &alignedClip;
+    }
+    const int savedDc = SaveDC(dc);
+    if (effectiveClip)
+    {
+        IntersectClipRect(dc, effectiveClip->left, effectiveClip->top,
+            effectiveClip->right, effectiveClip->bottom);
+    }
     SetTextColor(dc, color);
-    RECT drawBounds = bounds;
+    RECT drawBounds = alignedBounds;
     DrawTextW(dc, glyph, -1, &drawBounds,
         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     RestoreDC(dc, savedDc);
@@ -632,12 +835,20 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     std::wstring_view label = item.label ? item.label : L"";
     const size_t tab = label.find(L'\t');
     std::wstring primary(label.substr(0, tab));
+    std::wstring shortcut = tab == std::wstring_view::npos
+        ? std::wstring{} : std::wstring(label.substr(tab + 1));
+    std::wstring alignmentSample = primary;
+    if (!shortcut.empty())
+    {
+        alignmentSample += L' ';
+        alignmentSample += shortcut;
+    }
+    OpticallyCenterTextBounds(dc, alignmentSample, textBounds);
     DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()),
         &textBounds, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
             DT_END_ELLIPSIS | DT_HIDEPREFIX);
-    if (tab != std::wstring_view::npos)
+    if (!shortcut.empty())
     {
-        std::wstring shortcut(label.substr(tab + 1));
         DrawTextW(dc, shortcut.c_str(), static_cast<int>(shortcut.size()),
             &textBounds, DT_RIGHT | DT_VCENTER | DT_SINGLELINE |
                 DT_END_ELLIPSIS | DT_HIDEPREFIX);
@@ -705,6 +916,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     std::wstring_view label = item.label ? item.label : L"";
     const size_t tab = label.find(L'\t');
     std::wstring primary(label.substr(0, tab));
+    OpticallyCenterTextBounds(dc, primary, labelBounds);
     DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()),
         &labelBounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE |
             DT_END_ELLIPSIS | DT_HIDEPREFIX);
@@ -775,6 +987,7 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
                 metrics.textGap
             : metrics.outerInset * 2;
         labelBounds.right -= metrics.outerInset * 2;
+        OpticallyCenterTextBounds(dc, item.label, labelBounds);
         DrawTextW(dc, item.label, -1, &labelBounds,
             (hasGlyph ? DT_LEFT : DT_CENTER) |
                 DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS |
@@ -877,6 +1090,7 @@ bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
     RECT drawBounds = textBounds;
     drawBounds.left -= horizontalOffset;
     drawBounds.right += horizontalOffset;
+    OpticallyCenterTextBounds(dc, visibleText, drawBounds);
     const int savedDc = SaveDC(dc);
     IntersectClipRect(dc, textBounds.left, textBounds.top,
         textBounds.right, textBounds.bottom);

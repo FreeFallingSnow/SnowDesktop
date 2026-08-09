@@ -130,16 +130,10 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             return;
         }
 
-        const double commitStart =
-            snowdesktop::UiAnimationScheduler::
-                MonotonicMilliseconds();
-        hr = dcompDevice_->Commit();
-        uiAnimationScheduler_.RecordCommitDuration(
-            snowdesktop::UiAnimationScheduler::
-                MonotonicMilliseconds() - commitStart);
-        if (FAILED(hr))
+        if (!CommitCompositionAnimationFrame())
         {
-            RecoverCompositionRenderFailure(L"Paint Commit", hr);
+            RecoverCompositionRenderFailure(
+                L"Queue Paint Commit", E_FAIL);
             return;
         }
         compositionRenderRecoveryPending_ = false;

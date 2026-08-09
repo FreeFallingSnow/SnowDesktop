@@ -407,6 +407,19 @@ int wmain()
     Expect(replacementRendered && IsWindowVisible(window.Handle()) != FALSE,
         "the sibling preview atomically replaces the old frame");
 
+    Expect(window.Show(replacementModel, menuBounds, nullptr, 96,
+            false, {}, itemBounds,
+            snowdesktop::modern_menu::Appearance::OpaqueDark),
+        "the preview accepts an opaque menu appearance");
+    Expect(!window.BlurEnabledForTesting(),
+        "an opaque menu also disables blur on its companion preview");
+    Expect(window.Show(replacementModel, menuBounds, nullptr, 96,
+            true, {}, itemBounds,
+            snowdesktop::modern_menu::Appearance::SystemLightBlur),
+        "the preview can switch back to a blur menu appearance");
+    Expect(window.BlurEnabledForTesting(),
+        "an explicit blur theme restores the companion preview backdrop");
+
     const auto& commits = window.CommittedPositionsForTesting();
     Expect(!commits.empty(),
         "preview records its committed window positions");

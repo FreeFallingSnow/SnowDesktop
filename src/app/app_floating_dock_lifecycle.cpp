@@ -30,7 +30,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
                 dockSettings_.floatingShortcutMode,
                 dockSettings_.floatingEdgeSwipeEnabled))
     {
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         return;
     }
 
@@ -140,16 +140,17 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         return;
     }
 
+    POINT desktopPoint = cursor;
+    if (hwnd_ && IsWindow(hwnd_))
+        ScreenToClient(hwnd_, &desktopPoint);
+    else
+    {
+        desktopPoint.x -= virtualLeft_;
+        desktopPoint.y -= virtualTop_;
+    }
+
     if (floatingDockVisible_ && pointerPressed)
     {
-        POINT desktopPoint = cursor;
-        if (hwnd_ && IsWindow(hwnd_))
-            ScreenToClient(hwnd_, &desktopPoint);
-        else
-        {
-            desktopPoint.x -= virtualLeft_;
-            desktopPoint.y -= virtualTop_;
-        }
         if (leftButtonPressed &&
             TryActivateDockPopupFromMenuPointerPress(
                 desktopPoint,
@@ -181,6 +182,10 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 previewDesktopRect = previewScreenRect;
             }
         }
+        const RECT quickNavigationInteractionRect =
+            quickNavigationOpen_
+                ? quickNavigationRect_
+                : RECT{};
         if (snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
                     dragSession_.IsActive() ||
@@ -189,7 +194,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                     desktopPoint,
                     floatingDockRect_,
                     floatingDockPopupRect_,
-                    previewDesktopRect))
+                    previewDesktopRect,
+                    quickNavigationInteractionRect))
         {
             CloseFloatingDock();
             floatingDockEdgeSwipeDetector_.Reset();

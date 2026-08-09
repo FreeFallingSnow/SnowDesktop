@@ -6,7 +6,15 @@
 DesktopApp::~DesktopApp()
 {
     uiAnimationScheduler_.CancelAll();
-    uiAnimationFrameToken_ = 0;
+    dockWindowActivationObservationToken_ = 0;
+    dockWindowActivationObservations_.clear();
+    popupAnimationFrameToken_ = 0;
+    luaPanelAnimationFrameToken_ = 0;
+    quickNavigationAnimationFrameToken_ = 0;
+    dockBounceAnimationFrameToken_ = 0;
+    pageNotifyAnimationFrameToken_ = 0;
+    pointerRecoveryFrameToken_ = 0;
+    floatingDockHoverTailToken_ = 0;
     desktopPointerPresentPending_ = false;
     floatingDockPointerPresentPending_ = false;
     pageNotifyFadeOutToken_ = 0;
@@ -127,6 +135,7 @@ void DesktopApp::ResetDesktopWindowResources()
     desktopBackdropCompositor_.Reset();
     if (dockWindowTransition_)
         dockWindowTransition_->Cancel();
+    CancelAllDockWindowActivationObservations();
     nativeGlassPanelReadyLogged_ = false;
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -139,6 +148,7 @@ void DesktopApp::ResetDesktopWindowResources()
         StopRecycleBinWatcher();
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        KillTimer(hwnd_, kOleDragUiPumpTimerId);
         CancelUiAnimationFrame();
         if (pageNotifyFadeOutToken_)
             uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);

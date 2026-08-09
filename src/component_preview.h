@@ -1,5 +1,7 @@
 #pragma once
 
+#include "modern_menu.h"
+
 #include <windows.h>
 
 #include <cstdint>
@@ -105,11 +107,15 @@ public:
 
     bool Show(const Model& model, const RECT& menuBounds,
         HWND owner, UINT dpi, bool lightTheme,
-        ApplyHandler onApply = {}, const RECT& itemBounds = {});
+        ApplyHandler onApply = {}, const RECT& itemBounds = {},
+        modern_menu::Appearance appearance =
+            modern_menu::Appearance::FollowSystem);
     /** Use the same dwell delay as opening a real menu submenu. */
     bool ScheduleShow(const Model& model, const RECT& menuBounds,
         HWND owner, UINT dpi, bool lightTheme,
-        ApplyHandler onApply = {}, const RECT& itemBounds = {});
+        ApplyHandler onApply = {}, const RECT& itemBounds = {},
+        modern_menu::Appearance appearance =
+            modern_menu::Appearance::FollowSystem);
     /** Delay dismissal long enough for the pointer to cross the menu gap. */
     void ScheduleHide();
     void Hide();
@@ -130,6 +136,7 @@ public:
     }
     RECT NextBoundsForTesting() const { return nextButton_; }
     RECT NextGlyphBoundsForTesting() const { return nextGlyphRect_; }
+    bool BlurEnabledForTesting() const { return blurEnabled_; }
 
 private:
     bool EnsureCreated(HWND owner);
@@ -139,7 +146,7 @@ private:
     void ApplyCurrent();
     bool PointerInsideMenuOrPreview() const;
     std::wstring ModelIdentity(const Model& model) const;
-    void ApplyWindowAppearance(bool lightTheme);
+    void ApplyWindowAppearance();
     POINT ResolvePosition(const RECT& menuBounds, UINT dpi) const;
     static LRESULT CALLBACK WindowProc(
         HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -169,6 +176,7 @@ private:
     std::vector<OptionHit> optionHits_;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool lightTheme_ = true;
+    bool blurEnabled_ = true;
     bool pointerTracking_ = false;
     bool componentHovered_ = false;
     ApplyHandler onApply_;
@@ -178,6 +186,8 @@ private:
     HWND pendingOwner_ = nullptr;
     UINT pendingDpi_ = USER_DEFAULT_SCREEN_DPI;
     bool pendingLightTheme_ = true;
+    modern_menu::Appearance pendingAppearance_ =
+        modern_menu::Appearance::FollowSystem;
     ApplyHandler pendingOnApply_;
     std::unordered_map<std::wstring, Bitmap> cardFrameCache_;
     std::vector<POINT> committedPositions_;

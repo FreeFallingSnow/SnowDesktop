@@ -8,7 +8,7 @@ constexpr bool ShouldRenderWidget(
     bool externalDragActive,
     bool widgetMoveActive,
     bool widgetSelected,
-    bool popupOpen,
+    bool interactionRetained,
     bool pointerInside)
 {
     return !showOnHoverOnly ||
@@ -16,7 +16,7 @@ constexpr bool ShouldRenderWidget(
         externalDragActive ||
         widgetMoveActive ||
         widgetSelected ||
-        popupOpen ||
+        interactionRetained ||
         pointerInside;
 }
 

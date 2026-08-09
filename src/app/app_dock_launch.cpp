@@ -318,10 +318,12 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
                                 identity.appUserModelId = ToUpperInvariant(targetName.substr(
                                     appsFolder + std::wstring(L"APPSFOLDER\\").size()));
                             }
-                            else if (IsApplicationsShellLinkTarget(shellLink.Get()))
+                            else if (IsApplicationsShellLinkTarget(
+                                    shellLink.Get(), item.parsingName))
                             {
                                 identity.kind = DockAppIdentityKind::Applications;
-                                identity.appUserModelId = upper;
+                                if (identity.appUserModelId.empty())
+                                    identity.appUserModelId = upper;
                             }
                         }
                         if (parsingName) CoTaskMemFree(parsingName);

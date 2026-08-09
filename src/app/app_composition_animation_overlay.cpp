@@ -1,4 +1,5 @@
 #include "app.h"
+#include "native_menu_presentation_rules.h"
 
 namespace
 {
@@ -216,13 +217,118 @@ bool DesktopApp::CommitCompositionAnimationFrame()
 {
     if (!dcompDevice_)
         return false;
+    compositionCommitPending_ = true;
+    return true;
+}
+
+bool DesktopApp::FlushPendingCompositionCommit()
+{
+    if (!compositionCommitPending_)
+        return true;
+    if (!dcompDevice_)
+    {
+        compositionCommitPending_ = false;
+        return false;
+    }
     const double commitStart =
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
     const HRESULT hr = dcompDevice_->Commit();
+    if (SUCCEEDED(hr))
+        compositionCommitPending_ = false;
     uiAnimationScheduler_.RecordCommitDuration(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
         commitStart);
-    return SUCCEEDED(hr);
+    if (SUCCEEDED(hr))
+        return true;
+
+    // This device contains the desktop and floating-Dock trees. Recover those
+    // surfaces without touching Quick Navigation, which owns a separate DComp
+    // device specifically so its animation cannot block pointer presentation.
+    compositionCommitPending_ = false;
+    RecoverCompositionRenderFailure(
+        L"Batched DComp Commit", hr);
+    if (floatingDockVisible_)
+        RecoverFloatingDockCompositionFailure(
+            L"Batched DComp Commit", hr);
+    EnsureUiAnimationFrame();
+    return false;
+}
+
+bool DesktopApp::WaitForCompositionPresentation(
+    const wchar_t* diagnosticContext)
+{
+    if (!FlushPendingCompositionCommit())
+        return false;
+
+    const double waitStart =
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    HRESULT completionHr = dcompDevice_
+        ? dcompDevice_->WaitForCommitCompletion()
+        : E_UNEXPECTED;
+    if (FAILED(completionHr))
+        completionHr = DwmFlush();
+    uiAnimationScheduler_.RecordCommitDuration(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
+        waitStart);
+    if (SUCCEEDED(completionHr))
+        return true;
+
+    wchar_t message[192]{};
+    wsprintfW(
+        message,
+        L"%s composition completion FAILED hr=0x%08X",
+        diagnosticContext ? diagnosticContext : L"Dock handoff",
+        static_cast<unsigned>(completionHr));
+    WriteDiagnosticLogEntry(message);
+    return false;
+}
+
+bool DesktopApp::CommitQuickNavigationCompositionFrame()
+{
+    if (!quickNavDcompDevice_)
+        return false;
+    quickNavCompositionCommitPending_ = true;
+    return true;
+}
+
+bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
+{
+    if (!quickNavCompositionCommitPending_)
+        return true;
+    if (!quickNavDcompDevice_)
+    {
+        quickNavCompositionCommitPending_ = false;
+        return false;
+    }
+
+    const double commitStart =
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    const HRESULT hr = quickNavDcompDevice_->Commit();
+    quickNavCompositionCommitPending_ = false;
+    uiAnimationScheduler_.RecordCommitDuration(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
+        commitStart);
+    if (SUCCEEDED(hr))
+        return true;
+
+    RecoverQuickNavCompositionFailure(
+        L"Isolated DComp Commit", hr);
+    EnsureUiAnimationFrame();
+    return false;
+}
+
+void DesktopApp::FlushNativeMenuPresentation()
+{
+    if (!snowdesktop::native_menu_presentation_rules::
+            ShouldFlushAfterOwnerMessage(
+                shellPopupMenuLayerDepth_ > 0,
+                compositionPaintInProgress_,
+                quickNavCompositionPaintInProgress_,
+                floatingDockCompositionPaintInProgress_))
+        return;
+
+    FlushPendingCompositionCommit();
+    FlushPendingQuickNavigationCompositionCommit();
 }
 
 void DesktopApp::ClearDesktopBehindCompositionAnimation(
@@ -237,6 +343,23 @@ void DesktopApp::ClearDesktopBehindCompositionAnimation(
         return;
     ValidateRect(hwnd_, &update);
     OnPaint(&update);
+}
+
+void DesktopApp::PrepareCompositionAnimationOverlayRetirement(
+    UiCompositionAnimationOverlay& overlay,
+    const RECT& bounds)
+{
+    if (!overlay.active)
+        return;
+
+    // The normal desktop renderer skips popup content while its snapshot
+    // overlay is active. Release only that logical suppression first, then
+    // paint the final static frame while the snapshot is still attached to
+    // the DComp tree. ResetCompositionAnimationOverlay can subsequently
+    // retire the snapshot in the same pending DComp transaction, so DWM
+    // never observes an empty frame between the two content owners.
+    overlay.active = false;
+    ClearDesktopBehindCompositionAnimation(bounds);
 }
 
 void DesktopApp::ResetCompositionAnimationOverlay(
@@ -352,15 +475,21 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                 popupAnimation_.Advance(static_cast<std::uint64_t>(
                     snowdesktop::UiAnimationScheduler::
                         MonotonicMilliseconds()));
-                if (popupAnimation_.IsAnimating() &&
-                    StartCollectionPopupCompositionAnimation())
+                if (popupAnimation_.IsAnimating())
+                {
+                    if (StartCollectionPopupCompositionAnimation())
+                        return;
+                    EnsureUiAnimationFrame();
                     return;
+                }
                 if (popupAnimation_.IsHidden())
                 {
                     FinalizeCloseCollectionPopup();
                     return;
                 }
                 const RECT dirty = popupAnimationCacheRect_;
+                PrepareCompositionAnimationOverlayRetirement(
+                    popupAnimationOverlay_, dirty);
                 ResetCollectionPopupAnimationCache();
                 if (hwnd_ && IsWindow(hwnd_))
                     InvalidateRect(hwnd_, &dirty, FALSE);
@@ -423,9 +552,13 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
                     static_cast<std::uint64_t>(
                         snowdesktop::UiAnimationScheduler::
                             MonotonicMilliseconds()));
-                if (luaWidgetPanelAnimation_.IsAnimating() &&
-                    StartLuaWidgetPanelCompositionAnimation())
+                if (luaWidgetPanelAnimation_.IsAnimating())
+                {
+                    if (StartLuaWidgetPanelCompositionAnimation())
+                        return;
+                    EnsureUiAnimationFrame();
                     return;
+                }
                 if (luaWidgetPanelAnimation_.IsHidden())
                 {
                     FinalizeCloseLuaWidgetPanel();
@@ -433,6 +566,8 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
                 }
                 const RECT dirty =
                     luaWidgetPanelAnimationCacheRect_;
+                PrepareCompositionAnimationOverlayRetirement(
+                    luaWidgetPanelAnimationOverlay_, dirty);
                 ResetLuaWidgetPanelAnimationCache();
                 if (hwnd_ && IsWindow(hwnd_))
                     InvalidateRect(hwnd_, &dirty, FALSE);

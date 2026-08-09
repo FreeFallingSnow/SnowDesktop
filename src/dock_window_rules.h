@@ -24,6 +24,13 @@ enum class DockWindowIconSource
     GenericExecutable,
 };
 
+enum class DockWindowActivationObservationAction
+{
+    Stop,
+    WaitForRestore,
+    Activate,
+};
+
 struct DockRunningIndicatorColor
 {
     float red = 0.0f;
@@ -187,33 +194,120 @@ constexpr bool NeedsDockCloseSystemCommandFallback(
 }
 
 /**
- * @brief 判断显示请求后是否还需通过窗口切换器恢复或置前。
+ * @brief 判断异步恢复请求失败后是否需要窗口切换器回退。
  *
- * 非最小化窗口始终需要切到前台；最小化窗口仅在普通显示请求被拒绝
- * 时使用 SwitchToThisWindow，避免对正常窗口重复发送恢复操作。
+ * 此回退只负责发起一次恢复；真实窗口退出最小化后再执行置前，
+ * 避免对从最大化状态最小化的窗口连续发送恢复命令。
  */
-constexpr bool NeedsDockWindowSwitchFallback(
+constexpr bool NeedsDockRestoreRequestFallback(
     bool wasMinimized,
     bool showWindowAccepted) noexcept
 {
-    return !wasMinimized || !showWindowAccepted;
+    return wasMinimized && !showWindowAccepted;
 }
 
 /**
- * @brief 顶层浮动 Dock 必须在窗口命令和抓帧之前退出合成场景。
+ * @brief 判断显示请求后是否可以安全地将目标窗口切到前台。
+ *
+ * ShowWindowAsync 返回成功只代表请求已投递。最小化窗口必须等到
+ * IsIconic 清除后再切换，确保所有应用（包括恢复到最大化的窗口）
+ * 都在最终显示状态下置前。
+ */
+constexpr bool ShouldSwitchDockWindowAfterShow(
+    bool wasMinimized,
+    bool restoreCompleted) noexcept
+{
+    return !wasMinimized || restoreCompleted;
+}
+
+/**
+ * @brief 判断最后活动弹窗能否作为 Dock 的实际激活目标。
+ */
+constexpr bool IsDockWindowActivationPopupEligible(
+    bool valid,
+    bool visible,
+    bool iconic,
+    bool noActivate) noexcept
+{
+    return valid && visible && !iconic && !noActivate;
+}
+
+/**
+ * @brief 判断普通前台请求失败后是否可以共享输入队列重试。
+ */
+constexpr bool ShouldRetryDockWindowForegroundActivation(
+    bool foregroundMatched,
+    bool synchronousActivationSafe) noexcept
+{
+    return !foregroundMatched && synchronousActivationSafe;
+}
+
+/**
+ * @brief 根窗口与实际弹窗都可响应时，才允许执行同步置前操作。
+ */
+constexpr bool IsDockWindowSynchronousActivationSafe(
+    bool rootWindowSafe,
+    bool activationWindowSafe) noexcept
+{
+    return rootWindowSafe && activationWindowSafe;
+}
+
+/**
+ * @brief 解析异步恢复/激活观察器的下一步动作。
+ *
+ * 恢复请求在窗口退出最小化前没有短超时；真正显示后则只在有限窗口内
+ * 重试置前，避免一个已经被用户后续操作取代的旧请求长期抢占前台。
+ */
+constexpr DockWindowActivationObservationAction
+ResolveDockWindowActivationObservationAction(
+    bool windowValid,
+    bool closePending,
+    bool rootWindowSafe,
+    bool awaitingRestore,
+    bool iconic,
+    bool foregroundMatched,
+    bool activationRetryExpired) noexcept
+{
+    if (!windowValid || closePending || !rootWindowSafe ||
+        foregroundMatched)
+    {
+        return DockWindowActivationObservationAction::Stop;
+    }
+    if (iconic)
+    {
+        return awaitingRestore
+            ? DockWindowActivationObservationAction::WaitForRestore
+            : DockWindowActivationObservationAction::Stop;
+    }
+    return activationRetryExpired
+        ? DockWindowActivationObservationAction::Stop
+        : DockWindowActivationObservationAction::Activate;
+}
+
+/**
+ * @brief 判断最小化动画是否必须与顶层浮动 Dock 隔离。
  *
  * 最小化会立即捕获目标窗口所在的屏幕区域。如果浮动 Dock 仍在顶层，
- * 它会作为覆盖层被写入快照。关闭并同步合成后再执行窗口命令，才能
- * 捕获被 Dock 遮挡位置下方的真实窗口内容。
+ * 它会作为覆盖层被写入屏幕快照。调用方应先尝试只包含目标 HWND 的
+ * DWM 缩略图；不可用时再关闭并同步 Dock 后执行屏幕抓取。恢复复用
+ * 已有窗口快照或 DWM 缩略图，不需要隔离。
  */
-constexpr bool MustCloseFloatingDockBeforeWindowCommand(
+constexpr bool RequiresFloatingDockMinimizeCaptureIsolation(
     bool floatingDockVisible,
     DockClickAction action) noexcept
 {
     return floatingDockVisible &&
-        (action == DockClickAction::Activate ||
-         action == DockClickAction::Minimize ||
-         action == DockClickAction::Restore);
+        action == DockClickAction::Minimize;
+}
+
+/**
+ * @brief 判断最小化窗口是否应恢复到最大化状态。
+ */
+constexpr bool ShouldRestoreDockWindowMaximized(
+    UINT placementFlags, UINT placementShowCommand) noexcept
+{
+    return (placementFlags & WPF_RESTORETOMAXIMIZED) != 0 ||
+        placementShowCommand == SW_SHOWMAXIMIZED;
 }
 
 /**
@@ -227,8 +321,8 @@ constexpr bool MustCloseFloatingDockBeforeWindowCommand(
 constexpr int ResolveDockRestoreShowCommand(
     UINT placementFlags, UINT placementShowCommand) noexcept
 {
-    return (placementFlags & WPF_RESTORETOMAXIMIZED) != 0 ||
-            placementShowCommand == SW_SHOWMAXIMIZED
+    return ShouldRestoreDockWindowMaximized(
+            placementFlags, placementShowCommand)
         ? SW_SHOWMAXIMIZED
         : SW_RESTORE;
 }

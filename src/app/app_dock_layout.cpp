@@ -55,22 +55,14 @@ void DesktopApp::InvalidateDockRects(BOOL erase)
     }
 }
 
-void DesktopApp::ClearDockBackdropForDragTransition(
-    POINT previousPointer, POINT currentPointer)
+void DesktopApp::PrepareDockBackdropForDragTransition()
 {
-    for (const auto& container : containers_)
-    {
-        auto* dock = dynamic_cast<DockContainer*>(container.get());
-        if (!dock) continue;
-
-        const RECT previousPanel =
-            dock->GetVisualPanelBounds(previousPointer);
-        const RECT currentPanel =
-            dock->GetVisualPanelBounds(currentPointer);
-        desktopBackdropCompositor_.RemovePanel(previousPanel);
-        if (!EqualRect(&previousPanel, &currentPanel))
-            desktopBackdropCompositor_.RemovePanel(currentPanel);
-    }
+    // RemovePanel changes the helper HWND region and submits WinComp
+    // immediately. Doing that before the first drag paint creates a frame in
+    // which the Dock content still exists but its glass panel is already gone.
+    // Reconcile every panel in the next paint instead: BeginFrame/EndFrame can
+    // then replace the old hover geometry and new drag geometry atomically.
+    desktopBackdropFullCollectionPending_ = true;
 }
 
 int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const

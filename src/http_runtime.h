@@ -16,9 +16,9 @@
 namespace snowdesktop::http_security
 {
 bool IsAllowedRemoteIpLiteral(std::wstring_view address);
-bool IsAllowedHttpsUrlForDomains(const std::wstring& url,
-    const std::vector<std::string>& domains);
-bool IsResolutionPinningSupportedVersion(int majorVersion, int buildNumber);
+bool IsAllowedUrlForDomains(const std::wstring& url,
+    const std::vector<std::string>& domains,
+    bool allowAnyHttpOrHttpsUrl = false);
 }
 
 struct HttpRequestOptions
@@ -31,6 +31,7 @@ struct HttpRequestOptions
     int timeoutMs = 10000;
     int cacheSeconds = 0;
     std::vector<std::string> allowedDomains;
+    bool allowAnyHttpOrHttpsUrl = false;
 };
 
 struct HttpResponse

@@ -432,6 +432,13 @@ ShowDockFolderPopupContextMenu(
             _LW("app.menu.open"));
         AppendMenuW(
             menu,
+            hasSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextCopyPathCommand,
+            _LW("app.menu.copy_path"));
+        AppendMenuW(
+            menu,
             singleSelection &&
                     snowdesktop::
                         item_location::
@@ -442,6 +449,28 @@ ShowDockFolderPopupContextMenu(
             kContextRevealLocationCommand,
             _LW(
                 "app.menu.open_file_location"));
+        AppendMenuW(
+            menu, MF_SEPARATOR,
+            0, nullptr);
+        AppendMenuW(
+            menu,
+            singleSelection &&
+                    IsAdministratorRunnablePath(
+                        selectedPaths.front())
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextRunAsAdministratorCommand,
+            _LW("app.menu.run_as_administrator"));
+        AppendMenuW(
+            menu,
+            singleSelection
+                ? MF_STRING
+                : MF_STRING | MF_GRAYED,
+            kContextPropertiesCommand,
+            _LW("app.menu.properties"));
+        AppendMenuW(
+            menu, MF_SEPARATOR,
+            0, nullptr);
         AppendMenuW(
             menu,
             singleSelection
@@ -605,6 +634,18 @@ ShowDockFolderPopupContextMenu(
         kContextRevealLocationCommand,
         L"");
     SetMenuItemIcon(
+        menu, kContextCopyPathCommand,
+        snowdesktop::menu_fluent_glyphs::kCopy,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(
+        menu, kContextRunAsAdministratorCommand,
+        snowdesktop::menu_fluent_glyphs::kShield,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(
+        menu, kContextPropertiesCommand,
+        snowdesktop::menu_fluent_glyphs::kInfo,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(
         menu, kContextRenameCommand,
         L"");
     SetMenuItemIcon(
@@ -695,6 +736,18 @@ ShowDockFolderPopupContextMenu(
                 Reveal(
                     hwnd_,
                     selectedPaths.front());
+        break;
+    case kContextCopyPathCommand:
+        CopyPathsToClipboard(selectedPaths);
+        break;
+    case kContextRunAsAdministratorCommand:
+        if (selectedPaths.size() == 1 &&
+            IsAdministratorRunnablePath(selectedPaths.front()))
+            RunPathAsAdministrator(selectedPaths.front());
+        break;
+    case kContextPropertiesCommand:
+        if (selectedPaths.size() == 1)
+            ShowPathProperties(selectedPaths.front());
         break;
     case kContextRenameCommand:
         if (singleSelection)

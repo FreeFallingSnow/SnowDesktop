@@ -15,8 +15,6 @@ namespace
 {
 constexpr DWORD kMaxResponseBytes = 1024 * 1024;
 
-constexpr DWORD kResolutionPinningMinBuild = 16299; // Windows 10 1709
-
 bool IsBlockedIpv4(const IN_ADDR& address)
 {
     const std::uint32_t value = ntohl(address.S_un.S_addr);
@@ -188,27 +186,6 @@ bool IsIpLiteral(std::wstring_view address)
     return InetPtonW(AF_INET6, value.c_str(), &ipv6) == 1;
 }
 
-bool WinHttpSupportsResolutionPinning()
-{
-    // RtlGetVersion reports the real OS version regardless of the app
-    // manifest, unlike GetVersionExW which can be shimmed to 6.2. The SDK
-    // headers do not declare it, so resolve it from ntdll at run time.
-    using RtlGetVersionProc = LONG(NTAPI*)(OSVERSIONINFOW*);
-    static RtlGetVersionProc rtlGetVersion = []() -> RtlGetVersionProc
-    {
-        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        return ntdll ? reinterpret_cast<RtlGetVersionProc>(
-            GetProcAddress(ntdll, "RtlGetVersion")) : nullptr;
-    }();
-    if (!rtlGetVersion) return false;
-    OSVERSIONINFOW version{};
-    version.dwOSVersionInfoSize = sizeof(version);
-    if (rtlGetVersion(&version) != 0) return false;
-    return snowdesktop::http_security::
-        IsResolutionPinningSupportedVersion(
-            static_cast<int>(version.dwMajorVersion),
-            static_cast<int>(version.dwBuildNumber));
-}
 }
 
 bool snowdesktop::http_security::IsAllowedRemoteIpLiteral(
@@ -225,30 +202,26 @@ bool snowdesktop::http_security::IsAllowedRemoteIpLiteral(
     return false;
 }
 
-bool snowdesktop::http_security::IsResolutionPinningSupportedVersion(
-    int majorVersion, int buildNumber)
-{
-    if (majorVersion > 10) return true;
-    return majorVersion == 10 && buildNumber >=
-        static_cast<int>(kResolutionPinningMinBuild);
-}
-
 AsyncHttpService::~AsyncHttpService()
 {
     Stop();
 }
 
-bool snowdesktop::http_security::IsAllowedHttpsUrlForDomains(
+bool snowdesktop::http_security::IsAllowedUrlForDomains(
     const std::wstring& url,
-    const std::vector<std::string>& domains)
+    const std::vector<std::string>& domains,
+    bool allowAnyHttpOrHttpsUrl)
 {
     URL_COMPONENTS components{ sizeof(components) };
     wchar_t host[256]{};
     components.lpszHostName = host;
     components.dwHostNameLength = static_cast<DWORD>(std::size(host));
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components)) return false;
-    if (components.nScheme != INTERNET_SCHEME_HTTPS)
-        return false;
+    const bool isHttp = components.nScheme == INTERNET_SCHEME_HTTP;
+    const bool isHttps = components.nScheme == INTERNET_SCHEME_HTTPS;
+    if (allowAnyHttpOrHttpsUrl)
+        return (isHttp || isHttps) && components.dwHostNameLength > 0;
+    if (!isHttps) return false;
     std::wstring actual = NormalizeHostname(
         std::wstring(host, components.dwHostNameLength));
     if (actual.empty()) return false;
@@ -295,8 +268,9 @@ bool snowdesktop::http_security::IsAllowedHttpsUrlForDomains(
 int AsyncHttpService::Submit(HttpRequestOptions options)
 {
     if (!snowdesktop::http_security::
-            IsAllowedHttpsUrlForDomains(
-                options.url, options.allowedDomains))
+            IsAllowedUrlForDomains(
+                options.url, options.allowedDomains,
+                options.allowAnyHttpOrHttpsUrl))
         return 0;
     std::scoped_lock lock(mutex_);
     int activeForWidget = 0;
@@ -427,10 +401,11 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     for (int redirectCount = 0; redirectCount <= 3 && !token.stop_requested(); ++redirectCount)
     {
         if (!snowdesktop::http_security::
-                IsAllowedHttpsUrlForDomains(
-                    currentUrl, options.allowedDomains))
+                IsAllowedUrlForDomains(
+                    currentUrl, options.allowedDomains,
+                    options.allowAnyHttpOrHttpsUrl))
         {
-            response.error = "Redirect domain is not allowed";
+            response.error = "Redirect URL is not allowed";
             break;
         }
         URL_COMPONENTS components{ sizeof(components) };
@@ -450,7 +425,8 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
         }
         const std::wstring currentHost(host, components.dwHostNameLength);
         std::wstring pinnedAddress;
-        if (!ResolvePinnedPublicAddress(currentHost, pinnedAddress))
+        if (!options.allowAnyHttpOrHttpsUrl &&
+            !ResolvePinnedPublicAddress(currentHost, pinnedAddress))
         {
             response.error =
                 "Host resolves to a private, local, or unavailable address";
@@ -476,25 +452,16 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             response.error = "WinHttpOpenRequest failed";
             break;
         }
-        // WINHTTP_OPTION_RESOLUTION_HOSTNAME only exists on Windows 10
-        // version 1709 (build 16299) and later. On older systems the option
-        // is unknown and WinHttpSetOption always fails, which would break
-        // every widget request. Fall back to the unpinned connection there;
-        // the pre-connect DNS check above and the post-connect
-        // WINHTTP_OPTION_CONNECTION_INFO check below still ensure the
-        // request never reaches a private or local address.
-        if (WinHttpSupportsResolutionPinning())
+        // Resolution pinning is a best-effort hardening measure. Some
+        // WinHTTP versions expose the option in the SDK but reject it at run
+        // time, so attempt it directly and continue with the checked hostname
+        // connection when it is unavailable.
+        if (!pinnedAddress.empty())
         {
             const DWORD pinnedAddressBytes = static_cast<DWORD>(
                 (pinnedAddress.size() + 1) * sizeof(wchar_t));
-            if (!WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
-                    pinnedAddress.data(), pinnedAddressBytes))
-            {
-                response.error = "Cannot securely pin the resolved host";
-                WinHttpCloseHandle(request);
-                WinHttpCloseHandle(connection);
-                break;
-            }
+            WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
+                pinnedAddress.data(), pinnedAddressBytes);
         }
         DWORD disabledFeatures =
             WINHTTP_DISABLE_AUTHENTICATION | WINHTTP_DISABLE_COOKIES;
@@ -518,18 +485,21 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             WinHttpCloseHandle(connection);
             break;
         }
-        WINHTTP_CONNECTION_INFO connectionInfo{};
-        connectionInfo.cbSize = sizeof(connectionInfo);
-        DWORD connectionInfoSize = sizeof(connectionInfo);
-        if (!WinHttpQueryOption(request, WINHTTP_OPTION_CONNECTION_INFO,
-                &connectionInfo, &connectionInfoSize) ||
-            !IsAllowedRemoteSockaddr(reinterpret_cast<const SOCKADDR*>(
-                &connectionInfo.RemoteAddress)))
+        if (!options.allowAnyHttpOrHttpsUrl)
         {
-            response.error = "HTTP connection reached a non-public address";
-            WinHttpCloseHandle(request);
-            WinHttpCloseHandle(connection);
-            break;
+            WINHTTP_CONNECTION_INFO connectionInfo{};
+            connectionInfo.cbSize = sizeof(connectionInfo);
+            DWORD connectionInfoSize = sizeof(connectionInfo);
+            if (!WinHttpQueryOption(request, WINHTTP_OPTION_CONNECTION_INFO,
+                    &connectionInfo, &connectionInfoSize) ||
+                !IsAllowedRemoteSockaddr(reinterpret_cast<const SOCKADDR*>(
+                    &connectionInfo.RemoteAddress)))
+            {
+                response.error = "HTTP connection reached a non-public address";
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                break;
+            }
         }
         DWORD status = 0;
         DWORD statusSize = sizeof(status);
