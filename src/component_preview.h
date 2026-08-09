@@ -1,6 +1,11 @@
 #pragma once
 
+#include <d2d1_1.h>
+#include <d3d11.h>
+#include <dcomp.h>
+#include <dwrite.h>
 #include <windows.h>
+#include <wrl/client.h>
 
 #include <cstdint>
 #include <functional>
@@ -133,6 +138,8 @@ public:
 
 private:
     bool EnsureCreated(HWND owner);
+    bool InitializeGraphics();
+    void CreateFormats();
     bool RenderCurrent();
     void SelectRelative(int delta);
     void SetOption(OptionSetting setting, bool value);
@@ -147,6 +154,16 @@ private:
     HWND hwnd_ = nullptr;
     int width_ = 0;
     int height_ = 0;
+    Microsoft::WRL::ComPtr<ID3D11Device> d3dDevice_;
+    Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
+    Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> d2dContext_;
+    Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> dcrTarget_;
+    Microsoft::WRL::ComPtr<IDWriteFactory> dwriteFactory_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> titleFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> cardTitleFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> bodyFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> glyphFormat_;
     Model model_;
     size_t currentCard_ = 0;
     std::wstring modelIdentity_;

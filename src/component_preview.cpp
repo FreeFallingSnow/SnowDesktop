@@ -1,8 +1,9 @@
-#include "component_preview.h"
+﻿#include "component_preview.h"
 
 #include "menu_icon_render.h"
 #include "modern_menu.h"
 
+#include <d2d1helper.h>
 #include <dwmapi.h>
 #include <windowsx.h>
 
@@ -16,6 +17,8 @@ namespace snowdesktop::component_preview
 namespace
 {
 
+using Microsoft::WRL::ComPtr;
+
 constexpr wchar_t kPreviewWindowClass[] =
     L"SnowDesktop.ComponentPreviewPopup";
 constexpr UINT_PTR kOpenTimer = 1;
@@ -27,117 +30,226 @@ int Scale(int value, UINT dpi)
         USER_DEFAULT_SCREEN_DPI));
 }
 
-void Fill(HDC dc, const RECT& rect, COLORREF color)
+D2D1_RECT_F ToRectF(const RECT& rect)
 {
-    HBRUSH brush = CreateSolidBrush(color);
-    if (brush)
+    return D2D1::RectF(static_cast<float>(rect.left),
+        static_cast<float>(rect.top),
+        static_cast<float>(rect.right),
+        static_cast<float>(rect.bottom));
+}
+
+void SetBrush(ID2D1SolidColorBrush* brush, COLORREF color,
+    float alpha = 1.0f)
+{
+    brush->SetColor(D2D1::ColorF(
+        GetRValue(color) / 255.0f,
+        GetGValue(color) / 255.0f,
+        GetBValue(color) / 255.0f,
+        alpha));
+}
+
+void FillRectD2D(ID2D1RenderTarget* dc, ID2D1SolidColorBrush* brush,
+    const D2D1_RECT_F& rect, COLORREF color, float alpha = 1.0f)
+{
+    SetBrush(brush, color, alpha);
+    dc->FillRectangle(rect, brush);
+}
+
+void RoundedBoxD2D(ID2D1RenderTarget* dc, ID2D1SolidColorBrush* brush,
+    const RECT& rect, int radius, COLORREF fill, COLORREF border,
+    float alpha = 1.0f)
+{
+    const D2D1_ROUNDED_RECT rounded{
+        ToRectF(rect), static_cast<float>(radius),
+        static_cast<float>(radius),
+    };
+    SetBrush(brush, fill, alpha);
+    dc->FillRoundedRectangle(rounded, brush);
+    SetBrush(brush, border, alpha);
+    dc->DrawRoundedRectangle(rounded, brush, 1.0f);
+}
+
+void RoundedOutlineD2D(ID2D1RenderTarget* dc,
+    ID2D1SolidColorBrush* brush, const RECT& rect, int radius,
+    COLORREF border, float alpha = 1.0f)
+{
+    const D2D1_ROUNDED_RECT rounded{
+        ToRectF(rect), static_cast<float>(radius),
+        static_cast<float>(radius),
+    };
+    SetBrush(brush, border, alpha);
+    dc->DrawRoundedRectangle(rounded, brush, 1.0f);
+}
+
+/** @brief 浣跨敤 DWrite 娴嬮噺涓€娈垫枃鏈湪缁欏畾鏍煎紡涓嬬殑楂樺害锛圖IP锛夈€?*/
+float MeasureTextHeightD2D(IDWriteFactory* factory,
+    IDWriteTextFormat* format, const std::wstring& text, float width,
+    bool wrapping)
+{
+    if (!factory || !format || text.empty() || width <= 0)
+        return 0.0f;
+    format->SetWordWrapping(wrapping
+        ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(factory->CreateTextLayout(text.data(),
+            static_cast<UINT32>(text.size()), format, width, 10000.0f,
+            &layout)))
     {
-        FillRect(dc, &rect, brush);
-        DeleteObject(brush);
+        return 0.0f;
     }
+    DWRITE_TEXT_METRICS metrics{};
+    return SUCCEEDED(layout->GetMetrics(&metrics))
+        ? metrics.height : 0.0f;
 }
 
-void RoundedBox(HDC dc, const RECT& rect, int radius,
-    COLORREF fill, COLORREF border)
+/** @brief 灏嗘枃鏈埅鏂埌 maxWidth 鍐呭苟闄勫姞鐪佺暐鍙枫€?*/
+std::wstring TruncateWithEllipsis(IDWriteFactory* factory,
+    IDWriteTextFormat* format, const wchar_t* text, size_t length,
+    float maxWidth)
 {
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldBrush = brush ? SelectObject(dc, brush) : nullptr;
-    HGDIOBJ oldPen = pen ? SelectObject(dc, pen) : nullptr;
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
-        radius * 2, radius * 2);
-    if (oldPen) SelectObject(dc, oldPen);
-    if (oldBrush) SelectObject(dc, oldBrush);
-    if (pen) DeleteObject(pen);
-    if (brush) DeleteObject(brush);
+    const std::wstring_view view(text, length);
+    const auto measure = [&](const std::wstring& sample) {
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(factory->CreateTextLayout(sample.data(),
+                static_cast<UINT32>(sample.size()), format,
+                100000.0f, 100.0f, &layout)))
+        {
+            return 0.0f;
+        }
+        DWRITE_TEXT_METRICS metrics{};
+        return SUCCEEDED(layout->GetMetrics(&metrics))
+            ? metrics.width : 0.0f;
+    };
+    if (measure(std::wstring(view)) <= maxWidth)
+        return std::wstring(view);
+    constexpr wchar_t kEllipsis[] = L"\u2026";
+    size_t low = 0;
+    size_t high = length;
+    while (low < high)
+    {
+        const size_t mid = (low + high + 1) / 2;
+        if (measure(std::wstring(view.substr(0, mid)) + kEllipsis) <=
+            maxWidth)
+        {
+            low = mid;
+        }
+        else
+        {
+            high = mid - 1;
+        }
+    }
+    return std::wstring(view.substr(0, low)) + kEllipsis;
 }
 
-void RoundedOutline(HDC dc, const RECT& rect, int radius, COLORREF border)
+/** @brief 浠?DWrite 缁樺埗鏂囨湰锛涙敮鎸佹崲琛屼笌鐪佺暐鍙枫€?*/
+void DrawTextD2D(ID2D1RenderTarget* dc, ID2D1SolidColorBrush* brush,
+    IDWriteFactory* factory, IDWriteTextFormat* format,
+    const wchar_t* text, size_t length, const D2D1_RECT_F& rect,
+    COLORREF color, DWRITE_TEXT_ALIGNMENT align =
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+    bool wrapping = false, bool ellipsis = false,
+    float alpha = 1.0f)
 {
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldPen = pen ? SelectObject(dc, pen) : nullptr;
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
-        radius * 2, radius * 2);
-    if (oldBrush) SelectObject(dc, oldBrush);
-    if (oldPen) SelectObject(dc, oldPen);
-    if (pen) DeleteObject(pen);
+    if (!text || length == 0 || !factory || !format)
+        return;
+    format->SetTextAlignment(align);
+    format->SetWordWrapping(wrapping
+        ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
+    const float width = rect.right - rect.left;
+    const float height = rect.bottom - rect.top;
+    if (width <= 0.0f || height <= 0.0f)
+        return;
+
+    std::wstring truncated;
+    const wchar_t* drawText = text;
+    size_t drawLength = length;
+    if (ellipsis)
+    {
+        truncated = TruncateWithEllipsis(factory, format, text, length,
+            width);
+        drawText = truncated.c_str();
+        drawLength = truncated.size();
+    }
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(factory->CreateTextLayout(drawText,
+            static_cast<UINT32>(drawLength), format, width, height,
+            &layout)))
+    {
+        return;
+    }
+    SetBrush(brush, color, alpha);
+    dc->DrawTextLayout(D2D1::Point2F(rect.left, rect.top),
+        layout.Get(), brush);
 }
 
-void DrawCenteredText(HDC dc, HFONT font, COLORREF color,
-    const std::wstring& text, RECT rect)
-{
-    HGDIOBJ oldFont = SelectObject(dc, font);
-    const COLORREF oldColor = SetTextColor(dc, color);
-    const int oldMode = SetBkMode(dc, TRANSPARENT);
-    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &rect,
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS |
-            DT_NOPREFIX);
-    SetBkMode(dc, oldMode);
-    SetTextColor(dc, oldColor);
-    if (oldFont) SelectObject(dc, oldFont);
-}
-
-void DrawCenteredGlyph(HDC dc, HFONT font, COLORREF color,
-    wchar_t glyph, const RECT& rect, RECT& inkBounds)
+/** @brief 灞呬腑缁樺埗鍥炬爣瀛楀舰骞惰繑鍥炲叾澧ㄦ按杈圭晫銆?*/
+void DrawCenteredGlyphD2D(ID2D1RenderTarget* dc,
+    ID2D1SolidColorBrush* brush, IDWriteFactory* factory,
+    IDWriteTextFormat* format, wchar_t glyph, const RECT& rect,
+    RECT& inkBounds, COLORREF color, float alpha = 1.0f)
 {
     inkBounds = {};
-    HGDIOBJ oldFont = SelectObject(dc, font);
-    const COLORREF oldColor = SetTextColor(dc, color);
-    const int oldMode = SetBkMode(dc, TRANSPARENT);
-
-    MAT2 identity{};
-    identity.eM11.value = 1;
-    identity.eM22.value = 1;
-    GLYPHMETRICS metrics{};
-    if (GetGlyphOutlineW(dc, static_cast<UINT>(glyph), GGO_METRICS,
-            &metrics, 0, nullptr, &identity) != GDI_ERROR &&
-        metrics.gmBlackBoxX > 0 && metrics.gmBlackBoxY > 0)
+    if (!factory || !format)
+        return;
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(factory->CreateTextLayout(&glyph, 1, format,
+            100000.0f, 100.0f, &layout)))
     {
-        const int inkWidth = static_cast<int>(metrics.gmBlackBoxX);
-        const int inkHeight = static_cast<int>(metrics.gmBlackBoxY);
-        inkBounds.left = rect.left +
-            (rect.right - rect.left - inkWidth) / 2;
-        inkBounds.top = rect.top +
-            (rect.bottom - rect.top - inkHeight) / 2;
-        inkBounds.right = inkBounds.left + inkWidth;
-        inkBounds.bottom = inkBounds.top + inkHeight;
-
-        // DrawText centers the font's full line box.  Symbol glyphs have
-        // asymmetric side bearings and ascender space, so their visible ink
-        // can still look displaced.  Position the baseline from the glyph's
-        // actual black box instead.
-        const int originX = inkBounds.left - metrics.gmptGlyphOrigin.x;
-        const int baselineY = inkBounds.top + metrics.gmptGlyphOrigin.y;
-        const UINT oldAlignment = SetTextAlign(
-            dc, TA_LEFT | TA_BASELINE | TA_NOUPDATECP);
-        ExtTextOutW(dc, originX, baselineY, ETO_CLIPPED, &rect,
-            &glyph, 1, nullptr);
-        SetTextAlign(dc, oldAlignment);
+        return;
     }
-    else
+    DWRITE_TEXT_METRICS metrics{};
+    if (FAILED(layout->GetMetrics(&metrics)) ||
+        metrics.width <= 0.0f || metrics.height <= 0.0f)
     {
-        RECT fallbackRect = rect;
-        DrawTextW(dc, &glyph, 1, &fallbackRect,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        return;
     }
-
-    SetBkMode(dc, oldMode);
-    SetTextColor(dc, oldColor);
-    if (oldFont) SelectObject(dc, oldFont);
+    const float centerX = (rect.left + rect.right) / 2.0f;
+    const float centerY = (rect.top + rect.bottom) / 2.0f;
+    const D2D1_RECT_F drawRect{
+        centerX - metrics.width / 2.0f,
+        centerY - metrics.height / 2.0f,
+        centerX + metrics.width / 2.0f,
+        centerY + metrics.height / 2.0f,
+    };
+    inkBounds = {
+        static_cast<LONG>(drawRect.left),
+        static_cast<LONG>(drawRect.top),
+        static_cast<LONG>(drawRect.right),
+        static_cast<LONG>(drawRect.bottom),
+    };
+    SetBrush(brush, color, alpha);
+    dc->DrawTextLayout(D2D1::Point2F(drawRect.left, drawRect.top),
+        layout.Get(), brush);
 }
 
-void DrawWrappedText(HDC dc, HFONT font, COLORREF color,
-    const std::wstring& text, RECT rect, UINT flags = DT_LEFT | DT_WORDBREAK)
+void DrawBitmapD2D(ID2D1RenderTarget* dc, const Bitmap& image,
+    const RECT& bounds)
 {
-    HGDIOBJ oldFont = SelectObject(dc, font);
-    const COLORREF oldColor = SetTextColor(dc, color);
-    const int oldMode = SetBkMode(dc, TRANSPARENT);
-    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &rect,
-        flags | DT_NOPREFIX | DT_END_ELLIPSIS);
-    SetBkMode(dc, oldMode);
-    SetTextColor(dc, oldColor);
-    if (oldFont) SelectObject(dc, oldFont);
+    if (!dc || image.width <= 0 || image.height <= 0 ||
+        image.pixels.size() != static_cast<size_t>(image.width) *
+            image.height)
+    {
+        return;
+    }
+    D2D1_BITMAP_PROPERTIES properties{};
+    properties.pixelFormat = D2D1::PixelFormat(
+        DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+    ComPtr<ID2D1Bitmap> bitmap;
+    if (FAILED(dc->CreateBitmap(
+            D2D1::SizeU(static_cast<UINT32>(image.width),
+                static_cast<UINT32>(image.height)),
+            image.pixels.data(), image.width * 4, &properties, &bitmap)))
+    {
+        return;
+    }
+    const D2D1_RECT_F sourceRect{
+        0.0f, 0.0f,
+        static_cast<float>(image.width),
+        static_cast<float>(image.height),
+    };
+    const D2D1_RECT_F destRect = ToRectF(bounds);
+    dc->DrawBitmap(bitmap.Get(), destRect, 1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, sourceRect);
 }
 
 bool HasVisibleText(const std::wstring& text)
@@ -145,82 +257,6 @@ bool HasVisibleText(const std::wstring& text)
     return std::any_of(text.begin(), text.end(), [](wchar_t character) {
         return !std::iswspace(character);
     });
-}
-
-int MeasureTextHeight(HDC dc, HFONT font, const std::wstring& text,
-    int width, UINT flags)
-{
-    if (!dc || !font || !HasVisibleText(text) || width <= 0)
-        return 0;
-    HGDIOBJ oldFont = SelectObject(dc, font);
-    RECT bounds{ 0, 0, width, 0 };
-    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &bounds,
-        flags | DT_NOPREFIX | DT_CALCRECT);
-    if (oldFont) SelectObject(dc, oldFont);
-    return std::max(0, static_cast<int>(bounds.bottom - bounds.top));
-}
-
-void DrawBitmap(HDC destination, const Bitmap& image, const RECT& bounds)
-{
-    if (image.width <= 0 || image.height <= 0 ||
-        image.pixels.size() != static_cast<size_t>(image.width) *
-            image.height)
-        return;
-
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(info.bmiHeader);
-    info.bmiHeader.biWidth = image.width;
-    info.bmiHeader.biHeight = -image.height;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    void* pixels = nullptr;
-    HBITMAP bitmap = CreateDIBSection(destination, &info,
-        DIB_RGB_COLORS, &pixels, nullptr, 0);
-    HDC source = bitmap ? CreateCompatibleDC(destination) : nullptr;
-    if (!bitmap || !source || !pixels)
-    {
-        if (source) DeleteDC(source);
-        if (bitmap) DeleteObject(bitmap);
-        return;
-    }
-    std::copy(image.pixels.begin(), image.pixels.end(),
-        static_cast<std::uint32_t*>(pixels));
-    HGDIOBJ oldBitmap = SelectObject(source, bitmap);
-    using AlphaBlendFn = BOOL(WINAPI*)(HDC, int, int, int, int,
-        HDC, int, int, int, int, BLENDFUNCTION);
-    static const HMODULE alphaModule = LoadLibraryW(L"msimg32.dll");
-    static const auto alphaBlend = alphaModule
-        ? reinterpret_cast<AlphaBlendFn>(GetProcAddress(
-            alphaModule, "AlphaBlend"))
-        : nullptr;
-    if (alphaBlend)
-    {
-        const BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-        alphaBlend(destination, bounds.left, bounds.top,
-            bounds.right - bounds.left, bounds.bottom - bounds.top,
-            source, 0, 0, image.width, image.height, blend);
-    }
-    if (oldBitmap) SelectObject(source, oldBitmap);
-    DeleteDC(source);
-    DeleteObject(bitmap);
-}
-
-bool IsInsideRoundedPanel(int x, int y, int width, int height, int radius)
-{
-    const int nearestX = std::clamp(x, radius, width - radius - 1);
-    const int nearestY = std::clamp(y, radius, height - radius - 1);
-    const int dx = x - nearestX;
-    const int dy = y - nearestY;
-    return dx * dx + dy * dy <= radius * radius;
-}
-
-bool SameRgb(std::uint32_t pixel, COLORREF color)
-{
-    return (pixel & 0x00ffffffu) ==
-        (static_cast<std::uint32_t>(GetBValue(color)) |
-         (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
-         (static_cast<std::uint32_t>(GetRValue(color)) << 16));
 }
 
 bool OptionValue(const ApplySettings& settings, OptionSetting setting)
@@ -335,7 +371,91 @@ bool Window::EnsureCreated(HWND owner)
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         kPreviewWindowClass, L"", WS_POPUP,
         0, 0, 1, 1, owner, nullptr, GetModuleHandleW(nullptr), this);
-    return hwnd_ != nullptr;
+    if (!hwnd_)
+        return false;
+    if (!InitializeGraphics())
+        return false;
+    return true;
+}
+
+bool Window::InitializeGraphics()
+{
+    D3D_FEATURE_LEVEL featureLevel{};
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE,
+        nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
+        D3D11_SDK_VERSION, &d3dDevice_, &featureLevel, nullptr);
+    if (FAILED(hr))
+    {
+        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
+            D3D11_SDK_VERSION, &d3dDevice_, &featureLevel, nullptr);
+    }
+    if (FAILED(hr))
+        return false;
+
+    D2D1_FACTORY_OPTIONS factoryOptions{};
+    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+        __uuidof(ID2D1Factory1), &factoryOptions,
+        reinterpret_cast<void**>(d2dFactory_.GetAddressOf()));
+    if (FAILED(hr))
+        return false;
+
+    ComPtr<IDXGIDevice> dxgiDevice;
+    hr = d3dDevice_.As(&dxgiDevice);
+    if (FAILED(hr))
+        return false;
+    hr = d2dFactory_->CreateDevice(dxgiDevice.Get(), &d2dDevice_);
+    if (FAILED(hr))
+        return false;
+    hr = d2dDevice_->CreateDeviceContext(
+        D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext_);
+    if (FAILED(hr))
+        return false;
+
+    hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
+        __uuidof(IDWriteFactory),
+        reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
+    if (FAILED(hr))
+        return false;
+
+    D2D1_RENDER_TARGET_PROPERTIES targetProperties{};
+    targetProperties.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+    targetProperties.pixelFormat = D2D1::PixelFormat(
+        DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+    targetProperties.dpiX = USER_DEFAULT_SCREEN_DPI;
+    targetProperties.dpiY = USER_DEFAULT_SCREEN_DPI;
+    hr = d2dFactory_->CreateDCRenderTarget(&targetProperties,
+        &dcrTarget_);
+    if (FAILED(hr))
+        return false;
+
+    CreateFormats();
+    return titleFormat_ && cardTitleFormat_ && bodyFormat_ &&
+        glyphFormat_;
+}
+
+void Window::CreateFormats()
+{
+    const auto make = [&](const wchar_t* family, float size,
+                          DWRITE_FONT_WEIGHT weight) {
+        ComPtr<IDWriteTextFormat> format;
+        if (FAILED(dwriteFactory_->CreateTextFormat(family, nullptr,
+                weight, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, size, L"", &format)))
+        {
+            return ComPtr<IDWriteTextFormat>{};
+        }
+        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        return format;
+    };
+    titleFormat_ = make(L"Segoe UI",
+        static_cast<float>(Scale(17, dpi_)), DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    cardTitleFormat_ = make(L"Segoe UI",
+        static_cast<float>(Scale(13, dpi_)), DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    bodyFormat_ = make(L"Segoe UI",
+        static_cast<float>(Scale(11, dpi_)), DWRITE_FONT_WEIGHT_NORMAL);
+    glyphFormat_ = make(L"Segoe UI Symbol",
+        static_cast<float>(Scale(15, dpi_)), DWRITE_FONT_WEIGHT_SEMI_BOLD);
 }
 
 bool Window::Show(const Model& model, const RECT& menuBounds,
@@ -490,29 +610,21 @@ bool Window::RenderCurrent()
     width_ = std::max(Scale(360, dpi_),
         previewWidth + (padding + previewInset) * 2);
 
-    HFONT titleFont = CreateFontW(-Scale(17, dpi_), 0, 0, 0, FW_SEMIBOLD,
-        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HFONT cardTitleFont = CreateFontW(-Scale(13, dpi_), 0, 0, 0, FW_SEMIBOLD,
-        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HFONT bodyFont = CreateFontW(-Scale(11, dpi_), 0, 0, 0, FW_NORMAL,
-        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HFONT glyphFont = CreateFontW(-Scale(15, dpi_), 0, 0, 0, FW_SEMIBOLD,
-        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Symbol");
+    if (!dwriteFactory_ || !bodyFormat_ || !titleFormat_ ||
+        !cardTitleFormat_ || !glyphFormat_)
+    {
+        CreateFormats();
+    }
+    if (!dwriteFactory_ || !bodyFormat_ || !titleFormat_)
+        return false;
 
-    HDC measureDc = CreateCompatibleDC(nullptr);
     const int textWidth = width_ - padding * 2;
-    const int introductionHeight = MeasureTextHeight(measureDc, bodyFont,
-        model_.introduction, textWidth, DT_LEFT | DT_WORDBREAK);
-    const int resizeHintHeight = MeasureTextHeight(measureDc, bodyFont,
-        model_.resizeHint, textWidth, DT_LEFT | DT_SINGLELINE);
+    const int introductionHeight = static_cast<int>(std::ceil(
+        MeasureTextHeightD2D(dwriteFactory_.Get(), bodyFormat_.Get(),
+            model_.introduction, static_cast<float>(textWidth), true)));
+    const int resizeHintHeight = static_cast<int>(std::ceil(
+        MeasureTextHeightD2D(dwriteFactory_.Get(), bodyFormat_.Get(),
+            model_.resizeHint, static_cast<float>(textWidth), false)));
     const bool hasCardHeader = HasVisibleText(card.title) ||
         HasVisibleText(card.sizeLabel);
     const bool hasDescription = HasVisibleText(card.description);
@@ -521,12 +633,12 @@ bool Window::RenderCurrent()
     const int metadataTopPadding = Scale(8, dpi_);
     const int metadataBottomPadding = Scale(8, dpi_);
     const int cardHeaderHeight = hasCardHeader ? Scale(21, dpi_) : 0;
-    const int descriptionHeight = MeasureTextHeight(measureDc, bodyFont,
-        card.description,
-        width_ - (padding + metadataHorizontalPadding) * 2,
-        DT_LEFT | DT_WORDBREAK);
+    const int descriptionHeight = static_cast<int>(std::ceil(
+        MeasureTextHeightD2D(dwriteFactory_.Get(), bodyFormat_.Get(),
+            card.description,
+            static_cast<float>(width_ - (padding + metadataHorizontalPadding) * 2),
+            true)));
     const int applyButtonHeight = hasApplyButton ? Scale(32, dpi_) : 0;
-    if (measureDc) DeleteDC(measureDc);
 
     int metadataHeight = 0;
     if (hasCardHeader || hasDescription || hasApplyButton)
@@ -567,19 +679,63 @@ bool Window::RenderCurrent()
     {
         if (dc) DeleteDC(dc);
         if (bitmap) DeleteObject(bitmap);
-        if (titleFont) DeleteObject(titleFont);
-        if (cardTitleFont) DeleteObject(cardTitleFont);
-        if (bodyFont) DeleteObject(bodyFont);
-        if (glyphFont) DeleteObject(glyphFont);
         return false;
     }
     HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
-    auto* pixels = static_cast<std::uint32_t*>(rawPixels);
-    std::fill_n(pixels, static_cast<size_t>(width_) * height_, 0u);
+    std::fill_n(static_cast<std::uint32_t*>(rawPixels),
+        static_cast<size_t>(width_) * height_, 0u);
+
+    if (!dcrTarget_)
+    {
+        SelectObject(dc, oldBitmap);
+        DeleteDC(dc);
+        DeleteObject(bitmap);
+        return false;
+    }
+    const RECT targetRect{ 0, 0, width_, height_ };
+    if (FAILED(dcrTarget_->BindDC(dc, &targetRect)))
+    {
+        SelectObject(dc, oldBitmap);
+        DeleteDC(dc);
+        DeleteObject(bitmap);
+        return false;
+    }
+    dcrTarget_->BeginDraw();
+    dcrTarget_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+
+    ComPtr<ID2D1SolidColorBrush> frameBrush;
+    if (FAILED(dcrTarget_->CreateSolidColorBrush(
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), &frameBrush)))
+    {
+        dcrTarget_->EndDraw();
+        SelectObject(dc, oldBitmap);
+        DeleteDC(dc);
+        DeleteObject(bitmap);
+        return false;
+    }
 
     const auto palette = menu_icon::ResolvePalette(lightTheme_);
-    RECT panel{ 0, 0, width_, height_ };
-    Fill(dc, panel, palette.background);
+    const float materialAlpha = lightTheme_ ? 70.0f / 255.0f
+                                            : 76.0f / 255.0f;
+    const float contentAlpha = 246.0f / 255.0f;
+    const RECT panel{ 0, 0, width_, height_ };
+    const int radius = Scale(10, dpi_);
+    SetBrush(frameBrush.Get(), palette.background, materialAlpha);
+    dcrTarget_->FillRoundedRectangle(
+        D2D1::RoundedRect(ToRectF(panel),
+            static_cast<float>(radius), static_cast<float>(radius)),
+        frameBrush.Get());
+
+    const auto drawBody = [&](const std::wstring& text, const RECT& rect,
+                              COLORREF color, bool wrapping = false,
+                              bool ellipsis = false,
+                              DWRITE_TEXT_ALIGNMENT align =
+                                  DWRITE_TEXT_ALIGNMENT_LEADING) {
+        DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(),
+            dwriteFactory_.Get(), bodyFormat_.Get(), text.data(),
+            text.size(), ToRectF(rect), color, align, wrapping, ellipsis,
+            contentAlpha);
+    };
 
     int cursorY = padding;
     RECT titleRect{ padding, cursorY, width_ - padding,
@@ -588,18 +744,22 @@ bool Window::RenderCurrent()
     closeRect_ = { titleRect.right - closeButtonSize, titleRect.top,
         titleRect.right, titleRect.top + closeButtonSize };
     titleRect.right = closeRect_.left - Scale(8, dpi_);
-    DrawWrappedText(dc, titleFont, palette.text, model_.title, titleRect,
-        DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-    DrawWrappedText(dc, titleFont, palette.text, L"\u00D7", closeRect_,
-        DT_CENTER | DT_SINGLELINE);
+    DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(), dwriteFactory_.Get(),
+        titleFormat_.Get(), model_.title.data(), model_.title.size(),
+        ToRectF(titleRect), palette.text, DWRITE_TEXT_ALIGNMENT_LEADING,
+        false, true, contentAlpha);
+    DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(), dwriteFactory_.Get(),
+        titleFormat_.Get(), L"\\u00D7", 1, ToRectF(closeRect_),
+        palette.text, DWRITE_TEXT_ALIGNMENT_CENTER, false, false,
+        contentAlpha);
     cursorY = titleRect.bottom;
     if (introductionHeight)
     {
         cursorY += Scale(4, dpi_);
         RECT introductionRect{ padding, cursorY, width_ - padding,
             cursorY + introductionHeight };
-        DrawWrappedText(dc, bodyFont, palette.disabledText,
-            model_.introduction, introductionRect);
+        drawBody(model_.introduction, introductionRect,
+            palette.disabledText, true);
         cursorY = introductionRect.bottom;
     }
     if (resizeHintHeight)
@@ -607,9 +767,8 @@ bool Window::RenderCurrent()
         cursorY += Scale(2, dpi_);
         RECT resizeHintRect{ padding, cursorY, width_ - padding,
             cursorY + resizeHintHeight };
-        DrawWrappedText(dc, bodyFont, palette.disabledText,
-            model_.resizeHint, resizeHintRect,
-            DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+        drawBody(model_.resizeHint, resizeHintRect, palette.disabledText,
+            false, true);
         cursorY = resizeHintRect.bottom;
     }
     cursorY += gap;
@@ -617,9 +776,8 @@ bool Window::RenderCurrent()
     const int previewLeft = (width_ - previewWidth) / 2;
     previewRect_ = { previewLeft, cardTop + previewInset,
         previewLeft + previewWidth, cardTop + previewInset + previewHeight };
-    // Keep the viewport material transparent.  The component renderer owns
-    // every pixel inside it, including a fully transparent clock background.
-    RoundedOutline(dc, previewRect_, Scale(6, dpi_), palette.separator);
+    RoundedOutlineD2D(dcrTarget_.Get(), frameBrush.Get(), previewRect_,
+        Scale(6, dpi_), palette.separator, contentAlpha);
 
     const std::wstring frameCacheKey = card.cacheKey.empty()
         ? std::wstring{}
@@ -643,7 +801,7 @@ bool Window::RenderCurrent()
             cardFrameCache_[frameCacheKey] = rendered;
         }
     }
-    DrawBitmap(dc, rendered, previewRect_);
+    DrawBitmapD2D(dcrTarget_.Get(), rendered, previewRect_);
 
     int controlsY = previewRect_.bottom;
     previousButton_ = {};
@@ -663,20 +821,30 @@ bool Window::RenderCurrent()
         nextButton_.left = nextButton_.right - buttonWidth;
         RECT statusRect{ previousButton_.right, pagerRect_.top,
             nextButton_.left, pagerRect_.bottom };
-        RoundedBox(dc, previousButton_, Scale(6, dpi_),
-            palette.hoverBackground, palette.separator);
-        RoundedBox(dc, nextButton_, Scale(6, dpi_),
-            palette.hoverBackground, palette.separator);
-        DrawCenteredGlyph(dc, glyphFont,
+        RoundedBoxD2D(dcrTarget_.Get(), frameBrush.Get(),
+            previousButton_, Scale(6, dpi_), palette.hoverBackground,
+            palette.separator, contentAlpha);
+        RoundedBoxD2D(dcrTarget_.Get(), frameBrush.Get(),
+            nextButton_, Scale(6, dpi_), palette.hoverBackground,
+            palette.separator, contentAlpha);
+        DrawCenteredGlyphD2D(dcrTarget_.Get(), frameBrush.Get(),
+            dwriteFactory_.Get(), glyphFormat_.Get(), L'\\u2039',
+            previousButton_, previousGlyphRect_,
             currentCard_ > 0 ? palette.text : palette.disabledText,
-            L'\u2039', previousButton_, previousGlyphRect_);
-        DrawCenteredText(dc, bodyFont, palette.text,
+            contentAlpha);
+        const std::wstring statusText =
             std::to_wstring(currentCard_ + 1) + L" / " +
-                std::to_wstring(model_.cards.size()), statusRect);
-        DrawCenteredGlyph(dc, glyphFont,
+            std::to_wstring(model_.cards.size());
+        DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(),
+            dwriteFactory_.Get(), bodyFormat_.Get(), statusText.data(),
+            statusText.size(), ToRectF(statusRect), palette.text,
+            DWRITE_TEXT_ALIGNMENT_CENTER, false, false, contentAlpha);
+        DrawCenteredGlyphD2D(dcrTarget_.Get(), frameBrush.Get(),
+            dwriteFactory_.Get(), glyphFormat_.Get(), L'\\u203a',
+            nextButton_, nextGlyphRect_,
             currentCard_ + 1 < model_.cards.size()
                 ? palette.text : palette.disabledText,
-            L'\u203a', nextButton_, nextGlyphRect_);
+            contentAlpha);
         controlsY = pagerRect_.bottom + controlMargin;
     }
 
@@ -696,21 +864,26 @@ bool Window::RenderCurrent()
         RECT labelRect{ row.left, row.top,
             offRect.left - Scale(8, dpi_), row.bottom };
         const bool enabled = OptionValue(card.applySettings, option.setting);
-        DrawWrappedText(dc, bodyFont, palette.text, option.label, labelRect,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        drawBody(option.label, labelRect, palette.text, false, true);
         const int capsuleRadius = optionHeight / 2;
-        RoundedBox(dc, offRect, capsuleRadius,
+        RoundedBoxD2D(dcrTarget_.Get(), frameBrush.Get(), offRect,
+            capsuleRadius,
             enabled ? palette.background : palette.hoverBackground,
-            enabled ? palette.separator : palette.accent);
-        RoundedBox(dc, onRect, capsuleRadius,
+            enabled ? palette.separator : palette.accent, contentAlpha);
+        RoundedBoxD2D(dcrTarget_.Get(), frameBrush.Get(), onRect,
+            capsuleRadius,
             enabled ? palette.hoverBackground : palette.background,
-            enabled ? palette.accent : palette.separator);
-        DrawCenteredText(dc, bodyFont,
+            enabled ? palette.accent : palette.separator, contentAlpha);
+        DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(),
+            dwriteFactory_.Get(), bodyFormat_.Get(), option.offLabel.data(),
+            option.offLabel.size(), ToRectF(offRect),
             enabled ? palette.disabledText : palette.accent,
-            option.offLabel, offRect);
-        DrawCenteredText(dc, bodyFont,
+            DWRITE_TEXT_ALIGNMENT_CENTER, false, false, contentAlpha);
+        DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(),
+            dwriteFactory_.Get(), bodyFormat_.Get(), option.onLabel.data(),
+            option.onLabel.size(), ToRectF(onRect),
             enabled ? palette.accent : palette.disabledText,
-            option.onLabel, onRect);
+            DWRITE_TEXT_ALIGNMENT_CENTER, false, false, contentAlpha);
         optionHits_.push_back({ offRect, option.setting, false });
         optionHits_.push_back({ onRect, option.setting, true });
         controlsY = row.bottom;
@@ -720,7 +893,8 @@ bool Window::RenderCurrent()
     RECT cardRect{ padding, cardTop, width_ - padding,
         metadataTop + metadataHeight + previewInset };
     applyRect_ = {};
-    RoundedOutline(dc, cardRect, Scale(8, dpi_), palette.separator);
+    RoundedOutlineD2D(dcrTarget_.Get(), frameBrush.Get(), cardRect,
+        Scale(8, dpi_), palette.separator, contentAlpha);
     const int metadataLeft = cardRect.left + metadataHorizontalPadding;
     const int metadataRight = cardRect.right - metadataHorizontalPadding;
     int metadataY = metadataTop +
@@ -734,16 +908,23 @@ bool Window::RenderCurrent()
             RECT badge = cardTitle;
             badge.left = std::max(
                 badge.left, badge.right - Scale(58, dpi_));
-            RoundedBox(dc, badge, Scale(7, dpi_),
-                palette.hoverBackground, palette.separator);
-            DrawCenteredText(dc, bodyFont, palette.disabledText,
-                card.sizeLabel, badge);
+            RoundedBoxD2D(dcrTarget_.Get(), frameBrush.Get(), badge,
+                Scale(7, dpi_), palette.hoverBackground, palette.separator,
+                contentAlpha);
+            DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(),
+                dwriteFactory_.Get(), bodyFormat_.Get(),
+                card.sizeLabel.data(), card.sizeLabel.size(),
+                ToRectF(badge), palette.disabledText,
+                DWRITE_TEXT_ALIGNMENT_CENTER, false, false, contentAlpha);
             cardTitle.right = badge.left - Scale(6, dpi_);
         }
         if (HasVisibleText(card.title))
         {
-            DrawWrappedText(dc, cardTitleFont, palette.text, card.title,
-                cardTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(),
+                dwriteFactory_.Get(), cardTitleFormat_.Get(),
+                card.title.data(), card.title.size(), ToRectF(cardTitle),
+                palette.text, DWRITE_TEXT_ALIGNMENT_LEADING, false, true,
+                contentAlpha);
         }
         metadataY += cardHeaderHeight;
     }
@@ -752,8 +933,8 @@ bool Window::RenderCurrent()
         if (hasCardHeader) metadataY += Scale(2, dpi_);
         RECT descriptionRect{ metadataLeft, metadataY, metadataRight,
             metadataY + descriptionHeight };
-        DrawWrappedText(dc, bodyFont, palette.disabledText,
-            card.description, descriptionRect);
+        drawBody(card.description, descriptionRect, palette.disabledText,
+            true);
         metadataY = descriptionRect.bottom;
     }
     if (hasApplyButton)
@@ -761,39 +942,16 @@ bool Window::RenderCurrent()
         if (hasCardHeader || hasDescription) metadataY += Scale(6, dpi_);
         applyRect_ = { metadataLeft, metadataY, metadataRight,
             metadataY + applyButtonHeight };
-        RoundedBox(dc, applyRect_, Scale(8, dpi_),
-            palette.accent, palette.accent);
-        DrawCenteredText(dc, cardTitleFont, RGB(255, 255, 255),
-            model_.applyLabel, applyRect_);
+        RoundedBoxD2D(dcrTarget_.Get(), frameBrush.Get(), applyRect_,
+            Scale(8, dpi_), palette.accent, palette.accent, contentAlpha);
+        DrawTextD2D(dcrTarget_.Get(), frameBrush.Get(),
+            dwriteFactory_.Get(), cardTitleFormat_.Get(),
+            model_.applyLabel.data(), model_.applyLabel.size(),
+            ToRectF(applyRect_), RGB(255, 255, 255),
+            DWRITE_TEXT_ALIGNMENT_CENTER, false, false, contentAlpha);
     }
 
-    if (titleFont) DeleteObject(titleFont);
-    if (cardTitleFont) DeleteObject(cardTitleFont);
-    if (bodyFont) DeleteObject(bodyFont);
-    if (glyphFont) DeleteObject(glyphFont);
-
-    const int radius = Scale(10, dpi_);
-    constexpr unsigned contentAlpha = 246;
-    const unsigned materialAlpha = lightTheme_ ? 70u : 76u;
-    for (int y = 0; y < height_; ++y)
-    {
-        for (int x = 0; x < width_; ++x)
-        {
-            std::uint32_t& pixel = pixels[
-                static_cast<size_t>(y) * width_ + x];
-            if (!IsInsideRoundedPanel(x, y, width_, height_, radius))
-            {
-                pixel = 0;
-                continue;
-            }
-            const unsigned alpha = SameRgb(pixel, palette.background)
-                ? materialAlpha : contentAlpha;
-            const unsigned blue = (pixel & 0xFFu) * alpha / 255u;
-            const unsigned green = ((pixel >> 8) & 0xFFu) * alpha / 255u;
-            const unsigned red = ((pixel >> 16) & 0xFFu) * alpha / 255u;
-            pixel = blue | (green << 8) | (red << 16) | (alpha << 24);
-        }
-    }
+    dcrTarget_->EndDraw();
 
     HRGN region = CreateRoundRectRgn(0, 0, width_ + 1, height_ + 1,
         radius * 2, radius * 2);

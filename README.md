@@ -1,15 +1,17 @@
-# 飘雪桌面（SnowDesktop）
+# SparkDesktop
 
 [简体中文](./README.md) | [English](./README.en.md)
 
+> **Fork**：[FreeFallingSnow/SnowDesktop](https://github.com/FreeFallingSnow/SnowDesktop)（[GPL-3.0](./LICENSE)）的个人维护分支
+
 一款 Windows 桌面整理美化工具：用 Direct2D 渲染的自定义桌面，替代 Explorer 原生图标，支持多显示器网格布局、可嵌入组件和 Lua 脚本扩展。
-## 📦 安装
 
-[![从 Microsoft 获取](https://get.microsoft.com/images/zh-cn%20dark.svg)](https://apps.microsoft.com/detail/9PLLGJVL4LC3)
+## 📦 获取
 
-[源码仓库](https://github.com/FreeFallingSnow/SnowDesktop)
+本项目是个人 Fork，不在 Microsoft Store 分发。使用方式：
 
-[发行版仓库](https://github.com/FreeFallingSnow/SnowDesktop_Release)
+- 官方正式版本请前往[上游发行版仓库](https://github.com/FreeFallingSnow/SnowDesktop_Release)；
+- 或按下方 [构建](#🛠️-构建) 自行编译本仓库。
 
 ## ✨ 功能亮点
 
@@ -56,10 +58,6 @@
 
 ## 📄 许可证
 
-SnowDesktop 核心代码采用 GNU General Public License v3.0，详见 [LICENSE](./LICENSE)。
+本项目核心代码沿用上游 GNU General Public License v3.0，详见 [LICENSE](./LICENSE)。
 仓库中包含的第三方组件及其版权和许可信息，统一记录在
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
-
-独立的 `steam_bridge/` 创意工坊桥接程序采用 MIT 许可证，详见
-[steam_bridge/LICENSE](./steam_bridge/LICENSE)。Steamworks SDK 本身不包含在本仓库内，
-也不适用上述 GPL 或 MIT 许可证。

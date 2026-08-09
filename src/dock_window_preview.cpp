@@ -931,9 +931,14 @@ void DockWindowPreview::Paint()
             titleRect.left,
             closeRect.left -
                 std::max(2, ScaleForDpi(4, dpi_)));
+        // Blend ClearType/AA edges against the card fill color instead of
+        // the DC default white background color.
+        const COLORREF oldBkColor = SetBkColor(dc,
+            static_cast<int>(index) == hoveredIndex_ ? hovered : card);
         DrawTextW(dc, items_[index].title.c_str(), -1, &titleRect,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS |
             DT_NOPREFIX);
+        SetBkColor(dc, oldBkColor);
 
         const bool closeHoveredForItem =
             static_cast<int>(index) ==

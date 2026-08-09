@@ -1,10 +1,16 @@
-#include "modern_menu.h"
+﻿#include "modern_menu.h"
 
 #include "menu_icon_render.h"
+#include "utils.h"
 
+#include <d2d1_1.h>
+#include <d3d11.h>
+#include <dcomp.h>
+#include <dwrite.h>
 #include <dwmapi.h>
 #include <imm.h>
 #include <windowsx.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <atomic>
@@ -20,6 +26,8 @@ namespace snowdesktop::modern_menu
 namespace
 {
 
+using Microsoft::WRL::ComPtr;
+
 constexpr wchar_t kMenuWindowClass[] =
     L"SnowDesktop.ModernMenuPopup";
 constexpr UINT_PTR kSubmenuOpenTimer = 1;
@@ -33,6 +41,34 @@ int Scale(int value, UINT dpi)
 {
     return std::max(1, MulDiv(value, static_cast<int>(dpi),
         USER_DEFAULT_SCREEN_DPI));
+}
+
+void FillD2DRect(ID2D1RenderTarget* dc, ID2D1SolidColorBrush* brush,
+    const D2D1_RECT_F& rect, COLORREF color, float alpha = 1.0f)
+{
+    brush->SetColor(D2D1::ColorF(
+        GetRValue(color) / 255.0f,
+        GetGValue(color) / 255.0f,
+        GetBValue(color) / 255.0f,
+        alpha));
+    dc->FillRectangle(rect, brush);
+}
+
+float MeasureDWriteText(IDWriteFactory* factory, IDWriteTextFormat* format,
+    const wchar_t* text, size_t length)
+{
+    if (!factory || !format || !text || length == 0)
+        return 0.0f;
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(factory->CreateTextLayout(text,
+            static_cast<UINT32>(length), format, 100000.0f, 100.0f,
+            &layout)))
+    {
+        return 0.0f;
+    }
+    DWRITE_TEXT_METRICS metrics{};
+    return SUCCEEDED(layout->GetMetrics(&metrics))
+        ? metrics.width : 0.0f;
 }
 
 bool IsSelectable(const Item& item)
@@ -142,57 +178,111 @@ public:
           panelPadding_(Scale(kSubmenuPanelPaddingDip, options.dpi)),
           panelRadius_(Scale(8, options.dpi))
     {
-        const int textHeight = -Scale(13, options.dpi);
-        const int iconHeight = -metrics_.iconFontHeight;
-        const int quickTextHeight = -Scale(10, options.dpi);
-        const int quickIconHeight = -metrics_.quickActionFontHeight;
-        textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        // Only the official Regular face is embedded.  Requesting Semibold
-        // makes GDI synthesize thicker outlines, which distorts the 20px
-        // Fluent masters most visibly on 96-DPI / low-resolution screens.
-        fluentIconFont_ = CreateFontW(iconHeight, 0, 0, 0, FW_NORMAL,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_ONLY_PRECIS,
-            CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
-        fontAwesomeIconFont_ = CreateFontW(iconHeight, 0, 0, 0, FW_NORMAL,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE,
-            L"Font Awesome 6 Free Solid");
-        quickTextFont_ = CreateFontW(quickTextHeight, 0, 0, 0, FW_NORMAL,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        quickFluentIconFont_ = CreateFontW(quickIconHeight, 0, 0, 0,
-            FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-            OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS,
-            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-            L"FluentSystemIcons-Regular");
-        quickFontAwesomeIconFont_ = CreateFontW(quickIconHeight, 0, 0, 0,
-            FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-            L"Font Awesome 6 Free Solid");
+        if (!InitializeGraphics())
+            return;
     }
 
     ~MenuController()
     {
         CloseFromDepth(0);
-        if (fontAwesomeIconFont_)
-            DeleteObject(fontAwesomeIconFont_);
-        if (fluentIconFont_)
-            DeleteObject(fluentIconFont_);
-        if (quickFontAwesomeIconFont_)
-            DeleteObject(quickFontAwesomeIconFont_);
-        if (quickFluentIconFont_)
-            DeleteObject(quickFluentIconFont_);
-        if (quickTextFont_)
-            DeleteObject(quickTextFont_);
-        if (textFont_)
-            DeleteObject(textFont_);
+        // Graphics resources release automatically through ComPtr.
+    }
+
+    bool InitializeGraphics()
+    {
+        D3D_FEATURE_LEVEL featureLevel{};
+        HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE,
+            nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
+            D3D11_SDK_VERSION, &d3dDevice_, &featureLevel, nullptr);
+        if (FAILED(hr))
+        {
+            hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
+                D3D11_SDK_VERSION, &d3dDevice_, &featureLevel, nullptr);
+        }
+        if (FAILED(hr))
+            return false;
+
+        D2D1_FACTORY_OPTIONS factoryOptions{};
+        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            __uuidof(ID2D1Factory1), &factoryOptions,
+            reinterpret_cast<void**>(d2dFactory_.GetAddressOf()));
+        if (FAILED(hr))
+            return false;
+
+        ComPtr<IDXGIDevice> dxgiDevice;
+        hr = d3dDevice_.As(&dxgiDevice);
+        if (FAILED(hr))
+            return false;
+        hr = d2dFactory_->CreateDevice(dxgiDevice.Get(), &d2dDevice_);
+        if (FAILED(hr))
+            return false;
+        hr = d2dDevice_->CreateDeviceContext(
+            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext_);
+        if (FAILED(hr))
+            return false;
+
+        hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
+            __uuidof(IDWriteFactory),
+            reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
+        if (FAILED(hr))
+            return false;
+
+        const float textHeight = static_cast<float>(
+            Scale(13, options_.dpi));
+        const float iconHeight = static_cast<float>(
+            metrics_.iconFontHeight);
+        const float quickTextHeight = static_cast<float>(
+            Scale(10, options_.dpi));
+        const float quickIconHeight = static_cast<float>(
+            metrics_.quickActionFontHeight);
+        textFormat_ = CreateTextFormat(L"Segoe UI", textHeight);
+        quickTextFormat_ = CreateTextFormat(L"Segoe UI", quickTextHeight);
+        // 图标字体是内存内嵌资源，DirectWrite 的系统字体集合看不到
+        // （AddFontMemResourceEx 只对 GDI 可见），必须用内存字体集合创建。
+        fluentIconFormat_.Attach(CreateFluentTextFormat(
+            dwriteFactory_.Get(), iconHeight));
+        faIconFormat_.Attach(CreateFaTextFormat(
+            dwriteFactory_.Get(), iconHeight));
+        quickFluentIconFormat_.Attach(CreateFluentTextFormat(
+            dwriteFactory_.Get(), quickIconHeight));
+        quickFaIconFormat_.Attach(CreateFaTextFormat(
+            dwriteFactory_.Get(), quickIconHeight));
+        if (!textFormat_ || !quickTextFormat_ || !fluentIconFormat_ ||
+            !faIconFormat_)
+        {
+            return false;
+        }
+
+        // DCRenderTarget 将 D2D 绘制到 GDI 兼容 DIB，配合 UpdateLayeredWindow
+        // 呈现；这是比 DirectComposition 更稳妥的多帧路径。
+        D2D1_RENDER_TARGET_PROPERTIES targetProperties{};
+        targetProperties.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+        targetProperties.pixelFormat = D2D1::PixelFormat(
+            DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+        targetProperties.dpiX = USER_DEFAULT_SCREEN_DPI;
+        targetProperties.dpiY = USER_DEFAULT_SCREEN_DPI;
+        hr = d2dFactory_->CreateDCRenderTarget(&targetProperties,
+            &dcrTarget_);
+        if (FAILED(hr))
+            return false;
+
+        return true;
+    }
+
+    ComPtr<IDWriteTextFormat> CreateTextFormat(
+        const wchar_t* family, float sizeDip)
+    {
+        ComPtr<IDWriteTextFormat> format;
+        if (FAILED(dwriteFactory_->CreateTextFormat(family, nullptr,
+                DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, sizeDip, L"", &format)))
+        {
+            return {};
+        }
+        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        return format;
     }
 
     Result Run()
@@ -383,8 +473,11 @@ public:
 
     void Render(Popup& popup)
     {
-        if (!popup.hwnd || popup.windowWidth <= 0 || popup.windowHeight <= 0)
+        if (!popup.hwnd || popup.windowWidth <= 0 ||
+            popup.windowHeight <= 0)
+        {
             return;
+        }
 
         BITMAPINFO bitmapInfo{};
         bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
@@ -393,11 +486,10 @@ public:
         bitmapInfo.bmiHeader.biPlanes = 1;
         bitmapInfo.bmiHeader.biBitCount = 32;
         bitmapInfo.bmiHeader.biCompression = BI_RGB;
-
         void* rawPixels = nullptr;
         HBITMAP bitmap = CreateDIBSection(nullptr, &bitmapInfo,
             DIB_RGB_COLORS, &rawPixels, nullptr, 0);
-        HDC memoryDc = CreateCompatibleDC(nullptr);
+        HDC memoryDc = bitmap ? CreateCompatibleDC(nullptr) : nullptr;
         if (!bitmap || !memoryDc || !rawPixels)
         {
             if (memoryDc) DeleteDC(memoryDc);
@@ -405,28 +497,112 @@ public:
             return;
         }
         HGDIOBJ oldBitmap = SelectObject(memoryDc, bitmap);
-        auto* pixels = static_cast<std::uint32_t*>(rawPixels);
-        std::fill_n(pixels,
-            static_cast<size_t>(popup.windowWidth) * popup.windowHeight, 0u);
+        std::fill_n(static_cast<std::uint32_t*>(rawPixels),
+            static_cast<size_t>(popup.windowWidth) * popup.windowHeight,
+            0u);
 
-        const RECT panel{
-            shadowSize_, shadowSize_,
-            shadowSize_ + popup.panelWidth,
-            shadowSize_ + popup.panelHeight,
+
+        const RECT targetRect{ 0, 0, popup.windowWidth,
+            popup.windowHeight };
+        if (!dcrTarget_)
+        {
+            SelectObject(memoryDc, oldBitmap);
+            DeleteDC(memoryDc);
+            DeleteObject(bitmap);
+            return;
+        }
+        HRESULT bindResult = dcrTarget_->BindDC(memoryDc, &targetRect);
+        if (FAILED(bindResult))
+        {
+            SelectObject(memoryDc, oldBitmap);
+            DeleteDC(memoryDc);
+            DeleteObject(bitmap);
+            return;
+        }
+        dcrTarget_->BeginDraw();
+        dcrTarget_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+
+        // D2D brushes are target-bound; create the frame brush on the DC
+        // render target itself.
+        ComPtr<ID2D1SolidColorBrush> frameBrush;
+        if (FAILED(dcrTarget_->CreateSolidColorBrush(
+                D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), &frameBrush)))
+        {
+            dcrTarget_->EndDraw();
+            SelectObject(memoryDc, oldBitmap);
+            DeleteDC(memoryDc);
+            DeleteObject(bitmap);
+            return;
+        }
+
+        const float panelLeft = static_cast<float>(shadowSize_);
+        const float panelTop = static_cast<float>(shadowSize_);
+        const float panelRight = panelLeft + popup.panelWidth;
+        const float panelBottom = panelTop + popup.panelHeight;
+        const D2D1_RECT_F panel{
+            panelLeft, panelTop, panelRight, panelBottom,
         };
-        HBRUSH background = CreateSolidBrush(palette_.background);
-        FillRect(memoryDc, &panel, background);
-        DeleteObject(background);
+        const float radius = static_cast<float>(panelRadius_);
 
-        const RECT viewport{
+        // Panel background: translucent in blur mode so the DWM backdrop
+        // (acrylic) stays visible; near-opaque in solid mode.
+        const float panelAlpha = blurEnabled_
+            ? (lightTheme_ ? 70.0f : 76.0f) / 255.0f
+            : 246.0f / 255.0f;
+        frameBrush->SetColor(D2D1::ColorF(
+            GetRValue(palette_.background) / 255.0f,
+            GetGValue(palette_.background) / 255.0f,
+            GetBValue(palette_.background) / 255.0f,
+            panelAlpha));
+        dcrTarget_->FillRoundedRectangle(
+            D2D1::RoundedRect(panel, radius, radius), frameBrush.Get());
+
+        // One-pixel border.
+        const COLORREF borderColor = lightTheme_
+            ? RGB(215, 215, 215) : RGB(73, 73, 73);
+        frameBrush->SetColor(D2D1::ColorF(
+            GetRValue(borderColor) / 255.0f,
+            GetGValue(borderColor) / 255.0f,
+            GetBValue(borderColor) / 255.0f,
+            1.0f));
+        dcrTarget_->DrawRoundedRectangle(
+            D2D1::RoundedRect(panel, radius, radius),
+            frameBrush.Get(), 1.0f);
+
+        const D2D1_RECT_F viewport{
             panel.left,
             panel.top + panelPadding_,
             panel.right,
             panel.bottom - panelPadding_,
         };
-        const int savedDc = SaveDC(memoryDc);
-        IntersectClipRect(memoryDc, viewport.left, viewport.top,
-            viewport.right, viewport.bottom);
+        const RECT viewportRect{
+            static_cast<LONG>(viewport.left),
+            static_cast<LONG>(viewport.top),
+            static_cast<LONG>(viewport.right),
+            static_cast<LONG>(viewport.bottom),
+        };
+        dcrTarget_->PushAxisAlignedClip(
+            viewport, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+        menu_icon::RenderContext renderContext{};
+        renderContext.dc = dcrTarget_.Get();
+        renderContext.writeFactory = dwriteFactory_.Get();
+        renderContext.textFormat = textFormat_.Get();
+        renderContext.quickTextFormat = quickTextFormat_.Get();
+        renderContext.iconFormat = fluentIconFormat_.Get();
+        renderContext.quickIconFormat = quickFluentIconFormat_.Get();
+        renderContext.brush = frameBrush.Get();
+        renderContext.dpi = options_.dpi;
+        renderContext.palette = &palette_;
+        renderContext.metrics = &metrics_;
+        renderContext.hoverAlpha = blurEnabled_
+            ? 146.0f / 255.0f : panelAlpha;
+        renderContext.contentAlpha = 246.0f / 255.0f;
+        // Rows must not repaint the (translucent) panel background or the
+        // alpha stacks into visible stripes; the panel is already filled
+        // above, rows only add hover/selection tints.
+        renderContext.backgroundAlpha = 0.0f;
+
         for (size_t i = 0; i < popup.items->size(); ++i)
         {
             RECT row = popup.itemRects[i];
@@ -436,7 +612,7 @@ public:
             if ((*popup.items)[i].horizontalScrollAction)
                 OffsetRect(&row, -popup.horizontalScrollOffset, 0);
             RECT clipped{};
-            if (!IntersectRect(&clipped, &row, &viewport))
+            if (!IntersectRect(&clipped, &row, &viewportRect))
                 continue;
             if ((*popup.items)[i].horizontalScrollAction)
             {
@@ -447,9 +623,6 @@ public:
             }
 
             const Item& item = (*popup.items)[i];
-            const int savedRowDc = SaveDC(memoryDc);
-            IntersectClipRect(memoryDc, clipped.left, clipped.top,
-                clipped.right, clipped.bottom);
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
@@ -461,8 +634,16 @@ public:
             if (static_cast<int>(i) == popup.hoveredItem ||
                 static_cast<int>(i) == popup.keyboardItem)
                 state |= ODS_SELECTED;
-            HFONT iconFont = item.iconFont == IconFont::FontAwesomeSolid
-                ? fontAwesomeIconFont_ : fluentIconFont_;
+
+            const D2D1_RECT_F rowF{
+                static_cast<float>(row.left),
+                static_cast<float>(row.top),
+                static_cast<float>(row.right),
+                static_cast<float>(row.bottom),
+            };
+            renderContext.iconFormat = item.iconFont ==
+                IconFont::FontAwesomeSolid
+                ? faIconFormat_.Get() : fluentIconFormat_.Get();
             if (item.textInput)
             {
                 const bool focused = IsTextInputFocused(popup, item);
@@ -476,54 +657,51 @@ public:
                     focused,
                     focused && textCaretVisible_,
                 };
-                menu_icon::DrawTextInput(memoryDc, textFont_, iconFont,
-                    view, inputView, row, palette_, metrics_);
+                menu_icon::DrawTextInput(renderContext, view,
+                    inputView, rowF);
             }
-            else if (popup.depth == 0 && item.quickAction && !item.inlineAction)
+            else if (popup.depth == 0 && item.quickAction &&
+                !item.inlineAction)
             {
-                HFONT quickIconFont =
-                    item.iconFont == IconFont::FontAwesomeSolid
-                    ? quickFontAwesomeIconFont_
-                    : quickFluentIconFont_;
-                menu_icon::DrawQuickAction(memoryDc, quickTextFont_,
-                    quickIconFont, item.quickIcon, view, row, state,
-                    palette_, metrics_);
+                renderContext.quickIconFormat = item.iconFont ==
+                    IconFont::FontAwesomeSolid
+                    ? quickFaIconFormat_.Get()
+                    : quickFluentIconFormat_.Get();
+                menu_icon::DrawQuickAction(renderContext, item.quickIcon,
+                    view, rowF, state);
                 if (row.right < popup.quickActionRight)
                 {
-                    RECT verticalSeparator{
-                        row.right - 1,
-                        row.top + metrics_.outerInset * 2,
-                        row.right,
-                        row.bottom - metrics_.outerInset * 2,
+                    const D2D1_RECT_F verticalSeparator{
+                        static_cast<float>(row.right - 1),
+                        static_cast<float>(row.top +
+                            metrics_.outerInset * 2),
+                        static_cast<float>(row.right),
+                        static_cast<float>(row.bottom -
+                            metrics_.outerInset * 2),
                     };
-                    HBRUSH separatorBrush = CreateSolidBrush(
-                        palette_.separator);
-                    if (separatorBrush)
-                    {
-                        FillRect(memoryDc, &verticalSeparator,
-                            separatorBrush);
-                        DeleteObject(separatorBrush);
-                    }
+                    FillD2DRect(dcrTarget_.Get(), frameBrush.Get(),
+                        verticalSeparator, palette_.separator,
+                        renderContext.contentAlpha);
                 }
             }
             else if (item.inlineAction)
             {
-                menu_icon::DrawInlineAction(memoryDc, textFont_, iconFont,
-                    view, row, state, palette_, metrics_);
+                menu_icon::DrawInlineAction(renderContext, view,
+                    rowF, state);
             }
             else
             {
-                menu_icon::DrawItem(memoryDc, textFont_, iconFont, view,
-                    row, state, palette_, metrics_);
+                menu_icon::DrawItem(renderContext, view, rowF, state);
             }
-            RestoreDC(memoryDc, savedRowDc);
         }
         if (MaxHorizontalScroll(popup) > 0)
         {
             if (popup.horizontalScrollOffset > 0)
-                DrawHorizontalScrollIndicator(memoryDc, popup, true);
+                DrawHorizontalScrollIndicator(dcrTarget_.Get(),
+                    frameBrush.Get(), popup, true);
             if (popup.horizontalScrollOffset < MaxHorizontalScroll(popup))
-                DrawHorizontalScrollIndicator(memoryDc, popup, false);
+                DrawHorizontalScrollIndicator(dcrTarget_.Get(),
+                    frameBrush.Get(), popup, false);
         }
         if (popup.quickSeparatorRect.right >
             popup.quickSeparatorRect.left)
@@ -531,24 +709,31 @@ public:
             RECT separator = popup.quickSeparatorRect;
             OffsetRect(&separator, 0, -popup.scrollOffset);
             RECT clipped{};
-            if (IntersectRect(&clipped, &separator, &viewport))
+            if (IntersectRect(&clipped, &separator, &viewportRect))
             {
                 const menu_icon::ItemView separatorView{
                     L"", L"", true, false, false,
                 };
-                menu_icon::DrawItem(memoryDc, textFont_,
-                    fluentIconFont_, separatorView, separator, 0,
-                    palette_, metrics_);
+                const D2D1_RECT_F separatorF{
+                    static_cast<float>(separator.left),
+                    static_cast<float>(separator.top),
+                    static_cast<float>(separator.right),
+                    static_cast<float>(separator.bottom),
+                };
+                menu_icon::DrawItem(renderContext, separatorView,
+                    separatorF, 0);
             }
         }
-        RestoreDC(memoryDc, savedDc);
+        dcrTarget_->PopAxisAlignedClip();
 
         if (popup.scrollOffset > 0)
-            DrawScrollIndicator(memoryDc, popup, true);
+            DrawScrollIndicator(dcrTarget_.Get(), frameBrush.Get(),
+                popup, true);
         if (popup.scrollOffset < MaxScroll(popup))
-            DrawScrollIndicator(memoryDc, popup, false);
+            DrawScrollIndicator(dcrTarget_.Get(), frameBrush.Get(),
+                popup, false);
 
-        ApplyAlphaMask(popup, pixels, panel);
+        dcrTarget_->EndDraw();
 
         POINT destination{
             popup.panelScreenOrigin.x - shadowSize_,
@@ -659,7 +844,6 @@ private:
 
     void CalculateLayout(Popup& popup)
     {
-        HDC screenDc = GetDC(nullptr);
         int width = metrics_.minimumWidth;
         std::vector<int> quickIndices;
         std::vector<int> regularIndices;
@@ -695,16 +879,14 @@ private:
             {
                 width = std::max(width,
                     metrics_.minimumWidth + metrics_.rowHeight);
-                if (item.horizontalScrollAction && screenDc)
+                if (item.horizontalScrollAction)
                 {
-                    HGDIOBJ oldFont = SelectObject(screenDc, textFont_);
-                    SIZE labelSize{};
-                    GetTextExtentPoint32W(screenDc, item.label.c_str(),
-                        static_cast<int>(item.label.size()), &labelSize);
-                    if (oldFont) SelectObject(screenDc, oldFont);
+                    const float labelWidth = MeasureDWriteText(
+                        dwriteFactory_.Get(), textFormat_.Get(),
+                        item.label.c_str(), item.label.size());
                     inlineWidths[i] = std::max(
                         metrics_.rowHeight,
-                        static_cast<int>(labelSize.cx) +
+                        static_cast<int>(labelWidth) +
                             metrics_.outerInset * 4);
                 }
                 continue;
@@ -713,31 +895,25 @@ private:
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
             };
-            const SIZE measured = menu_icon::MeasureItem(
-                screenDc, textFont_, view, metrics_);
-            width = std::max(width, static_cast<int>(measured.cx));
+            const float measured = menu_icon::MeasureItemWidth(
+                dwriteFactory_.Get(), textFormat_.Get(), view, metrics_);
+            width = std::max(width, static_cast<int>(measured));
         }
         if (!quickIndices.empty())
         {
             int quickCellWidth = metrics_.quickActionMinimumWidth;
-            if (screenDc)
+            for (int index : quickIndices)
             {
-                HGDIOBJ oldFont = SelectObject(screenDc, quickTextFont_);
-                for (int index : quickIndices)
-                {
-                    std::wstring_view label =
-                        (*popup.items)[index].label;
-                    const size_t tab = label.find(L'\t');
-                    label = label.substr(0, tab);
-                    SIZE labelSize{};
-                    GetTextExtentPoint32W(screenDc, label.data(),
-                        static_cast<int>(label.size()), &labelSize);
-                    quickCellWidth = std::max(quickCellWidth,
-                        static_cast<int>(labelSize.cx) +
-                            metrics_.outerInset * 4);
-                }
-                if (oldFont)
-                    SelectObject(screenDc, oldFont);
+                std::wstring_view label =
+                    (*popup.items)[index].label;
+                const size_t tab = label.find(L'\t');
+                label = label.substr(0, tab);
+                const float labelWidth = MeasureDWriteText(
+                    dwriteFactory_.Get(), quickTextFormat_.Get(),
+                    label.data(), label.size());
+                quickCellWidth = std::max(quickCellWidth,
+                    static_cast<int>(labelWidth) +
+                        metrics_.outerInset * 4);
             }
             quickCellWidth = std::min(quickCellWidth,
                 metrics_.quickActionMaximumWidth);
@@ -747,8 +923,6 @@ private:
                     metrics_.outerInset * 2);
             popup.quickActionCellWidth = quickCellWidth;
         }
-        if (screenDc)
-            ReleaseDC(nullptr, screenDc);
 
         popup.itemRects.assign(popup.items->size(), RECT{});
         popup.navigationOrder.clear();
@@ -1371,17 +1545,13 @@ private:
     }
 
     int TextInputHorizontalOffset(
-        HDC dc, const std::wstring& text, size_t cursor,
+        const std::wstring& text, size_t cursor,
         int availableWidth) const
     {
-        SIZE prefix{};
         const size_t safeCursor = std::min(cursor, text.size());
-        if (safeCursor > 0)
-        {
-            GetTextExtentPoint32W(dc, text.data(),
-                static_cast<int>(safeCursor), &prefix);
-        }
-        return std::max(0, static_cast<int>(prefix.cx) -
+        const float prefix = MeasureDWriteText(dwriteFactory_.Get(),
+            textFormat_.Get(), text.data(), safeCursor);
+        return std::max(0, static_cast<int>(prefix) -
             availableWidth + metrics_.outerInset * 2);
     }
 
@@ -1400,32 +1570,24 @@ private:
         const int textLeft = glyphBounds.right + metrics_.textGap;
         const int textRight = field.right - metrics_.rightPadding;
 
-        HDC dc = GetDC(nullptr);
         size_t position = item.inputText.size();
-        if (dc)
         {
-            HGDIOBJ oldFont = SelectObject(dc, textFont_);
-            const int offset = TextInputHorizontalOffset(dc,
+            const int offset = TextInputHorizontalOffset(
                 item.inputText, textInputCursor_,
                 std::max(1, textRight - textLeft));
             const int target = std::max(0,
                 static_cast<int>(point.x) - textLeft + offset);
             for (size_t i = 0; i <= item.inputText.size(); ++i)
             {
-                SIZE prefix{};
-                if (i > 0)
-                {
-                    GetTextExtentPoint32W(dc, item.inputText.data(),
-                        static_cast<int>(i), &prefix);
-                }
-                if (static_cast<int>(prefix.cx) >= target)
+                const float prefix = MeasureDWriteText(
+                    dwriteFactory_.Get(), textFormat_.Get(),
+                    item.inputText.data(), i);
+                if (static_cast<int>(prefix) >= target)
                 {
                     position = i;
                     break;
                 }
             }
-            if (oldFont) SelectObject(dc, oldFont);
-            ReleaseDC(nullptr, dc);
         }
         FocusTextInput(popup, index, position, true);
     }
@@ -1752,22 +1914,17 @@ private:
         HDC dc = GetDC(nullptr);
         int advance = 0;
         int horizontalOffset = 0;
-        if (dc)
         {
-            HGDIOBJ oldFont = SelectObject(dc, textFont_);
-            SIZE prefix{};
-            if (displayCursor > 0)
-            {
-                GetTextExtentPoint32W(dc, display.data(),
-                    static_cast<int>(displayCursor), &prefix);
-            }
-            advance = static_cast<int>(prefix.cx);
-            horizontalOffset = TextInputHorizontalOffset(dc,
+            const float prefix = MeasureDWriteText(
+                dwriteFactory_.Get(), textFormat_.Get(),
+                display.data(), displayCursor);
+            advance = static_cast<int>(prefix);
+            horizontalOffset = TextInputHorizontalOffset(
                 display, displayCursor,
                 std::max(1, textRight - textLeft));
-            if (oldFont) SelectObject(dc, oldFont);
-            ReleaseDC(nullptr, dc);
         }
+        if (dc)
+            ReleaseDC(nullptr, dc);
         POINT caret{
             popup->panelScreenOrigin.x - shadowSize_ +
                 std::clamp(textLeft + advance - horizontalOffset,
@@ -1960,28 +2117,36 @@ private:
         result_ = {};
     }
 
-    void DrawScrollIndicator(HDC dc, const Popup& popup, bool top)
+    void DrawScrollIndicator(ID2D1RenderTarget* dc,
+        ID2D1SolidColorBrush* brush, const Popup& popup, bool top)
     {
-        const int centerX = shadowSize_ + popup.panelWidth / 2;
-        const int centerY = top
-            ? shadowSize_ + Scale(5, options_.dpi)
-            : shadowSize_ + popup.panelHeight - Scale(5, options_.dpi);
-        HPEN pen = CreatePen(PS_SOLID, 1,
-            lightTheme_ ? RGB(95, 95, 95) : RGB(190, 190, 190));
-        HGDIOBJ oldPen = SelectObject(dc, pen);
-        const int half = Scale(3, options_.dpi);
-        MoveToEx(dc, centerX - half,
-            centerY + (top ? half / 2 : -half / 2), nullptr);
-        LineTo(dc, centerX,
-            centerY + (top ? -half / 2 : half / 2));
-        LineTo(dc, centerX + half,
-            centerY + (top ? half / 2 : -half / 2));
-        SelectObject(dc, oldPen);
-        DeleteObject(pen);
+        const float centerX = static_cast<float>(shadowSize_) +
+            popup.panelWidth / 2.0f;
+        const float centerY = top
+            ? static_cast<float>(shadowSize_) + Scale(5, options_.dpi)
+            : static_cast<float>(shadowSize_) + popup.panelHeight -
+                Scale(5, options_.dpi);
+        const float colorValue = lightTheme_ ? 95.0f : 190.0f;
+        brush->SetColor(D2D1::ColorF(
+            colorValue / 255.0f, colorValue / 255.0f,
+            colorValue / 255.0f, 1.0f));
+        const float half = static_cast<float>(Scale(3, options_.dpi));
+        const D2D1_POINT_2F middle{
+            centerX, centerY + (top ? -half / 2.0f : half / 2.0f),
+        };
+        dc->DrawLine(
+            D2D1::Point2F(centerX - half,
+                centerY + (top ? half / 2.0f : -half / 2.0f)),
+            middle, brush, 1.0f);
+        dc->DrawLine(middle,
+            D2D1::Point2F(centerX + half,
+                centerY + (top ? half / 2.0f : -half / 2.0f)),
+            brush, 1.0f);
     }
 
     void DrawHorizontalScrollIndicator(
-        HDC dc, const Popup& popup, bool left)
+        ID2D1RenderTarget* dc, ID2D1SolidColorBrush* brush,
+        const Popup& popup, bool left)
     {
         RECT track = popup.horizontalScrollRect;
         OffsetRect(&track, 0, -popup.scrollOffset);
@@ -1991,130 +2156,33 @@ private:
             background.right = background.left + indicatorWidth;
         else
             background.left = background.right - indicatorWidth;
-        HBRUSH brush = CreateSolidBrush(palette_.background);
-        if (brush)
-        {
-            FillRect(dc, &background, brush);
-            DeleteObject(brush);
-        }
+        FillD2DRect(dc, brush,
+            D2D1::RectF(static_cast<float>(background.left),
+                static_cast<float>(background.top),
+                static_cast<float>(background.right),
+                static_cast<float>(background.bottom)),
+            palette_.background);
 
-        const int centerX = (background.left + background.right) / 2;
-        const int centerY = (background.top + background.bottom) / 2;
-        const int half = Scale(3, options_.dpi);
-        HPEN pen = CreatePen(PS_SOLID, 1,
-            lightTheme_ ? RGB(95, 95, 95) : RGB(190, 190, 190));
-        if (!pen)
-            return;
-        HGDIOBJ oldPen = SelectObject(dc, pen);
-        MoveToEx(dc, centerX + (left ? half / 2 : -half / 2),
-            centerY - half, nullptr);
-        LineTo(dc, centerX + (left ? -half / 2 : half / 2), centerY);
-        LineTo(dc, centerX + (left ? half / 2 : -half / 2),
-            centerY + half);
-        SelectObject(dc, oldPen);
-        DeleteObject(pen);
+        const float centerX = (background.left + background.right) / 2.0f;
+        const float centerY = (background.top + background.bottom) / 2.0f;
+        const float half = static_cast<float>(Scale(3, options_.dpi));
+        const float colorValue = lightTheme_ ? 95.0f : 190.0f;
+        brush->SetColor(D2D1::ColorF(
+            colorValue / 255.0f, colorValue / 255.0f,
+            colorValue / 255.0f, 1.0f));
+        const D2D1_POINT_2F middle{
+            centerX + (left ? -half / 2.0f : half / 2.0f), centerY,
+        };
+        dc->DrawLine(
+            D2D1::Point2F(centerX + (left ? half / 2.0f : -half / 2.0f),
+                centerY - half),
+            middle, brush, 1.0f);
+        dc->DrawLine(middle,
+            D2D1::Point2F(centerX + (left ? half / 2.0f : -half / 2.0f),
+                centerY + half),
+            brush, 1.0f);
     }
 
-    void ApplyAlphaMask(Popup& popup, std::uint32_t* pixels,
-        const RECT& panel)
-    {
-        const float centerX = (panel.left + panel.right) * 0.5f;
-        const float centerY = (panel.top + panel.bottom) * 0.5f;
-        const float halfWidth = (panel.right - panel.left) * 0.5f;
-        const float halfHeight = (panel.bottom - panel.top) * 0.5f;
-        const float radius = static_cast<float>(panelRadius_);
-        const float shadow = static_cast<float>(shadowSize_);
-        constexpr float solidPanelAlpha = 246.0f;
-        // The acrylic backdrop already supplies its own tint.  Keeping the
-        // custom surface comparatively translucent lets the blurred desktop
-        // remain visible instead of stacking two nearly opaque colour layers.
-        const float blurPanelAlpha = lightTheme_ ? 70.0f : 76.0f;
-        constexpr float blurHoverAlpha = 146.0f;
-        constexpr float blurContentAlpha = 246.0f;
-        constexpr float shadowAlpha = 34.0f;
-        const COLORREF borderColor = lightTheme_
-            ? RGB(215, 215, 215) : RGB(73, 73, 73);
-        const unsigned borderBlue = GetBValue(borderColor);
-        const unsigned borderGreen = GetGValue(borderColor);
-        const unsigned borderRed = GetRValue(borderColor);
-
-        for (int y = 0; y < popup.windowHeight; ++y)
-        {
-            for (int x = 0; x < popup.windowWidth; ++x)
-            {
-                const float qx = std::fabs((x + 0.5f) - centerX) -
-                    (halfWidth - radius);
-                const float qy = std::fabs((y + 0.5f) - centerY) -
-                    (halfHeight - radius);
-                const float outside = std::hypot(
-                    std::max(qx, 0.0f), std::max(qy, 0.0f));
-                const float distance = outside +
-                    std::min(std::max(qx, qy), 0.0f) - radius;
-                std::uint32_t& pixel = pixels[
-                    static_cast<size_t>(y) * popup.windowWidth + x];
-                const std::uint32_t rgb = pixel & 0x00FFFFFFu;
-                const auto dibColor = [](COLORREF color) {
-                    return static_cast<std::uint32_t>(GetBValue(color)) |
-                        (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
-                        (static_cast<std::uint32_t>(GetRValue(color)) << 16);
-                };
-                float surfaceAlpha = solidPanelAlpha;
-                if (blurEnabled_)
-                {
-                    if (rgb == dibColor(palette_.background))
-                        surfaceAlpha = blurPanelAlpha;
-                    else if (rgb == dibColor(palette_.hoverBackground))
-                        surfaceAlpha = blurHoverAlpha;
-                    else
-                        surfaceAlpha = blurContentAlpha;
-                }
-
-                // Analytic one-pixel coverage replaces the hard binary mask.
-                // It keeps the layered window's rounded edge smooth at 100%
-                // DPI while preserving a crisp, anti-aliased one-pixel border.
-                const float panelCoverage = std::clamp(
-                    0.5f - distance, 0.0f, 1.0f);
-                const float borderCoverage = panelCoverage * std::clamp(
-                    distance + 1.5f, 0.0f, 1.0f);
-                const float outsideDistance = std::max(distance, 0.0f);
-                float localShadowAlpha = 0.0f;
-                if (outsideDistance < shadow)
-                {
-                    const float strength =
-                        1.0f - outsideDistance / shadow;
-                    localShadowAlpha = shadowAlpha * strength * strength *
-                        (1.0f - panelCoverage);
-                }
-
-                float blue = static_cast<float>(pixel & 0xFFu);
-                float green = static_cast<float>((pixel >> 8) & 0xFFu);
-                float red = static_cast<float>((pixel >> 16) & 0xFFu);
-                blue += (static_cast<float>(borderBlue) - blue) *
-                    borderCoverage;
-                green += (static_cast<float>(borderGreen) - green) *
-                    borderCoverage;
-                red += (static_cast<float>(borderRed) - red) *
-                    borderCoverage;
-
-                const float localPanelAlpha =
-                    surfaceAlpha * panelCoverage;
-                const unsigned alpha = static_cast<unsigned>(std::clamp(
-                    localPanelAlpha + localShadowAlpha *
-                        (1.0f - localPanelAlpha / 255.0f),
-                    0.0f, 255.0f));
-                const unsigned premultipliedBlue = static_cast<unsigned>(
-                    blue * localPanelAlpha / 255.0f);
-                const unsigned premultipliedGreen = static_cast<unsigned>(
-                    green * localPanelAlpha / 255.0f);
-                const unsigned premultipliedRed = static_cast<unsigned>(
-                    red * localPanelAlpha / 255.0f);
-                pixel = premultipliedBlue |
-                    (premultipliedGreen << 8) |
-                    (premultipliedRed << 16) |
-                    (alpha << 24);
-            }
-        }
-    }
 
     void ApplyBlurClipRegion(Popup& popup)
     {
@@ -2210,12 +2278,18 @@ private:
     int shadowSize_ = 0;
     int panelPadding_ = 0;
     int panelRadius_ = 0;
-    HFONT textFont_ = nullptr;
-    HFONT fluentIconFont_ = nullptr;
-    HFONT fontAwesomeIconFont_ = nullptr;
-    HFONT quickTextFont_ = nullptr;
-    HFONT quickFluentIconFont_ = nullptr;
-    HFONT quickFontAwesomeIconFont_ = nullptr;
+    ComPtr<ID3D11Device> d3dDevice_;
+    ComPtr<ID2D1Factory1> d2dFactory_;
+    ComPtr<ID2D1Device> d2dDevice_;
+    ComPtr<ID2D1DeviceContext> d2dContext_;
+    ComPtr<ID2D1DCRenderTarget> dcrTarget_;
+    ComPtr<IDWriteFactory> dwriteFactory_;
+    ComPtr<IDWriteTextFormat> textFormat_;
+    ComPtr<IDWriteTextFormat> quickTextFormat_;
+    ComPtr<IDWriteTextFormat> fluentIconFormat_;
+    ComPtr<IDWriteTextFormat> faIconFormat_;
+    ComPtr<IDWriteTextFormat> quickFluentIconFormat_;
+    ComPtr<IDWriteTextFormat> quickFaIconFormat_;
     std::vector<std::unique_ptr<Popup>> popups_;
     int activeDepth_ = 0;
     UINT textInputCommand_ = 0;
@@ -2234,8 +2308,16 @@ private:
 
 Result Show(const std::vector<Item>& items, const Options& options)
 {
+    // DirectComposition / D2D / DWrite require a COM apartment. The caller
+    // (app UI thread) may already have initialized COM; if so the call is a
+    // no-op and we must not tear down their apartment on exit.
+    HRESULT coResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool initializedCom = coResult == S_OK;
     MenuController controller(items, options);
-    return controller.Run();
+    const Result result = controller.Run();
+    if (initializedCom)
+        CoUninitialize();
+    return result;
 }
 
 bool IsActive()

@@ -127,56 +127,6 @@ std::optional<std::filesystem::path> PickSettingsFile(HWND owner,
     return result;
 }
 
-bool LaunchSteamWorkshopPublisher(
-    const std::filesystem::path& developmentRoot)
-{
-    if (!WidgetEngine::IsSteamWorkshopBridgeAvailable()) return false;
-    const std::filesystem::path manager =
-        std::filesystem::path(GetExecutableDirectoryPath()) /
-        L"SnowDesktopWorkshopManager.exe";
-    std::error_code filesystemError;
-    if (!std::filesystem::is_regular_file(manager, filesystemError))
-        return false;
-    const DWORD attributes = GetFileAttributesW(manager.c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES ||
-        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
-        return false;
-    const std::string effectiveLanguage =
-        Locale::Instance().GetEffectiveLanguage();
-    const std::wstring managerLanguage(effectiveLanguage.begin(),
-        effectiveLanguage.end());
-    const std::wstring settingsFile = GetGeneralSettingsPath();
-    std::wstring commandLine = L"\"" + manager.wstring() +
-        L"\" --development-root \"" + developmentRoot.wstring() +
-        L"\" --language \"" + managerLanguage +
-        L"\" --settings-file \"" + settingsFile + L"\"";
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION process{};
-    const std::wstring workingDirectory = manager.parent_path().wstring();
-    if (!CreateProcessW(manager.c_str(), commandLine.data(), nullptr, nullptr,
-        FALSE, CREATE_UNICODE_ENVIRONMENT, nullptr,
-        workingDirectory.c_str(), &startup, &process))
-        return false;
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return true;
-}
-
-bool IsSteamWorkshopPublisherAvailable()
-{
-    if (!WidgetEngine::IsSteamWorkshopBridgeAvailable()) return false;
-    const std::filesystem::path manager =
-        std::filesystem::path(GetExecutableDirectoryPath()) /
-        L"SnowDesktopWorkshopManager.exe";
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(manager, error) || error)
-        return false;
-    const DWORD attributes = GetFileAttributesW(manager.c_str());
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
-}
-
 std::optional<std::filesystem::path> SaveSettingsFile(HWND owner,
     const wchar_t* title, const wchar_t* defaultName,
     const wchar_t* defaultExtension,
@@ -3565,10 +3515,6 @@ void SettingsWindow::DrawWidgetPackagesPage()
     ImGui::PopStyleVar();
 
     const auto packages = WidgetEngine::ListWidgetPackages();
-    const bool steamBridgeAvailable =
-        WidgetEngine::IsSteamWorkshopBridgeAvailable();
-    const bool workshopPublisherAvailable =
-        steamBridgeAvailable && IsSteamWorkshopPublisherAvailable();
     const std::string currentLocale =
         Locale::Instance().GetEffectiveLanguage();
     auto localizedManifest = [&](snowdesktop::widget::PackageManifest manifest)
@@ -3650,9 +3596,6 @@ void SettingsWindow::DrawWidgetPackagesPage()
         if (providerId == "static-catalog")
             return std::string(
                 _L("app.settings.widgets_source_catalog"));
-        if (providerId == "steam-workshop")
-            return std::string(
-                _L("app.settings.widgets_source_steam"));
         return providerId;
     };
     auto needsInstallConfirmation = [](const std::wstring& message)
@@ -3937,16 +3880,6 @@ void SettingsWindow::DrawWidgetPackagesPage()
             installLocalPackage(*selected, false);
         }
     }
-    if (steamBridgeAvailable)
-    {
-        ImGui::SameLine();
-        if (SecondaryButton(_L("app.settings.widgets_open_steam_workshop")))
-        {
-            ShellExecuteW(nullptr, L"open",
-                L"https://steamcommunity.com/workshop/", nullptr, nullptr,
-                SW_SHOWNORMAL);
-        }
-    }
     ImGui::Spacing();
 
     const auto legacy = WidgetEngine::ListLegacyWidgetPackages();
@@ -4158,20 +4091,6 @@ void SettingsWindow::DrawWidgetPackagesPage()
     if (ImGui::CollapsingHeader(
         _L("app.settings.widgets_advanced")))
     {
-        if (workshopPublisherAvailable)
-        {
-            if (SecondaryButton(
-                _L("app.settings.widgets_publish_steam")))
-            {
-                if (LaunchSteamWorkshopPublisher(
-                    WidgetEngine::GetWidgetPackagePaths().development))
-                    widgetPackageStatus_.clear();
-                else
-                    widgetPackageStatus_ =
-                        _L("app.settings.widgets_publisher_launch_failed");
-            }
-            ImGui::Spacing();
-        }
         if (!legacy.empty())
         {
             ImGui::SeparatorText(

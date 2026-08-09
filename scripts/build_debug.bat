@@ -46,7 +46,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo === Building SnowDesktop.exe and SnowDesktopSteamBridge.exe (Debug) ===
+echo === Building SnowDesktop.exe (Debug) ===
 cmake --build --preset debug
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
@@ -56,5 +56,4 @@ if %ERRORLEVEL% NEQ 0 (
 echo.
 echo === Build complete ===
 echo SnowDesktop.exe: .build_debug\Debug\SnowDesktop.exe
-echo Steam bridge: .build_debug\Debug\SnowDesktopSteamBridge.exe
 exit /b 0

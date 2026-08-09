@@ -1,16 +1,17 @@
-# SnowDesktop
+# SparkDesktop
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-A Windows desktop organization and personalization tool. SnowDesktop replaces native Explorer desktop icons with a custom Direct2D-rendered desktop and supports multi-monitor grid layouts, embeddable widgets, and Lua script extensions.
+> **Fork** of [FreeFallingSnow/SnowDesktop](https://github.com/FreeFallingSnow/SnowDesktop) ([GPL-3.0](./LICENSE)), maintained personally
 
-## 📦 Installation
+A Windows desktop organization and personalization tool. SparkDesktop replaces native Explorer desktop icons with a custom Direct2D-rendered desktop and supports multi-monitor grid layouts, embeddable widgets, and Lua script extensions.
 
-[![Get it from Microsoft](https://get.microsoft.com/images/en-us%20dark.svg)](https://apps.microsoft.com/detail/9PLLGJVL4LC3)
+## 📦 Getting it
 
-[Source repository](https://github.com/FreeFallingSnow/SnowDesktop)
+This repository is a personal fork and is not distributed on the Microsoft Store.
 
-[Release repository](https://github.com/FreeFallingSnow/SnowDesktop_Release)
+- For official releases, see the [upstream release repository](https://github.com/FreeFallingSnow/SnowDesktop_Release);
+- or build this repository yourself as described under [Build](#🛠️-build).
 
 ## ✨ Feature Highlights
 
@@ -58,11 +59,7 @@ normally first. To clear the lock automatically, use
 
 ## 📄 License
 
-The SnowDesktop core is licensed under GNU General Public License v3.0; see
+The core code of this repository follows the upstream GNU General Public License v3.0; see
 [LICENSE](./LICENSE). Copyright and license information for third-party
 components included in this repository is collected in
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
-
-The separate `steam_bridge/` Workshop bridge is MIT-licensed under
-[steam_bridge/LICENSE](./steam_bridge/LICENSE). The Steamworks SDK is not
-included in this repository and is not covered by either license.

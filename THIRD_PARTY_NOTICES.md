@@ -2,8 +2,7 @@
 
 SnowDesktop includes or redistributes the following third-party software and
 assets. These notices apply only to the named components. The SnowDesktop core
-is licensed under the GNU General Public License v3.0; the separate Steam bridge
-under `steam_bridge/` is licensed under the MIT License.
+is licensed under the GNU General Public License v3.0.
 
 | Component | Version | License | Copyright / source |
 | --- | --- | --- | --- |
@@ -41,11 +40,3 @@ The affected files are:
 The complete GPL v3 license text is retained in the repository root `LICENSE`.
 The upstream source and history remain available at the pinned TranslucentTB
 commit linked above.
-
-## Optional Steamworks dependency
-
-`steam_bridge/` can optionally be built against a separately obtained
-Steamworks SDK. The SDK, its headers, import libraries, and redistributable
-binary are not included in this repository and are not covered by either the
-SnowDesktop GPL license or the bridge MIT license. See
-`steam_bridge/THIRD_PARTY_NOTICES.md` for the distribution boundary.

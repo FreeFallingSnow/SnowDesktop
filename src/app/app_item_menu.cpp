@@ -304,15 +304,12 @@ void DesktopApp::ShowShellContextMenu(
         IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
-    snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(desktopFolder_.Get(), menuOwner);
-    HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : menuOwner;
+    // 不使用 ShellContextMenuSite：其 IShellView 会触发 Explorer 桌面视图
+    // 重建，导致图标层被重置（与 release-v1.0.1.0 一致，直接以 owner 显示）。
     ComPtr<IContextMenu> ctxMenu;
-    if (FAILED(desktopFolder_->GetUIObjectOf(shellOwner, static_cast<UINT>(pidls.size()), pidls.data(),
+    if (FAILED(desktopFolder_->GetUIObjectOf(menuOwner, static_cast<UINT>(pidls.size()), pidls.data(),
         IID_IContextMenu, nullptr, reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
         return;
-    menuSite.Attach(ctxMenu.Get());
 
     HMENU menu = CreatePopupMenu();
     constexpr UINT kFirstCmd = 1;

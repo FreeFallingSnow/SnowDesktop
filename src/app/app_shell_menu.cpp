@@ -84,16 +84,14 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
  */
 void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 {
-    snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(desktopFolder_.Get(), hwnd_);
-    HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : hwnd_;
+    // 不使用 ShellContextMenuSite：它创建的 IShellView 会触发 Explorer
+    // 桌面视图重建，导致 SnowDesktop 的图标层被重置。桌面背景菜单直接
+    // 以主窗口为 owner 显示（与 release-v1.0.1.0 行为一致）。
     ComPtr<IContextMenu> contextMenu;
-    HRESULT hr = desktopFolder_->CreateViewObject(shellOwner, IID_IContextMenu,
+    HRESULT hr = desktopFolder_->CreateViewObject(hwnd_, IID_IContextMenu,
         reinterpret_cast<void**>(contextMenu.GetAddressOf()));
     if (FAILED(hr) || !contextMenu)
         return;
-    menuSite.Attach(contextMenu.Get());
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;

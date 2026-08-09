@@ -28,7 +28,6 @@
 #include "http_runtime.h"
 #include "calendar_service.h"
 #include "widget_package.h"
-#include "steam_workshop_sync.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -644,13 +643,6 @@ public:
         QueryWidgetPackageSource(const std::string& providerId,
             const snowdesktop::widget::PackageQuery& query,
             std::string& error);
-    static bool IsSteamWorkshopBridgeAvailable();
-    static snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
-        QuerySteamWorkshopSubscriptions(const std::string& locale);
-    snowdesktop::widget::SteamWorkshopSyncResult
-        ApplySteamWorkshopSubscriptions(
-            const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot&
-                snapshot);
     bool InstallAndVerifyWidgetPackageFromSource(
         const std::string& providerId, const std::string& externalItemId,
         const std::string& version, std::wstring& error,

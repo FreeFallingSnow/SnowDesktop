@@ -86,7 +86,8 @@ void DesktopApp::RebuildContainersAndItems()
     containers_.clear();
     items_oo_.clear();
 
-    // Collect keys of items that belong to widgets.
+    // Collect keys of items that belong to widgets; desktop icons that are
+    // collected by a widget or the Dock are kept off the desktop.
     RefreshCollectedKeysCache();
     const auto& collectedKeys = collectedKeysCache_;
 

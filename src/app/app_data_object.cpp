@@ -177,7 +177,9 @@ void DesktopApp::RefreshCollectedKeysCache()
     {
         if (entry.type == DockEntryType::DesktopItem && !entry.keepOnDesktop &&
             !entry.reference.empty())
+        {
             collectedKeysCache_.insert(ToUpperInvariant(entry.reference));
+        }
     }
 }
 

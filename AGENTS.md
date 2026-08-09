@@ -1,4 +1,4 @@
-# SnowDesktop 仓库工作规则
+# SparkDesktop 仓库工作规则
 
 本文件适用于整个仓库。所有自动化 Agent 在执行 Git、Pull Request、版本发布和构建操作时必须遵守以下规则。
 

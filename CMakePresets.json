@@ -37,8 +37,6 @@
       "jobs": 2,
       "targets": [
         "SnowDesktop",
-        "SnowDesktopSteamBridge",
-        "SnowDesktopWorkshopManager",
         "snowwidget"
       ]
     },
@@ -48,9 +46,7 @@
       "configuration": "Debug",
       "jobs": 2,
       "targets": [
-        "SnowDesktop",
-        "SnowDesktopSteamBridge",
-        "SnowDesktopWorkshopManager"
+        "SnowDesktop"
       ]
     },
     {

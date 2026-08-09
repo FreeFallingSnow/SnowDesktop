@@ -203,7 +203,6 @@ constexpr UINT_PTR kDesktopHostWatchTimerId = 4;
 constexpr UINT kDesktopHostWatchIntervalMs = 2000;
 constexpr UINT_PTR kWidgetRefreshTimerId = 5;
 constexpr UINT kWidgetRefreshIntervalMs = 1000;
-constexpr DWORD kSteamWorkshopSubscriptionPollIntervalMs = 15000;
 constexpr UINT_PTR kCollectionPopupDwellTimerId = 6;
 constexpr UINT kCollectionPopupDwellIntervalMs = 50;
 constexpr DWORD kCollectionPopupDwellDelayMs = 600;

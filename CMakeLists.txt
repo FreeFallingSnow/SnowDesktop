@@ -221,8 +221,6 @@ set(SNOWDESKTOP_SOURCES
     src/widget_engine.cpp
     src/widget_package.cpp
     src/widget_package_paths.cpp
-    src/steam_workshop_source.cpp
-    src/steam_workshop_sync.cpp
     src/system_snapshot.cpp
     src/http_runtime.cpp
     src/widgets/widget_base.cpp
@@ -478,9 +476,8 @@ target_link_libraries(SnowDesktop PRIVATE
     version wbemuuid
 )
 
-# The Steam bridge is a separate MIT-licensed executable. It deliberately does
-# not link SnowDesktop or any other GPL target from this build.
-add_subdirectory(steam_bridge)
+# The Steam bridge (separate MIT-licensed executable) has been removed from
+# this fork; widget packages are managed without Steam Workshop.
 
 add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -761,20 +758,6 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src src/core
         LINK_LIBRARIES gdi32 user32
         LABELS integration ui preview)
-
-    snowdesktop_add_test(
-        SnowDesktopSteamWorkshopManagerTests
-        steam_workshop_manager
-        SOURCES
-            tests/steam_workshop_manager_tests.cpp
-            src/steam_workshop_sync.cpp
-        INCLUDE_DIRECTORIES steam_bridge/src src
-        LINK_LIBRARIES SnowDesktopWorkshopManagerSupport
-        COMMAND_ARGUMENTS
-            "$<TARGET_FILE:snowwidget>"
-            "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract integration security steam sdk-free)
-    add_dependencies(SnowDesktopSteamWorkshopManagerTests snowwidget)
 
     # Interactive visual smoke harness. It is excluded from normal builds and
     # CTest; run the target explicitly when reviewing the modern popup menu.
