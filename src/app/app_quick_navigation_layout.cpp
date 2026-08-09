@@ -113,6 +113,30 @@ int DesktopApp::GetQuickNavigationTabsStart(
                 QuickNavScale(8));
 }
 
+/**
+ * @brief 获取 tab 条滚动箭头按钮的矩形区域
+ * @param left true 为左箭头（滚动区起点），false 为右箭头（tab 条右端）
+ */
+RECT DesktopApp::GetQuickNavigationTabScrollButtonRect(bool left) const
+{
+    const RECT tabs = GetQuickNavigationTabsRect(quickNavigationRect_);
+    const int size = QuickNavScale(20);
+    const int y = tabs.top + (tabs.bottom - tabs.top - size) / 2;
+    if (left)
+    {
+        const int gap = QuickNavScale(8);
+        const int sepGap = QuickNavScale(6);
+        const int fixedWidth = quickNavTabWidths_.size() >= 2
+            ? quickNavTabWidths_[0] + gap + quickNavTabWidths_[1]
+            : 0;
+        const int scrollLeft =
+            GetQuickNavigationTabsStart(quickNavigationRect_) +
+            fixedWidth + sepGap + QuickNavScale(1) + gap;
+        return MakeRect(scrollLeft, y, scrollLeft + size, y + size);
+    }
+    return MakeRect(tabs.right - size, y, tabs.right, y + size);
+}
+
 void DesktopApp::SetQuickNavigationDesktopViewMode(
     QuickNavigationDesktopViewMode mode)
 {

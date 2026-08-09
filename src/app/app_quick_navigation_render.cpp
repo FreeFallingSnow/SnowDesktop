@@ -322,6 +322,13 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 quickNavAppearance_.
                     widgetBorderAlpha,
                 0.0f, 1.0f);
+    // 毛玻璃 backdrop 不可用（无合成器支持的环境）时退化为不透明主题色，
+    // 避免半透明面板与窗口黑底混合成黑色。
+    const float effectiveBgAlpha =
+        quickNavAppearance_.glassEnabled &&
+            !quickNavBackdropCompositor_.IsAvailable()
+        ? std::max(windowAlpha, 0.95f)
+        : windowAlpha;
     DrawD2DRoundedRectangle(
         ctx.Get(), overlay,
         windowCornerRadius,
@@ -329,7 +336,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             quickNavAppearance_.widgetBgR,
             quickNavAppearance_.widgetBgG,
             quickNavAppearance_.widgetBgB,
-            windowAlpha),
+            effectiveBgAlpha),
         D2D1::ColorF(0, 0, 0, 0));
     if (quickNavAppearance_.glassEnabled &&
         quickNavAppearance_.acrylicEnabled)
@@ -621,6 +628,68 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     ? fluentIconTextFormat_.Get()
                     : quickNavTabTextFormat_.Get()),
                 ToD2DColor(t.tabText));
+        }
+
+        // Tab strip overflow arrows: indicate and scroll hidden tabs.
+        const int maxTabScroll =
+            GetQuickNavigationMaxTabScrollOffset(
+                overlay);
+        if (maxTabScroll > 0)
+        {
+            const RECT rightBtn =
+                GetQuickNavigationTabScrollButtonRect(
+                    false);
+            registerHoverRegion(
+                rightBtn,
+                QuickNavigationPointerTargetKind::
+                    TabScrollRight);
+            const bool rightHovered =
+                PtInRect(
+                    &rightBtn,
+                    lastMousePoint_) != FALSE;
+            DrawD2DRoundedRectangle(
+                ctx.Get(), rightBtn,
+                static_cast<float>(
+                    QuickNavScale(8)),
+                ToD2DColor(
+                    t.tabHoverFill,
+                    rightHovered ? 0.85f : 0.55f),
+                ToD2DColor(
+                    t.tabDefaultStroke,
+                    rightHovered ? 0.9f : 0.6f));
+            DrawD2DText(
+                ctx.Get(), L"\u203A", rightBtn,
+                quickNavTabTextFormat_.Get(),
+                ToD2DColor(t.tabText));
+
+            if (quickNavigationTabScrollOffset_ > 0)
+            {
+                const RECT leftBtn =
+                    GetQuickNavigationTabScrollButtonRect(
+                        true);
+                registerHoverRegion(
+                    leftBtn,
+                    QuickNavigationPointerTargetKind::
+                        TabScrollLeft);
+                const bool leftHovered =
+                    PtInRect(
+                        &leftBtn,
+                        lastMousePoint_) != FALSE;
+                DrawD2DRoundedRectangle(
+                    ctx.Get(), leftBtn,
+                    static_cast<float>(
+                        QuickNavScale(8)),
+                    ToD2DColor(
+                        t.tabHoverFill,
+                        leftHovered ? 0.85f : 0.55f),
+                    ToD2DColor(
+                        t.tabDefaultStroke,
+                        leftHovered ? 0.9f : 0.6f));
+                DrawD2DText(
+                    ctx.Get(), L"\u2039", leftBtn,
+                    quickNavTabTextFormat_.Get(),
+                    ToD2DColor(t.tabText));
+            }
         }
     }
 

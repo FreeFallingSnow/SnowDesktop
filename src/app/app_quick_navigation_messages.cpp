@@ -159,6 +159,42 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 tabs.top,
                 tabs.right,
                 tabs.bottom);
+            // Tab strip scroll arrows (click to scroll hidden tabs).
+            const int maxTabScroll =
+                GetQuickNavigationMaxTabScrollOffset(
+                    overlay);
+            if (maxTabScroll > 0)
+            {
+                const RECT rightBtn =
+                    GetQuickNavigationTabScrollButtonRect(
+                        false);
+                if (PtInRect(&rightBtn, appPoint))
+                {
+                    quickNavigationTabScrollOffset_ =
+                        std::min(
+                            maxTabScroll,
+                            quickNavigationTabScrollOffset_ +
+                                QuickNavScale(80));
+                    InvalidateQuickNavigationWindow();
+                    return 0;
+                }
+                if (quickNavigationTabScrollOffset_ > 0)
+                {
+                    const RECT leftBtn =
+                        GetQuickNavigationTabScrollButtonRect(
+                            true);
+                    if (PtInRect(&leftBtn, appPoint))
+                    {
+                        quickNavigationTabScrollOffset_ =
+                            std::max(
+                                0,
+                                quickNavigationTabScrollOffset_ -
+                                    QuickNavScale(80));
+                        InvalidateQuickNavigationWindow();
+                        return 0;
+                    }
+                }
+            }
             for (size_t tab = 2; tab < ci.size() + 2; ++tab)
             {
                 RECT tabRect = GetQuickNavigationTabRect(overlay, tab);

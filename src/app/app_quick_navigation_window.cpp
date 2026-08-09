@@ -614,36 +614,6 @@ void DesktopApp::UpdateQuickNavTabWidths()
             static_cast<LONG>(static_cast<long>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(20)),
             static_cast<LONG>(QuickNavScale(72)), static_cast<LONG>(QuickNavScale(200))));
     }
-
-    // When the tab strip overflows the window, shrink the scrollable tabs
-    // (index >= 2) proportionally so every tab stays visible; long labels are
-    // ellipsized by the tab text renderer.
-    if (!IsRectEmpty(&quickNavigationRect_) && tabCount > 2)
-    {
-        const RECT tabs = GetQuickNavigationTabsRect(quickNavigationRect_);
-        const int tabsStart = GetQuickNavigationTabsStart(quickNavigationRect_);
-        const int gap = QuickNavScale(8);
-        const int sepGap = QuickNavScale(6);
-        const int fixedWidth = quickNavTabWidths_[0] + gap + quickNavTabWidths_[1];
-        const int scrollPad = sepGap + QuickNavScale(1) + gap;
-        const LONG available = std::max<LONG>(1,
-            (tabs.right - tabsStart - fixedWidth - scrollPad));
-        const int scrollable = static_cast<int>(tabCount) - 2;
-        int totalWidth = 0;
-        for (size_t i = 2; i < tabCount; ++i)
-            totalWidth += quickNavTabWidths_[i];
-        const LONG budget = std::max<LONG>(
-            static_cast<LONG>(scrollable * QuickNavScale(48)),
-            available - static_cast<LONG>((scrollable - 1) * gap));
-        const float ratio = static_cast<float>(budget) /
-            static_cast<float>(std::max(1, totalWidth));
-        for (size_t i = 2; i < tabCount; ++i)
-        {
-            quickNavTabWidths_[i] = std::max(
-                static_cast<int>(QuickNavScale(48)),
-                static_cast<int>(quickNavTabWidths_[i] * ratio));
-        }
-    }
 }
 
 /**
