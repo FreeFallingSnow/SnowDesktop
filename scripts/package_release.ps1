@@ -230,10 +230,10 @@ $version = (Get-Content `
     -Encoding UTF8 `
     -Raw | ConvertFrom-Json).version
 $versionParts = $version -split "\."
-if ($versionParts.Count -ne 4 -or
+if ($versionParts.Count -lt 3 -or $versionParts.Count -gt 4 -or
     $versionParts[0] -eq "0" -or
-    $versionParts[3] -ne "0") {
-    throw "version.json must use Store-compatible A.B.C.0 format."
+    ($versionParts.Count -eq 4 -and $versionParts[3] -ne "0")) {
+    throw "version.json must use A.B.C or Store-compatible A.B.C.0 format."
 }
 foreach ($part in $versionParts) {
     if ($part -notmatch "^(0|[1-9][0-9]*)$" -or
@@ -348,7 +348,7 @@ New-Item -ItemType Directory -Path $uploadStage -Force | Out-Null
 
 Copy-Payload -Destination $portableStage
 $portablePath = Join-Path $OutputDirectory `
-    "SnowDesktop-portable-x64-$version.zip"
+    "SparkDesktop-portable-x64-$version.zip"
 Remove-OutputFile -Path $portablePath
 Compress-Archive `
     -Path (Join-Path $portableStage "*") `
@@ -459,7 +459,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $msixPath = Join-Path $OutputDirectory `
-    "SnowDesktop-Store-x64-$version.msix"
+    "SparkDesktop-Store-x64-$version.msix"
 Remove-OutputFile -Path $msixPath
 & $makeAppx pack /d $msixStage /p $msixPath /o /v
 if ($LASTEXITCODE -ne 0) {
@@ -516,9 +516,9 @@ if (-not (Test-Path -LiteralPath $pdbPath -PathType Leaf)) {
 Copy-Item -LiteralPath $pdbPath -Destination $symbolsStage -Force
 
 $appxSymPath = Join-Path $OutputDirectory `
-    "SnowDesktop-Store-x64-$version.appxsym"
+    "SparkDesktop-Store-x64-$version.appxsym"
 $appxSymZipPath = Join-Path $OutputDirectory `
-    "SnowDesktop-Store-x64-$version.appxsym.zip"
+    "SparkDesktop-Store-x64-$version.appxsym.zip"
 Remove-OutputFile -Path $appxSymPath
 Remove-OutputFile -Path $appxSymZipPath
 Compress-Archive `
@@ -530,9 +530,9 @@ Move-Item -LiteralPath $appxSymZipPath -Destination $appxSymPath
 Copy-Item -LiteralPath $msixPath -Destination $uploadStage -Force
 Copy-Item -LiteralPath $appxSymPath -Destination $uploadStage -Force
 $msixUploadPath = Join-Path $OutputDirectory `
-    "SnowDesktop-Store-x64-$version.msixupload"
+    "SparkDesktop-Store-x64-$version.msixupload"
 $msixUploadZipPath = Join-Path $OutputDirectory `
-    "SnowDesktop-Store-x64-$version.msixupload.zip"
+    "SparkDesktop-Store-x64-$version.msixupload.zip"
 Remove-OutputFile -Path $msixUploadPath
 Remove-OutputFile -Path $msixUploadZipPath
 Compress-Archive `
