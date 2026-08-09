@@ -413,7 +413,7 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     response.id = id;
     response.widgetId = options.widgetId;
 
-    HINTERNET session = WinHttpOpen(L"SnowDesktop/1.0",
+    HINTERNET session = WinHttpOpen(L"SparkDesktop/1.0",
         WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { response.error = "WinHttpOpen failed"; return response; }
@@ -422,6 +422,20 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
     WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY,
         &redirectPolicy, sizeof(redirectPolicy));
+
+    HANDLE downloadFile = INVALID_HANDLE_VALUE;
+    if (!options.bodyFilePath.empty())
+    {
+        downloadFile = CreateFileW(options.bodyFilePath.c_str(),
+            GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (downloadFile == INVALID_HANDLE_VALUE)
+        {
+            response.error = "Cannot create download file";
+            WinHttpCloseHandle(session);
+            return response;
+        }
+    }
 
     std::wstring currentUrl = options.url;
     for (int redirectCount = 0; redirectCount <= 3 && !token.stop_requested(); ++redirectCount)
@@ -575,23 +589,37 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             continue;
         }
 
-        while (!token.stop_requested() && response.body.size() <= kMaxResponseBytes)
+        while (!token.stop_requested())
         {
+            if (options.bodyFilePath.empty() &&
+                response.body.size() > kMaxResponseBytes)
+                break;
             DWORD available = 0;
             if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
-            DWORD remaining = kMaxResponseBytes + 1 - static_cast<DWORD>(response.body.size());
-            available = std::min(available, remaining);
             std::string chunk(available, '\0');
             DWORD read = 0;
             if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
-            response.body.append(chunk.data(), read);
+            if (!options.bodyFilePath.empty())
+            {
+                DWORD written = 0;
+                if (!WriteFile(downloadFile, chunk.data(), read, &written, nullptr))
+                {
+                    response.error = "Download write failed";
+                    break;
+                }
+            }
+            else
+            {
+                response.body.append(chunk.data(), read);
+                if (response.body.size() > kMaxResponseBytes)
+                {
+                    response.body.resize(kMaxResponseBytes);
+                    response.error = "Response too large";
+                    break;
+                }
+            }
         }
         if (token.stop_requested()) response.error = "Cancelled";
-        else if (response.body.size() > kMaxResponseBytes)
-        {
-            response.body.resize(kMaxResponseBytes);
-            response.error = "Response too large";
-        }
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connection);
         break;
@@ -599,6 +627,12 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
 
     if (token.stop_requested() && response.error.empty())
         response.error = "Cancelled";
+    if (downloadFile != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(downloadFile);
+        if (!response.error.empty())
+            DeleteFileW(options.bodyFilePath.c_str());
+    }
     WinHttpCloseHandle(session);
     return response;
 }

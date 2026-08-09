@@ -421,6 +421,20 @@ add_executable(SnowDesktop WIN32
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
 set_target_properties(SnowDesktop PROPERTIES OUTPUT_NAME "SparkDesktop")
+
+# Portable self-update helper (waits for the main process, replaces files,
+# then relaunches SparkDesktop.exe).
+add_executable(SparkDesktopUpdater WIN32
+    updater/main.cpp
+)
+target_compile_features(SparkDesktopUpdater PRIVATE cxx_std_20)
+if (MSVC)
+    target_compile_options(SparkDesktopUpdater PRIVATE /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_definitions(SparkDesktopUpdater PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+        WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+endif()
+target_link_libraries(SparkDesktopUpdater PRIVATE shell32)
 if (TARGET SnowDesktopTaskbarHook)
     add_dependencies(SnowDesktop SnowDesktopTaskbarHook SnowDesktopCppWinRT)
     target_include_directories(SnowDesktop PRIVATE "${CPPWINRT_OUTPUT_DIR}")

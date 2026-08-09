@@ -33,6 +33,7 @@
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <wbemidl.h>
+#include <wincrypt.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -62,6 +63,45 @@ constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kAutoStartRunValue[] = L"SparkDesktop";
 constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
+
+// 计算文件 SHA-256，返回小写十六进制字符串；失败返回空串。
+std::string ComputeFileSha256Hex(const std::wstring& filePath)
+{
+    HANDLE file = CreateFileW(filePath.c_str(), GENERIC_READ,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return {};
+    HCRYPTPROV provider = 0;
+    HCRYPTHASH hash = 0;
+    std::string result;
+    if (CryptAcquireContextW(&provider, nullptr, nullptr,
+        PROV_RSA_AES, CRYPT_VERIFYCONTEXT) &&
+        CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash))
+    {
+        BYTE buffer[64 * 1024];
+        DWORD read = 0;
+        while (ReadFile(file, buffer, sizeof(buffer), &read, nullptr) &&
+            read > 0)
+        {
+            CryptHashData(hash, buffer, read, 0);
+        }
+        BYTE digest[32];
+        DWORD digestLen = sizeof(digest);
+        if (CryptGetHashParam(hash, HP_HASHVAL, digest, &digestLen, 0))
+        {
+            char hex[65];
+            for (DWORD i = 0; i < digestLen; ++i)
+                std::sprintf(hex + i * 2, "%02x", digest[i]);
+            result = hex;
+        }
+        CryptDestroyHash(hash);
+    }
+    if (provider)
+        CryptReleaseContext(provider, 0);
+    CloseHandle(file);
+    return result;
+}
 
 std::string CodepointToUtf8(unsigned int codepoint)
 {
@@ -4683,8 +4723,15 @@ void SettingsWindow::PerformUpdateCheck()
     updateCheckStatusKey_.clear();
     updateCheckStatusArgument_.clear();
     updateAvailable_ = false;
+    updateZipReady_ = false;
     latestVersion_.clear();
     downloadUrl_.clear();
+    updateZipUrl_.clear();
+    updateSha256Url_.clear();
+    updateZipPath_.clear();
+    if (updateDownloadRequestId_ != 0 && updateHttpService_)
+        updateHttpService_->Cancel(L"SparkDesktop.UpdateCheck", updateDownloadRequestId_);
+    updateDownloadRequestId_ = 0;
 
     if (snowdesktop::deployment::IsPackaged())
     {
@@ -4706,10 +4753,10 @@ void SettingsWindow::PerformUpdateCheck()
         updateHttpService_ = std::make_unique<AsyncHttpService>();
 
     HttpRequestOptions options;
-    options.widgetId = L"SnowDesktop.UpdateCheck";
+    options.widgetId = L"SparkDesktop.UpdateCheck";
     options.url =
-        L"https://api.github.com/repos/FreeFallingSnow/"
-        L"SnowDesktop_Release/releases/latest";
+        L"https://api.github.com/repos/TySpark/"
+        L"SparkDesktop/releases/latest";
     options.headers =
         L"Accept: application/vnd.github+json\r\n"
         L"X-GitHub-Api-Version: 2022-11-28\r\n";
@@ -4725,7 +4772,83 @@ void SettingsWindow::PerformUpdateCheck()
 
 void SettingsWindow::PollUpdateCheck()
 {
-    if (!updateHttpService_ || updateCheckRequestId_ == 0)
+    if (!updateHttpService_)
+        return;
+
+    // ── SHA256 校验文件下载响应 ──
+    if (updateSha256RequestId_ != 0)
+    {
+        for (HttpResponse& response : updateHttpService_->Drain())
+        {
+            if (response.id != updateSha256RequestId_)
+                continue;
+            updateSha256RequestId_ = 0;
+            updateSha256Hex_.clear();
+            if (response.error.empty() && response.status >= 200 &&
+                response.status < 300 && !response.body.empty())
+            {
+                // 期望格式：一行 "<64位hex>  文件名" 或纯 64 位 hex。
+                std::istringstream stream(response.body);
+                std::string first;
+                if (stream >> first && first.size() == 64 &&
+                    first.find_first_not_of(
+                        "0123456789abcdefABCDEF") == std::string::npos)
+                {
+                    updateSha256Hex_ = first;
+                }
+            }
+            StartUpdateZipDownload();
+            break;
+        }
+    }
+
+    // ── 更新包 zip 下载响应 ──
+    if (updateDownloadRequestId_ != 0)
+    {
+        for (HttpResponse& response : updateHttpService_->Drain())
+        {
+            if (response.id != updateDownloadRequestId_)
+                continue;
+            updateDownloadRequestId_ = 0;
+            if (!response.error.empty() || response.status < 200 ||
+                response.status >= 300)
+            {
+                updateZipReady_ = false;
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_download_failed");
+                updateCheckStatus_ =
+                    _L("app.settings.update_download_failed");
+                return;
+            }
+            if (!updateSha256Hex_.empty())
+            {
+                const std::string actual =
+                    ComputeFileSha256Hex(updateZipPath_);
+                if (actual.empty() ||
+                    _stricmp(actual.c_str(),
+                        updateSha256Hex_.c_str()) != 0)
+                {
+                    DeleteFileW(updateZipPath_.c_str());
+                    updateZipPath_.clear();
+                    updateZipReady_ = false;
+                    updateCheckStatusKey_ =
+                        L10N_KEY("app.settings.update_checksum_failed");
+                    updateCheckStatus_ =
+                        _L("app.settings.update_checksum_failed");
+                    return;
+                }
+            }
+            updateZipReady_ = true;
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.update_ready");
+            updateCheckStatus_ =
+                _L("app.settings.update_ready");
+            return;
+        }
+    }
+
+    // ── 更新检查请求响应 ──
+    if (updateCheckRequestId_ == 0)
         return;
 
     for (HttpResponse& response : updateHttpService_->Drain())
@@ -4785,6 +4908,36 @@ void SettingsWindow::PollUpdateCheck()
             return json.substr(pos, end - pos);
         };
 
+        // 在 releases/latest 的 assets[] 中按资产名后缀精确查找
+        // browser_download_url（.zip 便携包 / .sha256 校验文件）。
+        auto extractAssetUrlBySuffix = [](const std::string& json,
+            const char* nameSuffix) -> std::string {
+            const std::string needle = "\"name\":\"";
+            const size_t suffixLen = std::strlen(nameSuffix);
+            size_t pos = 0;
+            while ((pos = json.find(needle, pos)) != std::string::npos)
+            {
+                const size_t nameStart = pos + needle.size();
+                const size_t nameEnd = json.find('"', nameStart);
+                if (nameEnd == std::string::npos) return {};
+                if (nameEnd - nameStart >= suffixLen &&
+                    json.compare(nameEnd - suffixLen, suffixLen,
+                        nameSuffix) == 0)
+                {
+                    const size_t urlKey = json.find(
+                        "\"browser_download_url\":\"", nameEnd);
+                    if (urlKey == std::string::npos) return {};
+                    const size_t urlStart =
+                        urlKey + std::strlen("\"browser_download_url\":\"");
+                    const size_t urlEnd = json.find('"', urlStart);
+                    if (urlEnd == std::string::npos) return {};
+                    return json.substr(urlStart, urlEnd - urlStart);
+                }
+                pos = nameEnd;
+            }
+            return {};
+        };
+
         std::string tag =
             extractJsonString(response.body, "tag_name");
         if (tag.empty())
@@ -4801,6 +4954,11 @@ void SettingsWindow::PollUpdateCheck()
 
         const std::string htmlUrl =
             extractJsonString(response.body, "html_url");
+        // 便携更新包与校验文件资产直链（发布时附带这两个资产）。
+        updateZipUrl_ = extractAssetUrlBySuffix(
+            response.body, ".zip");
+        updateSha256Url_ = extractAssetUrlBySuffix(
+            response.body, ".sha256");
 
         auto compareVersion = [](const std::string& a,
                                   const std::string& b) -> int {
@@ -4839,6 +4997,120 @@ void SettingsWindow::PollUpdateCheck()
         }
         return;
     }
+}
+
+void SettingsWindow::StartUpdateDownload()
+{
+    if (updateZipUrl_.empty() || updateDownloadRequestId_ != 0 ||
+        updateSha256RequestId_ != 0)
+        return;
+
+    updateZipReady_ = false;
+    updateCheckStatusKey_ =
+        L10N_KEY("app.settings.update_downloading");
+    updateCheckStatus_ =
+        _L("app.settings.update_downloading");
+
+    if (!updateHttpService_)
+        updateHttpService_ = std::make_unique<AsyncHttpService>();
+
+    // 先取 SHA256 校验文件（小请求），完成后再下载 zip。
+    if (!updateSha256Url_.empty())
+    {
+        HttpRequestOptions options;
+        options.widgetId = L"SparkDesktop.UpdateCheck";
+        options.url = Utf8ToWide(updateSha256Url_);
+        options.timeoutMs = 15000;
+        options.allowedDomains = {
+            "github.com", "objects.githubusercontent.com",
+        };
+        updateSha256RequestId_ =
+            updateHttpService_->Submit(std::move(options));
+        if (updateSha256RequestId_ == 0)
+            updateSha256Hex_.clear();
+        return;
+    }
+    updateSha256Hex_.clear();
+    StartUpdateZipDownload();
+}
+
+void SettingsWindow::StartUpdateZipDownload()
+{
+    if (updateZipUrl_.empty())
+        return;
+    const std::wstring updatesDir = GetDataFilePath(L"updates");
+    CreateDirectoryW(updatesDir.c_str(), nullptr);
+    updateZipPath_ =
+        GetDataFilePath(L"updates\\SparkDesktop-update.zip");
+    DeleteFileW(updateZipPath_.c_str());
+
+    HttpRequestOptions options;
+    options.widgetId = L"SparkDesktop.UpdateCheck";
+    options.url = Utf8ToWide(updateZipUrl_);
+    options.timeoutMs = 120000;
+    options.allowedDomains = {
+        "github.com", "objects.githubusercontent.com",
+    };
+    options.bodyFilePath = updateZipPath_;
+    updateDownloadRequestId_ =
+        updateHttpService_->Submit(std::move(options));
+    if (updateDownloadRequestId_ == 0)
+    {
+        updateCheckStatusKey_ =
+            L10N_KEY("app.settings.update_http_init_failed");
+        updateCheckStatus_ =
+            _L("app.settings.update_http_init_failed");
+    }
+}
+
+void SettingsWindow::ApplyUpdateAndRestart()
+{
+    if (!updateZipReady_ || updateZipPath_.empty())
+        return;
+
+    // updater 位于安装目录（与主程序同目录）。
+    const std::wstring installDir = GetExecutableDirectoryPath();
+    const std::wstring updaterPath =
+        installDir + L"SparkDesktopUpdater.exe";
+    if (GetFileAttributesW(updaterPath.c_str()) ==
+        INVALID_FILE_ATTRIBUTES)
+    {
+        updateCheckStatusKey_ =
+            L10N_KEY("app.settings.update_updater_missing");
+        updateCheckStatus_ =
+            _L("app.settings.update_updater_missing");
+        return;
+    }
+
+    const DWORD currentPid = GetCurrentProcessId();
+    std::wstring commandLine = L"\"" + updaterPath +
+        L"\" --zip \"" + updateZipPath_ +
+        L"\" --dir \"" + installDir +
+        L"\" --launch SparkDesktop.exe --pid " +
+        std::to_wstring(currentPid);
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(updaterPath.c_str(), commandLine.data(),
+        nullptr, nullptr, FALSE, CREATE_UNICODE_ENVIRONMENT |
+            CREATE_NO_WINDOW, nullptr,
+        installDir.c_str(), &startup, &process))
+    {
+        updateCheckStatusKey_ =
+            L10N_KEY("app.settings.update_updater_failed");
+        updateCheckStatus_ =
+            _L("app.settings.update_updater_failed");
+        return;
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+
+    // 让主程序退出；updater 等待本进程结束后执行替换。
+    if (exitCallback_)
+        exitCallback_();
+    else
+        PostQuitMessage(0);
 }
 
 void SettingsWindow::DrawAboutPage()
@@ -4894,37 +5166,71 @@ void SettingsWindow::DrawAboutPage()
         }
     }
 
-    if (snowdesktop::deployment::IsPackaged())
+    // 便携版与安装版均显示更新检查；安装版在检查时跳转 Store。
+    if (!updateCheckStatus_.empty())
     {
-        ImGui::SameLine();
-        if (!updateCheckStatus_.empty())
+        if (updateCheckStatus_ == "checking")
         {
-            if (updateCheckStatus_ == "checking")
-            {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", _L("app.settings.checking"));
-            }
-            else if (updateAvailable_)
-            {
-                ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
-            }
-            else
-            {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
-            }
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", _L("app.settings.checking"));
         }
+        else if (updateAvailable_)
+        {
+            ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
+        }
+    }
 
-        float updateButtonW = SettingButtonWidth(_L("app.settings.check_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
-        ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - updateButtonW);
+    const bool updateBusy = updateCheckRequestId_ != 0 ||
+        updateDownloadRequestId_ != 0 ||
+        updateSha256RequestId_ != 0;
+
+    float updateButtonW = SettingButtonWidth(_L("app.settings.check_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - updateButtonW);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    ImGui::BeginDisabled(updateBusy);
+    if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
+    {
+        PerformUpdateCheck();
+    }
+    ImGui::EndDisabled();
+    ImGui::PopStyleColor(4);
+
+    // 便携版：发现新版本后提供"下载更新"；下载校验通过后提供"重启并更新"。
+    if (updateAvailable_ && !updateZipReady_)
+    {
+        float downloadW = SettingButtonWidth(_L("app.settings.download_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - downloadW);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-        ImGui::BeginDisabled(updateCheckRequestId_ != 0);
-        if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
+        ImGui::BeginDisabled(updateBusy);
+        if (ImGui::Button(_L("app.settings.download_update"), ImVec2(downloadW, 0)))
         {
-            PerformUpdateCheck();
+            StartUpdateDownload();
         }
         ImGui::EndDisabled();
+        ImGui::PopStyleColor(4);
+    }
+
+    if (updateZipReady_)
+    {
+        float applyW = SettingButtonWidth(_L("app.settings.restart_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - applyW);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.60f, 0.32f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.70f, 0.38f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.48f, 0.26f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        if (ImGui::Button(_L("app.settings.restart_update"), ImVec2(applyW, 0)))
+        {
+            ApplyUpdateAndRestart();
+        }
         ImGui::PopStyleColor(4);
     }
 

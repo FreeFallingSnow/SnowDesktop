@@ -507,6 +507,21 @@ private:
      */
     void PollUpdateCheck();
 
+    /**
+     * @brief 开始下载便携更新包（zip 及可选 SHA256 校验文件）
+     */
+    void StartUpdateDownload();
+
+    /**
+     * @brief 下载更新 zip（SHA256 校验文件就绪后调用）
+     */
+    void StartUpdateZipDownload();
+
+    /**
+     * @brief 启动 updater 并退出当前进程以完成自更新
+     */
+    void ApplyUpdateAndRestart();
+
     /** @} */
 
     /** @name 布局备份辅助方法
@@ -690,8 +705,22 @@ private:
     std::string latestVersion_;
     /// 更新检查返回的下载页面 URL
     std::string downloadUrl_;
+    /// 更新包 zip 资产的浏览器直链（GitHub assets browser_download_url）
+    std::string updateZipUrl_;
+    /// 更新包 zip 的 SHA256 校验文件资产 URL（可选）
+    std::string updateSha256Url_;
     /// 是否有可用更新
     bool updateAvailable_ = false;
+    /// 更新 zip 是否已下载并校验通过
+    bool updateZipReady_ = false;
+    /// 更新 zip 下载到的本地临时路径
+    std::wstring updateZipPath_;
+    /// 当前更新包下载请求 ID；0 表示没有进行中的下载
+    int updateDownloadRequestId_ = 0;
+    /// SHA256 校验文件下载请求 ID；0 表示没有进行中的请求
+    int updateSha256RequestId_ = 0;
+    /// 远端校验文件的预期 SHA256（小写十六进制）
+    std::string updateSha256Hex_;
     /// 携带版更新检查使用的异步 HTTP 服务
     std::unique_ptr<AsyncHttpService> updateHttpService_;
     /// 当前更新检查请求 ID；0 表示没有进行中的请求

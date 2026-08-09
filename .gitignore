@@ -9,6 +9,8 @@ TestResults/
 build/
 .build_debug/
 release/
+SparkDesktop-portable-*.zip
+SparkDesktop-portable-*.zip.sha256
 /docs/html/
 SnowDesktop_crash.log
 SnowDesktop.log

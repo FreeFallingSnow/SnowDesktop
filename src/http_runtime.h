@@ -31,6 +31,8 @@ struct HttpRequestOptions
     int timeoutMs = 10000;
     int cacheSeconds = 0;
     std::vector<std::string> allowedDomains;
+    // 非空时响应体流式写入该文件（替代内存缓冲），用于大文件下载。
+    std::wstring bodyFilePath;
 };
 
 struct HttpResponse

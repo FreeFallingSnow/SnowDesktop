@@ -39,7 +39,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Building SparkDesktop.exe and SnowDesktopTaskbarHook.dll (Release) ===
-cmake --build .build --target SnowDesktop SnowDesktopTaskbarHook --parallel 2
+cmake --build .build --target SnowDesktop SnowDesktopTaskbarHook SparkDesktopUpdater --parallel 2
 if %ERRORLEVEL% NEQ 0 (
     echo SparkDesktop build FAILED
     exit /b 1
@@ -54,6 +54,8 @@ copy /y ".build\SparkDesktop.exe" "%STAGE%\" >nul
 if %ERRORLEVEL% NEQ 0 ( echo Missing SparkDesktop.exe & exit /b 1 )
 copy /y ".build\SnowDesktopTaskbarHook.dll" "%STAGE%\" >nul
 if %ERRORLEVEL% NEQ 0 ( echo Missing SnowDesktopTaskbarHook.dll & exit /b 1 )
+copy /y ".build\SparkDesktopUpdater.exe" "%STAGE%\" >nul
+if %ERRORLEVEL% NEQ 0 ( echo Missing SparkDesktopUpdater.exe & exit /b 1 )
 
 copy /y "LICENSE" "%STAGE%\" >nul
 copy /y "THIRD_PARTY_NOTICES.md" "%STAGE%\" >nul
@@ -64,11 +66,20 @@ xcopy /e /i /y "widgets" "%STAGE%\widgets" >nul
 xcopy /e /i /y "lang" "%STAGE%\lang" >nul
 xcopy /e /i /y "skill" "%STAGE%\skill" >nul
 
+REM -- Package the portable zip and SHA256 checksum for the update feed --
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0package_portable.ps1"
+if %ERRORLEVEL% NEQ 0 (
+    echo Package zip creation FAILED
+    exit /b 1
+)
+
 echo.
 echo === Release build complete ===
 echo SparkDesktop.exe:   %STAGE%\SparkDesktop.exe
 echo Taskbar hook:     %STAGE%\SnowDesktopTaskbarHook.dll
+echo Updater:          %STAGE%\SparkDesktopUpdater.exe
 echo Widgets:          %STAGE%\widgets
 echo Languages:        %STAGE%\lang
-echo The %STAGE%\ folder is git-ignored and ready to distribute.
+echo Portable zip + .sha256:  repository root (SparkDesktop-portable-x64-*.zip)
+echo The %STAGE%\ folder and the portable zip are git-ignored.
 exit /b 0
