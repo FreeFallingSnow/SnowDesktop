@@ -117,8 +117,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
     {
-        ClearDockBackdropForDragTransition(
-            lastMousePoint_, client);
+        PrepareDockBackdropForDragTransition();
         dragSession_.Begin(nullptr, {}, {}, client, client);
     }
     else
@@ -268,8 +267,7 @@ HRESULT DesktopApp::HandleOleDragOver(
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
     {
-        ClearDockBackdropForDragTransition(
-            lastMousePoint_, client);
+        PrepareDockBackdropForDragTransition();
         dragSession_.Begin(nullptr, {}, {}, client, client);
     }
     else

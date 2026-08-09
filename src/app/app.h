@@ -685,8 +685,7 @@ private:
     void PresentDesktopPointerUpdate();
     /** @brief 同步呈现桌面拖动及浮动 Dock 指针反馈。 */
     void PresentPointerInteractionFrame();
-    void ClearDockBackdropForDragTransition(
-        POINT previousPointer, POINT currentPointer);
+    void PrepareDockBackdropForDragTransition();
     bool CreateFloatingDockWindow();
     void DestroyFloatingDockWindow();
     void ShowFloatingDock();
@@ -2795,6 +2794,8 @@ private:
     std::wstring hintTextCache_;
     /** @brief 确保拖拽提示窗口已创建。 @return 成功返回 true */
     bool EnsureDragHintWindow();
+    /** @brief 同步拖拽提示与悬浮 Dock 的 owner 关系。 */
+    void SyncDragHintWindowOwner();
     /** @brief 在客户端坐标位置显示拖拽提示。 @param clientPoint 客户端坐标 @param text 提示文本 */
     void ShowDragHintWindow(POINT clientPoint, const std::wstring& text);
     /** @brief 在屏幕坐标位置显示拖拽提示。 @param screenPoint 屏幕坐标 @param text 提示文本 */

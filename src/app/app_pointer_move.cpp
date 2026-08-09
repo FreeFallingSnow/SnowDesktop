@@ -221,7 +221,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             for (Item* item : sourceItems)
                 visualItemBounds.push_back(
                     item ? item->GetBounds() : RECT{});
-            ClearDockBackdropForDragTransition(oldMouse, current);
+            PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
             dragSession_.SetVisualItemBounds(
