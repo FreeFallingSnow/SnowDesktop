@@ -2190,9 +2190,13 @@ private:
     /**
      * @brief 获取可见的集合项边界矩形。
      * @param itemIndex 项索引
+     * @param[out] visibilityWidgetIndex 实际显示该项的组件索引，可选
      * @return 边界矩形
      */
-    RECT GetVisibleCollectionItemBounds(size_t itemIndex) const;
+    RECT GetVisibleCollectionItemBounds(size_t itemIndex,
+        size_t* visibilityWidgetIndex = nullptr) const;
+    /** @brief 将分组子组件解析为实际显示并参与悬浮可见性的宿主组件。 */
+    size_t ResolveRenameVisibilityWidgetIndex(size_t widgetIndex) const;
     /**
      * @brief 查找当前选中的单个文件夹条目。
      * @param[out] widgetIndex 部件索引

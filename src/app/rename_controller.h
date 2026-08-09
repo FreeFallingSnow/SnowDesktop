@@ -100,6 +100,10 @@ public:
     {
         return quickNavigationPresentation_;
     }
+    bool BlocksScrolling() const
+    {
+        return IsActive();
+    }
 
 private:
     void Begin(

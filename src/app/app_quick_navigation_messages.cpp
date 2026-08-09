@@ -120,6 +120,9 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             if (!quickNavigationInitialJumpOpen_ &&
                 PtInRect(&scrollCol, appPoint))
             {
+                if (renameController_.BlocksScrolling())
+                    return 0;
+
                 RECT track{}, thumb{};
                 int maxScroll = 0, contentHeight = 0;
                 if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,

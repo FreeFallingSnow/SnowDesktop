@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../menu_fluent_glyphs.h"
+#include "../right_click_contract.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
 
@@ -123,6 +124,7 @@ void DesktopApp::ShowItemContextMenu(
         menu, screenPoint, menuOwner, placeOutsideDock);
     DestroyMenu(menu);
     ClearMenuIcons();
+    bool inlineEditorStarted = false;
 
     switch (command)
     {
@@ -144,6 +146,7 @@ void DesktopApp::ShowItemContextMenu(
                 static_cast<size_t>(itemIndex));
         else
             BeginRenameSelected(dockRenameAnchor);
+        inlineEditorStarted = renameEdit_ != nullptr;
         break;
     case kContextCutCommand:
     case kContextCopyCommand:
@@ -271,7 +274,10 @@ void DesktopApp::ShowItemContextMenu(
         break;
     }
     RestoreDesktopWindowLayer();
-    if (!keepQuickNavigationOpen)
+    if (snowdesktop::right_click_contract::
+            ShouldRestoreInteractionFocusAfterMenu(
+                keepQuickNavigationOpen,
+                inlineEditorStarted))
         RestoreInteractionInputFocus();
 }
 

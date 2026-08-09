@@ -924,7 +924,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     PtInRect(&frame, oldMouse) != FALSE;
                 const bool pointerIsInside =
                     PtInRect(&frame, current) != FALSE;
-                const bool popupOpen =
+                const bool interactionRetained =
                     popupWidgetIndex_ == widgetIndex ||
                     (!interactionPinnedWidgetId_.empty() &&
                         interactionPinnedWidgetId_ == w.id);
@@ -936,7 +936,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                             dragDropController_.IsExternalDragActive(),
                             widgetAction_ == WidgetAction::Move,
                             w.selected,
-                            popupOpen,
+                            interactionRetained,
                             pointerInside);
                 };
                 if (shouldRender(pointerWasInside) ==

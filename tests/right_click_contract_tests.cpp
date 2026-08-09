@@ -171,6 +171,22 @@ void TestSelectionContract()
         "right-clicking a selected item must preserve multi-selection");
 }
 
+void TestMenuFocusRestoreContract()
+{
+    Check(
+        contract::ShouldRestoreInteractionFocusAfterMenu(
+            false, false),
+        "a completed desktop menu must restore interaction focus");
+    Check(
+        !contract::ShouldRestoreInteractionFocusAfterMenu(
+            true, false),
+        "an open interaction surface must retain its own focus");
+    Check(
+        !contract::ShouldRestoreInteractionFocusAfterMenu(
+            false, true),
+        "a newly started inline editor must retain focus");
+}
+
 } // namespace
 
 int main()
@@ -178,6 +194,7 @@ int main()
     TestContainerMenuMatrix();
     TestSlotItemMenuMatrix();
     TestSelectionContract();
+    TestMenuFocusRestoreContract();
     if (failures != 0)
     {
         std::cerr << failures

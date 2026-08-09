@@ -4,6 +4,9 @@
 
 void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 {
+    if (renameController_.BlocksScrolling())
+        return;
+
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     ScreenToClient(hwnd_, &pt);
     int currentMods = 0;

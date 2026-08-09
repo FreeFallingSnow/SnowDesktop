@@ -535,6 +535,10 @@ void TestHoverOnlyWidgetVisibility()
         "selected hover-only widget remains visible");
     Check(
         visibilityRules::ShouldRenderWidget(
+            true, false, false, false, false, true, false),
+        "retained inner rename reveals hover-only widget");
+    Check(
+        visibilityRules::ShouldRenderWidget(
             true, false, false, false, false, false, true),
         "pointer hover reveals hover-only widget");
 }
