@@ -62,6 +62,7 @@ copy /y "README.en.md" "%STAGE%\" >nul
 copy /y "third_party\fluentui-system-icons\LICENSE" "%STAGE%\licenses\FluentSystemIcons-LICENSE.txt" >nul
 xcopy /e /i /y "widgets" "%STAGE%\widgets" >nul
 xcopy /e /i /y "lang" "%STAGE%\lang" >nul
+xcopy /e /i /y "skill" "%STAGE%\skill" >nul
 
 echo.
 echo === Release build complete ===
